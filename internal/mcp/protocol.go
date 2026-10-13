@@ -8,6 +8,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -56,28 +57,40 @@ type DiscoverResult struct {
 
 // Request is a JSON-RPC request.
 type Request struct {
-	JSONRPC  string          `json:"jsonrpc"`
-	ID       int64           `json:"-"`
-	Method   string          `json:"method,omitempty"`
-	Params   json.RawMessage `json:"params,omitempty"`
-	Result   json.RawMessage `json:"result,omitempty"`
-	Error    *RPCError       `json:"error,omitempty"`
-	StringID string          `json:"-"`
-	stringID bool
-	hasID    bool
+	JSONRPC       string          `json:"jsonrpc"`
+	ID            int64           `json:"-"`
+	Method        string          `json:"method,omitempty"`
+	Params        json.RawMessage `json:"params,omitempty"`
+	Result        json.RawMessage `json:"result,omitempty"`
+	Error         *RPCError       `json:"error,omitempty"`
+	StringID      string          `json:"-"`
+	stringID      bool
+	hasID         bool
+	requestOrigin *serverRequestOrigin
 }
 
 // Response is a JSON-RPC response.
 type Response struct {
-	JSONRPC  string          `json:"jsonrpc"`
-	ID       int64           `json:"-"`
-	Method   string          `json:"method,omitempty"`
-	Params   json.RawMessage `json:"params,omitempty"`
-	Result   json.RawMessage `json:"result,omitempty"`
-	Error    *RPCError       `json:"error,omitempty"`
-	StringID string          `json:"-"`
-	stringID bool
-	hasID    bool
+	JSONRPC       string          `json:"jsonrpc"`
+	ID            int64           `json:"-"`
+	Method        string          `json:"method,omitempty"`
+	Params        json.RawMessage `json:"params,omitempty"`
+	Result        json.RawMessage `json:"result,omitempty"`
+	Error         *RPCError       `json:"error,omitempty"`
+	StringID      string          `json:"-"`
+	stringID      bool
+	hasID         bool
+	requestOrigin *serverRequestOrigin
+}
+
+// serverRequestOrigin carries local HTTP ownership, never wire metadata. A
+// server request belongs to its receiving session and optionally a client POST;
+// its wire ID remains independent of that client call's ID.
+type serverRequestOrigin struct {
+	ctx        context.Context
+	generation uint64
+	callID     int64
+	isCall     bool
 }
 
 // MarshalJSON keeps numeric IDs convenient for the client while accepting

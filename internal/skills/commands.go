@@ -135,6 +135,14 @@ func parseCommandFile(path, source string) (Skill, error) {
 		UserInvocable: true,
 	}
 
+	if source == "project" || source == "user" {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return Skill{}, err
+		}
+		skill.local = &localFile{resolved: resolved, command: true}
+	}
+
 	// Commands expose only descriptive metadata: parse the file as a skill, then
 	// keep just description + argument-hint. Execution-binding keys (allowed-tools,
 	// model, name, ...) are intentionally dropped. A file without frontmatter fails

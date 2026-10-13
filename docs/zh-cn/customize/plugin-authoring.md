@@ -113,6 +113,10 @@ UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`�
 
 模型工具注册在初始化结果的 `tools` 数组中，每个工具需要 `id`、`description` 和对象类型的 `input_schema`，宿主会生成带命名空间的公开名称。`execution_scopes` 可限制工具在 `root` 或 `child` 中可用；`activity` 描述只读性、并发安全、风险和是否编排子工具。应如实声明副作用，不要把写入工具标成只读来绕过调度或权限检查。这些声明属于可信扩展契约，不是沙箱。
 
+两个 SDK 运行时都按 `activity.concurrency_safe: true` 调度工具。相邻的显式安全工具可以重叠运行，每个运行时最多同时执行八个工具处理函数。省略或设为 false 的工具、未知工具 ID，以及普通能力和服务回调，仍按 FIFO 顺序独占执行；仅声明 `read_only` 不会启用并发。这些屏障同时适用于共享或不同的 execution ID。initialize、activate 和 shutdown 还会等待此前已接收的可重入回调结束。
+
+启用前应保护共享可变状态。每次调用的 Go context，或 TypeScript execution context 与带执行归属的 host，都应随该次调用传递，不要保存为共享的“当前调用”变量。取消在读取帧时注册，并在真正进入处理函数前再次检查，包括等待工具空位之后。取消某个 execution 会中止其所有仍活跃的回调，不影响独立 execution；已运行的代码仍需协作响应取消。显式可重入的能力和服务保留独立通道，使工具空位用尽时嵌套宿主回调仍能完成。该上限不限制这些回调或排队帧数量；TypeScript 并发也不会将同步 CPU 工作移至工作线程。
+
 会话启用 PTC 时，普通工具默认作为程序内绑定。用户交互、显式交付或必须保留
 为模型直调的生命周期控制可声明 `direct_only: true`。此类工具留在顶层工具
 列表，并拒绝嵌套调用。这个可选标记不授予权限，也不改变执行作用域；未声明
@@ -303,6 +307,17 @@ const plugin: RuntimePlugin = {
 ## 执行与取消
 
 工具和能力调用具有宿主管理的执行 ID。SDK 提供 `execution.signal`，应传给可取消操作，在信号中止时停止工作。调用返回后，执行作用域关闭；迟到的进度不能重新打开已完成执行，取消也不会等待插件确认。
+
+Go 和 TypeScript 运行时会在进入处理函数前拒绝已取消的工具、能力和服务请求，包括等待其他工作或生命周期屏障的请求。取消某次执行不会跳过清理所需的生命周期回调，并会通知共享该执行 ID 的所有活跃回调。处理函数一旦开始，取消仍是协作式的：应将 Go context 或 TypeScript signal 传给支持取消的操作。取消不能撤销已完成的副作用，也不能强制中断任意插件代码。
+
+App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
+包含当前连接运行时的当前 generation，以及仍被活动工作持有的旧 generation。
+每行在宿主局部 `id`、所属 `plugin_id`、可用执行作用域和最新进度之外，增加
+`generation_id` 与 `retained`。用 `(generation_id, id)` 作为稳定的诊断标识：
+不同 generation 都可能存在 `exec-1`。原有 `id` 和取消路由保持不变。
+结果按 generation ID、执行 ID 排序；调用结束后移除，读取列表不会延长
+任何 generation 的寿命。这是即时快照，不是执行历史或跨工作区清单。
+禁用插件也会取消其旧 generation 中的工作。
 
 `reportExecutionUpdate`、`invokeTool`、`askUserQuestions` 和 `importArtifact` 都调用版本化服务，需要对应声明。编排工具使用 `activity.orchestrator=true` 和 `execution.invoke-tool`，通过正常工具链委托副作用。重试相同工具和参数时，保持子调用 `call_id` 不变；不要用同一个 ID 表示不同工作。
 

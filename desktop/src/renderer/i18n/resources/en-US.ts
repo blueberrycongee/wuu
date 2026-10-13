@@ -1,6 +1,9 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "settings.draftRecovery": "Recover unsent text after reload",
+  "settings.draftRecoveryDescription": "Off by default. When enabled, stores up to 20 text drafts locally in this window for 24 hours (32K characters each). Closing the window or disabling this clears recovery copies. Only text is restored; attachments and quote links are not. Avoid secrets in saved drafts.",
+  "settings.draftRecoveryUnavailable": "Draft recovery storage is unavailable. Your current input is still here.",
   "execution.knownHosts": "SSH known hosts file",
   "execution.mount": "Host workspace directory (optional)",
   "execution.mountReadOnly": "Read-only host mount",
@@ -1945,6 +1948,9 @@ export const enUS = {
   "composer.compactingContext": "Compacting context",
   "composer.attachment.imagesAndPdfOnly": "Only images, PDFs and videos are supported",
   "composer.attachment.fileTooLarge": "\"{name}\" exceeds the {limit}MB file size limit",
+  "composer.attachment.retryRead": "Read failed · Retry",
+  "composer.attachment.retryFile": "Retry reading {name}: {reason}",
+  "composer.attachment.preparing": "Preparing attachment…",
   "composer.attachment.addFailed": "Failed to add attachment",
   "turn.orchestrationPaused": "Response paused",
   "common.select": "Select",
@@ -2176,6 +2182,7 @@ export const enUS = {
   "runtime.startFailed": "Failed to start runtime",
   "composer.compactFailed": "Failed to compact context",
   "composer.sendFailed": "Failed to send",
+  "composer.recoveredInterruptedDraft": "Recovered text from an interrupted send. Check the conversation before sending again; attachments are not restored.",
   "composer.failedDraftSaved": "Send failed. Open the saved draft or discard it.",
   "composer.openFailedDraft": "Open draft",
   "composer.discardFailedDraft": "Discard unsent draft",

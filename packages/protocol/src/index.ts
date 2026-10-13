@@ -730,6 +730,28 @@ export interface PluginDiagnosticsResult {
   id: string;
   diagnostics: PluginContributionDiagnostic[];
 }
+/** A live current/retained-generation execution from plugin/executions/list. */
+export interface PluginExecutionSnapshot {
+  /** Host-local ID. Use [generation_id, id] as the diagnostic identity. */
+  id: string;
+  generation_id: string;
+  retained: boolean;
+  plugin_id: string;
+  session_id?: string;
+  thread_id?: string;
+  turn_id?: string;
+  actor_id?: string;
+  call_id?: string;
+  tool?: string;
+  cwd?: string;
+  message?: string;
+  detail?: unknown;
+  updated_at?: string;
+}
+export interface PluginExecutionsResult {
+  /** Ordered by generation_id, then id; an empty result is [], never null. */
+  executions: PluginExecutionSnapshot[];
+}
 export interface PluginStorageGetParams extends PluginIdentityParams {
   scope: PluginValueScope;
   key: string;

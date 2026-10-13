@@ -21,9 +21,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/claudeengine"
 	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/execution"
-	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/process"
@@ -300,6 +298,7 @@ type Server struct {
 	pluginGenerationEpoch        atomic.Uint64
 	pluginRuntimeRevision        atomic.Uint64
 	pluginGenerationRefreshMu    sync.Mutex
+	pluginRefreshFailure         pluginGenerationRefreshFailure
 	configRefreshMu              sync.Mutex
 	configFingerprint            string
 	configRejectedSources        string
@@ -331,14 +330,6 @@ type Server struct {
 }
 
 func New(rt *runtime.Session, out io.Writer) *Server {
-	store, err := credentialstore.NewDesktopStore()
-	if err != nil {
-		providers.DebugLogf("desktop credential store: %v", err)
-	}
-	return NewWithCredentialStore(rt, out, store, http.DefaultClient)
-}
-
-func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credentialstore.Store, httpClient *http.Client) *Server {
 	nativeHistoryCtx, nativeHistoryCancel := context.WithCancel(context.Background())
 	s := &Server{
 		nativeHistoryCtx: nativeHistoryCtx, nativeHistoryCancel: nativeHistoryCancel,
@@ -359,7 +350,7 @@ func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credential
 		clientMethods:                make(map[string]struct{}),
 		runs:                         make(map[string]*runTracker),
 		activeRunByThread:            make(map[string]string),
-		modelCatalogHTTPClient:       httpClient,
+		modelCatalogHTTPClient:       http.DefaultClient,
 	}
 	s.retainCodexHost()
 	s.bindUserQuestions()
@@ -431,11 +422,6 @@ func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credential
 			// safer than letting it misclassify this live server as crashed.
 			s.startupErr = fmt.Errorf("finalize app-server presence: %w", err)
 			return s
-		}
-	}
-	if store != nil && rt != nil && rt.Toolkit != nil {
-		if manager := rt.Toolkit.MCPManager(); manager != nil {
-			manager.SetOAuthManager(mcp.NewOAuthManager(store, httpClient))
 		}
 	}
 	if rt != nil && rt.ActivityRegistry != nil {
@@ -1111,7 +1097,7 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 	case MethodConfigProviderRemove:
 		return s.handleConfigProviderRemove(req)
 	case MethodSkillList:
-		return s.handleSkillList(req)
+		return s.handleSkillList(ctx, req)
 	case MethodThreadStart:
 		return s.handleThreadStart(req)
 	case MethodThreadResume:
@@ -1259,13 +1245,13 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 	case MethodTurnStart:
 		return s.handleTurnStart(ctx, req)
 	case MethodTurnQueue:
-		return s.handleTurnQueue(req)
+		return s.handleTurnQueue(ctx, req)
 	case MethodTurnUpdateQueued:
-		return s.handleTurnUpdateQueued(req)
+		return s.handleTurnUpdateQueued(ctx, req)
 	case MethodTurnDequeue:
 		return s.handleTurnDequeue(req)
 	case MethodTurnSteer:
-		return s.handleTurnSteer(req)
+		return s.handleTurnSteer(ctx, req)
 	case MethodTurnUnsteer:
 		return s.handleTurnUnsteer(req)
 	case MethodTurnRequeue:

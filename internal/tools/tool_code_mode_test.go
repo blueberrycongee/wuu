@@ -577,12 +577,12 @@ func TestPTCBackgroundProcessesSurviveProgramsAndReturnThroughTools(t *testing.T
 	events := make(chan proc.Event, 32)
 	manager.Subscribe(events)
 	defer manager.Unsubscribe(events)
-	started := runPTCProgram(t, kit, `const ids=[]; for(const name of ["one","two"]) { const r=await tools.bash({command:"read line; echo DONE_$line",run_in_background:true}); ids.push(JSON.parse(r.content[0].text).id); } store("processes",ids); return ids;`)
+	started := runPTCProgram(t, kit, `const ids=[]; for(const name of ["one","two","stopped"]) { const r=await tools.bash({command:"read line; echo DONE_$line",run_in_background:true}); ids.push(JSON.parse(r.content[0].text).id); } store("processes",ids); return ids;`)
 	if started.IsError {
 		t.Fatal(started.TextProjection())
 	}
 	var ids []string
-	if err := json.Unmarshal([]byte(started.TextProjection()), &ids); err != nil || len(ids) != 2 {
+	if err := json.Unmarshal([]byte(started.TextProjection()), &ids); err != nil || len(ids) != 3 {
 		t.Fatalf("start=%q %v", started.TextProjection(), err)
 	}
 	for _, id := range ids {
@@ -591,7 +591,15 @@ func TestPTCBackgroundProcessesSurviveProgramsAndReturnThroughTools(t *testing.T
 			t.Fatalf("process lost owner/lifetime: %+v %v", p, err)
 		}
 	}
-	written := runPTCProgram(t, kit, `await Promise.all(load("processes").map((id,i)=>tools.process({action:"write",process_id:id,input:String(i+1)+"\n"})));`)
+	polled := runPTCProgram(t, kit, `return await Promise.all(load("processes").map(async id=>JSON.parse((await tools.process({action:"read",process_id:id})).content[0].text).status));`)
+	if polled.IsError || polled.TextProjection() != `["running","running","running"]` {
+		t.Fatalf("processes did not survive into the next program: %+v", polled)
+	}
+	stopped := runPTCProgram(t, kit, `return JSON.parse((await tools.process({action:"stop",process_id:load("processes")[2]})).content[0].text).status;`)
+	if stopped.IsError || stopped.TextProjection() != "stopped" {
+		t.Fatalf("process stop=%+v", stopped)
+	}
+	written := runPTCProgram(t, kit, `await Promise.all(load("processes").slice(0,2).map((id,i)=>tools.process({action:"write",process_id:id,input:String(i+1)+"\n"})));`)
 	if written.IsError {
 		t.Fatal(written.TextProjection())
 	}
@@ -608,7 +616,7 @@ func TestPTCBackgroundProcessesSurviveProgramsAndReturnThroughTools(t *testing.T
 			t.Fatal("managed processes never completed")
 		}
 	}
-	read := runPTCProgram(t, kit, `const results=await Promise.all(load("processes").map(id=>tools.process({action:"read",process_id:id,wait_ms:30000}))); for(const r of results)console.log(r.content[0].text);`)
+	read := runPTCProgram(t, kit, `const results=await Promise.all(load("processes").slice(0,2).map(id=>tools.process({action:"read",process_id:id,wait_ms:30000}))); for(const r of results)console.log(r.content[0].text);`)
 	if read.IsError || (!strings.Contains(read.TextProjection(), "DONE_1") || !strings.Contains(read.TextProjection(), "DONE_2")) {
 		t.Fatalf("process observation=%+v", read)
 	}
