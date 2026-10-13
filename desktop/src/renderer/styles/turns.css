@@ -3843,6 +3843,11 @@
   margin: var(--space-2) 0 0 22px;
 }
 
+/* The process fold already supplies the single-call detail spacing. */
+.process-surface-body > :is(.program-tool-details, .workspace-tool-details) {
+  margin: 0;
+}
+
 .program-tool-details .rich-code-block {
   margin: 0;
 }
