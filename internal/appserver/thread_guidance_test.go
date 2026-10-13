@@ -193,7 +193,7 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 		}
 		if tc.wantSelected {
 			wrong, _ := json.Marshal(map[string]string{"name": selected.Name, "source": selected.Source, "path": filepath.Join(repo, ".agents", "skills", "release-check", "SKILL.md")})
-			if _, err := srv.userMessageWithInputImages(started.Thread.ID, "/skill "+string(wrong), nil, nil, nil); err == nil {
+			if _, err := srv.userMessageWithInputImages(context.Background(), started.Thread.ID, "/skill "+string(wrong), nil, nil, nil); err == nil {
 				t.Fatal("worktree invocation accepted workspace-root identity")
 			}
 		}

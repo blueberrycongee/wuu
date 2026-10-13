@@ -81,7 +81,7 @@ func TestResponsesCustomToolRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			req := providers.ChatRequest{Model: "gpt-test", CacheHint: &providers.CacheHint{PromptCacheKey: "custom-round-trip"}, Messages: []providers.ChatMessage{{Role: "user", Content: "run"}}, Tools: []providers.ToolDefinition{{Name: "run_code", Freeform: true, InputSchema: map[string]any{"type": "object", "properties": map[string]any{"input": map[string]any{"type": "string"}}}}}}
+			req := providers.ChatRequest{Model: "gpt-5", CacheHint: &providers.CacheHint{PromptCacheKey: "custom-round-trip"}, Messages: []providers.ChatMessage{{Role: "user", Content: "run"}}, Tools: []providers.ToolDefinition{{Name: "run_code", Freeform: true, InputSchema: map[string]any{"type": "object", "properties": map[string]any{"input": map[string]any{"type": "string"}}}}}}
 			var calls []providers.ToolCall
 			if stream {
 				ch, err := client.StreamChat(context.Background(), req)

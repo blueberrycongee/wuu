@@ -8,7 +8,7 @@
     ]
   },
   "mcp_servers": {
-    "docs": {"command": "wuu-docs"}
+    "docs": {"command": "wuu-docs", "tool_timeout_ms": 45000}
   },
   "requested_permissions": ["network"]
 }

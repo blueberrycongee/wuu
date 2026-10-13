@@ -44,7 +44,8 @@ func TestTranslateMCPJson_StdioApproved(t *testing.T) {
 	    "local": {
 	      "command": "my-server",
 	      "args": ["--flag", "value"],
-	      "env": {"TOKEN": "abc"}
+	      "env": {"TOKEN": "abc"},
+	      "tool_timeout_ms": 45000
 	    }
 	  }
 	}`)
@@ -58,9 +59,10 @@ func TestTranslateMCPJson_StdioApproved(t *testing.T) {
 		t.Fatalf("expected server 'local', got %+v", servers)
 	}
 	want := MCPServerConfig{
-		Command: "my-server",
-		Args:    []string{"--flag", "value"},
-		Env:     map[string]string{"TOKEN": "abc"},
+		Command:       "my-server",
+		Args:          []string{"--flag", "value"},
+		Env:           map[string]string{"TOKEN": "abc"},
+		ToolTimeoutMS: 45000,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("stdio translation mismatch:\n got %+v\nwant %+v", got, want)

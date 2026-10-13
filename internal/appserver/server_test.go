@@ -89,7 +89,8 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 	rt.Toolkit = toolkit
 	rt.Toolkit.SetMCPManager(manager)
 	out := &lockedBuffer{}
-	srv := NewWithCredentialStore(rt, out, credentialStore, authServer.Client())
+	manager.SetOAuthManager(mcp.NewOAuthManager(credentialStore, authServer.Client()))
+	srv := New(rt, out)
 
 	requests := []string{
 		`{"id":"start","method":"mcp/auth/start","params":{"name":"docs"}}`,
