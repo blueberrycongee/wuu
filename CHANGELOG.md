@@ -71,6 +71,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   streamed blocks. Mermaid fences keep their source and a stable container
   through loading, settlement, and rendering errors.
 
+- Place the conversation trigger bell before the reply timestamp, keeping message
+  actions together and the time at the end of the row.
 - Keep the iOS conversation loading indicator centered and fully visible before
   messages arrive, instead of squeezing it into a clipped capsule at the left edge.
 - Responses connections keep text tools callable through JSON schemas when the

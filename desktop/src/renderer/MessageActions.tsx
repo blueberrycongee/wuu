@@ -58,8 +58,8 @@ export function AgentMessageActions({
       {showCopy ? <MessageCopyButton getText={getText} className="message-action-button" iconSize={15} /> : null}
       {showFork ? <MessageForkButton onFork={onFork} /> : null}
       {children}
-      <MessageTime timestamp={timestamp} />
       {trailingAction}
+      <MessageTime timestamp={timestamp} />
     </div>
   );
 }
