@@ -28,7 +28,7 @@ func Discover(projectRoot, wuuHome string) []Plugin {
 
 func DiscoverWithOptions(projectRoot, wuuHome string, options DiscoverOptions) []Plugin {
 	compatibility := CompatibilityOptions{
-		GOOS: options.GOOS, WuuVersion: options.WuuVersion, LookPath: options.LookPath,
+		GOOS: options.GOOS, WuuVersion: options.WuuVersion, LookPath: options.LookPath, LookupEnv: options.LookupEnv,
 	}
 	bundledPlugins := discoverBundled(wuuHome, options)
 	userPlugins := filterCompatiblePlugins(scanPluginRoots(userPluginRoots(wuuHome), "user", ""), compatibility)
@@ -42,15 +42,16 @@ func DiscoverWithOptions(projectRoot, wuuHome string, options DiscoverOptions) [
 	for _, item := range projectPlugins {
 		byID[item.ID] = item
 	}
-	// A development generation wins normal user/project collisions only after
-	// its package and authorization receipt have both been verified.
-	for _, item := range devPlugins {
-		byID[item.ID] = item
-	}
 	// Official bundled plugins are trusted by provenance, not by id. They win
-	// collisions so a project cannot shadow a privileged helper declaration
+	// ordinary collisions so a project cannot shadow a native helper declaration
 	// with an untrusted plugin using the same name.
 	for _, item := range bundledPlugins {
+		byID[item.ID] = item
+	}
+	// An explicitly authorized development source may replace any installed
+	// package after its receipt is verified. It retains development provenance;
+	// a matching id never grants the bundled package's native-helper privileges.
+	for _, item := range devPlugins {
 		byID[item.ID] = item
 	}
 

@@ -66,6 +66,7 @@ func discoverBundled(wuuHome string, options DiscoverOptions) []Plugin {
 		return nil
 	}
 	var out []Plugin
+	nodeRuntimeWarning := false
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -76,9 +77,16 @@ func discoverBundled(wuuHome string, options DiscoverOptions) []Plugin {
 			continue
 		}
 		resolveOfficialHelper(&item, options.LookupEnv)
-		if ValidateHostCompatibility(item, CompatibilityOptions{
-			GOOS: options.GOOS, WuuVersion: options.WuuVersion, LookPath: options.LookPath,
-		}) != nil || !bundledPluginEnabled(item, options.LookupEnv) {
+		if err := ValidateHostCompatibility(item, CompatibilityOptions{
+			GOOS: options.GOOS, WuuVersion: options.WuuVersion, LookPath: options.LookPath, LookupEnv: options.LookupEnv,
+		}); err != nil {
+			if !nodeRuntimeWarning && item.Runtime != nil && (item.Runtime.Command == "node" || item.Runtime.Command == "node.exe") {
+				slog.Warn("bundled Node plugins are unavailable", "error", err)
+				nodeRuntimeWarning = true
+			}
+			continue
+		}
+		if !bundledPluginEnabled(item, options.LookupEnv) {
 			continue
 		}
 		out = append(out, item)
@@ -143,10 +151,6 @@ func resolveOfficialHelper(item *Plugin, lookupEnv func(string) (string, bool)) 
 	}
 	command := resolveHelperCommand(spec, lookupEnv)
 	placeholder := "@wuu/official-helper:" + strings.TrimSpace(spec.ID)
-	runtimePlaceholder := "@wuu-official-helper:" + strings.TrimSpace(spec.ID)
-	if item.Runtime != nil && strings.TrimSpace(item.Runtime.Command) == runtimePlaceholder {
-		item.Runtime.Command = command
-	}
 	for name, server := range item.MCPServers {
 		if strings.TrimSpace(server.Command) == placeholder {
 			server.Command = command

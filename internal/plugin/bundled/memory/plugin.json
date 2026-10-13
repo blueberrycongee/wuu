@@ -8,13 +8,12 @@
   "defaultEnabled": false,
   "author": { "name": "Wuu" },
   "minimumWuuVersion": "0.1.0",
-  "runtime": { "protocol": "wuu-plugin-v1", "command": "@wuu-official-helper:memory", "timeout": 30 },
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
   "desktop": { "entry": "desktop.js" },
   "contributes": {
     "settingsPages": [
       { "id": "memory", "title": "Memory", "description": "Review and manage durable memory", "view": "memory.settings", "icon": "brain", "order": 30 }
     ]
   },
-  "interface": { "displayName": "Memory", "shortDescription": "Remember durable preferences, feedback, references, and lessons.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] },
-  "officialNativeHelper": { "id": "memory", "environment": "WUU_MEMORY_PLUGIN_HELPER", "executable": "wuu-memory-plugin" }
+  "interface": { "displayName": "Memory", "shortDescription": "Remember durable preferences, feedback, references, and lessons.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] }
 }

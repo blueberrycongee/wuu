@@ -10,9 +10,36 @@ The desktop host owns windows, layout, the conversation stream, input submission
 
 Bundled and external packages use the same runtime and desktop registration contracts. Bundled provenance affects discovery and trust, not the meaning of a tool, capability, or UI registration. A copied package does not become official merely by using a bundled plugin's ID.
 
+## Bundled TypeScript runtimes
+
+The eight bundled business plugins are `todo`, `ask-user`, `memory`, `subagent`,
+`peers`, `automation`, `goal`, and `dream`. Their source lives under
+`plugins/<id>/src/`; each exports the public TypeScript `RuntimePlugin` contract.
+The build produces self-contained `runtime.mjs` files beside the bundled
+manifests. Go embeds those packages and remains the runtime host. The former
+`wuu-<id>-plugin` Go helper executables are no longer needed.
+
+The desktop starts these runtimes with its own Electron executable in Node mode;
+the CLI uses Node from `PATH` or the absolute `WUU_NODE_EXECUTABLE` override.
+There is no separate installed npm dependency for a bundled runtime. The same
+JSONL initialization, service negotiation, activation, cancellation, and shutdown
+contracts apply to bundled and third-party plugins.
+
+This changes implementation language, not plugin identity or durable data layout.
+Existing settings, approvals, plugin storage keys, memory Markdown files, and
+session request identities remain in their existing locations. No export/import
+step or second Go implementation is used. Module variables and timers are rebuilt
+on replacement. Automation recovers durable work with stable dispatch identities;
+Goal restores unfinished goals paused for an explicit resume; Dream retains its
+settings, run state, and failure backoff. Disabling a plugin stops its owned
+behavior while preserving durable data and conversation history.
+
+For the edit-and-reload workflow and executable checks, see
+[develop a bundled plugin](plugin-quickstart.md#develop-a-bundled-plugin).
+
 ## Discovery and activation
 
-Discovery reads user packages, workspace packages, authorized development directories, and bundled packages. User packages normally live in `$WUU_HOME/plugins`; workspace packages live in `.wuu/plugins` under the workspace. Legacy singular `plugin` directories are also recognized. When IDs collide, later discovery replaces the earlier candidate; bundled packages are considered last.
+Discovery reads user packages, workspace packages, authorized development directories, and bundled packages. User packages normally live in `$WUU_HOME/plugins`; workspace packages live in `.wuu/plugins` under the workspace. Legacy singular `plugin` directories are also recognized. When IDs collide, later discovery normally replaces the earlier candidate; bundled packages are considered last. An explicitly authorized development package with the same ID overrides its bundled package while retaining development provenance. An ordinary untrusted same-ID copy does not gain that override.
 
 Finding a manifest does not mean running it. The host evaluates enabled state, trust, platform and minimum-version compatibility, package relationships, and runtime negotiation. Required package dependencies use legacy `requires` IDs or versioned `dependencies` entries. Missing or incompatible required dependencies leave consumers and their transitive required dependents inactive; `breaks` and required dependency cycles can reject the activation plan. Matching optional dependencies add ordering when possible, but their absence or failure does not block consumers. `conflicts` produces a diagnostic rather than choosing a winner automatically.
 

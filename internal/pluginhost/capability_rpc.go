@@ -1087,3 +1087,23 @@ func cloneServiceDescriptors(services []ServiceDescriptor) []ServiceDescriptor {
 func cloneServiceRequirements(requirements []ServiceRequirement) []ServiceRequirement {
 	return append([]ServiceRequirement(nil), requirements...)
 }
+
+// FileLockAcquireParams names a lock file relative to a host-owned root. The
+// file is not unlinked on release, preserving its inode across process owners.
+// Root is workspace_state, wuu_home, or project; absolute paths are rejected.
+type FileLockAcquireParams struct {
+	Root string `json:"root"`
+	Path string `json:"path"`
+}
+
+type FileLockAcquireResult struct {
+	LockID string `json:"lock_id"`
+}
+
+type FileLockReleaseParams struct {
+	LockID string `json:"lock_id"`
+}
+
+type FileLockReleaseResult struct {
+	Released bool `json:"released"`
+}

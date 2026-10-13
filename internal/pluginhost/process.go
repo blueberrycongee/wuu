@@ -44,6 +44,9 @@ type ProcessConfig struct {
 	// generation's service registry. When nil, service.call requests are
 	// rejected as unavailable.
 	ServiceRouter ServiceRouter
+	// OnClose releases generation-owned resources when this runtime exits or
+	// fails to start. It is invoked once, including on unexpected transport EOF.
+	OnClose func()
 	// PrepareOnly leaves a lifecycle-aware runtime initialized but inactive.
 	// The owning generation activates it after its durable commit succeeds.
 	PrepareOnly bool
@@ -105,6 +108,15 @@ type ProcessClient struct {
 }
 
 func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
+	if config.OnClose != nil {
+		config.OnClose = sync.OnceFunc(config.OnClose)
+	}
+	started := false
+	defer func() {
+		if !started && config.OnClose != nil {
+			config.OnClose()
+		}
+	}()
 	config.ID = strings.TrimSpace(config.ID)
 	config.Command = strings.TrimSpace(config.Command)
 	if config.ID == "" || config.Command == "" {
@@ -113,9 +125,8 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 	if config.Timeout <= 0 {
 		config.Timeout = 30 * time.Second
 	}
-	cmd := exec.Command(config.Command, config.Args...)
+	cmd := RuntimeCommand(config.Command, config.Args, config.Env)
 	cmd.Dir = config.PluginRoot
-	cmd.Env = buildEnv(config.Env)
 	configurePluginProcess(cmd)
 	// Descendants can inherit stderr after the runtime exits. Bound the copy
 	// goroutine drain independently of the shutdown RPC deadline.
@@ -211,6 +222,7 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 			return nil, fmt.Errorf("activate plugin %q: %w", config.ID, err)
 		}
 	}
+	started = true
 	return client, nil
 }
 
@@ -737,18 +749,27 @@ func (c *ProcessClient) writeHostServiceResult(response HostServiceResult) error
 }
 
 func (c *ProcessClient) stopProcess() error {
+	return c.retireProcess(nil)
+}
+
+// retireProcess serializes transport retirement and publishes its failure before
+// releasing generation-owned resources outside the process mutex.
+func (c *ProcessClient) retireProcess(failure error) error {
 	if c == nil {
 		return nil
 	}
 	c.stopMu.Lock()
+	defer func() {
+		if c.config.OnClose != nil {
+			c.config.OnClose()
+		}
+	}()
 	defer c.stopMu.Unlock()
-	return c.stopProcessLocked()
-}
-
-// stopProcessLocked serializes retirement with the failure that caused it.
-func (c *ProcessClient) stopProcessLocked() error {
 	if c.stopped {
 		return c.stopErr
+	}
+	if failure != nil {
+		defer c.setFailure(failure)
 	}
 	c.stopped = true
 	if c.processCancel != nil {
@@ -784,13 +805,7 @@ func (c *ProcessClient) setFailure(err error) {
 }
 
 func (c *ProcessClient) fail(err error) {
-	c.stopMu.Lock()
-	defer c.stopMu.Unlock()
-	if c.stopped {
-		return
-	}
-	_ = c.stopProcessLocked()
-	c.setFailure(err)
+	_ = c.retireProcess(err)
 }
 
 func (c *ProcessClient) failFatalCall(err error) {

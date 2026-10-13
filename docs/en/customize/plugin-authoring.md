@@ -99,8 +99,8 @@ With `@wuu/plugin-sdk`, implement `RuntimePlugin` and pass it to `runJSONLRuntim
 
 | Callback | Responsibility |
 | --- | --- |
-| `initialize(params, host)` | Return tools, capabilities, provided services, and required services |
-| `activate(host)` | Start timers, subscriptions, or other behavior after the runtime change commits |
+| `initialize(params, host, lifecycle)` | Return tools, capabilities, provided services, and required services |
+| `activate(host, lifecycle)` | Start timers, subscriptions, or other behavior after the runtime change commits |
 | `executeTool(params, host, execution)` | Run a registered tool and return its result |
 | `invokeCapability(params, host, execution)` | Handle a declared capability |
 | `invokeService(params, host, execution)` | Serve one host-routed service call |
@@ -108,6 +108,11 @@ With `@wuu/plugin-sdk`, implement `RuntimePlugin` and pass it to `runJSONLRuntim
 | `shutdown()` | Stop plugin-owned work and release resources |
 
 Initialization is preparation, not permission to start product behavior. The host permits only its read-phase services during native preflight. Defer writes and background work to `activate`, and make shutdown safe after partial initialization or partial activation. Preparation and persistence failures preserve the old runtime without calling candidate `activate`. Once the change commits, an activation failure leaves a degraded new generation with failure diagnostics; it does not restore the old generation or undo external effects. Avoid duplicate effects when explicitly retrying activation. Trusted initialization code and MCP preparation may still have external effects outside the host service boundary. See [runtime generations](plugin-system.md#runtime-generations) for the commit boundary.
+
+`lifecycle.signal` aborts when shutdown is requested or the transport closes.
+Use it for activation-owned background work and stop timers in shutdown. Cleanup
+may still use the unscoped lifecycle host to persist state or release resources;
+do not make cleanup depend on an already-aborted signal.
 
 ## Tools and capabilities
 
@@ -158,7 +163,7 @@ Capabilities can declare `priority`, `depends_on`, and `conflicts`. Higher prior
 
 ## Calling host services
 
-The current host exposes **`host.service.call` as the runtime gateway**. Declare each consumed service in `required_services` with its name and major version. Old direct frames such as `host.storage.get`, or declarations that require them in `required_host_services`, are not the current wire contract even though compatibility-shaped types remain in the SDK.
+The current host exposes **`host.service.call` as the runtime gateway**. Declare each consumed service in `required_services` with its name and major version. Old direct frames such as `host.storage.get` are not the wire contract. The TypeScript SDK accepts typed `host.call("host.storage.get", params)` conveniences and legacy-shaped `required_host_services` declarations, and translates them to the gateway and versioned requirements. There is no second routing path in the host.
 
 For example, this initialization result requests storage reads:
 
@@ -192,6 +197,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | --- | --- |
 | `host.storage.get/set/delete/keys` | String values in the plugin's user or workspace namespace |
 | `host.storage.compare-exchange` | Conditional replacement using `{ scope, key, expected, value }`; returns `{ swapped, value }` |
+| `host.file-lock` | Acquire and release a process-safe lock under a host-provided data root |
+
 | `host.model.request` | One bounded, text-only model request using host configuration |
 | `host.model.invoke` | Independent full logical model calls and streams |
 | `host.model.emit` | Events from a streaming adapter or middleware |
@@ -214,6 +221,39 @@ For session creation, provide a stable `request_id`, `visibility=user|plugin`, a
 A completed turn may have an empty `final_output`: normal provider completion does not require an outward reply or an acknowledgement tool. It records the end of execution, not proof that the user's objective was fulfilled. Consumers must inspect results and evidence; transport failures and abnormal stops still fail.
 
 The Peers plugin uses `if_running: "steer"` to deliver terminal replies into active work when possible. Replies arriving too late for that turn are retained for a follow-up; idle sessions still wake automatically. A `running` response with `steered: true` can still be an unconsumed input, not durable delivery. Peers keeps the reply pending until a durable receipt confirms delivery and retries inputs lost on restart with the same request ID.
+
+### Shared file locks
+
+Declare `{ name: "host.file-lock", major_version: 1, required: true }` when
+read-modify-write operations on files must coordinate across plugin processes.
+The service exposes `acquire` and `release`; `acquireFileLock` and `releaseFileLock`
+are the SDK helpers. Acquire takes a relative lock-file path and one root:
+`workspace_state`, `wuu_home`, or `project`. A successful acquisition returns an
+opaque `lock_id`; release returns `{ released: boolean }`. All writers must use
+the same lock path. The host owns the operating-system lock and releases handles
+when their plugin generation closes.
+
+Keep the unscoped host passed to initialization for this resource handshake.
+Pass the current execution ID to acquisition, wait for its authoritative reply,
+then check cancellation and release in `finally`:
+
+```ts
+const { lock_id } = await acquireFileLock(lifecycleHost, {
+  root: "workspace_state", path: "example/state.json.lock",
+}, execution.executionId);
+try {
+  execution.signal.throwIfAborted();
+  await updateStateFile();
+} finally {
+  await releaseFileLock(lifecycleHost, lock_id);
+}
+```
+
+Do not locally abandon an acquisition response: cancellation can race a successful
+grant, leaving the caller without the handle it must release. The execution ID
+lets the host cancel a waiting acquisition; generation cleanup remains the fallback
+for process loss. The lock does not make arbitrary plugin filesystem access a
+sandbox or create a transaction across different files.
 
 ## One-shot model requests
 
@@ -411,11 +451,16 @@ const plugin: RuntimePlugin = {
 };
 ```
 
-Use this only for reentrant handlers: protect shared mutable state and propagate cancellation. In an A → B → A service call chain, A's callback service must be able to run while its original handler awaits B. Opt-in applies to incoming `service.invoke` requests for the listed names; it does not make every tool or capability concurrent, grant service authority, or resolve package dependency cycles. Initialization and activation remain barriers. Shutdown stops new admission and waits for admitted work before cleanup. This is asynchronous overlap in one JavaScript process, not worker-thread execution.
+Use this only for reentrant handlers: protect shared mutable state and propagate cancellation. In an A → B → A service call chain, A's callback service must be able to run while its original handler awaits B. Opt-in applies to incoming `service.invoke` requests for the listed names; it does not make every tool or capability concurrent, grant service authority, or resolve package dependency cycles. `RuntimePlugin.concurrentCapabilities` provides the same opt-in for listed capability IDs, for example a read-only status request while a foreground task waits. Protect the state each concurrent handler reads or writes. Initialization and activation remain barriers. Shutdown stops new admission and waits for admitted work before cleanup. This is asynchronous overlap in one JavaScript process, not worker-thread execution.
 
 ## Execution and cancellation
 
-Tool and capability calls have a host-owned execution ID. The SDK supplies `execution.signal`; pass it to cancellable operations and stop work when it aborts. Returning from the invocation closes its scope. Late progress cannot reopen a completed execution, and cancellation does not wait for the plugin to acknowledge it.
+Tool and capability calls have a host-owned execution ID. The SDK supplies `execution.signal`; pass it to cancellable operations and stop work when it aborts. The `host` passed to tool, service, and capability handlers automatically binds
+both the execution ID and its abort signal to service calls. Use that handler host
+for foreground work instead of an unscoped host saved at initialization.
+`host.call(method, params, { signal })` can add cancellation; it cannot remove the
+execution's signal. A canceled pending call rejects and a late response is ignored.
+Returning from the invocation closes its scope. Late progress cannot reopen a completed execution, and cancellation does not wait for the plugin to acknowledge it.
 
 The Go and TypeScript runtimes reject cancelled tool, capability, and service
 requests before entering their handlers, including requests waiting behind other
@@ -454,6 +499,8 @@ The current turn keeps its tool and prompt generation. Finish that turn before d
 `wuu plugin dev ./extension.ts` runs a single file whose default export implements `RuntimePlugin`. Wuu supplies the matching SDK and generates the process adapter internally; manifests, installation, packaging, and builds are optional for this development path. It requires Node.js 22.7 or later with `--experimental-transform-types` support and supports only Node builtins and `@wuu/plugin-sdk` imports. It snapshots each candidate and validates syntax, imports, and its default export before publication, retaining the last published source on loading failure. Import validation executes module top-level code, so it is not a side-effect-free check. `initialize` runs only in the actual host with its read-phase services. Preparation failure preserves the old runtime; activation happens after commit and can leave a failed new runtime, as described above. See the [agent quickstart](plugin-quickstart.md) for a complete example.
 
 `wuu plugin create` generates `agent`, `desktop`, or `full` package scaffolds. For a directory, `wuu plugin dev` uses its `plugin.json` and `package.json` build script, then publishes the built development generation. Both paths keep watching after a failed build/load so fixing and saving recovers without restarting. Filesystem events are debounced, with periodic reconciliation for missed events; `--poll` must be positive.
+
+For monorepo packages, `package.json` may declare additional build inputs with `"wuu": { "dev": { "watch": ["../shared/src", "../assets/prompt.md"] } }`. Paths are relative to the package directory; sibling files and directories are supported. Wuu watches and fingerprints those inputs as well as the package, so edits rebuild and publish without restarting. Absolute paths, package ancestors, symlinked inputs, and more than 64 additional inputs are rejected. Keep generated files out of the list; `.git`, `node_modules`, and `dist` descendants remain ignored. This metadata affects development watching only, not runtime permissions.
 
 Use `validate` for package structure, `test` for executable initialization and negotiated descriptors, and real conversations or rendered UI for behavior. `pack` creates a local zip; it does not upload to a registry. Inspect the archive before distributing it: preparation excludes `.git` and `node_modules`, not every local file that might contain private data.
 

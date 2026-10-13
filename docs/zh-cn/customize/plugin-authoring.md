@@ -99,8 +99,8 @@ UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`�
 
 | 回调 | 职责 |
 | --- | --- |
-| `initialize(params, host)` | 返回工具、能力、提供的服务和需要的服务 |
-| `activate(host)` | 运行时变更提交后，启动定时器、订阅或其他行为 |
+| `initialize(params, host, lifecycle)` | 返回工具、能力、提供的服务和需要的服务 |
+| `activate(host, lifecycle)` | 运行时变更提交后，启动定时器、订阅或其他行为 |
 | `executeTool(params, host, execution)` | 执行已注册工具，返回结果 |
 | `invokeCapability(params, host, execution)` | 处理已声明能力 |
 | `invokeService(params, host, execution)` | 响应一次宿主路由的服务调用 |
@@ -108,6 +108,10 @@ UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`�
 | `shutdown()` | 停止插件拥有的工作并释放资源 |
 
 初始化是准备阶段，不代表可以开始产品行为。原生预检查期间，宿主只允许调用读取阶段的服务。写入和后台任务应推迟到 `activate`，shutdown 也应能安全处理部分初始化或部分激活。准备和持久化失败时保留旧运行时，不调用候选的 `activate`。变更提交后，激活失败会留下带失败诊断的降级新 generation，不恢复旧代，也不撤销外部效果。明确重试激活时，应避免重复产生效果。可信初始化代码和 MCP 准备仍可能在宿主服务边界之外产生外部效果。提交边界见[运行时 generation](plugin-system.md#运行时-generation)。
+
+请求关闭或连接结束时，`lifecycle.signal` 会中止。激活后启动的后台工作应
+使用此信号，并在 shutdown 中停止定时器。清理仍可使用不绑定执行作用域的
+生命周期 host 保存状态或释放资源，不应依赖已经中止的信号完成清理。
 
 ## 工具和能力
 
@@ -141,7 +145,7 @@ UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`�
 
 ## 调用宿主服务
 
-当前宿主只通过 **`host.service.call` 运行时入口**路由服务。每项消费的服务都要在 `required_services` 中声明名称和主版本。旧的 `host.storage.get` 直接消息，以及在 `required_host_services` 中要求它的声明，都不是当前传输契约，即使 SDK 中仍保留类似兼容类型。
+当前宿主只通过 **`host.service.call` 运行时入口**路由服务。每项消费的服务都要在 `required_services` 中声明名称和主版本。旧的 `host.storage.get` 直接消息不是传输契约。TypeScript SDK 接受带类型的 `host.call("host.storage.get", params)` 简写和旧形状的 `required_host_services` 声明，并将它们转换为统一入口和版本化服务要求。宿主不会维护第二套路由。
 
 例如，下面的初始化结果申请读取存储：
 
@@ -175,6 +179,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | --- | --- |
 | `host.storage.get/set/delete/keys` | 插件用户或工作区命名空间中的字符串值 |
 | `host.storage.compare-exchange` | 用 `{ scope, key, expected, value }` 条件替换，返回 `{ swapped, value }` |
+| `host.file-lock` | 在宿主提供的数据根目录中获取和释放跨进程文件锁 |
+
 | `host.model.request` | 使用宿主配置完成一次有界的纯文本模型请求 |
 | `host.model.invoke` | 独立的完整逻辑模型调用与流式响应 |
 | `host.model.emit` | 流式适配器或 middleware 发出的事件 |
@@ -197,6 +203,35 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 已完成的轮次可以没有 `final_output`：提供商正常结束不要求对外回复或调用确认工具。这只表示本轮执行结束，不证明用户目标已经达成；接收方仍须检查结果和证据，连接失败和异常终止仍会报错。
 
 Peers 插件通过 `if_running: "steer"` 尽量把终态回执注入当前工作；来不及在本轮处理的回执保留到后续轮次，空闲会话仍会被自动唤醒。返回 `running` 和 `steered: true` 时，输入可能尚未被消费，不代表已持久送达。Peers 会保留待送达状态，直到持久记录确认送达；重启丢失的输入使用同一请求 ID 重试。
+
+### 共享文件锁
+
+文件的读改写需要跨插件进程协调时，声明
+`{ name: "host.file-lock", major_version: 1, required: true }`。服务提供
+`acquire` 和 `release`，SDK 对应帮助函数为 `acquireFileLock` 和
+`releaseFileLock`。获取时指定相对锁文件路径，以及 `workspace_state`、
+`wuu_home` 或 `project` 根目录。成功后返回不透明的 `lock_id`，释放返回
+`{ released: boolean }`。所有写入者必须使用相同锁路径。宿主管理操作系统锁，
+在插件 generation 关闭时释放其句柄。
+
+为这项资源握手保留初始化时传入的不绑定执行作用域的 host。获取时传入当前
+执行 ID，等待宿主明确回复，然后检查取消，并在 `finally` 中释放：
+
+```ts
+const { lock_id } = await acquireFileLock(lifecycleHost, {
+  root: "workspace_state", path: "example/state.json.lock",
+}, execution.executionId);
+try {
+  execution.signal.throwIfAborted();
+  await updateStateFile();
+} finally {
+  await releaseFileLock(lifecycleHost, lock_id);
+}
+```
+
+不要在本地放弃等待获取响应：取消可能与成功授予同时发生，使调用者拿不到
+必须释放的句柄。执行 ID 让宿主能取消等待中的获取；进程丢失时由 generation
+清理兜底。文件锁不将插件的任意文件访问变成沙箱，也不提供跨文件事务。
 
 ## 单次模型请求
 
@@ -302,11 +337,14 @@ const plugin: RuntimePlugin = {
 };
 ```
 
-只对可重入的处理函数启用：保护共享可变状态，并传递取消信号。在 A → B → A 服务调用链中，A 等待 B 时，其回调服务必须能够执行。此选项仅影响所列名称的入站 `service.invoke` 请求，不会让所有工具或能力并发，不会授予服务权限，也不会解决包依赖环。初始化和激活仍是执行屏障；shutdown 停止接收新工作，等待已接收的工作结束后再清理。这是同一个 JavaScript 进程中的异步重叠执行，不是工作线程。
+只对可重入的处理函数启用：保护共享可变状态，并传递取消信号。在 A → B → A 服务调用链中，A 等待 B 时，其回调服务必须能够执行。此选项仅影响所列名称的入站 `service.invoke` 请求，不会让所有工具或能力并发，不会授予服务权限，也不会解决包依赖环。`RuntimePlugin.concurrentCapabilities` 为指定能力 ID 提供相同选项，例如在前台任务等待期间处理只读状态请求。仍须保护并发处理函数读取或修改的状态。初始化和激活仍是执行屏障；shutdown 停止接收新工作，等待已接收的工作结束后再清理。这是同一个 JavaScript 进程中的异步重叠执行，不是工作线程。
 
 ## 执行与取消
 
-工具和能力调用具有宿主管理的执行 ID。SDK 提供 `execution.signal`，应传给可取消操作，在信号中止时停止工作。调用返回后，执行作用域关闭；迟到的进度不能重新打开已完成执行，取消也不会等待插件确认。
+工具和能力调用具有宿主管理的执行 ID。SDK 提供 `execution.signal`，应传给可取消操作，在信号中止时停止工作。工具、服务和能力处理函数收到的 `host` 自动将执行 ID 和中止信号绑定到
+服务调用。前台工作应使用这个 host，不要改用初始化时保存的不绑定作用域
+host。`host.call(method, params, { signal })` 可附加取消信号，但不能移除执行
+本身的信号。取消会拒绝尚未完成的调用，迟到响应会被忽略。调用返回后，执行作用域关闭；迟到的进度不能重新打开已完成执行，取消也不会等待插件确认。
 
 Go 和 TypeScript 运行时会在进入处理函数前拒绝已取消的工具、能力和服务请求，包括等待其他工作或生命周期屏障的请求。取消某次执行不会跳过清理所需的生命周期回调，并会通知共享该执行 ID 的所有活跃回调。处理函数一旦开始，取消仍是协作式的：应将 Go context 或 TypeScript signal 传给支持取消的操作。取消不能撤销已完成的副作用，也不能强制中断任意插件代码。
 
@@ -338,6 +376,8 @@ App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
 `wuu plugin create` 生成 `agent`、`desktop` 或 `full` 包骨架。对于目录，`wuu plugin dev` 使用其中的 `plugin.json` 和 `package.json` 构建脚本，再发布构建后的开发 generation。两条路径在构建或加载失败后都会继续监听，修复并保存即可恢复，不需要重启。文件事件经过防抖，并定期核对以补偿遗漏；`--poll` 必须为正数。
 
 用 `validate` 检查包结构，`test` 检查可执行初始化和协商描述，再通过真实会话或界面验证行为。`pack` 生成本地 zip，不会上传到 registry。分发前应检查压缩包内容：准备阶段排除 `.git` 和 `node_modules`，不会排除所有可能包含私人数据的本地文件。
+
+Monorepo 插件可在 `package.json` 声明额外构建输入：`"wuu": { "dev": { "watch": ["../shared/src", "../assets/prompt.md"] } }`。路径相对插件目录，支持相邻文件或目录；修改后会重新构建并发布，无需重启。绝对路径、插件祖先目录、经过符号链接的路径，以及超过 64 个额外输入会被拒绝。不要列入生成文件；输入目录中的 `.git`、`node_modules`、`dist` 仍被忽略。这只控制开发监听，不改变运行时权限。
 
 当前 install/update CLI 会先暂存包，再单独批准代码激活。开发目录授权不会成为分发包的信任。命令见[插件管理](plugins.md)，信任边界见[安全模型](../reference/security-model.md)。
 

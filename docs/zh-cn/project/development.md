@@ -16,9 +16,9 @@ make dev
 `WUU_HOME="$HOME/.wuu" make dev`。共享数据意味着开发版可以修改安装版的数据，旧版可能无法识别新增配置。
 macOS LaunchServices 启动器也会转发该设置。
 
-`make setup` 安装桌面、共享客户端核心、保留的 Web/Expo 客户端、插件 SDK、协议包和文档站的锁定依赖，不会安装原生手机工具链或配置远程服务。
+`make setup` 安装桌面、共享客户端核心、保留的 Web/Expo 客户端、插件 SDK、TypeScript 插件、协议包和文档站的锁定依赖，不会安装原生手机工具链或配置远程服务。
 
-`make dev` 运行桌面启动器，在启动 Electron 前构建共享 Web 资源、适用平台的原生辅助程序，以及当前 Go 核心和插件辅助程序。应用使用该检出目录的私有 `wuu-core`，不是 `PATH` 中另行安装的 `wuu`。renderer 修改通过 Vite 更新；修改 Go、原生辅助程序或进程启动代码后，应重启启动器，让运行中的进程使用新构建。
+`make dev` 运行桌面启动器，在启动 Electron 前构建共享 Web 资源、适用平台的原生辅助程序，以及 TypeScript 插件运行包和当前 Go 核心。应用使用该检出目录的私有 `wuu-core`，不是 `PATH` 中另行安装的 `wuu`。renderer 修改通过 Vite 更新；修改 Go、原生辅助程序或进程启动代码后，应重启启动器，让运行中的进程使用新构建。
 
 桌面安装包在 `Resources/tools` 中内置一份校验过 checksum 的固定版本 ripgrep，并把该目录追加到核心的 `PATH` 末尾，因此即使系统没有安装 `rg`，搜索工具和 agent 的 shell 命令也能使用它；`PATH` 中已有的 `rg` 优先。`make dev` 不会下载它。如需在开发时使用内置版本，先运行一次 `npm --prefix desktop run build:ripgrep`；否则核心使用 `PATH` 中的 `rg`，或回退到内置的搜索实现。
 
@@ -38,6 +38,23 @@ Project Agent 尚属实验功能，默认构建和发布构建均关闭，没有
 make build-go
 ./bin/wuu --help
 ```
+
+八个内置业务插件使用 `plugins/<id>/src/` 中的 TypeScript 源码。
+`make build-plugins` 把独立 JavaScript 运行包生成到内嵌资源目录；`make build-go`、
+`make install` 和桌面核心构建会先重新生成这些资源，再编译 Go。已提交的运行包
+让普通 Go 构建不依赖 npm 安装；`make check-plugins` 会拒绝过期的生成产物。
+
+桌面对所有 Node 插件提供自身的 Electron Node 运行时，安装版无需系统 Node，
+也不再包含独立的业务插件辅助程序。CLI 默认使用 `PATH` 中的 Node；可通过
+`WUU_NODE_EXECUTABLE` 显式选择运行时。本地 TypeScript 单文件开发需要 Node 22.7
+或更新版本，也可以使用桌面运行时。
+
+执行 `make build-plugins` 后，可运行 `./bin/wuu plugin dev plugins/todo`，通过公开的
+目录开发流程监听内置插件源码。生成的 `plugin.json` 和 `dist/` 副本不会提交；
+清单和界面资源仍编辑 `internal/plugin/bundled/<id>/` 中的原始文件，再重新构建
+以更新副本。运行时源码保存后会自动重建。经过授权验证的开发代次优先于已安装包，
+同时保留开发来源身份。独立 TypeScript 文件仍可直接运行 `wuu plugin dev ./extension.ts`，
+不要求清单或构建。参见[插件快速开始](../customize/plugin-quickstart.md)。
 
 `make install` 从当前检出安装 CLI。当前发布工作流只打包 macOS arm64 桌面预览版；存在 Windows CI 和打包脚本，不代表已经发布 Windows 版本。用户可用的发行方式见[安装](../getting-started/installation.md)。
 
@@ -61,7 +78,9 @@ make build-go
 | 命令 | 检查或构建内容 |
 | --- | --- |
 | `make check-go` | 模块一致性、格式、vet，以及 Windows/macOS 交叉构建 |
-| `make test-go` | CLI、核心、Go 插件 SDK、内置插件和提示词的 Go 测试 |
+| `make test-go` | CLI、核心、公开 Go 插件 SDK、运行时边界和提示词的 Go 测试 |
+| `make check-plugins build-plugins` | TypeScript 插件类型、生成产物一致性及运行包 |
+| `make test-plugins` | 在临时宿主环境中验证已打包插件的 JSONL 生命周期、工具、持久化和后台行为 |
 | `make check-desktop test-desktop` | 桌面 TypeScript、启动器和单元测试 |
 | `make build-desktop` | 共享 Web 资源和 Electron main/preload/renderer 产物，不生成安装包 |
 | `make check-clients test-clients build-clients` | 协议/SDK/客户端类型、SDK/客户端测试，以及保留的 Web/Expo 产物 |

@@ -7,7 +7,7 @@
   "version": "0.1.0",
   "author": { "name": "Wuu" },
   "minimumWuuVersion": "0.1.0",
-  "runtime": { "protocol": "wuu-plugin-v1", "command": "@wuu-official-helper:goal", "timeout": 30 },
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
   "desktop": { "entry": "desktop.js" },
   "contributes": {
     "slots": [
@@ -15,6 +15,5 @@
     ],
     "commands": [{ "id": "goal", "title": "Set a persistent goal", "description": "Keep working toward an explicit objective across turns.", "kind": "prompt_template", "prompt": "./prompts/goal.md", "keywords": ["goal", "目标", "持续执行"] }]
   },
-  "interface": { "displayName": "Goal", "shortDescription": "Continue toward a persistent goal.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] },
-  "officialNativeHelper": { "id": "goal", "environment": "WUU_GOAL_PLUGIN_HELPER", "executable": "wuu-goal-plugin" }
+  "interface": { "displayName": "Goal", "shortDescription": "Continue toward a persistent goal.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] }
 }

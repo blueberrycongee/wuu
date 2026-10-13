@@ -36,6 +36,7 @@ func TestAgentSelfExtensionProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := filepath.Join(root, "self-extension.ts")
+	lifecyclePath := filepath.Join(root, "plugin-lifecycle.jsonl")
 	binary := strings.TrimSpace(os.Getenv("WUU_SELF_EXTENSION_BINARY"))
 	useManager := binary != ""
 	if !useManager {
@@ -50,17 +51,29 @@ func TestAgentSelfExtensionProcess(t *testing.T) {
 	cli := "WUU_EXEC_PROCESS_TEST=1 " + shellQuote(binary) + " -test.run=^TestExecProcessHelper$ -- plugin "
 	publish := cli + "dev --watch=false " + shellQuote(source)
 	fixture := func(version string) string {
-		return fmt.Sprintf(`import { readFileSync } from "node:fs";
+		return fmt.Sprintf(`import { appendFileSync, readFileSync } from "node:fs";
 import type { RuntimePlugin } from "@wuu/plugin-sdk";
 const version = %q;
+const lifecycle = %q;
 export default {
- initialize() { return { tools: [{ id: "read", description: "Self extension %s", input_schema: { type: "object" } }] }; },
+ initialize() { return { protocol_version: 2, tools: [{ id: "read", description: "Self extension %s", input_schema: { type: "object" } }], capabilities: [
+  { id: "agent.system_prompt.section", kind: "transform", version: 1 },
+  { id: "agent.request.transform", kind: "transform", version: 1 }
+ ] }; },
+ invokeCapability(call) {
+  appendFileSync(lifecycle, JSON.stringify({event:"capability",version,capability:call.capability}) + "\n");
+  if (call.capability === "agent.system_prompt.section") return { output: { text: "GENERATION_PROMPT_" + version } };
+  if (call.capability === "agent.request.transform") return { output: { prepend_system_messages: ["GENERATION_INTERCEPTOR_" + version] } };
+  throw new Error("unexpected capability");
+ },
+ shutdown() { appendFileSync(lifecycle, JSON.stringify({event:"shutdown",version}) + "\n"); },
  executeTool() {
+  appendFileSync(lifecycle, JSON.stringify({event:"tool",version}) + "\n");
   const disk = readFileSync(new URL(import.meta.url), "utf8").match(/const version = "([^"]+)"/)[1];
   return { result: { content: [{ type: "text", text: "memory:" + version + ";disk:" + disk }] } };
  }
 } satisfies RuntimePlugin;
-`, version, version)
+`, version, lifecyclePath, version)
 	}
 	encode := func(v any) string {
 		raw, err := json.Marshal(v)
@@ -76,6 +89,20 @@ export default {
 		}
 		return write + "text(await tools.bash(" + encode(map[string]string{"command": publish}) + "));"
 	}
+	// Await the real watcher-driven retirement before the disabling tool returns,
+	// so the next model step must exercise its retained transform chain.
+	waitForRetirement := "node -e " + shellQuote(`const fs = require("node:fs");
+const path = process.argv[1];
+const watcher = fs.watch(path, check);
+const timeout = setTimeout(() => { watcher.close(); process.exit(1); }, 10000);
+function check() {
+  const retired = fs.readFileSync(path, "utf8").split("\n").some(line => {
+    try { const value = JSON.parse(line); return value.event === "shutdown" && value.version === "v2"; }
+    catch { return false; }
+  });
+  if (retired) { clearTimeout(timeout); watcher.close(); console.log("runtime retired"); }
+}
+check();`) + " " + shellQuote(lifecyclePath)
 	var mu sync.Mutex
 	calls := map[string]int{}
 	var problems []string
@@ -138,6 +165,28 @@ export default {
 		if stage == "update" && strings.Contains(surface, "Self extension v2") {
 			fail("active update turn adopted v2 before completion")
 		}
+		// Prompt providers and request interceptors must follow the same pinned
+		// generation as tools, including later model calls in an updating turn.
+		expectedVersion := "v2"
+		switch stage {
+		case "discover-manager", "install", "disabled":
+			expectedVersion = ""
+		case "read-v1", "update":
+			expectedVersion = "v1"
+		}
+		for _, prefix := range []string{"GENERATION_PROMPT_", "GENERATION_INTERCEPTOR_"} {
+			wantVersion := expectedVersion
+			// Explicit disable revokes callbacks immediately, even in the turn
+			// whose existing prompt remains pinned until its idle boundary.
+			if stage == "disable-manager" && call > 1 && prefix == "GENERATION_INTERCEPTOR_" {
+				wantVersion = ""
+			}
+			for _, candidate := range []string{"v1", "v2"} {
+				if strings.Contains(surface, prefix+candidate) != (candidate == wantVersion) {
+					fail("%s step %d has incorrect %s%s generation; expected %q", stage, call, prefix, candidate, wantVersion)
+				}
+			}
+		}
 		code := ""
 		directTool := ""
 		if call == 1 {
@@ -149,7 +198,7 @@ export default {
 					code = `text(await tools.plugin_manager({action:"status"}));`
 				}
 			case "disable-manager":
-				code = "const receipt = await tools.plugin_manager(" + encode(map[string]string{"action": "disable", "id": singleFilePluginID(source)}) + "); text(\"MANAGER_RECEIPT:\" + receipt.model_text);"
+				code = "const receipt = await tools.plugin_manager(" + encode(map[string]string{"action": "disable", "id": singleFilePluginID(source)}) + "); text(\"MANAGER_RECEIPT:\" + receipt.model_text);" + " text(await tools.bash(" + encode(map[string]string{"command": waitForRetirement}) + "));"
 			case "install":
 				code = writeAndPublish(fixture("v1"))
 			case "read-v1", "read-v2", "after-invalid":
@@ -255,6 +304,9 @@ export default {
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + root, "WUU_HOME=" + home}
+	if node := os.Getenv("WUU_NODE_EXECUTABLE"); node != "" {
+		cmd.Env = append(cmd.Env, "WUU_NODE_EXECUTABLE="+node)
+	}
 	if !useManager {
 		cmd.Env = append(cmd.Env, "WUU_EXEC_PROCESS_TEST=1")
 	}
@@ -322,6 +374,9 @@ export default {
 			if err != nil {
 				t.Error(err)
 			}
+			if journal, err := os.ReadFile(lifecyclePath); err == nil {
+				_ = os.WriteFile(filepath.Join(dir, "plugin-lifecycle.jsonl"), journal, 0600)
+			}
 			t.Logf("Evidence: %s", dir)
 		}
 	}()
@@ -367,7 +422,10 @@ export default {
 	threadID := created["result"].(map[string]any)["thread"].(map[string]any)["id"].(string)
 	runTurn := func(stage string) {
 		request(stage, "turn/start", map[string]string{"thread_id": threadID, "prompt": "acceptance:" + stage})
-		terminal := wait(func(m map[string]any) bool { return m["method"] == "turn/completed" })
+		terminal := wait(func(m map[string]any) bool { return m["method"] == "turn/completed" || m["method"] == "turn/error" })
+		if terminal["method"] == "turn/error" {
+			t.Fatalf("stage %s failed: %v", stage, terminal)
+		}
 		params := terminal["params"].(map[string]any)
 		if params["thread_id"] != threadID || params["turn"].(map[string]any)["status"] != "completed" {
 			t.Fatalf("stage %s did not complete successfully: %v", stage, terminal)
@@ -404,6 +462,40 @@ export default {
 		}
 	}
 	runTurn("disabled")
+	// Disable must retire the active runtime, not merely hide its tool. The
+	// observable lifecycle journal also protects the old generation's lease:
+	// its update-turn call must finish before its shutdown is recorded.
+	journal, err := os.ReadFile(lifecyclePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastTool := map[string]int{}
+	shutdown := map[string]int{}
+	for index, line := range strings.Split(strings.TrimSpace(string(journal)), "\n") {
+		var event struct{ Event, Version string }
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Event == "tool" {
+			lastTool[event.Version] = index + 1
+		}
+		if event.Event == "shutdown" {
+			shutdown[event.Version] = index + 1
+		}
+	}
+	for _, version := range []string{"v1", "v2"} {
+		if lastTool[version] == 0 || shutdown[version] <= lastTool[version] {
+			t.Fatalf("%s did not retire after its final tool call: %s", version, journal)
+		}
+	}
+	if dir := os.Getenv("WUU_SELF_EXTENSION_EVIDENCE"); dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "plugin-lifecycle.jsonl"), journal, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	request("shutdown", "shutdown", map[string]any{})
 	_ = stdin.Close()
 	if err := cmd.Wait(); err != nil {

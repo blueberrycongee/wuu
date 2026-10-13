@@ -8,7 +8,7 @@
   "defaultEnabled": true,
   "author": { "name": "Wuu" },
   "minimumWuuVersion": "0.1.0",
-  "runtime": { "protocol": "wuu-plugin-v1", "command": "@wuu-official-helper:peers", "timeout": 30 },
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
   "contributes": {
     "commands": [
       {
@@ -22,6 +22,5 @@
       }
     ]
   },
-  "interface": { "displayName": "Peers", "shortDescription": "Coordinate independent sessions.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] },
-  "officialNativeHelper": { "id": "peers", "environment": "WUU_PEERS_PLUGIN_HELPER", "executable": "wuu-peers-plugin" }
+  "interface": { "displayName": "Peers", "shortDescription": "Coordinate independent sessions.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] }
 }

@@ -40,6 +40,7 @@ or later, then run:
 ```bash
 git clone https://github.com/blueberrycongee/wuu.git
 cd wuu
+npm ci --prefix plugins
 make install
 wuu --version
 ```

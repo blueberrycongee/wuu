@@ -19,16 +19,8 @@ import (
  "os"
  "sync"
  plugin "github.com/blueberrycongee/wuu/packages/plugin-go"
- "github.com/blueberrycongee/wuu/plugins/subagent"
- "github.com/blueberrycongee/wuu/plugins/peers"
 )
 func main() {
- if os.Getenv("FIXTURE_MODE") == "peers" {
-  if err := plugin.Serve(context.Background(), peers.Handler()); err != nil { panic(err) }; return
- }
- if os.Getenv("FIXTURE_MODE") == "subagent" {
-  if err := plugin.Serve(context.Background(), subagent.Handler()); err != nil { panic(err) }; return
- }
  var host plugin.Host
  var mu sync.Mutex
  active, maximum := 0, 0
@@ -130,7 +122,8 @@ assert.equal(built.status, 0, built.stderr);
 class Peer {
   frames = []; waiters = []; stderr = ""; sequence = 0;
   constructor(sdk, mode = "normal") {
-    this.child = spawn(sdk === "go" ? binary : process.execPath, sdk === "go" ? [] : [join(output,"fixture.mjs")], {
+    const entry = ["subagent", "peers"].includes(mode) ? join(root, "internal/plugin/bundled", mode, "runtime.mjs") : join(output, "fixture.mjs");
+    this.child = spawn(sdk === "go" ? binary : process.execPath, sdk === "go" ? [] : [entry], {
       cwd:root, env:{PATH:process.env.PATH,FIXTURE_MODE:mode}, stdio:["pipe","pipe","pipe"],
     });
     this.closed = new Promise(resolve => this.child.on("close", (code,signal) => {
@@ -273,7 +266,7 @@ for (const sdk of ["go","ts"]) {
   });
 }
 
-await scenario("go","bundled subagent foreground overlap and stale-result protection",async p => {
+await scenario("ts","bundled subagent foreground overlap and stale-result protection",async p => {
   let stored = null, sequence = 0;
   const sessions = [], pending = [];
   p.onFrame = frame => {
@@ -308,7 +301,7 @@ await scenario("go","bundled subagent foreground overlap and stale-result protec
   assert.equal(actual.request_id,expected); assert.equal(actual.state,"running"); assert.ok(!actual.suppress_completion);
   assert.ok(!(await p.request("shutdown")).error); p.child.stdin.end(); assert.equal((await p.closed).code,0);
 },"subagent");
-await scenario("go","bundled peer queries overlap without execution leakage",async p => {
+await scenario("ts","bundled peer queries overlap without execution leakage",async p => {
   p.onFrame = frame => {
     if (frame.method === "host.service.call" && frame.params.service === "host.storage.get") p.reply(frame,{value:null});
   };

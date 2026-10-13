@@ -156,20 +156,10 @@ func TestDiscoverWithOptionsHidesBundledCUAMacByDefault(t *testing.T) {
 }
 
 func TestDiscoverWithOptionsIncludesBundledPeers(t *testing.T) {
-	helper := filepath.Join(t.TempDir(), "wuu-peers-plugin")
-	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
 	plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
-		GOOS: "darwin",
-		LookupEnv: func(key string) (string, bool) {
-			switch key {
-			case "WUU_PEERS_PLUGIN_HELPER":
-				return helper, true
-			}
-			return "", false
-		},
+		GOOS:      "darwin",
+		LookPath:  func(command string) (string, error) { return command, nil },
+		LookupEnv: func(string) (string, bool) { return "", false },
 	})
 
 	var peers *Plugin

@@ -8,7 +8,6 @@
   "defaultEnabled": false,
   "author": { "name": "Wuu" },
   "minimumWuuVersion": "0.1.0",
-  "runtime": { "protocol": "wuu-plugin-v1", "command": "@wuu-official-helper:ask-user", "timeout": 15 },
-  "interface": { "displayName": "Ask User", "shortDescription": "Offer focused questions without pausing a task.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Interaction"] },
-  "officialNativeHelper": { "id": "ask-user", "environment": "WUU_ASK_USER_PLUGIN_HELPER", "executable": "wuu-ask-user-plugin" }
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 15 },
+  "interface": { "displayName": "Ask User", "shortDescription": "Offer focused questions without pausing a task.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Interaction"] }
 }

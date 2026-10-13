@@ -21,11 +21,16 @@ type runtimeCapabilityClient struct {
 	policy   pluginhost.ErrorPolicy
 	priority int
 	invoked  int
+	state    pluginhost.State
 }
 
 func (c *runtimeCapabilityClient) ID() string { return c.id }
 func (c *runtimeCapabilityClient) Status() pluginhost.Status {
-	return pluginhost.Status{ID: c.id, State: pluginhost.StateActive}
+	state := c.state
+	if state == "" {
+		state = pluginhost.StateActive
+	}
+	return pluginhost.Status{ID: c.id, State: state}
 }
 func (c *runtimeCapabilityClient) Close(context.Context) error { return nil }
 func (c *runtimeCapabilityClient) ProtocolVersion() int        { return pluginhost.CapabilityProtocolVersion }
@@ -97,7 +102,8 @@ func TestPluginCapabilityUsesRequestTransformRegistry(t *testing.T) {
 	client := &runtimeCapabilityClient{id: "capability", priority: 7, mutate: func(output *pluginhost.RequestTransformOutput) {
 		output.PrependSystemMessages = []string{"capability context"}
 	}}
-	intercept := pluginRequestInterceptor(pluginhost.New(client), "openai", "thread-2", "/workspace")
+	host := pluginhost.New(client)
+	intercept := pluginRequestInterceptor(host, "openai", "thread-2", "/workspace")
 	request := providers.ChatRequest{Model: "before", StepIndex: 3, Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}}}
 	if err := intercept(context.Background(), &request); err != nil {
 		t.Fatal(err)
@@ -107,6 +113,21 @@ func TestPluginCapabilityUsesRequestTransformRegistry(t *testing.T) {
 	}
 	if client.input.ThreadID != "thread-2" || client.input.Provider != "openai" || client.input.StepIndex != 3 || client.input.Request.Model != "before" || len(client.input.Request.Messages) != 1 {
 		t.Fatalf("input = %+v", client.input)
+	}
+
+	client.state = pluginhost.StateFailed
+	if err := intercept(context.Background(), &request); err == nil {
+		t.Fatal("failed live transformer bypassed its error policy")
+	}
+	client.state = pluginhost.StateActive
+	if _, retired := host.RetirePlugin(context.Background(), client.id, nil); !retired {
+		t.Fatal("plugin was not retired")
+	}
+	if err := intercept(context.Background(), &request); err != nil {
+		t.Fatalf("retained thread transformer survived plugin disable: %v", err)
+	}
+	if client.invoked != 1 || len(request.Messages) != 2 {
+		t.Fatalf("retired transformer changed the next model request: calls=%d request=%+v", client.invoked, request)
 	}
 }
 

@@ -136,6 +136,53 @@ wuu plugin dev .
 
 Open a conversation using the Wuu engine and ask it to use the greeting tool for a name. Confirm the tool result says hello. This verifies the behavior that the contract test does not cover.
 
+## Develop a bundled plugin
+
+From a source checkout, build the host once and prepare the bundled plugin
+workspace:
+
+```bash
+npm ci --prefix plugins
+npm --prefix plugins run build
+make build-go
+WUU_HOME="$PWD/.wuu-dev" ./bin/wuu plugin dev plugins/todo
+```
+
+Keep that last command running and use the development app with the same
+`WUU_HOME`. Edit `plugins/todo/src/index.ts` and save. The ordinary package watcher
+rebuilds and publishes the candidate. This explicitly authorized development
+package replaces the bundled `todo` candidate without acquiring bundled trust or
+provenance. Plugin-only TypeScript edits do not require another Go build. Changes
+to the Go host or its public services still do.
+
+All eight bundled plugins use this workflow. `plugin.json` and `dist/` under each
+source directory are generated development files; edit the source or the canonical
+manifest under `internal/plugin/bundled/<id>/` instead. To build only one runtime,
+run `node scripts/build-bundled-plugins.mjs --plugin=todo`. To verify that committed
+bundled runtimes match their source, run `npm --prefix plugins run build:check`.
+
+A current turn keeps its original implementation and files. The same conversation
+adopts the replacement at its next idle boundary after its outstanding work settles.
+A rejected candidate leaves the previous generation available. Verify an actual
+tool result after that boundary; a successful build is not proof of activation.
+
+Run credential-free process acceptance from the checkout:
+
+```bash
+node scripts/bundled-plugins-e2e.mjs
+WUU_SELF_EXTENSION_BINARY="$PWD/bin/wuu" \
+  WUU_SELF_EXTENSION_EVIDENCE="$PWD/.tmp/e2e/plugin-generation" \
+  go test -count=1 -run '^TestAgentSelfExtensionProcess$' ./cmd/wuu
+```
+
+The first command drives the shipped plugin executables over JSONL with disposable
+host services. It covers tools, persisted state, background work, cancellation,
+and shutdown, saving protocol transcripts, runtime hashes, and results under
+`.tmp/e2e/bundled-plugins/`. The second runs the real Go app-server against a local
+synthetic model endpoint. It verifies live-turn publication, next-turn adoption,
+last-good recovery, and disable cleanup without a model account. Neither command
+checks rendered desktop contributions.
+
 ## Distribute the package
 
 ```bash
@@ -147,3 +194,5 @@ wuu plugin approve hello-plugin
 The current CLI stages a local package before approval enables code execution. Development-directory authorization is separate and is not distributed in the zip. Plugins run with your user authority; package validation is not a security audit. See [plugin management](plugins.md) for disabling and removing packages.
 
 For persistent state, services, and lifecycle callbacks, continue with the [authoring reference](plugin-authoring.md). To add UI instead of a model tool, use the [desktop quickstart](desktop-plugin-quickstart.md).
+
+Their package metadata also watches the shared SDK, build script, and canonical author assets. Prompt and desktop-asset edits follow the same reload path; generated runtime output is excluded to avoid rebuild loops.

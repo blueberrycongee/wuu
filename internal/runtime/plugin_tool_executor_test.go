@@ -169,7 +169,7 @@ func TestReplacePluginToolHostPreservesHookLayer(t *testing.T) {
 		hooks.PreToolUse: {{Matcher: name, Command: "exit 2"}},
 	}))
 	executor := newPluginAwareToolExecutor(&recordingToolExecutor{}, oldHost, dispatcher, "thread", "thread", "/workspace")
-	executor = replacePluginToolHost(executor, newHost, "thread", "/workspace")
+	executor = replacePluginToolBindings(executor, newHost, dispatcher, "thread", "/workspace")
 
 	_, err := executor.Execute(context.Background(), providers.ToolCall{Name: name, Arguments: `{}`})
 	if err == nil || !hooks.IsBlocked(err) || newClient.executed {
@@ -242,7 +242,7 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 	}
 	kit.EnableTools(name)
 
-	executor = replacePluginToolHost(executor, pluginhost.New(), "thread", root)
+	executor = replacePluginToolBindings(executor, pluginhost.New(), nil, "thread", root)
 	nested, err = kit.CodeModeNestedSurface()
 	if err != nil {
 		t.Fatal(err)

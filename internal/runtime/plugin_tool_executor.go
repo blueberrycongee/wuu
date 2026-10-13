@@ -54,18 +54,17 @@ func newPluginAwareToolExecutor(inner agent.ToolExecutor, host *pluginhost.Host,
 	return executor
 }
 
-func replacePluginToolHost(executor agent.ToolExecutor, host *pluginhost.Host, threadID, cwd string) agent.ToolExecutor {
+func replacePluginToolBindings(executor agent.ToolExecutor, host *pluginhost.Host, dispatcher *hooks.Dispatcher, threadID, cwd string) agent.ToolExecutor {
+	if executor == nil {
+		return nil
+	}
 	if hooked, ok := executor.(*hooks.HookedExecutor); ok {
-		inner := hooked.Inner()
-		if previous, ok := inner.(*pluginToolExecutor); ok {
-			inner = previous.inner
-		}
-		return hooked.WithInner(newPluginToolExecutor(inner, host, threadID, cwd))
+		executor = hooked.Inner()
 	}
 	if previous, ok := executor.(*pluginToolExecutor); ok {
 		executor = previous.inner
 	}
-	return newPluginToolExecutor(executor, host, threadID, cwd)
+	return newPluginAwareToolExecutor(executor, host, dispatcher, threadID, threadID, cwd)
 }
 
 func (e *pluginToolExecutor) Definitions() []providers.ToolDefinition {

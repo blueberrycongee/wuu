@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -478,6 +479,7 @@ func TestProcessOversizeResponse(t *testing.T) {
 		return
 	}
 	root := t.TempDir()
+	var closed atomic.Int32
 	client, err := Start(context.Background(), ProcessConfig{
 		ID:          "oversize-plugin",
 		Command:     os.Args[0],
@@ -487,6 +489,7 @@ func TestProcessOversizeResponse(t *testing.T) {
 		ProjectRoot: filepath.Dir(root),
 		WuuHome:     t.TempDir(),
 		Timeout:     5 * time.Second,
+		OnClose:     func() { closed.Add(1) },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -495,11 +498,17 @@ func TestProcessOversizeResponse(t *testing.T) {
 		if err := client.Close(context.Background()); err != nil {
 			t.Logf("close: %v", err)
 		}
+		if got := closed.Load(); got != 1 {
+			t.Errorf("runtime cleanup called %d times, want exactly once", got)
+		}
 	}()
 
 	_, err = client.InvokeCapability(context.Background(), CapabilityInvokeParams{Capability: CapabilityPluginClientRequest, Input: json.RawMessage(`{}`), Output: json.RawMessage(`{}`)})
 	if err == nil {
 		t.Fatal("expected oversize response error")
+	}
+	if got := closed.Load(); got != 1 {
+		t.Fatalf("protocol failure left runtime resources open: cleanup calls = %d", got)
 	}
 	if !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("unexpected error: %v", err)

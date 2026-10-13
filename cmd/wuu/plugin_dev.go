@@ -645,6 +645,9 @@ func authorizeDevDirectory(devDir, pluginID, directory string) error {
 }
 
 func refreshDevGeneration(ctx context.Context, wuuHome, dir, packageManager string) (pluginDiagnostic, error) {
+	if _, err := pluginDevSourceRoots(dir); err != nil {
+		return pluginDiagnostic{Level: "fail", Check: "dev.watch"}, err
+	}
 	probe, acquired, err := session.TryAcquirePluginCatalogMutationLease(wuuHome)
 	if err != nil {
 		return pluginDiagnostic{Level: "fail", Check: "dev.mutation", Message: err.Error()}, fmt.Errorf("dev generation mutation check failed; previous generation preserved: %w", err)

@@ -18,8 +18,8 @@ import (
 )
 
 // pluginHostServices is bound to exactly one installed plugin generation. It
-// never accepts a caller-supplied plugin ID or filesystem path: ownership and
-// roots are captured from the validated plugin inventory at activation time.
+// never accepts a caller-supplied plugin ID or absolute filesystem path:
+// ownership and roots are captured from the validated inventory at activation.
 type pluginHostServices struct {
 	mu          sync.RWMutex
 	active      bool
@@ -31,6 +31,9 @@ type pluginHostServices struct {
 	wuuHome     string
 	settings    map[string]pluginpkg.SettingDefinition
 	turnRouter  *PluginSessionRouter
+	fileLocks   map[string]func()
+	lockContext context.Context
+	lockCancel  context.CancelFunc
 }
 
 func newPluginHostServices(item pluginpkg.Plugin, projectRoot, wuuHome string, turnRouter *PluginSessionRouter) *pluginHostServices {
@@ -38,10 +41,12 @@ func newPluginHostServices(item pluginpkg.Plugin, projectRoot, wuuHome string, t
 	for key, definition := range item.Settings {
 		settings[key] = definition
 	}
+	lockContext, lockCancel := context.WithCancel(context.Background())
 	services := &pluginHostServices{
 		open: true, pluginID: item.ID, subjectID: strings.TrimSpace(item.SubjectID),
 		fingerprint: item.Fingerprint, projectRoot: projectRoot, wuuHome: wuuHome,
 		settings: settings, turnRouter: turnRouter,
+		fileLocks: make(map[string]func()), lockContext: lockContext, lockCancel: lockCancel,
 	}
 	return services
 }
@@ -50,7 +55,16 @@ func (s *pluginHostServices) close() {
 	s.mu.Lock()
 	s.open = false
 	s.active = false
+	locks := s.fileLocks
+	s.fileLocks = make(map[string]func())
+	cancel := s.lockCancel
 	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	for _, release := range locks {
+		release()
+	}
 }
 
 func (s *pluginHostServices) activate() {
@@ -486,6 +500,10 @@ func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRe
 		pluginhost.ServiceRegistration{
 			Descriptor: pluginhost.KernelUserQuestionOfferDescriptor(),
 			Invoker:    &userQuestionOfferInvoker{parent: k}, Kernel: true,
+		},
+		pluginhost.ServiceRegistration{
+			Descriptor: pluginhost.KernelFileLockDescriptor(),
+			Invoker:    &fileLockInvoker{parent: k}, Kernel: true,
 		},
 		pluginhost.ServiceRegistration{
 			Descriptor: pluginhost.KernelArtifactImportDescriptor(),

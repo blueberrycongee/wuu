@@ -37,7 +37,13 @@ func (state *devWatchState) refresh(dir string, refresh func() (pluginDiagnostic
 	if !state.pending && len(changedPluginSourcePaths(state.attempted, current)) == 0 {
 		return
 	}
-	diagnostic, err := refresh()
+	var diagnostic pluginDiagnostic
+	var err error
+	if _, err = pluginDevSourceRoots(dir); err != nil {
+		diagnostic = pluginDiagnostic{Level: "fail", Check: "dev.watch", Message: err.Error()}
+	} else {
+		diagnostic, err = refresh()
+	}
 	if errors.Is(err, errDevGenerationBusy) {
 		if !state.pending {
 			diagnostic.Message = err.Error()
@@ -70,7 +76,7 @@ func watchDevDirFS(ctx context.Context, wuuHome, dir, packageManager string, pol
 	watcher, err := fsnotify.NewWatcher()
 	if err == nil {
 		defer watcher.Close()
-		if err = addDevWatchDirs(watcher, dir); err != nil {
+		if err = addDevSourceWatchDirs(watcher, dir); err != nil {
 			fmt.Printf("watch setup: %v; source reconciliation remains active\n", err)
 		}
 	} else {
@@ -121,7 +127,7 @@ func watchDevDirFS(ctx context.Context, wuuHome, dir, packageManager string, pol
 			if singleFile && filepath.Clean(event.Name) != filepath.Clean(dir) {
 				continue
 			}
-			if devWatchIgnoresEvent(dir, event) {
+			if !devSourceWatchesEvent(dir, event) {
 				continue
 			}
 			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename) != 0 {
@@ -138,7 +144,7 @@ func watchDevDirFS(ctx context.Context, wuuHome, dir, packageManager string, pol
 			if watcher != nil && events != nil {
 				// fsnotify is not recursive. Re-register directories after creation or
 				// replacement, including saves that raced their initial registration.
-				if err := addDevWatchDirs(watcher, dir); err != nil {
+				if err := addDevSourceWatchDirs(watcher, dir); err != nil {
 					fmt.Printf("watch registration: %v; source reconciliation remains active\n", err)
 				}
 			}
@@ -190,6 +196,40 @@ func devWatchPathIgnored(rel string) bool {
 	parts := strings.Split(filepath.Clean(rel), string(filepath.Separator))
 	for _, part := range parts {
 		if devWatchIgnoredDirs[part] {
+			return true
+		}
+	}
+	return false
+}
+
+func addDevSourceWatchDirs(watcher *fsnotify.Watcher, dir string) error {
+	roots, err := pluginDevSourceRoots(dir)
+	if err != nil {
+		return err
+	}
+	for _, root := range roots {
+		if err := addDevWatchDirs(watcher, root); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func devSourceWatchesEvent(dir string, event fsnotify.Event) bool {
+	roots, err := pluginDevSourceRoots(dir)
+	if err != nil {
+		roots = []string{dir}
+	}
+	for _, root := range roots {
+		if filepath.Clean(event.Name) == filepath.Clean(root) {
+			return true
+		}
+		info, err := os.Stat(root)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		rel, err := filepath.Rel(root, event.Name)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !devWatchPathIgnored(rel) {
 			return true
 		}
 	}

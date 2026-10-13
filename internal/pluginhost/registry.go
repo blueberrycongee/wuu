@@ -72,19 +72,20 @@ type serviceExecution struct {
 
 // ServiceRegistry resolves and routes service calls for one generation.
 type ServiceRegistry struct {
-	mu                sync.RWMutex
-	active            bool
-	open              bool
-	providers         map[serviceKey]serviceProvider
-	consumers         map[string]map[serviceKey]struct{}
-	notifiers         map[string]ServiceChangedNotifier
-	kernelLifecycles  []kernelServiceLifecycle
-	executions        map[string]*serviceExecution
-	executionChanged  chan struct{}
-	nextExecution     uint64
-	scopeTracker      *ExecutionTracker
-	backgroundStopped bool
-	cleanupOwners     map[string]int
+	mu                   sync.RWMutex
+	active               bool
+	open                 bool
+	providers            map[serviceKey]serviceProvider
+	consumers            map[string]map[serviceKey]struct{}
+	notifiers            map[string]ServiceChangedNotifier
+	kernelLifecycles     []kernelServiceLifecycle
+	executions           map[string]*serviceExecution
+	executionChanged     chan struct{}
+	nextExecution        uint64
+	scopeTracker         *ExecutionTracker
+	backgroundStopped    bool
+	cleanupOwners        map[string]int
+	rootExecutionContext func(string, string) (context.Context, bool, *HostServiceError)
 }
 
 // ServiceRegistration is the common provider entry consumed by the registry.
@@ -112,6 +113,15 @@ func NewServiceRegistry() *ServiceRegistry {
 		notifiers:  make(map[string]ServiceChangedNotifier),
 		executions: make(map[string]*serviceExecution), executionChanged: make(chan struct{}),
 	}
+}
+
+// bindRootExecutionContext connects a new plugin-initiated service chain to
+// its originating host dispatch. Nested providers reuse the admitted chain
+// after participant validation rather than pretending to own the root tool.
+func (r *ServiceRegistry) bindRootExecutionContext(resolve func(string, string) (context.Context, bool, *HostServiceError)) {
+	r.mu.Lock()
+	r.rootExecutionContext = resolve
+	r.mu.Unlock()
 }
 
 // BuildServiceRegistry collects provide/consume declarations from one
@@ -323,6 +333,10 @@ func (r *ServiceRegistry) allowShutdownCleanup(pluginID string) func() {
 }
 
 func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, caller string, key serviceKey, provider string, canStart bool) (context.Context, string, func(), *HostServiceError) {
+	callerContext := ctx
+	if err := callerContext.Err(); err != nil {
+		return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "calling transport was cancelled"}
+	}
 	r.mu.Lock()
 	current, registered := r.providers[key]
 	if !registered || current.pluginID != provider {
@@ -342,7 +356,12 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		execution.refs++
 		execution.participants[provider] = struct{}{}
 		r.mu.Unlock()
-		return execution.ctx, id, r.releaseExecution(id), nil
+		// A callback's transport can disappear while its shared root remains live.
+		// Cancel this invocation without revoking the other chain participants.
+		callContext, cancel := context.WithCancel(execution.ctx)
+		stopCaller := context.AfterFunc(callerContext, cancel)
+		release := r.releaseExecution(id)
+		return callContext, id, func() { stopCaller(); cancel(); release() }, nil
 	}
 	scoped := false
 	if r.scopeTracker != nil && id != "" && caller != "kernel" {
@@ -374,7 +393,20 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		r.nextExecution++
 		id = fmt.Sprintf("service-%d", r.nextExecution)
 	}
-	execCtx, cancel := context.WithCancel(ctx)
+	parentContext := ctx
+	if requestedID != "" && caller != "kernel" && r.rootExecutionContext != nil {
+		rootContext, handled, err := r.rootExecutionContext(caller, id)
+		if err != nil {
+			r.mu.Unlock()
+			return nil, "", nil, err
+		}
+		if handled {
+			parentContext = rootContext
+		}
+	}
+	execCtx, cancelRoot := context.WithCancel(parentContext)
+	stopCaller := context.AfterFunc(callerContext, cancelRoot)
+	cancel := func() { stopCaller(); cancelRoot() }
 	r.executions[id] = &serviceExecution{
 		ctx: execCtx, cancel: cancel, refs: 1,
 		participants: map[string]struct{}{caller: {}, provider: {}},

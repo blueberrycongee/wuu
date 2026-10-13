@@ -630,6 +630,26 @@ func (s *Session) IsCurrentPluginGeneration(generation *PluginGeneration) bool {
 	return s.pluginGeneration == generation
 }
 
+// RetainPluginHost captures the published host only when it registers the
+// requested capability, keeping that generation alive while callbacks run.
+// The caller must release the returned generation.
+func (s *Session) RetainPluginHost(capabilityID string) (*pluginhost.Host, *PluginGeneration) {
+	if s == nil {
+		return nil, nil
+	}
+	s.pluginGenerationMu.Lock()
+	defer s.pluginGenerationMu.Unlock()
+	if s.PluginHost == nil || len(s.PluginHost.Capabilities(capabilityID)) == 0 {
+		return nil, nil
+	}
+	if s.pluginGeneration == nil {
+		s.pluginGeneration = s.capturePluginGeneration()
+	}
+	generation := s.pluginGeneration
+	generation.retain()
+	return generation.host, generation
+}
+
 func (s *Session) RetainPluginGeneration() *PluginGeneration {
 	return s.retainPluginGeneration()
 }
@@ -702,11 +722,17 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	s.PluginHost = generation.host
 	s.systemPrompts = generation.systemPrompts
 	if s.StreamRunner != nil {
-		s.StreamRunner.Tools = replacePluginToolHost(s.StreamRunner.Tools, generation.host, "", s.RootDir)
+		s.StreamRunner.Tools = replacePluginToolBindings(s.StreamRunner.Tools, generation.host, generation.hooks, "", s.RootDir)
+		bindPluginCompactionHooks(s.StreamRunner, generation.hooks, "", s.RootDir)
 		s.StreamRunner.BeforeModelStep = pluginPreStepInjector(generation.host, s.ProviderName, s.Model, "", s.RootDir)
 		s.StreamRunner.BeforeRequest = pluginRequestInterceptorWithTransforms(generation.host, generation.requestTransforms, s.ProviderName, "", s.RootDir)
 		s.StreamRunner.WrapModelClient = pluginModelClientWrapper(generation.host, "")
 		s.StreamRunner.CompactionRegistry = generation.compactions
+		if profile := strings.TrimSpace(s.DriverProfile); profile != "" {
+			s.StreamRunner.LoopDriver = resolveLoopDriver(profile, generation.host, func() *driverGatewayTable {
+				return generation.driverGateways
+			})
+		}
 	}
 	s.HookDispatcher = generation.hooks
 	s.Skills = append([]skills.Skill(nil), generation.skills...)

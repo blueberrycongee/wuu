@@ -63,6 +63,8 @@ function main() {
     }
   }
 
+  run(process.execPath, [join(repoRoot, "scripts", "build-bundled-plugins.mjs")], { cwd: repoRoot });
+
   const ldflags = [
     "-s",
     "-w",
@@ -84,28 +86,6 @@ function main() {
     });
   }
 
-  for (const command of readdirSync(join(repoRoot, "cmd"), { withFileTypes: true })) {
-    if (!command.isDirectory() || !/^wuu-.+-plugin$/.test(command.name)) continue;
-    // A plugin directory without Go sources (empty leftover of a rename or an
-    // in-flight plugin removal) cannot be built; skip it instead of failing the
-    // whole dev launch. Safe to drop once empty wuu-*-plugin directories can no
-    // longer appear in the tree.
-    const commandDir = join(repoRoot, "cmd", command.name);
-    if (!readdirSync(commandDir).some((file) => file.endsWith(".go"))) continue;
-    const binaryName = target.platform === "win32" ? `${command.name}.exe` : command.name;
-    const pluginPath = join(outDir, binaryName);
-    run("go", ["build", "-ldflags", "-s -w", "-o", pluginPath, `./cmd/${command.name}`], {
-      cwd: repoRoot,
-      env: {
-        ...process.env,
-        CGO_ENABLED: "0",
-        GOOS: target.goos,
-        GOARCH: target.goarch,
-      },
-    });
-    if (target.platform !== "win32") chmodSync(pluginPath, 0o755);
-  }
-
   if (!pluginsOnly && target.platform !== "win32") {
     chmodSync(outPath, 0o755);
   }
@@ -118,7 +98,7 @@ function main() {
 
   console.log(
     pluginsOnly
-      ? `built first-party plugin helpers (${target.goos}/${target.goarch})`
+      ? "built TypeScript plugin runtimes"
       : `built ${outPath} (${target.goos}/${target.goarch})`,
   );
 }

@@ -170,6 +170,26 @@ func (t *ExecutionTracker) CancelPlugin(pluginID string, cause error) {
 	}
 }
 
+// ResolveContext resolves host-owned dispatch IDs without imposing tool-only
+// fields. Service-registry IDs are not handled here; expired host IDs never
+// fall back to an unrelated process-lifetime context.
+func (t *ExecutionTracker) ResolveContext(callerPluginID, executionID string) (context.Context, bool, *HostServiceError) {
+	id := strings.TrimSpace(executionID)
+	if !strings.HasPrefix(id, "exec-") {
+		return nil, false, nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	record := t.live[id]
+	if record == nil {
+		return nil, true, &HostServiceError{Code: "execution_not_found", Message: fmt.Sprintf("execution %s is not live", id)}
+	}
+	if record.snapshot.PluginID != callerPluginID {
+		return nil, true, &HostServiceError{Code: "service_not_authorized", Message: fmt.Sprintf("execution %s belongs to plugin %q", id, record.snapshot.PluginID)}
+	}
+	return record.ctx, true, nil
+}
+
 func (t *ExecutionTracker) ResolveTool(callerPluginID, executionID string) (ToolExecutionScope, *HostServiceError) {
 	return t.resolve(callerPluginID, executionID, true)
 }

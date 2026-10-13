@@ -131,6 +131,7 @@ func (h *Host) AttachServiceRegistry(registry *ServiceRegistry, conflicts []Serv
 	defer h.mu.Unlock()
 	h.serviceRegistry = registry
 	if registry != nil {
+		registry.bindRootExecutionContext(h.ResolveExecutionContext)
 		registry.mu.Lock()
 		registry.scopeTracker = h.executions
 		registry.mu.Unlock()
@@ -159,7 +160,9 @@ func (h *Host) addLocked(client Client) {
 		return
 	}
 	h.clients = append(h.clients, client)
-	if capabilityClient, ok := client.(CapabilityClient); ok && capabilityClient.ProtocolVersion() >= CapabilityProtocolVersion {
+	// Capabilities were introduced in v2; v3 adds service declarations without
+	// invalidating capability-only runtimes.
+	if capabilityClient, ok := client.(CapabilityClient); ok && capabilityClient.ProtocolVersion() >= 2 {
 		for _, descriptor := range capabilityClient.Capabilities() {
 			h.capabilities = append(h.capabilities, RegisteredCapability{
 				PluginID: client.ID(), Descriptor: descriptor, client: capabilityClient,
@@ -268,6 +271,10 @@ func (h *Host) Capability(pluginID, id string) (RegisteredCapability, bool) {
 	return RegisteredCapability{}, false
 }
 
+// ErrCapabilityRetired identifies an explicitly removed registration, distinct
+// from a runtime failure in a still-registered capability.
+var ErrCapabilityRetired = errors.New("capability registration was retired")
+
 // InvokeCapability invokes one exact plugin registration.
 func (h *Host) InvokeCapability(ctx context.Context, capability RegisteredCapability, input, output any) error {
 	if capability.client == nil {
@@ -282,15 +289,19 @@ func (h *Host) InvokeCapability(ctx context.Context, capability RegisteredCapabi
 		return fmt.Errorf("marshal capability %q output: %w", capability.Descriptor.ID, err)
 	}
 	h.mu.RLock()
-	admitted := false
+	registered, admitted := false, false
 	for _, current := range h.capabilities {
-		if current.PluginID == capability.PluginID && current.Descriptor.ID == capability.Descriptor.ID && current.client == capability.client && capabilityStateReady(current.client.Status().State) {
-			admitted = true
+		if current.PluginID == capability.PluginID && current.Descriptor.ID == capability.Descriptor.ID && current.client == capability.client {
+			registered = true
+			admitted = capabilityStateReady(current.client.Status().State)
 			break
 		}
 	}
 	if !admitted {
 		h.mu.RUnlock()
+		if !registered {
+			return fmt.Errorf("plugin %q capability %q is not active: %w", capability.PluginID, capability.Descriptor.ID, ErrCapabilityRetired)
+		}
 		return fmt.Errorf("plugin %q capability %q is not active", capability.PluginID, capability.Descriptor.ID)
 	}
 	executionID, executionCtx := h.executions.begin(capability.PluginID, ctx, ToolExecuteInput{}, false)
@@ -474,6 +485,15 @@ func (h *Host) ResolveToolExecution(callerPluginID, executionID string) (ToolExe
 		return ToolExecutionScope{}, &HostServiceError{Code: "service_unavailable", Message: "execution scope is unavailable"}
 	}
 	return h.executions.ResolveTool(callerPluginID, executionID)
+}
+
+// ResolveExecutionContext validates a root tool/capability dispatch owner.
+// Registry-owned service IDs keep their separately routed execution context.
+func (h *Host) ResolveExecutionContext(callerPluginID, executionID string) (context.Context, bool, *HostServiceError) {
+	if h == nil || h.executions == nil {
+		return nil, true, &HostServiceError{Code: "service_unavailable", Message: "execution scope is unavailable"}
+	}
+	return h.executions.ResolveContext(callerPluginID, executionID)
 }
 
 func (h *Host) ResolveExecution(callerPluginID, executionID string) (ExecutionScope, *HostServiceError) {

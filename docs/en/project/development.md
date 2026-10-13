@@ -18,9 +18,9 @@ To intentionally use existing data, set an absolute `WUU_HOME`, for example
 build to change installed-app data; older builds may reject newer settings.
 The override is also forwarded through the macOS LaunchServices launcher.
 
-`make setup` installs locked dependencies for the desktop, shared client core, retained Web/Expo clients, plugin SDK, protocol package, and docs site. It does not install the native phone toolchains or provision remote services.
+`make setup` installs locked dependencies for the desktop, shared client core, retained Web/Expo clients, plugin SDK, TypeScript plugins, protocol package, and docs site. It does not install the native phone toolchains or provision remote services.
 
-`make dev` runs the desktop launcher. It builds the shared Web assets, native helper where applicable, and current Go core and plugin helpers before starting Electron. The app uses that checkout's private `wuu-core`, not a separately installed `wuu` on `PATH`. Renderer changes use Vite updates; restart the launcher after changing Go, native helpers, or process-startup code so the running processes use the new build.
+`make dev` runs the desktop launcher. It builds the shared Web assets, native helper where applicable, and TypeScript plugin runtime bundles and the current Go core before starting Electron. The app uses that checkout's private `wuu-core`, not a separately installed `wuu` on `PATH`. Renderer changes use Vite updates; restart the launcher after changing Go, native helpers, or process-startup code so the running processes use the new build.
 
 Desktop packages bundle a checksum-pinned ripgrep in `Resources/tools` and append that directory to the core's `PATH`, so search tools and agent shell commands have `rg` even when the system lacks it; an `rg` already on `PATH` takes precedence. `make dev` does not download it. Run `npm --prefix desktop run build:ripgrep` once to use the bundled copy in development; otherwise the core uses `rg` from `PATH` or its built-in search fallback.
 
@@ -42,6 +42,26 @@ For CLI-only development:
 make build-go
 ./bin/wuu --help
 ```
+
+The eight bundled business plugins are TypeScript source under `plugins/<id>/src/`.
+`make build-plugins` emits self-contained JavaScript into the embedded package assets;
+`make build-go`, `make install`, and desktop core builds regenerate those assets before
+compiling Go. The checked-in bundles keep plain Go builds reproducible without an npm
+install. `make check-plugins` rejects stale generated bundles.
+
+The desktop supplies its own Electron Node runtime to all Node-based plugins, so an
+installed desktop needs no system Node or separate business-plugin helper binaries.
+The CLI uses Node from `PATH` unless `WUU_NODE_EXECUTABLE` explicitly selects a runtime.
+Local TypeScript-file development requires Node 22.7 or newer (or the desktop runtime).
+
+After `make build-plugins`, run `./bin/wuu plugin dev plugins/todo` to watch a bundled
+plugin's source through the public directory-development workflow. Its generated
+`plugin.json` and `dist/` copy are ignored locally; edit the canonical manifest and
+presentation assets under `internal/plugin/bundled/<id>/`, then rebuild to refresh
+those copies. Runtime source saves rebuild automatically. A verified development
+generation takes precedence over its installed package while retaining development
+provenance. Standalone TypeScript files still use `wuu plugin dev ./extension.ts`
+without a manifest or build. See the [plugin quickstart](../customize/plugin-quickstart.md).
 
 `make install` installs the CLI from the checkout. The current release workflow packages only the macOS arm64 desktop preview; Windows CI and packaging scripts do not imply a published Windows release. See [installation](../getting-started/installation.md) for user-facing availability.
 
@@ -69,7 +89,9 @@ narrow/large-font layouts. Results and screenshots are saved to
 | Command | What it checks or builds |
 | --- | --- |
 | `make check-go` | Module consistency, formatting, vet, Windows/macOS cross-builds |
-| `make test-go` | Go tests for the CLI, core, Go plugin SDK, bundled plugins, and prompts |
+| `make test-go` | Go tests for the CLI, core, public Go plugin SDK, runtime boundaries, and prompts |
+| `make check-plugins build-plugins` | TypeScript plugin types, generated bundle freshness, and runtime packages |
+| `make test-plugins` | Shipped plugin JSONL lifecycle, tools, persistence, and background behavior with disposable host fixtures |
 | `make check-desktop test-desktop` | Desktop TypeScript and launcher/unit tests |
 | `make build-desktop` | Shared Web assets and Electron main/preload/renderer bundles; not a packaged app |
 | `make check-clients test-clients build-clients` | Protocol/SDK/client types, SDK/client tests, and retained Web/Expo bundles |

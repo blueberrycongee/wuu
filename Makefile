@@ -1,5 +1,5 @@
 .PHONY: setup dev docs-dev check repository-check repository-metadata-check version-check eval-check docs-policy-check test-policy-check theme-contract-check generate-theme-contract theme-surface-matrix-check generate-theme-surface-matrix check-go check-desktop check-clients check-docs test test-go \
-	test-go-uncached test-desktop test-clients test-native build build-go build-desktop \
+	build-plugins check-plugins test-plugins test-go-uncached test-desktop test-clients test-native build build-go build-desktop \
 	build-clients build-docs build-macos ci install vet clean release-check \
 	print-version tag-release version-check version-sync release-prepare
 
@@ -12,8 +12,8 @@ LDFLAGS := -s -w \
 	-X github.com/blueberrycongee/wuu/internal/version.Version=$(BUILD_VERSION) \
 	-X github.com/blueberrycongee/wuu/internal/version.Commit=$(COMMIT) \
 	-X github.com/blueberrycongee/wuu/internal/version.Date=$(DATE)
-GO_DIRS := cmd internal packages/plugin-go plugins prompts
-GO_PACKAGES := ./cmd/... ./internal/... ./packages/plugin-go/... ./plugins/... ./prompts/...
+GO_DIRS := cmd internal packages/plugin-go prompts
+GO_PACKAGES := ./cmd/... ./internal/... ./packages/plugin-go/... ./prompts/...
 
 setup:
 	npm ci --prefix desktop
@@ -21,6 +21,7 @@ setup:
 	npm ci --prefix clients/mobile
 	npm ci --prefix clients/mobile-web
 	npm ci --prefix packages/plugin-sdk
+	npm ci --prefix plugins
 	npm ci --prefix packages/protocol
 	npm ci --prefix docs-site --no-audit --no-fund
 
@@ -30,7 +31,7 @@ dev:
 docs-dev:
 	npm --prefix docs-site run dev
 
-check: repository-check check-go check-desktop check-clients
+check: repository-check check-go check-desktop check-clients check-plugins
 
 repository-check: repository-metadata-check test-policy-check
 
@@ -81,7 +82,7 @@ check-clients:
 check-docs:
 	npm --prefix docs-site run check
 
-test: test-go test-desktop test-clients
+test: test-go test-desktop test-clients test-plugins
 
 test-go:
 	go test $(GO_PACKAGES)
@@ -103,7 +104,17 @@ test-native:
 
 build: build-go build-desktop build-clients
 
-build-go:
+test-plugins: build-plugins
+	node scripts/bundled-plugins-e2e.mjs
+
+build-plugins:
+	npm --prefix plugins run build
+
+check-plugins:
+	npm --prefix plugins run typecheck
+	npm --prefix plugins run build:check
+
+build-go: build-plugins
 	go build -ldflags "$(LDFLAGS)" -o bin/wuu ./cmd/wuu
 
 build-desktop:
@@ -121,7 +132,7 @@ build-macos:
 
 ci: check test build
 
-install:
+install: build-plugins
 	go install -ldflags "$(LDFLAGS)" ./cmd/wuu
 
 vet:
@@ -130,7 +141,7 @@ vet:
 clean:
 	rm -rf bin/ dist/
 
-release-check: version-check check-go test-go-uncached test-desktop test-native
+release-check: version-check check-go check-plugins test-go-uncached test-plugins test-desktop test-native
 
 version-check:
 	node --test scripts/release-version.test.mjs

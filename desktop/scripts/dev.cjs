@@ -11,7 +11,7 @@ const { ensureDevSigningIdentity } = require("./dev-signing.cjs");
 
 const desktopRoot = resolve(__dirname, "..");
 const buildHelper = join(__dirname, "build-cua-mac.cjs");
-const buildCoreAndPluginHelpers = join(__dirname, "build-core.cjs");
+const buildCoreAndPluginRuntimes = join(__dirname, "build-core.cjs");
 const electronVitePackage = require.resolve("electron-vite/package.json", { paths: [desktopRoot] });
 const electronViteManifest = JSON.parse(readFileSync(electronVitePackage, "utf8"));
 const electronVite = join(dirname(electronVitePackage), electronViteManifest.bin["electron-vite"]);
@@ -37,7 +37,7 @@ const appContextBuild = spawnSync(process.execPath, [join(__dirname, "build-app-
   stdio: "inherit",
 });
 if (appContextBuild.status !== 0) process.exit(appContextBuild.status ?? 1);
-const coreBuild = spawnSync(process.execPath, [buildCoreAndPluginHelpers, ...process.argv.slice(2)], {
+const coreBuild = spawnSync(process.execPath, [buildCoreAndPluginRuntimes, ...process.argv.slice(2)], {
   cwd: desktopRoot,
   env: process.env,
   stdio: "inherit",

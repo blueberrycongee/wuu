@@ -744,26 +744,16 @@ func NewSession(opts Options) (*Session, error) {
 		CompactThresholdPct:         cfg.Agent.CompactThresholdPct,
 		CompactKeepRecentTokens:     cfg.Agent.CompactKeepRecentTokens,
 		DisableAutoCompact:          cfg.Agent.DisableAutoCompact,
-		BeforeCompact: func(ctx context.Context, reason agent.CompactReason) error {
-			_, err := hookDispatcher.Dispatch(ctx, hooks.PreCompact, &hooks.Input{CWD: rootDir, CompactReason: string(reason)})
-			return err
-		},
-		AfterCompact: func(ctx context.Context, reason agent.CompactReason, compactErr error) error {
-			input := &hooks.Input{CWD: rootDir, CompactReason: string(reason)}
-			if compactErr != nil {
-				input.Error = compactErr.Error()
-			}
-			_, err := hookDispatcher.Dispatch(ctx, hooks.PostCompact, input)
-			return err
-		},
-		BeforeRequestContext:     RuntimeContextInjector(agentControl, agentthread.RootPath, toolkitContextBlockProvider(toolkit)),
-		BeforeModelStep:          pluginPreStepInjector(pluginHost, resolvedName, providerCfg.Model, "", rootDir),
-		BeforeRequest:            pluginRequestInterceptor(pluginHost, resolvedName, "", rootDir),
-		WrapModelClient:          pluginModelClientWrapper(pluginHost, ""),
-		InferenceOperationKind:   providers.InferenceOperationAgentRound,
-		InferenceWorkloadProfile: providers.InferenceProfileInteractive,
-		InferenceJournal:         workspaceJournal,
+		BeforeRequestContext:        RuntimeContextInjector(agentControl, agentthread.RootPath, toolkitContextBlockProvider(toolkit)),
+		BeforeModelStep:             pluginPreStepInjector(pluginHost, resolvedName, providerCfg.Model, "", rootDir),
+		BeforeRequest:               pluginRequestInterceptor(pluginHost, resolvedName, "", rootDir),
+		InferenceOperationKind:      providers.InferenceOperationAgentRound,
+		InferenceWorkloadProfile:    providers.InferenceProfileInteractive,
+		InferenceJournal:            workspaceJournal,
+		WrapModelClient:             pluginModelClientWrapper(pluginHost, ""),
 	}
+
+	bindPluginCompactionHooks(streamRunner, hookDispatcher, "", rootDir)
 
 	configLoadMode := opts.ConfigLoadMode
 	// Keep direct runtime callers that pass a non-user ConfigPath pinned to
@@ -1242,9 +1232,10 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		resolvedName, apiModel, activeSurfaceWithDeferredToolCatalog(shadow.Toolkit, shadow.DeferredToolCatalogPrompt),
 		shadow.InstructionFiles, "", "", shadow.AvailableSkills(),
 	)
-	shadow.BaseSystemPrompt = promptResult.Content
+	text, pluginSections := assemblePluginSystemPrompt(promptResult.Content, shadow.systemPrompts)
+	shadow.BaseSystemPrompt = text
 	shadow.BaseSystemPromptSections = promptResult.Sections
-	shadow.StreamRunner.UpdateSystemPromptWithSections(promptResult.Content, agentPromptSections(promptResult.Sections))
+	shadow.StreamRunner.UpdateSystemPromptWithSections(text, append(agentPromptSections(promptResult.Sections), pluginSections...))
 	threadRuntime, err := shadow.newThreadRuntimeForRoot(sessionID, threadRoot)
 	if err != nil {
 		return nil, err
@@ -1554,6 +1545,9 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	pluginHost := s.PluginHost
 	if generation != nil {
 		pluginHost = generation.host
+		// Embedded sessions without a managed generation own their callbacks;
+		// only replace hooks when adopting a generation-owned dispatcher.
+		bindPluginCompactionHooks(runner, generation.hooks, id, threadRoot)
 		if runner.CompactionRegistry == nil {
 			runner.CompactionRegistry = generation.compactions
 		}
@@ -1881,6 +1875,19 @@ func systemPromptForThreadRoot(promptText string, sections []agent.SystemPromptS
 	if next := strings.Index(promptText[start+len(marker):], "\n\n# "); next >= 0 {
 		end = start + len(marker) + next
 	}
+	// Section metadata is authoritative when valid: an appended plugin section
+	// need not start with a Markdown heading and must not be swallowed here.
+	for _, section := range sections {
+		if section.Key != "environment" || section.Bytes <= 0 || section.Bytes > len(promptText)-start {
+			continue
+		}
+		boundary := start + section.Bytes
+		sum := sha256.Sum256([]byte(promptText[start:boundary]))
+		if section.Hash == hex.EncodeToString(sum[:16]) {
+			end = boundary
+			break
+		}
+	}
 	updated := promptText[:start] + envSection + promptText[end:]
 	return updated, updateEnvironmentSectionInfo(sections, envSection)
 }
@@ -2169,6 +2176,29 @@ func setupCatwalk(cfg config.Config) {
 			defer cancel()
 			_ = providers.RefreshCatwalkIndex(ctx)
 		}()
+	}
+}
+
+// bindPluginCompactionHooks keeps compaction on the same generation as the
+// runner's tools. Copying a callback from the root runner would retain its
+// previous dispatcher when a conversation adopts a replacement generation.
+func bindPluginCompactionHooks(runner *agent.StreamRunner, dispatcher *hooks.Dispatcher, sessionID, cwd string) {
+	runner.BeforeCompact = nil
+	runner.AfterCompact = nil
+	if dispatcher == nil {
+		return
+	}
+	runner.BeforeCompact = func(ctx context.Context, reason agent.CompactReason) error {
+		_, err := dispatcher.Dispatch(ctx, hooks.PreCompact, &hooks.Input{SessionID: sessionID, CWD: cwd, CompactReason: string(reason)})
+		return err
+	}
+	runner.AfterCompact = func(ctx context.Context, reason agent.CompactReason, compactErr error) error {
+		input := &hooks.Input{SessionID: sessionID, CWD: cwd, CompactReason: string(reason)}
+		if compactErr != nil {
+			input.Error = compactErr.Error()
+		}
+		_, err := dispatcher.Dispatch(ctx, hooks.PostCompact, input)
+		return err
 	}
 }
 

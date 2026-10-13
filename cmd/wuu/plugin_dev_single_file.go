@@ -13,6 +13,7 @@ import (
 	"time"
 
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	pluginsdk "github.com/blueberrycongee/wuu/packages/plugin-sdk"
 )
 
@@ -83,7 +84,9 @@ func prepareSingleFilePlugin(ctx context.Context, source string) (string, func()
 	// read-phase kernel services, so only the real generation host can prepare it.
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, "node", "--experimental-transform-types", "loader.mjs", "--validate")
+	runtime := pluginhost.RuntimeCommand("node", []string{"--experimental-transform-types", "loader.mjs", "--validate"}, nil)
+	command := exec.CommandContext(ctx, runtime.Path, runtime.Args[1:]...)
+	command.Env = runtime.Env
 	command.Dir = root
 	if output, err := command.CombinedOutput(); err != nil {
 		return fail(fmt.Errorf("load TypeScript plugin (Node.js 22.7+ required): %w: %s", err, strings.TrimSpace(string(output))))

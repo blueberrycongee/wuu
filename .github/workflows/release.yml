@@ -55,6 +55,7 @@ jobs:
       - name: Install
         run: |
           npm ci
+          npm ci --prefix ../plugins
           npm ci --prefix ../clients/core
           npm ci --prefix ../clients/mobile-web
           node node_modules/electron/install.js
@@ -63,6 +64,7 @@ jobs:
       - name: Test
         timeout-minutes: 10
         run: |
+          make -C .. check-plugins test-plugins
           npm test
           npm run test:release-signing
 
