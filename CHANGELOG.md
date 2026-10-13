@@ -45,6 +45,18 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the iOS conversation loading indicator centered and fully visible before
+  messages arrive, instead of squeezing it into a clipped capsule at the left edge.
+- Responses connections keep text tools callable through JSON schemas when the
+  model or an explicit compatibility option disables custom tools. Forced choices
+  and replayed calls use the same wire format without changing saved history.
+- Bound plugin runtime shutdown, retire undeliverable execution cancellations,
+  preserve shutdown failures, and cap stderr so stalled or noisy extensions
+  cannot strand retirement.
+- Bound asynchronous desktop plugin startup, cancel superseded staging promptly,
+  and let optional consumers proceed after a provider times out while retaining
+  the last working replacement generation.
+
 - Back off repeated automatic plugin refresh failures without delaying changed
   candidates or manual retries, while retaining healthy running generations.
 - Remember iOS model and reasoning choices for new conversations per account,

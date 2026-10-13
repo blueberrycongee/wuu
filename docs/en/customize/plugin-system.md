@@ -54,6 +54,8 @@ Cleanup produces structured revocation records, persisted in `plugin-generation-
 
 ## Services and executions
 
+Runtime process writes honor cancellation and a bounded transport deadline. If a frame is interrupted during delivery or an execution cancellation cannot be delivered, the host retires that transport. Canceling an invocation before it is sent leaves other running work intact. Shutdown terminates the runtime process group on macOS/Linux and requests process-tree termination on Windows, with a bounded pipe drain. Windows tree cleanup is best-effort if the runtime has already exited. Unexpected nonzero shutdown exits remain visible in retirement reports. Runtime stderr keeps the most recent 64 KiB and marks omitted earlier output; verbose logs cannot grow this buffer indefinitely. These limits do not shorten a running tool’s execution deadline or replace the generation-retention rules above.
+
 Runtime plugins communicate over JSONL. Versioned services use the `host.service.call` gateway: providers declare names, versions, and methods; consumers declare service names and major versions. The registry binds consumers to providers and supplies caller identity. A missing required provider prevents the consumer from becoming usable. Duplicate providers for the same name and major version are diagnosed, not combined.
 
 Kernel services cover storage, settings, sessions, history, workspaces, artifacts, and execution operations. Feature services use the same routing mechanism. A service method's schema identifiers describe its contract; they are not permission to call another plugin's private process or read its private storage.
@@ -65,6 +67,10 @@ Capabilities compose at defined points, such as adding prompt context or observi
 ## Desktop generations and composition
 
 The desktop loads an eligible package's ESM entry and calls `activate(api)`. Registrations belong to that package generation. The host validates declared contributions and view targets before publishing it, then disposes the prior desktop generation. A failed candidate registration is disposed without replacing the existing desktop generation.
+
+Each candidate has a 30-second asynchronous staging budget covering the desktop module request, ESM import, and `activate(api)`. Timeout, unload, or a newer inventory sync settles pending activation without waiting for the plugin to finish. Its partial registrations are cleaned up and late registrations are rejected. A timed-out replacement leaves its last working generation active.
+
+`api.signal` is the generation's lifetime signal. Pass it to cancellable work and register resource cleanup before waiting. It is aborted on failed or superseded staging and on disposal of a published generation; successful activation clears the startup deadline. This is cooperative cancellation: it cannot interrupt synchronous JavaScript, stop an already-running import, or undo external side effects.
 
 Required providers must finish desktop activation successfully before consumers start. Independent branches may initialize concurrently. A provider replacement also reloads unchanged consumers; removing or disabling a required provider blocks them. Cleanup disposes consumers before providers. A failed replacement can preserve that package's previous desktop generation, but consumers do not activate against the unsuccessfully staged required replacement. Optional startup failures do not block consumers.
 

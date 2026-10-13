@@ -290,7 +290,10 @@ func BuildFacts(providerName string, provider config.ProviderConfig, model strin
 	// modelbudget.Resolve, the UI can show a catalog input limit (e.g. 922k)
 	// while turns actually clamp to the channel ceiling (e.g. Codex 272k).
 	budget := modelbudget.Resolve(model, ruleProvider, 0)
-	return capabilitiesFromProfile(ruleProviderName, ruleProvider, modelCfg, profile, budget), behaviorFromProfile(profile)
+	capabilities := capabilitiesFromProfile(ruleProviderName, ruleProvider, modelCfg, profile, budget)
+	options := modelvariant.ResolveForProvider(ruleProviderName, ruleProvider, model, "", "").ProviderOptions
+	capabilities.FreeformTool = modelprofile.SupportsFreeformTools(modelcatalog.APIModel(ruleProvider, model), options)
+	return capabilities, behaviorFromProfile(profile)
 }
 
 func resolveConfiguredRole(cfg config.Config, role Role, roleCfg config.ModelRoleConfig, main Selection) (Selection, error) {
@@ -345,6 +348,7 @@ func buildSelection(role Role, providerName string, provider config.ProviderConf
 	apiModel := modelcatalog.APIModel(ruleProvider, model)
 	selection := modelvariant.ResolveForProvider(ruleProviderName, ruleProvider, model, variant, effort)
 	capabilities, behavior := BuildFacts(providerName, provider, model)
+	capabilities.FreeformTool = modelprofile.SupportsFreeformTools(apiModel, selection.ProviderOptions)
 	return Selection{
 		Role:               role,
 		Provider:           providerName,
