@@ -1854,10 +1854,17 @@ func (c *AgentControl) StopAll() {
 	// compensation. A durable queue outage must not leave already-running
 	// workers consuming provider calls indefinitely.
 	c.manager.StopAll()
-	workers := c.manager.List()
-	sort.Slice(workers, func(i, j int) bool { return workers[i].AgentPath < workers[j].AgentPath })
-	for _, worker := range workers {
-		c.stopWorker(worker.ID, !c.isStopping())
+	// Shutdown already closed all turn admission and must reach the caller's
+	// durable-terminal yield without waiting for a worker transition. A failing
+	// terminal finalizer holds that lock until yield; parked workers likewise
+	// leave their durable intent for recovery rather than starting another
+	// terminal transition here. Explicit StopAll still closes every edge.
+	if !c.isStopping() {
+		workers := c.manager.List()
+		sort.Slice(workers, func(i, j int) bool { return workers[i].AgentPath < workers[j].AgentPath })
+		for _, worker := range workers {
+			c.stopWorker(worker.ID)
+		}
 	}
 	c.queueDrainMu.Lock()
 	defer c.queueDrainMu.Unlock()
@@ -1924,7 +1931,7 @@ func (c *AgentControl) StopFrom(currentPath, target string) bool {
 		if node.Path == agentthread.RootPath || queuedHandled[node.ID] {
 			continue
 		}
-		if c.stopWorker(node.ID, true) {
+		if c.stopWorker(node.ID) {
 			stopped = true
 		}
 	}
@@ -1934,7 +1941,7 @@ func (c *AgentControl) StopFrom(currentPath, target string) bool {
 // stopWorker serializes cancellation with automatic and explicit follow-ups.
 // Never hold parent and child transition locks together: child terminal
 // delivery acquires the parent's lock.
-func (c *AgentControl) stopWorker(workerID string, closeEdge bool) bool {
+func (c *AgentControl) stopWorker(workerID string) bool {
 	unlockTransition := c.lockWorkerTransition(workerID)
 	defer unlockTransition()
 	if sa := c.manager.Get(workerID); sa != nil && sa.Snapshot().Status == subagent.StatusWaitingChildren {
@@ -1946,12 +1953,8 @@ func (c *AgentControl) stopWorker(workerID string, closeEdge bool) bool {
 			return false
 		}
 	}
-	// Process shutdown leaves edges open for durable delivery after restart;
-	// an explicit subtree stop closes them until a user resumes the worker.
-	if closeEdge {
-		if closed, found := c.threads.UpdateEdgeStatus(workerID, agentthread.EdgeClosed, time.Now().UTC()); found {
-			_ = c.threadStore.RecordEdgeStatus(closed)
-		}
+	if closed, found := c.threads.UpdateEdgeStatus(workerID, agentthread.EdgeClosed, time.Now().UTC()); found {
+		_ = c.threadStore.RecordEdgeStatus(closed)
 	}
 	return c.manager.Stop(workerID)
 }

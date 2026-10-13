@@ -48,6 +48,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep stopped agent subtrees stopped when child cancellation results arrive.
   Parked parents now finish cancellation durably, and explicit follow-ups reopen
   their edges for later work without blocking shutdown cancellation or restart recovery.
+- Keep shutdown cancellation from waiting on durable worker terminal retries,
+  allowing server close to hand unacknowledged state to recovery.
 
 - Persist accepted human queue and steering input before acknowledging it, with
   durable edits, cancellation, and stable-ID deduplication. After a core restart,
