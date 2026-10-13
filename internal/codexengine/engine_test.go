@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +29,68 @@ type doneObservedContext struct {
 func (ctx *doneObservedContext) Done() <-chan struct{} {
 	ctx.once.Do(func() { close(ctx.observed) })
 	return ctx.Context.Done()
+}
+
+// Pause a selected real pipe write after an exact prefix. Cancellation then
+// observes either no frame, a partial frame, or a fully accepted request.
+type pipeWriteBarrier struct {
+	io.WriteCloser
+	release    <-chan struct{}
+	unblock    func()
+	entered    chan struct{}
+	prefix     int
+	method     string
+	noDeadline bool
+	failReset  bool
+	once       sync.Once
+}
+
+func (w *pipeWriteBarrier) Write(p []byte) (int, error) {
+	if w.method != "" && !strings.Contains(string(p), `"method":"`+w.method+`"`) {
+		return w.WriteCloser.Write(p)
+	}
+	first := false
+	w.once.Do(func() { first = true })
+	if !first {
+		return w.WriteCloser.Write(p)
+	}
+	prefix := w.prefix
+	if prefix < 0 {
+		prefix = len(p)
+	}
+	var n int
+	var err error
+	if prefix > 0 {
+		n, err = w.WriteCloser.Write(p[:prefix])
+	}
+	close(w.entered)
+	<-w.release
+	if n < len(p) && err == nil {
+		var rest int
+		rest, err = w.WriteCloser.Write(p[n:])
+		n += rest
+	}
+	return n, err
+}
+
+func (w *pipeWriteBarrier) SetWriteDeadline(deadline time.Time) error {
+	if w.noDeadline {
+		return os.ErrNoDeadline
+	}
+	if w.failReset && deadline.IsZero() {
+		return errors.New("cannot reset pipe deadline")
+	}
+	err := w.WriteCloser.(interface{ SetWriteDeadline(time.Time) error }).SetWriteDeadline(deadline)
+	if !deadline.IsZero() {
+		w.unblock()
+	}
+	return err
+}
+
+func (w *pipeWriteBarrier) Close() error {
+	err := w.WriteCloser.Close()
+	w.unblock()
+	return err
 }
 
 // buildFakeCodex compiles the fake app-server binary once per test run.
@@ -110,6 +173,61 @@ func TestEngineSpeedSurvivesNativeResume(t *testing.T) {
 func TestEngineEndToEndFakeCodex(t *testing.T) {
 	binary := buildFakeCodex(t)
 	t.Run("host ownership", func(t *testing.T) { testHostOwnership(t, binary) })
+	for _, tc := range []struct {
+		name                  string
+		prefix                int
+		noDeadline, failReset bool
+		wantClosed            bool
+	}{
+		{"empty", 0, false, false, false},
+		{"partial", 1, false, false, true},
+		{"unsupported deadline", 1, true, false, true},
+		{"reset failure", -1, false, true, true},
+	} {
+		t.Run("write cancellation/"+tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+			host := NewHost(binary, t.TempDir())
+			session, err := NewEngine(host).Open(ctx, agentengine.OpenRequest{ThreadID: "writer", RootDir: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := session.(*Session).client
+			t.Cleanup(func() { _ = client.Close() })
+			if err := client.transport.stdin.(interface{ SetWriteDeadline(time.Time) error }).SetWriteDeadline(time.Time{}); err != nil && !tc.noDeadline {
+				t.Skip("pipe deadlines unavailable:", err)
+			}
+			release := make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			t.Cleanup(unblock)
+			writer := &pipeWriteBarrier{WriteCloser: client.transport.stdin, release: release, unblock: unblock, entered: make(chan struct{}), prefix: tc.prefix, noDeadline: tc.noDeadline, failReset: tc.failReset}
+			client.transport.mu.Lock()
+			client.transport.stdin = writer
+			client.transport.mu.Unlock()
+			requestCtx, cancelRequest := context.WithCancel(ctx)
+			defer cancelRequest()
+			done := make(chan error, 1)
+			go func() { done <- client.Request(requestCtx, "config/read", map[string]any{}, nil) }()
+			select {
+			case <-writer.entered:
+			case <-ctx.Done():
+				t.Fatal("write did not reach its cancellation boundary")
+			}
+			cancelRequest()
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("request cancellation=%v", err)
+				}
+			case <-ctx.Done():
+				t.Fatal("canceled write did not settle")
+			}
+			if err := client.Request(ctx, "config/read", map[string]any{}, nil); (err != nil) != tc.wantClosed {
+				t.Fatalf("subsequent request=%v, want transport closed=%v", err, tc.wantClosed)
+			}
+		})
+	}
 	host := NewHost(binary, t.TempDir())
 	engine := NewEngine(host)
 
@@ -289,6 +407,13 @@ func TestEngineEndToEndFakeCodex(t *testing.T) {
 			var releaseOnce sync.Once
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			t.Cleanup(unblock)
+			if mode == "cancel-start-confirmed" {
+				client.transport.mu.Lock()
+				if writer := client.transport.stdin.(interface{ SetWriteDeadline(time.Time) error }); writer.SetWriteDeadline(time.Time{}) == nil {
+					client.transport.stdin = &pipeWriteBarrier{WriteCloser: client.transport.stdin, release: release, unblock: unblock, entered: make(chan struct{}), prefix: -1, method: "turn/start"}
+				}
+				client.transport.mu.Unlock()
+			}
 			primaryResult := make(chan turnOutcome, 1)
 			primaryCtx, stopPrimary := context.WithCancel(scenarioCtx)
 			go func() {

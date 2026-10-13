@@ -347,12 +347,13 @@ func TestPluginDevWatchRepairsInitialLoadFailure(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required")
 	}
+	home := t.TempDir()
 	source := filepath.Join(t.TempDir(), "watch.ts")
 	writePluginDevTestFile(t, source, "export default {")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPluginDevWatchRepairsInitialLoadFailure$")
-	cmd.Env = append(os.Environ(), "WUU_DEV_WATCH_TEST_HELPER=1", "WUU_DEV_WATCH_TEST_SOURCE="+source, "WUU_HOME="+t.TempDir())
+	cmd.Env = append(os.Environ(), "WUU_DEV_WATCH_TEST_HELPER=1", "WUU_DEV_WATCH_TEST_SOURCE="+source, "WUU_HOME="+home)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -379,28 +380,57 @@ func TestPluginDevWatchRepairsInitialLoadFailure(t *testing.T) {
 			}
 		}
 	}()
-	expect := func(level string) {
+	expect := func(level, check string) {
 		t.Helper()
 		select {
 		case diagnostic, ok := <-diagnostics:
-			if !ok || diagnostic.Level != level {
-				t.Fatalf("want %s diagnostic; got %+v, stream open=%v", level, diagnostic, ok)
+			if !ok || diagnostic.Level != level || diagnostic.Check != check {
+				t.Fatalf("want %s %s diagnostic; got %+v, stream open=%v", level, check, diagnostic, ok)
 			}
 		case <-ctx.Done():
 			t.Fatalf("watcher did not report %s: %v", level, ctx.Err())
 		}
 	}
-	expect("fail")
-	writePluginDevTestFile(t, source, `export default { initialize() { return {}; } };`)
-	expect("pass")
+	packageRoot := filepath.Join(home, "dev", "generations", singleFilePluginID(source), "package")
+	expectPublished := func(want string) {
+		t.Helper()
+		got, err := os.ReadFile(filepath.Join(packageRoot, "extension.ts"))
+		if err != nil || string(got) != want {
+			t.Fatalf("published source = %q, want %q; error: %v", got, want, err)
+		}
+	}
+	expect("fail", "dev.prepare")
+	// An in-place save truncates before writing. Make the watcher observe that
+	// intermediate revision, rather than racing it and assuming the next
+	// diagnostic already belongs to the completed repair.
+	file, err := os.OpenFile(source, os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	expect("fail", "dev.prepare")
+	if _, err := os.Stat(packageRoot); !os.IsNotExist(err) {
+		t.Fatalf("invalid source published a generation: %v", err)
+	}
+	const repaired = `export default { initialize() { return {}; } };`
+	if _, err := file.WriteString(repaired); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	expect("pass", "dev.refresh")
+	expectPublished(repaired)
 	// An atomic editor save replaces the watched inode. The parent-directory
 	// watch and reconciliation must still notice the next source revision.
 	replacement := source + ".saving"
-	writePluginDevTestFile(t, replacement, `export default { initialize() { return { tools: [] }; } };`)
+	const replaced = `export default { initialize() { return { tools: [] }; } };`
+	writePluginDevTestFile(t, replacement, replaced)
 	if err := os.Rename(replacement, source); err != nil {
 		t.Fatal(err)
 	}
-	expect("pass")
+	expect("pass", "dev.refresh")
+	expectPublished(replaced)
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
 		t.Fatal(err)
 	}
