@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ComposerDraftState } from "./AppState";
 import { captureComposerDrafts, cloneSessionTabDraft, createDraftSessionTab, initialState, type AppState } from "./AppState";
 import { createWorkspaceActions } from "./WorkspaceActions";
-import type { ComposerFile, ComposerImage } from "./ComposerMessages";
+import { awaitComposerFiles, type ComposerFile, type ComposerImage } from "./ComposerMessages";
 import {
   COMPOSER_PROMPT_IDLE_COMMIT_MS,
   useComposerDraftState,
@@ -161,22 +161,29 @@ describe("useComposerDraftState", () => {
     expect(hook.get().currentPrimaryComposerDraft().selections?.[0]).not.toBe(selection);
   });
 
-  it.each(["global", "primary", "secondary"] as const)("rejects unsupported %s attachments with a toast without changing the draft", async (pane) => {
+  it.each(["global", "primary", "secondary"] as const)("retains an unreadable %s attachment and retries restored snapshots explicitly", async (pane) => {
     const hook = await renderComposerDraftState();
-    const unsupported = new File(["hello"], "notes.txt", { type: "text/plain" });
-
+    stubFileReader("data:text/plain;base64,aGVsbG8=");
+    const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+    const read = vi.fn().mockRejectedValueOnce(new Error("File temporarily unavailable"))
+      .mockResolvedValue(new TextEncoder().encode("hello").buffer);
+    Object.defineProperty(file, "arrayBuffer", { configurable: true, value: read });
     await act(async () => {
-      if (pane === "global") await hook.get().attachComposerAttachmentFiles([unsupported]);
-      else await hook.get().attachSplitComposerAttachmentFiles(pane, [unsupported]);
+      if (pane === "global") await hook.get().attachComposerAttachmentFiles([file]);
+      else await hook.get().attachSplitComposerAttachmentFiles(pane, [file]);
     });
-
-    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+    const files = () => pane === "global" ? hook.get().composerFiles : hook.get().splitComposerDrafts[pane].files;
+    expect(files()).toHaveLength(1);
+    const failed = { ...files()[0] };
+    expect(failed.preparation?.error).toBe("File temporarily unavailable");
+    await expect(awaitComposerFiles([failed])).rejects.toThrow("File temporarily unavailable");
+    expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => { await files()[0].preparation?.retry?.(); });
+    expect(files()).toMatchObject([{ id: failed.id, filename: "notes.txt", data: "aGVsbG8=" }]);
+    // A failed-send snapshot keeps the preparation lifetime, not its old rejected promise.
+    await expect(awaitComposerFiles([failed])).resolves.toMatchObject([{ id: failed.id, data: "aGVsbG8=" }]);
+    expect(read).toHaveBeenCalledTimes(2);
     expect(hook.get().composerImages).toEqual([]);
-    expect(hook.get().composerFiles).toEqual([]);
-    expect(hook.get().splitComposerDrafts.primary.images).toEqual([]);
-    expect(hook.get().splitComposerDrafts.primary.files).toEqual([]);
-    expect(hook.get().splitComposerDrafts.secondary.images).toEqual([]);
-    expect(hook.get().splitComposerDrafts.secondary.files).toEqual([]);
   });
 
   it("attaches PDF files to the primary composer draft", async () => {
