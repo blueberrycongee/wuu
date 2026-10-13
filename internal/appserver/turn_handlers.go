@@ -34,6 +34,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/insight"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
+	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/process"
@@ -3221,6 +3222,10 @@ func (s *Server) persistTurnTrace(threadRuntime *runtime.ThreadRuntime, runner *
 	if runErr != nil {
 		errorText = runErr.Error()
 	}
+	profile := sessiontrace.NewModelProfileRecordWithBudget(providerName, model, apiModel, modelBudget)
+	if profile != nil && runner != nil {
+		profile.FreeformTool = modelprofile.SupportsFreeformTools(firstNonEmpty(apiModel, model), runner.ProviderOptions)
+	}
 	turnRecord := sessiontrace.TurnRecord{
 		ThreadID:            threadID,
 		TurnID:              turn.ID,
@@ -3228,7 +3233,7 @@ func (s *Server) persistTurnTrace(threadRuntime *runtime.ThreadRuntime, runner *
 		ProviderName:        providerName,
 		Model:               model,
 		APIModel:            apiModel,
-		ModelProfile:        sessiontrace.NewModelProfileRecordWithBudget(providerName, model, apiModel, modelBudget),
+		ModelProfile:        profile,
 		PermissionMode:      permissions.Mode,
 		StartedAt:           turn.StartedAt,
 		CompletedAt:         turn.CompletedAt,
