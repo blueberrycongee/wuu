@@ -24,7 +24,9 @@ const (
 
 	// maxResponseLineSize must accommodate transcript-bearing compaction
 	// responses while still bounding scanner growth from a misbehaving plugin.
-	maxResponseLineSize = 64 << 20 // 64 MiB
+	maxResponseLineSize    = 64 << 20 // 64 MiB
+	maxPluginStderrBytes   = 64 << 10
+	pluginPipeDrainTimeout = time.Second
 )
 
 type ProcessConfig struct {
@@ -77,7 +79,7 @@ type ProcessClient struct {
 	stdin              io.WriteCloser
 	scanner            *bufio.Scanner
 	seq                atomic.Uint64
-	writeMu            sync.Mutex
+	writeGate          chan struct{}
 	pendingMu          sync.Mutex
 	pending            map[string]chan rpcResponse
 	readerDone         chan struct{}
@@ -90,6 +92,7 @@ type ProcessClient struct {
 	tools              []ToolRegistration
 	protocol           int
 	capabilities       []CapabilityDescriptor
+	modelAdapters      []ModelAdapterDescriptor
 	providedServices   []ServiceDescriptor
 	requiredServices   []ServiceRequirement
 	negotiated         map[HostServiceMethod]struct{}
@@ -113,6 +116,10 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 	cmd := exec.Command(config.Command, config.Args...)
 	cmd.Dir = config.PluginRoot
 	cmd.Env = buildEnv(config.Env)
+	configurePluginProcess(cmd)
+	// Descendants can inherit stderr after the runtime exits. Bound the copy
+	// goroutine drain independently of the shutdown RPC deadline.
+	cmd.WaitDelay = pluginPipeDrainTimeout
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("plugin %q stdout: %w", config.ID, err)
@@ -127,6 +134,7 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 		stdin:      stdin,
 		status:     Status{ID: config.ID, State: StateStarting},
 		pending:    make(map[string]chan rpcResponse),
+		writeGate:  make(chan struct{}, 1),
 		readerDone: make(chan struct{}),
 	}
 	client.processCtx, client.processCancel = context.WithCancel(context.Background())
@@ -191,6 +199,7 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 		client.protocol = ProtocolVersion
 	}
 	client.capabilities = cloneCapabilityDescriptors(initialized.Capabilities)
+	client.modelAdapters = append([]ModelAdapterDescriptor(nil), initialized.ModelAdapters...)
 	client.providedServices = cloneServiceDescriptors(initialized.ProvidedServices)
 	client.requiredServices = cloneServiceRequirements(initialized.RequiredServices)
 	client.activationServices = map[HostServiceMethod]struct{}{ServiceCallMethod: {}}
@@ -247,8 +256,6 @@ func (c *ProcessClient) RequiredServices() []ServiceRequirement {
 
 // InvokeService delivers one registry-routed call to this provider plugin.
 func (c *ProcessClient) InvokeService(ctx context.Context, params ServiceInvokeParams) (json.RawMessage, error) {
-	finishExecution := c.watchExecution(ctx, params.ExecutionID)
-	defer finishExecution()
 	var result json.RawMessage
 	if err := c.call(ctx, ServiceInvokeMethod, params, &result); err != nil {
 		return nil, err
@@ -262,10 +269,15 @@ func (c *ProcessClient) NotifyServiceChanged(ctx context.Context, params Service
 }
 
 func (c *ProcessClient) InvokeCapability(ctx context.Context, params CapabilityInvokeParams) (CapabilityInvokeResult, error) {
-	callCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
-	defer cancel()
-	finishExecution := c.watchExecution(callCtx, params.ExecutionID)
-	defer finishExecution()
+	callCtx := ctx
+	if params.Capability != CapabilityModelAdapter && params.Capability != CapabilityModelMiddleware {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, c.config.Timeout)
+		defer cancel()
+	}
+	// Adapters and around-call middleware own potentially long model streams.
+	// Their caller controls the deadline; the handshake timeout must not kill
+	// a healthy provider operation or retire its plugin while it is streaming.
 	var result CapabilityInvokeResult
 	if err := c.call(callCtx, "capability.invoke", params, &result); err != nil {
 		if ctx.Err() == nil {
@@ -326,8 +338,6 @@ func (c *ProcessClient) ExecuteTool(ctx context.Context, params ToolExecuteParam
 	// Tool execution is owned by the turn context. The configured process
 	// timeout protects startup and lifecycle handshakes; applying it here would
 	// kill healthy long-running tools such as user interaction.
-	finishExecution := c.watchExecution(ctx, params.ExecutionID)
-	defer finishExecution()
 	var result ToolExecuteResult
 	if err := c.call(ctx, "tool.execute", params, &result); err != nil {
 		if ctx.Err() == nil {
@@ -389,7 +399,13 @@ func (c *ProcessClient) notifyExecutionCancel(executionID string) {
 	if err != nil {
 		return
 	}
-	_ = c.writeLine(payload)
+	ctx, cancel := context.WithTimeout(c.processCtx, time.Second)
+	defer cancel()
+	if err := c.writeLine(ctx, payload); err != nil {
+		// Unlike an unsent invocation, this frame cancels work already
+		// running in the plugin. Losing it must retire that work's transport.
+		c.fail(fmt.Errorf("cancel plugin execution %q: %w", executionID, err))
+	}
 }
 
 func (c *ProcessClient) Close(ctx context.Context) error {
@@ -404,6 +420,7 @@ func (c *ProcessClient) Close(ctx context.Context) error {
 	c.status.State = StateStopped
 	c.tools = nil
 	c.capabilities = nil
+	c.modelAdapters = nil
 	c.mu.Unlock()
 	return err
 }
@@ -431,9 +448,23 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	c.pending[id] = responseCh
 	c.pendingMu.Unlock()
 	defer c.removePending(id)
-	if err := c.writeLine(payload); err != nil {
+	if err := c.writeLine(ctx, payload); err != nil {
 		return fmt.Errorf("write request: %w", err)
 	}
+	// The invoke frame must be written before cancellation can be signalled.
+	// Otherwise a fast cancel can arrive before the runtime registers its
+	// execution controller and leave an already-cancelled callback running.
+	var executionID string
+	switch input := params.(type) {
+	case ToolExecuteParams:
+		executionID = input.ExecutionID
+	case CapabilityInvokeParams:
+		executionID = input.ExecutionID
+	case ServiceInvokeParams:
+		executionID = input.ExecutionID
+	}
+	finishExecution := c.watchExecution(ctx, executionID)
+	defer finishExecution()
 
 	select {
 	case response := <-responseCh:
@@ -463,14 +494,7 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 
 func (c *ProcessClient) readLoop() {
 	defer func() {
-		c.stopMu.Lock()
-		stopped := c.stopped
-		c.stopMu.Unlock()
-		if !stopped {
-			err := c.readFailure()
-			_ = c.stopProcess()
-			c.setFailure(err)
-		}
+		c.fail(c.readFailure())
 		close(c.readerDone)
 	}()
 	for c.scanner.Scan() {
@@ -539,14 +563,41 @@ func (c *ProcessClient) readFailure() error {
 	return err
 }
 
-func (c *ProcessClient) writeLine(payload []byte) error {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-	payload = append(payload, '\n')
-	if _, err := c.stdin.Write(payload); err != nil {
+// writeLine owns one complete JSONL frame. A canceled waiter leaves the
+// transport alone; cancellation during a write closes the pipe because a
+// partially delivered frame cannot safely be followed by another request.
+func (c *ProcessClient) writeLine(ctx context.Context, payload []byte) error {
+	writeCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
+	defer cancel()
+	select {
+	case c.writeGate <- struct{}{}:
+		defer func() { <-c.writeGate }()
+	case <-writeCtx.Done():
+		return writeCtx.Err()
+	case <-c.processCtx.Done():
+		return errors.New("plugin process transport closed")
+	}
+	if err := writeCtx.Err(); err != nil {
 		return err
 	}
-	return nil
+	interrupted := make(chan struct{})
+	stopInterrupt := context.AfterFunc(writeCtx, func() {
+		_ = c.stdin.Close()
+		close(interrupted)
+	})
+	payload = append(payload, '\n')
+	n, err := c.stdin.Write(payload)
+	if !stopInterrupt() {
+		<-interrupted
+		err = writeCtx.Err()
+	}
+	if err == nil && n != len(payload) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		c.fail(fmt.Errorf("write plugin frame: %w", err))
+	}
+	return err
 }
 
 type pluginMessageKind int
@@ -679,7 +730,7 @@ func (c *ProcessClient) writeHostServiceResult(response HostServiceResult) error
 	if len(payload)+1 > maxResponseLineSize {
 		return fmt.Errorf("host service result line exceeds %d bytes", maxResponseLineSize)
 	}
-	if err := c.writeLine(payload); err != nil {
+	if err := c.writeLine(c.processCtx, payload); err != nil {
 		return fmt.Errorf("write host service result: %w", err)
 	}
 	return nil
@@ -691,6 +742,11 @@ func (c *ProcessClient) stopProcess() error {
 	}
 	c.stopMu.Lock()
 	defer c.stopMu.Unlock()
+	return c.stopProcessLocked()
+}
+
+// stopProcessLocked serializes retirement with the failure that caused it.
+func (c *ProcessClient) stopProcessLocked() error {
 	if c.stopped {
 		return c.stopErr
 	}
@@ -702,11 +758,18 @@ func (c *ProcessClient) stopProcess() error {
 		return nil
 	}
 	_ = c.stdin.Close()
-	_ = c.cmd.Process.Kill()
-	err := c.cmd.Wait()
-	if err != nil && !strings.Contains(err.Error(), "signal: killed") {
-		c.stopErr = err
+	killErr := killPluginProcess(c.cmd)
+	killed := killErr == nil
+	if errors.Is(killErr, os.ErrProcessDone) {
+		killErr = nil
 	}
+	waitErr := c.cmd.Wait()
+	if killed && pluginProcessWasKilled(c.cmd.ProcessState) {
+		// Ignore only the recognizable forceful-termination status. A runtime
+		// that exits nonzero during shutdown still failed its cleanup.
+		waitErr = nil
+	}
+	c.stopErr = errors.Join(killErr, waitErr)
 	return c.stopErr
 }
 
@@ -717,10 +780,16 @@ func (c *ProcessClient) setFailure(err error) {
 	c.status.Error = err.Error()
 	c.tools = nil
 	c.capabilities = nil
+	c.modelAdapters = nil
 }
 
 func (c *ProcessClient) fail(err error) {
-	_ = c.stopProcess()
+	c.stopMu.Lock()
+	defer c.stopMu.Unlock()
+	if c.stopped {
+		return
+	}
+	_ = c.stopProcessLocked()
 	c.setFailure(err)
 }
 
@@ -823,18 +892,32 @@ var baselineEnvKeys = func() []string {
 }()
 
 type lockedBuffer struct {
-	mu sync.Mutex
-	b  bytes.Buffer
+	mu        sync.Mutex
+	b         bytes.Buffer
+	truncated bool
 }
 
 func (b *lockedBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.b.Write(p)
+	n := len(p)
+	if n >= maxPluginStderrBytes {
+		b.truncated = b.truncated || b.b.Len() > 0 || n > maxPluginStderrBytes
+		b.b.Reset()
+		p = p[n-maxPluginStderrBytes:]
+	} else if excess := b.b.Len() + n - maxPluginStderrBytes; excess > 0 {
+		b.truncated = true
+		b.b.Next(excess)
+	}
+	_, _ = b.b.Write(p)
+	return n, nil
 }
 
 func (b *lockedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.truncated {
+		return "[earlier plugin stderr truncated]\n" + b.b.String()
+	}
 	return b.b.String()
 }

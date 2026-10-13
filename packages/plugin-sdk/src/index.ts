@@ -10,6 +10,7 @@
  */
 
 import type { PluginDependency } from "./bundle-contract.js";
+import type { ModelAdapterDescriptor } from "./model.js";
 
 import type {
   PublicIconName,
@@ -472,6 +473,8 @@ export interface PluginGenerationApi {
   readonly ui: PluginUIKit;
   readonly pluginId: string;
   readonly generation: string;
+  /** Aborted when staging fails, is superseded, or this generation is disposed. */
+  readonly signal: AbortSignal;
   /** Invoke one method owned by this plugin's active runtime generation. */
   invokeRuntime(method: string, input?: unknown, options?: PluginRuntimeInvokeOptions): Promise<unknown>;
   /** List registered project workspaces that a trusted extension may target. */
@@ -486,6 +489,8 @@ export interface PluginGenerationApi {
   registerStyle(style: StyleRegistration): Disposable;
   registerLocale(locale: LocaleRegistration): Disposable;
   registerComposerStatusSource(source: ComposerStatusSourceRegistration): Disposable;
+  /** Supply append-only text for the host-owned composer ghost and Tab action. */
+  registerComposerInlineCompletionProvider(provider: ComposerInlineCompletionProviderRegistration): ComposerInlineCompletionProviderHandle;
   registerCleanup(cleanup: () => void): Disposable;
   registerViewType(definition: ViewTypeDefinition): Disposable;
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
@@ -500,6 +505,8 @@ export interface PluginGenerationApi {
 
 export interface PluginRuntimeInvokeOptions {
   readonly workspaceId?: string;
+  /** Cancel this invocation and the host work owned by its execution. */
+  readonly signal?: AbortSignal;
 }
 
 export interface PluginWorkspace {
@@ -590,6 +597,7 @@ export const EXECUTION_UPDATE_SERVICE = "execution.update" as const;
 export const INVOKE_TOOL_SERVICE = "execution.invoke-tool" as const;
 export const USER_QUESTION_ASK_SERVICE = "host.user-question.ask" as const;
 export const ARTIFACT_IMPORT_SERVICE = "host.artifact.import" as const;
+export const MODEL_REQUEST_SERVICE = "host.model.request" as const;
 export const SECURITY_AUTHORIZE_SERVICE = "security.authorize" as const;
 export const PROCESS_SANDBOX_SERVICE = "sandbox.process" as const;
 export const SECURITY_AUTHORIZE_METHOD = "authorize" as const;
@@ -638,6 +646,10 @@ export function requireArtifactImportService(): ServiceRequirement {
   return { name: ARTIFACT_IMPORT_SERVICE, major_version: 1, required: true };
 }
 
+export function requireModelRequestService(): ServiceRequirement {
+  return { name: MODEL_REQUEST_SERVICE, major_version: 1, required: true };
+}
+
 export interface HostServiceDescriptor {
   id: HostServiceMethod | (string & {});
   required?: boolean;
@@ -655,6 +667,34 @@ export interface ServiceDescriptor {
   name: string;
   version: string;
   methods: ServiceMethodDescriptor[];
+}
+
+/** Optional plugin-owned durable user notebook; declare major 1 with required: false. */
+export const MEMORY_NOTEBOOK_SERVICE = "memory.notebook";
+
+/** Reads the sanitized MEMORY.md index, at most 200 lines and 25,000 UTF-8 bytes. */
+export interface MemoryNotebookIndexRequest {
+  /** Positive UTF-8 byte budget, at most 25,000; absent or 0 uses that maximum. */
+  max_bytes?: number;
+}
+
+/** Reads one topic, without scanning or loading the rest of the notebook. */
+export interface MemoryNotebookReadRequest {
+  /** Plain, non-hidden .md filename; use the index method for MEMORY.md. */
+  file: string;
+  /** Positive UTF-8 byte budget, at most 65,536; absent or 0 uses 16,384. */
+  max_bytes?: number;
+}
+
+/** Fresh file evidence, not a model summary or an instruction authority. */
+export interface MemoryNotebookSnapshotV1 {
+  version: 1;
+  source: { scope: "user_notebook"; file: string };
+  found: boolean;
+  /** Opaque full-source revision. Present for empty files, absent for missing files. */
+  revision?: string;
+  content: string;
+  truncated: boolean;
 }
 
 export const AUTHORIZATION_SERVICE_DESCRIPTOR: ServiceDescriptor = {
@@ -703,6 +743,7 @@ export interface RuntimeInitializeParams {
 }
 
 export interface RuntimeInitializeResult {
+  model_adapters?: readonly ModelAdapterDescriptor[];
   tools?: ToolRegistration[];
   protocol_version?: 1 | 2 | 3;
   capabilities?: CapabilityDescriptor[];
@@ -724,6 +765,7 @@ export interface ToolActivityMetadata {
   /** Delegate effects through execution.invoke-tool without holding a leaf scheduling slot. */
   orchestrator?: boolean;
   read_only?: boolean;
+  /** Overlap with other explicitly safe tools; ordinary callbacks and unsafe tools stay exclusive. */
   concurrency_safe?: boolean;
   destructive?: boolean;
   risk?: string;
@@ -954,6 +996,8 @@ export interface ArtifactPresentation {
 }
 
 export interface ToolContentPart {
+  /** Output-only deferred-media reference preserved in model snapshots. */
+  remote_ref?: string;
   type: ToolContentType;
   text?: string;
   data?: string;
@@ -1240,6 +1284,58 @@ export async function invokeTool(host: RuntimeHost, params: InvokeToolParams): P
   }) as ToolResult;
 }
 
+/** Text-only input: no tools, attachments, credentials, or implicit conversation history. */
+export interface ModelRequestMessage {
+  readonly role: "system" | "user" | "assistant";
+  readonly content: string;
+}
+
+export interface ModelRequestParams {
+  /** One to 32 nonempty messages, at most 256 KiB of UTF-8 content in total. */
+  readonly messages: readonly ModelRequestMessage[];
+  /** Existing configured model alias; omitted uses the host's configured model. */
+  readonly model_alias?: string;
+  /**
+   * Requested output-token limit, integer 1–8192; defaults to 1024.
+   * An adapter that cannot preserve the limit fails with unsupported_limit
+   * before inference. Remote-server enforcement and billing are not guaranteed.
+   */
+  readonly max_output_tokens?: number;
+  /** Integer 1–45000 milliseconds; defaults to 45000. */
+  readonly timeout_ms?: number;
+}
+
+export interface ModelRequestUsage {
+  readonly input_tokens: number;
+  readonly output_tokens: number;
+  readonly cache_creation_tokens: number;
+  readonly cache_read_tokens: number;
+  readonly cache_creation_unknown: boolean;
+}
+
+export interface ModelRequestResult {
+  readonly text: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly finish_reason: string;
+  readonly truncated: boolean;
+  readonly usage?: ModelRequestUsage;
+}
+
+/**
+ * Run one bounded, tools-free model request through Wuu's configured provider.
+ * Requires host.model.request v1 and a host scoped to a live tool, capability,
+ * or service callback, including a generation-owned background job's callback.
+ * The request is cancelled when that execution ends or is cancelled.
+ */
+export async function requestModel(host: RuntimeHost, input: ModelRequestParams): Promise<ModelRequestResult> {
+  return await host.call("host.service.call", {
+    service: MODEL_REQUEST_SERVICE,
+    method: KERNEL_SERVICE_METHOD,
+    params: input,
+  }) as ModelRequestResult;
+}
+
 export interface ArtifactImportParams {
   /** Absolute path, or a path relative to the current tool execution's cwd. */
   path?: string;
@@ -1290,11 +1386,14 @@ export async function importArtifact(
 }
 
 export interface RuntimePlugin {
+  /** Additional reentrant handlers. model.adapter and model.middleware are always reentrant. */
+  concurrentCapabilities?: readonly string[];
   /**
    * Service names whose handlers may overlap tools, capabilities, and services.
    * Opt in only when handlers are safe for concurrent access. This permits a
    * service callback into a plugin already awaiting another plugin. Other
-   * requests remain ordered; lifecycle requests are barriers for all handlers.
+   * callbacks and tools without concurrency-safe metadata remain ordered;
+   * lifecycle requests are barriers for all handlers.
    */
   concurrentServices?: readonly string[];
   initialize(params: RuntimeInitializeParams, host: RuntimeHost): RuntimeInitializeResult | Promise<RuntimeInitializeResult>;
@@ -1383,15 +1482,19 @@ export async function handleRuntimeRequest(
         return { id: request.id, result: null };
       case "capability.invoke":
         if (!plugin.invokeCapability) throw new Error("capability.invoke is not implemented");
+        // Read the live signal after queue/lifecycle waiting, before user code.
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.invokeCapability(request.params, executionHost, execution) };
       case "service.invoke":
         if (!plugin.invokeService) throw new Error("service.invoke is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.invokeService(request.params, executionHost, execution) };
       case "service.changed":
         await plugin.serviceChanged?.(request.params, host);
         return { id: request.id, result: null };
       case "tool.execute":
         if (!plugin.executeTool) throw new Error("tool.execute is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.executeTool(request.params, executionHost, execution) };
       case "shutdown":
         await plugin.shutdown?.();
@@ -1492,6 +1595,9 @@ class JSONLRuntimeHost implements RuntimeHost {
   }
 }
 
+// Bound tool bodies without consuming the separate reentrant callback lane.
+const MAX_CONCURRENT_TOOLS = 8;
+
 /** Runs a plugin over Wuu's full-duplex JSON-lines transport. */
 export async function runJSONLRuntime(
   plugin: RuntimePlugin,
@@ -1507,17 +1613,44 @@ export async function runJSONLRuntime(
   const executions = new Map<string, Set<AbortController>>();
   const active = new Set<Promise<void>>();
   const concurrentServices = new Set(plugin.concurrentServices ?? []);
-  let requests = Promise.resolve();
-  let lifecycle = requests;
+  const concurrentCapabilities = new Set(["model.adapter", "model.middleware", ...plugin.concurrentCapabilities ?? []]);
+  const concurrentTools = new Set<string>();
+  const queued: { run(): Promise<void>; canOverlap(): boolean }[] = [];
+  let running = 0;
+  let exclusive = false;
+  // Only adjacent explicitly safe tools share slots. Classification happens
+  // after preceding work, including initialize, publishes its registrations.
+  const pump = (): void => {
+    while (queued.length > 0 && !exclusive && running < MAX_CONCURRENT_TOOLS) {
+      const next = queued[0];
+      const safe = next.canOverlap();
+      if (!safe && running > 0) return;
+      queued.shift();
+      running++;
+      exclusive = !safe;
+      const finished = (): void => {
+        running--;
+        if (!safe) exclusive = false;
+        pump();
+      };
+      void next.run().then(finished, finished);
+    }
+  };
+  const schedule = (run: () => Promise<void>, canOverlap = () => false): Promise<void> => {
+    const task = new Promise<void>((resolve, reject) => {
+      queued.push({ run: () => Promise.resolve().then(run).then(resolve, reject), canOverlap });
+    });
+    pump();
+    return task;
+  };
+  let lifecycle = Promise.resolve();
   let shuttingDown = false;
   const track = (task: Promise<void>): void => {
     active.add(task);
     void task.then(() => active.delete(task), () => active.delete(task));
   };
   const enqueueResponse = (value: unknown): void => {
-    const task = requests.then(() => send(value));
-    requests = task.catch(() => undefined);
-    track(task);
+    track(schedule(() => send(value)));
   };
   const processLine = (line: string): void => {
     if (line.trim() === "") return;
@@ -1543,7 +1676,8 @@ export async function runJSONLRuntime(
     }
     const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
     if (parsed.method === "shutdown") shuttingDown = true;
-    const concurrent = parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service);
+    const concurrent = (parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service))
+      || (parsed.method === "capability.invoke" && concurrentCapabilities.has(parsed.params.capability));
     const executionId = runtimeRequestExecutionId(parsed);
     const controller = new AbortController();
     // Even legacy requests without an execution id must stop on transport loss.
@@ -1554,20 +1688,30 @@ export async function runJSONLRuntime(
     // A lifecycle frame waits for everything already admitted. Opted-in
     // service calls may bypass ordinary work, but never an earlier lifecycle
     // frame. Capture the barrier now so later frames cannot create a cycle.
-    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : requests;
-    const task = ready
-      .then(() => {
-        if (parsed.method === "initialize") host.configure(parsed.params.supported_host_services);
-        return handleRuntimeRequest(plugin, parsed, host, execution);
-      })
-      .then(send)
+    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
+    const run = async (): Promise<void> => {
+      await ready;
+      if (parsed.method === "initialize") {
+        host.configure(parsed.params.supported_host_services);
+        concurrentTools.clear();
+      }
+      const response = await handleRuntimeRequest(plugin, parsed, host, execution);
+      if (parsed.method === "initialize" && "result" in response) {
+        const definition = response.result as RuntimeInitializeResult;
+        for (const tool of definition.tools ?? []) {
+          if (tool.activity?.concurrency_safe === true) concurrentTools.add(tool.id);
+        }
+      }
+      await send(response);
+    };
+    const task = (concurrent ? run() : schedule(run,
+      () => parsed.method === "tool.execute" && concurrentTools.has(parsed.params.tool_id)))
       .finally(() => {
         const controllers = executions.get(executionId);
         controllers?.delete(controller);
         if (controllers?.size === 0) executions.delete(executionId);
       });
-    if (!concurrent) requests = task.catch(() => undefined);
-    if (isLifecycle) lifecycle = requests;
+    if (isLifecycle) lifecycle = task.catch(() => undefined);
     track(task);
   };
   const decoder = new TextDecoder();
@@ -1746,6 +1890,87 @@ export interface ContextUsageSummaryV1 {
 
 export type ComposerSubmissionModeV1 = "send" | "queue" | "steer";
 
+/** One immutable request for an append-only suggestion in the host-owned composer. */
+export interface ComposerInlineCompletionContext {
+  readonly contractVersion: 1;
+  /** Conversation kind, including before a side conversation has an ID. Split panes use main. */
+  readonly kind: "main" | "side";
+  /** Opaque identity for this mounted input and conversation/workspace context. */
+  readonly composerId: string;
+  /** Changes whenever input, selection, composition, focus, or conversation state changes. */
+  readonly revision: number;
+  readonly threadId?: string;
+  /** Side-conversation identity; threadId remains its owning main conversation. */
+  readonly sideThreadId?: string;
+  readonly draftText: string;
+  /** UTF-16 offsets into draftText. The host requests only at a collapsed end caret. */
+  readonly selectionStart: number;
+  readonly selectionEnd: number;
+  /** Composer presentation activity; false does not prove the latest turn succeeded or settled. */
+  readonly running: boolean;
+}
+
+export interface ComposerInlineCompletion {
+  /** Optional provider-owned identity, preserved in interaction callbacks. */
+  readonly id?: string;
+  /** Literal text to append, never markup or a replacement of the current draft. */
+  readonly text: string;
+}
+
+/** Refresh only the exact input observation that produced a cached result. */
+export interface ComposerInlineCompletionRefresh {
+  readonly composerId: string;
+  readonly revision: number;
+}
+
+export interface ComposerInlineCompletionProviderHandle {
+  dispose(): void;
+  /**
+   * Recheck eligible inputs after external data changes; omit scope to recheck all.
+   * Coalesced at most once per 100 ms. A stale scope or disposed handle is ignored.
+   * Refresh never revives an explicitly dismissed observation.
+   */
+  refresh(scope?: ComposerInlineCompletionRefresh): void;
+}
+
+/** Attribution only: interaction callbacks never receive a later draft's text. */
+export type ComposerInlineCompletionSource = Pick<ComposerInlineCompletionContext,
+  "kind" | "composerId" | "revision" | "threadId" | "sideThreadId">;
+
+export type ComposerInlineCompletionInteraction = {
+  /** Host identity for this presentation, shared by its subsequent interactions. */
+  readonly interactionId: string;
+  /** The provider's result id, when supplied. */
+  readonly suggestionId?: string;
+  readonly source: ComposerInlineCompletionSource;
+} & (
+  | { readonly type: "shown" | "accepted" | "dismissed" }
+  | {
+    /** The composer callback accepted dispatch, not confirmation of backend delivery. */
+    readonly type: "dispatched";
+    readonly mode: ComposerSubmissionModeV1;
+    /** Draft text differs from the draft immediately after this acceptance. */
+    readonly edited: boolean;
+  }
+);
+
+export interface ComposerInlineCompletionProviderRegistration {
+  readonly id: string;
+  /** Lower orders run first; ties use plugin ID, then registration ID. */
+  readonly order?: number;
+  /**
+   * Return null to let the next provider try. The host owns rendering and Tab
+   * acceptance; providers own prompts, debouncing, and any context retrieval.
+   * Stop work when signal aborts. Late results never change the current input.
+   */
+  provideCompletion(
+    context: ComposerInlineCompletionContext,
+    signal: AbortSignal,
+  ): ComposerInlineCompletion | null | Promise<ComposerInlineCompletion | null>;
+  /** Receives only this registration's interactions while its generation is active. */
+  onDidInteract?(event: ComposerInlineCompletionInteraction): void | Promise<void>;
+}
+
 export interface ComposerSnapshotV1 {
   readonly contractVersion: 1;
   readonly draftText?: string;
@@ -1846,6 +2071,8 @@ export interface FilePreviewSnapshotV1 {
   readonly safeHostUrl?: string;
   readonly sizeBytes?: number;
   readonly binary?: boolean;
+  /** The exposed text was shortened to the host preview limit, independently of safeHostUrl. */
+  readonly truncated?: boolean;
   readonly readOnly?: boolean;
   readonly dirty?: boolean;
   readonly loading?: boolean;
@@ -2098,3 +2325,5 @@ export function createManifest(options: {
 }
 
 export * from "./bundle-contract.js";
+
+export * from "./model.js";

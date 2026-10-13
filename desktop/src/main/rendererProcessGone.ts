@@ -160,3 +160,25 @@ export function sendToWindow(window: BrowserWindow, channel: string, payload: un
     if (!(error instanceof Error && error.message.includes("Render frame was disposed"))) throw error;
   }
 }
+
+// Only the initial navigation may shut down a stale development host. Later
+// failures belong to renderer recovery, which keeps other windows/core alive.
+export async function loadDevelopmentRenderer(
+  window: BrowserWindow,
+  url: string,
+  app: Pick<App, "quit">,
+): Promise<void> {
+  let initialLoad = true;
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) return;
+    console.error(`[renderer] failed to load ${validatedURL || url}: ${errorDescription} (${errorCode})`);
+    if (initialLoad) app.quit();
+  });
+  try {
+    await window.loadURL(url);
+  } catch {
+    // did-fail-load reports the initial navigation error.
+  } finally {
+    initialLoad = false;
+  }
+}

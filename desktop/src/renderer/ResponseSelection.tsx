@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import type { ResponseSelection } from "../shared/protocol";
 import { SelectionActionMenu } from "./SelectionActionMenu";
@@ -6,6 +6,8 @@ import { selectionActionMenuMetrics, selectionActionMenuPosition } from "./Selec
 import { showToast } from "./Toast";
 import { translateCurrent, useI18n } from "./i18n";
 import "./ResponseSelection.css";
+
+export const SideConversationAvailableContext = createContext(false);
 
 let sourceHighlight: { root: HTMLElement; clear: () => void } | undefined;
 
@@ -80,10 +82,19 @@ export function navigateToResponseSelection(selection: ResponseSelection): boole
       window.getSelection()?.removeAllRanges();
       window.getSelection()?.addRange(range);
     }
-    const observer = new MutationObserver(() => sourceHighlight?.clear());
+    const observer = new MutationObserver((records) => {
+      // Scrolling and composer reflow update ancestor styles without invalidating
+      // the source. Only content, visibility, or source identity changes clear it.
+      if (records.some(record => record.type !== "attributes") || !visible(article)
+        || article.dataset.responseItemId !== selection.source.item_id
+        || article.dataset.responseTurnId !== selection.source.turn_id
+        || article.closest<HTMLElement>("[data-thread-id]")?.dataset.threadId !== selection.source.thread_id) {
+        sourceHighlight?.clear();
+      }
+    });
     observer.observe(root, { childList: true, characterData: true, subtree: true });
     for (let node: HTMLElement | null = article; node; node = node.parentElement) {
-      observer.observe(node, { attributes: true, attributeFilter: ["hidden", "inert", "aria-hidden", "style", "class", "data-thread-id"] });
+      observer.observe(node, { attributes: true, attributeFilter: ["hidden", "inert", "aria-hidden", "style", "class", "data-thread-id", "data-response-item-id", "data-response-turn-id"] });
     }
     sourceHighlight = { root, clear: () => {
       observer.disconnect();
@@ -135,6 +146,7 @@ export function AssistantResponseArticle({ turnID, itemID, children, ...props }:
   const [comment, setComment] = useState("");
   const [position, setPosition] = useState<CSSProperties & { "--menu-enter-y"?: string }>({ left: 0, top: 0 });
   const { t } = useI18n();
+  const sideConversationAvailable = useContext(SideConversationAvailableContext);
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current;
     const anchor = anchorRef.current;
@@ -265,7 +277,7 @@ export function AssistantResponseArticle({ turnID, itemID, children, ...props }:
       if (toolbarRef.current?.contains(event.target as Node)) return;
       capture();
     };
-    const key = (event: KeyboardEvent) => { if (event.key === "Escape") clear(); };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.isComposing) clear(); };
     const scroll = (event: Event) => {
       if (dragging || !capturedRef.current || toolbarRef.current?.contains(event.target as Node)) return;
       const root = article.querySelector<HTMLElement>(".agent-text");
@@ -330,7 +342,7 @@ export function AssistantResponseArticle({ turnID, itemID, children, ...props }:
       onCommentChange={setComment} onAdd={addSelection} onCommentStart={() => setCommenting(true)}
       onCommentCancel={() => { returnToToggleRef.current = true; setCommenting(false); setComment(""); }}
       onCommentSubmit={addSelection} commentToggleRef={commentToggleRef} commentInputRef={commentRef}
-      extraActions={ref.current?.closest('[data-wuu-component="side-thread"]') ? undefined
+      extraActions={!sideConversationAvailable || ref.current?.closest('[data-wuu-component="side-thread"]') ? undefined
         : <button type="button" onPointerDown={event => event.preventDefault()} onClick={askSide}>{t("responseSelection.askSide")}</button>} />, document.body) : null}
   </article>;
 }

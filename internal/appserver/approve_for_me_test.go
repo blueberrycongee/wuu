@@ -80,7 +80,14 @@ func TestNativeToolReviewUsesLiveConversationAndThreadModel(t *testing.T) {
 		{Content: `{"outcome":"deny","reason":"needs informed authorization"}`},
 		{Content: `{"outcome":"allow","reason":"user authorized this exact build cleanup"}`},
 	}}
-	runner := &agent.StreamRunner{Client: providers.AdaptStreamClient(threadClient), ProviderName: "thread-provider", Model: "thread-model"}
+	options := map[string]any{
+		"model": "unrelated-model", "messages": []any{"unrelated-context"}, "tools": []any{"unrelated-tool"},
+		"max_output_tokens": 4096, "reasoningEffort": "low", "topP": 0.8, "omitStore": true,
+	}
+	runner := &agent.StreamRunner{
+		Client: providers.AdaptStreamClient(threadClient), ProviderName: "thread-provider", Model: "thread-model",
+		Temperature: 0.2, Effort: "low", ProviderOptions: options,
+	}
 	reviewer := turnScopedReviewer{server: srv, turnID: "turn-live", runner: runner}
 	request := reviewTestRequest()
 	request.TurnID = ""
@@ -106,6 +113,10 @@ func TestNativeToolReviewUsesLiveConversationAndThreadModel(t *testing.T) {
 		if req.Model != "thread-model" || req.Provider != "thread-provider" || len(req.Tools) != 0 {
 			t.Fatalf("review request=%+v", req)
 		}
+		if req.MaxTokens != 0 || req.Temperature != 0.2 || req.Effort != "low" ||
+			!reflect.DeepEqual(req.ProviderOptions, map[string]any{"max_output_tokens": 4096, "reasoningEffort": "low", "topP": 0.8, "omitStore": true}) {
+			t.Fatalf("review changed tuning or inherited request-shape overrides: %+v", req)
+		}
 		var payload struct {
 			Arguments    string                `json:"arguments"`
 			TurnID       string                `json:"turn_id"`
@@ -123,6 +134,9 @@ func TestNativeToolReviewUsesLiveConversationAndThreadModel(t *testing.T) {
 		if strings.Contains(req.Messages[1].Content, "private reasoning") {
 			t.Fatal("review exposed hidden reasoning")
 		}
+	}
+	if options["model"] != "unrelated-model" || options["messages"] == nil || options["tools"] == nil {
+		t.Fatal("review mutated the active thread's provider options")
 	}
 }
 

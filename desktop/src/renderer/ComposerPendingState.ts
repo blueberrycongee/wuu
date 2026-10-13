@@ -1,3 +1,4 @@
+import { validPdfSelectionReference } from "./PdfSelection";
 import { useRef, useState, type MutableRefObject } from "react";
 import type {
   MessageContentPart,
@@ -107,8 +108,11 @@ function heldComposerMessage(
           typeof source.path !== "string" || !source.path.trim() ||
           typeof source.revision !== "string" || !source.revision.trim() ||
           typeof source.quote !== "string" || !source.quote ||
-          ![source.start_line, source.start_column, source.end_line, source.end_column]
-            .every((value) => typeof value === "number" && Number.isSafeInteger(value) && value > 0)
+          (source.pdf !== undefined ? !validPdfSelectionReference(source.pdf)
+            || ![source.start_line, source.start_column, source.end_line, source.end_column].every(value => value === 0)
+            || (source.pdf.artifact_sha256 !== undefined && source.revision !== `sha256:${source.pdf.artifact_sha256}`)
+            : ![source.start_line, source.start_column, source.end_line, source.end_column]
+              .every((value) => typeof value === "number" && Number.isSafeInteger(value) && value > 0))
         ) return [];
         const startLine = source.start_line as number;
         const startColumn = source.start_column as number;
@@ -130,6 +134,7 @@ function heldComposerMessage(
             start_column: startColumn,
             end_line: endLine,
             end_column: endColumn,
+            ...(validPdfSelectionReference(source.pdf) ? { pdf: { ...source.pdf } } : {}),
           },
         }];
       }
@@ -170,6 +175,7 @@ function heldComposerMessage(
     contentParts,
     activeDocument: activeDocumentPath ? { path: activeDocumentPath } : undefined,
     held,
+    ...(value.delivery_unconfirmed === true ? { deliveryUnconfirmed: true } : {}),
     heldPosition: held ? position : undefined,
     origin,
   };
@@ -583,6 +589,10 @@ export function useComposerPendingState({
       "queue",
       activeThreadIDForState(getAppState()),
     );
+    if (target?.message.deliveryUnconfirmed) {
+      setStatus(localizedText("composer.nativeDeliveryUnconfirmed"));
+      return false;
+    }
     if (!target) {
       return false;
     }
@@ -652,6 +662,10 @@ export function useComposerPendingState({
       "guide",
       activeThreadIDForState(getAppState()),
     );
+    if (target?.message.deliveryUnconfirmed) {
+      setStatus(localizedText("composer.nativeDeliveryUnconfirmed"));
+      return false;
+    }
     if (!target) {
       return false;
     }
@@ -775,6 +789,10 @@ export function useComposerPendingState({
       return;
     }
     const target = queuedTarget ?? guideTarget;
+    if (target?.message.deliveryUnconfirmed) {
+      setStatus(localizedText("composer.nativeDeliveryUnconfirmed"));
+      return;
+    }
     if (!target) {
       return;
     }
@@ -845,6 +863,10 @@ export function useComposerPendingState({
   async function requeueGuideMessage(
     target: LocatedPendingComposerMessage,
   ): Promise<void> {
+    if (target.message.deliveryUnconfirmed) {
+      setStatus(localizedText("composer.nativeDeliveryUnconfirmed"));
+      return;
+    }
     const { id } = target.message;
     if (target.message.operationState) {
       return;

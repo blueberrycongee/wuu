@@ -77,7 +77,7 @@ app.whenReady().then(async () => {
   let sequence = 0;
   async function request(method: string, params: Record<string, unknown>): Promise<void> {
     const id = String(++sequence);
-    await host.handleServerRequest({ workdir, kind: "server-request", message: { id, method, params: { workdir, tab_id: tabID, ...params } } });
+    await host.handleServerRequest({ workdir, kind: "server-request", message: { id, method, params: { workdir, thread_id: activity.thread_id, tab_id: tabID, ...params } } });
     assert.equal(errors.get(id), undefined);
     assert.ok(replies.has(id));
   }

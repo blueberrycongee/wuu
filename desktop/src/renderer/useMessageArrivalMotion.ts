@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef } from "react";
 import { messageMotionTime, motionCurve, motionDurationMs, prefersReducedMotion, subscribeReducedMotion } from "./motion";
 
 type Arrival = { element: HTMLElement; animation?: Animation };
-type MessageArrival = { id: string; element: HTMLElement; own: boolean; fresh: boolean };
+/** `settle`: the bubble rises in place instead of travelling from where it
+ * was laid out, so it appears where nothing was and fades in from clear. */
+type MessageArrival = { id: string; element: HTMLElement; own: boolean; fresh: boolean; settle?: boolean };
 
 /** Entrance and optimistic-DOM handoff only; callers own history and scrolling. */
 export function useMessageArrivalMotion() {
@@ -22,16 +24,17 @@ export function useMessageArrivalMotion() {
     const next = new Map<string, Arrival>();
     const freshArrivals: MessageArrival[] = [];
     const startTime = messageMotionTime();
-    const duration = motionDurationMs("--motion-base", 180);
+    const arriveDuration = motionDurationMs("--motion-base", 180);
+    const settleDuration = motionDurationMs("--motion-slow", 280);
     const easing = motionCurve("--ease-out", "cubic-bezier(0.33, 1, 0.68, 1)");
-    const canAnimate = !reset && !document.hidden && !prefersReducedMotion() && duration > 0;
-    for (const { id, element, own, fresh } of messages) {
+    const canAnimate = !reset && !document.hidden && !prefersReducedMotion() && arriveDuration > 0;
+    for (const { id, element, own, fresh, settle } of messages) {
       const old = reset ? undefined : rows.current.get(id);
       if (old?.element === element) { next.set(id, old); continue; }
       const arrival: Arrival = { element };
       next.set(id, arrival);
       const source = reset ? undefined : handoffs.current.get(id) ?? old;
-      if (!reset && !source && fresh) freshArrivals.push({ id, element, own, fresh });
+      if (!reset && !source && fresh) freshArrivals.push({ id, element, own, fresh, settle });
       const animation = source?.animation;
       const elapsed = animation && animation.playState !== "finished" && animation.playState !== "idle"
         && typeof animation.currentTime === "number" ? animation.currentTime : undefined;
@@ -39,9 +42,9 @@ export function useMessageArrivalMotion() {
       // or cancelled one. An acknowledgement before the first paint is fresh.
       if (!canAnimate || !element.animate || (source ? elapsed === undefined : !fresh)) continue;
       const entrance = element.animate([
-        { opacity: 0.85 },
+        { opacity: settle ? 0 : 0.85 },
         { opacity: 1 },
-      ], { duration, easing });
+      ], { duration: settle ? settleDuration : arriveDuration, easing });
       if (elapsed !== undefined) entrance.currentTime = elapsed;
       else if (startTime !== undefined) entrance.startTime = startTime;
       arrival.animation = entrance;

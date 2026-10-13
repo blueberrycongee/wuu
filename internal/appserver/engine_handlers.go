@@ -567,6 +567,7 @@ func (s *Server) applyEngineSettingsToRuntime() {
 		}
 	}
 	s.rt.RebuildCodexEngine(codexEnabled, codexBinary)
+	s.retainCodexHost()
 	s.rt.RebuildClaudeEngine(claudeEnabled, claudeBinary)
 	s.rt.RebuildProtocolEngines(cfg.Engines)
 	if !s.rt.EngineAvailable(defaultEngine) {
@@ -602,4 +603,25 @@ func binaryStatus(path string, resolveErr error) (bool, string) {
 		return false, "binary path is not absolute: " + path
 	}
 	return true, ""
+}
+
+// retainCodexHost owns the server lifetime, independently of turn leases. A
+// settings replacement releases this server's old owner without stopping turns
+// or another Server that still uses that host.
+func (s *Server) retainCodexHost() {
+	s.engineHostMu.Lock()
+	host := s.rt.CodexHost()
+	if s.closed.Load() || s.codexHost == host {
+		s.engineHostMu.Unlock()
+		return
+	}
+	release := s.codexHostRelease
+	s.codexHost, s.codexHostRelease = host, nil
+	if host != nil {
+		s.codexHostRelease = host.Retain()
+	}
+	s.engineHostMu.Unlock()
+	if release != nil {
+		release()
+	}
 }

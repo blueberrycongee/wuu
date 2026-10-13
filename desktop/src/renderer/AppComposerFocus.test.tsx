@@ -116,6 +116,12 @@ let resizeCallbacks = new Set<ResizeObserverCallback>();
 
 function initialized(cwd: string): InitializeResult {
   return {
+    extension_inventory: [{
+      id: "plugin:bundled:side", kind: "plugin", name: "Side", state: "active", enabled: true,
+      approval_state: "official", runtime_state: "active",
+      provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: "side", official: true },
+      contributions: { commands: [{ id: "side", title: "Side chat", kind: "side_conversation", template: "Side policy" }] },
+    }],
     protocol_version: "wuu-app-server/v0.1",
     provider: "fake",
     model: "fake-model",
@@ -786,6 +792,23 @@ describe("main composer focus continuity", () => {
 
     await enterCommand(dock, "/side");
 
+    await waitForSideComposerFocus();
+    const updateSide = async (enabled: boolean) => {
+      const inventory = initialized(scratchCwd).extension_inventory!;
+      inventory[0].enabled = enabled;
+      inventory[0].runtime_state = enabled ? "active" : "inactive";
+      await act(async () => {
+        for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: scratchCwd,
+          message: { method: "plugin/inventory/changed", params: { epoch: enabled ? 3 : 2, extension_inventory: inventory, skills: [] } } });
+      });
+      await flushAsync();
+    };
+    await updateSide(false);
+    expect(container.querySelector('textarea[aria-label="side composer"]')).toBeNull();
+    await enterCommand(mainComposer("dock"), "/side");
+    expect(container.querySelector('textarea[aria-label="side composer"]')).toBeNull();
+    await updateSide(true);
+    await enterCommand(mainComposer("dock"), "/side");
     await waitForSideComposerFocus();
   });
 

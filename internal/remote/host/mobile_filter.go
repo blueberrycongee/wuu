@@ -223,6 +223,14 @@ func (f mobileChatFilter) threads(raw json.RawMessage) (json.RawMessage, bool) {
 }
 
 func (f mobileChatFilter) thread(raw json.RawMessage) (json.RawMessage, bool) {
+	if f.tools {
+		var snapshot appserver.Thread
+		if err := json.Unmarshal(raw, &snapshot); err == nil {
+			if bounded, err := json.Marshal(appserver.RemoteThreadSnapshot(snapshot)); err == nil {
+				raw = bounded
+			}
+		}
+	}
 	var thread map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &thread); err != nil {
 		return raw, true
@@ -289,9 +297,7 @@ func (f mobileChatFilter) item(raw json.RawMessage, turnID string) (json.RawMess
 		return raw, true
 	}
 	switch appserver.ThreadItemType(jsonString(item["type"])) {
-	case appserver.ThreadItemUserMessage:
-		return raw, true
-	case appserver.ThreadItemAgentMessage:
+	case appserver.ThreadItemUserMessage, appserver.ThreadItemAgentMessage:
 		if !f.tools {
 			return raw, true
 		}

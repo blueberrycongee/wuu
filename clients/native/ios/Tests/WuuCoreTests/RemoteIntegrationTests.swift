@@ -78,6 +78,51 @@ final class RemoteIntegrationTests: XCTestCase {
         XCTAssertEqual(expanded.tool?.result, String(repeating: "工具结果🌱\n", count: 20_000))
         XCTAssertEqual(expanded.tool?.arguments, #"{"path":"fixture.txt"}"#)
         XCTAssertEqual(expanded.contentRef, "")
+        // Fork responses and broadcasts must stay bounded without losing older history.
+        let forked = try await remote.call("thread/fork", params: ["thread_id": .string(pagedID), "mode": "local", "history_page": true])
+        var forkHistory = ChatThread(forked["thread"])
+        XCTAssertFalse(forkHistory.historyCursor.isEmpty)
+        let forkID = forkHistory.id
+        let forkAnnounced = expectation(description: "fork creation is broadcast")
+        let forkNotice = Task<JSONValue?, Never> {
+            for await event in remote.events {
+                if case .notification("thread/started", let params) = event, params["thread"]["id"].string == forkID {
+                    forkAnnounced.fulfill(); return params["thread"]
+                }
+            }
+            return nil
+        }
+        await fulfillment(of: [forkAnnounced], timeout: 20)
+        forkNotice.cancel()
+        let notification = await forkNotice.value
+        XCTAssertEqual(notification?["history_cursor"], forked["thread"]["history_cursor"])
+        XCTAssertLessThan(try JSONEncoder().encode(notification).count, 300_000)
+        for _ in 0..<10 where !forkHistory.historyCursor.isEmpty {
+            let page = try await remote.call("thread/history/read", params: ["thread_id": .string(forkID), "cursor": .string(forkHistory.historyCursor)])
+            forkHistory.prependHistory(page)
+        }
+        XCTAssertEqual(forkHistory.messages.count, history.messages.count)
+        XCTAssertEqual(forkHistory.messages.first?.text, "message 0")
+        let artifactID = try XCTUnwrap(fixture["artifact_thread"].string)
+        let artifactSnapshot = try await remote.call("thread/resume", params: ["session_id": .string(artifactID), "response_only": true, "history_page": true])
+        let artifactMessage = try XCTUnwrap(ChatThread(artifactSnapshot["thread"]).messages.first { !$0.attachments.isEmpty })
+        let artifact = try XCTUnwrap(artifactMessage.attachments.first)
+        let original = try await remote.readAttachment(artifact, threadID: artifactID, messageID: artifactMessage.id)
+        XCTAssertEqual(original.data, Data(base64Encoded: fixture["image"].string ?? ""))
+        let thumbnail = try await remote.readAttachment(artifact, threadID: artifactID, messageID: artifactMessage.id, preview: true)
+        XCTAssertEqual(thumbnail.mediaType, "image/jpeg")
+        XCTAssertLessThan(thumbnail.data.count, original.data.count)
+        for invalid in ["thread", "index", "digest"] {
+            var params: [String: JSONValue] = ["thread_id": .string(artifactID), "turn_id": .string(artifactMessage.turnID),
+                "item_id": .string(artifactMessage.itemID), "kind": "artifact", "index": artifact["content_index"], "sha256": artifact["artifact"]["sha256"]]
+            if invalid == "thread" { params["thread_id"] = .string(pagedID) }
+            if invalid == "index" { params["index"] = 999 }
+            if invalid == "digest" { params["sha256"] = .string(String(repeating: "0", count: 64)) }
+            do {
+                _ = try await remote.call("thread/attachment/read", params: .object(params))
+                XCTFail("accepted invalid artifact \(invalid)")
+            } catch NativeError.invalid {}
+        }
         let started = try await remote.call("thread/start", params: ["cwd": fixture["workspace"]])
         let id = try XCTUnwrap(started["thread"]["id"].string)
         let completed = expectation(description: "real Go execution completed")

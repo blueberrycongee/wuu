@@ -1,10 +1,12 @@
 import { AppContextCapture } from "./appContextCapture";
+import { createBrowserView } from "./browserView";
 import { saveArtifactFile } from "./artifactSave";
+import { showArtifactItemMenu } from "./artifactItemMenu";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
-import { PhoneAccess, phonePairLink } from "./phoneAccess";
+import { PhoneAccess } from "./phoneAccess";
 import {
   app,
   BrowserWindow,
@@ -18,15 +20,16 @@ import {
   nativeTheme,
   Notification,
   powerMonitor,
+  protocol,
   screen,
   session as electronSession,
   systemPreferences,
   type OpenDialogOptions,
   shell,
   type WebContents,
-  WebContentsView,
 } from "electron";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -37,6 +40,8 @@ import {
   isLanguagePreference,
 } from "../shared/protocol";
 import type {
+  ArtifactItemMenuParams,
+  AppServerResponse,
   ConfigAdvancedUpdateResult,
   ConfigGeneralUpdateResult,
   ConfigCodexModelsResult,
@@ -131,6 +136,8 @@ import type {
   PluginStorageSetParams,
   PluginStorageResult,
   PluginClientRequestParams,
+  PluginClientCancelParams,
+  PluginClientCancelResult,
   PluginClientRequestResult,
   WorkspaceFileSaveParams,
   CodexPetFeed,
@@ -187,13 +194,13 @@ import { mainTranslate, resolveMainLocale, setMainLocale } from "./i18n";
 import { sideThreadEventFromServerEvent } from "./sideThreadEvents";
 import {
   registerRenderableFileProtocol,
-  registerRenderableFileScheme,
+  renderableFileSchemes,
 } from "./renderableFileProtocol";
 import {
   cachePluginDesktopModule,
   cachePluginIcon,
   registerPluginModuleProtocol,
-  registerPluginModuleScheme,
+  pluginModuleScheme,
 } from "./pluginModuleProtocol";
 import { TerminalSessionManager } from "./terminalSessions";
 import { WorkspaceFileService } from "./workspaceFiles";
@@ -209,7 +216,7 @@ import {
   productionApplicationMenuTemplate,
 } from "./appShellGuards";
 import { createWindowRegistry, type WindowRegistry } from "./windowRegistry";
-import { installRendererRecovery, sendToWindow } from "./rendererProcessGone";
+import { installRendererRecovery, loadDevelopmentRenderer, sendToWindow } from "./rendererProcessGone";
 import {
   BrowserHostCoordinator,
   BROWSER_PARTITION,
@@ -241,8 +248,9 @@ const ENABLE_EMBEDDED_BROWSER = process.env.WUU_ENABLE_BROWSER !== "0";
 if (process.argv.includes("--safe-mode")) {
   process.env.WUU_SAFE_MODE = "1";
 }
-registerRenderableFileScheme();
-registerPluginModuleScheme();
+// Electron forwards fetch/CORS privileges through one set of child-process
+// switches; a second registration would replace the first set.
+protocol.registerSchemesAsPrivileged([...renderableFileSchemes, pluginModuleScheme]);
 
 let mainWindow: BrowserWindow | null = null;
 // Live system notifications are kept referenced so the OS cannot collect
@@ -317,14 +325,7 @@ const browserHostCoordinator = new BrowserHostCoordinator(
           sandbox: true,
         },
       }) as unknown as BrowserHostWindowHandle,
-    () =>
-      new WebContentsView({
-        webPreferences: {
-          partition: BROWSER_PARTITION,
-          contextIsolation: true,
-          nodeIntegration: false,
-        },
-      }) as unknown as BrowserViewHandle,
+    (options) => createBrowserView(options) as unknown as BrowserViewHandle,
   ),
   (workdir) => broadcastToAll("wuu:browser-invalidate", { workdir }),
 );
@@ -623,8 +624,9 @@ function emitServerEvent(event: ServerEvent): void {
     browserHostCoordinator.onClientTorndown(event.workdir);
     observationCoordinator.dropWorkdir(event.workdir);
   }
+  browserHostCoordinator.handleServerEvent(event);
   const browserActivity = observationActivityFromServerEvent(event);
-  if (browserActivity) browserHostCoordinator.updateActivity(browserActivity);
+  if (browserActivity && event.kind === "notification") browserHostCoordinator.updateActivity(browserActivity, event.message.method);
   observationCoordinator.handleServerEvent(event);
   const sideThreadEvent = sideThreadEventFromServerEvent(event);
   if (sideThreadEvent) {
@@ -659,8 +661,75 @@ function unregisterWindow(windowID: number): void {
 // independent of the per-workdir app-server pool. Events (pairing URI,
 // paired, exit) fan out to every window; the settings panel re-pulls its
 // snapshot on each one.
+// Window and remote-peer requests share one ownership rule. A cancellation
+// targets the exact process admitted for the original request, even if the
+// workspace moves or is re-registered before its response arrives.
+const pluginRuntimeRequests = new Map<string, Map<string, {
+  id: string;
+  fingerprint: string;
+  cancel: () => Promise<PluginClientCancelResult>;
+}>>();
+
+async function requestPluginRuntime(
+  owner: string,
+  context: RuntimeContext,
+  params: PluginClientRequestParams,
+  onResponse?: (response: AppServerResponse) => void,
+  onOwnerCreated?: () => void,
+): Promise<PluginClientRequestResult> {
+  const { workspace_id: _workspaceID, ...request } = params;
+  if (params.request_id === undefined) {
+    return appServerClientPool.requestInContext<PluginClientRequestResult>(context, "plugin/client/request", request, onResponse);
+  }
+  if (typeof params.request_id !== "string" || params.request_id.length > 128 || !params.request_id.trim()) {
+    throw new Error("Plugin request ID must contain 1 to 128 characters");
+  }
+  let requests = pluginRuntimeRequests.get(owner);
+  if (!requests) {
+    requests = new Map();
+    pluginRuntimeRequests.set(owner, requests);
+    onOwnerCreated?.();
+  }
+  if (requests.has(params.request_id)) throw new Error("Plugin request ID is already active");
+  const requestInOwner = appServerClientPool.bindContextRequest(context);
+  const identity = { id: params.id, fingerprint: params.fingerprint, request_id: randomUUID() };
+  let cancellation: Promise<PluginClientCancelResult> | undefined;
+  requests.set(params.request_id, {
+    id: params.id,
+    fingerprint: params.fingerprint,
+    cancel: () => cancellation ??= requestInOwner<PluginClientCancelResult>("plugin/client/cancel", identity),
+  });
+  try {
+    return await requestInOwner<PluginClientRequestResult>(
+      "plugin/client/request", { ...request, request_id: identity.request_id }, onResponse,
+    );
+  } finally {
+    requests.delete(params.request_id);
+  }
+}
+
+function cancelPluginRuntime(owner: string, params: PluginClientCancelParams): Promise<PluginClientCancelResult> {
+  const request = params && pluginRuntimeRequests.get(owner)?.get(params.request_id);
+  if (!request || request.id !== params.id || request.fingerprint !== params.fingerprint) {
+    return Promise.resolve({ cancelled: false });
+  }
+  return request.cancel();
+}
+
+function cancelPluginRuntimeOwner(owner: string): void {
+  const requests = pluginRuntimeRequests.get(owner);
+  pluginRuntimeRequests.delete(owner);
+  for (const request of requests?.values() ?? []) {
+    void request.cancel().catch((error: unknown) => console.error("Plugin runtime cancellation failed", error));
+  }
+}
+
 const remoteTerminals = new TerminalSessionManager((owner,event)=>remoteAppServerBridge.notifyPeer(owner,"desktop/terminal/event",event));
 const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply, peerID) => {
+  const pluginOwner = `remote:${peerID}`;
+  // Existing ownership is enough to cancel; the original workspace may no
+  // longer be listed by the time the paired client disconnects or switches.
+  if (method === "plugin/client/cancel") return cancelPluginRuntime(pluginOwner, params as PluginClientCancelParams);
   // Keep the desktop's reverse-RPC capabilities: a phone attachment must not
   // disable browser tools on the shared execution service.
   if (method === "initialize") params = desktopInitializeParams();
@@ -675,12 +744,16 @@ const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, 
   else if (state.active_context?.kind === "no_project" && resolve(state.active_context.cwd) === cwd) context = state.active_context;
   else if (cwd.startsWith(resolve(wuuHomePath(), "scratch") + sep)) context = { kind: "no_project", cwd };
   else throw new Error("Unknown or unavailable remote workspace");
+  if (method === "plugin/client/request") return requestPluginRuntime(pluginOwner, context, params as PluginClientRequestParams, reply);
   if (method.startsWith("desktop/terminal/")) return requestRemoteTerminal(remoteTerminals,context,peerID,method,params);
   if (method === "desktop/skill/content") return readCatalogSkill(await appServerClientPool.requestInContext<SkillListResult>(context,"skill/list"),params as SkillContentParams);
   if (method.startsWith("desktop/file/")) return requestRemoteFiles(context,method,params);
   if (method.startsWith("desktop/git/")) return requestRemoteGit(gitServiceForContext(() => context), method, params);
   return appServerClientPool.requestInContext(context, method, params, reply);
-}, peerID=>remoteTerminals.stopForOwner(peerID));
+}, (peerID) => {
+  remoteTerminals.stopForOwner(peerID);
+  cancelPluginRuntimeOwner(`remote:${peerID}`);
+});
 
 const remoteHostManager = new RemoteHostManager({
   appServerEndpoint: () => remoteAppServerBridge.currentEndpoint(),
@@ -704,7 +777,7 @@ async function remoteControlSnapshot(workdir: string): Promise<RemoteControlSnap
     status_error: statusError || phoneAccess.error() || undefined,
     host_running: remoteHostManager.isRunning(),
     host_enabled: phoneAccess.enabled(),
-    pair_uri: phonePairLink(phoneAccess.url(), remoteHostManager.currentPairUri()),
+    pair_uri: remoteHostManager.currentPairUri(),
     web_url: phoneAccess.url(),
   };
 }
@@ -818,19 +891,7 @@ function loadRenderer(window: BrowserWindow): void {
   });
 
   if (devRendererURL) {
-    window.webContents.on(
-      "did-fail-load",
-      (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-        if (!isMainFrame || errorCode === -3) return;
-        console.error(
-          `[renderer] failed to load ${validatedURL || devRendererURL}: ${errorDescription} (${errorCode})`,
-        );
-        app.quit();
-      },
-    );
-    void window.loadURL(devRendererURL).catch(() => {
-      // did-fail-load logs the Chromium error and shuts down the stale dev host.
-    });
+    void loadDevelopmentRenderer(window, devRendererURL, app);
   } else {
     void window.loadFile(rendererPath);
   }
@@ -1592,6 +1653,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:managed-process-list", (event, threadId: string) =>
     appServerRequest<ManagedProcessListResult>(event, "process/list", { thread_id: threadId }),
   );
+  ipcMain.handle("wuu:process-cancel-notifications", (event, threadId: string, processId: string) =>
+    appServerRequest<ManagedProcessActionResult>(event, "process/cancel-notifications", { thread_id: threadId, process_id: processId }),
+  );
   ipcMain.handle("wuu:managed-process-read", (event, params: ManagedProcessReadParams) =>
     appServerRequest<ManagedProcessReadResult>(event, "process/read", params),
   );
@@ -1730,6 +1794,48 @@ app.whenReady().then(async () => {
     const parent = BrowserWindow.fromWebContents(event.sender);
     if (!parent) throw new Error("Artifact window is no longer available");
     await saveArtifactFile(parent, event.sender.session, name, source);
+  });
+  ipcMain.handle("wuu:artifact-show-menu", async (event, input: ArtifactItemMenuParams) => {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const sourceFrame = event.senderFrame;
+    if (!parent || parent.isDestroyed() || !sourceFrame || sourceFrame !== event.sender.mainFrame) {
+      throw new Error("Artifact window is no longer available");
+    }
+    if (!input || typeof input.threadId !== "string" || !input.threadId || typeof input.uri !== "string") {
+      throw new Error("Invalid artifact reference");
+    }
+    let navigated = false;
+    const onNavigation = (details: { isMainFrame: boolean; isSameDocument: boolean }): void => {
+      if (details.isMainFrame && !details.isSameDocument) navigated = true;
+    };
+    const isCurrentSource = (): boolean => !navigated && !parent.isDestroyed()
+      && !event.sender.isDestroyed() && !sourceFrame.isDestroyed() && event.sender.mainFrame === sourceFrame;
+    const onProcessGone = (): void => { navigated = true; };
+    event.sender.on("did-start-navigation", onNavigation);
+    event.sender.on("render-process-gone", onProcessGone);
+    try {
+      // Resolve the source session through its owning local core, not the active
+      // conversation's cwd. Remote/browser hosts do not expose this native IPC.
+      const { thread } = await appServerClientPool.requestForSession<ThreadResumeResult>(
+        runtimeContextForEvent(event), input.threadId, "thread/resume",
+        { session_id: input.threadId, response_only: true },
+      );
+      if (!isCurrentSource()) return { action: "none" };
+      const belongsToThread = thread.id === input.threadId && thread.turns.some(turn => turn.items.some(item =>
+        item.type === "tool_call" && item.result_detail?.content?.some(part => {
+          if (part.type === "text" || part.remote_ref) return false;
+          const resource = part.resource !== null && typeof part.resource === "object" && !Array.isArray(part.resource)
+            ? part.resource as Record<string, unknown> : undefined;
+          const uri = typeof part.uri === "string" && part.uri.trim() ? part.uri : resource?.uri;
+          return typeof uri === "string" && uri.trim() === input.uri;
+        }),
+      ));
+      if (!belongsToThread) throw new Error("Artifact is not available in the source conversation");
+      return await showArtifactItemMenu(parent, input, wuuHomePath(), isCurrentSource);
+    } finally {
+      event.sender.removeListener("did-start-navigation", onNavigation);
+      event.sender.removeListener("render-process-gone", onProcessGone);
+    }
   });
   ipcMain.handle("wuu:open-external", async (_event, url: string) => {
     await openExternalNavigation(url);
@@ -1920,16 +2026,14 @@ app.whenReady().then(async () => {
     appServerRequest<PluginStorageResult>(event, "plugin/storage/set", params));
   ipcMain.handle("wuu:plugin-runtime-request", (event, params: PluginClientRequestParams) => {
     const workspaceID = params.workspace_id?.trim();
-    if (!workspaceID) {
-      return appServerRequest<PluginClientRequestResult>(event, "plugin/client/request", params);
-    }
-    const { workspace_id: _workspaceID, ...request } = params;
-    return appServerClientPool.requestInContext<PluginClientRequestResult>(
-      runtimeContextForWorkspaceID(workspaceID),
-      "plugin/client/request",
-      request,
-    );
+    const context = workspaceID ? runtimeContextForWorkspaceID(workspaceID) : runtimeContextForEvent(event);
+    const owner = `window:${event.sender.id}`;
+    return requestPluginRuntime(owner, context, params, undefined, () => {
+      event.sender.once("destroyed", () => cancelPluginRuntimeOwner(owner));
+    });
   });
+  ipcMain.handle("wuu:plugin-runtime-cancel", (event, params: PluginClientCancelParams) =>
+    cancelPluginRuntime(`window:${event.sender.id}`, params));
   ipcMain.handle(
     "wuu:config-provider-remove",
     (
@@ -2057,9 +2161,13 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:activity-list", (event, threadId: string) =>
     appServerRequest<ActivityListResult>(event, "activity/list", { thread_id: threadId }),
   );
-  ipcMain.handle("wuu:activity-takeover", (event, threadId: string, activityId: string) =>
-    appServerRequest<ActivityActionResult>(event, "activity/takeover", { thread_id: threadId, activity_id: activityId }),
-  );
+  ipcMain.handle("wuu:activity-takeover", async (event, threadId: string, activityId: string, inputGeneration?: number) => {
+    const result = await appServerRequest<ActivityActionResult>(event, "activity/takeover", { thread_id: threadId, activity_id: activityId });
+    if (typeof inputGeneration === "number" && Number.isSafeInteger(inputGeneration)) {
+      browserHostCoordinator.acknowledgeLocalTakeover(result.activity, inputGeneration);
+    }
+    return result;
+  });
   ipcMain.handle("wuu:activity-release", (event, threadId: string, activityId: string) =>
     appServerRequest<ActivityReleaseResult>(event, "activity/release", { thread_id: threadId, activity_id: activityId }),
   );
@@ -2631,7 +2739,7 @@ app.whenReady().then(async () => {
     "wuu:browser-command",
     async (
       _event,
-      payload: { workdir: string; tabID: string; command: string; url?: string },
+      payload: { workdir: string; tabID: string; command: string; url?: string; threadID?: string },
     ) => {
       if (!ENABLE_EMBEDDED_BROWSER) return null;
       const snapshot = await browserHostCoordinator.runCommand(
@@ -2639,6 +2747,7 @@ app.whenReady().then(async () => {
         payload.tabID,
         payload.command,
         payload.url,
+        payload.threadID,
       );
       return snapshot ?? null;
     },

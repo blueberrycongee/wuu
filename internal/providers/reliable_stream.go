@@ -205,7 +205,7 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 			cancelAttempt()
 		}
 		if err != nil {
-			if journalErr := attempt.ObserveStreamEvent(StreamEvent{Type: EventError, Error: err}); journalErr != nil {
+			if journalErr := r.observeAttemptEvent(attempt, StreamEvent{Type: EventError, Error: err}); journalErr != nil {
 				err = errors.Join(err, journalErr)
 			}
 		}
@@ -328,7 +328,7 @@ func (r *ReliableStreamClient) forwardAttempt(
 		if err := argumentWhitespace.observe(ev); err != nil {
 			return err, sawDone, forwardedEvents, finalizedToolCalls
 		}
-		if err := attempt.ObserveStreamEvent(ev); err != nil {
+		if err := r.observeAttemptEvent(attempt, ev); err != nil {
 			return err, sawDone, forwardedEvents, finalizedToolCalls
 		}
 		if !connected {
@@ -368,6 +368,17 @@ func (r *ReliableStreamClient) forwardAttempt(
 			return nil, sawDone, forwardedEvents, finalizedToolCalls
 		}
 	}
+}
+
+func (r *ReliableStreamClient) OwnsStreamAccounting() bool { return true }
+
+func (r *ReliableStreamClient) observeAttemptEvent(attempt InferenceAttempt, event StreamEvent) error {
+	if owner, ok := r.inner.(StreamAccountingOwner); ok && owner.OwnsStreamAccounting() {
+		// This stream may already contain plugin-modified presentation usage.
+		// The lower boundary is the sole observer of physical provider evidence.
+		return attempt.JournalError()
+	}
+	return attempt.ObserveStreamEvent(event)
 }
 
 func (r *ReliableStreamClient) sendLifecycle(

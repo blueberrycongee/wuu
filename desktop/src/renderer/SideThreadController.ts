@@ -32,7 +32,7 @@ export type SideThreadController = {
   toggle: () => void;
   setDraft: (draft: string) => void;
   setDraftSelection: (selection: SideThreadSelection | undefined) => void;
-  sendMessage: (prompt: string) => void;
+  sendMessage: (prompt: string, commandID?: string) => void;
   interrupt: () => void;
   reset: () => void;
   sendDisabledReason?: string;
@@ -43,6 +43,7 @@ export type SideThreadControllerOptions = {
   activeThreadId: string | undefined;
   activeContext?: RuntimeContext;
   ipc?: SideThreadIPC;
+  commandID?: string;
   disabled?: boolean;
   disabledReason?: string;
 };
@@ -88,7 +89,7 @@ export function useSideThreadController(
   options: SideThreadControllerOptions
 ): SideThreadController {
   const { t } = useI18n();
-  const { activeThreadId, activeContext, ipc, disabled, disabledReason } = options;
+  const { activeThreadId, activeContext, ipc, disabled, disabledReason, commandID } = options;
   const ipcImpl = ipc ?? defaultIPC();
   const effectiveDisabled = Boolean(disabled || !ipcImpl);
   const effectiveReason = !ipcImpl
@@ -96,6 +97,9 @@ export function useSideThreadController(
     : disabled
       ? disabledReason ?? t("sideThread.unavailable")
       : undefined;
+
+  const disabledRef = useRef(effectiveDisabled);
+  disabledRef.current = effectiveDisabled;
 
   const [store, setStore] = useState<SideThreadStoreState>(() =>
     createInitialSideThreadStore()
@@ -143,7 +147,7 @@ export function useSideThreadController(
   }, [activeThreadId]);
 
   useEffect(() => {
-    if (!activeThreadId || !activeRuntimeKey || !ipcImpl) {
+    if (!activeThreadId || !activeRuntimeKey || !ipcImpl || effectiveDisabled) {
       lastActiveRuntimeKeyRef.current = activeRuntimeKey;
       return;
     }
@@ -159,6 +163,7 @@ export function useSideThreadController(
     const generation = (openGenerationRef.current.get(activeRuntimeKey) ?? 0) + 1;
     openGenerationRef.current.set(activeRuntimeKey, generation);
     const isCurrentRequest = () =>
+      !disabledRef.current &&
       !cancelled &&
       activeRuntimeKeyRef.current === activeRuntimeKey &&
       openGenerationRef.current.get(activeRuntimeKey) === generation;
@@ -202,13 +207,14 @@ export function useSideThreadController(
     return () => {
       cancelled = true;
     };
-  }, [activeRuntimeKey, activeThreadId, ipcImpl]);
+  }, [activeRuntimeKey, activeThreadId, ipcImpl, effectiveDisabled]);
 
   useEffect(() => {
     if (
       !activeThreadId ||
       !activeRuntimeKey ||
       !ipcImpl ||
+      effectiveDisabled ||
       !entry?.open ||
       entry.summary?.status !== "running"
     ) {
@@ -253,10 +259,10 @@ export function useSideThreadController(
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeRuntimeKey, activeThreadId, entry?.open, entry?.summary?.status, ipcImpl]);
+  }, [activeRuntimeKey, activeThreadId, entry?.open, entry?.summary?.status, ipcImpl, effectiveDisabled]);
 
   const open = useCallback(() => {
-    if (!activeThreadId) {
+    if (!activeThreadId || disabled) {
       return;
     }
     dispatch({ type: "open", mainThreadId: activeThreadId });
@@ -268,6 +274,7 @@ export function useSideThreadController(
     const generation = (openGenerationRef.current.get(activeRuntimeKey) ?? 0) + 1;
     openGenerationRef.current.set(activeRuntimeKey, generation);
     const isCurrentRequest = () =>
+      !disabledRef.current &&
       activeRuntimeKeyRef.current === activeRuntimeKey &&
       openGenerationRef.current.get(activeRuntimeKey) === generation;
 
@@ -345,7 +352,7 @@ export function useSideThreadController(
   }, [activeThreadId, dispatch]);
 
   const sendMessage = useCallback(
-    (prompt: string) => {
+    (prompt: string, selectedCommandID = commandID) => {
       if (!activeThreadId || !activeContext || !ipcImpl || effectiveDisabled) {
         return;
       }
@@ -402,6 +409,7 @@ export function useSideThreadController(
           const result = await ipcImpl.sendSideThreadMessage({
             main_thread_id: activeThreadId,
             prompt: trimmed,
+            ...(selectedCommandID ? { command_id: selectedCommandID } : {}),
             ...(selection ? { selection } : {})
           });
           setStore((previous) => {
@@ -464,7 +472,7 @@ export function useSideThreadController(
         }
       });
     },
-    [activeContext, activeThreadId, effectiveDisabled, ipcImpl]
+    [activeContext, activeThreadId, effectiveDisabled, ipcImpl, commandID]
   );
 
   const interrupt = useCallback(() => {

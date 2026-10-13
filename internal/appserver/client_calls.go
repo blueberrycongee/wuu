@@ -61,7 +61,7 @@ func (s *Server) callClient(ctx context.Context, method string, params any) (jso
 		s.clientCallMu.Unlock()
 	}
 
-	if err := s.writeJSON(Request{
+	if err := s.writeJSONContext(ctx, Request{
 		ID:     json.RawMessage(strconv.Quote(id)),
 		Method: method,
 		Params: json.RawMessage(payload),

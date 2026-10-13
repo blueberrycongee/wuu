@@ -20,6 +20,11 @@ for (const name of requiredBinaries) {
   if (!(statSync(path).mode & 0o111)) throw new Error(`${name} is not executable`);
   execFileSync("codesign", ["--verify", "--strict", ...requirementArgs, path]);
 }
+const rg = join(app, "Contents", "Resources", "tools", "rg");
+if (!(statSync(rg).mode & 0o111)) throw new Error("bundled rg is not executable");
+execFileSync("codesign", ["--verify", "--strict", ...requirementArgs, rg]);
+execFileSync(rg, ["--version"]);
+statSync(join(app, "Contents", "Resources", "licenses", "ripgrep", "LICENSE-MIT"));
 if (skipCua) {
   for (const name of ["wuu-cua-mac", "wuu-cua-mac-pip"]) {
     try {

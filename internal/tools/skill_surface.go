@@ -31,7 +31,7 @@ func skillAllowedBySurface(skill skills.Skill, surface capability.Surface) bool 
 	if surface.ProfileName == "" {
 		return true
 	}
-	if !surfaceHasVisibleCapability(surface, capability.CapabilityCommandBash) && skillMentionsTerminalOnlyPath(skill) {
+	if !skillSurfaceHasCapability(surface, capability.CapabilityCommandBash) && skillMentionsTerminalOnlyPath(skill) {
 		return false
 	}
 	if len(skill.AllowedTools) == 0 {
@@ -41,9 +41,6 @@ func skillAllowedBySurface(skill skills.Skill, surface capability.Surface) bool 
 		name := strings.TrimSpace(raw)
 		if name == "" {
 			continue
-		}
-		if !isKnownSurfaceSkillTool(name) {
-			return false
 		}
 		if !surfaceAllowsSkillTool(surface, name) {
 			return false
@@ -66,11 +63,14 @@ func surfaceAllowsSkillTool(surface capability.Surface, name string) bool {
 	if _, ok := surface.NestedTools[name]; ok {
 		return true
 	}
+	if _, ok := surface.ContributedTools[name]; ok {
+		return true
+	}
 	switch name {
 	case "bash":
-		return surfaceHasVisibleCapability(surface, capability.CapabilityCommandBash)
+		return skillSurfaceHasCapability(surface, capability.CapabilityCommandBash)
 	case "process":
-		return surfaceHasVisibleCapability(surface, capability.CapabilityCommandBackground)
+		return skillSurfaceHasCapability(surface, capability.CapabilityCommandBackground)
 	case "git":
 		return false
 	default:
@@ -78,19 +78,17 @@ func surfaceAllowsSkillTool(surface capability.Surface, name string) bool {
 	}
 }
 
-func isKnownSurfaceSkillTool(name string) bool {
-	switch strings.TrimSpace(name) {
-	case "read_file", "list_files", "write_file", "edit_file", "apply_patch",
-		"grep", "glob",
-		"bash", "process", "git",
-		"tool_search", "load_skill",
-		"web_fetch", "web_search",
-		"wuu_browser",
-		"list_agent_profiles", "create_agent_profile":
-		return true
-	default:
-		return false
+// Profile capability flags describe the underlying model, not session tool
+// restrictions. Skill aliases require a concrete callable tool on this surface.
+func skillSurfaceHasCapability(surface capability.Surface, capabilityName capability.Capability) bool {
+	for _, names := range []map[string]capability.Capability{surface.Tools, surface.NestedTools} {
+		for _, available := range names {
+			if available == capabilityName {
+				return true
+			}
+		}
 	}
+	return false
 }
 
 func skillMentionsTerminalOnlyPath(skill skills.Skill) bool {

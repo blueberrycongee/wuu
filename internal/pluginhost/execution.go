@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// Execution scope vocabulary. One execution is exactly one tool.execute or
-// capability.invoke dispatch: open rides the invoke frame itself (the
+// Execution scope vocabulary. One execution is one tool.execute,
+// capability.invoke or tracked service.invoke callback: open rides the invoke frame itself (the
 // execution_id param), close rides its response, and cancel is the only
 // mid-flight frame. Cancel is fire-and-forget on the host side — the core's
 // terminal state never waits for a plugin acknowledgement, and any response
@@ -57,10 +57,12 @@ type ExecutionSnapshot struct {
 	UpdatedAt time.Time       `json:"updated_at,omitempty"`
 }
 
-type ToolExecutionScope struct {
+type ExecutionScope struct {
 	ExecutionSnapshot
 	Context context.Context
 }
+
+type ToolExecutionScope = ExecutionScope
 
 type executionRecord struct {
 	snapshot *ExecutionSnapshot
@@ -100,7 +102,7 @@ func (t *ExecutionTracker) begin(pluginID string, ctx context.Context, input Too
 		ctx = context.Background()
 	}
 	id := fmt.Sprintf("exec-%d", t.seq.Add(1))
-	executionCtx, cancel := context.WithCancelCause(ctx)
+	executionCtx, cancel := context.WithCancelCause(bindModelEventExecution(ctx, pluginID, id))
 	t.mu.Lock()
 	t.live[id] = &executionRecord{
 		snapshot: &ExecutionSnapshot{
@@ -169,6 +171,16 @@ func (t *ExecutionTracker) CancelPlugin(pluginID string, cause error) {
 }
 
 func (t *ExecutionTracker) ResolveTool(callerPluginID, executionID string) (ToolExecutionScope, *HostServiceError) {
+	return t.resolve(callerPluginID, executionID, true)
+}
+
+// Resolve accepts any live host-owned invocation, including service callbacks
+// and client-request capabilities without a session. It never grants tool access.
+func (t *ExecutionTracker) Resolve(callerPluginID, executionID string) (ExecutionScope, *HostServiceError) {
+	return t.resolve(callerPluginID, executionID, false)
+}
+
+func (t *ExecutionTracker) resolve(callerPluginID, executionID string, requireTool bool) (ExecutionScope, *HostServiceError) {
 	id := strings.TrimSpace(executionID)
 	if id == "" {
 		return ToolExecutionScope{}, &HostServiceError{Code: "invalid_request", Message: "execution-scoped service requires execution_id"}
@@ -182,7 +194,7 @@ func (t *ExecutionTracker) ResolveTool(callerPluginID, executionID string) (Tool
 	if record.snapshot.PluginID != callerPluginID {
 		return ToolExecutionScope{}, &HostServiceError{Code: "service_not_authorized", Message: fmt.Sprintf("execution %s belongs to plugin %q", id, record.snapshot.PluginID)}
 	}
-	if !record.tool || strings.TrimSpace(record.snapshot.ThreadID) == "" || strings.TrimSpace(record.snapshot.TurnID) == "" || strings.TrimSpace(record.snapshot.CallID) == "" {
+	if requireTool && (!record.tool || strings.TrimSpace(record.snapshot.ThreadID) == "" || strings.TrimSpace(record.snapshot.TurnID) == "" || strings.TrimSpace(record.snapshot.CallID) == "") {
 		return ToolExecutionScope{}, &HostServiceError{Code: "invalid_execution_scope", Message: "service requires a live scoped tool execution"}
 	}
 	return ToolExecutionScope{ExecutionSnapshot: *record.snapshot, Context: record.ctx}, nil

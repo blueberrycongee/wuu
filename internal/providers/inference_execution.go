@@ -69,6 +69,9 @@ type InferenceSubmission struct {
 	OutputBytes     int
 
 	execution *InferenceExecution
+	// Stream observations are fallback evidence. A terminal receipt supplied
+	// explicitly by the protocol client takes precedence over buffered deltas.
+	usageFromStream bool
 }
 
 func (s InferenceSubmission) Valid() bool {
@@ -118,33 +121,41 @@ func (s InferenceSubmission) ObserveEstimatedUsage(usage *TokenUsage) {
 }
 
 func (s InferenceSubmission) ObserveUsage(usage *TokenUsage) {
+	s.observeUsage(usage, false)
+}
+
+func (s InferenceSubmission) observeUsage(usage *TokenUsage, fromStream bool) {
 	if !s.mutable() || usage == nil {
 		return
 	}
 	copyUsage := *usage
 	s.execution.updateSubmission(s.ID, func(current *InferenceSubmission) {
+		if fromStream && current.Outcome != InferenceSubmissionInFlight && current.CostState == InferenceCostKnown && !current.usageFromStream {
+			return
+		}
 		current.CostState = InferenceCostKnown
 		current.ReportedUsage = &copyUsage
+		current.usageFromStream = fromStream
 	})
 }
 
 func (s InferenceSubmission) CompleteSuccess(usage *TokenUsage) {
-	s.complete(InferenceSubmissionSucceeded, NormalizedFailure{}, usage)
+	s.complete(InferenceSubmissionSucceeded, NormalizedFailure{}, usage, false)
 }
 
 func (s InferenceSubmission) CompleteFailure(failure NormalizedFailure) {
-	s.complete(InferenceSubmissionFailed, failure, nil)
+	s.complete(InferenceSubmissionFailed, failure, nil, false)
 }
 
 func (s InferenceSubmission) CompleteFallback(failure NormalizedFailure) {
-	s.complete(InferenceSubmissionFallback, failure, nil)
+	s.complete(InferenceSubmissionFallback, failure, nil, false)
 }
 
 func (s InferenceSubmission) Abandon() {
-	s.complete(InferenceSubmissionAbandoned, NormalizedFailure{}, nil)
+	s.complete(InferenceSubmissionAbandoned, NormalizedFailure{}, nil, false)
 }
 
-func (s InferenceSubmission) complete(outcome InferenceSubmissionOutcome, failure NormalizedFailure, usage *TokenUsage) {
+func (s InferenceSubmission) complete(outcome InferenceSubmissionOutcome, failure NormalizedFailure, usage *TokenUsage, fromStream bool) {
 	if !s.mutable() {
 		return
 	}
@@ -155,9 +166,10 @@ func (s InferenceSubmission) complete(outcome InferenceSubmissionOutcome, failur
 	}
 	s.execution.updateSubmission(s.ID, func(current *InferenceSubmission) {
 		if current.Outcome != InferenceSubmissionInFlight {
-			if copyUsage != nil && current.CostState != InferenceCostKnown {
+			if copyUsage != nil && (current.CostState != InferenceCostKnown || !fromStream || current.usageFromStream) {
 				current.CostState = InferenceCostKnown
 				current.ReportedUsage = copyUsage
+				current.usageFromStream = fromStream
 			}
 			return
 		}
@@ -167,6 +179,7 @@ func (s InferenceSubmission) complete(outcome InferenceSubmissionOutcome, failur
 		if copyUsage != nil {
 			current.CostState = InferenceCostKnown
 			current.ReportedUsage = copyUsage
+			current.usageFromStream = fromStream
 			return
 		}
 		// Terminal without reported usage: settle on the conservative
@@ -560,9 +573,9 @@ func (a InferenceAttempt) ObserveStreamEvent(event StreamEvent) error {
 	case EventContentDelta, EventThinkingDelta, EventToolUseDelta:
 		submission.ObserveOutput(event.Content)
 	case EventUsage:
-		submission.ObserveUsage(event.Usage)
+		submission.observeUsage(event.Usage, true)
 	case EventDone:
-		submission.CompleteSuccess(event.Usage)
+		submission.complete(InferenceSubmissionSucceeded, NormalizedFailure{}, event.Usage, true)
 	case EventError:
 		err := event.Error
 		if err == nil {

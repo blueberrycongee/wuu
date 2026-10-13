@@ -105,6 +105,7 @@ const (
 	KernelUserQuestionAskService        = "host.user-question.ask"
 	KernelUserQuestionOfferService      = "host.user-question.offer"
 	KernelArtifactImportService         = "host.artifact.import"
+	KernelModelRequestService           = "host.model.request"
 	KernelServiceMethod                 = "call"
 )
 
@@ -209,8 +210,10 @@ type ToolDisplay struct {
 type ToolActivity struct {
 	// Orchestrator delegates effects through execution.invoke-tool. It does not
 	// occupy a leaf scheduling slot while its child calls execute.
-	Orchestrator    bool   `json:"orchestrator,omitempty"`
-	ReadOnly        bool   `json:"read_only,omitempty"`
+	Orchestrator bool `json:"orchestrator,omitempty"`
+	ReadOnly     bool `json:"read_only,omitempty"`
+	// ConcurrencySafe allows overlap with other explicitly safe tools.
+	// Ordinary callbacks and unsafe tools remain exclusive.
 	ConcurrencySafe bool   `json:"concurrency_safe,omitempty"`
 	Destructive     bool   `json:"destructive,omitempty"`
 	Risk            string `json:"risk,omitempty"`
@@ -259,11 +262,12 @@ type ProcessSandboxResult struct {
 }
 
 type Definition struct {
-	Tools                []Tool               `json:"tools,omitempty"`
-	Capabilities         []Capability         `json:"capabilities,omitempty"`
-	RequiredHostServices []HostService        `json:"required_host_services,omitempty"`
-	ProvidedServices     []Service            `json:"provided_services,omitempty"`
-	RequiredServices     []ServiceRequirement `json:"required_services,omitempty"`
+	ModelAdapters        []ModelAdapterDescriptor `json:"model_adapters,omitempty"`
+	Tools                []Tool                   `json:"tools,omitempty"`
+	Capabilities         []Capability             `json:"capabilities,omitempty"`
+	RequiredHostServices []HostService            `json:"required_host_services,omitempty"`
+	ProvidedServices     []Service                `json:"provided_services,omitempty"`
+	RequiredServices     []ServiceRequirement     `json:"required_services,omitempty"`
 }
 
 type ToolCall struct {
@@ -284,14 +288,16 @@ type ToolCall struct {
 }
 
 type ContentPart struct {
-	Type     string                `json:"type"`
-	Text     string                `json:"text,omitempty"`
-	Data     string                `json:"data,omitempty"`
-	MIMEType string                `json:"mime_type,omitempty"`
-	URI      string                `json:"uri,omitempty"`
-	Name     string                `json:"name,omitempty"`
-	Resource json.RawMessage       `json:"resource,omitempty"`
-	Artifact *ArtifactPresentation `json:"artifact,omitempty"`
+	// RemoteRef is an output-only deferred-media reference carried by model snapshots.
+	RemoteRef string                `json:"remote_ref,omitempty"`
+	Type      string                `json:"type"`
+	Text      string                `json:"text,omitempty"`
+	Data      string                `json:"data,omitempty"`
+	MIMEType  string                `json:"mime_type,omitempty"`
+	URI       string                `json:"uri,omitempty"`
+	Name      string                `json:"name,omitempty"`
+	Resource  json.RawMessage       `json:"resource,omitempty"`
+	Artifact  *ArtifactPresentation `json:"artifact,omitempty"`
 }
 
 type ArtifactPresentation struct {
@@ -757,6 +763,50 @@ type ExecutionUpdate struct {
 	Detail      json.RawMessage `json:"detail,omitempty"`
 }
 
+// ModelRequestMessage is plain text with no attachments or tool calls.
+type ModelRequestMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// ModelRequestParams selects only configured host models. Messages contain
+// one to 32 nonempty entries and at most 256 KiB of UTF-8 content in total.
+type ModelRequestParams struct {
+	Messages   []ModelRequestMessage `json:"messages"`
+	ModelAlias string                `json:"model_alias,omitempty"`
+	// MaxOutputTokens is 1–8192; omitted defaults to 1024.
+	MaxOutputTokens int `json:"max_output_tokens,omitempty"`
+	// TimeoutMS is 1–45000 milliseconds; omitted defaults to 45000.
+	TimeoutMS int `json:"timeout_ms,omitempty"`
+}
+
+type ModelRequestUsage struct {
+	InputTokens          int  `json:"input_tokens"`
+	OutputTokens         int  `json:"output_tokens"`
+	CacheCreationTokens  int  `json:"cache_creation_tokens"`
+	CacheReadTokens      int  `json:"cache_read_tokens"`
+	CacheCreationUnknown bool `json:"cache_creation_unknown"`
+}
+
+type ModelRequestResult struct {
+	Text         string             `json:"text"`
+	Provider     string             `json:"provider"`
+	Model        string             `json:"model"`
+	FinishReason string             `json:"finish_reason"`
+	Truncated    bool               `json:"truncated"`
+	Usage        *ModelRequestUsage `json:"usage,omitempty"`
+}
+
+// RequestModel performs one bounded tools-free request. The plugin must declare
+// host.model.request v1 and call from a live tool, capability, or service callback
+// context, including a generation-owned background job's callback. Ending or
+// cancelling that execution cancels the model request.
+func RequestModel(ctx context.Context, host Host, input ModelRequestParams) (ModelRequestResult, error) {
+	var result ModelRequestResult
+	err := CallService(ctx, host, KernelModelRequestService, KernelServiceMethod, input, &result)
+	return result, err
+}
+
 type ArtifactImportParams struct {
 	Path     string `json:"path,omitempty"`
 	Data     string `json:"data,omitempty"`
@@ -844,8 +894,11 @@ func kernelServiceForLegacyMethod(method string) (string, bool) {
 type Handler struct {
 	// ConcurrentCapabilities names capability handlers that may overlap tool
 	// execution and each other. Opt in only for handlers safe under concurrent
-	// access; all other requests retain ordered dispatch. Initialize completes
-	// before these handlers run, and shutdown waits for them to finish.
+	// access; ordinary callbacks and tools without concurrency-safe metadata
+	// retain ordered dispatch. Initialize completes before these handlers run,
+	// and shutdown waits for them to finish.
+	// model.adapter and model.middleware are always reentrant so callbacks can
+	// delegate model work through the host without deadlocking their caller.
 	ConcurrentCapabilities []string
 
 	Definition       Definition
@@ -884,37 +937,51 @@ type Client struct {
 	executions *executionTable
 }
 
-// executionTable maps live execution IDs to their cancellation functions so
-// an out-of-band execution.cancel frame can preempt the exact running
-// execution. Entries are released when the dispatch returns; a cancel for an
-// unknown or already-closed ID is a no-op and can never hit a later
-// execution.
+// executionTable maps each live execution to all of its callbacks, including
+// nested service calls. Each dispatch releases only its own registration;
+// cancellation snapshots the current registrations and cannot hit a later
+// invocation that reuses the ID.
 type executionTable struct {
 	mu      sync.Mutex
-	cancels map[string]context.CancelFunc
+	cancels map[string]map[*executionRegistration]struct{}
+}
+
+type executionRegistration struct {
+	cancel context.CancelFunc
 }
 
 func newExecutionTable() *executionTable {
-	return &executionTable{cancels: make(map[string]context.CancelFunc)}
+	return &executionTable{cancels: make(map[string]map[*executionRegistration]struct{})}
 }
 
-func (t *executionTable) track(id string, cancel context.CancelFunc) {
+func (t *executionTable) track(id string, cancel context.CancelFunc) *executionRegistration {
+	registration := &executionRegistration{cancel: cancel}
 	t.mu.Lock()
-	t.cancels[id] = cancel
+	if t.cancels[id] == nil {
+		t.cancels[id] = make(map[*executionRegistration]struct{})
+	}
+	t.cancels[id][registration] = struct{}{}
 	t.mu.Unlock()
+	return registration
 }
 
-func (t *executionTable) release(id string) {
+func (t *executionTable) release(id string, registration *executionRegistration) {
 	t.mu.Lock()
-	delete(t.cancels, id)
+	delete(t.cancels[id], registration)
+	if len(t.cancels[id]) == 0 {
+		delete(t.cancels, id)
+	}
 	t.mu.Unlock()
 }
 
 func (t *executionTable) cancelExecution(id string) {
 	t.mu.Lock()
-	cancel := t.cancels[id]
+	cancels := make([]context.CancelFunc, 0, len(t.cancels[id]))
+	for registration := range t.cancels[id] {
+		cancels = append(cancels, registration.cancel)
+	}
 	t.mu.Unlock()
-	if cancel != nil {
+	for _, cancel := range cancels {
 		cancel()
 	}
 }
@@ -936,9 +1003,9 @@ func (c *Client) trackExecution(ctx context.Context, executionID string) (contex
 	}
 	execCtx, cancel := context.WithCancel(ctx)
 	execCtx = context.WithValue(execCtx, executionContextKey{}, executionID)
-	c.executions.track(executionID, cancel)
+	registration := c.executions.track(executionID, cancel)
 	return execCtx, func() {
-		c.executions.release(executionID)
+		c.executions.release(executionID, registration)
 		cancel()
 	}
 }
@@ -1062,10 +1129,16 @@ type rpcError struct {
 // goroutine that later reads any execution.cancel frame — so a cancel can
 // never arrive before the registration it targets.
 type queuedDispatch struct {
-	request rpcRequest
-	ctx     context.Context
-	release func()
+	request         rpcRequest
+	ctx             context.Context
+	release         func()
+	lifecycleDone   chan struct{}
+	priorConcurrent *sync.WaitGroup
 }
+
+// Keep one plugin from starting an unbounded number of tool handlers. Reentrant
+// capability callbacks use their own lane so nested host calls can still finish.
+const maxConcurrentTools = 8
 
 func Serve(ctx context.Context, handler Handler) error {
 	return ServeIO(ctx, os.Stdin, os.Stdout, handler)
@@ -1083,43 +1156,84 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 	incomingRequests := make(chan queuedDispatch)
 	requests := make(chan queuedDispatch)
 	workerDone := make(chan error, 1)
-	var initialized atomic.Bool
+	workerExited := make(chan struct{})
 	var concurrent sync.WaitGroup
 	defer func() {
 		cancel()
 		client.closeTransport(context.Canceled)
 		concurrent.Wait()
+		<-workerExited
 	}()
 	go queueRequests(serveCtx, incomingRequests, requests)
 	go func() {
+		defer close(workerExited)
+		// Only the queue worker admits tools. Waiting for a slot never blocks
+		// the transport reader, which must keep routing replies and cancels.
+		finished := make(chan error, maxConcurrentTools)
+		running := 0
+		var workerErr error
+		waitTool := func() {
+			if err := <-finished; err != nil && workerErr == nil {
+				workerErr = err
+				client.closeTransport(err)
+				cancel()
+			}
+			running--
+		}
+		defer func() {
+			for running > 0 {
+				waitTool()
+			}
+			workerDone <- workerErr
+		}()
 		for envelope := range requests {
-			if envelope.request.Method == "shutdown" {
-				concurrent.Wait()
+			safe := false
+			if envelope.request.Method == "tool.execute" {
+				var call ToolCall
+				if json.Unmarshal(envelope.request.Params, &call) == nil {
+					for _, tool := range handler.Definition.Tools {
+						if tool.ID == call.ToolID {
+							safe = tool.Activity != nil && tool.Activity.ConcurrencySafe
+							break
+						}
+					}
+				}
 			}
-			result, stop, err := dispatch(envelope.ctx, client, handler, envelope.request)
-			if envelope.request.Method == "initialize" && err == nil {
-				initialized.Store(true)
+			if safe {
+				if running == maxConcurrentTools {
+					waitTool()
+				}
+				running++
+				go func() {
+					_, err := respondToDispatch(client, handler, envelope)
+					finished <- err
+				}()
+				continue
 			}
-			if envelope.release != nil {
-				envelope.release()
+			// Unsafe tools and ordinary callbacks form FIFO barriers across all
+			// execution IDs. Explicitly reentrant callbacks bypass this queue.
+			for running > 0 {
+				waitTool()
 			}
-			response := rpcResponse{ID: envelope.request.ID, Result: result}
+			if envelope.priorConcurrent != nil {
+				envelope.priorConcurrent.Wait()
+			}
+			stop, err := respondToDispatch(client, handler, envelope)
 			if err != nil {
-				response = rpcResponse{ID: envelope.request.ID, Error: &rpcError{Message: err.Error()}}
-			}
-			if writeErr := client.write(response); writeErr != nil {
-				workerDone <- writeErr
+				workerErr = err
 				return
 			}
 			if stop {
-				workerDone <- nil
 				return
 			}
 		}
-		workerDone <- nil
 	}()
 
 	acceptConcurrent := true
+	initializationSeen := false
+	lifecycleReady := make(chan struct{})
+	close(lifecycleReady)
+	concurrentEpoch := &sync.WaitGroup{}
 	for scanner.Scan() {
 		if err := serveCtx.Err(); err != nil {
 			client.closeTransport(err)
@@ -1159,25 +1273,40 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 			_ = json.Unmarshal(request.Params, &probe)
 			envelope.ctx, envelope.release = client.trackExecution(serveCtx, probe.ExecutionID)
 		}
+		if request.Method == "initialize" {
+			initializationSeen = true
+		}
+		if request.Method == "initialize" || request.Method == "activate" || request.Method == "shutdown" {
+			// Each lifecycle waits only for concurrency admitted before its frame.
+			// Later callbacks wait for this barrier outside the serial work queue,
+			// so ordinary handlers after activation can still reenter an adapter.
+			envelope.priorConcurrent = concurrentEpoch
+			envelope.lifecycleDone = make(chan struct{})
+			lifecycleReady = envelope.lifecycleDone
+			concurrentEpoch = &sync.WaitGroup{}
+		}
 		if request.Method == "shutdown" {
 			acceptConcurrent = false
 		}
-		if acceptConcurrent && initialized.Load() && request.Method == "capability.invoke" {
+		if acceptConcurrent && initializationSeen && request.Method == "capability.invoke" {
 			var call CapabilityCall
 			_ = json.Unmarshal(request.Params, &call)
-			if slices.Contains(handler.ConcurrentCapabilities, call.Capability) {
+			if call.Capability == CapabilityModelAdapter || call.Capability == CapabilityModelMiddleware || slices.Contains(handler.ConcurrentCapabilities, call.Capability) {
+				ready, epoch := lifecycleReady, concurrentEpoch
 				concurrent.Add(1)
+				epoch.Add(1)
 				go func() {
 					defer concurrent.Done()
-					if envelope.release != nil {
-						defer envelope.release()
+					defer epoch.Done()
+					select {
+					case <-ready:
+					case <-serveCtx.Done():
+						if envelope.release != nil {
+							envelope.release()
+						}
+						return
 					}
-					result, _, err := dispatch(envelope.ctx, client, handler, envelope.request)
-					response := rpcResponse{ID: envelope.request.ID, Result: result}
-					if err != nil {
-						response = rpcResponse{ID: envelope.request.ID, Error: &rpcError{Message: err.Error()}}
-					}
-					if err := client.write(response); err != nil {
+					if _, err := respondToDispatch(client, handler, envelope); err != nil {
 						client.closeTransport(err)
 						cancel()
 					}
@@ -1206,6 +1335,24 @@ func ServeIO(ctx context.Context, input io.Reader, output io.Writer, handler Han
 		return readErr
 	}
 	return workerErr
+}
+
+func respondToDispatch(client *Client, handler Handler, envelope queuedDispatch) (bool, error) {
+	if envelope.release != nil {
+		defer envelope.release()
+	}
+	result, stop, err := dispatch(envelope.ctx, client, handler, envelope.request)
+	response := rpcResponse{ID: envelope.request.ID, Result: result}
+	if err != nil {
+		response = rpcResponse{ID: envelope.request.ID, Error: &rpcError{Message: err.Error()}}
+	}
+	if err := client.write(response); err != nil {
+		return false, err
+	}
+	if envelope.lifecycleDone != nil {
+		close(envelope.lifecycleDone)
+	}
+	return stop, nil
 }
 
 // queueRequests keeps host requests ordered without allowing handler backpressure
@@ -1318,6 +1465,11 @@ func dispatch(ctx context.Context, client *Client, handler Handler, request rpcR
 		if err := json.Unmarshal(request.Params, &call); err != nil {
 			return nil, false, err
 		}
+		// Cancellation may arrive while this request waits in the dispatch
+		// queue. Do not enter user code after its execution has been cancelled.
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		result, err := handler.ExecuteTool(ctx, client, call)
 		if err != nil {
 			return nil, false, err
@@ -1331,6 +1483,9 @@ func dispatch(ctx context.Context, client *Client, handler Handler, request rpcR
 		}
 		var call CapabilityCall
 		if err := json.Unmarshal(request.Params, &call); err != nil {
+			return nil, false, err
+		}
+		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
 		value, err := handler.InvokeCapability(ctx, client, call)
@@ -1349,6 +1504,9 @@ func dispatch(ctx context.Context, client *Client, handler Handler, request rpcR
 		}
 		var call ServiceCall
 		if err := json.Unmarshal(request.Params, &call); err != nil {
+			return nil, false, err
+		}
+		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
 		value, err := handler.InvokeService(ctx, client, call)

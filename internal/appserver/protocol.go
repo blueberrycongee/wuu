@@ -51,6 +51,7 @@ const (
 	MethodPluginStorageGet                = "plugin/storage/get"
 	MethodPluginStorageSet                = "plugin/storage/set"
 	MethodPluginClientRequest             = "plugin/client/request"
+	MethodPluginClientCancel              = "plugin/client/cancel"
 	MethodUserQuestionList                = "user-question/list"
 	MethodUserQuestionRespond             = "user-question/respond"
 	MethodUserQuestionCancel              = "user-question/cancel"
@@ -112,6 +113,7 @@ const (
 	MethodProcessWrite                    = "process/write"
 	MethodProcessResize                   = "process/resize"
 	MethodProcessStop                     = "process/stop"
+	MethodProcessCancelNotifications      = "process/cancel-notifications"
 	MethodMCPList                         = "mcp/list"
 	MethodMCPConnect                      = "mcp/connect"
 	MethodMCPDisconnect                   = "mcp/disconnect"
@@ -149,6 +151,11 @@ const (
 	MethodBrowserCloseTab      = "browser/close_tab"
 	MethodBrowserSetVisibility = "browser/set_visibility"
 	MethodBrowserListTabs      = "browser/list_tabs"
+	MethodBrowserTurnEnded     = "browser/turn_ended"
+	MethodBrowserFinalize      = "browser/finalize"
+
+	NotificationBrowserRequestCancelled = "browser/request_cancelled"
+	NotificationBrowserTurnStarted      = "browser/turn_started"
 
 	NotificationThreadStarted          = "thread/started"
 	NotificationThreadResumed          = "thread/resumed"
@@ -336,12 +343,17 @@ type clientResponse struct {
 // packages/protocol/src/index.ts. None carry an activity_id: the desktop client
 // auto-rejects server requests whose activity_id names a stopped activity
 // (activityServerRequestRejection), which would wedge a CDP call the moment a
-// tab's activity is torn down. Tab addressing is by tab_id alone.
+// tab's activity is torn down. Every request carries the bridge-owned thread_id; the host rejects
+// attempts to list, close, or operate another thread's tab.
 type BrowserCDPParams struct {
-	Workdir string          `json:"workdir"`
-	TabID   string          `json:"tab_id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
+	ExecutionID string          `json:"execution_id,omitempty"`
+	ThreadID    string          `json:"thread_id"`
+	TurnID      string          `json:"turn_id,omitempty"`
+	RequestID   string          `json:"request_id,omitempty"`
+	Workdir     string          `json:"workdir"`
+	TabID       string          `json:"tab_id"`
+	Method      string          `json:"method"`
+	Params      json.RawMessage `json:"params,omitempty"`
 }
 
 type BrowserCDPResult struct {
@@ -354,10 +366,14 @@ type BrowserCDPResult struct {
 }
 
 type BrowserScreenshotParams struct {
-	Workdir  string `json:"workdir"`
-	TabID    string `json:"tab_id"`
-	DestPath string `json:"dest_path"`
-	Format   string `json:"format,omitempty"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
+	Workdir     string `json:"workdir"`
+	TabID       string `json:"tab_id"`
+	DestPath    string `json:"dest_path"`
+	Format      string `json:"format,omitempty"`
 }
 
 type BrowserScreenshotResult struct {
@@ -367,30 +383,99 @@ type BrowserScreenshotResult struct {
 }
 
 type BrowserOpenTabParams struct {
-	Workdir    string `json:"workdir"`
-	TabID      string `json:"tab_id"`
-	InitialURL string `json:"initial_url,omitempty"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
+	Workdir     string `json:"workdir"`
+	TabID       string `json:"tab_id"`
+	InitialURL  string `json:"initial_url,omitempty"`
 }
 
 type BrowserCloseTabParams struct {
-	Workdir string `json:"workdir"`
-	TabID   string `json:"tab_id"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
+	Workdir     string `json:"workdir"`
+	TabID       string `json:"tab_id"`
 }
 
 type BrowserSetVisibilityParams struct {
-	Workdir string `json:"workdir"`
-	TabID   string `json:"tab_id"`
-	Visible bool   `json:"visible"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
+	Workdir     string `json:"workdir"`
+	TabID       string `json:"tab_id"`
+	Visible     bool   `json:"visible"`
 }
 
 type BrowserListTabsParams struct {
-	Workdir string `json:"workdir"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id,omitempty"`
+	RequestID   string `json:"request_id,omitempty"`
+	Workdir     string `json:"workdir"`
+}
+
+// BrowserRequestCancelledParams revokes one in-flight desktop operation after
+// its caller has stopped waiting. New requests keep their own independent ID.
+type BrowserRequestCancelledParams struct {
+	Workdir   string `json:"workdir"`
+	ThreadID  string `json:"thread_id"`
+	RequestID string `json:"request_id"`
 }
 
 type BrowserListedTab struct {
-	TabID string `json:"tab_id"`
-	URL   string `json:"url,omitempty"`
-	Title string `json:"title,omitempty"`
+	TabID  string `json:"tab_id"`
+	URL    string `json:"url,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
+// BrowserTurnStartedParams announces an immutable execution identity before
+// its first browser request. A workspace rebind announces each touched scope.
+type BrowserTurnStartedParams struct {
+	ExecutionID string `json:"execution_id"`
+	Workdir     string `json:"workdir"`
+	ThreadID    string `json:"thread_id"`
+	TurnID      string `json:"turn_id"`
+}
+
+type BrowserKeptTab struct {
+	TabID  string `json:"tab_id"`
+	Status string `json:"status"`
+}
+
+// BrowserTurnEndedParams releases browser control independently of a cancelled
+// tool context. Only the matching active turn may close temporary tabs. User
+// pages and keep survive; preserve_all is the safe fallback on a store error.
+type BrowserTurnEndedParams struct {
+	ExecutionID string           `json:"execution_id"`
+	Workdir     string           `json:"workdir"`
+	ThreadID    string           `json:"thread_id"`
+	TurnID      string           `json:"turn_id"`
+	Keep        []BrowserKeptTab `json:"keep"`
+	PreserveAll bool             `json:"preserve_all,omitempty"`
+}
+
+type BrowserTurnEndedResult struct {
+	Tabs   []BrowserListedTab `json:"tabs,omitempty"`
+	Closed []string           `json:"closed"`
+	Kept   []string           `json:"kept"`
+	Stale  bool               `json:"stale,omitempty"`
+}
+
+// BrowserFinalizeParams selects kept pages atomically, including live opener
+// ancestors, before closing temporary pages. It does not end the active turn.
+type BrowserFinalizeParams struct {
+	ExecutionID string           `json:"execution_id,omitempty"`
+	Workdir     string           `json:"workdir"`
+	ThreadID    string           `json:"thread_id"`
+	TurnID      string           `json:"turn_id,omitempty"`
+	RequestID   string           `json:"request_id,omitempty"`
+	Keep        []BrowserKeptTab `json:"keep"`
 }
 
 type BrowserListTabsResult struct {
@@ -624,8 +709,9 @@ const (
 type ExtensionCommandKind string
 
 const (
-	ExtensionCommandPromptTemplate ExtensionCommandKind = "prompt_template"
-	ExtensionCommandRuntimeAction  ExtensionCommandKind = "runtime_action"
+	ExtensionCommandPromptTemplate   ExtensionCommandKind = "prompt_template"
+	ExtensionCommandRuntimeAction    ExtensionCommandKind = "runtime_action"
+	ExtensionCommandSideConversation ExtensionCommandKind = "side_conversation"
 )
 
 type ExtensionCommandDescriptor struct {
@@ -780,6 +866,7 @@ type ExtensionInventoryRecord struct {
 	Conflicts            []string                         `json:"conflicts,omitempty"`
 	ActivationIssues     []ExtensionPluginActivationIssue `json:"activation_issues,omitempty"`
 	Enabled              *bool                            `json:"enabled,omitempty"`
+	EnabledOverride      *bool                            `json:"enabled_override,omitempty"`
 	Desktop              *ExtensionDesktopDescriptor      `json:"desktop,omitempty"`
 	Contributions        *ExtensionContributions          `json:"contributions,omitempty"`
 	PendingUpdate        *ExtensionPendingUpdate          `json:"pending_update,omitempty"`
@@ -1029,24 +1116,26 @@ type AuthXAILoginCancelParams struct {
 }
 
 type ConfigModelUpdateResult struct {
-	Provider         string                  `json:"provider"`
-	Model            string                  `json:"model"`
-	Effort           string                  `json:"effort,omitempty"`
-	Variant          string                  `json:"variant,omitempty"`
-	MaxParallel      int                     `json:"max_parallel"`
-	Permissions      PermissionSummary       `json:"permissions"`
-	ExtensionTrust   ExtensionTrustSummary   `json:"extension_trust"`
-	ModelProfile     *ModelProfileSummary    `json:"model_profile,omitempty"`
-	ToolSurface      *ToolSurfaceSummary     `json:"tool_surface,omitempty"`
-	ModelRoles       []ModelRoleSummary      `json:"model_roles,omitempty"`
-	Providers        []ProviderSummary       `json:"providers,omitempty"`
-	AdvancedSettings AdvancedSettingsSummary `json:"advanced_settings"`
+	ProjectModels    config.ProjectModelsConfig   `json:"project_models"`
+	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases"`
+	Provider         string                       `json:"provider"`
+	Model            string                       `json:"model"`
+	Effort           string                       `json:"effort,omitempty"`
+	Variant          string                       `json:"variant,omitempty"`
+	MaxParallel      int                          `json:"max_parallel"`
+	Permissions      PermissionSummary            `json:"permissions"`
+	ExtensionTrust   ExtensionTrustSummary        `json:"extension_trust"`
+	ModelProfile     *ModelProfileSummary         `json:"model_profile,omitempty"`
+	ToolSurface      *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
+	ModelRoles       []ModelRoleSummary           `json:"model_roles,omitempty"`
+	Providers        []ProviderSummary            `json:"providers,omitempty"`
+	AdvancedSettings AdvancedSettingsSummary      `json:"advanced_settings"`
 }
 
 // ConfigProviderRemoveParams requests the deletion of a configured
 // provider. The handler enforces the same safety guards as the
 // existing config handlers (no removal of the last provider, no
-// removal of OAuth/connection-locked providers, and no removal of a
+// removal of OpenAI OAuth-managed providers, and no removal of a
 // provider currently used by a running turn) and atomically swaps the
 // default provider to FallbackProvider when the removed provider was
 // active.
@@ -1060,12 +1149,11 @@ type ConfigProviderRemoveParams struct {
 	Provider string `json:"provider"`
 	// FallbackProvider becomes the new default_provider if the removed
 	// provider was the active one. Optional; server picks another
-	// existing provider when empty. Required when removing the last
-	// remaining provider so the runtime still has a model to use.
+	// existing provider when empty. Removing the last provider is rejected.
 	FallbackProvider string `json:"fallback_provider,omitempty"`
 	// FallbackModel is applied to the new default provider after the
-	// swap so the runtime has a model to use. Optional; server reuses
-	// the removed provider's model when empty.
+	// swap so the runtime has a model to use. Optional; server uses
+	// the replacement provider's selected model when empty.
 	FallbackModel string `json:"fallback_model,omitempty"`
 }
 
@@ -1074,16 +1162,18 @@ type ConfigProviderRemoveParams struct {
 // merge provider/model/permissions into the initialized state, so the shape
 // intentionally matches that result.
 type ConfigProviderRemoveResult struct {
-	Provider         string                  `json:"provider"`
-	Model            string                  `json:"model"`
-	Variant          string                  `json:"variant,omitempty"`
-	Permissions      PermissionSummary       `json:"permissions"`
-	ExtensionTrust   ExtensionTrustSummary   `json:"extension_trust"`
-	ModelProfile     *ModelProfileSummary    `json:"model_profile,omitempty"`
-	ToolSurface      *ToolSurfaceSummary     `json:"tool_surface,omitempty"`
-	ModelRoles       []ModelRoleSummary      `json:"model_roles,omitempty"`
-	Providers        []ProviderSummary       `json:"providers,omitempty"`
-	AdvancedSettings AdvancedSettingsSummary `json:"advanced_settings"`
+	ProjectModels    config.ProjectModelsConfig   `json:"project_models"`
+	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases"`
+	Provider         string                       `json:"provider"`
+	Model            string                       `json:"model"`
+	Variant          string                       `json:"variant,omitempty"`
+	Permissions      PermissionSummary            `json:"permissions"`
+	ExtensionTrust   ExtensionTrustSummary        `json:"extension_trust"`
+	ModelProfile     *ModelProfileSummary         `json:"model_profile,omitempty"`
+	ToolSurface      *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
+	ModelRoles       []ModelRoleSummary           `json:"model_roles,omitempty"`
+	Providers        []ProviderSummary            `json:"providers,omitempty"`
+	AdvancedSettings AdvancedSettingsSummary      `json:"advanced_settings"`
 }
 
 type ConfigAdvancedUpdateParams struct {
@@ -1192,22 +1282,31 @@ type SkillListResult struct {
 	Skills []SkillSummary `json:"skills"`
 }
 
+// ProcessTrigger describes the host-owned wakeups associated with a process.
+type ProcessTrigger struct {
+	Status         string     `json:"status"`
+	OnExit         bool       `json:"on_exit"`
+	RecheckMinutes int        `json:"recheck_minutes,omitempty"`
+	NextRecheckAt  *time.Time `json:"next_recheck_at,omitempty"`
+}
+
 type ManagedProcessSummary struct {
-	ID             string    `json:"id"`
-	OwnerKind      string    `json:"owner_kind"`
-	OwnerID        string    `json:"owner_id"`
-	Lifecycle      string    `json:"lifecycle"`
-	Status         string    `json:"status"`
-	PID            int       `json:"pid"`
-	TTY            bool      `json:"tty,omitempty"`
-	Command        string    `json:"command"`
-	CWD            string    `json:"cwd"`
-	StartedAt      time.Time `json:"started_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	StoppedAt      time.Time `json:"stopped_at,omitempty"`
-	ExitCode       int       `json:"exit_code,omitempty"`
-	LastError      string    `json:"last_error,omitempty"`
-	InputAvailable bool      `json:"input_available,omitempty"`
+	ID             string          `json:"id"`
+	OwnerKind      string          `json:"owner_kind"`
+	OwnerID        string          `json:"owner_id"`
+	Lifecycle      string          `json:"lifecycle"`
+	Status         string          `json:"status"`
+	PID            int             `json:"pid"`
+	TTY            bool            `json:"tty,omitempty"`
+	Command        string          `json:"command"`
+	CWD            string          `json:"cwd"`
+	StartedAt      time.Time       `json:"started_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+	StoppedAt      time.Time       `json:"stopped_at,omitempty"`
+	ExitCode       int             `json:"exit_code,omitempty"`
+	LastError      string          `json:"last_error,omitempty"`
+	InputAvailable bool            `json:"input_available,omitempty"`
+	Trigger        *ProcessTrigger `json:"trigger,omitempty"`
 }
 
 type ProcessListParams struct {
@@ -1511,6 +1610,8 @@ type ThreadForkParams struct {
 	ItemID   string            `json:"item_id,omitempty"`
 	Target   *ThreadForkTarget `json:"target,omitempty"`
 	Mode     string            `json:"mode,omitempty"`
+	// HistoryPage bounds the returned history; older items use thread/history/read.
+	HistoryPage bool `json:"history_page,omitempty"`
 }
 
 type ThreadForkTarget struct {
@@ -1634,6 +1735,7 @@ type SideThreadMainTaskSummary struct {
 }
 
 type SideThreadSendParams struct {
+	CommandID    string                         `json:"command_id,omitempty"`
 	MainThreadID string                         `json:"main_thread_id"`
 	Prompt       string                         `json:"prompt"`
 	Selection    *sidethread.SelectionReference `json:"selection,omitempty"`
@@ -2021,18 +2123,20 @@ type TurnSteerParams struct {
 }
 
 type TurnSteerResult struct {
-	TurnID string `json:"turn_id"`
+	TurnID   string `json:"turn_id"`
+	Delivery string `json:"delivery,omitempty"`
 }
 
 type HeldUserMessage struct {
-	ID             string                         `json:"id"`
-	ThreadID       string                         `json:"thread_id"`
-	Origin         string                         `json:"origin"`
-	Prompt         string                         `json:"prompt,omitempty"`
-	Images         []TurnStartImage               `json:"images,omitempty"`
-	Files          []TurnStartFile                `json:"files,omitempty"`
-	ContentParts   []providers.MessageContentPart `json:"content_parts,omitempty"`
-	ActiveDocument *ActiveDocument                `json:"active_document,omitempty"`
+	DeliveryUnconfirmed bool                           `json:"delivery_unconfirmed,omitempty"`
+	ID                  string                         `json:"id"`
+	ThreadID            string                         `json:"thread_id"`
+	Origin              string                         `json:"origin"`
+	Prompt              string                         `json:"prompt,omitempty"`
+	Images              []TurnStartImage               `json:"images,omitempty"`
+	Files               []TurnStartFile                `json:"files,omitempty"`
+	ContentParts        []providers.MessageContentPart `json:"content_parts,omitempty"`
+	ActiveDocument      *ActiveDocument                `json:"active_document,omitempty"`
 }
 
 type TurnUnsteerParams struct {

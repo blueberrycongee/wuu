@@ -232,15 +232,26 @@ func NormalizeMessagePhase(phase string) MessagePhase {
 
 // FileSelectionSource identifies the captured file revision and selection range.
 // Lines and UTF-16 columns are one-based; the end position is exclusive.
+// PDF selections use page coordinates instead and leave line/column fields zero.
 type FileSelectionSource struct {
-	Workspace   string `json:"workspace"`
-	Path        string `json:"path"`
-	StartLine   int    `json:"start_line"`
-	StartColumn int    `json:"start_column"`
-	EndLine     int    `json:"end_line"`
-	EndColumn   int    `json:"end_column"`
-	Quote       string `json:"quote"`
-	Revision    string `json:"revision"`
+	Workspace   string                 `json:"workspace"`
+	Path        string                 `json:"path"`
+	StartLine   int                    `json:"start_line"`
+	StartColumn int                    `json:"start_column"`
+	EndLine     int                    `json:"end_line"`
+	EndColumn   int                    `json:"end_column"`
+	Quote       string                 `json:"quote"`
+	Revision    string                 `json:"revision"`
+	PDF         *PDFSelectionReference `json:"pdf,omitempty"`
+}
+
+// PDFSelectionReference retains the page range and optional immutable delivery identity.
+type PDFSelectionReference struct {
+	StartPage        int    `json:"start_page"`
+	EndPage          int    `json:"end_page"`
+	ArtifactURI      string `json:"artifact_uri,omitempty"`
+	ArtifactSHA256   string `json:"artifact_sha256,omitempty"`
+	ArtifactThreadID string `json:"artifact_thread_id,omitempty"`
 }
 
 // ResponseSelection identifies a quoted assistant response and its authored comment.
@@ -283,6 +294,10 @@ func CloneMessageContentParts(parts []MessageContentPart) []MessageContentPart {
 	for i := range out {
 		if out[i].Source != nil {
 			source := *out[i].Source
+			if source.PDF != nil {
+				pdf := *source.PDF
+				source.PDF = &pdf
+			}
 			out[i].Source = &source
 		}
 		if out[i].Selection != nil {
@@ -316,7 +331,12 @@ type ChatMessage struct {
 	Hidden bool
 	// ProviderItemID preserves provider-native assistant output item identity,
 	// such as OpenAI Responses msg_* ids, for same-model replay.
-	ProviderItemID       string
+	ProviderItemID string
+	// EngineTurnID binds an admitted user message to its native engine turn.
+	EngineTurnID string
+	// EngineTurnPending marks only newly admitted native work whose terminal
+	// state has not been durably confirmed. Legacy rows default to false.
+	EngineTurnPending    bool
 	ProviderItemProvider string
 	ProviderItemModel    string
 	// Steered marks user input that was injected into an already-running turn.
@@ -410,7 +430,10 @@ type ChatRequest struct {
 	// Provider is Wuu's configured provider identity. It is request metadata
 	// used to prevent provider-native state from crossing endpoints and is
 	// never serialized by provider adapters.
-	Provider    string
+	Provider string
+	// Adapter selects an exact plugin adapter. Empty or native uses the host protocol.
+	// It is host routing metadata and must never be sent to a provider.
+	Adapter     string
 	Model       string
 	Messages    []ChatMessage
 	Tools       []ToolDefinition
@@ -781,6 +804,14 @@ type StreamEvent struct {
 type StreamClient interface {
 	Client
 	StreamChat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error)
+}
+
+// StreamAccountingOwner identifies a stream boundary that records physical
+// provider evidence before forwarding logical or transformed events. Wrappers
+// that change stream events must preserve this ownership contract: an outer
+// retry executor still owns attempts, but must not rewrite physical receipts.
+type StreamAccountingOwner interface {
+	OwnsStreamAccounting() bool
 }
 
 var ErrNativeCompactionUnavailable = errors.New("native compaction unavailable")

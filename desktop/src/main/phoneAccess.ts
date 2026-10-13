@@ -16,13 +16,6 @@ export function phoneAddress(interfaces = networkInterfaces()): string {
   throw new Error("未找到局域网地址，请先将电脑连接到 Wi-Fi。");
 }
 
-export function phonePairLink(base: string | null, uri: string | null): string | null {
-  if (!base || !uri) return null;
-  const url = new URL(base);
-  url.hash = new URLSearchParams({ pair: uri }).toString();
-  return url.href;
-}
-
 /** Deployment belongs to the operator; the same host supports LAN, private
  * networks, a local reverse proxy, or a separately hosted blind relay. */
 export function phoneAccessConfig(env = process.env): { base: string; relay: string; localRelay?: string; args: string[]; external: boolean } {

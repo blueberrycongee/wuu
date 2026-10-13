@@ -40,7 +40,7 @@ struct AccountSettingsView: View {
                     Button("退出登录", role: .destructive) { model.perform { try await model.logout(); dismiss() } }.disabled(model.busy)
                 }
             }.navigationTitle("账号设置").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button { dismiss() } label: { Image(systemName: "xmark") }.accessibilityLabel("关闭账号设置") } }
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button { dismiss() } label: { Image(systemName: "xmark").font(.system(size: 19)) }.accessibilityLabel("关闭账号设置") } }
                 .confirmationDialog("移除这台设备的账号访问权限？", isPresented: Binding(get: { revokeTarget != nil }, set: { if !$0 { revokeTarget = nil } }), titleVisibility: .visible) {
                     Button("移除设备", role: .destructive) {
                         if let device = revokeTarget { model.perform { try await model.revoke(device) } }

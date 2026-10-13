@@ -40,7 +40,7 @@ import {
   AUTO_FOLLOW_NESTED_SCROLL_ATTR,
   useAutoFollowScrollContainer,
 } from "./AutoFollowScroll";
-import { AnimatedProcessText } from "./ProcessTextMotion";
+import { AnimatedProcessText, ProcessLabel } from "./ProcessTextMotion";
 import { motionDurationMs } from "./motion";
 import {
   useConversationRenderActive,
@@ -680,9 +680,8 @@ function ReasoningFold({
   // is still running. The label text still reflects this item's own
   // state.
   const textClass = `turn-reasoning-summary-text${
-    activeGray ? " is-live-gray wuu-live-text-wave" : ""
+    activeGray ? " is-live-gray" : ""
   }${streaming ? " is-streaming" : ""}`;
-  const waveRef = useLiveTextWave<HTMLSpanElement>(Boolean(activeGray));
   const [open, setOpen] = useState(false);
   const reasoningScroll = useAutoFollowScrollContainer({ open, initialAutoFollow: streaming });
 
@@ -705,16 +704,16 @@ function ReasoningFold({
           active={Boolean(activeGray)}
           activity="thinking"
         />
-        <span
-          ref={waveRef}
+        <ProcessLabel
           className={textClass}
-          data-text={label}
+          active={Boolean(activeGray)}
+          text={label}
         >
           <AnimatedProcessText
             className="turn-reasoning-summary-label"
             text={label}
           />
-        </span>
+        </ProcessLabel>
         <ChevronRight
           className="turn-reasoning-chevron icon-xs"
           aria-hidden

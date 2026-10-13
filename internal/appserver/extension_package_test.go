@@ -87,7 +87,7 @@ func TestExtensionPackageUpdateGrantsExactFingerprintAndDisablesImmediately(t *t
 	messages := parseOutput(t, out.String())
 	result := remarshal[ExtensionPackageUpdateResult](t, responseByID(t, messages, "grant")["result"])
 	record := findExtensionRecord(t, result.ExtensionInventory, "plugin:project:prompt-kit")
-	if record.ApprovalState != ExtensionApprovalGranted || record.RuntimeState != ExtensionRuntimeActive || record.Enabled == nil || !*record.Enabled {
+	if record.ApprovalState != ExtensionApprovalGranted || record.RuntimeState != ExtensionRuntimeActive || record.Enabled == nil || !*record.Enabled || record.EnabledOverride == nil || !*record.EnabledOverride {
 		t.Fatalf("granted package record = %+v", record)
 	}
 	if len(record.Contributions.Commands) != 1 || record.Contributions.Commands[0].ID != "draft" || record.Contributions.Commands[0].Template != "Draft ${input}" {
@@ -136,7 +136,7 @@ func TestExtensionPackageUpdateGrantsExactFingerprintAndDisablesImmediately(t *t
 	messages = parseOutput(t, out.String())
 	result = remarshal[ExtensionPackageUpdateResult](t, responseByID(t, messages, "disable")["result"])
 	record = findExtensionRecord(t, result.ExtensionInventory, "plugin:project:prompt-kit")
-	if record.Enabled == nil || *record.Enabled || record.RuntimeState != ExtensionRuntimeInactive {
+	if record.Enabled == nil || *record.Enabled || record.RuntimeState != ExtensionRuntimeInactive || record.EnabledOverride == nil || *record.EnabledOverride {
 		t.Fatalf("disabled package record = %+v", record)
 	}
 }

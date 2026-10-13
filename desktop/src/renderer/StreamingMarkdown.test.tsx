@@ -18,6 +18,7 @@ import {
   streamTextKey,
   streamTextStore,
 } from "./StreamText";
+import { ImagePreviewProvider } from "./ImagePreview";
 import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 
 // jsdom doesn't implement layout. Stub getBoundingClientRect so React
@@ -41,13 +42,13 @@ function mount(props: Parameters<typeof StreamingMarkdown>[0]): void {
   document.body.appendChild(container);
   root = createRoot(container);
   act(() => {
-    root!.render(<StreamingMarkdown {...props} />);
+    root!.render(<ImagePreviewProvider><StreamingMarkdown {...props} /></ImagePreviewProvider>);
   });
 }
 
 function rerender(props: Parameters<typeof StreamingMarkdown>[0]): void {
   act(() => {
-    root!.render(<StreamingMarkdown {...props} />);
+    root!.render(<ImagePreviewProvider><StreamingMarkdown {...props} /></ImagePreviewProvider>);
   });
 }
 
@@ -82,6 +83,51 @@ afterEach(async () => {
 });
 
 describe("StreamingMarkdown", () => {
+  it("resolves references across stable blocks as definitions arrive and settle", async () => {
+    const key = streamTextKey("turn", "s1", "text");
+    const props = { streamKey: key, initialText: "", isLive: true, phase: "final_answer" as const };
+    streamTextStore.seed(key, "[Read][guide] and ![Diagram][image].\n\nTail");
+    mount(props);
+    const firstBlock = container!.querySelector(".streaming-markdown-block");
+    expect(firstBlock?.querySelector("a")).toBeNull();
+    await act(async () => {
+      streamTextStore.append(key, '\n\n[guide]: https://example.com/guide "Guide"\n[image]: https://example.com/image.png\n\n');
+      await vi.advanceTimersByTimeAsync(STREAM_TEXT_NOTIFY_INTERVAL_MS);
+    });
+    expect(firstBlock?.querySelector("a")?.getAttribute("href")).toBe("https://example.com/guide");
+    expect(firstBlock?.querySelector("img.rich-image")?.getAttribute("src")).toBe("https://example.com/image.png");
+    rerender({ ...props, isLive: false });
+    expect(container!.querySelector(".streaming-markdown-block")).toBe(firstBlock);
+    expect(firstBlock?.querySelector("a")?.getAttribute("href")).toBe("https://example.com/guide");
+  });
+
+  it("uses the first message definition and discards definitions when a message is replaced", () => {
+    const key = streamTextKey("turn", "s2", "text");
+    const props = { streamKey: key, isLive: false, phase: "final_answer" as const };
+    mount({ ...props, initialText: "[guide]: https://example.com/first\n\n[Read][guide]\n\n[guide]: https://example.com/second\n" });
+    expect(container!.querySelector("a")?.getAttribute("href")).toBe("https://example.com/first");
+    rerender({ ...props, initialText: "[Read][guide]\n\n[guide]: https://example.com/replaced\n" });
+    expect(container!.querySelector("a")?.getAttribute("href")).toBe("https://example.com/replaced");
+    rerender({ ...props, streamKey: streamTextKey("turn", "s3", "text"), initialText: "[Read][guide]\n\nNo definition" });
+    expect(container!.querySelector("a")).toBeNull();
+    expect(container!.textContent).toContain("[Read][guide]");
+  });
+
+  it("keeps message-wide heading anchors unique through streaming and settle", () => {
+    const props = {
+      streamKey: streamTextKey("turn", "s4", "text"),
+      initialText: "# Topic\n\n# Topic\n\n# Topic-1\n\n# Topic",
+      isLive: true,
+      phase: "final_answer" as const,
+    };
+    mount(props);
+    const headings = Array.from(container!.querySelectorAll(".rich-heading"));
+    expect(headings.map(heading => heading.id)).toEqual(["topic", "topic-1", "topic-1-1", "topic-2"]);
+    rerender({ ...props, isLive: false });
+    expect(Array.from(container!.querySelectorAll(".rich-heading"))).toEqual(headings);
+    expect(headings.map(heading => heading.id)).toEqual(["topic", "topic-1", "topic-1-1", "topic-2"]);
+  });
+
   it("renders strong markers next to Chinese prose and opening punctuation", async () => {
     const key = streamTextKey("turn", "s1", "text");
     const text = "但**「多想的意愿」来自 RL 训练，「预算」是工程兜底**——所以不是换了一句话。";
@@ -424,6 +470,11 @@ describe("containsMermaidFence", () => {
     expect(containsMermaidFence("intro\n\n``` mermaid \ngraph TD\n```")).toBe(true);
     expect(containsMermaidFence("```ts\nconst mermaid = true;\n```")).toBe(false);
     expect(containsMermaidFence("plain text mentioning mermaid")).toBe(false);
+    for (const fence of ["~~~mermaid", "````mermaid", "   ```mermaid", "```mermaid title=Flow", "> ```mermaid", "- ```mermaid"]) {
+      expect(containsMermaidFence(`${fence}\ngraph TD\nA --> B`)).toBe(true);
+    }
+    expect(containsMermaidFence("````text\n```mermaid\ngraph TD\n```\n````")).toBe(false);
+    expect(containsMermaidFence("    ```mermaid\n    graph TD")).toBe(false);
   });
 });
 

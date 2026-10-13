@@ -14,7 +14,10 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/contextbudget"
+	"github.com/blueberrycongee/wuu/internal/extensions"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -103,6 +106,12 @@ func newSideThreadServer(t *testing.T, client providers.StreamClient) (*Server, 
 			SystemPrompt: "main coding-agent prompt",
 		},
 	}
+	item, err := pluginpkg.LoadManifestWithOptions("../plugin/bundled/side/plugin.json", pluginpkg.LoadOptions{Source: "bundled", Official: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.Plugins = []pluginpkg.Plugin{item}
+	rt.ActivePlugins = []pluginpkg.Plugin{item}
 	out := &lockedBuffer{}
 	s := &Server{
 		rt:              rt,
@@ -509,11 +518,12 @@ func TestSideThreadSendRejectsConcurrentServers(t *testing.T) {
 	peerClient := &sideThreadTestClient{response: "must not run"}
 	peer := &Server{
 		rt: &runtime.Session{
-			ProviderName: "test-provider",
-			Model:        "test-model",
-			RootDir:      rt.RootDir,
-			SessionDir:   rt.SessionDir,
-			StreamRunner: &agent.StreamRunner{Client: peerClient, Model: "test-model"},
+			ProviderName:  "test-provider",
+			Model:         "test-model",
+			RootDir:       rt.RootDir,
+			SessionDir:    rt.SessionDir,
+			ActivePlugins: rt.ActivePlugins,
+			StreamRunner:  &agent.StreamRunner{Client: peerClient, Model: "test-model"},
 		},
 		out:             &lockedBuffer{},
 		threads:         make(map[string]*threadState),
@@ -535,7 +545,7 @@ func TestSideThreadSendRejectsConcurrentServers(t *testing.T) {
 
 func TestInterruptSideThreadCancelsAndPersistsPartialReply(t *testing.T) {
 	client := &sideThreadTestClient{partial: "partial progress", started: make(chan struct{}), release: make(chan struct{})}
-	s, _, out := newSideThreadServer(t, client)
+	s, rt, out := newSideThreadServer(t, client)
 	createSideThreadMain(t, s, "main_interrupt")
 	if _, err := s.sendSideThreadMessage("main_interrupt", "status?"); err != nil {
 		t.Fatalf("send: %v", err)
@@ -554,6 +564,81 @@ func TestInterruptSideThreadCancelsAndPersistsPartialReply(t *testing.T) {
 	st := waitForSideThreadStatus(t, s.sideThreadStore, "main_interrupt", sidethread.StatusInterrupted)
 	if got := st.Messages[len(st.Messages)-1]; got.Status != sidethread.AssistantInterrupted || got.Text != "partial progress" {
 		t.Fatalf("assistant was not interrupted: %+v", got)
+	}
+
+	// Disabling the owning extension interrupts a running answer without erasing it.
+	candidate, err := rt.PreflightExtensionPolicy(config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	generation := rt.RetainPluginGeneration()
+	defer rt.ReleasePluginGeneration(generation)
+	client.started = make(chan struct{})
+	client.once = sync.Once{}
+	if _, err := s.sendSideThreadMessage("main_interrupt", "continue?"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-client.started:
+	case <-time.After(time.Second):
+		t.Fatal("second provider request did not start")
+	}
+	// Same-ID updates keep an already-running answer on its original generation.
+	updated := rt.Plugins[0]
+	updated.Fingerprint = "updated-side-policy"
+	rt.Plugins = []pluginpkg.Plugin{updated}
+	candidate, err = rt.PreflightExtensionPolicy(config.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	s.sideTurnMu.Lock()
+	activeTurn := s.sideTurns["main_interrupt"]
+	s.sideTurnMu.Unlock()
+	if activeTurn == nil || !s.sideConversationTurnAvailable(activeTurn) {
+		t.Fatal("same-ID update canceled a pinned answer")
+	}
+	settings := &extensions.Settings{}
+	settings.SetEnabled(rt.Plugins[0].SubjectID, false)
+	candidate, err = rt.PreflightExtensionPolicy(config.Config{Extensions: settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.sendSideThreadMessage("main_interrupt", "disabled"); err == nil {
+		t.Fatal("disabled side command accepted a send")
+	}
+	settings.SetEnabled(rt.Plugins[0].SubjectID, true)
+	candidate, err = rt.PreflightExtensionPolicy(config.Config{Extensions: settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	if generation.PluginAvailable(rt.Plugins[0].ID) {
+		t.Fatal("re-enable revived a revoked generation")
+	}
+	s.backgroundWG.Wait()
+	history := waitForSideThreadStatus(t, s.sideThreadStore, "main_interrupt", sidethread.StatusInterrupted)
+	if len(history.Messages) != 4 {
+		t.Fatalf("disable lost side history: %+v", history)
+	}
+	close(client.release)
+	if _, err := s.sendSideThreadMessage("main_interrupt", "enabled again"); err != nil {
+		t.Fatal(err)
+	}
+	s.backgroundWG.Wait()
+	history = waitForSideThreadStatus(t, s.sideThreadStore, "main_interrupt", sidethread.StatusCompleted)
+	if len(history.Messages) != 6 {
+		t.Fatalf("re-enable replaced side history: %+v", history)
 	}
 }
 
@@ -910,7 +995,7 @@ func TestNewSideThreadRunnerInheritsThreadModel(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	writeSelectionTestConfig(t, rt.ConfigPath)
 
-	base, err := rt.NewSideThreadRunner("side-default", rt.RootDir, runtime.ThreadModelSelection{})
+	base, err := rt.NewSideThreadRunner("side-default", rt.RootDir, runtime.ThreadModelSelection{}, "Test side policy")
 	if err != nil {
 		t.Fatalf("NewSideThreadRunner default: %v", err)
 	}
@@ -921,7 +1006,7 @@ func TestNewSideThreadRunnerInheritsThreadModel(t *testing.T) {
 	pinned, err := rt.NewSideThreadRunner("side-pinned", rt.RootDir, runtime.ThreadModelSelection{
 		Provider: "fake-provider",
 		Model:    "pinned-model",
-	})
+	}, "Test side policy")
 	if err != nil {
 		t.Fatalf("NewSideThreadRunner pinned: %v", err)
 	}

@@ -469,31 +469,16 @@
   white-space: nowrap;
 }
 
-/* Hiding is a secondary action; its footprint stays reserved so the meta
- * column never moves when it appears. */
-.model-choice-hide,
+/* Keep the selection marker separate from the always-discoverable action. */
+.model-choice-action,
 .model-choice-check {
   width: var(--control-field-height);
   height: var(--control-field-height);
   flex: 0 0 auto;
 }
 
-.model-choice-hide {
+.model-choice-action {
   color: var(--ink-tertiary);
-  opacity: 0;
-  transition: opacity var(--motion-fast) var(--ease-out);
-}
-
-.model-choice:hover .model-choice-hide,
-.model-choice-hide:focus-visible,
-.model-choice-hidden .model-choice-hide {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  .model-choice-hide {
-    opacity: 1;
-  }
 }
 
 .model-choice-add {

@@ -82,22 +82,24 @@ Keep status semantics separate from emphasis. TODO progress uses text colors and
 
 Use the system UI font with CJK fallback and respect user font choices. Code, editors, and diffs retain independent monospace typography rather than scaling mechanically with UI text. Avoid unrelated typefaces for headings, prose, and numbers; use tabular numbers or monospace where numerical alignment requires them.
 
-The current runtime defaults are **14.5px UI** and **11px code**. Ratios in `appearance.css` use 14 as their denominator: 14px is the proportional reference, not the current startup default. Valid saved preferences remain authoritative and must not be reset to the documented defaults.
+The current runtime defaults are **15px UI** and **13px code**. Ratios in `appearance.css` use 14 as their denominator: 14px is the proportional reference, not the current startup default. Valid saved preferences remain authoritative and must not be reset to the documented defaults.
 
-| Role | Variables | Relationship to UI size U | Value at U = 14.5px |
+| Role | Variables | Relationship to UI size U | Value at U = 15px |
 | --- | --- | --- | --- |
-| Hero | `--font-hero` | round(U × 32 / 14) | 33px |
-| Display | `--font-display` | round(U × 24 / 14) | 25px |
+| Hero | `--font-hero` | round(U × 32 / 14) | 34px |
+| Display | `--font-display` | round(U × 24 / 14) | 26px |
 | Heading | `--font-heading` | round(U × 20 / 14) | 21px |
 | Title | `--font-title` | round(U × 16 / 14) | 17px |
-| UI and body | `--font-ui`, `--font-body`, `--font-content` | U | 14.5px |
-| Menus and compact controls | `--font-menu`, `--font-sm` | round(U × 13 / 14) | 13px |
-| Metadata | `--font-xs` | max(12px, round(U × 12 / 14)) | 12px |
-| Code | `--appearance-code-size` | Independent preference | 11px |
+| UI and body | `--font-ui`, `--font-body`, `--font-content` | U | 15px |
+| Menus and compact controls | `--font-menu`, `--font-sm` | round(U × 13 / 14) | 14px |
+| Metadata | `--font-xs` | max(12px, round(U × 12 / 14)) | 13px |
+| Code | `--appearance-code-size` | Independent preference | 13px |
 
 Derived roles round to whole pixels. The saved UI size may be a half step, but fractional derived sizes would put line boxes and 1px edges between device pixels.
 
-Use 400 for ordinary text, 500 for compact menu items, and 500 or 600 selectively for headings and emphasis. Reserve 700 for occasional strong emphasis. Base line-height roles are 1.35 for UI, 1.55 for body, and 1.6 for metadata; individual reading surfaces may have semantic overrides, not one forced line height for every component. Conversation reading and process leading are whole-pixel lengths derived from the message size (1.8 and 1.6, rounded to 2px), so stacked rows and cards share edges. Composer drafts use the same reading leading as sent queries and answers, so text keeps its rhythm when it is sent. Message headings step to 1.5, 1.25, and 1.1 times the body size, rounded to whole pixels, so hierarchy does not rest on weight alone. Preserve natural letter spacing instead of shrinking type or tightening tracking to repair layout.
+Use 400 for ordinary text, 500 for compact menu items, and 500 or 600 selectively for headings and emphasis. Reserve 700 for occasional strong emphasis. Base line-height roles are 1.35 for UI, 1.55 for body, and 1.6 for metadata; individual reading surfaces may have semantic overrides, not one forced line height for every component. Conversation reading and process leading are whole-pixel lengths derived from the message size (both 1.6, rounded to 2px), so stacked rows and cards share edges. Composer drafts use the same reading leading as sent queries and answers, so text keeps its rhythm when it is sent. Message headings step to 1.5, 1.25, and 1.1 times the body size, rounded to whole pixels, so hierarchy does not rest on weight alone. At the default size, conversation text is 15px/24px with a 12px paragraph gap. The gap scales with UI size (0.8 times, rounded to 1px). Fenced code and hover diffs use the independent code size with 1.5 leading rounded to 1px, giving 13px/20px by default. Preserve natural letter spacing instead of shrinking type or tightening tracking to repair layout.
+
+The latest active process label uses a quiet, theme-relative tone with a highlight that sweeps for one second in each four-second cycle, after an initial 600ms delay. The base text stays visible beneath the decorative highlight. Once a summary is no longer active, it uses steady `--ink-tertiary` text. Reduced motion, background conversations, and stream-following suppress the highlight; result prose keeps its normal contrast.
 
 ## Spacing and layout
 
@@ -122,7 +124,7 @@ Every edge that reads as aligned must come from one shared role, not from separa
 
 - **Pane inset.** In chrome rows such as sidebar rows, titlebars, and tab bars, the first and last visible glyph sits `--pane-inset` from the pane edge. Align ink, not button boxes: a control whose box is larger than its glyph subtracts its optical offset, such as `--control-toolbar-glyph-offset` for toolbar buttons. Rows that float inside a pane, in the sidebar, the workspace tabs, the file tree, the review list, and the tool list, split the inset between the list's padding and the row's own, so the hover fill keeps a margin from the edge while the glyph stays on the inset.
 - **Reading column.** Unframed content (paragraphs, headings, lists, process rows, answer actions) shares the column's leading edge. Message tables have no side frame, so their outer cell text also starts on that edge.
-- **Framed content.** Code blocks, the composer, message bubbles, and cards place text and icon glyphs `--card-padding` from the outer edge; a frame's border is part of that measurement. A code block's language label, its code, and the composer's text therefore share one axis. The query bubble and the composer draft keep that inset above and below their text as well: their block padding subtracts the line's half-leading, with an 8px floor, so glyphs sit the same distance from the frame at every text size.
+- **Framed content.** Code blocks, the composer, message bubbles, and reading cards place text and icon glyphs `--card-padding` from the outer edge; a frame's border is part of that measurement. A code block's language label, its code, and the composer's text therefore share one axis. Compact entry cards use the density roles described below. The query bubble and the composer draft keep that inset above and below their text as well: their block padding subtracts the line's half-leading, with an 8px floor, so glyphs sit the same distance from the frame at every text size.
 - **Accessory columns.** Sidebar trailing accessories of different sizes share one center axis. Headings reserve their accessory's footprint whether or not the section has one, so group spacing does not depend on which headings offer an action.
 
 Align peer labels, icon columns, and trailing actions. Indentation expresses hierarchy, independent of running or unread status. Reserve the real footprint of indicators and actions plus a reading gap. Give each spacing relationship one owner rather than accumulating wrapper gaps, child margins, and invisible drag targets. Use appropriate reading-width roles such as `--content-column-width`, not one mandatory width for every page.
@@ -133,6 +135,7 @@ Align peer labels, icon columns, and trailing actions. Indentation expresses hie
 | --- | --- | --- |
 | Inner highlights, menu rows, compact chips, media | `--radius-xs`, `--radius-media` | 6px |
 | Controls and small cards | `--radius-sm` | 8px |
+| Embedded message cards | `--message-flow-card-radius` | Midpoint of small and panel radii; 12px by default |
 | Panels, dialogs and the composer | `--radius-md`, `--radius-lg` | 16px; lg aliases md |
 | Compact menu shell | `--menu-shell-radius` | Inner radius + menu inset; 12px at standard density |
 | Panel overlays and dialogs | `--menu-radius` | Follows panel by default; theme-overridable |
@@ -142,9 +145,28 @@ Corners stay tight so a control reads as a control: a 32px field or button with 
 
 Choose elevation by purpose: `--shadow-soft` for light controls, `--shadow-card` for cards, `--shadow-composer` for the composer, `--shadow-pop` for popovers, and `--shadow-modal` for dialogs. Attached trays and edge drawers use directional roles. Light mode uses restrained ambient shadows. Dark mode defines surfaces with inset highlights while overlays retain black ambient shadows. Hover, focus, and expansion do not automatically increase elevation; ordinary content does not need shadows everywhere.
 
+### Message-flow cards
+
+Related-session links, generated files, and turn-end output summaries share the
+`--message-flow-card-*` radius, border, surface, and hover roles. They have a quiet
+one-pixel frame and no added elevation. Media keeps its existing media radius.
+Use the shared compact inline padding and leading `--icon-size-xl` role; reserve
+the trailing action's space so long names truncate without moving it.
+
+Density follows content. A session link is one line with the roomy control's
+minimum height; its message body remains independently readable and selectable.
+A file has a primary filename in the UI font and a secondary line for its concise
+format and known byte size, separated by a small gap. Omit unavailable size rather
+than guessing. Single outputs and groups of up to three files need no repeated
+heading. Larger groups show three rows at a time, with total and remaining counts
+below the list; each expansion reveals up to three more files. Chevrons lead into
+the internal preview or workspace view. Managed-file context menus provide native
+file actions: associated applications on macOS, saving, and revealing an exported
+copy in the file manager. External editors never receive the immutable snapshot.
+
 ## Icons, motion, and controls
 
-Controls reuse [WuuIcons](../../../desktop/src/renderer/WuuIcons.tsx), not a competing stroke style. Standard drawings use a 24-unit canvas and 1.75 stroke. Use `--icon-size-*` roles with bounded growth as UI text increases. Sizes round to even pixels so glyphs center in even control boxes; at the 14px reference and the 14.5px default they are 12, 14, 16, 18, and 20px. Still inspect apparent size, centering, and stroke density.
+Controls reuse [WuuIcons](../../../desktop/src/renderer/WuuIcons.tsx), not a competing stroke style. Standard drawings use a 24-unit canvas and 1.75 stroke. Use `--icon-size-*` roles with bounded growth as UI text increases. Sizes round to even pixels so glyphs center in even control boxes; at the 14px reference they are 12, 14, 16, 18, and 20px; the 15px default resolves to 12, 16, 18, 20, and 22px. Still inspect apparent size, centering, and stroke density.
 
 Motion provides feedback and explains position changes: `--motion-fast` 120ms for immediate feedback, `--motion-base` 180ms for menus and content swaps, `--motion-slow` 280ms for structural moves, and `--motion-slower` 440ms for larger folds. Entrances decelerate with `--ease-out` and exits accelerate away with `--ease-in`, shorter than the entrance. Prefer existing semantic aliases and the shared entrance and exit keyframes described in [desktop UI maintenance](desktop-ui.md#motion). The OS setting and the in-app Motion preference both reduce motion, with the same result. Frequent actions must not wait for decorative animation; preserve established component-specific motion contracts.
 

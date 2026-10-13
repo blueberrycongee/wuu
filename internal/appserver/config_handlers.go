@@ -534,6 +534,10 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 			Conflicts:            cloneSortedStrings(item.Conflicts),
 			Enabled:              &enabled,
 		}
+		// Absent means the package default applies; false is a saved disable.
+		if grants.Disabled[item.SubjectID] || grants.Enabled[item.SubjectID] {
+			packageRecord.EnabledOverride = &enabled
+		}
 		for _, issue := range packageActivationIssues[item.ID] {
 			packageRecord.ActivationIssues = append(packageRecord.ActivationIssues, ExtensionPluginActivationIssue{
 				Kind:            string(issue.Kind),
@@ -1156,9 +1160,6 @@ func modelRoleConfigUpdate(input *ModelAliasSummary) *config.ModelRoleConfig {
 }
 
 func modelAliasSummaries(input map[string]config.ModelRoleConfig) map[string]ModelAliasSummary {
-	if len(input) == 0 {
-		return nil
-	}
 	out := make(map[string]ModelAliasSummary, len(input))
 	for name, alias := range input {
 		out[strings.TrimSpace(name)] = ModelAliasSummary{
@@ -1589,6 +1590,8 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	}
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	return s.writeResponse(req.ID, ConfigModelUpdateResult{
+		ModelAliases:     s.currentModelAliasSummaries(),
+		ProjectModels:    s.rt.ProjectModels,
 		Provider:         resolvedName,
 		Model:            model,
 		Effort:           effort,
@@ -1662,11 +1665,9 @@ func (s *Server) applyModelSelectionToRuntime(
 	s.rt.ModelRoles = roleSelections
 	s.rt.ProjectModels = cfg.Agent.ProjectModels
 	apiModel := modelcatalog.APIModel(ruleProviderCfg, model)
-	if roleSelections.Title.Inherited {
-		if client != nil {
-			s.rt.TitleClient = client
-		}
-	} else {
+	if roleSelections.Title.Inherited && client != nil {
+		s.rt.TitleClient = client
+	} else if !roleSelections.Title.Inherited || connectionChanged {
 		titleClient, err := providerfactory.BuildStreamClient(roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider)
 		if err != nil {
 			return fmt.Errorf("build title client: %w", err)
@@ -1752,6 +1753,8 @@ func providerClientConfigChanged(previous, next config.ProviderConfig) bool {
 func (s *Server) currentConfigModelUpdateResult() ConfigModelUpdateResult {
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	return ConfigModelUpdateResult{
+		ModelAliases:     s.currentModelAliasSummaries(),
+		ProjectModels:    s.rt.ProjectModels,
 		Provider:         s.rt.ProviderName,
 		Model:            s.rt.Model,
 		Effort:           s.currentDisplayEffort(),
@@ -1871,26 +1874,79 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("cannot remove the last configured provider"))
 	}
 	removedWasDefault := cfg.DefaultProvider == providerName
+	if removedWasDefault {
+		fallbackName := strings.TrimSpace(params.FallbackProvider)
+		if fallbackName == "" {
+			names := make([]string, 0, len(cfg.Providers)-1)
+			for name := range cfg.Providers {
+				if name != resolvedName {
+					names = append(names, name)
+				}
+			}
+			sort.Strings(names)
+			if len(names) > 0 {
+				fallbackName = names[0]
+			}
+		}
+		fallback, ok := cfg.Providers[fallbackName]
+		if !ok || fallbackName == resolvedName {
+			return s.writeResponse(req.ID, nil, errors.New("choose another configured provider before removing the default provider"))
+		}
+		fallbackModel := strings.TrimSpace(params.FallbackModel)
+		if fallbackModel == "" {
+			fallbackModel = strings.TrimSpace(fallback.Model)
+		}
+		if fallbackModel == "" || fallback.Models[fallbackModel].Disabled {
+			return s.writeResponse(req.ID, nil, errors.New("choose an available model for the replacement provider"))
+		}
+		// Validate the replacement before touching the removed connection's
+		// credentials. An invalid or unauthenticated fallback must be a no-op.
+		_, ruleCfg := modelcatalog.EnrichProvider(fallbackName, fallback, fallbackModel)
+		if _, err := providerfactory.BuildStreamClient(ruleCfg, fallbackName); err != nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("replacement provider is not ready: %w", err))
+		}
+		params.FallbackProvider, params.FallbackModel = fallbackName, fallbackModel
+	}
 	authStore, authErr := authstorage.ForHome(os.Getenv("HOME"))
 	if authErr != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("prepare credential cleanup: %w", authErr))
 	}
-	if authErr := authStore.DeleteProvider(resolvedName); authErr != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("remove provider credential: %w", authErr))
+	// This account-level sign-in may be used by other connections or
+	// workspaces. Removing a provider is not an account sign-out.
+	removeCredential := !config.IsXAISubscriptionProvider(existing.Type) || resolvedName != xaisub.AuthProviderID
+
+	credentials, authErr := authStore.Load()
+	if authErr != nil && !errors.Is(authErr, authstorage.ErrNotFound) {
+		return s.writeResponse(req.ID, nil, authErr)
 	}
-	if config.IsXAISubscriptionProvider(existing.Type) {
-		if err := xaisub.DeleteTokens(os.Getenv("HOME")); err != nil {
-			return s.writeResponse(req.ID, nil, fmt.Errorf("remove SuperGrok credential: %w", err))
+	// Config and credentials are separate atomic files. Restore only the
+	// affected credential entries if either part of removal fails.
+	restoreCredentials := func(cause error) error {
+		if previous, ok := credentials.Providers[resolvedName]; ok && removeCredential {
+			if err := authStore.Set(resolvedName, previous); err != nil {
+				cause = errors.Join(cause, fmt.Errorf("restore provider credential %q: %w", resolvedName, err))
+			}
+		}
+		return cause
+	}
+	if removeCredential {
+		if err := authStore.DeleteProvider(resolvedName); err != nil {
+			return s.writeResponse(req.ID, nil, restoreCredentials(fmt.Errorf("remove provider credential: %w", err)))
 		}
 	}
 	newDefault, removeErr := config.RemoveProvider(s.rt.ConfigPath, providerName, params.FallbackProvider, params.FallbackModel)
 	if removeErr != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("credential removed but provider config update failed; re-enter the credential before retrying: %w", removeErr))
+		return s.writeResponse(req.ID, nil, restoreCredentials(removeErr))
 	}
 	if !removedWasDefault {
-		// Removed an inactive provider; nothing in the runtime needs
-		// reconfiguring because the active selection is unchanged.
+		// Keep the main selection, but rebuild roles and idle snapshots that
+		// could still refer to the removed provider.
+		if err := s.refreshRuntimeAfterProviderEdit(true); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 		return s.writeResponse(req.ID, ConfigProviderRemoveResult{
+			ModelAliases:     s.currentModelAliasSummaries(),
+			ProjectModels:    s.rt.ProjectModels,
 			Provider:         s.rt.ProviderName,
 			Model:            s.rt.Model,
 			Variant:          s.currentVariant(),
@@ -1904,9 +1960,7 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 		}, nil)
 	}
 	// Default provider changed — reload the config and rebuild the
-	// runtime for the new default. Falling back to the removed
-	// provider's model when the caller did not supply fallbackModel
-	// keeps the renderer from showing an empty model after the swap.
+	// runtime for the validated replacement selection.
 	fallbackName := strings.TrimSpace(newDefault)
 	if fallbackName == "" {
 		return s.writeResponse(req.ID, nil, errors.New("provider removal left no default_provider configured"))
@@ -1952,12 +2006,12 @@ func (s *Server) runningTurnUsingProvider(providerName string) (string, bool) {
 	return "", false
 }
 
-func (s *Server) handleSkillList(req Request) error {
+func (s *Server) handleSkillList(ctx context.Context, req Request) error {
 	var params SkillListParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	catalog, root, err := s.skillCatalog(params.ThreadID)
+	catalog, root, err := s.currentSkillCatalog(ctx, params.ThreadID, false)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -1965,7 +2019,15 @@ func (s *Server) handleSkillList(req Request) error {
 }
 
 func (s *Server) skillCatalog(threadID string) ([]skills.Skill, string, error) {
+	return s.currentSkillCatalog(context.Background(), threadID, false)
+}
+
+func (s *Server) currentSkillCatalog(ctx context.Context, threadID string, force bool) ([]skills.Skill, string, error) {
 	if strings.TrimSpace(threadID) == "" {
+		if s.rt.Toolkit != nil {
+			items, err := s.rt.Toolkit.CurrentSkills(ctx, force)
+			return tools.FilterSkillsForSurface(items, s.rt.Toolkit.ActiveSurface()), s.rt.RootDir, err
+		}
 		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
 	}
 	th, err := s.ensureThreadLoaded(threadID)
@@ -1985,7 +2047,11 @@ func (s *Server) skillCatalog(threadID string) ([]skills.Skill, string, error) {
 			(baseRepo == "" || sessionWorkspacePath(baseRepo) != sessionWorkspacePath(s.rt.RootDir)) {
 			root = ""
 		}
-		return tools.FilterSkillsForSurface(threadRuntime.Toolkit.Skills(), threadRuntime.Toolkit.ActiveSurface()), root, nil
+		items, err := threadRuntime.Toolkit.CurrentSkills(ctx, force)
+		if err != nil {
+			return nil, root, err
+		}
+		return tools.FilterSkillsForSurface(items, threadRuntime.Toolkit.ActiveSurface()), root, nil
 	}
 	th.mu.Lock()
 	root := th.CWD
@@ -2215,6 +2281,7 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 func (s *Server) writeThreadModelSelectionResponse(req Request, th *threadState) error {
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
 	return s.writeResponse(req.ID, ConfigModelUpdateResult{
+		ModelAliases: s.currentModelAliasSummaries(), ProjectModels: s.rt.ProjectModels,
 		Provider: s.rt.ProviderName, Model: s.rt.Model,
 		Effort: s.currentDisplayEffort(), Variant: s.currentVariant(),
 		MaxParallel: s.rt.MaxParallel(), Permissions: s.permissionSummaryForThread(th),

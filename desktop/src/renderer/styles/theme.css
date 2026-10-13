@@ -258,7 +258,7 @@
   --message-flow-card-bg: var(--surface-1);
   --rich-code-block-bg: var(--surface-1);
   --message-flow-card-border: var(--hairline);
-  --message-flow-card-hover-bg: var(--wuu-color-surface, var(--surface-1));
+  --message-flow-card-hover-bg: var(--surface-2);
   --surface-chip: var(--surface-2);
   --fork-worktree-focus-ring: var(--focus-ring);
   --rich-blockquote-color: var(--wuu-color-text-muted, #a3a9ae);

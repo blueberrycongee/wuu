@@ -581,9 +581,13 @@ function ThreadList({
     }, Math.max(0, Math.min(...recentlyRead.values()) - Date.now()));
     return () => window.clearTimeout(timer);
   }, [recentlyRead]);
+  // A pending first send occupies the same recent-history slot as the thread
+  // it becomes. Otherwise creation briefly adds an extra row, then removes
+  // the last history row as soon as the server supplies the real thread.
+  const historyVisibleCount = Math.max(0, visibleCount - pendingConversations.length);
   const limitedThreads = limitedWorkspaceThreads(
     threads,
-    visibleCount,
+    historyVisibleCount,
     activeID,
     pendingThreadID,
     lastViewedTurnByThreadID,
@@ -641,8 +645,8 @@ function ThreadList({
               const visibleIDs = new Set(limitedThreads.map(thread => thread.id));
               let remaining = PROJECT_THREAD_BATCH_SIZE;
               let nextCount = visibleCount;
-              for (let index = visibleCount; index < threads.length; index++) {
-                nextCount = index + 1;
+              for (let index = historyVisibleCount; index < threads.length; index++) {
+                nextCount = index + 1 + pendingConversations.length;
                 if (!visibleIDs.has(threads[index].id) && --remaining === 0) break;
               }
               onShowMore(nextCount);

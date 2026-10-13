@@ -24,6 +24,8 @@ desktop/out-e2e/
 desktop/build/mobile-web/
 desktop/build/bin/
 desktop/build/app-context/
+desktop/build/tools/
+desktop/build/licenses/
 desktop/build/dev-host/
 desktop/build/.icon-work/
 desktop/release/

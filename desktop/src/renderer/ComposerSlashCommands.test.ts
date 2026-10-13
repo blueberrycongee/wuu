@@ -237,9 +237,16 @@ describe("composer slash commands", () => {
   });
 
   it("disables /side until the draft has a persisted thread", () => {
+    const state = initialized("gpt-5.5", ["gpt-5.5"]);
+    state.extension_inventory = [{
+      id: "plugin:bundled:side", kind: "plugin", name: "Side", state: "active", enabled: true,
+      approval_state: "official", runtime_state: "active",
+      provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: "side", official: true },
+      contributions: { commands: [{ id: "side", title: "Side chat", kind: "side_conversation", template: "Side policy" }] },
+    }];
     const commands = buildComposerSlashCommands({
       activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
-      initialized: initialized("gpt-5.5", ["gpt-5.5"]),
+      initialized: state,
       running: false,
       sideThreadDisabledReason: "先发送一条消息"
     });
@@ -248,6 +255,15 @@ describe("composer slash commands", () => {
     expect(side?.action).toBe("open-side-thread");
     expect(side?.argumentHint).toBe("提示词");
     expect(side?.disabledReason).toBe("先发送一条消息");
+    for (const runtime_state of ["inactive", "failed", "stopped"] as const) {
+      state.extension_inventory![0].runtime_state = runtime_state;
+      expect(buildComposerSlashCommands({ initialized: state, running: false }).some((command) => command.name === "side")).toBe(false);
+    }
+    state.extension_inventory![0].runtime_state = "active";
+    state.extension_inventory![0].enabled = false;
+    expect(buildComposerSlashCommands({ initialized: state, running: false }).some((command) => command.name === "side")).toBe(false);
+    state.extension_inventory![0].enabled = true;
+    expect(buildComposerSlashCommands({ initialized: state, running: false }).some((command) => command.name === "side")).toBe(true);
   });
 
   it("can disable /compact for surfaces without a compactable model context", () => {

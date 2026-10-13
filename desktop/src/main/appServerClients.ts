@@ -171,6 +171,12 @@ export class AppServerClientPool {
     this.maybeBroadcastRunningThreads();
   }
 
+  // Related control frames must reach the same process even if its workspace
+  // registration changes while the original request is still running.
+  bindContextRequest(context: RuntimeContext): <T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void) => Promise<T> {
+    return this.clientForContext(context).bindRequest();
+  }
+
   requestInContext<T>(
     context: RuntimeContext,
     method: string,
@@ -469,6 +475,17 @@ export class AppServerClient {
   start(): void {
     this.touch();
     this.ensureStarted();
+  }
+
+  bindRequest(): <T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void) => Promise<T> {
+    this.start();
+    const child = this.child;
+    return async <T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> => {
+      if (!child || this.child !== child || child.killed || this.disposing) {
+        throw new Error("The owning app-server process is no longer available");
+      }
+      return this.request<T>(method, params, onResponse);
+    };
   }
 
   request<T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> {
@@ -1059,6 +1076,26 @@ export function appServerHelperEnvironment(
     const discovered = candidates.find(exists);
     if (discovered) {
       result[helper.environment] = discovered;
+    }
+  }
+  const rg = platform === "win32" ? "rg.exe" : "rg";
+  const toolsDir = [
+    resourcesPath ? join(resourcesPath, "tools") : undefined,
+    sourceRoot ? join(sourceRoot, "desktop", "build", "tools") : undefined,
+  ]
+    .filter((dir): dir is string => Boolean(dir))
+    .find((dir) => exists(join(dir, rg)));
+  if (toolsDir) {
+    // Appended so a user-installed rg keeps precedence; the bundled copy only
+    // fills the gap for core search tools and agent shell commands.
+    const pathKey =
+      Object.keys(result).find((key) =>
+        platform === "win32" ? key.toUpperCase() === "PATH" : key === "PATH",
+      ) ?? "PATH";
+    const delimiter = platform === "win32" ? ";" : ":";
+    const entries = (result[pathKey] ?? "").split(delimiter).filter(Boolean);
+    if (!entries.includes(toolsDir)) {
+      result[pathKey] = [...entries, toolsDir].join(delimiter);
     }
   }
   return result;

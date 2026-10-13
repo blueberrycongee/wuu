@@ -27,9 +27,10 @@ struct ConnectionStatusView: View {
                     }
                 } else {
                     Text(offlineMessage)
-                        .accessibilityHint(detail)
                 }
                 Spacer(minLength: 0)
+                // Keep the presenter alive while an automatic reconnect is in progress.
+                if !detail.isEmpty { DetailButton(detail: detail, label: "断开原因") }
                 if !connecting {
                     Button("重连", action: reconnect)
                         .foregroundStyle(.primary).frame(minWidth: 44, minHeight: 44)

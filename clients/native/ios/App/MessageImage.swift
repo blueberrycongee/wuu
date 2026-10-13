@@ -46,8 +46,15 @@ struct MessageImage: View {
                 else if failed { Image(systemName: "arrow.clockwise").foregroundStyle(.secondary) }
                 else if connected { ProgressView() }
                 else { Image(systemName: "photo").foregroundStyle(.secondary) }
-            }.frame(width: Self.width, height: Self.height).clipShape(RoundedRectangle(cornerRadius: 10))
-        }.buttonStyle(.plain).disabled(!connected).accessibilityLabel(failed ? "图片加载失败，点击重试" : "图片，点击查看原图")
+            }.frame(width: Self.width, height: Self.height)
+                .contentShape(RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                // Light images, such as screenshots, would otherwise blend into the background.
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+        }.buttonStyle(.plain).disabled(!connected)
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(failed ? "图片加载失败，点击重试" : "图片，点击查看原图")
             .task(id: key + ":\(connected):\(attempt)") {
                 if loadedKey != key { image = nil; loadedKey = key }
                 guard connected, image == nil else { return }
@@ -71,35 +78,59 @@ struct DraftImage: View {
     }
 }
 
+/// One attachment and the message that owns it; reads and previews need both.
 private struct AttachmentTile: Identifiable {
+    let message: ChatMessage
     let index: Int
     let value: JSONValue
-    var id: Int { index }
+    var id: String { message.id + ":\(index)" }
     var isImage: Bool { value["media_type"].string?.hasPrefix("image/") == true }
 }
 
 /// Thumbnails have a stable footprint before and after loading; decoding never moves the timeline.
+/// Images from consecutive messages, such as several tool results, share one wrapping grid.
 struct MessageAttachments: View {
     let model: AppModel
-    let message: ChatMessage
-    private var tiles: [AttachmentTile] { message.attachments.enumerated().map { AttachmentTile(index: $0.offset, value: $0.element) } }
+    let messages: [ChatMessage]
+    var own = false
+    let inspectionOnly: Bool
+    @Binding private var preview: LoadedAttachment?
+    init(model: AppModel, message: ChatMessage) {
+        self.init(model: model, messages: [message])
+        own = message.role == "user"
+    }
+    init(model: AppModel, messages: [ChatMessage], inspectionOnly: Bool = false, preview: Binding<LoadedAttachment?>? = nil) {
+        self.model = model; self.messages = messages; self.inspectionOnly = inspectionOnly
+        _preview = preview ?? Binding(get: { model.attachmentPreview }, set: { model.attachmentPreview = $0 })
+    }
+    private var tiles: [AttachmentTile] {
+        messages.flatMap { message in
+            // Filter after enumeration so reads keep the host attachment address.
+            message.attachments.enumerated().filter { message.isInspectionImage($0.element) == inspectionOnly }
+                .map { AttachmentTile(message: message, index: $0.offset, value: $0.element) }
+        }
+    }
     var body: some View {
+        let tiles = self.tiles
         if tiles.contains(where: \.isImage) {
-            ThumbnailLayout(own: message.role == "user") {
+            ThumbnailLayout(own: own) {
                 ForEach(tiles.filter(\.isImage)) { tile in
-                    MessageImage(key: "\(model.activeID ?? ""):\(message.id):\(tile.index):\(tile.value["remote_ref"].string ?? "")",
+                    MessageImage(key: "\(model.activeID ?? ""):\(tile.message.id):\(tile.index):\(tile.value["remote_ref"].string ?? tile.value["uri"].string ?? "")",
                         connected: model.connected, loader: model.imagePreviews,
-                        read: { try await model.attachmentThumbnail(message, index: tile.index) }, open: { open(tile) })
+                        read: { try await model.attachmentThumbnail(tile.message, index: tile.index) }, open: { open(tile) })
                 }
             }
         }
         ForEach(tiles.filter { !$0.isImage }) { tile in
             Button { open(tile) } label: { Label(tile.value["filename"].string ?? "查看文件", systemImage: "doc") }
+                .frame(minHeight: 44)
                 .disabled(!model.connected || model.loadingAttachment)
         }
     }
     private func open(_ tile: AttachmentTile) {
-        model.perform { try await model.previewAttachment(message, index: tile.index) }
+        model.perform {
+            if let attachment = try await model.loadAttachmentPreview(tile.message, index: tile.index) { preview = attachment }
+        }
     }
 }
 

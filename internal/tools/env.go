@@ -190,6 +190,9 @@ type Env struct {
 	// browser backend is attached (for example the CLI/headless runtime), and
 	// the browser tool returns a clear execute-time error rather than panicking.
 	BrowserBridge BrowserBridge
+	// BrowserHostFinalize enables the negotiated atomic host cleanup. Older
+	// clients retain the per-tab finalize path until they advertise support.
+	BrowserHostFinalize bool
 	// BrowserTabs persists this thread's tab records (url/title/status/activity)
 	// so tabs survive core restarts and can be rebuilt on the first observe.
 	// Nil means tab state is not durable in this environment.
@@ -208,6 +211,9 @@ type Env struct {
 	// Runtime updates publish skillCatalog instead of mutating this slice.
 	Skills       []skills.Skill
 	skillCatalog atomic.Pointer[skillCatalog]
+	// Bound to this toolkit, never inherited from another toolkit's callbacks.
+	// Reads include its pinned extension catalogs and current revocation state.
+	skillSurface func() capability.Surface
 	// ActiveSurface is the compiled model profile surface currently
 	// governing this tool environment. Tools with secondary catalogs
 	// such as load_skill use it to avoid exposing instructions that
@@ -307,9 +313,10 @@ type BrowserBridge interface {
 // BrowserLiveTab is one view the desktop host currently has open for this
 // workspace. URL and Title are empty when the host only reports ids.
 type BrowserLiveTab struct {
-	ID    string
-	URL   string
-	Title string
+	ID     string
+	URL    string
+	Title  string
+	Status string
 }
 
 // BrowserTabRecord is the durable per-tab state the tool persists between turns
@@ -780,12 +787,27 @@ func (e *Env) SkillNames() []string {
 	return out
 }
 
-// VisibleSkills returns the skills allowed by the active model surface.
+// VisibleSkills returns model-invocable skills allowed by the active surface.
+// The user-facing catalog remains invocation-neutral.
 func (e *Env) VisibleSkills() []skills.Skill {
 	if e == nil {
 		return nil
 	}
-	return FilterSkillsForSurface(e.AvailableSkills(), e.ActiveSurface)
+	available := FilterSkillsForSurface(e.AvailableSkills(), e.skillSurfaceSnapshot())
+	visible := make([]skills.Skill, 0, len(available))
+	for _, skill := range available {
+		if !skill.DisableModelInvoke {
+			visible = append(visible, skill)
+		}
+	}
+	return visible
+}
+
+func (e *Env) skillSurfaceSnapshot() capability.Surface {
+	if e.skillSurface != nil {
+		return e.skillSurface()
+	}
+	return e.ActiveSurface
 }
 
 // ProcessSkillBody processes a skill body with variable substitution. Inline

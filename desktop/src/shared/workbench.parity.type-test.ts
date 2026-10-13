@@ -10,6 +10,9 @@ type Expect<T extends true> = T;
 type SnapshotParity = [
   Expect<Equal<SDK.ConversationItemSnapshotV1, Desktop.ConversationItemSnapshotV1>>,
   Expect<Equal<SDK.ComposerSnapshotV1, Desktop.ComposerSnapshotV1>>,
+  Expect<Equal<SDK.ComposerInlineCompletionContext, Desktop.ComposerInlineCompletionContext>>,
+  Expect<Equal<SDK.ComposerInlineCompletion, Desktop.ComposerInlineCompletion>>,
+  Expect<Equal<SDK.ComposerInlineCompletionProviderRegistration, Desktop.ComposerInlineCompletionProviderRegistration>>,
   Expect<Equal<SDK.HeaderSnapshotV1, Desktop.HeaderSnapshotV1>>,
   Expect<Equal<SDK.NavigationSnapshotV1, Desktop.NavigationSnapshotV1>>,
   Expect<Equal<SDK.StatusSnapshotV1, Desktop.StatusSnapshotV1>>,

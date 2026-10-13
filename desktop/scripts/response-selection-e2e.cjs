@@ -88,17 +88,17 @@ function measureGeometry() {
     theme: document.documentElement.dataset.theme, userAgent: navigator.userAgent, regions };
 }
 async function select(text, last = false, physical = false, backward = false, align = "center") {
-  await evaluate((selector, align) => {
+  await evaluate((selector, align, physical) => {
     const root = [...document.querySelectorAll(selector)].find(node => node.getBoundingClientRect().width);
     document.activeElement?.blur();
-    root.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+    if (!physical) root.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
     root.scrollIntoView({ block: align, behavior: "instant" });
-  }, surface, align);
+  }, surface, align, physical);
   // Source navigation and centering deliver scroll asynchronously. A user starts
   // the next drag after that movement; don't create a toolbar destined to be
   // dismissed by the previous operation's queued scroll event.
   await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  const selected = await evaluate((selector, text, last, backward) => {
+  const selected = await evaluate((selector, text, last, backward, physical) => {
     const root = [...document.querySelectorAll(selector)].find(node => node.getBoundingClientRect().width);
     const source = root.textContent;
     const start = last ? source.lastIndexOf(text) : source.indexOf(text);
@@ -116,12 +116,18 @@ async function select(text, last = false, physical = false, backward = false, al
     const first = range.cloneRange(); first.collapse(true);
     const final = range.cloneRange(); final.collapse(false);
     const a = first.getBoundingClientRect(), b = final.getBoundingClientRect();
-    const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
-    if (backward) selection.setBaseAndExtent(endNode, endOffset, startNode, startOffset);
-    document.dispatchEvent(new Event("selectionchange"));
-    root.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
-    return { text, renderedText: selection.toString(), start, end, source, from: { x: Math.round(a.x), y: Math.round(a.y + a.height / 2) }, to: { x: Math.round(b.x), y: Math.round(b.y + b.height / 2) } };
-  }, surface, text, last, backward);
+    let renderedText = range.toString();
+    // A native drag must create its own selection. Preselecting here mounts a
+    // toolbar and its range-restoration observer before the mouse is pressed.
+    if (!physical) {
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      if (backward) selection.setBaseAndExtent(endNode, endOffset, startNode, startOffset);
+      document.dispatchEvent(new Event("selectionchange"));
+      root.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+      renderedText = selection.toString();
+    }
+    return { text, renderedText, start, end, source, from: { x: Math.round(a.x), y: Math.round(a.y + a.height / 2) }, to: { x: Math.round(b.x), y: Math.round(b.y + b.height / 2) } };
+  }, surface, text, last, backward, physical);
   if (physical) {
     await evaluate(() => window.getSelection().removeAllRanges());
     win.focus();
@@ -195,57 +201,6 @@ async function checkSentReference(expected, name) {
     node.click();
   }, selector);
   await checkHighlight(expected);
-  // Observe this real keyboard path without adding waits or changing input
-  // actions. A failed run must distinguish missed input from source invalidation.
-  await evaluate((selector, surface, expected) => {
-    const events = [];
-    let active = true, dropped = 0;
-    const describe = node => node instanceof Element ? { tag: node.tagName, className: node.getAttribute('class'),
-      thread: node.getAttribute('data-thread-id'), item: node.getAttribute('data-response-item-id') } : null;
-    const state = () => {
-      const reference = [...document.querySelectorAll(selector)].at(-1);
-      const root = document.querySelector(surface);
-      const highlight = CSS.highlights.get('wuu-response-source');
-      return { focused: document.hasFocus(), activeElement: describe(document.activeElement), referenceFocused: document.activeElement === reference,
-        sourceText: root?.textContent, sourceConnected: root?.isConnected,
-        hiddenAncestor: describe(root?.closest('[hidden], [inert], [aria-hidden="true"]')),
-        exactSource: root?.textContent?.slice(expected.start, expected.end) === expected.text,
-        highlight: highlight ? [...highlight].map(range => range.toString()) : [] };
-    };
-    const record = (kind, detail) => {
-      if (!active) return;
-      if (events.length === 256) { events.shift(); dropped++; }
-      events.push({ at: performance.now(), kind, ...detail, state: state() });
-    };
-    const onEvent = event => {
-      const detail = { type: event.type, target: describe(event.target), key: event.key, trusted: event.isTrusted };
-      record('event', detail);
-      queueMicrotask(() => record('event-microtask', { ...detail, defaultPrevented: event.defaultPrevented }));
-    };
-    const onClickBubble = event => record('click-bubble', { target: describe(event.target), defaultPrevented: event.defaultPrevented });
-    const types = ['keydown', 'keyup', 'click', 'focusin', 'focusout', 'scroll'];
-    for (const type of types) document.addEventListener(type, onEvent, true);
-    document.addEventListener('click', onClickBubble);
-    const observer = new MutationObserver(records => {
-      for (const mutation of records) record('source-mutation', { type: mutation.type, target: describe(mutation.target),
-        attribute: mutation.attributeName, oldValue: mutation.oldValue,
-        value: mutation.attributeName ? mutation.target.getAttribute(mutation.attributeName) : undefined });
-    });
-    const root = document.querySelector(surface);
-    if (root) {
-      observer.observe(root, { childList: true, characterData: true, subtree: true });
-      for (let node = root.closest('article'); node; node = node.parentElement) {
-        observer.observe(node, { attributes: true, attributeOldValue: true,
-          attributeFilter: ['hidden', 'inert', 'aria-hidden', 'style', 'class', 'data-thread-id'] });
-      }
-    }
-    window.responseSelectionKeyboardTrace = {
-      snapshot: () => ({ events, dropped, final: state() }),
-      stop: () => { active = false; observer.disconnect(); for (const type of types) document.removeEventListener(type, onEvent, true); document.removeEventListener('click', onClickBubble); },
-    };
-    record('start', {});
-  }, selector, surface, expected);
-  try {
   await evaluate(selector => {
     CSS.highlights.delete("wuu-response-source");
     const node = [...document.querySelectorAll(selector)].at(-1);
@@ -263,17 +218,6 @@ async function checkSentReference(expected, name) {
   await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
   await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
   await checkHighlight(expected);
-  } catch (error) {
-    try {
-      report.keyboardSourceFailure = { name, expected, trace: await evaluate(() => window.responseSelectionKeyboardTrace.snapshot()) };
-    } catch (diagnosticError) {
-      report.keyboardSourceFailure = { name, expected, diagnosticError: String(diagnosticError) };
-    }
-    throw error;
-  } finally {
-    await evaluate(() => { window.responseSelectionKeyboardTrace.stop(); delete window.responseSelectionKeyboardTrace; })
-      .catch(error => { report.keyboardTraceCleanupError = String(error); });
-  }
   for (const [theme, font, width] of [["light", 14, 1200], ["dark", 14, 1200], ["light", 20, 390], ["dark", 20, 390]]) {
     win.setContentSize(width, 820);
     await evaluate((selector, theme, font) => {
@@ -285,6 +229,7 @@ async function checkSentReference(expected, name) {
       node.focus();
     }, selector, theme, font);
     await screenshot(`${name}-${theme}-${font}-${width}`);
+    await checkHighlight(expected);
   }
   win.setContentSize(1200, 820);
   await evaluate(() => {

@@ -59,6 +59,7 @@ export function ComposerQuoteCard({ text, comment = "", meta, className, notice,
       <div ref={panelRef} className={`composer-response-selection-popover${className ? ` ${className}-popover` : ""}`} role="dialog"
         aria-label={t("responseSelection.quote")} tabIndex={-1}
         onKeyDown={event => { event.stopPropagation(); if (event.key === "Escape") { event.preventDefault(); close(); } }}>
+        {meta ? <p className="composer-response-selection-meta">{meta}</p> : null}
         <blockquote className="composer-response-selection-quote">{text}</blockquote>
         {showComment ? <textarea className="composer-response-selection-comment" rows={1} wrap="soft"
           aria-label={t("responseSelection.optionalComment")} placeholder={t("responseSelection.optionalComment")}

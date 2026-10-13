@@ -81,6 +81,15 @@ func (th *threadState) resumeSnapshotLocked(paged bool) Thread {
 	return pageThreadSnapshot(thread)
 }
 
+// RemoteThreadSnapshot bounds an unpaged snapshot for a remote controller.
+// Existing pages retain their cursor so older history stays reachable.
+func RemoteThreadSnapshot(thread Thread) Thread {
+	if thread.HistoryPaged || len(thread.Turns) == 0 {
+		return thread
+	}
+	return pageThreadSnapshot(thread)
+}
+
 // RemoteThreadItem projects an item for a bandwidth-limited controller. Oversized
 // content retains an address readable through thread/content/read.
 func RemoteThreadItem(threadID, turnID string, item ThreadItem) ThreadItem {

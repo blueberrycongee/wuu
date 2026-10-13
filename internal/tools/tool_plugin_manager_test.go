@@ -150,6 +150,11 @@ func TestPluginManagerCodeModeCannotBypassExecutionTrust(t *testing.T) {
 
 func TestPluginManagerUsesBoundWorktreeSourceAndInventory(t *testing.T) {
 	kit, parent, worktree, ctx := newWorktreeExecFixture(t)
+	// The tool reports canonical paths; macOS temporary directories use /var aliases.
+	worktree, err := filepath.EvalSymlinks(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
 	kit.SetApproveForMe(true)
 	kit.SetPermissionMode("standard")
 	kit.SetReviewer(&recordingReviewer{decision: approvefor.Decision{Outcome: approvefor.OutcomeAllow}})

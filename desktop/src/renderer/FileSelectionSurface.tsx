@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { SideConversationAvailableContext } from "./ResponseSelection";
+import { useContext, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useFileSelectionActions } from "./FileSelectionContext";
 import { fileSelectionLineIndex, fileSelectionRevision, fileSelectionSource, findFileSelectionDOMAnchor, mapFileDOMSelection, type FileSelectionRange, type FileSelectionSource } from "./FileSelectionMapping";
 import { useI18n } from "./i18n";
@@ -54,6 +55,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
   active?: boolean;
   children: (controls: FileSelectionControls) => ReactNode;
 }): JSX.Element {
+  const sideConversationAvailable = useContext(SideConversationAvailableContext);
   const actions = useFileSelectionActions();
   const { locale } = useI18n();
   const labels = locale.startsWith("zh") ? copy.zh : copy.en;
@@ -80,7 +82,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
   const ownerKey = actions?.ownerKey;
   const current = capture?.ownerKey === ownerKey && capture?.source.workspace === workspace && capture.source.path === path ? capture : null;
   const stale = Boolean(current && current.source.revision !== revision);
-  const comments = actions?.comments.filter(part => part.source.workspace === workspace && part.source.path === path) ?? [];
+  const comments = actions?.comments.filter(part => !part.source.pdf && part.source.workspace === workspace && part.source.path === path) ?? [];
 
   const close = useCallback(() => {
     submissionRef.current++;
@@ -140,7 +142,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
   useEffect(() => {
     if (!enabled || !current) return;
     const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.isComposing) return;
       event.preventDefault();
       event.stopPropagation();
       if (formRef.current?.kind === "comment") {
@@ -306,8 +308,8 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
         onCommentSubmit={() => { if (form?.kind !== "comment") return; if (form.value.trim()) actions!.addComment(current.source, form.value.trim(), form.id); else if (!form.id) actions!.addQuote(current.source); else return; close(); }}
         commentToggleRef={commentToggle} commentInputRef={textarea}
         extraActions={<>
-          <button type="button" disabled={!actions!.askSide || stale} title={!actions!.askSide ? labels.sideUnavailable : undefined}
-            onPointerDown={event => event.preventDefault()} onClick={() => { actions!.askSide?.(current.source); close(); }}>{labels.askSide}</button>
+          {sideConversationAvailable ? <button type="button" disabled={!actions!.askSide || stale} title={!actions!.askSide ? labels.sideUnavailable : undefined}
+            onPointerDown={event => event.preventDefault()} onClick={() => { actions!.askSide?.(current.source); close(); }}>{labels.askSide}</button> : null}
           <button type="button" disabled={stale} onPointerDown={event => event.preventDefault()} onClick={() => startForm("edit")}>{labels.edit}</button>
           <button type="button" aria-label={labels.close} onPointerDown={event => event.preventDefault()} onClick={close}>×</button>
         </>}

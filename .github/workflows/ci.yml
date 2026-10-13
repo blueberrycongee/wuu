@@ -67,6 +67,60 @@ jobs:
       - name: Test
         run: make test-go
 
+      - name: Build plugin model acceptance prerequisites
+        run: |
+          npm ci --prefix packages/plugin-sdk
+          npm --prefix packages/plugin-sdk run build
+          mkdir -p .tmp/bin
+          go build -o .tmp/bin/wuu ./cmd/wuu
+
+      - name: Guard one-shot plugin model requests
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_E2E_CORE: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_MODEL_E2E_OUTPUT: ${{ runner.temp }}/wuu-plugin-model-evidence
+        run: |
+          mkdir -p "$WUU_MODEL_E2E_OUTPUT"
+          set -o pipefail
+          node scripts/plugin-model-request-e2e.mjs 2>&1 | tee "$WUU_MODEL_E2E_OUTPUT/run.log"
+
+      - name: Upload one-shot plugin model evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-model-request-evidence
+          path: |
+            ${{ runner.temp }}/wuu-plugin-model-evidence/*.json
+            ${{ runner.temp }}/wuu-plugin-model-evidence/*.jsonl
+            ${{ runner.temp }}/wuu-plugin-model-evidence/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard extensible model pipeline journeys
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_E2E_CORE: ${{ github.workspace }}/.tmp/bin/wuu
+          WUU_PIPELINE_E2E_OUTPUT: ${{ runner.temp }}/wuu-plugin-pipeline-evidence
+        run: |
+          mkdir -p "$WUU_PIPELINE_E2E_OUTPUT"
+          set -o pipefail
+          packages/plugin-sdk/node_modules/.bin/tsc -p scripts/fixtures/model-pipeline/tsconfig.json
+          node scripts/plugin-model-pipeline-e2e.mjs 2>&1 | tee "$WUU_PIPELINE_E2E_OUTPUT/run.log"
+
+      - name: Upload extensible model pipeline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-model-pipeline-evidence
+          path: |
+            ${{ runner.temp }}/wuu-plugin-pipeline-evidence/*.json
+            ${{ runner.temp }}/wuu-plugin-pipeline-evidence/*.jsonl
+            ${{ runner.temp }}/wuu-plugin-pipeline-evidence/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Build
         if: github.event_name == 'push'
         run: make build-go
@@ -147,8 +201,22 @@ jobs:
       - name: Typecheck
         run: make check-desktop
 
-      - name: Test
-        run: make test-desktop
+      - name: Guard development renderer recovery
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          mkdir -p "${{ runner.temp }}/wuu-renderer-recovery-evidence"
+          set -o pipefail
+          xvfb-run --auto-servernum npm --prefix desktop run test:renderer-recovery -- --no-sandbox 2>&1 | tee "${{ runner.temp }}/wuu-renderer-recovery-evidence/run.log"
+
+      - name: Upload renderer recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renderer-recovery-evidence
+          path: ${{ runner.temp }}/wuu-renderer-recovery-evidence
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Build
         id: build-renderer
@@ -163,7 +231,27 @@ jobs:
         if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji
+          sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
+
+      - name: Guard composer inline extension foundation
+        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_INLINE_E2E_OUTPUT: ${{ runner.temp }}/wuu-composer-inline-evidence
+        run: |
+          mkdir -p "$WUU_INLINE_E2E_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-inline-e2e.cjs 2>&1 | tee "$WUU_INLINE_E2E_OUTPUT/run.log"
+
+      - name: Upload composer inline extension evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: composer-inline-extension-evidence
+          path: ${{ runner.temp }}/wuu-composer-inline-evidence
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Guard app snapshot draft flow
         if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
@@ -298,6 +386,52 @@ jobs:
       - name: Build desktop fixture core
         id: build-fixture-core
         run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
+
+      - name: Verify incoming session cards and split drafts
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_SESSION_MESSAGE_OUTPUT: ${{ runner.temp }}/wuu-session-message-evidence
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          mkdir -p "$WUU_SESSION_MESSAGE_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-message-e2e.cjs 2>&1 | tee "$WUU_SESSION_MESSAGE_OUTPUT/process.log"
+
+      - name: Upload session card acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-message-evidence
+          path: ${{ runner.temp }}/wuu-session-message-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Verify PDF context through the desktop and core
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success' }}
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_DOCUMENT_OUTPUT: ${{ runner.temp }}/wuu-document-context-evidence
+          WUU_DOCUMENT_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_DOCUMENT_COMMIT: ${{ github.sha }}
+        run: |
+          mkdir -p "$WUU_DOCUMENT_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/document-context-e2e.mjs 2>&1 | tee "$WUU_DOCUMENT_OUTPUT/run.log"
+
+      - name: Upload PDF context evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: document-context-evidence
+          path: ${{ runner.temp }}/wuu-document-context-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Test
+        run: make test-desktop
 
       - name: Verify compact Fast mode controls
         if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
@@ -631,6 +765,9 @@ jobs:
 
       - name: Test macOS PTY lifecycle
         run: go test ./internal/process -run '^Test(PTY|ManagerTTY|StartTTY|WriteStdinToTTY)' -count=1
+
+      - name: Test macOS release signing fixtures
+        run: npm --prefix desktop run test:release-signing
 
       - name: Build read-only app snapshot helper
         run: |

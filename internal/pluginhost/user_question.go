@@ -77,9 +77,10 @@ type UserQuestionRequest struct {
 	ActorID     string         `json:"actor_id,omitempty"`
 	CallID      string         `json:"call_id,omitempty"`
 	Mode        string         `json:"mode,omitempty"`
+	ReplyToTool bool           `json:"reply_to_tool,omitempty"`
 	Questions   []UserQuestion `json:"questions"`
 	CreatedAt   time.Time      `json:"created_at"`
-	ExpiresAt   time.Time      `json:"expires_at,omitempty"`
+	ExpiresAt   time.Time      `json:"expires_at,omitzero"`
 }
 
 type UserQuestionOfferResult struct {
@@ -116,13 +117,9 @@ type pendingUserQuestion struct {
 	timer *time.Timer
 }
 
-func (e *pendingUserQuestion) blocking() bool {
-	return e != nil && e.request.Mode != UserQuestionModeOffer
-}
-
-// UserQuestionBroker owns live human questions. Blocking asks stay bound to
-// the owning execution. Offers stay visible after the tool returns until the
-// user answers, the offer expires, or the runtime closes.
+// UserQuestionBroker owns live human questions. Asks, including optional asks,
+// stay bound to the owning execution. Fire-and-forget offers stay visible after
+// the tool returns until answered, expired, or the runtime closes.
 type UserQuestionBroker struct {
 	mu          sync.Mutex
 	closed      bool
@@ -139,7 +136,20 @@ func NewUserQuestionBroker() *UserQuestionBroker {
 }
 
 func (b *UserQuestionBroker) Ask(ctx context.Context, owner UserQuestionOwner, params UserQuestionAskParams) (UserQuestionAnswer, error) {
-	entry, err := b.register(owner, params, UserQuestionModeAsk, userQuestionAskTimeout)
+	return b.ask(ctx, owner, params, UserQuestionModeAsk, userQuestionAskTimeout)
+}
+
+// AskOffer presents an optional question but returns the answer to the waiting
+// tool. Unlike Offer, it ends with the caller and must not create another turn.
+func (b *UserQuestionBroker) AskOffer(ctx context.Context, owner UserQuestionOwner, params UserQuestionAskParams) (UserQuestionAnswer, error) {
+	return b.ask(ctx, owner, params, UserQuestionModeOffer, userQuestionOfferTimeout)
+}
+
+func (b *UserQuestionBroker) ask(ctx context.Context, owner UserQuestionOwner, params UserQuestionAskParams, mode string, timeout time.Duration) (UserQuestionAnswer, error) {
+	if ctx.Err() != nil {
+		return UserQuestionAnswer{}, userQuestionContextError(ctx)
+	}
+	entry, err := b.register(owner, params, mode, timeout, true)
 	if err != nil {
 		return UserQuestionAnswer{}, err
 	}
@@ -157,14 +167,14 @@ func (b *UserQuestionBroker) Ask(ctx context.Context, owner UserQuestionOwner, p
 }
 
 func (b *UserQuestionBroker) Offer(owner UserQuestionOwner, params UserQuestionAskParams) (UserQuestionOfferResult, error) {
-	entry, err := b.register(owner, params, UserQuestionModeOffer, userQuestionOfferTimeout)
+	entry, err := b.register(owner, params, UserQuestionModeOffer, userQuestionOfferTimeout, false)
 	if err != nil {
 		return UserQuestionOfferResult{}, err
 	}
 	return UserQuestionOfferResult{RequestID: entry.request.RequestID, ExpiresAt: entry.request.ExpiresAt}, nil
 }
 
-func (b *UserQuestionBroker) register(owner UserQuestionOwner, params UserQuestionAskParams, mode string, timeout time.Duration) (*pendingUserQuestion, error) {
+func (b *UserQuestionBroker) register(owner UserQuestionOwner, params UserQuestionAskParams, mode string, timeout time.Duration, replyToTool bool) (*pendingUserQuestion, error) {
 	if err := validateUserQuestionAsk(owner, params); err != nil {
 		return nil, err
 	}
@@ -179,7 +189,7 @@ func (b *UserQuestionBroker) register(owner UserQuestionOwner, params UserQuesti
 			SessionID: strings.TrimSpace(owner.SessionID),
 			ThreadID:  strings.TrimSpace(owner.ThreadID), TurnID: strings.TrimSpace(owner.TurnID),
 			ActorID: strings.TrimSpace(owner.ActorID), CallID: strings.TrimSpace(owner.CallID),
-			Mode: mode, Questions: cloneUserQuestions(params.Questions), CreatedAt: now, ExpiresAt: now.Add(timeout),
+			Mode: mode, ReplyToTool: replyToTool, Questions: cloneUserQuestions(params.Questions), CreatedAt: now, ExpiresAt: now.Add(timeout),
 		},
 		result: make(chan userQuestionResult, 1),
 	}
@@ -233,7 +243,7 @@ func (b *UserQuestionBroker) Hold(requestID string) error {
 	if entry == nil {
 		return &UserQuestionError{Code: "question_not_pending", Message: "user question is no longer pending"}
 	}
-	if !entry.blocking() && entry.timer != nil {
+	if entry.request.Mode == UserQuestionModeOffer && entry.timer != nil {
 		entry.timer.Stop()
 		entry.timer = nil
 		entry.request.ExpiresAt = time.Time{}
@@ -330,7 +340,7 @@ func (b *UserQuestionBroker) resolve(requestID string, result userQuestionResult
 }
 
 func (b *UserQuestionBroker) deliver(entry *pendingUserQuestion, result userQuestionResult) {
-	if entry == nil || !entry.blocking() {
+	if entry == nil || !entry.request.ReplyToTool {
 		return
 	}
 	entry.result <- result

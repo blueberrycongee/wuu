@@ -11,6 +11,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
+	"github.com/blueberrycongee/wuu/internal/modelrequest"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -131,7 +132,7 @@ func (r nativeToolReviewer) reviewWithModel(ctx context.Context, request approve
 		"user_messages":   request.UserMessages,
 		"conversation":    messages, "earlier_history_omitted": omitted,
 	})
-	response, err := providers.ExecuteChat(reviewCtx, runner.Client, providers.ChatRequest{
+	response, err := modelrequest.Execute(reviewCtx, runner.Client, providers.ChatRequest{
 		Provider: runner.ProviderName,
 		Model:    model,
 		Messages: []providers.ChatMessage{
@@ -141,11 +142,8 @@ func (r nativeToolReviewer) reviewWithModel(ctx context.Context, request approve
 		Temperature:     runner.Temperature,
 		Effort:          runner.Effort,
 		ProviderOptions: runner.ProviderOptions,
-	}, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+	})
 	if err != nil {
-		return "", "", err
-	}
-	if err := reviewCtx.Err(); err != nil {
 		return "", "", err
 	}
 	return parseNativeReviewResponse(response.Content)

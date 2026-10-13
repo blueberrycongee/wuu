@@ -58,7 +58,7 @@ remain invalid; this is recovery behavior, not downgrade compatibility.
 | `thread/start` | Optional `cwd`, `workspace_id`, `engine`, `provider`, `model`, `effort`, `permission_mode`, `approve_for_me`, `ephemeral`, `workspace`, `base_revision` | `{ "thread": ... }` |
 | `thread/resume` | Optional `session_id`, `response_only`, `history_page` | Thread snapshot and available held/pending user messages |
 | `thread/edit-message` | `thread_id`, `turn_id`, `item_id` | Rewound thread and draft restored from the selected user message |
-| `thread/fork` | `thread_id`; optional `turn_id`, `item_id`, `target`, `mode` | New thread and optional worktree information |
+| `thread/fork` | `thread_id`; optional `turn_id`, `item_id`, `target`, `mode`, `history_page` | New thread and optional worktree information |
 | `thread/list`, `thread/listAll`, `thread/listArchived`, `thread/search` | Method-specific filters | Session metadata |
 | `thread/rename`, `thread/pin`, `thread/archive`, `thread/delete` | Target and method-specific changes | Updated state or operation result |
 
@@ -101,6 +101,18 @@ An omitted `session_id` in `thread/resume` selects the most recent visible sessi
 for the workspace. `response_only` avoids a duplicate resume broadcast to the
 requester. `history_page` requests bounded recent history rather than the full
 snapshot. Forks retain the source conversation and copy its selection.
+`thread/fork` also accepts `history_page`; both its result and `thread/started`
+notification then carry bounded recent history and a cursor for `thread/history/read`.
+The `mobile_activity` remote profile bounds unpaged thread snapshots as well.
+
+For published image snapshots, `thread/attachment/read` accepts `kind: "artifact"`
+with `thread_id`, `turn_id`, `item_id`, content `index`, and the stored `sha256`.
+The host resolves the URI from that message and validates the artifact's workspace,
+thread and immutable bytes. Clients cannot supply a filesystem path. `preview: true`
+returns a bounded JPEG thumbnail; original content uses base64 chunks of at most
+128 KiB with `offset`, `total` and `content_type`. The original digest covers decoded
+artifact bytes. Clients may request independent offsets concurrently, retain response
+order by offset, and verify the complete original before displaying it.
 
 For the built-in engine, `thread/edit-message` retracts the selected user message
 and later messages from the active conversation. Resuming and forking use that
@@ -109,6 +121,14 @@ The physical audit transcript remains append-only; editing does not erase its
 records. Retraction metadata is recorded for new edits; previously edited
 sessions without that metadata cannot reliably distinguish discarded branches
 from compacted history.
+
+For Codex, both operations create a bounded native branch before committing the
+new reference and Wuu history. Forks accept completed native turns or their final
+reply; edits exclude the selected prompt's whole native turn. Partial-turn cuts,
+unverifiable legacy identities, busy sources, unsupported adapters, or native
+responses that ignore the cutoff fail without changing the source. Empty native
+threads need no native copy. See [external engine history](../getting-started/external-engines.md#forking-and-editing-history)
+for supported boundaries and failure recovery. These operations never undo files.
 
 ## Turns and execution runs
 
@@ -128,6 +148,49 @@ optional `hold: true` to persist input as held work without dispatching it, even
 when the interrupted turn has already settled. This lets clients retain messages
 whose preparation or admission finishes after a Stop request. Held input remains
 available through the existing pending-input controls and resume snapshots.
+
+For persistent conversations, human queue/steer acceptance and pending-input edits
+or cancellation commit before a successful RPC response. Reuse a stable
+`client_id` when retrying an ambiguous response: a pending queue duplicate returns
+the original accepted input, while consumed IDs are rejected across input methods.
+Cancellation fences retries in that delivery mode; explicitly switching between
+queue and steering supersedes the previous mode's cancellation. Updates use
+`turn/update-queued`; resubmitting `turn/queue` does not edit or restart input.
+A restarted server exposes unconsumed input through `held_user_messages` and never
+reconstructs an automatic runnable queue. Live input appears only in
+`pending_user_messages`. Explicitly send a held item with `turn/steer`.
+
+User-history admission atomically settles the recovery record. Human steering
+checkpoints the unpersisted transcript before the next model request, preserving
+message order and preventing a crash from making dispatched input replayable.
+A concurrent edit or cancellation fences stale admission. Permission selection
+is re-resolved at execution; saved input does not restore old permissions.
+These are local process-crash guarantees, not automatic recovery of uncertain
+tool effects. Ephemeral conversations retain their memory-only behavior.
+
+Persistent Codex conversations support active-turn human steering. Wuu binds
+`expected_turn_id` to the current host turn, and the adapter binds the native
+request to the active native turn ID. Attachments and stable `client_id` values
+use the ordinary input path; steering does not change tools or permissions.
+The RPC response acknowledges local acceptance, while the user item appears in
+history only after a matching native acknowledgement and a successful local
+history commit. Several supplements can belong to the same turn.
+
+The steering result's optional `delivery` field reports the planned path,
+`active_turn` or `queued`; it does not acknowledge native consumption.
+Engines without active-turn steering, and ephemeral native conversations, retain
+the next-turn queue behavior. A native method-not-found response also falls back
+to the ordinary queue. A native rejection instead returns the input as held work;
+it is never silently injected into a later turn.
+
+If delivery loses its acknowledgement, is cancelled after sending, or cannot
+commit its receipt, the held item has `delivery_unconfirmed: true`. Its stable ID
+cannot be edited, withdrawn, requeued or resent, including after restart. The
+desktop shows the reason and keeps the original content available to view or copy. Inspect
+the native conversation before deciding whether to submit replacement input.
+This prevents automatic duplicate work; it does not claim exactly-once external
+tool execution. New input accepted while a native turn is settling is held if
+that turn can no longer accept it.
 
 Failed Wuu-engine streams can include `turn.error.recovery`. Its `attempt_count`
 and `retry_count` count recovery-executor calls that actually started; a prepared
@@ -271,9 +334,13 @@ without changing the default: the response reports the unchanged workspace
 selection, and idle conversations using the provider pick up the new
 connection. It cannot be combined with `thread_id`, `variant`, `effort`, or
 `permission_mode`, and on the default provider it cannot change the workspace
-model. `remove_model` hides a model choice so catalog refreshes cannot restore
-it; `add_model` restores a hidden choice or adds a model ID the catalog does not
-list. Provider summaries report hidden choices as `hidden_models`, and
+model. `remove_model` removes a model choice so catalog refreshes cannot restore
+it; the request must retain or supply a different selected `model`. Existing
+conversation, role, and alias selections retain their model metadata.
+`add_model` restores a removed choice or adds a model ID the catalog does not
+list. Model update and provider removal responses include `model_aliases` and
+`project_models`, including empty values, so clients can clear removed references.
+Provider summaries report removed choices as `hidden_models`, and
 `catalog_id` / `catalog_name` when the endpoint belongs to a model catalog
 service.
 
@@ -435,6 +502,16 @@ exclusive. `revision` identifies the captured file content, not necessarily a
 Git revision. The server checks required metadata, supported intent, positive
 coordinates, and range ordering; it does not read the file or verify its revision.
 
+PDF selections add optional `source.pdf` metadata with one-based `start_page`
+and `end_page` (inclusive). Their four line/column fields are zero; pages are
+never encoded as text lines. A delivered PDF also retains `artifact_uri`,
+`artifact_sha256`, and `artifact_thread_id` inside `pdf`, with `revision` set to
+`sha256:<artifact_sha256>`. Wuu checks the page ordering and delivery identity
+fields for consistency. These fields identify the quoted snapshot; they do not
+grant file access or prove that a quoted passage appears in it. The desktop's
+Quote and Comment actions add the excerpt to the current draft without sending.
+Workspace PDF revisions identify the file observed when the excerpt was captured.
+
 Each file-selection `text` must contain the complete model-visible serialized
 block, including source context, intent, and any comment. Clients concatenate
 part texts in order to form `prompt`. The server keeps valid metadata only when
@@ -489,15 +566,31 @@ for children has not delivered its final result.
 ## Server-initiated requests
 
 Reverse RPC is opt-in through `initialize.params.capabilities.reverse_rpc.methods`.
-The browser client advertises all six methods: `browser/cdp`, `browser/screenshot`,
+The basic browser client advertises six methods: `browser/cdp`, `browser/screenshot`,
 `browser/open_tab`, `browser/close_tab`, `browser/set_visibility`, and
 `browser/list_tabs`. These travel from core to client; they are not client-to-core
 methods despite appearing beside other method constants in the source.
+
+Every browser request carries a core-assigned `thread_id` and `workdir`. The client must scope tab creation, listing, input, capture, and cleanup to that conversation. Page-opened tabs inherit their opener's ownership. Reject an existing tab owned by another conversation rather than navigating or adopting it.
+
+A `request_id` identifies an in-flight browser operation. The `browser/request_cancelled` notification carries that ID with the same `thread_id` and `workdir` when the core stops waiting. Cancel only the matching operation, checking again after asynchronous work and before sending input. Activity takeover and stop revoke input for all tabs of that conversation. A later release grants fresh authority without resuming an old request.
+
+Desktop clients also advertise `browser/finalize` and `browser/turn_ended` for execution-scoped lifecycle support. Before the first browser request in a workspace, the core sends `browser/turn_started` with `workdir`, `thread_id`, `turn_id`, and an immutable `execution_id`. Every browser action in that execution carries the same tuple. A logical turn can resume with a new execution ID; reject requests and completion from an older execution even when its turn ID matches.
+
+`browser/finalize` atomically applies `keep: [{tab_id, status}]`, where status is `persistent`, `handoff`, or `deliverable`, and closes omitted temporary pages without ending the execution. Manual and user-taken pages remain persistent. Retained popups also protect their live same-task opener ancestry. Missing durable keep IDs may be absent after a host restart; a live ID owned by another task is an error.
+
+After completion or interruption, `browser/turn_ended` carries the execution tuple and retained records. Invalidate pending operations first, close temporary pages, and detach the debugger and clear input/cursor state on retained pages without replacing their live contents or current preview geometry. Cleanup must not delete screenshot artifacts referenced in history. On a durable keep-record read failure, `preserve_all: true` requests retaining all scoped pages instead of risking data loss. Both methods return `closed`, `kept`, and optional `tabs` with `tab_id`, `url`, `title`, and `status`; stale completion returns `stale: true` without modifying tabs. Hosts without the additional lifecycle methods retain the basic request contract.
 
 Reply with the server request's ID and a result or error while continuing to read
 the stream. Browser calls have a 30-second response timeout. Omitted capabilities
 do not authorize reverse requests. `wuu exec` does not advertise this interactive
 browser surface and makes permission decisions without a client approval exchange.
+
+## Background process triggers
+
+`process/list` accepts `thread_id` and returns only processes owned by that conversation. Each process may include `trigger` with `status` (`waiting`, `received`, `handled`, `cancelled`, or `stopped`), `on_exit`, and optional `recheck_minutes` and `next_recheck_at`. `received` means an event is available for continuation; it does not assert that a new turn has started. Detached processes without scheduled checks or a recorded cancellation omit `trigger`. Clients must tolerate its absence on older hosts.
+
+`process/cancel-notifications` accepts `thread_id` and `process_id`, checks ownership, and returns the updated `process`. It durably cancels future exit and recheck notifications without terminating the process. A continuation already admitted may finish. Use `process/stop` separately to stop a task. `process/read` is a read-only view of output and does not acknowledge the model-facing completion.
 
 ## Hosted processes
 

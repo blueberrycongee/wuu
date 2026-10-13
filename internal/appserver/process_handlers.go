@@ -33,12 +33,22 @@ func (s *Server) handleProcessList(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	s.agentCompletionMu.Lock()
+	queued := make(map[string]bool)
+	for _, entry := range s.pendingAgentCompletionTurns[threadID] {
+		queued[entry.processID] = true
+	}
+	s.agentCompletionMu.Unlock()
 	summaries := make([]ManagedProcessSummary, 0, len(processes))
 	for _, p := range processes {
 		if !s.processBelongsToThread(threadID, p) {
 			continue
 		}
-		summaries = append(summaries, managedProcessSummaryForManager(manager, p))
+		summary := managedProcessSummaryForManager(manager, p)
+		if summary.Trigger != nil && summary.Trigger.Status == "waiting" && queued[p.ID] {
+			summary.Trigger.Status = "received"
+		}
+		summaries = append(summaries, summary)
 	}
 	return s.writeResponse(req.ID, ProcessListResult{Processes: summaries}, nil)
 }
@@ -145,6 +155,34 @@ func (s *Server) handleProcessStop(req Request) error {
 	return s.writeResponse(req.ID, ProcessStopResult{Process: managedProcessSummaryForManager(manager, *stopped)}, nil)
 }
 
+func (s *Server) handleProcessCancelNotifications(req Request) error {
+	var params ProcessStopParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	manager, p, err := s.authorizedProcess(params.ThreadID, params.ProcessID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	cancelled, err := manager.CancelNotifications(p.ID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	// Admission rechecks persisted state as well, including events already
+	// taken by the drain when this cancellation arrives.
+	s.agentCompletionMu.Lock()
+	pending := s.pendingAgentCompletionTurns[strings.TrimSpace(params.ThreadID)]
+	kept := pending[:0]
+	for _, entry := range pending {
+		if entry.processID != p.ID {
+			kept = append(kept, entry)
+		}
+	}
+	s.pendingAgentCompletionTurns[strings.TrimSpace(params.ThreadID)] = kept
+	s.agentCompletionMu.Unlock()
+	return s.writeResponse(req.ID, ProcessStopResult{Process: managedProcessSummaryForManager(manager, *cancelled)}, nil)
+}
+
 func (s *Server) authorizedProcess(threadID, processID string) (*process.Manager, *process.Process, error) {
 	threadID = strings.TrimSpace(threadID)
 	processID = strings.TrimSpace(processID)
@@ -224,7 +262,36 @@ func managedProcessSummaryForManager(manager *process.Manager, p process.Process
 }
 
 func managedProcessSummary(p process.Process) ManagedProcessSummary {
+	var trigger *ProcessTrigger
+	if p.CompletionMode != process.CompletionModeDetached || p.RecheckMinutes > 0 || !p.NotificationsCancelledAt.IsZero() {
+		trigger = &ProcessTrigger{
+			Status:         "waiting",
+			OnExit:         p.CompletionMode != process.CompletionModeDetached,
+			RecheckMinutes: p.RecheckMinutes,
+		}
+		if !p.NextRecheckAt.IsZero() {
+			trigger.NextRecheckAt = &p.NextRecheckAt
+		}
+		switch {
+		case !p.NotificationsCancelledAt.IsZero():
+			trigger.Status = "cancelled"
+		case !p.CompletionDeliveredAt.IsZero():
+			trigger.Status = "handled"
+		case p.Status == process.StatusStopping || p.TerminalCause == process.EventCauseRequestedStop:
+			trigger.Status = "stopped"
+		case p.Status == process.StatusStopped || p.Status == process.StatusFailed:
+			// A failed start records no terminal cause and never wakes the thread.
+			if trigger.OnExit && p.TerminalCause == process.EventCauseNaturalExit {
+				trigger.Status = "received"
+			} else {
+				trigger.Status = "stopped"
+			}
+		case !p.PendingRecheckAt.IsZero():
+			trigger.Status = "received"
+		}
+	}
 	return ManagedProcessSummary{
+		Trigger:   trigger,
 		ID:        p.ID,
 		OwnerKind: string(p.OwnerKind),
 		OwnerID:   p.OwnerID,

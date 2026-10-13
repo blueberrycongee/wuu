@@ -19,6 +19,7 @@ import type {
   LanguagePreference,
   MessageFlowFontSize,
   PluginConflictPreferences,
+  PluginClientCancelResult,
   ProjectListResult,
   RunningThreadSnapshot,
   RuntimeContext,
@@ -124,6 +125,7 @@ const unavailableWebMethods = [
   "revealSession",
   "revealWorkspaceItem",
   "showWorkspaceItemMenu",
+  "showArtifactItemMenu",
   "popOutSession",
   "popOutClosed",
 ] as const satisfies readonly (keyof WuuDesktopApi)[];
@@ -596,6 +598,7 @@ export class RemoteDesktopBridge {
    return this.applyProjectState(await this.call(id?'desktop/projects/relocate':'desktop/projects/add',{path,id}));
   }
   private createApi(): WuuDesktopApi {
+    const pluginRequests = new Map<string, { id: string; fingerprint: string; workdir: string; revision: number }>();
     const target: WuuDesktopApi = {
       ...unavailableWebActions,
       hostKind: "web",
@@ -834,7 +837,37 @@ export class RemoteDesktopBridge {
       getPluginDiagnostics: (params) => this.call("plugin/diagnostics/list", params),
       getPluginStorage: (params) => this.call("plugin/storage/get", params),
       setPluginStorage: (params) => this.call("plugin/storage/set", params),
-      requestPluginRuntime: (params) => this.call("plugin/client/request", params),
+      requestPluginRuntime: async (params) => {
+        const workdir = this.requestWorkdir(params);
+        const requestID = params.request_id;
+        const identity = { id: params.id, fingerprint: params.fingerprint };
+        const revision = this.connection.revision;
+        if (requestID && pluginRequests.has(requestID)) throw new Error("Plugin request ID is already active");
+        if (requestID) pluginRequests.set(requestID, { ...identity, workdir, revision });
+        try {
+          const { workspace_id: _workspaceID, ...request } = params;
+          return await this.call("plugin/client/request", request, workdir);
+        } catch (error) {
+          // A local RPC deadline only forgets its reply. Stop the host work too,
+          // while the original connection still owns this request identity.
+          if (requestID && revision === this.connection.revision) {
+            void this.call<PluginClientCancelResult>("plugin/client/cancel", {
+              ...identity, request_id: requestID,
+            }, workdir).catch((cancelError: unknown) => {
+              console.error("Plugin runtime cancellation failed", cancelError);
+            });
+          }
+          throw error;
+        } finally {
+          if (requestID) pluginRequests.delete(requestID);
+        }
+      },
+      cancelPluginRuntime: async (params) => {
+        const request = pluginRequests.get(params.request_id);
+        if (!request || request.id !== params.id || request.fingerprint !== params.fingerprint
+          || request.revision !== this.connection.revision) return { cancelled: false };
+        return this.call<PluginClientCancelResult>("plugin/client/cancel", params, request.workdir);
+      },
       readManagedProcess: (params) => this.call("process/read", params),
       holdUserQuestion: (request_id) => this.call("user-question/hold", { request_id }),
       useCodexCredentials: (provider) => this.call("config/codex/credentials", { provider }),
@@ -859,6 +892,7 @@ export class RemoteDesktopBridge {
       reorderSessionFolders: (ids) => this.call("sessionFolder/reorder", { ids }),
       deleteSessionFolder: (id) => this.call("sessionFolder/delete", { id }),
       listManagedProcesses: (thread_id) => this.call("process/list", { thread_id }),
+      cancelProcessNotifications: (thread_id, process_id) => this.call("process/cancel-notifications", { thread_id, process_id }),
       takeoverActivity: (thread_id, activity_id) => this.call("activity/takeover", { thread_id, activity_id }),
       releaseActivity: (thread_id, activity_id) => this.call("activity/release", { thread_id, activity_id }),
       stopActivity: (thread_id, activity_id) => this.call("activity/stop", { thread_id, activity_id }),

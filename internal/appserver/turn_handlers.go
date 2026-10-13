@@ -2,12 +2,15 @@ package appserver
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"mime"
+	"net/url"
 	"reflect"
 	"slices"
 	"sort"
@@ -31,6 +34,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/insight"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
+	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/process"
@@ -44,11 +48,13 @@ import (
 )
 
 type queuedTurn struct {
-	id        string
-	msg       providers.ChatMessage
-	followups []providers.ChatMessage
-	snapshot  turnRuntimeSnapshot
-	origin    string
+	id                  string
+	msg                 providers.ChatMessage
+	followups           []providers.ChatMessage
+	snapshot            turnRuntimeSnapshot
+	origin              string
+	durable             bool
+	deliveryUnconfirmed bool
 	// Captured only at explicit user submission, never by a background drain.
 	resumeBrowser func()
 }
@@ -101,6 +107,7 @@ const (
 )
 
 type turnAdmissionHooks struct {
+	acceptedUserWork *session.HeldUserWork
 	// afterLease runs without th.mu after the durable lease has been acquired
 	// and disk state refreshed. The lease remains attached to th, so helpers may
 	// take th.mu and perform admission-only side effects without racing another
@@ -113,6 +120,9 @@ type turnAdmissionHooks struct {
 }
 
 type turnRuntimeSnapshot struct {
+	// CWD and permissions are captured at admission. Later metadata changes
+	// must not retarget an already-admitted external-engine turn.
+	CWD                string
 	ProviderName       string
 	Model              string
 	PermissionMode     string
@@ -208,7 +218,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		}
 		return nil
 	}
-	userMsg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
+	userMsg, err := s.userMessageWithInputImages(ctx, params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -502,7 +512,7 @@ func (s *Server) startThreadCompactTurn(ctx context.Context, req Request, th *th
 	return nil
 }
 
-func (s *Server) handleTurnQueue(req Request) error {
+func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 	var params TurnQueueParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -547,7 +557,7 @@ func (s *Server) handleTurnQueue(req Request) error {
 	if queueID == "" {
 		queueID = session.NewID()
 	}
-	msg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
+	msg, err := s.userMessageWithInputImages(ctx, params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -567,43 +577,34 @@ func (s *Server) handleTurnQueue(req Request) error {
 	entry.snapshot.PermissionExplicit = params.PermissionMode != nil
 	entry.snapshot.ForceCompact = isManualCompactPrompt(params.Prompt)
 	entry.snapshot.ActiveDocument = cloneActiveDocument(params.ActiveDocument)
-	queued := queuedTurnSummary(params.ThreadID, entry)
 	th.mu.Lock()
-	if th.interrupting || params.Hold {
-		// Keep the cancellation check and held append in one queue-state critical
-		// section. Otherwise stopping the active turn could let an already-cancelled
-		// late submission bypass normal queue admission.
-		s.queuedTurnMu.Lock()
-		if s.isCancelledPendingSubmissionLocked(params.ThreadID, queueID, session.HeldUserWorkOriginQueue) {
-			s.queuedTurnMu.Unlock()
-			th.mu.Unlock()
-			return s.writeResponse(req.ID, nil, errors.New("queue submission was cancelled before arrival"))
-		}
-		held, holdErr := s.appendHeldUserTurns(params.ThreadID, []queuedTurn{entry})
-		s.queuedTurnMu.Unlock()
-		th.mu.Unlock()
-		if holdErr != nil {
-			return s.writeResponse(req.ID, nil, holdErr)
-		}
-		if err := s.writeResponse(req.ID, TurnQueueResult{Queued: queued}, nil); err != nil {
-			return err
-		}
-		s.notifyHeldUserTurns(params.ThreadID, held)
-		return nil
-	}
 	for _, pendingSteer := range th.pendingSteers {
 		if strings.TrimSpace(pendingSteer.ClientID) == queueID {
 			th.mu.Unlock()
 			return s.writeResponse(req.ID, nil, errors.New("client_id is already pending as steering input"))
 		}
 	}
-	enqueued := s.enqueueQueuedUserTurn(params.ThreadID, entry)
-	th.mu.Unlock()
-	if !enqueued {
-		if _, pending := s.findQueuedUserTurn(params.ThreadID, queueID); !pending {
-			return s.writeResponse(req.ID, nil, errors.New("queue submission was cancelled before arrival"))
+	hold := th.interrupting || params.Hold
+	var enqueued bool
+	if th.PersistHistory {
+		entry, enqueued, err = s.acceptQueuedUserTurn(params.ThreadID, entry, hold)
+	} else if hold {
+		err = errors.New("held input requires a persistent conversation")
+	} else {
+		enqueued = s.enqueueQueuedUserTurn(params.ThreadID, entry)
+		if !enqueued {
+			var found bool
+			entry, found = s.findQueuedUserTurn(params.ThreadID, queueID)
+			if !found {
+				err = errQueuedTurnCancelled
+			}
 		}
 	}
+	th.mu.Unlock()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	queued := queuedTurnSummary(params.ThreadID, entry)
 	if err := s.writeResponse(req.ID, TurnQueueResult{Queued: queued}, nil); err != nil {
 		return err
 	}
@@ -612,11 +613,13 @@ func (s *Server) handleTurnQueue(req Request) error {
 			Queued: queued, Message: heldUserMessageSummary(params.ThreadID, entry),
 		})
 		s.kickQueuedTurnDrain(params.ThreadID)
+	} else if held, err := s.loadHeldUserTurns(params.ThreadID); err == nil {
+		s.notifyHeldUserTurns(params.ThreadID, held)
 	}
 	return nil
 }
 
-func (s *Server) handleTurnUpdateQueued(req Request) error {
+func (s *Server) handleTurnUpdateQueued(ctx context.Context, req Request) error {
 	var params TurnUpdateQueuedParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -647,16 +650,25 @@ func (s *Server) handleTurnUpdateQueued(req Request) error {
 	}
 	th.mu.Lock()
 	readOnly := th.ReadOnly
+	for _, steer := range th.pendingSteers {
+		if steer.ClientID == params.QueueID {
+			th.mu.Unlock()
+			return s.writeResponse(req.ID, nil, errors.New("requeue steering input before editing it"))
+		}
+	}
 	th.mu.Unlock()
 	if readOnly {
 		return s.writeResponse(req.ID, nil, errors.New("thread is read-only"))
 	}
 
-	msg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
+	msg, err := s.userMessageWithInputImages(ctx, params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	updated, ok := s.replaceQueuedUserTurn(params.ThreadID, params.QueueID, msg)
+	updated, ok, err := s.updateAcceptedQueuedTurn(params.ThreadID, params.QueueID, msg)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	var held []queuedTurn
 	if !ok {
 		updated, held, ok, err = s.updateHeldUserTurn(params.ThreadID, params.QueueID, msg)
@@ -690,17 +702,19 @@ func (s *Server) handleTurnDequeue(req Request) error {
 	if queueID == "" {
 		return s.writeResponse(req.ID, nil, errors.New("queue_id is required"))
 	}
-	removedTurn, removed := s.removeQueuedUserTurn(threadID, queueID)
-	var held []queuedTurn
-	if !removed {
-		var err error
-		removedTurn, held, removed, err = s.removeHeldUserTurn(threadID, queueID)
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
+	persist := true
+	if th := s.thread(threadID); th != nil {
+		th.mu.Lock()
+		persist = th.PersistHistory
+		th.mu.Unlock()
 	}
-	if !removed {
-		s.recordCancelledPendingSubmission(threadID, queueID, session.HeldUserWorkOriginQueue)
+	removedTurn, removed, err := s.cancelQueuedUserTurn(threadID, queueID, persist)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	held, err := s.loadHeldUserTurns(threadID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
 	if err := s.writeResponse(req.ID, OKResult{OK: removed}, nil); err != nil {
 		return err
@@ -718,7 +732,7 @@ func (s *Server) handleTurnDequeue(req Request) error {
 	return nil
 }
 
-func (s *Server) handleTurnSteer(req Request) error {
+func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 	var params TurnSteerParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -752,6 +766,9 @@ func (s *Server) handleTurnSteer(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if isHeld && heldTurn.deliveryUnconfirmed {
+		return s.writeResponse(req.ID, nil, session.ErrHeldUserWorkUnconfirmed)
+	}
 	// Reject an obsolete UI submission before it revokes automatic management.
 	// The admission checks below still run after the control transition.
 	th.mu.Lock()
@@ -765,7 +782,7 @@ func (s *Server) handleTurnSteer(req Request) error {
 	// Skill resolution can acquire the thread runtime; keep it outside the admission lock.
 	var steerMsg providers.ChatMessage
 	if !isHeld {
-		steerMsg, err = s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
+		steerMsg, err = s.userMessageWithInputImages(ctx, params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -788,7 +805,6 @@ func (s *Server) handleTurnSteer(req Request) error {
 		if !isHeld {
 			return s.writeResponse(req.ID, nil, errors.New("no active turn to steer"))
 		}
-		heldTurn.msg.Steered = false
 		heldTurn.resumeBrowser, err = s.rt.ActivityRegistry.PrepareResume(params.ThreadID, activity.KindBrowser)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -802,53 +818,53 @@ func (s *Server) handleTurnSteer(req Request) error {
 		}
 		th.mu.Lock()
 		turnID := th.currentTurn
+		delivery := s.steerDeliveryModeLocked(th)
 		th.mu.Unlock()
-		_, remaining, removed, removeErr := s.removeHeldUserTurn(params.ThreadID, clientID)
-		if removeErr != nil {
-			providers.DebugLogf("remove started held message %q: %v", clientID, removeErr)
-		} else if removed {
+		if remaining, err := s.loadHeldUserTurns(params.ThreadID); err == nil {
 			s.notifyHeldUserTurns(params.ThreadID, remaining)
 		}
-		return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID}, nil)
+		return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID, Delivery: delivery}, nil)
 	}
 	if err := th.validateSteerTargetLocked(params.ExpectedTurnID); err != nil {
 		th.mu.Unlock()
 		return s.writeResponse(req.ID, nil, err)
 	}
 	turnID := th.currentTurn
+	delivery := s.steerDeliveryModeLocked(th)
 	for _, pendingSteer := range th.pendingSteers {
 		if strings.TrimSpace(pendingSteer.ClientID) == clientID {
 			th.mu.Unlock()
-			return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID}, nil)
+			return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID, Delivery: delivery}, nil)
 		}
 	}
-	var remaining []queuedTurn
-	var removedTurn queuedTurn
+	steerDocument := params.ActiveDocument
 	if isHeld {
-		var removed bool
-		removedTurn, remaining, removed, err = s.removeHeldUserTurn(params.ThreadID, clientID)
-		if err != nil {
-			th.mu.Unlock()
-			return s.writeResponse(req.ID, nil, err)
-		}
-		if !removed {
-			th.mu.Unlock()
-			return s.writeResponse(req.ID, nil, errors.New("held message no longer exists"))
-		}
-		steerMsg = removedTurn.msg
+		steerMsg = heldTurn.msg
+		steerDocument = heldTurn.snapshot.ActiveDocument
 	}
 	steerMsg.ClientID = clientID
 	steerMsg.Steered = true
+	steerEntry := queuedTurn{id: clientID, msg: steerMsg, snapshot: turnRuntimeSnapshotLocked(th), origin: session.HeldUserWorkOriginSteer, durable: th.PersistHistory}
+	steerEntry.snapshot.ActiveDocument = cloneActiveDocument(steerDocument)
+	if isHeld {
+		steerEntry.snapshot = heldTurn.snapshot
+		err = s.persistUpdatedUserTurn(params.ThreadID, heldTurn, steerEntry)
+	} else if th.PersistHistory {
+		var accepted bool
+		accepted, err = s.persistAcceptedUserTurn(params.ThreadID, steerEntry)
+		if err == nil && !accepted {
+			err = errors.New("client_id is already accepted; resume the held input")
+		}
+	}
+	if err != nil {
+		th.mu.Unlock()
+		return s.writeResponse(req.ID, nil, err)
+	}
 	removedQueuedTurn, removedQueued := s.removeQueuedUserTurn(params.ThreadID, clientID)
 	th.pendingSteers = append(th.pendingSteers, steerMsg)
 	th.signalSteerWakeLocked()
-	steerDocument := params.ActiveDocument
-	if isHeld {
-		steerDocument = removedTurn.snapshot.ActiveDocument
-	}
 	th.steerDocumentOverrides = append(th.steerDocumentOverrides, activeDocumentOverride{
-		steerID:  clientID,
-		document: cloneActiveDocument(steerDocument),
+		steerID: clientID, document: cloneActiveDocument(steerDocument),
 	})
 	th.applyLatestSteerDocumentOverrideLocked()
 	th.mu.Unlock()
@@ -861,8 +877,9 @@ func (s *Server) handleTurnSteer(req Request) error {
 		})
 	}
 	if isHeld {
-		s.notifyPluginTurnDiscarded(params.ThreadID, removedTurn, "held turn was converted to steering input")
-		s.notifyHeldUserTurns(params.ThreadID, remaining)
+		if remaining, err := s.loadHeldUserTurns(params.ThreadID); err == nil {
+			s.notifyHeldUserTurns(params.ThreadID, remaining)
+		}
 	}
 	_ = s.writeNotification(NotificationTurnSteered, TurnSteeredNotification{
 		Message: heldUserMessageSummary(params.ThreadID, queuedTurn{
@@ -871,7 +888,7 @@ func (s *Server) handleTurnSteer(req Request) error {
 			origin:   session.HeldUserWorkOriginSteer,
 		}),
 	})
-	return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID}, nil)
+	return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID, Delivery: delivery}, nil)
 }
 
 func (th *threadState) validateSteerTargetLocked(expectedTurnID string) error {
@@ -968,20 +985,31 @@ func (s *Server) handleTurnUnsteer(req Request) error {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("thread %q not found", threadID))
 	}
 	th.mu.Lock()
+	if th.nativeSteerInFlight == steerID {
+		th.mu.Unlock()
+		return s.writeResponse(req.ID, nil, session.ErrHeldUserWorkUnconfirmed)
+	}
+	removedDurable := false
+	if s.rt != nil && th.PersistHistory {
+		var cancelErr error
+		removedDurable, cancelErr = session.CancelHeldUserWork(s.rt.SessionDir, threadID, steerID, session.HeldUserWorkOriginSteer)
+		if cancelErr != nil {
+			th.mu.Unlock()
+			return s.writeResponse(req.ID, nil, cancelErr)
+		}
+	}
 	removed := th.removePendingSteerLocked(steerID)
 	removedLive := removed
+	removed = removed || removedDurable
 	if removed {
 		th.removeSteerDocumentOverrideLocked(steerID)
 	}
 	th.mu.Unlock()
-	var held []queuedTurn
-	if !removed {
-		var err error
-		_, held, removed, err = s.removeHeldUserTurn(threadID, steerID)
-		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
+	held, err := s.loadHeldUserTurns(threadID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
+
 	if removed && held != nil {
 		s.notifyHeldUserTurns(threadID, held)
 	}
@@ -1015,6 +1043,17 @@ func (s *Server) handleTurnRequeue(req Request) error {
 	}
 
 	th.mu.Lock()
+	if th.nativeSteerInFlight == steerID {
+		th.mu.Unlock()
+		return s.writeResponse(req.ID, nil, session.ErrHeldUserWorkUnconfirmed)
+	}
+	if held, found, err := s.findHeldUserTurn(threadID, steerID); err != nil {
+		th.mu.Unlock()
+		return s.writeResponse(req.ID, nil, err)
+	} else if found && held.deliveryUnconfirmed {
+		th.mu.Unlock()
+		return s.writeResponse(req.ID, nil, session.ErrHeldUserWorkUnconfirmed)
+	}
 	document := th.steerDocumentOverrideLocked(steerID)
 	steerIndex := -1
 	for index, pending := range th.pendingSteers {
@@ -1022,6 +1061,38 @@ func (s *Server) handleTurnRequeue(req Request) error {
 			steerIndex = index
 			break
 		}
+	}
+	var durableEntry *queuedTurn
+	if steerIndex >= 0 && s.rt != nil && th.PersistHistory {
+		entry := queuedTurn{id: steerID, msg: th.pendingSteers[steerIndex], snapshot: turnRuntimeSnapshot{ActiveDocument: document}, origin: session.HeldUserWorkOriginQueue, durable: true}
+		held, found, loadErr := s.findHeldUserTurn(threadID, steerID)
+		if loadErr != nil {
+			th.mu.Unlock()
+			return s.writeResponse(req.ID, nil, loadErr)
+		}
+		if found {
+			// Another window may have edited the accepted steer. Switching
+			// modes preserves that canonical input, not this owner's cache.
+			entry = held
+		}
+		entry.origin = session.HeldUserWorkOriginQueue
+		entry.msg.Steered = false
+		var persistErr error
+		if found {
+			persistErr = s.persistUpdatedUserTurn(threadID, held, entry)
+		} else {
+			// Legacy/non-durable callers may have a pending steer without a row.
+			var accepted bool
+			accepted, persistErr = s.persistAcceptedUserTurn(threadID, entry)
+			if persistErr == nil && !accepted {
+				persistErr = errors.New("accepted input changed before requeue; review the held message")
+			}
+		}
+		if persistErr != nil {
+			th.mu.Unlock()
+			return s.writeResponse(req.ID, nil, persistErr)
+		}
+		durableEntry = &entry
 	}
 	msg, removed := th.takePendingSteerLocked(steerID)
 	if removed {
@@ -1031,6 +1102,10 @@ func (s *Server) handleTurnRequeue(req Request) error {
 			msg:      msg,
 			snapshot: turnRuntimeSnapshot{ActiveDocument: document},
 			origin:   session.HeldUserWorkOriginQueue,
+			durable:  s.rt != nil && th.PersistHistory,
+		}
+		if durableEntry != nil {
+			entry = *durableEntry
 		}
 		if !s.enqueueRequeuedUserTurn(threadID, entry) {
 			msg.Steered = true
@@ -1078,6 +1153,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	// of a managed session and reuse of a runtime cached before rerouting.
 	th.mu.Lock()
 	boundProject := th.WorkspaceID != ""
+	engineID := agentengine.NormalizeEngineID(th.EngineID)
 	binding := session.Session{WorkspaceID: th.WorkspaceID, CWD: th.CWD, WorktreeBaseRepo: th.WorktreeBaseRepo}
 	th.mu.Unlock()
 	if boundProject {
@@ -1092,7 +1168,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	// External-engine threads (codex, later claude) carry no native
 	// StreamRunner: the engine session drives the turn in the external
 	// process. Only the engine stamp is needed on the runtime handle.
-	if agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+	if engineID != agentengine.EngineWuu {
 		if remote, err := s.rt.RemoteProcesses(th.ID); err != nil {
 			return nil, err
 		} else if remote != nil {
@@ -1244,6 +1320,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 			threadRuntime.Toolkit.SetBrowserEnabled(false)
 		}
 		threadRuntime.Toolkit.SetBrowserBridge(s.browserBridgeForThread(browserWorkdir, th.ID))
+		threadRuntime.Toolkit.SetBrowserHostFinalize(s.supportsClientMethod(MethodBrowserFinalize) && s.supportsClientMethod(MethodBrowserTurnEnded))
 		threadRuntime.Toolkit.SetOnSessionWorkspaceChanged(func(root string) error {
 			if err := s.rebindThreadWorkspace(th.ID, root); err != nil {
 				return err
@@ -1782,6 +1859,26 @@ func validFileSelectionPart(part providers.MessageContentPart) bool {
 		strings.TrimSpace(source.Revision) == "" || source.Quote == "" {
 		return false
 	}
+	if pdf := source.PDF; pdf != nil {
+		if pdf.StartPage < 1 || pdf.EndPage < pdf.StartPage || source.StartLine != 0 || source.StartColumn != 0 || source.EndLine != 0 || source.EndColumn != 0 {
+			return false
+		}
+		// A URI is provenance, never permission to read a different resource.
+		if pdf.ArtifactURI != "" || pdf.ArtifactSHA256 != "" || pdf.ArtifactThreadID != "" {
+			uri, err := url.Parse(pdf.ArtifactURI)
+			if err != nil || uri.Scheme != "wuu-artifact" || len(pdf.ArtifactSHA256) != 64 || pdf.ArtifactThreadID == "" {
+				return false
+			}
+			segments := strings.Split(strings.TrimPrefix(uri.Path, "/"), "/")
+			if len(segments) != 3 || segments[0] != pdf.ArtifactThreadID || uri.Query().Get("sha256") != pdf.ArtifactSHA256 || source.Revision != "sha256:"+pdf.ArtifactSHA256 {
+				return false
+			}
+			if _, err := hex.DecodeString(pdf.ArtifactSHA256); err != nil {
+				return false
+			}
+		}
+		return true
+	}
 	return source.StartLine > 0 && source.StartColumn > 0 && source.EndLine > 0 && source.EndColumn > 0 &&
 		(source.EndLine > source.StartLine || (source.EndLine == source.StartLine && source.EndColumn >= source.StartColumn))
 }
@@ -2270,6 +2367,7 @@ func turnRuntimeSnapshotLocked(th *threadState) turnRuntimeSnapshot {
 		return turnRuntimeSnapshot{}
 	}
 	return turnRuntimeSnapshot{
+		CWD:            th.CWD,
 		ProviderName:   th.ModelProvider,
 		Model:          th.Model,
 		PermissionMode: th.PermissionMode,
@@ -2284,10 +2382,6 @@ func (snapshot turnRuntimeSnapshot) withPermissions(permissions config.ResolvedP
 	permissions = normalizeTurnPermissions(permissions)
 	snapshot.PermissionMode = permissions.Mode
 	return snapshot
-}
-
-func (snapshot turnRuntimeSnapshot) hasPermissions() bool {
-	return strings.TrimSpace(snapshot.PermissionMode) != ""
 }
 
 func normalizeTurnPermissions(permissions config.ResolvedPermissions) config.ResolvedPermissions {
@@ -2306,15 +2400,7 @@ func (s *Server) resolveTurnPermissions(permissionMode *string) (config.Resolved
 
 func (s *Server) resolveThreadTurnPermissions(th *threadState, requested *string) (config.ResolvedPermissions, error) {
 	if s != nil && s.rt != nil && s.rt.PermissionModeExplicit {
-		// A process-scoped explicit override (exec --permission-mode) beats
-		// the thread pin and persisted session metadata: a user asking for
-		// read_only must never silently run with a resumed session's broader
-		// pinned mode. The override is never written back into the session.
-		permissions := normalizeTurnPermissions(s.rt.Permissions)
-		if requested != nil && config.NormalizePermissionMode(*requested) != permissions.Mode {
-			return config.ResolvedPermissions{}, errors.New("permission mode does not match this process's explicit permission override")
-		}
-		return permissions, nil
+		return s.resolveTurnPermissionMode("", requested)
 	}
 	mode := ""
 	if th != nil {
@@ -2323,7 +2409,9 @@ func (s *Server) resolveThreadTurnPermissions(th *threadState, requested *string
 		persist := th.PersistHistory
 		threadID := th.ID
 		th.mu.Unlock()
-		if mode == "" && persist && s != nil && s.rt != nil {
+		// Preflight checks must see another app-server's latest saved pin.
+		// Admission revalidates it after acquiring execution ownership.
+		if persist && s != nil && s.rt != nil {
 			if metadata, ok, err := session.Find(s.rt.SessionDir, threadID); err != nil {
 				return config.ResolvedPermissions{}, err
 			} else if ok {
@@ -2331,6 +2419,20 @@ func (s *Server) resolveThreadTurnPermissions(th *threadState, requested *string
 			}
 		}
 	}
+	return s.resolveTurnPermissionMode(mode, requested)
+}
+
+func (s *Server) resolveTurnPermissionMode(mode string, requested *string) (config.ResolvedPermissions, error) {
+	if s != nil && s.rt != nil && s.rt.PermissionModeExplicit {
+		// A process-scoped explicit override (exec --permission-mode) beats
+		// the thread pin without being written back into session metadata.
+		permissions := normalizeTurnPermissions(s.rt.Permissions)
+		if requested != nil && config.NormalizePermissionMode(*requested) != permissions.Mode {
+			return config.ResolvedPermissions{}, errors.New("permission mode does not match this process's explicit permission override")
+		}
+		return permissions, nil
+	}
+	mode = strings.TrimSpace(mode)
 	if mode == "" && s != nil && s.rt != nil {
 		mode = s.rt.Permissions.Mode
 	}
@@ -2355,6 +2457,13 @@ func usageContextWindowTokens(runner *agent.StreamRunner) int {
 }
 
 func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState, threadRuntime *runtime.ThreadRuntime, turnID string, turnRuntime turnRuntimeSnapshot, history []providers.ChatMessage, requestContext []agent.ContextSegment) {
+	browserTurn := &browserTurnState{threadID: th.ID, turnID: turnID, executionID: rand.Text(), bridges: make(map[string]*browserBridge)}
+	ctx = context.WithValue(ctx, browserTurnContextKey{}, browserTurn)
+	turnKit := s.rt.Toolkit
+	if threadRuntime != nil && threadRuntime.Toolkit != nil {
+		turnKit = threadRuntime.Toolkit
+	}
+	defer func() { _ = s.finishBrowserTurn(browserTurn, turnKit) }()
 	// A refresh during this turn kept its generation leased. Release it once
 	// all turn cleanup has finished, unless background work still depends on it.
 	defer s.retireIdlePluginRuntimes()
@@ -2377,21 +2486,49 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	if metadata, ok, err := session.Find(s.rt.SessionDir, th.ID); err == nil && ok {
 		sessionInstructions = effectiveSessionInstructions(metadata)
 	}
+	s.retainCodexHost()
 	engine := s.rt.EngineSessionForThread(ctx, threadRuntime, agentengine.ThreadBinding{
 		ThreadID:       th.ID,
-		RootDir:        firstNonEmpty(th.CWD, s.rt.RootDir),
+		RootDir:        firstNonEmpty(turnRuntime.CWD, s.rt.RootDir),
 		Model:          th.Model,
 		Effort:         th.ModelEffort,
 		Speed:          th.Speed,
 		ModelOptions:   th.ModelOptions,
-		PermissionMode: th.PermissionMode,
+		PermissionMode: turnRuntime.permissions().Mode,
 		Instructions:   sessionInstructions,
 		ExternalRef:    th.EngineRef,
 		PersistRef: func(ref string) error {
 			return s.persistThreadEngineRef(th.ID, ref)
 		},
+		PersistTurnRef: func(nativeTurnID string, pending bool) error {
+			th.mu.Lock()
+			defer th.mu.Unlock()
+			for i := len(th.History) - 1; i >= 0; i-- {
+				msg := &th.History[i]
+				if msg.Role != "user" || msg.Steered {
+					continue
+				}
+				// Settlement may reconcile an earlier canceled native turn before
+				// admitting the new prompt. Match its durable ID, not the latest row.
+				if !pending && nativeTurnID != "" && msg.EngineTurnID != nativeTurnID {
+					continue
+				}
+				if th.PersistHistory {
+					if err := session.SetHistoryEngineTurnID(s.rt.SessionDir, th.ID, msg.Seq, th.EngineRef, nativeTurnID, pending); err != nil {
+						return err
+					}
+				}
+				msg.EngineTurnID = nativeTurnID
+				msg.EngineTurnPending = pending
+				return nil
+			}
+			return errors.New("native turn has no admitted user message")
+		},
 		RequestApproval: func(approvalCtx context.Context, request agentengine.ApprovalRequest) (agentengine.ApprovalDecision, error) {
 			return s.requestEngineApproval(approvalCtx, th.ID, turnID, request)
+		},
+		RequestUserInput: func(inputCtx context.Context, request agentengine.UserInputRequest) (map[string][]string, error) {
+			return s.requestEngineUserInput(inputCtx, th.ID, turnID, request)
 		},
 	})
 	if engine == nil {
@@ -2400,6 +2537,11 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	if engine == nil {
 		engine = runtime.EngineUnavailableSession(agentengine.NormalizeEngineID(string(threadRuntime.EngineID)))
 	}
+	// Bindings are acquired for this turn, including external-engine process
+	// ownership. Release before publishing its terminal outcome or admitting
+	// another turn, with the deferred call covering early exits as well.
+	closeEngine := sync.OnceFunc(func() { _ = engine.Close(context.Background()) })
+	defer closeEngine()
 	turnWorktreePath := ""
 	var frozenTreeContext []agent.ContextSegment
 	if th != nil {
@@ -2509,22 +2651,43 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			}
 			return committed, checkpoint.ThroughSeq, nil
 		}
-		runner.ArchiveHistory = func(archiveCtx context.Context, messages []providers.ChatMessage) (agent.HistoryArchive, error) {
-			if th == nil || !th.PersistHistory {
-				return agent.HistoryArchive{}, errors.New("durable session history is unavailable")
+		runner.ArchiveHistory = nil
+		if th != nil && th.PersistHistory {
+			runner.ArchiveHistory = func(archiveCtx context.Context, messages []providers.ChatMessage) (agent.HistoryArchive, error) {
+				seqs, endSeq, err := appendChatMessagesReturningSeqs(s.rt.SessionDir, th.ID, messages)
+				if err != nil {
+					// These messages left the live steer queue but were not sent.
+					// Clear its optimistic view before publishing held recovery.
+					for _, message := range messages {
+						if message.Steered && isHumanUserMessage(message) {
+							notify(NotificationTurnUnsteered, TurnUnsteeredNotification{ThreadID: th.ID, SteerID: message.ClientID})
+						}
+					}
+					return agent.HistoryArchive{}, err
+				}
+				// A rejected steer remains held. Publish its transcript item only
+				// after the atomic history/receipt checkpoint has succeeded.
+				th.mu.Lock()
+				if th.currentTurn == turnID {
+					th.stampDurableAgentMessageSeqsLocked(turnID, messages, seqs)
+				}
+				var batch []outboundNotification
+				for _, message := range messages {
+					if message.Steered && isHumanUserMessage(message) {
+						batch = append(batch, th.materializeSteerLocked(turnID, message, time.Now().UTC())...)
+					}
+				}
+				th.mu.Unlock()
+				notifyBatch(batch)
+				if endSeq > 0 {
+					return agent.HistoryArchive{Seqs: seqs, HeadSeq: endSeq}, nil
+				}
+				page, err := session.ReadHistoryPage(archiveCtx, s.rt.SessionDir, th.ID, 1, 1)
+				if err != nil {
+					return agent.HistoryArchive{}, err
+				}
+				return agent.HistoryArchive{Seqs: seqs, HeadSeq: page.HeadSeq}, nil
 			}
-			seqs, endSeq, err := appendChatMessagesReturningSeqs(s.rt.SessionDir, th.ID, messages)
-			if err != nil {
-				return agent.HistoryArchive{}, err
-			}
-			if endSeq > 0 {
-				return agent.HistoryArchive{Seqs: seqs, HeadSeq: endSeq}, nil
-			}
-			page, err := session.ReadHistoryPage(archiveCtx, s.rt.SessionDir, th.ID, 1, 1)
-			if err != nil {
-				return agent.HistoryArchive{}, err
-			}
-			return agent.HistoryArchive{Seqs: seqs, HeadSeq: page.HeadSeq}, nil
 		}
 	}
 	defer restoreRunner()
@@ -2533,10 +2696,6 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// worktree-bound thread's file/shell tools switch their execution CWD to
 	// the checkout (after their ordinary sandbox checks) even when the
 	// runtime happens to be rooted at the parent repo.
-	turnKit := s.rt.Toolkit
-	if threadRuntime != nil && threadRuntime.Toolkit != nil {
-		turnKit = threadRuntime.Toolkit
-	}
 	if turnWorktreePath != "" && turnKit != nil {
 		ctx = toolctx.WithWorktreeBinding(ctx, turnKit.RootDir(), turnWorktreePath)
 	}
@@ -2774,6 +2933,13 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		SessionID:   th.ID,
 		ExecutionID: turnID,
 	})
+	joinNativeSteering := func() {}
+	if native, ok := engine.(agentengine.SteeringSession); ok && th.PersistHistory {
+		th.mu.Lock()
+		th.nativeSteerUnsupported = false
+		th.mu.Unlock()
+		joinNativeSteering = s.startNativeSteering(driverCtx, th, turnID, native)
+	}
 	turnResult, err := engine.RunTurn(driverCtx, agentengine.TurnInput{History: history}, func(ev providers.StreamEvent) {
 		th.streamMu.Lock()
 		defer th.streamMu.Unlock()
@@ -2801,6 +2967,8 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			Event:    sanitizeStreamEvent(ev),
 		})
 	})
+	joinNativeSteering()
+	closeEngine()
 	// RunTurn returns the engine outcome; the built-in wuu engine's result is
 	// the native loop result the rest of the turn accounting consumes.
 	res := turnResult.Result
@@ -2820,6 +2988,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// long-lived runner before the thread can become idle and admit another
 	// turn; the deferred call remains as panic-safe cleanup.
 	restoreRunner()
+	browserCleanupErr := s.finishBrowserTurn(browserTurn, turnKit)
 
 	if errors.Is(err, context.Canceled) {
 		th.mu.Lock()
@@ -2829,6 +2998,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			err = nil
 		}
 	}
+	err = errors.Join(err, browserCleanupErr)
 
 	now := time.Now().UTC()
 	completionAnswerReady := false
@@ -2991,9 +3161,33 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	}
 	// Keep the execution lease through trace persistence and runner cleanup so
 	// the next turn cannot observe a half-restored runtime.
+	var nativeHeld []queuedTurn
 	th.interrupting = false
 	s.pruneRevokedSteersLocked(th)
 	unconsumedSteers := th.drainPendingSteersLocked()
+	if _, native := engine.(agentengine.SteeringSession); native && th.PersistHistory && !th.nativeSteerUnsupported {
+		var human, generated []providers.ChatMessage
+		for _, message := range unconsumedSteers {
+			if isHumanUserMessage(message) {
+				human = append(human, message)
+			} else {
+				generated = append(generated, message)
+			}
+		}
+		if len(human) > 0 {
+			entries := queuedTurnsFromSteers(human)
+			th.applySteerDocumentOverridesLocked(entries)
+			for index := range entries {
+				entries[index].origin = session.HeldUserWorkOriginSteer
+			}
+			var holdErr error
+			nativeHeld, holdErr = s.appendHeldUserTurns(th.ID, entries)
+			if holdErr != nil {
+				providers.DebugLogf("retain native steering at turn completion for %q: %v", th.ID, holdErr)
+			}
+		}
+		unconsumedSteers = generated
+	}
 	if len(unconsumedSteers) > 0 {
 		if threadRuntime != nil && threadRuntime.AgentControl != nil {
 			unconsumedSteers = filterConsumedAgentCompletionSteers(unconsumedSteers, threadRuntime.AgentControl)
@@ -3007,7 +3201,27 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 				}
 			}
 			th.applySteerDocumentOverridesLocked(queuedSteers)
-			s.prependQueuedUserTurns(th.ID, queuedSteers)
+			ready := queuedSteers[:0]
+			for _, entry := range queuedSteers {
+				if isHumanUserMessage(entry.msg) {
+					held, found, loadErr := s.findHeldUserTurn(th.ID, entry.id)
+					if loadErr != nil {
+						providers.DebugLogf("recover pending steer %q: %v", entry.id, loadErr)
+						continue
+					}
+					if found {
+						entry = held
+						entry.origin = session.HeldUserWorkOriginQueue
+						entry.msg.Steered = false
+						if err := s.persistUpdatedUserTurn(th.ID, held, entry); err != nil {
+							providers.DebugLogf("requeue pending steer %q: %v", entry.id, err)
+							continue
+						}
+					}
+				}
+				ready = append(ready, entry)
+			}
+			s.prependQueuedUserTurns(th.ID, ready)
 		}
 	}
 	completionClaimFailed := len(turnRuntime.AgentCompletionResultIDs) > 0
@@ -3046,6 +3260,9 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	}
 	th.releaseTurnExecutionLocked(turnID)
 	th.mu.Unlock()
+	if len(nativeHeld) > 0 {
+		s.notifyHeldUserTurnsWithError(th.ID, nativeHeld, "native turn ended before steering input was accepted")
+	}
 	// A terminal notification is the client-visible completion barrier. By the
 	// time it is published all durable settlement and runtime cleanup
 	// is finished, and the execution lease is available for the next request.
@@ -3096,6 +3313,15 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			TracePath:                tracePath,
 			AwaitingAutoContinuation: awaitingAutoContinuation,
 		})
+	}
+	if err != nil && th.PersistHistory {
+		// A steer removed from the live queue can fail its persistence fence
+		// before dispatch. Restore its editable held view without a reconnect.
+		if held, loadErr := s.loadHeldUserTurns(th.ID); loadErr != nil {
+			providers.DebugLogf("load held input after failed turn %q: %v", turnID, loadErr)
+		} else if len(held) > 0 {
+			s.notifyHeldUserTurnsWithError(th.ID, held, err.Error())
+		}
 	}
 	if hasRunUpdate {
 		notify(NotificationRunUpdated, RunUpdatedNotification{Run: runUpdate})
@@ -3192,6 +3418,10 @@ func (s *Server) persistTurnTrace(threadRuntime *runtime.ThreadRuntime, runner *
 	if runErr != nil {
 		errorText = runErr.Error()
 	}
+	profile := sessiontrace.NewModelProfileRecordWithBudget(providerName, model, apiModel, modelBudget)
+	if profile != nil && runner != nil {
+		profile.FreeformTool = modelprofile.SupportsFreeformTools(firstNonEmpty(apiModel, model), runner.ProviderOptions)
+	}
 	turnRecord := sessiontrace.TurnRecord{
 		ThreadID:            threadID,
 		TurnID:              turn.ID,
@@ -3199,7 +3429,7 @@ func (s *Server) persistTurnTrace(threadRuntime *runtime.ThreadRuntime, runner *
 		ProviderName:        providerName,
 		Model:               model,
 		APIModel:            apiModel,
-		ModelProfile:        sessiontrace.NewModelProfileRecordWithBudget(providerName, model, apiModel, modelBudget),
+		ModelProfile:        profile,
 		PermissionMode:      permissions.Mode,
 		StartedAt:           turn.StartedAt,
 		CompletedAt:         turn.CompletedAt,
@@ -3614,7 +3844,7 @@ func (s *Server) drainQueuedTurns(threadID string) (capacityFull bool) {
 	capacityFull = errors.Is(err, session.ErrProjectWorkerCapacity)
 	requeueCandidate := !started && (err == nil || executionBusy || retryableAdmission)
 	cancelled := s.settleQueuedTurnClaim(threadID, entry, requeueCandidate)
-	if errors.Is(err, errQueuedTurnCancelled) || cancelled {
+	if errors.Is(err, errQueuedTurnCancelled) || errors.Is(err, session.ErrHeldUserWorkSettled) || cancelled {
 		err = errQueuedTurnCancelled
 		executionBusy = false
 		retryableAdmission = false
@@ -3789,6 +4019,16 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 			return startedThreadTurn{}, false, errSessionInputApplied
 		}
 	}
+	if th.PersistHistory && userMsg.ClientID != "" && hooks.acceptedUserWork == nil {
+		found, err := session.HasHeldUserWorkReceipt(s.rt.SessionDir, th.ID, userMsg.ClientID)
+		if err != nil || found {
+			abortAdmission()
+			if err != nil {
+				return startedThreadTurn{}, false, err
+			}
+			return startedThreadTurn{}, false, session.ErrHeldUserWorkSettled
+		}
+	}
 	if hooks.afterLease != nil {
 		if err := hooks.afterLease(th, &userMsg); err != nil {
 			abortAdmission()
@@ -3845,6 +4085,20 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 			return startedThreadTurn{}, false, nil
 		}
 	}
+	// Resolve only after the durable refresh and admission hooks. A queued
+	// or cached preflight selection cannot override the newly admitted pin.
+	// All entrypoints, including automatic completions, honor process limits.
+	var requestedPermission *string
+	if snapshot.PermissionExplicit {
+		requestedPermission = &snapshot.PermissionMode
+	}
+	permissions, err := s.resolveTurnPermissionMode(th.PermissionMode, requestedPermission)
+	if err != nil {
+		th.releaseThreadExecutionLeaseLocked()
+		th.mu.Unlock()
+		cancel()
+		return startedThreadTurn{}, false, err
+	}
 	var commitAfterAppend func() error
 	if hooks.beforeUserAppendLocked != nil {
 		var err error
@@ -3868,7 +4122,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		}
 	}
 	if th.PersistHistory && !userAlreadyPersisted {
-		seq, err := appendControlledChatMessage(s.rt.SessionDir, th.ID, userMsg, snapshot.Control, snapshot.ExecutionControlBaseline)
+		seq, err := appendControlledChatMessage(s.rt.SessionDir, th.ID, userMsg, snapshot.Control, snapshot.ExecutionControlBaseline, hooks.acceptedUserWork)
 		if err != nil {
 			th.releaseThreadExecutionLeaseLocked()
 			th.mu.Unlock()
@@ -3910,11 +4164,8 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	} else {
 		turnID = turn.ID
 	}
-	turnRuntime := turnRuntimeSnapshotLocked(th)
-	if snapshot.hasPermissions() || snapshot.PermissionExplicit {
-		turnRuntime = turnRuntime.withPermissions(snapshot.permissions())
-		turnRuntime.PermissionExplicit = snapshot.PermissionExplicit
-	}
+	turnRuntime := turnRuntimeSnapshotLocked(th).withPermissions(permissions)
+	turnRuntime.PermissionExplicit = snapshot.PermissionExplicit
 	turnRuntime.ForceCompact = snapshot.ForceCompact
 	turnRuntime.CompactOnly = snapshot.CompactOnly
 	turnRuntime.HistoryBaselineSeq = th.historyHeadSeq
@@ -3964,6 +4215,14 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 	if strings.TrimSpace(entry.msg.ClientID) == "" {
 		entry.msg.ClientID = entry.id
 	}
+	var acceptedUserWork *session.HeldUserWork
+	if entry.durable {
+		row, err := heldUserWorkRow(entry)
+		if err != nil {
+			return false, err
+		}
+		acceptedUserWork = &row
+	}
 	entry.msg.Steered = false
 
 	if s.beforeQueuedTurnThreadLookupForTest != nil {
@@ -3977,15 +4236,10 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 		return false, fmt.Errorf("thread %q not found", threadID)
 	}
 	var threadRuntime *runtime.ThreadRuntime
-	// Permissions are re-resolved at start time, never trusted from the
-	// queue-time snapshot: a permission change landing while the turn waited
-	// in the queue must govern the turn that actually runs.
-	permissions, err := s.resolveThreadTurnPermissions(th, nil)
-	if err != nil {
-		return false, err
-	}
-
-	snapshot := entry.snapshot.withPermissions(permissions)
+	// Queue-time permission validation does not pin the later execution.
+	// Admission resolves the current mode after refreshing durable metadata.
+	snapshot := entry.snapshot
+	snapshot.PermissionExplicit = false
 	started, ok, err := s.startThreadUserTurnWithAdmission(
 		ctx,
 		th,
@@ -3994,7 +4248,13 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 		false,
 		turnReadOnlyFail,
 		turnAdmissionHooks{
+			acceptedUserWork: acceptedUserWork,
 			afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
+				if entry.durable {
+					if _, found := s.findSessionInput(admitted, entry.msg.ClientID); found {
+						return session.ErrHeldUserWorkSettled
+					}
+				}
 				var runtimeErr error
 				threadRuntime, runtimeErr = s.ensureThreadRuntimeAfterAdmission(admitted)
 				if runtimeErr != nil {
@@ -4413,7 +4673,7 @@ func (s *Server) startSyntheticTurn(ctx context.Context, threadID string, userMs
 		if resultID := strings.TrimSpace(turn.resultID); resultID != "" {
 			completionResultIDs = append(completionResultIDs, resultID)
 		}
-		if processID := strings.TrimSpace(turn.processID); processID != "" {
+		if processID := strings.TrimSpace(turn.processID); processID != "" && turn.kind != agentCompletionTurnKindRecheck {
 			processCompletionIDs = append(processCompletionIDs, processID)
 		}
 	}
@@ -4434,6 +4694,20 @@ func (s *Server) startSyntheticTurn(ctx context.Context, threadID string, userMs
 				}
 				if err := gateAlreadyDeliveredCompletions(admitted.History, threadRuntime, completionResultIDs, processCompletionIDs); err != nil {
 					return err
+				}
+				// Rechecks belong to live processes, so they must not pass through
+				// the natural-exit completion gate or acquire its delivery marker.
+				for _, entry := range pending {
+					if entry.kind != agentCompletionTurnKindRecheck {
+						continue
+					}
+					p, err := threadRuntime.ProcessManager.Get(entry.processID)
+					if err != nil {
+						return errors.Join(errRetryableTurnAdmission, err)
+					}
+					if p.RecheckMinutes <= 0 || (p.Status != process.StatusStarting && p.Status != process.StatusRunning) {
+						return errAgentCompletionAlreadyDelivered
+					}
 				}
 				*admittedMsg = combineAgentCompletionMessages(pending)
 				if clientID := agentCompletionClientID(pending); clientID != "" {
@@ -4726,6 +5000,7 @@ func cloneAgentCompletionTurns(turns []agentCompletionTurn) []agentCompletionTur
 	out := make([]agentCompletionTurn, 0, len(turns))
 	for i, turn := range turns {
 		out = append(out, agentCompletionTurn{
+			kind:      turn.kind,
 			agentID:   turn.agentID,
 			resultID:  turn.resultID,
 			processID: turn.processID,
@@ -4865,6 +5140,7 @@ func (s *Server) persistTurnResultLocked(th *threadState, res agent.LoopResult, 
 				return err
 			}
 			th.History = applyPersistedHistorySeqs(th.History, res.DurableNewMessages, seqs)
+			th.stampDurableAgentMessageSeqsLocked(th.currentTurn, res.DurableNewMessages, seqs)
 			if endSeq > rewriteBaselineSeq {
 				rewriteBaselineSeq = endSeq
 			}
@@ -4888,9 +5164,11 @@ func (s *Server) persistTurnResultLocked(th *threadState, res agent.LoopResult, 
 		if res.DurableMessagesTracked {
 			messagesToAppend = res.DurableNewMessages
 		}
-		if err := appendChatMessages(s.rt.SessionDir, th.ID, messagesToAppend); err != nil {
+		seqs, _, err := appendChatMessagesReturningSeqs(s.rt.SessionDir, th.ID, messagesToAppend)
+		if err != nil {
 			return err
 		}
+		th.stampDurableAgentMessageSeqsLocked(th.currentTurn, messagesToAppend, seqs)
 	}
 	if err := appendTokenUsage(s.rt.SessionDir, th.ID, providerName, model, providers.TokenUsage{
 		InputTokens:         res.InputTokens,

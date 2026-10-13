@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -211,6 +212,27 @@ func (c *Client) buildResponsesRequest(req providers.ChatRequest, stream bool) (
 		return responsesRequest{}, err
 	}
 
+	if !modelprofile.SupportsFreeformTools(req.Model, req.ProviderOptions) {
+		// Freeform describes the logical tool, not every endpoint's wire
+		// support. Keep its JSON schema and lower history only on this request.
+		req.Tools = append([]providers.ToolDefinition(nil), req.Tools...)
+		for i := range req.Tools {
+			req.Tools[i].Freeform = false
+		}
+		for i := range prepared {
+			for j := range prepared[i].ToolCalls {
+				call := &prepared[i].ToolCalls[j]
+				if call.Kind == providers.ToolCallKindCustom {
+					call.Kind = providers.ToolCallKindFunction
+					call.ProviderItemID = ""
+				}
+			}
+			if prepared[i].ToolResultKind == providers.ToolCallKindCustom {
+				prepared[i].ToolResultKind = providers.ToolCallKindFunction
+			}
+		}
+	}
+
 	instructions, messages := splitResponsesInstructions(prepared)
 	nativeDeferred := providers.NativeToolDiscoveryEnabled(req.NativeDeferredToolDiscovery, req.Tools)
 	input := make([]responsesInputItem, 0, len(messages))
@@ -365,7 +387,7 @@ func responsesProviderOptionUnsupported(key string) bool {
 	switch key {
 	case "toolStreaming", "toolChoiceAutoOnly", "omitStore", "omitPromptCacheKey", "thinkingConfig", "reasoningConfig", "modelParams", "gateway",
 		"usage", "chat_template_args", "enable_thinking", "thinking",
-		"temperatureSupported", "temperature_supported", "promptCacheKeySupported", "video_input":
+		"temperatureSupported", "temperature_supported", "promptCacheKeySupported", "video_input", "freeform_tool":
 		return true
 	default:
 		return false

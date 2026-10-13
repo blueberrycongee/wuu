@@ -12,13 +12,10 @@ type SourceProps = {
   onOpen?: (url: string, modifiers?: WorkspaceBrowserOpenModifiers) => void;
 };
 
-/** Source links and a count control for the owning process disclosure. */
-export function TurnSourcesRow({ sources, running = false, onOpen, inline = false, expanded = false, onExpandedChange, detailsID }: SourceProps & {
+/** Overlapping source links beside the owning process disclosure. */
+export function TurnSourcesRow({ sources, running = false, onOpen, inline = false }: SourceProps & {
   running?: boolean;
   inline?: boolean;
-  expanded?: boolean;
-  onExpandedChange?: (open: boolean, trigger: HTMLButtonElement) => void;
-  detailsID?: string;
 }): JSX.Element | null {
   const { t } = useI18n();
   const renderActive = useConversationRenderActive();
@@ -31,7 +28,8 @@ export function TurnSourcesRow({ sources, running = false, onOpen, inline = fals
     const owner = rowRef.current?.closest<HTMLElement>(".process-surface-inline-controls");
     if (!owner) return;
     const measure = () => {
-      if (owner.clientWidth > 0) setVisibleLimit(Math.max(1, Math.min(6, Math.floor((owner.clientWidth * 0.48 - 90) / 34))));
+      // The first target is 32px wide; each overlapping source adds 18px.
+      if (owner.clientWidth > 0) setVisibleLimit(Math.max(1, Math.min(6, 1 + Math.floor((owner.clientWidth * 0.48 - 32) / 18))));
     };
     measure();
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
@@ -53,14 +51,6 @@ export function TurnSourcesRow({ sources, running = false, onOpen, inline = fals
       {sources.slice(0, visibleLimit).map(source => <SourceLink key={source.url} source={source} onOpen={openURL}
         arrive={mayAnimate && !seenURLs.current.has(source.url)} motionAllowed={mayAnimate}
         index={newURLs.findIndex(item => item.url === source.url)} />)}
-      <button type="button" className="web-research-more" aria-expanded={expanded} aria-controls={detailsID}
-        aria-label={label}
-        onClick={event => onExpandedChange?.(!expanded, event.currentTarget)}
-        onKeyDown={event => {
-          if (event.key !== "Escape" || !expanded) return;
-          event.preventDefault(); event.stopPropagation();
-          onExpandedChange?.(false, event.currentTarget);
-        }}>{label}</button>
     </div>
   </div>;
 }

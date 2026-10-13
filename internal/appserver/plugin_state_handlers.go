@@ -73,9 +73,10 @@ func (s *Server) handlePluginRegistryIntrospect(req Request) error {
 }
 
 // PluginExecutionsResult is the live execution table: open tool/capability
-// executions with their owning plugin and latest self-reported progress.
+// executions across current and retained generations, with owning plugin and
+// latest self-reported progress.
 type PluginExecutionsResult struct {
-	Executions []pluginhost.ExecutionSnapshot `json:"executions"`
+	Executions []runtime.PluginExecutionSnapshot `json:"executions"`
 }
 
 func (s *Server) handlePluginExecutionsList(req Request) error {
@@ -84,7 +85,7 @@ func (s *Server) handlePluginExecutionsList(req Request) error {
 	}
 	executions := s.rt.PluginExecutionSnapshots()
 	if executions == nil {
-		executions = []pluginhost.ExecutionSnapshot{}
+		executions = []runtime.PluginExecutionSnapshot{}
 	}
 	return s.writeResponse(req.ID, PluginExecutionsResult{Executions: executions}, nil)
 }
@@ -203,9 +204,16 @@ func (s *Server) activePluginSetting(id, fingerprint, key string) (pluginpkg.Plu
 }
 
 func (s *Server) requireActiveDesktopPlugin(id, fingerprint string) (pluginpkg.Plugin, error) {
+	plugin, _, err := s.requireActiveDesktopPluginHost(id, fingerprint)
+	return plugin, err
+}
+
+// Admission and dispatch must use the same generation snapshot. Reading the
+// mutable Session.PluginHost again can route old-fingerprint input to new code.
+func (s *Server) requireActiveDesktopPluginHost(id, fingerprint string) (pluginpkg.Plugin, *pluginhost.Host, error) {
 	id, fingerprint = strings.TrimSpace(id), strings.TrimSpace(fingerprint)
 	if id == "" || fingerprint == "" {
-		return pluginpkg.Plugin{}, errors.New("plugin id and fingerprint are required")
+		return pluginpkg.Plugin{}, nil, errors.New("plugin id and fingerprint are required")
 	}
 	snapshot := s.rt.ExtensionSnapshot()
 	for _, plugin := range snapshot.Plugins {
@@ -213,7 +221,7 @@ func (s *Server) requireActiveDesktopPlugin(id, fingerprint string) (pluginpkg.P
 			continue
 		}
 		if plugin.Fingerprint != fingerprint {
-			return pluginpkg.Plugin{}, errors.New("plugin generation is no longer active")
+			return pluginpkg.Plugin{}, nil, errors.New("plugin generation is no longer active")
 		}
 		settings := extensions.Settings{}
 		if snapshot.ExtensionSettings != nil {
@@ -223,14 +231,14 @@ func (s *Server) requireActiveDesktopPlugin(id, fingerprint string) (pluginpkg.P
 		}
 		approval, state, _, enabled := pluginPackageInventoryState(settings, plugin)
 		if !enabled || (approval != ExtensionApprovalGranted && approval != ExtensionApprovalOfficial) || (state != ExtensionStateGranted && state != ExtensionStateActive) {
-			return pluginpkg.Plugin{}, errors.New("desktop plugin is not approved and enabled")
+			return pluginpkg.Plugin{}, nil, errors.New("desktop plugin is not approved and enabled")
 		}
 		if err := desktopPluginRuntimeError(snapshot.PluginHost, plugin.ID); err != nil {
-			return pluginpkg.Plugin{}, err
+			return pluginpkg.Plugin{}, nil, err
 		}
-		return plugin, nil
+		return plugin, snapshot.PluginHost, nil
 	}
-	return pluginpkg.Plugin{}, fmt.Errorf("plugin %q is not available in this workspace", id)
+	return pluginpkg.Plugin{}, nil, fmt.Errorf("plugin %q is not available in this workspace", id)
 }
 
 func desktopPluginRuntimeError(host *pluginhost.Host, id string) error {

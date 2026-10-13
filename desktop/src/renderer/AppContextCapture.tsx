@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AppContextSettings, AppContextSnapshot, AppContextState } from "../shared/protocol";
 import type { ComposerFile, ComposerImage } from "./ComposerMessages";
 import { composerFileFromFile } from "./ComposerMessages";
@@ -14,13 +14,15 @@ let currentDraftTarget: DraftTarget | undefined;
 
 // The preview lives beside App so Settings and other App routes cannot unmount
 // it. App supplies the actual current draft owner through this private hook.
-export function useAppContextDraftTarget(add: DraftTarget["add"]): void {
-  const target = useRef<DraftTarget>({ add });
-  target.current.add = add;
-  useEffect(() => {
-    currentDraftTarget = target.current;
-    return () => { if (currentDraftTarget === target.current) currentDraftTarget = undefined; };
-  }, []);
+export function useAppContextDraftTarget(identity: string | undefined, add: DraftTarget["add"]): void {
+  // Keep the owner stable across ordinary renders, but revoke it when the
+  // active conversation, pane, or workspace changes during attachment prep.
+  const target = useMemo<DraftTarget>(() => ({ add }), [identity]);
+  target.add = add;
+  useLayoutEffect(() => {
+    currentDraftTarget = identity === undefined ? undefined : target;
+    return () => { if (currentDraftTarget === target) currentDraftTarget = undefined; };
+  }, [identity, target]);
 }
 
 export function AppContextCaptureHost(): JSX.Element | null {
@@ -30,19 +32,21 @@ export function AppContextCaptureHost(): JSX.Element | null {
   const [settings, setSettings] = useState<AppContextSettings>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const refreshGeneration = useRef(0);
 
   useEffect(() => {
     if (!window.wuu.getAppContextState) return;
     let active = true;
     const refresh = async (explicit = false): Promise<void> => {
+      const generation = ++refreshGeneration.current;
       try {
         const next = await window.wuu.getAppContextState!();
-        if (!active) return;
+        if (!active || generation !== refreshGeneration.current) return;
         setState(next);
         if (explicit) { setSettings(next.settings); setError(""); }
         if (explicit || next.phase === "ready" || next.phase === "error") setOpen(true);
       } catch (reason) {
-        if (active && explicit) { setError((reason as Error).message); setOpen(true); }
+        if (active && generation === refreshGeneration.current && explicit) { setError((reason as Error).message); setOpen(true); }
       }
     };
     const show = (): void => { void refresh(true); };
@@ -57,11 +61,16 @@ export function AppContextCaptureHost(): JSX.Element | null {
   const workingSettings = settings ?? state?.settings;
   const close = (): void => {
     if (busy) return;
+    const generation = ++refreshGeneration.current;
     setOpen(false);
     setError("");
-    void window.wuu.discardAppContextSnapshot?.().then(setState).catch(() => undefined);
+    setState(undefined);
+    void window.wuu.discardAppContextSnapshot?.().then(next => {
+      if (generation === refreshGeneration.current) setState(next);
+    }).catch(() => undefined);
   };
   const perform = async (operation: () => Promise<void>): Promise<void> => {
+    refreshGeneration.current += 1;
     setBusy(true); setError("");
     try { await operation(); } catch (reason) { setError((reason as Error).message); }
     finally { setBusy(false); }
@@ -81,6 +90,7 @@ export function AppContextCaptureHost(): JSX.Element | null {
     const next = await window.wuu.discardAppContextSnapshot!(snapshot.id);
     if (destination !== currentDraftTarget) throw new Error("The conversation window changed. Capture the app again.");
     destination.add({ id: `app-snapshot-${snapshot.id}`, media_type: "image/png", data: snapshot.image_base64 }, context);
+    refreshGeneration.current += 1;
     setState(next);
     setOpen(false);
   }); };

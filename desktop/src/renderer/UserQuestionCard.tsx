@@ -131,7 +131,11 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
       const remainingMs = expiresAt - Date.now();
       if (remainingMs <= 0) {
         setRemainingSeconds(0);
-        void onCancel();
+        // The broker's expiry can win the same deadline. Handle that late
+        // cancel reply while the resolved notification removes the card.
+        void onCancel().catch((cause) => {
+          setError(cause instanceof Error ? cause.message : t("userQuestion.cancelFailed"));
+        });
         return;
       }
       setRemainingSeconds(Math.max(1, Math.ceil(remainingMs / 1000)));
@@ -144,7 +148,10 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
   function keepOffer(): void {
     if (!offer || submitting || held.current) return;
     held.current = true;
-    void onHold?.();
+    void onHold?.().catch((cause) => {
+      held.current = false;
+      setError(cause instanceof Error ? cause.message : t("userQuestion.sendFailed"));
+    });
   }
 
   function toggle(questionID: string, label: string, multiSelect: boolean): Record<string, string[]> {
@@ -328,7 +335,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
                 value={custom[offerQuestion.id] ?? ""}
               />
             </>
-          ) : (
+          ) : !request.reply_to_tool || offerQuestion.allow_custom ? (
             <button
               className="user-question-offer-custom"
               disabled={submitting}
@@ -338,7 +345,7 @@ export function UserQuestionCard({ request, onAnswer, onCancel, onHold, onCustom
               <Pencil aria-hidden="true" />
               <span>{t("userQuestion.custom")}</span>
             </button>
-          )}
+          ) : null}
           {drafting ? (
             <button
               className="settings-button settings-button-primary user-question-submit"

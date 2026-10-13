@@ -134,8 +134,8 @@ func (t *Toolkit) executeBrowserToolResult(ctx context.Context, call providers.T
 // executeBrowserFinalize closes or preserves tabs through the ordinary pipeline
 // without ending the thread's browser activity.
 func (t *Toolkit) executeBrowserFinalize(ctx context.Context, call providers.ToolCall, tool Tool) (toolresult.Result, error) {
-	// finalize closes the tabs the model did not keep (handled by the tool's own
-	// Execute) but deliberately does NOT stop the browser activity, even with an
+	// finalize closes temporary tabs the model did not keep (handled by the
+	// tool's own Execute) but deliberately does NOT stop the browser activity, even with an
 	// empty keep list. A hard registry.Stop tombstones the (thread, plugin, kind)
 	// session for the process lifetime — Acquire then returns ErrStopped forever
 	// with no in-thread recovery, so a later turn's navigate would break browsing

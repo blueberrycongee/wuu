@@ -1,3 +1,4 @@
+import { ConversationTriggers } from "./ConversationTriggers";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import {
   memo,
@@ -300,7 +301,8 @@ function BuiltInThreadItemView({
       const deliveryText = item.input_text?.trim() ?? "";
       const relatedSessionID = item.related_session_id?.trim() || undefined;
       const sessionMessage = (item.origin === "host" || item.origin === "plugin") && item.presentation_kind === "session_message";
-      const sourceLabel = t("message.fromSession", { name: item.name?.trim() || relatedSessionID || t("message.anotherSession") });
+      const sourceName = item.name?.trim() || relatedSessionID || t("message.anotherSession");
+      const sourceLabel = t("message.fromSession", { name: sourceName });
       // input_text equals the bubble for ordinary messages (or would, if a
       // stale server projection ever leaks it); only hidden messages with a
       // related session get a navigation action.
@@ -328,9 +330,10 @@ function BuiltInThreadItemView({
               onClick={openRelatedSession}
               disabled={!relatedSessionAvailable}
               title={sourceLabel}
+              aria-label={`${t("message.openRelatedSession")}: ${sourceName}`}
             >
-              <MessagesSquare size={15} aria-hidden="true" />
-              <span>{sourceLabel}</span>
+              <MessagesSquare aria-hidden="true" />
+              <span>{sourceName}</span>
             </button>
           ) : null}
           {editing ? (
@@ -456,6 +459,8 @@ function BuiltInThreadItemView({
               getText={() => streamFieldValue(turnID, item, "text")}
               placement={actionsPersistent ? "persistent" : "overlay"}
               timestamp={turnAnswerReadyAt}
+              trailingAction={item.id === latestAgentMessageID && owningThreadId
+                ? <ConversationTriggers key={owningThreadId} threadID={owningThreadId} /> : undefined}
               showCopy={copyable}
               showFork={forkVisible}
               onFork={

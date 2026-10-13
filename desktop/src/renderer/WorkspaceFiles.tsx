@@ -1,3 +1,4 @@
+import { workspacePdfRevision } from "./PdfSelection";
 import { useActiveContextMenu } from "./ActiveContextMenu";
 import { hostSupports } from "./HostCapabilities";
 import { preparePresortedFileTreeInput } from "@pierre/trees";
@@ -704,6 +705,10 @@ export function WorkspaceFilePreview({
     [activeContext?.cwd, selectedFilePath]
   );
 
+  const selectedFileKey = `${activeContext?.cwd ?? ""}\n${selectedWorkspaceFilePath ?? ""}`;
+  const selectedFileKeyRef = useRef(selectedFileKey);
+  useLayoutEffect(() => { selectedFileKeyRef.current = selectedFileKey; }, [selectedFileKey]);
+
   useEffect(() => {
     if (!selectedWorkspaceFilePath) {
       setFile(undefined);
@@ -808,7 +813,18 @@ export function WorkspaceFilePreview({
         <article className="workspace-file-preview readonly">
           <WorkspacePreviewBoundary resourceKey={file.path}>
             <Suspense fallback={<div className="workspace-file-pdf-preview" />}>
-              <WorkspacePdfPreview url={file.renderable_url} title={file.path} />
+              <WorkspacePdfPreview url={file.renderable_url} title={file.path} active={active}
+                source={{ workspace: activeContext.cwd, path: file.path, revision: workspacePdfRevision(file) }}
+                initialPage={anchor?.startsWith("pdf-page=") ? Number(new URLSearchParams(anchor).get("pdf-page")) : undefined}
+                pageRequest={anchor}
+                onRefresh={async (signal) => {
+                  const refreshed = await window.wuu.readWorkspaceFile(file.path, activeContext.cwd);
+                  if (signal.aborted || selectedFileKeyRef.current !== selectedFileKey) return false;
+                  setFile(refreshed);
+                  return refreshed.renderable_kind === "pdf"
+                    && refreshed.renderable_url === file.renderable_url
+                    && workspacePdfRevision(refreshed) === workspacePdfRevision(file);
+                }} />
             </Suspense>
           </WorkspacePreviewBoundary>
         </article>
@@ -835,6 +851,7 @@ export function WorkspaceFilePreview({
       />
     ) : (
       <article className="workspace-file-preview readonly">
+        {file.truncated ? <p className="workspace-file-preview-notice" role="status">{t("workspace.files.previewTruncated")}</p> : null}
         <FileSelectionSurface key={`${activeContext.cwd}:${file.path}`} workspace={activeContext.cwd} path={file.path} text={draftText} active={active}>
           {(selectionControls) => (
             <div className={`workspace-file-editor-scroll ${isMarkdownReadingMode ? "markdown-reading" : "code"}`}>

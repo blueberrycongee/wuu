@@ -3,7 +3,8 @@
 <plist version="1.0">
 <dict>
     <key>WuuPushEnabled</key><string>$(WUU_PUSH_ENABLED)</string>
-    <key>NSCameraUsageDescription</key><string>拍摄照片并添加到你发送的消息。</string>
+    <key>NSCameraUsageDescription</key><string>扫描电脑上的配对码，或拍摄照片添加到消息。</string>
+    <key>NSLocalNetworkUsageDescription</key><string>通过本地网络连接已配对的电脑，发送消息并接收回复。</string>
     <key>UILaunchScreen</key><dict/>
     <key>UISupportedInterfaceOrientations</key>
     <array>

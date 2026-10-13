@@ -67,18 +67,19 @@ it("keeps source actions beside the aggregated disclosure without nesting button
   act(() => source.click());
   expect(onOpenURL).toHaveBeenCalledExactlyOnceWith(results[0].url);
   expect(header.querySelector("details")?.open).toBe(false);
-  act(() => header.querySelector<HTMLButtonElement>(".web-research-more")!.click());
+  const summary = header.querySelector<HTMLElement>("summary")!;
+  act(() => summary.click());
+  act(() => header.querySelector("details")!.dispatchEvent(new Event("toggle")));
   expect(header.querySelector("details")?.open).toBe(true);
   expect(header.querySelectorAll(".web-research-expanded .web-source-link")).toHaveLength(8);
   expect(header.querySelector(".process-surface-tool-list")).not.toBeNull();
   const chips = header.querySelectorAll<HTMLButtonElement>(".web-research-expanded .web-source-link");
   act(() => { chips[0].focus(); chips[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
   expect(header.querySelector("details")?.open).toBe(false);
-  expect(document.activeElement).toBe(header.querySelector(".web-research-more"));
-  const summary = header.querySelector<HTMLElement>("summary")!;
+  expect(document.activeElement).toBe(summary);
   act(() => summary.click());
   act(() => header.querySelector("details")!.dispatchEvent(new Event("toggle")));
-  expect(header.querySelector(".web-research-more")?.getAttribute("aria-expanded")).toBe("true");
+  expect(header.querySelector("details")?.open).toBe(true);
   expect(header.querySelectorAll(".web-research-expanded .web-source-link")).toHaveLength(8);
   expect(header.querySelectorAll(".process-surface-tool-list")).toHaveLength(1);
   const first = header.querySelector<HTMLButtonElement>(".web-research-expanded .web-source-link")!;
@@ -716,7 +717,7 @@ describe("ProcessSurface", () => {
     });
 
     expect(
-      container.querySelector(".process-surface-summary-line")?.textContent,
+      container.querySelector(".process-surface-summary-line .process-label-content")?.textContent,
     ).toBe(t("process.thinkingAfterOperations", { count: 4 }));
     const summary = container.querySelector(".process-surface-summary-line");
     const blobatar = summary?.querySelector<SVGSVGElement>(
@@ -799,7 +800,15 @@ describe("ProcessSurface", () => {
     );
     expect(text).not.toBeNull();
     expect(text?.querySelector(".process-surface-blobatar")).toBeNull();
-    expect(text?.getAttribute("data-text")).toBe(text?.textContent);
+    const content = text?.querySelector(".process-label-content");
+    const highlight = text?.querySelector(".process-label-highlight");
+    expect(content?.textContent).toBe(text?.getAttribute("data-text"));
+    expect(highlight?.getAttribute("aria-hidden")).toBe("true");
+    expect(highlight?.textContent).toBe(content?.textContent);
+
+    rerender({ processItems: [makeReadFile("tool-1", "a.ts", "completed")], streaming: false, active: false });
+    expect(container.querySelector(".process-label-highlight")).toBeNull();
+    expect(container.querySelector(".process-label-content")).toBe(content);
   });
 
   it("shows the fixed round blobatar while reasoning without tool calls", () => {
@@ -812,7 +821,7 @@ describe("ProcessSurface", () => {
     expect(
       summary?.querySelector("svg.process-surface-blobatar"),
     ).not.toBeNull();
-    expect(summary?.textContent).toBe("正在思考");
+    expect(summary?.querySelector(".process-label-content")?.textContent).toBe("正在思考");
   });
 
   it("morphs the process-row blobatar across activity switches instead of replacing it", () => {
@@ -854,6 +863,7 @@ describe("ProcessSurface", () => {
         makeReadFile("tool-2", "b.ts", "completed"),
       ],
       streaming: false,
+      active: true,
     });
     const countBefore = container.querySelector(".process-surface-count");
     expect(countBefore?.textContent).toBe("2");
@@ -866,9 +876,13 @@ describe("ProcessSurface", () => {
         makeReadFile("tool-3", "c.ts", "completed"),
       ],
       streaming: false,
+      active: true,
     });
     const countDuring = container.querySelector(".process-surface-count");
     expect(countDuring?.textContent).toBe("3");
+    const highlightCount = container.querySelector(".process-label-highlight .process-surface-count");
+    expect(highlightCount?.textContent).toBe(countDuring?.textContent);
+    expect(highlightCount?.classList.contains("is-changing")).toBe(true);
     expect(countDuring?.classList.contains("is-changing")).toBe(true);
 
     // Past the 180ms window, the class is cleared.
@@ -1002,7 +1016,7 @@ describe("ProcessSurface", () => {
         processItems: [...makeSearches(3), makeReadFile("read-1", "session.ts", "in_progress")],
         streaming: true,
       });
-      const summary = container.querySelector(".process-surface-summary-line")?.textContent;
+      const summary = container.querySelector(".process-surface-summary-line .process-label-content")?.textContent;
       expect(summary).toContain("3");
       expect(summary).toContain("session.ts");
     } finally {

@@ -1109,7 +1109,7 @@ func mergeChatProviderOptions(object map[string]any, options map[string]any, for
 func chatProviderOptionIsAISDKOnly(key string) bool {
 	switch key {
 	case "toolStreaming", "toolChoiceAutoOnly", "omitStore", "omitPromptCacheKey", "thinkingConfig", "reasoningConfig", "modelParams", "gateway",
-		"temperatureSupported", "temperature_supported", "promptCacheKeySupported", "native_tool_search", "nativeToolSearch":
+		"temperatureSupported", "temperature_supported", "promptCacheKeySupported", "native_tool_search", "nativeToolSearch", "freeform_tool":
 		return true
 	default:
 		return false

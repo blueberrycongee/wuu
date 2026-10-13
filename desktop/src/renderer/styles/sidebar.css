@@ -2676,7 +2676,6 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
 }
 
 .sidebar-hover-card-time {
-  flex: 0 0 auto;
   color: var(--ink-tertiary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

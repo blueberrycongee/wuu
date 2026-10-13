@@ -9,6 +9,9 @@ import (
 )
 
 func TestKeyringStoreUsesNamespacedAccountsWithoutFallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	backend := &fakeKeyringBackend{values: map[string]string{}}
 	store := NewKeyringStore("wuu-test", backend)
 	ctx := context.Background()
@@ -22,6 +25,18 @@ func TestKeyringStoreUsesNamespacedAccountsWithoutFallback(t *testing.T) {
 	}
 	if _, ok := backend.values["wuu-test\x00mcp:docs:oauth"]; !ok {
 		t.Fatalf("namespaced keyring account missing: %+v", backend.values)
+	}
+	rejected := errors.New("conditional write rejected")
+	if err := store.Update(ctx, "mcp:docs", "oauth", func(current []byte) ([]byte, error) {
+		if string(current) != string(secret) {
+			t.Fatalf("Update read = %v", current)
+		}
+		return []byte("must-not-save"), rejected
+	}); !errors.Is(err, rejected) {
+		t.Fatalf("Update error = %v", err)
+	}
+	if got, err := store.Get(ctx, "mcp:docs", "oauth"); err != nil || string(got) != string(secret) {
+		t.Fatalf("rejected Update changed secret: %v", err)
 	}
 	if err := store.Delete(ctx, "mcp:docs", "oauth"); err != nil {
 		t.Fatal(err)

@@ -488,7 +488,24 @@ func (r *Registry) BindControl(parent context.Context, lease Lease) (context.Con
 	}
 	ctx, cancel := context.WithCancelCause(parent)
 	stop := context.AfterFunc(entry.control, func() { cancel(ErrControlRevoked) })
-	return ctx, func() { stop(); cancel(context.Canceled) }, nil
+	// Keep the original authority available at side-effect dispatch boundaries;
+	// AfterFunc propagates cancellation asynchronously.
+	bound := context.WithValue(ctx, boundControlContextKey{}, entry.control)
+	return bound, func() { stop(); cancel(context.Canceled) }, nil
+}
+
+type boundControlContextKey struct{}
+
+// ControlErr checks both caller cancellation and the original activity lease.
+// It does not wait for the lease's asynchronous cancellation callback to run.
+func ControlErr(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if control, ok := ctx.Value(boundControlContextKey{}).(context.Context); ok && control.Err() != nil {
+		return context.Cause(control)
+	}
+	return nil
 }
 
 func (r *Registry) CheckControl(threadID, activityID, token string) error {

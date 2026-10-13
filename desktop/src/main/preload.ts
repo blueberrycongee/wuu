@@ -205,6 +205,8 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:terminal-stop", id),
   listManagedProcesses: (threadId: string) =>
     ipcRenderer.invoke("wuu:managed-process-list", threadId),
+  cancelProcessNotifications: (threadId: string, processId: string) =>
+    ipcRenderer.invoke("wuu:process-cancel-notifications", threadId, processId),
   readManagedProcess: (params) =>
     ipcRenderer.invoke("wuu:managed-process-read", params),
   writeManagedProcess: (threadId: string, processId: string, input: string) =>
@@ -287,6 +289,7 @@ const api: WuuDesktopApi = {
   getPluginStorage: (params) => ipcRenderer.invoke("wuu:plugin-storage-get", params),
   setPluginStorage: (params) => ipcRenderer.invoke("wuu:plugin-storage-set", params),
   requestPluginRuntime: (params) => ipcRenderer.invoke("wuu:plugin-runtime-request", params),
+  cancelPluginRuntime: (params) => ipcRenderer.invoke("wuu:plugin-runtime-cancel", params),
   listSkills: (params) => ipcRenderer.invoke("wuu:skill-list", params),
   readSkillContent: (params) => ipcRenderer.invoke("wuu:skill-content", params),
   returnManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-return", params),
@@ -310,8 +313,8 @@ const api: WuuDesktopApi = {
   pollXAILogin: (loginId: string) => ipcRenderer.invoke("wuu:auth-xai-login-poll", loginId),
   cancelXAILogin: (loginId: string) => ipcRenderer.invoke("wuu:auth-xai-login-cancel", loginId),
   listActivities: (threadId: string) => ipcRenderer.invoke("wuu:activity-list", threadId),
-  takeoverActivity: (threadId: string, activityId: string) =>
-    ipcRenderer.invoke("wuu:activity-takeover", threadId, activityId),
+  takeoverActivity: (threadId: string, activityId: string, inputGeneration?: number) =>
+    ipcRenderer.invoke("wuu:activity-takeover", threadId, activityId, inputGeneration),
   releaseActivity: (threadId: string, activityId: string) =>
     ipcRenderer.invoke("wuu:activity-release", threadId, activityId),
   stopActivity: (threadId: string, activityId: string) =>
@@ -434,6 +437,8 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:file-show-in-folder", path),
   showWorkspaceItemMenu: (path: string) =>
     ipcRenderer.invoke("wuu:file-show-menu", path),
+  showArtifactItemMenu: (params) =>
+    ipcRenderer.invoke("wuu:artifact-show-menu", params),
   saveArtifactFile: async (name: string, source: string) => {
     // Blob URLs belong to this renderer and cannot be fetched by the main process.
     if (source.startsWith("blob:")) {
@@ -602,7 +607,7 @@ type BrowserTakeoverApi = {
   browserSurface: (workdir: string, tabID: string) => Promise<BrowserSurfaceSnapshot | null>;
   onBrowserSurface: (handler: (snapshot: BrowserSurfaceSnapshot) => void) => () => void;
   onBrowserUserInput: (
-    handler: (payload: { workdir: string; tabID: string }) => void,
+    handler: (payload: { workdir: string; tabID: string; threadID?: string; inputGeneration?: number }) => void,
   ) => () => void;
   onBrowserTabAdopted: (handler: (payload: BrowserTabAdopted) => void) => () => void;
   onBrowserDock: (handler: (payload: BrowserDockTarget) => void) => () => void;

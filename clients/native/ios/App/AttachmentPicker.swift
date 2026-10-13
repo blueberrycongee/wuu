@@ -63,13 +63,17 @@ struct AttachmentPicker: View {
             }
             Button("照片", systemImage: "photo") { photos = true }
             Button("文件", systemImage: "doc") { files = true }
-            Text("最多 4 个图片或 PDF，合计 3 MB")
         } label: {
-            Image(systemName: reading ? "hourglass" : "plus").font(.system(size: 20)).foregroundStyle(.primary)
-                .frame(width: 44, height: 44).background(Color(uiColor: .systemBackground), in: Circle())
+            Group {
+                if reading { ProgressView() }
+                else { Image(systemName: "plus").font(.system(size: 20)).foregroundStyle(.primary) }
+            }.frame(width: 44, height: 44).background(Color(uiColor: .systemBackground), in: Circle())
                 .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
         }
-            .accessibilityLabel("添加附件").disabled(reading || attachments.count >= 4)
+            .accessibilityLabel(reading ? "正在处理附件" : "添加附件")
+            // Size limits are reported when a selection exceeds them; only the full state needs a reason.
+            .accessibilityHint(attachments.count >= 4 ? "每条消息最多 4 个附件" : "")
+            .disabled(reading || attachments.count >= 4)
             .fullScreenCover(isPresented: $camera) {
                 CameraCapture { image in
                     camera = false
