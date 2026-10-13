@@ -25,11 +25,12 @@ message. The list comes from the connected computer's enabled, available engines
 Existing conversations display their bound engine; start a new conversation to use
 another one. The same page offers models, reasoning and permission modes exposed
 by the selected engine. Changes require an online computer and an idle task.
-iOS remembers saved model and reasoning choices for new conversations using the
-same computer and engine, including after relaunch; account connections keep
-separate preferences. Existing conversations retain their own settings, and
-permissions are not remembered as defaults. Removed models fall back to the
-computer's defaults. Engine installation, sign-in and credentials remain on the computer.
+iOS remembers saved model, reasoning and permission choices for new conversations
+using the same computer and engine, including after relaunch; account connections
+keep separate preferences. This includes Unrestricted access after confirmation.
+Existing conversations retain their own settings. Removed models fall back to the
+computer's defaults without discarding a permission choice that the engine still
+supports. Engine installation, sign-in and credentials remain on the computer.
 
 The app saves the pinned computer identity and phone key in the iOS keychain.
 It restores the last computer, folder and conversation after relaunch. Returning

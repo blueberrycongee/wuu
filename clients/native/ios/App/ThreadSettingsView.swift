@@ -86,7 +86,7 @@ struct ThreadSettingsView: View {
                             ForEach(variants, id: \.self) { Text($0).tag($0) }
                         }
                     }
-                } footer: { Text("模型与推理配置会用于此电脑上相同引擎的新会话。模型连接和凭据在电脑上管理。") }
+                } footer: { Text("模型、推理配置与执行权限会用于此电脑上相同引擎的新会话。模型连接和凭据在电脑上管理。") }
                 Section {
                     Picker("执行权限", selection: $selection.permission) {
                         ForEach(["standard", "read_only", "unconfined"].filter { permissions.contains($0) || $0 == selection.permission }, id: \.self) { mode in
@@ -112,16 +112,14 @@ struct ThreadSettingsView: View {
                         }.disabled(!canSave)
                     }
                 }
-                .confirmationDialog("允许此会话不受限地访问电脑？", isPresented: $confirmUnconfined, titleVisibility: .visible) {
+                .confirmationDialog("允许不受限地访问电脑？", isPresented: $confirmUnconfined, titleVisibility: .visible) {
                     Button("允许不受限访问", role: .destructive) { save() }
-                } message: { Text("任务将不再受工作区文件和网络边界限制。仅对信任的任务开启。") }
+                } message: { Text("任务将不再受工作区文件和网络边界限制。此权限也会用于此电脑上相同引擎的新会话。仅对信任的任务开启。") }
                 .task { await load() }
         }
     }
     private func draftSelection(engine: String) -> ThreadSettings {
-        model.preferredDraftSettings(engine: engine,
-            defaults: engine == "wuu" ? defaults : ThreadSettings(["permission_mode": "unconfined"]),
-            providers: providers, engines: engines)
+        model.preferredDraftSettings(engine: engine, defaults: defaults, providers: providers, engines: engines)
     }
     private func load() async {
         loading = true; error = nil

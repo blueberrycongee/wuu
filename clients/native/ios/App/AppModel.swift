@@ -602,7 +602,8 @@ struct MessageForkRequest: Identifiable {
         pendingSettings[thread.id] ?? thread.settings
     }
     func preferredDraftSettings(engine: String, defaults: ThreadSettings, providers: [RemoteProvider], engines: [RemoteEngine]) -> ThreadSettings {
-        modelPreferences?.selection(engine: engine, defaults: defaults, providers: providers, engines: engines) ?? defaults
+        let engineDefaults = engine == "wuu" ? defaults : ThreadSettings(["permission_mode": "unconfined"])
+        return modelPreferences?.selection(engine: engine, defaults: engineDefaults, providers: providers, engines: engines) ?? engineDefaults
     }
     func loadSettingsChoices(threadID: String) async throws -> (providers: [RemoteProvider], engines: [RemoteEngine], defaultEngine: String, defaults: ThreadSettings) {
         guard connected, let remote, let live, live.id == threadID else { throw CancellationError() }
@@ -684,11 +685,14 @@ struct MessageForkRequest: Identifiable {
             if pendingSettings[thread.id] == nil, modelPreferences?.hasSavedChoices == true {
                 let choices = try await loadSettingsChoices(threadID: thread.id)
                 let engine = thread.engine.isEmpty ? choices.defaultEngine : thread.engine
-                remembered = modelPreferences?.selection(engine: engine, defaults: choices.defaults,
+                remembered = preferredDraftSettings(engine: engine, defaults: choices.defaults,
                     providers: choices.providers, engines: choices.engines)
-                if remembered != nil { thread.engine = engine }
+                thread.engine = engine
             }
             var params: [String: JSONValue] = ["cwd": .string(cwd), "engine": .string(thread.engine)]
+            if let settings = pendingSettings[thread.id] ?? remembered {
+                params["permission_mode"] = .string(settings.permission)
+            }
             if let id = workspaces.first(where: { $0["path"].string == cwd })?["id"].string {
                 params["workspace_id"] = .string(id)
             }
@@ -699,11 +703,7 @@ struct MessageForkRequest: Identifiable {
             // Keep composer bindings stable, including an attachment still being prepared.
             composerDraftIDs[thread.id] = draftID
             pendingSettings[thread.id] = pendingSettings.removeValue(forKey: draftID)
-            if var remembered {
-                // A remembered model must never carry permissions into a new conversation.
-                remembered.permission = thread.settings.permission
-                pendingSettings[thread.id] = remembered
-            }
+            if let remembered { pendingSettings[thread.id] = remembered }
             pendingTitles[thread.id] = pendingTitles.removeValue(forKey: draftID)
             // Keep this session on failure so an explicit retry never creates another one.
             draftWorkspace = nil; live = thread; activeID = thread.id; workspace = thread.cwd

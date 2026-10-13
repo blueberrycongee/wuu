@@ -85,6 +85,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- iOS remembers saved permission modes, including Unrestricted, for new
+  conversations on the same computer and engine. The first message preserves
+  that choice, including when a previously selected model is no longer available.
+
 - Fix Windows file-lock errors when saving plugin choices during onboarding or
   changing plugin packages, allowing setup to continue to the next step.
 
