@@ -23,8 +23,6 @@ export const enUS = {
   "composer.appContext.capturing": "Capturing {app}…",
   "composer.appContext.ready": "Ready: switch to another app, then press {shortcut}.",
 
-  "settings.draftRecovery": "Recover unsent text after reload",
-  "settings.draftRecoveryDescription": "Off by default. When enabled, stores up to 20 text drafts locally in this window for 24 hours (32K characters each). Closing the window or disabling this clears recovery copies. Only text is restored; attachments and quote links are not. Avoid secrets in saved drafts.",
   "settings.draftRecoveryUnavailable": "Draft recovery storage is unavailable. Your current input is still here.",
   "execution.knownHosts": "SSH known hosts file",
   "execution.mount": "Host workspace directory (optional)",

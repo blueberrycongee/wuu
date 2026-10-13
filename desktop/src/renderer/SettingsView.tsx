@@ -1,4 +1,3 @@
-import { ComposerDraftRecoverySetting } from "./ComposerDraftRecoverySetting";
 import { hostSupports } from "./HostCapabilities";
 import { isTouchWebShell } from "./ComposerFocus";
 import {
@@ -1317,7 +1316,6 @@ function SettingsGeneralPage({
           <SettingsRow title={t("settings.language")}>
             <LanguagePreferenceControl />
           </SettingsRow>
-          <ComposerDraftRecoverySetting />
         </SettingsGroup>
       </SettingsSection>
 

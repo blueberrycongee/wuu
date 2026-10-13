@@ -12,9 +12,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Add opt-in macOS app snapshots: capture a single frontmost window with a global shortcut, review its image and optional available text locally, then add it to a draft without sending. Computer Use remains excluded from release builds.
 
-- Optional unsent-text recovery after a renderer reload, disabled by default.
-  Recovery copies are limited to the current window, 20 drafts, 32K characters
-  per draft and 24 hours; closing the window or disabling recovery clears them.
+- Automatically recover unsent text after a renderer reload, with no settings
+  toggle. Recovery copies are limited to the current window, 20 drafts, 32K
+  characters per draft and 24 hours; closing the window clears them.
   Attachments and quotes are excluded.
 
 - Bounded per-server MCP tool execution budgets through `tool_timeout_ms`,

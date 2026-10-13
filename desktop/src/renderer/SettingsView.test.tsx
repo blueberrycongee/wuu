@@ -453,7 +453,7 @@ describe("SettingsView model services", () => {
     expect(container.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
   });
 
-  it("gathers conversation defaults and local recovery on General", async () => {
+  it("gathers conversation defaults on General", async () => {
     installServicesStub();
     const onSave = vi.fn(async () => {});
     renderSettings({ initialized: servicesInitialized(), initialPage: "general", locale: "en-US", onSave });
@@ -464,14 +464,6 @@ describe("SettingsView model services", () => {
     expect(group?.querySelector('[data-testid="settings-default-model-select"]')?.textContent).toContain("GPT-6 Astra");
     expect(group?.textContent).toContain("ChatGPT");
     expect(group?.querySelector('[aria-label="Default for new conversations"]')).not.toBeNull();
-    const recovery = container.querySelector<HTMLButtonElement>('[data-testid="settings-draft-recovery"]')!;
-    expect(recovery.getAttribute("aria-checked")).toBe("false");
-    click(recovery);
-    expect(recovery.getAttribute("aria-checked")).toBe("true");
-    window.sessionStorage.setItem("wuu.desktop.draftRecovery.v1", "saved-text");
-    click(recovery);
-    expect(recovery.getAttribute("aria-checked")).toBe("false");
-    expect(window.sessionStorage.getItem("wuu.desktop.draftRecovery.v1")).toBeNull();
   });
 
   it("sends General to Model providers when no service is connected", async () => {

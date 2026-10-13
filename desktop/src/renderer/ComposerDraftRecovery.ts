@@ -2,9 +2,7 @@ import type { RuntimeContext } from "../shared/protocol";
 import type { SessionTab } from "./AppState";
 import { translateCurrent } from "./i18n";
 
-const PREFERENCE_KEY = "wuu.desktop.draftRecovery.enabled";
 const STORAGE_KEY = "wuu.desktop.draftRecovery.v1";
-const CHANGE_EVENT = "wuu:draft-recovery-preference";
 const MAX_DRAFTS = 20;
 const MAX_PROMPT_LENGTH = 32 * 1024;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -20,51 +18,12 @@ type StoredDraft = {
   prompt: string;
   updatedAt: number;
 };
-type StoredRecovery = { version: 1; generation: string; activeTabID: string; drafts: StoredDraft[] };
-export type ComposerRecovery = { tabs: SessionTab[]; activeTabID: string; generation?: string };
+type StoredRecovery = { version: 1; activeTabID: string; drafts: StoredDraft[] };
+export type ComposerRecovery = { tabs: SessionTab[]; activeTabID: string };
 
 // Keep timestamps for unchanged live input even after its recovery copy expires.
 // Ordinary app renders must not extend the retention period.
 let previous: StoredRecovery | undefined;
-
-export function composerDraftRecoveryGeneration(): string | undefined {
-  try {
-    return window.localStorage.getItem(PREFERENCE_KEY) || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export function composerDraftRecoveryEnabled(): boolean {
-  return Boolean(composerDraftRecoveryGeneration());
-}
-
-export function setComposerDraftRecoveryEnabled(enabled: boolean): void {
-  // A new consent generation also invalidates copies in temporarily suspended
-  // windows, even if they miss both the disable and re-enable storage events.
-  if (enabled) window.localStorage.setItem(PREFERENCE_KEY, crypto.randomUUID());
-  else window.localStorage.removeItem(PREFERENCE_KEY);
-  previous = undefined;
-  window.sessionStorage.removeItem(STORAGE_KEY);
-  window.dispatchEvent(new Event(CHANGE_EVENT));
-}
-
-export function observeComposerDraftRecovery(callback: () => void): () => void {
-  const changed = (event: Event): void => {
-    if (event instanceof StorageEvent && event.key !== PREFERENCE_KEY && event.key !== null) return;
-    if (previous?.generation !== composerDraftRecoveryGeneration()) previous = undefined;
-    if (!composerDraftRecoveryEnabled()) {
-      try { window.sessionStorage.removeItem(STORAGE_KEY); } catch { /* Storage may be unavailable. */ }
-    }
-    callback();
-  };
-  window.addEventListener(CHANGE_EVENT, changed);
-  window.addEventListener("storage", changed);
-  return () => {
-    window.removeEventListener(CHANGE_EVENT, changed);
-    window.removeEventListener("storage", changed);
-  };
-}
 
 export function sameRecoveryContext(left: RuntimeContext, right: RuntimeContext): boolean {
   return left.kind === right.kind && left.cwd === right.cwd &&
@@ -125,14 +84,13 @@ function writeStored(snapshot: StoredRecovery): void {
 export function readComposerDraftRecovery(): ComposerRecovery {
   const empty = { tabs: [], activeTabID: "" };
   try {
-    const generation = composerDraftRecoveryGeneration();
     const raw = window.sessionStorage.getItem(STORAGE_KEY);
-    if (!generation || !raw || raw.length > MAX_STORAGE_LENGTH) {
+    if (!raw || raw.length > MAX_STORAGE_LENGTH) {
       window.sessionStorage.removeItem(STORAGE_KEY);
       return empty;
     }
     const data = JSON.parse(raw) as Partial<StoredRecovery>;
-    if (data.version !== 1 || data.generation !== generation || !Array.isArray(data.drafts) || data.drafts.length > MAX_DRAFTS) {
+    if (data.version !== 1 || !Array.isArray(data.drafts) || data.drafts.length > MAX_DRAFTS) {
       window.sessionStorage.removeItem(STORAGE_KEY);
       return empty;
     }
@@ -144,10 +102,10 @@ export function readComposerDraftRecovery(): ComposerRecovery {
       seen.add(entry.id);
       return [entry];
     });
-    previous = { version: 1, generation, activeTabID: validString(data.activeTabID, 512) ? data.activeTabID : "", drafts };
+    previous = { version: 1, activeTabID: validString(data.activeTabID, 512) ? data.activeTabID : "", drafts };
     writeStored(previous);
     const tabs = drafts.filter((entry) => now - entry.updatedAt < MAX_AGE_MS).map(tabFromDraft);
-    return { tabs, activeTabID: tabs.some((tab) => tab.id === previous!.activeTabID) ? previous.activeTabID : "", generation };
+    return { tabs, activeTabID: tabs.some((tab) => tab.id === previous!.activeTabID) ? previous.activeTabID : "" };
   } catch {
     try { window.sessionStorage.removeItem(STORAGE_KEY); } catch { /* No usable recovery store. */ }
     return empty;
@@ -158,14 +116,8 @@ export function readComposerDraftRecovery(): ComposerRecovery {
 // selections, auth/runtime configuration and other tab fields never cross it.
 export function writeComposerDraftRecovery(tabs: SessionTab[], activeTabID: string): boolean {
   try {
-    const generation = composerDraftRecoveryGeneration();
-    if (!generation) {
-      previous = undefined;
-      window.sessionStorage.removeItem(STORAGE_KEY);
-      return true;
-    }
     const now = Date.now();
-    const oldDrafts = previous?.generation === generation ? previous.drafts : [];
+    const oldDrafts = previous?.drafts ?? [];
     const drafts = tabs.flatMap((tab) => {
       if (tab.kind === "skills") return [];
       const old = oldDrafts.find((entry) => entry.id === tab.id && sameRecoveryContext(entry.context, tab.context));
@@ -174,7 +126,7 @@ export function writeComposerDraftRecovery(tabs: SessionTab[], activeTabID: stri
         updatedAt: old?.prompt === tab.prompt ? old.updatedAt : now }, now);
       return entry ? [entry] : [];
     }).sort((left, right) => right.updatedAt - left.updatedAt);
-    previous = { version: 1, generation, activeTabID, drafts };
+    previous = { version: 1, activeTabID, drafts };
     writeStored(previous);
     return true;
   } catch {

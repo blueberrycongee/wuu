@@ -1,5 +1,5 @@
 import { useAppContextDraftTarget } from "./AppContextCapture";
-import { composerDraftRecoveryGeneration, composerDraftRecoveryEnabled, observeComposerDraftRecovery, readComposerDraftRecovery, sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
+import { readComposerDraftRecovery, sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { validPdfSelectionReference } from "./PdfSelection";
 import { createArtifactComposerFile } from "./ArtifactComposerFile";
 import { SideConversationAvailableContext } from "./ResponseSelection";
@@ -1055,7 +1055,6 @@ export function App(): JSX.Element {
   const recoveryTextSnapshots = useRef(new Map<string, { prompt: string; text: string; hasReferences: boolean }>());
   const recoveryStorageWarning = useRef(false);
   const saveDraftRecovery = useStableCallback((input?: { prompt: string; pane?: ConversationPaneID }) => {
-    if (!composerDraftRecoveryEnabled()) return;
     const current = appStateRef.current;
     // Boot has not selected a workspace yet. Never replace the recovery store
     // with the initial empty/default composer while that selection is pending.
@@ -1123,9 +1122,8 @@ export function App(): JSX.Element {
   }, [state.sessionTabs, state.activeSessionTabID, state.initialized, state.activeContext,
     state.thread?.id, state.secondaryThread?.id, prompt, promptRevision, splitComposerDrafts, saveDraftRecovery]);
   useEffect(() => {
-    const stop = observeComposerDraftRecovery(() => saveDraftRecovery());
     const timer = window.setInterval(() => saveDraftRecovery(), 60_000);
-    return () => { stop(); window.clearInterval(timer); };
+    return () => window.clearInterval(timer);
   }, [saveDraftRecovery]);
   const runningThreadReconcileInFlightRef = useRef("");
   const workspaceHasDirtyFilesRef = useRef(false);
@@ -3664,11 +3662,7 @@ export function App(): JSX.Element {
   function restoreInitialComposerRuntime(loadedState: Partial<AppState>): void {
     const context = loadedState.activeContext;
     const current = appStateRef.current;
-    // Consent may change while workspace/session loading is awaiting IPC.
-    // Revalidate at the point recovered input becomes visible, not only at read.
-    const generationIsCurrent = recoveredDrafts.generation === composerDraftRecoveryGeneration();
     const sessionTabs = current.sessionTabs.filter((tab) => {
-      if (!generationIsCurrent && recoveredDrafts.tabs.some((recovered) => recovered.id === tab.id)) return false;
       // Check inactive projects too: their id may now name another directory.
       if (tab.context.kind === "project") {
         const tabContext = tab.context;
@@ -4462,14 +4456,12 @@ export function App(): JSX.Element {
       } else if (submittedThread) {
         // Keep failed input in its conversation without replacing a newer draft.
         preserveFailedComposerMessage(submittedThread.id, message);
-        if (composerDraftRecoveryEnabled()) {
-          const recoveryTab = createDraftSessionTab(`draft:recovery:${message.id}`, recoveryOwner?.context ?? currentState.activeContext!, recoveryDraft);
-          rememberCollapsedPromptParts(recoveryTab.id, recoveryDraft.prompt, recoveryDraft.contentParts);
-          const preserve = (state: AppState): AppState => ({ ...state, sessionTabs: [recoveryTab, ...state.sessionTabs] });
-          appStateRef.current = preserve(appStateRef.current);
-          setState(preserve);
-          setFailedDraftTabIDs((ids) => [...ids, recoveryTab.id]);
-        }
+        const recoveryTab = createDraftSessionTab(`draft:recovery:${message.id}`, recoveryOwner?.context ?? currentState.activeContext!, recoveryDraft);
+        rememberCollapsedPromptParts(recoveryTab.id, recoveryDraft.prompt, recoveryDraft.contentParts);
+        const preserve = (state: AppState): AppState => ({ ...state, sessionTabs: [recoveryTab, ...state.sessionTabs] });
+        appStateRef.current = preserve(appStateRef.current);
+        setState(preserve);
+        setFailedDraftTabIDs((ids) => [...ids, recoveryTab.id]);
       } else {
         // Thread creation failed before there was a conversation to retain the
         // input. A separate draft must not replace newer work in the source tab.

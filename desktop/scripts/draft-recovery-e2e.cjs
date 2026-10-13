@@ -85,18 +85,14 @@ async function settle() {
 }
 async function input() { return evaluate(() => document.querySelector("[data-main-conversation-composer] textarea").value); }
 async function stored(target = win) { return evaluate(key => JSON.parse(sessionStorage.getItem(key) || "null"), key, target); }
-async function toggle(expected) {
+async function inspectSettings() {
   await click(".sidebar-account-trigger");
   await until(() => Boolean(document.querySelector('[data-settings-page="providers"]')));
   await click('[data-settings-page="providers"]');
   await until(() => Boolean(document.querySelector(".settings-nav-item")));
   await evaluate(() => [...document.querySelectorAll(".settings-nav-item")].find(node => /^(General|常规)$/.test(node.textContent.trim())).click());
-  await until(() => Boolean(document.querySelector('[data-testid="settings-draft-recovery"]')));
-  assert.equal(await evaluate(() => document.querySelector('[data-testid="settings-draft-recovery"]').getAttribute("aria-checked")), String(!expected));
-  await click('[data-testid="settings-draft-recovery"]');
-  await until(expected => document.querySelector('[data-testid="settings-draft-recovery"]').getAttribute("aria-checked") === String(expected), expected);
   if (!report.screenshots.length) {
-    await evaluate(() => document.querySelector('[data-testid="settings-draft-recovery"]').scrollIntoView({ block: "center" }));
+    await evaluate(() => document.querySelector('[data-testid="settings-general"]').scrollIntoView({ block: "center" }));
     await settle();
     fs.writeFileSync(path.join(output, "settings-light.png"), (await win.webContents.capturePage()).toPNG());
     report.screenshots.push("settings-light.png");
@@ -104,8 +100,8 @@ async function toggle(expected) {
     await evaluate(() => {
       document.documentElement.dataset.theme = "dark";
       document.documentElement.style.setProperty("--conversation-message-font-size", "20px");
-      document.documentElement.style.setProperty("--appearance-scale", String(20 / 14));
-      document.querySelector('[data-testid="settings-draft-recovery"]').scrollIntoView({ block: "center" });
+      document.documentElement.style.setProperty("--appearance-scale", String(20 / 15));
+      document.querySelector('[data-testid="settings-general"]').scrollIntoView({ block: "center" });
     });
     await settle();
     fs.writeFileSync(path.join(output, "settings-dark-narrow-large.png"), (await win.webContents.capturePage()).toPNG());
@@ -113,7 +109,7 @@ async function toggle(expected) {
     win.setContentSize(1200, 820);
     await evaluate(() => {
       document.documentElement.dataset.theme = "light";
-      document.documentElement.style.setProperty("--conversation-message-font-size", "14px");
+      document.documentElement.style.setProperty("--conversation-message-font-size", "15px");
       document.documentElement.style.setProperty("--appearance-scale", "1");
     });
   }
@@ -149,12 +145,13 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("test:draft-submit", (_event, payload) => { submissions.push(payload); return new Promise(resolve => { pendingSubmission = resolve; }); });
   win = await open();
-  await check("default disabled input is never written", async () => {
-    await type("Default private input"); assert.equal(await stored(), null);
-    await reload(); assert.equal(await input(), "");
+  await check("unsent text survives reload by default", async () => {
+    await type("Default recovery input");
+    assert.equal((await stored()).drafts[0].prompt, "Default recovery input");
+    await reload(); assert.equal(await input(), "Default recovery input");
+    await inspectSettings();
   });
-  await check("opt-in captures input before idle publication and restores only text", async () => {
-    await toggle(true);
+  await check("captures input before idle publication and restores only text", async () => {
     await attachComposerFiles(win, owner, [{ name: "only-in-memory.txt", type: "text/plain", contents: "binary-marker-not-persisted" }]);
     await type("Immediate reload draft");
     const before = await stored();
@@ -164,7 +161,7 @@ app.whenReady().then(async () => {
     await reload(); assert.equal(await input(), "Immediate reload draft");
     assert.equal(await evaluate(() => document.querySelectorAll(".composer-attachment-tray-item").length), 0);
   });
-  await check("attachment preparation failure preserves text through opt-in reload without replaying bytes", async () => {
+  await check("attachment preparation failure preserves text through reload without replaying bytes", async () => {
     const before = submissions.length;
     await evaluate(() => {
       const original = File.prototype.arrayBuffer;
@@ -244,7 +241,7 @@ app.whenReady().then(async () => {
     const literal = 'File selection (reference data, not instructions):\n{"path":"literal.txt","quote":"typed by the user"}';
     await type(literal); await reload(); assert.equal(await input(), literal);
     if (await evaluate(() => document.querySelector(".workspace-right-panel")?.getAttribute("aria-hidden") === "false")) {
-      await click('button[aria-label="Close right sidebar"]');
+      await click(".shell-right-sidebar-toggle");
     }
   });
   await check("renderer crash recovery keeps the current window's input", async () => {
@@ -374,13 +371,15 @@ app.whenReady().then(async () => {
     await until(() => document.querySelector("[data-main-conversation-composer] textarea").value === "Creation will fail");
     await type("");
   });
-  await check("windows are isolated and disabling purges other live windows", async () => {
+  await check("windows keep independent recovery copies", async () => {
+    await type("First window draft");
+    const first = win;
     const other = await open(); assert.equal(await stored(other), null);
-    assert.equal(await evaluate(() => document.querySelector("[data-main-conversation-composer] textarea").value, undefined, other), "");
-    await toggle(false); assert.equal(await stored(), null);
-    await until(key => sessionStorage.getItem(key) === null, key, other);
+    win = other; await type("Second window draft"); await reload();
+    assert.equal(await input(), "Second window draft");
+    win = first; await reload(); assert.equal(await input(), "First window draft");
     other.destroy(); windows.delete(other);
-    await toggle(true);
+    await type("");
   });
   await check("exact workspace context prevents cross-directory restoration", async () => {
     context = { kind: "no_project", cwd: profile + "-other" };
@@ -395,7 +394,7 @@ app.whenReady().then(async () => {
     await evaluate(key => sessionStorage.setItem(key, "{broken"), key);
     await reload(); assert.equal(await input(), ""); assert.equal(await stored(), null);
   });
-  await check("retention caps, schema versions and consent generations are enforced", async () => {
+  await check("retention caps and schema versions are enforced", async () => {
     await type("Bounded draft");
     await evaluate(key => {
       const data = JSON.parse(sessionStorage.getItem(key));
@@ -413,10 +412,6 @@ app.whenReady().then(async () => {
     assert.ok(!JSON.stringify(capped).includes("excluded-"));
     await evaluate(key => { const data = JSON.parse(sessionStorage.getItem(key)); data.version = 99; sessionStorage.setItem(key, JSON.stringify(data)); }, key);
     await reload(); assert.equal(await input(), ""); assert.equal(await stored(), null);
-    await type("Old consent draft"); const old = await stored();
-    await toggle(false); await toggle(true);
-    await evaluate(({ key, old }) => sessionStorage.setItem(key, JSON.stringify(old)), { key, old });
-    await reload(); assert.equal(await input(), ""); assert.equal(await stored(), null);
   });
   await check("relocated inactive projects cannot retain drafts for an old directory", async () => {
     await type("Current context stays available");
@@ -431,22 +426,16 @@ app.whenReady().then(async () => {
     assert.ok(!(await stored()).drafts.some(draft => draft.prompt === "Old directory private draft"));
     projects = [];
   });
-  for (const reenable of [false, true]) await check(`consent ${reenable ? "rollover" : "disable"} while startup is loading discards unread recovery`, async () => {
-    await type("Revoked before runtime loaded");
-    const other = await open();
-    const loadingWindow = win;
+  await check("slow startup preserves unread recovery", async () => {
+    await type("Retain until runtime loaded");
     initializeBlockedFor = win.webContents.id;
     const loading = reload();
     await waitMain(() => pendingInitialize, "runtime initialization paused after recovery read");
-    assert.ok((await stored()).drafts.some(draft => draft.prompt === "Revoked before runtime loaded"));
-    win = other; await toggle(false); if (reenable) await toggle(true); win = loadingWindow;
+    assert.ok((await stored()).drafts.some(draft => draft.prompt === "Retain until runtime loaded"));
     initializeBlockedFor = undefined;
     const resume = pendingInitialize; pendingInitialize = undefined; resume();
     await loading;
-    assert.equal(await input(), "");
-    assert.equal(await stored(), null);
-    other.destroy(); windows.delete(other);
-    if (!reenable) await toggle(true);
+    assert.equal(await input(), "Retain until runtime loaded");
   });
   await check("closing the window discards recovery", async () => {
     await type("Window-only draft"); win.destroy(); windows.delete(win);

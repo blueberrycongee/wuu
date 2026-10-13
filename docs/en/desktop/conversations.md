@@ -10,6 +10,10 @@ Delete is permanent: it removes saved history and cleans up associated artifacts
 
 After the first send, the workspace sidebar immediately shows the pending conversation. You can switch away and return while it is being created. Stop cancels this wait and retains your input; a late creation response does not send the cancelled message or keep an unused empty conversation. Starting another conversation uses a separate draft.
 
+## Recover unsent text
+
+Wuu automatically restores unsent text in the same window after a reload. No setting is required. Recovery copies stay local to that window for up to 24 hours, with at most 20 drafts and 32K characters per draft. Closing the window clears them. Attachments and quoted context are not restored, and recovered text is never sent automatically.
+
 ## Find a conversation
 
 Open **Search conversations** in the sidebar or press **Command + P** (**Ctrl + P** on Windows and Linux). With no query, pinned conversations appear first, followed by recently updated conversations. Type to search titles and history across projects, including archived conversations. Results show their project and, for content matches, a highlighted excerpt in the same row. Otherwise identical results also show their last-updated date and time.

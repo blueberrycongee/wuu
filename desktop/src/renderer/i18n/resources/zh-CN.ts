@@ -21,8 +21,6 @@ export const zhCN = {
   "composer.appContext.capturing": "正在捕获 {app}…",
   "composer.appContext.ready": "已就绪：切换到其他应用，再按 {shortcut}。",
 
-  "settings.draftRecovery": "重新加载后恢复未发送文字",
-  "settings.draftRecoveryDescription": "默认关闭。开启后，在当前窗口本地保存最多 20 条文字草稿，保留 24 小时（每条最多 32K 字符）。关闭窗口或此开关会清理恢复副本。仅恢复文字，附件与引用关联不会恢复，请勿在保存的草稿中输入密钥。",
   "settings.draftRecoveryUnavailable": "草稿恢复存储不可用，当前输入仍然保留。",
   "execution.knownHosts": "SSH 已知主机文件",
   "execution.mount": "本机工作目录（可选）",

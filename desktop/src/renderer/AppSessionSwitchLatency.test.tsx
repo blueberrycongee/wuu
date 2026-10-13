@@ -1,4 +1,4 @@
-import { readComposerDraftRecovery, setComposerDraftRecoveryEnabled } from "./ComposerDraftRecovery";
+import { readComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { openComposerAttachmentPicker } from "./test/attachmentPicker";
 /**
  * Session switching keeps the outgoing conversation covered until the resumed
@@ -660,7 +660,6 @@ describe("session tab switch latency", () => {
     { activePane: "primary", direct: false }, { activePane: "secondary", direct: false },
     { activePane: "primary", direct: true }, { activePane: "secondary", direct: true },
   ])("preserves both split drafts from $activePane (direct pane promotion=$direct)", async ({ activePane, direct }) => {
-    setComposerDraftRecoveryEnabled(true);
     const { threadsByID } = installWuuApi();
     const third = { ...threadB(), id: "thread-third", preview: "third conversation" };
     threadsByID.set(third.id, third);
@@ -1264,7 +1263,6 @@ describe("session tab switch latency", () => {
   });
 
   it.each(["", "newer draft"])("preserves failed input without overwriting the current draft (%s)", async (newerDraft) => {
-    setComposerDraftRecoveryEnabled(true);
     const { startTurn } = installWuuApi();
     const pending = deferred<{ turn: Turn }>();
     startTurn.mockReturnValueOnce(pending.promise);
@@ -1291,7 +1289,6 @@ describe("session tab switch latency", () => {
   });
 
   it.each(["accepted", "rejected"])("does not reactivate a submitted conversation when its delayed response is %s", async (outcome) => {
-    setComposerDraftRecoveryEnabled(true);
     const { startTurn } = installWuuApi();
     const pending = deferred<{ turn: Turn }>();
     startTurn.mockReturnValueOnce(pending.promise);
