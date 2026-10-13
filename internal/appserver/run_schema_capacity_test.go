@@ -150,7 +150,8 @@ func assertSchemaUserTurns(t *testing.T, srv *Server, threadID string, want int)
 	}
 	count := 0
 	for _, message := range history {
-		if message.Role == "user" {
+		// Catalog refreshes are hidden runtime context, not submitted user turns.
+		if message.Role == "user" && !(message.Hidden && message.ReadOnly && message.Origin == "runtime" && message.Cause == "skill_catalog") {
 			count++
 		}
 	}
