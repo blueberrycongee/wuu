@@ -201,6 +201,23 @@ app.whenReady().then(async () => {
   check("explicit show works while auto-show is off", controls.length === 0 && surfaceCount === 1);
   coordinator.setAutoShow(true);
   coordinator.setActiveThread(threadID);
+  const otherWindow = new BrowserWindow({ width: 400, height: 300, show: false, frame: false });
+  await otherWindow.loadURL("data:text/html,<body>Foreground fixture window</body>");
+  // Explicitly blur because the headless platform can mark two windows focused.
+  // Exercise real BrowserWindow state; native compositor ordering needs macOS QA.
+  main.blur(); otherWindow.show(); otherWindow.focus();
+  await waitFor("other fixture window focused", () => otherWindow.isFocused() && !main.isFocused());
+  check("an already-visible preview does not steal focus when its parent blurs", pip.isVisible() && otherWindow.isFocused());
+  await overlay.webContents.executeJavaScript("document.getElementById('close').click()");
+  await waitFor("preview hidden with background parent", () => !pip.isVisible());
+  main.blur(); otherWindow.focus();
+  await waitFor("other fixture window remains foreground after hide", () => otherWindow.isFocused() && !main.isFocused());
+  coordinator.showForThread(threadID);
+  check("a hidden preview waits while its parent is unfocused", !pip.isVisible() && otherWindow.isFocused(), { mainFocused: main.isFocused(), otherFocused: otherWindow.isFocused(), pipVisible: pip.isVisible(), pipFocused: pip.isFocused() });
+  main.focus();
+  await waitFor("parent focus restores preview", () => pip.isVisible());
+  check("showing a preview preserves parent keyboard focus", main.isFocused() && !pip.isFocused());
+  otherWindow.destroy();
   main.hide(); await waitFor("hidden parent hides preview", () => !pip.isVisible());
   coordinator.refreshBrowserPresentation();
   check("activity refresh cannot show hidden main window", !main.isVisible() && !pip.isVisible());
