@@ -16,7 +16,7 @@ public struct ConversationRow: Identifiable, Sendable, Equatable {
             let joinsProcess = message.isProcess && previous?.isProcessGroup == true &&
                 (previous?.messages.last?.hasInlineAttachments == false || (message.tool != nil && previous?.messages.last?.tool != nil))
             let joinsTools = !message.isProcess && message.tool != nil && previous?.isToolGroup == true
-            if sameTurn && (joinsProcess || joinsTools) {
+            if sameTurn && message.activity == .null && previous?.messages.last?.activity == .null && (joinsProcess || joinsTools) {
                 rows[rows.count - 1].messages.append(message)
             } else {
                 rows.append(ConversationRow(messages: [message]))

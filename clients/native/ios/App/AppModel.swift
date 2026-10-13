@@ -584,7 +584,7 @@ struct MessageForkRequest: Identifiable {
         if connected, let remote {
             refreshing = true; connectionStatus = ""
             do {
-                _ = try await remote.call("thread/resume", params: ["session_id": .string(id), "response_only": true, "history_page": true], snapshotTag: selection.uuidString)
+                _ = try await remote.call("thread/resume", params: ["session_id": .string(id), "response_only": true, "history_page": true, "conversation_history": true], snapshotTag: selection.uuidString)
             } catch {
                 // Keep rejecting deltas until an authoritative snapshot succeeds.
                 if epoch == stamp, opening == selection, self.remote === remote {
@@ -655,6 +655,22 @@ struct MessageForkRequest: Identifiable {
         guard epoch == stamp, opening == selection, self.remote === remote else { return }
         beforePrepend()
         self.live?.prependHistory(page)
+    }
+    func readActivity(_ message: ChatMessage, cursor: String, threadID: String) async throws -> JSONValue {
+        guard connected, !refreshing, let remote, live?.id == threadID else { throw NativeError.invalid("请连接电脑后重试") }
+        let stamp = epoch, selection = opening
+        let page = try await remote.call("thread/activity/read", params: [
+            "thread_id": .string(threadID), "turn_id": .string(message.turnID),
+            "item_id": .string(message.itemID), "last_item_id": message.activity["last_item_id"], "cursor": .string(cursor)])
+        guard !Task.isCancelled, epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
+        return page
+    }
+    func readActivityContent(_ message: ChatMessage, threadID: String) async throws -> JSONValue {
+        guard connected, let remote, live?.id == threadID else { throw NativeError.invalid("请连接电脑后重试") }
+        let stamp = epoch, selection = opening
+        let item = try await remote.readContent(message.contentRef, threadID: threadID)
+        guard !Task.isCancelled, epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
+        return item
     }
     func expand(_ message: ChatMessage) async throws {
         guard connected, let remote, let live, !message.contentRef.isEmpty, !loadingContent.contains(message.id) else { return }

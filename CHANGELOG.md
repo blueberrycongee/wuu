@@ -48,6 +48,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- iOS history loads settled processing steps as stable summaries. Tap a summary
+  to page through its details without changing the conversation reading position;
+  published attachments remain in the conversation.
+
 - iOS conversation swipe actions show centered icons without visible labels,
   retain screen-reader names, and distinguish pin/unpin and archive/restore.
   Archive actions use a gray background for visibility in light and dark modes.

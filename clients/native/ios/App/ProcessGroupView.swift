@@ -8,8 +8,8 @@ struct ProcessGroupView: View {
     let settings: ThreadSettings?
     let active: Bool
     var inspect: () -> Void
-    private var toolCount: Int { messages.filter { $0.tool != nil }.count }
-    private var failures: Int { messages.filter { $0.tool?.status == "failed" }.count }
+    private var toolCount: Int { messages.reduce(0) { $0 + ($1.activity["tool_count"].number.map(Int.init) ?? ($1.tool != nil ? 1 : 0)) } }
+    private var failures: Int { messages.reduce(0) { $0 + ($1.activity["failed_count"].number.map(Int.init) ?? ($1.tool?.status == "failed" ? 1 : 0)) } }
     private var detail: String? {
         var parts: [String] = []
         if toolCount > 0 { parts.append("\(toolCount) 项操作") }
@@ -51,6 +51,10 @@ struct ProcessGroupDetails: View {
     let messages: [ChatMessage]
     let settings: ThreadSettings?
     let active: Bool
+    var loading = false
+    var loadError: String?
+    var loadMore: (() -> Void)?
+    var expand: ((ChatMessage) -> Void)?
     @Environment(\.dismiss) private var dismiss
     /// Consecutive tool calls form one run; each piece of commentary stands alone.
     private var segments: [[ChatMessage]] {
@@ -74,10 +78,19 @@ struct ProcessGroupDetails: View {
                                         isLive: active && segment[0].role == "assistant" && segment[0].id == model.messages.last?.id)
                                 .foregroundStyle(segment[0].role == "error" ? Color.red : Color.primary)
                             if !segment[0].contentRef.isEmpty {
-                                Button("加载完整消息") { model.perform { try await model.expand(segment[0]) } }
+                                Button("加载完整消息") {
+                                    if let expand { expand(segment[0]) }
+                                    else { model.perform { try await model.expand(segment[0]) } }
+                                }
                                     .disabled(!model.connected || model.loadingContent.contains(segment[0].id))
                             }
                         }
+                    }
+                    if loading { ProgressView().accessibilityLabel("正在读取处理过程") }
+                    if let loadError { Text(loadError).foregroundStyle(.red) }
+                    if let loadMore {
+                        Button(loadError == nil ? "加载更多步骤" : "重试") { loadMore() }
+                            .disabled(loading || !model.connected)
                     }
                 }
                 .padding(20).frame(maxWidth: .infinity, alignment: .leading)

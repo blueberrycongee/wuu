@@ -307,7 +307,7 @@ func (f mobileChatFilter) item(raw json.RawMessage, turnID string) (json.RawMess
 		}
 		out, err := json.Marshal(appserver.RemoteThreadItem(f.threadID, turnID, message))
 		return out, err == nil
-	case appserver.ThreadItemToolCall:
+	case appserver.ThreadItemToolCall, appserver.ThreadItemProcessSummary, appserver.ThreadItemError:
 		if !f.tools {
 			return nil, false
 		}

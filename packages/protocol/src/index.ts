@@ -1668,12 +1668,13 @@ export type ManagedProcessWriteResult = ManagedProcessActionResult & {
 export type ThreadStatus = "idle" | "in_progress";
 export type TurnStatus = "in_progress" | "completed" | "failed" | "interrupted";
 export type TurnKind = "user" | "internal" | "compact";
-export type TurnItemsView = "full";
+export type TurnItemsView = "full" | "conversation";
 export type ThreadItemType =
   | "user_message"
   | "agent_message"
   | "reasoning"
   | "tool_call"
+  | "process_summary"
   | "context_compaction"
   | "stream_reconnect"
   | "error";
@@ -2253,6 +2254,8 @@ export type Turn = {
   model?: string;
   items: ThreadItem[];
   items_view: TurnItemsView;
+  /** Folding context retained across conversation-history page boundaries. */
+  has_final_answer?: boolean;
   status: TurnStatus;
   // Structured turn-end error populated by the Go core's BuildTurnError.
   // Older clients that only read `message` still work because every new
@@ -2429,6 +2432,8 @@ export type TurnEventNotification = {
 };
 
 export type ThreadItem = {
+  /** Settled activity folded by opt-in conversation history. Details use thread/activity/read. */
+  activity?: { last_item_id: string; item_count: number; tool_count: number; failed_count: number };
   /** Local Markdown images, readable through message/image/read. */
   markdown_images?: InputImage[];
   /** Complete content is fetched separately when a history item exceeds the page budget. */

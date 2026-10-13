@@ -39,6 +39,23 @@ wuu app-server --workdir /path/to/project
 Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束。用 `run/interrupt`
 停止运行；关闭由客户端启动的服务前，先请求 `shutdown`。
 
+## 分页读取会话历史
+
+需要紧凑会话视图时，在 `thread/resume` 中传入 `conversation_history: true`。
+主机会先将已结束的工具活动和过程说明折叠为 `process_summary` 条目，再计算历史页大小。
+回复、错误和已发布附件仍然可见；正在执行的轮次保留实时条目。
+将返回的 `history_cursor` 原样传给 `thread/history/read` 读取更早的会话页。
+分页可以拆分轮次，但不会拆分处理过程摘要。
+
+用户打开摘要时，调用 `thread/activity/read`，传入 `thread_id`、`turn_id`、摘要的
+`item_id`，并将 `activity.last_item_id` 作为 `last_item_id`。响应包含 `turn` 和可选的
+`next_cursor`；将后者作为 `cursor` 读取下一页详情。详情页应与会话状态分开保存。
+单个超长条目通过 `remote_content_ref` 和 `thread/content/read` 获取完整内容。
+若历史编辑移除了分页边界，应重新打开会话，不再使用过期游标。
+
+未传入 `conversation_history` 的客户端继续使用原来的历史格式。
+旧版主机会忽略此选项，返回常规历史页。
+
 ## 排队输入与崩溃恢复
 
 持久对话中的 `turn/queue`、`turn/steer` 接收输入，以及编辑和取消操作，都会先提交本地存储，

@@ -1596,6 +1596,8 @@ type ThreadResumeParams struct {
 	ResponseOnly bool `json:"response_only,omitempty"`
 	// HistoryPage returns a bounded recent page; older turns use thread/history/read.
 	HistoryPage bool `json:"history_page,omitempty"`
+	// ConversationHistory returns folded activity with separately paged details.
+	ConversationHistory bool `json:"conversation_history,omitempty"`
 }
 
 type ThreadResumeResult struct {
@@ -2364,7 +2366,8 @@ const (
 type TurnItemsView string
 
 const (
-	TurnItemsViewFull TurnItemsView = "full"
+	TurnItemsViewFull         TurnItemsView = "full"
+	TurnItemsViewConversation TurnItemsView = "conversation"
 )
 
 type WorkspaceKind string
@@ -2452,12 +2455,14 @@ type Turn struct {
 	Model         string        `json:"model,omitempty"`
 	Items         []ThreadItem  `json:"items"`
 	ItemsView     TurnItemsView `json:"items_view"`
-	Status        TurnStatus    `json:"status"`
-	Error         *TurnError    `json:"error,omitempty"`
-	FinishReason  string        `json:"finish_reason,omitempty"`
-	StopReason    string        `json:"stop_reason,omitempty"`
-	Truncated     bool          `json:"truncated,omitempty"`
-	StartedAt     *time.Time    `json:"started_at,omitempty"`
+	// HasFinalAnswer preserves folding context when conversation history splits a turn.
+	HasFinalAnswer bool       `json:"has_final_answer,omitempty"`
+	Status         TurnStatus `json:"status"`
+	Error          *TurnError `json:"error,omitempty"`
+	FinishReason   string     `json:"finish_reason,omitempty"`
+	StopReason     string     `json:"stop_reason,omitempty"`
+	Truncated      bool       `json:"truncated,omitempty"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
 	// AnswerReadyAt is the user-visible completion boundary. Provider cleanup,
 	// durable turn settlement, and execution-lease release may finish later.
 	AnswerReadyAt       *time.Time `json:"answer_ready_at,omitempty"`
@@ -2506,6 +2511,7 @@ const (
 	ThreadItemAgentMessage      ThreadItemType = "agent_message"
 	ThreadItemReasoning         ThreadItemType = "reasoning"
 	ThreadItemToolCall          ThreadItemType = "tool_call"
+	ThreadItemProcessSummary    ThreadItemType = "process_summary"
 	ThreadItemContextCompaction ThreadItemType = "context_compaction"
 	ThreadItemStreamReconnect   ThreadItemType = "stream_reconnect"
 	ThreadItemError             ThreadItemType = "error"
@@ -2520,6 +2526,7 @@ const (
 )
 
 type ThreadItem struct {
+	Activity *ConversationActivity `json:"activity,omitempty"`
 	// steered preserves input identity from live messages and the durable display
 	// transcript, independently of compactable provider history. It is host-only.
 	steered          bool

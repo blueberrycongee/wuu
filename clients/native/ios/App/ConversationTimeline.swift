@@ -125,18 +125,19 @@ struct ConversationTimeline: View {
                 if let edit = model.historyEdit { HistoryMessageEditView(model: model, edit: edit) }
             }
             .onDisappear { historyRequest?.cancel() }
+            .onChange(of: model.activeID) { _, _ in inspectedProcess = nil }
     }
     private func timelineRow(_ row: ConversationRow, size: CGSize) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             // Process groups also contain tools, so they are checked first.
             if row.isProcessGroup {
                 ProcessGroupView(messages: row.messages, settings: model.live?.settings, active: row.processActive) {
-                    inspectedProcess = ActivityInspection(id: row.messages[0].id, messages: row.messages)
+                    inspectedProcess = ActivityInspection(id: row.messages[0].id, threadID: model.live?.id ?? "", messages: row.messages)
                 }
             } else if row.isToolGroup {
                 ToolGroupView(model: model, messages: row.messages, settings: model.live?.settings,
                     active: model.live?.running == true && row.messages.last?.id == model.messages.last?.id) { summary in
-                    inspectedProcess = ActivityInspection(id: row.id, messages: row.messages, toolsOnly: true, summary: summary)
+                    inspectedProcess = ActivityInspection(id: row.id, threadID: model.live?.id ?? "", messages: row.messages, toolsOnly: true, summary: summary)
                 }
             } else {
                 MessageBubble(model: model, message: row.messages[0],
@@ -153,7 +154,10 @@ struct ConversationTimeline: View {
             if row.isProcessGroup || row.isToolGroup, row.messages.contains(where: \.hasInlineAttachments) {
                 MessageAttachments(model: model, messages: row.messages)
             }
-        }.id(row.id).background { TimelineRowAnchor(id: row.messages.last!.id, state: scrollState) }
+        }.id(row.id).background {
+            let last = row.messages.last!
+            TimelineRowAnchor(id: last.activity["last_item_id"].string.map { last.turnID + ":" + $0 } ?? last.id, state: scrollState)
+        }
     }
     private var pausedEdit: HistoryMessageEdit? {
         guard let edit = model.historyEdit, edit.prepared, edit.threadID == model.activeID, !model.showingHistoryEdit else { return nil }
@@ -386,9 +390,49 @@ private struct ReplyActions: View {
     }
 }
 
+/// Detail pages stay in this sheet; reading them never mutates timeline rows or its cursor.
+private struct PagedActivityInspection: View {
+    let model: AppModel
+    let summary: ChatMessage
+    let threadID: String
+    @State private var detail: ChatThread?
+    @State private var cursor = ""
+    @State private var loaded = false
+    @State private var loading = false
+    @State private var error: String?
+    @State private var pageRequest = 0
+    var body: some View {
+        ProcessGroupDetails(model: model, messages: detail?.messages ?? [], settings: model.live?.settings,
+            active: false, loading: loading, loadError: error,
+            loadMore: !loaded || !cursor.isEmpty ? { pageRequest += 1 } : nil,
+            expand: { message in
+                model.perform {
+                    let item = try await model.readActivityContent(message, threadID: threadID)
+                    detail?.expandContent(message.contentRef, item: item)
+                }
+            })
+            .task(id: pageRequest) { await loadPage() }
+    }
+    private func loadPage() async {
+        guard !loading, !loaded || !cursor.isEmpty else { return }
+        loading = true; error = nil
+        defer { loading = false }
+        do {
+            let page = try await model.readActivity(summary, cursor: cursor, threadID: threadID)
+            guard case .object(var turn) = page["turn"] else { throw NativeError.invalid("电脑未返回处理过程") }
+            let previous = detail?.turns.first?["items"].array ?? []
+            turn["items"] = .array(previous + page["turn"]["items"].array)
+            detail = ChatThread(["id": .string(threadID), "turns": [.object(turn)]])
+            cursor = page["next_cursor"].string ?? ""
+            loaded = true
+        } catch is CancellationError {} catch { self.error = error.localizedDescription }
+    }
+}
+
 private struct ActivityInspection: Identifiable {
     /// A member of the inspected group, retained when a final answer regroups the rows.
     let id: String
+    let threadID: String
     let messages: [ChatMessage]
     var toolsOnly = false
     var summary: String?
@@ -403,7 +447,10 @@ private struct ActivityInspectionSheet: View {
         let messages = row?.messages ?? inspection.messages
         let active = row?.processActive == true || (row?.isToolGroup == true && model.live?.running == true &&
             row?.messages.last?.id == model.messages.last?.id)
-        if inspection.toolsOnly {
+        if let summary = messages.first, summary.activity != .null {
+            PagedActivityInspection(model: model, summary: summary, threadID: inspection.threadID)
+                .id(inspection.threadID + ":" + summary.id)
+        } else if inspection.toolsOnly {
             ToolGroupDetails(model: model, messages: messages, summary: inspection.summary, active: active)
         } else {
             ProcessGroupDetails(model: model, messages: messages, settings: model.live?.settings, active: active)

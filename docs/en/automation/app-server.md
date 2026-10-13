@@ -59,6 +59,26 @@ for future conversations; add `keep_selection: true` to save a provider's
 connection without making it the default. Do not try to override a turn's permission mode through
 `turn/start`.
 
+## Page conversation history
+
+For a compact conversation view, send `conversation_history: true` with
+`thread/resume`. The response folds settled tool activity and commentary into
+`process_summary` items before applying the history page budget. Replies, errors
+and published attachments remain visible; active turns retain live items.
+Pass the returned opaque `history_cursor` to `thread/history/read` to load older
+conversation pages. A page can split a turn, but never a process summary.
+
+When the user opens a summary, call `thread/activity/read` with `thread_id`,
+`turn_id`, the summary’s `item_id`, and `activity.last_item_id` as `last_item_id`.
+The response contains `turn` and an optional `next_cursor`. Pass that cursor as
+`cursor` to read the next detail page. Keep these detail pages separate from the
+conversation state. Oversized individual items retain `remote_content_ref` for
+`thread/content/read`. If history editing removes a boundary, reopen the
+conversation instead of continuing with the stale cursor.
+
+Clients that omit `conversation_history` keep the existing item history format.
+Older hosts ignore the option and return their usual history pages.
+
 ## Delete archived conversations
 
 `thread/listArchived` returns archived conversations across the configured

@@ -72,6 +72,15 @@ func pageThreadSnapshot(thread Thread) Thread {
 	return thread
 }
 
+func (th *threadState) threadResumeSnapshotLocked(params ThreadResumeParams) Thread {
+	if params.ConversationHistory {
+		thread := th.snapshotTurnsLocked(nil)
+		thread.Turns = th.Turns
+		return conversationSnapshot(thread)
+	}
+	return th.resumeSnapshotLocked(params.HistoryPage)
+}
+
 func (th *threadState) resumeSnapshotLocked(paged bool) Thread {
 	if !paged {
 		return th.snapshotLocked()
@@ -257,6 +266,9 @@ func (s *Server) handleThreadHistoryRead(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	requestCursor := params.Cursor
+	conversation := strings.HasPrefix(params.Cursor, "conversation:")
+	params.Cursor = strings.TrimPrefix(params.Cursor, "conversation:")
 	boundaryTurn, boundaryItem := "", ""
 	if strings.HasPrefix(params.Cursor, "turn:") {
 		boundaryTurn = strings.TrimPrefix(params.Cursor, "turn:")
@@ -275,16 +287,20 @@ func (s *Server) handleThreadHistoryRead(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	th.mu.Lock()
+	turns := th.Turns
+	if conversation {
+		turns = conversationTurns(turns)
+	}
 	end, itemEnd := -1, 0
-	for i := len(th.Turns) - 1; i >= 0; i-- {
-		if th.Turns[i].ID == boundaryTurn {
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].ID == boundaryTurn {
 			end = i
 			break
 		}
 	}
 	if end >= 0 && boundaryItem != "" {
 		itemEnd = -1
-		for i, item := range th.Turns[end].Items {
+		for i, item := range turns[end].Items {
 			if item.ID == boundaryItem {
 				itemEnd = i
 				break
@@ -298,15 +314,18 @@ func (s *Server) handleThreadHistoryRead(req Request) error {
 	if itemEnd == 0 {
 		end--
 		if end >= 0 {
-			itemEnd = len(th.Turns[end].Items)
+			itemEnd = len(turns[end].Items)
 		}
 	}
-	turns, cursor := historyPage(th.ID, th.Turns, end, itemEnd)
+	turns, cursor := historyPage(th.ID, turns, end, itemEnd)
 	th.mu.Unlock()
+	if conversation && cursor != "" {
+		cursor = "conversation:" + cursor
+	}
 	return s.writeResponse(req.ID, struct {
 		ThreadID      string `json:"thread_id"`
 		Cursor        string `json:"cursor"`
 		Turns         []Turn `json:"turns"`
 		HistoryCursor string `json:"history_cursor,omitempty"`
-	}{params.ThreadID, params.Cursor, turns, cursor}, nil)
+	}{params.ThreadID, requestCursor, turns, cursor}, nil)
 }

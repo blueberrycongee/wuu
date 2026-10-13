@@ -388,13 +388,13 @@ func (s *Server) handleThreadResume(req Request) error {
 	if th := s.thread(id); th != nil {
 		th.mu.Lock()
 		s.restorePluginToolLabels(th.Turns)
-		thread := th.resumeSnapshotLocked(params.HistoryPage)
+		thread := th.threadResumeSnapshotLocked(params)
 		th.mu.Unlock()
 		thread, err = s.threadWithChildAgents(thread)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		return s.writeThreadResumeResult(req, thread, params.ResponseOnly || params.HistoryPage)
+		return s.writeThreadResumeResult(req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
 	}
 	th, err := s.loadPersistedThreadState(id, time.Now().UTC())
 	if err != nil {
@@ -408,10 +408,12 @@ func (s *Server) handleThreadResume(req Request) error {
 		if !ok {
 			return s.writeResponse(req.ID, nil, session.ErrSessionNotFound)
 		}
-		if params.HistoryPage {
+		if params.ConversationHistory {
+			thread = conversationSnapshot(thread)
+		} else if params.HistoryPage {
 			thread = pageThreadSnapshot(thread)
 		}
-		return s.writeThreadResumeResult(req, thread, params.ResponseOnly || params.HistoryPage)
+		return s.writeThreadResumeResult(req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
 	}
 	th = s.addLoadedThread(th)
 	if th == nil {
@@ -419,13 +421,13 @@ func (s *Server) handleThreadResume(req Request) error {
 	}
 
 	th.mu.Lock()
-	thread := th.resumeSnapshotLocked(params.HistoryPage)
+	thread := th.threadResumeSnapshotLocked(params)
 	th.mu.Unlock()
 	thread, err = s.threadWithChildAgents(thread)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	return s.writeThreadResumeResult(req, thread, params.ResponseOnly || params.HistoryPage)
+	return s.writeThreadResumeResult(req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
 }
 
 func (s *Server) writeThreadResumeResult(req Request, thread Thread, responseOnly bool) error {

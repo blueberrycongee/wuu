@@ -56,7 +56,7 @@ remain invalid; this is recovery behavior, not downgrade compatibility.
 | Method | Input | Result |
 | --- | --- | --- |
 | `thread/start` | Optional `cwd`, `workspace_id`, `engine`, `provider`, `model`, `effort`, `permission_mode`, `approve_for_me`, `ephemeral`, `workspace`, `base_revision` | `{ "thread": ... }` |
-| `thread/resume` | Optional `session_id`, `response_only`, `history_page` | Thread snapshot and available held/pending user messages |
+| `thread/resume` | Optional `session_id`, `response_only`, `history_page`, `conversation_history` | Thread snapshot and available held/pending user messages |
 | `thread/edit-message` | `thread_id`, `turn_id`, `item_id` | Rewound thread and draft restored from the selected user message |
 | `thread/fork` | `thread_id`; optional `turn_id`, `item_id`, `target`, `mode`, `history_page` | New thread and optional worktree information |
 | `thread/list`, `thread/listAll`, `thread/listArchived`, `thread/search` | Method-specific filters | Session metadata |
@@ -104,6 +104,23 @@ snapshot. Forks retain the source conversation and copy its selection.
 `thread/fork` also accepts `history_page`; both its result and `thread/started`
 notification then carry bounded recent history and a cursor for `thread/history/read`.
 The `mobile_activity` remote profile bounds unpaged thread snapshots as well.
+
+`conversation_history: true` on `thread/resume` opts into bounded conversation
+pages with settled process regions replaced by `process_summary` items and
+`items_view: "conversation"`. Their
+`activity` carries `last_item_id`, `item_count`, `tool_count`, and `failed_count`;
+the summary ID is its first source item ID. `has_final_answer` on a turn preserves
+folding context when paging splits the turn. Active turns retain their live items.
+Published attachments remain at their source addresses. Pass the opaque
+`history_cursor` back to `thread/history/read`; clients must not parse it.
+
+`thread/activity/read` takes `thread_id`, `turn_id`, `item_id` (the summary ID),
+`last_item_id`, and an optional `cursor`. It returns `thread_id`, a `turn` with
+up to 100 detail items within the history byte budget, and optional `next_cursor`.
+Detail pages run forward and do not affect the conversation cursor. Oversized
+items use the existing content and attachment references. A removed or regrouped
+boundary fails explicitly. Clients without the opt-in retain the original format;
+old hosts ignore the option. See [conversation paging](../automation/app-server.md#page-conversation-history).
 
 For published image snapshots, `thread/attachment/read` accepts `kind: "artifact"`
 with `thread_id`, `turn_id`, `item_id`, content `index`, and the stored `sha256`.

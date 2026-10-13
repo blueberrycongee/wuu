@@ -13,17 +13,18 @@ public struct ChatMessage: Identifiable, Sendable, Equatable {
     public var itemID: String
     public var isProcess: Bool
     public var turnActive: Bool
+    public var activity: JSONValue
     /// Match desktop: explicit artifact placement publishes an image; ordinary tool images stay in the process.
     public func isInspectionImage(_ attachment: JSONValue) -> Bool {
         tool != nil && attachment["media_type"].string?.hasPrefix("image/") == true &&
             (attachment["artifact"]["placement"].string ?? "").isEmpty
     }
     public var hasInlineAttachments: Bool { attachments.contains { !isInspectionImage($0) } }
-    public init(id: String, role: String, text: String, contentRef: String = "", attachments: [JSONValue] = [], tool: ToolActivity? = nil, sourceSessionID: String = "", sourceSessionName: String = "", turnID: String = "", itemID: String = "", isProcess: Bool = false, turnActive: Bool = false) {
+    public init(id: String, role: String, text: String, contentRef: String = "", attachments: [JSONValue] = [], tool: ToolActivity? = nil, sourceSessionID: String = "", sourceSessionName: String = "", turnID: String = "", itemID: String = "", isProcess: Bool = false, turnActive: Bool = false, activity: JSONValue = .null) {
         self.id = id; self.role = role; self.text = text; self.contentRef = contentRef; self.attachments = attachments
         self.tool = tool
         self.sourceSessionID = sourceSessionID; self.sourceSessionName = sourceSessionName
-        self.turnID = turnID; self.itemID = itemID; self.isProcess = isProcess; self.turnActive = turnActive
+        self.turnID = turnID; self.itemID = itemID; self.isProcess = isProcess; self.turnActive = turnActive; self.activity = activity
     }
 }
 
@@ -110,10 +111,10 @@ public struct ChatThread: Identifiable, Sendable {
             let active = turn["status"].string == "in_progress"
             // Like desktop, only a structurally terminal answer ends the process region.
             // Keep interrupted/error commentary readable when there is no final answer.
-            let hasAnswer = items.contains { $0["type"].string == "agent_message" && $0["terminal"].bool &&
+            let hasAnswer = turn["has_final_answer"].bool || items.contains { $0["type"].string == "agent_message" && $0["terminal"].bool &&
                 (!($0["text"].string ?? "").isEmpty || !$0["images"].array.isEmpty || !$0["markdown_images"].array.isEmpty) }
             var messages: [ChatMessage] = items.compactMap { item in
-                guard let type = item["type"].string, ["user_message", "agent_message", "error", "tool_call"].contains(type) else { return nil }
+                guard let type = item["type"].string, ["user_message", "agent_message", "error", "tool_call", "process_summary"].contains(type) else { return nil }
                 let sessionMessage = ["host", "plugin"].contains(item["origin"].string ?? "") && item["presentation_kind"].string == "session_message"
                 // Host-marked model notifications are not user messages; attributed peer messages remain visible.
                 if type == "user_message", !sessionMessage,
@@ -132,8 +133,8 @@ public struct ChatThread: Identifiable, Sendable {
                     sourceSessionID: sessionMessage ? item["related_session_id"].string ?? "" : "",
                     sourceSessionName: item["name"].string ?? "",
                     turnID: turn["id"].string ?? "", itemID: item["id"].string ?? "",
-                    isProcess: hasAnswer && (type == "tool_call" || (type == "agent_message" && !item["terminal"].bool)),
-                    turnActive: active)
+                    isProcess: type == "process_summary" || (hasAnswer && (type == "tool_call" || (type == "agent_message" && !item["terminal"].bool))),
+                    turnActive: active, activity: item["activity"])
             }
             let cancelled = turn["status"].string == "interrupted" && turn["error"]["category"].string == "cancelled"
             if let error = turn["error"]["message"].string, !cancelled, !error.isEmpty, !messages.contains(where: { $0.role == "error" }) {
