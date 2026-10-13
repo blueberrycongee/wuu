@@ -20,6 +20,12 @@ func killPluginProcess(cmd *exec.Cmd) error {
 	if errors.Is(err, syscall.ESRCH) {
 		return os.ErrProcessDone
 	}
+	if errors.Is(err, syscall.EPERM) {
+		// Darwin rejects a group whose members have all exited but are not yet
+		// reaped. The leader is still our unreaped child, so signal it directly;
+		// Wait then reports its real exit status.
+		return cmd.Process.Kill()
+	}
 	return err
 }
 
