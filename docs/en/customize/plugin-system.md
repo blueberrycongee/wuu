@@ -52,6 +52,8 @@ Cleanup produces structured revocation records, persisted in `plugin-generation-
 
 ## Services and executions
 
+Runtime process writes honor cancellation and a bounded transport deadline. If a frame is interrupted during delivery or an execution cancellation cannot be delivered, the host retires that transport. Canceling an invocation before it is sent leaves other running work intact. Shutdown terminates the runtime process group on macOS/Linux and requests process-tree termination on Windows, with a bounded pipe drain. Windows tree cleanup is best-effort if the runtime has already exited. Unexpected nonzero shutdown exits remain visible in retirement reports. Runtime stderr keeps the most recent 64 KiB and marks omitted earlier output; verbose logs cannot grow this buffer indefinitely. These limits do not shorten a running tool’s execution deadline or replace the generation-retention rules above.
+
 Runtime plugins communicate over JSONL. Versioned services use the `host.service.call` gateway: providers declare names, versions, and methods; consumers declare service names and major versions. The registry binds consumers to providers and supplies caller identity. A missing required provider prevents the consumer from becoming usable. Duplicate providers for the same name and major version are diagnosed, not combined.
 
 Kernel services cover storage, settings, sessions, history, workspaces, artifacts, and execution operations. Feature services use the same routing mechanism. A service method's schema identifiers describe its contract; they are not permission to call another plugin's private process or read its private storage.
