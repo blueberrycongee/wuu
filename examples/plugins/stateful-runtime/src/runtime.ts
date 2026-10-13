@@ -1,5 +1,6 @@
 import {
   PLUGIN_CLIENT_REQUEST_CAPABILITY,
+  requireKernelService,
   runJSONLRuntime,
   type CapabilityInvokeParams,
   type RuntimeHost,
@@ -54,13 +55,12 @@ async function startSession(host: RuntimeHost, prompt: string): Promise<unknown>
 const plugin: RuntimePlugin = {
   initialize() {
     return {
-      protocol_version: 2,
       capabilities: [{ id: PLUGIN_CLIENT_REQUEST_CAPABILITY, kind: "decision", version: 1 }],
-      required_host_services: [
-        { id: "host.storage.get", required: true },
-        { id: "host.storage.compare_exchange", required: true },
-        { id: "host.session.create", required: true },
-        { id: "host.session.send", required: true },
+      required_services: [
+        requireKernelService("host.storage.get"),
+        requireKernelService("host.storage.compare_exchange"),
+        requireKernelService("host.session.create"),
+        requireKernelService("host.session.send"),
       ],
     };
   },

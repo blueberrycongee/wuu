@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { normalize, parse, sep } from "node:path";
-import type { RuntimeHost, RuntimePlugin, RuntimeInitializeParams, ToolExecuteParams, TurnLifecycleInput } from "@wuu/plugin-sdk";
+import { requireKernelService, type RuntimeHost, type RuntimePlugin, type RuntimeInitializeParams, type ToolExecuteParams, type TurnLifecycleInput } from "@wuu/plugin-sdk";
 import { localTimezone, parseCronExpression, validateTimezone } from "./schedule.js";
 
 const storageKey = "automation.state";
@@ -298,7 +298,7 @@ export function createAutomationPlugin(): RuntimePlugin {
       return {
         tools: [{ id: "cron", description: "Manage scheduled Agent prompts. action=list returns tasks; action=add creates a one-shot or recurring task from a five-field cron expression; action=remove deletes a task. Use new_thread for an independent visible conversation and thread_heartbeat to wake an existing conversation. Set workspace=worktree so each triggered session runs in its own git worktree instead of the shared project directory.", input_schema: cronSchema, execution_scopes: ["root" as const] }],
         capabilities: [{ id: "plugin.client.request", kind: "decision" as const, version: 1 }, { id: "agent.turn.lifecycle", kind: "observe" as const, version: 1, error_policy: "isolate" as const }],
-        required_host_services: ["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"].map(id => ({ id, required: true })),
+        required_services: (["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService),
       };
     },
     activate(_runtimeHost, lifecycle) {

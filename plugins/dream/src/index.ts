@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { RuntimeHost, RuntimePlugin, TurnLifecycleInput, AgentTurnCompletedInput } from "@wuu/plugin-sdk";
+import { requireKernelService, type RuntimeHost, type RuntimePlugin, type TurnLifecycleInput, type AgentTurnCompletedInput } from "@wuu/plugin-sdk";
 
 const storageKey = "dream.state";
 const zeroTime = "0001-01-01T00:00:00Z";
@@ -155,8 +155,10 @@ export function createDreamPlugin(): RuntimePlugin {
       }
       return {
         capabilities: [...["agent.turn.completed", "agent.turn.lifecycle"].map(id => ({ id, kind: "observe" as const, version: 1, error_policy: "isolate" as const })), { id: "plugin.client.request", kind: "decision" as const, version: 1 }],
-        required_host_services: ["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"].map(id => ({ id, required: true })),
-        required_services: [{ name: "memory.session", major_version: 1 }],
+        required_services: [
+          ...(["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService),
+          { name: "memory.session", major_version: 1 },
+        ],
       };
     },
     async activate(_runtimeHost, lifecycle) {

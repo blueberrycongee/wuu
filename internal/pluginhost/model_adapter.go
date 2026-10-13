@@ -4,17 +4,17 @@ import (
 	"fmt"
 	"strings"
 
-	pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 )
 
 const (
-	CapabilityModelAdapter = pluginapi.CapabilityModelAdapter
-	KernelModelEmitService = pluginapi.KernelModelEmitService
+	CapabilityModelAdapter = pluginprotocol.CapabilityModelAdapter
+	KernelModelEmitService = pluginprotocol.KernelModelEmitService
 )
 
 // ModelAdapterDescriptor names an exact, generation-owned implementation.
 // Native is reserved for host protocols; plugin IDs use dotted names.
-type ModelAdapterDescriptor = pluginapi.ModelAdapterDescriptor
+type ModelAdapterDescriptor = pluginprotocol.ModelAdapterDescriptor
 
 type RegisteredModelAdapter struct {
 	RegisteredCapability

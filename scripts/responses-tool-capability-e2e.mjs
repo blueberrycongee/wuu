@@ -124,7 +124,7 @@ try {
   await writeFile(pluginPath, `
 import { invokeModel, startModelInvocation, readModelInvocation } from "@wuu/plugin-sdk";
 export default {
-  initialize() { return { protocol_version: 3, required_host_services: [{ id: "host.service.call", required: true }],
+  initialize() { return { protocol_version: 3,
     required_services: [{ name: "host.model.invoke", major_version: 1, required: true }],
     capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }] }; },
   async invokeCapability(params, host) {

@@ -1,6 +1,6 @@
 # Agent plugin quickstart
 
-Start with one TypeScript file and a Wuu CLI. Node.js 22.7 or later with `--experimental-transform-types` support is required for this path. Wuu supplies its matching SDK; no checkout, npm install, manifest, or build command is needed.
+Start with one TypeScript file and a Wuu CLI. Node.js 22.7 or later with `--experimental-transform-types` support is required for this path. Wuu supplies its matching official TypeScript SDK; no checkout, npm install, manifest, or build command is needed.
 
 ## Run one file
 
@@ -32,7 +32,7 @@ Run:
 wuu plugin dev ./hello.ts
 ```
 
-This authorizes that exact file and watches it. The default export is the public `RuntimePlugin` contract. Wuu snapshots the file, checks syntax, imports, and the default export without calling `initialize`, and publishes an isolated development generation. Edit the greeting and save to reload. Syntax, import, or export failures retain the last published generation; fixing the file and saving retries automatically, including after an initial failure. Publication can proceed while a turn is running; that turn keeps its existing generation, and the conversation adopts the update at its next idle turn boundary. The actual host then initializes the candidate with read-phase services. Preparation failure keeps the old runtime; native activation follows the runtime change's commit. If activation fails after that point, the new generation remains published with failure diagnostics rather than rolling back. Publication does not prove activation in every open conversation; check the plugin's actual status and the [generation contract](plugin-system.md#runtime-generations).
+This authorizes that exact file and watches it. The default export is the public `RuntimePlugin` contract. Wuu snapshots the file, checks syntax, imports, and the default export without calling `initialize`, and publishes an isolated development generation. Edit the greeting and save to reload. Syntax, import, or export failures retain the last published generation; fixing the file and saving retries automatically, including after an initial failure. Publication can proceed while a turn is running; that turn and its outstanding workers or managed processes keep their existing generation. The conversation adopts the update at its next idle turn boundary after that work settles. The actual host then initializes the candidate with read-phase services. Preparation failure keeps the old runtime; native activation follows the runtime change's commit. If activation fails after that point, the new generation remains published with failure diagnostics rather than rolling back. Publication does not prove activation in every open conversation; check the plugin's actual status and the [generation contract](plugin-system.md#runtime-generations).
 
 Use a regular `.ts` file, not a symlink. Only Node builtins and `@wuu/plugin-sdk` imports are supported in this single-file path. Other local files, npm dependencies, JSX, and custom `tsconfig` transforms need the package workflow below. TypeScript execution does not type-check your code. Keep stdout for the protocol; use `console.error` for diagnostics. Importing a module runs its top-level code, even during validation. Development authorization grants trust to this source; it does not sandbox code or approve a distributed package.
 
@@ -47,11 +47,11 @@ In a Wuu-engine conversation, the deferred `plugin_manager` tool provides a scop
 3. Check the result, then finish the current turn. Its tool definitions stay pinned to the old generation.
 4. On the next idle turn, discover and call the new greeting tool. Use `{"action":"status"}` or status with an exact `id` to compare published state with the current conversation's generation. Check the actual tool result before calling it usable.
 
-Outstanding background work must settle before this conversation can adopt the update. Do not leave a `wuu plugin dev` watcher running as work owned by this turn; use the one-shot apply path above.
+Outstanding conversation workers and managed processes must settle before this conversation can adopt the update. Do not leave a `wuu plugin dev` watcher running as work owned by this turn; use the one-shot apply path above.
 
 Apply can execute module top-level code and package build scripts on the host. Before validation or import, it requires an `unconfined` session, or `standard` mode with an enabled, configured permission reviewer returning an allow decision. Read-only mode rejects mutations. Workspace write permission alone does not authorize host code execution. The host chooses the executable and plugin storage; this tool does not grant general filesystem access to `$WUU_HOME`. Remote-environment source paths are not supported.
 
-`{"action":"disable","id":"<plugin-id>"}` and `{"action":"enable","id":"<plugin-id>"}` change an existing plugin's enabled state; enabling does not supply missing trust. Applying an update does not automatically start another turn. Published or installed state, callable tools in this conversation, and rendered desktop UI are separate checks. For desktop contributions, inspect the actual view as well as runtime status.
+`{"action":"disable","id":"<plugin-id>"}` and `{"action":"enable","id":"<plugin-id>"}` change an existing plugin's enabled state; enabling does not supply missing trust. A committed disable revokes the plugin across retained generations without waiting for the next idle turn. Applying an update does not automatically start another turn. Published or installed state, callable tools in this conversation, and rendered desktop UI are separate checks. For desktop contributions, inspect the actual view as well as runtime status.
 
 ## Grow into a package
 
@@ -161,10 +161,12 @@ manifest under `internal/plugin/bundled/<id>/` instead. To build only one runtim
 run `node scripts/build-bundled-plugins.mjs --plugin=todo`. To verify that committed
 bundled runtimes match their source, run `npm --prefix plugins run build:check`.
 
-A current turn keeps its original implementation and files. The same conversation
-adopts the replacement at its next idle boundary after its outstanding work settles.
-A rejected candidate leaves the previous generation available. Verify an actual
-tool result after that boundary; a successful build is not proof of activation.
+A current turn and its outstanding workers or managed processes keep their original
+implementation and files. The same conversation adopts the replacement at its next
+idle boundary after that work settles. A preparation or pre-commit failure leaves
+the previous generation available; activation failure after commit leaves a failed
+new generation. Verify an actual tool result after adoption; a successful build is
+not proof of activation.
 
 Run credential-free process acceptance from the checkout:
 

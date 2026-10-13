@@ -35,7 +35,6 @@ export default {
   initialize() {
     return {
       protocol_version: 3,
-      required_host_services: [{ id: "host.service.call", required: true }],
       required_services: [
         ...["host.model.invoke", "host.background"].map(name => ({ name, major_version: 1, required: true })),
         { name: "fixture.shadow-compare", major_version: 1, required: false },

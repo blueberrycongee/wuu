@@ -77,7 +77,7 @@
 
 ### 按你的方式扩展
 
-插件可以添加工具和功能，比如定时自动化、长期目标、任务清单、记忆、子 Agent 等，每一个都能单独开关。你还可以安装本地插件、添加技能、连接 MCP 服务、配置 hooks。扩展和内置插件用的是同一套公开 API。详见[扩展 Wuu](docs/zh-cn/customize/index.md)。
+插件可以添加工具和功能，比如定时自动化、长期目标、任务清单、记忆、子 Agent 等，每一个都能单独开关。你还可以安装本地插件、添加技能、连接 MCP 服务、配置 hooks。官方 TypeScript SDK 为外部扩展和内置插件提供同一套公开 API。详见[扩展 Wuu](docs/zh-cn/customize/index.md)。
 
 <p align="center">
   <img src="landing/assets/readme/plugins-zh.jpg" width="640" alt="插件">

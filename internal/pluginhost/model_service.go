@@ -1,6 +1,6 @@
 package pluginhost
 
-import pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
+import "github.com/blueberrycongee/wuu/internal/pluginprotocol"
 
 const KernelModelRequestService = "host.model.request"
 
@@ -37,4 +37,4 @@ type ModelRequestResult struct {
 
 // ModelRequestUsage is absent when the provider did not report token usage.
 // Cancellation cannot undo a provider submission or guarantee zero charges.
-type ModelRequestUsage = pluginapi.ModelRequestUsage
+type ModelRequestUsage = pluginprotocol.ModelRequestUsage

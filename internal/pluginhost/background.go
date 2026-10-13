@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 )
 
 const (
-	KernelBackgroundService    = pluginapi.KernelBackgroundService
+	KernelBackgroundService    = pluginprotocol.KernelBackgroundService
 	backgroundMaxJobsPerPlugin = 64
 	backgroundMaxResultBytes   = 1 << 20
 )
@@ -31,9 +31,9 @@ func KernelBackgroundDescriptor() ServiceDescriptor {
 
 // BackgroundStartParams dispatches one finite callback to a service provided
 // by the caller. Timers, scheduling policy and durable results remain plugin-owned.
-type BackgroundStartParams = pluginapi.BackgroundStartParams
-type BackgroundStartResult = pluginapi.BackgroundHandle
-type BackgroundJobParams = pluginapi.BackgroundJobParams
+type BackgroundStartParams = pluginprotocol.BackgroundStartParams
+type BackgroundStartResult = pluginprotocol.BackgroundHandle
+type BackgroundJobParams = pluginprotocol.BackgroundJobParams
 
 type BackgroundJobSnapshot struct {
 	JobID  string            `json:"job_id"`

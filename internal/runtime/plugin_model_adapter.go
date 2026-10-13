@@ -9,8 +9,8 @@ import (
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
 )
 
 type modelAdapterClient struct {
@@ -115,7 +115,7 @@ func (c *modelAdapterClient) Chat(ctx context.Context, req providers.ChatRequest
 	if err != nil {
 		return providers.ChatResponse{}, err
 	}
-	response, callErr := invokePluginModelChat(ctx, c.host, capability.RegisteredCapability, pluginapi.ModelAdapterInput{
+	response, callErr := invokePluginModelChat(ctx, c.host, capability.RegisteredCapability, pluginprotocol.ModelAdapterInput{
 		AdapterID: req.Adapter, Request: logicalModelRequest(req), Stream: false,
 	})
 	callErr = errors.Join(callErr, settlePluginModelSubmission(req, submission, response.Usage, callErr))
@@ -144,7 +144,7 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 	if err != nil {
 		return nil, err
 	}
-	stream, err := invokePluginModelStream(ctx, c.host, capability.RegisteredCapability, pluginapi.ModelAdapterInput{
+	stream, err := invokePluginModelStream(ctx, c.host, capability.RegisteredCapability, pluginprotocol.ModelAdapterInput{
 		AdapterID: req.Adapter, Request: logicalModelRequest(req), Stream: true,
 	}, submission)
 	if err != nil {
@@ -293,7 +293,7 @@ func settlePluginModelSubmission(req providers.ChatRequest, submission providers
 }
 
 func invokePluginModelChat(ctx context.Context, host *pluginhost.Host, capability pluginhost.RegisteredCapability, input any) (providers.ChatResponse, error) {
-	var output pluginapi.ModelAdapterOutput
+	var output pluginprotocol.ModelAdapterOutput
 	if err := host.InvokeCapability(ctx, capability, input, &output); err != nil {
 		return providers.ChatResponse{}, err
 	}
@@ -321,7 +321,7 @@ func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capabil
 		var emitErr error
 		emitted := false
 		closed := false
-		streamCtx := pluginhost.WithModelEventSink(ctx, capability.PluginID, func(callCtx context.Context, wire pluginapi.ModelStreamEventV1) error {
+		streamCtx := pluginhost.WithModelEventSink(ctx, capability.PluginID, func(callCtx context.Context, wire pluginprotocol.ModelStreamEventV1) error {
 			mu.Lock()
 			defer mu.Unlock()
 			if emitErr != nil {
@@ -355,7 +355,7 @@ func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capabil
 			}
 			return emitErr
 		})
-		var output pluginapi.ModelAdapterOutput
+		var output pluginprotocol.ModelAdapterOutput
 		callErr := host.InvokeCapability(streamCtx, capability, input, &output)
 		mu.Lock()
 		closed = true
@@ -425,7 +425,7 @@ func (k *modelEmitInvoker) InvokeService(ctx context.Context, params pluginhost.
 	if !active || host == nil {
 		return nil, serviceError("service_unavailable", "model event service is unavailable")
 	}
-	var event pluginapi.ModelStreamEventV1
+	var event pluginprotocol.ModelStreamEventV1
 	if err := decodeServiceParams(params.Params, &event); err != nil {
 		return nil, err
 	}

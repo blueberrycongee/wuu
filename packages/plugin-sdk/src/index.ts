@@ -630,7 +630,7 @@ export const KERNEL_SERVICE_NAMES = {
 
 export type KernelHostServiceMethod = keyof typeof KERNEL_SERVICE_NAMES;
 
-/** Preserve the former host-call input while emitting the Service Registry gateway frame. */
+/** Build a typed kernel service call through the Service Registry gateway. */
 export function kernelServiceCall<M extends KernelHostServiceMethod>(
   id: string,
   method: M,
@@ -653,11 +653,6 @@ export function requireArtifactImportService(): ServiceRequirement {
 
 export function requireModelRequestService(): ServiceRequirement {
   return { name: MODEL_REQUEST_SERVICE, major_version: 1, required: true };
-}
-
-export interface HostServiceDescriptor {
-  id: HostServiceMethod | (string & {});
-  required?: boolean;
 }
 
 /** One typed method of a provided service. */
@@ -754,7 +749,6 @@ export interface RuntimeInitializeResult {
   tools?: ToolRegistration[];
   protocol_version?: 1 | 2 | 3;
   capabilities?: CapabilityDescriptor[];
-  required_host_services?: HostServiceDescriptor[];
   provided_services?: ServiceDescriptor[];
   required_services?: ServiceRequirement[];
   lifecycle_version?: 1;
@@ -1599,26 +1593,10 @@ export async function handleRuntimeRequest(
     switch (request.method) {
       case "initialize": {
         const result = await plugin.initialize(request.params, host, lifecycle);
-        const legacy = result.required_host_services?.filter((service) => Object.hasOwn(KERNEL_SERVICE_NAMES, service.id)) ?? [];
-        if (legacy.length === 0) return { id: request.id, result: {
+        return { id: request.id, result: {
           ...result,
           protocol_version: result.required_services?.length || result.provided_services?.length
             ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
-          lifecycle_version: 1,
-        } };
-        // The typed legacy conveniences use the registry gateway, as in the Go SDK.
-        const requirements = [...result.required_services ?? []];
-        for (const descriptor of legacy) {
-          const name = KERNEL_SERVICE_NAMES[descriptor.id as KernelHostServiceMethod];
-          const existing = requirements.findIndex((service) => service.name === name && service.major_version === 1);
-          if (existing < 0) requirements.push({ name, major_version: 1, required: descriptor.required });
-          else requirements[existing] = { ...requirements[existing]!, required: requirements[existing]!.required || descriptor.required };
-        }
-        return { id: request.id, result: {
-          ...result,
-          protocol_version: CAPABILITY_PROTOCOL_V3,
-          required_host_services: result.required_host_services?.filter((service) => !Object.hasOwn(KERNEL_SERVICE_NAMES, service.id)),
-          required_services: requirements,
           lifecycle_version: 1,
         } };
       }

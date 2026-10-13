@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -25,71 +26,89 @@ import (
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/tools"
-	plugingo "github.com/blueberrycongee/wuu/packages/plugin-go"
 )
 
-// The fixture uses the public Go extension protocol in a separate process, so
-// assertions cover real generation ownership and tool routing rather than a
-// synthetic epoch comparison.
+// The fixture speaks the process wire protocol directly, so these assertions
+// cover generation ownership and routing without a plugin authoring SDK.
 func TestPluginReloadBehaviorProcess(t *testing.T) {
 	marker := os.Getenv("WUU_RELOAD_TEST_MARKER")
 	if marker == "" {
 		return
 	}
-	var callbackHost plugingo.Host
-	var required []plugingo.HostService
-	if os.Getenv("WUU_RELOAD_TEST_SESSION") != "" {
-		required = []plugingo.HostService{{ID: plugingo.HostServiceSessionSend, Required: true}}
-	}
-	err := plugingo.Serve(context.Background(), plugingo.Handler{
-		Initialize: func(_ context.Context, host plugingo.Host, _ plugingo.InitializeParams) error {
-			callbackHost = host
+	scanner := bufio.NewScanner(os.Stdin)
+	enc := json.NewEncoder(os.Stdout)
+	activationID := ""
+	for scanner.Scan() {
+		var req struct {
+			ID     string          `json:"id"`
+			Method string          `json:"method"`
+			Result json.RawMessage `json:"result"`
+			Error  json.RawMessage `json:"error"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+			os.Exit(2)
+		}
+		var result any = map[string]any{}
+		var callErr error
+		switch req.Method {
+		case "initialize":
 			if path := os.Getenv("WUU_RELOAD_TEST_ATTEMPTS"); path != "" {
 				file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 				if err != nil {
-					return err
+					os.Exit(2)
 				}
-				_, err = fmt.Fprintln(file, time.Now().UnixNano())
-				closeErr := file.Close()
-				if err != nil || closeErr != nil {
-					return fmt.Errorf("record initialization: %v, %v", err, closeErr)
+				_, callErr = fmt.Fprintln(file, time.Now().UnixNano())
+				if err := file.Close(); err != nil {
+					callErr = err
 				}
 			}
 			if path := os.Getenv("WUU_RELOAD_TEST_FAILURE"); path != "" {
 				if message, err := os.ReadFile(path); err == nil {
-					return fmt.Errorf("%s", message)
+					callErr = fmt.Errorf("%s", message)
 				}
 			}
-			return nil
-		},
-		Activate: func(context.Context) error {
+			definition := pluginhost.CapabilityInitializeResult{
+				ProtocolVersion:  pluginhost.CapabilityProtocolVersion,
+				LifecycleVersion: pluginhost.RuntimeLifecycleVersion,
+				InitializeResult: pluginhost.InitializeResult{Tools: []pluginhost.ToolRegistration{{ID: "read", Description: os.Getenv("WUU_RELOAD_TEST_DESCRIPTION"), InputSchema: map[string]any{"type": "object"}, Activity: &pluginhost.ToolActivityMetadata{ReadOnly: true, ConcurrencySafe: true, Risk: "low"}}}},
+			}
+			if os.Getenv("WUU_RELOAD_TEST_SESSION") != "" {
+				definition.RequiredServices = []pluginhost.ServiceRequirement{{Name: pluginhost.KernelSessionSendService, MajorVersion: 1, Required: true}}
+			}
+			result = definition
+		case "activate":
 			if message := os.Getenv("WUU_RELOAD_TEST_ACTIVATE_ERROR"); message != "" {
-				return fmt.Errorf("%s", message)
+				callErr = fmt.Errorf("%s", message)
 			}
-
-			if target := os.Getenv("WUU_RELOAD_TEST_SESSION"); target != "" {
-				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-				defer cancel()
-				var result plugingo.SessionSendResult
-				err := plugingo.CallHostService(ctx, callbackHost, plugingo.HostServiceSessionSend, plugingo.SessionSendParams{RequestID: "activate-send", SessionID: target, Input: plugingo.SessionInput{Prompt: "activation callback"}}, &result)
-				if err != nil {
-					return err
-				}
-				raw, _ := json.Marshal(result)
-				return os.WriteFile(os.Getenv("WUU_RELOAD_TEST_CALLBACK_RESULT"), raw, 0600)
+			if target := os.Getenv("WUU_RELOAD_TEST_SESSION"); target != "" && callErr == nil {
+				activationID = req.ID
+				_ = enc.Encode(map[string]any{"id": "fixture-session-send", "method": "host.service.call", "params": pluginhost.ServiceCallParams{Service: pluginhost.KernelSessionSendService, Method: "call", Params: json.RawMessage(fmt.Sprintf(`{"request_id":"activate-send","session_id":%q,"input":{"prompt":"activation callback"}}`, target))}})
+				continue
 			}
-			return nil
-		},
-		Shutdown: func(context.Context) error {
-			return os.WriteFile(os.Getenv("WUU_RELOAD_TEST_SHUTDOWN"), []byte(marker), 0600)
-		},
-		Definition: plugingo.Definition{RequiredHostServices: required, Tools: []plugingo.Tool{{ID: "read", Description: os.Getenv("WUU_RELOAD_TEST_DESCRIPTION"), InputSchema: map[string]any{"type": "object"}, Activity: &plugingo.ToolActivity{ReadOnly: true, ConcurrencySafe: true, Risk: "low"}}}},
-		ExecuteTool: func(context.Context, plugingo.Host, plugingo.ToolCall) (plugingo.ToolResult, error) {
-			return plugingo.TextResult(marker), nil
-		},
-	})
-	if err != nil {
-		os.Exit(2)
+		case "":
+			if req.ID != "fixture-session-send" || activationID == "" {
+				continue
+			}
+			if len(req.Error) != 0 && string(req.Error) != "null" {
+				_ = enc.Encode(map[string]any{"id": activationID, "error": req.Error})
+				activationID = ""
+				continue
+			}
+			callErr = os.WriteFile(os.Getenv("WUU_RELOAD_TEST_CALLBACK_RESULT"), req.Result, 0600)
+			req.ID, activationID = activationID, ""
+		case "tool.execute":
+			result = map[string]any{"result": map[string]any{"content": []map[string]string{{"type": "text", "text": marker}}}}
+		case "shutdown":
+			callErr = os.WriteFile(os.Getenv("WUU_RELOAD_TEST_SHUTDOWN"), []byte(marker), 0600)
+		}
+		if callErr != nil {
+			_ = enc.Encode(map[string]any{"id": req.ID, "error": map[string]string{"code": "fixture_error", "message": callErr.Error()}})
+		} else {
+			_ = enc.Encode(map[string]any{"id": req.ID, "result": result})
+		}
+		if req.Method == "shutdown" {
+			os.Exit(0)
+		}
 	}
 	os.Exit(0)
 }
@@ -656,7 +675,7 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 			if err != nil {
 				t.Fatalf("activation callback did not complete: %v; statuses=%+v", err, rt.PluginHost.Statuses())
 			}
-			var result plugingo.SessionSendResult
+			var result pluginhost.SessionSendResult
 			if err := json.Unmarshal(raw, &result); err != nil {
 				t.Fatal(err)
 			}

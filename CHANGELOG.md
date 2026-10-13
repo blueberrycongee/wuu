@@ -48,6 +48,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- TypeScript is the single official plugin-authoring SDK. Remove the public Go
+  plugin SDK and legacy `required_host_services` declarations; plugins use versioned
+  `required_services` and the service gateway. The Go host and language-neutral
+  JSONL process protocol remain supported.
+
 - Simplify conversation triggers into compact task rows with inline cancellation
   and expandable output, removing repeated labels and command text.
 
@@ -62,7 +67,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   retain readable contrast. Saved font preferences stay intact, and diff
   previews follow the independent code font and size settings.
 
-- Plugin SDKs now overlap explicitly concurrency-safe tools in a bounded pool,
+- The plugin SDK now overlaps explicitly concurrency-safe tools in a bounded pool,
   while ordinary handlers and lifecycle transitions retain ordered barriers.
   Foreground subagent waits no longer serialize independent tasks, and a late
   result cannot overwrite a newer follow-up task.

@@ -1,9 +1,8 @@
-package pluginapi
+// Package pluginprotocol holds the Go host representation of plugin wire data.
+// It contains no plugin authoring or process runtime API.
+package pluginprotocol
 
-import (
-	"context"
-	"encoding/json"
-)
+import "encoding/json"
 
 const (
 	KernelModelInvokeService        = "host.model.invoke"
@@ -312,40 +311,40 @@ type BackgroundCancelResult struct {
 	Cancelled bool `json:"cancelled"`
 }
 
-// InvokeModel performs independent inference without executing returned tool calls.
-func InvokeModel(ctx context.Context, host Host, input ModelInvokeParams) (ModelInvokeResult, error) {
-	var result ModelInvokeResult
-	err := CallService(ctx, host, KernelModelInvokeService, "call", input, &result)
-	return result, err
+type ContentPart struct {
+	// RemoteRef is an output-only deferred-media reference carried by model snapshots.
+	RemoteRef string                `json:"remote_ref,omitempty"`
+	Type      string                `json:"type"`
+	Text      string                `json:"text,omitempty"`
+	Data      string                `json:"data,omitempty"`
+	MIMEType  string                `json:"mime_type,omitempty"`
+	URI       string                `json:"uri,omitempty"`
+	Name      string                `json:"name,omitempty"`
+	Resource  json.RawMessage       `json:"resource,omitempty"`
+	Artifact  *ArtifactPresentation `json:"artifact,omitempty"`
 }
-func StartModelInvocation(ctx context.Context, host Host, input ModelInvokeParams) (ModelInvocationHandle, error) {
-	var result ModelInvocationHandle
-	err := CallService(ctx, host, KernelModelInvokeService, "start", input, &result)
-	return result, err
+
+type ArtifactPresentation struct {
+	// Placement may be "inline" or "turn_end". Empty lets Wuu choose a
+	// media-appropriate default.
+	Placement string `json:"placement,omitempty"`
+	Ref       string `json:"ref,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
+	SizeBytes int64  `json:"size_bytes,omitempty"`
 }
-func ReadModelInvocation(ctx context.Context, host Host, input ModelInvocationReadParams) (ModelInvocationReadResult, error) {
-	var result ModelInvocationReadResult
-	err := CallService(ctx, host, KernelModelInvokeService, "read", input, &result)
-	return result, err
+
+type ActivityRef struct {
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	State      string `json:"state,omitempty"`
+	ThreadID   string `json:"thread_id,omitempty"`
+	PreviewURI string `json:"preview_uri,omitempty"`
 }
-func CancelModelInvocation(ctx context.Context, host Host, input ModelInvocationHandle) error {
-	return CallService(ctx, host, KernelModelInvokeService, "cancel", input, nil)
-}
-func EmitModelEvent(ctx context.Context, host Host, event ModelStreamEventV1) error {
-	return CallService(ctx, host, KernelModelEmitService, "call", event, nil)
-}
-func StartBackground(ctx context.Context, host Host, input BackgroundStartParams) (BackgroundHandle, error) {
-	var result BackgroundHandle
-	err := CallService(ctx, host, KernelBackgroundService, "start", input, &result)
-	return result, err
-}
-func InspectBackground(ctx context.Context, host Host, input BackgroundJobParams) (BackgroundStatus, error) {
-	var result BackgroundStatus
-	err := CallService(ctx, host, KernelBackgroundService, "inspect", input, &result)
-	return result, err
-}
-func CancelBackground(ctx context.Context, host Host, input BackgroundJobParams) (BackgroundCancelResult, error) {
-	var result BackgroundCancelResult
-	err := CallService(ctx, host, KernelBackgroundService, "cancel", input, &result)
-	return result, err
+
+type ModelRequestUsage struct {
+	InputTokens          int  `json:"input_tokens"`
+	OutputTokens         int  `json:"output_tokens"`
+	CacheCreationTokens  int  `json:"cache_creation_tokens"`
+	CacheReadTokens      int  `json:"cache_read_tokens"`
+	CacheCreationUnknown bool `json:"cache_creation_unknown"`
 }

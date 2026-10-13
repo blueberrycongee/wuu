@@ -78,7 +78,7 @@ make build-go
 | 命令 | 检查或构建内容 |
 | --- | --- |
 | `make check-go` | 模块一致性、格式、vet，以及 Windows/macOS 交叉构建 |
-| `make test-go` | CLI、核心、公开 Go 插件 SDK、运行时边界和提示词的 Go 测试 |
+| `make test-go` | CLI、核心、运行时边界和提示词的 Go 测试 |
 | `make check-plugins build-plugins` | TypeScript 插件类型、生成产物一致性及运行包 |
 | `make test-plugins` | 在临时宿主环境中验证已打包插件的 JSONL 生命周期、工具、持久化和后台行为 |
 | `make check-desktop test-desktop` | 桌面 TypeScript、启动器和单元测试 |
@@ -92,7 +92,7 @@ make build-go
 
 类型检查、单元测试和构建成功，与应用实际可用是不同的证据。UI 修改需按[桌面 UI 指南](desktop-ui.md)检查受影响的渲染与交互；插件修改还需验证实际工具调用或界面贡献，包验证不会完成这些检查。
 
-验证 SDK 工具调度时，先执行 `npm --prefix packages/plugin-sdk run build`，再执行 `node scripts/plugin-tool-scheduling-e2e.mjs`。脚本构建小型 Go fixture，通过真实 JSONL 子进程管道测试两个 SDK，以及内置子任务和同级会话工具；宿主服务使用合成响应，不需要模型凭据。`WUU_E2E_RACE=1` 启用 Go race detector，`GO` 指定 Go 可执行文件。结果和协议帧保存在 `.tmp/plugin-tool-scheduling/results.json`；可用 `WUU_E2E_OUTPUT` 指定其他产物目录。它验证 SDK 进程边界，不代表完整 Go 宿主、推理服务或桌面 UI 验收。
+验证 SDK 工具调度时，先执行 `npm --prefix packages/plugin-sdk run build`，再执行 `node scripts/plugin-tool-scheduling-e2e.mjs`。脚本通过真实 JSONL 子进程管道测试官方 TypeScript SDK，以及内置子任务和同级会话工具；宿主服务使用合成响应，不需要构建 Go 或提供模型凭据。结果和协议帧保存在 `.tmp/plugin-tool-scheduling/results.json`；可用 `WUU_E2E_OUTPUT` 指定其他产物目录。它验证 SDK 进程边界，不代表完整 Go 宿主、推理服务或桌面 UI 验收。
 
 `npm --prefix desktop run test:renderer-recovery` 会主动让隐藏的 Chromium 渲染进程
 崩溃，检查恢复、重试上限、窗口隔离和 IPC。测试使用临时配置目录和模拟内容，不读取
@@ -330,7 +330,7 @@ macOS 拉取请求测试原生辅助程序，推送到 `main` 时还生成桌面
 
 ## 代码边界
 
-`cmd/wuu` 和 `internal` 包含 CLI 与 Go 核心；`desktop` 负责 Electron main/preload、renderer UI、IPC 和打包。`packages/protocol` 保存共享客户端协议类型，`clients/core` 实现无 UI 的远程行为。插件 SDK 和内置实现位于 `packages/plugin-sdk`、`packages/plugin-go` 和 `plugins`。
+`cmd/wuu` 和 `internal` 包含 CLI 与 Go 核心；`desktop` 负责 Electron main/preload、renderer UI、IPC 和打包。`packages/protocol` 保存共享客户端协议类型，`clients/core` 实现无 UI 的远程行为。官方 TypeScript 插件 SDK 位于 `packages/plugin-sdk`，内置实现位于 `plugins`。`internal/sdk` 是 Go 宿主的内部应用嵌入接口，不是插件编写 API。其他语言的运行时也可实现相同的、与语言无关的 JSONL 进程契约。
 
 Electron API 应留在桌面外壳。新外壳应通过[协议（英文）](../../en/integrations/app-server-protocol.md)与 `wuu app-server` 通信，不应依赖桌面内部实现或另建一套核心。行为变化时同步更新公开文档的中英文版本，放置和检查规则见[文档维护（英文）](../../../docs/README.md)。
 

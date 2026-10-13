@@ -191,24 +191,9 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
     switch (request.method) {
       case "initialize": {
         const result = await plugin.initialize(request.params, host, lifecycle);
-        const legacy = result.required_host_services?.filter((service) => Object.hasOwn(KERNEL_SERVICE_NAMES, service.id)) ?? [];
-        if (legacy.length === 0) return { id: request.id, result: {
-          ...result,
-          protocol_version: result.required_services?.length || result.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
-          lifecycle_version: 1
-        } };
-        const requirements = [...result.required_services ?? []];
-        for (const descriptor of legacy) {
-          const name = KERNEL_SERVICE_NAMES[descriptor.id];
-          const existing = requirements.findIndex((service) => service.name === name && service.major_version === 1);
-          if (existing < 0) requirements.push({ name, major_version: 1, required: descriptor.required });
-          else requirements[existing] = { ...requirements[existing], required: requirements[existing].required || descriptor.required };
-        }
         return { id: request.id, result: {
           ...result,
-          protocol_version: CAPABILITY_PROTOCOL_V3,
-          required_host_services: result.required_host_services?.filter((service) => !Object.hasOwn(KERNEL_SERVICE_NAMES, service.id)),
-          required_services: requirements,
+          protocol_version: result.required_services?.length || result.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
           lifecycle_version: 1
         } };
       }

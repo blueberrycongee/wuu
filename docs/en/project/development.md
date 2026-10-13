@@ -89,7 +89,7 @@ narrow/large-font layouts. Results and screenshots are saved to
 | Command | What it checks or builds |
 | --- | --- |
 | `make check-go` | Module consistency, formatting, vet, Windows/macOS cross-builds |
-| `make test-go` | Go tests for the CLI, core, public Go plugin SDK, runtime boundaries, and prompts |
+| `make test-go` | Go tests for the CLI, core, runtime boundaries, and prompts |
 | `make check-plugins build-plugins` | TypeScript plugin types, generated bundle freshness, and runtime packages |
 | `make test-plugins` | Shipped plugin JSONL lifecycle, tools, persistence, and background behavior with disposable host fixtures |
 | `make check-desktop test-desktop` | Desktop TypeScript and launcher/unit tests |
@@ -105,10 +105,9 @@ Type checks, unit tests, and successful bundles are different evidence from a wo
 
 For SDK tool scheduling, build the TypeScript SDK with
 `npm --prefix packages/plugin-sdk run build`, then run
-`node scripts/plugin-tool-scheduling-e2e.mjs`. It builds a small Go fixture and
-exercises both SDKs over real JSONL subprocess pipes, including bundled subagent
-and peer tools, using synthetic host services. It requires no model credentials.
-`WUU_E2E_RACE=1` enables the Go race detector; `GO` selects a Go executable.
+`node scripts/plugin-tool-scheduling-e2e.mjs`. It exercises the official
+TypeScript SDK and bundled subagent and peer tools over real JSONL subprocess
+pipes with synthetic host services. It requires no Go build or model credentials.
 Results and wire traces are retained in `.tmp/plugin-tool-scheduling/results.json`;
 `WUU_E2E_OUTPUT` selects another artifact directory. This verifies the SDK process
 boundary, not the full Go host, inference provider, or desktop UI.
@@ -420,6 +419,6 @@ macOS pull requests test the native helper; pushes to `main` also package a desk
 
 ## Code boundaries
 
-`cmd/wuu` and `internal` contain the CLI and Go core. `desktop` owns Electron main/preload, renderer UI, IPC, and packaging. `packages/protocol` holds shared client protocol types; `clients/core` implements UI-free remote behavior. The plugin SDKs and bundled implementations live in `packages/plugin-sdk`, `packages/plugin-go`, and `plugins`.
+`cmd/wuu` and `internal` contain the CLI and Go core. `desktop` owns Electron main/preload, renderer UI, IPC, and packaging. `packages/protocol` holds shared client protocol types; `clients/core` implements UI-free remote behavior. The official TypeScript plugin SDK lives in `packages/plugin-sdk`; bundled implementations live in `plugins`. `internal/sdk` is the internal application-embedding facade for the Go host, not a plugin authoring API. Other language runtimes can implement the same language-independent JSONL process contract.
 
 Keep Electron APIs in the desktop shell. A new shell should communicate with `wuu app-server` through its [protocol](../integrations/app-server-protocol.md), rather than importing desktop internals or creating a separate core. Update both language versions of affected public docs with behavior changes; [documentation maintenance](../../../docs/README.md) describes placement and checks.

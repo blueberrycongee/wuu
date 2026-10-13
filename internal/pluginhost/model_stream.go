@@ -3,7 +3,7 @@ package pluginhost
 import (
 	"context"
 
-	pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 )
 
 type modelEventSinkKey struct{}
@@ -11,12 +11,12 @@ type modelEventSinkKey struct{}
 type modelEventSink struct {
 	pluginID    string
 	executionID string
-	emit        func(context.Context, pluginapi.ModelStreamEventV1) error
+	emit        func(context.Context, pluginprotocol.ModelStreamEventV1) error
 }
 
 // WithModelEventSink binds a stream callback to the next exact capability
 // execution. Descendant calls cannot use their own IDs to emit into it.
-func WithModelEventSink(ctx context.Context, pluginID string, emit func(context.Context, pluginapi.ModelStreamEventV1) error) context.Context {
+func WithModelEventSink(ctx context.Context, pluginID string, emit func(context.Context, pluginprotocol.ModelStreamEventV1) error) context.Context {
 	return context.WithValue(ctx, modelEventSinkKey{}, modelEventSink{pluginID: pluginID, emit: emit})
 }
 
@@ -35,7 +35,7 @@ func bindModelEventExecution(ctx context.Context, pluginID, executionID string) 
 
 // EmitModelEvent requires a live, exact streaming adapter or middleware
 // execution. It does not confer model, tool, or credential authority.
-func (h *Host) EmitModelEvent(ctx context.Context, pluginID, executionID string, event pluginapi.ModelStreamEventV1) error {
+func (h *Host) EmitModelEvent(ctx context.Context, pluginID, executionID string, event pluginprotocol.ModelStreamEventV1) error {
 	scope, err := h.ResolveExecution(pluginID, executionID)
 	if err != nil {
 		return err

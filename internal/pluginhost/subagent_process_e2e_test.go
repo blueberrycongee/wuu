@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
-	pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
 )
 
 // Keep real child waits blocked until the status query has returned. This
@@ -29,35 +28,35 @@ type foregroundRouter struct {
 func (r *foregroundRouter) RouteServiceCall(ctx context.Context, _ string, call pluginhost.ServiceCallParams) (json.RawMessage, *pluginhost.HostServiceError) {
 	var result any = struct{}{}
 	switch call.Service {
-	case pluginapi.KernelStorageGetService:
+	case pluginhost.KernelStorageGetService:
 		r.mu.Lock()
-		result = pluginapi.StorageGetResult{Value: r.stored}
+		result = pluginhost.StorageGetResult{Value: r.stored}
 		r.mu.Unlock()
-	case pluginapi.KernelStorageSetService:
-		var p pluginapi.StorageSetParams
+	case pluginhost.KernelStorageSetService:
+		var p pluginhost.StorageSetParams
 		_ = json.Unmarshal(call.Params, &p)
 		r.mu.Lock()
 		r.stored = &p.Value
 		r.mu.Unlock()
-	case pluginapi.KernelStorageKeysService:
+	case pluginhost.KernelStorageKeysService:
 		result = map[string]any{"keys": []string{}}
-	case pluginapi.KernelSessionCreateService:
+	case pluginhost.KernelSessionCreateService:
 		r.mu.Lock()
 		r.next++
 		id := fmt.Sprintf("child-%d", r.next)
 		r.mu.Unlock()
-		result = pluginapi.SessionCreateResult{SessionID: id, Created: true}
-	case pluginapi.KernelSessionSendService:
-		var p pluginapi.SessionSendParams
+		result = pluginhost.SessionCreateResult{SessionID: id, Created: true}
+	case pluginhost.KernelSessionSendService:
+		var p pluginhost.SessionSendParams
 		_ = json.Unmarshal(call.Params, &p)
 		if p.Cause == "subagent.completion" {
 			r.mu.Lock()
 			r.completions++
 			r.mu.Unlock()
 		}
-		result = pluginapi.SessionSendResult{SessionID: p.SessionID, TurnID: p.SessionID + "-turn", State: "running"}
-	case pluginapi.KernelSessionInspectService:
-		var p pluginapi.SessionInspectParams
+		result = pluginhost.SessionSendResult{SessionID: p.SessionID, TurnID: p.SessionID + "-turn", State: "running"}
+	case pluginhost.KernelSessionInspectService:
+		var p pluginhost.SessionInspectParams
 		_ = json.Unmarshal(call.Params, &p)
 		r.waiting <- p.SessionID
 		select {
@@ -65,9 +64,9 @@ func (r *foregroundRouter) RouteServiceCall(ctx context.Context, _ string, call 
 		case <-ctx.Done():
 			return nil, &pluginhost.HostServiceError{Code: "cancelled", Message: ctx.Err().Error()}
 		}
-		result = pluginapi.SessionInspectResult{Turn: &pluginapi.SessionTurnInspection{RequestID: p.RequestID, TurnID: p.SessionID + "-turn", State: "completed", FinalOutput: "report " + p.SessionID}}
-	case pluginapi.KernelSessionListService:
-		result = pluginapi.SessionListResult{Sessions: []pluginapi.SessionSummary{{SessionID: "child-1", State: "running"}}}
+		result = pluginhost.SessionInspectResult{Turn: &pluginhost.SessionTurnInspection{RequestID: p.RequestID, TurnID: p.SessionID + "-turn", State: "completed", FinalOutput: "report " + p.SessionID}}
+	case pluginhost.KernelSessionListService:
+		result = pluginhost.SessionListResult{Sessions: []pluginhost.SessionSummary{{SessionID: "child-1", State: "running"}}}
 	default:
 		return nil, &pluginhost.HostServiceError{Code: "unexpected", Message: call.Service}
 	}
@@ -146,7 +145,7 @@ func TestForegroundSpawnsSurviveConcurrentStatusQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, record := range index.Records {
-		input, _ := json.Marshal(pluginapi.TurnLifecycleInput{ThreadID: record.SessionID, RequestID: record.RequestID, State: "completed", FinalOutput: "report"})
+		input, _ := json.Marshal(map[string]any{"thread_id": record.SessionID, "request_id": record.RequestID, "state": "completed", "final_output": "report"})
 		if _, err := client.InvokeCapability(context.Background(), pluginhost.CapabilityInvokeParams{Capability: "agent.turn.lifecycle", Input: input}); err != nil {
 			t.Fatal(err)
 		}

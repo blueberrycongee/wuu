@@ -95,7 +95,7 @@ UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`�
 
 宿主启动 manifest 中的命令，通过 stdin/stdout 交换每行一个 JSON 对象。stdout 专用于协议帧，诊断信息写入 stderr。manifest 的传输名称 `wuu-plugin-v1` 与协商的能力协议编号是不同字段；使用服务的新运行时应协商 `protocol_version: 3`。
 
-使用 `@wuu/plugin-sdk` 时，实现 `RuntimePlugin` 并传给 `runJSONLRuntime`。SDK 负责消息分帧、请求 ID、取消信号和 lifecycle-v1 握手。
+官方插件编写 SDK 是 TypeScript 的 `@wuu/plugin-sdk`。实现 `RuntimePlugin` 并传给 `runJSONLRuntime`，SDK 负责消息分帧、请求 ID、取消信号和 lifecycle-v1 握手。其他语言的进程也可实现相同的 JSONL 契约，但 Wuu 不提供另一套编写 SDK。
 
 | 回调 | 职责 |
 | --- | --- |
@@ -117,9 +117,9 @@ UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`�
 
 模型工具注册在初始化结果的 `tools` 数组中，每个工具需要 `id`、`description` 和对象类型的 `input_schema`，宿主会生成带命名空间的公开名称。`execution_scopes` 可限制工具在 `root` 或 `child` 中可用；`activity` 描述只读性、并发安全、风险和是否编排子工具。应如实声明副作用，不要把写入工具标成只读来绕过调度或权限检查。这些声明属于可信扩展契约，不是沙箱。
 
-两个 SDK 运行时都按 `activity.concurrency_safe: true` 调度工具。相邻的显式安全工具可以重叠运行，每个运行时最多同时执行八个工具处理函数。省略或设为 false 的工具、未知工具 ID，以及普通能力和服务回调，仍按 FIFO 顺序独占执行；仅声明 `read_only` 不会启用并发。这些屏障同时适用于共享或不同的 execution ID。initialize、activate 和 shutdown 还会等待此前已接收的可重入回调结束。
+TypeScript 运行时适配器按 `activity.concurrency_safe: true` 调度工具。相邻的显式安全工具可以重叠运行，每个运行时最多同时执行八个工具处理函数。省略或设为 false 的工具、未知工具 ID，以及普通能力和服务回调，仍按 FIFO 顺序独占执行；仅声明 `read_only` 不会启用并发。这些屏障同时适用于共享或不同的 execution ID。initialize、activate 和 shutdown 还会等待此前已接收的可重入回调结束。
 
-启用前应保护共享可变状态。每次调用的 Go context，或 TypeScript execution context 与带执行归属的 host，都应随该次调用传递，不要保存为共享的“当前调用”变量。取消在读取帧时注册，并在真正进入处理函数前再次检查，包括等待工具空位之后。取消某个 execution 会中止其所有仍活跃的回调，不影响独立 execution；已运行的代码仍需协作响应取消。显式可重入的能力和服务保留独立通道，使工具空位用尽时嵌套宿主回调仍能完成。该上限不限制这些回调或排队帧数量；TypeScript 并发也不会将同步 CPU 工作移至工作线程。
+启用前应保护共享可变状态。每次调用的 execution context 与带执行归属的 host，都应随该次调用传递，不要保存为共享的“当前调用”变量。取消在读取帧时注册，并在真正进入处理函数前再次检查，包括等待工具空位之后。取消某个 execution 会中止其所有仍活跃的回调，不影响独立 execution；已运行的代码仍需协作响应取消。显式可重入的能力和服务保留独立通道，使工具空位用尽时嵌套宿主回调仍能完成。该上限不限制这些回调或排队帧数量；TypeScript 并发也不会将同步 CPU 工作移至工作线程。
 
 会话启用 PTC 时，普通工具默认作为程序内绑定。用户交互、显式交付或必须保留
 为模型直调的生命周期控制可声明 `direct_only: true`。此类工具留在顶层工具
@@ -145,7 +145,7 @@ UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`�
 
 ## 调用宿主服务
 
-当前宿主只通过 **`host.service.call` 运行时入口**路由服务。每项消费的服务都要在 `required_services` 中声明名称和主版本。旧的 `host.storage.get` 直接消息不是传输契约。TypeScript SDK 接受带类型的 `host.call("host.storage.get", params)` 简写和旧形状的 `required_host_services` 声明，并将它们转换为统一入口和版本化服务要求。宿主不会维护第二套路由。
+当前宿主只通过 **`host.service.call` 运行时入口**路由服务。每项消费的服务都要在 `required_services` 中声明名称和主版本。旧的 `host.storage.get` 直接消息不是传输契约。TypeScript SDK 将 `host.call("host.storage.get", params)` 等带类型的简写转换为统一入口。服务要求只通过 `required_services` 声明；`requireKernelService` 等辅助函数用于构造这些带版本的条目。宿主不会维护第二套路由。
 
 例如，下面的初始化结果申请读取存储：
 
@@ -306,7 +306,7 @@ middleware 接收 `ModelMiddlewareInput`，包含 `request`、`origin`、`stream
 
 这些模式是受信任扩展明确声明的用量契约。原生转发使用宿主配置的凭据和提供商传输。Extension API 不提供自动附加凭据的任意 HTTP 传输；对于插件代码在宿主服务之外自行发起的任意网络请求，Wuu 无法强制执行推理预算。
 
-两个 SDK 中的 `model.adapter` 和 `model.middleware` 处理函数都可重入，能与等待它们的工具或回调并发运行，因此应保护共享可变状态。TypeScript 的其他 `concurrentCapabilities` 和 `concurrentServices` 仍须显式启用；生命周期屏障继续有效。
+TypeScript 运行时适配器中的 `model.adapter` 和 `model.middleware` 处理函数可重入，能与等待它们的工具或回调并发运行，因此应保护共享可变状态。TypeScript 的其他 `concurrentCapabilities` 和 `concurrentServices` 仍须显式启用；生命周期屏障继续有效。
 
 ### 属于 generation 的后台工作
 
@@ -346,7 +346,7 @@ const plugin: RuntimePlugin = {
 host。`host.call(method, params, { signal })` 可附加取消信号，但不能移除执行
 本身的信号。取消会拒绝尚未完成的调用，迟到响应会被忽略。调用返回后，执行作用域关闭；迟到的进度不能重新打开已完成执行，取消也不会等待插件确认。
 
-Go 和 TypeScript 运行时会在进入处理函数前拒绝已取消的工具、能力和服务请求，包括等待其他工作或生命周期屏障的请求。取消某次执行不会跳过清理所需的生命周期回调，并会通知共享该执行 ID 的所有活跃回调。处理函数一旦开始，取消仍是协作式的：应将 Go context 或 TypeScript signal 传给支持取消的操作。取消不能撤销已完成的副作用，也不能强制中断任意插件代码。
+TypeScript 运行时适配器会在进入处理函数前拒绝已取消的工具、能力和服务请求，包括等待其他工作或生命周期屏障的请求。取消某次执行不会跳过清理所需的生命周期回调，并会通知共享该执行 ID 的所有活跃回调。处理函数一旦开始，取消仍是协作式的：应将 abort signal 传给支持取消的操作。取消不能撤销已完成的副作用，也不能强制中断任意插件代码。
 
 App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
 包含当前连接运行时的当前 generation，以及仍被活动工作持有的旧 generation。
@@ -367,7 +367,7 @@ App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
 
 状态结果包含 `plugins` 列表。比较 `published_fingerprint` 与 `current_conversation_fingerprint`，并检查 `adoption_pending`、`desired_enabled`、`trusted` 和 `current_conversation_runtime_state`；存在运行时诊断时由 `error` 返回。这些字段说明发布、策略和当前会话的绑定，不证明某个工具执行成功或桌面视图已渲染。
 
-当前轮次保留原工具与提示词 generation。结束该轮次后，在下一次空闲轮次边界发现并调用更新后的工具。发布不等于实际调用工具或检查界面，也不会自行安排后续轮次。
+普通更新保留当前轮次及其未完成工作者或受管进程的原工具与提示词 generation。这些工作结束后，在下一次空闲轮次边界发现并调用更新后的工具。禁用或移除提交成功后，则无需等待空闲轮次，直接撤销各个仍被引用 generation 中的插件。发布不等于实际调用工具或检查界面，也不会自行安排后续轮次。
 
 ## 开发和分发
 
@@ -381,4 +381,4 @@ Monorepo 插件可在 `package.json` 声明额外构建输入：`"wuu": { "dev":
 
 当前 install/update CLI 会先暂存包，再单独批准代码激活。开发目录授权不会成为分发包的信任。命令见[插件管理](plugins.md)，信任边界见[安全模型](../reference/security-model.md)。
 
-完整类型位于 [`packages/plugin-sdk/src/index.ts`](../../../packages/plugin-sdk/src/index.ts)，Go 接入使用 [`packages/plugin-go`](../../../packages/plugin-go/runtime.go)。请与目标 Wuu 版本匹配；产品 CalVer、包 schema、能力协议、服务版本和桌面快照版本是不同的兼容性检查。
+完整插件编写类型位于 [`packages/plugin-sdk/src/index.ts`](../../../packages/plugin-sdk/src/index.ts)。Go 宿主及其内部应用嵌入接口属于宿主实现，不是另一套插件编写 SDK。请与目标 Wuu 版本匹配；产品 CalVer、包 schema、能力协议、服务版本和桌面快照版本是不同的兼容性检查。

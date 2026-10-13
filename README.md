@@ -77,7 +77,7 @@ When the work belongs somewhere else, run the agent's tools in Docker, over SSH,
 
 ### Make it yours
 
-Plugins add tools and features: scheduled automation, persistent goals, task checklists, memory, subagents and more. Each one can be turned on or off. You can install a local plugin, add skills, connect MCP servers and run hooks. Extensions use the same public API as the bundled plugins. See [Extend wuu](docs/en/customize/index.md).
+Plugins add tools and features: scheduled automation, persistent goals, task checklists, memory, subagents and more. Each one can be turned on or off. You can install a local plugin, add skills, connect MCP servers and run hooks. The official TypeScript SDK gives external and bundled plugins the same public API. See [Extend wuu](docs/en/customize/index.md).
 
 <p align="center">
   <img src="landing/assets/readme/plugins-en.jpg" width="640" alt="Plugins">

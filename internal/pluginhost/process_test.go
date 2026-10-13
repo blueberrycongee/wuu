@@ -16,8 +16,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	plugingo "github.com/blueberrycongee/wuu/packages/plugin-go"
 )
 
 func mustRaw(value any) json.RawMessage {
@@ -608,20 +606,57 @@ func TestProcessClientCancelReachesPluginExecution(t *testing.T) {
 }
 
 func runExecutionHelper() {
-	_ = plugingo.Serve(context.Background(), plugingo.Handler{
-		Definition: plugingo.Definition{Tools: []plugingo.Tool{
-			{ID: "wait", Description: "block until canceled", InputSchema: map[string]any{"type": "object"}},
-			{ID: "ping", Description: "answer promptly", InputSchema: map[string]any{"type": "object"}},
-		}},
-		ExecuteTool: func(ctx context.Context, host plugingo.Host, call plugingo.ToolCall) (plugingo.ToolResult, error) {
+	scanner := bufio.NewScanner(os.Stdin)
+	enc := json.NewEncoder(os.Stdout)
+	waitingID, executionID := "", ""
+	var queuedPings []string
+	respond := func(id, text string) {
+		_ = enc.Encode(map[string]any{"id": id, "result": map[string]any{"result": map[string]any{"content": []map[string]string{{"type": "text", "text": text}}}}})
+	}
+	for scanner.Scan() {
+		var req struct {
+			ID     string          `json:"id"`
+			Method string          `json:"method"`
+			Params json.RawMessage `json:"params"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+			os.Exit(2)
+		}
+		switch req.Method {
+		case "initialize":
+			_ = enc.Encode(map[string]any{"id": req.ID, "result": CapabilityInitializeResult{ProtocolVersion: CapabilityProtocolVersion, InitializeResult: InitializeResult{Tools: []ToolRegistration{
+				{ID: "wait", Description: "block until canceled", InputSchema: map[string]any{"type": "object"}},
+				{ID: "ping", Description: "answer promptly", InputSchema: map[string]any{"type": "object"}},
+			}}}})
+		case "tool.execute":
+			var call ToolExecuteParams
+			_ = json.Unmarshal(req.Params, &call)
 			if call.ToolID == "wait" {
-				_ = plugingo.ReportExecutionUpdate(ctx, host, plugingo.ExecutionUpdate{ExecutionID: call.ExecutionID, Message: "waiting"})
-				<-ctx.Done()
-				return plugingo.TextResult("aborted"), nil
+				waitingID, executionID = req.ID, call.ExecutionID
+				_ = enc.Encode(map[string]any{"id": "fixture-progress", "method": "host.service.call", "params": map[string]any{"service": "execution.update", "method": "call", "execution_id": executionID, "params": map[string]string{"execution_id": executionID, "message": "waiting"}}})
+			} else if waitingID != "" {
+				queuedPings = append(queuedPings, req.ID)
+			} else {
+				respond(req.ID, "pong")
 			}
-			return plugingo.TextResult("pong"), nil
-		},
-	})
+		case "execution.cancel":
+			var call struct {
+				ExecutionID string `json:"execution_id"`
+			}
+			_ = json.Unmarshal(req.Params, &call)
+			if waitingID != "" && call.ExecutionID == executionID {
+				respond(waitingID, "aborted")
+				waitingID, executionID = "", ""
+				for _, id := range queuedPings {
+					respond(id, "pong")
+				}
+				queuedPings = nil
+			}
+		case "shutdown":
+			_ = enc.Encode(map[string]any{"id": req.ID, "result": map[string]any{}})
+			return
+		}
+	}
 }
 
 type recordingServiceRouter struct {

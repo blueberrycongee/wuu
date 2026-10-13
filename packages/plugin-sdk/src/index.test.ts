@@ -167,7 +167,7 @@ const plugin: RuntimePlugin = {
       protocol_version: CAPABILITY_PROTOCOL_V2,
       capabilities: [{ id: REQUEST_TRANSFORM_CAPABILITY, kind: "transform", version: 1 }],
       tools: [{ id: "echo", description: "Echo input", input_schema: { type: "object" } }],
-      required_host_services: [{ id: "host.storage.compare_exchange", required: true }],
+      required_services: [requireKernelService("host.storage.compare_exchange")],
     };
   },
   invokeCapability(params) {
@@ -189,9 +189,9 @@ if (initializedResult === null || initializedResult.protocol_version === undefin
 }
 if (initializedResult.protocol_version !== 3
   || initializedResult.required_services?.[0]?.name !== "host.storage.compare-exchange"
-  || !initializedResult.required_services[0].required
-  || initializedResult.required_host_services?.length) {
-  throw new Error("legacy host-service declaration did not negotiate registry authority");
+  || initializedResult.required_services[0].major_version !== 1
+  || !initializedResult.required_services[0].required) {
+  throw new Error("service requirement did not negotiate registry authority");
 }
 
 async function* input(): AsyncIterable<string> {

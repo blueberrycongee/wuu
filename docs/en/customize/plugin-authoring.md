@@ -95,7 +95,7 @@ UI declarations belong under `contributes.slots`, `surfaces`, `presenters`, `nav
 
 The host starts the manifest's command and exchanges one JSON object per line over stdin/stdout. Reserve stdout for protocol frames and stderr for diagnostics. The manifest transport name `wuu-plugin-v1` and the negotiated capability protocol number are different fields; new service-using runtimes should negotiate `protocol_version: 3`.
 
-With `@wuu/plugin-sdk`, implement `RuntimePlugin` and pass it to `runJSONLRuntime`. The SDK handles framing, request IDs, cancellation signals, and the lifecycle-v1 handshake.
+The official plugin authoring SDK is TypeScript: `@wuu/plugin-sdk`. Implement `RuntimePlugin` and pass it to `runJSONLRuntime`; the SDK handles framing, request IDs, cancellation signals, and the lifecycle-v1 handshake. A process written in another language can implement the same JSONL contract, but Wuu does not provide a separate authoring SDK for it.
 
 | Callback | Responsibility |
 | --- | --- |
@@ -118,7 +118,7 @@ do not make cleanup depend on an already-aborted signal.
 
 Register model tools in the initialization result's `tools` array. Each tool needs an `id`, `description`, and object `input_schema`. The host creates a namespaced public name. `execution_scopes` can limit availability to `root` or `child`; `activity` describes read-only behavior, concurrency safety, risk, and whether the tool orchestrates child tools. Declare real effects rather than marking a writer read-only to bypass scheduling or permission checks. These declarations are trusted-extension contracts, not a sandbox.
 
-Both SDK runtimes honor `activity.concurrency_safe: true` for tool dispatch.
+The TypeScript runtime adapter honors `activity.concurrency_safe: true` for tool dispatch.
 Adjacent explicitly safe tools may overlap, with at most eight tool handlers
 running per runtime. Omitted or false values, unknown tool IDs, and ordinary
 capability/service callbacks remain FIFO exclusive barriers. `read_only` alone
@@ -126,9 +126,8 @@ does not enable concurrency. These barriers apply across both shared and distinc
 execution IDs. Initialize, activate, and shutdown also wait for previously
 admitted reentrant callbacks before proceeding.
 
-Protect shared mutable state before opting in. Keep each invocation's Go context
-or TypeScript execution context and scoped host with that invocation; do not
-store them in a shared current-call variable. Cancellation is registered while a
+Protect shared mutable state before opting in. Keep each invocation's execution
+context and scoped host with that invocation; do not store them in a shared current-call variable. Cancellation is registered while a
 frame is read and checked again before its handler starts, including after
 waiting for a tool slot. Canceling one execution aborts all its live callbacks
 without canceling independent executions. Already running code must cooperate
@@ -163,7 +162,7 @@ Capabilities can declare `priority`, `depends_on`, and `conflicts`. Higher prior
 
 ## Calling host services
 
-The current host exposes **`host.service.call` as the runtime gateway**. Declare each consumed service in `required_services` with its name and major version. Old direct frames such as `host.storage.get` are not the wire contract. The TypeScript SDK accepts typed `host.call("host.storage.get", params)` conveniences and legacy-shaped `required_host_services` declarations, and translates them to the gateway and versioned requirements. There is no second routing path in the host.
+The current host exposes **`host.service.call` as the runtime gateway**. Declare each consumed service in `required_services` with its name and major version. Old direct frames such as `host.storage.get` are not the wire contract. The TypeScript SDK translates typed conveniences such as `host.call("host.storage.get", params)` to that gateway. Declare requirements only through `required_services`; helpers such as `requireKernelService` construct these versioned entries. There is no second routing path in the host.
 
 For example, this initialization result requests storage reads:
 
@@ -401,9 +400,9 @@ and Wuu cannot enforce its inference budget over arbitrary network requests made
 by plugin code outside host services.
 
 `model.adapter` and `model.middleware` handlers are intrinsically reentrant in
-both SDKs: they can overlap a tool or callback that is awaiting them. Protect shared
-mutable state. TypeScript's additional `concurrentCapabilities` and
-`concurrentServices` remain explicit opt-ins; lifecycle barriers still apply.
+the TypeScript runtime adapter: they can overlap a tool or callback that is
+awaiting them. Protect shared mutable state. Additional `concurrentCapabilities`
+and `concurrentServices` remain explicit opt-ins; lifecycle barriers still apply.
 
 ### Generation-owned background work
 
@@ -462,13 +461,13 @@ for foreground work instead of an unscoped host saved at initialization.
 execution's signal. A canceled pending call rejects and a late response is ignored.
 Returning from the invocation closes its scope. Late progress cannot reopen a completed execution, and cancellation does not wait for the plugin to acknowledge it.
 
-The Go and TypeScript runtimes reject cancelled tool, capability, and service
+The TypeScript runtime adapter rejects cancelled tool, capability, and service
 requests before entering their handlers, including requests waiting behind other
 work or a lifecycle barrier. Cancelling an execution does not skip lifecycle
 callbacks needed for cleanup, and reaches every live callback sharing that
 execution ID.
-Once a handler has started, cancellation remains cooperative: propagate the Go
-context or TypeScript signal to operations that support it. Cancellation cannot
+Once a handler has started, cancellation remains cooperative: propagate its
+abort signal to operations that support it. Cancellation cannot
 undo completed effects or forcibly interrupt arbitrary plugin code.
 
 App-server's read-only `plugin/executions/list` returns `{ executions: [...] }`
@@ -492,7 +491,7 @@ The built-in deferred `plugin_manager` tool accepts `status`, `apply`, `enable`,
 
 Status returns a `plugins` list. Compare `published_fingerprint` with `current_conversation_fingerprint` and inspect `adoption_pending`, `desired_enabled`, `trusted`, and `current_conversation_runtime_state`. An `error` reports runtime diagnostics when present. These fields report publication, policy, and this conversation's bindings; they do not prove a particular tool succeeded or a desktop view rendered.
 
-The current turn keeps its tool and prompt generation. Finish that turn before discovering and invoking updated tools at the next idle turn boundary. Publication is not a tool invocation or a rendered UI check, and it does not schedule a continuation by itself.
+An ordinary update leaves the current turn and its outstanding workers or managed processes on their tool and prompt generation. Discover and invoke updated tools at the next idle turn boundary after that work settles. A committed disable or removal instead revokes the plugin across retained generations without waiting for an idle turn. Publication is not a tool invocation or a rendered UI check, and it does not schedule a continuation by itself.
 
 ## Development and distribution
 
@@ -506,4 +505,4 @@ Use `validate` for package structure, `test` for executable initialization and n
 
 The current install/update CLI stages packages and uses a separate approval step before code activation. Development-directory authorization does not become trust for a distributed package. See [plugin management](plugins.md) for the commands and [security](../reference/security-model.md) for the trust boundary.
 
-Exact types live in [`packages/plugin-sdk/src/index.ts`](../../../packages/plugin-sdk/src/index.ts); Go integrations use [`packages/plugin-go`](../../../packages/plugin-go/runtime.go). Check these against the Wuu version you target. Product CalVer, package schema, capability protocol, service versions, and desktop snapshot versions are distinct compatibility checks.
+Exact authoring types live in [`packages/plugin-sdk/src/index.ts`](../../../packages/plugin-sdk/src/index.ts). The Go host and its internal application-embedding facade are host implementation code, not additional plugin authoring SDKs. Check these against the Wuu version you target. Product CalVer, package schema, capability protocol, service versions, and desktop snapshot versions are distinct compatibility checks.

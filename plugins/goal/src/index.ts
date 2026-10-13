@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { RuntimeHost, RuntimePlugin, ToolExecuteParams, AgentPreStepInput, TurnLifecycleInput, AgentTurnInterruptedInput, AgentTurnCompletedInput, HostServiceContracts } from "@wuu/plugin-sdk";
+import { requireKernelService, type RuntimeHost, type RuntimePlugin, type ToolExecuteParams, type AgentPreStepInput, type TurnLifecycleInput, type AgentTurnInterruptedInput, type AgentTurnCompletedInput, type HostServiceContracts } from "@wuu/plugin-sdk";
 
 const storageKey = "goal.state";
 const maxObjectiveBytes = 8192;
@@ -185,7 +185,7 @@ export function createGoalPlugin(): RuntimePlugin {
           ...["agent.turn.completed", "agent.turn.interrupted", "agent.turn.lifecycle"].map(id => ({ id, kind: "observe" as const, version: 1, error_policy: "isolate" as const })),
           { id: "plugin.client.request", kind: "decision" as const, version: 1 },
         ],
-        required_host_services: ["host.storage.get", "host.storage.set", "host.session.send", "host.session.cancel", "host.session.inspect"].map(id => ({ id, required: true })),
+        required_services: (["host.storage.get", "host.storage.set", "host.session.send", "host.session.cancel", "host.session.inspect"] as const).map(requireKernelService),
       };
     },
     activate() { return locked(async () => {

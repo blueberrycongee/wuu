@@ -49,7 +49,6 @@ export default {
   initialize() {
     return {
       protocol_version: 3,
-      required_host_services: [{ id: "host.service.call", required: true }],
       required_services: ["host.model.invoke", "host.model.emit", "host.background"].map(name => ({ name, major_version: 1, required: true })),
       provided_services: [{ name: service, version: "1.0.0", methods: [{ name: "compare", input_schema: "fixture.shadow.input.v1", output_schema: "fixture.shadow.output.v1" }] }],
       model_adapters: [{ id: adapter, version: 1 }, { id: nativeAdapter, version: 1, mode: "delegate" }],

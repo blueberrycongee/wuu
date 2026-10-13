@@ -12,8 +12,8 @@ LDFLAGS := -s -w \
 	-X github.com/blueberrycongee/wuu/internal/version.Version=$(BUILD_VERSION) \
 	-X github.com/blueberrycongee/wuu/internal/version.Commit=$(COMMIT) \
 	-X github.com/blueberrycongee/wuu/internal/version.Date=$(DATE)
-GO_DIRS := cmd internal packages/plugin-go prompts
-GO_PACKAGES := ./cmd/... ./internal/... ./packages/plugin-go/... ./prompts/...
+GO_DIRS := cmd internal prompts
+GO_PACKAGES := ./cmd/... ./internal/... ./prompts/...
 
 setup:
 	npm ci --prefix desktop

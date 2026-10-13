@@ -4,6 +4,482 @@
 import { randomBytes } from "node:crypto";
 import { normalize, parse, sep } from "node:path";
 
+// packages/plugin-sdk/src/theme-contract.generated.ts
+var PUBLIC_THEME_TOKEN_NAMES = [
+  "--wuu-paper",
+  "--wuu-ink",
+  "--wuu-ink-soft",
+  "--wuu-hairline",
+  "--wuu-surface-muted",
+  "--wuu-accent",
+  "--wuu-accent-press",
+  "--wuu-color-canvas",
+  "--wuu-color-surface",
+  "--wuu-color-surface-muted",
+  "--wuu-color-surface-elevated",
+  "--wuu-color-overlay-backdrop",
+  "--wuu-color-text",
+  "--wuu-color-text-muted",
+  "--wuu-color-live-highlight",
+  "--wuu-color-border-subtle",
+  "--wuu-color-border-strong",
+  "--wuu-color-accent",
+  "--wuu-color-accent-pressed",
+  "--wuu-color-focus",
+  "--wuu-color-success",
+  "--wuu-color-warning",
+  "--wuu-color-danger",
+  "--wuu-color-info",
+  "--wuu-color-link",
+  "--wuu-color-link-hover",
+  "--wuu-color-on-accent",
+  "--wuu-control-secondary-background",
+  "--wuu-control-field-background",
+  "--wuu-control-icon-background",
+  "--wuu-badge-neutral-background",
+  "--wuu-inline-code-background",
+  "--wuu-font-family-ui",
+  "--wuu-font-family-mono",
+  "--wuu-font-size-ui",
+  "--wuu-font-size-body",
+  "--wuu-line-height-body",
+  "--wuu-space-unit",
+  "--wuu-space-density",
+  "--wuu-message-actions-block-gap",
+  "--wuu-message-actions-overlay-gap",
+  "--wuu-message-actions-control-gap",
+  "--wuu-message-actions-inline-offset",
+  "--wuu-message-action-size",
+  "--wuu-message-action-radius",
+  "--wuu-message-user-background",
+  "--wuu-message-user-border",
+  "--wuu-message-user-color",
+  "--wuu-message-user-radius",
+  "--wuu-message-user-shadow",
+  "--wuu-nav-item-hover-background",
+  "--wuu-nav-item-hover-ring",
+  "--wuu-skill-mark-browser-a",
+  "--wuu-skill-mark-browser-b",
+  "--wuu-skill-mark-browser-c",
+  "--wuu-skill-mark-commit-a",
+  "--wuu-skill-mark-commit-b",
+  "--wuu-skill-mark-commit-c",
+  "--wuu-skill-mark-presentation-a",
+  "--wuu-skill-mark-presentation-b",
+  "--wuu-skill-mark-presentation-c",
+  "--wuu-skill-mark-creator-a",
+  "--wuu-skill-mark-creator-b",
+  "--wuu-skill-mark-creator-c",
+  "--wuu-skill-mark-plugin-a",
+  "--wuu-skill-mark-plugin-b",
+  "--wuu-skill-mark-plugin-c",
+  "--wuu-skill-mark-default-a",
+  "--wuu-skill-mark-default-b",
+  "--wuu-skill-mark-default-c",
+  "--wuu-radius-inner",
+  "--wuu-radius-control",
+  "--wuu-radius-panel",
+  "--wuu-radius-overlay",
+  "--wuu-border-subtle",
+  "--wuu-border-strong",
+  "--wuu-elevation-panel",
+  "--wuu-elevation-overlay",
+  "--wuu-motion-duration-fast",
+  "--wuu-motion-duration-normal",
+  "--wuu-motion-easing-standard",
+  "--wuu-content-max-width"
+];
+var PUBLIC_SYNTAX_TOKEN_NAMES = [
+  "--hljs-keyword",
+  "--hljs-function",
+  "--hljs-string",
+  "--hljs-number",
+  "--hljs-comment",
+  "--hljs-tag",
+  "--hljs-literal",
+  "--hljs-meta",
+  "--wuu-syntax-keyword",
+  "--wuu-syntax-function",
+  "--wuu-syntax-string",
+  "--wuu-syntax-number",
+  "--wuu-syntax-comment",
+  "--wuu-syntax-tag",
+  "--wuu-syntax-literal",
+  "--wuu-syntax-meta"
+];
+var PUBLIC_ICON_NAMES = [
+  "archive",
+  "bot",
+  "brain",
+  "calendar",
+  "check",
+  "check-circle",
+  "clock",
+  "code",
+  "database",
+  "file-text",
+  "folder",
+  "gauge",
+  "globe",
+  "inbox",
+  "layout-grid",
+  "list-todo",
+  "message-square",
+  "moon",
+  "plug",
+  "pulse",
+  "search",
+  "settings",
+  "shield",
+  "sliders",
+  "sparkles",
+  "terminal",
+  "users",
+  "workflow",
+  "wrench"
+];
+var PUBLIC_THEME_TOKEN_SET = new Set(PUBLIC_THEME_TOKEN_NAMES);
+var PUBLIC_SYNTAX_TOKEN_SET = new Set(PUBLIC_SYNTAX_TOKEN_NAMES);
+var PUBLIC_ICON_NAME_SET = new Set(PUBLIC_ICON_NAMES);
+
+// packages/plugin-sdk/src/bundle-contract.ts
+var encoder = new TextEncoder();
+
+// packages/plugin-sdk/src/index.ts
+var CAPABILITY_PROTOCOL_V3 = 3;
+var KERNEL_SERVICE_METHOD = "call";
+var KERNEL_SERVICE_NAMES = {
+  "host.storage.get": "host.storage.get",
+  "host.storage.set": "host.storage.set",
+  "host.storage.delete": "host.storage.delete",
+  "host.storage.keys": "host.storage.keys",
+  "host.storage.compare_exchange": "host.storage.compare-exchange",
+  "host.settings.get": "host.settings.get",
+  "host.settings.list": "host.settings.list",
+  "host.session.create": "host.session.create",
+  "host.session.send": "host.session.send",
+  "host.session.list": "host.session.list",
+  "host.session.cancel": "host.session.cancel",
+  "host.session.inspect": "host.session.inspect",
+  "host.session.control": "host.session.control",
+  "host.session.history.read": "host.session.history.read",
+  "host.session.history.search": "host.session.history.search",
+  "host.workspace.status": "host.workspace.status",
+  "host.workspace.apply": "host.workspace.apply",
+  "host.workspace.discard": "host.workspace.discard"
+};
+function kernelServiceCall(id, method, params) {
+  return {
+    id,
+    method: "host.service.call",
+    params: { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params }
+  };
+}
+function requireKernelService(method) {
+  return { name: KERNEL_SERVICE_NAMES[method], major_version: 1, required: true };
+}
+var RuntimeHostServiceError = class extends Error {
+  code;
+  constructor(error) {
+    super(error.message);
+    this.name = "RuntimeHostServiceError";
+    this.code = error.code;
+  }
+};
+async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHost, execution = idleRuntimeExecution, lifecycle = idleRuntimeExecution) {
+  const executionHost = scopedRuntimeHost(host, execution);
+  try {
+    switch (request.method) {
+      case "initialize": {
+        const result = await plugin.initialize(request.params, host, lifecycle);
+        return { id: request.id, result: {
+          ...result,
+          protocol_version: result.required_services?.length || result.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
+          lifecycle_version: 1
+        } };
+      }
+      case "activate":
+        await plugin.activate?.(host, lifecycle);
+        return { id: request.id, result: null };
+      case "capability.invoke":
+        if (!plugin.invokeCapability) throw new Error("capability.invoke is not implemented");
+        execution.signal.throwIfAborted();
+        return { id: request.id, result: await plugin.invokeCapability(request.params, executionHost, execution) };
+      case "service.invoke":
+        if (!plugin.invokeService) throw new Error("service.invoke is not implemented");
+        execution.signal.throwIfAborted();
+        return { id: request.id, result: await plugin.invokeService(request.params, executionHost, execution) };
+      case "service.changed":
+        await plugin.serviceChanged?.(request.params, host);
+        return { id: request.id, result: null };
+      case "tool.execute":
+        if (!plugin.executeTool) throw new Error("tool.execute is not implemented");
+        execution.signal.throwIfAborted();
+        return { id: request.id, result: await plugin.executeTool(request.params, executionHost, execution) };
+      case "shutdown":
+        await plugin.shutdown?.();
+        return { id: request.id, result: null };
+    }
+  } catch (error) {
+    return { id: request.id, error: { message: error instanceof Error ? error.message : String(error) } };
+  }
+}
+function scopedRuntimeHost(host, execution) {
+  return {
+    supports: (method) => host.supports(method),
+    call: (method, params, options) => {
+      const signal = options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
+      const serviceParams = method === "host.service.call" ? params : { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params };
+      return host.call("host.service.call", {
+        ...serviceParams,
+        ...execution.executionId ? { execution_id: execution.executionId } : {}
+      }, { signal });
+    }
+  };
+}
+var unavailableRuntimeHost = {
+  supports: () => false,
+  call: async (method) => {
+    throw new Error(`host service ${method} is unavailable outside a runtime connection`);
+  }
+};
+var idleRuntimeExecutionController = new AbortController();
+var idleRuntimeExecution = {
+  executionId: "",
+  signal: idleRuntimeExecutionController.signal
+};
+var JSONLRuntimeHost = class {
+  constructor(send) {
+    this.send = send;
+  }
+  sequence = 0;
+  closed = false;
+  supported = /* @__PURE__ */ new Set();
+  pending = /* @__PURE__ */ new Map();
+  configure(methods) {
+    this.supported = new Set(methods ?? []);
+  }
+  supports(method) {
+    return this.supported.has("host.service.call") || this.supported.has(method);
+  }
+  call(method, params, options) {
+    const signal = options?.signal;
+    if (signal?.aborted) return Promise.reject(signal.reason);
+    if (this.closed) return Promise.reject(new Error("runtime transport closed"));
+    if (!this.supports(method)) {
+      return Promise.reject(new Error(`host service ${method} is not supported`));
+    }
+    const id = `plugin-${++this.sequence}`;
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        this.pending.delete(id);
+        signal?.removeEventListener("abort", abort);
+      };
+      const abort = () => {
+        cleanup();
+        reject(signal.reason);
+      };
+      const fail = (error) => {
+        cleanup();
+        reject(error);
+      };
+      this.pending.set(id, {
+        resolve(value) {
+          cleanup();
+          resolve(value);
+        },
+        reject: fail
+      });
+      signal?.addEventListener("abort", abort, { once: true });
+      const frame = method === "host.service.call" ? { id, method, params } : kernelServiceCall(id, method, params);
+      void this.send(frame).catch(fail);
+    });
+  }
+  route(value) {
+    if (typeof value !== "object" || value === null) return false;
+    const response = value;
+    if (typeof response.id !== "string" || response.method !== void 0 || !("result" in response) && !("error" in response)) return false;
+    const pending = this.pending.get(response.id);
+    if (!pending) return true;
+    this.pending.delete(response.id);
+    if (response.error !== void 0) {
+      const error = response.error;
+      pending.reject(new RuntimeHostServiceError({
+        code: typeof error.code === "string" ? error.code : "host_error",
+        message: typeof error.message === "string" ? error.message : "host service failed"
+      }));
+    } else {
+      pending.resolve(response.result);
+    }
+    return true;
+  }
+  close() {
+    this.closed = true;
+    for (const pending of this.pending.values()) {
+      pending.reject(new Error("runtime transport closed"));
+    }
+    this.pending.clear();
+  }
+};
+var MAX_CONCURRENT_TOOLS = 8;
+async function runJSONLRuntime(plugin, streams) {
+  let writes = Promise.resolve();
+  const send = (value) => {
+    const next = writes.then(async () => {
+      await streams.output.write(`${JSON.stringify(value)}
+`);
+    });
+    writes = next.catch(() => void 0);
+    return next;
+  };
+  const host = new JSONLRuntimeHost(send);
+  const lifetime = new AbortController();
+  const executions = /* @__PURE__ */ new Map();
+  const active = /* @__PURE__ */ new Set();
+  const concurrentServices = new Set(plugin.concurrentServices ?? []);
+  const concurrentCapabilities = /* @__PURE__ */ new Set(["model.adapter", "model.middleware", ...plugin.concurrentCapabilities ?? []]);
+  const concurrentTools = /* @__PURE__ */ new Set();
+  const queued = [];
+  let running = 0;
+  let exclusive = false;
+  const pump = () => {
+    while (queued.length > 0 && !exclusive && running < MAX_CONCURRENT_TOOLS) {
+      const next = queued[0];
+      const safe = next.canOverlap();
+      if (!safe && running > 0) return;
+      queued.shift();
+      running++;
+      exclusive = !safe;
+      const finished = () => {
+        running--;
+        if (!safe) exclusive = false;
+        pump();
+      };
+      void next.run().then(finished, finished);
+    }
+  };
+  const schedule = (run, canOverlap = () => false) => {
+    const task = new Promise((resolve, reject) => {
+      queued.push({ run: () => Promise.resolve().then(run).then(resolve, reject), canOverlap });
+    });
+    pump();
+    return task;
+  };
+  let lifecycle = Promise.resolve();
+  let shuttingDown = false;
+  const track = (task) => {
+    active.add(task);
+    void task.then(() => active.delete(task), () => active.delete(task));
+  };
+  const enqueueResponse = (value) => {
+    track(schedule(() => send(value)));
+  };
+  const processLine = (line) => {
+    if (line.trim() === "") return;
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch (error) {
+      enqueueResponse({ id: "invalid", error: { message: error instanceof Error ? error.message : String(error) } });
+      return;
+    }
+    if (host.route(parsed)) return;
+    if (isExecutionCancelRequest(parsed)) {
+      for (const controller2 of executions.get(parsed.params.execution_id) ?? []) controller2.abort();
+      return;
+    }
+    if (!isRuntimeRequest(parsed)) {
+      enqueueResponse({ id: "invalid", error: { message: "invalid runtime request" } });
+      return;
+    }
+    if (shuttingDown) {
+      track(send({ id: parsed.id, error: { message: "runtime is shutting down" } }));
+      return;
+    }
+    const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
+    if (parsed.method === "shutdown") {
+      shuttingDown = true;
+      lifetime.abort();
+    }
+    const concurrent = parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service) || parsed.method === "capability.invoke" && concurrentCapabilities.has(parsed.params.capability);
+    const executionId = runtimeRequestExecutionId(parsed);
+    const controller = new AbortController();
+    let controllers = executions.get(executionId);
+    if (!controllers) executions.set(executionId, controllers = /* @__PURE__ */ new Set());
+    controllers.add(controller);
+    const execution = { executionId, signal: controller.signal };
+    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
+    const run = async () => {
+      await ready;
+      if (parsed.method === "initialize") {
+        host.configure(parsed.params.supported_host_services);
+        concurrentTools.clear();
+      }
+      const response = await handleRuntimeRequest(plugin, parsed, host, execution, { signal: lifetime.signal });
+      if (parsed.method === "initialize" && "result" in response) {
+        const definition = response.result;
+        for (const tool of definition.tools ?? []) {
+          if (tool.activity?.concurrency_safe === true) concurrentTools.add(tool.id);
+        }
+      }
+      await send(response);
+    };
+    const task = (concurrent ? run() : schedule(
+      run,
+      () => parsed.method === "tool.execute" && concurrentTools.has(parsed.params.tool_id)
+    )).finally(() => {
+      const controllers2 = executions.get(executionId);
+      controllers2?.delete(controller);
+      if (controllers2?.size === 0) executions.delete(executionId);
+      controller.abort();
+    });
+    if (isLifecycle) lifecycle = task.catch(() => void 0);
+    track(task);
+  };
+  const decoder = new TextDecoder();
+  let buffered = "";
+  try {
+    for await (const chunk of streams.input) {
+      buffered += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      for (const line of lines) processLine(line);
+    }
+    buffered += decoder.decode();
+    if (buffered.trim() !== "") processLine(buffered);
+  } finally {
+    lifetime.abort();
+    host.close();
+    for (const controllers of executions.values()) {
+      for (const controller of controllers) controller.abort();
+    }
+    await Promise.all(active);
+    await writes;
+  }
+}
+function isExecutionCancelRequest(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const request = value;
+  return typeof request.id === "string" && request.method === "execution.cancel" && typeof request.params?.execution_id === "string" && request.params.execution_id.trim() !== "";
+}
+function runtimeRequestExecutionId(request) {
+  switch (request.method) {
+    case "capability.invoke":
+    case "service.invoke":
+    case "tool.execute":
+      return request.params.execution_id?.trim() ?? "";
+    default:
+      return "";
+  }
+}
+function isRuntimeRequest(value) {
+  if (typeof value !== "object" || value === null) return false;
+  const request = value;
+  if (typeof request.id !== "string" || typeof request.method !== "string") return false;
+  if (request.method === "activate" || request.method === "shutdown") return true;
+  return ["initialize", "capability.invoke", "service.invoke", "service.changed", "tool.execute"].includes(request.method) && typeof request.params === "object" && request.params !== null;
+}
+
 // plugins/automation/src/schedule.ts
 var bounds = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
 function integer(value) {
@@ -460,7 +936,7 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
       return {
         tools: [{ id: "cron", description: "Manage scheduled Agent prompts. action=list returns tasks; action=add creates a one-shot or recurring task from a five-field cron expression; action=remove deletes a task. Use new_thread for an independent visible conversation and thread_heartbeat to wake an existing conversation. Set workspace=worktree so each triggered session runs in its own git worktree instead of the shared project directory.", input_schema: cronSchema, execution_scopes: ["root"] }],
         capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }, { id: "agent.turn.lifecycle", kind: "observe", version: 1, error_policy: "isolate" }],
-        required_host_services: ["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"].map((id) => ({ id, required: true }))
+        required_services: ["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"].map(requireKernelService)
       };
     },
     activate(_runtimeHost, lifecycle) {
@@ -511,494 +987,6 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
   };
 }
 var src_default = createAutomationPlugin();
-
-// packages/plugin-sdk/src/theme-contract.generated.ts
-var PUBLIC_THEME_TOKEN_NAMES = [
-  "--wuu-paper",
-  "--wuu-ink",
-  "--wuu-ink-soft",
-  "--wuu-hairline",
-  "--wuu-surface-muted",
-  "--wuu-accent",
-  "--wuu-accent-press",
-  "--wuu-color-canvas",
-  "--wuu-color-surface",
-  "--wuu-color-surface-muted",
-  "--wuu-color-surface-elevated",
-  "--wuu-color-overlay-backdrop",
-  "--wuu-color-text",
-  "--wuu-color-text-muted",
-  "--wuu-color-live-highlight",
-  "--wuu-color-border-subtle",
-  "--wuu-color-border-strong",
-  "--wuu-color-accent",
-  "--wuu-color-accent-pressed",
-  "--wuu-color-focus",
-  "--wuu-color-success",
-  "--wuu-color-warning",
-  "--wuu-color-danger",
-  "--wuu-color-info",
-  "--wuu-color-link",
-  "--wuu-color-link-hover",
-  "--wuu-color-on-accent",
-  "--wuu-control-secondary-background",
-  "--wuu-control-field-background",
-  "--wuu-control-icon-background",
-  "--wuu-badge-neutral-background",
-  "--wuu-inline-code-background",
-  "--wuu-font-family-ui",
-  "--wuu-font-family-mono",
-  "--wuu-font-size-ui",
-  "--wuu-font-size-body",
-  "--wuu-line-height-body",
-  "--wuu-space-unit",
-  "--wuu-space-density",
-  "--wuu-message-actions-block-gap",
-  "--wuu-message-actions-overlay-gap",
-  "--wuu-message-actions-control-gap",
-  "--wuu-message-actions-inline-offset",
-  "--wuu-message-action-size",
-  "--wuu-message-action-radius",
-  "--wuu-message-user-background",
-  "--wuu-message-user-border",
-  "--wuu-message-user-color",
-  "--wuu-message-user-radius",
-  "--wuu-message-user-shadow",
-  "--wuu-nav-item-hover-background",
-  "--wuu-nav-item-hover-ring",
-  "--wuu-skill-mark-browser-a",
-  "--wuu-skill-mark-browser-b",
-  "--wuu-skill-mark-browser-c",
-  "--wuu-skill-mark-commit-a",
-  "--wuu-skill-mark-commit-b",
-  "--wuu-skill-mark-commit-c",
-  "--wuu-skill-mark-presentation-a",
-  "--wuu-skill-mark-presentation-b",
-  "--wuu-skill-mark-presentation-c",
-  "--wuu-skill-mark-creator-a",
-  "--wuu-skill-mark-creator-b",
-  "--wuu-skill-mark-creator-c",
-  "--wuu-skill-mark-plugin-a",
-  "--wuu-skill-mark-plugin-b",
-  "--wuu-skill-mark-plugin-c",
-  "--wuu-skill-mark-default-a",
-  "--wuu-skill-mark-default-b",
-  "--wuu-skill-mark-default-c",
-  "--wuu-radius-inner",
-  "--wuu-radius-control",
-  "--wuu-radius-panel",
-  "--wuu-radius-overlay",
-  "--wuu-border-subtle",
-  "--wuu-border-strong",
-  "--wuu-elevation-panel",
-  "--wuu-elevation-overlay",
-  "--wuu-motion-duration-fast",
-  "--wuu-motion-duration-normal",
-  "--wuu-motion-easing-standard",
-  "--wuu-content-max-width"
-];
-var PUBLIC_SYNTAX_TOKEN_NAMES = [
-  "--hljs-keyword",
-  "--hljs-function",
-  "--hljs-string",
-  "--hljs-number",
-  "--hljs-comment",
-  "--hljs-tag",
-  "--hljs-literal",
-  "--hljs-meta",
-  "--wuu-syntax-keyword",
-  "--wuu-syntax-function",
-  "--wuu-syntax-string",
-  "--wuu-syntax-number",
-  "--wuu-syntax-comment",
-  "--wuu-syntax-tag",
-  "--wuu-syntax-literal",
-  "--wuu-syntax-meta"
-];
-var PUBLIC_ICON_NAMES = [
-  "archive",
-  "bot",
-  "brain",
-  "calendar",
-  "check",
-  "check-circle",
-  "clock",
-  "code",
-  "database",
-  "file-text",
-  "folder",
-  "gauge",
-  "globe",
-  "inbox",
-  "layout-grid",
-  "list-todo",
-  "message-square",
-  "moon",
-  "plug",
-  "pulse",
-  "search",
-  "settings",
-  "shield",
-  "sliders",
-  "sparkles",
-  "terminal",
-  "users",
-  "workflow",
-  "wrench"
-];
-var PUBLIC_THEME_TOKEN_SET = new Set(PUBLIC_THEME_TOKEN_NAMES);
-var PUBLIC_SYNTAX_TOKEN_SET = new Set(PUBLIC_SYNTAX_TOKEN_NAMES);
-var PUBLIC_ICON_NAME_SET = new Set(PUBLIC_ICON_NAMES);
-
-// packages/plugin-sdk/src/bundle-contract.ts
-var encoder = new TextEncoder();
-
-// packages/plugin-sdk/src/index.ts
-var CAPABILITY_PROTOCOL_V3 = 3;
-var KERNEL_SERVICE_METHOD = "call";
-var KERNEL_SERVICE_NAMES = {
-  "host.storage.get": "host.storage.get",
-  "host.storage.set": "host.storage.set",
-  "host.storage.delete": "host.storage.delete",
-  "host.storage.keys": "host.storage.keys",
-  "host.storage.compare_exchange": "host.storage.compare-exchange",
-  "host.settings.get": "host.settings.get",
-  "host.settings.list": "host.settings.list",
-  "host.session.create": "host.session.create",
-  "host.session.send": "host.session.send",
-  "host.session.list": "host.session.list",
-  "host.session.cancel": "host.session.cancel",
-  "host.session.inspect": "host.session.inspect",
-  "host.session.control": "host.session.control",
-  "host.session.history.read": "host.session.history.read",
-  "host.session.history.search": "host.session.history.search",
-  "host.workspace.status": "host.workspace.status",
-  "host.workspace.apply": "host.workspace.apply",
-  "host.workspace.discard": "host.workspace.discard"
-};
-function kernelServiceCall(id, method, params) {
-  return {
-    id,
-    method: "host.service.call",
-    params: { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params }
-  };
-}
-var RuntimeHostServiceError = class extends Error {
-  code;
-  constructor(error) {
-    super(error.message);
-    this.name = "RuntimeHostServiceError";
-    this.code = error.code;
-  }
-};
-async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHost, execution = idleRuntimeExecution, lifecycle = idleRuntimeExecution) {
-  const executionHost = scopedRuntimeHost(host, execution);
-  try {
-    switch (request.method) {
-      case "initialize": {
-        const result = await plugin.initialize(request.params, host, lifecycle);
-        const legacy = result.required_host_services?.filter((service) => Object.hasOwn(KERNEL_SERVICE_NAMES, service.id)) ?? [];
-        if (legacy.length === 0) return { id: request.id, result: {
-          ...result,
-          protocol_version: result.required_services?.length || result.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
-          lifecycle_version: 1
-        } };
-        const requirements = [...result.required_services ?? []];
-        for (const descriptor of legacy) {
-          const name = KERNEL_SERVICE_NAMES[descriptor.id];
-          const existing = requirements.findIndex((service) => service.name === name && service.major_version === 1);
-          if (existing < 0) requirements.push({ name, major_version: 1, required: descriptor.required });
-          else requirements[existing] = { ...requirements[existing], required: requirements[existing].required || descriptor.required };
-        }
-        return { id: request.id, result: {
-          ...result,
-          protocol_version: CAPABILITY_PROTOCOL_V3,
-          required_host_services: result.required_host_services?.filter((service) => !Object.hasOwn(KERNEL_SERVICE_NAMES, service.id)),
-          required_services: requirements,
-          lifecycle_version: 1
-        } };
-      }
-      case "activate":
-        await plugin.activate?.(host, lifecycle);
-        return { id: request.id, result: null };
-      case "capability.invoke":
-        if (!plugin.invokeCapability) throw new Error("capability.invoke is not implemented");
-        execution.signal.throwIfAborted();
-        return { id: request.id, result: await plugin.invokeCapability(request.params, executionHost, execution) };
-      case "service.invoke":
-        if (!plugin.invokeService) throw new Error("service.invoke is not implemented");
-        execution.signal.throwIfAborted();
-        return { id: request.id, result: await plugin.invokeService(request.params, executionHost, execution) };
-      case "service.changed":
-        await plugin.serviceChanged?.(request.params, host);
-        return { id: request.id, result: null };
-      case "tool.execute":
-        if (!plugin.executeTool) throw new Error("tool.execute is not implemented");
-        execution.signal.throwIfAborted();
-        return { id: request.id, result: await plugin.executeTool(request.params, executionHost, execution) };
-      case "shutdown":
-        await plugin.shutdown?.();
-        return { id: request.id, result: null };
-    }
-  } catch (error) {
-    return { id: request.id, error: { message: error instanceof Error ? error.message : String(error) } };
-  }
-}
-function scopedRuntimeHost(host, execution) {
-  return {
-    supports: (method) => host.supports(method),
-    call: (method, params, options) => {
-      const signal = options?.signal ? AbortSignal.any([execution.signal, options.signal]) : execution.signal;
-      const serviceParams = method === "host.service.call" ? params : { service: KERNEL_SERVICE_NAMES[method], method: KERNEL_SERVICE_METHOD, params };
-      return host.call("host.service.call", {
-        ...serviceParams,
-        ...execution.executionId ? { execution_id: execution.executionId } : {}
-      }, { signal });
-    }
-  };
-}
-var unavailableRuntimeHost = {
-  supports: () => false,
-  call: async (method) => {
-    throw new Error(`host service ${method} is unavailable outside a runtime connection`);
-  }
-};
-var idleRuntimeExecutionController = new AbortController();
-var idleRuntimeExecution = {
-  executionId: "",
-  signal: idleRuntimeExecutionController.signal
-};
-var JSONLRuntimeHost = class {
-  constructor(send) {
-    this.send = send;
-  }
-  sequence = 0;
-  closed = false;
-  supported = /* @__PURE__ */ new Set();
-  pending = /* @__PURE__ */ new Map();
-  configure(methods) {
-    this.supported = new Set(methods ?? []);
-  }
-  supports(method) {
-    return this.supported.has("host.service.call") || this.supported.has(method);
-  }
-  call(method, params, options) {
-    const signal = options?.signal;
-    if (signal?.aborted) return Promise.reject(signal.reason);
-    if (this.closed) return Promise.reject(new Error("runtime transport closed"));
-    if (!this.supports(method)) {
-      return Promise.reject(new Error(`host service ${method} is not supported`));
-    }
-    const id = `plugin-${++this.sequence}`;
-    return new Promise((resolve, reject) => {
-      const cleanup = () => {
-        this.pending.delete(id);
-        signal?.removeEventListener("abort", abort);
-      };
-      const abort = () => {
-        cleanup();
-        reject(signal.reason);
-      };
-      const fail = (error) => {
-        cleanup();
-        reject(error);
-      };
-      this.pending.set(id, {
-        resolve(value) {
-          cleanup();
-          resolve(value);
-        },
-        reject: fail
-      });
-      signal?.addEventListener("abort", abort, { once: true });
-      const frame = method === "host.service.call" ? { id, method, params } : kernelServiceCall(id, method, params);
-      void this.send(frame).catch(fail);
-    });
-  }
-  route(value) {
-    if (typeof value !== "object" || value === null) return false;
-    const response = value;
-    if (typeof response.id !== "string" || response.method !== void 0 || !("result" in response) && !("error" in response)) return false;
-    const pending = this.pending.get(response.id);
-    if (!pending) return true;
-    this.pending.delete(response.id);
-    if (response.error !== void 0) {
-      const error = response.error;
-      pending.reject(new RuntimeHostServiceError({
-        code: typeof error.code === "string" ? error.code : "host_error",
-        message: typeof error.message === "string" ? error.message : "host service failed"
-      }));
-    } else {
-      pending.resolve(response.result);
-    }
-    return true;
-  }
-  close() {
-    this.closed = true;
-    for (const pending of this.pending.values()) {
-      pending.reject(new Error("runtime transport closed"));
-    }
-    this.pending.clear();
-  }
-};
-var MAX_CONCURRENT_TOOLS = 8;
-async function runJSONLRuntime(plugin, streams) {
-  let writes = Promise.resolve();
-  const send = (value) => {
-    const next = writes.then(async () => {
-      await streams.output.write(`${JSON.stringify(value)}
-`);
-    });
-    writes = next.catch(() => void 0);
-    return next;
-  };
-  const host = new JSONLRuntimeHost(send);
-  const lifetime = new AbortController();
-  const executions = /* @__PURE__ */ new Map();
-  const active = /* @__PURE__ */ new Set();
-  const concurrentServices = new Set(plugin.concurrentServices ?? []);
-  const concurrentCapabilities = /* @__PURE__ */ new Set(["model.adapter", "model.middleware", ...plugin.concurrentCapabilities ?? []]);
-  const concurrentTools = /* @__PURE__ */ new Set();
-  const queued = [];
-  let running = 0;
-  let exclusive = false;
-  const pump = () => {
-    while (queued.length > 0 && !exclusive && running < MAX_CONCURRENT_TOOLS) {
-      const next = queued[0];
-      const safe = next.canOverlap();
-      if (!safe && running > 0) return;
-      queued.shift();
-      running++;
-      exclusive = !safe;
-      const finished = () => {
-        running--;
-        if (!safe) exclusive = false;
-        pump();
-      };
-      void next.run().then(finished, finished);
-    }
-  };
-  const schedule = (run, canOverlap = () => false) => {
-    const task = new Promise((resolve, reject) => {
-      queued.push({ run: () => Promise.resolve().then(run).then(resolve, reject), canOverlap });
-    });
-    pump();
-    return task;
-  };
-  let lifecycle = Promise.resolve();
-  let shuttingDown = false;
-  const track = (task) => {
-    active.add(task);
-    void task.then(() => active.delete(task), () => active.delete(task));
-  };
-  const enqueueResponse = (value) => {
-    track(schedule(() => send(value)));
-  };
-  const processLine = (line) => {
-    if (line.trim() === "") return;
-    let parsed;
-    try {
-      parsed = JSON.parse(line);
-    } catch (error) {
-      enqueueResponse({ id: "invalid", error: { message: error instanceof Error ? error.message : String(error) } });
-      return;
-    }
-    if (host.route(parsed)) return;
-    if (isExecutionCancelRequest(parsed)) {
-      for (const controller2 of executions.get(parsed.params.execution_id) ?? []) controller2.abort();
-      return;
-    }
-    if (!isRuntimeRequest(parsed)) {
-      enqueueResponse({ id: "invalid", error: { message: "invalid runtime request" } });
-      return;
-    }
-    if (shuttingDown) {
-      track(send({ id: parsed.id, error: { message: "runtime is shutting down" } }));
-      return;
-    }
-    const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
-    if (parsed.method === "shutdown") {
-      shuttingDown = true;
-      lifetime.abort();
-    }
-    const concurrent = parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service) || parsed.method === "capability.invoke" && concurrentCapabilities.has(parsed.params.capability);
-    const executionId = runtimeRequestExecutionId(parsed);
-    const controller = new AbortController();
-    let controllers = executions.get(executionId);
-    if (!controllers) executions.set(executionId, controllers = /* @__PURE__ */ new Set());
-    controllers.add(controller);
-    const execution = { executionId, signal: controller.signal };
-    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
-    const run = async () => {
-      await ready;
-      if (parsed.method === "initialize") {
-        host.configure(parsed.params.supported_host_services);
-        concurrentTools.clear();
-      }
-      const response = await handleRuntimeRequest(plugin, parsed, host, execution, { signal: lifetime.signal });
-      if (parsed.method === "initialize" && "result" in response) {
-        const definition = response.result;
-        for (const tool of definition.tools ?? []) {
-          if (tool.activity?.concurrency_safe === true) concurrentTools.add(tool.id);
-        }
-      }
-      await send(response);
-    };
-    const task = (concurrent ? run() : schedule(
-      run,
-      () => parsed.method === "tool.execute" && concurrentTools.has(parsed.params.tool_id)
-    )).finally(() => {
-      const controllers2 = executions.get(executionId);
-      controllers2?.delete(controller);
-      if (controllers2?.size === 0) executions.delete(executionId);
-      controller.abort();
-    });
-    if (isLifecycle) lifecycle = task.catch(() => void 0);
-    track(task);
-  };
-  const decoder = new TextDecoder();
-  let buffered = "";
-  try {
-    for await (const chunk of streams.input) {
-      buffered += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
-      const lines = buffered.split("\n");
-      buffered = lines.pop() ?? "";
-      for (const line of lines) processLine(line);
-    }
-    buffered += decoder.decode();
-    if (buffered.trim() !== "") processLine(buffered);
-  } finally {
-    lifetime.abort();
-    host.close();
-    for (const controllers of executions.values()) {
-      for (const controller of controllers) controller.abort();
-    }
-    await Promise.all(active);
-    await writes;
-  }
-}
-function isExecutionCancelRequest(value) {
-  if (typeof value !== "object" || value === null) return false;
-  const request = value;
-  return typeof request.id === "string" && request.method === "execution.cancel" && typeof request.params?.execution_id === "string" && request.params.execution_id.trim() !== "";
-}
-function runtimeRequestExecutionId(request) {
-  switch (request.method) {
-    case "capability.invoke":
-    case "service.invoke":
-    case "tool.execute":
-      return request.params.execution_id?.trim() ?? "";
-    default:
-      return "";
-  }
-}
-function isRuntimeRequest(value) {
-  if (typeof value !== "object" || value === null) return false;
-  const request = value;
-  if (typeof request.id !== "string" || typeof request.method !== "string") return false;
-  if (request.method === "activate" || request.method === "shutdown") return true;
-  return ["initialize", "capability.invoke", "service.invoke", "service.changed", "tool.execute"].includes(request.method) && typeof request.params === "object" && request.params !== null;
-}
 
 // plugins/automation/plugins/automation/runtime-entry.ts
 var [major, minor] = process.versions.node.split(".").map(Number);
