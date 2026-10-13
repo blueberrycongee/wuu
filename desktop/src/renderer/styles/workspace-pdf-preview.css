@@ -52,7 +52,8 @@
   gap: 2px;
 }
 
-.workspace-pdf-zoom-controls button {
+.workspace-pdf-zoom-controls button,
+.workspace-pdf-retry {
   display: grid;
   height: var(--control-size-toolbar);
   min-width: var(--control-size-toolbar);
@@ -64,12 +65,14 @@
   font: inherit;
 }
 
-.workspace-pdf-zoom-controls button svg {
+.workspace-pdf-zoom-controls button svg,
+.workspace-pdf-retry svg {
   width: var(--icon-size);
   height: var(--icon-size);
 }
 
-.workspace-pdf-zoom-controls button:not(:disabled):hover {
+.workspace-pdf-zoom-controls button:not(:disabled):hover,
+.workspace-pdf-retry:not(:disabled):hover {
   background: var(--ink-overlay-4);
   color: var(--ink);
 }
@@ -84,7 +87,8 @@ button:focus-visible {
   outline-offset: -2px;
 }
 
-.workspace-pdf-zoom-controls button:disabled {
+.workspace-pdf-zoom-controls button:disabled,
+.workspace-pdf-retry:disabled {
   opacity: 0.45;
 }
 
@@ -105,6 +109,8 @@ button:focus-visible {
 
 .workspace-pdf-container {
   position: absolute;
+  /* PDF.js layers must stay below the sibling recovery controls. */
+  isolation: isolate;
   inset: 0;
   overflow: auto;
   background: var(--paper);
@@ -122,6 +128,7 @@ button:focus-visible {
 
 .workspace-pdf-status {
   position: absolute;
+  z-index: 1;
   inset: 0;
   display: grid;
   place-content: center;
@@ -139,6 +146,11 @@ button:focus-visible {
 }
 
 .workspace-pdf-status.error span {
-  max-width: 420px;
+  max-width: min(420px, 100%);
+  overflow-wrap: anywhere;
   color: var(--ink-soft);
+}
+
+.workspace-pdf-retry {
+  margin-top: var(--space-2);
 }
