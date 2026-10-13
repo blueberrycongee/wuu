@@ -1,3 +1,4 @@
+import { readComposerDraftRecovery, setComposerDraftRecoveryEnabled } from "./ComposerDraftRecovery";
 import { openComposerAttachmentPicker } from "./test/attachmentPicker";
 /**
  * Session switching keeps the outgoing conversation covered until the resumed
@@ -367,7 +368,7 @@ function emitNotification(method: string, params: Record<string, unknown>, workd
 
 async function pickPendingAttachment(owner: Element, extension: "pdf" | "png" | "mp4") {
   const bytes = new TextEncoder().encode(`attachment owned by A (${extension})`);
-  const read = deferred<ArrayBuffer>();
+  let read = deferred<ArrayBuffer>();
   const encoded = deferred<void>();
   const originalRead = FileReader.prototype.readAsDataURL;
   vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader, blob) {
@@ -396,7 +397,10 @@ async function pickPendingAttachment(owner: Element, extension: "pdf" | "png" | 
         await encoded.promise;
       });
     },
-    fail: async () => { await act(async () => read.reject(new Error("File read failed"))); },
+    fail: async () => {
+      await act(async () => read.reject(new Error("File read failed")));
+      read = deferred<ArrayBuffer>();
+    },
   };
 }
 
@@ -411,6 +415,7 @@ describe("session tab switch latency", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     window.localStorage.clear();
+    window.sessionStorage.clear();
   });
 
   afterEach(() => {
@@ -655,6 +660,7 @@ describe("session tab switch latency", () => {
     { activePane: "primary", direct: false }, { activePane: "secondary", direct: false },
     { activePane: "primary", direct: true }, { activePane: "secondary", direct: true },
   ])("preserves both split drafts from $activePane (direct pane promotion=$direct)", async ({ activePane, direct }) => {
+    setComposerDraftRecoveryEnabled(true);
     const { threadsByID } = installWuuApi();
     const third = { ...threadB(), id: "thread-third", preview: "third conversation" };
     threadsByID.set(third.id, third);
@@ -689,6 +695,12 @@ describe("session tab switch latency", () => {
     await flushAsync();
     const restoredB = mainComposerTextarea().value;
     expect({ restoredA, restoredB }).toEqual({ restoredA: "new draft for A", restoredB: "new draft for B" });
+    const recovered = readComposerDraftRecovery().tabs.filter(tab => tab.kind === "thread");
+    expect(recovered.find(tab => tab.threadID === threadAID)?.prompt).toBe("new draft for A");
+    expect(recovered.find(tab => tab.threadID === threadBID)?.prompt).toBe("new draft for B");
+    await act(async () => { root!.unmount(); root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    expect(mainComposerTextarea().value).toBe("new draft for B");
   });
 
   it("keeps the rendered target draft when a delayed fork completes after switching", async () => {
@@ -750,7 +762,7 @@ describe("session tab switch latency", () => {
     { split: false, failure: false }, { split: true, failure: false },
     { split: false, failure: true }, { split: true, failure: true },
   ])("keeps attachment completion while a cold navigation waits (split=$split, failure=$failure)", async ({ split, failure }) => {
-    const { threadsByID, resumeThread } = installWuuApi();
+    const { threadsByID, resumeThread, startTurn } = installWuuApi();
     const third = { ...threadB(), id: "cold-third", preview: "cold third" };
     threadsByID.set(third.id, third);
     await act(async () => { root = createRoot(container); root.render(<App />); });
@@ -769,8 +781,15 @@ describe("session tab switch latency", () => {
     await flushAsync();
     await act(async () => { threadRowButton(split ? "session switch B" : "session switch A")!.click(); });
     await flushAsync();
-    if (failure) expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
-    else expect(container.querySelector(`${mainComposerSelector} img`)?.getAttribute("src")).toBe(`data:image/png;base64,${attachment.data}`);
+    if (failure) {
+      const retry = container.querySelector<HTMLButtonElement>(`${mainComposerSelector} .composer-attachment-failed .composer-document-card-main`)!;
+      expect(retry.getAttribute("aria-label")).toContain("File read failed");
+      await act(async () => { retry.click(); retry.click(); });
+      await attachment.finish();
+      expect(container.querySelector(`${mainComposerSelector} .composer-attachment-failed`)).toBeNull();
+      expect(startTurn).not.toHaveBeenCalled();
+    }
+    expect(container.querySelector(`${mainComposerSelector} img`)?.getAttribute("src")).toBe(`data:image/png;base64,${attachment.data}`);
   });
 
   it.each(["pdf", "png", "mp4"] as const)("keeps a pending %s on its original draft after switching conversations", async (extension) => {
@@ -807,7 +826,7 @@ describe("session tab switch latency", () => {
     }
   });
 
-  it.each(["remove", "send", "failure"] as const)("does not restore a pending PDF after %s", async (action) => {
+  it.each(["remove", "send", "failure"] as const)("settles a pending PDF without losing removal, send, or failure state (%s)", async (action) => {
     const { startTurn } = installWuuApi();
     await act(async () => { root = createRoot(container); root.render(<App />); });
     await flushAsync();
@@ -821,14 +840,16 @@ describe("session tab switch latency", () => {
     }
     if (action === "failure") await attachment.fail();
     else await attachment.finish();
-    expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
+    if (action === "failure") expect(container.querySelector(`${mainComposerSelector} .composer-attachment-failed`)).not.toBeNull();
+    else expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
     if (action === "send") {
       expect(startTurn).toHaveBeenCalledOnce();
       expect(startTurn.mock.calls[0][3][0].data).toBe(attachment.data);
     } else expect(startTurn).not.toHaveBeenCalled();
     await act(async () => { threadRowButton("session switch B")!.click(); });
     await act(async () => { threadRowButton("session switch A")!.click(); });
-    expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
+    if (action === "failure") expect(container.querySelector(`${mainComposerSelector} .composer-attachment-failed`)).not.toBeNull();
+    else expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
   });
 
   it.each(["pdf", "png"] as const)("does not revive a closed split draft when its %s finishes", async (extension) => {
@@ -1243,6 +1264,7 @@ describe("session tab switch latency", () => {
   });
 
   it.each(["", "newer draft"])("preserves failed input without overwriting the current draft (%s)", async (newerDraft) => {
+    setComposerDraftRecoveryEnabled(true);
     const { startTurn } = installWuuApi();
     const pending = deferred<{ turn: Turn }>();
     startTurn.mockReturnValueOnce(pending.promise);
@@ -1251,19 +1273,25 @@ describe("session tab switch latency", () => {
     // Repeating an earlier prompt is not evidence that this send was admitted.
     const text = threadA().turns[0].items[0].text!;
     await act(async () => { setMainComposerPrompt(text); });
+    expect(readComposerDraftRecovery().tabs.map(tab => tab.kind !== "skills" && tab.prompt)).toContain(text);
     await act(async () => { mainComposerSendButton().click(); });
     expect(mainComposerTextarea().value).toBe("");
     await act(async () => { setMainComposerPrompt(newerDraft); });
+    expect(readComposerDraftRecovery().tabs.map(tab => tab.kind !== "skills" && tab.prompt)).toContain(text);
     await act(async () => { pending.reject(new Error("send rejected")); });
     expect(mainComposerTextarea().value).toBe(newerDraft || text);
     if (newerDraft) {
       expect(activeThreadProbe()?.dataset.latestUserText).toBe(text);
       expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("failed");
     }
+    const recovered = readComposerDraftRecovery().tabs.map(tab => tab.kind !== "skills" && tab.prompt);
+    expect(recovered).toContain(text);
+    if (newerDraft) expect(recovered).toContain(newerDraft);
     expect(startTurn).toHaveBeenCalledTimes(1);
   });
 
   it.each(["accepted", "rejected"])("does not reactivate a submitted conversation when its delayed response is %s", async (outcome) => {
+    setComposerDraftRecoveryEnabled(true);
     const { startTurn } = installWuuApi();
     const pending = deferred<{ turn: Turn }>();
     startTurn.mockReturnValueOnce(pending.promise);
@@ -1281,6 +1309,13 @@ describe("session tab switch latency", () => {
       }
     });
     expect(activeSessionTabLabel()).toContain("session switch B");
+    expect(mainComposerTextarea().value).toBe("draft for B");
+    const recovered = readComposerDraftRecovery().tabs.map(tab => tab.kind !== "skills" && tab.prompt);
+    expect(recovered).toContain("draft for B");
+    if (outcome === "accepted") expect(recovered).not.toContain("send to A");
+    else expect(recovered).toContain("send to A");
+    await act(async () => { root!.unmount(); root = createRoot(container); root.render(<App />); });
+    await flushAsync();
     expect(mainComposerTextarea().value).toBe("draft for B");
     expect(startTurn).toHaveBeenCalledTimes(1);
   });
@@ -1303,7 +1338,7 @@ describe("session tab switch latency", () => {
     window.wuu.initialize = vi.fn(async () => ({ ...initialized(), workspace_root: context.cwd }));
     const encoded = { id: "prepared-image", media_type: "image/png", data: "aW1hZ2U=" };
     const encoding = deferred<ComposerMessages.ComposerImage>();
-    vi.spyOn(ComposerMessages, "composerImagePlaceholder").mockReturnValue({ ...encoded, data: "", encodePromise: encoding.promise });
+    vi.spyOn(ComposerMessages, "composerImagePlaceholder").mockReturnValue({ ...encoded, data: "", encodePromise: encoding.promise, preparation: { filename: "image.png", promise: encoding.promise, restart: vi.fn() } });
     await act(async () => { root = createRoot(container); root.render(<App />); });
     await flushAsync();
     const input = openComposerAttachmentPicker(container.querySelector('[data-main-conversation-composer="dock"]')!);

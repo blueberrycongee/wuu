@@ -51,8 +51,9 @@ struct ConversationTimeline: View {
                                 .accessibilityElement().accessibilityLabel("正在处理")
                         }
                     }.padding(inset)
+                        // Fill the viewport even without rows so refresh overlays keep their width and center.
                         // Short conversations start at the top; once filled, normal bottom following takes over.
-                        .frame(minHeight: geometry.size.height, alignment: .top)
+                        .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .topLeading)
                         .overlay(alignment: .bottom) { Color.clear.frame(height: 1).id("bottom") }
                         .background {
                         TimelineScrollReader(state: scrollState) { next in

@@ -48,8 +48,46 @@ export function appendWorkspacePathToPrompt(prompt: string, path: string): strin
   return `${prompt}${separator}${path} `;
 }
 
+// Shared by draft/message snapshots so an explicit retry replaces the rejected
+// promise everywhere. File bytes and callbacks never enter the transport payload.
+export type ComposerAttachmentPreparation<T> = {
+  filename: string;
+  promise: Promise<T>;
+  result?: T;
+  error?: string;
+  retry?: () => Promise<void>;
+  restart: () => void;
+};
+
+function attachmentPreparation<T>(filename: string, encode: () => Promise<T>): ComposerAttachmentPreparation<T> {
+  let readSource = encode;
+  const read = async (): Promise<T> => {
+    try {
+      const result = await readSource();
+      preparation.result = result;
+      preparation.retry = undefined;
+      // Recovered message snapshots need the completed bytes, not the source File.
+      readSource = () => Promise.resolve(result);
+      return result;
+    } catch (error) {
+      preparation.error = error instanceof Error && error.message ? error.message : translateCurrent("composer.attachment.imageEncodeFailed");
+      throw error;
+    }
+  };
+  const preparation: ComposerAttachmentPreparation<T> = {
+    filename,
+    promise: Promise.resolve().then(read),
+    restart() {
+      preparation.error = undefined;
+      preparation.promise = Promise.resolve().then(read);
+    },
+  };
+  return preparation;
+}
+
 export type ComposerImage = InputImage & {
   id: string;
+  preparation?: ComposerAttachmentPreparation<ComposerImage>;
   /**
    * Optimistic placeholder preview source. Set the moment the user pastes or
    * selects a file so the attachment strip can render the raw file via
@@ -71,6 +109,7 @@ export type ComposerImage = InputImage & {
 
 export type ComposerFile = InputFile & {
   id: string;
+  preparation?: ComposerAttachmentPreparation<ComposerFile>;
   /** Pending file bytes stay with this attachment slot through draft moves. */
   encodePromise?: Promise<ComposerFile>;
 };
@@ -117,11 +156,14 @@ export function clipboardAttachmentFiles(event: ReactClipboardEvent<HTMLTextArea
  *
  * Encoding preserves the original bytes; the core owns provider resizing.
  */
-export function composerImagePlaceholder(file: File): ComposerImage {
+export function composerImagePlaceholder(file: File): ComposerImage & { preparation: ComposerAttachmentPreparation<ComposerImage> } {
+  if (file.size > COMPOSER_ATTACHMENT_MAX_BYTES) {
+    throw new Error(translateCurrent("composer.attachment.fileTooLarge", { name: file.name || "image", limit: 20 }));
+  }
   const mediaType = normalizeImageMediaType(file.type);
   const id = nextComposerAttachmentID();
   const previewSrc = URL.createObjectURL(file);
-  const encodePromise: Promise<ComposerImage> = (async () => {
+  const preparation = attachmentPreparation(file.name || "image", async () => {
     try {
       const encoded = await normalizeImageFileForPrompt(file);
       return { id, ...encoded };
@@ -131,13 +173,14 @@ export function composerImagePlaceholder(file: File): ComposerImage {
       // revocation can make the optimistic preview flash broken first.
       window.setTimeout(() => URL.revokeObjectURL(previewSrc), 0);
     }
-  })();
+  });
   return {
     id,
     media_type: mediaType,
     data: "",
     previewSrc,
-    encodePromise
+    preparation,
+    encodePromise: preparation.promise
   };
 }
 
@@ -153,7 +196,7 @@ export async function composerFileFromFile(file: File): Promise<ComposerFile> {
   return composerFilePlaceholder(file).encodePromise!;
 }
 
-export function composerFilePlaceholder(file: File): ComposerFile {
+export function composerFilePlaceholder(file: File): ComposerFile & { preparation: ComposerAttachmentPreparation<ComposerFile> } {
   const videoType = composerVideoMediaType(file);
   if (file.size > COMPOSER_ATTACHMENT_MAX_BYTES) {
     throw new Error(translateCurrent("composer.attachment.fileTooLarge", { name: file.name || "attachment", limit: 20 }));
@@ -164,13 +207,11 @@ export function composerFilePlaceholder(file: File): ComposerFile {
     data: "",
     filename: file.name.trim() || "attachment"
   };
-  return {
+  const preparation = attachmentPreparation(placeholder.filename, async () => ({
     ...placeholder,
-    encodePromise: (async () => ({
-      ...placeholder,
-      data: await bufferToBase64(await file.arrayBuffer()),
-    }))(),
-  };
+    data: await bufferToBase64(await file.arrayBuffer()),
+  }));
+  return { ...placeholder, preparation, encodePromise: preparation.promise };
 }
 
 export function isComposerImageFile(file: File): boolean {
@@ -263,7 +304,7 @@ export async function awaitComposerImages(
     return images;
   }
   const resolved = await Promise.all(
-    images.map((image) => image.encodePromise ?? Promise.resolve(image))
+    images.map((image) => image.preparation?.promise ?? image.encodePromise ?? Promise.resolve(image))
   );
   return images.map((placeholder, index) => {
     const replacement = resolved[index];
@@ -279,7 +320,7 @@ export async function awaitComposerImages(
 }
 
 export async function awaitComposerFiles(files: ComposerFile[]): Promise<ComposerFile[]> {
-  return Promise.all(files.map((file) => file.encodePromise ?? file));
+  return Promise.all(files.map((file) => file.preparation?.promise ?? file.encodePromise ?? file));
 }
 
 function optimisticInputImagesFromComposer(images: ComposerImage[]): InputImage[] {
@@ -304,7 +345,7 @@ export function revokeComposerImagePreview(image: ComposerImage | undefined): vo
 
 /** True when an image is still in its optimistic placeholder phase. */
 export function isComposerImagePending(image: ComposerImage): boolean {
-  return Boolean(image.encodePromise);
+  return Boolean(image.encodePromise) && !image.preparation?.error;
 }
 
 export function createComposerMessage(
