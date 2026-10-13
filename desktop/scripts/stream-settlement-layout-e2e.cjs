@@ -8,7 +8,7 @@ app.setPath('userData', fs.mkdtempSync(path.join(output, 'profile-')));
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, width: 1000, height: 900 });
   const report = [];
-  for (const width of [1000, 420]) for (const size of [14, 20]) for (const theme of ['light', 'dark']) {
+  for (const width of [1000, 420]) for (const size of [14, 15, 20]) for (const theme of ['light', 'dark']) {
     win.setContentSize(width, 900);
     await win.loadURL(`${process.env.WUU_FIXTURE_ORIGIN || 'http://localhost:5173'}/dev/message-flow-reading/?surface=lifecycle&lateTerminal=1&size=${size}&theme=${theme}`);
     const evaluate = fn => win.webContents.executeJavaScript(`(${fn.toString()})()`);

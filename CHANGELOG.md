@@ -46,6 +46,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Improve conversation reading rhythm with 15px UI and 13px code defaults,
+  tighter paragraph spacing and consistent file labels. Active process labels
+  use a lighter tone with a brief, intermittent highlight; settled summaries
+  retain readable contrast. Saved font preferences stay intact, and diff
+  previews follow the independent code font and size settings.
+
 - Plugin SDKs now overlap explicitly concurrency-safe tools in a bounded pool,
   while ordinary handlers and lifecycle transitions retain ordered barriers.
   Foreground subagent waits no longer serialize independent tasks, and a late
@@ -60,6 +66,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   require omission of the `store` field.
 
 ### Fixed
+
+- Preserve message-wide Markdown references and unique heading anchors across
+  streamed blocks. Mermaid fences keep their source and a stable container
+  through loading, settlement, and rendering errors.
 
 - Keep the iOS conversation loading indicator centered and fully visible before
   messages arrive, instead of squeezing it into a clipped capsule at the left edge.

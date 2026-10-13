@@ -8,7 +8,7 @@ export interface AppearancePreferences {
 }
 
 export const appearanceDefaults: AppearancePreferences = {
-  codeSize: 11,
+  codeSize: 13,
   uiFont: "", codeFont: "", motion: "system",
 };
 const storageKey = "wuu.appearance.v1";

@@ -106,7 +106,7 @@ machine-specific setup in user-level configuration.
   consistent typography, icon treatment, spacing, corners, and interaction states.
 - Use one UI font-size baseline for sidebars, prose, menus, settings, and controls.
   Keep code size independent across code blocks, editors, and diffs. Preserve saved
-  preferences. Current defaults are 14px UI and 11px code; these are reference
+  preferences. Current defaults are 15px UI and 13px code; these are reference
   values, not fixed sizes that override user preferences.
 - Establish hierarchy with position, spacing, type size, and weight. Default text
   should remain regular; use emphasis selectively. Keep secondary text readable.

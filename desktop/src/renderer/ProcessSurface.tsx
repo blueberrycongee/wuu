@@ -22,7 +22,7 @@ import {
   AUTO_FOLLOW_NESTED_SCROLL_ATTR,
   useAutoFollowScrollContainer,
 } from "./AutoFollowScroll";
-import { AnimatedProcessText } from "./ProcessTextMotion";
+import { AnimatedProcessText, ProcessLabel } from "./ProcessTextMotion";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
 import { TurnSourcesRow, TurnSourceChips } from "./TurnSourcesRow";
 import { collectTurnArtifacts } from "./ArtifactOutputs";
@@ -363,11 +363,10 @@ export function ProcessSurface({
         provider={provider}
         model={model}
       />
-      <span
-        className={`process-surface-summary-text${
-          processEntryActive ? " wuu-live-text-wave" : ""
-        }`}
-        data-text={summaryText}
+      <ProcessLabel
+        className="process-surface-summary-text"
+        active={processEntryActive}
+        text={summaryText}
       >
         {useCondensedSummary ? (
           <AnimatedProcessText
@@ -400,7 +399,7 @@ export function ProcessSurface({
             />
           </span>
         ) : null}
-      </span>
+      </ProcessLabel>
     </span>
   );
 

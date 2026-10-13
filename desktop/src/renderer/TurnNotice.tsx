@@ -8,7 +8,7 @@ import { formatCurrentNumber, translateCurrent as t } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
 import { ProcessSurfaceMascot } from "./ProcessSurface";
-import { useLiveTextWave } from "./LiveTextWave";
+import { ProcessLabel } from "./ProcessTextMotion";
 import { CollapsibleDetails } from "./CollapsibleMotion";
 import type { TurnStreamStatus } from "./AppState";
 import type { SettingsPage } from "./SettingsView";
@@ -50,7 +50,6 @@ export function SystemEventNotice({
   const summaryText = event.detail
     ? `${event.label} · ${event.detail}`
     : event.label;
-  const waveRef = useLiveTextWave<HTMLSpanElement>(inProgress);
   const hasExpandedDetail = Boolean(event.expandedDetail);
   return (
     <aside
@@ -65,10 +64,10 @@ export function SystemEventNotice({
             {inProgress ? (
               <ProcessSurfaceMascot active activity="idle" />
             ) : null}
-            <span
-              ref={waveRef}
-              className={`process-surface-summary-text system-event-copy${inProgress ? " wuu-live-text-wave" : ""}`}
-              data-text={summaryText}
+            <ProcessLabel
+              className="process-surface-summary-text system-event-copy"
+              active={inProgress}
+              text={summaryText}
             >
               <span className="process-surface-segment system-event-title">
                 {event.label}
@@ -81,7 +80,7 @@ export function SystemEventNotice({
                   </span>
                 </>
               ) : null}
-            </span>
+            </ProcessLabel>
           </span>
         }
         disabled={!hasExpandedDetail}
@@ -489,7 +488,6 @@ export function ContextCompactionNotice({
   const expandedDetail = failed ? normalized : summary || (recognizedOutcome ? "" : normalized);
   const hasSummary = !inProgress && Boolean(expandedDetail);
   const [expanded, setExpanded] = useState(false);
-  const waveRef = useLiveTextWave<HTMLSpanElement>(inProgress);
   const handleToggle = (
     event: React.SyntheticEvent<HTMLDetailsElement>,
   ): void => {
@@ -516,10 +514,10 @@ export function ContextCompactionNotice({
                 <ProcessSurfaceMascot active activity="compact" />
               </span>
             ) : null}
-            <span
-              ref={waveRef}
-              className={`process-surface-summary-text context-compaction-copy${inProgress ? " wuu-live-text-wave" : ""}`}
-              data-text={title}
+            <ProcessLabel
+              className="process-surface-summary-text context-compaction-copy"
+              active={inProgress}
+              text={title}
             >
               <span className="process-surface-segment context-compaction-title">
                 {title}
@@ -532,7 +530,7 @@ export function ContextCompactionNotice({
                   </span>
                 </>
               ) : null}
-            </span>
+            </ProcessLabel>
           </span>
         }
         disabled={!hasSummary}

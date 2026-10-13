@@ -44,6 +44,8 @@
   --reasoning-stream-cursor-color: var(--gray-500);
   --turn-process-entry-color: var(--ink-tertiary);
   --process-control-color-fallback: var(--ink-tertiary);
+  --process-active-color: color-mix(in srgb, var(--ink-soft) 39%, var(--paper));
+  --process-active-highlight: var(--ink-muted);
   --activity-toggle-hover-color: var(--gray-650);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-600));
   --activity-detail-color: var(--wuu-color-text-muted, var(--gray-550));
@@ -608,8 +610,8 @@
   overflow: hidden;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  line-height: 1.2;
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -984,8 +986,9 @@
   border-radius: var(--radius-sm);
   background: var(--message-file-bg);
   color: var(--message-file-fg);
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
 }
 
 .message-file .icon {
@@ -2429,12 +2432,17 @@
   border: 0;
   overflow: visible;
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink-tertiary);
   cursor: default;
   font-size: var(--conversation-process-font-size);
   font-weight: var(--conversation-process-font-weight);
   line-height: var(--conversation-process-line-height);
   list-style: none;
+}
+
+/* Transient activity stays quiet while completed summaries remain readable. */
+.process-surface-row.is-live-gray {
+  color: var(--process-active-color);
 }
 
 .process-surface-fold > .process-surface-row {
@@ -2546,8 +2554,8 @@
   margin-right: 2px;
 }
 
-/* Mask the actual glyphs so segmented labels and changing counts stay aligned.
- * The mascot sits outside this wrapper and keeps its normal contrast. */
+/* Keep segmented labels and changing counts aligned. Only the active process
+ * label receives the sweep; completed summaries retain their steady ink. */
 .process-surface-summary-text {
   --process-segment-gap: 8px;
   --process-segment-inner-gap: 4px;
@@ -2559,46 +2567,60 @@
   overflow: hidden;
 }
 
-.process-surface-summary-text.wuu-live-text-wave {
-  mask-image: linear-gradient(
-    90deg,
-    currentColor calc(50% - 60px),
-    color-mix(in srgb, currentColor 15%, transparent) 50%,
-    currentColor calc(50% + 60px)
-  );
-  mask-size: calc(200% + 120px) 100%;
-  mask-repeat: no-repeat;
-  animation: process-summary-soft-wave 2s linear infinite;
+.process-label {
+  position: relative;
 }
 
-.process-surface-summary-text.wuu-live-text-wave::after {
+/* The base children keep their original flex positions and selection. */
+.process-label-content {
+  display: contents;
+}
+
+.process-label-highlight {
+  position: absolute;
+  inset: 0;
+  display: inherit;
+  align-items: inherit;
+  gap: inherit;
+  overflow: hidden;
+  color: var(--process-active-highlight);
+  pointer-events: none;
+  user-select: none;
+  mask-image: linear-gradient(
+    90deg,
+    transparent calc(50% - 30px),
+    #000 50%,
+    transparent calc(50% + 30px)
+  );
+  mask-size: calc(200% + 60px) 100%;
+  mask-position: 100% 50%;
+  mask-repeat: no-repeat;
+  animation: process-summary-soft-wave 4s linear 600ms infinite;
+}
+
+/* The highlight has the same segmented layout as the source, and is hidden
+ * from assistive technology. Never paint a second flat data-text string. */
+.process-label.wuu-live-text-wave::after {
   content: none;
   animation: none;
 }
 
 @keyframes process-summary-soft-wave {
   from { mask-position: 100% 50%; }
-  to { mask-position: 0% 50%; }
+  25%, to { mask-position: 0% 50%; }
 }
 
-:root[data-renderer-hidden] .process-surface-summary-text.wuu-live-text-wave {
-  animation-play-state: paused;
-}
-
-:root[data-stream-following] .process-surface-summary-text.wuu-live-text-wave {
+:root[data-renderer-hidden] .process-label-highlight,
+:root[data-stream-following] .process-label-highlight,
+.cached-conversation-pane[data-active="false"] .process-label-highlight {
+  display: none;
   animation: none;
-  mask-image: none;
-}
-
-.cached-conversation-pane[data-active="false"] .process-surface-summary-text.wuu-live-text-wave {
-  animation: none;
-  mask-image: none;
 }
 
 @container style(--motion-reduced: 1) {
-  .process-surface-summary-text.wuu-live-text-wave {
+  .process-label-highlight {
+    display: none;
     animation: none;
-    mask-image: none;
   }
 }
 
@@ -3514,7 +3536,7 @@
 
 .rich-code-block {
   --rich-code-padding-block: 10px;
-  --rich-code-line-height: 1.5;
+  --rich-code-line-height: var(--appearance-code-line-height);
   /* Label, code and copy glyph share the card inset measured from the outer
    * edge, the same axis as composer text; the 1px is the frame. */
   --rich-code-inset: calc(var(--card-padding) - 1px);
@@ -3552,7 +3574,7 @@
 .rich-code-block--no-header .rich-code-copy {
   position: absolute;
   /* Center the action on the first code line, including custom code sizes. */
-  top: calc(var(--rich-code-padding-block) + (var(--appearance-code-size, 11px) * var(--rich-code-line-height) - 24px) / 2);
+  top: calc(var(--rich-code-padding-block) + (var(--rich-code-line-height) - 24px) / 2);
   right: calc(var(--rich-code-inset) - var(--rich-code-copy-glyph-offset));
   margin-left: 0;
   z-index: 1;
@@ -3930,6 +3952,11 @@
 }
 
 .rich-mermaid {
+  /* Retain the ready diagram's footprint while rendering or showing an error. */
+  width: 100%;
+  height: 360px;
+  min-width: 0;
+  box-sizing: border-box;
   overflow: auto;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
@@ -3948,11 +3975,15 @@
   appearance: none;
   display: grid;
   width: 100%;
-  height: 360px;
+  height: 100%;
+  min-height: 0;
   box-sizing: border-box;
   place-items: center;
   overflow: hidden;
-  margin-inline: auto;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
   color: inherit;
   cursor: zoom-in;
   font: inherit;
@@ -3972,15 +4003,25 @@
 
 .rich-mermaid-loading,
 .rich-mermaid-error {
-  color: var(--ink-tertiary);
+  min-height: 100%;
+  color: var(--ink-soft);
   font-size: var(--font-ui);
+}
+
+.rich-mermaid-loading {
+  display: grid;
+  place-items: center;
+}
+
+.rich-mermaid[data-mermaid-state="error"] {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
 }
 
 .rich-mermaid-error {
   display: grid;
+  align-content: start;
   gap: 10px;
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
   color: var(--danger);
 }
 
@@ -4034,6 +4075,10 @@
   user-select: none;
 }
 
+.turn-reasoning-summary:has(> .turn-reasoning-summary-text.is-live-gray) {
+  color: var(--process-active-color);
+}
+
 .turn-reasoning-summary::-webkit-details-marker {
   display: none;
 }
@@ -4055,10 +4100,6 @@
   flex: 0 1 auto;
   min-width: 0;
 }
-
-/* (the overlay, keyframes, and reduced-motion handling for
-   `.turn-reasoning-summary-text.is-streaming` live with the unified
-   process-surface shimmer selectors above) */
 
 .turn-reasoning-chevron {
   flex: 0 0 auto;
@@ -4943,9 +4984,9 @@ pre {
   overflow: auto;
   padding: var(--compact-padding-block) 0;
   background: var(--paper);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.55;
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: var(--appearance-code-line-height);
 }
 
 .tool-diff-preview-summary {
@@ -4968,7 +5009,7 @@ pre {
 
 .tool-diff-line {
   display: grid;
-  grid-template-columns: 36px 36px 1fr;
+  grid-template-columns: repeat(2, calc(5ch + 16px)) minmax(0, 1fr);
   min-width: 0;
 }
 
@@ -5056,9 +5097,10 @@ pre {
   min-width: 0;
   overflow: hidden;
   color: var(--ink);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: var(--font-sm);
-  font-weight: 400;
+  font-family: inherit;
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5384,7 +5426,7 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
   padding: 18px;
   overflow: auto;
   color: var(--ink);
-  font: var(--appearance-code-size, 11px)/1.55 var(--font-mono);
+  font: var(--appearance-code-size)/var(--appearance-code-line-height) var(--font-mono);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -5676,13 +5718,6 @@ button.turn-edit-summary-overview:focus-visible {
   width: var(--icon-size);
   height: var(--icon-size);
   color: var(--ink-muted);
-}
-
-.turn-edit-summary-card[data-wuu-component="turn-artifacts"] .turn-output-summary-name {
-  font-family: inherit;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  line-height: 1.35;
 }
 
 .turn-edit-summary-stats {

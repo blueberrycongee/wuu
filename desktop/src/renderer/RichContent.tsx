@@ -1,10 +1,14 @@
 import { PENDING_STREAM_LINK } from "./StreamingMarkdownMend";
 import { hostSupports } from "./HostCapabilities";
-import { Children, cloneElement, isValidElement, memo, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Children, createContext, useContext, cloneElement, isValidElement, memo, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Github, Globe2, Mail } from "./WuuIcons";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+import { toMarkdown } from "mdast-util-to-markdown";
+import type { Definition, Root as MarkdownRoot } from "mdast";
 import remarkCjkAutolinkBoundary from "./remarkCjkAutolinkBoundary";
 import remarkCjkStrongBoundary from "./remarkCjkStrongBoundary";
 import { useImagePreview } from "./ImagePreview";
@@ -34,6 +38,8 @@ import {
   highlightCode,
   shouldHighlightCode,
 } from "./WorkspaceCodeHighlight";
+
+const markdownRemarkPlugins = [remarkGfm, remarkCjkAutolinkBoundary, remarkCjkStrongBoundary];
 
 type RichContentProps = {
   text?: string;
@@ -66,6 +72,8 @@ export type RichTextRenderer = (
 type RichTextRenderOptions = {
   renderText?: RichTextRenderer;
 };
+
+const MermaidStreamingContext = createContext(false);
 
 type MermaidState =
   | { status: "rendering" }
@@ -173,6 +181,7 @@ function MarkdownContentView({
   mermaidStreaming = false,
   allowRawHtml = false,
   sourceMapping = false,
+  documentContext,
 }: {
   text: string;
   cwd?: string;
@@ -185,22 +194,25 @@ function MarkdownContentView({
   mermaidStreaming?: boolean;
   allowRawHtml?: boolean;
   sourceMapping?: boolean;
+  documentContext?: MarkdownFragmentContext;
 }): JSX.Element {
   const components = useMemo(
-    () => markdownComponents(cwd, renderText, renderMermaid, mermaidStreaming, onOpenFile, onOpenURL, sourceMapping),
-    [cwd, renderText, renderMermaid, mermaidStreaming, onOpenFile, onOpenURL, sourceMapping]
+    () => markdownComponents(cwd, renderText, renderMermaid, onOpenFile, onOpenURL, sourceMapping),
+    [cwd, renderText, renderMermaid, onOpenFile, onOpenURL, sourceMapping]
   );
   return (
-    <ReactMarkdown
-      components={components}
-      // CommonMark links and GFM autolinks are the only text-to-link rules.
-      // File mentions stay literal; file navigation uses explicit link targets.
-      remarkPlugins={[remarkGfm, remarkCjkAutolinkBoundary, remarkCjkStrongBoundary]}
-      rehypePlugins={[...(allowRawHtml ? [rehypeRaw] : []), rehypeHeadingIDs, ...(sourceMapping ? [rehypeFileSelectionMapping] : [])]}
-      urlTransform={richMarkdownUrlTransform}
-    >
-      {text}
-    </ReactMarkdown>
+    <MermaidStreamingContext.Provider value={mermaidStreaming}>
+      <ReactMarkdown
+        components={components}
+        // CommonMark links and GFM autolinks are the only text-to-link rules.
+        // File mentions stay literal; file navigation uses explicit link targets.
+        remarkPlugins={markdownRemarkPlugins}
+        rehypePlugins={[...(allowRawHtml ? [rehypeRaw] : []), [rehypeHeadingIDs, documentContext?.headingIDs], ...(sourceMapping ? [rehypeFileSelectionMapping] : [])]}
+        urlTransform={richMarkdownUrlTransform}
+      >
+        {documentContext?.referenceDefinitions ? `${documentContext.referenceDefinitions}\n${text}` : text}
+      </ReactMarkdown>
+    </MermaidStreamingContext.Provider>
   );
 }
 
@@ -215,7 +227,6 @@ function markdownComponents(
   cwd: string | undefined,
   renderText: RichTextRenderer | undefined,
   renderMermaid: boolean,
-  mermaidStreaming: boolean,
   onOpenFile: ((path: string) => void) | undefined,
   onOpenURL: ((url: string, event?: ReactMouseEvent<HTMLElement>) => void) | undefined,
   sourceMapping: boolean,
@@ -317,15 +328,7 @@ function markdownComponents(
             STREAM_CURSOR_SENTINEL_PATTERN,
             "",
           );
-          return (
-            <MermaidDiagram
-              // Keep the trailing newline while streaming: it is the only
-              // signal that the last line is complete, which lets the
-              // partial-line render skip just the truly unfinished line.
-              code={mermaidStreaming ? diagramCode : diagramCode.replace(/\n$/, "")}
-              streaming={mermaidStreaming}
-            />
-          );
+          return <MermaidDiagram code={diagramCode} />;
         }
         const displayedCode = reactNodeText(child.props.children);
         const code = displayedCode.replace(/\n$/, "");
@@ -810,9 +813,10 @@ type MarkdownASTNode = {
   children?: MarkdownASTNode[];
 };
 
-function rehypeHeadingIDs() {
+function rehypeHeadingIDs(headingIDs?: readonly string[]) {
   return (tree: MarkdownASTNode): void => {
-    const slugCounts = new Map<string, number>();
+    const usedIDs = new Set<string>();
+    let headingIndex = 0;
     visitMarkdownAST(tree, (node) => {
       if (!/^h[1-6]$/.test(node.tagName ?? "")) {
         return;
@@ -821,14 +825,110 @@ function rehypeHeadingIDs() {
       if (!baseSlug) {
         return;
       }
-      const count = slugCounts.get(baseSlug) ?? 0;
-      slugCounts.set(baseSlug, count + 1);
+      const id = headingIDs?.[headingIndex++] ?? uniqueHeadingID(baseSlug, usedIDs);
       node.properties = {
         ...node.properties,
-        id: count === 0 ? baseSlug : `${baseSlug}-${count}`,
+        id,
       };
     });
   };
+}
+
+function uniqueHeadingID(base: string, used: Set<string>): string {
+  let id = base;
+  let suffix = 0;
+  while (used.has(id)) id = `${base}-${++suffix}`;
+  used.add(id);
+  return id;
+}
+
+// Use the same CommonMark/GFM parser and text repairs as the render path.
+// Metadata is cached per frozen fragment; ordinary deltas only parse the tail.
+const markdownMetadataParser = unified()
+  .use(remarkParse)
+  .use(markdownRemarkPlugins);
+
+type MarkdownFragmentMetadata = {
+  definitionSource: string;
+  headingSlugs: string[];
+  hasMermaid: boolean;
+  hasContent: boolean;
+};
+
+export type MarkdownFragmentContext = {
+  referenceDefinitions: string;
+  headingIDs: readonly string[];
+  hasMermaid: boolean;
+  hasContent: boolean;
+};
+
+type MarkdownDocumentFragment = {
+  text: string;
+  parsed: MarkdownFragmentMetadata;
+  resolved: MarkdownFragmentMetadata;
+  context: MarkdownFragmentContext;
+};
+
+export type MarkdownDocument = {
+  fragments: MarkdownDocumentFragment[];
+};
+
+export function inspectMarkdownFragment(text: string): MarkdownFragmentMetadata {
+  const tree = markdownMetadataParser.runSync(markdownMetadataParser.parse(text), text) as MarkdownRoot;
+  const definitions: Definition[] = [];
+  const headingSlugs: string[] = [];
+  let hasMermaid = false;
+  visitMarkdownAST(tree, (node) => {
+    if (node.type === "definition") definitions.push(node as Definition);
+    if (node.type === "heading") {
+      const slug = markdownHeadingSlug(markdownSourceText(node));
+      if (slug) headingSlugs.push(slug);
+    }
+    if (node.type === "code" && "lang" in node && typeof node.lang === "string") {
+      hasMermaid ||= node.lang.toLowerCase() === "mermaid";
+    }
+  });
+  return {
+    definitionSource: definitions.length ? toMarkdown({ type: "root", children: definitions }) : "",
+    headingSlugs,
+    hasMermaid,
+    hasContent: tree.children.some(node => node.type !== "definition"),
+  };
+}
+
+function markdownSourceText(node: MarkdownASTNode): string {
+  if (node.type === "text" || node.type === "inlineCode") return node.value ?? "";
+  return node.children?.map(markdownSourceText).join("") ?? "";
+}
+
+/** Share reference definitions and heading IDs without replacing stable DOM. */
+export function createMarkdownDocument(texts: readonly string[], previous?: MarkdownDocument): MarkdownDocument {
+  const parsed = texts.map((text, index) => {
+    const old = previous?.fragments[index];
+    return old?.text === text ? old.parsed : inspectMarkdownFragment(text);
+  });
+  // Prefix definitions so an earlier definition wins even when a later block
+  // repeats its identifier. Serialization preserves escaped labels and titles,
+  // including definitions nested in lists or block quotes.
+  const referenceDefinitions = parsed.map(fragment => fragment.definitionSource).filter(Boolean).join("\n");
+  const usedIDs = new Set<string>();
+  const fragments = texts.map((text, index): MarkdownDocumentFragment => {
+    const old = previous?.fragments[index];
+    const sameDefinitions = old?.context.referenceDefinitions === referenceDefinitions;
+    const resolved = old?.parsed === parsed[index] && sameDefinitions
+      ? old.resolved
+      : referenceDefinitions ? inspectMarkdownFragment(`${referenceDefinitions}\n${text}`) : parsed[index];
+    const headingIDs = resolved.headingSlugs.map(slug => uniqueHeadingID(slug, usedIDs));
+    const context = sameDefinitions
+      && old.context.hasMermaid === resolved.hasMermaid
+      && old.context.hasContent === resolved.hasContent
+      && old.context.headingIDs.length === headingIDs.length
+      && old.context.headingIDs.every((id, position) => id === headingIDs[position])
+      ? old.context
+      : { referenceDefinitions, headingIDs, hasMermaid: resolved.hasMermaid, hasContent: resolved.hasContent };
+    return { text, parsed: parsed[index], resolved, context };
+  });
+  return { fragments };
 }
 
 function visitMarkdownAST(node: MarkdownASTNode, visitor: (node: MarkdownASTNode) => void): void {
@@ -1025,21 +1125,11 @@ function base64URL(value: string): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function MermaidDiagram({
-  code,
-  streaming = false,
-}: {
-  code: string;
-  /**
-   * While the diagram source is still streaming (an open fence in the live
-   * tail), render attempts happen offscreen on a debounced cadence and only
-   * successful results are committed to the visible tree. Failed partial
-   * renders are dropped silently so the last coherent diagram stays visible
-   * and no error flashes into the stream; once this flips off, the final
-   * render runs immediately and errors are surfaced as before.
-   */
-  streaming?: boolean;
-}): JSX.Element {
+function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
+  // Context keeps the Markdown component types stable as the live tail settles.
+  // Recreating the custom `pre` component would remount an already drawn diagram.
+  const streaming = useContext(MermaidStreamingContext);
+  const code = streaming ? source : source.replace(/\n$/, "");
   const { locale, t } = useI18n();
   const { openPreview } = useImagePreview();
   const reactID = useId();
@@ -1156,35 +1246,29 @@ function MermaidDiagram({
     };
   }, [code, diagramID, locale, streaming, theme]);
 
-  if (state.status === "rendered") {
-    return (
-      <button
-        type="button"
-        className="rich-mermaid rich-mermaid-diagram"
-        aria-label={t("rich.enlargeDiagram")}
-        title={t("rich.enlargeDiagram")}
-        onClick={() => openPreview({
-          svg: state.svg,
-          alt: t("rich.mermaidDiagram"),
-          title: t("rich.mermaidDiagram"),
-        })}
-        dangerouslySetInnerHTML={{ __html: state.svg }}
-      />
-    );
-  }
-  if (state.status === "error") {
-    return (
-      <div className="rich-mermaid rich-mermaid-error">
-        <span>{state.message}</span>
-        <pre>
-          <code>{code}</code>
-        </pre>
-      </div>
-    );
-  }
   return (
-    <div className="rich-mermaid rich-mermaid-loading">
-      {t("rich.renderingDiagram")}
+    <div className="rich-mermaid" data-mermaid-state={state.status} aria-busy={state.status === "rendering"}>
+      {state.status === "rendered" ? (
+        <button
+          type="button"
+          className="rich-mermaid-diagram"
+          aria-label={t("rich.enlargeDiagram")}
+          title={t("rich.enlargeDiagram")}
+          onClick={() => openPreview({
+            svg: state.svg,
+            alt: t("rich.mermaidDiagram"),
+            title: t("rich.mermaidDiagram"),
+          })}
+          dangerouslySetInnerHTML={{ __html: state.svg }}
+        />
+      ) : state.status === "error" ? (
+        <div className="rich-mermaid-error">
+          <span>{state.message}</span>
+          <pre><code>{code}</code></pre>
+        </div>
+      ) : (
+        <div className="rich-mermaid-loading" role="status">{t("rich.renderingDiagram")}</div>
+      )}
     </div>
   );
 }

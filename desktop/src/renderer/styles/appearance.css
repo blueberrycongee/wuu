@@ -6,7 +6,7 @@
   --tracking-ui: normal;
   --tracking-prose: normal;
   letter-spacing: var(--tracking-ui);
-  --font-ui: var(--conversation-message-font-size, 14.5px);
+  --font-ui: var(--conversation-message-font-size);
   /* Derived roles snap to whole pixels: the saved UI size may be a half step,
    * and fractional derived sizes put every line box and 1px edge between
    * device pixels. Icons snap to even sizes so they center in even boxes. */
@@ -21,7 +21,8 @@
   --font-hero: round(nearest, calc(var(--font-ui) * 32 / 14), 1px);
   --font-mono: var(--appearance-code-font, ui-monospace, monospace);
   --conversation-message-font-family: var(--appearance-ui-font, system-ui, sans-serif);
-  --appearance-code-size: 11px;
+  --appearance-code-size: 13px;
+  --appearance-code-line-height: round(nearest, calc(var(--appearance-code-size) * 1.5), 1px);
   --icon-size: round(nearest, clamp(16px, calc(var(--font-ui) * 16 / 14), 20px), 2px);
   --icon-size-sm: round(nearest, clamp(14px, calc(var(--font-ui) * 14 / 14), 18px), 2px);
   --icon-size-xs: round(nearest, clamp(12px, calc(var(--font-ui) * 12 / 14), 16px), 2px);
@@ -113,7 +114,7 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .workspace-markdown-reading .rich-content pre.rich-code,
 .workspace-markdown-reading .rich-content pre.rich-code code {
   font-family: var(--appearance-code-font, ui-monospace, monospace);
-  font-size: var(--appearance-code-size, 11px);
+  font-size: var(--appearance-code-size);
   letter-spacing: normal;
 }
 /* Grid-based editors and terminal cells must not inherit prose tracking. */

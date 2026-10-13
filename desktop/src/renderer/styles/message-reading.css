@@ -197,7 +197,7 @@
   text-wrap: balance;
 }
 
-/* Each level is a visible step above the next (22/18/16 over 14.5 body) and
+/* Each level is a visible step above the next (23/19/17 over 15px body) and
  * lands on a whole pixel, so hierarchy does not rest on weight alone. */
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h1 { font-size: round(nearest, 1.5em, 1px); }
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-heading--h2 { font-size: round(nearest, 1.25em, 1px); }
