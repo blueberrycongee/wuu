@@ -1,13 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { AppContextSettings, AppContextSnapshot, AppContextState } from "../shared/protocol";
+import type { AppContextSnapshot, AppContextState } from "../shared/protocol";
 import type { ComposerFile, ComposerImage } from "./ComposerMessages";
 import { composerFileFromFile } from "./ComposerMessages";
 import { Modal } from "./Modal";
 import { useI18n } from "./i18n";
 import "./styles/app-context.css";
-
-const openEvent = "wuu:open-app-snapshot";
-export function openAppContextSetup(): void { window.dispatchEvent(new Event(openEvent)); }
 
 type DraftTarget = { add: (image: ComposerImage, context: ComposerFile) => void };
 let currentDraftTarget: DraftTarget | undefined;
@@ -29,7 +26,6 @@ export function AppContextCaptureHost(): JSX.Element | null {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<AppContextState>();
-  const [settings, setSettings] = useState<AppContextSettings>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const refreshGeneration = useRef(0);
@@ -37,28 +33,25 @@ export function AppContextCaptureHost(): JSX.Element | null {
   useEffect(() => {
     if (!window.wuu.getAppContextState) return;
     let active = true;
-    const refresh = async (explicit = false): Promise<void> => {
+    const refresh = async (): Promise<void> => {
       const generation = ++refreshGeneration.current;
       try {
         const next = await window.wuu.getAppContextState!();
         if (!active || generation !== refreshGeneration.current) return;
         setState(next);
-        if (explicit) { setSettings(next.settings); setError(""); }
-        if (explicit || next.phase === "ready" || next.phase === "error") setOpen(true);
-      } catch (reason) {
-        if (active && generation === refreshGeneration.current && explicit) { setError((reason as Error).message); setOpen(true); }
+        setOpen(next.phase === "ready" || next.phase === "error");
+      } catch {
+        // Background reads can outlive the main-window owner. Capture failures
+        // are delivered through the error phase, which opens the preview.
       }
     };
-    const show = (): void => { void refresh(true); };
-    window.addEventListener(openEvent, show);
     const unsubscribe = window.wuu.onAppContextChanged?.(() => { void refresh(); });
     void refresh();
-    return () => { active = false; window.removeEventListener(openEvent, show); unsubscribe?.(); };
+    return () => { active = false; unsubscribe?.(); };
   }, []);
 
   if (!open) return null;
   const snapshot = state?.snapshot;
-  const workingSettings = settings ?? state?.settings;
   const close = (): void => {
     if (busy) return;
     const generation = ++refreshGeneration.current;
@@ -75,10 +68,6 @@ export function AppContextCaptureHost(): JSX.Element | null {
     try { await operation(); } catch (reason) { setError((reason as Error).message); }
     finally { setBusy(false); }
   };
-  const save = (): void => { void perform(async () => {
-    const next = await window.wuu.updateAppContextSettings!(workingSettings!);
-    setState(next); setSettings(next.settings);
-  }); };
   const add = (): void => { void perform(async () => {
     if (!snapshot) return;
     const destination = currentDraftTarget;
@@ -100,8 +89,7 @@ export function AppContextCaptureHost(): JSX.Element | null {
       panelClassName="app-context-dialog" footer={(
         <>
           <button data-app-context-action="cancel" className="settings-button settings-button-ghost" disabled={busy} onClick={close}>{t("common.cancel")}</button>
-          {snapshot ? <button data-app-context-action="add" className="settings-button settings-button-primary" disabled={busy} onClick={add}>{t("composer.appContext.add")}</button>
-            : workingSettings && state?.available ? <button data-app-context-action="save" className="settings-button settings-button-primary" disabled={busy} onClick={save}>{t("common.save")}</button> : null}
+          {snapshot ? <button data-app-context-action="add" className="settings-button settings-button-primary" disabled={busy} onClick={add}>{t("composer.appContext.add")}</button> : null}
         </>
       )}>
       {error || state?.error ? <p className="app-context-error" role="alert">{error || state?.error}</p> : null}
@@ -114,25 +102,6 @@ export function AppContextCaptureHost(): JSX.Element | null {
           {snapshot.text_status === "unavailable" ? <p>{t("composer.appContext.textUnavailable")}</p> : null}
           {snapshot.text_status === "truncated" ? <p>{t("composer.appContext.textTruncated")}</p> : null}
           {snapshot.available_text ? <details><summary>{t("composer.appContext.availableText")}</summary><pre>{snapshot.available_text}</pre></details> : null}
-        </div>
-      ) : !state?.available ? <p>{t("composer.appContext.unavailable")}</p> : workingSettings ? (
-        <div className="app-context-settings">
-          <p>{t("composer.appContext.instructions")}</p>
-          <label><input type="checkbox" checked={workingSettings.enabled} disabled={busy}
-            onChange={event => setSettings({ ...workingSettings, enabled: event.target.checked })} /> {t("composer.appContext.enable")}</label>
-          <label>{t("composer.appContext.shortcut")}<input className="settings-input" value={workingSettings.shortcut} disabled={busy}
-            onChange={event => setSettings({ ...workingSettings, shortcut: event.target.value })} spellCheck={false} /></label>
-          <p className="app-context-hint">{t("composer.appContext.shortcutHint")}</p>
-          <label><input type="checkbox" checked={workingSettings.include_text} disabled={busy}
-            onChange={event => setSettings({ ...workingSettings, include_text: event.target.checked })} /> {t("composer.appContext.includeText")}</label>
-          <p className="app-context-hint">{t("composer.appContext.textHint")}</p>
-          <div className="app-context-permissions">
-            <button className="settings-button" disabled={busy} onClick={() => void perform(async () => { setState(await window.wuu.requestAppContextPermission!("screen")); })}>{t("composer.appContext.screenPermission")}</button>
-            {workingSettings.include_text ? <button className="settings-button" disabled={busy} onClick={() => void perform(async () => { setState(await window.wuu.requestAppContextPermission!("text")); })}>{t("composer.appContext.textPermission")}</button> : null}
-          </div>
-          <p className="app-context-hint">{t("composer.appContext.permissionHint")}</p>
-          {state.phase === "capturing" ? <p role="status">{t("composer.appContext.capturing", { app: state.app_name ?? "" })}</p> : null}
-          {state.settings.enabled && state.shortcut_registered ? <p role="status">{t("composer.appContext.ready", { shortcut: state.settings.shortcut })}</p> : null}
         </div>
       ) : null}
     </Modal>

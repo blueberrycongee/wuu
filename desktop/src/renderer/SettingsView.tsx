@@ -83,6 +83,7 @@ import { BackgroundSettings } from "./background/BackgroundSettings";
 import { DefaultEnvironmentRow, ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
 import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot, type SettingsStatusTone } from "./SettingsSection";
+import { AppContextSettingsSection } from "./AppContextSettingsSection";
 import { toastErrorMessage } from "./Toast";
 import type { ArchiveDeletionState } from "./useArchiveDeletion";
 import { DefaultEngineRow, EngineSettingsSection } from "./EngineSettingsSection";
@@ -1318,6 +1319,8 @@ function SettingsGeneralPage({
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
+
+      <AppContextSettingsSection />
 
       <SettingsSection title={t("settings.about")} testID="settings-about">
         <SettingsGroup>

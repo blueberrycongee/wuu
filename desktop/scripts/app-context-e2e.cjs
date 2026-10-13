@@ -72,7 +72,12 @@ async function waitFor(win, fn) {
 }
 async function capture(win, name) {
   if (!screenshots) return;
-  await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await evaluate(win, async () => {
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await Promise.all(document.getAnimations().filter(animation =>
+      animation.playState === 'running' && Number.isFinite(animation.effect.getComputedTiming().endTime)
+    ).map(animation => animation.finished.catch(() => {})));
+  });
   // Background/cached panes intentionally pause animations. Only the visible
   // snapshot dialog and its scrim must finish entering; keep the wait bounded.
   await waitFor(win, () => {
@@ -113,15 +118,34 @@ app.whenReady().then(async () => {
     const input = document.querySelector('.composer textarea');
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Keep my existing draft');
     input.dispatchEvent(new Event('input', { bubbles: true }));
-    window.dispatchEvent(new Event('wuu:open-app-snapshot'));
   });
-  await waitFor(win, () => Boolean(document.querySelector('.app-context-settings')));
-  assert.equal(await evaluate(win, () => document.querySelector('.app-context-settings input[type="checkbox"]').checked), false);
-  await capture(win, 'setup-light');
-  await evaluate(win, () => document.querySelector('.app-context-settings input[type="checkbox"]').click());
-  await click(win, 'save');
-  await waitFor(win, () => document.querySelector('.app-context-settings [role="status"]')?.textContent.includes('Control+Alt+Space'));
-  await click(win, 'cancel');
+  await evaluate(win, () => document.querySelector('.sidebar-account-trigger').click());
+  await waitFor(win, () => Boolean(document.querySelector('[data-settings-page="providers"]')));
+  await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
+  await waitFor(win, () => Boolean(document.querySelector('.settings-nav-item')));
+  await evaluate(win, () => [...document.querySelectorAll('.settings-nav-item')].find(button => /^(General|常规)$/.test(button.textContent.trim())).click());
+  await waitFor(win, () => Boolean(document.querySelector('[data-testid="settings-app-context"] [role="switch"]:not(:disabled)')));
+  assert.equal(await evaluate(win, () => document.querySelector('[data-testid="settings-app-context"] [role="switch"]').getAttribute('aria-checked')), 'false');
+  await evaluate(win, () => document.querySelectorAll('[data-testid="settings-app-context"] [role="switch"]')[1].click());
+  await waitFor(win, async () => (await window.wuu.getAppContextState()).settings.include_text);
+  for (const [theme, width, size] of [['light', 1150, 15], ['dark', 1150, 15], ['light', 620, 20], ['dark', 620, 20]]) {
+    win.setContentSize(width, 900);
+    await win.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--font-ui', '${size}px');document.querySelector('[data-testid="settings-app-context"]').scrollIntoView({block:'center'});`);
+    await capture(win, `setup-${theme}-${width}-${size}`);
+  }
+  await evaluate(win, () => {
+    const input = document.querySelector('[data-testid="settings-app-context"] input');
+    input.focus();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Control+Alt+K');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await evaluate(win, () => document.querySelector('[data-testid="settings-app-context"] input').blur());
+  await waitFor(win, async () => (await window.wuu.getAppContextState()).settings.shortcut === 'Control+Alt+K');
+  await evaluate(win, () => document.querySelector('[data-testid="settings-app-context"] [role="switch"]').click());
+  await waitFor(win, async () => (await window.wuu.getAppContextState()).shortcut_registered);
+  await evaluate(win, () => document.querySelector('.settings-back-button').click());
+  win.setContentSize(1150, 900);
+  await evaluate(win, () => { document.documentElement.dataset.theme = 'light'; document.documentElement.style.setProperty('--font-ui', '15px'); });
   await waitFor(win, async () => (await window.wuu.getAppContextState()).phase === 'idle');
   publish(win, { ...state, phase: 'ready', snapshot });
   await waitFor(win, () => Boolean(document.querySelector('.app-context-preview img')));
@@ -282,4 +306,12 @@ app.whenReady().then(async () => {
   assert.deepEqual(errors, []);
   fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report)); console.log(`Evidence: ${output}`); app.exit(0);
-}).catch(error => { console.error(error); app.exit(1); });
+}).catch(async error => {
+  console.error(error);
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    console.error(await evaluate(win, () => [...document.querySelectorAll('[role="alert"]')].map(element => element.textContent)));
+    await capture(win, 'failure');
+  }
+  app.exit(1);
+});
