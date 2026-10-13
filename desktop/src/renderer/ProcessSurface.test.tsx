@@ -104,7 +104,7 @@ it.each([
 ])("keeps a single $name source disclosure reachable", ({ name, arguments: args, source }) => {
   const item: ThreadItem = { id: "source", type: "tool_call", name, status: "completed", arguments: JSON.stringify(args) };
   const { container } = render({ processItems: [item], streaming: false });
-  const details = container.querySelector<HTMLDetailsElement>(".program-tool-record");
+  const details = container.querySelector<HTMLDetailsElement>(".process-surface-fold");
   expect(details).not.toBeNull();
   act(() => {
     details!.open = true;

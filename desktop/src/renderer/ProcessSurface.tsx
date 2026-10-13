@@ -263,10 +263,12 @@ export function ProcessSurface({
   const toolSegments = buildToolActivityProcessSegments(toolItems);
   const hasReasoning = reasoningItems.length > 0;
   const hasMultipleTools = toolItems.length > 1;
+  const hasStandaloneDisclosure = toolItems.length === 1 && !hasReasoning
+    && ["set_session_workspace", "run_code", "exec"].includes(toolItems[0].name ?? "");
   const hasInspection = !hasReasoning && !hasMultipleTools
     && collectTurnArtifacts({ items: toolItems }).some(artifact => artifact.foldPreview);
   const hasWebActivity = sources.length > 0 || toolItems.some(item => ["websearch", "webfetch"].includes((item.name ?? "").toLowerCase().replaceAll("_", "")));
-  const hasDetails = hasReasoning || hasMultipleTools || hasInspection || hasWebActivity;
+  const hasDetails = hasReasoning || hasMultipleTools || hasInspection || hasWebActivity || hasStandaloneDisclosure;
   const detailRuns: ThreadItem[][] = [];
   for (const item of processItems) {
     if (!isToolActivityItem(item) && item.type !== "reasoning") continue;
@@ -403,13 +405,7 @@ export function ProcessSurface({
     </span>
   );
 
-  const hasStandaloneDisclosure = toolItems.length === 1 && !hasReasoning
-    && ["set_session_workspace", "run_code", "exec"].includes(toolItems[0].name ?? "");
-  const nativeFallback = hasStandaloneDisclosure ? (
-    <div className={className}>
-      <ToolActivityRow items={toolItems} streaming={streaming} />
-    </div>
-  ) : (
+  const nativeFallback = (
     <div className={className}>
       <ProcessSurfaceFold
         summary={summaryLine}
@@ -435,7 +431,9 @@ export function ProcessSurface({
         }}
       >
         {expanded ? <TurnSourceChips sources={sources} onOpen={onOpenURL} /> : null}
-        {detailRuns.map(items => items[0].type === "tool_call" ? (
+        {hasStandaloneDisclosure ? (
+          expanded ? <ToolActivityRow items={toolItems} streaming={streaming} detailsOnly /> : null
+        ) : detailRuns.map(items => items[0].type === "tool_call" ? (
           <div className="process-surface-tool-list" key={items[0].id}>
             <ToolActivityTimeline items={items} cwd={cwd} showInspectionPreviews={expanded} />
           </div>

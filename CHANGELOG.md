@@ -72,6 +72,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep plugin catalog switches and toolbar controls visually stable while enabling
   or disabling a plugin, while continuing to block duplicate changes.
 
+- Keep standalone and aggregated tool calls on the same process row, with an
+  activity-shaped mascot and gray highlighted labels. Code execution, commands,
+  and workspace switches retain one-click access to their details.
+
 - Forking a conversation from an assistant reply that streamed in the current
   session no longer fails with "fork target not found" after the model used
   several thinking blocks in one step.
