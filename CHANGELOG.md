@@ -93,6 +93,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Background browser activity no longer raises Wuu above another macOS app when its preview first appears. New or hidden previews wait for their Wuu window to regain focus; existing previews remain stable during focus changes.
+
 - Keep iOS pending-message context-menu previews opaque so conversation text
   cannot show through, and constrain their width in landscape.
 

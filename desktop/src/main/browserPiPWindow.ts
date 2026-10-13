@@ -302,6 +302,10 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     // Restore the preview from host visibility events, never by showing Wuu.
     const parentHidden = parent && (parent.isDestroyed() || !parent.isVisible() || parent.isMinimized());
     if (this.visible && !columnGone && !parentHidden) {
+      // On macOS, showing a native child orders its parent forward even with
+      // showInactive(). Defer a new presentation until the user returns to its
+      // host; an already-visible card stays put, including while it has focus.
+      if (!win.isVisible() && parent && !parent.isFocused()) return;
       this.mount();
       if (this.win !== win || win.isDestroyed()) return;
       if (!win.isVisible()) win.showInactive();
@@ -386,7 +390,7 @@ export class BrowserPiPSurface implements ObservationPiPHandle {
     if (win.isVisible()) win.hide();
     win.setParentWindow?.(parent && !parent.isDestroyed() ? parent : null);
     if (parent && !parent.isDestroyed()) {
-      const events = ["show", "hide", "minimize", "restore"] as const;
+      const events = ["show", "hide", "minimize", "restore", "focus"] as const;
       const syncVisibility = (): void => this.applyVisibility();
       for (const event of events) parent.on(event, syncVisibility);
       this.detachHostParent = () => {
