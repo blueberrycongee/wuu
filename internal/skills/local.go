@@ -116,7 +116,9 @@ func (s *localScan) directory(path string) ([]os.DirEntry, error) {
 	// The trailing separator and dot require a directory even during a rename
 	// race, instead of opening a FIFO substituted for the directory.
 	root, err := os.OpenRoot(filepath.Clean(path) + string(os.PathSeparator) + ".")
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+	// Unreadable roots are skipped like missing ones, matching earlier discovery.
+	// One locked directory must not hide every other skill, including bundled ones.
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, os.ErrPermission) {
 		return nil, nil
 	}
 	if err != nil {

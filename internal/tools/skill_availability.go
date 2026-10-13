@@ -91,7 +91,13 @@ func (t *Toolkit) PrepareModelStep(ctx context.Context, history []providers.Chat
 	}
 	items, err := catalog.refresh(ctx, true)
 	if err != nil {
-		return nil, err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		// A failed refresh must not stop the turn. Keep the admitted catalog;
+		// a later round boundary retries discovery.
+		providers.DebugLogf("refresh local skill catalog: %v", err)
+		return nil, nil
 	}
 	next := *catalog
 	next.skills = append([]skills.Skill(nil), items...)
