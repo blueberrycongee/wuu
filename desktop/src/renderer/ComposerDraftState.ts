@@ -20,6 +20,7 @@ import {
   isComposerImageFile,
   isComposerDocumentFile,
   revokeComposerImagePreview,
+  type ComposerAttachmentPreparation,
   type ComposerFile,
   type ComposerImage,
 } from "./ComposerMessages";
@@ -74,6 +75,29 @@ type ComposerAttachmentTargets = {
   onFileEncoded: (id: string, encoded?: ComposerFile) => void;
 };
 
+async function prepareComposerAttachment<T extends { id: string }>(
+  placeholder: T & { preparation: ComposerAttachmentPreparation<T> },
+  settle: (id: string, encoded?: T) => void,
+): Promise<void> {
+  const preparation = placeholder.preparation;
+  async function settleAttempt(): Promise<void> {
+    try {
+      settle(placeholder.id, await preparation.promise);
+    } catch {
+      // Keep the source and failed state available to drafts restored after a
+      // send failure. A dismissed slot is still protected by settleAttachment.
+      settle(placeholder.id, { ...placeholder, encodePromise: undefined, previewSrc: undefined });
+    }
+  }
+  preparation.retry = async () => {
+    if (!preparation.error) return;
+    preparation.restart();
+    settle(placeholder.id, { ...placeholder, encodePromise: preparation.promise, previewSrc: undefined });
+    await settleAttempt();
+  };
+  await settleAttempt();
+}
+
 export async function buildComposerAttachments(
   files: File[],
   targets: ComposerAttachmentTargets,
@@ -82,22 +106,12 @@ export async function buildComposerAttachments(
     ...files.filter(isComposerImageFile).map(async (file) => {
       const placeholder = composerImagePlaceholder(file);
       targets.onImagePlaceholder(placeholder);
-      try {
-        targets.onImageEncoded(placeholder.id, await placeholder.encodePromise);
-      } catch (error) {
-        targets.onImageEncoded(placeholder.id);
-        throw error;
-      }
+      await prepareComposerAttachment<ComposerImage>(placeholder, targets.onImageEncoded);
     }),
     ...files.filter(isComposerDocumentFile).map(async (file) => {
       const placeholder = composerFilePlaceholder(file);
       targets.onFilePlaceholder(placeholder);
-      try {
-        targets.onFileEncoded(placeholder.id, await placeholder.encodePromise);
-      } catch (error) {
-        targets.onFileEncoded(placeholder.id);
-        throw error;
-      }
+      await prepareComposerAttachment<ComposerFile>(placeholder, targets.onFileEncoded);
     }),
   ]);
 }

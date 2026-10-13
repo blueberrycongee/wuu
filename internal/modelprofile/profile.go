@@ -2,6 +2,7 @@ package modelprofile
 
 import (
 	"strings"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -150,6 +151,44 @@ func Resolve(providerName, model string) Profile {
 	return profile
 }
 
+// SupportsFreeformTools resolves the native text-tool wire capability from the
+// actual API model. A configured provider's display name is not evidence that
+// a compatible endpoint supports custom tools. Explicit model options let a
+// gateway disable that wire form, or opt in an otherwise unknown model.
+func SupportsFreeformTools(model string, options map[string]any) bool {
+	if enabled, ok := options["freeform_tool"].(bool); ok {
+		return enabled
+	}
+	// The behavioral family matcher accepts provider labels and arbitrary GPT/
+	// Codex substrings. Wire capabilities must only infer support for known API
+	// model IDs; older GPTs and unrecognized gateway deployments stay JSON-only.
+	id := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "openai/")
+	if len(id) > len("-2006-01-02") {
+		cut := len(id) - len("-2006-01-02")
+		if id[cut] == '-' {
+			if _, err := time.Parse("2006-01-02", id[cut+1:]); err == nil {
+				id = id[:cut]
+			}
+		}
+	}
+	switch id {
+	case "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-pro", "gpt-5-codex",
+		"gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1-codex-max",
+		"gpt-5.2", "gpt-5.2-pro", "gpt-5.2-codex",
+		"gpt-5.3-codex", "gpt-5.3-codex-spark",
+		"gpt-5.4", "gpt-5.4-fast", "gpt-5.4-mini", "gpt-5.4-mini-fast", "gpt-5.4-nano", "gpt-5.4-pro",
+		"gpt-5.5", "gpt-5.5-fast", "gpt-5.5-pro",
+		"gpt-5.6", "gpt-5.6-fast", "gpt-5.6-pro",
+		"gpt-5.6-luna", "gpt-5.6-luna-fast", "gpt-5.6-luna-pro",
+		"gpt-5.6-sol", "gpt-5.6-sol-fast", "gpt-5.6-sol-pro",
+		"gpt-5.6-terra", "gpt-5.6-terra-fast", "gpt-5.6-terra-pro",
+		"gpt-6-astra", "gpt-6-astra-fast", "gpt-6-astra-pro", "gpt-6.1-sol":
+		return true
+	default:
+		return false
+	}
+}
+
 func FamilyForProviderModel(providerName, model string) Family {
 	id := strings.ToLower(strings.TrimSpace(providerName + "/" + model))
 	provider := strings.ToLower(strings.TrimSpace(providerName))
@@ -237,7 +276,7 @@ func applyClaude(profile *Profile) {
 func applyCodex(profile *Profile) {
 	profile.APIShape.Responses = true
 	profile.APIShape.ToolCalling = ToolCallingProviderNative
-	profile.APIShape.FreeformTool = true
+	profile.APIShape.FreeformTool = SupportsFreeformTools(profile.Model, nil)
 	profile.APIShape.ParallelToolCalls = true
 	profile.APIShape.StreamingToolArgs = true
 	profile.APIShape.DeveloperRole = true

@@ -10,6 +10,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Optional unsent-text recovery after a renderer reload, disabled by default.
+  Recovery copies are limited to the current window, 20 drafts, 32K characters
+  per draft and 24 hours; closing the window or disabling recovery clears them.
+  Attachments and quotes are excluded.
+
+- Bounded per-server MCP tool execution budgets through `tool_timeout_ms`,
+  shared by native and PTC calls while preserving earlier caller cancellation
+  and the 30-second default.
 - iOS conversation settings can select a computer's available engine before the
   first message, and edit the selected engine's models, reasoning and advertised
   permission modes. Existing conversations display their bound engine.
@@ -35,6 +43,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Plugin SDKs now overlap explicitly concurrency-safe tools in a bounded pool,
+  while ordinary handlers and lifecycle transitions retain ordered barriers.
+  Foreground subagent waits no longer serialize independent tasks, and a late
+  result cannot overwrite a newer follow-up task.
+
 - Approve for me shares the one-shot text request foundation with plugins while
   retaining host-owned permission decisions and the active conversation's model
   and tuning. Provider options cannot replace review evidence, switch models, or
@@ -45,6 +58,74 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the iOS conversation loading indicator centered and fully visible before
+  messages arrive, instead of squeezing it into a clipped capsule at the left edge.
+- Responses connections keep text tools callable through JSON schemas when the
+  model or an explicit compatibility option disables custom tools. Forced choices
+  and replayed calls use the same wire format without changing saved history.
+- Bound plugin runtime shutdown, retire undeliverable execution cancellations,
+  preserve shutdown failures, and cap stderr so stalled or noisy extensions
+  cannot strand retirement.
+- Bound asynchronous desktop plugin startup, cancel superseded staging promptly,
+  and let optional consumers proceed after a provider times out while retaining
+  the last working replacement generation.
+- Keep live plugin executions visible in diagnostics after hot reload, with
+  generation-scoped identities that distinguish overlapping execution IDs.
+
+- Back off repeated automatic plugin refresh failures without delaying changed
+  candidates or manual retries, while retaining healthy running generations.
+- Prevent cancelled queued plugin tool, capability, and service calls from
+  entering their handlers while preserving lifecycle cleanup.
+- PDF links to named destinations and page references navigate within the
+  current preview, preserve zoom, and ignore invalid or superseded targets.
+  External links retain the desktop's existing safe URL policy.
+
+- Failed PDF previews can retry in the same panel without reloading the window
+  or losing conversation drafts. Retries recover loading, page-fetch, and rendering
+  errors, refresh workspace file metadata, preserve the requested page, and cancel
+  the previous viewer when switching files or closing.
+- Keep unreadable composer attachments in their original draft with an explicit
+  retry action, including attachments restored after a failed send. Retrying
+  prepares the file again without sending the message automatically. If sending
+  fails after preparation completes, restore the ready attachment and preview.
+- Refresh local skill instructions and metadata without restarting the runtime.
+  Model rounds adopt changed catalogs while loaded history and plugin package
+  generations remain pinned; stale or invalid file identities fail closed.
+
+- Honor manual-only skill invocation settings when loading skills by name, and
+  recognize reachable plugin and MCP tools in skill requirements without
+  enabling unavailable tools or changing permissions. Session tool restrictions
+  also apply to contributed, deferred, and nested tools and their dependent skills.
+- Bound skill resource sampling for both selected skills and model tool calls,
+  honor request cancellation, and identify incomplete filename hints without
+  changing the resource base directory.
+- PTC runtime shutdown settles when its control connection closes, keeping
+  native teardown warnings out of completed program results.
+- MCP server-request replies no longer block healthy tool calls or notifications.
+  Reply work is bounded, follows its originating call's cancellation, and stops
+  on connection close without replaying replies into a replacement session.
+
+- MCP OAuth credentials and pending sign-ins remain available across plugin
+  reloads, including startup and adding the first MCP server to a running session.
+- Remote MCP notification streams recover after session expiry or credential
+  refresh, discard obsolete session messages, and report unrecoverable handshakes
+  as connection failures. Concurrent expired calls share one recovery, renewed
+  sessions clear old resume cursors, and closing the connection cancels recovery.
+
+- Remote MCP POST streams now close when their call completes or is cancelled.
+  An interrupted or malformed response fails only its originating call promptly,
+  without replaying tools or disconnecting healthy calls and notifications.
+  Responses cannot resolve a different call through a mismatched POST request ID.
+- MCP OAuth logout and newer logins now fence late token exchanges and refresh
+  writes across processes, preventing older credentials from becoming active
+  again after logout or a newer login.
+
+- Bind saved MCP OAuth credentials to the resource used for login, require
+  reauthentication after resource changes, and prevent credentials from reaching
+  cross-origin redirects or legacy SSE message endpoints.
+- Disconnecting or reconnecting an MCP server cancels older connection attempts,
+  preventing queued startup, delayed initialization or tool discovery from
+  restoring a stopped connection or replacing its newer tools and status.
 - Keep stopped agent subtrees stopped when child cancellation results arrive.
   Parked parents now finish cancellation durably, and explicit follow-ups reopen
   their edges for later work without blocking shutdown cancellation or restart recovery.

@@ -34,6 +34,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/insight"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
+	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/process"
@@ -216,7 +217,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		}
 		return nil
 	}
-	userMsg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
+	userMsg, err := s.userMessageWithInputImages(ctx, params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -510,7 +511,7 @@ func (s *Server) startThreadCompactTurn(ctx context.Context, req Request, th *th
 	return nil
 }
 
-func (s *Server) handleTurnQueue(req Request) error {
+func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 	var params TurnQueueParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -555,7 +556,7 @@ func (s *Server) handleTurnQueue(req Request) error {
 	if queueID == "" {
 		queueID = session.NewID()
 	}
-	msg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
+	msg, err := s.userMessageWithInputImages(ctx, params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -617,7 +618,7 @@ func (s *Server) handleTurnQueue(req Request) error {
 	return nil
 }
 
-func (s *Server) handleTurnUpdateQueued(req Request) error {
+func (s *Server) handleTurnUpdateQueued(ctx context.Context, req Request) error {
 	var params TurnUpdateQueuedParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -659,7 +660,7 @@ func (s *Server) handleTurnUpdateQueued(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("thread is read-only"))
 	}
 
-	msg, err := s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
+	msg, err := s.userMessageWithInputImages(ctx, params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -730,7 +731,7 @@ func (s *Server) handleTurnDequeue(req Request) error {
 	return nil
 }
 
-func (s *Server) handleTurnSteer(req Request) error {
+func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 	var params TurnSteerParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -777,7 +778,7 @@ func (s *Server) handleTurnSteer(req Request) error {
 	// Skill resolution can acquire the thread runtime; keep it outside the admission lock.
 	var steerMsg providers.ChatMessage
 	if !isHeld {
-		steerMsg, err = s.userMessageWithInputImages(params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
+		steerMsg, err = s.userMessageWithInputImages(ctx, params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -3355,6 +3356,10 @@ func (s *Server) persistTurnTrace(threadRuntime *runtime.ThreadRuntime, runner *
 	if runErr != nil {
 		errorText = runErr.Error()
 	}
+	profile := sessiontrace.NewModelProfileRecordWithBudget(providerName, model, apiModel, modelBudget)
+	if profile != nil && runner != nil {
+		profile.FreeformTool = modelprofile.SupportsFreeformTools(firstNonEmpty(apiModel, model), runner.ProviderOptions)
+	}
 	turnRecord := sessiontrace.TurnRecord{
 		ThreadID:            threadID,
 		TurnID:              turn.ID,
@@ -3362,7 +3367,7 @@ func (s *Server) persistTurnTrace(threadRuntime *runtime.ThreadRuntime, runner *
 		ProviderName:        providerName,
 		Model:               model,
 		APIModel:            apiModel,
-		ModelProfile:        sessiontrace.NewModelProfileRecordWithBudget(providerName, model, apiModel, modelBudget),
+		ModelProfile:        profile,
 		PermissionMode:      permissions.Mode,
 		StartedAt:           turn.StartedAt,
 		CompletedAt:         turn.CompletedAt,
