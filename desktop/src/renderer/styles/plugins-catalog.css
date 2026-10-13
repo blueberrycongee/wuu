@@ -155,6 +155,25 @@ button.catalog-row,
   align-self: center;
 }
 
+/* A catalog mutation locks controls without making the whole page flash.
+ * Controls unavailable for other reasons keep their usual disabled styling. */
+.skills-catalog [data-mutation-blocked]:disabled {
+  opacity: 1;
+}
+
+.catalog-row-switch[data-mutation-blocked][aria-busy="true"] {
+  cursor: progress;
+}
+
+/* Keep the hovered track stable while the request holds the native lock. */
+.catalog-row-switch[data-mutation-blocked]:hover {
+  --switch-track-color: var(--switch-track-off-hover);
+}
+
+.catalog-row-switch[data-mutation-blocked][aria-checked="true"]:hover {
+  --switch-track-color: var(--switch-track-on-hover);
+}
+
 /* Off plugins keep their place but step back. */
 .plugin-row:not([data-on]) .catalog-row-mark {
   color: var(--ink-tertiary);

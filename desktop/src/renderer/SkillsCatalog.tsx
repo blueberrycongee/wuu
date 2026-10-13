@@ -442,6 +442,7 @@ export function SkillsCatalog({
           aria-label={t("skills.refresh")}
           title={t("skills.refresh")}
           disabled={state.loading || Boolean(packageMutation)}
+          data-mutation-blocked={(Boolean(packageMutation) && !state.loading) || undefined}
           aria-busy={state.loading}
           onClick={() => void refreshSkills()}
         >
@@ -451,6 +452,7 @@ export function SkillsCatalog({
           className="settings-button"
           type="button"
           disabled={Boolean(packageMutation) || !hostSupports("installPluginPackage")}
+          data-mutation-blocked={(Boolean(packageMutation) && hostSupports("installPluginPackage")) || undefined}
           onClick={() => void installPluginPackage()}
         >
           <PackagePlus className="icon" aria-hidden="true" />
@@ -518,6 +520,7 @@ export function SkillsCatalog({
                 key={record.id}
                 record={record}
                 toggleDisabled={Boolean(packageMutation)}
+                toggleBusy={packageMutation.startsWith(`${record.id}:`)}
                 onOpen={() => setSelectedPluginID(record.id)}
                 onToggle={onUpdateExtensionPackage ? () => togglePlugin(record) : undefined}
               />
@@ -958,12 +961,14 @@ function PluginRow({
   record,
   attention,
   toggleDisabled = false,
+  toggleBusy = false,
   onOpen,
   onToggle,
 }: {
   record: ExtensionInventoryRecord;
   attention?: PluginAttention;
   toggleDisabled?: boolean;
+  toggleBusy?: boolean;
   onOpen: () => void;
   /** Omitted when the catalog cannot change packages. */
   onToggle?: () => void;
@@ -1006,6 +1011,8 @@ function PluginRow({
           aria-checked={toggle.on}
           aria-label={t(toggle.on ? "skills.pluginDisableNamed" : "skills.pluginEnableNamed", { name: record.name })}
           disabled={toggleDisabled || toggleUnavailable}
+          data-mutation-blocked={(toggleDisabled && !toggleUnavailable) || undefined}
+          aria-busy={toggleBusy || undefined}
           onClick={onToggle}
         >
           <span className="settings-switch-thumb" aria-hidden="true" />

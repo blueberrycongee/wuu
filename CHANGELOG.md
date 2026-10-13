@@ -69,6 +69,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep plugin catalog switches and toolbar controls visually stable while enabling
+  or disabling a plugin, while continuing to block duplicate changes.
+
 - Forking a conversation from an assistant reply that streamed in the current
   session no longer fails with "fork target not found" after the model used
   several thinking blocks in one step.
