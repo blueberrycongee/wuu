@@ -894,6 +894,9 @@ jobs:
           go test ./internal/session -run '^TestInferenceRuntimeProcessAliveWindows$'
           go test ./internal/tools -run '^TestProcessSandbox(PolicyMapsWorkspaceBoundary|TempRejectsSymlink|PolicyFailsClosedWithoutBackend)$'
 
+      - name: Test Windows plugin generation leases
+        run: go test ./internal/session -run '^Test(PluginGenerationLease|ReadPluginGenerationEpoch|PluginCatalogMutation|PluginCatalogReadLease)' -count=1 -v
+
       - name: Install Desktop dependencies
         run: npm ci --prefix desktop
 

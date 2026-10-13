@@ -69,6 +69,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Fix Windows file-lock errors when saving plugin choices during onboarding or
+  changing plugin packages, allowing setup to continue to the next step.
+
 - Preserve paragraph and quote spacing when a streamed reply becomes the final
   answer. Desktop CI now checks rendered completion geometry across themes,
   window widths and text sizes.
