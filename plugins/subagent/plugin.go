@@ -57,6 +57,11 @@ type taskIndex struct {
 
 var taskIndexMu sync.Mutex
 
+// Serialize task state transitions, not foreground waits. The index lock only
+// protects individual storage operations; read/send/write must also be atomic
+// relative to another tool updating the same task.
+var taskTransitionMu sync.Mutex
+
 func Handler() pluginapi.Handler {
 	return pluginapi.Handler{
 		ConcurrentCapabilities: []string{capabilityPrompt, capabilityClient},
@@ -148,19 +153,28 @@ func spawnAgent(ctx context.Context, host pluginapi.Host, call pluginapi.ToolCal
 		workspace = "worktree"
 		contextSource = "fork"
 	}
-	record, err := createTask(ctx, host, pluginapi.SessionCreateParams{RequestID: "create-" + requestID, Name: name, Visibility: "plugin", ParentSessionID: call.SessionID, ContextSource: contextSource, Workspace: workspace, ModelAlias: strings.TrimSpace(args.Model), Instructions: workerInstructions(strings.TrimSpace(args.SubagentType))}, taskRecord{ParentSessionID: call.SessionID, ParentTurnID: call.TurnID, Name: name, RequestID: "turn-" + requestID, State: "created"})
-	if err != nil {
-		return pluginapi.ToolResult{}, err
-	}
+	var record taskRecord
 	var sent pluginapi.SessionSendResult
-	err = host.CallHost(ctx, pluginapi.HostServiceSessionSend, pluginapi.SessionSendParams{RequestID: record.RequestID, SessionID: record.SessionID, Input: pluginapi.SessionInput{Prompt: strings.TrimSpace(args.Prompt)}, Presentation: &pluginapi.SessionInputPresentation{Kind: "query_bubble", Text: "子任务 " + name + " 已开始", Name: name}, Cause: "subagent.task"}, &sent)
+	err = func() error {
+		taskTransitionMu.Lock()
+		defer taskTransitionMu.Unlock()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var err error
+		record, err = createTask(ctx, host, pluginapi.SessionCreateParams{RequestID: "create-" + requestID, Name: name, Visibility: "plugin", ParentSessionID: call.SessionID, ContextSource: contextSource, Workspace: workspace, ModelAlias: strings.TrimSpace(args.Model), Instructions: workerInstructions(strings.TrimSpace(args.SubagentType))}, taskRecord{ParentSessionID: call.SessionID, ParentTurnID: call.TurnID, Name: name, RequestID: "turn-" + requestID, State: "created"})
+		if err != nil {
+			return err
+		}
+		if err := host.CallHost(ctx, pluginapi.HostServiceSessionSend, pluginapi.SessionSendParams{RequestID: record.RequestID, SessionID: record.SessionID, Input: pluginapi.SessionInput{Prompt: strings.TrimSpace(args.Prompt)}, Presentation: &pluginapi.SessionInputPresentation{Kind: "query_bubble", Text: "子任务 " + name + " 已开始", Name: name}, Cause: "subagent.task"}, &sent); err != nil {
+			return err
+		}
+		record.State = sent.State
+		record.TurnID = sent.TurnID
+		record.QueueID = sent.QueueID
+		return saveRecord(ctx, host, record)
+	}()
 	if err != nil {
-		return pluginapi.ToolResult{}, err
-	}
-	record.State = sent.State
-	record.TurnID = sent.TurnID
-	record.QueueID = sent.QueueID
-	if err := saveRecord(ctx, host, record); err != nil {
 		return pluginapi.ToolResult{}, err
 	}
 	if runInBackground {
@@ -190,14 +204,22 @@ func spawnAgent(ctx context.Context, host pluginapi.Host, call pluginapi.ToolCal
 		})
 	}
 
-	// The terminal result is returned by this tool call, so the queued lifecycle
-	// notification must only acknowledge and clean up the record instead of
-	// starting a duplicate parent turn with the same completion.
-	record.State = inspected.Turn.State
-	record.TurnID = inspected.Turn.TurnID
-	record.QueueID = inspected.Turn.QueueID
-	record.SuppressCompletion = true
-	if err := saveRecord(ctx, host, record); err != nil {
+	// A follow-up may have replaced this task while the foreground call waited.
+	// Only suppress completion for the request whose result we are returning.
+	err = func() error {
+		taskTransitionMu.Lock()
+		defer taskTransitionMu.Unlock()
+		current, found, err := loadRecordBySession(ctx, host, record.SessionID)
+		if err != nil || !found || current.RequestID != record.RequestID {
+			return err
+		}
+		current.State = inspected.Turn.State
+		current.TurnID = inspected.Turn.TurnID
+		current.QueueID = inspected.Turn.QueueID
+		current.SuppressCompletion = true
+		return saveRecord(ctx, host, current)
+	}()
+	if err != nil {
 		return pluginapi.ToolResult{}, err
 	}
 	return spawnAgentResult(spawnAgentOutput{
@@ -216,6 +238,11 @@ func spawnAgentResult(output spawnAgentOutput) (pluginapi.ToolResult, error) {
 }
 
 func sendMessage(ctx context.Context, host pluginapi.Host, call pluginapi.ToolCall) (pluginapi.ToolResult, error) {
+	taskTransitionMu.Lock()
+	defer taskTransitionMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return pluginapi.ToolResult{}, err
+	}
 	var args struct {
 		Target  string `json:"target"`
 		Message string `json:"message"`
@@ -258,6 +285,11 @@ func sendMessage(ctx context.Context, host pluginapi.Host, call pluginapi.ToolCa
 }
 
 func closeAgent(ctx context.Context, host pluginapi.Host, call pluginapi.ToolCall) (pluginapi.ToolResult, error) {
+	taskTransitionMu.Lock()
+	defer taskTransitionMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return pluginapi.ToolResult{}, err
+	}
 	var args struct {
 		Target string `json:"target"`
 	}

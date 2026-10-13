@@ -56,8 +56,9 @@ type PluginGeneration struct {
 	// refs counts the live Session plus any ThreadRuntime still bound to this
 	// generation. A retired generation stays open until the last conversation
 	// that started against it is released.
-	refs           atomic.Int32
-	revocationMu   sync.Mutex
+	refs         atomic.Int32
+	revocationMu sync.Mutex
+	// revokedMu also protects host detachment from read-only diagnostics.
 	revokedMu      sync.Mutex
 	revokedPlugins map[string]bool
 }
@@ -68,7 +69,17 @@ func (s *Session) PreflightExtensions(cfg config.Config) (*PluginGeneration, err
 	if s == nil {
 		return nil, errors.New("runtime is not initialized")
 	}
-	return s.buildPluginGeneration(cfg, discoverPlugins(s.RootDir, s.WuuHome), nil, nil, startPluginClient)
+	return s.PreflightDiscoveredExtensions(cfg, discoverPlugins(s.RootDir, s.WuuHome))
+}
+
+// PreflightDiscoveredExtensions builds the already-observed catalog, allowing
+// refresh admission to fingerprint its exact inputs before starting processes.
+// Callers must serialize discovery and preparation with catalog publication.
+func (s *Session) PreflightDiscoveredExtensions(cfg config.Config, discovered []pluginpkg.Plugin) (*PluginGeneration, error) {
+	if s == nil {
+		return nil, errors.New("runtime is not initialized")
+	}
+	return s.buildPluginGeneration(cfg, discovered, nil, nil, startPluginClient)
 }
 
 // PluginGenerationNeedsRecovery reports a runtime process that reached active
@@ -764,7 +775,9 @@ func (g *PluginGeneration) close() error {
 		}
 
 		cancel()
+		g.revokedMu.Lock()
 		g.host = nil
+		g.revokedMu.Unlock()
 	}
 	g.requestTransforms = nil
 	for index := len(g.ownedRoots) - 1; index >= 0; index-- {
@@ -900,15 +913,60 @@ func (s *Session) PluginServiceRegistrySnapshot() (pluginhost.ServiceRegistrySna
 	return registry.Snapshot(epoch), nil
 }
 
-// PluginExecutionSnapshots returns the live execution table of the active
-// plugin host: which tool/capability executions are open right now, owned by
-// which plugin, with their latest self-reported progress. Read-only; each
-// entry is authored by the owning plugin about its own execution.
-func (s *Session) PluginExecutionSnapshots() []pluginhost.ExecutionSnapshot {
-	if s == nil || s.PluginHost == nil {
+// PluginExecutionSnapshot attributes one host-local execution to its generation.
+// The (GenerationID, ID) pair is the diagnostic identity; ID remains unchanged
+// for execution-scoped services and cancellation on the owning host.
+type PluginExecutionSnapshot struct {
+	pluginhost.ExecutionSnapshot
+	GenerationID string `json:"generation_id"`
+	Retained     bool   `json:"retained"`
+}
+
+// PluginExecutionSnapshots returns this Session's current and retained live
+// executions, ordered by generation ID and host-local execution ID. It neither
+// retains generations nor extends execution leases. Rows are point-in-time
+// diagnostics and may finish while the caller consumes the result.
+func (s *Session) PluginExecutionSnapshots() []PluginExecutionSnapshot {
+	if s == nil {
 		return nil
 	}
-	return s.PluginHost.ExecutionSnapshots()
+	s.pluginGenerationMu.Lock()
+	current := s.pluginGeneration
+	generations := make([]*PluginGeneration, 0, len(s.retiredPluginGenerations)+1)
+	if current != nil {
+		generations = append(generations, current)
+	}
+	for generation := range s.retiredPluginGenerations {
+		if generation != current {
+			generations = append(generations, generation)
+		}
+	}
+	s.pluginGenerationMu.Unlock()
+	var snapshots []PluginExecutionSnapshot
+	for _, generation := range generations {
+		// A thread-model shadow can release its last reference without the
+		// Session mutex. Serialize only the snapshot with host detachment;
+		// never acquire a lifecycle reference or wait for plugin callbacks.
+		generation.revokedMu.Lock()
+		if generation.refs.Load() > 0 && generation.host != nil {
+			for _, execution := range generation.host.ExecutionSnapshots() {
+				execution.Detail = append([]byte(nil), execution.Detail...)
+				snapshots = append(snapshots, PluginExecutionSnapshot{
+					ExecutionSnapshot: execution,
+					GenerationID:      generation.id,
+					Retained:          generation != current,
+				})
+			}
+		}
+		generation.revokedMu.Unlock()
+	}
+	sort.Slice(snapshots, func(i, j int) bool {
+		if snapshots[i].GenerationID != snapshots[j].GenerationID {
+			return snapshots[i].GenerationID < snapshots[j].GenerationID
+		}
+		return snapshots[i].ID < snapshots[j].ID
+	})
+	return snapshots
 }
 
 // snapshotMutableExecutionPackages detaches executable and lazy declarative paths

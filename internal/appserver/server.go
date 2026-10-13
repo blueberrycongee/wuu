@@ -290,6 +290,7 @@ type Server struct {
 	pluginGenerationEpoch        atomic.Uint64
 	pluginRuntimeRevision        atomic.Uint64
 	pluginGenerationRefreshMu    sync.Mutex
+	pluginRefreshFailure         pluginGenerationRefreshFailure
 	configRefreshMu              sync.Mutex
 	configFingerprint            string
 	configRejectedSources        string
