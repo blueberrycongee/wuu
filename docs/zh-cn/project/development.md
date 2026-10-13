@@ -58,6 +58,8 @@ make build-go
 
 类型检查、单元测试和构建成功，与应用实际可用是不同的证据。UI 修改需按[桌面 UI 指南](desktop-ui.md)检查受影响的渲染与交互；插件修改还需验证实际工具调用或界面贡献，包验证不会完成这些检查。
 
+验证 SDK 工具调度时，先执行 `npm --prefix packages/plugin-sdk run build`，再执行 `node scripts/plugin-tool-scheduling-e2e.mjs`。脚本构建小型 Go fixture，通过真实 JSONL 子进程管道测试两个 SDK，以及内置子任务和同级会话工具；宿主服务使用合成响应，不需要模型凭据。`WUU_E2E_RACE=1` 启用 Go race detector，`GO` 指定 Go 可执行文件。结果和协议帧保存在 `.tmp/plugin-tool-scheduling/results.json`；可用 `WUU_E2E_OUTPUT` 指定其他产物目录。它验证 SDK 进程边界，不代表完整 Go 宿主、推理服务或桌面 UI 验收。
+
 `npm --prefix desktop run test:renderer-recovery` 会主动让隐藏的 Chromium 渲染进程
 崩溃，检查恢复、重试上限、窗口隔离和 IPC。测试使用临时配置目录和模拟内容，不读取
 你的 Wuu 数据。请在图形桌面会话中运行；它不验证原生对话框外观或打包应用行为。
@@ -79,6 +81,20 @@ Connect 和 Refresh 能覆盖尚在排队的启动任务。它不使用真实凭
 默认为 `.tmp/e2e/mcp-connection-generations/`，保存 JSON RPC 往返、服务端请求、
 二进制哈希与通过/失败记录。现有 manager 测试另行覆盖串行 app-server RPC 分发器
 无法同时发起的并发操作、永久撤销，以及旧客户端的延迟回调。
+
+### 工作区 PDF 预览
+
+在图形会话中运行 `npm --prefix desktop run test:e2e:workspace-preview`，
+用生成的 PDF 验证真实 renderer 和 PDF.js。检查包括重试、命名与显式目标、
+键盘和中键跳转、页码范围、来源替换、保留挂载的隐藏面板，以及关闭或重试期间的竞态。外链 IPC 仅记录，
+不打开系统浏览器；部分真实目标解析结果会被延迟，以检查过期结果。
+JSON、合成 PDF 和截图写入 `desktop/out/e2e/workspace-preview/`，
+不使用已安装应用的配置目录或 Go 核心。
+
+无图形会话时，运行
+`node desktop/scripts/workspace-preview-e2e.cjs --pdf-fixtures-only`，
+用真实 Node PDF.js 验证相同的 PDF 字节。此模式检查解析、命名和页面引用解析，
+以及不安全动作数据，不验证渲染或点击。
 
 ### 实时缩放布局护栏
 

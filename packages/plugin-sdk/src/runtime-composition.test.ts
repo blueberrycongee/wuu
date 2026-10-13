@@ -211,7 +211,12 @@ async function transportClose(failed: boolean): Promise<void> {
   const events: string[] = [];
   const peer = new Peer({
     initialize: definition,
-    async invokeService(_params, host, execution) {
+    shutdown() { events.push("shutdown"); },
+    async invokeService(params, host, execution) {
+      if (params.service === "queued.service") {
+        events.push("queued handler ran");
+        return {};
+      }
       started.resolve();
       try { await host.call("host.service.call", { service: "remote.service", method: "call" }); }
       catch { events.push("pending rejected"); }
@@ -227,12 +232,16 @@ async function transportClose(failed: boolean): Promise<void> {
   await peer.start();
   const response = peer.request("service.invoke", { service: "local.service", method: "call", caller: "test", execution_id: "closed" });
   await started.promise;
+  const queued = peer.request("service.invoke", { service: "queued.service", method: "call", caller: "test", execution_id: "queued-close" });
+  const shutdown = peer.request("shutdown");
   const failure = failed ? new Error("input stream failed") : undefined;
   let caught: unknown;
   try { await peer.close(failure); } catch (error) { caught = error; }
   assert(caught === failure, "transport did not preserve the input error");
   await response;
-  assert(events.join(",") === "pending rejected,new rejected", "EOF left a host call pending");
+  assert((await queued).error, "transport loss admitted a queued handler");
+  assert(!(await shutdown).error, "transport loss skipped lifecycle cleanup");
+  assert(events.join(",") === "pending rejected,new rejected,shutdown", `EOF dispatch or cleanup changed: ${events}`);
 }
 
 async function serialDispatchAndFailure(): Promise<void> {
@@ -242,6 +251,15 @@ async function serialDispatchAndFailure(): Promise<void> {
   const peer = new Peer({
     concurrentServices: ["probe.service"],
     initialize: definition,
+    executeTool() {
+      events.push("cancelled.tool");
+      return { result: { content: [] } };
+    },
+    invokeCapability() {
+      events.push("cancelled.capability");
+      return { output: {} };
+    },
+    shutdown() { events.push("shutdown"); },
     async invokeService(params) {
       if (params.service === "probe.service") return {};
       events.push(params.service);
@@ -256,14 +274,28 @@ async function serialDispatchAndFailure(): Promise<void> {
   await peer.start();
   const first = peer.request("service.invoke", { service: "first.service", method: "call", caller: "test" });
   await firstStarted.promise;
+  const cancelled = [
+    peer.request("tool.execute", { tool_id: "effect", tool: "effect", call_id: "queued", cwd: ".", arguments: {}, execution_id: "queued-tool" }),
+    peer.request("capability.invoke", { capability: "agent.request.transform", input: {}, execution_id: "queued-capability" }),
+    peer.request("service.invoke", { service: "cancelled.service", method: "call", caller: "test", execution_id: "queued-service" }),
+  ];
+  for (const executionId of ["queued-tool", "queued-capability", "queued-service"]) {
+    peer.send({ id: `cancel-${executionId}`, method: "execution.cancel", params: { execution_id: executionId } });
+  }
   const second = peer.request("service.invoke", { service: "second.service", method: "call", caller: "test" });
-  // The probe response establishes that the preceding frame was received.
+  // The probe response establishes that every cancellation frame was received.
   await peer.request("service.invoke", { service: "probe.service", method: "call", caller: "test" });
   assert(events.join(",") === "first.service", "default service dispatch stopped being serial");
   firstRelease.resolve();
   assert((await first).error?.message === "provider failed", "service error was not returned");
   assert((await second).result?.recovered, "one provider failure poisoned later requests");
-  assert(events.join(",") === "first.service,second.service", "serial request order changed");
+  assert((await Promise.all(cancelled)).every((response) => response.error), "cancelled queued requests did not return errors");
+  assert(events.join(",") === "first.service,second.service", `cancelled queued handler ran: ${events}`);
+  peer.send({ id: "late-cancel", method: "execution.cancel", params: { execution_id: "queued-service" } });
+  assert((await peer.request("service.invoke", { service: "fresh.service", method: "call", caller: "test", execution_id: "fresh" })).result?.recovered,
+    "late cancellation prevented fresh work");
+  await peer.request("shutdown");
+  assert(events.join(",") === "first.service,second.service,fresh.service,shutdown", "cancellation prevented lifecycle cleanup");
   await peer.close();
 }
 
