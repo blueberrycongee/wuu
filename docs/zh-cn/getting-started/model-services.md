@@ -135,7 +135,7 @@ await tools.read_file({path: "screenshots/settings.png"});
 
 ### 发现、执行与结果
 
-使用 OpenAI Responses（包括 Codex provider）时，`run_code` 通过自定义文本工具直接接收 JavaScript 源码，不要加 JSON 包装或 Markdown 围栏。其他 provider API 使用 `{"input":"..."}` 传入同一份源码。可选的首行 `// @run_code: {...}` 注释设置 `description`、`timeout_ms`、`result_view` 和 `max_output_tokens`；未知选项会在执行前报错。恢复历史会话时，原有 `code` 调用仍可执行。
+在已识别的 GPT-5 及更新模型 Responses 连接上，`run_code` 通过自定义文本工具直接接收 JavaScript 源码，不要给这类输入加 JSON 包装或 Markdown 围栏。旧版 GPT、未知模型和其他 provider API 使用 `{"input":"..."}` 传入同一份源码。若 Responses 网关不支持自定义工具，将 `providers.<provider>.models.<model>.options.freeform_tool` 设为 `false`；只有确认端点支持时才设为 `true`。未知模型默认使用 JSON 工具。这个选项只改变传输格式，不改变 PTC 开关。历史调用会按当前请求转换，已保存的会话历史保持不变。可选的首行 `// @run_code: {...}` 注释设置 `description`、`timeout_ms`、`result_view` 和 `max_output_tokens`；未知选项会在执行前报错。恢复历史会话时，原有 `code` 调用仍可执行。
 `description` 是展示元数据，省略它不会阻止执行。
 入口说明在固定目录预算内提供常用文件、搜索和命令工具的完整定义，其他绑定提供预览。
 可直接使用已列出的参数定义；只有预览的绑定再查询精确参数。`await searchTools(query, {limit: 8, offset: 0})`
