@@ -7,10 +7,13 @@ struct PendingMessagesView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showingAll = false
     private var pending: [PendingMessage] { model.live?.pending ?? [] }
+    private var editable: Bool { model.connected && !model.refreshing && model.live?.readOnly != true }
+    private var running: Bool { model.live?.running == true }
     var body: some View {
         VStack(spacing: 4) {
             if let first = pending.first {
-                PendingMessageView(model: model, message: first).id(first.id).transition(.opacity)
+                PendingMessageView(model: model, message: first, editable: editable, running: running)
+                    .id(first.id).transition(.opacity)
                 if pending.count > 1 {
                     Button("查看全部 \(pending.count) 条待处理消息") { showingAll = true }
                         .font(.footnote).foregroundStyle(.secondary).frame(minHeight: 44)
@@ -23,7 +26,7 @@ struct PendingMessagesView: View {
             NavigationStack {
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(pending) { PendingMessageView(model: model, message: $0) }
+                        ForEach(pending) { PendingMessageView(model: model, message: $0, editable: editable, running: running) }
                     }.padding(16)
                 }
                 .navigationTitle("待处理消息").navigationBarTitleDisplayMode(.inline)
@@ -59,6 +62,9 @@ private struct PendingStatus {
 struct PendingMessageView: View {
     let model: AppModel
     let message: PendingMessage
+    // Observe conversation state in the parent: streaming deltas must not rebuild an open menu.
+    let editable: Bool
+    let running: Bool
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -67,7 +73,6 @@ struct PendingMessageView: View {
     @State private var working = false
     private var status: PendingStatus { PendingStatus(message) }
     private var attachmentCount: Int { message.value["images"].array.count + message.value["files"].array.count }
-    private var editable: Bool { model.connected && !model.refreshing && model.live?.readOnly != true }
     private var preview: String {
         let text = message.text.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
         if !text.isEmpty { return text.count > 120 ? String(text.prefix(120)) + "…" : text }
@@ -86,7 +91,7 @@ struct PendingMessageView: View {
                     Image(systemName: "arrow.turn.down.right").font(.system(size: 17)).frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain).accessibilityLabel("立即引导")
-                .disabled(working || !editable || model.live?.running != true)
+                .disabled(working || !editable || !running)
             }
             if message.held {
                 ZStack {
@@ -94,7 +99,7 @@ struct PendingMessageView: View {
                     else {
                         Button("继续") { act(.resume) }
                             .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.small)
-                            .disabled(!editable || model.live?.running == true)
+                            .disabled(!editable || running)
                             .transition(.opacity)
                     }
                 }
@@ -111,12 +116,12 @@ struct PendingMessageView: View {
             }
             Group {
                 if message.held {
-                    Button("继续", systemImage: "play") { act(.resume) }.disabled(model.live?.running == true)
+                    Button("继续", systemImage: "play") { act(.resume) }.disabled(running)
                 }
                 if !message.held {
                     Button(message.origin == "steer" ? "改为排队" : "立即引导", systemImage: "arrow.turn.down.right") {
                         act(message.origin == "steer" ? .requeue : .steer)
-                    }.disabled(model.live?.running != true)
+                    }.disabled(!running)
                 }
                 Button("移除", systemImage: "trash", role: .destructive) { act(.remove) }
             }.disabled(working || !editable)
