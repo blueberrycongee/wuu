@@ -646,13 +646,19 @@ struct MessageForkRequest: Identifiable {
         pendingSettings.removeValue(forKey: threadID)
         modelPreferences?.save(settings, engine: engine)
     }
+    var historyLoadID: UUID? { connected && !refreshing && live != nil ? opening : nil }
     func loadOlder(beforePrepend: () -> Void) async throws {
+        try Task.checkCancellation()
         guard connected, !refreshing, let remote, let live, !live.historyCursor.isEmpty, !loadingHistory else { return }
         let stamp = epoch, selection = opening
         loadingHistory = true
         defer { if epoch == stamp, opening == selection { loadingHistory = false } }
         let page = try await remote.call("thread/history/read", params: ["thread_id": .string(live.id), "cursor": .string(live.historyCursor)])
-        guard epoch == stamp, opening == selection, self.remote === remote else { return }
+        guard !Task.isCancelled, connected, !refreshing, epoch == stamp, opening == selection, self.remote === remote else { throw CancellationError() }
+        guard page["thread_id"].string == live.id, page["cursor"].string == live.historyCursor,
+              (page["history_cursor"].string ?? "") != live.historyCursor else {
+            throw NativeError.invalid("历史分页未前进，请重新打开会话")
+        }
         beforePrepend()
         self.live?.prependHistory(page)
     }

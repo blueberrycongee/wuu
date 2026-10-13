@@ -66,7 +66,14 @@ For a compact conversation view, send `conversation_history: true` with
 `process_summary` items before applying the history page budget. Replies, errors
 and published attachments remain visible; active turns retain live items.
 Pass the returned opaque `history_cursor` to `thread/history/read` to load older
-conversation pages. A page can split a turn, but never a process summary.
+conversation pages. These pages currently allow up to 100 turns and 1 MiB of
+serialized item data; a page can split a turn, but never a process summary.
+The iOS timeline starts loading older pages automatically after opening a
+conversation and continues until history is complete. Requests run one at a
+time and stop when the view closes, the conversation changes, or the connection
+is lost. Reading position is retained while browsing older messages; a failed
+page can be retried at the top of the timeline. Tool details and full oversized
+content remain on demand.
 
 When the user opens a summary, call `thread/activity/read` with `thread_id`,
 `turn_id`, the summary’s `item_id`, and `activity.last_item_id` as `last_item_id`.
