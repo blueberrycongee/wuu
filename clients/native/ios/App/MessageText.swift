@@ -2,14 +2,24 @@ import SwiftUI
 import MarkdownUI
 
 struct MessageText: View {
+    private static let markdownByteLimit = 128 * 1024
     let text: String
     let markdown: Bool
     var contextMenuEnabled = true
     var isLive = false
     @Environment(\.mobileTextSize) private var textSize
-    @State private var renderState = MessageMarkdown()
+    @StateObject private var renderState: MessageMarkdown
     private var input: MessageMarkdown.Input { .init(text: text, live: isLive) }
     @State private var selecting = false
+    init(text: String, markdown: Bool, contextMenuEnabled: Bool = true, isLive: Bool = false) {
+        self.text = text
+        self.markdown = markdown
+        self.contextMenuEnabled = contextMenuEnabled
+        self.isLive = isLive
+        // StateObject initializes once per row identity, before the lazy stack measures it.
+        _renderState = StateObject(wrappedValue: MessageMarkdown(.init(
+            text: markdown && text.utf8.count <= Self.markdownByteLimit ? text : "", live: isLive)))
+    }
     var body: some View {
         if contextMenuEnabled {
             rendered.textSelection(.enabled)
@@ -25,7 +35,7 @@ struct MessageText: View {
     }
     private var rendered: some View {
         Group {
-            if markdown, text.utf8.count <= 128 * 1024 {
+            if markdown, text.utf8.count <= Self.markdownByteLimit {
                 MessageMarkdownView(rendered: renderState)
                     .task(id: input) { renderState.submit(input) }
                     .onDisappear { renderState.stop() }
@@ -72,7 +82,7 @@ private struct SelectableText: UIViewRepresentable {
 
 // Only committed snapshots invalidate the Markdown tree; incoming tokens update the owner.
 private struct MessageMarkdownView: View {
-    let rendered: MessageMarkdown
+    @ObservedObject var rendered: MessageMarkdown
     @Environment(\.mobileTextSize) private var textSize
     var body: some View {
         Markdown(rendered.content)
@@ -139,15 +149,23 @@ private struct MessageMarkdownView: View {
     }
 }
 
-@MainActor @Observable private final class MessageMarkdown {
+@MainActor private final class MessageMarkdown: ObservableObject {
     struct Input: Equatable { let text: String; let live: Bool }
-    var content = MarkdownContent("")
-    var reveal = StreamingTextRevealState()
-    @ObservationIgnored private var desired = Input(text: "", live: false)
-    @ObservationIgnored private var rendered: Input?
-    @ObservationIgnored private var work: Task<Void, Never>?
-    @ObservationIgnored private var generation = 0
-    @ObservationIgnored private var lastParse = ContinuousClock.now
+    @Published var content: MarkdownContent
+    @Published var reveal = StreamingTextRevealState()
+    private var desired: Input
+    private var rendered: Input
+    private var work: Task<Void, Never>?
+    private var generation = 0
+    private var lastParse = ContinuousClock.now
+
+    init(_ input: Input) {
+        let value = ParsedMarkdown(input.text)
+        content = value.content
+        desired = input
+        rendered = input
+        reveal.update(value.plainText, animated: false)
+    }
 
     func submit(_ input: Input) {
         desired = input
@@ -155,9 +173,9 @@ private struct MessageMarkdownView: View {
         let stamp = generation
         work = Task {
             while rendered != desired {
-                if rendered?.text == desired.text { rendered = desired; break }
+                if rendered.text == desired.text { rendered = desired; break }
                 // A fixed cadence cannot be starved by continuously arriving tokens.
-                if rendered != nil, desired.live {
+                if desired.live {
                     let deadline = lastParse + .milliseconds(100)
                     do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
                 }
@@ -167,7 +185,7 @@ private struct MessageMarkdownView: View {
                 guard !Task.isCancelled, generation == stamp else { return }
                 // A replacement owns the next frame; an older append snapshot is still useful.
                 if desired.text.hasPrefix(snapshot.text) {
-                    reveal.update(value.plainText, animated: rendered != nil && (snapshot.live || rendered?.live == true))
+                    reveal.update(value.plainText, animated: snapshot.live || rendered.live)
                     content = value.content
                     rendered = snapshot
                 }
@@ -180,7 +198,6 @@ private struct MessageMarkdownView: View {
         generation += 1
         work?.cancel(); work = nil
         reveal.chunks.removeAll()
-        rendered = nil
     }
 }
 

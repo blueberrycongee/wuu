@@ -26,7 +26,9 @@ struct ConversationTimeline: View {
                     let latestTurnID = rows.last?.messages[0].turnID
                     let previousTurnID = rows.last { $0.messages[0].turnID != latestTurnID }?.messages[0].turnID
                     let recentStart = rows.firstIndex { $0.messages[0].turnID == (previousTurnID ?? latestTurnID) } ?? rows.endIndex
-                    VStack(alignment: .leading, spacing: rowSpacing) {
+                    // One lazy stack owns every row's position. A nested history stack can
+                    // revise its estimated height without moving the eager replies below it.
+                    LazyVStack(alignment: .leading, spacing: rowSpacing) {
                         if model.live?.historyCursor.isEmpty == false {
                             HStack {
                                 Spacer()
@@ -38,14 +40,12 @@ struct ConversationTimeline: View {
                                 Spacer()
                             }.frame(minHeight: 24)
                         }
-                        if recentStart > rows.startIndex {
-                            LazyVStack(alignment: .leading, spacing: rowSpacing) {
-                                ForEach(rows[..<recentStart]) { row in timelineRow(row, size: geometry.size) }
-                            }
+                        ForEach(rows[..<recentStart]) { row in timelineRow(row, size: geometry.size) }
+                        // Keep adjacent turns together until iOS stops looping row phases
+                        // around embedded UIKit views at the growing turn's boundary.
+                        VStack(alignment: .leading, spacing: rowSpacing) {
+                            ForEach(rows[recentStart...]) { row in timelineRow(row, size: geometry.size) }
                         }
-                        // Keep the growing turn and its predecessor mounted as their boundary crosses the viewport.
-                        // Rejoin the lazy history when iOS no longer loops row phases around embedded UIKit views.
-                        ForEach(rows[recentStart...]) { row in timelineRow(row, size: geometry.size) }
                         if model.live?.running == true && model.messages.last?.tool == nil && model.conversationRows.last?.processActive != true {
                             ConversationActivityMark(activity: model.messages.last?.role == "assistant" ? "responding" : "thinking", settings: model.live?.settings)
                                 .accessibilityElement().accessibilityLabel("正在处理")

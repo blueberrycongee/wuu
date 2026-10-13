@@ -93,6 +93,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Prevent long iOS replies from overlapping or jumping during history scrolling
+  by sharing one lazy layout and measuring Markdown content on first display.
+
 - Keep iOS pending-message context-menu previews opaque so conversation text
   cannot show through, and constrain their width in landscape.
 
