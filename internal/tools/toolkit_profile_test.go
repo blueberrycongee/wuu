@@ -10,6 +10,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -164,6 +165,10 @@ func TestActiveProfileAllowsDeferredMCPThroughToolSearch(t *testing.T) {
 		},
 	)
 	kit.SetActiveProfile(modelprofile.Resolve("openai", "gpt-5-codex"), true)
+	kit.SetSkills([]skills.Skill{{Name: "docs", AllowedTools: []string{"mcp_docs_search"}}})
+	if len(kit.env.VisibleSkills()) != 1 {
+		t.Fatal("reachable deferred MCP tool did not satisfy the skill requirement")
+	}
 
 	if containsProfileDef(kit.Definitions(), "mcp_docs_search") {
 		t.Fatal("MCP tool should not be visible before tool_search")
@@ -199,6 +204,10 @@ func TestActiveProfileAllowsDeferredMCPThroughToolSearch(t *testing.T) {
 	}
 	if !strings.Contains(out, "mcp_docs_search") {
 		t.Fatalf("unexpected MCP result: %s", out)
+	}
+	kit.DisableTools("mcp_docs_search")
+	if len(kit.env.VisibleSkills()) != 0 {
+		t.Fatal("disabled MCP tool still satisfied the skill requirement")
 	}
 }
 
