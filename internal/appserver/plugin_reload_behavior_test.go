@@ -16,6 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -43,6 +44,22 @@ func TestPluginReloadBehaviorProcess(t *testing.T) {
 	err := plugingo.Serve(context.Background(), plugingo.Handler{
 		Initialize: func(_ context.Context, host plugingo.Host, _ plugingo.InitializeParams) error {
 			callbackHost = host
+			if path := os.Getenv("WUU_RELOAD_TEST_ATTEMPTS"); path != "" {
+				file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+				if err != nil {
+					return err
+				}
+				_, err = fmt.Fprintln(file, time.Now().UnixNano())
+				closeErr := file.Close()
+				if err != nil || closeErr != nil {
+					return fmt.Errorf("record initialization: %v, %v", err, closeErr)
+				}
+			}
+			if path := os.Getenv("WUU_RELOAD_TEST_FAILURE"); path != "" {
+				if message, err := os.ReadFile(path); err == nil {
+					return fmt.Errorf("%s", message)
+				}
+			}
 			return nil
 		},
 		Activate: func(context.Context) error {
@@ -75,6 +92,118 @@ func TestPluginReloadBehaviorProcess(t *testing.T) {
 		os.Exit(2)
 	}
 	os.Exit(0)
+}
+
+func TestPluginRefreshFailureBackoffKeepsRealRuntimeAndManualRetry(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = retryingTempDir(t)
+	control := t.TempDir()
+	attemptsPath := filepath.Join(control, "attempts")
+	failurePath := filepath.Join(control, "failure")
+	manifest := pluginpkg.Manifest{SchemaVersion: 1, ID: "retry-fixture", Runtime: &pluginpkg.RuntimeSpec{
+		Protocol: pluginhost.ProtocolName, Command: os.Args[0], Args: []string{"-test.run=^TestPluginReloadBehaviorProcess$"},
+		Env: map[string]string{"WUU_RELOAD_TEST_MARKER": "last good runtime", "WUU_RELOAD_TEST_DESCRIPTION": "Read fixture",
+			"WUU_RELOAD_TEST_SHUTDOWN": filepath.Join(control, "shutdown"), "WUU_RELOAD_TEST_ATTEMPTS": attemptsPath, "WUU_RELOAD_TEST_FAILURE": failurePath},
+	}}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(rt.WuuHome, "plugins", manifest.ID, "plugin.json")
+	writePluginPackageFile(t, path, string(raw))
+	item, err := pluginpkg.LoadManifest(path, "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		DefaultProvider: "fake-provider",
+		Providers:       map[string]config.ProviderConfig{"fake-provider": {Type: "openai-compatible", BaseURL: "https://example.test/v1", Model: "fake-model"}},
+		Extensions:      &extensions.Settings{},
+	}
+	if err := cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint, Permissions: item.EffectivePermissions}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePluginPackageFile(t, rt.ConfigPath, string(raw))
+	if _, _, err := rt.LoadEffectiveConfig(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.RefreshExtensions(cfg); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = rt.Cleanup() })
+	oldHost := rt.PluginHost
+	pinned := rt.RetainPluginGeneration()
+	defer rt.ReleasePluginGeneration(pinned)
+	toolName := ""
+	for _, tool := range oldHost.ToolDefinitions() {
+		if registered, ok := oldHost.Tool(tool.Name); ok && registered.PluginID == manifest.ID {
+			toolName = tool.Name
+		}
+	}
+	if toolName == "" {
+		t.Fatalf("fixture tool is missing: %+v", oldHost.Statuses())
+	}
+	assertOldTool := func() {
+		t.Helper()
+		result, err := oldHost.ExecuteTool(context.Background(), toolName, pluginhost.ToolExecuteInput{
+			ThreadID: "retained-thread", TurnID: "retained-turn", CallID: "read", CWD: rt.RootDir, Arguments: json.RawMessage(`{}`),
+		})
+		if err != nil || !strings.Contains(fmt.Sprint(result), "last good runtime") {
+			t.Fatalf("retained process is unusable: %+v, %v", result, err)
+		}
+	}
+	attempts := func() int {
+		t.Helper()
+		data, err := os.ReadFile(attemptsPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(strings.Fields(string(data)))
+	}
+	out := &lockedBuffer{}
+	srv := &Server{rt: rt, out: out, threads: map[string]*threadState{}}
+	defer srv.Close()
+	writePluginPackageFile(t, failurePath, "initialization refused")
+	epoch := advancePluginGenerationWatchTestEpoch(t, rt.WuuHome)
+	if err := srv.refreshPluginGenerationIfChanged(); err == nil || !strings.Contains(err.Error(), "initialization refused") {
+		t.Fatalf("candidate failure was hidden: %v", err)
+	}
+	for range 8 {
+		_ = srv.refreshPluginGenerationIfChanged()
+		thread := &threadState{ID: "waiting-for-recovery"}
+		thread.mu.Lock()
+		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(thread)
+		thread.mu.Unlock()
+		if err != nil || acquired {
+			t.Fatalf("turn admission did not wait for recovery: acquired=%t err=%v", acquired, err)
+		}
+		srv.backgroundWG.Wait()
+	}
+	if attempts() != 2 || rt.PluginHost != oldHost || srv.pluginGenerationEpoch.Load() == epoch {
+		t.Fatalf("failed candidate was rebuilt or published: attempts=%d epoch=%d", attempts(), srv.pluginGenerationEpoch.Load())
+	}
+	assertOldTool()
+	// The real Refresh RPC is an explicit attempt even during automatic backoff.
+	callPluginPackageRPC(t, srv, "retry-failed", MethodExtensionCatalogRefresh, struct{}{})
+	response := responseByID(t, parseOutput(t, out.String()), "retry-failed")
+	if response["error"] == nil || attempts() != 3 || rt.PluginHost != oldHost {
+		t.Fatalf("manual retry did not attempt and report failure: %+v; attempts=%d", response, attempts())
+	}
+	assertOldTool()
+	if err := os.Remove(failurePath); err != nil {
+		t.Fatal(err)
+	}
+	callPluginPackageRPC(t, srv, "retry-repaired", MethodExtensionCatalogRefresh, struct{}{})
+	response = responseByID(t, parseOutput(t, out.String()), "retry-repaired")
+	if response["error"] != nil || attempts() != 4 || rt.PluginHost == oldHost {
+		t.Fatalf("repaired manual retry did not publish: %+v; attempts=%d", response, attempts())
+	}
+	assertOldTool()
+	t.Logf("real plugin initialize attempts=%d; failed candidates retained callable old process; manual failure and recovery reported through Refresh RPC", attempts())
 }
 
 func publishReloadBehaviorGeneration(t *testing.T, rt *runtime.Session, marker, description string) {

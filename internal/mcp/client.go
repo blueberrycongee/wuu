@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/capability"
+	"github.com/blueberrycongee/wuu/internal/mcpconfig"
 )
 
 const defaultConnectionTimeout = 30 * time.Second
@@ -39,6 +40,7 @@ type ServerConfig struct {
 	OAuth         *OAuthConfig            `json:"oauth,omitempty"`
 	Enabled       *bool                   `json:"enabled,omitempty"`
 	ToolOverrides map[string]ToolOverride `json:"tool_overrides,omitempty"`
+	ToolTimeoutMS mcpconfig.ToolTimeoutMS `json:"tool_timeout_ms,omitempty"`
 }
 
 // Canonical ServerConfig.Transport values. "http" (not "streamable-http") is
@@ -89,6 +91,7 @@ type ToolOverride struct {
 // Client is a connected MCP server session.
 type Client struct {
 	name                     string
+	toolTimeout              time.Duration
 	transport                Transport
 	inFlight                 *inFlight
 	readLoop                 *readLoop
@@ -188,6 +191,10 @@ func withDefaultConnectionTimeout(ctx context.Context) (context.Context, context
 
 // ConnectStdio starts a local command as an MCP stdio server and connects.
 func ConnectStdio(ctx context.Context, cfg ServerConfig) (*Client, error) {
+	toolTimeout, err := cfg.ToolTimeoutMS.Duration()
+	if err != nil {
+		return nil, fmt.Errorf("mcp server %q: %w", cfg.Name, err)
+	}
 	cmd := cfg.Command
 	args := cfg.Args
 	if cmd == "" {
@@ -201,6 +208,7 @@ func ConnectStdio(ctx context.Context, cfg ServerConfig) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.toolTimeout = toolTimeout
 	c.SetToolOverrides(cfg.ToolOverrides)
 	return c, nil
 }
@@ -211,6 +219,10 @@ func ConnectSSE(ctx context.Context, cfg ServerConfig) (*Client, error) {
 }
 
 func connectSSEWithTokenProvider(ctx context.Context, cfg ServerConfig, tokenProvider TokenProvider) (*Client, error) {
+	toolTimeout, err := cfg.ToolTimeoutMS.Duration()
+	if err != nil {
+		return nil, fmt.Errorf("mcp server %q: %w", cfg.Name, err)
+	}
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("mcp server %q: url is required for sse transport", cfg.Name)
 	}
@@ -225,6 +237,7 @@ func connectSSEWithTokenProvider(ctx context.Context, cfg ServerConfig, tokenPro
 	if err != nil {
 		return nil, fmt.Errorf("mcp server %q: SSE transport at %s: %w", cfg.Name, cfg.URL, err)
 	}
+	c.toolTimeout = toolTimeout
 	c.SetToolOverrides(cfg.ToolOverrides)
 	return c, nil
 }
@@ -236,6 +249,10 @@ func ConnectStreamableHTTP(ctx context.Context, cfg ServerConfig) (*Client, erro
 }
 
 func connectStreamableHTTPWithTokenProvider(ctx context.Context, cfg ServerConfig, tokenProvider TokenProvider) (*Client, error) {
+	toolTimeout, err := cfg.ToolTimeoutMS.Duration()
+	if err != nil {
+		return nil, fmt.Errorf("mcp server %q: %w", cfg.Name, err)
+	}
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("mcp server %q: url is required for streamable HTTP transport", cfg.Name)
 	}
@@ -245,6 +262,7 @@ func connectStreamableHTTPWithTokenProvider(ctx context.Context, cfg ServerConfi
 		// Connect already closed the transport via c.Close().
 		return nil, fmt.Errorf("mcp server %q: streamable HTTP transport at %s: %w", cfg.Name, cfg.URL, err)
 	}
+	c.toolTimeout = toolTimeout
 	c.SetToolOverrides(cfg.ToolOverrides)
 	return c, nil
 }
@@ -499,11 +517,25 @@ func cloneToolOverrides(in map[string]ToolOverride) map[string]ToolOverride {
 	return out
 }
 
-// CallTool invokes a tool on the server.
+// ToolTimeout returns the immutable execution budget of this connection.
+func (c *Client) ToolTimeout() time.Duration {
+	if c.toolTimeout == 0 {
+		return mcpconfig.DefaultToolTimeout
+	}
+	return c.toolTimeout
+}
+
+// CallTool invokes a tool with the server budget or earlier caller deadline.
+// Expiry is returned to the caller; the tool is never replayed on timeout.
 func (c *Client) CallTool(ctx context.Context, name string, arguments json.RawMessage) (*CallToolResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.ToolTimeout())
+	defer cancel()
 	params := CallToolParams{Name: name, Arguments: arguments}
 	resultBytes, err := callWithProtocol(ctx, c.transport, c.inFlight, "tools/call", params, c.protocolVersion)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 	var result CallToolResult

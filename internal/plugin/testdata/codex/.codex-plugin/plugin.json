@@ -9,7 +9,7 @@
     ]
   },
   "mcpServers": {
-    "docs": {"command": "codex-docs"}
+    "docs": {"command": "codex-docs", "tool_timeout_ms": 45000}
   },
   "requestedPermissions": ["network", "filesystem.read"],
   "activityKinds": ["browser"],

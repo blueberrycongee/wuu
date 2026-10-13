@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/hooks"
@@ -94,6 +94,9 @@ type Options struct {
 	// SafeMode discovers plugin manifests for management but activates no
 	// runtime, tool, skill, hook, or desktop contribution from a plugin.
 	SafeMode bool
+	// MCPOAuth supplies the host authentication service before any MCP connection
+	// starts. All plugin generations share it; nil uses the desktop credential store.
+	MCPOAuth *mcp.OAuthManager
 }
 
 // ConfigLoadMode identifies the three supported config source models. It is
@@ -188,6 +191,8 @@ type Session struct {
 	pluginTransitionMu sync.Mutex
 	pluginGenerationMu sync.Mutex
 	pluginGeneration   *PluginGeneration
+	// mcpOAuth outlives individual connection managers, including retained turns.
+	mcpOAuth *mcp.OAuthManager
 	// Retired generations are tracked without an extra reference so policy
 	// revocation reaches older conversations without extending their lifetime.
 	retiredPluginGenerations   map[*PluginGeneration]struct{}
@@ -238,6 +243,7 @@ func (s *Session) cloneForThreadModel() (*Session, error) {
 		ExtensionSettings:           s.ExtensionSettings,
 		PluginHost:                  s.PluginHost,
 		pluginGeneration:            s.pluginGeneration,
+		mcpOAuth:                    s.mcpOAuth,
 		UserQuestions:               s.UserQuestions,
 		DriverProfile:               s.DriverProfile,
 		PluginSessionRouter:         s.PluginSessionRouter,
@@ -512,6 +518,15 @@ func NewSession(opts Options) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	mcpOAuth := opts.MCPOAuth
+	if mcpOAuth == nil {
+		store, err := credentialstore.NewDesktopStore()
+		if err != nil {
+			providers.DebugLogf("desktop credential store: %v", err)
+		} else {
+			mcpOAuth = mcp.NewOAuthManager(store, nil)
+		}
+	}
 	activityRegistry := activity.NewRegistry()
 	var toolExecutor agent.ToolExecutor
 	var toolkit *tools.Toolkit
@@ -556,7 +571,7 @@ func NewSession(opts Options) (*Session, error) {
 		})
 		toolkit = kit
 		toolExecutor = newPluginAwareToolExecutor(kit, pluginHost, hookDispatcher, "", "", rootDir)
-		connectMCPServers(cfg, activePlugins, toolkit)
+		connectMCPServers(cfg, activePlugins, toolkit, mcpOAuth)
 	}
 
 	// Interpreter processes start only when called. Thread clones share lifecycle
@@ -644,6 +659,10 @@ func NewSession(opts Options) (*Session, error) {
 			HistoryDir:                     "",
 			WorkerSysPrompt:                workerBaseSystemPrompt,
 			WorkerPrompt: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata, isolation agentcontrol.IsolationMode) (string, error) {
+				workerToolSurface, err := workerToolSurfaceForToolkit(toolkit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+				if err != nil {
+					return "", err
+				}
 				files, workerSkills := runtimeSession.guidanceForRoot(workerRoot, nil)
 				return buildWorkerBasePrompt(workerRoot, sessionDate, "", workerToolProviderName, workerToolModeModel, workerToolSurface, files, workerSkills), nil
 			},
@@ -665,6 +684,7 @@ func NewSession(opts Options) (*Session, error) {
 				wkit.SetProcessManager(processMgr)
 				_, workerSkills, workerGeneration := runtimeSession.skillSnapshotForRoot(workerRoot, nil)
 				wkit.SetSkillsWithAvailability(workerSkills, workerGeneration.skillAvailable)
+				runtimeSession.bindLocalSkillRefresh(wkit, workerRoot, workerGeneration)
 				wkit.SetAgentControl(agentControl)
 				wkit.ConfigureSurfaceForProviderModel(workerToolProviderName, workerToolModeModel, false)
 				wkit.SetToolSearchEnabled(workerToolSearchEnabled)
@@ -784,6 +804,7 @@ func NewSession(opts Options) (*Session, error) {
 		AgentControl:                agentControl,
 		ProcessManager:              processMgr,
 		Toolkit:                     toolkit,
+		mcpOAuth:                    mcpOAuth,
 		CodeMode:                    codeModeService,
 		ActivityRegistry:            activityRegistry,
 		WorkerClient:                workerClient,
@@ -871,6 +892,7 @@ func NewSession(opts Options) (*Session, error) {
 	initialHooks := hooks.NewDispatcher(nil)
 	initialHooks.Replace(hookDispatcher)
 	runtimeSession.pluginGeneration = &PluginGeneration{
+		id:            newPluginGenerationID(wuuHome),
 		ownedRoots:    initialSnapshotRoots,
 		settings:      cfg,
 		plugins:       append([]pluginpkg.Plugin(nil), discoveredPlugins...),
@@ -900,6 +922,7 @@ func NewSession(opts Options) (*Session, error) {
 	if toolkit != nil {
 		toolkit.SetPluginManager(runtimeSession.pluginManager(runtimeSession.pluginGeneration, runPluginManagementCommand))
 		toolkit.SetSkillsWithAvailability(discoveredSkills, runtimeSession.pluginGeneration.skillAvailable)
+		runtimeSession.bindLocalSkillRefresh(toolkit, rootDir, runtimeSession.pluginGeneration)
 	}
 	snapshotsOwned = false
 	// The legacy/root control remains dormant until SetSessionID binds its real
@@ -1199,6 +1222,9 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		kit.SetToolSearchEnabled(shadow.ToolSearchEnabled)
 		kit.SetNativeDeferredToolDiscovery(shadow.NativeDeferredToolDiscovery)
 		shadow.Toolkit = kit
+		// Prompt admission must see this clone's plugin tools before the final
+		// thread runtime binds its executor, including a different pinned model.
+		shadow.StreamRunner.Tools = newPluginAwareToolExecutor(kit, shadow.PluginHost, shadow.HookDispatcher, sessionID, "", threadRoot)
 		catalog, catalogErr := deferredToolCatalogPromptForToolkit(kit)
 		if catalogErr != nil {
 			return nil, catalogErr
@@ -1322,6 +1348,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 		kit.SetProcessManager(threadProcessManager)
 		kit.SetSkillsWithAvailability(threadSkills, generation.skillAvailable)
+		s.bindLocalSkillRefresh(kit, threadRoot, generation)
 		ConfigureToolkitPermissions(kit, s.Permissions)
 		kit.SetApproveForMe(false)
 		kit.SetSessionID(id)
@@ -1410,6 +1437,10 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 						}
 						workerRoot = environment.Root()
 					}
+					workerToolSurface, err := workerToolSurfaceForToolkit(kit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
+					if err != nil {
+						return "", err
+					}
 					files, workerSkills := s.guidanceForRoot(workerRoot, generation)
 					return buildWorkerBasePrompt(workerRoot, s.SessionDate, s.workerOrientation, workerToolProviderName, workerToolModeModel, workerToolSurface, files, workerSkills), nil
 				},
@@ -1434,6 +1465,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					workerKit.SetProcessManager(threadProcessManager)
 					_, workerSkills := s.guidanceForRoot(workerRoot, generation)
 					workerKit.SetSkills(workerSkills)
+					s.bindLocalSkillRefresh(workerKit, workerRoot, generation)
 					workerKit.SetAgentControl(control)
 					workerKit.SetSessionID(id)
 					workerKit.SetSessionDir(artifactDir)
@@ -2325,38 +2357,14 @@ func discoverSkills(rootDir, homeDir, wuuHome string, plugins []pluginpkg.Plugin
 }
 
 func discoverSkillsWithPlugins(rootDir, homeDir, wuuHome string, plugins pluginSkillSnapshot, cfg config.SkillsConfig) []skills.Skill {
-	if !cfg.IsEnabled() {
+	discovered, err := localSkillLoader(rootDir, homeDir, wuuHome, plugins, cfg)(context.Background(), true)
+	if err != nil {
+		// No partial precedence result is published. Execution and explicit
+		// selection retry through the context-aware loader and surface errors.
+		providers.DebugLogf("discover local skills: %v", err)
 		return nil
 	}
-	var userDirs []skills.SourceDir
-	if home := skillUserHome(homeDir); home != "" {
-		userDirs = append(userDirs,
-			skills.SourceDir{Path: filepath.Join(home, ".codex", "skills"), Source: "user"},
-			skills.SourceDir{Path: filepath.Join(home, ".claude", "skills"), Source: "user"},
-			skills.SourceDir{Path: filepath.Join(home, ".agents", "skills"), Source: "user"},
-			skills.SourceDir{Path: filepath.Join(home, ".config", "opencode", "skills"), Source: "user"},
-		)
-	}
-	if strings.TrimSpace(wuuHome) != "" {
-		userDirs = append(userDirs, skills.SourceDir{Path: filepath.Join(wuuHome, "skills"), Source: "user"})
-	}
-	// Keep plugin contents pinned while resolving ordinary disk skills at this root.
-	byName := make(map[string]skills.Skill)
-	for _, layer := range [][]skills.Skill{plugins.user, skills.DiscoverSourceDirs(nil, userDirs), plugins.project, skills.DiscoverSourceDirs(skillProjectDirs(rootDir), nil)} {
-		for _, skill := range layer {
-			byName[skill.Name] = skill
-		}
-	}
-	discovered := make([]skills.Skill, 0, len(byName))
-	for _, skill := range byName {
-		discovered = append(discovered, skill)
-	}
-	sort.Slice(discovered, func(i, j int) bool { return discovered[i].Name < discovered[j].Name })
-	// Claude Code-style command templates (.claude/commands/*.md) are read as
-	// pure content and adapted into lightweight skill entries. Native skills
-	// take precedence over commands with the same name.
-	commands := skills.DiscoverCommandsSourceDirs(commandProjectDirs(rootDir), commandUserDirs(wuuHome))
-	return skills.MergeWithBundled(skills.MergeCommands(discovered, commands), wuuHome)
+	return discovered
 }
 
 // commandProjectDirs returns the project-chain command directories, mirroring
@@ -2468,21 +2476,22 @@ func skillDirChain(root, leaf string) []string {
 	return chain
 }
 
-func connectMCPServers(cfg config.Config, plugins []pluginpkg.Plugin, toolkit *tools.Toolkit) {
+func connectMCPServers(cfg config.Config, plugins []pluginpkg.Plugin, toolkit *tools.Toolkit, oauth *mcp.OAuthManager) {
 	if toolkit == nil {
 		return
 	}
 	toolkit.SetMCPActivityBindings(mcpActivityBindingsFromPlugins(plugins))
-	manager, _ := startMCPManager(cfg, plugins, nil)
+	manager, _ := startMCPManager(cfg, plugins, nil, oauth)
 	toolkit.SetMCPManager(manager)
 }
 
-func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlugins map[string]bool) (*mcp.Manager, error) {
+func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlugins map[string]bool, oauth *mcp.OAuthManager) (*mcp.Manager, error) {
 	servers := mcpServersFromConfigAndPlugins(cfg, plugins)
 	if len(servers) == 0 {
 		return nil, nil
 	}
 	mcpMgr := mcp.NewManager()
+	mcpMgr.SetOAuthManager(oauth)
 	serverConfigs := make(map[string]mcp.ServerConfig, len(servers))
 	requiredServers := make(map[string]bool)
 	for _, item := range plugins {
@@ -2505,6 +2514,7 @@ func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlug
 			OAuth:         mcpOAuthConfig(mcpCfg.OAuth),
 			Enabled:       mcpCfg.Enabled,
 			ToolOverrides: mcpToolOverrides(mcpCfg.ToolOverrides),
+			ToolTimeoutMS: mcpCfg.ToolTimeoutMS,
 		}
 	}
 	mcpMgr.Configure(serverConfigs)
@@ -2531,16 +2541,16 @@ func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlug
 				continue
 			}
 			wait.Add(1)
-			go func(name string, serverCfg mcp.ServerConfig) {
+			go func(name string) {
 				defer wait.Done()
 				semaphore <- struct{}{}
 				defer func() { <-semaphore }()
-				if err := mcpMgr.Add(ctx, serverCfg); err != nil {
+				if err := mcpMgr.ConnectIfUnstarted(ctx, name); err != nil {
 					providers.DebugLogf("mcp server %q failed to connect: %v", name, err)
 				} else {
 					providers.DebugLogf("mcp server %q connected (%d tools)", name, mcpMgr.Status()[name].ToolCount)
 				}
-			}(name, serverCfg)
+			}(name)
 		}
 		wait.Wait()
 	}()
@@ -2598,6 +2608,9 @@ func mcpServersFromConfigAndPlugins(cfg config.Config, plugins []pluginpkg.Plugi
 			}
 			if server.Enabled != nil {
 				pluginServer.Enabled = server.Enabled
+			}
+			if server.ToolTimeoutMS != 0 {
+				pluginServer.ToolTimeoutMS = server.ToolTimeoutMS
 			}
 			out[name] = pluginServer
 			continue
