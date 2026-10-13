@@ -45,6 +45,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the iOS conversation loading indicator centered and fully visible before
+  messages arrive, instead of squeezing it into a clipped capsule at the left edge.
 - Responses connections keep text tools callable through JSON schemas when the
   model or an explicit compatibility option disables custom tools. Forced choices
   and replayed calls use the same wire format without changing saved history.
