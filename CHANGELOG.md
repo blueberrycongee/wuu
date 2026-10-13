@@ -35,6 +35,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Plugin SDKs now overlap explicitly concurrency-safe tools in a bounded pool,
+  while ordinary handlers and lifecycle transitions retain ordered barriers.
+  Foreground subagent waits no longer serialize independent tasks, and a late
+  result cannot overwrite a newer follow-up task.
+
 - Approve for me shares the one-shot text request foundation with plugins while
   retaining host-owned permission decisions and the active conversation's model
   and tuning. Provider options cannot replace review evidence, switch models, or
@@ -45,6 +50,24 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the iOS conversation loading indicator centered and fully visible before
+  messages arrive, instead of squeezing it into a clipped capsule at the left edge.
+- Responses connections keep text tools callable through JSON schemas when the
+  model or an explicit compatibility option disables custom tools. Forced choices
+  and replayed calls use the same wire format without changing saved history.
+- Bound plugin runtime shutdown, retire undeliverable execution cancellations,
+  preserve shutdown failures, and cap stderr so stalled or noisy extensions
+  cannot strand retirement.
+- Bound asynchronous desktop plugin startup, cancel superseded staging promptly,
+  and let optional consumers proceed after a provider times out while retaining
+  the last working replacement generation.
+- Keep live plugin executions visible in diagnostics after hot reload, with
+  generation-scoped identities that distinguish overlapping execution IDs.
+
+- Back off repeated automatic plugin refresh failures without delaying changed
+  candidates or manual retries, while retaining healthy running generations.
+- Prevent cancelled queued plugin tool, capability, and service calls from
+  entering their handlers while preserving lifecycle cleanup.
 - Failed PDF previews can retry in the same panel without reloading the window
   or losing conversation drafts. Retries recover loading, page-fetch, and rendering
   errors, refresh workspace file metadata, preserve the requested page, and cancel

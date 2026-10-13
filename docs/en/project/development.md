@@ -62,6 +62,16 @@ make build-go
 
 Type checks, unit tests, and successful bundles are different evidence from a working app. For UI changes, inspect the affected rendering and interactions using the [desktop UI guide](desktop-ui.md). For plugin changes, also exercise actual tool calls or rendered contributions; package validation alone does not do that.
 
+For SDK tool scheduling, build the TypeScript SDK with
+`npm --prefix packages/plugin-sdk run build`, then run
+`node scripts/plugin-tool-scheduling-e2e.mjs`. It builds a small Go fixture and
+exercises both SDKs over real JSONL subprocess pipes, including bundled subagent
+and peer tools, using synthetic host services. It requires no model credentials.
+`WUU_E2E_RACE=1` enables the Go race detector; `GO` selects a Go executable.
+Results and wire traces are retained in `.tmp/plugin-tool-scheduling/results.json`;
+`WUU_E2E_OUTPUT` selects another artifact directory. This verifies the SDK process
+boundary, not the full Go host, inference provider, or desktop UI.
+
 `npm --prefix desktop run test:renderer-recovery` intentionally crashes hidden
 Chromium renderers to check recovery, retry limits, window isolation, and IPC.
 It uses a temporary profile and synthetic content, not your Wuu data. Run it in

@@ -58,6 +58,8 @@ make build-go
 
 类型检查、单元测试和构建成功，与应用实际可用是不同的证据。UI 修改需按[桌面 UI 指南](desktop-ui.md)检查受影响的渲染与交互；插件修改还需验证实际工具调用或界面贡献，包验证不会完成这些检查。
 
+验证 SDK 工具调度时，先执行 `npm --prefix packages/plugin-sdk run build`，再执行 `node scripts/plugin-tool-scheduling-e2e.mjs`。脚本构建小型 Go fixture，通过真实 JSONL 子进程管道测试两个 SDK，以及内置子任务和同级会话工具；宿主服务使用合成响应，不需要模型凭据。`WUU_E2E_RACE=1` 启用 Go race detector，`GO` 指定 Go 可执行文件。结果和协议帧保存在 `.tmp/plugin-tool-scheduling/results.json`；可用 `WUU_E2E_OUTPUT` 指定其他产物目录。它验证 SDK 进程边界，不代表完整 Go 宿主、推理服务或桌面 UI 验收。
+
 `npm --prefix desktop run test:renderer-recovery` 会主动让隐藏的 Chromium 渲染进程
 崩溃，检查恢复、重试上限、窗口隔离和 IPC。测试使用临时配置目录和模拟内容，不读取
 你的 Wuu 数据。请在图形桌面会话中运行；它不验证原生对话框外观或打包应用行为。
