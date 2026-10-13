@@ -49,6 +49,7 @@ func TestConnectRollsBackWhenInitializedNotificationFails(t *testing.T) {
 func TestCallSendsCancelledNotificationOnContextCancel(t *testing.T) {
 	transport := newScriptedTransport()
 	f := newInFlight()
+	signal := &sentSignalTransport{Transport: transport, method: "notifications/cancelled", sent: make(chan struct{})}
 
 	// tools/call is never auto-answered by the scripted transport, so the
 	// call blocks until the context is cancelled.
@@ -58,9 +59,15 @@ func TestCallSendsCancelledNotificationOnContextCancel(t *testing.T) {
 		cancel()
 	}()
 
-	_, err := call(ctx, transport, f, "tools/call", map[string]any{"name": "slow"})
+	_, err := call(ctx, signal, f, "tools/call", map[string]any{"name": "slow"})
 	if err == nil {
 		t.Fatalf("expected cancellation error")
+	}
+
+	select {
+	case <-signal.sent:
+	case <-time.After(time.Second):
+		t.Fatal("cancel notification was not sent")
 	}
 
 	transport.mu.Lock()

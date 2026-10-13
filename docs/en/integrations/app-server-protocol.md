@@ -122,6 +122,14 @@ records. Retraction metadata is recorded for new edits; previously edited
 sessions without that metadata cannot reliably distinguish discarded branches
 from compacted history.
 
+For Codex, both operations create a bounded native branch before committing the
+new reference and Wuu history. Forks accept completed native turns or their final
+reply; edits exclude the selected prompt's whole native turn. Partial-turn cuts,
+unverifiable legacy identities, busy sources, unsupported adapters, or native
+responses that ignore the cutoff fail without changing the source. Empty native
+threads need no native copy. See [external engine history](../getting-started/external-engines.md#forking-and-editing-history)
+for supported boundaries and failure recovery. These operations never undo files.
+
 ## Turns and execution runs
 
 Interactive clients start a turn with text or attachments:
@@ -140,6 +148,49 @@ optional `hold: true` to persist input as held work without dispatching it, even
 when the interrupted turn has already settled. This lets clients retain messages
 whose preparation or admission finishes after a Stop request. Held input remains
 available through the existing pending-input controls and resume snapshots.
+
+For persistent conversations, human queue/steer acceptance and pending-input edits
+or cancellation commit before a successful RPC response. Reuse a stable
+`client_id` when retrying an ambiguous response: a pending queue duplicate returns
+the original accepted input, while consumed IDs are rejected across input methods.
+Cancellation fences retries in that delivery mode; explicitly switching between
+queue and steering supersedes the previous mode's cancellation. Updates use
+`turn/update-queued`; resubmitting `turn/queue` does not edit or restart input.
+A restarted server exposes unconsumed input through `held_user_messages` and never
+reconstructs an automatic runnable queue. Live input appears only in
+`pending_user_messages`. Explicitly send a held item with `turn/steer`.
+
+User-history admission atomically settles the recovery record. Human steering
+checkpoints the unpersisted transcript before the next model request, preserving
+message order and preventing a crash from making dispatched input replayable.
+A concurrent edit or cancellation fences stale admission. Permission selection
+is re-resolved at execution; saved input does not restore old permissions.
+These are local process-crash guarantees, not automatic recovery of uncertain
+tool effects. Ephemeral conversations retain their memory-only behavior.
+
+Persistent Codex conversations support active-turn human steering. Wuu binds
+`expected_turn_id` to the current host turn, and the adapter binds the native
+request to the active native turn ID. Attachments and stable `client_id` values
+use the ordinary input path; steering does not change tools or permissions.
+The RPC response acknowledges local acceptance, while the user item appears in
+history only after a matching native acknowledgement and a successful local
+history commit. Several supplements can belong to the same turn.
+
+The steering result's optional `delivery` field reports the planned path,
+`active_turn` or `queued`; it does not acknowledge native consumption.
+Engines without active-turn steering, and ephemeral native conversations, retain
+the next-turn queue behavior. A native method-not-found response also falls back
+to the ordinary queue. A native rejection instead returns the input as held work;
+it is never silently injected into a later turn.
+
+If delivery loses its acknowledgement, is cancelled after sending, or cannot
+commit its receipt, the held item has `delivery_unconfirmed: true`. Its stable ID
+cannot be edited, withdrawn, requeued or resent, including after restart. The
+desktop shows the reason and keeps the original content available to view or copy. Inspect
+the native conversation before deciding whether to submit replacement input.
+This prevents automatic duplicate work; it does not claim exactly-once external
+tool execution. New input accepted while a native turn is settling is held if
+that turn can no longer accept it.
 
 Failed Wuu-engine streams can include `turn.error.recovery`. Its `attempt_count`
 and `retry_count` count recovery-executor calls that actually started; a prepared
@@ -283,9 +334,13 @@ without changing the default: the response reports the unchanged workspace
 selection, and idle conversations using the provider pick up the new
 connection. It cannot be combined with `thread_id`, `variant`, `effort`, or
 `permission_mode`, and on the default provider it cannot change the workspace
-model. `remove_model` hides a model choice so catalog refreshes cannot restore
-it; `add_model` restores a hidden choice or adds a model ID the catalog does not
-list. Provider summaries report hidden choices as `hidden_models`, and
+model. `remove_model` removes a model choice so catalog refreshes cannot restore
+it; the request must retain or supply a different selected `model`. Existing
+conversation, role, and alias selections retain their model metadata.
+`add_model` restores a removed choice or adds a model ID the catalog does not
+list. Model update and provider removal responses include `model_aliases` and
+`project_models`, including empty values, so clients can clear removed references.
+Provider summaries report removed choices as `hidden_models`, and
 `catalog_id` / `catalog_name` when the endpoint belongs to a model catalog
 service.
 

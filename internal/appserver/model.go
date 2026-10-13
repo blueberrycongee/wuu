@@ -577,14 +577,22 @@ func (th *threadState) takePendingSteersLocked(turnID string, now time.Time) ([]
 			steers[i].Role = "user"
 		}
 		steers[i].Steered = true
-		item := chatMessageItem(th.nextItemIDLocked(turnID), steers[i])
-		if item.ID == "" {
+		if th.PersistHistory && isHumanUserMessage(steers[i]) {
+			// Durable human input is materialized by the history checkpoint.
 			continue
 		}
-		th.upsertItemLocked(turnID, item, now)
-		out = append(out, itemStarted(th.ID, turnID, item, now), itemCompleted(th.ID, turnID, item, now))
+		out = append(out, th.materializeSteerLocked(turnID, steers[i], now)...)
 	}
 	return steers, out
+}
+
+func (th *threadState) materializeSteerLocked(turnID string, message providers.ChatMessage, now time.Time) []outboundNotification {
+	item := chatMessageItem(th.nextItemIDLocked(turnID), message)
+	if item.ID == "" {
+		return nil
+	}
+	th.upsertItemLocked(turnID, item, now)
+	return []outboundNotification{itemStarted(th.ID, turnID, item, now), itemCompleted(th.ID, turnID, item, now)}
 }
 
 func (th *threadState) drainPendingSteersLocked() []providers.ChatMessage {

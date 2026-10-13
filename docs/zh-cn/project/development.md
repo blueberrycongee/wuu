@@ -41,6 +41,21 @@ make build-go
 
 `make install` 从当前检出安装 CLI。当前发布工作流只打包 macOS arm64 桌面预览版；存在 Windows CI 和打包脚本，不代表已经发布 Windows 版本。用户可用的发行方式见[安装](../getting-started/installation.md)。
 
+### 原生引导端到端检查
+
+构建核心后，使用 Node 22.13 或更新版本运行
+`WUU_E2E_CORE=bin/wuu node scripts/native-steering-e2e.mjs`。
+该脚本启动真实 stdio app-server、受控的原生子进程和临时 SQLite 存储，
+检查当前轮次补充、轮次 ID 约束、延迟确认、拒绝、取消、持久化故障、重启恢复
+和不支持协议时的排队回退。结果、协议记录和被测二进制哈希保存在
+`.tmp/e2e/native-steering/`；可用 `WUU_STEER_E2E_OUTPUT` 指定其他输出目录。
+检查只使用合成数据，不调用外部模型，也不验证桌面渲染或已安装的原生引擎。
+
+构建桌面渲染器后，运行 `cd desktop && electron scripts/native-steering-e2e.cjs`，
+在正式 UI 中检查恢复出的未确认输入：只读恢复、完整复制、普通待处理项的操作，
+以及宽窗口默认字号和窄窗口大字号布局。结果和截图保存在
+`desktop/out/e2e/native-steering/`；可用 `WUU_STEER_UI_OUTPUT` 更改目录。
+
 ## 选择相关检查
 
 | 命令 | 检查或构建内容 |
@@ -58,9 +73,55 @@ make build-go
 
 类型检查、单元测试和构建成功，与应用实际可用是不同的证据。UI 修改需按[桌面 UI 指南](desktop-ui.md)检查受影响的渲染与交互；插件修改还需验证实际工具调用或界面贡献，包验证不会完成这些检查。
 
+验证 SDK 工具调度时，先执行 `npm --prefix packages/plugin-sdk run build`，再执行 `node scripts/plugin-tool-scheduling-e2e.mjs`。脚本构建小型 Go fixture，通过真实 JSONL 子进程管道测试两个 SDK，以及内置子任务和同级会话工具；宿主服务使用合成响应，不需要模型凭据。`WUU_E2E_RACE=1` 启用 Go race detector，`GO` 指定 Go 可执行文件。结果和协议帧保存在 `.tmp/plugin-tool-scheduling/results.json`；可用 `WUU_E2E_OUTPUT` 指定其他产物目录。它验证 SDK 进程边界，不代表完整 Go 宿主、推理服务或桌面 UI 验收。
+
 `npm --prefix desktop run test:renderer-recovery` 会主动让隐藏的 Chromium 渲染进程
 崩溃，检查恢复、重试上限、窗口隔离和 IPC。测试使用临时配置目录和模拟内容，不读取
 你的 Wuu 数据。请在图形桌面会话中运行；它不验证原生对话框外观或打包应用行为。
+
+### MCP 连接生命周期
+
+构建核心后，运行 loopback 生命周期验收：
+
+```sh
+go build -o bin/wuu ./cmd/wuu
+node scripts/mcp-connection-generations-e2e.mjs
+```
+
+此脚本使用独立临时数据、合成 MCP 服务和真实 app-server 进程，通过确定性的响应屏障，
+验证后台初始化及工具发现期间的 Disconnect、Connect、Refresh 与退出，以及之后的
+显式重连和其他服务不受影响。它还会占满四个后台连接名额，验证后续 Disconnect、
+Connect 和 Refresh 能覆盖尚在排队的启动任务。它不使用真实凭据，也不验证桌面界面。
+`WUU_E2E_CORE` 可指定其他核心二进制；`WUU_MCP_E2E_OUTPUT` 可指定证据目录，
+默认为 `.tmp/e2e/mcp-connection-generations/`，保存 JSON RPC 往返、服务端请求、
+二进制哈希与通过/失败记录。现有 manager 测试另行覆盖串行 app-server RPC 分发器
+无法同时发起的并发操作、永久撤销，以及旧客户端的延迟回调。
+
+### MCP 重载期间的身份验证
+
+运行 `go run ./scripts/mcp-auth-reload-e2e`，使用回环 OAuth/MCP 服务验证共享
+运行时与 app-server 协议。夹具将合成凭据保存到临时文件存储，覆盖带凭据启动、
+管理器代际替换、跨替换完成登录、旧代前台工具调用、禁用后重新启用，以及无 MCP
+启动后首次添加服务器。它还检查管理器和传输会话保持代际独立，RPC 响应不泄露凭据。
+夹具不会调用模型或外部引擎。
+
+此夹具通过运行时显式注入 OAuth 服务，不验证 macOS Keychain 或桌面 UI。
+结果、连接标识与 RPC 记录默认写入 `.tmp/e2e/mcp-auth-reload/`；可用
+`WUU_MCP_AUTH_E2E_OUTPUT` 指定其他证据目录。
+
+### 工作区 PDF 预览
+
+在图形会话中运行 `npm --prefix desktop run test:e2e:workspace-preview`，
+用生成的 PDF 验证真实 renderer 和 PDF.js。检查包括重试、命名与显式目标、
+键盘和中键跳转、页码范围、来源替换、保留挂载的隐藏面板，以及关闭或重试期间的竞态。外链 IPC 仅记录，
+不打开系统浏览器；部分真实目标解析结果会被延迟，以检查过期结果。
+JSON、合成 PDF 和截图写入 `desktop/out/e2e/workspace-preview/`，
+不使用已安装应用的配置目录或 Go 核心。
+
+无图形会话时，运行
+`node desktop/scripts/workspace-preview-e2e.cjs --pdf-fixtures-only`，
+用真实 Node PDF.js 验证相同的 PDF 字节。此模式检查解析、命名和页面引用解析，
+以及不安全动作数据，不验证渲染或点击。
 
 ### 实时缩放布局护栏
 
@@ -245,3 +306,15 @@ macOS 拉取请求测试原生辅助程序，推送到 `main` 时还生成桌面
 `cmd/wuu` 和 `internal` 包含 CLI 与 Go 核心；`desktop` 负责 Electron main/preload、renderer UI、IPC 和打包。`packages/protocol` 保存共享客户端协议类型，`clients/core` 实现无 UI 的远程行为。插件 SDK 和内置实现位于 `packages/plugin-sdk`、`packages/plugin-go` 和 `plugins`。
 
 Electron API 应留在桌面外壳。新外壳应通过[协议（英文）](../../en/integrations/app-server-protocol.md)与 `wuu app-server` 通信，不应依赖桌面内部实现或另建一套核心。行为变化时同步更新公开文档的中英文版本，放置和检查规则见[文档维护（英文）](../../../docs/README.md)。
+
+
+## 原生历史协议端到端验证
+
+先运行 `make build-go` 构建 CLI，再运行
+`go build -o bin/fakecodex ./internal/codexengine/testdata/fakecodex` 构建本地协议
+替身，最后运行 `node scripts/native-history-e2e.mjs`。脚本启动真实 Wuu 与
+fake Codex 子进程，并使用临时存储，不使用供应商凭据或真实推理。
+覆盖原生分支、编辑截止点、事务失败、不支持的响应、旧记录标识、父子隔离
+与重启恢复。结果和原始协议日志保存在 `.tmp/e2e/native-history/`，可通过
+`WUU_HISTORY_E2E_OUTPUT` 更改目录。这验证应用服务器协议，不代表桌面渲染
+或真实供应商 CLI 已通过验收。

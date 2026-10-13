@@ -23,7 +23,7 @@ import { WORKSPACE_FILE_DRAG_MIME, type QueuedComposerMessage } from "./Composer
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
 import { PluginHost } from "./plugins/PluginHost";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
-import { COMPOSER_ACTIONS, type PresentationHost } from "../shared/workbench";
+import { COMPOSER_ACTIONS, type PresentationHost, type ComposerInlineCompletionProviderHandle, type ComposerInlineCompletionInteraction } from "../shared/workbench";
 import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
 import { buildFileSelectionPart } from "./FileSelectionContext";
 import type {
@@ -64,6 +64,12 @@ afterEach(() => {
 
 function initialized(permissions?: PermissionSummary): InitializeResult {
   return {
+    extension_inventory: [{
+      id: "plugin:bundled:side", kind: "plugin", name: "Side", state: "active", enabled: true,
+      approval_state: "official", runtime_state: "active",
+      provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: "side", official: true },
+      contributions: { commands: [{ id: "side", title: "Side chat", kind: "side_conversation", template: "Side policy" }] },
+    }],
     protocol_version: "wuu-app-server/v0.1",
     provider: "fake",
     model: "fake-model",
@@ -1323,20 +1329,61 @@ describe("Composer send control", () => {
     expect(textarea.value).toBe("");
   });
 
-  it("retains a rejected draft and permits another submission attempt", () => {
+  it("retains a rejected draft and permits another submission attempt", async () => {
+    const host = new PluginHost({ react: React });
+    const interactions: ComposerInlineCompletionInteraction[] = [];
+    let provider!: ComposerInlineCompletionProviderHandle;
+    let ready = false;
+    let latestContext: { composerId: string; revision: number } | undefined;
+    await host.activateGeneration({ pluginId: "snippets", generation: "one", register(api) {
+      provider = api.registerComposerInlineCompletionProvider({
+        id: "cached", provideCompletion(context) {
+          latestContext = context;
+          return ready && context.draftText === "retry" ? { id: "snippet-1", text: " this draft" } : null;
+        },
+        onDidInteract: (event) => { interactions.push(event); },
+      });
+    } });
     const onSend = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
-    renderComposer({ prompt: "keep until accepted", onSend });
+    renderComposer({ prompt: "retry", onSend, pluginHost: host });
     const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => { textarea.focus(); textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      textarea.dispatchEvent(new Event("select", { bubbles: true })); });
+    expect(container.querySelector('[data-wuu-component="composer-inline-completion-text"]')).toBeNull();
+    ready = true;
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        provider.refresh(latestContext);
+        provider.refresh(latestContext);
+        await vi.advanceTimersByTimeAsync(100);
+      });
+    } finally { vi.useRealTimers(); }
+    expect(container.querySelector('[data-wuu-component="composer-inline-completion-text"]')?.textContent).toBe(" this draft");
+    expect(interactions.map((event) => event.type)).toEqual(["shown"]);
+    act(() => { textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })); });
+    expect(textarea.value).toBe("retry this draft");
+    expect(interactions.map((event) => event.type)).toEqual(["shown", "accepted"]);
+    act(() => { textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    expect(textarea.value).toBe("retry this draft");
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(interactions.map((event) => event.type)).toEqual(["shown", "accepted"]);
     act(() => {
-      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    });
-    expect(textarea.value).toBe("keep until accepted");
-    act(() => {
+      setTextareaValue(textarea, "retry this draft with an edit");
       textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     expect(onSend).toHaveBeenCalledTimes(2);
-    expect(onSend).toHaveBeenLastCalledWith("keep until accepted");
+    expect(onSend).toHaveBeenLastCalledWith("retry this draft with an edit");
     expect(textarea.value).toBe("");
+    expect(interactions.map((event) => event.type)).toEqual(["shown", "accepted", "dispatched"]);
+    expect(interactions[2]).toMatchObject({ suggestionId: "snippet-1", interactionId: interactions[0].interactionId,
+      source: interactions[0].source, type: "dispatched", mode: "send", edited: true });
+    expect(JSON.stringify(interactions)).not.toContain("retry");
+    await act(async () => {
+      setTextareaValue(textarea, "unrelated draft");
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(interactions).toHaveLength(3);
   });
 
   it("submits a quote-only split draft once when duplicate gestures race its clear", () => {
@@ -2753,7 +2800,7 @@ describe("Composer send control", () => {
     act(() => sendButton?.click());
 
     expect(onOpenSideThread).toHaveBeenCalledTimes(1);
-    expect(onOpenSideThread).toHaveBeenCalledWith(undefined);
+    expect(onOpenSideThread).toHaveBeenCalledWith(undefined, "side.side");
     expect(setPrompt).toHaveBeenCalledWith("");
   });
 
@@ -2773,7 +2820,7 @@ describe("Composer send control", () => {
     act(() => sendButton?.click());
 
     expect(onOpenSideThread).toHaveBeenCalledTimes(1);
-    expect(onOpenSideThread).toHaveBeenCalledWith("现在进度怎么样");
+    expect(onOpenSideThread).toHaveBeenCalledWith("现在进度怎么样", "side.side");
     expect(setPrompt).toHaveBeenCalledWith("");
   });
 });

@@ -53,6 +53,8 @@ export type UserQuestionRequest = {
   actor_id?: string;
   call_id?: string;
   mode?: "ask" | "offer";
+  /** Return the answer to the waiting tool, without sending another message. */
+  reply_to_tool?: boolean;
   questions: UserQuestion[];
   created_at: string;
   expires_at?: string;
@@ -451,7 +453,7 @@ export type ExtensionCommandDescriptor = {
   id: string;
   title: string;
   description?: string;
-  kind: "prompt_template" | "runtime_action";
+  kind: "prompt_template" | "runtime_action" | "side_conversation";
   template?: string;
   contexts?: string[];
   aliases?: string[];
@@ -587,6 +589,8 @@ export type ExtensionInventoryRecord = {
   conflicts?: string[];
   activation_issues?: ExtensionPluginActivationIssue[];
   enabled?: boolean;
+  // Explicit user policy; absent means the package default applies.
+  enabled_override?: boolean;
   desktop?: ExtensionDesktopDescriptor;
   contributions?: ExtensionContributions;
   pending_update?: ExtensionPendingUpdate;
@@ -728,6 +732,28 @@ export interface PluginDiagnosticsResult {
   id: string;
   diagnostics: PluginContributionDiagnostic[];
 }
+/** A live current/retained-generation execution from plugin/executions/list. */
+export interface PluginExecutionSnapshot {
+  /** Host-local ID. Use [generation_id, id] as the diagnostic identity. */
+  id: string;
+  generation_id: string;
+  retained: boolean;
+  plugin_id: string;
+  session_id?: string;
+  thread_id?: string;
+  turn_id?: string;
+  actor_id?: string;
+  call_id?: string;
+  tool?: string;
+  cwd?: string;
+  message?: string;
+  detail?: unknown;
+  updated_at?: string;
+}
+export interface PluginExecutionsResult {
+  /** Ordered by generation_id, then id; an empty result is [], never null. */
+  executions: PluginExecutionSnapshot[];
+}
 export interface PluginStorageGetParams extends PluginIdentityParams {
   scope: PluginValueScope;
   key: string;
@@ -740,6 +766,8 @@ export interface PluginStorageResult {
   value: string | null;
 }
 export interface PluginClientRequestParams extends PluginIdentityParams {
+  /** Optional opaque ID enabling cancellation of this request. */
+  request_id?: string;
   method: string;
   input?: unknown;
   /** Desktop routing hint. The main process resolves this stable project id
@@ -747,6 +775,8 @@ export interface PluginClientRequestParams extends PluginIdentityParams {
   workspace_id?: string;
 }
 export interface PluginClientRequestResult { result?: unknown; }
+export interface PluginClientCancelParams extends PluginIdentityParams { request_id: string; }
+export interface PluginClientCancelResult { cancelled: boolean; }
 
 export type ConfigModelUpdateResult = {
   provider: string;
@@ -764,6 +794,7 @@ export type ConfigModelUpdateResult = {
   model_profile?: ModelProfileSummary;
   tool_surface?: ToolSurfaceSummary;
   extension_trust?: ExtensionTrustSummary;
+  project_models?: ProjectModelsConfig;
   model_roles?: ModelRoleSummary[];
   model_aliases?: Record<string, ModelAliasSummary>;
   providers?: ProviderSummary[];
@@ -2052,6 +2083,8 @@ export type SideThreadHistoryResult = {
 };
 
 export type SideThreadSendParams = {
+  // Public plugin command ID (plugin.command); omitted selects the first active side command.
+  command_id?: string;
   main_thread_id: string;
   // The user's prompt. Empty prompts are rejected by the IPC layer.
   prompt: string;
@@ -2490,6 +2523,7 @@ export type QueuedTurn = {
 };
 
 export type HeldUserMessage = {
+  delivery_unconfirmed?: boolean;
   id: string;
   thread_id: string;
   origin: "queue" | "steer";
@@ -2630,7 +2664,7 @@ export const MESSAGE_FLOW_FONT_SIZE_RANGE = {
   min: 13,
   max: 20,
   step: 0.5,
-  default: 14.5,
+  default: 15,
 } as const;
 
 export type ThemePreference = "system" | "light" | "dark";
@@ -2959,6 +2993,7 @@ export type WuuDesktopApi = {
   getPluginStorage: (params: PluginStorageGetParams) => Promise<PluginStorageResult>;
   setPluginStorage: (params: PluginStorageSetParams) => Promise<PluginStorageResult>;
   requestPluginRuntime: (params: PluginClientRequestParams) => Promise<PluginClientRequestResult>;
+  cancelPluginRuntime: (params: PluginClientCancelParams) => Promise<PluginClientCancelResult>;
   listMCPServers: () => Promise<MCPListResult>;
   connectMCPServer: (name: string) => Promise<MCPServerActionResult>;
   disconnectMCPServer: (name: string) => Promise<MCPServerActionResult>;
@@ -3155,7 +3190,7 @@ export type WuuDesktopApi = {
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
     targetContext?: RuntimeContext,
-  ) => Promise<{ turn_id: string }>;
+  ) => Promise<{ turn_id: string; delivery?: "active_turn" | "queued" }>;
   unsteerTurn: (threadId: string, steerId: string) => Promise<{ ok: boolean }>;
   requeueTurn: (
     threadId: string,

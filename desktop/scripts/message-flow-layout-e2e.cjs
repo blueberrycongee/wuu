@@ -21,7 +21,7 @@ async function run() {
   win.webContents.on("console-message", ({ level, message }) => { if (level >= 2) console.error(message); });
   const report = [];
   for (const width of [1280, 420]) {
-    for (const size of [14, 14.5, 20]) {
+    for (const size of [14, 14.5, 15, 20]) {
       for (const theme of ["light", "dark"]) {
         win.setContentSize(width, 900);
         const query = `size=${size}&theme=${theme}`;

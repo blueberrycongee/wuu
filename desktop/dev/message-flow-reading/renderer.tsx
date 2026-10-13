@@ -220,7 +220,7 @@ function Fixture(): JSX.Element {
   return <ImagePreviewProvider>
     <header className="fixture-toolbar">
       <strong>Wuu · 消息流排版验收</strong>
-      <label>字号<select aria-label="字号" value={size} onChange={event => setSize(Number(event.target.value))}>{[MESSAGE_FLOW_FONT_SIZE_RANGE.min, 14, 14.5, 16, 18, MESSAGE_FLOW_FONT_SIZE_RANGE.max].map(value => <option key={value}>{value}</option>)}</select></label>
+      <label>字号<select aria-label="字号" value={size} onChange={event => setSize(Number(event.target.value))}>{Array.from(new Set([MESSAGE_FLOW_FONT_SIZE_RANGE.min, 14, 14.5, MESSAGE_FLOW_FONT_SIZE_RANGE.default, 16, 18, MESSAGE_FLOW_FONT_SIZE_RANGE.max])).sort((a, b) => a - b).map(value => <option key={value}>{value}</option>)}</select></label>
       <label>主题<select aria-label="主题" value={theme} onChange={event => setTheme(event.target.value)}><option value="light">浅色</option><option value="dark">深色</option></select></label>
       <label>渲染方式<select aria-label="渲染方式" value={surface} onChange={event => setSurface(event.target.value)}><option value="conversation">完整对话</option><option value="images">消息图片</option><option value="lifecycle">回复完成与动作占位</option><option value="stream">流式分块</option><option value="rich">普通 Markdown</option><option value="chat">聊天气泡</option><option value="user">用户消息</option><option value="edit">编辑用户消息</option><option value="workspace">文件预览</option><option value="failures">失败与中断</option></select></label>
       <label><input aria-label="流式状态" type="checkbox" checked={live} onChange={event => setLive(event.target.checked)} />显示流式光标</label>

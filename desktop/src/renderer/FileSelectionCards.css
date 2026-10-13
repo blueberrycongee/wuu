@@ -268,7 +268,7 @@ button.file-selection-location:hover {
   background: var(--surface-1);
   border-radius: var(--radius-xs);
   font-family: var(--font-mono);
-  font-size: var(--appearance-code-size, 11px);
+  font-size: var(--appearance-code-size);
 }
 
 .file-selection-tag:focus-visible,

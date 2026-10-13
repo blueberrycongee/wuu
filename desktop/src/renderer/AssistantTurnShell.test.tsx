@@ -279,7 +279,7 @@ function processSurfaceRows(container: HTMLElement): HTMLElement[] {
 }
 
 function reasoningSummaryText(fold: HTMLDetailsElement): string {
-  return fold.querySelector(".turn-reasoning-summary-text")?.textContent ?? "";
+  return fold.querySelector(".turn-reasoning-summary-text .process-label-content")?.textContent ?? "";
 }
 
 type StubbedScrollLayout = {
@@ -898,7 +898,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     const folds = reasoningFolds(container);
     expect(folds).toHaveLength(1);
     const label = folds[0].querySelector(".turn-reasoning-summary-text");
-    expect(label?.textContent).toBe("查看思考过程");
+    expect(label?.querySelector(".process-label-content")?.textContent).toBe("查看思考过程");
     expect(label?.classList.contains("is-live-gray")).toBe(true);
     expect(label?.classList.contains("is-streaming")).toBe(false);
   });
@@ -913,7 +913,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     const folds = reasoningFolds(container);
     expect(folds).toHaveLength(1);
     const label = folds[0].querySelector(".turn-reasoning-summary-text");
-    expect(label?.textContent).toBe("查看思考过程");
+    expect(label?.querySelector(".process-label-content")?.textContent).toBe("查看思考过程");
     expect(label?.classList.contains("is-live-gray")).toBe(false);
     expect(label?.classList.contains("is-streaming")).toBe(false);
   });

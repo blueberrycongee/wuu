@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1853,6 +1854,18 @@ func (c *AgentControl) StopAll() {
 	// compensation. A durable queue outage must not leave already-running
 	// workers consuming provider calls indefinitely.
 	c.manager.StopAll()
+	// Shutdown already closed all turn admission and must reach the caller's
+	// durable-terminal yield without waiting for a worker transition. A failing
+	// terminal finalizer holds that lock until yield; parked workers likewise
+	// leave their durable intent for recovery rather than starting another
+	// terminal transition here. Explicit StopAll still closes every edge.
+	if !c.isStopping() {
+		workers := c.manager.List()
+		sort.Slice(workers, func(i, j int) bool { return workers[i].AgentPath < workers[j].AgentPath })
+		for _, worker := range workers {
+			c.stopWorker(worker.ID)
+		}
+	}
 	c.queueDrainMu.Lock()
 	defer c.queueDrainMu.Unlock()
 	c.queueMu.Lock()
@@ -1918,14 +1931,32 @@ func (c *AgentControl) StopFrom(currentPath, target string) bool {
 		if node.Path == agentthread.RootPath || queuedHandled[node.ID] {
 			continue
 		}
-		if c.manager.Stop(node.ID) {
+		if c.stopWorker(node.ID) {
 			stopped = true
-		}
-		if closed, found := c.threads.UpdateEdgeStatus(node.ID, agentthread.EdgeClosed, now); found {
-			_ = c.threadStore.RecordEdgeStatus(closed)
 		}
 	}
 	return stopped
+}
+
+// stopWorker serializes cancellation with automatic and explicit follow-ups.
+// Never hold parent and child transition locks together: child terminal
+// delivery acquires the parent's lock.
+func (c *AgentControl) stopWorker(workerID string) bool {
+	unlockTransition := c.lockWorkerTransition(workerID)
+	defer unlockTransition()
+	if sa := c.manager.Get(workerID); sa != nil && sa.Snapshot().Status == subagent.StatusWaitingChildren {
+		// Parking released execution ownership. Retake it before changing the
+		// snapshot so terminal recovery cannot replay the old completed intent
+		// while the asynchronous cancellation prepares its new generation.
+		if _, err := c.acquireWorkerExecution(workerID); err != nil {
+			providers.DebugLogf("agentcontrol: acquire parked worker %s for stop: %v", workerID, err)
+			return false
+		}
+	}
+	if closed, found := c.threads.UpdateEdgeStatus(workerID, agentthread.EdgeClosed, time.Now().UTC()); found {
+		_ = c.threadStore.RecordEdgeStatus(closed)
+	}
+	return c.manager.Stop(workerID)
 }
 
 // List returns snapshots of all sub-agents in this session.
@@ -2013,7 +2044,7 @@ func (c *AgentControl) SendMessageFrom(currentPath string, ctx context.Context, 
 	if msg == "" {
 		return errors.New("message is required")
 	}
-	snap, newLease, unlockTransition, err := c.prepareWorkerFollowup(ctx, id)
+	snap, newLease, unlockTransition, err := c.prepareWorkerFollowup(ctx, id, false)
 	if err != nil {
 		return err
 	}
@@ -2067,7 +2098,7 @@ func (c *AgentControl) FollowupTaskFrom(currentPath string, ctx context.Context,
 	if msg == "" {
 		return subagent.SubAgentSnapshot{}, errors.New("message is required")
 	}
-	current, newLease, unlockTransition, err := c.prepareWorkerFollowup(ctx, id)
+	current, newLease, unlockTransition, err := c.prepareWorkerFollowup(ctx, id, false)
 	if err != nil {
 		return subagent.SubAgentSnapshot{}, err
 	}
@@ -3923,6 +3954,10 @@ func (c *AgentControl) consumeWorkerNotification(n subagent.Notification) (worke
 				if err := c.threadStore.RecordCommunication(c.rootThreadID, c.newAgentCompletionCommunication(n.Snapshot, agentthread.RootPath)); err != nil {
 					return workerNotificationSettled, fmt.Errorf("persist root completion communication: %w", err)
 				}
+			} else if c.workerEdgeClosed(n.Snapshot.ParentID) {
+				// Stopping the parent deliberately suppresses automatic wakeup.
+				// Keep the result-ready ledger, but settle this child's terminal
+				// rather than retaining its execution lease for a stopped parent.
 			} else if workerID := firstNonEmptyString(strings.TrimSpace(n.AgentID), strings.TrimSpace(n.Snapshot.ID)); workerTerminalFinalizationPath(c.harnessDir, workerID) != "" {
 				// A busy parent (including one blocked in Wait on this very
 				// terminal transition) cannot claim yet. Defer: the durable
@@ -4056,6 +4091,11 @@ func (c *AgentControl) recordWorkerResumed(snap subagent.SubAgentSnapshot) {
 			c.markReportSettlementPending(snap.ID)
 		}
 	}
+	if c.workerEdgeClosed(snap.ID) {
+		if meta, ok := c.threads.UpdateEdgeStatus(snap.ID, agentthread.EdgeOpen, time.Now().UTC()); ok {
+			_ = c.threadStore.RecordEdgeStatus(meta)
+		}
+	}
 	c.recordHarnessResume(snap)
 	if meta, ok := c.threads.UpdateStatus(snap.ID, agentthread.StatusRunning, time.Now().UTC()); ok {
 		_ = c.threadStore.RecordStatus(meta)
@@ -4181,7 +4221,7 @@ func (c *AgentControl) maybeNudgeReportClosing(n subagent.Notification) bool {
 		return false
 	}
 	meta, ok := c.threads.Resolve(n.AgentID)
-	if !ok {
+	if !ok || meta.Source.EdgeStatus == agentthread.EdgeClosed {
 		return false
 	}
 	wt, err := LookupWorkerType(meta.Role)
@@ -4276,8 +4316,25 @@ func (c *AgentControl) deliverNestedResultToParent(ctx context.Context, snap sub
 		// single-consumer behavior and do not send a second copy to the parent.
 		return consumedBy != ""
 	}
-	parentBefore, newParentLease, unlockTransition, leaseErr := c.prepareWorkerFollowup(ctx, parentID)
+	parentBefore, newParentLease, unlockTransition, leaseErr := c.prepareWorkerFollowup(ctx, parentID, true)
 	if leaseErr != nil {
+		if errors.Is(leaseErr, errWorkerEdgeClosed) {
+			defer unlockTransition()
+			// A prior run may already have applied the result before Stop.
+			// Preserve that acknowledgement; otherwise release the reservation
+			// so the durable result remains available without waking the parent.
+			applied, err := c.parentPersistedRunContainsResult(parentID, resultID)
+			if err == nil && applied {
+				transitioned, consumer, err := c.transitionAgentResultDeliveryConsumer(resultID, agentResultConsumerNestedPending, agentResultConsumerNestedFollowup)
+				return err == nil && (transitioned || consumer == agentResultConsumerNestedFollowup)
+			}
+			if err == nil {
+				if err := c.ReleaseAgentResultDeliveryClaim(resultID, agentResultConsumerNestedPending); err != nil {
+					providers.DebugLogf("agentcontrol: release stopped parent result %s: %v", resultID, err)
+				}
+			}
+			return false
+		}
 		providers.DebugLogf("agentcontrol: acquire parent worker %s for nested result: %v", parentID, leaseErr)
 		return false
 	}
@@ -4410,7 +4467,7 @@ func (c *AgentControl) parkWaitingChildren(n subagent.Notification) bool {
 		return false
 	}
 	workerID := firstNonEmptyString(strings.TrimSpace(n.AgentID), strings.TrimSpace(n.Snapshot.ID))
-	if workerID == "" || !c.hasLiveDirectChildren(workerID) {
+	if workerID == "" || c.workerEdgeClosed(workerID) || !c.hasLiveDirectChildren(workerID) {
 		return false
 	}
 	if c.manager != nil {

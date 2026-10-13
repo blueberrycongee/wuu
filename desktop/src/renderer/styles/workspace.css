@@ -551,7 +551,7 @@
   color: inherit;
   font-size: var(--font-ui);
   font-weight: var(--weight-regular);
-  line-height: 1;
+  line-height: var(--line-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

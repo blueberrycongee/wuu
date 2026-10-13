@@ -10,16 +10,60 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
-- A Trigger button beside the latest assistant reply's timestamp shows background
-  task wakeups, scheduled checks, and recent output, with a control to cancel
-  automatic continuation without stopping the task.
+- Optional unsent-text recovery after a renderer reload, disabled by default.
+  Recovery copies are limited to the current window, 20 drafts, 32K characters
+  per draft and 24 hours; closing the window or disabling recovery clears them.
+  Attachments and quotes are excluded.
 
-- The desktop app bundles ripgrep, so search tools and agent shell commands can
-  use `rg` on machines without it installed. A user-installed `rg` still takes
-  precedence.
+- Bounded per-server MCP tool execution budgets through `tool_timeout_ms`,
+  shared by native and PTC calls while preserving earlier caller cancellation
+  and the 30-second default.
+- Steer active Codex turns with stable human-message IDs and native turn fencing.
+  Confirmed input is saved once; rejected or uncertain delivery remains held,
+  with unconfirmed submissions protected from replay after restart.
+- iOS conversation settings can select a computer's available engine before the
+  first message, and edit the selected engine's models, reasoning and advertised
+  permission modes. Existing conversations display their bound engine.
 
-- Model services show vendor marks for LM Studio, Lynkr, Privatemode AI, and
-  Atomic Chat instead of letter placeholders.
+- Side chat is a bundled plugin with a recommended-on onboarding choice and a
+  persistent enable switch. Disabling it stops side answers and hides its entry
+  points without deleting history. Extensions can supply attached-chat policy
+  through the public `side_conversation` command contribution.
+- Inline completion providers can refresh asynchronously cached suggestions and
+  receive scoped display, acceptance, dismissal, and dispatch interactions without
+  receiving later draft text. Dispatch events do not imply backend delivery.
+
+- Optional read-only `memory.notebook` service for bounded index and topic reads,
+  with source revisions, UTF-8 limits, and explicit missing-file results.
+
+- Composable model extensions with full logical request snapshots, request hooks,
+  around-call middleware, independent inference streams, explicitly selected
+  adapters, and generation-owned background service calls.
+- Plugin APIs for host-rendered inline draft suffixes and bounded, text-only
+  model requests through configured providers, with cancellation and lifecycle
+  handling. Completion plugins supply their own policy; no completion provider
+  is registered by default.
+
+### Changed
+
+- Improve conversation reading rhythm with 15px UI and 13px code defaults,
+  tighter paragraph spacing and consistent file labels. Active process labels
+  use a lighter tone with a brief, intermittent highlight; settled summaries
+  retain readable contrast. Saved font preferences stay intact, and diff
+  previews follow the independent code font and size settings.
+
+- Plugin SDKs now overlap explicitly concurrency-safe tools in a bounded pool,
+  while ordinary handlers and lifecycle transitions retain ordered barriers.
+  Foreground subagent waits no longer serialize independent tasks, and a late
+  result cannot overwrite a newer follow-up task.
+
+- Approve for me shares the one-shot text request foundation with plugins while
+  retaining host-owned permission decisions and the active conversation's model
+  and tuning. Provider options cannot replace review evidence, switch models, or
+  add tools; review keeps its existing timeout and output-token policy.
+- One-shot text requests preserve native provider preparation and transport
+  compatibility, including Codex journal identity and Responses endpoints that
+  require omission of the `store` field.
 
 ### Fixed
 
@@ -27,8 +71,149 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   session no longer fails with "fork target not found" after the model used
   several thinking blocks in one step.
 
-- Deliver scheduled background-process checks while the task is still running,
-  without treating them as process-exit notifications.
+- Preserve message-wide Markdown references and unique heading anchors across
+  streamed blocks. Mermaid fences keep their source and a stable container
+  through loading, settlement, and rendering errors.
+
+- Place the conversation trigger bell before the reply timestamp, keeping message
+  actions together and the time at the end of the row.
+- Keep the iOS conversation loading indicator centered and fully visible before
+  messages arrive, instead of squeezing it into a clipped capsule at the left edge.
+- Responses connections keep text tools callable through JSON schemas when the
+  model or an explicit compatibility option disables custom tools. Forced choices
+  and replayed calls use the same wire format without changing saved history.
+- Bound plugin runtime shutdown, retire undeliverable execution cancellations,
+  preserve shutdown failures, and cap stderr so stalled or noisy extensions
+  cannot strand retirement.
+- Bound asynchronous desktop plugin startup, cancel superseded staging promptly,
+  and let optional consumers proceed after a provider times out while retaining
+  the last working replacement generation.
+- Keep live plugin executions visible in diagnostics after hot reload, with
+  generation-scoped identities that distinguish overlapping execution IDs.
+
+- Back off repeated automatic plugin refresh failures without delaying changed
+  candidates or manual retries, while retaining healthy running generations.
+- Prevent cancelled queued plugin tool, capability, and service calls from
+  entering their handlers while preserving lifecycle cleanup.
+- PDF links to named destinations and page references navigate within the
+  current preview, preserve zoom, and ignore invalid or superseded targets.
+  External links retain the desktop's existing safe URL policy.
+
+- Failed PDF previews can retry in the same panel without reloading the window
+  or losing conversation drafts. Retries recover loading, page-fetch, and rendering
+  errors, refresh workspace file metadata, preserve the requested page, and cancel
+  the previous viewer when switching files or closing.
+- Keep unreadable composer attachments in their original draft with an explicit
+  retry action, including attachments restored after a failed send. Retrying
+  prepares the file again without sending the message automatically. If sending
+  fails after preparation completes, restore the ready attachment and preview.
+- Refresh local skill instructions and metadata without restarting the runtime.
+  Model rounds adopt changed catalogs while loaded history and plugin package
+  generations remain pinned; stale or invalid file identities fail closed.
+
+- Honor manual-only skill invocation settings when loading skills by name, and
+  recognize reachable plugin and MCP tools in skill requirements without
+  enabling unavailable tools or changing permissions. Session tool restrictions
+  also apply to contributed, deferred, and nested tools and their dependent skills.
+- Bound skill resource sampling for both selected skills and model tool calls,
+  honor request cancellation, and identify incomplete filename hints without
+  changing the resource base directory.
+- PTC runtime shutdown settles when its control connection closes, keeping
+  native teardown warnings out of completed program results.
+- MCP server-request replies no longer block healthy tool calls or notifications.
+  Reply work is bounded, follows its originating call's cancellation, and stops
+  on connection close without replaying replies into a replacement session.
+
+- MCP OAuth credentials and pending sign-ins remain available across plugin
+  reloads, including startup and adding the first MCP server to a running session.
+- Remote MCP notification streams recover after session expiry or credential
+  refresh, discard obsolete session messages, and report unrecoverable handshakes
+  as connection failures. Concurrent expired calls share one recovery, renewed
+  sessions clear old resume cursors, and closing the connection cancels recovery.
+
+- Remote MCP POST streams now close when their call completes or is cancelled.
+  An interrupted or malformed response fails only its originating call promptly,
+  without replaying tools or disconnecting healthy calls and notifications.
+  Responses cannot resolve a different call through a mismatched POST request ID.
+- MCP OAuth logout and newer logins now fence late token exchanges and refresh
+  writes across processes, preventing older credentials from becoming active
+  again after logout or a newer login.
+
+- Bind saved MCP OAuth credentials to the resource used for login, require
+  reauthentication after resource changes, and prevent credentials from reaching
+  cross-origin redirects or legacy SSE message endpoints.
+- Disconnecting or reconnecting an MCP server cancels older connection attempts,
+  preventing queued startup, delayed initialization or tool discovery from
+  restoring a stopped connection or replacing its newer tools and status.
+- Keep stopped agent subtrees stopped when child cancellation results arrive.
+  Parked parents now finish cancellation durably, and explicit follow-ups reopen
+  their edges for later work without blocking shutdown cancellation or restart recovery.
+- Keep shutdown cancellation from waiting on durable worker terminal retries,
+  allowing server close to hand unacknowledged state to recovery.
+
+- Native engine questions now use the existing choice and free-text cards, return
+  answers to the original call, and clear on cancellation or disconnection.
+  Optional answers no longer need to become a separate user message.
+
+- Persist accepted human queue and steering input before acknowledging it, with
+  durable edits, cancellation, and stable-ID deduplication. After a core restart,
+  unconsumed input returns as held work instead of automatically executing.
+- Apply the selected Codex reasoning effort to native turns, including changes
+  and restores to the configured or model default on resumed conversations.
+
+- Keep resumed Codex turns in the admitted conversation workspace, including
+  linked worktree switches, and honor the turn's effective permission boundary
+  without restarting the native conversation.
+
+- Preserve Codex-native context when forking or editing conversation history.
+  Validate whole-turn cutoffs, commit the new native binding with the visible
+  history, and refuse unsupported cuts instead of silently losing context.
+
+- Settle external-engine turns when their process disconnects or output exceeds
+  the stream buffer, retain partial output, and bound interruption cleanup.
+  If a native turn cannot confirm it stopped, its shared process is closed and
+  other attached turns receive explicit errors rather than staying running.
+  Preserve unrelated conversations after confirmed interruption, malformed
+  turn notifications, or cancellation of a queued protocol write. On pollable
+  pipes, cancellation racing a completed protocol write also preserves healthy
+  conversations; partial frames still retire the shared connection.
+- Share one Codex startup across concurrent sessions, retry failed or closed
+  hosts on later turns, and release each turn's process ownership without
+  interrupting other sessions. Keep healthy hosts warm until their app-server
+  owners shut down or switch engines.
+
+- Remember iOS model and reasoning choices for new conversations per account,
+  computer and engine, including first sends without reopening settings and app relaunches.
+- Preserve the iOS reading position across lazy layout updates when loading older
+  messages, including history pages that extend an existing folded process group.
+- Show the running indicator only on the current iOS process group when a turn
+  resumes after earlier replies; completed groups and their inspectors stay idle.
+- Make the iOS message input respond to taps across its padded text area, and
+  keep draft typing from invalidating the root view while preserving native text editing.
+- Keep the sidebar's recent-history range stable while a first message creates
+  its conversation, avoiding a temporary extra row and subsequent layout jump,
+  including while saving a draft's custom name.
+- Keep reply actions stable when opening background triggers, preserve their
+  completion reveal order, and use a compact notification icon for the trigger list.
+
+- Align desktop navigation and control labels with icons using the selected
+  font's rendered metrics, and preserve accents and descenders in workspace tabs.
+
+## [2026.10.12] - 2026-10-12
+
+### Contributors
+
+@blueberrycongee
+
+### Highlights
+
+- See background task wakeups, scheduled checks, and recent output from a Trigger
+  button beside the latest reply, and cancel automatic continuation without
+  stopping the task. Scheduled checks now arrive while the task is still running.
+- Search tools and agent shells can use the bundled ripgrep on machines without
+  `rg`; a user-installed `rg` still takes precedence.
+- Model services show vendor marks for LM Studio, Lynkr, Privatemode AI, and
+  Atomic Chat.
 
 ## [2026.10.11] - 2026-10-11
 

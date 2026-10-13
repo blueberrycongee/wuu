@@ -22,9 +22,25 @@ type Host struct {
 	rootDir    string
 
 	mu       sync.Mutex
-	client   *Client
-	refs     int
-	startErr error
+	current  *hostGeneration
+	owners   int
+	starting *hostStartup
+}
+
+// References belong to a particular subprocess, never to whichever process
+// happens to be current when a session closes.
+type hostGeneration struct {
+	client *Client
+	refs   int
+}
+
+type hostStartup struct {
+	done       chan struct{}
+	cancel     context.CancelFunc
+	waiters    int
+	finished   bool
+	generation *hostGeneration
+	err        error
 }
 
 // ResolveBinary locates the codex executable. The WUU_CODEX_BINARY
@@ -54,49 +70,165 @@ func NewHost(binaryPath, rootDir string) *Host {
 // SetExtraArgs appends arguments after the app-server subcommand (for
 // example -c config overrides).
 func (h *Host) SetExtraArgs(args ...string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.extraArgs = append([]string(nil), args...)
 }
 
-// Acquire returns the shared app-server client, starting and initializing
-// the process on first use. Concurrent callers share one startup.
-func (h *Host) Acquire(ctx context.Context) (*Client, error) {
+// Acquire returns the shared app-server client and an idempotent release for
+// this acquisition. Concurrent callers share initialization. Canceling a caller
+// only cancels startup when no other caller still needs it. Failed or closed
+// processes are not reused by later acquisitions.
+func (h *Host) Acquire(ctx context.Context) (*Client, func(), error) {
 	if h == nil {
-		return nil, errors.New("codex host is nil")
+		return nil, nil, errors.New("codex host is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
 	}
 	h.mu.Lock()
-	if h.client != nil {
-		h.refs++
-		client := h.client
-		h.mu.Unlock()
-		return client, nil
+	if generation := h.current; generation != nil {
+		generation.client.mu.Lock()
+		closed := generation.client.closed
+		generation.client.mu.Unlock()
+		if !closed {
+			generation.refs++
+			h.mu.Unlock()
+			return generation.client, h.release(generation), nil
+		}
+		h.current = nil
+		if generation.refs == 0 {
+			go func() { _ = generation.client.Close() }()
+		}
 	}
-	if h.startErr != nil {
-		err := h.startErr
-		h.mu.Unlock()
-		return nil, err
+	startup := h.starting
+	if startup == nil {
+		// The handshake has its own timeout; the first waiter's deadline must
+		// not terminate the shared process while another waiter still needs it.
+		startCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		startup = &hostStartup{done: make(chan struct{}), cancel: cancel}
+		h.starting = startup
+		go h.initialize(startCtx, startup)
 	}
+	startup.waiters++
 	h.mu.Unlock()
 
+	select {
+	case <-startup.done:
+	case <-ctx.Done():
+	}
+	h.mu.Lock()
+	if !startup.finished {
+		startup.waiters--
+		last := startup.waiters == 0
+		if last {
+			// A later caller can start afresh without joining abandoned work.
+			h.starting = nil
+			startup.cancel()
+		}
+		h.mu.Unlock()
+		if last {
+			// A caller draining its final turn must not finish shutdown while
+			// the canceled startup still owns a child. Other waiters cancel
+			// independently, and new acquisitions may already start afresh.
+			<-startup.done
+		}
+		return nil, nil, ctx.Err()
+	}
+	generation, err := startup.generation, startup.err
+	h.mu.Unlock()
+	if generation == nil {
+		return nil, nil, err
+	}
+	release := h.release(generation)
+	if err := ctx.Err(); err != nil {
+		release()
+		return nil, nil, err
+	}
+	return generation.client, release, nil
+}
+
+func (h *Host) initialize(ctx context.Context, startup *hostStartup) {
 	client, err := h.start(ctx)
 	h.mu.Lock()
-	if err != nil {
-		h.startErr = err
-		h.mu.Unlock()
-		return nil, err
+	startup.finished = true
+	startup.err = err
+	if h.starting == startup {
+		h.starting = nil
+		if err == nil {
+			// Reserve ownership for every waiting caller before publishing. A
+			// fast first caller cannot close the process ahead of its peers.
+			startup.generation = &hostGeneration{client: client, refs: startup.waiters}
+			h.current = startup.generation
+		}
 	}
-	h.client = client
-	h.refs++
+	startup.cancel()
+	abandoned := client != nil && startup.generation == nil
 	h.mu.Unlock()
-	return client, nil
+	if abandoned {
+		_ = client.Close()
+	}
+	close(startup.done)
+}
+
+// Retain keeps a healthy host warm between acquisitions until its returned,
+// idempotent release is called. It does not start a process. Long-lived callers
+// (such as an app-server) own this lifetime separately from per-turn leases;
+// failed generations still retire and later acquisitions may replace them.
+func (h *Host) Retain() func() {
+	h.mu.Lock()
+	h.owners++
+	h.mu.Unlock()
+	return sync.OnceFunc(func() {
+		h.mu.Lock()
+		h.owners--
+		var client *Client
+		if h.current != nil {
+			client = h.detachUnusedLocked(h.current)
+		}
+		h.mu.Unlock()
+		if client != nil {
+			// Server shutdown has already drained its turn leases. Wait for
+			// this final child cleanup instead of leaving a process behind.
+			_ = client.Close()
+		}
+	})
+}
+
+// release binds cleanup to one acquisition and one generation. Owners retain
+// only the current healthy generation, never an old failed process.
+func (h *Host) release(generation *hostGeneration) func() {
+	return sync.OnceFunc(func() {
+		h.mu.Lock()
+		generation.refs--
+		client := h.detachUnusedLocked(generation)
+		h.mu.Unlock()
+		if client != nil {
+			// The final lease owns cleanup even after a settings replacement
+			// has released the host's warm owner. Turn draining must include
+			// this retired child before publishing terminal or closing Server.
+			_ = client.Close()
+		}
+	})
+}
+
+func (h *Host) detachUnusedLocked(generation *hostGeneration) *Client {
+	if generation.refs != 0 || (h.current == generation && h.owners != 0) {
+		return nil
+	}
+	if h.current == generation {
+		h.current = nil
+	}
+	return generation.client
 }
 
 // ListModels reads the model catalog owned by the installed Codex app-server.
 func (h *Host) ListModels(ctx context.Context) ([]ModelListItem, error) {
-	client, err := h.Acquire(ctx)
+	client, release, err := h.Acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer h.Release()
+	defer release()
 	return listModels(ctx, client)
 }
 
@@ -129,32 +261,17 @@ func listModels(ctx context.Context, client *Client) ([]ModelListItem, error) {
 	}
 }
 
-// Release drops one session's reference. The app-server is shut down when
-// the last reference is released.
-func (h *Host) Release() {
-	if h == nil {
-		return
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.refs > 0 {
-		h.refs--
-	}
-	if h.refs == 0 && h.client != nil {
-		client := h.client
-		h.client = nil
-		h.startErr = nil
-		go func() {
-			_ = client.Close()
-		}()
-	}
-}
-
 // start spawns the app-server and runs the initialize handshake. The binary
 // is resolved lazily so a missing codex CLI produces a clear error at first
 // use rather than at session construction.
 func (h *Host) start(ctx context.Context) (*Client, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	h.mu.Lock()
 	binaryPath := strings.TrimSpace(h.binaryPath)
+	extraArgs := append([]string(nil), h.extraArgs...)
+	h.mu.Unlock()
 	if binaryPath == "" {
 		resolved, err := ResolveBinary()
 		if err != nil {
@@ -166,7 +283,7 @@ func (h *Host) start(ctx context.Context) (*Client, error) {
 		BinaryPath: binaryPath,
 		CWD:        h.rootDir,
 		Env:        h.env,
-		ExtraArgs:  h.extraArgs,
+		ExtraArgs:  extraArgs,
 	})
 	if err != nil {
 		return nil, err

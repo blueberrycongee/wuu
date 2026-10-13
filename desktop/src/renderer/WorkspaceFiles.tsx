@@ -705,6 +705,10 @@ export function WorkspaceFilePreview({
     [activeContext?.cwd, selectedFilePath]
   );
 
+  const selectedFileKey = `${activeContext?.cwd ?? ""}\n${selectedWorkspaceFilePath ?? ""}`;
+  const selectedFileKeyRef = useRef(selectedFileKey);
+  useLayoutEffect(() => { selectedFileKeyRef.current = selectedFileKey; }, [selectedFileKey]);
+
   useEffect(() => {
     if (!selectedWorkspaceFilePath) {
       setFile(undefined);
@@ -812,7 +816,15 @@ export function WorkspaceFilePreview({
               <WorkspacePdfPreview url={file.renderable_url} title={file.path} active={active}
                 source={{ workspace: activeContext.cwd, path: file.path, revision: workspacePdfRevision(file) }}
                 initialPage={anchor?.startsWith("pdf-page=") ? Number(new URLSearchParams(anchor).get("pdf-page")) : undefined}
-                pageRequest={anchor} />
+                pageRequest={anchor}
+                onRefresh={async (signal) => {
+                  const refreshed = await window.wuu.readWorkspaceFile(file.path, activeContext.cwd);
+                  if (signal.aborted || selectedFileKeyRef.current !== selectedFileKey) return false;
+                  setFile(refreshed);
+                  return refreshed.renderable_kind === "pdf"
+                    && refreshed.renderable_url === file.renderable_url
+                    && workspacePdfRevision(refreshed) === workspacePdfRevision(file);
+                }} />
             </Suspense>
           </WorkspacePreviewBoundary>
         </article>

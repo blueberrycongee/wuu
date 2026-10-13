@@ -28,8 +28,8 @@ import (
 
 // PluginGeneration is a complete replacement for the plugin-owned surfaces of a
 // Session. It owns every process and private package snapshot. Conversations
-// adopt published updates at their next idle turn boundary; active turns and
-// background work retain their generation until they settle. Committed removal
+// adopt published updates at their next idle turn boundary. Active foreground
+// turns retain their generation; publication cancels its background jobs. Committed removal
 // or disable revokes that plugin across all retained generations immediately.
 // Close retires the remaining resources in reverse ownership order and records
 // a structured revocation report.
@@ -56,8 +56,9 @@ type PluginGeneration struct {
 	// refs counts the live Session plus any ThreadRuntime still bound to this
 	// generation. A retired generation stays open until the last conversation
 	// that started against it is released.
-	refs           atomic.Int32
-	revocationMu   sync.Mutex
+	refs         atomic.Int32
+	revocationMu sync.Mutex
+	// revokedMu also protects host detachment from read-only diagnostics.
 	revokedMu      sync.Mutex
 	revokedPlugins map[string]bool
 }
@@ -68,7 +69,17 @@ func (s *Session) PreflightExtensions(cfg config.Config) (*PluginGeneration, err
 	if s == nil {
 		return nil, errors.New("runtime is not initialized")
 	}
-	return s.buildPluginGeneration(cfg, discoverPlugins(s.RootDir, s.WuuHome), nil, nil, startPluginClient)
+	return s.PreflightDiscoveredExtensions(cfg, discoverPlugins(s.RootDir, s.WuuHome))
+}
+
+// PreflightDiscoveredExtensions builds the already-observed catalog, allowing
+// refresh admission to fingerprint its exact inputs before starting processes.
+// Callers must serialize discovery and preparation with catalog publication.
+func (s *Session) PreflightDiscoveredExtensions(cfg config.Config, discovered []pluginpkg.Plugin) (*PluginGeneration, error) {
+	if s == nil {
+		return nil, errors.New("runtime is not initialized")
+	}
+	return s.buildPluginGeneration(cfg, discovered, nil, nil, startPluginClient)
 }
 
 // PluginGenerationNeedsRecovery reports a runtime process that reached active
@@ -304,6 +315,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		}
 		return nil, err
 	}
+	kernel.bindModelSession(s, host)
 	// Service negotiation can reject a prepared runtime after process startup.
 	// Treat that exactly like startup failure for required replacements.
 	for _, status := range host.Statuses() {
@@ -345,7 +357,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		ownedRoots:        append([]string(nil), ownedRoots...),
 		driverGateways:    kernel.driverGateways,
 	}
-	generation.mcp, err = startMCPManager(cfg, active, required)
+	generation.mcp, err = startMCPManager(cfg, active, required, s.mcpOAuth)
 	if err != nil {
 		_ = generation.close()
 		s.persistRevocationReport(generation)
@@ -401,6 +413,9 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		}
 	}
 	s.pluginGenerationMu.Unlock()
+	// Publication transfers background ownership before the replacement starts
+	// its timers. Existing foreground calls can continue on the old generation.
+	old.host.StopBackground()
 	// Activation may synchronously call host services. Keep old bindings
 	// available until activation settles, without holding their lookup mutex.
 	activationErr := activatePluginHost(context.Background(), candidate.host)
@@ -690,6 +705,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.StreamRunner.Tools = replacePluginToolHost(s.StreamRunner.Tools, generation.host, "", s.RootDir)
 		s.StreamRunner.BeforeModelStep = pluginPreStepInjector(generation.host, s.ProviderName, s.Model, "", s.RootDir)
 		s.StreamRunner.BeforeRequest = pluginRequestInterceptorWithTransforms(generation.host, generation.requestTransforms, s.ProviderName, "", s.RootDir)
+		s.StreamRunner.WrapModelClient = pluginModelClientWrapper(generation.host, "")
 		s.StreamRunner.CompactionRegistry = generation.compactions
 	}
 	s.HookDispatcher = generation.hooks
@@ -698,6 +714,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	if s.Toolkit != nil {
 		s.Toolkit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 		s.Toolkit.SetSkillsWithAvailability(s.Skills, generation.skillAvailable)
+		s.bindLocalSkillRefresh(s.Toolkit, s.RootDir, generation)
 		s.Toolkit.SetMCPActivityBindings(generation.mcpBinding)
 		s.Toolkit.SetMCPManager(generation.mcp)
 		configureToolkitSecurityExtensions(s.Toolkit, generation.host.ServiceRegistry())
@@ -758,7 +775,9 @@ func (g *PluginGeneration) close() error {
 		}
 
 		cancel()
+		g.revokedMu.Lock()
 		g.host = nil
+		g.revokedMu.Unlock()
 	}
 	g.requestTransforms = nil
 	for index := len(g.ownedRoots) - 1; index >= 0; index-- {
@@ -894,15 +913,60 @@ func (s *Session) PluginServiceRegistrySnapshot() (pluginhost.ServiceRegistrySna
 	return registry.Snapshot(epoch), nil
 }
 
-// PluginExecutionSnapshots returns the live execution table of the active
-// plugin host: which tool/capability executions are open right now, owned by
-// which plugin, with their latest self-reported progress. Read-only; each
-// entry is authored by the owning plugin about its own execution.
-func (s *Session) PluginExecutionSnapshots() []pluginhost.ExecutionSnapshot {
-	if s == nil || s.PluginHost == nil {
+// PluginExecutionSnapshot attributes one host-local execution to its generation.
+// The (GenerationID, ID) pair is the diagnostic identity; ID remains unchanged
+// for execution-scoped services and cancellation on the owning host.
+type PluginExecutionSnapshot struct {
+	pluginhost.ExecutionSnapshot
+	GenerationID string `json:"generation_id"`
+	Retained     bool   `json:"retained"`
+}
+
+// PluginExecutionSnapshots returns this Session's current and retained live
+// executions, ordered by generation ID and host-local execution ID. It neither
+// retains generations nor extends execution leases. Rows are point-in-time
+// diagnostics and may finish while the caller consumes the result.
+func (s *Session) PluginExecutionSnapshots() []PluginExecutionSnapshot {
+	if s == nil {
 		return nil
 	}
-	return s.PluginHost.ExecutionSnapshots()
+	s.pluginGenerationMu.Lock()
+	current := s.pluginGeneration
+	generations := make([]*PluginGeneration, 0, len(s.retiredPluginGenerations)+1)
+	if current != nil {
+		generations = append(generations, current)
+	}
+	for generation := range s.retiredPluginGenerations {
+		if generation != current {
+			generations = append(generations, generation)
+		}
+	}
+	s.pluginGenerationMu.Unlock()
+	var snapshots []PluginExecutionSnapshot
+	for _, generation := range generations {
+		// A thread-model shadow can release its last reference without the
+		// Session mutex. Serialize only the snapshot with host detachment;
+		// never acquire a lifecycle reference or wait for plugin callbacks.
+		generation.revokedMu.Lock()
+		if generation.refs.Load() > 0 && generation.host != nil {
+			for _, execution := range generation.host.ExecutionSnapshots() {
+				execution.Detail = append([]byte(nil), execution.Detail...)
+				snapshots = append(snapshots, PluginExecutionSnapshot{
+					ExecutionSnapshot: execution,
+					GenerationID:      generation.id,
+					Retained:          generation != current,
+				})
+			}
+		}
+		generation.revokedMu.Unlock()
+	}
+	sort.Slice(snapshots, func(i, j int) bool {
+		if snapshots[i].GenerationID != snapshots[j].GenerationID {
+			return snapshots[i].GenerationID < snapshots[j].GenerationID
+		}
+		return snapshots[i].ID < snapshots[j].ID
+	})
+	return snapshots
 }
 
 // snapshotMutableExecutionPackages detaches executable and lazy declarative paths

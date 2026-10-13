@@ -9,6 +9,7 @@ import {
   type PluginContributionDeclarations,
   type PluginGenerationApi,
 } from "./PluginHost";
+import { settleOnAbort } from "./activation";
 import { WorkbenchController } from "./Workbench";
 import { PluginHostService, WorkbenchService, createDesktopCompositionRoot } from "./composition";
 
@@ -26,16 +27,33 @@ export interface DesktopPluginFailure {
 
 export const desktopPluginHost = new PluginHost({
   react: React,
-  invokeRuntime: async ({ pluginId, generation, method, input, workspaceId }) => {
-    const response = await window.wuu?.requestPluginRuntime?.({
-      id: pluginId,
-      fingerprint: generation,
+  invokeRuntime: async ({ pluginId, generation, method, input, workspaceId, signal }) => {
+    signal?.throwIfAborted();
+    const bridge = window.wuu;
+    if (!bridge?.requestPluginRuntime || !bridge.cancelPluginRuntime) {
+      throw new Error("Plugin runtime requests are unavailable");
+    }
+    const identity = { id: pluginId, fingerprint: generation, request_id: crypto.randomUUID() };
+    const response = bridge.requestPluginRuntime({
+      ...identity,
       method,
       input,
       ...(workspaceId ? { workspace_id: workspaceId } : {}),
     });
-    if (!response) throw new Error("Plugin runtime requests are unavailable");
-    return response.result;
+    const cancel = () => {
+      void bridge.cancelPluginRuntime(identity).catch((error: unknown) => {
+        console.error("Plugin runtime cancellation failed", error);
+      });
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) cancel();
+    try {
+      const result = await response;
+      signal?.throwIfAborted();
+      return result.result;
+    } finally {
+      signal?.removeEventListener("abort", cancel);
+    }
   },
   listWorkspaces: async () => {
     const result = await window.wuu?.listProjects?.();
@@ -74,6 +92,7 @@ export class DesktopPluginRuntime {
   private readonly activeDependencies = new Map<string, string>();
   private readonly pendingDependencies = new Map<string, { signature: string }>();
   private syncEpoch = 0;
+  private syncController?: AbortController;
 
   constructor(
     readonly host: PluginHost,
@@ -85,6 +104,9 @@ export class DesktopPluginRuntime {
     safeMode = false,
   ): Promise<readonly DesktopPluginFailure[]> {
     const epoch = ++this.syncEpoch;
+    this.syncController?.abort();
+    const controller = new AbortController();
+    this.syncController = controller;
     const candidates = new Map(
       (safeMode ? [] : inventory).filter(isAvailablePlugin).map((plugin) => [plugin.id, plugin] as const),
     );
@@ -154,9 +176,14 @@ export class DesktopPluginRuntime {
     }
 
     // Disabling a plugin must take effect even while unrelated preferences are loading.
-    const preferences = await window.wuu?.getPluginConflictPreferences?.();
-    if (epoch !== this.syncEpoch) return [];
-    if (preferences) this.host.setConflictPreferences(preferences);
+    try {
+      const preferences = await settleOnAbort(() => window.wuu?.getPluginConflictPreferences?.(), controller.signal);
+      if (epoch !== this.syncEpoch) return [];
+      if (preferences) this.host.setConflictPreferences(preferences);
+    } catch (error: unknown) {
+      if (controller.signal.aborted) return [];
+      throw error;
+    }
 
     // Each branch waits only for its providers, never for unrelated startup work.
     const activations = new Map<string, Promise<boolean>>();
@@ -183,24 +210,22 @@ export class DesktopPluginRuntime {
         this.pendingDependencies.set(plugin.id, pending);
         try {
           if (epoch !== this.syncEpoch) return false;
-          const loaded = await window.wuu?.loadPluginDesktopModule?.({ id: plugin.id, fingerprint });
-          if (epoch !== this.syncEpoch) return false;
-          if (!loaded || loaded.id !== plugin.id || loaded.fingerprint !== fingerprint) {
-            throw new Error("Desktop plugin module identity mismatch");
-          }
           await this.host.activateGeneration({
             pluginId: plugin.id,
             generation: fingerprint,
             contributions: desktopContributionDeclarations(plugin),
+            signal: controller.signal,
             register: async (api) => {
-              const module = requireDesktopPluginModule(await this.loadModule(loaded.url));
-              if (epoch !== this.syncEpoch) {
-                throw new PluginGenerationSupersededError(plugin.id, fingerprint);
+              const loaded = await window.wuu?.loadPluginDesktopModule?.({ id: plugin.id, fingerprint });
+              api.signal.throwIfAborted();
+              if (!loaded || loaded.id !== plugin.id || loaded.fingerprint !== fingerprint) {
+                throw new Error("Desktop plugin module identity mismatch");
               }
+              const loadedModule = await this.loadModule(loaded.url);
+              api.signal.throwIfAborted();
+              const module = requireDesktopPluginModule(loadedModule);
               await module.activate(api);
-              if (epoch !== this.syncEpoch) {
-                throw new PluginGenerationSupersededError(plugin.id, fingerprint);
-              }
+              api.signal.throwIfAborted();
             },
           });
           if (epoch === this.syncEpoch) {

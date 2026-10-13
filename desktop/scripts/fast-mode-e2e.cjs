@@ -338,8 +338,13 @@ async function run() {
   assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'true');
   await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
   await capturePanel(main, 'codex-inherited-fast');
-  for (const [speed, tier, slash] of [['standard', 'default'], ['fast', 'fast'], ['standard', 'default', true], ['fast', 'fast']]) {
+  for (const [speed, tier, slash, effort] of [['standard', 'default', false, 'high'], ['fast', 'fast', false, 'low'], ['standard', 'default', true, 'low'], ['fast', 'fast', false, 'high']]) {
     await openPanel();
+    await evaluate(main, () => document.querySelector('.codex-effort-slider input').focus());
+    await key(main, 'End');
+    await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.model_effort === 'high', native);
+    if (effort === 'low') await key(main, 'Left');
+    await waitFor(main, async ({ id, effort }) => (await window.wuu.resumeThread(id)).thread.model_effort === effort, { id: native, effort });
     if (slash) {
       await evaluate(main, () => {
         document.querySelector('.codex-runtime-trigger').click();
@@ -364,7 +369,8 @@ async function run() {
     const log = fs.readFileSync(process.env.WUU_TEST_CODEX_REQUESTS, 'utf8').trim().split('\n').map(line => JSON.parse(line));
     const last = log.filter(request => request.method === 'turn/start').at(-1);
     assert.equal(last.params.serviceTier, tier);
-    assert.equal(last.params.reasoningEffort, 'high');
+    assert.equal(last.params.effort, effort);
+    assert.equal(Object.hasOwn(last.params, 'reasoningEffort'), false);
     if (speed === 'fast') {
       await openPanel();
       await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/contextbudget"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -38,6 +40,10 @@ const (
 )
 
 type sideThreadTurn struct {
+	generation  *runtime.PluginGeneration
+	pluginID    string
+	commandID   string
+	fingerprint string
 	cancel      context.CancelFunc
 	lease       *session.ThreadExecutionLease
 	interrupted atomic.Bool
@@ -369,7 +375,7 @@ func (s *Server) handleSideThreadSendMessage(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	start := make(chan struct{})
-	res, err := s.sendSideThreadMessageWithSelection(strings.TrimSpace(params.MainThreadID), strings.TrimSpace(params.Prompt), params.Selection, start)
+	res, err := s.sendSideThreadMessageWithSelection(strings.TrimSpace(params.MainThreadID), strings.TrimSpace(params.Prompt), params.Selection, start, params.CommandID)
 	writeErr := s.writeResponse(req.ID, res, err)
 	// The response establishes the side-thread identity and running summary in
 	// the renderer. Do not let a fast provider publish deltas or a terminal
@@ -388,7 +394,7 @@ func (s *Server) sendSideThreadMessageWhenReady(mainID, prompt string, start <-c
 	return s.sendSideThreadMessageWithSelection(mainID, prompt, nil, start)
 }
 
-func (s *Server) sendSideThreadMessageWithSelection(mainID, prompt string, selection *sidethread.SelectionReference, start <-chan struct{}) (*SideThreadSendResult, error) {
+func (s *Server) sendSideThreadMessageWithSelection(mainID, prompt string, selection *sidethread.SelectionReference, start <-chan struct{}, commandIDs ...string) (*SideThreadSendResult, error) {
 	if mainID == "" {
 		return nil, errors.New("main_thread_id is required")
 	}
@@ -403,6 +409,24 @@ func (s *Server) sendSideThreadMessageWithSelection(mainID, prompt string, selec
 	}
 	if s.closed.Load() {
 		return nil, errServerClosed
+	}
+	commandID := ""
+	if len(commandIDs) > 0 {
+		commandID = strings.TrimSpace(commandIDs[0])
+	}
+	generation := s.rt.RetainPluginGeneration()
+	generationOwned := true
+	defer func() {
+		if generationOwned {
+			s.rt.ReleasePluginGeneration(generation)
+		}
+	}()
+	owner, command, err := s.sideConversationCommand(commandID)
+	if err != nil {
+		return nil, err
+	}
+	if generation != nil && !s.rt.IsCurrentPluginGeneration(generation) {
+		return nil, errors.New("plugin generation changed during side conversation admission")
 	}
 
 	s.sideTurnMu.Lock()
@@ -461,7 +485,7 @@ func (s *Server) sendSideThreadMessageWithSelection(mainID, prompt string, selec
 			return nil, err
 		}
 	}
-	runner, err := s.rt.NewSideThreadRunner(sideThreadID, s.mainThreadRoot(mainID), s.mainThreadModelSelection(mainID), mainID)
+	runner, err := s.rt.NewSideThreadRunner(sideThreadID, s.mainThreadRoot(mainID), s.mainThreadModelSelection(mainID), command.ResolvedPrompt.Text, mainID)
 	if err != nil {
 		return nil, err
 	}
@@ -473,6 +497,11 @@ func (s *Server) sendSideThreadMessageWithSelection(mainID, prompt string, selec
 	if err != nil {
 		return nil, err
 	}
+	// Runner construction reads the workspace toolkit. A publication during that
+	// work must not admit a turn against a different retained plugin generation.
+	if generation != nil && !s.rt.IsCurrentPluginGeneration(generation) {
+		return nil, errors.New("plugin generation changed during side conversation admission")
+	}
 	st, err := s.sideThreadStore.BeginTurnWithSelection(mainID, sideThreadID, prompt, userMessageID, assistantMessageID, selection)
 	if err != nil {
 		return nil, err
@@ -481,7 +510,7 @@ func (s *Server) sendSideThreadMessageWithSelection(mainID, prompt string, selec
 	lifecycleLeaseOwned = false
 
 	ctx, cancel := context.WithCancel(context.Background())
-	turn := &sideThreadTurn{cancel: cancel, lease: lease}
+	turn := &sideThreadTurn{cancel: cancel, lease: lease, commandID: command.PublicID, fingerprint: owner.Fingerprint, pluginID: owner.ID, generation: generation}
 	s.sideTurnMu.Lock()
 	if s.closed.Load() {
 		s.sideTurnMu.Unlock()
@@ -506,11 +535,37 @@ func (s *Server) sendSideThreadMessageWithSelection(mainID, prompt string, selec
 		return nil, s.abortAcceptedSideThread(mainID, userMessageID, assistantMessageID, errServerClosed)
 	}
 	leaseOwned = false
+	generationOwned = false
 
 	return &SideThreadSendResult{
 		UserMessageID: userMessageID,
 		Summary:       *sideThreadWireSummary(st, s.mainTaskSnapshot(mainID)),
 	}, nil
+}
+
+// Resolve from the active generation on every send; disabled, revoked and safe-mode
+// packages cannot retain an executable side-conversation entry point.
+func (s *Server) sideConversationCommand(id string) (pluginpkg.Plugin, pluginpkg.ResolvedCommand, error) {
+	plugins := s.rt.ExtensionSnapshot().ActivePlugins
+	sort.Slice(plugins, func(i, j int) bool { return plugins[i].ID < plugins[j].ID })
+	for _, item := range plugins {
+		commands := append([]pluginpkg.ResolvedCommand(nil), item.Commands...)
+		sort.Slice(commands, func(i, j int) bool { return commands[i].ID < commands[j].ID })
+		for _, command := range commands {
+			if command.Kind == pluginpkg.CommandKindSideConversation && (id == "" || command.PublicID == id) && command.ResolvedPrompt != nil {
+				return item, command, nil
+			}
+		}
+	}
+	return pluginpkg.Plugin{}, pluginpkg.ResolvedCommand{}, errors.New("side conversation command is unavailable")
+}
+
+func (s *Server) sideConversationTurnAvailable(turn *sideThreadTurn) bool {
+	if turn.generation != nil {
+		return turn.generation.PluginAvailable(turn.pluginID)
+	}
+	owner, _, err := s.sideConversationCommand(turn.commandID)
+	return err == nil && owner.Fingerprint == turn.fingerprint
 }
 
 func validateSideThreadSelection(mainID string, selection *sidethread.SelectionReference) error {
@@ -579,6 +634,7 @@ func (s *Server) runSideThreadTurn(
 		}
 		s.sideTurnMu.Unlock()
 		releaseSideThreadExecutionLease(mainID, turn.lease)
+		s.rt.ReleasePluginGeneration(turn.generation)
 	}()
 	if start != nil {
 		select {
@@ -600,6 +656,10 @@ func (s *Server) runSideThreadTurn(
 		s.mainThreadRoot(mainID),
 		time.Now().UTC(),
 	)
+	if !s.sideConversationTurnAvailable(turn) {
+		turn.interrupted.Store(true)
+		turn.cancel()
+	}
 	if ctx.Err() == nil {
 		s.notifySideThreadStatus(initial, s.mainTaskSnapshot(mainID))
 		watchDone := make(chan struct{})
@@ -758,6 +818,11 @@ func (s *Server) watchSideThreadInterrupt(ctx context.Context, mainID string, tu
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if !s.sideConversationTurnAvailable(turn) {
+				turn.interrupted.Store(true)
+				turn.cancel()
+				return
+			}
 			st, err := s.sideThreadStore.Load(mainID)
 			if err != nil && !errors.Is(err, sidethread.ErrNotFound) {
 				providers.DebugLogf("observe side thread %q: %v", mainID, err)

@@ -248,6 +248,7 @@ export function ConversationSplitPane({
           onSend={onSend}
           onInterrupt={onInterrupt}
           queryHistorySessionID={thread.id}
+          turnId={thread.turns?.at(-1)?.id}
           queryHistory={queryHistory}
           requestedHandoffIntent={requestedHandoffIntent}
         />

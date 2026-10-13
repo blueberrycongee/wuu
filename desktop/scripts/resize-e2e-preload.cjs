@@ -130,7 +130,7 @@ if (liveLayout) {
 }
 let submittedTurns = 0;
 
-contextBridge.exposeInMainWorld("wuu", {
+const desktopAPI = {
   listProjects: async () => projectList(),
   createBlankProject: async () => projectList(),
   chooseProjectFolder: async () => projectList(),
@@ -275,7 +275,14 @@ contextBridge.exposeInMainWorld("wuu", {
     provider: "e2e",
     model: "mock-resize",
     workspace_root: cwd,
-    providers: [{ name: "e2e", type: "mock", model: "mock-resize" }]
+    providers: [{ name: "e2e", type: "mock", model: "mock-resize" }],
+    // Layout journeys open /side through the same public contribution gate.
+    extension_inventory: [{
+      id: "user:e2e-attached-chat", kind: "plugin", name: "Attached chat fixture",
+      state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
+      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "e2e-attached-chat" },
+      contributions: { commands: [{ id: "side", title: "Side chat", kind: "side_conversation", template: "Use the fixture side conversation." }] },
+    }],
   }),
   updateGeneralSettings: async settings => {
     generalSettings = { ...generalSettings, ...settings };
@@ -356,4 +363,10 @@ contextBridge.exposeInMainWorld("wuu", {
     return () => terminalListeners.delete(handler);
   },
   onWindowResizeState: () => () => undefined
-});
+};
+// Focused renderer journeys may extend this shared synthetic backend without
+// copying it or adding test-only hooks to production renderer code.
+const extend = process.env.WUU_RENDERER_E2E_EXTENSION
+  ? require(process.env.WUU_RENDERER_E2E_EXTENSION)
+  : (api) => api;
+contextBridge.exposeInMainWorld("wuu", extend(desktopAPI));

@@ -294,3 +294,10 @@ func (h *HookedExecutor) UnfreezeToolSurface() {
 		freezer.UnfreezeToolSurface()
 	}
 }
+
+func (h *HookedExecutor) PrepareModelStep(ctx context.Context, history []providers.ChatMessage) ([]providers.ChatMessage, error) {
+	if preparer, ok := h.inner.(agent.ModelStepPreparer); ok {
+		return preparer.PrepareModelStep(ctx, history)
+	}
+	return nil, nil
+}

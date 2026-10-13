@@ -3,11 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ExtensionInventoryRecord, WuuDesktopApi } from "../../shared/protocol";
 import { DesktopPluginRuntime } from "./DesktopPluginRuntime";
-import { PluginHost } from "./PluginHost";
+import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 
 const originalWuu = window.wuu;
 
 afterEach(() => {
+  vi.useRealTimers();
   window.wuu = originalWuu;
 });
 
@@ -37,6 +38,7 @@ describe("DesktopPluginRuntime", () => {
       if (safeMode) {
         await runtime.sync([], true);
         expect(host.isGenerationActive("user:healthy", "fingerprint-one")).toBe(false);
+        expect(await pending).toEqual([]);
       }
       release();
       expect(await pending).toEqual([]);
@@ -126,7 +128,7 @@ describe("DesktopPluginRuntime", () => {
     })));
     const host = new PluginHost({ react: React });
     const runtime = new DesktopPluginRuntime(host, async (url) => ({
-      async activate(api: { registerCleanup(fn: () => void): void }) {
+      async activate(api: PluginGenerationApi) {
         if (url.startsWith("user:consumer/")) {
           const index = consumerStarts++;
           events.push(`start:consumer:${index}`);
@@ -134,6 +136,7 @@ describe("DesktopPluginRuntime", () => {
           signalStarted[index]?.();
           await gates[index];
         } else {
+          if (url.startsWith("user:independent/")) api.registerCommand({ id: "ready", title: "Ready", execute() {} });
           events.push(`start:${url}`);
           api.registerCleanup(() => events.push(`stop:${url}`));
         }
@@ -142,15 +145,23 @@ describe("DesktopPluginRuntime", () => {
     const provider = dependencyPlugin("provider");
     const consumer = dependencyPlugin("consumer", ["provider"]);
     const inventory = [consumer, provider];
+    const independentActive = new Promise<void>((resolve) => {
+      const unsubscribe = host.subscribe(() => {
+        if (!host.isGenerationActive("user:independent", "fingerprint-one")) return;
+        unsubscribe();
+        resolve();
+      });
+    });
     const first = runtime.sync(inventory);
     let second: ReturnType<DesktopPluginRuntime["sync"]> | undefined;
     try {
       await started[0];
       second = runtime.sync([...inventory, dependencyPlugin("independent")]);
       await started[1];
+      await independentActive;
       expect(host.isGenerationActive("user:independent", "fingerprint-one")).toBe(true);
+      expect(await first).toEqual([]);
       releases[0]!();
-      await first;
       expect(events.filter((event) => event === "start:user:provider/fingerprint-one")).toHaveLength(1);
       expect(events).not.toContain("stop:user:provider/fingerprint-one");
       expect(await runtime.sync([consumer, { ...provider, fingerprint: "two" }, dependencyPlugin("independent")])).toEqual([]);
@@ -193,46 +204,64 @@ describe("DesktopPluginRuntime", () => {
     expect(load).not.toHaveBeenCalled();
   });
 
-  it("cascades desktop startup failure while independent plugins still activate", async () => {
+  it.each(["reject", "timeout"])("cascades desktop startup %s while independent plugins still activate", async (failure) => {
+    vi.useFakeTimers();
     const activated: string[] = [];
     installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
       id, fingerprint, digest: "a".repeat(64), url: id,
     })));
     const runtime = new DesktopPluginRuntime(new PluginHost({ react: React }), async (id) => ({
       activate() {
-        if (id === "user:provider") throw new Error("provider failed");
+        if (id === "user:provider") {
+          if (failure === "timeout") return new Promise<void>(() => {});
+          throw new Error("provider failed");
+        }
         activated.push(id);
       },
     }));
-    const failures = await runtime.sync([
+    const pending = runtime.sync([
       dependencyPlugin("consumer", ["provider"]), dependencyPlugin("provider"), dependencyPlugin("independent"),
+      dependencyPlugin("transitive", ["consumer"]),
     ]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const failures = await pending;
     expect(activated).toEqual(["user:independent"]);
-    expect(failures.map((failure) => failure.pluginId).sort()).toEqual(["user:consumer", "user:provider"]);
+    expect(failures.map((failure) => failure.pluginId).sort()).toEqual(["user:consumer", "user:provider", "user:transitive"]);
     await runtime.sync([]);
   });
 
-  it("keeps optional failure nonblocking and stable, then rebinds on provider recovery", async () => {
+  it.each(["reject", "bridge", "import", "register"])("keeps optional %s failure nonblocking and stable, then rebinds on recovery", async (failure) => {
+    vi.useFakeTimers();
     const events: string[] = [];
     let fail = true;
-    installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
-      id, fingerprint, digest: "a".repeat(64), url: id,
-    })));
-    const runtime = new DesktopPluginRuntime(new PluginHost({ react: React }), async (id) => ({
-      activate(api: { registerCleanup(fn: () => void): void }) {
-        events.push(id);
-        if (id === "user:provider" && fail) throw new Error("optional provider failed");
-        api.registerCleanup(() => events.push(`stop:${id}`));
-      },
+    installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => {
+      if (id === "user:provider" && fail && failure === "bridge") return new Promise<never>(() => {});
+      return { id, fingerprint, digest: "a".repeat(64), url: id };
     }));
+    const runtime = new DesktopPluginRuntime(new PluginHost({ react: React }), async (id) => {
+      if (id === "user:provider" && fail && failure === "import") return new Promise(() => {});
+      return { activate(api: { registerCleanup(fn: () => void): void }) {
+        events.push(id);
+        if (id === "user:provider" && fail) {
+          if (failure === "register") return new Promise<void>(() => {});
+          throw new Error("optional provider failed");
+        }
+        api.registerCleanup(() => events.push(`stop:${id}`));
+      } };
+    });
     const consumer = { ...dependencyPlugin("consumer"), resolved_dependencies: ["provider"] };
     const inventory = [consumer, dependencyPlugin("provider")];
-    const failures = await runtime.sync(inventory);
-    expect(events).toEqual(["user:provider", "user:consumer"]);
+    const pending = runtime.sync(inventory);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const failures = await pending;
+    const startedProvider = failure === "reject" || failure === "register";
+    expect(events).toEqual(startedProvider ? ["user:provider", "user:consumer"] : ["user:consumer"]);
     expect(failures.map((failure) => failure.pluginId)).toEqual(["user:provider"]);
     events.length = 0;
-    await runtime.sync(inventory);
-    expect(events).toEqual(["user:provider"]);
+    const retry = runtime.sync(inventory);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await retry;
+    expect(events).toEqual(startedProvider ? ["user:provider"] : []);
     fail = false;
     events.length = 0;
     await runtime.sync(inventory);
@@ -316,37 +345,71 @@ describe("DesktopPluginRuntime", () => {
     expect(await pending).toEqual([]);
   });
 
-  it("does not activate an in-flight module after entering safe mode", async () => {
-    let finishRead!: (value: Awaited<ReturnType<WuuDesktopApi["loadPluginDesktopModule"]>>) => void;
+  it.each([
+    ["bridge", "safe-mode"], ["import", "safe-mode"], ["register", "safe-mode"],
+    ["bridge", "newer-sync"], ["import", "newer-sync"], ["register", "newer-sync"],
+    ["bridge", "timeout"], ["import", "timeout"], ["register", "timeout"],
+  ])("settles stalled %s on %s without allowing late activation", async (stage, action) => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
     let started!: () => void;
-    const reading = new Promise<void>((resolve) => { started = resolve; });
-    installDesktopModuleLoader(vi.fn<WuuDesktopApi["loadPluginDesktopModule"]>()
-      .mockImplementationOnce(() => {
-        started();
-        return new Promise((resolve) => { finishRead = resolve; });
-      })
-      .mockImplementation(async ({ id, fingerprint }) => ({
-        id, fingerprint, digest: "a".repeat(64), url: "wuu-plugin://module/demo.js",
-      })));
-
-    const activate = vi.fn();
-    const runtime = new DesktopPluginRuntime(new PluginHost({ react: React }), async () => ({ activate }));
+    const staging = new Promise<void>((resolve) => { started = resolve; });
+    let wait = true;
+    const suspend = async (point: string): Promise<void> => {
+      if (stage !== point || !wait) return;
+      started();
+      await gate;
+    };
+    installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => {
+      await suspend("bridge");
+      return { id, fingerprint, digest: "a".repeat(64), url: fingerprint };
+    }));
+    const cleanup = vi.fn();
+    let candidate: PluginGenerationApi | undefined;
+    const activate = vi.fn(async (api: PluginGenerationApi) => {
+      if (wait) candidate = api;
+      api.registerCleanup(cleanup);
+      await suspend("register");
+      api.registerCommand({ id: "working", title: "Working", execute: () => api.generation });
+    });
+    const host = new PluginHost({ react: React, activationTimeoutMs: 100 });
+    const runtime = new DesktopPluginRuntime(host, async () => {
+      await suspend("import");
+      return { activate };
+    });
     const plugin = inventoryPlugin();
     const pending = runtime.sync([plugin]);
-    await reading;
-    expect(await runtime.sync([plugin], true)).toEqual([]);
-    finishRead({ id: plugin.id, fingerprint: plugin.fingerprint!, digest: "a".repeat(64), url: "wuu-plugin://module/demo.js" });
-    expect(await pending).toEqual([]);
-    expect(activate).not.toHaveBeenCalled();
+    await staging;
+    if (action === "timeout") {
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await pending).toEqual([expect.objectContaining({ pluginId: plugin.id })]);
+    } else {
+      wait = false;
+      expect(await runtime.sync(action === "newer-sync" ? [{ ...plugin, fingerprint: "two" }] : [], action === "safe-mode")).toEqual([]);
+      expect(await pending).toEqual([]);
+    }
+    expect(candidate?.signal.aborted).toBe(stage === "register" ? true : undefined);
+    expect(host.isGenerationActive(plugin.id, plugin.fingerprint!)).toBe(false);
+    expect(cleanup).toHaveBeenCalledTimes(stage === "register" ? 1 : 0);
+    const calls = activate.mock.calls.length;
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(activate).toHaveBeenCalledTimes(calls);
+    expect(host.getCommands().map((command) => command.generation)).toEqual(action === "newer-sync" ? ["two"] : []);
+    expect(host.getGenerationDiagnostics(plugin.id, plugin.fingerprint!)).toHaveLength(action === "timeout" ? 1 : 0);
+    await runtime.sync([]);
   });
 
-  it.each(["import", "register"])("keeps the last working generation after replacement %s fails", async (failure) => {
+  it.each(["import", "register", "timeout"])("keeps the last working generation after replacement %s fails", async (failure) => {
+    vi.useFakeTimers();
     installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
       id, fingerprint, digest: "a".repeat(64), url: `wuu-plugin://module/${fingerprint}.js`,
     })));
     const cleanup = vi.fn();
     const load = vi.fn(async (url: string) => {
       if (url.includes("fingerprint-two")) {
+        if (failure === "timeout") return { activate() { return new Promise<void>(() => {}); } };
         if (failure === "import") throw new Error("replacement import failed");
         return { activate() { throw new Error("replacement registration failed"); } };
       }
@@ -363,7 +426,9 @@ describe("DesktopPluginRuntime", () => {
     const plugin = inventoryPlugin();
     expect(await runtime.sync([plugin])).toEqual([]);
     const replacement = { ...plugin, fingerprint: "fingerprint-two" };
-    expect(await runtime.sync([replacement])).toEqual([
+    const pending = runtime.sync([replacement]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(await pending).toEqual([
       expect.objectContaining({ pluginId: plugin.id, fingerprint: "fingerprint-two" }),
     ]);
     expect(cleanup).not.toHaveBeenCalled();

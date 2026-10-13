@@ -68,7 +68,7 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 		if needsRefresh {
 			_ = lease.Release()
 			_ = s.startBackground(func() {
-				if err := s.refreshPluginGenerationIfChanged(); err != nil && !errors.Is(err, errPluginGenerationRefreshBusy) {
+				if err := s.refreshPluginGenerationIfChanged(); err != nil && !pluginGenerationRefreshPending(err) {
 					providers.DebugLogf("refresh plugin generation before admission: %v", err)
 				}
 			})

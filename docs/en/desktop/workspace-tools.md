@@ -8,6 +8,8 @@ Expanding the right panel adds the current conversation as the first tab beside 
 
 ## Side chat
 
+The bundled Side plugin supplies `/side` and is selected in the recommended first-run setup. You can turn it off during setup or later in Settings → Plugins. Disabling it removes side-chat entry points and stops active side answers while preserving history; enabling it restores access.
+
 Use `/side` or **Ask in side chat** to open the side chat tab in the right sidebar. It shares the sidebar width and expanded layout with files and other tools. File selections keep their quote card, and the original file stays available in its tab.
 
 Side chat follows the selected main conversation; each conversation keeps its own side history and draft. Switching tool tabs or collapsing the sidebar preserves the draft and lets a running answer continue. Closing the side chat tab preserves its history; use the chat's stop or reset action to interrupt or clear it. In the expanded layout, the side chat tab has its own input, while the main conversation remains available through its first tab.

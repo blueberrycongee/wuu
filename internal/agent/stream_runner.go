@@ -46,8 +46,8 @@ type StreamRunner struct {
 	// CompactionRegistry resolves a generation-owned compactor for each run.
 	CompactionRegistry  *CompactionRegistry
 	CompactionNoteStore CompactionNoteStore
-	// ArchiveHistory commits original in-run messages before a fresh context
-	// releases them. App-server installs this per turn for persisted sessions.
+	// ArchiveHistory commits in-run messages before accepted steering is
+	// dispatched or a fresh context releases them. App-server installs this per turn for persisted sessions.
 	ArchiveHistory     HistoryArchiveFunc
 	CommitFreshContext FreshContextCommitFunc
 	MaxSteps           int
@@ -132,6 +132,10 @@ type StreamRunner struct {
 	// BeforeRequest transforms the complete provider-neutral request immediately
 	// before it is sent. Runtime plugin hosts install their typed pipeline here.
 	BeforeRequest func(context.Context, *providers.ChatRequest) error
+	// WrapModelClient installs generation-scoped inference extensions after host
+	// request assembly while retaining the shared provider execution lifecycle.
+	WrapModelClient func(providers.StreamClient) providers.StreamClient
+
 	// OnRequestContext receives metadata-only summaries of request-only model
 	// context assembled before requests.
 	OnRequestContext func(info RequestContextInfo)
@@ -613,8 +617,8 @@ func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers
 		}
 	}
 	cfg.ForkCompactionNote = r.compactionNoteFork(cfg.RetainedRequestContext)
+	cfg.ArchiveHistory = r.ArchiveHistory
 	if contextWindowsEnabled {
-		cfg.ArchiveHistory = r.ArchiveHistory
 		cfg.FreshContextTokens = r.freshContextTargetTokens(compactThresholdTokens)
 		cfg.FreshContext = func(ctx context.Context, messages []providers.ChatMessage, head, fixed, target int) ([]providers.ChatMessage, error) {
 			if err := ctx.Err(); err != nil {
@@ -1017,7 +1021,11 @@ func (r *StreamRunner) currentUsageContract() string {
 func (r *StreamRunner) providerConnectionSnapshot() (providers.StreamClient, string) {
 	r.usageMu.Lock()
 	defer r.usageMu.Unlock()
-	return r.Client, r.ProviderObservationKey
+	client := r.Client
+	if client != nil && r.WrapModelClient != nil {
+		client = r.WrapModelClient(client)
+	}
+	return client, r.ProviderObservationKey
 }
 
 // UpdateProviderConnection atomically replaces the transport and its opaque

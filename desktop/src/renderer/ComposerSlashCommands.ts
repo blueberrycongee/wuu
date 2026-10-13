@@ -244,21 +244,6 @@ export function buildComposerSlashCommands({
       disabledReason: needsWorkspace ?? needsIdleThread
     },
     {
-      // Side-thread messages remain outside the main conversation history.
-      // Optional args after `/side ` are sent as the side-thread prompt.
-      id: "side",
-      name: "side",
-      title: t("slash.side.title"),
-      description: t("slash.side.description"),
-      tag: t("slash.tag.conversation"),
-      kind: "action",
-      action: "open-side-thread",
-      argumentHint: t("slash.side.argumentHint"),
-      keywords: ["side", "侧聊", "旁路", "进度"],
-      // Side chat remains available while the main turn is running.
-      disabledReason: needsWorkspace ?? sideThreadDisabledReason
-    },
-    {
       id: "compact",
       name: "compact",
       title: t("slash.compact.title"),
@@ -386,7 +371,7 @@ export function buildComposerSlashCommands({
     ["skill", ...[...commands, ...skillCommands].flatMap((command) => [command.name, ...(command.aliases ?? [])])],
   );
   const pluginCommands = registerPluginPromptCommands(
-    pluginCommandPackagesFromInventory(initialized?.extension_inventory ?? []),
+    pluginCommandPackagesFromInventory(initialized?.features?.safe_mode ? [] : initialized?.extension_inventory ?? []),
     reservedNames,
     activeContext?.kind,
     availablePluginRuntimeCommands,
@@ -396,11 +381,12 @@ export function buildComposerSlashCommands({
     title: command.title,
     description: command.description,
     tag: `Plugin · ${command.pluginId}`,
-    kind: command.kind === "runtime_action" ? "action" : "prompt",
-    action: command.kind === "runtime_action" ? "plugin" : undefined,
+    kind: command.kind === "prompt_template" ? "prompt" : "action",
+    action: command.kind === "side_conversation" ? "open-side-thread" : command.kind === "runtime_action" ? "plugin" : undefined,
+    argumentHint: command.kind === "side_conversation" ? t("slash.side.argumentHint") : undefined,
     aliases: command.aliases,
     keywords: [command.pluginId, "plugin", ...command.keywords],
-    disabledReason: command.kind === "runtime_action"
+    disabledReason: command.kind !== "prompt_template"
       ? needsRuntime ?? sideThreadDisabledReason
       : needsRuntime,
     pluginId: command.pluginId,

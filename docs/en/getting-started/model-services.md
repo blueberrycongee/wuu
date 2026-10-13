@@ -23,6 +23,14 @@ from being added to the request. Explicitly configuring both headers remains
 supported. Saving a new API key in Settings replaces the previous bearer token,
 including its configured environment-variable reference.
 
+## Manage providers and models
+
+Open a connected provider in **Settings → Model providers**. **Add model** accepts a model ID without duplicating the provider or its credentials. The trash icon removes a model from that provider's choices. Removing the selected model asks you to choose its replacement before saving; add another model first if it is the only one.
+
+Removed choices stay removed after reloading or refreshing the catalog. You can restore them from **Removed models**. Existing conversations, model roles, and aliases keep their model selections and metadata; removing a choice does not revoke model access or erase conversation history.
+
+Use the provider's **… → Delete provider** action to remove the entire connection and its provider-specific saved key. Shared subscription sign-ins are kept. Removing the default provider asks you to choose another default. Existing conversations remain and switch from the removed provider to the current default on their next turn. Roles that used it return to inherited defaults, and its aliases are removed. Add another provider before deleting the last configured provider. Automatically discovered services and OpenAI OAuth-managed connections cannot be removed here; their authentication remains managed by the original sign-in flow.
+
 ## Current OpenAI and Anthropic models
 
 The catalog includes `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `claude-opus-5-5`, and `claude-fable-5-1`. Existing conversation and workspace selections remain unchanged; select a new model when you want to use it.
@@ -126,6 +134,11 @@ including all images, files, text, and metadata, must fit within 64 MiB. Base64
 encoding increases file sizes by about one third. If the request is too large,
 Wuu keeps the draft so you can remove attachments or shorten the message and retry.
 
+If an attachment cannot be read while preparing it, its card stays in the draft.
+Choose **Retry** to read the same selected file again, or remove it and select a
+replacement. A successful retry does not send the message. These unsent files
+remain in memory only; reattach them after closing or reloading the window.
+
 Path-only delivery counts the reference text toward context, not the file's
 disk or Base64 size. Native images use image estimates; other admitted native
 media currently use a bounded fallback without page/frame accounting. Provider
@@ -186,7 +199,7 @@ use PTC while it is enabled.
 
 ### Discover, execute and inspect results
 
-On OpenAI Responses (including the Codex provider), `run_code` accepts raw JavaScript source through a custom text tool. Do not wrap it in JSON or Markdown fences. Other provider APIs accept the same source as `{"input":"..."}`. An optional first-line `// @run_code: {...}` comment sets `description`, `timeout_ms`, `result_view`, and `max_output_tokens`; unknown options fail before execution. Previously recorded `code` calls remain executable when resuming a session.
+On Responses connections with a recognized GPT-5-or-later model, `run_code` accepts raw JavaScript source through a custom text tool. Do not wrap custom-tool input in JSON or Markdown fences. Older GPT models, unknown models, and other provider APIs accept the same source as `{"input":"..."}`. For a Responses gateway that does not support custom tools, set `providers.<provider>.models.<model>.options.freeform_tool` to `false`; use `true` only when the endpoint supports that wire format. Unknown models use JSON tools by default. This setting changes the wire format, not whether PTC is enabled. Historical calls are converted for the current request without changing saved conversation history. An optional first-line `// @run_code: {...}` comment sets `description`, `timeout_ms`, `result_view`, and `max_output_tokens`; unknown options fail before execution. Previously recorded `code` calls remain executable when resuming a session.
 The description is display metadata; omitting it does not prevent execution.
 Its description includes core file, search and command definitions within a
 fixed catalog budget, with previews for other bindings. Use included schemas

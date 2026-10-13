@@ -7,13 +7,15 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/modelroles"
 )
 
 func TestServerConfigModelRemovalPersistsAndKeepsFallback(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	if err := os.WriteFile(rt.ConfigPath, []byte(`{
   "default_provider": "fake-provider",
-  "providers": {"fake-provider": {"type": "openai-compatible", "base_url": "https://example.test/v1", "model": "old", "models": {"old": {"name": "Old model"}, "next": {}}}}
+  "providers": {"fake-provider": {"type": "openai-compatible", "base_url": "https://example.test/v1", "model": "old", "models": {"old": {"name": "Old model"}, "next": {}}}},
+  "agent": {"model_aliases": {"existing": {"provider": "fake-provider", "model": "old"}}}
 }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +43,10 @@ func TestServerConfigModelRemovalPersistsAndKeepsFallback(t *testing.T) {
 	provider := cfg.Providers["fake-provider"]
 	if !provider.Models["old"].Disabled || provider.Model != "next" {
 		t.Fatalf("removal not persisted: %+v", provider)
+	}
+	alias, err := modelroles.ResolveAlias(cfg, "existing")
+	if err != nil || alias.Model != "old" || provider.Models["old"].Name != "Old model" {
+		t.Fatalf("model-choice removal changed existing routing or metadata: alias=%+v err=%v", alias, err)
 	}
 	// Rediscovery supplies live metadata but must not undo a saved removal.
 	provider.Type = "openai-codex"

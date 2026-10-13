@@ -2,6 +2,7 @@ package memory
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,10 +34,6 @@ var indexInvisibleChars = []rune{
 	'\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
 }
 
-type indexSnapshot struct {
-	Content string
-}
-
 func userNotebook(wuuHome string) string {
 	home := strings.TrimSpace(wuuHome)
 	if home == "" {
@@ -56,45 +53,70 @@ func errorsNewNotebookPath() error {
 	return fmt.Errorf("memory: notebook path is required")
 }
 
-func readSafeIndex(dir string) (indexSnapshot, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, indexFileName))
+// readNotebookFile bounds source reads and keeps both service and tool reads
+// inside the notebook even when a filename has been replaced by a symlink.
+func readNotebookFile(dir, name string) ([]byte, error) {
+	root, err := os.OpenRoot(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return indexSnapshot{}, nil
-		}
-		return indexSnapshot{}, fmt.Errorf("memory: read index: %w", err)
+		return nil, err
 	}
-	lines := strings.Split(string(raw), "\n")
+	defer root.Close()
+	info, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("memory file must be a regular file")
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, maxMemoryFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxMemoryFileBytes {
+		return nil, fmt.Errorf("memory file exceeds %d bytes", maxMemoryFileBytes)
+	}
+	if !utf8.Valid(raw) {
+		return nil, fmt.Errorf("memory file must contain UTF-8 text")
+	}
+	return raw, nil
+}
+
+func safeIndex(content string, maxBytes int) (string, bool) {
+	lines := strings.Split(content, "\n")
 	for i, line := range lines {
 		if unsafeIndexLine(line) {
 			lines[i] = removedLineNotice
 		}
 	}
 	trimmed := strings.TrimSpace(strings.Join(lines, "\n"))
-	if trimmed == "" {
-		return indexSnapshot{}, nil
-	}
 	allLines := strings.Split(trimmed, "\n")
 	lineTruncated := len(allLines) > maxIndexLines
-	byteTruncated := len(trimmed) > maxIndexBytes
 	if lineTruncated {
 		trimmed = strings.Join(allLines[:maxIndexLines], "\n")
 	}
-	if len(trimmed) > maxIndexBytes {
-		if cut := strings.LastIndexByte(trimmed[:maxIndexBytes], '\n'); cut > 0 {
-			trimmed = trimmed[:cut]
-		} else {
-			cut := maxIndexBytes
-			for cut > 0 && !utf8.RuneStart(trimmed[cut]) {
-				cut--
-			}
-			trimmed = trimmed[:cut]
+	if len(trimmed) > maxBytes {
+		if cut := strings.LastIndexByte(trimmed[:maxBytes], '\n'); cut > 0 {
+			return trimmed[:cut], true
 		}
 	}
-	if lineTruncated || byteTruncated {
-		trimmed += "\n\n> WARNING: MEMORY.md was truncated before prompt injection. Keep index entries short and move detail into topic files."
+	trimmed, byteTruncated := boundedNotebookText(trimmed, maxBytes)
+	return trimmed, lineTruncated || byteTruncated
+}
+
+func boundedNotebookText(content string, maxBytes int) (string, bool) {
+	if len(content) <= maxBytes {
+		return content, false
 	}
-	return indexSnapshot{Content: trimmed}, nil
+	cut := maxBytes
+	for cut > 0 && !utf8.RuneStart(content[cut]) {
+		cut--
+	}
+	return content[:cut], true
 }
 
 func unsafeIndexLine(line string) bool {

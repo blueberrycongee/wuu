@@ -8,7 +8,7 @@ import { StreamingMarkdown } from "./StreamingMarkdown";
 
 const { mermaidInitialize, mermaidRender } = vi.hoisted(() => ({
   mermaidInitialize: vi.fn(),
-  mermaidRender: vi.fn(async (id: string) => ({
+  mermaidRender: vi.fn(async (id: string, _code: string) => ({
     svg: `<svg data-diagram-id="${id}"></svg>`,
   })),
 }));
@@ -29,7 +29,8 @@ let openExternalMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   document.documentElement.dataset.theme = "light";
   mermaidInitialize.mockClear();
-  mermaidRender.mockClear();
+  mermaidRender.mockReset();
+  mermaidRender.mockImplementation(async (id: string) => ({ svg: `<svg data-diagram-id="${id}"></svg>` }));
   writeTextMock = vi.fn().mockResolvedValue(undefined);
   // jsdom does not implement the clipboard API; inject a mock for the
   // success-path tests.
@@ -118,6 +119,45 @@ describe("RichContent code block", () => {
     ]);
     expect(container.querySelector("code a, code button")).toBeNull();
     expect(resolveWorkspaceFileReferenceMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["~~~mermaid", "````mermaid", "   ```mermaid", "```mermaid title=Flow", "> ```mermaid", "- ```mermaid"]
+    .flatMap((opener, index) => [false, true].map(isLive => ({ opener, index, isLive }))))(
+    "renders a $opener fence as a diagram (live=$isLive)", async ({ opener, index, isLive }) => {
+      const indent = opener.startsWith(">") ? "> " : opener.startsWith("-") ? "  " : "";
+      const code = `graph TD\n%% example-${index}-${isLive}\nA --> B`;
+      const source = `${opener}\n${code.split("\n").map(line => indent + line).join("\n")}`;
+      const props = { streamKey: `mermaid-${opener}-${isLive}`, initialText: source, isLive, phase: "final_answer" as const };
+      renderWithImagePreview(<StreamingMarkdown {...props} />);
+      await act(async () => { await vi.waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(1)); });
+      expect(mermaidRender.mock.calls[0][1]).toBe(code);
+      expect(container.querySelector(".rich-mermaid svg")).not.toBeNull();
+      expect(container.querySelector(".rich-code-block")).toBeNull();
+      const shell = container.querySelector(".rich-mermaid");
+      renderWithImagePreview(<StreamingMarkdown {...props} isLive={false} />);
+      expect(container.querySelector(".rich-mermaid")).toBe(shell);
+      expect(mermaidRender).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("preserves the diagram shell when loading succeeds or fails", async () => {
+    let finishRender!: (value: { svg: string }) => void;
+    mermaidRender.mockImplementationOnce(() => new Promise(resolve => { finishRender = resolve; }));
+    renderWithImagePreview(<RichContent text={"```mermaid\ngraph TD\nA --> B\n```"} />);
+    const shell = container.querySelector(".rich-mermaid");
+    expect(shell?.getAttribute("aria-busy")).toBe("true");
+    await act(async () => {
+      await vi.waitFor(() => expect(finishRender).toBeTypeOf("function"));
+      finishRender({ svg: "<svg></svg>" });
+    });
+    expect(container.querySelector(".rich-mermaid")).toBe(shell);
+    expect(shell?.getAttribute("aria-busy")).toBe("false");
+    mermaidRender.mockRejectedValueOnce(new Error("Invalid diagram"));
+    renderWithImagePreview(<RichContent text={"```mermaid\ninvalid source\n```"} />);
+    await act(async () => { await vi.waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(2)); });
+    expect(container.querySelector(".rich-mermaid")).toBe(shell);
+    expect(shell?.querySelector("code")?.textContent).toBe("invalid source");
+    expect(shell?.textContent).toContain("Invalid diagram");
   });
 
   it("rerenders Mermaid diagrams when the applied theme changes", async () => {
@@ -415,6 +455,14 @@ describe("RichContent code block", () => {
     expect(writeTextMock).toHaveBeenCalledWith("console.log('hi');");
   });
 
+});
+
+describe("RichContent message semantics", () => {
+  it("avoids collisions between repeated headings and explicit numeric suffixes", () => {
+    render(<RichContent text={"# Topic\n\n# Topic\n\n# Topic-1\n\n# Topic"} />);
+    expect(Array.from(container.querySelectorAll(".rich-heading"), heading => heading.id))
+      .toEqual(["topic", "topic-1", "topic-1-1", "topic-2"]);
+  });
 });
 
 describe("RichContent raw HTML and heading levels", () => {

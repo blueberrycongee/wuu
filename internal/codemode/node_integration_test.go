@@ -1,10 +1,12 @@
 package codemode
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"math"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,6 +69,83 @@ func TestNodeProgramLifecycle(t *testing.T) {
 	result, err = s.Run(context.Background(), RunRequest{Code: `let rejected = false; for (let i=0; i<128; i++) { try { await tools.media({}); } catch(e) { rejected = true; } } return rejected;`, Tools: []ToolDefinition{{Name: "media"}}}, opts)
 	if err != nil || result.Error != "" || string(result.Value) != "true" || len(result.Media) != toolresult.MaxContentParts-1 {
 		t.Fatalf("media bound=%+v %v", result, err)
+	}
+
+	for _, tc := range []struct {
+		name, code, frameType string
+		value                 int
+		failure               string
+	}{
+		{"completed", "return 7;", "done", 7, ""},
+		{"pending host call", "await tools.read({});", "call", 0, ""},
+		{"failed", `throw new Error("guest failure");`, "done", 0, "guest failure"},
+	} {
+		t.Run("control channel closes before process stop/"+tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			listener, err := net.Listen("tcp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			stopAccept := context.AfterFunc(ctx, func() { _ = listener.Close() })
+			defer stopAccept()
+			modules := make(map[string]string)
+			for _, name := range []string{"index.js", "wasi-shim.js", "extensions.js", "version.js"} {
+				data, err := runtimeAssets.ReadFile("vendor/quickjs/" + name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				modules[name] = string(data)
+			}
+			wasm, err := loadRuntimeWasm(runtimeAssets)
+			if err != nil {
+				t.Fatal(err)
+			}
+			boot, err := json.Marshal(map[string]any{"address": listener.Addr().String(), "secret": "shutdown-fixture", "code": tc.code, "tools": []string{"read"}, "modules": modules, "wasm": wasm})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.CommandContext(ctx, s.config.NodeExecutable, "--input-type=module", "-e", bootstrap)
+			cmd.Env = append(os.Environ(), "NODE_NO_WARNINGS=1", "ELECTRON_RUN_AS_NODE=1")
+			cmd.Stdin = bytes.NewReader(boot)
+			var output bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &output, &output
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				cancel()
+				if cmd.ProcessState == nil {
+					_ = cmd.Wait()
+				}
+			}()
+			conn, err := listener.Accept()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			deadline, _ := ctx.Deadline()
+			_ = conn.SetDeadline(deadline)
+			var hello struct{ Secret string }
+			if err := readFrame(conn, &hello); err != nil || hello.Secret != "shutdown-fixture" {
+				t.Fatalf("control handshake=%+v %v", hello, err)
+			}
+			var done struct {
+				Type  string
+				Value int
+				Error string
+			}
+			if err := readFrame(conn, &done); err != nil || done.Type != tc.frameType || done.Value != tc.value || (tc.failure == "" && done.Error != "") || (tc.failure != "" && !strings.Contains(done.Error, tc.failure)) {
+				t.Fatalf("completion=%+v %v", done, err)
+			}
+			// Service cleanup can close the socket before its process-stop signal runs.
+			// Exercise that ordering without a signal hiding native shutdown diagnostics.
+			_ = conn.Close()
+			if err := cmd.Wait(); err != nil || output.Len() != 0 {
+				t.Fatalf("control shutdown=%v output=%q", err, output.String())
+			}
+		})
 	}
 }
 

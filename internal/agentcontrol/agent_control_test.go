@@ -1327,55 +1327,83 @@ func TestNestedResultRoutesToParentAgent(t *testing.T) {
 }
 
 func TestStopClosesAgentSubtree(t *testing.T) {
-	dir := t.TempDir()
-	initRepo(t, dir)
-	c, err := New(Config{
-		Client:        &slowClient{},
-		DefaultModel:  "fake-model",
-		ParentRepo:    dir,
-		WorktreeRoot:  filepath.Join(dir, ".wuu", "worktrees"),
-		SessionID:     "sess-close-tree",
-		WorkerFactory: func(string, WorkerType, agentthread.Metadata) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	parent, err := c.Spawn(context.Background(), SpawnRequest{
-		Type:     DefaultSubagentType,
-		TaskName: "parent",
-		Prompt:   "parent task",
-	})
-	if err != nil {
-		t.Fatalf("parent spawn: %v", err)
-	}
-	child, err := c.Spawn(context.Background(), SpawnRequest{
-		Type:       DefaultSubagentType,
-		TaskName:   "child",
-		Prompt:     "child task",
-		ParentID:   parent.AgentID,
-		ParentPath: parent.AgentPath,
-	})
-	if err != nil {
-		t.Fatalf("child spawn: %v", err)
-	}
+	for _, stopAll := range []bool{false, true} {
+		t.Run(map[bool]string{false: "stop-subtree", true: "stop-all"}[stopAll], func(t *testing.T) {
+			dir := t.TempDir()
+			initRepo(t, dir)
+			c, err := New(Config{
+				Client:        &slowClient{},
+				DefaultModel:  "fake-model",
+				ParentRepo:    dir,
+				WorktreeRoot:  filepath.Join(dir, ".wuu", "worktrees"),
+				SessionID:     "sess-close-tree",
+				WorkerFactory: func(string, WorkerType, agentthread.Metadata) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { stopAndCloseAgentControlForTest(t, c) })
+			parent, err := c.Spawn(context.Background(), SpawnRequest{
+				Type:     DefaultSubagentType,
+				TaskName: "parent",
+				Prompt:   "parent task",
+			})
+			if err != nil {
+				t.Fatalf("parent spawn: %v", err)
+			}
+			child, err := c.Spawn(context.Background(), SpawnRequest{
+				Type:       DefaultSubagentType,
+				TaskName:   "child",
+				Prompt:     "child task",
+				ParentID:   parent.AgentID,
+				ParentPath: parent.AgentPath,
+			})
+			if err != nil {
+				t.Fatalf("child spawn: %v", err)
+			}
+			// Hold the child's cancellation result until the stopped parent has fully
+			// settled. Delivery must not revive that parent with a fresh run context.
+			childTerminal := make(chan struct{})
+			releaseChild := make(chan struct{})
+			var releaseOnce, terminalOnce sync.Once
+			unblockChild := func() { releaseOnce.Do(func() { close(releaseChild) }) }
+			t.Cleanup(unblockChild)
+			c.SetWorkerTerminalTransitionHookForTest(func(id string) {
+				if id == child.AgentID {
+					terminalOnce.Do(func() { close(childTerminal); <-releaseChild })
+				}
+			})
 
-	if !c.Stop(parent.AgentPath) {
-		t.Fatal("expected parent subtree stop to succeed")
-	}
-	if _, err := c.Wait(context.Background(), parent.AgentID); err != nil {
-		t.Fatalf("wait parent: %v", err)
-	}
-	if _, err := c.Wait(context.Background(), child.AgentID); err != nil {
-		t.Fatalf("wait child: %v", err)
-	}
-	for _, id := range []string{parent.AgentID, child.AgentID} {
-		meta, ok := c.threads.Resolve(id)
-		if !ok {
-			t.Fatalf("missing metadata for %s", id)
-		}
-		if meta.Source.EdgeStatus != agentthread.EdgeClosed {
-			t.Fatalf("expected %s edge closed, got %+v", id, meta.Source)
-		}
+			if stopAll {
+				c.StopAll()
+			} else if !c.Stop(parent.AgentPath) {
+				t.Fatal("expected parent subtree stop to succeed")
+			}
+			if _, err := c.Wait(context.Background(), parent.AgentID); err != nil {
+				t.Fatalf("wait parent: %v", err)
+			}
+			select {
+			case <-childTerminal:
+			case <-time.After(5 * time.Second):
+				t.Fatal("child cancellation did not reach terminal delivery")
+			}
+			unblockChild()
+			if _, err := c.Wait(context.Background(), child.AgentID); err != nil {
+				t.Fatalf("wait child: %v", err)
+			}
+			for _, id := range []string{parent.AgentID, child.AgentID} {
+				if snap := c.Manager().Get(id).Snapshot(); snap.Status != subagent.StatusCancelled {
+					t.Fatalf("stopped worker revived after child delivery: %+v", snap)
+				}
+				meta, ok := c.threads.Resolve(id)
+				if !ok {
+					t.Fatalf("missing metadata for %s", id)
+				}
+				if meta.Source.EdgeStatus != agentthread.EdgeClosed {
+					t.Fatalf("expected %s edge closed, got %+v", id, meta.Source)
+				}
+			}
+		})
 	}
 }
 
