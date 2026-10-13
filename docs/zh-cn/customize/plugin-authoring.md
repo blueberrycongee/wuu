@@ -85,7 +85,9 @@
 
 主题 token 来自[生成的主题契约](theme-surface-matrix.md)，不是任意宿主 CSS 变量。设置支持 `boolean`、`string`、`number`、`enum`，作用域为 `user|workspace`，应用方式为 `live|restart`。运行时通过 `host.settings.get/list` 服务读取，桌面 View 通过 `host.getSetting` 读取。禁用或删除包默认保留设置和存储。
 
-`contributes.commands` 中的命令包含本地 ID 和 kind。`prompt_template` 引用包内有大小限制的 UTF-8 文件，提供宿主管理的输入框动作；`runtime_action` 指向桌面 generation 注册的命令，只有声明不会执行代码。
+`contributes.commands` 中的命令包含本地 ID 和 kind。`prompt_template` 引用包内有大小限制的 UTF-8 文件，提供宿主管理的输入框动作；`runtime_action` 指向桌面 generation 注册的命令，只有声明不会执行代码。`side_conversation` 引用包内提示词，打开宿主管理的附属会话界面；消息继续使用现有侧聊执行与历史机制，宿主保留当前权限边界。发送请求使用 `plugin.command` 公共 ID 标识命令；停用或移除所属插件会取消正在生成的回答，但不会删除历史。同 ID 更新从下一次回答生效，正在生成的回答保留其原有 generation。此类命令不需要桌面入口或辅助进程。
+
+首次设置在完成前中断时，会保留已经应用的插件选择。清单区分实际 `enabled` 状态与可选的 `enabled_override` 用户设置；没有 override 时使用插件默认值。
 
 UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`、`workspaceTools` 或 `settingsPages` 中，描述放置位置和入口，实际渲染仍由桌面模块注册。匹配与组合规则见[桌面 UI 插件](desktop-plugins.md)。
 
@@ -114,6 +116,10 @@ UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`�
 ## 工具和能力
 
 模型工具注册在初始化结果的 `tools` 数组中，每个工具需要 `id`、`description` 和对象类型的 `input_schema`，宿主会生成带命名空间的公开名称。`execution_scopes` 可限制工具在 `root` 或 `child` 中可用；`activity` 描述只读性、并发安全、风险和是否编排子工具。应如实声明副作用，不要把写入工具标成只读来绕过调度或权限检查。这些声明属于可信扩展契约，不是沙箱。
+
+两个 SDK 运行时都按 `activity.concurrency_safe: true` 调度工具。相邻的显式安全工具可以重叠运行，每个运行时最多同时执行八个工具处理函数。省略或设为 false 的工具、未知工具 ID，以及普通能力和服务回调，仍按 FIFO 顺序独占执行；仅声明 `read_only` 不会启用并发。这些屏障同时适用于共享或不同的 execution ID。initialize、activate 和 shutdown 还会等待此前已接收的可重入回调结束。
+
+启用前应保护共享可变状态。每次调用的 Go context，或 TypeScript execution context 与带执行归属的 host，都应随该次调用传递，不要保存为共享的“当前调用”变量。取消在读取帧时注册，并在真正进入处理函数前再次检查，包括等待工具空位之后。取消某个 execution 会中止其所有仍活跃的回调，不影响独立 execution；已运行的代码仍需协作响应取消。显式可重入的能力和服务保留独立通道，使工具空位用尽时嵌套宿主回调仍能完成。该上限不限制这些回调或排队帧数量；TypeScript 并发也不会将同步 CPU 工作移至工作线程。
 
 会话启用 PTC 时，普通工具默认作为程序内绑定。用户交互、显式交付或必须保留
 为模型直调的生命周期控制可声明 `direct_only: true`。此类工具留在顶层工具
@@ -174,6 +180,11 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.storage.get/set/delete/keys` | 插件用户或工作区命名空间中的字符串值 |
 | `host.storage.compare-exchange` | 用 `{ scope, key, expected, value }` 条件替换，返回 `{ swapped, value }` |
 | `host.file-lock` | 在宿主提供的数据根目录中获取和释放跨进程文件锁 |
+
+| `host.model.request` | 使用宿主配置完成一次有界的纯文本模型请求 |
+| `host.model.invoke` | 独立的完整逻辑模型调用与流式响应 |
+| `host.model.emit` | 流式适配器或 middleware 发出的事件 |
+| `host.background` | 调用插件自己服务的 generation 所属后台工作 |
 | `host.settings.get/list` | 声明的设置值 |
 | `host.session.create/send/list/inspect/cancel/control` | 按宿主生命周期规则创建和管理会话 |
 | `host.session.history.read/search` | 使用序列快照和续读游标访问有限历史 |
@@ -222,6 +233,89 @@ try {
 必须释放的句柄。执行 ID 让宿主能取消等待中的获取；进程丢失时由 generation
 清理兜底。文件锁不将插件的任意文件访问变成沙箱，也不提供跨文件事务。
 
+## 单次模型请求
+
+在初始化结果的 `required_services` 中声明 `requireModelRequestService()`，再从宿主管理的活动工具、capability（包括 `plugin.client.request`）或服务回调中调用 `requestModel(host, input)`。使用该处理函数作用域内的 `RuntimeHost`，TypeScript SDK 会补充 execution ID。generation 所有的后台任务也会提供活动的服务回调。需要在 observer 或其他处理函数返回后继续工作时，应启动这样的后台任务，并在其回调中发起请求。激活阶段及脱离执行的定时器或任务，没有活动执行作用域时不能直接调用模型服务。
+
+```ts
+import { requestModel, type RuntimeHost } from "@wuu/plugin-sdk";
+
+async function requestText(host: RuntimeHost, content: string) {
+  return await requestModel(host, {
+    messages: [{ role: "user", content }],
+    max_output_tokens: 256,
+    timeout_ms: 10_000,
+  });
+}
+```
+
+`host.model.request` 的版本为 `1.0.0`，使用 `call` 方法，schema 标识为 `host.model.request.input.v1` 和 `host.model.request.output.v1`。服务协商检查声明的主版本；SDK 中存在 helper 或 `host.supports("host.service.call")` 返回真，都不能单独证明旧宿主支持此服务。
+
+| 输入 | 契约 |
+| --- | --- |
+| `messages` | 1–32 条消息，角色为 `system`、`user` 或 `assistant`；内容为非空白 UTF-8 文本，总计最多 256 KiB |
+| `model_alias` | 可选的现有 `agent.model_aliases` 名称；省略或为空时使用已保存的有效配置中的主模型 |
+| `max_output_tokens` | 整数 1–8192，默认 1024 |
+| `timeout_ms` | 整数 1–45000，默认 45000 |
+
+`max_output_tokens` 是请求的输出 token 上限，不是费用上限。已配置的 token 限制选项不能提高本次调用的上限。如果提供商适配器在准备请求时移除限制，或将其提高到请求值以上，调用会在提交推理前返回 `unsupported_limit`。这项宿主侧检查不保证远程服务器如何执行 token 限制或计费。
+
+超时同时受 `timeout_ms` 和所属调用的剩余生命周期限制。运行时默认 capability 超时为 30 秒，因此请求可能在 45 秒之前结束。应明确配置包的运行时超时，不要认为模型服务会延长它。取消、所属调用结束或 generation 撤销都会取消尚未完成的提供商工作。
+
+远程 Web 客户端对 `api.invokeRuntime` 另有独立的 30 秒 RPC 超时，增加包的超时时间不会延长它。该时限到达后，客户端会请求取消原来的宿主调用。
+
+结果包含 `text`、`provider`、`model`、`finish_reason` 和 `truncated`。可选的 `usage` 包含输入、输出、缓存创建、缓存读取 token 数及 `cache_creation_unknown`；缺少用量不代表零费用。空或非文本响应，以及请求工具调用的响应都会报错，不会启动工具循环。
+
+宿主复用已配置的凭据、提供商请求准备、容量协调、重试和推理用量记录。不自动加入对话历史、代理专用请求 hook 或工具，也不创建持久会话。上下文由插件自行选择和限制。此服务不接受凭据、端点 URL 或任意提供商覆盖。应说明哪些草稿或历史文本会发送给已配置的提供商，限制请求频率和输出；取消只能尽量避免后续工作，已提交的请求仍可能产生费用。
+
+## 可组合的模型扩展
+
+完整逻辑请求使用 `host.model.invoke` 版本 1；原有的 `host.model.request` 纯文本契约保持不变。在 `required_services` 中声明 `requireModelInvokeService()` 以获得服务调用权限，由活动的工具、capability、服务或后台执行提供生命周期。独立推理不会创建对话轮次，也不会执行模型返回的工具调用。
+
+`LogicalModelRequestV1` 包含 `version: 1`、提供商和模型身份、有序消息与工具、缓存提示、模型选项、工具选择、媒体准入和原生回放状态。消息保留 reasoning block、提供商原生 item 及其回退历史、工具调用和结果、发现的工具 schema，以及已解析的图片和文件字节。富工具结果保留 artifact 和延迟媒体引用，以及经过预算限制的 `model_text`。不导出本地临时文件路径、凭据、宿主重试对象或执行权限。复制快照时应保留未知的提供商选项和不透明原生数据。
+
+这是逻辑快照，不保证最终 HTTP 字节完全相同或缓存一定命中。上下文、路由、模型、适配器、原生状态兼容性或媒体变化时，插件需要使旧快照失效。已配置凭据、提供商请求准备、取消和推理用量记录仍由宿主负责。原生转发不能配置任意端点或凭据。
+
+| 扩展点 | 契约 |
+| --- | --- |
+| `model.request.transform` | 版本 1 的 `transform` capability，接收 `{ request, origin }`，在提供商调用前返回 `{ request? }`。 |
+| `model.request.observe` | 版本 1 的 `observe` capability，观察请求及终态响应或错误，并接收完整逻辑请求和宿主确认的来源。 |
+| `model.middleware` | 版本 1 的 `decision` capability，错误策略为 `propagate`；可包装调用、返回替代响应，或执行一次性 continuation。 |
+| `model.adapter` | 版本 1 的 `decision` capability，错误策略为 `propagate`；提供显式选中的适配器实现。 |
+
+插件发起的独立请求绕过请求 hook 和 around-call middleware，因此观察普通请求后重放不会递归触发同一策略。`origin.kind`、`plugin_id`、operation ID 和可用的会话上下文由宿主填写；复制这些字段不能冒充普通代理请求。
+
+### 独立调用与流式响应
+
+`invokeModel(host, { request, model_alias?, max_output_tokens?, timeout_ms? })` 返回 `{ response, origin }`。比较第二个模型时，选择已配置的模型别名。显式别名提供其已配置的选项和 effort 默认值；请求中的显式 effort 选择该模型对应的 variant，显式 `provider_options` 字段覆盖这些默认值，`request.adapter` 优先于合并后的 `provider_options.adapter`。不指定别名时保留完整请求快照，不用当前配置刷新它。输出 token 和超时受宿主及所属执行约束；缺少用量不代表没有费用，取消也不能撤销已经提交的请求。完整请求保留自己的输出限制，除非显式通过 `max_output_tokens` 覆盖；独立调用默认超时 120 秒，最多 600 秒。输入和保留的流数据分别最多 16 MiB，每条流最多保留 4096 个事件。
+
+`startModelInvocation` 返回 `invocation_id`。`readModelInvocation` 接收该 ID、`cursor` 和可选 `wait_ms`，返回有序事件、下一游标、`done` 和终态结果或错误。句柄绑定当前插件 generation 和执行。`cancelModelInvocation` 取消活动流；`streamModel` 将这些方法包装成异步迭代器，在消费者提前退出或抛错时取消未完成工作。应在处理函数的生命周期内消费流；需要跨越原调用生命周期时，使用后台任务。转发事件时保留不透明的 `provider_state` 和 `lifecycle` 数据；`reset_partial` 为真时，在接收重试的新事件前丢弃已累计的部分输出。
+
+middleware 接收 `ModelMiddlewareInput`，包含 `request`、`origin`、`stream` 和 `continuation_id`。通过 `invokeModel` 或 `startModelInvocation` 转发时，携带该 continuation ID 和未经修改的请求。continuation 只能由当前活动回调使用一次，不接受模型别名或输出限制覆盖；修改输入应使用 request-transform 扩展点。直接返回响应可以跳过后续调用链；先转发再修改响应则包装下游行为，不另建一次推理 operation。
+
+### 可替换的适配器
+
+初始化时注册 `model_adapters: [{ id: "example.adapter", version: 1 }]` 并实现 `model.adapter`。ID 是全局唯一的点分名称，最多 160 个字符，各段可含小写字母、数字、`_` 和 `-`；候选 generation 内任何重复注册都会失败。通过 `request.adapter` 显式选择实现，或在模型配置中设置 `options.adapter` 以用于普通对话；请求中的显式值优先，`"native"` 选择宿主协议。保留选项在原生传输前会被移除。选中的适配器缺失或被撤销时会报错，不会回退到原生实现。适配器可以生成合成响应，也可以通过 `host.model.invoke` 发起另一条有界请求，并用 `adapter: "native"` 转发给原生提供商。
+
+回调接收 `{ adapter_id, request, stream }`。非流式调用返回 `{ response }`。流式调用可以直接返回该响应，也可以通过 `emitModelEvent` 发出有序事件，以恰好一个 `done` 或 `error` 结束，然后返回 `{}`。发事件前需声明 `requireModelEmitService()`。混合返回响应与事件、缺少终态事件，或在对应流式回调之外发事件都会失败。宿主不会向插件发送凭据。
+
+适配器在注册时明确声明用量记录方式：
+
+- `mode: "direct"`（默认值）：宿主在调用回调前记录一条可能计费的提交，并检查工作流预算。返回的用量是插件报告的本适配器用量；省略用量表示未知，不代表零。额外发起的 `host.model.invoke` 调用分别记录其提交和费用。
+- `mode: "delegate"`：用于包装器，例如 `{ id: "example.forward", version: 1, mode: "delegate" }`。宿主保留逻辑操作记录，但不记录一条可计费的父提交。响应中的用量仅用于汇总；每个宿主模型子调用分别记录实际提供商提交和用量，因此转发响应不会重复计费。
+
+这些模式是受信任扩展明确声明的用量契约。原生转发使用宿主配置的凭据和提供商传输。Extension API 不提供自动附加凭据的任意 HTTP 传输；对于插件代码在宿主服务之外自行发起的任意网络请求，Wuu 无法强制执行推理预算。
+
+两个 SDK 中的 `model.adapter` 和 `model.middleware` 处理函数都可重入，能与等待它们的工具或回调并发运行，因此应保护共享可变状态。TypeScript 的其他 `concurrentCapabilities` 和 `concurrentServices` 仍须显式启用；生命周期屏障继续有效。
+
+### 属于 generation 的后台工作
+
+声明 `requireBackgroundService()`，提供有明确结束点的版本化服务处理函数，在激活后调用 `startBackground(host, { key, service, method, params?, timeout_ms? })`。目标必须是同一插件 generation 自己提供的服务。启动返回 `{ job_id, execution_id }`，回调获得普通的作用域 host 和取消信号，因此可以在原对话或观察回调返回后调用模型服务。
+
+`inspectBackground(host, { job_id })` 返回 `running`、`completed`、`failed` 或 `cancelled`，以及结果或错误；`cancelBackground` 用于取消。活动 key 在每个插件内唯一，最多同时运行 64 个任务并保留 64 个终态结果；参数和结果分别最多 1 MiB。它不是持久调度器：重载、禁用、generation 退役或进程丢失会取消所属工作，旧 generation 不能再启动任务。计时器、调度策略、预算、快照失效和持久业务状态由插件负责，关闭时应清理计时器。
+
+公开 SDK 的[有界重放 fixture](../../../scripts/fixtures/model-pipeline/replay.ts)和[影子比较 fixture](../../../scripts/fixtures/model-pipeline/shadow.ts)使用合成数据验证这些扩展点。它们用于验收，不是默认安装的缓存或比较功能。对源码构建的 core 运行 `node scripts/plugin-model-pipeline-e2e.mjs`，驱动会使用本地模拟提供商并保存可重复检查的结果，不产生付费推理。
+
 ## 提供服务
 
 初始化时返回 `provided_services`，并实现 `invokeService`。描述包含小写点分名称、严格的 `MAJOR.MINOR.PATCH` 版本，以及带 `input_schema`、`output_schema` 标识的方法。这些标识命名契约，不是内嵌 JSON Schema 定义。
@@ -251,6 +345,17 @@ const plugin: RuntimePlugin = {
 服务调用。前台工作应使用这个 host，不要改用初始化时保存的不绑定作用域
 host。`host.call(method, params, { signal })` 可附加取消信号，但不能移除执行
 本身的信号。取消会拒绝尚未完成的调用，迟到响应会被忽略。调用返回后，执行作用域关闭；迟到的进度不能重新打开已完成执行，取消也不会等待插件确认。
+
+Go 和 TypeScript 运行时会在进入处理函数前拒绝已取消的工具、能力和服务请求，包括等待其他工作或生命周期屏障的请求。取消某次执行不会跳过清理所需的生命周期回调，并会通知共享该执行 ID 的所有活跃回调。处理函数一旦开始，取消仍是协作式的：应将 Go context 或 TypeScript signal 传给支持取消的操作。取消不能撤销已完成的副作用，也不能强制中断任意插件代码。
+
+App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
+包含当前连接运行时的当前 generation，以及仍被活动工作持有的旧 generation。
+每行在宿主局部 `id`、所属 `plugin_id`、可用执行作用域和最新进度之外，增加
+`generation_id` 与 `retained`。用 `(generation_id, id)` 作为稳定的诊断标识：
+不同 generation 都可能存在 `exec-1`。原有 `id` 和取消路由保持不变。
+结果按 generation ID、执行 ID 排序；调用结束后移除，读取列表不会延长
+任何 generation 的寿命。这是即时快照，不是执行历史或跨工作区清单。
+禁用插件也会取消其旧 generation 中的工作。
 
 `reportExecutionUpdate`、`invokeTool`、`askUserQuestions` 和 `importArtifact` 都调用版本化服务，需要对应声明。编排工具使用 `activity.orchestrator=true` 和 `execution.invoke-tool`，通过正常工具链委托副作用。重试相同工具和参数时，保持子调用 `call_id` 不变；不要用同一个 ID 表示不同工作。
 

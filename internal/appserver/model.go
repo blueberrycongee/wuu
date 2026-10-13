@@ -577,14 +577,22 @@ func (th *threadState) takePendingSteersLocked(turnID string, now time.Time) ([]
 			steers[i].Role = "user"
 		}
 		steers[i].Steered = true
-		item := chatMessageItem(th.nextItemIDLocked(turnID), steers[i])
-		if item.ID == "" {
+		if th.PersistHistory && isHumanUserMessage(steers[i]) {
+			// Durable human input is materialized by the history checkpoint.
 			continue
 		}
-		th.upsertItemLocked(turnID, item, now)
-		out = append(out, itemStarted(th.ID, turnID, item, now), itemCompleted(th.ID, turnID, item, now))
+		out = append(out, th.materializeSteerLocked(turnID, steers[i], now)...)
 	}
 	return steers, out
+}
+
+func (th *threadState) materializeSteerLocked(turnID string, message providers.ChatMessage, now time.Time) []outboundNotification {
+	item := chatMessageItem(th.nextItemIDLocked(turnID), message)
+	if item.ID == "" {
+		return nil
+	}
+	th.upsertItemLocked(turnID, item, now)
+	return []outboundNotification{itemStarted(th.ID, turnID, item, now), itemCompleted(th.ID, turnID, item, now)}
 }
 
 func (th *threadState) drainPendingSteersLocked() []providers.ChatMessage {
@@ -1092,6 +1100,38 @@ func (th *threadState) applyMessageItemLocked(turnID string, msg providers.ChatM
 		return []outboundNotification{itemCompleted(th.ID, turnID, item, now)}
 	default:
 		return nil
+	}
+}
+
+// stampDurableAgentMessageSeqsLocked gives live agent message rows the seq of
+// the assistant message they render once that message is committed. Live rows
+// are numbered by stream events, restored rows per persisted message, so their
+// positional ids diverge (one message can stream several reasoning blocks).
+// Without a provider item id, the seq is the only identity both views share,
+// and fork resolves the row by it. seqs is index-aligned with messages.
+func (th *threadState) stampDurableAgentMessageSeqsLocked(turnID string, messages []providers.ChatMessage, seqs []int) {
+	for t := range th.Turns {
+		if th.Turns[t].ID != turnID {
+			continue
+		}
+		items := th.Turns[t].Items
+		next := 0
+		for m, msg := range messages {
+			if m >= len(seqs) || seqs[m] <= 0 || msg.Role != "assistant" || strings.TrimSpace(msg.Content) == "" {
+				continue
+			}
+			// Messages and their rows share order, so a repeated answer text
+			// stamps the next unstamped row instead of an earlier one.
+			for i := next; i < len(items); i++ {
+				if items[i].Type != ThreadItemAgentMessage || items[i].Seq > 0 || items[i].Text != msg.Content {
+					continue
+				}
+				items[i].Seq = seqs[m]
+				next = i + 1
+				break
+			}
+		}
+		return
 	}
 }
 

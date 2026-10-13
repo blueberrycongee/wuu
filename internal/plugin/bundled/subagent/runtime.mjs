@@ -217,15 +217,18 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
         return { id: request.id, result: null };
       case "capability.invoke":
         if (!plugin.invokeCapability) throw new Error("capability.invoke is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.invokeCapability(request.params, executionHost, execution) };
       case "service.invoke":
         if (!plugin.invokeService) throw new Error("service.invoke is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.invokeService(request.params, executionHost, execution) };
       case "service.changed":
         await plugin.serviceChanged?.(request.params, host);
         return { id: request.id, result: null };
       case "tool.execute":
         if (!plugin.executeTool) throw new Error("tool.execute is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.executeTool(request.params, executionHost, execution) };
       case "shutdown":
         await plugin.shutdown?.();
@@ -332,6 +335,7 @@ var JSONLRuntimeHost = class {
     this.pending.clear();
   }
 };
+var MAX_CONCURRENT_TOOLS = 8;
 async function runJSONLRuntime(plugin, streams) {
   let writes = Promise.resolve();
   const send = (value) => {
@@ -347,18 +351,42 @@ async function runJSONLRuntime(plugin, streams) {
   const executions = /* @__PURE__ */ new Map();
   const active = /* @__PURE__ */ new Set();
   const concurrentServices = new Set(plugin.concurrentServices ?? []);
-  const concurrentCapabilities = new Set(plugin.concurrentCapabilities ?? []);
-  let requests = Promise.resolve();
-  let lifecycle = requests;
+  const concurrentCapabilities = /* @__PURE__ */ new Set(["model.adapter", "model.middleware", ...plugin.concurrentCapabilities ?? []]);
+  const concurrentTools = /* @__PURE__ */ new Set();
+  const queued = [];
+  let running = 0;
+  let exclusive = false;
+  const pump = () => {
+    while (queued.length > 0 && !exclusive && running < MAX_CONCURRENT_TOOLS) {
+      const next = queued[0];
+      const safe = next.canOverlap();
+      if (!safe && running > 0) return;
+      queued.shift();
+      running++;
+      exclusive = !safe;
+      const finished = () => {
+        running--;
+        if (!safe) exclusive = false;
+        pump();
+      };
+      void next.run().then(finished, finished);
+    }
+  };
+  const schedule = (run, canOverlap = () => false) => {
+    const task = new Promise((resolve, reject) => {
+      queued.push({ run: () => Promise.resolve().then(run).then(resolve, reject), canOverlap });
+    });
+    pump();
+    return task;
+  };
+  let lifecycle = Promise.resolve();
   let shuttingDown = false;
   const track = (task) => {
     active.add(task);
     void task.then(() => active.delete(task), () => active.delete(task));
   };
   const enqueueResponse = (value) => {
-    const task = requests.then(() => send(value));
-    requests = task.catch(() => void 0);
-    track(task);
+    track(schedule(() => send(value)));
   };
   const processLine = (line) => {
     if (line.trim() === "") return;
@@ -394,18 +422,32 @@ async function runJSONLRuntime(plugin, streams) {
     if (!controllers) executions.set(executionId, controllers = /* @__PURE__ */ new Set());
     controllers.add(controller);
     const execution = { executionId, signal: controller.signal };
-    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : requests;
-    const task = ready.then(() => {
-      if (parsed.method === "initialize") host.configure(parsed.params.supported_host_services);
-      return handleRuntimeRequest(plugin, parsed, host, execution, { signal: lifetime.signal });
-    }).then(send).finally(() => {
+    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
+    const run = async () => {
+      await ready;
+      if (parsed.method === "initialize") {
+        host.configure(parsed.params.supported_host_services);
+        concurrentTools.clear();
+      }
+      const response = await handleRuntimeRequest(plugin, parsed, host, execution, { signal: lifetime.signal });
+      if (parsed.method === "initialize" && "result" in response) {
+        const definition = response.result;
+        for (const tool of definition.tools ?? []) {
+          if (tool.activity?.concurrency_safe === true) concurrentTools.add(tool.id);
+        }
+      }
+      await send(response);
+    };
+    const task = (concurrent ? run() : schedule(
+      run,
+      () => parsed.method === "tool.execute" && concurrentTools.has(parsed.params.tool_id)
+    )).finally(() => {
       const controllers2 = executions.get(executionId);
       controllers2?.delete(controller);
       if (controllers2?.size === 0) executions.delete(executionId);
       controller.abort();
     });
-    if (!concurrent) requests = task.catch(() => void 0);
-    if (isLifecycle) lifecycle = requests;
+    if (isLifecycle) lifecycle = task.catch(() => void 0);
     track(task);
   };
   const decoder = new TextDecoder();
@@ -467,6 +509,7 @@ var terminalState = (state) => ["completed", "failed", "interrupted", "discarded
 var SubagentPlugin = class {
   concurrentCapabilities = [promptCapability, clientCapability];
   indexQueue = Promise.resolve();
+  transitionQueue = Promise.resolve();
   initialize() {
     const services = [
       "host.session.create",
@@ -525,23 +568,24 @@ var SubagentPlugin = class {
       required_services: services.map(requireKernelService)
     };
   }
-  async executeTool(call, host) {
+  async executeTool(call, host, execution) {
     switch (call.tool_id) {
       case "spawn_agent":
-        return this.spawnAgent(host, call);
+        return this.spawnAgent(host, call, execution);
       case "send_message":
-        return this.sendMessage(host, call);
+        return this.withTransition(execution, () => this.sendMessage(host, call));
       case "close_agent":
-        return this.closeAgent(host, call);
+        return this.withTransition(execution, () => this.closeAgent(host, call));
       default:
         throw new Error(`unknown tool ${JSON.stringify(call.tool_id)}`);
     }
   }
-  async spawnAgent(host, call) {
+  async spawnAgent(host, call, execution) {
     const args = call.arguments;
     if (!args.description?.trim() || !args.prompt?.trim()) throw new Error("spawn_agent requires description and prompt");
     if (args.agent_profile?.trim()) throw new Error("agent_profile is no longer part of the Subagent plugin contract; put required memory in the task prompt");
     if (!call.session_id?.trim()) throw new Error("spawn_agent requires a parent session");
+    const parentSessionID = call.session_id;
     const background = args.run_in_background ?? true;
     const name = args.name?.trim() || deriveTaskName(args.description);
     const requestID = randomBytes(12).toString("hex");
@@ -558,34 +602,37 @@ var SubagentPlugin = class {
     }
     const workspace = args.isolation?.trim() === "worktree" ? "worktree" : "shared";
     if (workspace === "worktree") context = "fork";
-    const record = await this.createTask(host, {
-      request_id: `create-${requestID}`,
-      name,
-      visibility: "plugin",
-      parent_session_id: call.session_id,
-      context_source: context,
-      workspace,
-      model_alias: args.model?.trim(),
-      instructions: workerInstructions(args.subagent_type?.trim())
-    }, {
-      session_id: "",
-      parent_session_id: call.session_id,
-      parent_turn_id: call.turn_id,
-      name,
-      request_id: `turn-${requestID}`,
-      state: "created"
+    const { record, sent } = await this.withTransition(execution, async () => {
+      const record2 = await this.createTask(host, {
+        request_id: `create-${requestID}`,
+        name,
+        visibility: "plugin",
+        parent_session_id: parentSessionID,
+        context_source: context,
+        workspace,
+        model_alias: args.model?.trim(),
+        instructions: workerInstructions(args.subagent_type?.trim())
+      }, {
+        session_id: "",
+        parent_session_id: parentSessionID,
+        parent_turn_id: call.turn_id,
+        name,
+        request_id: `turn-${requestID}`,
+        state: "created"
+      });
+      const sent2 = await host.call("host.session.send", {
+        request_id: record2.request_id,
+        session_id: record2.session_id,
+        input: { prompt: args.prompt.trim() },
+        presentation: { kind: "query_bubble", text: `\u5B50\u4EFB\u52A1 ${name} \u5DF2\u5F00\u59CB`, name },
+        cause: "subagent.task"
+      });
+      record2.state = sent2.state;
+      record2.turn_id = sent2.turn_id;
+      record2.queue_id = sent2.queue_id;
+      await this.saveRecord(host, record2);
+      return { record: record2, sent: sent2 };
     });
-    const sent = await host.call("host.session.send", {
-      request_id: record.request_id,
-      session_id: record.session_id,
-      input: { prompt: args.prompt.trim() },
-      presentation: { kind: "query_bubble", text: `\u5B50\u4EFB\u52A1 ${name} \u5DF2\u5F00\u59CB`, name },
-      cause: "subagent.task"
-    });
-    record.state = sent.state;
-    record.turn_id = sent.turn_id;
-    record.queue_id = sent.queue_id;
-    await this.saveRecord(host, record);
     const identity = { session_id: record.session_id, task_name: name, run_in_background: background };
     if (background) return textResult({ ...identity, state: sent.state, backgrounded: true });
     const inspected = await host.call("host.session.inspect", {
@@ -602,11 +649,16 @@ var SubagentPlugin = class {
         ...inspected.timed_out ? { timed_out: true } : {}
       });
     }
-    record.state = inspected.turn.state;
-    record.turn_id = inspected.turn.turn_id;
-    record.queue_id = inspected.turn.queue_id;
-    record.suppress_completion = true;
-    await this.saveRecord(host, record);
+    const completed = inspected.turn;
+    await this.withTransition(execution, async () => {
+      const current = await this.loadRecord(host, "session_id", record.session_id);
+      if (!current || current.request_id !== record.request_id) return;
+      current.state = completed.state;
+      current.turn_id = completed.turn_id;
+      current.queue_id = completed.queue_id;
+      current.suppress_completion = true;
+      await this.saveRecord(host, current);
+    });
     return textResult({
       ...identity,
       state: inspected.turn.state,
@@ -776,6 +828,15 @@ ${output}` },
         state: turn.state
       });
     }
+  }
+  // Serialize state transitions, leaving foreground waits outside the lock.
+  withTransition(execution, operation) {
+    const next = this.transitionQueue.then(() => {
+      execution.signal.throwIfAborted();
+      return operation();
+    });
+    this.transitionQueue = next.catch(() => void 0);
+    return next;
   }
   withIndex(operation) {
     const next = this.indexQueue.then(operation);

@@ -690,6 +690,11 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	}
 	finalStatus := sa.Status
 	sa.mu.Unlock()
+	m.finishTerminal(ctx, sa, finalStatus, nextHistory)
+}
+
+// finishTerminal is shared by a running turn and cancellation of a parked turn.
+func (m *Manager) finishTerminal(ctx context.Context, sa *SubAgent, finalStatus Status, nextHistory []providers.ChatMessage) {
 	m.prepareTerminal(sa, finalStatus)
 
 	if sa.historyPath != "" {
@@ -913,7 +918,7 @@ func (m *Manager) Stop(id string) bool {
 	if sa == nil {
 		return false
 	}
-	sa.cancel()
+	m.stopAgent(sa)
 	return true
 }
 
@@ -926,7 +931,14 @@ func (m *Manager) StopAll() {
 	}
 	m.mu.Unlock()
 	for _, sa := range agents {
-		sa.cancel()
+		// Keep the cancellation wave non-blocking on terminal observers. A
+		// parked worker has no active turn; its coordinator uses Stop with
+		// execution ownership to finalize it separately.
+		sa.mu.Lock()
+		if sa.cancelFunc != nil {
+			sa.cancelFunc()
+		}
+		sa.mu.Unlock()
 	}
 }
 
@@ -1321,12 +1333,31 @@ func (s *SubAgent) pushPendingMessage(message string) {
 	_, _ = s.pushPendingMessageSnapshot(message)
 }
 
-func (s *SubAgent) cancel() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.cancelFunc != nil {
-		s.cancelFunc()
+// A waiting_children worker has no live runTurn to observe cancellation. Give
+// its terminal transition a fresh completion signal and the same durable
+// finalization path as a running turn. Notify asynchronously: the caller may
+// hold the coordinator's worker-transition lock used by the terminal observer.
+func (m *Manager) stopAgent(sa *SubAgent) {
+	sa.mu.Lock()
+	if sa.cancelFunc != nil {
+		sa.cancelFunc()
 	}
+	if sa.Status != StatusWaitingChildren {
+		sa.mu.Unlock()
+		return
+	}
+	sa.Status = StatusCancelled
+	sa.CompletedAt = time.Now()
+	sa.Activity = ""
+	sa.ActivityAt = time.Time{}
+	done := make(chan struct{})
+	sa.doneCh = done
+	history := providers.CloneChatMessages(sa.history)
+	sa.mu.Unlock()
+	go func() {
+		defer close(done)
+		m.finishTerminal(context.Background(), sa, StatusCancelled, history)
+	}()
 }
 
 func (s *SubAgent) pushPendingMessageSnapshot(message string) (SubAgentSnapshot, bool) {

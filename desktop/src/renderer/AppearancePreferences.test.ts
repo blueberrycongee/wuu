@@ -38,7 +38,7 @@ describe("appearance preferences", () => {
   });
 
   it("preserves the existing reading size and ignores the retired local UI size", () => {
-    localStorage.setItem("wuu.appearance.v1", JSON.stringify({ uiSize: 16, uiFont: "Example Sans" }));
+    localStorage.setItem("wuu.appearance.v1", JSON.stringify({ uiSize: 16, codeSize: 11, uiFont: "Example Sans" }));
     applyMessageFlowFontSize(18);
     const stop = startAppearanceSync();
     expect(document.documentElement.style.getPropertyValue("--conversation-message-font-size")).toBe("18px");

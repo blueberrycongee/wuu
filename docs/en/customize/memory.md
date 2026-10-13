@@ -35,6 +35,49 @@ summary, and the model reads the saved evidence before continuing.
 
 Save confirmed, lasting information. Do not use memory as a transcript archive, secret store, or log of temporary task progress. When a memory conflicts with current evidence, correct it rather than following it blindly.
 
-Memory can be sent to the configured model and can influence later actions. Review sensitive entries and untrusted imported text. Disabling the plugin removes its prompts, tools, and settings page; it does not erase the existing notebook files.
+Memory can be sent to the configured model and can influence later actions. Review sensitive entries and untrusted imported text. Disabling the plugin removes its prompts, tools, services, and settings page; it does not erase the existing notebook files.
 
 [Dream](dream.md) can consolidate workspace knowledge in the background. It has its own opt-in setting and makes additional model calls. Project instructions such as `AGENTS.md` remain independent of both plugins; see [configuration](../reference/configuration.md) and the [security model](../reference/security-model.md).
+
+## Read-only service for extensions
+
+Memory provides `memory.notebook` version `1.0.0` through the existing service
+registry. Declare `{ name: "memory.notebook", major_version: 1, required: false }`
+in `required_services`, then use `host.service.call` with `service:
+"memory.notebook"` and one of these methods:
+
+| Method | Parameters | Result bounds |
+| --- | --- | --- |
+| `index` | Optional `max_bytes` | Sanitized `MEMORY.md`, at most 200 lines and 25,000 UTF-8 bytes |
+| `read` | `file`, optional `max_bytes` | One topic; defaults to 16,384 UTF-8 bytes, maximum 65,536 |
+
+An absent or zero `max_bytes` selects the default; negative or over-limit values
+fail. `read` accepts only a plain, non-hidden `.md` filename, excluding
+`MEMORY.md`; it rejects directory paths and symlinks. Source files must be valid
+UTF-8 regular files no larger than 256 KiB. Truncation never splits a UTF-8
+character. No method lists all topic contents, writes memory, or invokes a model.
+
+Both methods return `{ version: 1, source: { scope: "user_notebook", file },
+found, revision?, content, truncated }`. `revision` identifies the complete source
+content, even when the returned excerpt is shorter or sanitized; treat it as
+opaque. An existing empty file has `found: true` and a revision. A deleted or
+missing file has `found: false`, empty content and no revision. The request schema
+identifiers are `memory.notebook.index.request.v1` and
+`memory.notebook.read.request.v1`; both return `memory.notebook.snapshot.v1`.
+The TypeScript SDK exports corresponding `MemoryNotebook*` types.
+
+Reads use the same notebook reader as the existing memory tools, and `index`
+shares the agent prompt's sanitization. Files are reread for each call, without a
+service cache. Consumers must reread before reusing remembered content, clear
+retained content on missing files or service unavailability, and handle
+`service.changed` when provider resolution changes. That notification does not
+track file edits. These are individual file snapshots, not an atomic snapshot
+across an index and its topics.
+
+When Memory is disabled or unavailable, the registry returns
+`service_unavailable`; an optional consumer remains usable without memory. Do not
+fall back to reading its files or silently enable it. Notebook text is untrusted
+context: current instructions and evidence take precedence. Personalized drafting,
+completion, or task handoff extensions can read relevant topics on demand; these
+are possible consumers, not bundled integrations. Workspace/session memory remains
+the separate `memory.session` service.

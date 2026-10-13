@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -146,6 +147,35 @@ type ApprovalRequest struct {
 // or the owning turn context ends. Missing handlers must fail closed.
 type ApprovalHandler func(context.Context, ApprovalRequest) (ApprovalDecision, error)
 
+// UserInputRequest carries an engine question without granting any permission.
+// Blocking controls presentation; both modes return answers to the original call.
+type UserInputRequest struct {
+	EngineID  EngineID
+	ThreadID  string
+	TurnID    string
+	ItemID    string
+	Blocking  bool
+	Questions []UserInputQuestion
+}
+
+type UserInputQuestion struct {
+	ID          string
+	Header      string
+	Question    string
+	AllowCustom bool
+	Secret      bool
+	Options     []UserInputOption
+}
+
+type UserInputOption struct {
+	Label       string
+	Description string
+}
+
+// UserInputHandler returns question-ID keyed answers. An empty map means no answer.
+// The owning turn must cancel its context on completion, interruption or disconnect.
+type UserInputHandler func(context.Context, UserInputRequest) (map[string][]string, error)
+
 // TurnResult is the outcome of one engine turn.
 type TurnResult struct {
 	// Result is the native loop result of the built-in wuu engine. External
@@ -161,6 +191,18 @@ type Session interface {
 	Close(context.Context) error
 }
 
+// SteeringSession accepts human input in its currently running native turn.
+// Implementations must bind the request to that turn and never start a new one.
+// A successful result is the native turn ID that acknowledged the input.
+// ErrSteerRejected proves the input was not accepted; other errors leave delivery
+// uncertain and must never cause an automatic retry.
+type SteeringSession interface {
+	Steer(context.Context, providers.ChatMessage) (string, error)
+}
+
+var ErrSteerRejected = errors.New("native steering input was not accepted")
+var ErrSteerUnsupported = errors.New("native engine does not support active-turn steering")
+
 // Factory creates and resumes engine sessions.
 type Factory interface {
 	Descriptor(context.Context) (Descriptor, error)
@@ -171,6 +213,7 @@ type Factory interface {
 // Registry maps engine ids to factories. The runtime registers the built-in
 // wuu engine at startup; external engines register as they are added.
 type Registry struct {
+	mu        sync.RWMutex
 	factories map[EngineID]Factory
 }
 
@@ -201,10 +244,16 @@ type ThreadBinding struct {
 	// PersistRef stores a newly created native session reference back into
 	// the thread's persisted binding.
 	PersistRef func(ref string) error
+	// PersistTurnRef records native admission before dispatch, then its turn ID
+	// before consuming events. Pending stays true until a terminal outcome or
+	// an explicit admission rejection is durably confirmed.
+	PersistTurnRef func(turnID string, pending bool) error
 	// RequestApproval lets an external engine reuse the host's interaction
 	// broker and conversation card. Nil means interactive approval is not
 	// available and the engine must decline.
 	RequestApproval ApprovalHandler
+	// RequestUserInput reuses the host question UI; nil reports unavailable.
+	RequestUserInput UserInputHandler
 }
 
 // MCPServer is one host-provided Streamable HTTP MCP endpoint.
@@ -267,6 +316,8 @@ func (r *Registry) Register(f Factory) error {
 	if id == "" {
 		return errors.New("engine descriptor id is required")
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.factories[id] = f
 	return nil
 }
@@ -276,6 +327,8 @@ func (r *Registry) Lookup(id EngineID) (Factory, bool) {
 	if r == nil {
 		return nil, false
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	f, ok := r.factories[NormalizeEngineID(string(id))]
 	return f, ok
 }
@@ -287,6 +340,8 @@ func (r *Registry) Unregister(id EngineID) {
 	if r == nil {
 		return
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	delete(r.factories, NormalizeEngineID(string(id)))
 }
 
@@ -295,17 +350,21 @@ func (r *Registry) Descriptors() []Descriptor {
 	if r == nil {
 		return nil
 	}
+	// Factories may call back into the registry while describing themselves.
+	// Snapshot their identities without holding the lock across that call.
+	r.mu.RLock()
+	factories := make(map[EngineID]Factory, len(r.factories))
 	ids := make([]string, 0, len(r.factories))
-	for id := range r.factories {
+	for id, factory := range r.factories {
+		factories[id] = factory
 		ids = append(ids, string(id))
 	}
+	r.mu.RUnlock()
 	sort.Strings(ids)
 	out := make([]Descriptor, 0, len(ids))
 	for _, id := range ids {
-		if f, ok := r.factories[EngineID(id)]; ok {
-			if desc, err := f.Descriptor(context.Background()); err == nil {
-				out = append(out, desc)
-			}
+		if desc, err := factories[EngineID(id)].Descriptor(context.Background()); err == nil {
+			out = append(out, desc)
 		}
 	}
 	return out

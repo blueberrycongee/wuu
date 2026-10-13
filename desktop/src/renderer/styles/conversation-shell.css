@@ -32,7 +32,7 @@
   --shell-jump-progress-step-in-progress-bg: color-mix(in srgb, var(--wuu-color-text, #131314) 20%, transparent);
   /* Message-flow body typography. Owned at :root (not on .conversation-pane)
      so a user setting written to <html style="..."> cascades globally
-     without being shadowed by a more specific selector. Default 13px
+     without being shadowed by a more specific selector. Default 15px
      matches MESSAGE_FLOW_FONT_SIZE_RANGE; see renderer/main.tsx for the
      apply path. font-family and
      font-weight moved here too so the settings preview (which is NOT
@@ -43,7 +43,7 @@
     "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
     "Microsoft YaHei UI", "Source Han Sans SC", "Noto Sans CJK SC",
     "Noto Sans SC", sans-serif;
-  --conversation-message-font-size: 13px;
+  --conversation-message-font-size: 15px;
   /* Normal (400) body weight: the stream previously held 450 to add
      presence to 14px type, but in practice it read as denser, heavier
      gray walls across long answers. Default weight lets the font's own
@@ -61,7 +61,7 @@
      sent queries and every composer draft, including composers outside
      .conversation-pane. A relaxed body line makes mixed CJK, Latin and inline
      code read as one continuous answer instead of a stack of dense rows. */
-  --conversation-reading-line-height: round(nearest, calc(var(--conversation-message-font-size) * 1.8), 2px);
+  --conversation-reading-line-height: round(nearest, calc(var(--conversation-message-font-size) * 1.6), 2px);
   /* Framed text (the query bubble and the composer draft) keeps its glyphs
      --card-padding from the frame on every side: the block padding gives back
      the line's half-leading, so the inset holds at every text size. The floor
@@ -103,7 +103,7 @@
   /* Providers may confirm an answer only after streaming finishes. Its
      provisional process placement must use the final reading rhythm. */
   --conversation-commentary-line-height: var(--conversation-reading-line-height);
-  --conversation-prose-block-gap: calc(var(--conversation-message-font-size) * 1.1);
+  --conversation-prose-block-gap: round(nearest, calc(var(--conversation-message-font-size) * 0.8), 1px);
   --conversation-prose-heading-before: calc(var(--conversation-message-font-size) * 1.7);
   --conversation-prose-heading-after: calc(var(--conversation-message-font-size) * 0.55);
   --conversation-prose-list-gap: calc(var(--conversation-message-font-size) * 0.4);

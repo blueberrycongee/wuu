@@ -6,6 +6,18 @@ const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { releaseSigningIdentity } = require("./check-release-signing.cjs");
 
+// Mirror the bundled ripgrep that verify-mac-release.cjs requires in packaged apps.
+function addBundledRipgrep(dir, contents) {
+  const tools = join(contents, "Resources", "tools");
+  const licenses = join(contents, "Resources", "licenses", "ripgrep");
+  mkdirSync(tools, { recursive: true });
+  mkdirSync(licenses, { recursive: true });
+  const source = join(dir, "rg.c");
+  writeFileSync(source, "int main(void) { return 0; }\n");
+  execFileSync("clang", [source, "-o", join(tools, "rg")]);
+  writeFileSync(join(licenses, "LICENSE-MIT"), "MIT\n");
+}
+
 test("certificate-backed signing rejects missing or ad-hoc identity", () => {
   for (const value of [undefined, "-", "Wuu Dev Signing"]) {
     assert.throws(() => releaseSigningIdentity({ WUU_RELEASE_SIGN_ID: value }));
@@ -29,6 +41,7 @@ test("certificate-free preview signs, verifies, and rejects tampered resources",
     writeFileSync(source, "int main(void) { return 0; }\n");
     execFileSync("clang", [source, "-o", executable]);
     copyFileSync(executable, join(bin, "wuu-core"));
+    addBundledRipgrep(dir, contents);
     const resource = join(contents, "Resources", "data.txt");
     writeFileSync(resource, "original");
     await require("./sign-mac.cjs")({ app, platform: "darwin", version: "44.1.0" });
@@ -86,6 +99,7 @@ test("changed signed builds retain a verifiable designated requirement", { skip:
     writeFileSync(join(contents, "Info.plist"), `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.blueberrycongee.wuu</string><key>CFBundleExecutable</key><string>wuu</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`);
     const source = join(dir, "main.c");
     const executable = join(contents, "MacOS", "wuu");
+    addBundledRipgrep(dir, contents);
     const requirements = [];
     for (const version of [1, 2]) {
       writeFileSync(source, `int main(void) { return ${version}; }\n`);

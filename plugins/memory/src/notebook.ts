@@ -1,11 +1,12 @@
-import { randomBytes } from "node:crypto";
-import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { constants } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export const INDEX_FILE = "MEMORY.md";
 export const MAX_MEMORY_BYTES = 256 * 1024;
 const MAX_INDEX_LINES = 200;
-const MAX_INDEX_BYTES = 25_000;
+export const MAX_INDEX_BYTES = 25_000;
 const threatPatterns = [
   /ignore\s+(previous|all|above|prior)\s+instructions/i,
   /you\s+are\s+now\s+/i,
@@ -33,20 +34,88 @@ export async function readSafeIndex(notebook: string): Promise<string> {
     if (missing(error)) return "";
     throw new Error(`memory: read index: ${error instanceof Error ? error.message : String(error)}`);
   }
-  let content = raw.split("\n").map((line) => unsafeLine(line) ? "[memory line removed: security]" : line).join("\n").trim();
-  if (!content) return "";
-  const lines = content.split("\n");
-  const truncated = lines.length > MAX_INDEX_LINES || Buffer.byteLength(content) > MAX_INDEX_BYTES;
-  if (lines.length > MAX_INDEX_LINES) content = lines.slice(0, MAX_INDEX_LINES).join("\n");
+  const result = safeIndex(raw, MAX_INDEX_BYTES);
+  return result.content + (result.truncated ? "\n\n> WARNING: MEMORY.md was truncated before prompt injection. Keep index entries short and move detail into topic files." : "");
+}
+
+function boundedText(content: string, maxBytes: number): { content: string; truncated: boolean } {
   const bytes = Buffer.from(content);
-  if (bytes.length > MAX_INDEX_BYTES) {
-    const newline = bytes.subarray(0, MAX_INDEX_BYTES).lastIndexOf(10);
-    let cut = newline > 0 ? newline : MAX_INDEX_BYTES;
-    if (newline <= 0) while (cut > 0 && (bytes[cut]! & 0xc0) === 0x80) cut--;
-    content = bytes.subarray(0, cut).toString();
+  if (bytes.length <= maxBytes) return { content, truncated: false };
+  let cut = maxBytes;
+  while (cut > 0 && (bytes[cut]! & 0xc0) === 0x80) cut--;
+  return { content: bytes.subarray(0, cut).toString(), truncated: true };
+}
+
+function safeIndex(raw: string, maxBytes: number): { content: string; truncated: boolean } {
+  const lines = raw.split("\n").map((line) => unsafeLine(line) ? "[memory line removed: security]" : line).join("\n").trim().split("\n");
+  const content = lines.slice(0, MAX_INDEX_LINES).join("\n");
+  const bytes = Buffer.from(content);
+  if (bytes.length > maxBytes) {
+    const newline = bytes.subarray(0, maxBytes).lastIndexOf(10);
+    if (newline > 0) return { content: bytes.subarray(0, newline).toString(), truncated: true };
   }
-  if (truncated) content += "\n\n> WARNING: MEMORY.md was truncated before prompt injection. Keep index entries short and move detail into topic files.";
-  return content;
+  const bounded = boundedText(content, maxBytes);
+  return { content: bounded.content, truncated: lines.length > MAX_INDEX_LINES || bounded.truncated };
+}
+
+/** Bound reads from regular notebook files and reject symlink replacements. */
+export async function readNotebookFile(notebook: string, name: string): Promise<Buffer> {
+  const path = join(notebook, name);
+  const before = await lstat(path);
+  if (!before.isFile()) throw new Error("memory file must be a regular file");
+  const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || before.dev !== info.dev || before.ino !== info.ino) throw new Error("memory file changed while opening");
+    const buffer = Buffer.alloc(MAX_MEMORY_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await file.read(buffer, length, buffer.length - length, null);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    if (length > MAX_MEMORY_BYTES) throw new Error(`memory file exceeds ${MAX_MEMORY_BYTES} bytes`);
+    const raw = buffer.subarray(0, length);
+    try { new TextDecoder("utf-8", { fatal: true }).decode(raw); }
+    catch { throw new Error("memory file must contain UTF-8 text"); }
+    return raw;
+  } finally {
+    await file.close();
+  }
+}
+
+export async function readNotebookSnapshot(notebook: string, method: string, params: Record<string, unknown>): Promise<unknown> {
+  if (params.file != null && typeof params.file !== "string") throw new Error("memory.notebook file must be a string");
+  let name = (params.file as string | undefined)?.trim() ?? "";
+  let limit = 16 * 1024;
+  let maximum = 64 * 1024;
+  switch (method) {
+    case "index":
+      if (name) throw new Error("memory.notebook index does not accept a file");
+      name = INDEX_FILE;
+      limit = maximum = MAX_INDEX_BYTES;
+      break;
+    case "read":
+      if (!name || name.startsWith(".") || /[/\\]/.test(name) || !name.endsWith(".md") || name.toLowerCase() === INDEX_FILE.toLowerCase()) {
+        throw new Error("memory.notebook read requires a plain, non-hidden topic .md filename; use index for MEMORY.md");
+      }
+      break;
+    default: throw new Error(`unknown memory.notebook method ${JSON.stringify(method)}`);
+  }
+  const maxBytes = params.max_bytes ?? 0;
+  if (typeof maxBytes !== "number" || !Number.isInteger(maxBytes) || maxBytes < 0 || maxBytes > maximum) {
+    throw new Error(`memory.notebook max_bytes must be between 1 and ${maximum}, or 0 for the default`);
+  }
+  if (maxBytes) limit = maxBytes;
+  const source = { scope: "user_notebook", file: name };
+  let raw: Buffer;
+  try { raw = await readNotebookFile(notebook, name); }
+  catch (error) {
+    if (missing(error)) return { version: 1, source, found: false, content: "", truncated: false };
+    throw error;
+  }
+  const bounded = method === "index" ? safeIndex(raw.toString(), limit) : boundedText(raw.toString(), limit);
+  return { version: 1, source, found: true, revision: `sha256:${createHash("sha256").update(raw).digest("hex")}`, ...bounded };
 }
 
 /** A same-directory rename publishes only complete, flushed files. */

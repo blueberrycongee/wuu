@@ -133,6 +133,53 @@ func TestServiceRegistryCall(t *testing.T) {
 	if len(provider.invokeCalls) != 1 || provider.invokeCalls[0].Caller != "notes" || provider.invokeCalls[0].Method != "query" {
 		t.Fatalf("invoke params = %+v", provider.invokeCalls)
 	}
+
+	// Transport cancellation ends a service invocation even while its host-owned
+	// root remains live. Nested participants must not cancel their siblings.
+	host := New(provider, consumer)
+	host.AttachServiceRegistry(registry, nil)
+	rootID := host.executions.BeginTool("notes", context.Background(), ToolExecuteInput{})
+	defer host.executions.End(rootID)
+	callerContext, cancelCaller := context.WithCancel(context.Background())
+	defer cancelCaller()
+	key := serviceKey{name: "search.provider", major: 1}
+	rootContext, _, releaseRoot, rootErr := registry.acquireExecution(callerContext, rootID, "notes", key, "search", true)
+	if rootErr != nil {
+		t.Fatal(rootErr)
+	}
+	defer releaseRoot()
+	nestedCaller, cancelNested := context.WithCancel(context.Background())
+	defer cancelNested()
+	nestedContext, _, releaseNested, nestedErr := registry.acquireExecution(nestedCaller, rootID, "search", key, "search", true)
+	if nestedErr != nil {
+		t.Fatal(nestedErr)
+	}
+	defer releaseNested()
+	cancelNested()
+	if _, _, release, cancelledErr := registry.acquireExecution(nestedCaller, rootID, "search", key, "search", true); cancelledErr == nil || cancelledErr.Code != "request_cancelled" {
+		if release != nil {
+			release()
+		}
+		t.Fatalf("cancelled transport admitted another invocation: %v", cancelledErr)
+	}
+	select {
+	case <-nestedContext.Done():
+	case <-time.After(time.Second):
+		t.Fatal("nested caller transport loss did not cancel its service")
+	}
+	if rootContext.Err() != nil {
+		t.Fatal("nested caller transport loss cancelled the shared chain")
+	}
+	cancelCaller()
+	select {
+	case <-rootContext.Done():
+	case <-time.After(time.Second):
+		t.Fatal("caller transport loss did not cancel its rooted service")
+	}
+	owner, ownerErr := host.ResolveExecution("notes", rootID)
+	if ownerErr != nil || owner.Context.Err() != nil {
+		t.Fatalf("service transport loss cancelled its independent owner: %+v, %v", owner, ownerErr)
+	}
 }
 
 func TestServiceRegistryCallProviderFailures(t *testing.T) {

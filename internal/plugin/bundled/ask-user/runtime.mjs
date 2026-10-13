@@ -219,15 +219,18 @@ async function handleRuntimeRequest(plugin2, request, host = unavailableRuntimeH
         return { id: request.id, result: null };
       case "capability.invoke":
         if (!plugin2.invokeCapability) throw new Error("capability.invoke is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin2.invokeCapability(request.params, executionHost, execution) };
       case "service.invoke":
         if (!plugin2.invokeService) throw new Error("service.invoke is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin2.invokeService(request.params, executionHost, execution) };
       case "service.changed":
         await plugin2.serviceChanged?.(request.params, host);
         return { id: request.id, result: null };
       case "tool.execute":
         if (!plugin2.executeTool) throw new Error("tool.execute is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin2.executeTool(request.params, executionHost, execution) };
       case "shutdown":
         await plugin2.shutdown?.();
@@ -334,6 +337,7 @@ var JSONLRuntimeHost = class {
     this.pending.clear();
   }
 };
+var MAX_CONCURRENT_TOOLS = 8;
 async function runJSONLRuntime(plugin2, streams) {
   let writes = Promise.resolve();
   const send = (value) => {
@@ -349,18 +353,42 @@ async function runJSONLRuntime(plugin2, streams) {
   const executions = /* @__PURE__ */ new Map();
   const active = /* @__PURE__ */ new Set();
   const concurrentServices = new Set(plugin2.concurrentServices ?? []);
-  const concurrentCapabilities = new Set(plugin2.concurrentCapabilities ?? []);
-  let requests = Promise.resolve();
-  let lifecycle = requests;
+  const concurrentCapabilities = /* @__PURE__ */ new Set(["model.adapter", "model.middleware", ...plugin2.concurrentCapabilities ?? []]);
+  const concurrentTools = /* @__PURE__ */ new Set();
+  const queued = [];
+  let running = 0;
+  let exclusive = false;
+  const pump = () => {
+    while (queued.length > 0 && !exclusive && running < MAX_CONCURRENT_TOOLS) {
+      const next = queued[0];
+      const safe = next.canOverlap();
+      if (!safe && running > 0) return;
+      queued.shift();
+      running++;
+      exclusive = !safe;
+      const finished = () => {
+        running--;
+        if (!safe) exclusive = false;
+        pump();
+      };
+      void next.run().then(finished, finished);
+    }
+  };
+  const schedule = (run, canOverlap = () => false) => {
+    const task = new Promise((resolve, reject) => {
+      queued.push({ run: () => Promise.resolve().then(run).then(resolve, reject), canOverlap });
+    });
+    pump();
+    return task;
+  };
+  let lifecycle = Promise.resolve();
   let shuttingDown = false;
   const track = (task) => {
     active.add(task);
     void task.then(() => active.delete(task), () => active.delete(task));
   };
   const enqueueResponse = (value) => {
-    const task = requests.then(() => send(value));
-    requests = task.catch(() => void 0);
-    track(task);
+    track(schedule(() => send(value)));
   };
   const processLine = (line) => {
     if (line.trim() === "") return;
@@ -396,18 +424,32 @@ async function runJSONLRuntime(plugin2, streams) {
     if (!controllers) executions.set(executionId, controllers = /* @__PURE__ */ new Set());
     controllers.add(controller);
     const execution = { executionId, signal: controller.signal };
-    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : requests;
-    const task = ready.then(() => {
-      if (parsed.method === "initialize") host.configure(parsed.params.supported_host_services);
-      return handleRuntimeRequest(plugin2, parsed, host, execution, { signal: lifetime.signal });
-    }).then(send).finally(() => {
+    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
+    const run = async () => {
+      await ready;
+      if (parsed.method === "initialize") {
+        host.configure(parsed.params.supported_host_services);
+        concurrentTools.clear();
+      }
+      const response = await handleRuntimeRequest(plugin2, parsed, host, execution, { signal: lifetime.signal });
+      if (parsed.method === "initialize" && "result" in response) {
+        const definition = response.result;
+        for (const tool of definition.tools ?? []) {
+          if (tool.activity?.concurrency_safe === true) concurrentTools.add(tool.id);
+        }
+      }
+      await send(response);
+    };
+    const task = (concurrent ? run() : schedule(
+      run,
+      () => parsed.method === "tool.execute" && concurrentTools.has(parsed.params.tool_id)
+    )).finally(() => {
       const controllers2 = executions.get(executionId);
       controllers2?.delete(controller);
       if (controllers2?.size === 0) executions.delete(executionId);
       controller.abort();
     });
-    if (!concurrent) requests = task.catch(() => void 0);
-    if (isLifecycle) lifecycle = requests;
+    if (isLifecycle) lifecycle = task.catch(() => void 0);
     track(task);
   };
   const decoder = new TextDecoder();

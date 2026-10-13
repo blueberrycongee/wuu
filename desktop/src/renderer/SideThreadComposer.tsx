@@ -30,6 +30,8 @@ export type SideThreadComposerProps = {
   disabledReason?: string;
   /** A side request failure that no reply shows; reported above the input. */
   error?: string;
+  mainThreadId?: string;
+  sideThreadId?: string;
   queryHistorySessionID: string;
   queryHistory: string[];
   onChangeDraft: (draft: string) => void;
@@ -51,6 +53,8 @@ export function SideThreadComposer({
   running,
   disabledReason,
   error,
+  mainThreadId,
+  sideThreadId,
   queryHistorySessionID,
   queryHistory,
   onChangeDraft,
@@ -127,8 +131,8 @@ export function SideThreadComposer({
       onGuideQueuedMessage={noop}
       onEditQueuedMessage={noop}
       onEditGuideMessage={noop}
-      onSend={() => {
-        const prompt = draft.trim();
+      onSend={(promptOverride) => {
+        const prompt = (promptOverride ?? draft).trim();
         if (!readOnly && !running && prompt) {
           onSend(prompt);
         }
@@ -136,6 +140,9 @@ export function SideThreadComposer({
       onInterrupt={onInterrupt}
       slashCommandsOverride={onReset ? slashCommands : undefined}
       onResetSideThread={onReset}
+      inlineCompletionKind="side"
+      threadId={mainThreadId}
+      sideThreadId={sideThreadId}
       queryHistorySessionID={queryHistorySessionID}
       queryHistory={queryHistory}
     />;

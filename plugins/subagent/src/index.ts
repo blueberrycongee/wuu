@@ -6,6 +6,7 @@ import {
   type HostServiceContracts,
   type JSONSchemaObject,
   type KernelHostServiceMethod,
+  type RuntimeExecutionContext,
   type RuntimeHost,
   type RuntimePlugin,
   type ToolExecuteParams,
@@ -54,6 +55,7 @@ const terminalState = (state: string): boolean => ["completed", "failed", "inter
 class SubagentPlugin implements RuntimePlugin {
   readonly concurrentCapabilities = [promptCapability, clientCapability];
   private indexQueue: Promise<unknown> = Promise.resolve();
+  private transitionQueue: Promise<unknown> = Promise.resolve();
 
   initialize() {
     const services: KernelHostServiceMethod[] = [
@@ -101,20 +103,21 @@ class SubagentPlugin implements RuntimePlugin {
     };
   }
 
-  async executeTool(call: ToolExecuteParams, host: RuntimeHost): Promise<ToolExecuteResult> {
+  async executeTool(call: ToolExecuteParams, host: RuntimeHost, execution: RuntimeExecutionContext): Promise<ToolExecuteResult> {
     switch (call.tool_id) {
-      case "spawn_agent": return this.spawnAgent(host, call);
-      case "send_message": return this.sendMessage(host, call);
-      case "close_agent": return this.closeAgent(host, call);
+      case "spawn_agent": return this.spawnAgent(host, call, execution);
+      case "send_message": return this.withTransition(execution, () => this.sendMessage(host, call));
+      case "close_agent": return this.withTransition(execution, () => this.closeAgent(host, call));
       default: throw new Error(`unknown tool ${JSON.stringify(call.tool_id)}`);
     }
   }
 
-  private async spawnAgent(host: RuntimeHost, call: ToolExecuteParams): Promise<ToolExecuteResult> {
+  private async spawnAgent(host: RuntimeHost, call: ToolExecuteParams, execution: RuntimeExecutionContext): Promise<ToolExecuteResult> {
     const args = call.arguments as SpawnArguments;
     if (!args.description?.trim() || !args.prompt?.trim()) throw new Error("spawn_agent requires description and prompt");
     if (args.agent_profile?.trim()) throw new Error("agent_profile is no longer part of the Subagent plugin contract; put required memory in the task prompt");
     if (!call.session_id?.trim()) throw new Error("spawn_agent requires a parent session");
+    const parentSessionID = call.session_id;
     const background = args.run_in_background ?? true;
     const name = args.name?.trim() || deriveTaskName(args.description);
     const requestID = randomBytes(12).toString("hex");
@@ -126,21 +129,24 @@ class SubagentPlugin implements RuntimePlugin {
     }
     const workspace = args.isolation?.trim() === "worktree" ? "worktree" : "shared";
     if (workspace === "worktree") context = "fork";
-    const record = await this.createTask(host, {
-      request_id: `create-${requestID}`, name, visibility: "plugin", parent_session_id: call.session_id,
-      context_source: context, workspace, model_alias: args.model?.trim(), instructions: workerInstructions(args.subagent_type?.trim()),
-    }, {
-      session_id: "", parent_session_id: call.session_id, parent_turn_id: call.turn_id,
-      name, request_id: `turn-${requestID}`, state: "created",
+    const { record, sent } = await this.withTransition(execution, async () => {
+      const record = await this.createTask(host, {
+        request_id: `create-${requestID}`, name, visibility: "plugin", parent_session_id: parentSessionID,
+        context_source: context, workspace, model_alias: args.model?.trim(), instructions: workerInstructions(args.subagent_type?.trim()),
+      }, {
+        session_id: "", parent_session_id: parentSessionID, parent_turn_id: call.turn_id,
+        name, request_id: `turn-${requestID}`, state: "created",
+      });
+      const sent = await host.call("host.session.send", {
+        request_id: record.request_id, session_id: record.session_id, input: { prompt: args.prompt.trim() },
+        presentation: { kind: "query_bubble", text: `子任务 ${name} 已开始`, name }, cause: "subagent.task",
+      });
+      record.state = sent.state;
+      record.turn_id = sent.turn_id;
+      record.queue_id = sent.queue_id;
+      await this.saveRecord(host, record);
+      return { record, sent };
     });
-    const sent = await host.call("host.session.send", {
-      request_id: record.request_id, session_id: record.session_id, input: { prompt: args.prompt.trim() },
-      presentation: { kind: "query_bubble", text: `子任务 ${name} 已开始`, name }, cause: "subagent.task",
-    });
-    record.state = sent.state;
-    record.turn_id = sent.turn_id;
-    record.queue_id = sent.queue_id;
-    await this.saveRecord(host, record);
     const identity = { session_id: record.session_id, task_name: name, run_in_background: background };
     if (background) return textResult({ ...identity, state: sent.state, backgrounded: true });
 
@@ -151,13 +157,18 @@ class SubagentPlugin implements RuntimePlugin {
       return textResult({ ...identity, state: inspected.turn?.state?.trim() ? inspected.turn.state : sent.state,
         backgrounded: true, ...(inspected.timed_out ? { timed_out: true } : {}) });
     }
-    // Lifecycle observations run after this tool, so the direct result is never
-    // delivered again as a separate parent continuation.
-    record.state = inspected.turn.state;
-    record.turn_id = inspected.turn.turn_id;
-    record.queue_id = inspected.turn.queue_id;
-    record.suppress_completion = true;
-    await this.saveRecord(host, record);
+    // A follow-up may replace this task while the foreground call waits.
+    // Suppress only the request whose terminal result is returned here.
+    const completed = inspected.turn;
+    await this.withTransition(execution, async () => {
+      const current = await this.loadRecord(host, "session_id", record.session_id);
+      if (!current || current.request_id !== record.request_id) return;
+      current.state = completed.state;
+      current.turn_id = completed.turn_id;
+      current.queue_id = completed.queue_id;
+      current.suppress_completion = true;
+      await this.saveRecord(host, current);
+    });
     return textResult({ ...identity, state: inspected.turn.state, backgrounded: false,
       ...(inspected.turn.final_output ? { final_output: inspected.turn.final_output } : {}),
       ...(inspected.turn.error ? { error: inspected.turn.error } : {}),
@@ -301,6 +312,16 @@ class SubagentPlugin implements RuntimePlugin {
         request_id: turn.request_id, turn_id: turn.turn_id, queue_id: turn.queue_id, state: turn.state,
       });
     }
+  }
+
+  // Serialize state transitions, leaving foreground waits outside the lock.
+  private withTransition<T>(execution: RuntimeExecutionContext, operation: () => Promise<T>): Promise<T> {
+    const next = this.transitionQueue.then(() => {
+      execution.signal.throwIfAborted();
+      return operation();
+    });
+    this.transitionQueue = next.catch(() => undefined);
+    return next;
   }
 
   private withIndex<T>(operation: () => Promise<T>): Promise<T> {

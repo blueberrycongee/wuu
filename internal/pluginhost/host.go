@@ -71,6 +71,9 @@ type Host struct {
 	serviceRegistry     *ServiceRegistry
 	packageRequirements map[string][]string
 	executions          *ExecutionTracker
+	background          map[string]*backgroundJob
+	backgroundCompleted []string
+	backgroundClosed    bool
 	materialize         func(context.Context, ToolExecutionScope, *toolresult.Result) error
 }
 
@@ -129,6 +132,9 @@ func (h *Host) AttachServiceRegistry(registry *ServiceRegistry, conflicts []Serv
 	h.serviceRegistry = registry
 	if registry != nil {
 		registry.bindRootExecutionContext(h.ResolveExecutionContext)
+		registry.mu.Lock()
+		registry.scopeTracker = h.executions
+		registry.mu.Unlock()
 	}
 	for _, conflict := range conflicts {
 		if h.diagnostics[conflict.PluginID] == nil {
@@ -204,6 +210,9 @@ func (h *Host) ValidateCapabilities() error {
 	h.mu.RLock()
 	registered := append([]RegisteredCapability(nil), h.capabilities...)
 	h.mu.RUnlock()
+	if err := h.validateModelAdapters(); err != nil {
+		return err
+	}
 	present := make(map[string]struct{}, len(registered))
 	for _, capability := range registered {
 		present[capability.Descriptor.ID] = struct{}{}
@@ -262,6 +271,10 @@ func (h *Host) Capability(pluginID, id string) (RegisteredCapability, bool) {
 	return RegisteredCapability{}, false
 }
 
+// ErrCapabilityRetired identifies an explicitly removed registration, distinct
+// from a runtime failure in a still-registered capability.
+var ErrCapabilityRetired = errors.New("capability registration was retired")
+
 // InvokeCapability invokes one exact plugin registration.
 func (h *Host) InvokeCapability(ctx context.Context, capability RegisteredCapability, input, output any) error {
 	if capability.client == nil {
@@ -276,15 +289,19 @@ func (h *Host) InvokeCapability(ctx context.Context, capability RegisteredCapabi
 		return fmt.Errorf("marshal capability %q output: %w", capability.Descriptor.ID, err)
 	}
 	h.mu.RLock()
-	admitted := false
+	registered, admitted := false, false
 	for _, current := range h.capabilities {
-		if current.PluginID == capability.PluginID && current.Descriptor.ID == capability.Descriptor.ID && current.client == capability.client && capabilityStateReady(current.client.Status().State) {
-			admitted = true
+		if current.PluginID == capability.PluginID && current.Descriptor.ID == capability.Descriptor.ID && current.client == capability.client {
+			registered = true
+			admitted = capabilityStateReady(current.client.Status().State)
 			break
 		}
 	}
 	if !admitted {
 		h.mu.RUnlock()
+		if !registered {
+			return fmt.Errorf("plugin %q capability %q is not active: %w", capability.PluginID, capability.Descriptor.ID, ErrCapabilityRetired)
+		}
 		return fmt.Errorf("plugin %q capability %q is not active", capability.PluginID, capability.Descriptor.ID)
 	}
 	executionID, executionCtx := h.executions.begin(capability.PluginID, ctx, ToolExecuteInput{}, false)
@@ -479,6 +496,13 @@ func (h *Host) ResolveExecutionContext(callerPluginID, executionID string) (cont
 	return h.executions.ResolveContext(callerPluginID, executionID)
 }
 
+func (h *Host) ResolveExecution(callerPluginID, executionID string) (ExecutionScope, *HostServiceError) {
+	if h == nil || h.executions == nil {
+		return ExecutionScope{}, &HostServiceError{Code: "service_unavailable", Message: "execution scope is unavailable"}
+	}
+	return h.executions.Resolve(callerPluginID, executionID)
+}
+
 func (h *Host) CancelExecutions(cause error) {
 	if h != nil && h.executions != nil {
 		h.executions.CancelAll(cause)
@@ -542,7 +566,9 @@ func (h *Host) RetirePlugin(ctx context.Context, pluginID string, cause error) (
 	}
 	// Contributions and executions are already detached. Keep declared host
 	// services available while the plugin persists state and cancels its work.
+	finishCleanup := registry.allowShutdownCleanup(pluginID)
 	closeErr := client.Close(ctx)
+	finishCleanup()
 	if registry != nil {
 		registry.RevokePlugin(ctx, pluginID)
 	}
@@ -625,8 +651,10 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 	if h == nil {
 		return nil
 	}
+	h.StopBackground()
 	h.mu.Lock()
 	clients := append([]Client(nil), h.clients...)
+	registry := h.serviceRegistry
 	h.clients = nil
 	h.tools = nil
 	h.toolOrder = nil
@@ -639,7 +667,9 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 
 	outcomes := make([]ClientShutdownOutcome, 0, len(clients))
 	for i := len(clients) - 1; i >= 0; i-- {
+		finishCleanup := registry.allowShutdownCleanup(clients[i].ID())
 		outcomes = append(outcomes, ClientShutdownOutcome{PluginID: clients[i].ID(), Err: clients[i].Close(ctx)})
+		finishCleanup()
 	}
 	return outcomes
 }

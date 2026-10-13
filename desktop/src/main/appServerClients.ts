@@ -171,6 +171,12 @@ export class AppServerClientPool {
     this.maybeBroadcastRunningThreads();
   }
 
+  // Related control frames must reach the same process even if its workspace
+  // registration changes while the original request is still running.
+  bindContextRequest(context: RuntimeContext): <T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void) => Promise<T> {
+    return this.clientForContext(context).bindRequest();
+  }
+
   requestInContext<T>(
     context: RuntimeContext,
     method: string,
@@ -469,6 +475,17 @@ export class AppServerClient {
   start(): void {
     this.touch();
     this.ensureStarted();
+  }
+
+  bindRequest(): <T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void) => Promise<T> {
+    this.start();
+    const child = this.child;
+    return async <T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> => {
+      if (!child || this.child !== child || child.killed || this.disposing) {
+        throw new Error("The owning app-server process is no longer available");
+      }
+      return this.request<T>(method, params, onResponse);
+    };
   }
 
   request<T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> {

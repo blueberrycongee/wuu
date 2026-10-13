@@ -697,6 +697,17 @@ func TestLoadFrom_BrokenConfigIsNotNotFound(t *testing.T) {
 
 func TestLoadFrom_InvalidConfigIsNotNotFound(t *testing.T) {
 	workdir := t.TempDir()
+	// Invalid tool budgets must fail at the configuration boundary, never
+	// silently turn into an unlimited or default execution budget.
+	for _, value := range []string{"0", "-1", "3600001", "1.5", "null", `"infinity"`, "9223372036854775808"} {
+		data := `{"default_provider":"x","providers":{"x":{"type":"openai-compatible","base_url":"http://127.0.0.1","model":"test"}},"mcp_servers":{"docs":{"command":"unused","tool_timeout_ms":` + value + `}}}`
+		if err := os.WriteFile(filepath.Join(workdir, ".wuu.json"), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := LoadProjectConfig(workdir); err == nil || !strings.Contains(err.Error(), "tool_timeout_ms") {
+			t.Fatalf("tool_timeout_ms=%s: expected actionable validation error, got %v", value, err)
+		}
+	}
 	// Valid JSON, fails Validate (no providers).
 	if err := os.WriteFile(filepath.Join(workdir, ".wuu.json"), []byte(`{"default_provider":"x"}`), 0o644); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -1177,7 +1188,8 @@ func TestRemoveProviderActiveSwapsDefault(t *testing.T) {
       "base_url": "https://keep.example.com/v1",
       "model": "keep-model"
     }
-  }
+  },
+  "agent": {"model_roles": {"review": {"model": "drop-model", "variant": "high"}}}
 }`
 	if err := os.WriteFile(path, []byte(orig), 0o644); err != nil {
 		t.Fatal(err)
@@ -1197,6 +1209,9 @@ func TestRemoveProviderActiveSwapsDefault(t *testing.T) {
 	}
 	if cfg.DefaultProvider != "keep" {
 		t.Fatalf("default provider not swapped: %q", cfg.DefaultProvider)
+	}
+	if cfg.Agent.ModelRoles.Review != (ModelRoleConfig{}) {
+		t.Fatalf("implicit role retained the removed default's model: %+v", cfg.Agent.ModelRoles.Review)
 	}
 	keep, _, _ := cfg.ResolveProvider("keep")
 	if keep.Model != "keep-model" {
@@ -1314,8 +1329,12 @@ func TestRemoveProviderClearsModelRoleReferences(t *testing.T) {
   },
   "agent": {
     "model_roles": {
-      "review": { "provider": "drop", "model": "drop-model" },
+      "review": { "provider": " drop ", "model": "drop-model" },
       "compact": { "provider": "keep", "model": "keep-model" }
+    },
+    "project_models": {
+      "side": {"provider": " drop ", "model": "drop-model"},
+      "executor": {"provider": "keep", "model": "keep-model"}
     }
   }
 }`
@@ -1331,8 +1350,15 @@ func TestRemoveProviderClearsModelRoleReferences(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if strings.Contains(string(data), `"provider": "drop"`) {
-		t.Fatalf("review role provider was not cleared: %s", data)
+	var saved Config
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Agent.ModelRoles.Review != (ModelRoleConfig{}) {
+		t.Fatalf("removed provider's role must inherit the complete default selection: %+v", saved.Agent.ModelRoles.Review)
+	}
+	if saved.Agent.ProjectModels.Side != (ModelRoleConfig{}) || saved.Agent.ProjectModels.Executor.Provider != "keep" {
+		t.Fatalf("project model cleanup = %+v", saved.Agent.ProjectModels)
 	}
 	if !strings.Contains(string(data), `"provider": "keep"`) {
 		t.Fatalf("compact role provider was unexpectedly removed: %s", data)

@@ -1,3 +1,5 @@
+import { ComposerInlineCompletionOverlay, useComposerInlineCompletion } from "./ComposerInlineCompletion";
+import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
 import { VideoAttachment } from "./VideoAttachment";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
@@ -44,6 +46,7 @@ import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { ComposerAttachMenuButton, ComposerCameraPanel } from "./ComposerCamera";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import { Tooltip } from "./Tooltip";
+import { MessageCopyButton } from "./MessageActions";
 import { ComposerFeedback } from "./ComposerFeedback";
 import type { MessageContentPart, ResponseSelection } from "../shared/protocol";
 
@@ -108,6 +111,7 @@ export function SplitPaneComposer({
   status,
   statusLiveProgress,
   queryHistorySessionID,
+  turnId,
   queryHistory = [],
   requestedHandoffIntent,
   onPasteAttachmentFiles,
@@ -133,6 +137,7 @@ export function SplitPaneComposer({
   status: string;
   statusLiveProgress?: boolean;
   queryHistorySessionID?: string;
+  turnId?: string;
   queryHistory?: string[];
   requestedHandoffIntent?: string;
   onPasteAttachmentFiles: (files: File[]) => void;
@@ -145,6 +150,19 @@ export function SplitPaneComposer({
   const connected = useWorkbenchConnected();
   const sendDisabled = requestedSendDisabled || Boolean(stopState) || !connected;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composing = useRef(false);
+  const [submissionRevision, setSubmissionRevision] = useState(0);
+  const inputDraftUpdates = useRef<string[]>([]);
+  const externalDraft = useRef({ prompt, revision: 0 });
+  if (externalDraft.current.prompt !== prompt) {
+    const echo = inputDraftUpdates.current.lastIndexOf(prompt);
+    if (echo >= 0) inputDraftUpdates.current.splice(0, echo + 1);
+    else {
+      inputDraftUpdates.current.length = 0;
+      externalDraft.current.revision += 1;
+    }
+    externalDraft.current.prompt = prompt;
+  }
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const photosInputRef = useRef<HTMLInputElement>(null);
   const shellRef = useRef<HTMLDivElement>(null);
@@ -225,6 +243,21 @@ export function SplitPaneComposer({
     textareaRef
   });
 
+  function updateVisiblePrompt(value: string): void {
+    resetQueryHistoryNavigation();
+    const nextPrompt = hasCollapsedPromptBlocks ? `${collapsedPromptPrefix}${value}` : value;
+    inputDraftUpdates.current.push(nextPrompt);
+    setPrompt(nextPrompt);
+  }
+  const inline = useComposerInlineCompletion({
+    host: desktopPluginHost, inputRef: textareaRef, value: visiblePromptValue,
+    kind: "main",
+    enabled: !readOnly && connected && !hasCollapsedPromptBlocks && !cameraOpen,
+    contextKey: queryHistorySessionID ?? "", revisionKey: JSON.stringify([submissionRevision, turnId, requestedHandoffIntent]),
+    resetKey: JSON.stringify([externalDraft.current.revision, requestedHandoffIntent]),
+    threadId: queryHistorySessionID, running, compositionActive: composing.current, onInsert: updateVisiblePrompt,
+  });
+
   useEffect(() => {
     if (requestedHandoffIntent === undefined || appliedHandoffIntentRef.current === requestedHandoffIntent) {
       return;
@@ -278,14 +311,20 @@ export function SplitPaneComposer({
   }
 
   function submitComposer(): void {
-    if (readOnly || sendDisabled || submittedDraftRef.current === draftSignature) return;
+    const visiblePrompt = textareaRef.current?.value ?? visiblePromptValue;
+    const currentPrompt = hasCollapsedPromptBlocks ? `${collapsedPromptPrefix}${visiblePrompt}` : visiblePrompt;
+    const currentSignature = JSON.stringify([currentPrompt, images.map(image => image.id), files.map(file => file.id), selections]);
+    if (readOnly || sendDisabled || submittedDraftRef.current === currentSignature) return;
     resetQueryHistoryNavigation();
-    const contentParts = collapsedContentPartsForPrompt(prompt);
-    const canonicalPrompt = contentParts ? contentParts.map((part) => part.text).join("") : prompt;
+    const contentParts = collapsedContentPartsForPrompt(currentPrompt);
+    const canonicalPrompt = contentParts ? contentParts.map((part) => part.text).join("") : currentPrompt;
     if (contentParts && queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
-    const accepted = contentParts ? onSend(canonicalPrompt, contentParts) : onSend();
+    const accepted = contentParts ? onSend(canonicalPrompt, contentParts) : onSend(currentPrompt);
     if (accepted === false) return;
-    submittedDraftRef.current = draftSignature;
+    inline.actions.dispatched(canonicalPrompt, running ? "queue" : "send");
+    submittedDraftRef.current = currentSignature;
+    composing.current = false;
+    setSubmissionRevision((revision) => revision + 1);
     // Keep focus restoration in the user action, without viewport scrolling.
     const textarea = textareaRef.current;
     if (textarea && document.activeElement !== textarea) {
@@ -298,6 +337,16 @@ export function SplitPaneComposer({
       return;
     }
     if (isComposerTextComposing(event)) {
+      return;
+    }
+    if (event.key === "Tab") {
+      if (!event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !event.repeat && inline.actions.accept()) {
+        event.preventDefault();
+      }
+      return;
+    }
+    if (event.key === "Escape" && inline.actions.dismiss()) {
+      event.preventDefault();
       return;
     }
     if (handleQueryHistoryKeyDown(event)) {
@@ -382,17 +431,20 @@ export function SplitPaneComposer({
                 />
                 <textarea
                   ref={textareaRef}
+                  data-wuu-component="composer-input"
                   value={visiblePromptValue}
-                  placeholder={readOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : t("composer.continueBranch")}
+                  placeholder={inline.text ? "" : readOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : t("composer.continueBranch")}
                   disabled={readOnly}
                   aria-readonly={readOnly}
+                  aria-describedby={inline.text ? inline.descriptionId : undefined}
+                  onFocus={() => inline.observe()}
+                  onBlur={() => inline.observe()}
+                  onSelect={() => inline.observe()}
+                  onCompositionStart={() => { composing.current = true; inline.observe(true); }}
+                  onCompositionEnd={() => { composing.current = false; inline.observe(false); }}
                   onChange={(event) => {
-                    resetQueryHistoryNavigation();
-                    setPrompt(
-                      hasCollapsedPromptBlocks
-                        ? `${collapsedPromptPrefix}${event.target.value}`
-                        : event.target.value
-                    );
+                    updateVisiblePrompt(event.target.value);
+                    inline.observe();
                   }}
                   onPaste={(event) =>
                     handleCollapsedComposerPaste(event, {
@@ -404,6 +456,10 @@ export function SplitPaneComposer({
                   }
                   onKeyDown={handleKeyDown}
                 />
+                {inline.text ? <ComposerInlineCompletionOverlay inputRef={textareaRef} value={visiblePromptValue} text={inline.text} /> : null}
+                {inline.text ? <span className="sr-only" id={inline.descriptionId} role="status">
+                  {t("composer.inlineCompletionAvailable", { text: inline.text })}
+                </span> : null}
                 <div className="composer-bar split-composer-bar">
                   <div className="composer-bar-left">
                     {mobileWeb ? (
@@ -537,6 +593,7 @@ export function ComposerQueueStrip({
   }
 
   const hasHeldMessages = rows.some((row) => row.message.held);
+  const hasUnconfirmedMessages = rows.some((row) => row.message.deliveryUnconfirmed);
   const latestMessage = rows.at(-1)?.message;
 
   function setExpanded(next: boolean): void {
@@ -557,11 +614,11 @@ export function ComposerQueueStrip({
       icon={<ListTodo className="icon-sm" />}
       summary={
         <Tooltip
-          content={latestMessage ? queuedMessageFullPreview(latestMessage) : undefined}
+          content={hasUnconfirmedMessages ? t("composer.nativeDeliveryUnconfirmed") : latestMessage ? queuedMessageFullPreview(latestMessage) : undefined}
           disabled={
-            expanded ||
+            !hasUnconfirmedMessages && (expanded ||
             !latestMessage ||
-            queuedMessageFullPreview(latestMessage) === queuedMessagePreview(latestMessage)
+            queuedMessageFullPreview(latestMessage) === queuedMessagePreview(latestMessage))
           }
         >
           <span
@@ -569,7 +626,9 @@ export function ComposerQueueStrip({
             role="status"
             aria-live="polite"
           >
-            {expanded
+            {hasUnconfirmedMessages
+              ? t("composer.nativeDeliveryUnconfirmed")
+              : expanded
               ? hasHeldMessages
                 ? t("composer.heldNotice")
                 : t("composer.pendingMessages")
@@ -641,6 +700,7 @@ function ComposerQueueItem({
       className={`composer-queue-row ${kind}`}
       data-position={position}
       aria-busy={Boolean(message.operationState)}
+      aria-description={message.deliveryUnconfirmed ? t("composer.nativeDeliveryUnconfirmed") : undefined}
     >
       <span className="composer-queue-index" aria-hidden="true">
         {position}
@@ -649,27 +709,40 @@ function ComposerQueueItem({
         content={queuedMessageFullPreview(message)}
         disabled={queuedMessageFullPreview(message) === queuedMessagePreview(message)}
       >
-        <button
-          type="button"
-          className="composer-queue-preview"
-          aria-label={editContentLabel}
-          onClick={onEdit}
-          disabled={Boolean(message.operationState)}
-        >
-          {queuedMessagePreview(message)}
-        </button>
+        {message.deliveryUnconfirmed ? (
+          <span className="composer-queue-preview" aria-label={queuedMessageFullPreview(message)}>
+            {queuedMessagePreview(message)}
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="composer-queue-preview"
+            aria-label={editContentLabel}
+            onClick={onEdit}
+            disabled={Boolean(message.operationState)}
+          >
+            {queuedMessagePreview(message)}
+          </button>
+        )}
       </Tooltip>
       <div className="composer-queue-actions composer-input-header-actions">
-        <button
-          type="button"
-          className="composer-queue-action composer-input-header-action edit"
-          aria-label={editLabel}
-          title={t("common.edit")}
-          onClick={onEdit}
-          disabled={Boolean(message.operationState)}
-        >
-          <PencilLine className="icon-sm" aria-hidden="true" />
-        </button>
+        {message.deliveryUnconfirmed ? (
+          <MessageCopyButton
+            className="composer-queue-action composer-input-header-action"
+            getText={() => message.text || queuedMessageFullPreview(message)}
+          />
+        ) : (
+          <button
+            type="button"
+            className="composer-queue-action composer-input-header-action edit"
+            aria-label={editLabel}
+            title={t("common.edit")}
+            onClick={onEdit}
+            disabled={Boolean(message.operationState)}
+          >
+            <PencilLine className="icon-sm" aria-hidden="true" />
+          </button>
+        )}
         {onGuide ? (
           <button
             type="button"
@@ -689,7 +762,7 @@ function ComposerQueueItem({
                   : t("composer.convertToGuideTitle")
             }
             onClick={onGuide}
-            disabled={dispatchDisabled}
+            disabled={dispatchDisabled || message.deliveryUnconfirmed}
           >
             {kind === "guide" && !message.held ? (
               <CornerUpLeft className="icon-sm" aria-hidden="true" />
@@ -704,7 +777,7 @@ function ComposerQueueItem({
           aria-label={t("composer.removeQueuedMessage", { position })}
           title={t("common.remove")}
           onClick={onRemove}
-          disabled={message.operationState === "switching"}
+          disabled={message.operationState === "switching" || message.deliveryUnconfirmed}
         >
           <X className="icon-sm" aria-hidden="true" />
         </button>

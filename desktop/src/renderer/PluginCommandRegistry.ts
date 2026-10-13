@@ -15,7 +15,7 @@ export type RegisteredPluginPromptCommand = {
   name: string;
   title: string;
   description: string;
-  kind: "prompt_template" | "runtime_action";
+  kind: "prompt_template" | "runtime_action" | "side_conversation";
   template?: string;
   contexts: string[];
   aliases: string[];
@@ -58,7 +58,7 @@ export function pluginCommandPackagesFromInventory(inventory: readonly unknown[]
       : "";
     const contributions = isRecord(value.contributions) ? value.contributions : undefined;
     const commands = Array.isArray(contributions?.commands)
-      ? contributions.commands.flatMap(parseCommandContribution)
+      ? contributions.commands.flatMap(parseCommandContribution).filter((command) => command.kind !== "side_conversation" || value.runtime_state === "active")
       : [];
     if (!pluginId || commands.length === 0) {
       continue;
@@ -166,7 +166,7 @@ function validateContribution(
   if ((contribution.description?.length ?? 0) > maxDescriptionLength) {
     return registryIssue(pluginId, contribution.id, "invalid", "Plugin command description is too long");
   }
-  if (contribution.kind === "prompt_template") {
+  if (contribution.kind === "prompt_template" || contribution.kind === "side_conversation") {
     const template = contribution.template?.trim() ?? "";
     if (!template || template.length > maxTemplateLength) {
       return registryIssue(pluginId, contribution.id, "invalid", "Plugin command prompt template is invalid");
@@ -199,7 +199,7 @@ function parseCommandContribution(value: unknown): PluginCommandContribution[] {
   if (!isRecord(value)
     || typeof value.id !== "string"
     || typeof value.title !== "string"
-    || (value.kind !== "prompt_template" && value.kind !== "runtime_action")) {
+    || (value.kind !== "prompt_template" && value.kind !== "runtime_action" && value.kind !== "side_conversation")) {
     return [];
   }
   return [{

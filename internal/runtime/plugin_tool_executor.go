@@ -34,12 +34,14 @@ func newPluginToolExecutor(inner agent.ToolExecutor, host *pluginhost.Host, thre
 	if inner == nil || host == nil {
 		if kit, ok := inner.(*tools.Toolkit); ok {
 			kit.SetCodeModeAdditionalTools(nil)
+			kit.SetSkillToolProvider(nil)
 		}
 		return inner
 	}
 	executor := &pluginToolExecutor{inner: inner, host: host, threadID: threadID, cwd: cwd}
 	if kit, ok := inner.(*tools.Toolkit); ok {
 		kit.SetCodeModeAdditionalTools(executor.pluginDefinitions)
+		kit.SetSkillToolProvider(executor.livePluginDefinitions)
 	}
 	return executor
 }
@@ -288,4 +290,11 @@ func (e *pluginToolExecutor) UnfreezeToolSurface() {
 	if freezer, ok := e.inner.(agent.ToolSurfaceFreezer); ok {
 		freezer.UnfreezeToolSurface()
 	}
+}
+
+func (e *pluginToolExecutor) PrepareModelStep(ctx context.Context, history []providers.ChatMessage) ([]providers.ChatMessage, error) {
+	if preparer, ok := e.inner.(agent.ModelStepPreparer); ok {
+		return preparer.PrepareModelStep(ctx, history)
+	}
+	return nil, nil
 }

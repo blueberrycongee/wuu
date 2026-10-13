@@ -38,7 +38,7 @@ func TestNewSideThreadRunnerRemovesMutableMainThreadCallbacks(t *testing.T) {
 		AfterTurn:            func(context.Context, *agent.StreamRunner, []providers.ChatMessage, agent.LoopResult) { called = true },
 		OnEvent:              func(providers.StreamEvent) { called = true },
 	}
-	runner, err := (&Session{StreamRunner: base}).NewSideThreadRunner("side-actual-id", "", ThreadModelSelection{})
+	runner, err := (&Session{StreamRunner: base}).NewSideThreadRunner("side-actual-id", "", ThreadModelSelection{}, "Test side policy")
 	if err != nil {
 		t.Fatalf("NewSideThreadRunner: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestNewSideThreadRunnerUsesReadOnlyMainAgentTools(t *testing.T) {
 		Model:        "test-model",
 		MaxSteps:     20,
 	}
-	runner, err := (&Session{RootDir: root, StreamRunner: base, Toolkit: kit}).NewSideThreadRunner("side-tools", root, ThreadModelSelection{})
+	runner, err := (&Session{RootDir: root, StreamRunner: base, Toolkit: kit}).NewSideThreadRunner("side-tools", root, ThreadModelSelection{}, "Test side policy")
 	if err != nil {
 		t.Fatalf("NewSideThreadRunner: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestNewSideThreadRunnerFallsBackWhenModelUnresolvable(t *testing.T) {
 	runner, err := s.NewSideThreadRunner("side-fallback", "", ThreadModelSelection{
 		Provider: "ghost-provider",
 		Model:    "ghost-model",
-	})
+	}, "Test side policy")
 	if err != nil {
 		t.Fatalf("NewSideThreadRunner: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestNewSideThreadRunnerReDerivesMediaInputForPinnedModel(t *testing.T) {
 	runner, err := s.NewSideThreadRunner("side-media", "", ThreadModelSelection{
 		Provider: "test",
 		Model:    "text-only-model",
-	})
+	}, "Test side policy")
 	if err != nil {
 		t.Fatalf("NewSideThreadRunner: %v", err)
 	}

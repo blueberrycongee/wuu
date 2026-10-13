@@ -51,6 +51,7 @@ const (
 	MethodPluginStorageGet                = "plugin/storage/get"
 	MethodPluginStorageSet                = "plugin/storage/set"
 	MethodPluginClientRequest             = "plugin/client/request"
+	MethodPluginClientCancel              = "plugin/client/cancel"
 	MethodUserQuestionList                = "user-question/list"
 	MethodUserQuestionRespond             = "user-question/respond"
 	MethodUserQuestionCancel              = "user-question/cancel"
@@ -708,8 +709,9 @@ const (
 type ExtensionCommandKind string
 
 const (
-	ExtensionCommandPromptTemplate ExtensionCommandKind = "prompt_template"
-	ExtensionCommandRuntimeAction  ExtensionCommandKind = "runtime_action"
+	ExtensionCommandPromptTemplate   ExtensionCommandKind = "prompt_template"
+	ExtensionCommandRuntimeAction    ExtensionCommandKind = "runtime_action"
+	ExtensionCommandSideConversation ExtensionCommandKind = "side_conversation"
 )
 
 type ExtensionCommandDescriptor struct {
@@ -864,6 +866,7 @@ type ExtensionInventoryRecord struct {
 	Conflicts            []string                         `json:"conflicts,omitempty"`
 	ActivationIssues     []ExtensionPluginActivationIssue `json:"activation_issues,omitempty"`
 	Enabled              *bool                            `json:"enabled,omitempty"`
+	EnabledOverride      *bool                            `json:"enabled_override,omitempty"`
 	Desktop              *ExtensionDesktopDescriptor      `json:"desktop,omitempty"`
 	Contributions        *ExtensionContributions          `json:"contributions,omitempty"`
 	PendingUpdate        *ExtensionPendingUpdate          `json:"pending_update,omitempty"`
@@ -1113,24 +1116,26 @@ type AuthXAILoginCancelParams struct {
 }
 
 type ConfigModelUpdateResult struct {
-	Provider         string                  `json:"provider"`
-	Model            string                  `json:"model"`
-	Effort           string                  `json:"effort,omitempty"`
-	Variant          string                  `json:"variant,omitempty"`
-	MaxParallel      int                     `json:"max_parallel"`
-	Permissions      PermissionSummary       `json:"permissions"`
-	ExtensionTrust   ExtensionTrustSummary   `json:"extension_trust"`
-	ModelProfile     *ModelProfileSummary    `json:"model_profile,omitempty"`
-	ToolSurface      *ToolSurfaceSummary     `json:"tool_surface,omitempty"`
-	ModelRoles       []ModelRoleSummary      `json:"model_roles,omitempty"`
-	Providers        []ProviderSummary       `json:"providers,omitempty"`
-	AdvancedSettings AdvancedSettingsSummary `json:"advanced_settings"`
+	ProjectModels    config.ProjectModelsConfig   `json:"project_models"`
+	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases"`
+	Provider         string                       `json:"provider"`
+	Model            string                       `json:"model"`
+	Effort           string                       `json:"effort,omitempty"`
+	Variant          string                       `json:"variant,omitempty"`
+	MaxParallel      int                          `json:"max_parallel"`
+	Permissions      PermissionSummary            `json:"permissions"`
+	ExtensionTrust   ExtensionTrustSummary        `json:"extension_trust"`
+	ModelProfile     *ModelProfileSummary         `json:"model_profile,omitempty"`
+	ToolSurface      *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
+	ModelRoles       []ModelRoleSummary           `json:"model_roles,omitempty"`
+	Providers        []ProviderSummary            `json:"providers,omitempty"`
+	AdvancedSettings AdvancedSettingsSummary      `json:"advanced_settings"`
 }
 
 // ConfigProviderRemoveParams requests the deletion of a configured
 // provider. The handler enforces the same safety guards as the
 // existing config handlers (no removal of the last provider, no
-// removal of OAuth/connection-locked providers, and no removal of a
+// removal of OpenAI OAuth-managed providers, and no removal of a
 // provider currently used by a running turn) and atomically swaps the
 // default provider to FallbackProvider when the removed provider was
 // active.
@@ -1144,12 +1149,11 @@ type ConfigProviderRemoveParams struct {
 	Provider string `json:"provider"`
 	// FallbackProvider becomes the new default_provider if the removed
 	// provider was the active one. Optional; server picks another
-	// existing provider when empty. Required when removing the last
-	// remaining provider so the runtime still has a model to use.
+	// existing provider when empty. Removing the last provider is rejected.
 	FallbackProvider string `json:"fallback_provider,omitempty"`
 	// FallbackModel is applied to the new default provider after the
-	// swap so the runtime has a model to use. Optional; server reuses
-	// the removed provider's model when empty.
+	// swap so the runtime has a model to use. Optional; server uses
+	// the replacement provider's selected model when empty.
 	FallbackModel string `json:"fallback_model,omitempty"`
 }
 
@@ -1158,16 +1162,18 @@ type ConfigProviderRemoveParams struct {
 // merge provider/model/permissions into the initialized state, so the shape
 // intentionally matches that result.
 type ConfigProviderRemoveResult struct {
-	Provider         string                  `json:"provider"`
-	Model            string                  `json:"model"`
-	Variant          string                  `json:"variant,omitempty"`
-	Permissions      PermissionSummary       `json:"permissions"`
-	ExtensionTrust   ExtensionTrustSummary   `json:"extension_trust"`
-	ModelProfile     *ModelProfileSummary    `json:"model_profile,omitempty"`
-	ToolSurface      *ToolSurfaceSummary     `json:"tool_surface,omitempty"`
-	ModelRoles       []ModelRoleSummary      `json:"model_roles,omitempty"`
-	Providers        []ProviderSummary       `json:"providers,omitempty"`
-	AdvancedSettings AdvancedSettingsSummary `json:"advanced_settings"`
+	ProjectModels    config.ProjectModelsConfig   `json:"project_models"`
+	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases"`
+	Provider         string                       `json:"provider"`
+	Model            string                       `json:"model"`
+	Variant          string                       `json:"variant,omitempty"`
+	Permissions      PermissionSummary            `json:"permissions"`
+	ExtensionTrust   ExtensionTrustSummary        `json:"extension_trust"`
+	ModelProfile     *ModelProfileSummary         `json:"model_profile,omitempty"`
+	ToolSurface      *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
+	ModelRoles       []ModelRoleSummary           `json:"model_roles,omitempty"`
+	Providers        []ProviderSummary            `json:"providers,omitempty"`
+	AdvancedSettings AdvancedSettingsSummary      `json:"advanced_settings"`
 }
 
 type ConfigAdvancedUpdateParams struct {
@@ -1729,6 +1735,7 @@ type SideThreadMainTaskSummary struct {
 }
 
 type SideThreadSendParams struct {
+	CommandID    string                         `json:"command_id,omitempty"`
 	MainThreadID string                         `json:"main_thread_id"`
 	Prompt       string                         `json:"prompt"`
 	Selection    *sidethread.SelectionReference `json:"selection,omitempty"`
@@ -2116,18 +2123,20 @@ type TurnSteerParams struct {
 }
 
 type TurnSteerResult struct {
-	TurnID string `json:"turn_id"`
+	TurnID   string `json:"turn_id"`
+	Delivery string `json:"delivery,omitempty"`
 }
 
 type HeldUserMessage struct {
-	ID             string                         `json:"id"`
-	ThreadID       string                         `json:"thread_id"`
-	Origin         string                         `json:"origin"`
-	Prompt         string                         `json:"prompt,omitempty"`
-	Images         []TurnStartImage               `json:"images,omitempty"`
-	Files          []TurnStartFile                `json:"files,omitempty"`
-	ContentParts   []providers.MessageContentPart `json:"content_parts,omitempty"`
-	ActiveDocument *ActiveDocument                `json:"active_document,omitempty"`
+	DeliveryUnconfirmed bool                           `json:"delivery_unconfirmed,omitempty"`
+	ID                  string                         `json:"id"`
+	ThreadID            string                         `json:"thread_id"`
+	Origin              string                         `json:"origin"`
+	Prompt              string                         `json:"prompt,omitempty"`
+	Images              []TurnStartImage               `json:"images,omitempty"`
+	Files               []TurnStartFile                `json:"files,omitempty"`
+	ContentParts        []providers.MessageContentPart `json:"content_parts,omitempty"`
+	ActiveDocument      *ActiveDocument                `json:"active_document,omitempty"`
 }
 
 type TurnUnsteerParams struct {

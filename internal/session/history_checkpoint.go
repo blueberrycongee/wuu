@@ -47,7 +47,7 @@ func RewriteHistoryRecordsForEdit(sessDir, id string, records []HistoryRecord, f
 	if fromSeq <= 0 || fromSeq > baselineSeq {
 		return fmt.Errorf("invalid history edit range %d..%d", fromSeq, baselineSeq)
 	}
-	_, err := storeHistoryCheckpointAtBaseline(sessDir, id, HistoryCheckpointKindProviderRewrite, records, baselineSeq, nil, fromSeq)
+	_, err := storeHistoryCheckpointAtBaseline(sessDir, id, HistoryCheckpointKindProviderRewrite, records, baselineSeq, nil, fromSeq, nil)
 	return err
 }
 
@@ -55,7 +55,7 @@ func RewriteHistoryRecordsForEdit(sessDir, id string, records []HistoryRecord, f
 // read through baselineSeq. Messages already committed after the baseline are
 // appended to the exact replacement inside the same write transaction.
 func StoreHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []HistoryRecord, baselineSeq int) (HistoryCheckpoint, error) {
-	return storeHistoryCheckpointAtBaseline(sessDir, id, kind, replacement, baselineSeq, nil, 0)
+	return storeHistoryCheckpointAtBaseline(sessDir, id, kind, replacement, baselineSeq, nil, 0, nil)
 }
 
 // StoreContextWindow commits the provider checkpoint and its note anchor in one
@@ -64,10 +64,21 @@ func StoreContextWindow(sessDir, id string, replacement []HistoryRecord, baselin
 	if strings.TrimSpace(note.ProviderKey) == "" {
 		return HistoryCheckpoint{}, errors.New("context window requires a note provider key")
 	}
-	return storeHistoryCheckpointAtBaseline(sessDir, id, "context_window", replacement, baselineSeq, &note, 0)
+	return storeHistoryCheckpointAtBaseline(sessDir, id, "context_window", replacement, baselineSeq, &note, 0, nil)
 }
 
-func storeHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []HistoryRecord, baselineSeq int, note *CompactionNote, retractFromSeq int) (HistoryCheckpoint, error) {
+// RewriteHistoryRecordsForEngineEdit commits a copy-on-write native session
+// reference and the matching visible/provider prefix in one transaction. The
+// original native session is never rolled back; failed commits leave it usable.
+func RewriteHistoryRecordsForEngineEdit(sessDir, id string, records []HistoryRecord, fromSeq, baselineSeq int, oldRef, newRef string) error {
+	if fromSeq <= 0 || fromSeq > baselineSeq || oldRef == "" || newRef == "" || oldRef == newRef {
+		return errors.New("invalid native history edit")
+	}
+	_, err := storeHistoryCheckpointAtBaseline(sessDir, id, HistoryCheckpointKindProviderRewrite, records, baselineSeq, nil, fromSeq, &[2]string{oldRef, newRef})
+	return err
+}
+
+func storeHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []HistoryRecord, baselineSeq int, note *CompactionNote, retractFromSeq int, engineRefs *[2]string) (HistoryCheckpoint, error) {
 	id = strings.TrimSpace(id)
 	kind = strings.TrimSpace(kind)
 	if baselineSeq < 0 {
@@ -106,6 +117,23 @@ func storeHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []Hi
 	}
 	if baselineSeq > headSeq {
 		return HistoryCheckpoint{}, fmt.Errorf("history checkpoint baseline %d exceeds head %d", baselineSeq, headSeq)
+	}
+
+	if engineRefs != nil {
+		if headSeq != baselineSeq {
+			return HistoryCheckpoint{}, errors.New("native history changed during edit; refresh and try again")
+		}
+		result, err := tx.Exec(`UPDATE sessions SET engine_ref = ? WHERE id = ? AND engine_ref = ?`, engineRefs[1], id, engineRefs[0])
+		if err != nil {
+			return HistoryCheckpoint{}, fmt.Errorf("replace native history reference: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return HistoryCheckpoint{}, err
+		}
+		if count != 1 {
+			return HistoryCheckpoint{}, errors.New("native session changed during edit; refresh and try again")
+		}
 	}
 
 	records := make([]HistoryRecord, len(replacement))

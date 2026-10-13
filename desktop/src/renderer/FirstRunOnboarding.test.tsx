@@ -221,6 +221,7 @@ describe("FirstRunOnboarding", () => {
               plugin("ask-user", true),
               plugin("todo", false),
               plugin("automation", false),
+              plugin("side", true),
               plugin("subagent", true),
               plugin("peers", true),
               plugin("memory", true),
@@ -234,20 +235,35 @@ describe("FirstRunOnboarding", () => {
     const selectedPlugins = () => [...container.querySelectorAll(".onboarding-plugin")]
       .filter((row) => row.querySelector("[role=switch]")?.getAttribute("aria-checked") === "true")
       .map((row) => row.querySelector(".catalog-row-title")?.textContent);
-    expect(selectedPlugins()).toEqual(["automation"]);
+    expect(selectedPlugins()).toEqual(["side", "automation"]);
     expect(container.querySelector(".onboarding-presets [aria-pressed=true]")?.textContent).toBe("推荐");
     await clickButton("全部");
-    expect(selectedPlugins()).toHaveLength(6);
+    expect(selectedPlugins()).toHaveLength(7);
     await clickButton("推荐");
-    expect(selectedPlugins()).toEqual(["automation"]);
+    expect(selectedPlugins()).toEqual(["side", "automation"]);
     expect(props.onUpdateExtensionPackage).not.toHaveBeenCalled();
+    await clickPlugin("side");
     await clickButton("继续");
-    expect(props.onUpdateExtensionPackage).toHaveBeenCalledTimes(5);
+    expect(props.onUpdateExtensionPackage).toHaveBeenCalledTimes(7);
+    expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: "plugin:bundled:side", action: "disable" });
     expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: "plugin:bundled:automation", action: "enable" });
-    expect(props.onUpdateExtensionPackage).not.toHaveBeenCalledWith({ id: "plugin:bundled:todo", action: "disable" });
+    expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: "plugin:bundled:todo", action: "disable" });
     for (const id of ["ask-user", "subagent", "peers", "memory"]) {
       expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "disable" });
     }
+
+    // Restarting before onboarding finishes keeps the committed selection.
+    await act(async () => {
+      root.unmount();
+      root = createRoot(container);
+      root.render(<I18nProvider><FirstRunOnboarding {...props} inventory={[
+        "side", "ask-user", "todo", "automation", "subagent", "peers", "memory",
+      ].map((id) => ({ ...plugin(id, id === "automation"), enabled_override: id === "automation" }))} /></I18nProvider>);
+    });
+    await clickButton("开始设置");
+    expect(selectedPlugins()).toEqual(["automation"]);
+    await clickButton("继续");
+    expect(props.onUpdateExtensionPackage).toHaveBeenCalledTimes(7);
   });
 
   it("splits the mascot into three colored clones that keep stacked decorations", async () => {
@@ -307,7 +323,7 @@ describe("FirstRunOnboarding", () => {
       await clickPlugin(id);
       selected.push(id);
       expect(container.querySelectorAll(".onboarding-plugin [role=switch][aria-checked=true]")).toHaveLength(selected.length);
-      const expected = selected.filter((pluginID) => pluginID !== "subagent");
+      const expected = selected.filter((pluginID) => pluginID !== "subagent" && pluginID !== "side");
       expect(wornCapabilities().sort()).toEqual([...expected].sort());
       for (const decoration of expected) {
         const node = mascotStage()?.querySelector(`[data-onboarding-capability="${decoration}"]`);
@@ -326,7 +342,7 @@ describe("FirstRunOnboarding", () => {
     expect(wornCapabilities()).toEqual([]);
     await clickButton("全部");
     expect(visibleClones()).toHaveLength(3);
-    expect(wornCapabilities().sort()).toEqual(ONBOARDING_PLUGIN_ORDER.filter((id) => id !== "subagent").sort());
+    expect(wornCapabilities().sort()).toEqual(ONBOARDING_PLUGIN_ORDER.filter((id) => id !== "subagent" && id !== "side").sort());
     expect(update).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
   });
@@ -387,7 +403,7 @@ describe("FirstRunOnboarding", () => {
     await clickButton("极简");
     await clickButton("继续");
 
-    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledTimes(2);
     expect(update).toHaveBeenCalledWith({ id: "plugin:bundled:ask-user", action: "disable" });
     expect(complete).not.toHaveBeenCalled();
 

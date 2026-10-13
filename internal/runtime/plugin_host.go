@@ -267,6 +267,11 @@ func buildPluginRequestTransforms(host *pluginhost.Host, provider, threadID, cwd
 				StepIndex: request.StepIndex,
 				Request:   modelRequestViewV1(request),
 			}, &output); err != nil {
+				// Thread-local chains can outlive explicit disable within a turn.
+				// Failed live registrations still follow their declared error policy.
+				if errors.Is(err, pluginhost.ErrCapabilityRetired) {
+					return nil
+				}
 				return host.HandleCapabilityError(capability, err)
 			}
 			if err := applyRequestTransformPatch(request, output); err != nil {

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { lstat, mkdir, readFile, readdir, unlink } from "node:fs/promises";
+import { lstat, mkdir, readdir, unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
 import {
   requireKernelService, FILE_LOCK_SERVICE,
@@ -8,13 +8,14 @@ import {
   type ServiceInvokeParams, type ToolExecuteParams, type ToolExecuteResult,
   type JSONSchemaObject,
 } from "@wuu/plugin-sdk";
-import { frontmatter, INDEX_FILE, MAX_MEMORY_BYTES, missing, promptSection, readSafeIndex, writeAtomicFile } from "./notebook.js";
+import { frontmatter, INDEX_FILE, MAX_MEMORY_BYTES, missing, promptSection, readNotebookFile, readNotebookSnapshot, readSafeIndex, writeAtomicFile } from "./notebook.js";
 import { runSessionMemory, sessionMemorySchema } from "./workspace-memory.js";
 
 const CAPABILITY_PROMPT = "agent.system_prompt.section";
 const CAPABILITY_CLIENT = "plugin.client.request";
 const CAPABILITY_LIFECYCLE = "agent.turn.lifecycle";
 const SESSION_MEMORY_SERVICE = "memory.session";
+const NOTEBOOK_MEMORY_SERVICE = "memory.notebook";
 
 interface Job {
   id: string;
@@ -80,6 +81,9 @@ class MemoryPlugin implements RuntimePlugin {
       provided_services: [{
         name: SESSION_MEMORY_SERVICE, version: "1.0.0",
         methods: ["status", "read", "append", "replace"].map((name) => ({ name, input_schema: `memory.session.${name}.request.v1`, output_schema: `memory.session.${name}.response.v1` })),
+      }, {
+        name: NOTEBOOK_MEMORY_SERVICE, version: "1.0.0",
+        methods: ["index", "read"].map((name) => ({ name, input_schema: `memory.notebook.${name}.request.v1`, output_schema: "memory.notebook.snapshot.v1" })),
       }],
     };
   }
@@ -126,6 +130,7 @@ class MemoryPlugin implements RuntimePlugin {
   }
 
   async invokeService(call: ServiceInvokeParams, _host: RuntimeHost, execution: RuntimeExecutionContext): Promise<unknown> {
+    if (call.service === NOTEBOOK_MEMORY_SERVICE) return readNotebookSnapshot(this.notebook, call.method, object(call.params));
     if (call.service !== SESSION_MEMORY_SERVICE) throw new Error(`memory plugin does not provide service ${JSON.stringify(call.service)}`);
     const params = object(call.params);
     return runSessionMemory(this.workspaceStateDir, {
@@ -207,9 +212,8 @@ class MemoryPlugin implements RuntimePlugin {
   }
 
   private async readFile(name: string): Promise<string> {
-    const raw = await readFile(this.safePath(name, true));
-    if (raw.length > MAX_MEMORY_BYTES) throw new Error(`memory file exceeds ${MAX_MEMORY_BYTES} bytes`);
-    return raw.toString();
+    const path = this.safePath(name, true);
+    return (await readNotebookFile(this.notebook, basename(path))).toString();
   }
 
   private async readFileOptional(name: string): Promise<string> {

@@ -385,6 +385,8 @@ type kernelHostServices struct {
 	driverGateways    *driverGatewayTable
 	workspaceStateDir string
 	wuuHome           string
+	modelSession      *Session
+	modelHost         *pluginhost.Host
 }
 
 func newKernelHostServices(generation func() uint64, executions executionUpdateRecorder) *kernelHostServices {
@@ -463,6 +465,22 @@ func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRe
 		})
 	}
 	registrations = append(registrations,
+		pluginhost.ServiceRegistration{
+			Descriptor: pluginhost.KernelModelInvokeDescriptor(),
+			Invoker:    &modelInvokeInvoker{parent: k, store: newModelInvocationStore()}, Kernel: true,
+		},
+		pluginhost.ServiceRegistration{
+			Descriptor: pluginhost.KernelModelEmitDescriptor(),
+			Invoker:    &modelEmitInvoker{parent: k}, Kernel: true,
+		},
+		pluginhost.ServiceRegistration{
+			Descriptor: pluginhost.KernelBackgroundDescriptor(),
+			Invoker:    &backgroundInvoker{parent: k}, Kernel: true,
+		},
+		pluginhost.ServiceRegistration{
+			Descriptor: pluginhost.KernelModelRequestDescriptor(),
+			Invoker:    &modelRequestInvoker{parent: k}, Kernel: true,
+		},
 		pluginhost.ServiceRegistration{
 			Descriptor: pluginhost.KernelRegistryIntrospectDescriptor(),
 			Invoker:    &registryIntrospectInvoker{parent: k}, Kernel: true,

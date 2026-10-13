@@ -82,22 +82,24 @@ Keep status semantics separate from emphasis. TODO progress uses text colors and
 
 Use the system UI font with CJK fallback and respect user font choices. Code, editors, and diffs retain independent monospace typography rather than scaling mechanically with UI text. Avoid unrelated typefaces for headings, prose, and numbers; use tabular numbers or monospace where numerical alignment requires them.
 
-The current runtime defaults are **14.5px UI** and **11px code**. Ratios in `appearance.css` use 14 as their denominator: 14px is the proportional reference, not the current startup default. Valid saved preferences remain authoritative and must not be reset to the documented defaults.
+The current runtime defaults are **15px UI** and **13px code**. Ratios in `appearance.css` use 14 as their denominator: 14px is the proportional reference, not the current startup default. Valid saved preferences remain authoritative and must not be reset to the documented defaults.
 
-| Role | Variables | Relationship to UI size U | Value at U = 14.5px |
+| Role | Variables | Relationship to UI size U | Value at U = 15px |
 | --- | --- | --- | --- |
-| Hero | `--font-hero` | round(U × 32 / 14) | 33px |
-| Display | `--font-display` | round(U × 24 / 14) | 25px |
+| Hero | `--font-hero` | round(U × 32 / 14) | 34px |
+| Display | `--font-display` | round(U × 24 / 14) | 26px |
 | Heading | `--font-heading` | round(U × 20 / 14) | 21px |
 | Title | `--font-title` | round(U × 16 / 14) | 17px |
-| UI and body | `--font-ui`, `--font-body`, `--font-content` | U | 14.5px |
-| Menus and compact controls | `--font-menu`, `--font-sm` | round(U × 13 / 14) | 13px |
-| Metadata | `--font-xs` | max(12px, round(U × 12 / 14)) | 12px |
-| Code | `--appearance-code-size` | Independent preference | 11px |
+| UI and body | `--font-ui`, `--font-body`, `--font-content` | U | 15px |
+| Menus and compact controls | `--font-menu`, `--font-sm` | round(U × 13 / 14) | 14px |
+| Metadata | `--font-xs` | max(12px, round(U × 12 / 14)) | 13px |
+| Code | `--appearance-code-size` | Independent preference | 13px |
 
 Derived roles round to whole pixels. The saved UI size may be a half step, but fractional derived sizes would put line boxes and 1px edges between device pixels.
 
-Use 400 for ordinary text, 500 for compact menu items, and 500 or 600 selectively for headings and emphasis. Reserve 700 for occasional strong emphasis. Base line-height roles are 1.35 for UI, 1.55 for body, and 1.6 for metadata; individual reading surfaces may have semantic overrides, not one forced line height for every component. Conversation reading and process leading are whole-pixel lengths derived from the message size (1.8 and 1.6, rounded to 2px), so stacked rows and cards share edges. Composer drafts use the same reading leading as sent queries and answers, so text keeps its rhythm when it is sent. Message headings step to 1.5, 1.25, and 1.1 times the body size, rounded to whole pixels, so hierarchy does not rest on weight alone. Preserve natural letter spacing instead of shrinking type or tightening tracking to repair layout.
+Use 400 for ordinary text, 500 for compact menu items, and 500 or 600 selectively for headings and emphasis. Reserve 700 for occasional strong emphasis. Base line-height roles are 1.35 for UI, 1.55 for body, and 1.6 for metadata; individual reading surfaces may have semantic overrides, not one forced line height for every component. Conversation reading and process leading are whole-pixel lengths derived from the message size (both 1.6, rounded to 2px), so stacked rows and cards share edges. Composer drafts use the same reading leading as sent queries and answers, so text keeps its rhythm when it is sent. Message headings step to 1.5, 1.25, and 1.1 times the body size, rounded to whole pixels, so hierarchy does not rest on weight alone. At the default size, conversation text is 15px/24px with a 12px paragraph gap. The gap scales with UI size (0.8 times, rounded to 1px). Fenced code and hover diffs use the independent code size with 1.5 leading rounded to 1px, giving 13px/20px by default. Preserve natural letter spacing instead of shrinking type or tightening tracking to repair layout.
+
+The latest active process label uses a quiet, theme-relative tone with a highlight that sweeps for one second in each four-second cycle, after an initial 600ms delay. The base text stays visible beneath the decorative highlight. Once a summary is no longer active, it uses steady `--ink-tertiary` text. Reduced motion, background conversations, and stream-following suppress the highlight; result prose keeps its normal contrast.
 
 ## Spacing and layout
 
@@ -164,7 +166,7 @@ copy in the file manager. External editors never receive the immutable snapshot.
 
 ## Icons, motion, and controls
 
-Controls reuse [WuuIcons](../../../desktop/src/renderer/WuuIcons.tsx), not a competing stroke style. Standard drawings use a 24-unit canvas and 1.75 stroke. Use `--icon-size-*` roles with bounded growth as UI text increases. Sizes round to even pixels so glyphs center in even control boxes; at the 14px reference and the 14.5px default they are 12, 14, 16, 18, and 20px. Still inspect apparent size, centering, and stroke density.
+Controls reuse [WuuIcons](../../../desktop/src/renderer/WuuIcons.tsx), not a competing stroke style. Standard drawings use a 24-unit canvas and 1.75 stroke. Use `--icon-size-*` roles with bounded growth as UI text increases. Sizes round to even pixels so glyphs center in even control boxes; at the 14px reference they are 12, 14, 16, 18, and 20px; the 15px default resolves to 12, 16, 18, 20, and 22px. Still inspect apparent size, centering, and stroke density.
 
 Motion provides feedback and explains position changes: `--motion-fast` 120ms for immediate feedback, `--motion-base` 180ms for menus and content swaps, `--motion-slow` 280ms for structural moves, and `--motion-slower` 440ms for larger folds. Entrances decelerate with `--ease-out` and exits accelerate away with `--ease-in`, shorter than the entrance. Prefer existing semantic aliases and the shared entrance and exit keyframes described in [desktop UI maintenance](desktop-ui.md#motion). The OS setting and the in-app Motion preference both reduce motion, with the same result. Frequent actions must not wait for decorative animation; preserve established component-specific motion contracts.
 

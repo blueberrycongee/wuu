@@ -8,6 +8,9 @@ import {
 } from "react";
 import {
   MarkdownContent,
+  createMarkdownDocument,
+  inspectMarkdownFragment,
+  type MarkdownDocument,
   type RichTextRenderer,
 } from "./RichContent";
 import {
@@ -92,6 +95,12 @@ export function StreamingMarkdown({
     streamTextStore.replacementVersion(streamKey),
   );
   const acceptedStreamValueRef = useRef(hasStreamValue);
+  const renderedSourceKeyRef = useRef(streamKey);
+  if (renderedSourceKeyRef.current !== streamKey) {
+    renderedSourceKeyRef.current = streamKey;
+    acceptedStreamValueRef.current = hasStreamValue;
+    renderedReplacementVersionRef.current = streamTextStore.replacementVersion(streamKey);
+  }
   // Resolve the sticky snapshot before committing DOM. Publishing in a layout
   // effect lets the parent's scroll restore measure the previous text first.
   if (hasStreamValue) {
@@ -179,19 +188,13 @@ export function StreamingMarkdown({
   const surfaceRef = useRef<HTMLDivElement>(null);
   const cursorTextRenderer = useMemo(() => createCursorTextRenderer(), []);
   const stableCursorTextRenderer = cursorTextRenderer;
-  // Mermaid is expensive; do not flip the markdown renderer for ordinary
-  // text. The diagram renderer is enabled as soon as a Mermaid fence appears
-  // (not only after streaming ends) so the open fence in the tail can render
-  // progressively offscreen while its source grows; messages without a
-  // Mermaid fence never enter the diagram renderer at all.
-  const renderMermaid = containsMermaidFence(visibleText);
 
   // Split the visible text into stable blocks + an open tail. Every
   // stable block is its own memoized markdown surface, so promoting a
   // new block from the tail only costs that single block's parse — the
   // earlier blocks stay mounted as-is. This caps per-tick work at
-  // O(tail) and per-promotion work at O(one block), independent of the
-  // total answer length.
+  // O(tail) parsing and per-promotion parsing at O(one block). A newly
+  // completed reference definition can intentionally invalidate earlier blocks.
   //
   // The settled phase uses the same split as streaming: keeping the
   // block layout stable across the streaming → settled transition means
@@ -215,43 +218,48 @@ export function StreamingMarkdown({
   // When trailing blank lines promote the visible tail into a stable prose
   // block, keep the cursor inside that last block. The old absolute sibling
   // had no inline anchor and could paint at the top of the message instead of
-  // after the last visible character. A closed fence remains the one shape
-  // that cannot safely accept the sentinel without creating a paragraph below
-  // the code card, so it keeps the zero-flow-height sibling fallback.
+  // after the last visible character. Fences and diagrams cannot safely
+  // accept the sentinel, so they keep the zero-flow-height sibling fallback.
   // Repeated blank lines are preserved by the scanner, but must not become
   // empty flex children: each would add a prose gap and could draw the cursor
   // in an otherwise empty paragraph below the visible message.
+  const document = useMarkdownDocument(split, streamKey, renderedReplacementVersionRef.current);
   const visibleBlocks = useMemo(
-    () => split.blocks.filter((block) => block.trim().length > 0),
-    [split.blocks],
+    () => document.fragments.slice(0, -1).filter(fragment => fragment.context.hasContent),
+    [document],
   );
+  const tailContext = document.fragments.at(-1)!.context;
   useStreamVeil(
     surfaceRef, renderedText, isLive,
     `${streamKey}:${renderedReplacementVersionRef.current}`, visibleBlocks.length, renderActive,
   );
   const lastStableBlockIndex = visibleBlocks.length - 1;
-  const lastStableBlock = visibleBlocks[lastStableBlockIndex] ?? "";
-  const tailIsEmpty = split.tail.trim().length === 0;
+  const lastStableBlock = visibleBlocks[lastStableBlockIndex]?.text ?? "";
+  const tailIsEmpty = !tailContext.hasContent;
   const cursorStableBlockIndex = showCursor &&
     tailIsEmpty &&
     lastStableBlockIndex >= 0 &&
+    !visibleBlocks[lastStableBlockIndex].context.hasMermaid &&
     !endsWithFenceCloser(lastStableBlock.trimEnd())
       ? lastStableBlockIndex
       : -1;
-  const tailHasOpenMermaidFence =
-    split.inFence && split.openFenceLanguage?.toLowerCase() === "mermaid";
   // Keep the synthetic cursor outside an open code fence so copied and
   // selected code stays exact, including when an unfinished fence settles.
   const cursorNeedsBlockTail = showCursor && (
     endsWithFenceCloser(split.tail) ||
-    split.inFence ||
+    split.inFence || tailContext.hasMermaid ||
     (tailIsEmpty && lastStableBlockIndex >= 0 && cursorStableBlockIndex < 0)
   );
   // A cursor after a trailing newline creates an extra line box even when
   // settled CSS hides it. Anchor it to the last visible text in the tail too.
   const displayTail = useMemo(
-    () => isLive ? mendStreamingMarkdown(split.tail) : split.tail,
-    [isLive, split.tail],
+    () => {
+      if (!tailContext.hasContent) return "";
+      // The canonical parser recognizes nested fences that the prose mender
+      // deliberately does not scan. Never repair already identified diagrams.
+      return isLive && !tailContext.hasMermaid ? mendStreamingMarkdown(split.tail) : split.tail;
+    },
+    [isLive, split.tail, tailContext.hasContent, tailContext.hasMermaid],
   );
   const tailText = showCursor && !cursorNeedsBlockTail && cursorStableBlockIndex < 0
     ? insertCursorBeforeTrailingWhitespace(displayTail)
@@ -265,7 +273,7 @@ export function StreamingMarkdown({
       data-stream-state={phase}
       data-cursor-state={cursorState}
     >
-      {visibleBlocks.map((block, index) => (
+      {visibleBlocks.map(({ text: block, context }, index) => (
         // Keep stable blocks keyed separately so settled text does not remount
         // into one large markdown tree when streaming ends.
         <div className="streaming-markdown-block" key={index}>
@@ -282,7 +290,8 @@ export function StreamingMarkdown({
                 ? stableCursorTextRenderer
                 : undefined
             }
-            renderMermaid={renderMermaid}
+            renderMermaid={context.hasMermaid}
+            documentContext={context}
           />
         </div>
       ))}
@@ -291,8 +300,9 @@ export function StreamingMarkdown({
         cwd={cwd}
         onOpenFile={onOpenFile}
         renderText={cursorTextRenderer}
-        renderMermaid={renderMermaid}
-        mermaidStreaming={isLive && tailHasOpenMermaidFence}
+        renderMermaid={tailContext.hasMermaid}
+        documentContext={tailContext}
+        mermaidStreaming={isLive && tailContext.hasMermaid}
       />
       {cursorNeedsBlockTail ? (
         <span
@@ -307,7 +317,8 @@ export function StreamingMarkdown({
 /**
  * Memoized markdown surface. Stable blocks are passed in by value;
  * React.memo's default shallow compare on the `text` string is exactly
- * what we want — identical text means identical render.
+ * what we want. Shared definitions and heading IDs only invalidate a
+ * block when its message-level semantics change.
  */
 const MemoMarkdownContent = MarkdownContent;
 
@@ -338,7 +349,7 @@ function createCursorTextRenderer(): RichTextRenderer {
 }
 
 export function containsMermaidFence(text: string): boolean {
-  return /(^|\n)```[ \t]*mermaid[ \t]*\r?\n/i.test(text);
+  return inspectMarkdownFragment(text).hasMermaid;
 }
 
 type MarkdownFence = { marker: "`" | "~"; length: number; info: string };
@@ -391,6 +402,19 @@ function insertCursorBeforeTrailingWhitespace(text: string): string {
 }
 
 type StableBlockSplit = { blocks: string[]; tail: string };
+
+function useMarkdownDocument(split: StableBlockSplit, sourceKey: string, replacementVersion: number): MarkdownDocument {
+  const committed = useRef<{ sourceKey: string; replacementVersion: number; document: MarkdownDocument } | undefined>(undefined);
+  const document = useMemo(() => {
+    const previous = committed.current;
+    return createMarkdownDocument([...split.blocks, split.tail],
+      previous?.sourceKey === sourceKey && previous.replacementVersion === replacementVersion ? previous.document : undefined);
+  }, [split.blocks, split.tail, sourceKey, replacementVersion]);
+  useLayoutEffect(() => {
+    committed.current = { sourceKey, replacementVersion, document };
+  }, [document, sourceKey, replacementVersion]);
+  return document;
+}
 
 type StableBlockScanState = StableBlockSplit & {
   sourceKey: string;
@@ -536,10 +560,9 @@ function markdownColumnWidth(text: string): number {
  * (`\n\n`). Open fences and lists with a possible indented continuation
  * remain in the tail until their boundary is known.
  *
- * Each stable block has self-contained markdown semantics: prepending
- * or appending more text to the overall document cannot change how the
- * block parses. That property is what makes block-level memoization
- * safe.
+ * Blocks retain their structure as text appends. Message-wide definitions
+ * and heading IDs are reconciled separately: a newly completed definition
+ * can resolve references in an earlier block without replacing its DOM.
  *
  * Exported for tests.
  */

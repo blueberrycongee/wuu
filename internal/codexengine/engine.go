@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
@@ -22,13 +23,19 @@ type Engine struct {
 	host *Host
 	// RequestApproval bridges Codex's reverse-RPC approval requests to Wuu's
 	// host-owned interaction broker. Nil declines every request.
-	RequestApproval agentengine.ApprovalHandler
+	RequestApproval  agentengine.ApprovalHandler
+	RequestUserInput agentengine.UserInputHandler
 }
 
 // NewEngine builds the codex engine around a host (binary discovery +
 // app-server lifecycle).
 func NewEngine(host *Host) *Engine {
 	return &Engine{host: host}
+}
+
+// Host returns the shared process host used by this engine's bindings.
+func (e *Engine) Host() *Host {
+	return e.host
 }
 
 // Descriptor describes the codex engine.
@@ -39,7 +46,9 @@ func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
 		Capabilities: []string{
 			"native-tool-loop",
 			"native-session-resume",
+			"active-turn-steering",
 			"approval-requests",
+			"user-input-requests",
 			// engine/list with include_quota reads this engine's account
 			// allowance, so clients can reserve room for it beforehand.
 			"account-quota",
@@ -79,7 +88,9 @@ func (e *Engine) SessionForThread(ctx context.Context, binding agentengine.Threa
 		mcpServers:     binding.MCPServers,
 		externalRef:    binding.ExternalRef,
 		persistRef:     binding.PersistRef,
+		persistTurnRef: binding.PersistTurnRef,
 		approval:       binding.RequestApproval,
+		userInput:      binding.RequestUserInput,
 	})
 }
 
@@ -94,14 +105,16 @@ type sessionOptions struct {
 	mcpServers     []agentengine.MCPServer
 	externalRef    string
 	persistRef     func(string) error
+	persistTurnRef func(string, bool) error
 	approval       agentengine.ApprovalHandler
+	userInput      agentengine.UserInputHandler
 }
 
 func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengine.Session, error) {
 	if e == nil || e.host == nil {
 		return nil, errors.New("codex engine is not configured")
 	}
-	client, err := e.host.Acquire(ctx)
+	client, release, err := e.host.Acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -109,9 +122,13 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 	if approval == nil {
 		approval = e.RequestApproval
 	}
+	userInput := opts.userInput
+	if userInput == nil {
+		userInput = e.RequestUserInput
+	}
 	return &Session{
-		engine:         e,
 		client:         client,
+		release:        release,
 		threadID:       opts.threadID,
 		rootDir:        opts.rootDir,
 		model:          opts.model,
@@ -122,7 +139,10 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 		mcpServers:     append([]agentengine.MCPServer(nil), opts.mcpServers...),
 		ref:            opts.externalRef,
 		persist:        opts.persistRef,
+		persistTurnRef: opts.persistTurnRef,
 		approval:       approval,
+		steerReady:     make(chan struct{}),
+		userInput:      userInput,
 	}, nil
 }
 
@@ -131,8 +151,8 @@ func (e *Engine) newSession(ctx context.Context, opts sessionOptions) (agentengi
 // the binding's PersistRef; later turns run turn/start directly on the shared
 // app-server, or thread/resume first if the app-server restarted.
 type Session struct {
-	engine *Engine
-	client *Client
+	client  *Client
+	release func()
 
 	threadID       string
 	rootDir        string
@@ -143,11 +163,18 @@ type Session struct {
 	instructions   string
 	mcpServers     []agentengine.MCPServer
 
-	mu          sync.Mutex
-	ref         string
-	persist     func(string) error
-	approval    agentengine.ApprovalHandler
-	approvalCtx context.Context
+	mu                   sync.Mutex
+	ref                  string
+	persist              func(string) error
+	persistTurnRef       func(string, bool) error
+	approval             agentengine.ApprovalHandler
+	approvalCtx          context.Context
+	activeTurnID         string
+	steerReady           chan struct{}
+	steerReadyOnce       sync.Once
+	userInput            agentengine.UserInputHandler
+	userInputDefaultMode bool
+	cancelTurn           context.CancelFunc
 }
 
 // RunTurn starts a codex turn and translates its notifications into Wuu
@@ -156,15 +183,60 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	if s == nil || s.client == nil {
 		return agentengine.TurnResult{}, errors.New("codex session has no app-server client")
 	}
+	defer s.signalSteerReady()
 	if err := ctx.Err(); err != nil {
 		return agentengine.TurnResult{}, err
 	}
+	// Pending is written only by the native admission protocol below. Missing
+	// IDs in older conversations do not imply uncertain work and stay usable.
+	if s.persistTurnRef != nil {
+		var native *historyThread
+		for _, message := range input.History {
+			if !message.EngineTurnPending {
+				continue
+			}
+			if message.EngineTurnID == "" {
+				return agentengine.TurnResult{}, errors.New("an earlier Codex admission has no verified native turn ID; fork an earlier completed turn before continuing")
+			}
+			if native == nil {
+				var response struct {
+					Thread historyThread `json:"thread"`
+				}
+				if err := s.client.Request(ctx, "thread/read", map[string]any{"threadId": s.ref, "includeTurns": true}, &response); err != nil {
+					return agentengine.TurnResult{}, fmt.Errorf("verify pending Codex turn: %w", err)
+				}
+				if response.Thread.ID != s.ref || response.Thread.Turns == nil {
+					return agentengine.TurnResult{}, errors.New("Codex did not return the pending native history; no new input was sent")
+				}
+				native = &response.Thread
+			}
+			matches := 0
+			terminal := false
+			for _, turn := range native.Turns {
+				if turn.ID == message.EngineTurnID {
+					matches++
+					terminal = turn.Status == "completed" || turn.Status == "interrupted" || turn.Status == "failed"
+				}
+			}
+			if matches != 1 || !terminal {
+				return agentengine.TurnResult{}, errors.New("an earlier Codex turn still has an unconfirmed native outcome; no new input was sent")
+			}
+			if err := s.persistTurnRef(message.EngineTurnID, false); err != nil {
+				return agentengine.TurnResult{}, fmt.Errorf("settle recovered native turn: %w", err)
+			}
+		}
+	}
+	ctx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
 	s.approvalCtx = ctx
+	s.cancelTurn = cancel
 	s.mu.Unlock()
 	defer func() {
+		cancel()
 		s.mu.Lock()
 		s.approvalCtx = nil
+		s.activeTurnID = ""
+		s.cancelTurn = nil
 		s.mu.Unlock()
 	}()
 	// First turn: create the codex thread and persist its id so later turns
@@ -178,27 +250,191 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 	// Subscribe before turn/start: the app-server streams notifications
 	// immediately after responding, so a late subscription would drop them.
 	done := make(chan turnOutcome, 1)
-	sub := newTurnSubscription(s.client, sink, done)
+	sub := newTurnSubscription(s.client, s.ref, sink, done)
 	defer sub.close()
-	turnResp, err := s.startTurn(ctx, inputs)
-	if err != nil {
-		return agentengine.TurnResult{}, err
+	// Questions use the same authenticated native identity as output. A
+	// turn/started notification may precede a delayed or lost start response.
+	questionCtx, cancelQuestions := context.WithCancel(ctx)
+	defer cancelQuestions()
+	go func() {
+		select {
+		case <-sub.nativeStopped:
+		case <-s.client.done:
+		case <-questionCtx.Done():
+		}
+		cancelQuestions()
+	}()
+	removeInput := s.client.OnRequest(MethodToolRequestUserInput, func(raw json.RawMessage) (any, error) {
+		return s.handleUserInput(questionCtx, sub, raw)
+	})
+	defer removeInput()
+	if s.persistTurnRef != nil {
+		if err := s.persistTurnRef("", true); err != nil {
+			return agentengine.TurnResult{}, fmt.Errorf("persist native turn admission: %w", err)
+		}
 	}
-	turnID := turnResp.Turn.ID
-	sub.setTurnID(turnID)
+	settle := func(out turnOutcome) (agentengine.TurnResult, error) {
+		// Stream failure and transport shutdown are not proof of native completion.
+		// Read the independently retained terminal notification even when partial
+		// output failed before its event could be delivered to the stream consumer.
+		sub.mu.Lock()
+		status, turnID, nativeDone := sub.nativeStatus, sub.turnID, sub.nativeDone
+		sub.mu.Unlock()
+		if s.persistTurnRef != nil && nativeDone {
+			switch status {
+			case "completed", "interrupted", "failed":
+				if err := s.persistTurnRef(turnID, false); err != nil {
+					out.err = errors.Join(out.err, fmt.Errorf("persist native turn settlement: %w", err))
+				}
+			}
+		}
+		return out.result, out.err
+	}
+	turnResp, err := s.startTurn(ctx, inputs)
+	if err == nil {
+		if strings.TrimSpace(turnResp.Turn.ID) == "" {
+			err = errors.New("codex turn/start returned an empty turn id")
+		} else {
+			sub.setTurnID(turnResp.Turn.ID)
+		}
+	}
+	sub.mu.Lock()
+	turnID := sub.turnID
+	sub.mu.Unlock()
+	if turnID != "" && s.persistTurnRef != nil {
+		if persistErr := s.persistTurnRef(turnID, true); persistErr != nil {
+			err = errors.Join(err, fmt.Errorf("persist native turn boundary: %w", persistErr))
+		}
+	}
+	if err != nil {
+		var rejected *RPCError
+		definitelyRejected := errors.As(err, &rejected) &&
+			(rejected.Code == -32600 || rejected.Code == -32601 || rejected.Code == -32602)
+		if definitelyRejected && turnID == "" {
+			if s.persistTurnRef != nil {
+				err = errors.Join(err, s.persistTurnRef("", false))
+			}
+		} else {
+			// Internal errors and invalid/lost responses may follow acceptance.
+			// Retain partial output and require bounded native stop confirmation.
+			s.stopNativeTurn(sub)
+		}
+		sub.fail(err)
+		out := <-done
+		out.err = errors.Join(err, out.err)
+		return settle(out)
+	}
+	s.mu.Lock()
+	s.activeTurnID = turnID
+	s.mu.Unlock()
+	s.signalSteerReady()
 
 	select {
 	case out := <-done:
-		return out.result, out.err
+		sub.mu.Lock()
+		streamFailed := sub.streamErr != nil
+		sub.mu.Unlock()
+		if streamFailed {
+			s.stopNativeTurn(sub)
+		}
+		return settle(out)
 	case <-ctx.Done():
-		_ = s.interrupt(context.Background(), turnID)
+		s.stopNativeTurn(sub)
+		sub.fail(ctx.Err())
+		out := <-done
+		out.err = errors.Join(ctx.Err(), out.err)
+		return settle(out)
+	}
+}
+
+// Acknowledging turn/interrupt is not a terminal event. If the process cannot
+// confirm that the turn stopped, retire the shared connection; peer turns fail
+// visibly as well rather than continue executing without an observer.
+func (s *Session) stopNativeTurn(sub *turnSubscription) {
+	select {
+	case <-sub.nativeStopped:
+		return
+	default:
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), nativeCleanupTimeout)
+	defer cancel()
+	// turn/started can identify an accepted turn even when the start response
+	// is lost. Do not send an empty ID or discard its eventual stop proof.
+	select {
+	case <-sub.ready:
+		sub.mu.Lock()
+		turnID := sub.turnID
+		sub.mu.Unlock()
+		_ = s.interrupt(ctx, turnID)
+	case <-ctx.Done():
+	case <-s.client.done:
+	}
+	select {
+	case <-sub.nativeStopped:
+		return
+	case <-ctx.Done():
+	case <-s.client.done:
+	}
+	select {
+	case <-sub.nativeStopped:
+		return
+	default:
+	}
+	_ = s.client.Close()
+}
+
+// signalSteerReady also unblocks waiting input when native startup fails.
+func (s *Session) signalSteerReady() {
+	s.steerReadyOnce.Do(func() {
+		if s.steerReady != nil {
+			close(s.steerReady)
+		}
+	})
+}
+
+// Steer preserves native ownership of the loop. A stable client ID identifies
+// the human message, while expectedTurnId fences it against a successor turn.
+func (s *Session) Steer(ctx context.Context, message providers.ChatMessage) (string, error) {
+	if s == nil || s.client == nil {
+		return "", fmt.Errorf("%w: no native session", agentengine.ErrSteerRejected)
+	}
+	if s.steerReady != nil {
 		select {
-		case out := <-done:
-			return out.result, out.err
-		default:
-			return agentengine.TurnResult{}, ctx.Err()
+		case <-s.steerReady:
+		case <-ctx.Done():
+			return "", fmt.Errorf("%w: %v", agentengine.ErrSteerRejected, ctx.Err())
 		}
 	}
+	s.mu.Lock()
+	ref, turnID := s.ref, s.activeTurnID
+	s.mu.Unlock()
+	if ref == "" || turnID == "" || ctx.Err() != nil {
+		return "", fmt.Errorf("%w: no active native turn", agentengine.ErrSteerRejected)
+	}
+	if message.Role != "user" || message.Hidden || message.ReadOnly || (message.Origin != "" && message.Origin != "user") || strings.TrimSpace(message.ClientID) == "" {
+		return "", fmt.Errorf("%w: explicit human input is required", agentengine.ErrSteerRejected)
+	}
+	var response TurnSteerResponse
+	err := s.client.Request(ctx, MethodTurnSteer, TurnSteerParams{
+		ThreadID: ref, ExpectedTurnID: turnID, ClientUserMessageID: message.ClientID,
+		Input: turnInputs([]providers.ChatMessage{message}),
+	}, &response)
+	if err != nil {
+		var rejected *RPCError
+		if errors.As(err, &rejected) {
+			if rejected.Code == -32601 {
+				return "", fmt.Errorf("%w: %v", agentengine.ErrSteerUnsupported, err)
+			}
+			if rejected.Code == -32600 || rejected.Code == -32602 {
+				return "", fmt.Errorf("%w: %v", agentengine.ErrSteerRejected, err)
+			}
+		}
+		return "", err
+	}
+	if response.TurnID != turnID {
+		return "", fmt.Errorf("native steering acknowledgement returned turn %q, expected %q; delivery is unconfirmed", response.TurnID, turnID)
+	}
+	return response.TurnID, nil
 }
 
 func (s *Session) registerApprovalHandlers() func() {
@@ -306,7 +542,7 @@ func (s *Session) matchesThread(threadID string) bool {
 
 // ensureThread runs thread/start once and persists the native thread id.
 func (s *Session) ensureThread(ctx context.Context) error {
-	if s.speed == "" || s.model == "" || s.effort == "" {
+	if s.userInput != nil || s.speed == "" || s.model == "" || s.effort == "" {
 		// Omitting fields on a warm native thread inherits its previous
 		// overrides. Resolve the native configuration before every new binding.
 		var response struct {
@@ -314,10 +550,17 @@ func (s *Session) ensureThread(ctx context.Context) error {
 				Model       string          `json:"model"`
 				Effort      ReasoningEffort `json:"model_reasoning_effort"`
 				ServiceTier *string         `json:"service_tier"`
+				Features    struct {
+					DefaultModeUserInput *bool `json:"default_mode_request_user_input"`
+				} `json:"features"`
 			} `json:"config"`
 		}
 		if err := s.client.Request(ctx, "config/read", map[string]any{"cwd": s.rootDir, "includeLayers": false}, &response); err != nil {
 			return fmt.Errorf("codex config/read: %w", err)
+		}
+		if s.userInput != nil {
+			configured := response.Config.Features.DefaultModeUserInput
+			s.userInputDefaultMode = configured == nil || *configured
 		}
 		if s.model == "" {
 			s.model = response.Config.Model
@@ -401,6 +644,11 @@ func (s *Session) ensureThread(ctx context.Context) error {
 
 func (s *Session) threadConfig() map[string]any {
 	config := map[string]any{}
+	if s.userInput != nil {
+		// Enable the host question bridge in ordinary native turns while
+		// preserving explicit opt-outs. The native tool-level gate is untouched.
+		config["features.default_mode_request_user_input"] = s.userInputDefaultMode
+	}
 	if len(s.mcpServers) > 0 {
 		servers := make(map[string]any, len(s.mcpServers))
 		for _, server := range s.mcpServers {
@@ -421,14 +669,18 @@ func (s *Session) startTurn(ctx context.Context, inputs []UserInput) (TurnStartR
 	if sandboxPolicy.Type == SandboxPolicyWorkspaceWrite && strings.TrimSpace(s.rootDir) != "" {
 		sandboxPolicy.WritableRoots = []string{s.rootDir}
 	}
+	// Loaded native threads can ignore resume overrides. Set CWD together
+	// with the sandbox so its implicit writable CWD cannot remain on the old
+	// worktree while WritableRoots points at the newly selected workspace.
 	err := s.client.Request(ctx, MethodTurnStart, TurnStartParams{
-		ThreadID:        s.ref,
-		Input:           inputs,
-		Model:           s.model,
-		ReasoningEffort: s.effort,
-		ServiceTier:     s.serviceTier(),
-		ApprovalPolicy:  approval,
-		SandboxPolicy:   &sandboxPolicy,
+		CWD:            s.rootDir,
+		ThreadID:       s.ref,
+		Input:          inputs,
+		Model:          s.model,
+		Effort:         s.effort,
+		ServiceTier:    s.serviceTier(),
+		ApprovalPolicy: approval,
+		SandboxPolicy:  &sandboxPolicy,
 	}, &resp)
 	return resp, err
 }
@@ -455,6 +707,8 @@ func (s *Session) interrupt(ctx context.Context, turnID string) error {
 	}, &out)
 }
 
+const nativeCleanupTimeout = 2 * time.Second
+
 // Interrupt cancels the in-flight turn via turn/interrupt.
 func (s *Session) Interrupt(ctx context.Context, reason string) error {
 	if s == nil {
@@ -473,12 +727,19 @@ func (s *Session) Interrupt(ctx context.Context, reason string) error {
 }
 
 // Close releases the client reference held by this session. The shared
-// app-server stays alive while other threads use it.
+// app-server stays alive while other threads or app-server owners use it.
 func (s *Session) Close(context.Context) error {
-	if s == nil || s.engine == nil || s.engine.host == nil {
-		return nil
+	if s != nil {
+		s.mu.Lock()
+		cancel := s.cancelTurn
+		s.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		if s.release != nil {
+			s.release()
+		}
 	}
-	s.engine.host.Release()
 	return nil
 }
 
@@ -567,14 +828,24 @@ type codexAgentItemState struct {
 // turnSubscription translates the notifications of one codex turn into Wuu
 // stream events and signals completion.
 type turnSubscription struct {
-	client *Client
-	turnID string
-	sink   agentengine.EventSink
-	done   chan turnOutcome
+	client   *Client
+	threadID string
+	turnID   string
+	sink     agentengine.EventSink
+	done     chan turnOutcome
 
 	events          chan turnNotification
 	mu              sync.Mutex
 	closed          bool
+	stopped         chan struct{}
+	ready           chan struct{}
+	wake            chan struct{}
+	streamErr       error
+	terminal        *turnNotification
+	terminalTurnID  string
+	nativeStopped   chan struct{}
+	nativeStatus    string
+	nativeDone      bool
 	unsubs          []func()
 	labels          map[string]string
 	tools           map[string]struct{}
@@ -584,17 +855,25 @@ type turnSubscription struct {
 	lastAgentItemID string
 }
 
-func newTurnSubscription(client *Client, sink agentengine.EventSink, done chan turnOutcome) *turnSubscription {
+var errTurnStreamOverflow = errors.New("codex turn stream exceeded its buffer and cannot continue safely")
+
+func newTurnSubscription(client *Client, threadID string, sink agentengine.EventSink, done chan turnOutcome) *turnSubscription {
 	sub := &turnSubscription{
-		client:    client,
-		sink:      sink,
-		done:      done,
-		events:    make(chan turnNotification, 512),
-		labels:    make(map[string]string),
-		tools:     make(map[string]struct{}),
-		reasoning: make(map[string]struct{}),
+		client:        client,
+		threadID:      threadID,
+		sink:          sink,
+		done:          done,
+		events:        make(chan turnNotification, 512),
+		stopped:       make(chan struct{}),
+		ready:         make(chan struct{}),
+		wake:          make(chan struct{}, 1),
+		nativeStopped: make(chan struct{}),
+		labels:        make(map[string]string),
+		tools:         make(map[string]struct{}),
+		reasoning:     make(map[string]struct{}),
 	}
 	handlers := map[string]struct{}{
+		NotifyTurnStarted:           {},
 		NotifyAgentMessageDelta:     {},
 		NotifyReasoningTextDelta:    {},
 		NotifyReasoningSummaryAdded: {},
@@ -610,24 +889,182 @@ func newTurnSubscription(client *Client, sink agentengine.EventSink, done chan t
 			sub.enqueue(turnNotification{method: method, params: params})
 		}))
 	}
+	go sub.run()
 	return sub
 }
 
-// setTurnID fixes the turn the subscription filters for and starts the
-// consume loop. Notifications that arrived before the id was known (between
-// subscription and turn/start response) stay buffered and are filtered once
-// the id is set.
+// setTurnID binds the subscription to the accepted native turn. turn/started
+// may arrive before its RPC response, including when that response is lost.
 func (sub *turnSubscription) setTurnID(turnID string) {
-	sub.turnID = turnID
-	go sub.run()
+	sub.mu.Lock()
+	if sub.turnID == "" {
+		sub.turnID = turnID
+		close(sub.ready)
+	}
+	if sub.terminalTurnID == sub.turnID && !sub.nativeDone {
+		sub.nativeDone = true
+		close(sub.nativeStopped)
+	}
+	sub.signalLocked()
+	sub.mu.Unlock()
 }
 
 func (sub *turnSubscription) enqueue(notification turnNotification) {
+	var target struct {
+		ThreadID string `json:"threadId"`
+	}
+	if err := json.Unmarshal(notification.params, &target); err != nil {
+		sub.fail(fmt.Errorf("decode codex notification target: %w", err))
+		return
+	}
+	if target.ThreadID != sub.threadID {
+		return
+	}
+	var envelope struct {
+		TurnID string            `json:"turnId"`
+		Turn   TurnCompletedInfo `json:"turn"`
+	}
+	if err := json.Unmarshal(notification.params, &envelope); err != nil {
+		sub.fail(fmt.Errorf("decode codex turn notification: %w", err))
+		return
+	}
+	if envelope.TurnID == "" {
+		envelope.TurnID = envelope.Turn.ID
+	}
+	if notification.method == NotifyTurnStarted {
+		if strings.TrimSpace(envelope.TurnID) != "" {
+			sub.setTurnID(envelope.TurnID)
+		}
+		return
+	}
+	sub.mu.Lock()
+	defer sub.mu.Unlock()
+	if sub.closed || (sub.turnID != "" && envelope.TurnID != sub.turnID) {
+		return
+	}
+	if notification.method == NotifyTurnCompleted {
+		switch envelope.Turn.Status {
+		case "completed", "interrupted", "failed":
+		default:
+			if sub.streamErr == nil {
+				sub.streamErr = fmt.Errorf("codex turn/completed returned nonterminal status %q", envelope.Turn.Status)
+			}
+			sub.signalLocked()
+			return
+		}
+		// Terminal delivery has its own slot. Ordinary output backpressure must
+		// never hide proof that the native turn has stopped.
+		sub.terminal = &notification
+		sub.terminalTurnID = envelope.TurnID
+		sub.nativeStatus = envelope.Turn.Status
+		if sub.turnID != "" && !sub.nativeDone {
+			sub.nativeDone = true
+			close(sub.nativeStopped)
+		}
+		sub.signalLocked()
+		return
+	}
+	if sub.streamErr != nil {
+		return
+	}
 	select {
 	case sub.events <- notification:
 	default:
-		// A slow sink must not wedge the app-server; drop the notification
-		// and let turn/completed reconcile the final state.
+		sub.streamErr = errTurnStreamOverflow
+		sub.signalLocked()
+	}
+}
+
+func (sub *turnSubscription) signalLocked() {
+	select {
+	case sub.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (sub *turnSubscription) fail(err error) {
+	sub.mu.Lock()
+	defer sub.mu.Unlock()
+	if sub.streamErr == nil {
+		sub.streamErr = err
+	}
+	sub.signalLocked()
+}
+
+func (sub *turnSubscription) next() (turnNotification, error) {
+	var clientDone <-chan struct{}
+	if sub.client != nil {
+		clientDone = sub.client.done
+	}
+	for {
+		sub.mu.Lock()
+		err := sub.streamErr
+		ready := sub.turnID != ""
+		sub.mu.Unlock()
+		if ready && clientDone == nil && sub.client != nil {
+			clientDone = sub.client.done
+		}
+		events := sub.events
+		if !ready {
+			events = nil
+		}
+		// Drain accepted notifications before a transport-close signal. A native
+		// process can exit immediately after writing its successful terminal.
+		select {
+		case event, ok := <-events:
+			if !ok {
+				if err != nil {
+					return turnNotification{}, err
+				}
+				return turnNotification{}, errors.New("codex turn stream closed before completion")
+			}
+			return event, nil
+		default:
+		}
+		// A failed/invalid start response can race output already accepted by
+		// the reader. Drain that bound output before reporting its failure.
+		if err != nil {
+			return turnNotification{}, err
+		}
+		sub.mu.Lock()
+		var terminal *turnNotification
+		if ready {
+			terminal = sub.terminal
+			sub.terminal = nil
+		}
+		sub.mu.Unlock()
+		if terminal != nil {
+			return *terminal, nil
+		}
+		select {
+		case event, ok := <-events:
+			if !ok {
+				if err != nil {
+					return turnNotification{}, err
+				}
+				return turnNotification{}, errors.New("codex turn stream closed before completion")
+			}
+			return event, nil
+		case <-sub.wake:
+		case <-sub.stopped:
+			return turnNotification{}, context.Canceled
+		case <-clientDone:
+			// Recheck the queue and terminal slot after observing closure.
+			clientDone = nil
+			sub.mu.Lock()
+			if sub.turnID == "" {
+				// The response waiter will bind the ID or fail this subscription.
+				// Preserve buffered output until it has made that decision.
+				sub.mu.Unlock()
+				continue
+			}
+			if len(sub.events) == 0 && sub.terminal == nil {
+				sub.mu.Unlock()
+				return turnNotification{}, sub.client.terminalError()
+			}
+			sub.mu.Unlock()
+			clientDone = sub.client.done
+		}
 	}
 }
 
@@ -638,6 +1075,9 @@ func (sub *turnSubscription) close() {
 		return
 	}
 	sub.closed = true
+	if sub.stopped != nil {
+		close(sub.stopped)
+	}
 	unsubs := sub.unsubs
 	sub.unsubs = nil
 	sub.mu.Unlock()
@@ -657,7 +1097,27 @@ func (sub *turnSubscription) run() {
 		usageCursor  int
 		reconnecting bool
 	)
-	for notification := range sub.events {
+	for {
+		notification, streamErr := sub.next()
+		if streamErr != nil {
+			content := text.String()
+			if content == "" {
+				content = sub.lastAgentText
+			}
+			result := agent.LoopResult{
+				Content: strings.TrimSpace(content), FinishReason: providers.FinishReasonError,
+				InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
+				CacheReadTokens: usage.CacheReadTokens, CacheCreationTokens: usage.CacheCreationTokens,
+			}
+			if content != "" || reasoning.Len() > 0 {
+				result.NewMessages = []providers.ChatMessage{{Role: "assistant", Content: content, ReasoningContent: reasoning.String()}}
+			}
+			if !errors.Is(streamErr, context.Canceled) {
+				sub.emit(providers.StreamEvent{Type: providers.EventError, Error: streamErr})
+			}
+			sub.finish(result, streamErr)
+			return
+		}
 		if sub.turnID == "" {
 			// No turn id (should not happen); drop everything.
 			continue
@@ -680,6 +1140,7 @@ func (sub *turnSubscription) run() {
 			Item json.RawMessage `json:"item"`
 		}
 		if err := json.Unmarshal(notification.params, &envelope); err != nil {
+			sub.fail(fmt.Errorf("decode codex turn notification: %w", err))
 			continue
 		}
 		// turn/completed carries the turn id nested; all other notifications
@@ -759,12 +1220,13 @@ func (sub *turnSubscription) run() {
 				}})
 				continue
 			}
-			sub.emit(providers.StreamEvent{Type: providers.EventError, Error: lastErr})
 			if reconnecting {
 				sub.emit(providers.StreamEvent{Type: providers.EventLifecycle, Lifecycle: &providers.StreamLifecycle{Phase: providers.StreamPhaseFailed, Reason: lastErr.Error()}})
 			}
-			sub.finish(agent.LoopResult{}, lastErr)
-			return
+			// A non-retryable stream error is not native turn completion. Preserve
+			// partial output and let RunTurn confirm the turn stopped.
+			sub.fail(lastErr)
+			continue
 		case NotifyTurnCompleted:
 			status := envelope.Turn.Status
 			var turnErr error
@@ -818,8 +1280,6 @@ func (sub *turnSubscription) run() {
 			return
 		}
 	}
-	// Stream closed without a terminal notification.
-	sub.finish(agent.LoopResult{}, errors.New("codex turn stream closed before completion"))
 }
 
 func (sub *turnSubscription) emitItem(method string, raw json.RawMessage) {

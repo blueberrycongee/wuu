@@ -89,6 +89,20 @@ export default {
 		}
 		return write + "text(await tools.bash(" + encode(map[string]string{"command": publish}) + "));"
 	}
+	// Await the real watcher-driven retirement before the disabling tool returns,
+	// so the next model step must exercise its retained transform chain.
+	waitForRetirement := "node -e " + shellQuote(`const fs = require("node:fs");
+const path = process.argv[1];
+const watcher = fs.watch(path, check);
+const timeout = setTimeout(() => { watcher.close(); process.exit(1); }, 10000);
+function check() {
+  const retired = fs.readFileSync(path, "utf8").split("\n").some(line => {
+    try { const value = JSON.parse(line); return value.event === "shutdown" && value.version === "v2"; }
+    catch { return false; }
+  });
+  if (retired) { clearTimeout(timeout); watcher.close(); console.log("runtime retired"); }
+}
+check();`) + " " + shellQuote(lifecyclePath)
 	var mu sync.Mutex
 	calls := map[string]int{}
 	var problems []string
@@ -161,9 +175,15 @@ export default {
 			expectedVersion = "v1"
 		}
 		for _, prefix := range []string{"GENERATION_PROMPT_", "GENERATION_INTERCEPTOR_"} {
+			wantVersion := expectedVersion
+			// Explicit disable revokes callbacks immediately, even in the turn
+			// whose existing prompt remains pinned until its idle boundary.
+			if stage == "disable-manager" && call > 1 && prefix == "GENERATION_INTERCEPTOR_" {
+				wantVersion = ""
+			}
 			for _, candidate := range []string{"v1", "v2"} {
-				if strings.Contains(surface, prefix+candidate) != (candidate == expectedVersion) {
-					fail("%s step %d has incorrect %s%s generation; expected %q", stage, call, prefix, candidate, expectedVersion)
+				if strings.Contains(surface, prefix+candidate) != (candidate == wantVersion) {
+					fail("%s step %d has incorrect %s%s generation; expected %q", stage, call, prefix, candidate, wantVersion)
 				}
 			}
 		}
@@ -178,7 +198,7 @@ export default {
 					code = `text(await tools.plugin_manager({action:"status"}));`
 				}
 			case "disable-manager":
-				code = "const receipt = await tools.plugin_manager(" + encode(map[string]string{"action": "disable", "id": singleFilePluginID(source)}) + "); text(\"MANAGER_RECEIPT:\" + receipt.model_text);"
+				code = "const receipt = await tools.plugin_manager(" + encode(map[string]string{"action": "disable", "id": singleFilePluginID(source)}) + "); text(\"MANAGER_RECEIPT:\" + receipt.model_text);" + " text(await tools.bash(" + encode(map[string]string{"command": waitForRetirement}) + "));"
 			case "install":
 				code = writeAndPublish(fixture("v1"))
 			case "read-v1", "read-v2", "after-invalid":
@@ -402,7 +422,10 @@ export default {
 	threadID := created["result"].(map[string]any)["thread"].(map[string]any)["id"].(string)
 	runTurn := func(stage string) {
 		request(stage, "turn/start", map[string]string{"thread_id": threadID, "prompt": "acceptance:" + stage})
-		terminal := wait(func(m map[string]any) bool { return m["method"] == "turn/completed" })
+		terminal := wait(func(m map[string]any) bool { return m["method"] == "turn/completed" || m["method"] == "turn/error" })
+		if terminal["method"] == "turn/error" {
+			t.Fatalf("stage %s failed: %v", stage, terminal)
+		}
 		params := terminal["params"].(map[string]any)
 		if params["thread_id"] != threadID || params["turn"].(map[string]any)["status"] != "completed" {
 			t.Fatalf("stage %s did not complete successfully: %v", stage, terminal)

@@ -7,5 +7,5 @@ import "embed"
 
 // Sources contains the SDK and its generated public theme contract.
 //
-//go:embed src/index.ts src/theme-contract.generated.ts src/bundle-contract.ts
+//go:embed src/index.ts src/theme-contract.generated.ts src/bundle-contract.ts src/model.ts
 var Sources embed.FS

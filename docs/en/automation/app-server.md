@@ -151,3 +151,27 @@ The stdio protocol is a trusted local control surface, not an authenticated netw
 service. A remote or hosted deployment must provide its own transport security and
 isolation around it. The [protocol reference](../integrations/app-server-protocol.md)
 covers message shapes, capabilities, selection rules, and cloud process identity.
+
+## Answer native engine questions
+
+Codex questions use the existing `user-question/requested` and
+`user-question/resolved` notifications and `user-question/list`,
+`user-question/respond`, `user-question/cancel`, and `user-question/hold` methods.
+Requests carry the owning Wuu `thread_id` and `turn_id`, plus the native item in
+`call_id`. Question IDs are scoped to this host request; echo them unchanged.
+
+A request with `reply_to_tool: true` returns answers to the waiting engine call.
+Do not also submit a message or steer a turn. `mode: "ask"` uses the regular
+question form; `mode: "offer"` uses the optional card with the existing 20-second
+expiry, paused by `user-question/hold`. Cancelling, skipping, or expiry supplies
+no answer and never selects an option. Turn completion, interruption, and native
+process disconnect retire the question; late responses fail. Missing native
+blocking metadata defaults to a blocking question. Secret-input requests are
+explicitly unsupported and are never shown in a plain-text field.
+
+Wuu enables questions in ordinary native turns when the host question bridge is
+available. An explicit native `features.default_mode_request_user_input = false`
+is retained, and Wuu never overrides the native tool-level disable setting.
+Feature configuration is applied at thread creation or cold resume. Loaded native
+threads keep their initial feature configuration; reconnect the native engine or
+start another conversation to apply a changed native question setting.

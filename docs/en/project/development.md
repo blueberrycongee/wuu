@@ -65,6 +65,25 @@ without a manifest or build. See the [plugin quickstart](../customize/plugin-qui
 
 `make install` installs the CLI from the checkout. The current release workflow packages only the macOS arm64 desktop preview; Windows CI and packaging scripts do not imply a published Windows release. See [installation](../getting-started/installation.md) for user-facing availability.
 
+### Native steering end-to-end check
+
+Build the core, then run `WUU_E2E_CORE=bin/wuu node scripts/native-steering-e2e.mjs`
+with Node 22.13 or newer. The fixture starts the real stdio app-server, a controlled
+native subprocess, and a disposable SQLite store. It checks same-turn steering,
+turn-ID fencing, delayed acknowledgement, rejection, cancellation, persistence
+faults, restart recovery, and unsupported-protocol fallback. It saves results,
+protocol transcripts and the tested binary hash under `.tmp/e2e/native-steering/`;
+set `WUU_STEER_E2E_OUTPUT` to choose another output directory. It uses synthetic
+data and no external inference, and does not validate desktop rendering or an
+installed native engine.
+
+After building the desktop renderer, run
+`cd desktop && electron scripts/native-steering-e2e.cjs` to inspect restored
+unconfirmed input in the production UI. It checks read-only recovery, complete
+clipboard content, ordinary held input controls, and wide/default-font and
+narrow/large-font layouts. Results and screenshots are saved to
+`desktop/out/e2e/native-steering/`; set `WUU_STEER_UI_OUTPUT` to override it.
+
 ## Choose the relevant checks
 
 | Command | What it checks or builds |
@@ -84,11 +103,85 @@ without a manifest or build. See the [plugin quickstart](../customize/plugin-qui
 
 Type checks, unit tests, and successful bundles are different evidence from a working app. For UI changes, inspect the affected rendering and interactions using the [desktop UI guide](desktop-ui.md). For plugin changes, also exercise actual tool calls or rendered contributions; package validation alone does not do that.
 
+For SDK tool scheduling, build the TypeScript SDK with
+`npm --prefix packages/plugin-sdk run build`, then run
+`node scripts/plugin-tool-scheduling-e2e.mjs`. It builds a small Go fixture and
+exercises both SDKs over real JSONL subprocess pipes, including bundled subagent
+and peer tools, using synthetic host services. It requires no model credentials.
+`WUU_E2E_RACE=1` enables the Go race detector; `GO` selects a Go executable.
+Results and wire traces are retained in `.tmp/plugin-tool-scheduling/results.json`;
+`WUU_E2E_OUTPUT` selects another artifact directory. This verifies the SDK process
+boundary, not the full Go host, inference provider, or desktop UI.
+
 `npm --prefix desktop run test:renderer-recovery` intentionally crashes hidden
 Chromium renderers to check recovery, retry limits, window isolation, and IPC.
 It uses a temporary profile and synthetic content, not your Wuu data. Run it in
 a graphical desktop session; it does not validate native dialog appearance or
 packaged-app behavior.
+
+### Native history protocol E2E
+
+Build the CLI with `make build-go`, then build the local protocol fixture with
+`go build -o bin/fakecodex ./internal/codexengine/testdata/fakecodex` and run
+`node scripts/native-history-e2e.mjs`. The driver starts real Wuu and fake Codex
+processes with disposable stores; it uses no vendor credentials or inference.
+It covers native forks, edit cutoffs, transaction failures, unsupported replies,
+legacy identities, child/parent isolation, and restart recovery. Results and raw
+protocol logs are written under `.tmp/e2e/native-history/`; set
+`WUU_HISTORY_E2E_OUTPUT` to select another artifact directory. This checks the
+app-server protocol, not desktop rendering or a live vendor CLI.
+
+### MCP connection lifecycle
+
+After building the core, run the loopback lifecycle fixture:
+
+```sh
+go build -o bin/wuu ./cmd/wuu
+node scripts/mcp-connection-generations-e2e.mjs
+```
+
+It starts real app-server processes with disposable state and synthetic MCP
+servers. Deterministic response barriers cover Disconnect, Connect, Refresh and
+shutdown during background initialization and tool discovery, including later
+explicit reconnects and unaffected servers. It also fills the four-connection
+startup limit, then verifies that newer Disconnect, Connect and Refresh actions
+supersede startup work still waiting in the queue. It does not use real credentials
+or validate the desktop UI. `WUU_E2E_CORE` selects another core binary;
+`WUU_MCP_E2E_OUTPUT` selects the evidence directory. The default is
+`.tmp/e2e/mcp-connection-generations/`, containing JSON RPC transcripts, server
+requests, binary hashes and pass/fail receipts. Existing manager tests additionally
+cover concurrent operations that the serial app-server RPC dispatcher cannot
+issue together, plus permanent revocation and retired-client callbacks.
+
+### MCP authentication across reloads
+
+Run `go run ./scripts/mcp-auth-reload-e2e` to exercise the shared runtime and
+app-server protocol against a loopback OAuth/MCP service. It saves synthetic
+credentials in a disposable file store, then covers authenticated startup,
+manager replacement, a login started before replacement, a retained foreground
+tool call, disable/re-enable, and adding the first MCP server after empty startup.
+It checks that managers and transport sessions remain generation-owned and that
+RPC responses do not expose credentials. No model or external engine is invoked.
+
+The fixture uses the runtime's explicit OAuth-service injection; it does not test
+macOS Keychain or the desktop UI. Receipts, connection identities and RPC output
+are saved under `.tmp/e2e/mcp-auth-reload/`; set `WUU_MCP_AUTH_E2E_OUTPUT` to use
+another evidence directory.
+
+### Workspace PDF preview
+
+Run `npm --prefix desktop run test:e2e:workspace-preview` in a graphical session
+to exercise the real renderer and PDF.js with generated PDFs. It checks retries,
+named and explicit destinations, keyboard/middle-click navigation, page bounds,
+source replacement, retained hidden panels, and close/retry races. External-link IPC is recorded rather
+than opening the system browser; selected real destination responses are delayed
+to check stale results. JSON, synthetic PDFs, and screenshots are written under
+`desktop/out/e2e/workspace-preview/`. No installed profile or Go core is used.
+
+Without a graphical session, run
+`node desktop/scripts/workspace-preview-e2e.cjs --pdf-fixtures-only` to verify the
+same PDF bytes with real Node PDF.js. This checks parsing, named/page-reference
+resolution, and unsafe action data, but does not verify rendering or clicks.
 
 ### Live resize layout guard
 

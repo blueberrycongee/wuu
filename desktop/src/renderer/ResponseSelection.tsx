@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import type { ResponseSelection } from "../shared/protocol";
 import { SelectionActionMenu } from "./SelectionActionMenu";
@@ -6,6 +6,8 @@ import { selectionActionMenuMetrics, selectionActionMenuPosition } from "./Selec
 import { showToast } from "./Toast";
 import { translateCurrent, useI18n } from "./i18n";
 import "./ResponseSelection.css";
+
+export const SideConversationAvailableContext = createContext(false);
 
 let sourceHighlight: { root: HTMLElement; clear: () => void } | undefined;
 
@@ -144,6 +146,7 @@ export function AssistantResponseArticle({ turnID, itemID, children, ...props }:
   const [comment, setComment] = useState("");
   const [position, setPosition] = useState<CSSProperties & { "--menu-enter-y"?: string }>({ left: 0, top: 0 });
   const { t } = useI18n();
+  const sideConversationAvailable = useContext(SideConversationAvailableContext);
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current;
     const anchor = anchorRef.current;
@@ -339,7 +342,7 @@ export function AssistantResponseArticle({ turnID, itemID, children, ...props }:
       onCommentChange={setComment} onAdd={addSelection} onCommentStart={() => setCommenting(true)}
       onCommentCancel={() => { returnToToggleRef.current = true; setCommenting(false); setComment(""); }}
       onCommentSubmit={addSelection} commentToggleRef={commentToggleRef} commentInputRef={commentRef}
-      extraActions={ref.current?.closest('[data-wuu-component="side-thread"]') ? undefined
+      extraActions={!sideConversationAvailable || ref.current?.closest('[data-wuu-component="side-thread"]') ? undefined
         : <button type="button" onPointerDown={event => event.preventDefault()} onClick={askSide}>{t("responseSelection.askSide")}</button>} />, document.body) : null}
   </article>;
 }

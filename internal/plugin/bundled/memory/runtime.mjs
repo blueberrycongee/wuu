@@ -2,7 +2,7 @@
 
 // plugins/memory/src/index.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
-import { lstat, mkdir as mkdir2, readFile as readFile3, readdir, unlink as unlink2 } from "node:fs/promises";
+import { lstat as lstat2, mkdir as mkdir2, readdir, unlink as unlink2 } from "node:fs/promises";
 import { basename as basename2, join as join3 } from "node:path";
 
 // packages/plugin-sdk/src/theme-contract.generated.ts
@@ -235,15 +235,18 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
         return { id: request.id, result: null };
       case "capability.invoke":
         if (!plugin.invokeCapability) throw new Error("capability.invoke is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.invokeCapability(request.params, executionHost, execution) };
       case "service.invoke":
         if (!plugin.invokeService) throw new Error("service.invoke is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.invokeService(request.params, executionHost, execution) };
       case "service.changed":
         await plugin.serviceChanged?.(request.params, host);
         return { id: request.id, result: null };
       case "tool.execute":
         if (!plugin.executeTool) throw new Error("tool.execute is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.executeTool(request.params, executionHost, execution) };
       case "shutdown":
         await plugin.shutdown?.();
@@ -350,6 +353,7 @@ var JSONLRuntimeHost = class {
     this.pending.clear();
   }
 };
+var MAX_CONCURRENT_TOOLS = 8;
 async function runJSONLRuntime(plugin, streams) {
   let writes = Promise.resolve();
   const send = (value) => {
@@ -365,18 +369,42 @@ async function runJSONLRuntime(plugin, streams) {
   const executions = /* @__PURE__ */ new Map();
   const active = /* @__PURE__ */ new Set();
   const concurrentServices = new Set(plugin.concurrentServices ?? []);
-  const concurrentCapabilities = new Set(plugin.concurrentCapabilities ?? []);
-  let requests = Promise.resolve();
-  let lifecycle = requests;
+  const concurrentCapabilities = /* @__PURE__ */ new Set(["model.adapter", "model.middleware", ...plugin.concurrentCapabilities ?? []]);
+  const concurrentTools = /* @__PURE__ */ new Set();
+  const queued = [];
+  let running = 0;
+  let exclusive = false;
+  const pump = () => {
+    while (queued.length > 0 && !exclusive && running < MAX_CONCURRENT_TOOLS) {
+      const next = queued[0];
+      const safe = next.canOverlap();
+      if (!safe && running > 0) return;
+      queued.shift();
+      running++;
+      exclusive = !safe;
+      const finished = () => {
+        running--;
+        if (!safe) exclusive = false;
+        pump();
+      };
+      void next.run().then(finished, finished);
+    }
+  };
+  const schedule = (run, canOverlap = () => false) => {
+    const task = new Promise((resolve, reject) => {
+      queued.push({ run: () => Promise.resolve().then(run).then(resolve, reject), canOverlap });
+    });
+    pump();
+    return task;
+  };
+  let lifecycle = Promise.resolve();
   let shuttingDown = false;
   const track = (task) => {
     active.add(task);
     void task.then(() => active.delete(task), () => active.delete(task));
   };
   const enqueueResponse = (value) => {
-    const task = requests.then(() => send(value));
-    requests = task.catch(() => void 0);
-    track(task);
+    track(schedule(() => send(value)));
   };
   const processLine = (line) => {
     if (line.trim() === "") return;
@@ -412,18 +440,32 @@ async function runJSONLRuntime(plugin, streams) {
     if (!controllers) executions.set(executionId, controllers = /* @__PURE__ */ new Set());
     controllers.add(controller);
     const execution = { executionId, signal: controller.signal };
-    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : requests;
-    const task = ready.then(() => {
-      if (parsed.method === "initialize") host.configure(parsed.params.supported_host_services);
-      return handleRuntimeRequest(plugin, parsed, host, execution, { signal: lifetime.signal });
-    }).then(send).finally(() => {
+    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
+    const run = async () => {
+      await ready;
+      if (parsed.method === "initialize") {
+        host.configure(parsed.params.supported_host_services);
+        concurrentTools.clear();
+      }
+      const response = await handleRuntimeRequest(plugin, parsed, host, execution, { signal: lifetime.signal });
+      if (parsed.method === "initialize" && "result" in response) {
+        const definition = response.result;
+        for (const tool of definition.tools ?? []) {
+          if (tool.activity?.concurrency_safe === true) concurrentTools.add(tool.id);
+        }
+      }
+      await send(response);
+    };
+    const task = (concurrent ? run() : schedule(
+      run,
+      () => parsed.method === "tool.execute" && concurrentTools.has(parsed.params.tool_id)
+    )).finally(() => {
       const controllers2 = executions.get(executionId);
       controllers2?.delete(controller);
       if (controllers2?.size === 0) executions.delete(executionId);
       controller.abort();
     });
-    if (!concurrent) requests = task.catch(() => void 0);
-    if (isLifecycle) lifecycle = requests;
+    if (isLifecycle) lifecycle = task.catch(() => void 0);
     track(task);
   };
   const decoder = new TextDecoder();
@@ -471,8 +513,9 @@ function isRuntimeRequest(value) {
 }
 
 // plugins/memory/src/notebook.ts
-import { randomBytes } from "node:crypto";
-import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { constants } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { lstat, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 var INDEX_FILE = "MEMORY.md";
 var MAX_MEMORY_BYTES = 256 * 1024;
@@ -503,20 +546,88 @@ async function readSafeIndex(notebook) {
     if (missing(error)) return "";
     throw new Error(`memory: read index: ${error instanceof Error ? error.message : String(error)}`);
   }
-  let content = raw.split("\n").map((line) => unsafeLine(line) ? "[memory line removed: security]" : line).join("\n").trim();
-  if (!content) return "";
-  const lines = content.split("\n");
-  const truncated = lines.length > MAX_INDEX_LINES || Buffer.byteLength(content) > MAX_INDEX_BYTES;
-  if (lines.length > MAX_INDEX_LINES) content = lines.slice(0, MAX_INDEX_LINES).join("\n");
+  const result = safeIndex(raw, MAX_INDEX_BYTES);
+  return result.content + (result.truncated ? "\n\n> WARNING: MEMORY.md was truncated before prompt injection. Keep index entries short and move detail into topic files." : "");
+}
+function boundedText(content, maxBytes) {
   const bytes = Buffer.from(content);
-  if (bytes.length > MAX_INDEX_BYTES) {
-    const newline = bytes.subarray(0, MAX_INDEX_BYTES).lastIndexOf(10);
-    let cut = newline > 0 ? newline : MAX_INDEX_BYTES;
-    if (newline <= 0) while (cut > 0 && (bytes[cut] & 192) === 128) cut--;
-    content = bytes.subarray(0, cut).toString();
+  if (bytes.length <= maxBytes) return { content, truncated: false };
+  let cut = maxBytes;
+  while (cut > 0 && (bytes[cut] & 192) === 128) cut--;
+  return { content: bytes.subarray(0, cut).toString(), truncated: true };
+}
+function safeIndex(raw, maxBytes) {
+  const lines = raw.split("\n").map((line) => unsafeLine(line) ? "[memory line removed: security]" : line).join("\n").trim().split("\n");
+  const content = lines.slice(0, MAX_INDEX_LINES).join("\n");
+  const bytes = Buffer.from(content);
+  if (bytes.length > maxBytes) {
+    const newline = bytes.subarray(0, maxBytes).lastIndexOf(10);
+    if (newline > 0) return { content: bytes.subarray(0, newline).toString(), truncated: true };
   }
-  if (truncated) content += "\n\n> WARNING: MEMORY.md was truncated before prompt injection. Keep index entries short and move detail into topic files.";
-  return content;
+  const bounded = boundedText(content, maxBytes);
+  return { content: bounded.content, truncated: lines.length > MAX_INDEX_LINES || bounded.truncated };
+}
+async function readNotebookFile(notebook, name) {
+  const path = join(notebook, name);
+  const before = await lstat(path);
+  if (!before.isFile()) throw new Error("memory file must be a regular file");
+  const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  try {
+    const info = await file.stat();
+    if (!info.isFile() || before.dev !== info.dev || before.ino !== info.ino) throw new Error("memory file changed while opening");
+    const buffer = Buffer.alloc(MAX_MEMORY_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await file.read(buffer, length, buffer.length - length, null);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    if (length > MAX_MEMORY_BYTES) throw new Error(`memory file exceeds ${MAX_MEMORY_BYTES} bytes`);
+    const raw = buffer.subarray(0, length);
+    try {
+      new TextDecoder("utf-8", { fatal: true }).decode(raw);
+    } catch {
+      throw new Error("memory file must contain UTF-8 text");
+    }
+    return raw;
+  } finally {
+    await file.close();
+  }
+}
+async function readNotebookSnapshot(notebook, method, params) {
+  if (params.file != null && typeof params.file !== "string") throw new Error("memory.notebook file must be a string");
+  let name = params.file?.trim() ?? "";
+  let limit = 16 * 1024;
+  let maximum = 64 * 1024;
+  switch (method) {
+    case "index":
+      if (name) throw new Error("memory.notebook index does not accept a file");
+      name = INDEX_FILE;
+      limit = maximum = MAX_INDEX_BYTES;
+      break;
+    case "read":
+      if (!name || name.startsWith(".") || /[/\\]/.test(name) || !name.endsWith(".md") || name.toLowerCase() === INDEX_FILE.toLowerCase()) {
+        throw new Error("memory.notebook read requires a plain, non-hidden topic .md filename; use index for MEMORY.md");
+      }
+      break;
+    default:
+      throw new Error(`unknown memory.notebook method ${JSON.stringify(method)}`);
+  }
+  const maxBytes = params.max_bytes ?? 0;
+  if (typeof maxBytes !== "number" || !Number.isInteger(maxBytes) || maxBytes < 0 || maxBytes > maximum) {
+    throw new Error(`memory.notebook max_bytes must be between 1 and ${maximum}, or 0 for the default`);
+  }
+  if (maxBytes) limit = maxBytes;
+  const source = { scope: "user_notebook", file: name };
+  let raw;
+  try {
+    raw = await readNotebookFile(notebook, name);
+  } catch (error) {
+    if (missing(error)) return { version: 1, source, found: false, content: "", truncated: false };
+    throw error;
+  }
+  const bounded = method === "index" ? safeIndex(raw.toString(), limit) : boundedText(raw.toString(), limit);
+  return { version: 1, source, found: true, revision: `sha256:${createHash("sha256").update(raw).digest("hex")}`, ...bounded };
 }
 async function writeAtomicFile(path, content, mode, createDirectory) {
   if (createDirectory) await mkdir(dirname(path), { recursive: true, mode: 493 });
@@ -691,6 +802,7 @@ var CAPABILITY_PROMPT = "agent.system_prompt.section";
 var CAPABILITY_CLIENT = "plugin.client.request";
 var CAPABILITY_LIFECYCLE = "agent.turn.lifecycle";
 var SESSION_MEMORY_SERVICE = "memory.session";
+var NOTEBOOK_MEMORY_SERVICE = "memory.notebook";
 function object(value) {
   if (value == null) return {};
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("invalid tool arguments: expected an object");
@@ -740,6 +852,10 @@ var MemoryPlugin = class {
         name: SESSION_MEMORY_SERVICE,
         version: "1.0.0",
         methods: ["status", "read", "append", "replace"].map((name) => ({ name, input_schema: `memory.session.${name}.request.v1`, output_schema: `memory.session.${name}.response.v1` }))
+      }, {
+        name: NOTEBOOK_MEMORY_SERVICE,
+        version: "1.0.0",
+        methods: ["index", "read"].map((name) => ({ name, input_schema: `memory.notebook.${name}.request.v1`, output_schema: "memory.notebook.snapshot.v1" }))
       }]
     };
   }
@@ -793,6 +909,7 @@ var MemoryPlugin = class {
     }
   }
   async invokeService(call, _host, execution) {
+    if (call.service === NOTEBOOK_MEMORY_SERVICE) return readNotebookSnapshot(this.notebook, call.method, object(call.params));
     if (call.service !== SESSION_MEMORY_SERVICE) throw new Error(`memory plugin does not provide service ${JSON.stringify(call.service)}`);
     const params = object(call.params);
     return runSessionMemory(this.workspaceStateDir, {
@@ -876,9 +993,8 @@ var MemoryPlugin = class {
     return join3(this.notebook, name);
   }
   async readFile(name) {
-    const raw = await readFile3(this.safePath(name, true));
-    if (raw.length > MAX_MEMORY_BYTES) throw new Error(`memory file exceeds ${MAX_MEMORY_BYTES} bytes`);
-    return raw.toString();
+    const path = this.safePath(name, true);
+    return (await readNotebookFile(this.notebook, basename2(path))).toString();
   }
   async readFileOptional(name) {
     try {
@@ -903,7 +1019,7 @@ var MemoryPlugin = class {
     const entries = await readdir(this.notebook, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (entry.isDirectory() || !entry.name.endsWith(".md")) continue;
-      const info = await lstat(join3(this.notebook, entry.name), { bigint: true }).catch(() => void 0);
+      const info = await lstat2(join3(this.notebook, entry.name), { bigint: true }).catch(() => void 0);
       if (info) out.set(entry.name, { size: info.size, modified: info.mtimeNs });
     }
     return out;

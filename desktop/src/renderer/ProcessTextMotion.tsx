@@ -4,6 +4,7 @@ import {
   useState,
   type JSX,
   type Ref,
+  type ReactNode,
 } from "react";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
 import {
@@ -16,6 +17,23 @@ import {
 const processTextExitMs = (): number =>
   prefersReducedMotion() ? 0 : motionDurationMs("--motion-base", 180);
 const WIDTH_CLEANUP_BUFFER_MS = 32;
+
+/** Keeps the readable label mounted while its decorative sweep comes and goes. */
+export function ProcessLabel({ active, className, text, children }: {
+  active: boolean;
+  className: string;
+  text: string;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <span className={`process-label ${className}${active ? " wuu-live-text-wave" : ""}`} data-text={text}>
+      <span className="process-label-content">{children}</span>
+      {active ? (
+        <span className="process-label-highlight" aria-hidden="true">{children}</span>
+      ) : null}
+    </span>
+  );
+}
 
 export function AnimatedProcessText({
   text,

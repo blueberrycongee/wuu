@@ -3,8 +3,11 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -270,5 +273,152 @@ func TestServerThreadForkPublishesPersistedWorkspaceIdentity(t *testing.T) {
 		if snapshot.WorkspaceID != rt.WorkspaceID || snapshot.CWD != sourceCWD {
 			t.Fatalf("fork snapshot lost workspace identity: id=%s workspace=%q cwd=%q", snapshot.ID, snapshot.WorkspaceID, snapshot.CWD)
 		}
+	}
+}
+
+// interleavedThinkingForkClient streams one completed turn whose middle model
+// step carries two thinking blocks, then blocks every later request so the
+// next turn stays running.
+type interleavedThinkingForkClient struct {
+	firstText string
+	mu        sync.Mutex
+	calls     int
+	blocked   chan struct{}
+	once      sync.Once
+}
+
+func (c *interleavedThinkingForkClient) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
+	return providers.ChatResponse{}, fmt.Errorf("unexpected non-streaming request")
+}
+
+func (c *interleavedThinkingForkClient) StreamChat(ctx context.Context, _ providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	c.mu.Lock()
+	call := c.calls
+	c.calls++
+	c.mu.Unlock()
+	ch := make(chan providers.StreamEvent, 16)
+	think := func(text string) {
+		ch <- providers.StreamEvent{Type: providers.EventThinkingDelta, Content: text}
+		ch <- providers.StreamEvent{Type: providers.EventThinkingDone}
+	}
+	useTool := func(id string) {
+		tool := providers.ToolCall{ID: id, Name: "echo_tool", Arguments: `{}`}
+		ch <- providers.StreamEvent{Type: providers.EventToolUseStart, ToolCall: &providers.ToolCall{ID: id, Name: tool.Name}}
+		ch <- providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &tool}
+		ch <- providers.StreamEvent{Type: providers.EventDone, StopReason: "tool_use"}
+	}
+	switch call {
+	case 0:
+		think("plan the inspection")
+		ch <- providers.StreamEvent{Type: providers.EventContentDelta, Content: c.firstText}
+		useTool("call-a")
+	case 1:
+		think("first interleaved block")
+		think("second interleaved block")
+		useTool("call-b")
+	case 2:
+		think("summarize")
+		ch <- providers.StreamEvent{Type: providers.EventContentDelta, Content: "Final answer for turn one."}
+		ch <- providers.StreamEvent{Type: providers.EventDone, StopReason: "end_turn"}
+	default:
+		c.once.Do(func() { close(c.blocked) })
+		go func() {
+			defer close(ch)
+			<-ctx.Done()
+			ch <- providers.StreamEvent{Type: providers.EventError, Error: ctx.Err()}
+		}()
+		return ch, nil
+	}
+	close(ch)
+	return ch, nil
+}
+
+// TestServerThreadForkLiveAnswerAfterInterleavedThinking reproduces "fork target
+// not found" for an answer the client saw streamed live. One provider message
+// with several thinking blocks yields more live reasoning rows than its
+// restored projection, so positional item ids diverge; fork must still resolve
+// the answer from the identity carried by the completed turn.
+func TestServerThreadForkLiveAnswerAfterInterleavedThinking(t *testing.T) {
+	for _, firstText := range []string{"I will inspect it.", "Final answer for turn one."} {
+		t.Run(firstText, func(t *testing.T) {
+			client := &interleavedThinkingForkClient{firstText: firstText, blocked: make(chan struct{})}
+			rt := newTestRuntime(t, &fakeClient{})
+			rt.StreamRunner.Client = providers.AdaptStreamClient(client)
+			rt.StreamRunner.Tools = fastToolExecutor{}
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
+				t.Fatalf("thread/start: %v", err)
+			}
+			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"]).Thread.ID
+			if err := srv.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"turn-1","method":"turn/start","params":{"thread_id":%q,"prompt":"inspect"}}`, threadID))); err != nil {
+				t.Fatalf("turn/start: %v", err)
+			}
+			completed := remarshal[TurnCompletedNotification](t, notificationByMethod(t, waitForMethod(t, out, NotificationTurnCompleted), NotificationTurnCompleted)["params"])
+			turn, answer := finalAnswerItemForForkTest(t, []Turn{completed.Turn}, "Final answer for turn one.")
+			if answer.Seq <= 0 {
+				t.Fatalf("completed answer has no durable identity: %+v", answer)
+			}
+			sourceHistory, err := loadChatMessages(rt.SessionDir, threadID)
+			if err != nil {
+				t.Fatalf("load completed source history: %v", err)
+			}
+
+			// The user forks the earlier answer while the next turn is still running.
+			if err := srv.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"turn-2","method":"turn/start","params":{"thread_id":%q,"prompt":"next"}}`, threadID))); err != nil {
+				t.Fatalf("turn/start 2: %v", err)
+			}
+			<-client.blocked
+			payload, err := json.Marshal(map[string]any{
+				"id":     "fork",
+				"method": MethodThreadFork,
+				"params": ThreadForkParams{
+					ThreadID: threadID,
+					TurnID:   turn.ID,
+					ItemID:   answer.ID,
+					Mode:     "local",
+					Target:   &ThreadForkTarget{Seq: answer.Seq, Type: answer.Type, SourceID: answer.SourceID},
+				},
+			})
+			if err != nil {
+				t.Fatalf("marshal fork request: %v", err)
+			}
+			if err := srv.handleLine(context.Background(), payload); err != nil {
+				t.Fatalf("thread/fork: %v", err)
+			}
+			response := responseByID(t, parseOutput(t, out.String()), "fork")
+			if response["error"] != nil {
+				t.Fatalf("thread/fork returned error: %+v", response["error"])
+			}
+			fork := remarshal[ThreadForkResult](t, response["result"]).Thread
+			history, err := loadChatMessages(rt.SessionDir, fork.ID)
+			if err != nil {
+				t.Fatalf("load fork history: %v", err)
+			}
+			visible := visibleMessagesForTest(history)
+			want := visibleMessagesForTest(sourceHistory)
+			// A fork owns new durable addresses and execution ledger entries, but the
+			// message contents, reasoning blocks and tool call/result pairs must survive.
+			for _, messages := range [][]providers.ChatMessage{visible, want} {
+				for i := range messages {
+					messages[i].Seq = 0
+					messages[i].ToolInvocationID = ""
+				}
+			}
+			if !reflect.DeepEqual(visible, want) {
+				t.Fatalf("fork changed completed history:\n got %+v\nwant %+v", visible, want)
+			}
+			last := visible[len(visible)-1]
+			if last.Role != "assistant" || last.Content != "Final answer for turn one." {
+				t.Fatalf("fork must end at the selected answer, got %+v", last)
+			}
+			for _, msg := range visible {
+				if msg.Role == "user" && msg.Content == "next" {
+					t.Fatalf("fork included the later running turn: %+v", visible)
+				}
+			}
+		})
 	}
 }

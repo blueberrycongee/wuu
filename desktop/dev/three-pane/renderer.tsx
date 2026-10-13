@@ -10,6 +10,7 @@ import { ConversationTitleActions, ConversationTitleContent } from "../../src/re
 import type { SettingsUsageDay, WuuDesktopApi, Turn, UsageOverviewResponse } from "../../src/shared/protocol";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { applyMeasuredScrollbarWidth } from "../../src/renderer/ScrollbarMetrics";
+import { applyAppearance, appearanceDefaults } from "../../src/renderer/AppearancePreferences";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { AppBackground } from "../../src/renderer/background/AppBackground";
@@ -68,6 +69,7 @@ function Fixture() {
   const params = new URLSearchParams(location.search);
   const [size, setSize] = useState(Number(params.get("size")) || 14);
   const [theme, setTheme] = useState(params.get("theme") || "light");
+  const font = params.get("font") || "";
   const [active, setActive] = useState("sample-0");
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set(["sample-project"]));
   const [tabs, setTabs] = useState<WorkspaceViewTab[]>([]);
@@ -79,7 +81,11 @@ function Fixture() {
   const environmentToggleRef = useRef<HTMLButtonElement>(null);
   const dock = useRef<HTMLElement>(null);
   const [dockHeight, setDockHeight] = useState(0);
-  useLayoutEffect(() => { applyMessageFlowFontSize(size); document.documentElement.dataset.theme = theme; }, [size, theme]);
+  useLayoutEffect(() => {
+    applyMessageFlowFontSize(size);
+    applyAppearance({ ...appearanceDefaults, uiFont: font });
+    document.documentElement.dataset.theme = theme;
+  }, [size, theme, font]);
   useLayoutEffect(() => {
     if (!dock.current) return;
     const element = dock.current;
@@ -90,7 +96,7 @@ function Fixture() {
   function openTool(kind: WorkspacePanelView) { setTabs(current => current.some(tab => tab.id === kind) ? current : [...current, { id: kind, kind }]); setActiveTab(kind); }
   return <WuuUIRoot><ImagePreviewProvider>
     <AppBackground />
-    <div className="sample-controls"><span>当前源码 · 示例数据</span><label>主题 <select value={theme} onChange={e => setTheme(e.target.value)}><option value="light">亮色</option><option value="dark">暗色</option></select></label><label>字号 <select value={size} onChange={e => setSize(Number(e.target.value))}>{[13,14,20].map(n => <option key={n}>{n}</option>)}</select></label><button onClick={() => setRightOpen(value => !value)}>切换右栏</button></div>
+    <div className="sample-controls"><span>当前源码 · 示例数据</span><label>主题 <select value={theme} onChange={e => setTheme(e.target.value)}><option value="light">亮色</option><option value="dark">暗色</option></select></label><label>字号 <select value={size} onChange={e => setSize(Number(e.target.value))}>{[13,14,14.5,20].map(n => <option key={n}>{n}</option>)}</select></label><button onClick={() => setRightOpen(value => !value)}>切换右栏</button></div>
     <div className={`app-shell sample-shell${rightOpen ? " right-panel-open" : ""}${globalized ? " right-panel-globalized" : ""}`}>
       <aside className="sidebar"><div className="sidebar-content">
         <div className="sample-brand">Wuu</div>

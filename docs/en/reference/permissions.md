@@ -32,6 +32,8 @@ This is not a sandbox for all installed code. Plugins, hooks, MCP servers, exter
 
 All shell execution goes through review, including commands classified as read-only. Other destructive or high-risk calls, and applicable Git, process, browser, and MCP actions, are also reviewed. Ordinary low-risk reads do not require it. Review uses the active conversation's model and can add model requests, cost, and latency.
 
+Review is a one-shot, text-only request with a 90-second deadline, also bounded by the owning execution. It preserves the active model's sampling, reasoning, transport compatibility, and configured output-token policy. Provider options cannot replace the review evidence, select another model, or add tools. The host still owns the review policy and the decision to execute a tool.
+
 The reviewer can allow the call, deny it, or leave it unresolved so the agent can explain the proposed action and seek informed user approval in conversation. A timeout, cancellation, or review failure leaves the action unexecuted; it is not permission to bypass review. The option cannot elevate the session to Unconfined or override dedicated credential and sensitive-write guards.
 
 `wuu exec` does not expose this option. Its native permission checks allow or deny calls without opening an interactive approval dialog.

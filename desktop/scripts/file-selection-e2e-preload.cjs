@@ -54,7 +54,16 @@ contextBridge.exposeInMainWorld("selectionE2E", {
 contextBridge.exposeInMainWorld("wuu", {
   initialLanguagePreference: "en-US", initialSystemLocale: "en-US", initialMessageFlowFontSize: 14,
   listProjects: async () => projects(), selectNoProject: async () => projects(),
-  initialize: async () => ({ protocol_version: "e2e", provider: "e2e", model: "mock-selection", workspace_root: cwd, providers }),
+  initialize: async () => ({
+    protocol_version: "e2e", provider: "e2e", model: "mock-selection", workspace_root: cwd, providers,
+    // Selection-to-side uses the public contribution, not a built-in command.
+    extension_inventory: [{
+      id: "user:e2e-attached-chat", kind: "plugin", name: "Attached chat fixture",
+      state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
+      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "e2e-attached-chat" },
+      contributions: { commands: [{ id: "side", title: "Side chat", kind: "side_conversation", template: "Use the fixture side conversation." }] },
+    }],
+  }),
   updateRuntimeSettings: async () => ({ provider: "e2e", model: "mock-selection", providers }),
   loadCodexModels: async () => ({ provider: "e2e", models: [{ id: "mock-selection", name: "mock-selection" }] }),
   getBuildInfo: async () => ({ desktop: { version: "selection-e2e", date: now } }),
