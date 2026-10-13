@@ -3,7 +3,7 @@ import type { ManagedProcessSummary } from "../shared/protocol";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { useConversationRenderActive } from "./ConversationRenderActivity";
 import { useI18n } from "./i18n";
-import { AlertCircle, Bell, X } from "./WuuIcons";
+import { AlertCircle, Bell, ChevronRight, X } from "./WuuIcons";
 import "./styles/conversation-triggers.css";
 
 export function ConversationTriggers({ threadID }: { threadID: string }): JSX.Element {
@@ -142,21 +142,29 @@ function ProcessTriggerRow({ threadID, process, busy, cancelling, onCancel }: {
     return () => { disposed = true; };
   }, [expanded, threadID, process.id]);
 
+  const schedule = [
+    trigger.on_exit ? t("triggers.onExit") : "",
+    trigger.recheck_minutes ? t("triggers.interval", { minutes: trigger.recheck_minutes }) : "",
+    trigger.recheck_minutes && trigger.next_recheck_at
+      ? t("triggers.next", { time: formatDate(trigger.next_recheck_at, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) }) : "",
+  ].filter(Boolean);
+  const metadata = pending && schedule.length > 0
+    ? [...(trigger.status === "received" ? [t("triggers.received")] : []), ...schedule]
+    : [t(`triggers.${trigger.status}`)];
+
   return <section className="conversation-trigger-row">
-    <div className="conversation-trigger-row-heading">
-      <span>{!trigger.on_exit && trigger.recheck_minutes ? t("triggers.recheck") : t("triggers.processExit")}</span>
-      <span className="conversation-trigger-status">{t(`triggers.${trigger.status}`)}</span>
-    </div>
-    <div className="conversation-trigger-command" title={process.command}>{process.command}</div>
-    {pending && trigger.on_exit ? <p>{t("triggers.onExit")}</p> : null}
-    {pending && trigger.recheck_minutes ? <p>{t("triggers.interval", { minutes: trigger.recheck_minutes })}
-      {trigger.next_recheck_at ? ` · ${t("triggers.next", { time: formatDate(trigger.next_recheck_at, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) })}` : ""}</p> : null}
     <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
-      <summary>{t("triggers.source")}</summary>
-      <pre>{process.command}</pre>
+      <summary title={t("triggers.source")}>
+        <ChevronRight className="conversation-trigger-chevron" size={14} aria-hidden="true" />
+        <span className="conversation-trigger-command" title={process.command}>{process.command}</span>
+        <span className="conversation-trigger-meta">
+          {metadata.map((text) => <span key={text}>{text}</span>)}
+        </span>
+      </summary>
       <pre>{failed ? t("triggers.outputFailed") : output === undefined ? t("common.loadingEllipsis") : output || t("triggers.noOutput")}</pre>
     </details>
-    {pending ? <button type="button" className="settings-button settings-button-ghost" disabled={busy} onClick={onCancel}
-      title={t("triggers.cancelHint")}>{cancelling ? t("triggers.cancelling") : t("triggers.cancel")}</button> : null}
+    {pending ? <button type="button" className="settings-button settings-button-ghost conversation-trigger-cancel"
+      disabled={busy} aria-busy={cancelling} aria-label={cancelling ? t("triggers.cancelling") : t("triggers.cancel")}
+      onClick={onCancel} title={t("triggers.cancelHint")}>{t("common.cancel")}</button> : null}
   </section>;
 }

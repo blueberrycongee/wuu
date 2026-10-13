@@ -48,6 +48,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Simplify conversation triggers into compact task rows with inline cancellation
+  and expandable output, removing repeated labels and command text.
+
 - Desktop pet cards use static status icons instead of pulsing lights. The
   composer removes placeholder and floating status copy, shows a static sending
   icon, and offers a retry button after failed sends while keeping the draft and

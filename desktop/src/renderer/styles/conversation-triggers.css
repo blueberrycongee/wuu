@@ -3,66 +3,102 @@
   flex-direction: column;
   width: var(--floating-menu-available-width, 360px);
   max-height: min(500px, var(--floating-menu-available-height, 70vh));
-  padding: 12px;
+  padding: 8px;
   font-weight: var(--weight-regular);
   font-size: var(--font-ui);
   line-height: 1.5;
   color: var(--ink);
 }
 
-.conversation-trigger-heading,
-.conversation-trigger-row-heading {
+.conversation-trigger-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-}
-
-.conversation-trigger-heading {
-  margin-bottom: 8px;
+  padding-left: 8px;
+  flex-shrink: 0;
   font-weight: var(--weight-medium);
 }
 
 .conversation-trigger-list {
   min-height: 0;
-  max-height: min(420px, 55vh);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
+.conversation-trigger-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 8px;
+  padding: 8px;
+}
+
 .conversation-trigger-row + .conversation-trigger-row {
-  margin-top: 12px;
-  padding-top: 12px;
   border-top: 1px solid var(--hairline-soft);
 }
 
-.conversation-trigger-status {
-  flex-shrink: 0;
+.conversation-trigger-meta {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 8px;
+  grid-column: 2;
   color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.conversation-trigger-cancel {
+  align-self: start;
+}
+
+.conversation-trigger-row details {
+  min-width: 0;
 }
 
 .conversation-trigger-panel p {
-  margin: 6px 0;
+  margin: 12px 8px;
   color: var(--ink-muted);
   overflow-wrap: anywhere;
 }
 
 .conversation-trigger-command {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  min-width: 0;
   overflow: hidden;
-  overflow-wrap: anywhere;
-  margin-top: 4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.conversation-trigger-row details {
-  margin-block: 8px;
+.conversation-trigger-row details[open] .conversation-trigger-command {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .conversation-trigger-row summary {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 6px;
+  row-gap: 2px;
+  align-items: start;
+  padding-block: 4px;
+  border-radius: var(--radius-sm);
+  list-style: none;
   cursor: pointer;
+}
+
+.conversation-trigger-row summary::-webkit-details-marker {
+  display: none;
+}
+
+.conversation-trigger-chevron {
+  margin-top: calc((1.5em - 14px) / 2);
   color: var(--ink-muted);
+}
+
+.conversation-trigger-row details[open] .conversation-trigger-chevron {
+  transform: rotate(90deg);
+}
+
+.conversation-trigger-row summary:hover .conversation-trigger-command {
+  color: var(--ink-soft);
 }
 
 .conversation-trigger-row pre {
@@ -70,7 +106,7 @@
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  margin: 8px 0;
+  margin: 8px 0 0 20px;
   padding: 8px;
   background: var(--surface-2);
   border-radius: var(--radius-sm);
@@ -80,6 +116,10 @@
 
 .conversation-trigger-panel .conversation-trigger-error {
   color: var(--danger);
+}
+
+.composer-mobile-sheet .conversation-trigger-heading {
+  display: none;
 }
 
 .conversation-trigger-panel :focus-visible {
