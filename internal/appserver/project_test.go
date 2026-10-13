@@ -112,8 +112,11 @@ func requestHasUserText(request providers.ChatRequest, marker string) bool {
 
 func lastUserRequestMessage(request providers.ChatRequest) providers.ChatMessage {
 	for index := len(request.Messages) - 1; index >= 0; index-- {
-		if request.Messages[index].Role == "user" {
-			return request.Messages[index]
+		message := request.Messages[index]
+		// Catalog refreshes follow admitted input as model-only context. Keep
+		// every other user-role message eligible so attribution errors fail.
+		if message.Role == "user" && !(message.Hidden && message.ReadOnly && message.Origin == "runtime" && message.Cause == "skill_catalog") {
+			return message
 		}
 	}
 	return providers.ChatMessage{}
@@ -606,7 +609,8 @@ func TestProjectDelegatesAndReportsResultOnce(t *testing.T) {
 	plan.response <- toolCallResponse("create-pagination", "session", `{"action":"create","title":"Pagination","prompt":"Implement page-size 50 in search.go"}`)
 
 	brief := calls.next(t, "Implement page-size 50")
-	if message := lastUserRequestMessage(brief.request); message.Origin != "host" || isHumanUserMessage(message) {
+	if message := lastUserRequestMessage(brief.request); message.Origin != "host" || isHumanUserMessage(message) ||
+		message.Cause != "project" || message.RelatedSessionID != coordinator.ID {
 		t.Fatalf("delegation must be attributed to the host, not user authorization: %+v", message)
 	}
 	brief.response <- toolCallResponse("write-search", "write_file", `{"path":"search.go","content":"package search\n\nconst PageSize = 50\n"}`)
@@ -988,7 +992,8 @@ func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
 			if !requestToolNames(workerCall.request)["session"] {
 				t.Fatal("worker has no session communication tool")
 			}
-			if msg := lastUserRequestMessage(workerCall.request); msg.RelatedSessionID != side.ID {
+			if msg := lastUserRequestMessage(workerCall.request); msg.RelatedSessionID != side.ID ||
+				msg.Origin != "host" || msg.Cause != "project" || isHumanUserMessage(msg) {
 				t.Fatalf("worker lost its delegator: %+v", msg)
 			}
 			workerCall.response <- providersResponse("Verified.")
