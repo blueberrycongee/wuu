@@ -129,6 +129,10 @@ struct MessageForkRequest: Identifiable {
         #if DEBUG
         if NativeUIFixture.enabled {
             live = NativeUIFixture.thread(); activeID = live?.id; connected = true
+            if ProcessInfo.processInfo.arguments.contains("--native-refresh-fixture") {
+                refreshing = true
+                if ProcessInfo.processInfo.arguments.contains("--native-empty-fixture") { live = nil }
+            }
             return
         }
         #endif
