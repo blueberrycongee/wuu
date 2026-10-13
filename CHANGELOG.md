@@ -54,7 +54,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   If a native turn cannot confirm it stopped, its shared process is closed and
   other attached turns receive explicit errors rather than staying running.
   Preserve unrelated conversations after confirmed interruption, malformed
-  turn notifications, or cancellation of a queued protocol write.
+  turn notifications, or cancellation of a queued protocol write. On pollable
+  pipes, cancellation racing a completed protocol write also preserves healthy
+  conversations; partial frames still retire the shared connection.
 - Share one Codex startup across concurrent sessions, retry failed or closed
   hosts on later turns, and release each turn's process ownership without
   interrupting other sessions. Keep healthy hosts warm until their app-server
