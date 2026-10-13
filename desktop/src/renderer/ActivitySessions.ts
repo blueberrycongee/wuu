@@ -96,11 +96,15 @@ export function clearActivitiesForWorkdir(
 function mergeActivity(state: ActivitySessionsState, incoming: ActivitySession): ActivitySessionsState {
   const key = activityKey(incoming);
   const current = state.byKey[key];
-  if (current?.state === "stopped" && incoming.state !== "stopped") {
-    return state;
-  }
-  if (current && eventTime(incoming.updated_at) < eventTime(current.updated_at)) {
-    return state;
+  if (current) {
+    const incomingTime = eventTime(incoming.updated_at);
+    const currentTime = eventTime(current.updated_at);
+    if (incomingTime < currentTime) return state;
+    const changedExecution = current.execution_id !== incoming.execution_id;
+    // Activity IDs survive runs. Only a strictly newer, identified execution
+    // can replace a stopped epoch; delayed snapshots cannot restore old control.
+    if (changedExecution && (!incoming.execution_id || incomingTime <= currentTime)) return state;
+    if (current.state === "stopped" && incoming.state !== "stopped" && !changedExecution) return state;
   }
   if (current === incoming) {
     return state;
@@ -112,9 +116,10 @@ function activityKey(activity: ActivitySession): string {
   return `${activity.workdir}\u0000${activity.thread_id}\u0000${activity.id}`;
 }
 
-function eventTime(value: string): number {
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+function eventTime(value: string): string {
+  // Core timestamps are UTC RFC3339Nano. Date.parse loses the ordering between
+  // an execution grant and a stop/control notification in the same millisecond.
+  return value.replace(/(?:\.(\d+))?Z$/, (_match, fraction: string | undefined) => `.${(fraction ?? "").padEnd(9, "0")}Z`);
 }
 
 function activityFromUnknown(value: unknown): ActivitySession | undefined {

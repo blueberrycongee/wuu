@@ -455,7 +455,7 @@ describe("BrowserPiPSurface", () => {
     surface.start();
     surface.setVisible(true);
     await settle();
-    const viewport = overlay.executed.find((code) => code.includes("wuuPipViewport"));
+    const viewport = [...overlay.executed].reverse().find((code) => code.includes("wuuPipViewport"));
     expect(viewport).toContain('"scale":0.26');
     expect(viewport).toContain('"y":20');
 
@@ -482,11 +482,14 @@ describe("BrowserPiPSurface", () => {
     surface.stop();
   });
 
-  it("parks the tab back before an external window close destroys the view", () => {
+  it("hides an externally closed preview and parks its tab without destroying the host", () => {
     const { surface, win, host } = makeSurface();
     surface.start();
     surface.setVisible(true);
-    win.emit("close");
+    const preventDefault = vi.fn();
+    win.emit("close", { preventDefault });
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(win.destroyed).toBe(false);
     expect(host.unmounts).toEqual([{ restore: { x: 0, y: 0, width: 1000, height: 500 } }]);
     surface.stop();
   });

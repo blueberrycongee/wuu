@@ -18,14 +18,16 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 type MCPActivityBinding struct {
-	Kind     activity.Kind
-	PluginID string
+	Kind         activity.Kind
+	PluginID     string
+	GenerationID string
 }
 
 type cuaSequenceRequest struct {
@@ -88,17 +90,30 @@ func (t *Toolkit) executeActivityBoundToolResult(ctx context.Context, call provi
 		return toolresult.Result{}, errors.New("activity-bound MCP tool requires a thread context")
 	}
 	target := mcpActivityTarget(call.Arguments)
-	if binding.Kind == activity.KindCUA {
-		target = t.canonicalCUATarget(ctx, tool, target)
-	}
 	sequence, isSequence := parseCUASequence(call.Arguments)
 
 	// The lease lifecycle (Acquire, before/after CheckControl, re-target, and the
 	// state/preview/error Update) is the shared spine in runActivityBoundAction.
 	// Only the CUA-specific derivations stay here as hooks.
-	spec := activitySpec{Kind: binding.Kind, ThreadID: threadID, Workdir: workdir, PluginID: binding.PluginID, Target: target}
+	spec := activitySpec{Kind: binding.Kind, ThreadID: threadID, Workdir: workdir, PluginID: binding.PluginID, GenerationID: binding.GenerationID, Target: target}
+	if native, ok := tool.(*mcp.MCPTool); ok {
+		spec.ConnectionID = native.ConnectionID()
+	}
 	hooks := activityHooks{
 		run: func(ctx context.Context, session activity.Session, lease activity.Lease) (toolresult.Result, string, error) {
+			if binding.Kind == activity.KindCUA {
+				// Resolving an app may invoke the native helper. Bind ownership
+				// first so even a first-call failure revokes this task's backends.
+				canonical := t.canonicalCUATarget(ctx, tool, target)
+				if err := activity.ControlErr(ctx); err != nil {
+					return toolresult.Result{}, "", err
+				}
+				if canonical != "" && canonical != session.Target {
+					if _, err := t.activityRegistry.UpdateWithLease(lease, activity.UpdateOptions{Target: canonical, ClearWindowIdentity: true}); err != nil {
+						return toolresult.Result{}, "", err
+					}
+				}
+			}
 			if isSequence {
 				return t.executeCUASequence(ctx, tool, threadID, session.ID, lease.Token, sequence)
 			}

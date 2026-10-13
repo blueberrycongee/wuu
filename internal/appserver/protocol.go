@@ -613,6 +613,8 @@ type MCPAuthRemoveResult struct {
 }
 
 type ActivitySession struct {
+	// ExecutionID is absent for standalone/legacy activities without an admitted turn.
+	ExecutionID string                `json:"execution_id,omitempty"`
 	ID          string                `json:"id"`
 	Kind        string                `json:"kind"`
 	ThreadID    string                `json:"thread_id"`
@@ -639,8 +641,9 @@ type ActivityListResult struct {
 }
 
 type ActivityActionParams struct {
-	ThreadID   string `json:"thread_id"`
-	ActivityID string `json:"activity_id"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	ThreadID    string `json:"thread_id"`
+	ActivityID  string `json:"activity_id"`
 }
 
 type ActivityActionResult struct {

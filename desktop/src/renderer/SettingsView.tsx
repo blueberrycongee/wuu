@@ -83,6 +83,7 @@ import { BackgroundSettings } from "./background/BackgroundSettings";
 import { DefaultEnvironmentRow, ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
 import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot, type SettingsStatusTone } from "./SettingsSection";
+import { ActivityPreviewPreferenceSection } from "./ActivityPreviewPreferenceSection";
 import { AppContextSettingsSection } from "./AppContextSettingsSection";
 import { toastErrorMessage } from "./Toast";
 import type { ArchiveDeletionState } from "./useArchiveDeletion";
@@ -1320,6 +1321,7 @@ function SettingsGeneralPage({
         </SettingsGroup>
       </SettingsSection>
 
+      <ActivityPreviewPreferenceSection />
       <AppContextSettingsSection />
 
       <SettingsSection title={t("settings.about")} testID="settings-about">

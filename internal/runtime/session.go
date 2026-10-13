@@ -881,8 +881,9 @@ func NewSession(opts Options) (*Session, error) {
 	}
 	initialHooks := hooks.NewDispatcher(nil)
 	initialHooks.Replace(hookDispatcher)
+	generationID := newPluginGenerationID(wuuHome)
 	runtimeSession.pluginGeneration = &PluginGeneration{
-		id:            newPluginGenerationID(wuuHome),
+		id:            generationID,
 		ownedRoots:    initialSnapshotRoots,
 		settings:      cfg,
 		plugins:       append([]pluginpkg.Plugin(nil), discoveredPlugins...),
@@ -891,7 +892,7 @@ func NewSession(opts Options) (*Session, error) {
 		hooks:         initialHooks,
 		skills:        append([]skills.Skill(nil), discoveredSkills...),
 		pluginSkills:  pluginSkills,
-		mcpBinding:    mcpActivityBindingsFromPlugins(activePlugins),
+		mcpBinding:    mcpActivityBindingsFromPlugins(activePlugins, generationID),
 		systemPrompts: systemPrompts,
 		compactions:   compactions,
 	}
@@ -908,8 +909,10 @@ func NewSession(opts Options) (*Session, error) {
 	if toolkit != nil {
 		runtimeSession.pluginGeneration.mcp = toolkit.MCPManager()
 	}
+	runtimeSession.pluginGeneration.bindActivityOwnership(activityRegistry)
 	runtimeSession.pluginGeneration.retain()
 	if toolkit != nil {
+		toolkit.SetMCPActivityBindings(runtimeSession.pluginGeneration.mcpBinding)
 		toolkit.SetPluginManager(runtimeSession.pluginManager(runtimeSession.pluginGeneration, runPluginManagementCommand))
 		toolkit.SetSkillsWithAvailability(discoveredSkills, runtimeSession.pluginGeneration.skillAvailable)
 		runtimeSession.bindLocalSkillRefresh(toolkit, rootDir, runtimeSession.pluginGeneration)
@@ -2510,7 +2513,6 @@ func connectMCPServers(cfg config.Config, plugins []pluginpkg.Plugin, toolkit *t
 	if toolkit == nil {
 		return
 	}
-	toolkit.SetMCPActivityBindings(mcpActivityBindingsFromPlugins(plugins))
 	manager, _ := startMCPManager(cfg, plugins, nil, oauth)
 	toolkit.SetMCPManager(manager)
 }
@@ -2587,7 +2589,7 @@ func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlug
 	return mcpMgr, nil
 }
 
-func mcpActivityBindingsFromPlugins(plugins []pluginpkg.Plugin) map[string]tools.MCPActivityBinding {
+func mcpActivityBindingsFromPlugins(plugins []pluginpkg.Plugin, generationID string) map[string]tools.MCPActivityBinding {
 	out := make(map[string]tools.MCPActivityBinding)
 	for _, item := range plugins {
 		if len(item.ActivityKinds) != 1 {
@@ -2606,7 +2608,7 @@ func mcpActivityBindingsFromPlugins(plugins []pluginpkg.Plugin) map[string]tools
 			if name == "" {
 				continue
 			}
-			out[PluginMCPServerName(pluginID, name)] = tools.MCPActivityBinding{Kind: kind, PluginID: pluginID}
+			out[PluginMCPServerName(pluginID, name)] = tools.MCPActivityBinding{Kind: kind, PluginID: pluginID, GenerationID: generationID}
 		}
 	}
 	if len(out) == 0 {

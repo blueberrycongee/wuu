@@ -1503,6 +1503,13 @@ export function App(): JSX.Element {
     window.addEventListener("focus", syncVisibleCUAThread);
     return () => window.removeEventListener("focus", syncVisibleCUAThread);
   }, [activeThreadID]);
+  const activeLocalActivity = useMemo(
+    () => state.initialized?.runtime_host?.kind !== "cloud" && window.wuu.showActivityPreview
+      ? activitiesForThread(activitySessions, state.activeContext?.cwd, activeThreadID)
+        .filter(activity => activity.state !== "stopped").at(-1)
+      : undefined,
+    [activitySessions, activeThreadID, state.activeContext?.cwd, state.initialized?.runtime_host?.kind],
+  );
   const activeBrowserActivity = useMemo(
     () =>
       ENABLE_EMBEDDED_BROWSER
@@ -1549,6 +1556,7 @@ export function App(): JSX.Element {
         activeBrowserActivity.thread_id,
         activeBrowserActivity.id,
         inputGeneration,
+        activeBrowserActivity.execution_id,
       );
       mergeActivityResponse(result.activity);
     } catch (error) {
@@ -5737,6 +5745,10 @@ export function App(): JSX.Element {
             rightPanelOpen={rightPanelOpen}
             onToggleRightPanel={toggleRightPanel}
             showRightPanelToggle={false}
+            onShowActivityPreview={activeLocalActivity ? () => {
+              void window.wuu.showActivityPreview!(activeLocalActivity.thread_id)
+                .catch(error => showErrorToast(error, t("app.activityPreviewFailed")));
+            } : undefined}
           />
         </header>
         <ConversationSidePanels

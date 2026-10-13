@@ -19,7 +19,6 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
@@ -56,7 +55,7 @@ type queuedTurn struct {
 	durable             bool
 	deliveryUnconfirmed bool
 	// Captured only at explicit user submission, never by a background drain.
-	resumeBrowser func()
+	resumeActivities func()
 }
 
 type queuedTurnClaim struct {
@@ -230,7 +229,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	snapshot.PermissionExplicit = params.PermissionMode != nil
 	snapshot.ForceCompact = isManualCompactPrompt(params.Prompt)
 	snapshot.RequestContext = activeDocumentRequestContext(params.ActiveDocument)
-	resumeBrowser, err := s.rt.ActivityRegistry.PrepareResume(params.ThreadID, activity.KindBrowser)
+	resumeActivities, err := s.rt.ActivityRegistry.PrepareRun(params.ThreadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -276,7 +275,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	}); err != nil {
 		return errors.Join(err, s.abortStartedThreadTurnDurably(th, started, err))
 	}
-	resumeBrowser()
+	resumeActivities()
 	launch.Commit()
 	return nil
 }
@@ -569,7 +568,7 @@ func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 	}
 	entry := queuedTurn{id: queueID, msg: msg, snapshot: turnRuntimeSnapshot{}.withPermissions(permissions), origin: session.HeldUserWorkOriginQueue}
 	if !params.Hold {
-		entry.resumeBrowser, err = s.rt.ActivityRegistry.PrepareResume(params.ThreadID, activity.KindBrowser)
+		entry.resumeActivities, err = s.rt.ActivityRegistry.PrepareRun(params.ThreadID)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -805,7 +804,7 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 		if !isHeld {
 			return s.writeResponse(req.ID, nil, errors.New("no active turn to steer"))
 		}
-		heldTurn.resumeBrowser, err = s.rt.ActivityRegistry.PrepareResume(params.ThreadID, activity.KindBrowser)
+		heldTurn.resumeActivities, err = s.rt.ActivityRegistry.PrepareRun(params.ThreadID)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -2020,6 +2019,7 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 			interruptedThread = th.snapshotLocked()
 		}
 		th.mu.Unlock()
+		s.rt.ActivityRegistry.PauseThread(threadID)
 		if hasAgentWork && threadRuntime.AgentControl != nil {
 			threadRuntime.AgentControl.FreezeWorkerTree()
 		}
@@ -2075,6 +2075,7 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 	th.workerTreeFrozen = true
 	control := threadAgentControlLocked(th)
 	th.mu.Unlock()
+	s.rt.ActivityRegistry.PauseThread(threadID)
 	// Cancel the active turn before notifying plugin observers. A plugin host
 	// service may be running inside the same helper process as the observer; a
 	// synchronous observer callback here would otherwise re-enter that ordered
@@ -2459,11 +2460,15 @@ func usageContextWindowTokens(runner *agent.StreamRunner) int {
 func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState, threadRuntime *runtime.ThreadRuntime, turnID string, turnRuntime turnRuntimeSnapshot, history []providers.ChatMessage, requestContext []agent.ContextSegment) {
 	browserTurn := &browserTurnState{threadID: th.ID, turnID: turnID, executionID: rand.Text(), bridges: make(map[string]*browserBridge)}
 	ctx = context.WithValue(ctx, browserTurnContextKey{}, browserTurn)
+	ctx = s.rt.ActivityRegistry.BeginExecution(ctx, th.ID, browserTurn.executionID)
 	turnKit := s.rt.Toolkit
 	if threadRuntime != nil && threadRuntime.Toolkit != nil {
 		turnKit = threadRuntime.Toolkit
 	}
-	defer func() { _ = s.finishBrowserTurn(browserTurn, turnKit) }()
+	defer func() {
+		s.rt.ActivityRegistry.EndExecution(th.ID, browserTurn.executionID)
+		_ = s.finishBrowserTurn(browserTurn, turnKit)
+	}()
 	// A refresh during this turn kept its generation leased. Release it once
 	// all turn cleanup has finished, unless background work still depends on it.
 	defer s.retireIdlePluginRuntimes()
@@ -2988,6 +2993,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// long-lived runner before the thread can become idle and admit another
 	// turn; the deferred call remains as panic-safe cleanup.
 	restoreRunner()
+	s.rt.ActivityRegistry.EndExecution(th.ID, browserTurn.executionID)
 	browserCleanupErr := s.finishBrowserTurn(browserTurn, turnKit)
 
 	if errors.Is(err, context.Canceled) {
@@ -4306,8 +4312,8 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 		}
 		th.mu.Unlock()
 	}
-	if entry.resumeBrowser != nil {
-		entry.resumeBrowser()
+	if entry.resumeActivities != nil {
+		entry.resumeActivities()
 	}
 	launch.Commit()
 	if reference := started.runtime.PluginTurn; reference != nil {

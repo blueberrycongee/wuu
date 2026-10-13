@@ -73,6 +73,14 @@ make build-go
 以及宽窗口默认字号和窄窗口大字号布局。结果和截图保存在
 `desktop/out/e2e/native-steering/`；可用 `WUU_STEER_UI_OUTPUT` 更改目录。
 
+### 实时活动预览验收
+
+安装桌面依赖后，运行 `node desktop/scripts/activity-preview-e2e.cjs`。脚本会打包产品中的 Electron 预览窗口与浏览器/原生内容适配器，打开独立的合成网页，并通过真实 JSONL 传输启动合成原生画面子进程。它检查切换提供方时的窗口身份和几何保持、画面确认、旧回调拒绝、捕获错误呈现、手动隐藏与重新打开、自动预览设置、任务控制派发以及关闭清理。结果、传输日志与渲染截图保存在 `desktop/out/activity-preview/`；可用 `WUU_ACTIVITY_PREVIEW_OUTPUT` 修改目录。无图形会话的 Linux 自动使用软件渲染和合成显示器。
+
+构建 core 后，运行 `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs`，检查真实 Go 执行归属和 Chromium 输入。停止必须中断当前任务；之后的新指令应取得新的操作权限，旧执行 ID 仍须被拒绝。该脚本也覆盖浏览器任务隔离、保留页面、待发送输入期间接管与清理。证据保存在 `desktop/out/browser-task-ownership/`。
+
+这些检查不验证 ScreenCaptureKit、原生应用输入、macOS 权限、系统窗口合成或安装包签名。在启用 Computer Use 的 macOS 构建中，还需检查浏览器 → 原生应用 → 浏览器切换、同一应用的两个窗口、将终端和 Wuu 作为普通目标、隐藏或最小化窗口、目标关闭、屏幕录制权限拒绝或撤销，以及待发送输入期间的接管。隐藏和停止不能退出被观察的应用；停用或替换扩展必须停止它的流。还需检查明暗主题、默认与大字号、减少动态效果，以及输入框附近的拖拽和缩放。`node desktop/scripts/inspect-cua-pip.cjs` 可为运行中的原生预览记录进程/窗口诊断与截图；辅助进程正在运行本身不能证明画面实时有效。
+
 ## 选择相关检查
 
 | 命令 | 检查或构建内容 |

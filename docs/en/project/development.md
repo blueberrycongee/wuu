@@ -127,6 +127,14 @@ it with `xvfb-run --auto-servernum` and `-- --no-sandbox`. Measurements and
 screenshots go to `desktop/out/stream-settlement/` (`WUU_SETTLEMENT_OUTPUT`
 overrides this). Desktop CI runs the same gate and uploads its evidence.
 
+### Live activity preview acceptance
+
+Run `node desktop/scripts/activity-preview-e2e.cjs` after installing desktop dependencies. It bundles the production Electron preview shell and browser/native content adapters, opens isolated browser pages, and starts a synthetic native-frame subprocess over the real JSONL transport. It verifies stable window identity and geometry across provider changes, frame acknowledgement, stale callback rejection, capture-error presentation, sticky hide and explicit reopen, automatic-preview preference, task-control dispatch, and teardown. Results, transport logs, and rendered screenshots are saved under `desktop/out/activity-preview/`; `WUU_ACTIVITY_PREVIEW_OUTPUT` selects another directory. Headless Linux uses software rendering and a synthetic display automatically.
+
+Build the core, then run `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs` to check real Go execution ownership and Chromium input. Stop must interrupt the current run; a later user instruction must work with new authority while old execution IDs remain rejected. The fixture also covers browser task isolation, retained pages, takeover during pending input, and cleanup. Evidence is written under `desktop/out/browser-task-ownership/`.
+
+These checks do not verify ScreenCaptureKit, native application input, macOS permissions, native window composition, or packaged signatures. On a Computer Use-enabled macOS build, also check browser → native app → browser switching, two windows of one app, Terminal and Wuu as ordinary targets, hidden/minimized windows, target closure, Screen Recording denial/revocation, and takeover during pending input. Hide and Stop must leave the observed applications running; extension disable or replacement must retire its stream. Check both themes, default and large text, reduced motion, and drag/resize near the composer. `node desktop/scripts/inspect-cua-pip.cjs` records process/window diagnostics and captures for a running native preview; a running helper alone is not proof of live pixels.
+
 ### Native history protocol E2E
 
 Build the CLI with `make build-go`, then build the local protocol fixture with

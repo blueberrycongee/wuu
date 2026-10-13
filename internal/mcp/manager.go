@@ -45,13 +45,15 @@ type Manager struct {
 	statuses   map[string]ServerStatus
 	servers    map[string]*serverLifecycle
 	generation uint64
-	oauth      *OAuthManager
-	ctx        context.Context
-	cancel     context.CancelFunc
-	operations sync.WaitGroup
-	closed     bool
-	closeDone  chan struct{}
-	closeErr   error
+	// connectionRetired releases host resources owned by a disconnected provider.
+	connectionRetired func(string, string)
+	oauth             *OAuthManager
+	ctx               context.Context
+	cancel            context.CancelFunc
+	operations        sync.WaitGroup
+	closed            bool
+	closeDone         chan struct{}
+	closeErr          error
 }
 
 var (
@@ -80,6 +82,27 @@ func NewManager() *Manager {
 		ctx:       ctx,
 		cancel:    cancel,
 		closeDone: make(chan struct{}),
+	}
+}
+
+// SetConnectionRetiredCallback binds cleanup of host resources to provider
+// connection retirement. It is called outside the manager lock before closing
+// detached connections; callbacks must not synchronously close this manager.
+func (m *Manager) SetConnectionRetiredCallback(callback func(serverName, connectionID string)) {
+	m.mu.Lock()
+	m.connectionRetired = callback
+	m.mu.Unlock()
+}
+
+func (m *Manager) notifyConnectionRetired(client *Client) {
+	if client == nil {
+		return
+	}
+	m.mu.RLock()
+	callback := m.connectionRetired
+	m.mu.RUnlock()
+	if callback != nil {
+		callback(client.Name(), client.ConnectionID())
 	}
 }
 
@@ -271,6 +294,7 @@ func (m *Manager) add(ctx context.Context, cfg ServerConfig, mode connectionMode
 	m.generation++
 	m.mu.Unlock()
 	if old != nil {
+		m.notifyConnectionRetired(old)
 		_ = old.Close()
 	}
 	return nil
@@ -341,6 +365,7 @@ func (m *Manager) beginConnection(parent context.Context, cfg ServerConfig, mode
 		previousCancel()
 	}
 	if old != nil {
+		m.notifyConnectionRetired(old)
 		_ = old.Close()
 	}
 	return &connectionAttempt{ctx: ctx, config: cfg, generation: generation, finish: func() {
@@ -413,6 +438,7 @@ func (m *Manager) clientConnectionFailed(name string, generation uint64, client 
 	m.operations.Add(1)
 	m.mu.Unlock()
 	defer m.operations.Done()
+	m.notifyConnectionRetired(client)
 	_ = client.Close()
 }
 
@@ -567,6 +593,7 @@ func (m *Manager) Revoke(name string) error {
 		m.operations.Add(1)
 	}
 	m.mu.Unlock()
+	m.notifyConnectionRetired(client)
 	if cancel != nil {
 		cancel()
 	}
@@ -625,6 +652,7 @@ func (m *Manager) Disconnect(name string) error {
 		m.operations.Add(1)
 	}
 	m.mu.Unlock()
+	m.notifyConnectionRetired(c)
 	if cancel != nil {
 		cancel()
 	}
@@ -780,6 +808,10 @@ func (m *Manager) Close() error {
 	}
 	m.mu.Unlock()
 
+	sort.Slice(clients, func(i, j int) bool { return clients[i].Name() < clients[j].Name() })
+	for _, client := range clients {
+		m.notifyConnectionRetired(client)
+	}
 	cancel()
 	var firstErr error
 	for _, c := range clients {
@@ -831,6 +863,7 @@ func (m *Manager) recordConnectionStatus(generation uint64, status ServerStatus,
 	m.mu.Unlock()
 	if client != nil {
 		defer m.operations.Done()
+		m.notifyConnectionRetired(client)
 		_ = client.Close()
 	}
 	return nil

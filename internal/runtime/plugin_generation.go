@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/hooks"
@@ -29,8 +30,9 @@ import (
 // PluginGeneration is a complete replacement for the plugin-owned surfaces of a
 // Session. It owns every process and private package snapshot. Conversations
 // adopt published updates at their next idle turn boundary. Active foreground
-// turns retain their generation; publication cancels its background jobs. Committed removal
-// or disable revokes that plugin across all retained generations immediately.
+// turns retain their generation; publication cancels its background jobs and
+// local UI control. Committed removal or disable revokes that plugin across all
+// retained generations immediately.
 // Close retires the remaining resources in reverse ownership order and records
 // a structured revocation report.
 type PluginGeneration struct {
@@ -44,6 +46,7 @@ type PluginGeneration struct {
 	pluginSkills      pluginSkillSnapshot
 	mcp               *mcp.Manager
 	mcpBinding        map[string]tools.MCPActivityBinding
+	activityRegistry  *activity.Registry
 	requestTransforms *agent.RequestTransformChain
 	systemPrompts     *agent.SystemPromptAssembler
 	compactions       *agent.CompactionRegistry
@@ -343,8 +346,9 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		return nil, errors.Join(err, closeErr)
 	}
 	pluginSkills := discoverPluginSkills(active)
+	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
-		id:                newPluginGenerationID(s.WuuHome),
+		id:                generationID,
 		settings:          cfg,
 		plugins:           append([]pluginpkg.Plugin(nil), discovered...),
 		active:            append([]pluginpkg.Plugin(nil), active...),
@@ -352,7 +356,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		hooks:             buildHookDispatcher(cfg, active, s.TitleClient, s.Model, nil),
 		skills:            discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, pluginSkills, cfg.Skills),
 		pluginSkills:      pluginSkills,
-		mcpBinding:        mcpActivityBindingsFromPlugins(active),
+		mcpBinding:        mcpActivityBindingsFromPlugins(active, generationID),
 		requestTransforms: buildPluginRequestTransforms(host, s.ProviderName, "", s.RootDir),
 		systemPrompts:     systemPrompts,
 		compactions:       compactions,
@@ -367,6 +371,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 	}
 	// Activation acquires the Session reference. A prepared candidate has no
 	// live owners and must not keep an extra reference after publication.
+	generation.bindActivityOwnership(s.ActivityRegistry)
 	return generation, nil
 }
 
@@ -390,8 +395,9 @@ func (e *pluginGenerationCommittedError) Unwrap() error { return e.cause }
 // without invoking candidate activation. After commit, activation failure is a
 // degraded published generation, exposed through status inventory and a
 // PluginGenerationWasCommitted error; external effects cannot be rolled back.
-// Active work retains same-ID implementations until its idle boundary, while
-// removal or disable revokes that plugin across all retained generations.
+// Active work retains same-ID implementations until its idle boundary. Local
+// control and previews stop at publication, while removal or disable revokes all
+// of that plugin's surfaces across retained generations.
 func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit func() error) error {
 	if s == nil {
 		return errors.New("runtime is not initialized")
@@ -415,8 +421,11 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		}
 	}
 	s.pluginGenerationMu.Unlock()
-	// Publication transfers background ownership before the replacement starts
-	// its timers. Existing foreground calls can continue on the old generation.
+	// Local control cannot outlive provider replacement. Revoke leases before
+	// the replacement activates, so a pinned foreground turn cannot keep sending
+	// input or silently switch control surfaces after publication.
+	old.revokeActivities("")
+	// Ordinary foreground calls retain their generation until the idle boundary.
 	old.host.StopBackground()
 	// Activation may synchronously call host services. Keep old bindings
 	// available until activation settles, without holding their lookup mutex.
@@ -431,7 +440,7 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		candidate.active = available
 		candidate.pluginSkills = discoverPluginSkills(available)
 		candidate.skills = discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, candidate.pluginSkills, candidate.settings.Skills)
-		candidate.mcpBinding = mcpActivityBindingsFromPlugins(available)
+		candidate.mcpBinding = mcpActivityBindingsFromPlugins(available, candidate.id)
 	}
 	// Preparation materializes native contributions before the effectful
 	// lifecycle opens. Failed runtimes must not leave cached prompts or win
@@ -561,6 +570,7 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 		g.hooks.Replace(buildHookDispatcher(g.settings, remaining, client, model, nil))
 	}
 	for _, item := range retiring {
+		g.revokeActivities(item.ID)
 		if g.host != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			outcome, _ := g.host.RetirePlugin(ctx, item.ID, &pluginhost.UserQuestionError{Code: "plugin_disabled", Message: "plugin was removed or disabled"})
@@ -705,8 +715,9 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 	}
 	hookSnapshot := hooks.NewDispatcher(nil)
 	hookSnapshot.Replace(s.HookDispatcher)
+	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
-		id:                newPluginGenerationID(s.WuuHome),
+		id:                generationID,
 		settings:          config.Config{Extensions: s.ExtensionSettings},
 		plugins:           append([]pluginpkg.Plugin(nil), s.Plugins...),
 		active:            append([]pluginpkg.Plugin(nil), s.ActivePlugins...),
@@ -715,12 +726,16 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 		skills:            append([]skills.Skill(nil), s.Skills...),
 		pluginSkills:      s.pluginSkills,
 		mcp:               manager,
-		mcpBinding:        mcpActivityBindingsFromPlugins(s.ActivePlugins),
+		mcpBinding:        mcpActivityBindingsFromPlugins(s.ActivePlugins, generationID),
 		requestTransforms: buildPluginRequestTransforms(s.PluginHost, s.ProviderName, "", s.RootDir),
 		systemPrompts:     s.systemPrompts,
 	}
 	if s.StreamRunner != nil {
 		generation.compactions = s.StreamRunner.CompactionRegistry
+	}
+	generation.bindActivityOwnership(s.ActivityRegistry)
+	if s.Toolkit != nil {
+		s.Toolkit.SetMCPActivityBindings(generation.mcpBinding)
 	}
 	generation.retain()
 	return generation
@@ -785,6 +800,9 @@ func (g *PluginGeneration) close() error {
 	}
 	g.revokedMu.Unlock()
 	report := &GenerationRevocationReport{GenerationID: g.id, RetiredAt: time.Now().UTC()}
+	for _, owner := range g.revokeActivities("") {
+		report.record(owner, "activity-control", RevocationPhaseCancelExecutions, nil)
+	}
 	var err error
 	if g.mcp != nil {
 		mcpErr := g.mcp.Close()

@@ -1031,6 +1031,8 @@ export type MCPAuthRemoveResult = {
 
 export type ActivitySession = {
   id: string;
+  // Identifies the admitted run; callbacks from earlier runs cannot regain control.
+  execution_id?: string;
   kind: "browser" | "cua";
   thread_id: string;
   workdir: string;
@@ -3019,9 +3021,9 @@ export type WuuDesktopApi = {
   pollXAILogin: (loginId: string) => Promise<AuthXAILoginPollResult>;
   cancelXAILogin: (loginId: string) => Promise<{ ok: boolean }>;
   listActivities: (threadId: string) => Promise<ActivityListResult>;
-  takeoverActivity: (threadId: string, activityId: string, inputGeneration?: number) => Promise<ActivityActionResult>;
-  releaseActivity: (threadId: string, activityId: string) => Promise<ActivityReleaseResult>;
-  stopActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
+  takeoverActivity: (threadId: string, activityId: string, inputGeneration?: number, executionId?: string) => Promise<ActivityActionResult>;
+  releaseActivity: (threadId: string, activityId: string, executionId?: string) => Promise<ActivityReleaseResult>;
+  stopActivity: (threadId: string, activityId: string, executionId?: string) => Promise<ActivityActionResult>;
   listSkills: (params?: SkillListParams) => Promise<SkillListResult>;
   readSkillContent: (params: SkillContentParams) => Promise<SkillContentResult>;
   returnManagedSession: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
@@ -3075,6 +3077,11 @@ export type WuuDesktopApi = {
   windowClose?: () => Promise<void>;
   windowIsMaximized?: () => Promise<boolean>;
   onWindowMaximizedChange?: (handler: (maximized: boolean) => void) => () => void;
+  // Desktop-only presentation preference. Does not enable or disable extensions.
+  getActivityPreviewAutoShow?: () => Promise<boolean>;
+  setActivityPreviewAutoShow?: (enabled: boolean) => Promise<void>;
+  onActivityPreviewAutoShowChange?: (handler: (enabled: boolean) => void) => () => void;
+  showActivityPreview?: (threadId: string) => Promise<void>;
   // Appearance. The preference persists in desktop-settings.json; the
   // renderer resolves "system" against prefers-color-scheme and stamps
   // data-theme on <html>. `initialThemePreference` is read synchronously

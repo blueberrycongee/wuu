@@ -1,24 +1,23 @@
 import AppKit
 import ApplicationServices
-import AVFoundation
+@preconcurrency import CoreImage
 @preconcurrency import CoreMedia
+import CoreVideo
 import Darwin
 import Foundation
-import QuartzCore
+import ImageIO
 @preconcurrency import ScreenCaptureKit
 
-public struct NativePiPConfiguration: Sendable {
+public struct NativePreviewConfiguration: Sendable {
     public let activityID: String
     public let target: String
-    public let frame: CGRect
     public let processID: pid_t?
     public let windowID: CGWindowID?
     public let parentProcessID: pid_t?
 
-    public init(activityID: String, target: String, frame: CGRect, processID: pid_t? = nil, windowID: CGWindowID? = nil, parentProcessID: pid_t? = nil) {
+    public init(activityID: String, target: String, processID: pid_t? = nil, windowID: CGWindowID? = nil, parentProcessID: pid_t? = nil) {
         self.activityID = activityID
         self.target = target
-        self.frame = frame
         self.processID = processID
         self.windowID = windowID
         self.parentProcessID = parentProcessID
@@ -58,552 +57,137 @@ private final class PiPCommandReader: @unchecked Sendable {
     }
 }
 
-private final class CapturedFrame: @unchecked Sendable {
-    let sampleBuffer: CMSampleBuffer
-
-    init(_ sampleBuffer: CMSampleBuffer) {
-        self.sampleBuffer = sampleBuffer
-    }
-}
-
-@MainActor
-private final class NativePiPLiveView: NSView {
-    private let displayLayer = AVSampleBufferDisplayLayer()
-    private let pointerLayer = CAShapeLayer()
-    private let rippleLayer = CAShapeLayer()
-    private var videoSize = CGSize(width: 16, height: 9)
-    private var pointerPosition = CGPoint(x: 0.5, y: 0.5)
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.clear.cgColor
-
-        displayLayer.videoGravity = .resizeAspect
-        displayLayer.backgroundColor = NSColor.clear.cgColor
-        layer?.addSublayer(displayLayer)
-
-        let pointerPath = CGMutablePath()
-        // Core Animation uses a bottom-left origin here. Define the cursor in
-        // that coordinate space so its tip points toward the upper-left.
-        pointerPath.move(to: CGPoint(x: 2, y: 28))
-        pointerPath.addLine(to: CGPoint(x: 2, y: 5))
-        pointerPath.addLine(to: CGPoint(x: 8, y: 11))
-        pointerPath.addLine(to: CGPoint(x: 12, y: 2))
-        pointerPath.addLine(to: CGPoint(x: 17, y: 4))
-        pointerPath.addLine(to: CGPoint(x: 13, y: 13))
-        pointerPath.addLine(to: CGPoint(x: 21, y: 13))
-        pointerPath.closeSubpath()
-        pointerLayer.opacity = 0
-        pointerLayer.path = pointerPath
-        pointerLayer.fillColor = NSColor.white.cgColor
-        pointerLayer.strokeColor = NSColor.systemOrange.cgColor
-        pointerLayer.lineWidth = 2
-        pointerLayer.lineJoin = .round
-        pointerLayer.bounds = CGRect(x: 0, y: 0, width: 24, height: 30)
-        pointerLayer.anchorPoint = CGPoint(x: 2.0 / 24.0, y: 28.0 / 30.0)
-        layer?.addSublayer(pointerLayer)
-
-        rippleLayer.path = CGPath(ellipseIn: CGRect(x: 0, y: 0, width: 18, height: 18), transform: nil)
-        rippleLayer.fillColor = NSColor.clear.cgColor
-        rippleLayer.strokeColor = NSColor.systemOrange.withAlphaComponent(0.9).cgColor
-        rippleLayer.lineWidth = 2
-        rippleLayer.bounds = CGRect(x: 0, y: 0, width: 18, height: 18)
-        rippleLayer.opacity = 0
-        layer?.addSublayer(rippleLayer)
+/// Only the latest uncoded frame and one acknowledged transport frame are kept.
+/// Encoding never runs on the main actor or the ScreenCaptureKit callback queue.
+private final class NativePreviewFrames: @unchecked Sendable {
+    private struct Frame {
+        let image: CVPixelBuffer
+        let generation: UInt64
     }
 
-    required init?(coder: NSCoder) { nil }
+    private let lock = NSLock()
+    private let queue = DispatchQueue(label: "com.blueberrycongee.wuu.cua.preview-encode", qos: .userInitiated)
+    private let context = CIContext(options: [.cacheIntermediates: false])
+    private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+    private let writer: PiPEventWriter
+    private var generation: UInt64 = 0
+    private var sequence: UInt64 = 0
+    private var pending: Frame?
+    private var encoding = false
+    private var awaitingAcknowledgement: UInt64?
+    private var failure: String?
 
-    override func layout() {
-        super.layout()
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        displayLayer.frame = bounds
-        placePointer()
-        CATransaction.commit()
+    init(writer: PiPEventWriter) { self.writer = writer }
+
+    func beginStream() -> UInt64 {
+        lock.withLock {
+            generation += 1
+            pending = nil
+            awaitingAcknowledgement = nil
+            return generation
+        }
     }
 
-    func enqueue(_ sampleBuffer: CMSampleBuffer) {
-        // AVSampleBufferDisplayLayer reads DisplayImmediately from the per-sample
-        // attachments array, never from buffer-level attachments. Without a
-        // control timebase, a frame only presents when this flag is set on the
-        // sample itself; writing it with CMSetAttachment lands it in the wrong
-        // bucket, so the layer holds every frame in its queue and stays black
-        // while the overlay pointer (a separate CAShapeLayer) still renders.
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true),
-           CFArrayGetCount(attachments) > 0 {
-            let sampleAttachments = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
-            CFDictionarySetValue(
-                sampleAttachments,
-                Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
-                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+    func invalidate() {
+        lock.withLock {
+            generation += 1
+            pending = nil
+            awaitingAcknowledgement = nil
+        }
+    }
+
+    func isCurrent(_ generation: UInt64) -> Bool { lock.withLock { generation == self.generation } }
+    func failureMessage() -> String? { lock.withLock { failure } }
+
+    func submit(_ image: CVPixelBuffer, generation: UInt64) {
+        lock.withLock {
+            guard generation == self.generation else { return }
+            pending = Frame(image: image, generation: generation)
+            scheduleIfReady()
+        }
+    }
+
+    func acknowledge(_ sequence: UInt64) {
+        lock.withLock {
+            guard awaitingAcknowledgement == sequence else { return }
+            awaitingAcknowledgement = nil
+            scheduleIfReady()
+        }
+    }
+
+    // Caller holds lock. Keeping one queue operation, rather than dispatching
+    // every captured sample, prevents a slow encoder/renderer growing a backlog.
+    private func scheduleIfReady() {
+        guard !encoding, awaitingAcknowledgement == nil, pending != nil else { return }
+        encoding = true
+        queue.async { [self] in encodeLatest() }
+    }
+
+    private func encodeLatest() {
+        let selected: (Frame, UInt64)? = lock.withLock {
+            guard let frame = pending, awaitingAcknowledgement == nil else {
+                encoding = false
+                return nil
+            }
+            pending = nil
+            sequence += 1
+            awaitingAcknowledgement = sequence
+            return (frame, sequence)
+        }
+        guard let (frame, sequence) = selected else { return }
+        let data = autoreleasepool {
+            context.jpegRepresentation(
+                of: CIImage(cvPixelBuffer: frame.image),
+                colorSpace: colorSpace,
+                options: [CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): 0.82]
             )
         }
-        if displayLayer.status == .failed { displayLayer.flush() }
-        displayLayer.enqueue(sampleBuffer)
-        if let imageBuffer = sampleBuffer.imageBuffer {
-            let size = CGSize(width: CVPixelBufferGetWidth(imageBuffer), height: CVPixelBufferGetHeight(imageBuffer))
-            setVideoSize(size)
+        lock.withLock {
+            encoding = false
+            guard frame.generation == generation, awaitingAcknowledgement == sequence else {
+                scheduleIfReady()
+                return
+            }
+            // A preview is bounded to 1280 pixels on its longest edge. Reject a
+            // malformed/oversized result instead of allowing unbounded pipe data.
+            guard let data, data.count <= 3_000_000 else {
+                generation += 1
+                awaitingAcknowledgement = nil
+                pending = nil
+                let message = "native preview frame encoding failed"
+                failure = message
+                writer.send("capture_status", fields: ["status": "error", "message": message])
+                return
+            }
+            writer.send("frame", fields: [
+                "sequence": sequence,
+                "width": CVPixelBufferGetWidth(frame.image),
+                "height": CVPixelBufferGetHeight(frame.image),
+                "data": data.base64EncodedString(),
+            ])
         }
-    }
-
-    func setVideoSize(_ size: CGSize) {
-        guard size.width > 0, size.height > 0 else { return }
-        videoSize = size
-        needsLayout = true
-    }
-
-    func hideInteraction() {
-        pointerLayer.opacity = 0
-        pointerLayer.removeAllAnimations()
-        rippleLayer.removeAllAnimations()
-    }
-
-    func animateInteraction(_ payload: [String: Any]) {
-        guard let kind = payload["kind"] as? String,
-              let x = payload["x"] as? Double,
-              let y = payload["y"] as? Double else { return }
-        let destination = CGPoint(
-            x: min(1, max(0, payload["to_x"] as? Double ?? x)),
-            y: min(1, max(0, payload["to_y"] as? Double ?? y))
-        )
-        pointerLayer.opacity = 1
-        let from = pointerPoint(pointerPosition)
-        let to = pointerPoint(destination)
-        pointerPosition = destination
-
-        let animation = CAKeyframeAnimation(keyPath: "position")
-        animation.values = [from, CGPoint(x: (from.x + to.x) / 2 + 18, y: (from.y + to.y) / 2 + 14), to]
-        animation.keyTimes = [0, 0.52, 1]
-        animation.duration = 0.52
-        animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 0.8, 0.24, 1)
-        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { pointerLayer.add(animation, forKey: "move") }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        pointerLayer.position = to
-        rippleLayer.position = to
-        CATransaction.commit()
-
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-        switch kind {
-        case "click": animateClick()
-        case "scroll": animateNudge(key: "scroll", y: 8)
-        case "type": animatePulse()
-        case "drag": animateNudge(key: "drag", y: -4)
-        default: break
-        }
-    }
-
-    private func animateClick() {
-        let scale = CABasicAnimation(keyPath: "transform.scale")
-        scale.fromValue = 0.35
-        scale.toValue = 1.8
-        let opacity = CABasicAnimation(keyPath: "opacity")
-        opacity.fromValue = 0.95
-        opacity.toValue = 0
-        let group = CAAnimationGroup()
-        group.animations = [scale, opacity]
-        group.duration = 0.48
-        rippleLayer.add(group, forKey: "click")
-    }
-
-    private func animateNudge(key: String, y: CGFloat) {
-        let animation = CAKeyframeAnimation(keyPath: "transform.translation.y")
-        animation.values = [0, y, 0]
-        animation.duration = 0.62
-        pointerLayer.add(animation, forKey: key)
-    }
-
-    private func animatePulse() {
-        let animation = CAKeyframeAnimation(keyPath: "opacity")
-        animation.values = [1, 0.45, 1]
-        animation.duration = 0.55
-        pointerLayer.add(animation, forKey: "type")
-    }
-
-    private func presentationRect() -> CGRect {
-        AVMakeRect(aspectRatio: videoSize, insideRect: bounds)
-    }
-
-    private func pointerPoint(_ normalized: CGPoint) -> CGPoint {
-        let rect = presentationRect()
-        return CGPoint(x: rect.minX + normalized.x * rect.width, y: rect.maxY - normalized.y * rect.height)
-    }
-
-    private func placePointer() {
-        pointerLayer.position = pointerPoint(pointerPosition)
-        rippleLayer.position = pointerLayer.position
     }
 }
 
-/// Container that shows a frosted placeholder (target app icon) the instant the
-/// preview is requested, then cross-fades to the live capture once the first
-/// real frame is presented. The placeholder communicates *which* app is being
-/// observed; it is not a status badge and never carries error text.
 @MainActor
-private final class NativePiPView: NSView {
-    private let frostView = NSVisualEffectView()
-    private let iconView = NSImageView()
-    private let live = NativePiPLiveView()
-    private let closeButton = NSButton()
-    private let controls = NSView()
-    private let stateLabel = NSTextField(labelWithString: "")
-    private let controlButton = NSButton()
-    private let stopButton = NSButton()
-    private var userControlled = false
-    private let chinese = Locale.preferredLanguages.first?.hasPrefix("zh") == true
-    var onControl: ((String) -> Void)?
-    private var trackingArea: NSTrackingArea?
-    private var isLive = false
-    var onClose: (() -> Void)?
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.clear.cgColor
-        layer?.cornerRadius = 14
-        layer?.masksToBounds = true
-
-        frostView.material = .hudWindow
-        frostView.state = .active
-        frostView.blendingMode = .behindWindow
-        frostView.wantsLayer = true
-        addSubview(frostView)
-
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.contentTintColor = .secondaryLabelColor
-        iconView.wantsLayer = true
-        iconView.image = NativePiPView.fallbackIcon()
-        addSubview(iconView)
-
-        // Live capture sits above the placeholder and starts transparent, so the
-        // frosted icon shows through until the first frame reveals it.
-        live.alphaValue = 0
-        addSubview(live)
-
-        closeButton.title = "×"
-        closeButton.isBordered = false
-        closeButton.font = .systemFont(ofSize: 17, weight: .regular)
-        closeButton.contentTintColor = .labelColor
-        closeButton.wantsLayer = true
-        closeButton.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.88).cgColor
-        closeButton.layer?.cornerRadius = 8
-        closeButton.alphaValue = 1
-        closeButton.target = self
-        closeButton.action = #selector(closePressed)
-        closeButton.toolTip = chinese ? "关闭预览" : "Close preview"
-        closeButton.setAccessibilityLabel(closeButton.toolTip)
-        addSubview(closeButton)
-
-        controls.wantsLayer = true
-        controls.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        addSubview(controls)
-        stateLabel.font = .systemFont(ofSize: 10, weight: .medium)
-        stateLabel.textColor = .secondaryLabelColor
-        stateLabel.lineBreakMode = .byTruncatingTail
-        controls.addSubview(stateLabel)
-        for button in [controlButton, stopButton] {
-            button.bezelStyle = .inline
-            button.isBordered = false
-            button.contentTintColor = .labelColor
-            button.font = .systemFont(ofSize: 11, weight: .medium)
-            button.target = self
-            controls.addSubview(button)
-        }
-        controlButton.action = #selector(controlPressed)
-        stopButton.title = chinese ? "停止" : "Stop"
-        stopButton.action = #selector(stopPressed)
-        updateActivity(["state": "starting", "controller": "agent"])
-        startPlaceholderPulse()
-    }
-
-    required init?(coder: NSCoder) { nil }
-
-    private static func fallbackIcon() -> NSImage? {
-        NSImage(systemSymbolName: "macwindow", accessibilityDescription: "preparing live preview")
-    }
-
-    func setIcon(_ image: NSImage?) {
-        if let image {
-            iconView.contentTintColor = nil
-            iconView.image = image
-        } else {
-            iconView.contentTintColor = .secondaryLabelColor
-            iconView.image = NativePiPView.fallbackIcon()
-        }
-    }
-
-    override func layout() {
-        super.layout()
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        frostView.frame = bounds
-        live.frame = bounds
-        let side = max(28, min(bounds.width, bounds.height) * 0.42)
-        iconView.frame = CGRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2, width: side, height: side)
-        closeButton.frame = CGRect(x: bounds.maxX - 30, y: bounds.maxY - 30, width: 22, height: 22)
-        controls.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 30)
-        stopButton.frame = CGRect(x: bounds.width - 48, y: 4, width: 40, height: 22)
-        controlButton.frame = CGRect(x: bounds.width - 112, y: 4, width: 60, height: 22)
-        stateLabel.frame = CGRect(x: 10, y: 8, width: max(20, bounds.width - 128), height: 14)
-        CATransaction.commit()
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            closeButton.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.88).cgColor
-            controls.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        }
-    }
-
-    private func startPlaceholderPulse() {
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-        let pulse = CABasicAnimation(keyPath: "opacity")
-        pulse.fromValue = 0.85
-        pulse.toValue = 0.4
-        pulse.duration = 1.35
-        pulse.autoreverses = true
-        pulse.repeatCount = .infinity
-        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        iconView.layer?.add(pulse, forKey: "pulse")
-    }
-
-    func revealLive() {
-        guard !isLive else { return }
-        isLive = true
-        iconView.layer?.removeAnimation(forKey: "pulse")
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.28
-            live.animator().alphaValue = 1
-            iconView.animator().alphaValue = 0
-        }
-    }
-
-    func showPlaceholder() {
-        guard isLive else { return }
-        isLive = false
-        iconView.alphaValue = 1
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.2
-            live.animator().alphaValue = 0
-        }
-        startPlaceholderPulse()
-    }
-
-    func enqueue(_ sampleBuffer: CMSampleBuffer) { live.enqueue(sampleBuffer) }
-    func setVideoSize(_ size: CGSize) { live.setVideoSize(size) }
-    func animateInteraction(_ payload: [String: Any]) { live.animateInteraction(payload) }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let next = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways], owner: self)
-        addTrackingArea(next)
-        trackingArea = next
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        NSAnimationContext.runAnimationGroup { _ in closeButton.animator().alphaValue = 1 }
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        closeButton.alphaValue = 1
-    }
-
-    func updateActivity(_ payload: [String: Any]) {
-        let state = payload["state"] as? String ?? "starting"
-        userControlled = payload["controller"] as? String == "user"
-        let stopped = state == "stopped"
-        let error = payload["error"] as? String ?? ""
-        stateLabel.stringValue = !error.isEmpty ? (chinese ? "操作失败" : "Action failed")
-            : stopped ? (chinese ? "已停止" : "Stopped")
-            : userControlled ? (chinese ? "你在控制" : "Your control")
-            : (chinese ? "Agent 控制" : "Agent control")
-        stateLabel.toolTip = error.isEmpty ? nil : error
-        controlButton.title = userControlled ? (chinese ? "交还" : "Release") : (chinese ? "接管" : "Take over")
-        controlButton.setAccessibilityLabel(controlButton.title)
-        controlButton.isEnabled = !stopped
-        stopButton.isEnabled = !stopped
-        if stopped || userControlled { live.hideInteraction() }
-    }
-
-    private func requestControl(_ action: String) {
-        controlButton.isEnabled = false
-        stopButton.isEnabled = false
-        stateLabel.stringValue = chinese ? "正在处理" : "Working"
-        onControl?(action)
-    }
-
-    @objc private func controlPressed() { requestControl(userControlled ? "release" : "takeover") }
-    @objc private func stopPressed() { requestControl("stop") }
-    @objc private func closePressed() { onClose?() }
-}
-
-@MainActor
-private final class NativePiPWindowController: NSObject, NSWindowDelegate {
-    let panel: NSPanel
-    let content: NativePiPView
-    private let writer: PiPEventWriter
-    private let desktopTop: CGFloat
-    private var shown = false
+private final class NativePreviewControl {
     private var requestedVisible = true
     private var requestedLive = true
     private var lastController = "agent"
     private var lastState = "starting"
     var shouldCapture: Bool { requestedVisible && requestedLive }
-    private var captureAvailable = false
 
-    init(configuration: NativePiPConfiguration, writer: PiPEventWriter) {
-        self.writer = writer
-        content = NativePiPView(frame: CGRect(origin: .zero, size: configuration.frame.size))
-        desktopTop = NSScreen.screens.first?.frame.maxY ?? 0
-        let nativeFrame = CGRect(
-            x: configuration.frame.minX,
-            y: desktopTop - configuration.frame.maxY,
-            width: configuration.frame.width,
-            height: configuration.frame.height
-        )
-        panel = NSPanel(
-            contentRect: nativeFrame,
-            styleMask: [.borderless, .nonactivatingPanel, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        super.init()
-        panel.delegate = self
-        panel.contentView = content
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.hidesOnDeactivate = false
-        panel.becomesKeyOnlyIfNeeded = true
-        // The helper runs in a separate process, so it cannot be attached as an
-        // NSPanel child of Electron's main window. Keep the preview above normal
-        // application windows while its owning activity is visible.
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.isMovableByWindowBackground = true
-        panel.minSize = CGSize(width: 220, height: 140)
-        panel.maxSize = CGSize(width: 720, height: 800)
-        panel.contentAspectRatio = configuration.frame.size
-        content.onControl = { [weak self] action in self?.writer.send("control", fields: ["action": action]) }
-        content.onClose = { [weak self] in
-            self?.requestedVisible = false
-            self?.writer.send("user_close")
-            self?.panel.orderOut(nil)
-        }
-    }
-
-    func showAfterFirstFrame(videoSize: CGSize) {
-        content.setVideoSize(videoSize)
-        let ratio = videoSize.width / max(1, videoSize.height)
-        let previousRatio = panel.contentAspectRatio.width / max(0.01, panel.contentAspectRatio.height)
-        panel.contentAspectRatio = CGSize(width: ratio, height: 1)
-        if shown, abs(previousRatio - ratio) > 0.001 {
-            resizeForAspectRatio(ratio)
-        }
-        presentContent(width: Int(videoSize.width), height: Int(videoSize.height), ratio: ratio)
-    }
-
-    var hasShownContent: Bool { shown }
-
-    func setVisible(_ visible: Bool) {
-        requestedVisible = visible
-        // Show the surface immediately so the frosted placeholder appears while
-        // capture spins up; visibility is no longer gated on the first frame.
-        if visible { panel.orderFrontRegardless() } else { panel.orderOut(nil) }
-    }
-
-    func setAppearance(dark: Bool) {
-        panel.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-    }
+    func setVisible(_ visible: Bool) { requestedVisible = visible }
     func setLive(_ live: Bool) { requestedLive = live }
-    func updateActivity(_ payload: [String: Any]) { content.updateActivity(payload) }
+
     func needsRestoration(_ payload: [String: Any]) -> Bool {
         let nextController = payload["controller"] as? String ?? "agent"
         let nextState = payload["state"] as? String ?? "active"
-        let restore = (nextController == "user" && lastController != "user") || (nextState == "stopped" && lastState != "stopped")
+        let restore = (nextController != "agent" && lastController == "agent")
+            || (nextState == "stopped" && lastState != "stopped")
         lastController = nextController
         lastState = nextState
         return restore
-    }
-    func setIcon(_ image: NSImage?) { content.setIcon(image) }
-
-    func markCaptureUnavailable() {
-        guard captureAvailable else { return }
-        captureAvailable = false
-        // Fall back to the frosted placeholder instead of vanishing; a briefly
-        // unavailable window should still read as "observing this app".
-        content.showPlaceholder()
-    }
-
-    func animateInteraction(_ payload: [String: Any]) { content.animateInteraction(payload) }
-
-    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        let ratio = max(0.01, panel.contentAspectRatio.width / max(0.01, panel.contentAspectRatio.height))
-        let widthDriven = CGSize(width: frameSize.width, height: frameSize.width / ratio)
-        if widthDriven.height <= panel.maxSize.height { return widthDriven }
-        return CGSize(width: frameSize.height * ratio, height: frameSize.height)
-    }
-
-    func windowDidResize(_ notification: Notification) { publishGeometry() }
-    func windowDidMove(_ notification: Notification) { publishGeometry() }
-
-    private func presentContent(width: Int, height: Int, ratio: CGFloat) {
-        captureAvailable = true
-        // First real frame: cross-fade the live capture over the placeholder and
-        // grow from the fixed placeholder size to the window's true aspect ratio.
-        content.revealLive()
-        if !shown {
-            let fitted = fittedPiPSize(ratio: ratio, preferredWidth: panel.frame.width)
-            let current = panel.frame
-            panel.setFrame(
-                CGRect(x: current.maxX - fitted.width, y: current.maxY - fitted.height, width: fitted.width, height: fitted.height),
-                display: true,
-                animate: true
-            )
-            shown = true
-            writer.send("ready", fields: ["width": width, "height": height])
-        }
-        if requestedVisible, !panel.isVisible {
-            panel.orderFrontRegardless()
-        }
-    }
-
-    private func fittedPiPSize(ratio: CGFloat, preferredWidth: CGFloat) -> CGSize {
-        var width = preferredWidth
-        var height = width / max(0.01, ratio)
-        if height > 800 { height = 800; width = height * ratio }
-        if height < 140 { height = 140; width = height * ratio }
-        if width > 720 { width = 720; height = width / ratio }
-        return CGSize(width: max(220, width), height: max(140, height))
-    }
-
-    private func resizeForAspectRatio(_ ratio: CGFloat) {
-        let current = panel.frame
-        var width = current.width
-        var height = width / max(0.01, ratio)
-        if height > panel.maxSize.height { height = panel.maxSize.height; width = height * ratio }
-        if height < panel.minSize.height { height = panel.minSize.height; width = height * ratio }
-        if width > panel.maxSize.width { width = panel.maxSize.width; height = width / ratio }
-        if width < panel.minSize.width { width = panel.minSize.width; height = width / ratio }
-        panel.setFrame(
-            CGRect(x: current.maxX - width, y: current.maxY - height, width: width, height: height),
-            display: true,
-            animate: true
-        )
-    }
-
-    private func publishGeometry() {
-        let frame = panel.frame
-        writer.send("geometry", fields: [
-            "x": frame.minX,
-            "y": desktopTop - frame.maxY,
-            "width": frame.width,
-            "height": frame.height,
-        ])
     }
 }
 
@@ -716,16 +300,19 @@ struct CaptureFreshness: Equatable {
 
 @available(macOS 14.0, *)
 private final class NativePiPStreamOutput: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
-    let controller: NativePiPWindowController
-    let writer: PiPEventWriter
+    private let writer: PiPEventWriter
+    private let frames: NativePreviewFrames
+    private let generation: UInt64
     private let lock = NSLock()
     private var stopped = false
+    private var invalidated = false
     private var freshness = CaptureFreshness()
     private var lastStatus: SCFrameStatus?
 
-    init(controller: NativePiPWindowController, writer: PiPEventWriter) {
-        self.controller = controller
+    init(frames: NativePreviewFrames, writer: PiPEventWriter) {
+        self.frames = frames
         self.writer = writer
+        generation = frames.beginStream()
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -737,44 +324,51 @@ private final class NativePiPStreamOutput: NSObject, SCStreamOutput, SCStreamDel
         let status = (attachments?.first?[.status] as? NSNumber).flatMap { SCFrameStatus(rawValue: $0.intValue) }
         let imageBuffer = valid ? sampleBuffer.imageBuffer : nil
         let captureUnavailable = !valid || status == .blank || status == .suspended || status == .stopped
-        let shouldDisplay = imageBuffer != nil && !captureUnavailable
-        lock.lock()
-        let statusChanged = status != nil && status != lastStatus
-        if let status { lastStatus = status }
-        if status == .stopped { stopped = true }
-        freshness.recordCallback(
-            at: ProcessInfo.processInfo.systemUptime,
-            displayedFrame: shouldDisplay,
-            captureUnavailable: captureUnavailable
-        )
-        lock.unlock()
-        if statusChanged, let status { writer.send("capture_status", fields: ["status": captureStatusName(status)]) }
-        guard shouldDisplay, let imageBuffer = sampleBuffer.imageBuffer else { return }
-        let size = CGSize(width: CVPixelBufferGetWidth(imageBuffer), height: CVPixelBufferGetHeight(imageBuffer))
-        // SCStream invokes this callback on its capture queue. Core Animation
-        // layers belong to the main actor, so enqueue and publish readiness in
-        // one ordered main-actor operation. Publishing ready before the layer
-        // receives the frame creates a visible-but-empty PiP window.
-        let frame = CapturedFrame(sampleBuffer)
-        Task { @MainActor [weak controller, frame] in
-            guard let controller else { return }
-            controller.content.enqueue(frame.sampleBuffer)
-            controller.showAfterFirstFrame(videoSize: size)
+        let shouldDisplay = imageBuffer != nil && status == .complete
+        lock.withLock {
+            guard !invalidated, frames.isCurrent(generation) else { return }
+            let statusChanged = status != nil && status != lastStatus
+            if let status { lastStatus = status }
+            if captureUnavailable {
+                stopped = true
+                frames.invalidate()
+            }
+            freshness.recordCallback(
+                at: ProcessInfo.processInfo.systemUptime,
+                displayedFrame: shouldDisplay,
+                captureUnavailable: captureUnavailable
+            )
+            if statusChanged, let status {
+                writer.send("capture_status", fields: ["status": captureStatusName(status)])
+            } else if captureUnavailable {
+                writer.send("capture_status", fields: ["status": "suspended"])
+            }
+            if shouldDisplay, let imageBuffer {
+                frames.submit(imageBuffer, generation: generation)
+            }
         }
     }
 
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
-        lock.lock(); stopped = true; lock.unlock()
-        let ns = error as NSError
-        pipDebugLog("stream didStopWithError domain=\(ns.domain) code=\(ns.code)")
-        writer.send("capture_status", fields: ["status": "error", "message": error.localizedDescription])
+    func stream(_ stream: SCStream, didStopWithError error: Error) { lockFailure(error) }
+
+    func invalidate() {
+        lock.withLock {
+            invalidated = true
+            stopped = true
+            frames.invalidate()
+        }
     }
 
-    func isStopped() -> Bool { lock.withLock { stopped } }
+    func isStopped() -> Bool { lock.withLock { stopped || !frames.isCurrent(generation) } }
+    func wasPaused() -> Bool { lock.withLock { !stopped && !frames.isCurrent(generation) } }
     func freshnessSnapshot() -> CaptureFreshness { lock.withLock { freshness } }
     func lockFailure(_ error: Error) {
-        lock.lock(); stopped = true; lock.unlock()
-        writer.send("capture_status", fields: ["status": "error", "message": error.localizedDescription])
+        lock.withLock {
+            guard !invalidated, frames.isCurrent(generation) else { return }
+            stopped = true
+            frames.invalidate()
+            writer.send("capture_status", fields: ["status": "error", "message": error.localizedDescription])
+        }
     }
 }
 
@@ -1121,9 +715,11 @@ private final class NativePiPWindowStage {
 private func streamConfiguration(for window: SCWindow) -> SCStreamConfiguration {
     let configuration = SCStreamConfiguration()
     let scale = window.owningApplication == nil ? 1 : NSScreen.main?.backingScaleFactor ?? 2
-    configuration.width = max(1, Int(window.frame.width * scale))
-    configuration.height = max(1, Int(window.frame.height * scale))
-    configuration.queueDepth = 4
+    let previewScale = min(scale, 1280 / max(1, max(window.frame.width, window.frame.height)))
+    configuration.width = max(1, Int(window.frame.width * previewScale))
+    configuration.height = max(1, Int(window.frame.height * previewScale))
+    configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+    configuration.queueDepth = 3
     configuration.showsCursor = false
     configuration.pixelFormat = kCVPixelFormatType_32BGRA
     configuration.ignoreShadowsSingleWindow = true
@@ -1201,15 +797,22 @@ private func startWindowStream(window: SCWindow, output: NativePiPStreamOutput, 
         // stop the stream — fire-and-forget via the completion handler so we
         // never re-hang on a genuinely stuck one — rather than leaking a stream
         // that keeps capturing with no output attached.
-        try? stream.removeStreamOutput(output, type: .screen)
-        stream.stopCapture { _ in }
+        stopWindowStream(stream, output: output)
         throw ComputerError.operationFailed("capture failed to start")
     }
     return stream
 }
 
+@available(macOS 14.0, *)
+private func stopWindowStream(_ stream: SCStream, output: NativePiPStreamOutput) {
+    output.invalidate()
+    try? stream.removeStreamOutput(output, type: .screen)
+    // A wedged capture daemon must not delay cancellation or target restoration.
+    stream.stopCapture { _ in }
+}
+
 @MainActor
-public func runNativePiP(configuration: NativePiPConfiguration) async throws {
+public func runNativePreview(configuration: NativePreviewConfiguration) async throws {
     guard CGPreflightScreenCaptureAccess() else {
         throw ComputerError.permissionDenied("Screen Recording permission is required for live window capture")
     }
@@ -1222,19 +825,25 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
         return !$0.isTerminated && ($0.bundleIdentifier?.lowercased() == normalized || $0.localizedName?.lowercased() == normalized || $0.bundleURL?.path.lowercased() == normalized)
     }) else { throw ComputerError.appNotFound(configuration.target) }
 
+    pipDebugLog("preview activity=\(configuration.activityID) process=\(app.processIdentifier)")
     let writer = PiPEventWriter()
-    let controller = NativePiPWindowController(configuration: configuration, writer: writer)
-    controller.setIcon(app.icon)
+    let frames = NativePreviewFrames(writer: writer)
+    let controller = NativePreviewControl()
+    let requestedFrame = requestedWindowFrame(windowID: configuration.windowID, processID: app.processIdentifier)
+    guard configuration.windowID == nil || requestedFrame != nil else {
+        writer.send("gone")
+        return
+    }
     let windowStage = NativePiPWindowStage(
         application: app,
-        requestedFrame: requestedWindowFrame(windowID: configuration.windowID, processID: app.processIdentifier),
+        requestedFrame: requestedFrame,
         focusedFrame: focusedWindowFrame(processID: app.processIdentifier)
     )
     defer { windowStage.restore() }
     let terminationSignals = [SIGTERM, SIGINT].map { code in
         signal(code, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: code, queue: .main)
-        source.setEventHandler { windowStage.restore(); exit(0) }
+        source.setEventHandler { frames.invalidate(); windowStage.restore(); exit(0) }
         source.resume()
         return source
     }
@@ -1248,6 +857,7 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
         let data = input.availableData
         if data.isEmpty {
             Task { @MainActor in
+                frames.invalidate()
                 windowStage.restore()
                 exit(0)
             }
@@ -1259,12 +869,20 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
                       let command = try? JSONSerialization.jsonObject(with: commandData) as? [String: Any],
                       let type = command["type"] as? String else { return }
                 switch type {
-                case "visible": controller.setVisible(command["visible"] as? Bool == true)
-                case "live": controller.setLive(command["live"] as? Bool == true)
-                case "appearance": controller.setAppearance(dark: command["dark"] as? Bool == true)
+                case "visible":
+                    controller.setVisible(command["visible"] as? Bool == true)
+                    if !controller.shouldCapture { frames.invalidate() }
+                case "live":
+                    controller.setLive(command["live"] as? Bool == true)
+                    if !controller.shouldCapture { frames.invalidate(); windowStage.restore() }
+                case "ack":
+                    if let sequence = command["sequence"] as? UInt64 { frames.acknowledge(sequence) }
                 case "activity":
-                    controller.updateActivity(command)
                     let nextController = command["controller"] as? String ?? "agent"
+                    if nextController == "none" || command["state"] as? String == "stopped" {
+                        controller.setLive(false)
+                        frames.invalidate()
+                    }
                     if controller.needsRestoration(command) {
                         windowStage.restore()
                         let pid = app.processIdentifier
@@ -1272,14 +890,11 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
                             try await Task.detached { try WindowRestorationJournal.restoreForUser(processID: pid) }.value
                             if nextController == "user" { app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps]) }
                         } catch {
-                            var failed = command
-                            failed["error"] = error.localizedDescription
-                            controller.updateActivity(failed)
+                            writer.send("capture_status", fields: ["status": "error", "message": error.localizedDescription])
                         }
                     }
-                case "interaction": controller.animateInteraction(command)
                 case "close":
-                    controller.panel.orderOut(nil)
+                    frames.invalidate()
                     windowStage.restore()
                     exit(0)
                 default: break
@@ -1287,6 +902,7 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
             }
         }
     }
+    defer { FileHandle.standardInput.readabilityHandler = nil }
     await windowStage.prepareIfNeeded()
 
     let geometryMonitor = WindowGeometryMonitor(processID: app.processIdentifier, windowFrame: .zero)
@@ -1297,7 +913,11 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
 
     var stream: SCStream?
     var output: NativePiPStreamOutput?
-    var trackedWindowID: CGWindowID?
+    defer {
+        if let stream, let output { stopWindowStream(stream, output: output) }
+        frames.invalidate()
+    }
+    var trackedWindowID: CGWindowID? = configuration.windowID
     var trackedFrame: CGRect = .zero
     var streamStartedAt = ProcessInfo.processInfo.systemUptime
     var lastVerifiedCaptureAt = streamStartedAt
@@ -1306,10 +926,10 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
     var lastSafetyRefresh = Date.distantPast
 
     while !app.isTerminated && processIsAlive(configuration.parentProcessID) {
+        if let failure = frames.failureMessage() { throw ComputerError.operationFailed(failure) }
         if !controller.shouldCapture {
             if let existing = stream, let existingOutput = output {
-                try? existing.removeStreamOutput(existingOutput, type: .screen)
-                try? await existing.stopCapture()
+                stopWindowStream(existing, output: existingOutput)
                 writer.send("capture_status", fields: ["status": "stopped"])
             }
             stream = nil
@@ -1318,35 +938,38 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
             continue
         }
         if establishFailures >= 4 {
-            writer.send("capture_status", fields: ["status": "error", "message": "capture recovery exhausted"])
-            break
+            throw ComputerError.operationFailed("capture recovery exhausted")
         }
-        // Establish (or re-establish) the capture stream whenever we do not have
-        // a live one. Failures are non-fatal: the frosted placeholder stays up
-        // and we back off and retry, matching how the reference implementation
-        // keeps a placeholder when a capture stream stops with an error.
+        // Recover only the same target. The Electron host owns all presentation
+        // and displays unavailable status while capture backs off.
         if stream == nil || output?.isStopped() == true {
             if let existing = stream, let existingOutput = output {
-                try? existing.removeStreamOutput(existingOutput, type: .screen)
-                try? await existing.stopCapture()
+                stopWindowStream(existing, output: existingOutput)
             }
             stream = nil
             output = nil
             if establishFailures > 0 {
                 if ProcessInfo.processInfo.systemUptime - lastVerifiedCaptureAt >= callbackSilenceTimeout {
-                    controller.markCaptureUnavailable()
+                    writer.send("capture_status", fields: ["status": "suspended"])
                 }
                 try await Task.sleep(for: .milliseconds(250 * (1 << min(5, establishFailures))))
             }
-            guard let content = await shareableContent(timeout: 3),
-                  let target = (configuration.windowID != nil
-                    ? content.windows.first(where: { $0.windowID == configuration.windowID && $0.owningApplication?.processID == app.processIdentifier })
-                    : preferredStreamWindow(in: content, processID: app.processIdentifier)) else {
+            guard let content = await shareableContent(timeout: 3) else {
                 establishFailures += 1
                 continue
             }
+            guard controller.shouldCapture else { continue }
+            guard !app.isTerminated, processIsAlive(configuration.parentProcessID) else { break }
+            guard let target = (trackedWindowID != nil
+                ? content.windows.first(where: { $0.windowID == trackedWindowID && $0.owningApplication?.processID == app.processIdentifier })
+                : preferredStreamWindow(in: content, processID: app.processIdentifier)) else {
+                writer.send("gone")
+                break
+            }
+            // A helper never silently retargets to another window after a close.
+            trackedWindowID = target.windowID
             pipDebugLog("resolve window id=\(target.windowID) frame=\(target.frame) title=\(target.title ?? "-")")
-            let next = NativePiPStreamOutput(controller: controller, writer: writer)
+            let next = NativePiPStreamOutput(frames: frames, writer: writer)
             do {
                 stream = try await startWindowStream(window: target, output: next, timeout: captureStartTimeout)
                 output = next
@@ -1368,6 +991,15 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
 
         guard let activeStream = stream, let activeOutput = output else { continue }
         try await Task.sleep(for: .milliseconds(100))
+        guard controller.shouldCapture else { continue }
+        if activeOutput.wasPaused() {
+            // A hide/show pair can arrive within one supervision tick. Restart
+            // its invalidated stream without counting a user pause as failure.
+            stopWindowStream(activeStream, output: activeOutput)
+            stream = nil
+            output = nil
+            continue
+        }
         let now = ProcessInfo.processInfo.systemUptime
         let freshness = activeOutput.freshnessSnapshot()
         if let healthyAt = freshness.lastHealthyCallbackUptime {
@@ -1386,10 +1018,9 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
             unavailableStatusTimeout: unavailableStatusTimeout
         )
         if activeOutput.isStopped() || recoveryRequired {
-            try? activeStream.removeStreamOutput(activeOutput, type: .screen)
-            try? await activeStream.stopCapture()
+            stopWindowStream(activeStream, output: activeOutput)
             if now - lastVerifiedCaptureAt >= callbackSilenceTimeout {
-                controller.markCaptureUnavailable()
+                writer.send("capture_status", fields: ["status": "suspended"])
             }
             establishFailures += 1
             stream = nil
@@ -1397,22 +1028,29 @@ public func runNativePiP(configuration: NativePiPConfiguration) async throws {
             continue
         }
         if !freshness.hasDisplayedFrame, now - lastVerifiedCaptureAt >= callbackSilenceTimeout {
-            controller.markCaptureUnavailable()
+            writer.send("capture_status", fields: ["status": "suspended"])
         }
         let safetyRefreshDue = Date().timeIntervalSince(lastSafetyRefresh) >= 5
         guard geometryMonitor.takeDirty() || safetyRefreshDue else { continue }
         lastSafetyRefresh = Date()
-        guard let refreshed = await shareableContent(timeout: 3),
-              let nextWindow = refreshed.windows.first(where: { $0.windowID == (trackedWindowID ?? 0) }) else { continue }
+        guard CGPreflightScreenCaptureAccess() else {
+            throw ComputerError.permissionDenied("Screen Recording permission was revoked")
+        }
+        guard let refreshed = await shareableContent(timeout: 3) else { continue }
+        guard let nextWindow = refreshed.windows.first(where: {
+            $0.windowID == trackedWindowID && $0.owningApplication?.processID == app.processIdentifier
+        }) else {
+            stopWindowStream(activeStream, output: activeOutput)
+            stream = nil
+            output = nil
+            writer.send("gone")
+            break
+        }
         guard windowFrameDistance(nextWindow.frame, trackedFrame) > 1 else { continue }
         do {
             try await activeStream.updateConfiguration(streamConfiguration(for: nextWindow))
             trackedFrame = nextWindow.frame
         } catch { activeOutput.lockFailure(error) }
-    }
-    if let stream, let output {
-        try? stream.removeStreamOutput(output, type: .screen)
-        try? await stream.stopCapture()
     }
 }
 

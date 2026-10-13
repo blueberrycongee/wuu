@@ -30,15 +30,22 @@ type registryEntry struct {
 }
 
 type Registry struct {
-	mu             sync.RWMutex
-	entries        map[string]*registryEntry
-	listeners      map[uint64]func(Event)
-	nextListenerID uint64
-	now            func() time.Time
+	mu                 sync.RWMutex
+	entries            map[string]*registryEntry
+	runs               map[string]*threadRun
+	revokedOwners      map[activityOwner]struct{}
+	revokedConnections map[activityConnection]struct{}
+	listeners          map[uint64]func(Event)
+	nextListenerID     uint64
+	now                func() time.Time
 }
 
 func NewRegistry() *Registry {
-	return &Registry{entries: make(map[string]*registryEntry), listeners: make(map[uint64]func(Event)), now: time.Now}
+	return &Registry{
+		entries: make(map[string]*registryEntry), runs: make(map[string]*threadRun),
+		revokedOwners: make(map[activityOwner]struct{}), revokedConnections: make(map[activityConnection]struct{}),
+		listeners: make(map[uint64]func(Event)), now: time.Now,
+	}
 }
 
 func (r *Registry) Subscribe(listener func(Event)) func() {
@@ -63,6 +70,9 @@ func (r *Registry) Start(options StartOptions) (Session, Lease, error) {
 	}
 	options.ThreadID = strings.TrimSpace(options.ThreadID)
 	options.Workdir = strings.TrimSpace(options.Workdir)
+	options.PluginID = strings.TrimSpace(options.PluginID)
+	options.GenerationID = strings.TrimSpace(options.GenerationID)
+	options.ConnectionID = strings.TrimSpace(options.ConnectionID)
 	if options.ThreadID == "" || options.Workdir == "" {
 		return Session{}, Lease{}, errors.New("activity thread_id and workdir are required")
 	}
@@ -83,21 +93,31 @@ func (r *Registry) Start(options StartOptions) (Session, Lease, error) {
 	}
 	now := r.now().UTC()
 	session := Session{
-		ID:         id,
-		Kind:       options.Kind,
-		ThreadID:   options.ThreadID,
-		Workdir:    options.Workdir,
-		PluginID:   strings.TrimSpace(options.PluginID),
-		Target:     strings.TrimSpace(options.Target),
-		ProcessID:  options.ProcessID,
-		WindowID:   options.WindowID,
-		State:      StateStarting,
-		Controller: ControllerAgent,
-		Preview:    strings.TrimSpace(options.Preview),
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:           id,
+		Kind:         options.Kind,
+		ThreadID:     options.ThreadID,
+		Workdir:      options.Workdir,
+		PluginID:     strings.TrimSpace(options.PluginID),
+		GenerationID: options.GenerationID,
+		ConnectionID: options.ConnectionID,
+		Target:       strings.TrimSpace(options.Target),
+		ProcessID:    options.ProcessID,
+		WindowID:     options.WindowID,
+		State:        StateStarting,
+		Controller:   ControllerAgent,
+		Preview:      strings.TrimSpace(options.Preview),
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	r.mu.Lock()
+	if err := r.checkExecutionLocked(nil, options.ThreadID); err != nil {
+		r.mu.Unlock()
+		return Session{}, Lease{}, err
+	}
+	if r.ownerRevokedLocked(options.PluginID, options.GenerationID, options.ConnectionID) {
+		r.mu.Unlock()
+		return Session{}, Lease{}, ErrControlRevoked
+	}
 	if _, exists := r.entries[id]; exists {
 		r.mu.Unlock()
 		return Session{}, Lease{}, ErrAlreadyExists
@@ -105,6 +125,9 @@ func (r *Registry) Start(options StartOptions) (Session, Lease, error) {
 	if r.targetBusyLocked(session.Target, session.Kind, session.ID) {
 		r.mu.Unlock()
 		return Session{}, Lease{}, ErrTargetBusy
+	}
+	if run := r.runs[options.ThreadID]; run != nil && run.execution != nil {
+		session.ExecutionID = run.execution.id
 	}
 	control, revoke := context.WithCancelCause(context.Background())
 	r.entries[id] = &registryEntry{session: session, leaseToken: token, control: control, revoke: revoke}
@@ -118,12 +141,27 @@ func (r *Registry) Start(options StartOptions) (Session, Lease, error) {
 // gates: callers cannot silently create a replacement session and continue
 // controlling the UI behind the user's back.
 func (r *Registry) Acquire(options StartOptions) (Session, Lease, error) {
+	return r.acquire(nil, options)
+}
+
+// AcquireForExecution rejects work from an ended or superseded task, even when
+// its caller removed context cancellation or attempts another backend.
+func (r *Registry) AcquireForExecution(ctx context.Context, options StartOptions) (Session, Lease, error) {
+	if err := ControlErr(ctx); err != nil {
+		return Session{}, Lease{}, err
+	}
+	return r.acquire(ctx, options)
+}
+
+func (r *Registry) acquire(ctx context.Context, options StartOptions) (Session, Lease, error) {
 	if r == nil {
 		return Session{}, Lease{}, errors.New("activity registry is unavailable")
 	}
 	options.ThreadID = strings.TrimSpace(options.ThreadID)
 	options.Workdir = strings.TrimSpace(options.Workdir)
 	options.PluginID = strings.TrimSpace(options.PluginID)
+	options.GenerationID = strings.TrimSpace(options.GenerationID)
+	options.ConnectionID = strings.TrimSpace(options.ConnectionID)
 	if options.ThreadID == "" || options.Workdir == "" || options.PluginID == "" {
 		return Session{}, Lease{}, errors.New("activity thread_id, workdir, and plugin_id are required")
 	}
@@ -132,10 +170,28 @@ func (r *Registry) Acquire(options StartOptions) (Session, Lease, error) {
 	}
 
 	r.mu.Lock()
+	if err := r.checkExecutionLocked(ctx, options.ThreadID); err != nil {
+		r.mu.Unlock()
+		return Session{}, Lease{}, err
+	}
+	if r.ownerRevokedLocked(options.PluginID, options.GenerationID, options.ConnectionID) {
+		// A pinned old generation may make its first UI call only after its
+		// provider retired. Fence this execution too; stale contexts were
+		// rejected above and cannot stop a newer task.
+		var events []Event
+		if ctx != nil {
+			events = r.revokeThreadLocked(options.ThreadID, true)
+		}
+		r.mu.Unlock()
+		for _, event := range events {
+			r.emit(event)
+		}
+		return Session{}, Lease{}, ErrControlRevoked
+	}
 	requestedTarget := strings.TrimSpace(options.Target)
 	var current *registryEntry
 	for _, entry := range r.entries {
-		if entry.session.ThreadID != options.ThreadID || entry.session.PluginID != options.PluginID || entry.session.Kind != options.Kind {
+		if entry.session.ThreadID != options.ThreadID || entry.session.PluginID != options.PluginID || entry.session.Kind != options.Kind || entry.session.GenerationID != options.GenerationID || entry.session.ConnectionID != options.ConnectionID {
 			continue
 		}
 		if current == nil || entry.session.CreatedAt.After(current.session.CreatedAt) {
@@ -147,6 +203,22 @@ func (r *Registry) Acquire(options StartOptions) (Session, Lease, error) {
 		if r.targetBusyLocked(requestedTarget, options.Kind, session.ID) {
 			r.mu.Unlock()
 			return Session{}, Lease{}, ErrTargetBusy
+		}
+		// Idle activities become agent-owned only when this execution actually
+		// uses them. A later text-only turn must not resurrect a prior PiP.
+		if run := r.runs[options.ThreadID]; run != nil && run.execution != nil && run.execution.control.Err() == nil && session.Controller == ControllerNone && session.State != StateStopped {
+			r.releaseLocked(current, rand.Text())
+			current.session.ExecutionID = run.execution.id
+			current.session.State = StateStarting
+			current.session.Preview = ""
+			current.session.Interaction = nil
+			current.session.ProcessID, current.session.WindowID = 0, 0
+			current.session.Error = ""
+			session = current.session
+			lease := Lease{ActivityID: session.ID, ThreadID: session.ThreadID, Token: current.leaseToken}
+			r.mu.Unlock()
+			r.emit(Event{Type: EventControlChanged, Activity: session})
+			return session, lease, nil
 		}
 		switch {
 		case session.State == StateStopped:
@@ -186,19 +258,24 @@ func (r *Registry) Acquire(options StartOptions) (Session, Lease, error) {
 	}
 	now := r.now().UTC()
 	session := Session{
-		ID:         id,
-		Kind:       options.Kind,
-		ThreadID:   options.ThreadID,
-		Workdir:    options.Workdir,
-		PluginID:   options.PluginID,
-		Target:     strings.TrimSpace(options.Target),
-		ProcessID:  options.ProcessID,
-		WindowID:   options.WindowID,
-		State:      StateStarting,
-		Controller: ControllerAgent,
-		Preview:    strings.TrimSpace(options.Preview),
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:           id,
+		Kind:         options.Kind,
+		ThreadID:     options.ThreadID,
+		Workdir:      options.Workdir,
+		PluginID:     options.PluginID,
+		GenerationID: options.GenerationID,
+		ConnectionID: options.ConnectionID,
+		Target:       strings.TrimSpace(options.Target),
+		ProcessID:    options.ProcessID,
+		WindowID:     options.WindowID,
+		State:        StateStarting,
+		Controller:   ControllerAgent,
+		Preview:      strings.TrimSpace(options.Preview),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if run := r.runs[options.ThreadID]; run != nil && run.execution != nil {
+		session.ExecutionID = run.execution.id
 	}
 	control, revoke := context.WithCancelCause(context.Background())
 	r.entries[id] = &registryEntry{session: session, leaseToken: token, control: control, revoke: revoke}
@@ -340,7 +417,7 @@ func (r *Registry) targetBusyLocked(target string, kind Kind, exceptActivityID s
 		return false
 	}
 	for id, entry := range r.entries {
-		if id == exceptActivityID || entry.session.Kind != kind || entry.session.State == StateStopped {
+		if id == exceptActivityID || entry.session.Kind != kind || entry.session.State == StateStopped || entry.session.Controller == ControllerNone {
 			continue
 		}
 		if strings.ToLower(strings.TrimSpace(entry.session.Target)) == target {
@@ -350,9 +427,9 @@ func (r *Registry) targetBusyLocked(target string, kind Kind, exceptActivityID s
 	return false
 }
 
-func (r *Registry) Takeover(threadID, activityID string) (Session, error) {
+func (r *Registry) Takeover(threadID, activityID string, executionID ...string) (Session, error) {
 	r.mu.Lock()
-	entry, err := r.entryLocked(threadID, activityID)
+	entry, err := r.executionEntryLocked(threadID, activityID, executionID)
 	if err != nil {
 		r.mu.Unlock()
 		return Session{}, err
@@ -361,21 +438,18 @@ func (r *Registry) Takeover(threadID, activityID string) (Session, error) {
 		r.mu.Unlock()
 		return Session{}, ErrStopped
 	}
-	entry.revoke(ErrControlRevoked)
-	entry.leaseToken = ""
-	entry.session.Controller = ControllerUser
-	entry.session.State = StateUserControlled
-	entry.takeoverVersion++
-	entry.session.UpdatedAt = r.now().UTC()
+	events := r.revokeThreadLocked(threadID, false)
 	session := entry.session
 	r.mu.Unlock()
-	r.emit(Event{Type: EventControlChanged, Activity: session})
+	for _, event := range events {
+		r.emit(event)
+	}
 	return session, nil
 }
 
-func (r *Registry) Release(threadID, activityID string) (Session, Lease, error) {
+func (r *Registry) Release(threadID, activityID string, executionID ...string) (Session, Lease, error) {
 	r.mu.Lock()
-	entry, err := r.entryLocked(threadID, activityID)
+	entry, err := r.executionEntryLocked(threadID, activityID, executionID)
 	if err != nil {
 		r.mu.Unlock()
 		return Session{}, Lease{}, err
@@ -384,12 +458,23 @@ func (r *Registry) Release(threadID, activityID string) (Session, Lease, error) 
 		r.mu.Unlock()
 		return Session{}, Lease{}, ErrStopped
 	}
+	if run := r.runs[threadID]; run != nil && run.execution != nil {
+		// Releasing manual ownership is not a new model instruction. Remain
+		// idle until explicit admission creates another execution epoch.
+		session := r.idleLocked(entry)
+		r.mu.Unlock()
+		r.emit(Event{Type: EventControlChanged, Activity: session})
+		return session, Lease{ActivityID: session.ID, ThreadID: session.ThreadID}, nil
+	}
 	token, err := randomID("lease", 24)
 	if err != nil {
 		r.mu.Unlock()
 		return Session{}, Lease{}, err
 	}
 	session := r.releaseLocked(entry, token)
+	if run := r.runs[threadID]; run != nil {
+		run.paused = false
+	}
 	r.mu.Unlock()
 	r.emit(Event{Type: EventControlChanged, Activity: session})
 	return session, Lease{ActivityID: session.ID, ThreadID: session.ThreadID, Token: token}, nil
@@ -430,6 +515,9 @@ func (r *Registry) PrepareResume(threadID string, kind Kind) (func(), error) {
 				continue
 			}
 			events = append(events, Event{Type: EventControlChanged, Activity: r.releaseLocked(entry, resume.token)})
+			if run := r.runs[threadID]; run != nil {
+				run.paused = false
+			}
 		}
 		r.mu.Unlock()
 		for _, event := range events {
@@ -448,9 +536,21 @@ func (r *Registry) releaseLocked(entry *registryEntry, token string) Session {
 	return entry.session
 }
 
-func (r *Registry) Stop(threadID, activityID string) (Session, error) {
+func (r *Registry) idleLocked(entry *registryEntry) Session {
+	entry.revoke(ErrControlRevoked)
+	entry.leaseToken = ""
+	entry.session.Controller = ControllerNone
+	if entry.session.State != StateError {
+		entry.session.State = StateActive
+	}
+	entry.session.Interaction = nil
+	entry.session.UpdatedAt = r.now().UTC()
+	return entry.session
+}
+
+func (r *Registry) Stop(threadID, activityID string, executionID ...string) (Session, error) {
 	r.mu.Lock()
-	entry, err := r.entryLocked(threadID, activityID)
+	entry, err := r.executionEntryLocked(threadID, activityID, executionID)
 	if err != nil {
 		r.mu.Unlock()
 		return Session{}, err
@@ -460,14 +560,12 @@ func (r *Registry) Stop(threadID, activityID string) (Session, error) {
 		r.mu.Unlock()
 		return session, nil
 	}
-	entry.revoke(ErrControlRevoked)
-	entry.leaseToken = ""
-	entry.session.State = StateStopped
-	entry.session.Controller = ControllerNone
-	entry.session.UpdatedAt = r.now().UTC()
+	events := r.revokeThreadLocked(threadID, true)
 	session := entry.session
 	r.mu.Unlock()
-	r.emit(Event{Type: EventStopped, Activity: session})
+	for _, event := range events {
+		r.emit(event)
+	}
 	return session, nil
 }
 
@@ -502,6 +600,9 @@ func ControlErr(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if execution, ok := ctx.Value(executionContextKey{}).(*executionEpoch); ok && execution.control.Err() != nil {
+		return ErrControlRevoked
+	}
 	if control, ok := ctx.Value(boundControlContextKey{}).(context.Context); ok && control.Err() != nil {
 		return context.Cause(control)
 	}
@@ -524,6 +625,25 @@ func (r *Registry) CheckControl(threadID, activityID, token string) error {
 	return nil
 }
 
+// Optional execution identity protects newer runs from delayed desktop controls.
+func (r *Registry) executionEntryLocked(threadID, activityID string, executionID []string) (*registryEntry, error) {
+	entry, err := r.entryLocked(threadID, activityID)
+	if err != nil {
+		return nil, err
+	}
+	if len(executionID) > 0 && executionID[0] != "" {
+		if entry.session.ExecutionID != executionID[0] {
+			return nil, ErrControlRevoked
+		}
+		// An idle previous activity keeps its historical identity until first
+		// use. Its delayed controls must not interrupt a newer text-only turn.
+		if run := r.runs[entry.session.ThreadID]; run != nil && run.execution != nil && run.execution.control.Err() == nil && run.execution.id != executionID[0] {
+			return nil, ErrControlRevoked
+		}
+	}
+	return entry, nil
+}
+
 func (r *Registry) entryLocked(threadID, activityID string) (*registryEntry, error) {
 	entry, ok := r.entries[strings.TrimSpace(activityID)]
 	if !ok {
@@ -540,6 +660,12 @@ func (r *Registry) emit(event Event) {
 		return
 	}
 	r.mu.RLock()
+	// Mutations publish outside the registry lock. A newer takeover, stop, or
+	// execution may already have replaced this snapshot before publication.
+	if entry := r.entries[event.Activity.ID]; entry != nil && entry.session != event.Activity {
+		r.mu.RUnlock()
+		return
+	}
 	listeners := make([]func(Event), 0, len(r.listeners))
 	for _, listener := range r.listeners {
 		listeners = append(listeners, listener)

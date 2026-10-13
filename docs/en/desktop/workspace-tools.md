@@ -113,13 +113,13 @@ The shortcut starts disabled, and no background history or audio is recorded. Ad
 
 Open **Browser** or enter `/browser` to view a page in the workspace panel beside the conversation. That panel and the page the agent is using are the same tab: the address bar, back, forward, and reload all drive it. Clicking a web link in a message, a turn source capsule, or a compact browser activity row also opens or focuses that panel and navigates to the page. Hold Command (Ctrl on Windows) or middle-click to open it in the system browser instead. If you are already using another workspace tool, the page still navigates in that tab and does not steal the panel.
 
-Desktop browser automation is available by default. The active conversation automatically previews the Agent's page in a floating card, including during background browser actions; switching conversations hides it. The preview does not require an explicit visibility request and stays visible across further actions. Hiding or minimizing Wuu also hides the card; showing or restoring the window brings it back. Dragging the card snaps it to a corner of that column, clear of the composer. The page keeps its layout size and is zoomed so the whole page fits in the card. Dragging an edge or corner changes the card, and the zoom follows. Pointer events on the card move or resize it; they do not click or scroll the page. The card does not paint the page scrollbar or automatically open the side panel. Open the browser or expand the card to use that same page in the panel. Set `WUU_ENABLE_BROWSER=0` before launching Wuu to hide the automation tool.
+Desktop browser automation is available by default. The active conversation can show the Agent's page in the [live activity preview](#live-activity-preview), including during background browser actions. Open the browser or expand the preview to use that same page in the panel. Showing the page in the panel replaces its floating preview. Set `WUU_ENABLE_BROWSER=0` before launching Wuu to hide the automation tool.
 
 Each conversation owns its browser tabs, including pages opened in a new window. Listing or cleaning up tabs in one conversation leaves other conversations' pages alone. Tabs still share the app's browser profile and signed-in sessions; task ownership is not a separate login profile.
 
 Page-opened windows keep their original content and opener connection, including script-filled blank pages and forms submitted to a new window. When a turn finishes or is interrupted, Wuu closes temporary task pages and releases automation control. Pages you opened or took over, pages retained for handoff, and deliverables stay available. Keeping a popup also keeps its live opener so messaging and review context continue working. A later instruction can use a retained page with fresh control authority.
 
-Clicking or typing in the Agent's page, submitting an address, or using its navigation buttons pauses the current task and leaves the page available for you to use. Hovering and scrolling alone do not pause it. Send your next instruction in the conversation when you are ready to continue; background updates do not restore browser input. Use the conversation's Stop action to interrupt a task. The browser has no separate control-transfer buttons or ownership status bar.
+Clicking or typing in the Agent's page, submitting an address, or using its navigation buttons pauses the current task and leaves the page available for you to use. Hovering and scrolling alone do not pause it. Send your next instruction in the conversation when you are ready to continue; background updates do not restore browser input. Use the conversation's Stop action or the preview's Stop task control to interrupt a task.
 
 The floating preview and workspace panel share an animated pointer. It stays legible when the page is scaled, moves to the target before input, and shows click, typing, and scroll feedback. Direct page input clears it. Reduced-motion settings disable travel and idle movement.
 
@@ -130,6 +130,26 @@ WUU_BROWSER_PROXY=http://proxy.example:7897 npm run dev --prefix desktop
 ```
 
 Use the address and port of your own proxy. This setting does not configure model API or app-server traffic. If browser requests fail after enabling it, check the proxy and restart Wuu with the corrected setting.
+
+## Live activity preview
+
+The active conversation has one watch-only floating preview for browser and supported local computer-use activity. Switching browser tabs or app windows changes the content inside that same preview. Switching conversations changes which activity you see. Moving or resizing the preview does not send clicks, scrolling, or keyboard input to the target.
+
+In **Settings → General → Live activity**, **Show preview automatically** controls whether local activity opens the preview. The setting is saved across restarts. It does not enable an extension or give the Agent control. Hiding a preview leaves the task running; later activity updates do not reopen a preview you hid. Use **Show live activity** in the conversation title bar to open it again. This action appears when the conversation has a local activity that has not stopped.
+
+Hiding or minimizing Wuu hides the preview too. Restoring Wuu shows it again only when it was not explicitly hidden. Drag the preview to place it in a corner of the conversation column, clear of the composer, or resize it from an edge or corner. The browser page keeps its layout size and is scaled to fit. The preview follows the app's appearance and text settings and respects reduced motion.
+
+The preview separates viewing from control:
+
+- **Hide preview** hides the card and leaves the task running.
+- **Open in side panel** opens a browser page at full size.
+- **Take over and pause task** pauses the whole task and revokes its browser and computer-use control. You can then use the page or application yourself.
+- **Finish takeover** ends a takeover. It does not restart the interrupted task; send another instruction to continue with fresh authority.
+- **Stop task** interrupts the task and stops its activity. Old requests remain revoked. A later explicit instruction can start a new run.
+
+Closing or stopping the preview does not quit the application being observed. Disabling or retiring the owning extension stops its preview activity. If a capture target disappears, permission is denied, or capture stops producing valid frames, the preview shows that condition rather than presenting an old frame as live. It does not silently switch to another app window or the whole screen.
+
+Native app previews require a macOS build with Computer Use enabled and the relevant macOS permissions. The floating preview does not itself grant Screen Recording or Accessibility access. See [installation](../getting-started/installation.md) for build availability and permissions.
 
 ## Find an action
 

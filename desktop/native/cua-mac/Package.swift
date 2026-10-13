@@ -17,8 +17,8 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("ApplicationServices"),
                 .linkedFramework("CoreGraphics"),
-                .linkedFramework("AVFoundation"),
-                .linkedFramework("QuartzCore"),
+                .linkedFramework("CoreImage"),
+                .linkedFramework("ImageIO"),
                 .linkedFramework("ScreenCaptureKit"),
             ]
         ),

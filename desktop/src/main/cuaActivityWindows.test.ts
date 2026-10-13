@@ -9,7 +9,6 @@ import {
   pipVisibleForActivity,
   activityVisibleForThread,
   frameStreamRetryDelay,
-  nativePiPInitialBounds,
   browserPiPInitialBounds,
   observationActivityFromServerEvent,
   observationKey,
@@ -45,12 +44,6 @@ describe("CUA native picture-in-picture", () => {
   });
 
   it("places the PiP inside the Wuu window corner and active work area", () => {
-    expect(nativePiPInitialBounds(
-      { x: 100, y: 80, width: 1200, height: 800 },
-      { x: 0, y: 0, width: 1440, height: 900 },
-    )).toEqual({ x: 1028, y: 92, width: 260, height: 170 });
-    expect(nativePiPInitialBounds(undefined, { x: 1440, y: 0, width: 1200, height: 900 }))
-      .toEqual({ x: 2356, y: 24, width: 260, height: 170 });
     expect(browserPiPInitialBounds(
       { x: 100, y: 80, width: 1200, height: 800 },
       { x: 0, y: 0, width: 1440, height: 900 },
@@ -139,7 +132,7 @@ describe("CUA native picture-in-picture", () => {
     expect(helpers.map((helper) => helper.target)).toEqual(["app-a", "app-c"]);
   });
 
-  it("does not start an update while a user-closed helper is still stopping", () => {
+  it("keeps a user-closed preview hidden across activity updates until explicitly reopened", () => {
     vi.useFakeTimers();
     vi.setSystemTime("2026-07-10T10:00:01.500Z");
     const events: string[] = [];
@@ -170,9 +163,13 @@ describe("CUA native picture-in-picture", () => {
     testCoordinator.handlePiPEvent(observationKey(initial), { event: "user_close" });
     coordinator.update(activity({ target: "app-b", updated_at: "2026-07-10T10:00:02Z" }));
 
-    expect(events).toEqual(["start:app-a", "stop:app-a"]);
+    expect(events).toEqual(["start:app-a"]);
     expect(helpers).toHaveLength(1);
-
+    coordinator.setActiveThread(undefined);
+    coordinator.setActiveThread("thread-1");
+    expect(events).toEqual(["start:app-a"]);
+    coordinator.showForThread("thread-1");
+    expect(events).toEqual(["start:app-a", "stop:app-a"]);
     helpers[0].finishStop?.();
     expect(events).toEqual(["start:app-a", "stop:app-a", "start:app-b"]);
     expect(helpers.map((helper) => helper.target)).toEqual(["app-a", "app-b"]);
@@ -427,7 +424,8 @@ describe("browser observation surface", () => {
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
     // Controls from the reused window must address the new observation key.
     retarget.mock.calls[0][1].onEvent({ event: "user_close" });
-    expect(stops).toHaveLength(1);
+    expect(stops).toHaveLength(0);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
   });
 
   it("swaps a non-retargetable surface through the serialized replacement", () => {

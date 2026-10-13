@@ -21,7 +21,7 @@ async function main() {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "wuu-browser-ownership-"));
   try {
     const result = spawnSync(String(require("electron")), [
-      ...(process.platform === "linux" ? ["--no-sandbox"] : []), output,
+      ...(process.platform === "linux" ? ["--no-sandbox", ...(!process.env.DISPLAY ? ["--ozone-platform=headless", "--ozone-override-screen-size=1440,1000"] : [])] : []), output,
     ], { stdio: "inherit", env: { ...process.env, WUU_BROWSER_OWNERSHIP_FIXTURE: fixture } });
     process.exitCode = result.status ?? 1;
     if (result.error) throw result.error;

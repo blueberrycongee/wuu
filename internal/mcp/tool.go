@@ -52,6 +52,10 @@ func (t *MCPTool) ServerName() string {
 	return t.serverName
 }
 
+// ConnectionID returns the exact transport owner captured by this tool. A
+// frozen tool catalog must never borrow a replacement connection's authority.
+func (t *MCPTool) ConnectionID() string { return t.client.ConnectionID() }
+
 // Definition returns the JSON-schema tool definition for the model.
 func (t *MCPTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{

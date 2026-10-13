@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -340,15 +343,82 @@ func TestSuccessfulCandidateSwapsThenClosesOldGeneration(t *testing.T) {
 func TestActivatePluginGenerationKeepsPinnedConversationGeneration(t *testing.T) {
 	oldClient := &generationClient{id: "old"}
 	old := testPluginGeneration("old", oldClient)
+	old.id = "old-activity-generation"
+	registry := activity.NewRegistry()
+	old.mcpBinding = map[string]tools.MCPActivityBinding{"provider": {Kind: activity.KindCUA, PluginID: "old", GenerationID: old.id}}
+	old.bindActivityOwnership(registry)
+	controlled, lease, err := registry.Start(activity.StartOptions{ThreadID: "controlled", Workdir: "/workspace", PluginID: "old", GenerationID: old.id, Kind: activity.KindCUA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action, cancel, err := registry.BindControl(context.Background(), lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	unrelated, unrelatedLease, err := registry.Start(activity.StartOptions{ThreadID: "unrelated", Workdir: "/workspace", PluginID: "other", GenerationID: "other-generation", Kind: activity.KindCUA})
+	if err != nil {
+		t.Fatal(err)
+	}
 	session := testGenerationSession(old)
+	session.ActivityRegistry = registry
 	pinned := session.RetainPluginGeneration()
 	if pinned != old {
 		t.Fatal("session did not pin the current generation")
 	}
 	candidateClient := &generationClient{id: "old"}
 	candidate := testPluginGeneration("old", candidateClient)
+	candidate.id = "replacement-activity-generation"
+	candidate.mcp = mcp.NewManager()
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var request struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch request.Method {
+		case "server/discover":
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"error":{"code":-32601,"message":"unsupported"}}`, request.ID)
+		case "initialize":
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}}}`, request.ID)
+		case "tools/list":
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"observe","inputSchema":{"type":"object"}}]}}`, request.ID)
+		default:
+			w.WriteHeader(http.StatusAccepted)
+		}
+	}))
+	defer provider.Close()
+	defer candidate.close()
+	if err := candidate.mcp.Add(context.Background(), mcp.ServerConfig{Name: "provider", URL: provider.URL, Transport: mcp.TransportStreamableHTTP}); err != nil {
+		t.Fatal(err)
+	}
+	connectionID := candidate.mcp.NativeTools()[0].Client.ConnectionID()
+	candidate.mcpBinding = map[string]tools.MCPActivityBinding{"provider": {Kind: activity.KindCUA, PluginID: "old", GenerationID: candidate.id}}
+	candidate.bindActivityOwnership(registry)
 	if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case <-action.Done():
+	case <-time.After(time.Second):
+		t.Fatal("publication retained old local-control operation")
+	}
+	if _, _, err := registry.Acquire(activity.StartOptions{ThreadID: "late-old-work", Workdir: "/workspace", PluginID: "old", GenerationID: old.id, Kind: activity.KindCUA}); !errors.Is(err, activity.ErrControlRevoked) {
+		t.Fatalf("retired generation reacquired control: %v", err)
+	}
+	if err := registry.CheckControl(unrelated.ThreadID, unrelated.ID, unrelatedLease.Token); err != nil {
+		t.Fatalf("provider update stopped unrelated work: %v", err)
+	}
+	if err := registry.CheckControl(controlled.ThreadID, controlled.ID, lease.Token); err == nil {
+		t.Fatal("published provider update left an old lease usable")
 	}
 	if session.PluginHost != candidate.host {
 		t.Fatal("candidate was not published as the live generation")
@@ -362,9 +432,49 @@ func TestActivatePluginGenerationKeepsPinnedConversationGeneration(t *testing.T)
 	if candidateClient.closed {
 		t.Fatal("live candidate was closed")
 	}
+	replacement, replacementLease, err := registry.Start(activity.StartOptions{ThreadID: "replacement", Workdir: "/workspace", PluginID: "old", GenerationID: candidate.id, ConnectionID: connectionID, Kind: activity.KindCUA})
+	if err != nil {
+		t.Fatal(err)
+	}
 	session.ReleasePluginGeneration(pinned)
+	if err := registry.CheckControl(replacement.ThreadID, replacement.ID, replacementLease.Token); err != nil {
+		t.Fatalf("late old-generation cleanup stopped replacement control: %v", err)
+	}
 	if !oldClient.closed {
 		t.Fatal("pinned generation survived after the last conversation released it")
+	}
+	if err := candidate.mcp.Disconnect("provider"); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.CheckControl(replacement.ThreadID, replacement.ID, replacementLease.Token); err == nil {
+		t.Fatal("MCP provider disconnect left owned local control active")
+	}
+	if err := registry.CheckControl(unrelated.ThreadID, unrelated.ID, unrelatedLease.Token); err != nil {
+		t.Fatalf("provider disconnect stopped unrelated work: %v", err)
+	}
+	if err := candidate.mcp.Connect(context.Background(), "provider"); err != nil {
+		t.Fatal(err)
+	}
+	reconnected := candidate.mcp.NativeTools()[0].Client.ConnectionID()
+	if connectionID == "" || reconnected == "" || reconnected == connectionID {
+		t.Fatalf("reconnect did not replace transport identity: %q -> %q", connectionID, reconnected)
+	}
+	grant, err := registry.PrepareRun(replacement.ThreadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant()
+	resumed := registry.BeginExecution(context.Background(), replacement.ThreadID, "explicit-recovery")
+	recovered, recoveredLease, err := registry.AcquireForExecution(resumed, activity.StartOptions{ThreadID: replacement.ThreadID, Workdir: "/workspace", PluginID: "old", GenerationID: candidate.id, ConnectionID: reconnected, Kind: activity.KindCUA})
+	if err != nil {
+		t.Fatalf("healthy same-generation reconnect remained unusable: %v", err)
+	}
+	registry.RevokeConnection("old", candidate.id, connectionID)
+	if err := registry.CheckControl(recovered.ThreadID, recovered.ID, recoveredLease.Token); err != nil {
+		t.Fatalf("late connection retirement stopped healthy successor: %v", err)
+	}
+	if err := registry.CheckControl(replacement.ThreadID, replacement.ID, replacementLease.Token); err == nil {
+		t.Fatal("reconnect revived old connection authority")
 	}
 }
 

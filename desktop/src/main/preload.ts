@@ -24,6 +24,7 @@ import {
   type WuuDesktopApi,
 } from "../shared/protocol";
 
+import type { ActivityPreviewAppearance } from "../shared/activityPreview";
 import { initializeDesktopPageZoom, type DesktopZoomAction } from "../shared/DesktopPageZoom";
 
 // Restore shell zoom independently of font preferences.
@@ -314,12 +315,12 @@ const api: WuuDesktopApi = {
   pollXAILogin: (loginId: string) => ipcRenderer.invoke("wuu:auth-xai-login-poll", loginId),
   cancelXAILogin: (loginId: string) => ipcRenderer.invoke("wuu:auth-xai-login-cancel", loginId),
   listActivities: (threadId: string) => ipcRenderer.invoke("wuu:activity-list", threadId),
-  takeoverActivity: (threadId: string, activityId: string, inputGeneration?: number) =>
-    ipcRenderer.invoke("wuu:activity-takeover", threadId, activityId, inputGeneration),
-  releaseActivity: (threadId: string, activityId: string) =>
-    ipcRenderer.invoke("wuu:activity-release", threadId, activityId),
-  stopActivity: (threadId: string, activityId: string) =>
-    ipcRenderer.invoke("wuu:activity-stop", threadId, activityId),
+  takeoverActivity: (threadId: string, activityId: string, inputGeneration?: number, executionId?: string) =>
+    ipcRenderer.invoke("wuu:activity-takeover", threadId, activityId, inputGeneration, executionId),
+  releaseActivity: (threadId: string, activityId: string, executionId?: string) =>
+    ipcRenderer.invoke("wuu:activity-release", threadId, activityId, executionId),
+  stopActivity: (threadId: string, activityId: string, executionId?: string) =>
+    ipcRenderer.invoke("wuu:activity-stop", threadId, activityId, executionId),
   listCodexPets: () => ipcRenderer.invoke("wuu:codex-pets-list"),
   updateCodexPetSettings: (settings) =>
     ipcRenderer.invoke("wuu:codex-pets-update", settings),
@@ -384,6 +385,14 @@ const api: WuuDesktopApi = {
       ipcRenderer.removeListener("wuu:language-preference-changed", listener);
   },
   initialMessageFlowFontSize,
+  getActivityPreviewAutoShow: () => ipcRenderer.invoke("wuu:activity-preview-auto-show-get"),
+  setActivityPreviewAutoShow: (enabled) => ipcRenderer.invoke("wuu:activity-preview-auto-show-set", enabled),
+  onActivityPreviewAutoShowChange: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, enabled: boolean) => handler(enabled);
+    ipcRenderer.on("wuu:activity-preview-auto-show-changed", listener);
+    return () => ipcRenderer.removeListener("wuu:activity-preview-auto-show-changed", listener);
+  },
+  showActivityPreview: (threadId) => ipcRenderer.invoke("wuu:activity-preview-show", threadId),
   getThemePreference: () => ipcRenderer.invoke("wuu:theme-preference-get"),
   setThemePreference: (theme: ThemePreference) =>
     ipcRenderer.invoke("wuu:theme-preference-set", theme),
@@ -612,6 +621,7 @@ type BrowserTakeoverApi = {
   ) => () => void;
   onBrowserTabAdopted: (handler: (payload: BrowserTabAdopted) => void) => () => void;
   onBrowserDock: (handler: (payload: BrowserDockTarget) => void) => () => void;
+  reportActivityPreviewAppearance: (appearance: ActivityPreviewAppearance) => void;
   reportBrowserPiPHostLayout: (
     payload: {
       host: { x: number; y: number; width: number; height: number };
@@ -660,6 +670,9 @@ browserApi.onBrowserTabAdopted = (handler) => {
     handler(payload);
   ipcRenderer.on("wuu:browser-tab-adopted", listener);
   return () => ipcRenderer.removeListener("wuu:browser-tab-adopted", listener);
+};
+browserApi.reportActivityPreviewAppearance = (appearance) => {
+  void ipcRenderer.invoke("wuu:activity-preview-appearance", appearance);
 };
 browserApi.reportBrowserPiPHostLayout = (payload) => {
   void ipcRenderer.invoke("wuu:browser-pip-host-layout", payload);

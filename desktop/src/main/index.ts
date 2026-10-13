@@ -150,6 +150,7 @@ import type {
 import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
 import { ObservationCoordinator, activityControlMethod, observationActivityFromServerEvent } from "./cuaActivityWindows";
+import type { ActivityPreviewAppearance } from "../shared/activityPreview";
 import { browserPiPHostClient } from "./browserPiPPlacement";
 import { createObservationPiPFactory } from "./browserPiPWindow";
 import { removeLegacyDesktopCliLink } from "./legacyCliLink";
@@ -164,6 +165,8 @@ import { CodexPetActivity } from "./codexPetActivity";
 import { CodexPetCommandRelay, type CodexPetCommandTarget } from "./codexPetCommands";
 import { RemoteHostManager } from "./remoteControl";
 import {
+  getActivityPreviewAutoShow,
+  setActivityPreviewAutoShow,
   getCodexPetSettings,
   getCodexPetScale,
   getCodexPetSize,
@@ -364,12 +367,13 @@ const observationCoordinator = new ObservationCoordinator(
   }),
   async (activity, action) => {
     const result = await appServerClientPool.requestForWorkdir<ActivityActionResult>(
-      activity.workdir, activityControlMethod(action), { thread_id: activity.thread_id, activity_id: activity.id },
+      activity.workdir, activityControlMethod(action), { thread_id: activity.thread_id, activity_id: activity.id, execution_id: activity.execution_id },
     );
     return result.activity;
   },
 );
 observationCoordinator.setAppearance(resolvedThemeIsDark());
+observationCoordinator.setAutoShow(getActivityPreviewAutoShow());
 browserHostCoordinator.setRendererSink({
   surface: (snapshot) => broadcastToAll("wuu:browser-surface", snapshot),
   userInput: (payload) => broadcastToAll("wuu:browser-user-input", payload),
@@ -2162,18 +2166,18 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:activity-list", (event, threadId: string) =>
     appServerRequest<ActivityListResult>(event, "activity/list", { thread_id: threadId }),
   );
-  ipcMain.handle("wuu:activity-takeover", async (event, threadId: string, activityId: string, inputGeneration?: number) => {
-    const result = await appServerRequest<ActivityActionResult>(event, "activity/takeover", { thread_id: threadId, activity_id: activityId });
+  ipcMain.handle("wuu:activity-takeover", async (event, threadId: string, activityId: string, inputGeneration?: number, executionId?: string) => {
+    const result = await appServerRequest<ActivityActionResult>(event, "activity/takeover", { thread_id: threadId, activity_id: activityId, execution_id: executionId });
     if (typeof inputGeneration === "number" && Number.isSafeInteger(inputGeneration)) {
       browserHostCoordinator.acknowledgeLocalTakeover(result.activity, inputGeneration);
     }
     return result;
   });
-  ipcMain.handle("wuu:activity-release", (event, threadId: string, activityId: string) =>
-    appServerRequest<ActivityReleaseResult>(event, "activity/release", { thread_id: threadId, activity_id: activityId }),
+  ipcMain.handle("wuu:activity-release", (event, threadId: string, activityId: string, executionId?: string) =>
+    appServerRequest<ActivityReleaseResult>(event, "activity/release", { thread_id: threadId, activity_id: activityId, execution_id: executionId }),
   );
-  ipcMain.handle("wuu:activity-stop", (event, threadId: string, activityId: string) =>
-    appServerRequest<ActivityActionResult>(event, "activity/stop", { thread_id: threadId, activity_id: activityId }),
+  ipcMain.handle("wuu:activity-stop", (event, threadId: string, activityId: string, executionId?: string) =>
+    appServerRequest<ActivityActionResult>(event, "activity/stop", { thread_id: threadId, activity_id: activityId, execution_id: executionId }),
   );
   ipcMain.handle("wuu:side-thread-open", (event, mainThreadId: string) =>
     appServerRequest<SideThreadOpenResult>(event, "sideThread/open", { main_thread_id: mainThreadId }),
@@ -2323,6 +2327,29 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:window-is-maximized", (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     return Boolean(win && !win.isDestroyed() && win.isMaximized());
+  });
+  ipcMain.handle("wuu:activity-preview-auto-show-get", () => getActivityPreviewAutoShow());
+  ipcMain.handle("wuu:activity-preview-auto-show-set", (_event, enabled: unknown) => {
+    if (typeof enabled !== "boolean") throw new Error("Invalid activity preview preference");
+    setActivityPreviewAutoShow(enabled);
+    observationCoordinator.setAutoShow(enabled);
+    broadcastToAll("wuu:activity-preview-auto-show-changed", enabled);
+  });
+  ipcMain.handle("wuu:activity-preview-show", (_event, threadId: unknown) => {
+    if (typeof threadId !== "string" || !threadId.trim()) throw new Error("Missing conversation");
+    observationCoordinator.showForThread(threadId);
+  });
+  ipcMain.handle("wuu:activity-preview-appearance", (event, value: unknown) => {
+    // Only the main workbench supplies global presentation preferences.
+    if (event.sender !== mainWindow?.webContents || !value || typeof value !== "object") return;
+    const appearance = value as ActivityPreviewAppearance;
+    if (typeof appearance.reducedMotion !== "boolean" ||
+      typeof appearance.fontSize !== "number" || !Number.isFinite(appearance.fontSize) ||
+      appearance.fontSize < MESSAGE_FLOW_FONT_SIZE_RANGE.min || appearance.fontSize > MESSAGE_FLOW_FONT_SIZE_RANGE.max ||
+      (appearance.locale !== "en-US" && appearance.locale !== "zh-CN") ||
+      [appearance.fontFamily, appearance.surface, appearance.text, appearance.muted]
+        .some(field => typeof field !== "string" || field.length > 512)) return;
+    observationCoordinator.setAppearance(resolvedThemeIsDark(), appearance);
   });
   ipcMain.handle("wuu:theme-preference-get", () => getThemePreference());
   ipcMain.on("wuu:onboarding-complete-get-sync", (event) => {

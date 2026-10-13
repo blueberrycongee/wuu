@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,6 +91,7 @@ type ToolOverride struct {
 
 // Client is a connected MCP server session.
 type Client struct {
+	connectionID             string
 	name                     string
 	toolTimeout              time.Duration
 	transport                Transport
@@ -121,9 +123,10 @@ func connect(ctx context.Context, name string, t Transport, tryModern bool) (*Cl
 	defer cancel()
 
 	c := &Client{
-		name:      name,
-		transport: t,
-		inFlight:  newInFlight(),
+		connectionID: rand.Text(),
+		name:         name,
+		transport:    t,
+		inFlight:     newInFlight(),
 	}
 	c.readLoop = newReadLoop(t, c.inFlight, c.handleNotification, c.handleRequest, c.handleReadLoopExit)
 	c.readLoop.Start()
@@ -325,6 +328,10 @@ func connectRemoteWithTokenProvider(ctx context.Context, cfg ServerConfig, token
 
 // Name returns the server name.
 func (c *Client) Name() string { return c.name }
+
+// ConnectionID identifies this immutable connection incarnation. Reconnecting
+// the same configured server creates a different local resource owner.
+func (c *Client) ConnectionID() string { return c.connectionID }
 
 // DiscoverTools fetches the tool list from the server and caches it.
 func (c *Client) DiscoverTools(ctx context.Context) ([]Tool, error) {

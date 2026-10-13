@@ -1201,9 +1201,9 @@ func TestMCPActivityBindingsFromPluginsUsesDeclaredKind(t *testing.T) {
 				"computer": {Command: "wuu-cua-mac"},
 			},
 		},
-	}})
+	}}, "test-generation")
 	binding, ok := bindings["plugin.cua-mac.computer"]
-	if !ok || binding.Kind != activity.KindCUA || binding.PluginID != "cua-mac" {
+	if !ok || binding.Kind != activity.KindCUA || binding.PluginID != "cua-mac" || binding.GenerationID != "test-generation" {
 		t.Fatalf("cua binding = %+v, ok=%v", binding, ok)
 	}
 }

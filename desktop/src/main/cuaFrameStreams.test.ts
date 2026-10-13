@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CUA_PIP_FORCE_STOP_TIMEOUT_MS,
   CUALineDecoder,
-  CUANativePiP,
+  CUANativePreview,
   cuaFrameHelperCandidates,
   isSameExecutableFile,
 } from "./cuaFrameStreams";
@@ -45,7 +45,7 @@ describe("CUALineDecoder", () => {
   });
 });
 
-describe("CUANativePiP", () => {
+describe("CUANativePreview", () => {
   it("turns an asynchronous EPIPE into a recoverable helper failure", async () => {
     const pipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
     const stdin = new Writable({
@@ -59,16 +59,19 @@ describe("CUANativePiP", () => {
       pid: 1234,
     }) as unknown as ChildProcessWithoutNullStreams;
     const onError = vi.fn();
-    const pip = new CUANativePiP(
+    const onEvent = vi.fn();
+    const onFrame = vi.fn();
+    const spawnHelper = vi.fn(() => child);
+    const pip = new CUANativePreview(
       "/tmp/wuu-cua-mac-pip",
       "thread-id",
       "Finder",
       undefined,
       undefined,
-      { x: 0, y: 0, width: 320, height: 240 },
-      vi.fn(),
+      onEvent,
       onError,
-      (() => child) as unknown as typeof spawn,
+      onFrame,
+      spawnHelper as unknown as typeof spawn,
     );
 
     pip.start();
@@ -78,6 +81,12 @@ describe("CUANativePiP", () => {
     expect(pip.isLive()).toBe(false);
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
     expect(onError).toHaveBeenCalledTimes(1);
+
+    child.stdout.emit("data", Buffer.from('{"event":"frame","sequence":1,"width":320,"height":240,"data":"late"}\n{"event":"capture_status","status":"healthy"}\n'));
+    pip.start();
+    expect(onFrame).not.toHaveBeenCalled();
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(spawnHelper).toHaveBeenCalledTimes(1);
   });
 });
 

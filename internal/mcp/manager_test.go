@@ -75,6 +75,13 @@ func TestManagerCloseWaitsForDetachedClientClose(t *testing.T) {
 			manager.clients["docs"] = client
 			manager.statuses["docs"] = ServerStatus{Name: "docs", State: MCPServerStateConnected, Connected: true}
 			manager.mu.Unlock()
+			retired := make(chan string, 1)
+			var retirementOnce sync.Once
+			manager.SetConnectionRetiredCallback(func(name, connectionID string) {
+				// Reading status proves cleanup is outside the manager lock.
+				_ = manager.Status()
+				retirementOnce.Do(func() { retired <- name })
+			})
 
 			var releaseOnce sync.Once
 			release := func() { releaseOnce.Do(func() { close(transport.release) }) }
@@ -91,6 +98,15 @@ func TestManagerCloseWaitsForDetachedClientClose(t *testing.T) {
 			case <-transport.closeStarted:
 			case <-time.After(2 * time.Second):
 				t.Fatal("Disconnect did not start closing the client")
+			}
+
+			select {
+			case name := <-retired:
+				if name != "docs" {
+					t.Fatalf("retired provider = %q", name)
+				}
+			default:
+				t.Fatal("provider cleanup started before ownership retirement")
 			}
 
 			if action == "refresh" {
@@ -235,7 +251,12 @@ func TestManagerNativeToolsAndGenerationTrackCatalogChanges(t *testing.T) {
 	manager.mu.Unlock()
 	generation := manager.Generation()
 	manager.catalogChanged("docs", 1, client)
+	retirements := 0
+	manager.SetConnectionRetiredCallback(func(string, string) { retirements++ })
 	manager.clientConnectionFailed("docs", 1, client, errors.New("late connection failure"))
+	if retirements != 0 {
+		t.Fatal("retired client callback revoked replacement ownership")
+	}
 	if err := manager.recordConnectionStatus(1, ServerStatus{Name: "docs", State: MCPServerStateAuthRequired}, true); !errors.Is(err, context.Canceled) {
 		t.Fatalf("retired OAuth failure = %v, want cancellation without closing the replacement", err)
 	}
@@ -292,6 +313,12 @@ func TestManagerFailedConnectRecordsFailedState(t *testing.T) {
 func TestManagerMarksUnexpectedClientFailure(t *testing.T) {
 	server := newLegacySSEServer(t)
 	manager := NewManager()
+	retired := make(chan string, 1)
+	var retirementOnce sync.Once
+	manager.SetConnectionRetiredCallback(func(name, connectionID string) {
+		_ = manager.Status()
+		retirementOnce.Do(func() { retired <- name })
+	})
 	t.Cleanup(func() { _ = manager.Close() })
 
 	err := manager.Add(context.Background(), ServerConfig{
@@ -308,21 +335,24 @@ func TestManagerMarksUnexpectedClientFailure(t *testing.T) {
 	}
 
 	server.srv.CloseClientConnections()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		status := manager.Status()["legacy"]
-		if status.State == MCPServerStateFailed && !status.Connected && status.Error != "" {
-			if len(manager.NativeTools()) != 0 {
-				t.Fatalf("NativeTools retained tools from failed client: %+v", manager.NativeTools())
-			}
-			if manager.Generation() <= initialGeneration {
-				t.Fatalf("generation did not advance after failure: %d -> %d", initialGeneration, manager.Generation())
-			}
-			return
+	select {
+	case name := <-retired:
+		if name != "legacy" {
+			t.Fatalf("retired provider = %q", name)
 		}
-		time.Sleep(10 * time.Millisecond)
+	case <-time.After(2 * time.Second):
+		t.Fatal("unexpected provider failure did not retire owned resources")
 	}
-	t.Fatalf("manager did not record unexpected client failure: %+v", manager.Status()["legacy"])
+	status := manager.Status()["legacy"]
+	if status.State != MCPServerStateFailed || status.Connected || status.Error == "" {
+		t.Fatalf("manager did not record unexpected client failure: %+v", status)
+	}
+	if len(manager.NativeTools()) != 0 {
+		t.Fatalf("NativeTools retained tools from failed client: %+v", manager.NativeTools())
+	}
+	if manager.Generation() <= initialGeneration {
+		t.Fatalf("generation did not advance after failure: %d -> %d", initialGeneration, manager.Generation())
+	}
 }
 
 func TestClassifyConnectErrorDetectsNeedsAuth(t *testing.T) {

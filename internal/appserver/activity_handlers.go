@@ -42,17 +42,15 @@ func (s *Server) handleActivityTakeover(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	current, err := registry.Takeover(params.ThreadID, params.ActivityID)
+	current, err := registry.Takeover(params.ThreadID, params.ActivityID, params.ExecutionID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if current.Kind == activity.KindBrowser {
-		if err := s.takeSessionControl(params.ThreadID, session.ControlPaused); err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
-		if _, err := s.interruptThreadExecution(params.ThreadID, "", ""); err != nil {
-			return s.writeResponse(req.ID, nil, err)
-		}
+	if err := s.takeSessionControl(params.ThreadID, session.ControlPaused); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if _, err := s.interruptThreadExecution(params.ThreadID, "", ""); err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
 	return s.writeResponse(req.ID, ActivityActionResult{Activity: activitySessionFromRuntime(current)}, nil)
 }
@@ -66,7 +64,7 @@ func (s *Server) handleActivityRelease(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	session, lease, err := registry.Release(params.ThreadID, params.ActivityID)
+	session, lease, err := registry.Release(params.ThreadID, params.ActivityID, params.ExecutionID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -82,11 +80,17 @@ func (s *Server) handleActivityStop(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	session, err := registry.Stop(params.ThreadID, params.ActivityID)
+	current, err := registry.Stop(params.ThreadID, params.ActivityID, params.ExecutionID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	return s.writeResponse(req.ID, ActivityActionResult{Activity: activitySessionFromRuntime(session)}, nil)
+	if err := s.takeSessionControl(params.ThreadID, session.ControlPaused); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if _, err := s.interruptThreadExecution(params.ThreadID, "", ""); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	return s.writeResponse(req.ID, ActivityActionResult{Activity: activitySessionFromRuntime(current)}, nil)
 }
 
 func parseActivityActionParams(req Request) (ActivityActionParams, error) {
@@ -98,6 +102,7 @@ func parseActivityActionParams(req Request) (ActivityActionParams, error) {
 	}
 	params.ThreadID = strings.TrimSpace(params.ThreadID)
 	params.ActivityID = strings.TrimSpace(params.ActivityID)
+	params.ExecutionID = strings.TrimSpace(params.ExecutionID)
 	if params.ThreadID == "" || params.ActivityID == "" {
 		return params, errors.New("activity thread_id and activity_id are required")
 	}
@@ -131,6 +136,7 @@ func (s *Server) notifyActivityEvent(event activity.Event) {
 func activitySessionFromRuntime(session activity.Session) ActivitySession {
 	return ActivitySession{
 		ID:          session.ID,
+		ExecutionID: session.ExecutionID,
 		Kind:        string(session.Kind),
 		ThreadID:    session.ThreadID,
 		Workdir:     session.Workdir,

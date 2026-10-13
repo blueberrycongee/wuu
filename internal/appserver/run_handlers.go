@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -109,7 +108,7 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	params.Request.ImageCount = len(images)
 	params.Request.FileCount = len(files)
 	params.Request.StructuredOutput = len(params.OutputSchema) > 0
-	resumeBrowser, err := s.rt.ActivityRegistry.PrepareResume(params.ThreadID, activity.KindBrowser)
+	resumeActivities, err := s.rt.ActivityRegistry.PrepareRun(params.ThreadID)
 	if err != nil {
 		return s.writeRunError(req.ID, "internal_error", err)
 	}
@@ -199,7 +198,7 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 		_, _ = s.failAndDetachExecutionRun(run.ID, execution.StatusInterrupted, "notification_failed", "protocol", err)
 		return errors.Join(err, persistErr)
 	}
-	resumeBrowser()
+	resumeActivities()
 	launch.Commit()
 	return nil
 }

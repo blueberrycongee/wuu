@@ -240,6 +240,16 @@ export const cursorRuntimeSource = `function () {
   }
 
   return {
+    setReducedMotion: function (value) {
+      reduced = value;
+      if (!reduced) return;
+      if (travel) finish(travel.resolve);
+      if (raf) window.cancelAnimationFrame(raf);
+      raf = 0;
+      if (restPose && host) paint(Object.assign({}, restPose, { rotation: 0, press: 0 }));
+      if (effectAnimation) effectAnimation.cancel();
+      if (effect) { effect.remove(); effect = null; }
+    },
     moveTo: function (x, y) {
       cancelTravel();
       window.clearTimeout(pressTimer);

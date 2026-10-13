@@ -1,4 +1,7 @@
 import { useEffect } from "react";
+import type { ActivityPreviewAppearance } from "../shared/activityPreview";
+import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
+import { useI18n } from "./i18n";
 
 // Tells the main process where the conversation column and its obstacles are,
 // in viewport pixels. The card snaps to a corner of that column.
@@ -20,6 +23,36 @@ interface HostLayoutReport {
 type HostLayoutReporter = (payload: HostLayoutReport | null) => void;
 
 export function BrowserPiPHostReporter(): null {
+  const { locale } = useI18n();
+  useEffect(() => {
+    const report = (window.wuu as { reportActivityPreviewAppearance?: (appearance: ActivityPreviewAppearance) => void } | undefined)
+      ?.reportActivityPreviewAppearance;
+    if (!report) return;
+    const root = document.documentElement;
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let previous = "";
+    const update = (): void => {
+      const style = getComputedStyle(root);
+      const appearance: ActivityPreviewAppearance = {
+        reducedMotion: root.dataset.appearanceMotion === "reduce" || motion.matches,
+        fontSize: Number.parseFloat(style.getPropertyValue("--conversation-message-font-size")) || MESSAGE_FLOW_FONT_SIZE_RANGE.default,
+        fontFamily: style.getPropertyValue("--appearance-ui-font").trim() || style.fontFamily,
+        locale,
+        surface: style.getPropertyValue("--surface-1").trim(),
+        text: style.getPropertyValue("--ink-strong").trim(),
+        muted: style.getPropertyValue("--ink-soft").trim(),
+      };
+      const next = JSON.stringify(appearance);
+      if (next === previous) return;
+      previous = next;
+      report(appearance);
+    };
+    const observer = new MutationObserver(update);
+    observer.observe(root, { attributes: true, attributeFilter: ["style", "data-theme", "data-appearance-motion"] });
+    motion.addEventListener("change", update);
+    update();
+    return () => { observer.disconnect(); motion.removeEventListener("change", update); };
+  }, [locale]);
   useEffect(() => {
     const report = (window.wuu as { reportBrowserPiPHostLayout?: HostLayoutReporter } | undefined)
       ?.reportBrowserPiPHostLayout;
