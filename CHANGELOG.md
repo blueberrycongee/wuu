@@ -45,6 +45,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep stopped agent subtrees stopped when child cancellation results arrive.
+  Parked parents now finish cancellation durably, and explicit follow-ups reopen
+  their edges for later work without blocking shutdown cancellation or restart recovery.
+
 - Persist accepted human queue and steering input before acknowledging it, with
   durable edits, cancellation, and stable-ID deduplication. After a core restart,
   unconsumed input returns as held work instead of automatically executing.
