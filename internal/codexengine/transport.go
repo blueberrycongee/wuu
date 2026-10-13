@@ -194,6 +194,8 @@ func (t *Transport) WriteLine(ctx context.Context, line string) error {
 	done := make(chan error, 1)
 	var stateMu sync.Mutex
 	writing := false
+	var deadlineWriter interface{ SetWriteDeadline(time.Time) error }
+	interrupted := false
 	go func() {
 		t.writeMu.Lock()
 		defer t.writeMu.Unlock()
@@ -217,13 +219,28 @@ func (t *Transport) WriteLine(ctx context.Context, line string) error {
 			done <- err
 			return
 		}
+		deadlineWriter, _ = stdin.(interface{ SetWriteDeadline(time.Time) error })
 		writing = true
 		stateMu.Unlock()
-		_, err := io.WriteString(stdin, line+"\n")
+		frame := line + "\n"
+		n, err := io.WriteString(stdin, frame)
 		stateMu.Lock()
 		writing = false
+		var resetErr error
+		if interrupted {
+			resetErr = deadlineWriter.SetWriteDeadline(time.Time{})
+		}
+		canceledBeforeWrite := interrupted && n == 0 && errors.Is(err, os.ErrDeadlineExceeded) && resetErr == nil
 		stateMu.Unlock()
-		if err != nil {
+		if canceledBeforeWrite {
+			err = ctx.Err()
+		} else {
+			if n != len(frame) && err == nil {
+				err = io.ErrShortWrite
+			}
+			err = errors.Join(err, resetErr)
+		}
+		if err != nil && !canceledBeforeWrite {
 			t.fireClose(fmt.Sprintf("write stdin: %v", err))
 			go func() { _ = t.Close() }()
 		}
@@ -235,10 +252,20 @@ func (t *Transport) WriteLine(ctx context.Context, line string) error {
 	case <-ctx.Done():
 		stateMu.Lock()
 		uncertain := writing
+		if writing && deadlineWriter != nil && deadlineWriter.SetWriteDeadline(time.Now()) == nil {
+			interrupted = true
+			uncertain = false
+		}
+		waitForWrite := interrupted
 		stateMu.Unlock()
-		// Only an active pipe write can leave a partial frame. Cancellation
-		// while queued, or after a complete write, must not kill healthy peers.
-		if uncertain {
+		// A peer may accept a whole frame before its writer publishes completion.
+		// Interrupt pollable pipes and inspect the actual write outcome instead
+		// of treating that scheduling window as a corrupted shared transport.
+		if waitForWrite {
+			<-done
+		} else if uncertain {
+			// Pipes without deadline support must close to unblock an active write;
+			// its framing cannot be trusted until the write has returned.
 			t.fireClose("codex app-server write canceled")
 			go func() { _ = t.Close() }()
 		}
