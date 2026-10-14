@@ -38,8 +38,9 @@ contextBridge.exposeInMainWorld("wuu", {
   loadCodexModels: async provider => ({ provider, models: [{ id: "mock-selection", name: "mock-selection" }] }),
   gitStatus: async () => ({ is_repo: false, branches: [], dirty_count: 0 }),
   listGitChanges: async () => ({ is_repo: false, root: cwd, files: [] }),
+  getThreadExecutionEnvironment: async thread_id => ({ thread_id, environment: { state: "local", root: cwd } }),
   listWorkspaceFiles: async () => ({ root: cwd, paths: [], truncated: false }),
-  listWorkspaceDirectory: async () => ({ root: cwd, path: "", entries: [], truncated: false }),
+  listWorkspaceDirectory: async (_path, _root, target) => ({ target: target && { thread_id: target.thread_id, environment_id: "local" }, root: cwd, path: "", entries: [], truncated: false }),
   listMCPServers: async () => ({ servers: [] }),
   startTurn: async (...args) => {
     record("startTurn", args);

@@ -1,3 +1,4 @@
+import { WorkspaceFileSource } from "./WorkspacePaths";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -333,7 +334,7 @@ describe("RichContent code block", () => {
     expect(resolveWorkspaceFileReferenceMock).not.toHaveBeenCalled();
   });
 
-  it("keeps a non-interactive fallback when a Markdown image fails to load", () => {
+  it("keeps a non-interactive fallback when a Markdown image fails to load", async () => {
     renderWithImagePreview(<RichContent text="![饿鹅骑自行车](missing.svg)" />);
 
     const image = container.querySelector<HTMLImageElement>("img.rich-image");
@@ -342,6 +343,20 @@ describe("RichContent code block", () => {
     expect(container.querySelector("img.rich-image")).toBeNull();
     expect(container.querySelector(".rich-image-block [role=img]")).not.toBeNull();
     expect(container.querySelector(".rich-image-block [role=button]")).toBeNull();
+
+    for (const [document, imagePath] of [["docs/report.md", "assets/chart.png"], ["/worker/docs/report.md", "/worker/assets/chart.png"]]) {
+      const target = { thread_id: "original-thread", environment_id: "original-worker" };
+      const image = "data:image/png;base64,c3ludGhldGlj";
+      const read = vi.fn().mockResolvedValue({ target, root: "/worker", path: imagePath, renderable_kind: "image", renderable_url: image });
+      window.wuu.readWorkspaceFile = read;
+      renderWithImagePreview(<WorkspaceFileSource.Provider value={{ context: { kind: "no_project", cwd: "/host", file_root: "/worker", file_target: target }, path: document }}>
+        <RichContent text="![worker chart](../assets/chart.png)" cwd="/host" />
+      </WorkspaceFileSource.Provider>);
+      await settleFileReferenceResolution();
+      expect(read).toHaveBeenCalledWith(imagePath, "/host", target);
+      expect(container.querySelector("img")?.getAttribute("src")).toBe(image);
+      expect(container.querySelector('img[src^="wuu-file:"]')).toBeNull();
+    }
   });
 
   it("decorates web links with an inline site icon", () => {

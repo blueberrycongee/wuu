@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/workspaceview"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -99,7 +100,7 @@ func workspaceGitList(ctx context.Context, root string, args ...string) ([]byte,
 }
 
 func (s *Server) handleWorkspaceGit(ctx context.Context, req Request) error {
-	var params workspaceViewParams
+	var params workspaceview.Params
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -343,7 +344,7 @@ func readWorkspaceGitStatus(ctx context.Context, root, baseline string) (workspa
 
 func readWorkspaceGitDiff(ctx context.Context, root, baseline, path string) (workspaceGitDiff, error) {
 	result := workspaceGitDiff{IsRepo: true, workspaceGitChange: workspaceGitChange{Status: "unknown"}}
-	clean, err := workspaceRelativePath(path, false)
+	clean, err := workspaceview.RelativePath(path, false)
 	if err != nil {
 		return result, err
 	}
@@ -369,7 +370,7 @@ func readWorkspaceGitDiff(ctx context.Context, root, baseline, path string) (wor
 	if result.Status == "untracked" {
 		args = []string{"diff", "--no-ext-diff", "--no-textconv", "--no-index", "--", os.DevNull, path}
 	}
-	patch, truncated, err := workspaceGitRun(ctx, root, workspacePreviewBytes, args...)
+	patch, truncated, err := workspaceGitRun(ctx, root, workspaceview.PreviewBytes, args...)
 	if err != nil {
 		var exit *exec.ExitError
 		if result.Status != "untracked" || !errors.As(err, &exit) || exit.ExitCode() != 1 {
@@ -386,7 +387,7 @@ func readWorkspaceGitDiff(ctx context.Context, root, baseline, path string) (wor
 		if result.OldPath != "" {
 			originalPath = result.OldPath
 		}
-		original, cut, err := workspaceGitRun(ctx, root, workspacePreviewBytes, "show", baseline+":"+originalPath)
+		original, cut, err := workspaceGitRun(ctx, root, workspaceview.PreviewBytes, "show", baseline+":"+originalPath)
 		if err != nil {
 			return result, err
 		}
@@ -415,7 +416,7 @@ func readWorkspaceGitDiff(ctx context.Context, root, baseline, path string) (wor
 			}
 			result.ModifiedText = &text
 		} else if info.Mode().IsRegular() {
-			preview, err := readWorkspacePreview(rooted, clean)
+			preview, err := workspaceview.ReadPreview(rooted, clean)
 			if err != nil {
 				return result, err
 			}

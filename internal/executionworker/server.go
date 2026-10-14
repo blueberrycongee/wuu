@@ -48,6 +48,8 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 		return s.process(ctx, method, data)
 	}
 	switch method {
+	case "workspace/view":
+		return s.workspaceView(data)
 	case "export/read", "export/close":
 		return s.export(method, data)
 	case "initialize":

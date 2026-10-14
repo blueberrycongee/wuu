@@ -79,18 +79,21 @@ contextBridge.exposeInMainWorld("wuu", {
   }),
   commitGitChanges: async () => ({ ok: true }),
   createPullRequest: async () => ({ url: "https://example.test/pr/1" }),
+  getThreadExecutionEnvironment: async thread_id => ({ thread_id, environment: { state: "local", root: cwd } }),
   listWorkspaceFiles: async () => ({
     root: cwd,
     paths: [],
     truncated: false
   }),
-  listWorkspaceDirectory: async (path = "") => ({
+  listWorkspaceDirectory: async (path = "", _root, target) => ({
+    target: target && { thread_id: target.thread_id, environment_id: "local" },
     root: cwd,
     path: path.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, ""),
     entries: [],
     truncated: false
   }),
-  readWorkspaceFile: async (path) => ({
+  readWorkspaceFile: async (path, _root, target) => ({
+    target: target && { thread_id: target.thread_id, environment_id: "local" },
     root: cwd,
     path,
     absolute_path: path,

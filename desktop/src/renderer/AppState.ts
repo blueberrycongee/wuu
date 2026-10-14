@@ -1,3 +1,4 @@
+import type { WorkspaceFileContext } from "../shared/protocol";
 import type {
   Agent,
   AppServerNotification,
@@ -2107,14 +2108,10 @@ export function resolveThreadRuntimeContext(
 export function workspacePanelContext(
   activeContext: RuntimeContext | undefined,
   thread: Thread | undefined,
-): RuntimeContext | undefined {
-  if (!thread || !thread.cwd || thread.cwd === activeContext?.cwd) {
-    return activeContext;
-  }
-  if (!activeContext) {
-    return { kind: "no_project", cwd: thread.cwd };
-  }
-  return { ...activeContext, cwd: thread.cwd };
+): WorkspaceFileContext | undefined {
+  if (!thread?.cwd) return activeContext;
+  const context = activeContext ?? { kind: "no_project" as const, cwd: thread.cwd };
+  return { ...context, cwd: thread.cwd, file_target: { thread_id: thread.id }, ...(thread.title ? { file_label: thread.title } : {}) };
 }
 
 export function scratchThreads(

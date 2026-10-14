@@ -1234,12 +1234,24 @@ describe("WorkspaceRightPanel", () => {
     expect(onOpenTool).toHaveBeenCalledWith("review");
   });
 
-  it("walks the tool picker with arrow keys, wrapping at the ends", () => {
-    mount(<WorkspaceRightPanel {...baseProps()} tabs={[]} activeTabID={undefined} />);
+  it("walks the tool picker with arrow keys, wrapping at the ends", async () => {
+    const pluginHost = new PluginHost({ react: React });
+    await pluginHost.activateGeneration({
+      pluginId: "picker-extension", generation: "one",
+      contributions: { workspace_tools: [{ id: "notes", view: "notes", title: "Extension notes" }] },
+      register(api) { api.registerViewType({ id: "notes", title: "Notes", render: () => null }); },
+    });
+    window.wuu.getThreadExecutionEnvironment = vi.fn().mockResolvedValue({
+      thread_id: "picker-session", environment: { state: "local", root: "/repo/project" },
+    });
+    const file = workspaceFileViewTab({ context: { kind: "no_project", cwd: "/repo/project" }, path: "README.md" });
+    mount(<WorkspaceRightPanel {...baseProps()} tabs={[file]} activeTabID={undefined}
+      pluginHost={pluginHost} terminalThread={{ id: "picker-session", status: "idle" } as Thread} />);
+    await act(async () => {});
 
     const items = Array.from(
-      container?.querySelectorAll<HTMLButtonElement>(".workspace-tool-menu-item") ?? [],
-    );
+      container?.querySelectorAll<HTMLElement>(".workspace-tool-menu-list > .workspace-tool-menu-item") ?? [],
+    ).filter(item => !item.closest("details:not([open])"));
     expect(items.length).toBeGreaterThan(2);
     const press = (key: string): void => {
       act(() => {
@@ -1258,6 +1270,26 @@ describe("WorkspaceRightPanel", () => {
     expect(document.activeElement).toBe(items.at(-1));
     press("Home");
     expect(document.activeElement).toBe(items[0]);
+
+    const more = container!.querySelector<HTMLDetailsElement>(".workspace-tool-menu-more")!;
+    const moreSummary = more.querySelector<HTMLElement>("summary")!;
+    const environment = container!.querySelector<HTMLElement>(".session-environment-summary")!;
+    const resume = container!.querySelector<HTMLElement>('[data-wuu-component="workspace-resume-tab"]')!;
+    moreSummary.focus();
+    press("ArrowDown");
+    expect(document.activeElement).toBe(environment);
+    expect(container!.querySelector<HTMLDetailsElement>(".session-environment-status")!.open).toBe(false);
+    press("ArrowDown");
+    expect(document.activeElement).toBe(resume);
+    press("ArrowUp");
+    expect(document.activeElement).toBe(environment);
+    press("ArrowUp");
+    expect(document.activeElement).toBe(moreSummary);
+    more.open = true;
+    press("ArrowDown");
+    expect(document.activeElement).toBe(more.querySelector("button"));
+    press("ArrowDown");
+    expect(document.activeElement).toBe(environment);
   });
 });
 

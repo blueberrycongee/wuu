@@ -5,7 +5,7 @@ import { preparePresortedFileTreeInput } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { type CSSProperties, Suspense, lazy, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
-  RuntimeContext,
+  WorkspaceFileContext,
   WorkspaceDirectoryListResult,
   WorkspaceFileReadResult,
   WorkspaceFileTreeEntry
@@ -17,7 +17,7 @@ import { revealScrollbar } from "./ScrollbarReveal";
 import { FileSelectionSurface } from "./FileSelectionSurface";
 import type { WorkspaceMonacoViewState } from "./WorkspaceMonacoEditor";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
-import { workspacePathToSlash } from "./WorkspacePaths";
+import { WorkspaceFileSource, listWorkspaceDirectoryInContext, readWorkspaceFileInContext, workspaceFileContextKey, workspacePathToSlash } from "./WorkspacePaths";
 import { translateCurrent, useI18n } from "./i18n";
 import { desktopPlatform } from "./platform";
 import { FilePreviewPresentation } from "./plugins/FilePreviewPresentation";
@@ -170,10 +170,10 @@ export function WorkspaceFileTree({
   selectedFilePath,
   onOpenFile,
 }: {
-  activeContext?: RuntimeContext;
+  activeContext?: WorkspaceFileContext;
   open: boolean;
   selectedFilePath?: string;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, context?: WorkspaceFileContext) => void;
 }): JSX.Element {
   const { locale, t } = useI18n();
   const [directories, setDirectories] = useState<Record<string, WorkspaceDirectoryListResult>>({});
@@ -182,7 +182,8 @@ export function WorkspaceFileTree({
   const [reloadGeneration, setReloadGeneration] = useState(0);
   const loadingDirectoriesRef = useRef(new Set<string>());
   const directoryGenerationRef = useRef(0);
-  const workspaceRoot = activeContext?.cwd;
+  const workspaceRoot = activeContext?.file_root ?? activeContext?.cwd;
+  const contextKey = workspaceFileContextKey(activeContext);
   const selectedWorkspaceFilePath = useMemo(
     () => normalizeSelectedWorkspaceFilePath(selectedFilePath, workspaceRoot),
     [selectedFilePath, workspaceRoot]
@@ -201,7 +202,7 @@ export function WorkspaceFileTree({
     setDirectories({});
     setLoading(true);
     setError(undefined);
-    void window.wuu.listWorkspaceDirectory("", workspaceRoot).then((result) => {
+    void listWorkspaceDirectoryInContext("", activeContext!).then((result) => {
       if (!cancelled) setDirectories({ "": result });
     }).catch((nextError) => {
       if (!cancelled) setError(desktopApiErrorMessage(nextError, translateCurrent("workspace.files.readFailed")));
@@ -212,7 +213,7 @@ export function WorkspaceFileTree({
       cancelled = true;
       directoryGenerationRef.current += 1;
     };
-  }, [open, workspaceRoot, locale, reloadGeneration]);
+  }, [open, workspaceRoot, contextKey, locale, reloadGeneration]);
 
   if (!workspaceRoot) {
     return <WorkspacePanelEmpty title={t("workspace.files.noWorkspace")} />;
@@ -241,17 +242,18 @@ export function WorkspaceFileTree({
     <div className="workspace-file-panel">
       {rootDirectory.truncated ? <div className="workspace-file-tree-limit">{t("workspace.files.truncated")}</div> : null}
       <WorkspaceFileTreeView
-        key={workspaceRoot}
+        key={contextKey}
         directories={directories}
         workspaceRoot={rootDirectory.root}
+        localFiles={!rootDirectory.target || rootDirectory.target.environment_id === "local"}
         selectedFilePath={selectedWorkspaceFilePath}
-        onOpenFile={onOpenFile}
+        onOpenFile={(path) => rootDirectory.target && activeContext ? onOpenFile(path, { ...activeContext, file_root: rootDirectory.root, file_target: { thread_id: rootDirectory.target.thread_id, environment_id: rootDirectory.target.environment_id } }) : onOpenFile(path)}
         onLoadDirectory={(path) => {
           if (directories[path] || loadingDirectoriesRef.current.has(path)) return;
           const generation = directoryGenerationRef.current;
           const pending = loadingDirectoriesRef.current;
           pending.add(path);
-          void window.wuu.listWorkspaceDirectory(path, workspaceRoot).then((result) => {
+          void listWorkspaceDirectoryInContext(path, { ...activeContext!, file_target: rootDirectory.target ?? activeContext?.file_target }).then((result) => {
             if (directoryGenerationRef.current === generation) {
               setDirectories((current) => ({ ...current, [path]: result }));
             }
@@ -266,9 +268,10 @@ export function WorkspaceFileTree({
   );
 }
 
-const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories, workspaceRoot, selectedFilePath, onOpenFile, onLoadDirectory }: {
+const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories, workspaceRoot, localFiles, selectedFilePath, onOpenFile, onLoadDirectory }: {
   directories: Record<string, WorkspaceDirectoryListResult>;
   workspaceRoot: string;
+  localFiles: boolean;
   selectedFilePath?: string;
   onOpenFile: (path: string) => void;
   onLoadDirectory: (path: string) => void;
@@ -408,7 +411,7 @@ const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories,
       <FileTree
         model={model}
         style={WORKSPACE_FILE_TREE_STYLE}
-        renderContextMenu={(item, context) => desktopPlatform() === "darwin" && hostSupports("showWorkspaceItemMenu") ? (
+        renderContextMenu={(item, context) => localFiles && desktopPlatform() === "darwin" && hostSupports("showWorkspaceItemMenu") ? (
           <MacWorkspaceTreeContextMenu
             absolutePath={absoluteWorkspacePath(workspaceRoot, item.path)}
             onClose={() => context.close()}
@@ -417,6 +420,7 @@ const WorkspaceFileTreeView = memo(function WorkspaceFileTreeView({ directories,
           <WorkspaceTreeContextMenu
             entry={{ ...item, path: absoluteWorkspacePath(workspaceRoot, item.path) }}
             workspaceRoot={workspaceRoot}
+            localFiles={localFiles}
             x={context.anchorRect.left}
             y={context.anchorRect.bottom}
             onClose={() => context.close()}
@@ -446,12 +450,14 @@ function MacWorkspaceTreeContextMenu({
 function WorkspaceTreeContextMenu({
   entry,
   workspaceRoot,
+  localFiles,
   x,
   y,
   onClose
 }: {
   entry: WorkspaceFileTreeEntry;
   workspaceRoot: string;
+  localFiles: boolean;
   x: number;
   y: number;
   onClose: () => void;
@@ -601,7 +607,7 @@ function WorkspaceTreeContextMenu({
           type="button"
           role="menuitem"
           className="workspace-tree-context-menu-item"
-          disabled={!hostSupports("revealWorkspaceItem")}
+          disabled={!localFiles || !hostSupports("revealWorkspaceItem")}
           onClick={revealInFolder}
         >
           {t("workspace.files.revealInFileManager")}
@@ -680,7 +686,7 @@ export function WorkspaceFilePreview({
   onDirtyChange
 }: {
   active?: boolean;
-  activeContext?: RuntimeContext;
+  activeContext?: WorkspaceFileContext;
   editorResourceID?: string;
   selectedFilePath?: string;
   selection?: WorkspaceFileSelection;
@@ -700,12 +706,14 @@ export function WorkspaceFilePreview({
   const editorViewStateRef = useRef<WorkspaceMonacoViewState | null>(null);
   const loadedFileKeyRef = useRef<string | undefined>(undefined);
   const markdownHostRef = useRef<HTMLDivElement>(null);
+  const contextKey = workspaceFileContextKey(activeContext);
   const selectedWorkspaceFilePath = useMemo(
-    () => normalizeSelectedWorkspaceFilePath(selectedFilePath, activeContext?.cwd),
-    [activeContext?.cwd, selectedFilePath]
+    () => activeContext?.file_target && selectedFilePath?.startsWith("/")
+      ? selectedFilePath : normalizeSelectedWorkspaceFilePath(selectedFilePath, activeContext?.file_root ?? activeContext?.cwd),
+    [contextKey, activeContext?.file_root, selectedFilePath]
   );
 
-  const selectedFileKey = `${activeContext?.cwd ?? ""}\n${selectedWorkspaceFilePath ?? ""}`;
+  const selectedFileKey = `${contextKey}\n${selectedWorkspaceFilePath ?? ""}`;
   const selectedFileKeyRef = useRef(selectedFileKey);
   useLayoutEffect(() => { selectedFileKeyRef.current = selectedFileKey; }, [selectedFileKey]);
 
@@ -719,7 +727,7 @@ export function WorkspaceFilePreview({
     }
 
     let cancelled = false;
-    const fileKey = `${activeContext?.cwd ?? ""}\n${selectedWorkspaceFilePath}`;
+    const fileKey = `${contextKey}\n${selectedWorkspaceFilePath}`;
     const refreshing = loadedFileKeyRef.current === fileKey;
     if (!refreshing) {
       editorViewStateRef.current = null;
@@ -728,8 +736,7 @@ export function WorkspaceFilePreview({
       setLoading(true);
     }
     setError(undefined);
-    void window.wuu
-      .readWorkspaceFile(selectedWorkspaceFilePath, activeContext?.cwd)
+    void readWorkspaceFileInContext(selectedWorkspaceFilePath, activeContext)
       .then((result) => {
         if (!cancelled) {
           loadedFileKeyRef.current = fileKey;
@@ -751,8 +758,9 @@ export function WorkspaceFilePreview({
     return () => {
       cancelled = true;
     };
-  }, [activeContext?.cwd, selectedWorkspaceFilePath, locale, presenterReloadKey, refreshKey]);
+  }, [contextKey, selectedWorkspaceFilePath, locale, presenterReloadKey, refreshKey]);
 
+  const localFiles = !activeContext?.file_target || file?.target?.environment_id === "local";
   const isMarkdown = Boolean(file && isMarkdownPath(file.path));
   const isMarkdownReadingMode = isMarkdown && !selection;
   const dirtyStatePath = file?.path ?? selectedWorkspaceFilePath;
@@ -814,11 +822,11 @@ export function WorkspaceFilePreview({
           <WorkspacePreviewBoundary resourceKey={file.path}>
             <Suspense fallback={<div className="workspace-file-pdf-preview" />}>
               <WorkspacePdfPreview url={file.renderable_url} title={file.path} active={active}
-                source={{ workspace: activeContext.cwd, path: file.path, revision: workspacePdfRevision(file) }}
+                source={localFiles ? { workspace: file.root, path: file.path, revision: workspacePdfRevision(file) } : undefined}
                 initialPage={anchor?.startsWith("pdf-page=") ? Number(new URLSearchParams(anchor).get("pdf-page")) : undefined}
                 pageRequest={anchor}
                 onRefresh={async (signal) => {
-                  const refreshed = await window.wuu.readWorkspaceFile(file.path, activeContext.cwd);
+                  const refreshed = await readWorkspaceFileInContext(file.path, activeContext);
                   if (signal.aborted || selectedFileKeyRef.current !== selectedFileKey) return false;
                   setFile(refreshed);
                   return refreshed.renderable_kind === "pdf"
@@ -839,7 +847,7 @@ export function WorkspaceFilePreview({
       <WorkspacePanelEmpty
         title={t("workspace.files.cannotPreview")}
         description={t("workspace.files.binary")}
-        action={hostSupports("revealWorkspaceItem") ? (
+        action={localFiles && hostSupports("revealWorkspaceItem") ? (
           <button
             className="settings-button"
             type="button"
@@ -852,18 +860,20 @@ export function WorkspaceFilePreview({
     ) : (
       <article className="workspace-file-preview readonly">
         {file.truncated ? <p className="workspace-file-preview-notice" role="status">{t("workspace.files.previewTruncated")}</p> : null}
-        <FileSelectionSurface key={`${activeContext.cwd}:${file.path}`} workspace={activeContext.cwd} path={file.path} text={draftText} active={active}>
+        <FileSelectionSurface key={`${contextKey}:${file.path}`} workspace={file.root} path={file.path} text={draftText} active={active && localFiles}>
           {(selectionControls) => (
             <div className={`workspace-file-editor-scroll ${isMarkdownReadingMode ? "markdown-reading" : "code"}`}>
               {isMarkdownReadingMode ? (
                 <div className="workspace-markdown-reading" ref={markdownHostRef}>
+                  <WorkspaceFileSource.Provider value={{ context: activeContext, path: file.path }}>
                   <RichContent
                     text={draftText}
-                    cwd={activeContext.cwd}
+                    cwd={`${file.root.replace(/[/\\]+$/, "")}/${file.path.slice(0, file.path.lastIndexOf("/") + 1)}`}
                     onOpenFile={onOpenFile}
                     allowRawHtml
                     sourceMapping
                   />
+                  </WorkspaceFileSource.Provider>
                 </div>
               ) : active ? (
                 <WorkspacePreviewBoundary resourceKey={file.path}>
@@ -890,7 +900,7 @@ export function WorkspaceFilePreview({
     );
   const presentation = (
     <FilePreviewPresentation
-      workspaceRoot={activeContext.cwd}
+      workspaceRoot={activeContext.file_target ? contextKey : activeContext.cwd}
       workspaceRelativePath={selectedWorkspaceFilePath}
       file={file}
       text={draftText}
@@ -899,7 +909,7 @@ export function WorkspaceFilePreview({
       error={error}
       fallback={fallback}
       open={onOpenFile}
-      reveal={hostSupports("revealWorkspaceItem") ? (path) => window.wuu.revealWorkspaceItem(`${activeContext.cwd}/${path}`) : undefined}
+      reveal={localFiles && hostSupports("revealWorkspaceItem") ? (path) => window.wuu.revealWorkspaceItem(`${activeContext.cwd}/${path}`) : undefined}
       reload={() => setPresenterReloadKey((value) => value + 1)}
     />
   );
@@ -909,7 +919,7 @@ export function WorkspaceFilePreview({
       <button type="button" disabled={loading || exporting || !file} onClick={() => {
         if (!file || exporting) return;
         setExporting(true); setExportError("");
-        void window.wuu.exportWorkspaceFile!(file.path, activeContext.cwd)
+        void (file.target ? window.wuu.exportWorkspaceFile!(file.path, activeContext.cwd, file.target) : window.wuu.exportWorkspaceFile!(file.path, activeContext.cwd))
           .catch(error => setExportError(desktopApiErrorMessage(error, translateCurrent("workspace.files.openFailed"))))
           .finally(() => setExporting(false));
       }}>{t("artifacts.downloadNamed", { name: file?.path ?? selectedWorkspaceFilePath })}</button>

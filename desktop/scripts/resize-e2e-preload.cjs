@@ -173,6 +173,7 @@ const desktopAPI = {
   }),
   commitGitChanges: async () => ({ ok: true, committed: false }),
   createPullRequest: async () => ({ url: "", already_exists: false }),
+  getThreadExecutionEnvironment: async thread_id => ({ thread_id, environment: { state: "local", root: cwd } }),
   listWorkspaceFiles: async () => ({
     root: cwd,
     paths: workspacePaths,
@@ -199,7 +200,8 @@ const desktopAPI = {
     entries: []
   }),
   listMCPServers: async () => ({ servers: [] }),
-  listWorkspaceDirectory: async (path = "") => ({
+  listWorkspaceDirectory: async (path = "", _root, target) => ({
+    target: target && { thread_id: target.thread_id, environment_id: "local" },
     root: cwd,
     path: path.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, ""),
     entries: path
@@ -211,7 +213,8 @@ const desktopAPI = {
         })),
     truncated: false
   }),
-  readWorkspaceFile: async (path) => ({
+  readWorkspaceFile: async (path, _root, target) => ({
+    target: target && { thread_id: target.thread_id, environment_id: "local" },
     root: cwd,
     path,
     absolute_path: path,

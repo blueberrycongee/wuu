@@ -1,6 +1,7 @@
 package executionenv
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"os"
@@ -68,6 +69,9 @@ func (e *Environment) Summary() Summary {
 
 func (e *Environment) setStatus(state string, client *Client) {
 	e.statusMu.Lock()
+	if state == "ready" && client != e.statusClient {
+		e.viewConnection = rand.Text()
+	}
 	e.status, e.statusClient = state, client
 	e.statusMu.Unlock()
 }

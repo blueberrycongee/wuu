@@ -7,7 +7,9 @@ import type {
   InitializeResult,
   ServerEvent,
   Thread,
+  ThreadExecutionEnvironmentResult,
   WuuDesktopApi,
+  WorkspaceFileTarget,
 } from "../shared/protocol";
 
 vi.mock("@xterm/xterm", () => ({
@@ -190,13 +192,17 @@ function installWuuApi(): void {
       dirty_count: 0,
       files: [],
     }),
-    listWorkspaceDirectory: vi.fn().mockResolvedValue({
+    getThreadExecutionEnvironment: vi.fn(async (thread_id: string) => ({
+      thread_id, environment: { state: "local", root: workspace },
+    })),
+    listWorkspaceDirectory: vi.fn(async (_path: string, _cwd: string, target?: WorkspaceFileTarget) => ({
       root: workspace,
       path: "",
       entries: [{ kind: "file", name: "README.md", path: "README.md" }],
       truncated: false,
-    }),
-    readWorkspaceFile: vi.fn().mockResolvedValue({
+      target: target && { ...target, environment_id: target.environment_id || "local" },
+    })),
+    readWorkspaceFile: vi.fn(async (_path: string, _cwd: string, target?: WorkspaceFileTarget) => ({
       root: workspace,
       path: "README.md",
       absolute_path: `${workspace}/README.md`,
@@ -206,7 +212,8 @@ function installWuuApi(): void {
       binary: false,
       truncated: false,
       text: "# Artifact\n",
-    }),
+      target: target && { ...target, environment_id: target.environment_id || "local" },
+    })),
     browserSurface: vi.fn().mockResolvedValue(null),
     browserCommand: vi.fn(async (params: Parameters<NonNullable<WuuDesktopApi["browserCommand"]>>[0]) => ({
       workdir: params.workdir, tabID: params.tabID, url: params.url,
@@ -390,10 +397,17 @@ describe("workspace file tabs", () => {
     expect(container.querySelector(".conversation-title-heading h1")?.textContent).toBe("Other conversation");
     expect(composer.isConnected).toBe(true);
     const restoreFocus = vi.spyOn(composer, "focus");
+    const pendingFile = deferred<ThreadExecutionEnvironmentResult>();
+    vi.mocked(window.wuu.getThreadExecutionEnvironment!).mockImplementationOnce(() => pendingFile.promise);
+    await act(async () => container.querySelector<HTMLButtonElement>(".rich-file-link")!.click());
     await act(async () => close.click());
     await flushAsync();
     expect(restoreFocus).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(container.querySelector(".conversation-title-heading h1"));
+    await act(async () => pendingFile.resolve({ thread_id: second.id, environment: { state: "local", root: workspace } }));
+    await flushAsync();
+    expect(container.querySelector(".app-shell")?.classList.contains("right-panel-open")).toBe(false);
+    expect(container.querySelector(".workspace-tool-tab.active")?.textContent).not.toContain("README.md");
   });
 
   async function openSelectionDocument(): Promise<void> {
@@ -477,6 +491,26 @@ describe("workspace file tabs", () => {
     await openSelectionDocument();
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
     await flushAsync();
+    await act(async () => container.querySelector<HTMLButtonElement>(".workspace-panel-add")!.click());
+    await flushAsync();
+    const filesTool = Array.from(container.querySelectorAll<HTMLButtonElement>(".workspace-tool-menu-item"))
+      .find(button => /^(文件|Files)$/.test(button.textContent?.trim() || ""));
+    await act(async () => filesTool!.click());
+    await flushAsync();
+    const draftFile = container.querySelector("file-tree-container")?.shadowRoot
+      ?.querySelector<HTMLButtonElement>('[data-item-path="README.md"]');
+    await act(async () => draftFile!.click());
+    await flushAsync();
+    expect(vi.mocked(window.wuu.readWorkspaceFile).mock.lastCall?.[2]).toBeUndefined();
+    expect(container.querySelectorAll(".workspace-file-resource")).toHaveLength(2);
+    await act(async () => container.querySelector<HTMLButtonElement>(".workspace-panel-globalize")!.click());
+    await flushAsync();
+    expect(container.querySelector('[data-main-conversation-composer="document"]')).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>(".workspace-panel-globalize")!.click());
+    await flushAsync();
+    vi.mocked(window.wuu.getThreadExecutionEnvironment!).mockImplementation(async thread_id => ({
+      thread_id, environment: { id: "new-remote", state: "not_initialized", root: "/worker" },
+    }));
     vi.mocked(window.wuu.startThread).mockResolvedValueOnce({ thread: { ...completedThread(), id: "thread-review-new", turns: [] } });
     startTurnMock.mockRejectedValueOnce(new Error("offline"));
     await typeMainPrompt("Original question");
@@ -485,6 +519,9 @@ describe("workspace file tabs", () => {
     await submitMainPrompt();
     await flushAsync();
     expect(startTurnMock).toHaveBeenCalledTimes(1);
+    expect(container.querySelectorAll(".workspace-file-resource")).toHaveLength(1);
+    expect(startTurnMock.mock.calls[0][5]).toBeUndefined();
+    expect(container.querySelector('[data-main-conversation-composer="document"]')).toBeNull();
     expect(selectionActions!.comments).toEqual([original]);
     expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value).toBe("Original question");
     expect(container.querySelector(".composer-file-selection-card")).not.toBeNull();
@@ -836,12 +873,14 @@ describe("workspace file tabs", () => {
     vi.mocked(window.wuu.listWorkspaceDirectory).mockResolvedValue({
       root: workspace, path: "", truncated: false,
       entries: [{ kind: "file", name: "report.pdf", path: "report.pdf" }],
+      target: { thread_id: "thread-artifact-tabs", environment_id: "local" },
     });
     await openSelectionDocument();
     vi.mocked(window.wuu.readWorkspaceFile).mockResolvedValue({
       root: workspace, path: "report.pdf", absolute_path: `${workspace}/report.pdf`,
       size_bytes: 100, mtime_ms: 1000, sha256: "a".repeat(64), binary: true, truncated: false,
       renderable_kind: "pdf", renderable_url: "data:application/pdf;base64,JVBERg==",
+      target: { thread_id: "thread-artifact-tabs", environment_id: "local" },
     });
     const file = container.querySelector('file-tree-container')?.shadowRoot
       ?.querySelector<HTMLButtonElement>('[data-item-path="report.pdf"]');

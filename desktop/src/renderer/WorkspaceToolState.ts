@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { RuntimeContext } from "../shared/protocol";
+import type { WorkspaceFileContext } from "../shared/protocol";
 import type { ArtifactPreviewRequest } from "./ArtifactPreviewContext";
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
@@ -37,7 +37,7 @@ export function useWorkspaceToolState({
   openWorkspaceSideThread: () => void;
   openWorkspacePluginTool: (entry: RegisteredPluginViewEntry) => void;
   openWorkspaceDiffTab: (input: { threadID: string; path: string; selection: TurnFileDiffSelection }) => void;
-  openWorkspaceFileTab: (input: { context: RuntimeContext; path: string }) => void;
+  openWorkspaceFileTab: (input: { context: WorkspaceFileContext; path: string }) => void;
   openWorkspaceArtifactTab: (input: ArtifactPreviewRequest) => void;
   openWorkspaceProjectTab: (projectID: string, title: string) => void;
   syncWorkspaceProjectTab: (project: { id: string; title: string } | undefined) => void;
@@ -104,7 +104,7 @@ export function useWorkspaceToolState({
     openTab(workspaceDiffViewTab(input));
   }
 
-  function openWorkspaceFileTab(input: { context: RuntimeContext; path: string }): void {
+  function openWorkspaceFileTab(input: { context: WorkspaceFileContext; path: string }): void {
     openTab(workspaceFileViewTab(input));
     setRightPanelOpenWithMotion(true);
   }

@@ -35,6 +35,27 @@ The read-only `environment` contains an optional opaque `id`, profile `name`, `b
 an operation outcome or a fresh machine probe. `unsupported` means the saved environment
 requires Wuu's built-in engine. Missing selection records are not created by this call.
 
+## Read a session workspace
+
+`workspace/directory/list`, `workspace/file/read`, `workspace/file/resolve` and
+`workspace/file/chunk` accept a `thread_id` and a matching `target.thread_id`.
+`root`, when supplied, is the session's host cwd used to detect relocation; it
+never selects a remote root. The host validates session ownership and resolves
+the saved execution destination. Older callers without a target keep host-local
+workspace access.
+
+Results include `target` with the source `thread_id`, `environment_id` (`local`
+for host execution), and a `connection_id` for remote reads. Send the expected
+environment ID to reject a changed destination. Chunked transfers must retain
+the returned connection ID and file `version`; reconnecting or changing the
+file invalidates the transfer. Reads require an existing live worker and never
+provision, reconnect, execute a tool or fall back to host files.
+
+Paths stay inside the selected root, including symlink resolution. Directory
+listings return at most 4,000 entries; reference search visits at most 8,000.
+Text previews are limited to 512 KiB, inline media to 2 MiB, and each file chunk
+to 256 KiB with a 64 MiB file limit. The view API is read-only.
+
 ## Run a task
 
 Create a session, then use the returned `result.thread.id`:

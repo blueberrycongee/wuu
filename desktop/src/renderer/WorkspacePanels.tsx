@@ -1,3 +1,4 @@
+import type { WorkspaceFileContext } from "../shared/protocol";
 import {
   type CSSProperties,
   type DragEvent as ReactDragEvent,
@@ -241,7 +242,7 @@ export function WorkspaceRightPanel({
   // fork) when it differs from activeContext, and roots the file tree and
   // terminal; see workspacePanelContext in AppState.ts.
   activeContext?: RuntimeContext;
-  workspaceContext?: RuntimeContext;
+  workspaceContext?: WorkspaceFileContext;
   terminalThread?: Thread;
   gitStatus?: GitStatusResult;
   selectedFilePath?: string;
@@ -253,7 +254,7 @@ export function WorkspaceRightPanel({
   onCloseTab: (id: string) => void;
   onDirtyFileTabsChange?: (dirty: boolean) => void;
   onReorderTabs: (activeID: string, overID: string) => void;
-  onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
+  onOpenFile: (path: string, sourceContext?: WorkspaceFileContext) => void;
   globalized: boolean;
   conversationTab?: { title: string; active: boolean; onSelect: () => void };
   sideThreadContent?: ReactNode;
@@ -968,7 +969,7 @@ export function WorkspaceRightPanel({
                   </Tooltip>
                 ) : null}
                 <WorkspaceFileTree
-                  activeContext={workspaceContext}
+                  activeContext={activeTab?.kind === "file" ? activeTab.context : workspaceContext}
                   open={
                     open &&
                     fileTreeShown &&
@@ -1064,6 +1065,7 @@ export function WorkspaceRightPanel({
                   />
                 ) : activeTab.kind === "diff" ? (
                   <TurnFileDiffPanel
+                    threadID={activeTab.threadID}
                     selection={activeTab.selection}
                     onClose={() => onCloseTab(activeTab.id)}
                   />
@@ -1156,7 +1158,7 @@ function WorkspaceFileResource({
 }: {
   active: boolean;
   onDirtyChange: (tabID: string, dirty: boolean) => void;
-  onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
+  onOpenFile: (path: string, sourceContext?: WorkspaceFileContext) => void;
   tab: WorkspaceFileViewTab;
   refreshKey?: string;
 }): JSX.Element {
@@ -1470,6 +1472,11 @@ function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
   if (tab.kind === "new") return translateCurrent("workspace.newPage");
   if (tab.kind === "side-thread") return translateCurrent("sideThread.title");
   if (tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project") return tab.title;
+  if (tab.kind === "file" && tab.context.file_target) {
+    const root = tab.context.file_root ?? tab.context.cwd;
+    const path = tab.path.startsWith("/") ? tab.path : `${root.replace(/[/\\]+$/, "")}/${tab.path}`;
+    return `${tab.context.file_label || tab.context.file_target.thread_id} · ${path}`;
+  }
   return tab.kind === "diff" || tab.kind === "file"
     ? tab.path
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);

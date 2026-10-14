@@ -12,6 +12,7 @@ import {
   type RemoteControlEvent,
   type RunningThreadSnapshot,
   type RuntimeContext,
+  type WorkspaceFileTarget,
   type ServerEvent,
   type SideThreadEventEnvelope,
   type SideThreadSendParams,
@@ -189,14 +190,14 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:git-create-pr", params, root),
   listWorkspaceFiles: (root?: string) =>
     ipcRenderer.invoke("wuu:file-tree-list", root),
-  listWorkspaceDirectory: (path?: string, root?: string) =>
-    ipcRenderer.invoke("wuu:file-directory-list", path, root),
-  readWorkspaceFile: (path: string, root?: string) =>
-    ipcRenderer.invoke("wuu:file-read", path, root),
-  writeWorkspaceFile: (params, root?: string) =>
-    ipcRenderer.invoke("wuu:file-write", params, root),
-  resolveWorkspaceFileReference: (reference: string, root?: string) =>
-    ipcRenderer.invoke("wuu:file-reference-resolve", reference, root),
+  listWorkspaceDirectory: (path?: string, root?: string, target?: WorkspaceFileTarget) =>
+    ipcRenderer.invoke("wuu:file-directory-list", path, root, target),
+  readWorkspaceFile: (path: string, root?: string, target?: WorkspaceFileTarget) =>
+    ipcRenderer.invoke("wuu:file-read", path, root, target),
+  writeWorkspaceFile: (params, root?: string, target?: WorkspaceFileTarget) =>
+    ipcRenderer.invoke("wuu:file-write", params, root, target),
+  resolveWorkspaceFileReference: (reference: string, root?: string, target?: WorkspaceFileTarget) =>
+    ipcRenderer.invoke("wuu:file-reference-resolve", reference, root, target),
   startTerminalSession: (params) =>
     ipcRenderer.invoke("wuu:terminal-start", params),
   writeTerminalSession: (id: string, data: string) =>

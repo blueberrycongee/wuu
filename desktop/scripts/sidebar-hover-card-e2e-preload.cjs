@@ -74,8 +74,9 @@ contextBridge.exposeInMainWorld("wuu", {
   selectProject: async () => projectList(),
   selectNoProject: async () => projectList(),
   gitStatus: async () => ({ is_repo: true, branch: "main", branches: ["main"], dirty_count: 0 }),
+  getThreadExecutionEnvironment: async thread_id => ({ thread_id, environment: { state: "local", root: repo } }),
   listWorkspaceFiles: async () => ({ root: repo, paths: [], truncated: false }),
-  listWorkspaceDirectory: async (path = "") => ({ root: repo, path, entries: [], truncated: false }),
+  listWorkspaceDirectory: async (path = "", _root, target) => ({ target: target && { thread_id: target.thread_id, environment_id: "local" }, root: repo, path, entries: [], truncated: false }),
   initialize: async () => ({
     protocol_version: "e2e", provider: "e2e", model: "mock-model", workspace_root: repo,
     providers: [{ name: "e2e", type: "mock", model: "mock-model", connection_locked: true }],

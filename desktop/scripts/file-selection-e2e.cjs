@@ -76,6 +76,8 @@ async function run() {
       phase = `${label}: open file`;
       await openFile(file);
       const initial = await snapshot();
+      assert.ok(initial.reads.some(read => read.path === file && read.target?.thread_id === initial.thread.id && read.target.environment_id === "local"),
+        "The file preview must retain the fixture conversation's local execution identity");
       const text = initial.files[file];
       const quote = file.endsWith(".md") ? "Select this Markdown passage for review." : text;
       const draft = `Keep this independent draft (${label}).`;

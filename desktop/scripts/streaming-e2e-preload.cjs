@@ -111,18 +111,21 @@ contextBridge.exposeInMainWorld("wuu", {
     branches: [branch],
     dirty_count: 0
   }),
+  getThreadExecutionEnvironment: async thread_id => ({ thread_id, environment: { state: "local", root: cwd } }),
   listWorkspaceFiles: async () => ({
     root: cwd,
     paths: [],
     truncated: false
   }),
-  listWorkspaceDirectory: async (path = "") => ({
+  listWorkspaceDirectory: async (path = "", _root, target) => ({
+    target: target && { thread_id: target.thread_id, environment_id: "local" },
     root: cwd,
     path: path.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, ""),
     entries: [],
     truncated: false
   }),
-  readWorkspaceFile: async (path) => ({
+  readWorkspaceFile: async (path, _root, target) => ({
+    target: target && { thread_id: target.thread_id, environment_id: "local" },
     root: cwd,
     path,
     absolute_path: path,
@@ -166,7 +169,7 @@ contextBridge.exposeInMainWorld("wuu", {
       original_text: "const value = 'before';\n".repeat(20),
       modified_text: "const value = 'after';\n".repeat(20) }),
     listWorkspaceFiles: async () => ({ root: cwd, paths: Object.keys(workspaceDemoFiles), truncated: false }),
-    listWorkspaceDirectory: async (path = "") => {
+    listWorkspaceDirectory: async (path = "", _root, target) => {
       const relative = workspaceDemoPath(path).replace(/\/$/, "");
       const prefix = relative ? relative + "/" : "";
       const entries = new Map();
@@ -177,9 +180,9 @@ contextBridge.exposeInMainWorld("wuu", {
         const kind = rest.includes("/") ? "directory" : "file";
         entries.set(name, { kind, name, path: prefix + name + (kind === "directory" ? "/" : "") });
       }
-      return { root: cwd, path: relative, entries: [...entries.values()], truncated: false };
+      return { target: target && { thread_id: target.thread_id, environment_id: "local" }, root: cwd, path: relative, entries: [...entries.values()], truncated: false };
     },
-    readWorkspaceFile: async (path) => {
+    readWorkspaceFile: async (path, _root, target) => {
       const relative = workspaceDemoPath(path);
       if (relative === process.env.WUU_WORKSPACE_FILE_RETRY_E2E && !workspacePreviewReadFailed) {
         workspacePreviewReadFailed = true;
@@ -187,7 +190,7 @@ contextBridge.exposeInMainWorld("wuu", {
       }
       const text = workspaceDemoFiles[relative];
       if (text === undefined) throw new Error("Unknown demo file: " + relative);
-      return { root: cwd, path: relative, absolute_path: cwd + "/" + relative,
+      return { target: target && { thread_id: target.thread_id, environment_id: "local" }, root: cwd, path: relative, absolute_path: cwd + "/" + relative,
         size_bytes: new TextEncoder().encode(text).length, mtime_ms: 1000,
         sha256: "a".repeat(64), binary: false, truncated: false, text };
     },

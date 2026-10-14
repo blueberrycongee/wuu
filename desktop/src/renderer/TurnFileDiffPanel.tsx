@@ -1,3 +1,4 @@
+import { WorkspaceFileSource, readWorkspaceFileInContext } from "./WorkspacePaths";
 import { useEffect, useMemo, useState } from "react";
 import { FileText, X } from "./WuuIcons";
 import type { GitFileDiffResult, WorkspaceFileReadResult } from "../shared/protocol";
@@ -61,7 +62,7 @@ function currentVersionLabel(
   current?: WorkspaceFileReadResult,
   missing = false,
 ): string | undefined {
-  if (missing) return translateCurrent("turnDiff.current.missing");
+  if (missing) return translateCurrent("turnDiff.current.unavailable");
   if (!current) return undefined;
   const afterSHA = normalizedSHA(selection.afterSha);
   if (afterSHA && !current.truncated) {
@@ -83,9 +84,11 @@ function currentVersionLabel(
 
 export function TurnFileDiffPanel({
   selection,
+  threadID,
   onClose,
 }: {
   selection?: TurnFileDiffSelection;
+  threadID?: string;
   onClose: () => void;
 }): JSX.Element | null {
   const { locale, t, formatNumber } = useI18n();
@@ -102,13 +105,16 @@ export function TurnFileDiffPanel({
     setCurrentMissing(false);
     if (!selection?.cwd) return () => { cancelled = true; };
 
-    const path = workspaceRelativePath(selection.path, selection.cwd);
+    const path = threadID ? selection.path : workspaceRelativePath(selection.path, selection.cwd);
     if (!path) return () => { cancelled = true; };
     setLoadingCurrent(true);
-    void window.wuu
-      .readWorkspaceFile(path, selection.cwd)
+    void readWorkspaceFileInContext(path, { kind: "no_project", cwd: selection.cwd, ...(threadID ? { file_target: { thread_id: threadID } } : {}) })
       .then((result) => {
-        if (!cancelled) setCurrentFile(result);
+        if (cancelled) return;
+        setCurrentFile(result);
+        if (!result.target || result.target.environment_id === "local") {
+          void window.wuu.readGitFileDiff(result.path, selection.cwd).then(git => { if (!cancelled) setGitFile(git); }).catch(() => undefined);
+        }
       })
       .catch(() => {
         if (!cancelled) setCurrentMissing(true);
@@ -116,15 +122,10 @@ export function TurnFileDiffPanel({
       .finally(() => {
         if (!cancelled) setLoadingCurrent(false);
       });
-    void window.wuu
-      .readGitFileDiff(path, selection.cwd)
-      .then((result) => {
-        if (!cancelled) setGitFile(result);
-      })
-      .catch(() => undefined);
+
 
     return () => { cancelled = true; };
-  }, [selection]);
+  }, [selection, threadID]);
 
   const views = useMemo(() => {
     if (!selection) return [] as Array<{ id: ArtifactView; label: string }>;
@@ -205,12 +206,15 @@ export function TurnFileDiffPanel({
           {deliveryLabel ? <span>{deliveryLabel}</span> : null}
         </div>
       </div>
+      <WorkspaceFileSource.Provider value={threadID && selection.cwd ? {
+        context: { kind: "no_project", cwd: selection.cwd, file_root: currentFile?.root, file_target: currentFile?.target ?? { thread_id: threadID } }, path: currentFile?.path ?? selection.path,
+      } : undefined}>
       <div className={`turn-file-diff-body is-${activeView ?? "empty"}`}>
         {activeView === "changes" && selection.diff ? (
           <ToolDiffContent diff={selection.diff} />
         ) : activeView === "reading" && selection.snapshotText !== undefined ? (
           <div className="turn-artifact-markdown">
-            <RichContent text={selection.snapshotText} cwd={selection.cwd} allowRawHtml />
+            <RichContent text={selection.snapshotText} cwd={currentFile ? `${currentFile.root}/${currentFile.path.slice(0, currentFile.path.lastIndexOf("/") + 1)}` : undefined} allowRawHtml />
           </div>
         ) : activeView === "source" && selection.snapshotText !== undefined ? (
           <pre className="turn-artifact-source">{selection.snapshotText}</pre>
@@ -221,7 +225,7 @@ export function TurnFileDiffPanel({
         ) : activeView === "current" && currentFile?.text !== undefined ? (
           isMarkdownPath(selection.path) ? (
             <div className="turn-artifact-markdown">
-              <RichContent text={currentFile.text} cwd={selection.cwd} allowRawHtml />
+              <RichContent text={currentFile.text} cwd={currentFile ? `${currentFile.root}/${currentFile.path.slice(0, currentFile.path.lastIndexOf("/") + 1)}` : undefined} allowRawHtml />
             </div>
           ) : (
             <pre className="turn-artifact-source">{currentFile.text}</pre>
@@ -238,6 +242,7 @@ export function TurnFileDiffPanel({
           <div className="turn-artifact-empty">{t("turnDiff.noContent")}</div>
         )}
       </div>
+      </WorkspaceFileSource.Provider>
     </section>
   );
 }

@@ -1207,7 +1207,14 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		}
 		return nil
 	case MethodWorkspaceDirectoryList, MethodWorkspaceFileRead, MethodWorkspaceFileResolve, MethodWorkspaceFileChunk:
-		return s.handleWorkspaceView(req)
+		if !s.startBackground(func() {
+			if err := s.handleWorkspaceView(ctx, req); err != nil {
+				log.Printf("wuu: workspace file view: %v", err)
+			}
+		}) {
+			return s.writeResponse(req.ID, nil, errServerClosed)
+		}
+		return nil
 	case MethodWorkspaceList:
 		return s.handleWorkspaceList(req)
 	case MethodWorkspaceStateCleanup:

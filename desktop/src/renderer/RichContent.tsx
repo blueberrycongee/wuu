@@ -1,3 +1,4 @@
+import { WorkspaceFileSource, readWorkspaceFileInContext, workspaceFileContextKey } from "./WorkspacePaths";
 import { PENDING_STREAM_LINK } from "./StreamingMarkdownMend";
 import { hostSupports } from "./HostCapabilities";
 import { Children, createContext, useContext, cloneElement, isValidElement, memo, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
@@ -611,6 +612,8 @@ function RichFileLink({
   onOpenFile: (path: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const fileSource = useContext(WorkspaceFileSource);
+  const localFiles = !fileSource?.context.file_target || fileSource.context.file_target.environment_id === "local";
   const reference = formatWorkspaceFileTarget(target);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const path = target.path;
@@ -649,7 +652,7 @@ function RichFileLink({
             { label: t("workspace.files.copyPath"), onSelect: () => copyToClipboard(absolutePath) },
             { label: t("workspace.files.copyRelativePath"), onSelect: () => copyToClipboard(path) },
             { label: t("workspace.files.copyFileName"), onSelect: () => copyToClipboard(fileName) },
-            ...(hostSupports("revealWorkspaceItem")
+            ...(localFiles && hostSupports("revealWorkspaceItem")
               ? [{ separator: true } as const, {
                   label: t("workspace.files.revealInFileManager"),
                   onSelect: () => window.wuu.revealWorkspaceItem(absolutePath),
@@ -1001,11 +1004,41 @@ function RichImage({
   inline?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
-  const resolvedSource = resolveImageSource(source, cwd);
+  const fileSource = useContext(WorkspaceFileSource);
+  const scoped = Boolean(fileSource?.context.file_target);
+  const external = /^(?:https?:|data:image\/)/i.test(source);
+  const sourceKey = JSON.stringify([workspaceFileContextKey(fileSource?.context), fileSource?.path, source]);
+  const [workspaceImage, setWorkspaceImage] = useState<{ key: string; url?: string }>();
+  useEffect(() => {
+    if (!scoped || external || !fileSource) return;
+    let cancelled = false;
+    setWorkspaceImage(undefined);
+    let path = source;
+    if (path.startsWith("file://")) {
+      try { path = decodeURIComponent(new URL(path).pathname); } catch { path = ""; }
+    } else if (!path.startsWith("/") && !/^[a-z][a-z0-9+.-]*:/i.test(path)) {
+      const directory = fileSource.path.slice(0, fileSource.path.lastIndexOf("/") + 1);
+      const segments: string[] = [];
+      let outside = false;
+      for (const segment of `${directory}${path}`.split("/")) {
+        if (!segment || segment === ".") continue;
+        if (segment === "..") { if (segments.length === 0) { outside = true; break; } segments.pop(); }
+        else segments.push(segment);
+      }
+      path = outside ? "" : `${directory.startsWith("/") ? "/" : ""}${segments.join("/")}`;
+    }
+    void readWorkspaceFileInContext(path, fileSource.context).then(result => {
+      if (!cancelled) setWorkspaceImage({ key: sourceKey, url: result.renderable_kind === "image" ? result.renderable_url : undefined });
+    }, () => { if (!cancelled) setWorkspaceImage({ key: sourceKey }); });
+    return () => { cancelled = true; };
+  }, [sourceKey, scoped, external]);
+  const resolvedSource = scoped && !external
+    ? workspaceImage?.key === sourceKey ? workspaceImage.url ?? "" : ""
+    : resolveImageSource(source, cwd);
   const [failedSource, setFailedSource] = useState<string | null>(null);
   const { openPreview } = useImagePreview();
   const titleText = imageTarget(source);
-  const register = useImagePreviewRegistration(failedSource === resolvedSource ? null : { src: resolvedSource, alt, title: titleText });
+  const register = useImagePreviewRegistration(!resolvedSource || failedSource === resolvedSource ? null : { src: resolvedSource, alt, title: titleText });
   const handleActivate = (origin: HTMLElement): void => {
     openPreview({ src: resolvedSource, alt, title: titleText }, origin);
   };
@@ -1015,7 +1048,7 @@ function RichImage({
       handleActivate(event.currentTarget);
     }
   };
-  const image = failedSource === resolvedSource ? (
+  const image = !resolvedSource || failedSource === resolvedSource ? (
     <span className="rich-image rich-image-unavailable" role="img" aria-label={t("imagePreview.loadFailed")}>
       {t("imagePreview.loadFailed")}
     </span>

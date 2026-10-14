@@ -19,9 +19,10 @@ module.exports = (api) => {
   }
   return {
     ...api,
+    getThreadExecutionEnvironment: async thread_id => ({ thread_id, environment: { state: "local", root: context.cwd } }),
     listWorkspaceFiles: async () => ({ root: context.cwd, paths: ["private-selection.md"], truncated: false }),
-    listWorkspaceDirectory: async (path = "") => ({ root: context.cwd, path, entries: path ? [] : [{ name: "private-selection.md", path: "private-selection.md", kind: "file" }], truncated: false }),
-    readWorkspaceFile: async path => ({ root: context.cwd, path, absolute_path: context.cwd + "/" + path, size_bytes: 80, binary: false, truncated: false, text: "# Selection fixture\n\nReference marker must stay out of recovery.\n" }),
+    listWorkspaceDirectory: async (path = "", _root, target) => ({ target: target && { thread_id: target.thread_id, environment_id: "local" }, root: context.cwd, path, entries: path ? [] : [{ name: "private-selection.md", path: "private-selection.md", kind: "file" }], truncated: false }),
+    readWorkspaceFile: async (path, _root, target) => ({ target: target && { thread_id: target.thread_id, environment_id: "local" }, root: context.cwd, path, absolute_path: context.cwd + "/" + path, size_bytes: 80, binary: false, truncated: false, text: "# Selection fixture\n\nReference marker must stay out of recovery.\n" }),
     listProjects: async () => ({ projects: await ipcRenderer.invoke("test:draft-projects"), active_context: context }),
     selectProject: async id => {
       const projects = await ipcRenderer.invoke("test:draft-projects");

@@ -1,3 +1,5 @@
+import type { WorkspaceFileContext } from "../shared/protocol";
+import { bindWorkspaceFileContext } from "./WorkspacePaths";
 import { useAppContextDraftTarget } from "./AppContextCapture";
 import { readComposerDraftRecovery, sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { validPdfSelectionReference } from "./PdfSelection";
@@ -1295,9 +1297,16 @@ export function App(): JSX.Element {
   // worktree directory distinct from the project root activeContext stays
   // pinned to.
   const conversationWorkspaceContext = useMemo(
-    () => workspacePanelContext(state.activeContext, state.thread),
-    [state.activeContext, state.thread],
+    () => workspacePanelContext(state.activeContext, activeThreadForState(state)),
+    [state.activeContext, state.thread, state.secondaryThread, state.activePane, state.activeSessionTabID],
   );
+  // Draft file tabs predate the session's execution pin. Drop them before
+  // painting the bound session rather than retaining host bytes as its files.
+  useLayoutEffect(() => {
+    if (conversationWorkspaceContext?.file_target) {
+      closeWorkspaceViewTabsWhere(tab => tab.kind === "file" && !tab.context.file_target);
+    }
+  }, [conversationWorkspaceContext?.file_target?.thread_id]);
   const workspaceContext = focusedWorkspaceContext ?? conversationWorkspaceContext;
   const activeWorkspaceViewTab = workspaceActiveViewTabID
     ? workspaceViewTabs.find((tab) => tab.id === workspaceActiveViewTabID)
@@ -1310,8 +1319,7 @@ export function App(): JSX.Element {
     ? workspaceViewTabs.find((tab) => tab.id === workspaceActiveFileTabID)
     : undefined;
   const activeWorkspaceFileTabID =
-    activeWorkspaceFileTab?.kind === "file" &&
-    sameRuntimeContext(activeWorkspaceFileTab.context, workspaceContext)
+    activeWorkspaceFileTab?.kind === "file"
       ? activeWorkspaceFileTab.id
       : undefined;
   const activeWorkspaceFile =
@@ -2435,7 +2443,9 @@ export function App(): JSX.Element {
   const activePreviewFile = activeWorkspaceViewTab?.kind === "file" &&
     activeWorkspaceViewTab.id === activeWorkspaceFileTabID &&
     sameRuntimeContext(activeWorkspaceViewTab.context, previewTargetContext) &&
-    activeWorkspaceViewTab.context.cwd === previewTargetContext?.cwd
+    activeWorkspaceViewTab.context.cwd === previewTargetContext?.cwd &&
+    activeWorkspaceViewTab.context.file_target?.thread_id !== undefined &&
+    activeWorkspaceViewTab.context.file_target.thread_id === previewTargetThread?.id
       ? activeWorkspaceViewTab : undefined;
   const activePreviewArtifact = activeWorkspaceViewTab?.kind === "artifact" &&
     activeWorkspaceViewTab.artifact.mimeType === "application/pdf" &&
@@ -2810,7 +2820,17 @@ export function App(): JSX.Element {
   ): void => {
     openWorkspaceBrowserOrExternal(url, modifiers, openWorkspaceBrowser);
   });
-  const openWorkspaceFile = useStableCallback((path: string, sourceContext?: RuntimeContext): void => {
+  const workspaceFileOpenGeneration = useRef(0);
+  useLayoutEffect(() => { workspaceFileOpenGeneration.current++; }, [state.thread?.id, state.secondaryThread?.id, state.activeSessionTabID, state.activePane, state.activeContext?.cwd, rightPanelOpen, workspaceActiveViewTabID]);
+  const openBoundWorkspaceFile = useStableCallback((context: WorkspaceFileContext, path: string): void => {
+    const generation = ++workspaceFileOpenGeneration.current;
+    const open = (bound: WorkspaceFileContext) => {
+      if (generation === workspaceFileOpenGeneration.current) openWorkspaceFileTab({ context: bound, path });
+    };
+    // Keep failed inspection session-scoped so opening cannot become a host read.
+    void bindWorkspaceFileContext(context).then(open, () => open(context));
+  });
+  const openWorkspaceFile = useStableCallback((path: string, sourceContext?: WorkspaceFileContext): void => {
     // Stamp the same derived context the workspace panel's file tree/preview
     // are rooted at (workspacePanelContext), not the raw activeContext — for
     // a worktree-fork thread these differ, and activeWorkspaceFile's match
@@ -2818,19 +2838,19 @@ export function App(): JSX.Element {
     // stops highlighting/previewing once opened.
     const context = sourceContext ?? workspacePanelContext(
       appStateRef.current.activeContext,
-      appStateRef.current.thread,
+      activeThreadForState(appStateRef.current),
     );
     if (!context) {
       return;
     }
-    openWorkspaceFileTab({ context, path });
+    openBoundWorkspaceFile(context, path);
   });
   const openWorkspaceFileForThread = useStableCallback((thread: Thread, path: string): void => {
     const context = workspacePanelContext(appStateRef.current.activeContext, thread);
     if (!context) {
       return;
     }
-    openWorkspaceFileTab({ context, path });
+    openBoundWorkspaceFile(context, path);
   });
   const rememberWorkspaceDirtyFiles = useStableCallback((dirty: boolean): void => {
     workspaceHasDirtyFilesRef.current = dirty;

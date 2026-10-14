@@ -21,8 +21,19 @@ describe('complete workspace downloads', () => {
       const { offset } = raw as { offset: number };
       return { data: btoa('abc'), offset, size: 6, version: offset ? 'new' : 'old', mime: 'text/plain' } as T;
     }, 'changing.txt')).rejects.toThrow();
+    const target = { thread_id: 'thread', environment_id: 'worker', connection_id: 'one' };
+    for (const changed of [{ ...target, connection_id: 'two' }, { ...target, environment_id: 'local' }, { ...target, thread_id: 'other' }]) {
+      await expect(downloadWorkspaceFile(async <T>(_method: string, raw?: unknown) => {
+        const params = raw as { offset: number; target: typeof target; thread_id: string };
+        expect(params.thread_id).toBe('thread');
+        expect(params.target).toEqual(target);
+        return { data: btoa('abc'), offset: params.offset, size: 6, version: 'same', mime: 'text/plain', target: params.offset ? changed : target } as T;
+      }, 'same.txt', '/host', target, 'same')).rejects.toThrow('Execution workspace changed');
+    }
   });
   it('rejects an empty non-final chunk instead of looping forever', async () => {
     await expect(downloadWorkspaceFile(async <T>() => ({ data: '', offset: 0, size: 1, version: 'a', mime: '' }) as T, 'missing')).rejects.toThrow();
   });
+
+
 });

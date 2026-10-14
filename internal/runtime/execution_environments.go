@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/workspaceview"
 )
 
 func (s *Session) executionEnvironmentManager() *executionenv.Manager {
@@ -157,4 +158,41 @@ func (s *Session) ExecutionEnvironmentSummary(id, localRoot string) (executionen
 		manager = executionenv.NewManager()
 	}
 	return manager.Summary(s.WuuHome, id, statepath.SessionArtifactDir(stateDir, id), localRoot)
+}
+
+// ReadExecutionWorkspace observes the pinned destination without opening or
+// reconnecting an environment. A remote failure never becomes a host read.
+func (s *Session) ReadExecutionWorkspace(ctx context.Context, id, localRoot, method string, params workspaceview.Params) (any, error) {
+	summary, err := s.ExecutionEnvironmentSummary(id, localRoot)
+	if err != nil {
+		return nil, err
+	}
+	identity := summary.ID
+	if identity == "" {
+		identity = "local"
+	}
+	if params.Target != nil && params.Target.EnvironmentID != "" && params.Target.EnvironmentID != identity {
+		return nil, errors.New("session execution destination changed; reopen the file view")
+	}
+	if summary.ID == "" {
+		result, err := workspaceview.Read(localRoot, method, params, &workspaceview.Target{ThreadID: id, EnvironmentID: "local"})
+		if err != nil {
+			return nil, err
+		}
+		latest, err := s.ExecutionEnvironmentSummary(id, localRoot)
+		if err != nil {
+			return nil, err
+		}
+		if latest.ID != summary.ID {
+			return nil, errors.New("session execution destination changed; reopen the file view")
+		}
+		return result, nil
+	}
+	s.threadProcessMu.Lock()
+	manager := s.executionEnvironments
+	s.threadProcessMu.Unlock()
+	if manager == nil {
+		return nil, errors.New("session execution workspace is not connected")
+	}
+	return manager.ReadWorkspace(ctx, s.WuuHome, id, summary.ID, method, params)
 }

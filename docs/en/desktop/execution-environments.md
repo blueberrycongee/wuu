@@ -16,8 +16,15 @@ conversations continue to use local execution when run. **Not connected** means 
 host has no live transport; it does not prove that a retained machine or files are gone.
 A remote profile used with an external engine shows that the built-in agent is required.
 
-Files, Review and the user terminal still show the local workspace. The environment
-row identifies where agent workspace tools run; it does not reroute those panels.
+Files and file previews follow the conversation's saved execution destination.
+Remote files are available only while this host has a live worker connection;
+opening Files does not provision or reconnect it. A failed remote read never opens
+an identically named local file. File tabs keep their source conversation and
+destination when you switch conversations. Draft-only local file tabs close when a
+session starts and cannot supply document context before a destination is bound.
+Remote files are read-only: local reveal,
+selection comments and selection edit requests are unavailable. Review and the user
+terminal still show the local workspace.
 
 ## Start with Docker
 

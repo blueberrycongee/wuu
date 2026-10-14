@@ -1528,6 +1528,19 @@ export type FileTreeListResult = {
   truncated: boolean;
 };
 
+// Files retain their originating session even when the selected conversation changes.
+export type WorkspaceFileTarget = {
+  thread_id: string;
+  environment_id?: string;
+  connection_id?: string;
+};
+
+export type WorkspaceFileContext = RuntimeContext & {
+  file_target?: WorkspaceFileTarget;
+  file_root?: string;
+  file_label?: string;
+};
+
 export type WorkspaceFileTreeEntry = {
   name: string;
   path: string;
@@ -1535,6 +1548,7 @@ export type WorkspaceFileTreeEntry = {
 };
 
 export type WorkspaceDirectoryListResult = {
+  target?: WorkspaceFileTarget;
   root: string;
   path: string;
   entries: WorkspaceFileTreeEntry[];
@@ -1542,6 +1556,8 @@ export type WorkspaceDirectoryListResult = {
 };
 
 export type WorkspaceFileReadResult = {
+  version?: string;
+  target?: WorkspaceFileTarget;
   root: string;
   path: string;
   absolute_path: string;
@@ -1568,6 +1584,7 @@ export type WorkspaceFileSaveResult = {
 };
 
 export type WorkspaceFileReferenceResolveResult = {
+  target?: WorkspaceFileTarget;
   root: string;
   reference: string;
   status: "resolved" | "missing" | "ambiguous" | "invalid";
@@ -2931,10 +2948,10 @@ export type WuuDesktopApi = {
   // worktree fork) instead of the active project's cwd. See
   // workspacePanelContext in AppState.ts.
   listWorkspaceFiles: (root?: string) => Promise<FileTreeListResult>;
-  listWorkspaceDirectory: (path?: string, root?: string) => Promise<WorkspaceDirectoryListResult>;
-  readWorkspaceFile: (path: string, root?: string) => Promise<WorkspaceFileReadResult>;
-  writeWorkspaceFile: (params: WorkspaceFileSaveParams, root?: string) => Promise<WorkspaceFileSaveResult>;
-  resolveWorkspaceFileReference: (reference: string, root?: string) => Promise<WorkspaceFileReferenceResolveResult>;
+  listWorkspaceDirectory: (path?: string, root?: string, target?: WorkspaceFileTarget) => Promise<WorkspaceDirectoryListResult>;
+  readWorkspaceFile: (path: string, root?: string, target?: WorkspaceFileTarget) => Promise<WorkspaceFileReadResult>;
+  writeWorkspaceFile: (params: WorkspaceFileSaveParams, root?: string, target?: WorkspaceFileTarget) => Promise<WorkspaceFileSaveResult>;
+  resolveWorkspaceFileReference: (reference: string, root?: string, target?: WorkspaceFileTarget) => Promise<WorkspaceFileReferenceResolveResult>;
   startTerminalSession: (params?: TerminalSessionStartParams) => Promise<TerminalSessionStartResult>;
   writeTerminalSession: (id: string, data: string) => Promise<TerminalSessionActionResult>;
   resizeTerminalSession: (id: string, cols: number, rows: number) => Promise<TerminalSessionActionResult>;
@@ -3068,7 +3085,7 @@ export type WuuDesktopApi = {
   /** Save original artifact bytes via a desktop save dialog or mobile share sheet. */
   saveArtifactFile?: (name: string, source: string) => Promise<void>;
   /** Export a complete workspace file to the phone, rejecting changed or oversized files. */
-  exportWorkspaceFile?: (path: string, root?: string) => Promise<void>;
+  exportWorkspaceFile?: (path: string, root?: string, target?: WorkspaceFileTarget) => Promise<void>;
   isAccountWindow?: boolean;
   openAccountWindow?: () => Promise<void>;
   closeAccountWindow?: () => Promise<void>;

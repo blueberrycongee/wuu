@@ -227,6 +227,9 @@ async function clickMenuItem(text: string): Promise<void> {
 }
 
 describe("WorkspaceFileTree", () => {
+
+
+
   it.each(["", "src"])("recovers a directory failure at %j by retrying the current root", async (failedPath) => {
     let shouldFail = true;
     listWorkspaceDirectory.mockImplementation(async (path = "", cwd = "/repo") => {
@@ -266,6 +269,21 @@ describe("WorkspaceFileTree", () => {
     expect(listWorkspaceDirectory).toHaveBeenLastCalledWith("", "/other");
     expect(rowButtonByTitle("README.md")).toBeTruthy();
     expect(treeShadowRoot().querySelector('[data-item-path="stale.ts"]')).toBeNull();
+
+    const first = { ...activeContext, file_target: { thread_id: "first", environment_id: "worker-one" } };
+    const second = { ...activeContext, file_target: { thread_id: "second", environment_id: "worker-two" } };
+    let finishFirst!: (directory: WorkspaceDirectoryListResult) => void;
+    listWorkspaceDirectory.mockImplementation((_path, _root, target) => target.thread_id === "first"
+      ? new Promise(resolve => { finishFirst = resolve; })
+      : Promise.resolve({ root: "/worker", path: "", entries: [{ kind: "file", name: "second.md", path: "second.md" }], truncated: false, target: second.file_target }));
+    const openFile = vi.fn();
+    await render(<WorkspaceFileTree activeContext={first} open onOpenFile={openFile} />);
+    await render(<WorkspaceFileTree activeContext={second} open onOpenFile={openFile} />);
+    await act(async () => finishFirst({ root: "/worker", path: "", entries: [{ kind: "file", name: "stale.md", path: "stale.md" }], truncated: false, target: first.file_target }));
+    await settleDirectoryLoads();
+    expect(treeShadowRoot().querySelector('[data-item-path="stale.md"]')).toBeNull();
+    await act(async () => rowButtonByTitle("second.md").click());
+    expect(openFile).toHaveBeenCalledWith("second.md", { ...second, file_root: "/worker" });
   });
 
   it.skipIf(process.platform === "win32").each([
@@ -561,6 +579,12 @@ describe("WorkspaceFileTree", () => {
     expect(readWorkspaceFile).toHaveBeenLastCalledWith("src/components/Button.tsx", "/repo");
     expect(container.textContent).toContain("Recovered file content");
     expect(container.textContent).not.toContain("File temporarily unavailable");
+
+    const context = { ...activeContext, file_target: { thread_id: "thread", environment_id: "worker" } };
+    readWorkspaceFile.mockResolvedValueOnce(workspaceFile({ path: "same.md", text: "WRONG DESTINATION", target: { thread_id: "thread", environment_id: "local" } }));
+    await render(<WorkspaceFilePreview activeContext={context} selectedFilePath="same.md" />);
+    expect(container.textContent).not.toContain("WRONG DESTINATION");
+    expect(container.textContent).toContain("destination changed");
   });
 
   it("exports the complete selected file and reports native save failures", async () => {
@@ -613,6 +637,25 @@ describe("WorkspaceFileTree", () => {
       await Promise.resolve();
     });
     expect(container.textContent).toContain("updated button code");
+
+    const first = { ...activeContext, file_root: "/worker", file_target: { thread_id: "first", environment_id: "worker-one" } };
+    const second = { ...activeContext, file_root: "/worker", file_target: { thread_id: "second", environment_id: "worker-two" } };
+    let finishFirst!: (file: WorkspaceFileReadResult) => void;
+    readWorkspaceFile.mockClear();
+    readWorkspaceFile.mockImplementation((_path, _root, target) => target.thread_id === "first"
+      ? new Promise(resolve => { finishFirst = resolve; })
+      : Promise.resolve(workspaceFile({ path: "same.md", text: "SECOND worker bytes", target: second.file_target })));
+    await render(<WorkspaceFilePreview activeContext={first} selectedFilePath="same.md" />);
+    await render(<WorkspaceFilePreview activeContext={second} selectedFilePath="same.md" />);
+    expect(container.textContent).toContain("SECOND worker bytes");
+    await act(async () => finishFirst(workspaceFile({ path: "same.md", text: "STALE first worker", target: first.file_target })));
+    expect(container.textContent).not.toContain("STALE first worker");
+    expect(readWorkspaceFile).toHaveBeenLastCalledWith("same.md", "/repo", second.file_target);
+    readWorkspaceFile.mockRejectedValueOnce(new Error("Worker disconnected"));
+    await render(<WorkspaceFilePreview activeContext={second} selectedFilePath="same.md" refreshKey="new-turn" />);
+    expect(container.textContent).toContain("Worker disconnected");
+    expect(container.textContent).not.toContain("SECOND worker bytes");
+    expect(readWorkspaceFile.mock.calls.every(call => call.length === 3)).toBe(true);
   });
 
   it("opens selected non-Markdown text files in the center Monaco editor surface", async () => {

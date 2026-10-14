@@ -71,14 +71,16 @@ contextBridge.exposeInMainWorld("wuu", {
     diff: { files: 0, additions: 0, deletions: 0 }, staged_diff: { files: 0, additions: 0, deletions: 0 } }),
   listGitChanges: async () => ({ is_repo: true, root: cwd, files: [] }),
   listMCPServers: async () => ({ servers: [] }),
+  getThreadExecutionEnvironment: async thread_id => ({ thread_id, environment: { state: "local", root: cwd } }),
   listWorkspaceFiles: async () => ({ root: cwd, paths: Object.keys(files), truncated: false }),
-  listWorkspaceDirectory: async (directory = "") => ({ root: cwd, path: directory, truncated: false,
+  listWorkspaceDirectory: async (directory = "", _root, target) => ({ target: target && { thread_id: target.thread_id, environment_id: "local" }, root: cwd, path: directory, truncated: false,
     entries: directory ? [] : Object.keys(files).map(name => ({ name, path: name, kind: "file" })) }),
-  readWorkspaceFile: async name => {
+  readWorkspaceFile: async (name, _root, target) => {
     name = path.isAbsolute(name) ? path.relative(cwd, name) : name;
     if (!(name in files)) throw new Error(`Unknown fixture file: ${name}`);
-    reads.push({ path: name, text: files[name] });
-    return { root: cwd, path: name, absolute_path: path.join(cwd, name), size_bytes: Buffer.byteLength(files[name]),
+    const source = target && { thread_id: target.thread_id, environment_id: "local" };
+    reads.push({ path: name, text: files[name], target: source });
+    return { target: source, root: cwd, path: name, absolute_path: path.join(cwd, name), size_bytes: Buffer.byteLength(files[name]),
       binary: false, truncated: false, text: files[name] };
   },
   startThread: async () => ({ thread: clone(thread) }),

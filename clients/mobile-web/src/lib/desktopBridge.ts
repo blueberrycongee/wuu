@@ -23,6 +23,7 @@ import type {
   ProjectListResult,
   RunningThreadSnapshot,
   RuntimeContext,
+  WorkspaceFileTarget,
   Thread,
   ThreadResumeResult,
   ServerEvent,
@@ -606,14 +607,14 @@ export class RemoteDesktopBridge {
       chooseProjectFolder: () => this.chooseComputerFolder(false),
       relocateProject: (id) => this.chooseComputerFolder(false,id),
       removeProject: async (id) => this.applyProjectState(await this.call('desktop/projects/remove',{id})),
-      ...(isNative ? { saveArtifactFile: saveNativeArtifact, exportWorkspaceFile: async (path: string, root?: string) => {
-        const blob = await downloadWorkspaceFile(this.call.bind(this), path, root || this.workdir());
+      ...(isNative ? { saveArtifactFile: saveNativeArtifact, exportWorkspaceFile: async (path: string, root?: string, target?: WorkspaceFileTarget) => {
+        const blob = await downloadWorkspaceFile(this.call.bind(this), path, root || this.workdir(), target);
         const url = URL.createObjectURL(blob);
         try { await saveNativeArtifact(path.split('/').pop() || 'file', url); }
         finally { URL.revokeObjectURL(url); }
       } } : {}),
       listWorkspaceFiles: (root) => this.call("desktop/file/list", {root:root || this.workdir()}),
-      writeWorkspaceFile: (params,root) => this.call("desktop/file/write",{params,root:root || this.workdir()}),
+      writeWorkspaceFile: (params,root,target) => target ? Promise.reject(new Error("Session workspace files are read-only")) : this.call("desktop/file/write",{params,root:root || this.workdir()}),
       onRuntimeRestore: (listener) => {
         this.restoreListeners.add(listener);
         return () => this.restoreListeners.delete(listener);
@@ -635,12 +636,12 @@ export class RemoteDesktopBridge {
       createPullRequest: (params, root) => this.call("desktop/git/create-pr", { params, root: root || this.workdir() }),
       listGitChanges: (root) => this.call("workspace/git/changes", { root: root || this.workdir() }),
       readGitFileDiff: (path, root) => this.call("workspace/git/diff", { path, root: root || this.workdir() }),
-      listWorkspaceDirectory: (path, root) => this.call("workspace/directory/list", { path, root: root || this.workdir() }),
-      readWorkspaceFile: async (path, root) => {
+      listWorkspaceDirectory: (path, root, target) => this.call("workspace/directory/list", { path, root: root || this.workdir(), ...(target ? { thread_id: target.thread_id, target } : {}) }),
+      readWorkspaceFile: async (path, root, target) => {
         const workspace = root || this.workdir();
-        const result = await this.call<import("@wuu/protocol").WorkspaceFileReadResult>("workspace/file/read", { path, root: workspace });
+        const result = await this.call<import("@wuu/protocol").WorkspaceFileReadResult>("workspace/file/read", { path, root: workspace, ...(target ? { thread_id: target.thread_id, target } : {}) });
         if (result.renderable_kind && !result.renderable_url) {
-          const blob = await downloadWorkspaceFile(this.call.bind(this), path, workspace);
+          const blob = await downloadWorkspaceFile(this.call.bind(this), result.path, workspace, result.target, result.version);
           result.renderable_url = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(String(reader.result));
@@ -650,7 +651,7 @@ export class RemoteDesktopBridge {
         }
         return result;
       },
-      resolveWorkspaceFileReference: (reference, root) => this.call("workspace/file/resolve", { reference, root: root || this.workdir() }),
+      resolveWorkspaceFileReference: (reference, root, target) => this.call("workspace/file/resolve", { reference, root: root || this.workdir(), ...(target ? { thread_id: target.thread_id, target } : {}) }),
       listProjects: async () => {
         if (this.workspaceSnapshotFresh) {
           this.assertAvailable(true);

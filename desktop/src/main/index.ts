@@ -1,3 +1,5 @@
+import type { WorkspaceFileTarget, WorkspaceFileReadResult, WorkspaceDirectoryListResult, WorkspaceFileReferenceResolveResult } from "../shared/protocol";
+import { downloadWorkspaceFile } from "../shared/workspaceDownload";
 import { AppContextCapture } from "./appContextCapture";
 import { createBrowserView } from "./browserView";
 import { saveArtifactFile } from "./artifactSave";
@@ -504,6 +506,24 @@ function appServerRequest<T>(
   return context
     ? appServerClientPool.requestInContext<T>(context, method, params)
     : appServerClientPool.request<T>(method, params);
+}
+
+async function sessionWorkspaceRequest<T>(event: IpcMainInvokeEvent, method: string, params: Record<string, unknown>, target: WorkspaceFileTarget): Promise<T> {
+  return appServerRequest<T>(event, method, { ...params, thread_id: target.thread_id, target });
+}
+
+async function readSessionWorkspaceFile(event: IpcMainInvokeEvent, path: string, root: string | undefined, target: WorkspaceFileTarget): Promise<WorkspaceFileReadResult> {
+  const request = <T>(method: string, params?: unknown) => appServerRequest<T>(event, method, params);
+  const result = await sessionWorkspaceRequest<WorkspaceFileReadResult>(event, "workspace/file/read", { path, root }, target);
+  if (result.target?.environment_id === "local") {
+    // Preserve native file URLs and previews for a validated local session.
+    return { ...workspaceFilesForEvent(event).readFile(result.path, result.root), target: result.target };
+  }
+  if (result.renderable_kind && !result.renderable_url) {
+    const blob = await downloadWorkspaceFile(request, result.path, root, result.target, result.version);
+    result.renderable_url = `data:${blob.type};base64,${Buffer.from(await blob.arrayBuffer()).toString("base64")}`;
+  }
+  return result;
 }
 
 function desktopInitializeParams() {
@@ -1620,21 +1640,28 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle(
     "wuu:file-directory-list",
-    (event, path?: string, root?: string) =>
-      workspaceFilesForEvent(event).directoryList(path, root),
+    (event, path?: string, root?: string, target?: WorkspaceFileTarget) =>
+      target ? sessionWorkspaceRequest<WorkspaceDirectoryListResult>(event, "workspace/directory/list", { path, root }, target)
+        : workspaceFilesForEvent(event).directoryList(path, root),
   );
-  ipcMain.handle("wuu:file-read", (event, path: string, root?: string) =>
-    workspaceFilesForEvent(event).readFile(path, root),
+  ipcMain.handle("wuu:file-read", (event, path: string, root?: string, target?: WorkspaceFileTarget) =>
+    target ? readSessionWorkspaceFile(event, path, root, target) : workspaceFilesForEvent(event).readFile(path, root),
   );
   ipcMain.handle(
     "wuu:file-write",
-    (event, params: WorkspaceFileSaveParams, root?: string) =>
-      workspaceFilesForEvent(event).writeFile(params, root),
+    async (event, params: WorkspaceFileSaveParams, root?: string, target?: WorkspaceFileTarget) => {
+      if (!target) return workspaceFilesForEvent(event).writeFile(params, root);
+      const current = await sessionWorkspaceRequest<WorkspaceFileReadResult>(event, "workspace/file/read", { path: params.path, root }, target);
+      if (current.target?.environment_id !== "local") throw new Error("Remote workspace files are read-only");
+      const result = workspaceFilesForEvent(event).writeFile({ ...params, path: current.path }, current.root);
+      return { ...result, file: { ...result.file, target: current.target } };
+    },
   );
   ipcMain.handle(
     "wuu:file-reference-resolve",
-    (event, reference: string, root?: string) =>
-      workspaceFilesForEvent(event).resolveFileReference(reference, root),
+    (event, reference: string, root?: string, target?: WorkspaceFileTarget) =>
+      target ? sessionWorkspaceRequest<WorkspaceFileReferenceResolveResult>(event, "workspace/file/resolve", { reference, root }, target)
+        : workspaceFilesForEvent(event).resolveFileReference(reference, root),
   );
   ipcMain.handle(
     "wuu:terminal-start",

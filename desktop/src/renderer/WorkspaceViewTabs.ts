@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useState } from "react";
 import { arrayMove } from "@dnd-kit/sortable";
-import type { ExtensionIconDescriptor, RuntimeContext } from "../shared/protocol";
+import type { ExtensionIconDescriptor, WorkspaceFileContext } from "../shared/protocol";
 import {
   parseWorkspaceFileTarget,
   type WorkspaceFileLinkTarget,
@@ -9,7 +9,7 @@ import {
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import type { ArtifactPreviewRequest } from "./ArtifactPreviewContext";
-import { workspacePathToSlash } from "./WorkspacePaths";
+import { workspaceFileContextKey, workspacePathToSlash } from "./WorkspacePaths";
 
 /**
  * Content shown in the workspace right panel's tab strip. Built-in tools are
@@ -33,7 +33,7 @@ export type WorkspaceDiffViewTab = {
 export type WorkspaceFileViewTab = {
   kind: "file";
   id: string;
-  context: RuntimeContext;
+  context: WorkspaceFileContext;
   path: string;
   title: string;
   selection?: WorkspaceFileSelection;
@@ -153,7 +153,7 @@ export function workspaceDiffViewTab({
   };
 }
 
-export function workspaceFileViewTabID(context: RuntimeContext, path: string): string {
+export function workspaceFileViewTabID(context: WorkspaceFileContext, path: string): string {
   const normalizedPath = normalizeWorkspaceFileTabPath(
     context,
     workspaceFileTarget(path).path,
@@ -162,14 +162,14 @@ export function workspaceFileViewTabID(context: RuntimeContext, path: string): s
     context.kind === "project"
       ? `project:${context.project_id}:${context.cwd}`
       : `no_project:${context.cwd}`;
-  return `file:${encodeURIComponent(contextKey)}:${encodeURIComponent(normalizedPath)}`;
+  return `file:${encodeURIComponent(contextKey)}:${encodeURIComponent(workspaceFileContextKey(context))}:${encodeURIComponent(normalizedPath)}`;
 }
 
 export function workspaceFileViewTab({
   context,
   path,
 }: {
-  context: RuntimeContext;
+  context: WorkspaceFileContext;
   path: string;
 }): WorkspaceFileViewTab {
   const target = workspaceFileTarget(path);
@@ -189,9 +189,13 @@ function workspaceFileTarget(path: string): WorkspaceFileLinkTarget {
   return parseWorkspaceFileTarget(path) ?? { kind: "workspace-file", path };
 }
 
-export function normalizeWorkspaceFileTabPath(context: RuntimeContext, path: string): string {
-  const normalizedRoot = workspacePathToSlash(context.cwd, context.cwd).replace(/\/+$/, "");
-  const normalizedPath = workspacePathToSlash(path, context.cwd).replace(/\/+$/, "");
+export function normalizeWorkspaceFileTabPath(context: WorkspaceFileContext, path: string): string {
+  const root = context.file_root ?? context.cwd;
+  const normalizedRoot = workspacePathToSlash(root, root).replace(/\/+$/, "");
+  const normalizedPath = workspacePathToSlash(path, root).replace(/\/+$/, "");
+  // Absolute session links are checked on the destination, never stripped
+  // into an unrelated workspace-relative filename.
+  if (context.file_target && normalizedPath.startsWith("/") && !normalizedPath.startsWith(`${normalizedRoot}/`)) return normalizedPath;
   const relativePath = normalizedPath.startsWith(`${normalizedRoot}/`)
     ? normalizedPath.slice(normalizedRoot.length + 1)
     : normalizedPath.replace(/^\/+/, "");

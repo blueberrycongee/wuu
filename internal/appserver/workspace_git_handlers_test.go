@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/blueberrycongee/wuu/internal/workspaceview"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,7 +89,7 @@ func TestWorkspaceGitUnbornBinaryAndBoundedPreview(t *testing.T) {
 	writeWorkspaceViewFile(t, root, "first.txt", "first\n")
 	gitViewCommand(t, root, "add", "first.txt")
 	writeWorkspaceViewFile(t, root, "binary.dat", "binary\x00bytes")
-	writeWorkspaceViewFile(t, root, "large.txt", strings.Repeat("line\n", workspacePreviewBytes))
+	writeWorkspaceViewFile(t, root, "large.txt", strings.Repeat("line\n", workspaceview.PreviewBytes))
 	ctx := context.Background()
 	baseline, err := workspaceGitBaseline(ctx, root)
 	if err != nil {
@@ -119,7 +120,7 @@ func TestWorkspaceGitUnbornBinaryAndBoundedPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !large.Truncated || len(large.Patch) > workspacePreviewBytes || large.ModifiedText == nil || len(*large.ModifiedText) > workspacePreviewBytes {
+	if !large.Truncated || len(large.Patch) > workspaceview.PreviewBytes || large.ModifiedText == nil || len(*large.ModifiedText) > workspaceview.PreviewBytes {
 		t.Fatal("unbounded preview")
 	}
 }
@@ -166,7 +167,7 @@ func TestWorkspaceGitRPCRejectsUnknownRootAndReportsNonRepository(t *testing.T) 
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	for index, root := range []string{t.TempDir(), rt.RootDir} {
-		params, err := json.Marshal(workspaceViewParams{Root: root})
+		params, err := json.Marshal(workspaceview.Params{Root: root})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -192,7 +193,7 @@ func TestWorkspaceGitRPCReadsTheSelectedRepository(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	for _, method := range []string{MethodWorkspaceGitStatus, MethodWorkspaceGitChanges, MethodWorkspaceGitDiff} {
-		params, err := json.Marshal(workspaceViewParams{Root: root, Path: "selected.txt"})
+		params, err := json.Marshal(workspaceview.Params{Root: root, Path: "selected.txt"})
 		if err != nil {
 			t.Fatal(err)
 		}

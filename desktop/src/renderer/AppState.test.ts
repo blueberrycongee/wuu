@@ -1011,11 +1011,11 @@ describe("workspacePanelContext", () => {
     cwd: "/repo/project",
   };
 
-  it("returns the very same activeContext reference when the thread's cwd matches it", () => {
+  it("retains the thread identity when its cwd matches the active workspace", () => {
     const thread = threadWithUserTexts(["hello"]);
     thread.cwd = projectContext.cwd;
 
-    expect(workspacePanelContext(projectContext, thread)).toBe(projectContext);
+    expect(workspacePanelContext(projectContext, thread)).toEqual({ ...projectContext, file_target: { thread_id: thread.id }, ...(thread.title ? { file_label: thread.title } : {}) });
   });
 
   it("returns activeContext unchanged when the thread has no cwd", () => {
@@ -1042,6 +1042,7 @@ describe("workspacePanelContext", () => {
       kind: "project",
       project_id: projectContext.project_id,
       cwd: thread.cwd,
+      file_target: { thread_id: thread.id }, ...(thread.title ? { file_label: thread.title } : {}),
     });
   });
 
@@ -1052,6 +1053,7 @@ describe("workspacePanelContext", () => {
     expect(workspacePanelContext(undefined, thread)).toEqual({
       kind: "no_project",
       cwd: thread.cwd,
+      file_target: { thread_id: thread.id }, ...(thread.title ? { file_label: thread.title } : {}),
     });
   });
 });

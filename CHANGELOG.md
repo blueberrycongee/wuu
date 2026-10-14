@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Browse and preview the files edited in a conversation's pinned execution
+  environment. Remote reads require the existing worker connection and never
+  fall back to same-named host files; remote views are read-only.
+
 - Inspect a conversation’s pinned execution environment from the workspace tool
   picker, including its workspace and observed connection state, without starting
   a worker or changing the selection.

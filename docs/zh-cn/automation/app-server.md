@@ -30,6 +30,22 @@ wuu app-server --workdir /path/to/project
 `ready` 仅表示当前宿主观察到的连接状态，不代表某次操作的结果，也不会重新探测机器。`unsupported` 表示保存的环境需要内置引擎。调用不会为缺少选择记录的会话创建记录。
 
 
+## 读取会话工作区
+
+`workspace/directory/list`、`workspace/file/read`、`workspace/file/resolve` 和
+`workspace/file/chunk` 支持 `thread_id`，并要求 `target.thread_id` 与其一致。
+可选的 `root` 是会话在主机上的 cwd，用于检测目录迁移，不能指定远程根目录。
+主机校验会话归属后，使用已保存的执行目标。未传 target 的旧调用保留主机工作区访问。
+
+结果中的 `target` 包含源 `thread_id`、`environment_id`（本机执行为 `local`），
+远程读取还包含 `connection_id`。传入预期的环境 ID 可拒绝已变化的执行目标。
+分块传输必须保留返回的连接 ID 和文件 `version`；重新连接或文件变化会使传输失效。
+读取只使用已有的执行连接，不会创建环境、重新连接、执行工具或回退到本机文件。
+
+路径和符号链接均受所选根目录约束。目录最多返回 4,000 项，引用查找最多访问 8,000 项。
+文本预览限制为 512 KiB，内联媒体为 2 MiB，文件分块为 256 KiB，分块文件上限为 64 MiB。
+这些接口均为只读。
+
 ## 运行任务
 
 创建会话，再使用返回的 `result.thread.id`：

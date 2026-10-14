@@ -163,6 +163,15 @@ describe("workspaceFileViewTab", () => {
     expect(workspaceFileViewTabID(projectContext, "src/App.tsx")).not.toBe(
       workspaceFileViewTabID(worktreeContext, "src/App.tsx"),
     );
+
+    const first = { ...projectContext, file_root: "/worker", file_target: { thread_id: "a", environment_id: "worker" } };
+    const second = { ...first, file_target: { thread_id: "b", environment_id: "worker" } };
+    const local = { ...first, file_target: { thread_id: "a", environment_id: "local" } };
+    const file = workspaceFileViewTab({ context: first, path: "/worker/same.txt" });
+    expect(file.path).toBe("same.txt");
+    expect(file.id).not.toBe(workspaceFileViewTab({ context: second, path: "same.txt" }).id);
+    expect(file.id).not.toBe(workspaceFileViewTab({ context: local, path: "same.txt" }).id);
+    expect(workspaceFileViewTab({ context: first, path: "/outside/same.txt" }).path).toBe("/outside/same.txt");
   });
 
   it("normalizes aliases of the same workspace file to one resource", () => {

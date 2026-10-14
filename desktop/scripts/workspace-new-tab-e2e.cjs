@@ -568,9 +568,20 @@ app.whenReady().then(async () => {
   await waitFor(() => document.activeElement === document.querySelector(".workspace-tool-menu-more > summary"));
   win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Down" });
   win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
+  await waitFor(() => document.activeElement === document.querySelector(".session-environment-summary"));
+  assert.equal(await evaluate(() => document.querySelector(".session-environment-status").open), false,
+    "Arrow navigation focuses the environment summary without expanding its details");
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Down" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
   await waitFor(() => document.activeElement?.dataset.wuuComponent === "workspace-resume-tab");
   await capture("light-14-keyboard-focus");
-  results.push({ scenario: "keyboard skips collapsed extensions", passed: true });
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Up" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Up" });
+  await waitFor(() => document.activeElement === document.querySelector(".session-environment-summary"));
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Up" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Up" });
+  await waitFor(() => document.activeElement === document.querySelector(".workspace-tool-menu-more > summary"));
+  results.push({ scenario: "keyboard skips collapsed extensions and reaches environment and resumed files", passed: true });
   const hover = await evaluate(() => {
     const box = document.querySelector('[data-wuu-tool="files"]').getBoundingClientRect();
     return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
