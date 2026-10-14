@@ -97,6 +97,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep iOS conversations visible after sending through long histories, with stable
+  latest-message following through keyboard changes and retained reading position
+  while replies arrive or older history loads.
+
 - Preserve browser viewport and click/scroll coordinates in compact live previews,
   including cards scaled below 25% and transitions back to the browser panel.
 
