@@ -109,6 +109,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Automatically hide completed activity previews after 30 seconds while retaining
+  browser pages. New work cancels the pending dismissal, and previews can be
+  reopened explicitly without being revived by routine state refreshes.
+
 - Keep composer inputs free of duplicate status text while surfacing rejected
   requests through toasts, preserving drafts and disabled-action explanations.
   Explicit retries report each failure even when the error repeats. Revisiting
