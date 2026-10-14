@@ -10,6 +10,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Enable Computer Use in macOS desktop releases with bundled native control and
+  live-preview helpers. Releases require Developer ID signing and notarization;
+  screen capture and desktop control use macOS Screen Recording and Accessibility
+  permissions.
+
+- `wuu session compact` reclaims free database space and enables incremental
+  reclamation for older stores. Large provider-history checkpoints now use
+  lossless compression, with bounded migration of existing checkpoints.
+
 - iOS and Android render Mermaid diagrams offline as replies stream, preserve the
   last valid diagram during partial syntax, and expose source and copy actions.
 
@@ -17,7 +26,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   larger readable history pages, retained reading position, and retry on failure.
   Process details remain available on demand.
 
-- Add opt-in macOS app snapshots: record a shortcut and configure permissions in Settings → General → App snapshot, then capture a single frontmost window directly into the active draft with its image and optional available text. Capturing focuses the composer and preserves existing text without sending. Computer Use remains excluded from release builds.
+- Add opt-in macOS app snapshots: record a shortcut and configure permissions in Settings → General → App snapshot, then capture a single frontmost window directly into the active draft with its image and optional available text. Capturing focuses the composer and preserves existing text without sending.
 
 - Automatically recover unsent text after a renderer reload, with no settings
   toggle. Recovery copies are limited to the current window, 20 drafts, 32K
@@ -113,6 +122,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Keep parallel file-read tracking synchronized from the first tool call, so
   concurrent reads retain their edit-safety state without racing initialization.
+
+- Stop all workers without letting cancelled child results wake parked parents
+  before their edges close. Write worker snapshots atomically so concurrent result
+  delivery can read complete history and release results for explicit recovery.
+
+- Automatically hide completed activity previews after 30 seconds while retaining
+  browser pages. New work cancels the pending dismissal, and previews can be
+  reopened explicitly without being revived by routine state refreshes.
 
 - Keep composer inputs free of duplicate status text while surfacing rejected
   requests through toasts, preserving drafts and disabled-action explanations.
