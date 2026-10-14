@@ -65,6 +65,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Live activity previews show only display controls: Hide for native apps, plus
+  Open in side panel for browser pages. Use the conversation's Stop action to
+  interrupt a task, or interact with a browser page in the side panel to take over.
+
 - Desktop text uses stronger light-theme contrast and native macOS font smoothing
   by default, with an optional grayscale setting. Content fonts can be selected
   independently for messages, drafts, and Markdown previews; code editors now

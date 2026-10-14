@@ -13,16 +13,6 @@ import { activityTimestamp } from "../shared/activityTimestamp";
 import type { WindowRegistry } from "./windowRegistry";
 import { activityPreviewIsLive } from "./activityPiPContent";
 
-export type ActivityControlAction = "takeover" | "release" | "stop";
-
-export function activityControlMethod(action: ActivityControlAction): "activity/takeover" | "activity/release" | "activity/stop" {
-  switch (action) {
-    case "takeover": return "activity/takeover";
-    case "release": return "activity/release";
-    case "stop": return "activity/stop";
-  }
-}
-
 export function frameStreamRetryDelay(attempt: number): number {
   return Math.min(16_000, 1_000 * 2 ** Math.max(1, attempt));
 }
@@ -78,7 +68,7 @@ export function pipVisibleForActivity(activity: ActivitySession, inPanel = false
 type ActivitySnapshot = (threadID: string) => Promise<ActivitySession[]>;
 
 // The core owns one observation host. Provider adapters only attach content;
-// task control, visibility, theme and interaction feedback stay in this contract.
+// visibility, theme and interaction feedback stay in this contract.
 export type ObservationPiPHandle = {
   start(): void;
   setVisible(visible: boolean): void;
@@ -88,8 +78,6 @@ export type ObservationPiPHandle = {
   setLive?(live: boolean): void;
   setTurnCompleted?(completed: boolean): void;
   setAppearance?(dark: boolean, preferences?: ActivityPreviewAppearance): void;
-  setControlPending?(pending: boolean): void;
-  setControlFailed?(): void;
   suspendContent?(message: string): void;
   setHostLayout?(layout: BrowserPiPScreenLayout | null): void;
   setHostParent?(parent: BrowserPiPHostWindow | null): void;
@@ -133,7 +121,6 @@ type PiPEntry = {
   // "preparing" = frosted placeholder shown, no live frame yet.
   // "live" = first real frame presented (native `ready`).
   phase: "preparing" | "live" | "failed";
-  controlPending?: boolean;
   retiredExecutions: Set<string>;
 };
 
@@ -179,7 +166,6 @@ export class ObservationCoordinator {
     private readonly registry: WindowRegistry,
     private readonly snapshot?: ActivitySnapshot,
     private readonly pipFactory?: ObservationPiPFactory,
-    private readonly control?: (activity: ActivitySession, action: ActivityControlAction) => Promise<ActivitySession>,
   ) {}
 
   handleServerEvent(event: ServerEvent): void {
@@ -268,8 +254,6 @@ export class ObservationCoordinator {
       // retargeting the card. An unresolved/new target cannot resume old pixels.
       if (retained.activity.execution_id !== activity.execution_id) {
         if (retained.activity.execution_id) retained.retiredExecutions.add(retained.activity.execution_id);
-        retained.controlPending = false;
-        retained.pip.setControlPending?.(false);
         retained.pip.setTurnCompleted?.(false);
       }
       const sameTarget = retained.key === observationKey(activity);
@@ -347,8 +331,6 @@ export class ObservationCoordinator {
         if (this.current !== entry) return;
       }
       if (this.current.activity.execution_id !== activity.execution_id) {
-        this.current.controlPending = false;
-        this.current.pip.setControlPending?.(false);
         this.current.pip.setTurnCompleted?.(false);
       }
       this.current.activity = activity;
@@ -371,7 +353,6 @@ export class ObservationCoordinator {
       }
       current.key = key;
       current.threadID = activity.thread_id;
-      current.controlPending = false;
       current.activity = activity;
       current.phase = "preparing";
       current.pip.retarget(activity, this.eventSink(key));
@@ -469,27 +450,6 @@ export class ObservationCoordinator {
         return;
       case "expand":
         if (entry.activity.kind === "browser") this.onBrowserExpand?.(entry.activity);
-        return;
-      case "control":
-        if (event.execution_id !== undefined && event.execution_id !== (entry.activity.execution_id ?? "")) return;
-        if (this.control && !entry.controlPending && (event.action === "takeover" || event.action === "release" || event.action === "stop")) {
-          const controlActivity = entry.activity;
-          const executionID = controlActivity.execution_id;
-          entry.controlPending = true;
-          entry.pip.setControlPending?.(true);
-          void this.control(controlActivity, event.action)
-            .then((activity) => this.update(activity))
-            .catch((error: unknown) => {
-              console.warn("Activity preview control failed", error);
-              if (this.current === entry && entry.key === key && entry.activity.execution_id === executionID
-                && entry.activity.state !== "stopped" && entry.activity.controller === controlActivity.controller) entry.pip.setControlFailed?.();
-            })
-            .finally(() => {
-              if (this.current !== entry || entry.key !== key || entry.activity.execution_id !== executionID) return;
-              entry.controlPending = false;
-              entry.pip.setControlPending?.(false);
-            });
-        }
         return;
       case "gone":
         this.handlePiPGone(key);
