@@ -385,6 +385,12 @@
   letter-spacing: 0;
   line-height: var(--line-ui);
   text-rendering: optimizeLegibility;
+  /* macOS's default smoothing dilates every stroke: regular text reads a
+   * step heavier and light-on-dark text blooms. Grayscale rendering keeps
+   * each face at its designed weight in both themes; other platforms
+   * ignore these properties. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* data-platform is stamped by the preload before first paint (same
