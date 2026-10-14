@@ -107,6 +107,15 @@ timestamps, ticket, Gatekeeper assessment, and version. `verification.json`
 records the commit, version, checks, notarization submission ID, and final hashes.
 These checks do not prove UI behavior or permission retention across updates.
 
+App and DMG uploads return a submission ID before polling begins. The pipeline
+records each ID and archive SHA-256 in `release/notarization/` and retries transient
+query failures against that same ID, never by uploading again. Five consecutive
+network failures, a non-transient query failure, rejection, or a 30-minute polling
+limit stops the build. Receipts are uploaded as `notarization-evidence` even when
+the build fails; they contain no credentials. Resuming the helper with an existing
+receipt requires the exact same archive hash. A fresh CI build creates new signed
+archives and must obtain its own notarization results.
+
 Use the Release workflow's manual dispatch for verification without publication.
 The `codex/developer-id-signing` branch also runs this verification on push so the
 workflow can be validated before landing on main. Only a `v*` tag push can enter
@@ -115,7 +124,7 @@ See the [signing reference](../../../desktop/scripts/RELEASE-SIGNING.md).
 
 ## Published artifacts
 
-The release contains `wuu-<version>-mac-arm64.dmg`, `wuu-<version>-mac-arm64.zip`, and any matching `.blockmap` files produced by electron-builder. The app includes its own private `wuu-core` subprocess. The workflow does not publish standalone CLI archives, Windows installers, native phone apps, or CUA helpers.
+The release contains `wuu-<version>-mac-arm64.dmg`, `wuu-<version>-mac-arm64.zip`, and matching ZIP `.blockmap` files produced by electron-builder. DMG blockmaps are excluded because signing and stapling modify the disk image after electron-builder creates its blockmap. The app includes its own private `wuu-core` subprocess. The workflow does not publish standalone CLI archives, Windows installers, native phone apps, or CUA helpers.
 
 A separately source-installed CLI can coexist with the app and may have a different version. When checking a desktop release, inspect the bundled core and installed app rather than assuming `wuu --version` on `PATH` identifies the desktop build.
 

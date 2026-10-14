@@ -15,7 +15,7 @@ jobs:
   desktop-macos:
     name: Desktop macOS
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       WUU_SKIP_CUA_MAC: "1"
       WUU_ENABLE_CUA_MAC: "0"
@@ -93,6 +93,7 @@ jobs:
           make -C .. check-plugins test-plugins
           npm test
           npm run test:release-signing
+          node --test scripts/test-notarization.cjs
 
       - name: Build desktop release
         run: npm run release:desktop
@@ -132,6 +133,16 @@ jobs:
             desktop/release/*.zip.blockmap
             desktop/release/verification.json
           if-no-files-found: error
+
+      - name: Upload notarization evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: notarization-evidence
+          path: |
+            desktop/release/notarization/*.json
+            desktop/release/verification.json
+          if-no-files-found: ignore
 
       - name: Remove release credentials
         if: always()
