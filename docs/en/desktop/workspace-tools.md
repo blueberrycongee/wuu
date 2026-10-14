@@ -151,6 +151,14 @@ Closing or stopping the preview does not quit the application being observed. Di
 
 Native app previews require a macOS build with Computer Use enabled and the relevant macOS permissions. The floating preview does not itself grant Screen Recording or Accessibility access. See [installation](../getting-started/installation.md) for build availability and permissions.
 
+## Mac app control
+
+In builds with Computer Use enabled, the Agent can work in a background app while your current app stays in front. The preview's existing cursor shows its actions. Background focus support keeps menus available between steps; applications that require foreground input still need an explicit foreground action.
+
+Text operations include plain text, Markdown and HTML paste, selecting a unique text match, and placing the insertion point before or after it. Paste restores the previous clipboard unless another app or you copied something in the meantime. Clicks support modifier keys and holds; held keys and mouse buttons are released when an action is cancelled.
+
+After input, Wuu waits briefly for Accessibility and visual changes to settle before returning or taking a requested follow-up observation. This does not prove that a save, navigation or other asynchronous task has finished: the Agent must still check the intended result.
+
 ## Find an action
 
 Type `/` in the composer to search workspace actions, prompt shortcuts, and skills. Disabled entries explain missing prerequisites such as a workspace, an idle conversation, or engine support.

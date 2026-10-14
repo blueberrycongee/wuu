@@ -21,6 +21,7 @@ public final class ComputerExecution: @unchecked Sendable {
         lock.unlock()
         if stopped { throw ComputerError.cancelled("request cancelled; input may have partially executed") }
         if Date() >= deadline { throw ComputerError.cancelled("request deadline exceeded; input may have partially executed") }
+        try inputGuard?()
     }
 
     public func beginInput() throws {
@@ -56,6 +57,16 @@ public final class ComputerExecution: @unchecked Sendable {
     static var current: ComputerExecution? { Thread.current.threadDictionary[threadKey] as? ComputerExecution }
     static func checkpoint() throws { try current?.check() }
     static func input() throws { try current?.beginInput() }
+}
+
+// Run the event loop while holding input so cancellation can interrupt a long
+// press. Callers release in defer, including when this checkpoint throws.
+func holdInput(for duration: TimeInterval) throws {
+    let deadline = Date().addingTimeInterval(duration)
+    while Date() < deadline {
+        try ComputerExecution.checkpoint()
+        RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.02)))
+    }
 }
 
 private struct RequestMessage: @unchecked Sendable { let value: [String: Any] }

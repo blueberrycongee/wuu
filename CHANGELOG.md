@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Computer Use-enabled macOS builds support background focus and menu tracking,
+  formatted paste with clipboard restoration, modifier clicks, cancellable holds,
+  text insertion-point selection, and AX/visual settling before follow-up actions.
+
 - iOS and Android render Mermaid diagrams offline as replies stream, preserve the
   last valid diagram during partial syntax, and expose source and copy actions.
 
