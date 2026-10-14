@@ -47,6 +47,15 @@ func (e *recordingToolExecutor) AuthorizeTool(_ context.Context, call providers.
 	return e.authorizationErr
 }
 
+type legacyPluginInner struct {
+	agent.ToolExecutor
+	err error
+}
+
+func (e legacyPluginInner) Execute(context.Context, providers.ToolCall) (string, error) {
+	return "partial legacy output", e.err
+}
+
 type pluginToolTestClient struct {
 	executed   bool
 	scopes     []string
@@ -157,6 +166,26 @@ func TestPluginToolExecutorRunsInsideToolHooks(t *testing.T) {
 	}
 	if client.executed || len(inner.authorized) != 0 {
 		t.Fatalf("hook must run before authorization and dispatch: executed=%v authorized=%+v", client.executed, inner.authorized)
+	}
+
+	legacyErr := toolerrors.New("legacy_failure", "legacy plugin-wrapper execution failed")
+	legacy := legacyPluginInner{ToolExecutor: inner, err: legacyErr}
+	wrapped := newPluginAwareToolExecutor(legacy, host, hooks.NewDispatcher(hooks.NewRegistry(nil)), "thread", "thread", "/workspace")
+	call := providers.ToolCall{ID: "failed-legacy", Name: "demo", Arguments: `{}`}
+	if _, err := wrapped.(agent.RichToolExecutor).ExecuteResult(context.Background(), call); err != legacyErr {
+		t.Fatalf("wrapper changed the typed execution error: %v", err)
+	}
+	runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: wrapped})
+	messages, err := runtime.ExecuteFinalCalls(context.Background(), []providers.ToolCall{call}, nil)
+	if err != nil || len(messages) != 1 || messages[0].ToolResult == nil || !messages[0].ToolResult.IsError {
+		t.Fatalf("plugin-wrapped legacy failure: %+v, %v", messages, err)
+	}
+	var diagnostic struct {
+		Error string `json:"error"`
+		Kind  string `json:"error_kind"`
+	}
+	if err := json.Unmarshal([]byte(messages[0].Content), &diagnostic); err != nil || diagnostic.Error != legacyErr.Error() || diagnostic.Kind != "legacy_failure" {
+		t.Fatalf("legacy plugin-wrapper diagnostic lost: %q, %v", messages[0].Content, err)
 	}
 }
 

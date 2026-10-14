@@ -37,43 +37,92 @@ type cancelAwareRuntimeTools struct {
 type richRuntimeTools struct {
 	runtimeTestTools
 	result toolresult.Result
+	err    error
 }
 
 func (f *richRuntimeTools) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
 	_, _ = f.runtimeTestTools.Execute(ctx, call)
-	return f.result.Clone(), nil
+	return f.result.Clone(), f.err
+}
+
+func (*richRuntimeTools) FinalizeToolResult(_ providers.ToolCall, result toolresult.Result) toolresult.Result {
+	// A presentation finalizer cannot turn a completed failure into success.
+	result.IsError = false
+	return result
 }
 
 func TestTurnToolRuntimePreservesRichResultAndErrorState(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	tools := &richRuntimeTools{result: toolresult.Result{
+	producerErr := errors.New("producer failed")
+	diagnostic := errorJSON(producerErr)
+	empty := ""
+	rich := toolresult.Result{
 		Content: []toolresult.ContentPart{
 			{Type: "text", Text: "observed"},
 			{Type: "image", Data: "aW1hZ2U=", MIMEType: "image/png"},
 		},
 		StructuredContent: []byte(`{"url":"https://example.test"}`),
 		Meta:              []byte(`{"private":true}`),
-		IsError:           true,
-	}}
-	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: tools})
-	var callback toolresult.Result
-	runtime.SetResultCallback(func(_ providers.ToolCall, result toolresult.Result) {
-		callback = result.Clone()
-	})
-
-	msgs, _ := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "call-1", Name: "browser_observe"}}, nil)
-	if len(msgs) != 1 || msgs[0].ToolResult == nil {
-		t.Fatalf("rich tool message missing: %+v", msgs)
 	}
-	if !msgs[0].ToolResult.IsError || len(msgs[0].ToolResult.Content) != 2 || len(msgs[0].ToolResult.Meta) == 0 {
-		t.Fatalf("rich tool result flattened: %+v", msgs[0].ToolResult)
-	}
-	if msgs[0].Content != msgs[0].ToolResult.TextProjection() {
-		t.Fatalf("compatibility content = %q, projection = %q", msgs[0].Content, msgs[0].ToolResult.TextProjection())
-	}
-	if callback.JSONProjection() != msgs[0].ToolResult.JSONProjection() {
-		t.Fatalf("callback result mismatch: %s != %s", callback.JSONProjection(), msgs[0].ToolResult.JSONProjection())
+	for _, test := range []struct {
+		name     string
+		result   toolresult.Result
+		isError  bool
+		err      error
+		expected *toolresult.Result
+	}{
+		{name: "domain failure", result: rich, isError: true},
+		{name: "rich failure with execution error", result: rich, isError: true, err: producerErr},
+		{name: "execution error forces failure", result: rich, err: producerErr},
+		{name: "empty failure", err: producerErr, expected: &toolresult.Result{Content: toolresult.FromText(diagnostic).Content}},
+		{name: "metadata only", result: toolresult.Result{Meta: []byte(`{"receipt":"saved"}`)}, err: producerErr,
+			expected: &toolresult.Result{Meta: []byte(`{"receipt":"saved"}`), Content: toolresult.FromText(diagnostic).Content}},
+		{name: "activity only", result: toolresult.Result{Activity: &toolresult.ActivityRef{ID: "saved", Kind: "job"}}, err: producerErr,
+			expected: &toolresult.Result{Activity: &toolresult.ActivityRef{ID: "saved", Kind: "job"}, Content: toolresult.FromText(diagnostic).Content}},
+		{name: "empty model view", result: toolresult.Result{ModelText: &empty}, err: producerErr,
+			expected: &toolresult.Result{ModelText: &diagnostic}},
+		{name: "empty model view keeps hidden content", result: toolresult.Result{Content: toolresult.FromText("hidden producer text").Content, ModelText: &empty}, err: producerErr,
+			expected: &toolresult.Result{Content: toolresult.FromText("hidden producer text").Content, ModelText: &diagnostic}},
+		{name: "empty content retains structured payload", result: toolresult.Result{Content: []toolresult.ContentPart{{Type: "text"}}, StructuredContent: []byte(`{"completed":1}`)}, err: producerErr,
+			expected: &toolresult.Result{Content: []toolresult.ContentPart{{Type: "text"}}, StructuredContent: []byte(`{"completed":1}`), ModelText: &diagnostic}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			tools := &richRuntimeTools{result: test.result.Clone(), err: test.err}
+			tools.result.IsError = test.isError
+			dir := t.TempDir()
+			ledger, err := toolledger.New(dir, "owner")
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: tools, Ledger: ledger, OperationID: "turn"})
+			var callback toolresult.Result
+			runtime.SetResultCallback(func(_ providers.ToolCall, result toolresult.Result) {
+				callback = result.Clone()
+			})
+			msgs, _ := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "call-1", Name: "browser_observe"}}, nil)
+			if len(msgs) != 1 || msgs[0].ToolResult == nil {
+				t.Fatalf("rich tool message missing: %+v", msgs)
+			}
+			expected := tools.result.Clone()
+			if test.expected != nil {
+				expected = test.expected.Clone()
+			}
+			expected.IsError = true
+			if msgs[0].ToolResult.JSONProjection() != expected.JSONProjection() {
+				t.Fatalf("canonical failure changed: %s != %s", msgs[0].ToolResult.JSONProjection(), expected.JSONProjection())
+			}
+			if msgs[0].Content != msgs[0].ToolResult.TextProjection() || callback.JSONProjection() != msgs[0].ToolResult.JSONProjection() {
+				t.Fatal("callback, history and failure projection disagree")
+			}
+			reopened, err := toolledger.New(dir, "owner")
+			if err != nil {
+				t.Fatal(err)
+			}
+			pending, err := reopened.PendingProjection(ctx)
+			if err != nil || len(pending) != 1 || pending[0].Result.JSONProjection() != expected.JSONProjection() {
+				t.Fatalf("replay lost canonical failure: %+v %v", pending, err)
+			}
+		})
 	}
 }
 

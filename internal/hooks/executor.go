@@ -181,7 +181,11 @@ func (h *HookedExecutor) ExecuteResult(ctx context.Context, call providers.ToolC
 	} else {
 		var text string
 		text, execErr = h.inner.Execute(ctx, call)
-		result = toolresult.FromText(text)
+		// Legacy partial text is not a canonical failure result. Let the
+		// runtime normalize the original error instead of hiding its diagnostic.
+		if execErr == nil {
+			result = toolresult.FromText(text)
+		}
 	}
 	if execErr != nil {
 		result.IsError = true

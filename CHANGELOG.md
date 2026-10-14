@@ -111,6 +111,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve structured results, metadata, and rich content from failed tool calls
+  in code mode and durable history, while keeping their failed status.
+  Legacy text-only errors retain their diagnostics through executor wrappers.
+  Session tool policies preserve explicit model views while removing unusable
+  archive recovery references.
+
 - Keep composer inputs free of duplicate status text while surfacing rejected
   requests through toasts, preserving drafts and disabled-action explanations.
   Explicit retries report each failure even when the error repeats. Revisiting

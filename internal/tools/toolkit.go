@@ -1931,6 +1931,11 @@ func executeToolResult(ctx context.Context, tool Tool, call providers.ToolCall) 
 		return rich.ExecuteResult(ctx, call.Arguments)
 	}
 	text, err := tool.Execute(ctx, call.Arguments)
+	// Only rich tools own a canonical result on failure. Preserve the original
+	// error for runtime normalization, including typed recovery information.
+	if err != nil {
+		return toolresult.Result{IsError: true}, err
+	}
 	return toolresult.FromText(text), err
 }
 

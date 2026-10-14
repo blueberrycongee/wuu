@@ -320,11 +320,25 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 				}
 			}
 			if executionErr != nil {
-				result = toolresult.FromErrorText(errorJSON(executionErr))
+				// Completed rich failures can carry partial results and recovery
+				// metadata. Preserve them for callers and durable replay.
+				if strings.TrimSpace(result.TextProjection()) == "" {
+					diagnostic := errorJSON(executionErr)
+					if len(result.Content) == 0 && result.ModelText == nil {
+						result.Content = toolresult.FromText(diagnostic).Content
+					} else {
+						// An empty model view can intentionally hide producer
+						// content. Supply the diagnostic without restoring it.
+						result.ModelText = &diagnostic
+					}
+				}
+				result.IsError = true
 			}
+			isError := result.IsError
 			if finalizer, ok := r.executor.(ToolResultFinalizer); ok {
 				result = finalizer.FinalizeToolResult(call, result)
 			}
+			result.IsError = result.IsError || isError
 			if r.ledger != nil {
 				if settleErr := r.ledger.Settle(context.WithoutCancel(runCtx), run.invocationID, result); settleErr != nil {
 					run.complete(toolresult.Result{}, fmt.Errorf("settle tool invocation: %w", settleErr))
@@ -841,6 +855,11 @@ func executeToolResult(ctx context.Context, executor ToolExecutor, call provider
 	} else {
 		var text string
 		text, err = executor.Execute(ctx, call)
+		// Legacy executors have no canonical rich failure contract. Keep their
+		// existing error diagnostic instead of treating partial text as it.
+		if err != nil {
+			text = errorJSON(err)
+		}
 		result = toolresult.FromText(text)
 	}
 	if err != nil {

@@ -153,7 +153,11 @@ func (e *pluginToolExecutor) ExecuteResult(ctx context.Context, call providers.T
 	} else {
 		var text string
 		text, executeErr = e.inner.Execute(ctx, call)
-		result = toolresult.FromText(text)
+		// Legacy failures need the runtime's diagnostic, not partial text
+		// promoted into a canonical rich result by this wrapper.
+		if executeErr == nil {
+			result = toolresult.FromText(text)
+		}
 	}
 	if executeErr != nil {
 		result.IsError = true

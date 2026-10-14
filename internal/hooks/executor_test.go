@@ -3,10 +3,12 @@ package hooks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
@@ -103,6 +105,34 @@ func TestHookedExecutorPreservesRichResultAndSendsStableProjectionToHooks(t *tes
 	}
 	if input.ToolResponse != result.HookProjection() {
 		t.Fatalf("hook projection = %q, want %q", input.ToolResponse, result.HookProjection())
+	}
+
+	producerErr := errors.New("legacy hook execution failed")
+	for _, rich := range []bool{false, true} {
+		var source agent.ToolExecutor = &stubExecutor{result: "partial legacy output", err: producerErr}
+		if rich {
+			source = &richStubExecutor{stubExecutor: stubExecutor{err: producerErr}, result: result}
+		}
+		wrapped := NewHookedExecutor(source, NewDispatcher(NewRegistry(nil)), "sess-1", t.TempDir())
+		runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: wrapped})
+		messages, err := runtime.ExecuteFinalCalls(context.Background(), []providers.ToolCall{{ID: "failed", Name: "browser_observe", Arguments: `{}`}}, nil)
+		if err != nil || len(messages) != 1 || messages[0].ToolResult == nil || !messages[0].ToolResult.IsError {
+			t.Fatalf("wrapped failure rich=%v: %+v, %v", rich, messages, err)
+		}
+		if rich {
+			expected := result.Clone()
+			expected.IsError = true
+			if messages[0].ToolResult.JSONProjection() != expected.JSONProjection() {
+				t.Fatal("hook wrapper flattened a rich failure")
+			}
+		} else {
+			var diagnostic struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(messages[0].Content), &diagnostic); err != nil || diagnostic.Error != producerErr.Error() {
+				t.Fatalf("legacy hook diagnostic lost: %q, %v", messages[0].Content, err)
+			}
+		}
 	}
 }
 

@@ -149,15 +149,28 @@ func (e *sessionToolPolicyExecutor) ExecuteResult(ctx context.Context, call prov
 		return rich.ExecuteResult(ctx, call)
 	}
 	text, err := e.base.Execute(ctx, call)
+	// Do not promote legacy partial text to a canonical rich failure.
+	if err != nil {
+		return toolresult.Result{IsError: true}, err
+	}
 	return toolresult.FromText(text), err
 }
 
 func (e *sessionToolPolicyExecutor) FinalizeToolResult(call providers.ToolCall, result toolresult.Result) toolresult.Result {
 	if !e.allowed("read_file") {
-		// A restricted session cannot follow archive cursors. Preserve its full
-		// evidence instead of advertising recovery that the policy forbids.
-		result = result.Clone()
-		result.ModelText = nil
+		// A restricted session cannot follow archive cursors. Restore evidence
+		// only for that recovery view; other explicit model views may hide
+		// producer content intentionally, including normalized failure views.
+		if result.ModelText != nil {
+			var recovery struct {
+				Kind        string `json:"kind"`
+				ArtifactRef string `json:"artifact_ref"`
+			}
+			if json.Unmarshal([]byte(*result.ModelText), &recovery) == nil && recovery.Kind == "archived_tool_result" && strings.TrimSpace(recovery.ArtifactRef) != "" {
+				result = result.Clone()
+				result.ModelText = nil
+			}
+		}
 		return result
 	}
 	if finalizer, ok := e.base.(agent.ToolResultFinalizer); ok {

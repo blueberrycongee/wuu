@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -49,7 +51,11 @@ func containsString(values []string, want string) bool {
 type richToolkitTool struct {
 	richCalls   int
 	legacyCalls int
+	err         error
 }
+
+// Expose only the legacy contract of a tool.
+type legacyToolkitTool struct{ Tool }
 
 func (t *richToolkitTool) Name() string { return "rich_test" }
 func (t *richToolkitTool) Definition() providers.ToolDefinition {
@@ -57,7 +63,7 @@ func (t *richToolkitTool) Definition() providers.ToolDefinition {
 }
 func (t *richToolkitTool) Execute(context.Context, string) (string, error) {
 	t.legacyCalls++
-	return "legacy path", nil
+	return "legacy path", t.err
 }
 func (t *richToolkitTool) ExecuteResult(context.Context, string) (toolresult.Result, error) {
 	t.richCalls++
@@ -68,7 +74,7 @@ func (t *richToolkitTool) ExecuteResult(context.Context, string) (toolresult.Res
 		},
 		StructuredContent: json.RawMessage(`{"ok":true}`),
 		Meta:              json.RawMessage(`{"internal":"kept"}`),
-	}, nil
+	}, t.err
 }
 func (t *richToolkitTool) IsReadOnly() bool        { return true }
 func (t *richToolkitTool) IsConcurrencySafe() bool { return true }
@@ -103,6 +109,30 @@ func TestToolkitExecuteResultPrefersRichToolAndKeepsTextAdapter(t *testing.T) {
 	}
 	if rich.richCalls != 2 || rich.legacyCalls != 0 {
 		t.Fatalf("rich calls = %d, legacy calls = %d", rich.richCalls, rich.legacyCalls)
+	}
+
+	rich.err = errors.New("legacy toolkit execution failed")
+	for _, legacy := range []bool{false, true} {
+		if legacy {
+			kit.registry = NewRegistry(legacyToolkitTool{Tool: rich})
+		}
+		runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: kit})
+		messages, err := runtime.ExecuteFinalCalls(context.Background(), []providers.ToolCall{call}, nil)
+		if err != nil || len(messages) != 1 || messages[0].ToolResult == nil || !messages[0].ToolResult.IsError {
+			t.Fatalf("toolkit failure legacy=%v: %+v, %v", legacy, messages, err)
+		}
+		if !legacy {
+			if len(messages[0].ToolResult.Content) != 2 || len(messages[0].ToolResult.StructuredContent) == 0 || len(messages[0].ToolResult.Meta) == 0 {
+				t.Fatal("toolkit flattened a rich failure")
+			}
+		} else {
+			var diagnostic struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(messages[0].Content), &diagnostic); err != nil || diagnostic.Error != rich.err.Error() {
+				t.Fatalf("legacy toolkit diagnostic lost: %q, %v", messages[0].Content, err)
+			}
+		}
 	}
 }
 
