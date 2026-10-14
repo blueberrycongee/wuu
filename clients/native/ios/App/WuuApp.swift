@@ -71,6 +71,16 @@ struct RootView: View {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--native-composer-fixture") {
             ConversationView(model: model, drafts: drafts)
+                .task {
+                    let arguments = ProcessInfo.processInfo.arguments
+                    guard arguments.contains("--native-pending-fixture"), arguments.contains("--native-stream-fixture") else { return }
+                    // Exercise menu taps while the conversation publishes unrelated deltas for one minute.
+                    for _ in 0..<1200 {
+                        guard !Task.isCancelled else { return }
+                        model.live?.apply("item/agentMessage/delta", ["thread_id": "local-ui-fixture", "turn_id": "active", "item_id": "reply", "delta": "持续输出。"])
+                        do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+                    }
+                }
         } else {
             NativeUIFixtureView(model: model)
         }

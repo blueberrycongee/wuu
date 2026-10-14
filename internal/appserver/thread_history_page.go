@@ -25,20 +25,28 @@ const historyDisplayMetadataBytes = 1024
 // pages. A removed boundary fails explicitly instead of silently skipping data.
 // Pages may split a turn at item boundaries. Oversized individual items retain
 // a preview and an address for their complete content.
-func historyPage(threadID string, turns []Turn, endTurn, endItem int) ([]Turn, string) {
+func historyPage(threadID string, turns []Turn, endTurn, endItem int, conversation bool) ([]Turn, string) {
+	maxTurns, maxBytes := historyPageTurns, historyPageBytes
+	if conversation {
+		maxTurns, maxBytes = conversationPageTurns, conversationPageBytes
+	}
 	result := []Turn{}
 	size := 0
-	for ti := endTurn; ti >= 0 && len(result) < historyPageTurns; ti-- {
+	for ti := endTurn; ti >= 0 && len(result) < maxTurns; ti-- {
 		turn := turns[ti]
-		limit := len(turn.Items)
-		if ti == endTurn {
+		if conversation {
+			turn = conversationTurn(turn)
+		}
+		source := turn.Items
+		limit := len(source)
+		if ti == endTurn && endItem >= 0 {
 			limit = endItem
 		}
 		turn.Items = []ThreadItem{}
 		for ii := limit - 1; ii >= 0; ii-- {
-			item := historyItem(threadID, turns[ti].ID, turns[ti].Items[ii])
+			item := historyItem(threadID, turn.ID, source[ii])
 			raw, _ := json.Marshal(item)
-			if size > 0 && size+len(raw) > historyPageBytes {
+			if size > 0 && size+len(raw) > maxBytes {
 				if len(turn.Items) > 0 {
 					result = append([]Turn{turn}, result...)
 				}
@@ -48,7 +56,7 @@ func historyPage(threadID string, turns []Turn, endTurn, endItem int) ([]Turn, s
 			turn.Items = append([]ThreadItem{item}, turn.Items...)
 		}
 		result = append([]Turn{turn}, result...)
-		if ti > 0 && len(result) >= historyPageTurns {
+		if ti > 0 && len(result) >= maxTurns {
 			return result, historyCursor(result)
 		}
 	}
@@ -66,7 +74,7 @@ func historyCursor(turns []Turn) string {
 func pageThreadSnapshot(thread Thread) Thread {
 	end := len(thread.Turns) - 1
 	if end >= 0 {
-		thread.Turns, thread.HistoryCursor = historyPage(thread.ID, thread.Turns, end, len(thread.Turns[end].Items))
+		thread.Turns, thread.HistoryCursor = historyPage(thread.ID, thread.Turns, end, -1, false)
 	}
 	thread.HistoryPaged = true
 	return thread
@@ -288,9 +296,6 @@ func (s *Server) handleThreadHistoryRead(req Request) error {
 	}
 	th.mu.Lock()
 	turns := th.Turns
-	if conversation {
-		turns = conversationTurns(turns)
-	}
 	end, itemEnd := -1, 0
 	for i := len(turns) - 1; i >= 0; i-- {
 		if turns[i].ID == boundaryTurn {
@@ -300,7 +305,11 @@ func (s *Server) handleThreadHistoryRead(req Request) error {
 	}
 	if end >= 0 && boundaryItem != "" {
 		itemEnd = -1
-		for i, item := range turns[end].Items {
+		boundary := turns[end]
+		if conversation {
+			boundary = conversationTurn(boundary)
+		}
+		for i, item := range boundary.Items {
 			if item.ID == boundaryItem {
 				itemEnd = i
 				break
@@ -313,11 +322,9 @@ func (s *Server) handleThreadHistoryRead(req Request) error {
 	}
 	if itemEnd == 0 {
 		end--
-		if end >= 0 {
-			itemEnd = len(turns[end].Items)
-		}
+		itemEnd = -1
 	}
-	turns, cursor := historyPage(th.ID, turns, end, itemEnd)
+	turns, cursor := historyPage(th.ID, turns, end, itemEnd, conversation)
 	th.mu.Unlock()
 	if conversation && cursor != "" {
 		cursor = "conversation:" + cursor

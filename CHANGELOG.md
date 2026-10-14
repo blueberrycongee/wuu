@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- iOS automatically loads older conversation pages after opening a thread, with
+  larger readable history pages, retained reading position, and retry on failure.
+  Process details remain available on demand.
+
 - Add opt-in macOS app snapshots: record a shortcut and configure permissions in Settings → General → App snapshot, then capture a single frontmost window directly into the active draft with its image and optional available text. Capturing focuses the composer and preserves existing text without sending. Computer Use remains excluded from release builds.
 
 - Automatically recover unsent text after a renderer reload, with no settings
@@ -95,6 +99,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Prevent long iOS replies from overlapping or jumping during history scrolling
   by sharing one lazy layout and measuring Markdown content on first display.
+
+- Keep iOS pending-message menu actions responsive while a reply streams, so
+  copying, steering, requeueing and removing messages remain usable.
 
 - Keep iOS pending-message context-menu previews opaque so conversation text
   cannot show through, and constrain their width in landscape.
