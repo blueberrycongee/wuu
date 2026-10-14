@@ -37,10 +37,6 @@ app.whenReady().then(async () => {
     await server.listen();
     origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   }
-  win = new BrowserWindow({ show: false, width: 1000, height: 900, webPreferences: { backgroundThrottling: false } });
-  win.webContents.on('console-message', event => {
-    if (event.level === 'error') console.error(event.message);
-  });
   const evaluate = fn => win.webContents.executeJavaScript(`(${fn.toString()})()`);
   const wait = async predicate => {
     for (let attempt = 0; attempt < 400; attempt++) {
@@ -75,7 +71,20 @@ app.whenReady().then(async () => {
   for (const width of [1000, 420]) for (const size of [14, 15, 20]) for (const theme of ['light', 'dark']) {
     for (const lateTerminal of [true, false]) for (const content of ['prose', 'markdown']) {
       caseName = `${width}-${size}-${theme}-${lateTerminal ? 'late' : 'early'}-${content}`;
+      // Give each navigation its own renderer so the matrix does not retain
+      // previous fixture documents and their Vite/React runtime state.
+      if (win) win.destroy();
+      win = new BrowserWindow({ show: false, width, height: 900, webPreferences: { backgroundThrottling: false } });
       win.setContentSize(width, 900);
+      win.webContents.on('console-message', event => {
+        if (event.level === 'error') console.error(event.message);
+      });
+      win.webContents.on('render-process-gone', (_event, details) => {
+        console.error(`${caseName}: renderer exited`, details);
+      });
+      win.webContents.on('did-fail-load', (_event, code, description, url) => {
+        console.error(`${caseName}: load failed`, { code, description, url });
+      });
       const params = new URLSearchParams({ surface: 'lifecycle', live: '1', size, theme, content });
       if (lateTerminal) params.set('lateTerminal', '1');
       await win.loadURL(`${origin}/dev/message-flow-reading/?${params}`);
