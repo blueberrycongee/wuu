@@ -110,6 +110,28 @@ func TestRelocatedProjectUsesNewDirectory(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			// Inspection must resolve cold metadata without relying on list/resume
+			// to repair a moved project, or persisting that repair itself.
+			storedBefore, found, err := session.Find(after.rt.SessionDir, created.ID)
+			if err != nil || !found {
+				t.Fatalf("read cold metadata: found=%v err=%v", found, err)
+			}
+			call("environment", MethodThreadExecutionEnvironment, map[string]string{"thread_id": created.ID})
+			environmentResponse := responseByID(t, parseOutput(t, outAfter.String()), "environment")
+			if environmentResponse["error"] != nil {
+				t.Fatalf("cold relocated environment: %+v", environmentResponse)
+			}
+			environment := remarshal[ThreadExecutionEnvironmentResult](t, environmentResponse["result"])
+			if environment.Environment.State != "local" || environment.Environment.Root != expectedRoot {
+				t.Fatalf("wrong cold environment: %+v; want root %q", environment, expectedRoot)
+			}
+			storedAfter, found, err := session.Find(after.rt.SessionDir, created.ID)
+			if err != nil || !found || storedAfter.CWD != storedBefore.CWD || storedAfter.WorktreeBaseRepo != storedBefore.WorktreeBaseRepo {
+				t.Fatalf("inspection rewrote metadata: before=%+v after=%+v err=%v", storedBefore, storedAfter, err)
+			}
+			if after.thread(created.ID) != nil {
+				t.Fatal("inspection loaded a thread runtime")
+			}
 			call("list", "thread/list", map[string]any{})
 			listed := remarshal[ThreadListResult](t, responseByID(t, parseOutput(t, outAfter.String()), "list")["result"])
 			if len(listed.Threads) != 1 || listed.Threads[0].ID != created.ID {

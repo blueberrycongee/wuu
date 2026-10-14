@@ -339,6 +339,8 @@ const api: WuuDesktopApi = {
   ) => ipcRenderer.invoke("wuu:thread-fork", threadId, turnId, itemId, mode, target),
   editThreadMessage: (threadId: string, turnId: string, itemId: string) =>
     ipcRenderer.invoke("wuu:thread-edit-message", threadId, turnId, itemId),
+  getThreadExecutionEnvironment: (threadId: string) =>
+    ipcRenderer.invoke("wuu:thread-execution-environment", threadId),
   getThreadContextComposition: (threadId: string) =>
     ipcRenderer.invoke("wuu:thread-context-composition", threadId),
   listInstructionFiles: () => ipcRenderer.invoke("wuu:instructions-list"),

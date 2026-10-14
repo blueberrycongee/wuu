@@ -142,3 +142,19 @@ func (s *Session) executionStateDir() (string, error) {
 	}
 	return resolveWorkspaceStateDir(home, s.WorkspaceID, s.RootDir)
 }
+
+// ExecutionEnvironmentSummary inspects a session without creating its runtime
+// or selecting/provisioning an execution destination.
+func (s *Session) ExecutionEnvironmentSummary(id, localRoot string) (executionenv.Summary, error) {
+	stateDir, err := s.executionStateDir()
+	if err != nil {
+		return executionenv.Summary{}, err
+	}
+	s.threadProcessMu.Lock()
+	manager := s.executionEnvironments
+	s.threadProcessMu.Unlock()
+	if manager == nil {
+		manager = executionenv.NewManager()
+	}
+	return manager.Summary(s.WuuHome, id, statepath.SessionArtifactDir(stateDir, id), localRoot)
+}

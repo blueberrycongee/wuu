@@ -3475,3 +3475,57 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
 .workspace-file-preview.readonly:has(> .workspace-file-preview-notice) {
   grid-template-rows: auto minmax(0, 1fr);
 }
+
+/* Destination details belong to the existing workspace tool picker. */
+.session-environment-summary {
+  grid-template-columns: var(--icon-size) minmax(0, 1fr) var(--icon-size);
+  list-style: none;
+  cursor: pointer;
+}
+.session-environment-summary::-webkit-details-marker { display: none; }
+.session-environment-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-environment-summary > svg:last-child {
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+.session-environment-status[open] .session-environment-summary > svg:last-child {
+  transform: rotate(180deg);
+}
+.session-environment-details {
+  padding: var(--space-1) var(--space-3) var(--space-3);
+}
+.session-environment-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--ink-soft);
+}
+.session-environment-state > span { min-width: 0; overflow-wrap: anywhere; }
+.session-environment-state button { flex: none; }
+.session-environment-details dl {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+}
+.session-environment-details dl > div {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.session-environment-details dt { color: var(--ink-tertiary); }
+.session-environment-details dd {
+  margin: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.session-environment-local-views {
+  margin: var(--space-3) 0 0;
+  color: var(--ink-soft);
+  line-height: 1.5;
+}

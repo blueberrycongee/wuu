@@ -35,6 +35,47 @@ func TestCreateAndList(t *testing.T) {
 	if len(sessions) != 2 {
 		t.Fatalf("expected 2 sessions, got %d", len(sessions))
 	}
+	t.Run("read_existing_metadata_from_live_wal", func(t *testing.T) {
+		writer, err := openStore(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer writer.Close()
+		if _, err := writer.Exec(`UPDATE sessions SET title = 'live WAL' WHERE id = ?`, s1.ID); err != nil {
+			t.Fatal(err)
+		}
+		found, ok, err := FindExisting(dir, s1.ID)
+		if err != nil || !ok || found.Title != "live WAL" {
+			t.Fatalf("read live metadata: %+v found=%v err=%v", found, ok, err)
+		}
+		scan, ok, err := openStoreForScan(dir)
+		if err != nil || !ok {
+			t.Fatalf("open scan: found=%v err=%v", ok, err)
+		}
+		defer scan.Close()
+		if _, err := scan.Exec(`UPDATE sessions SET title = 'unexpected' WHERE id = ?`, s1.ID); err == nil {
+			t.Fatal("read-only scan accepted a write")
+		}
+	})
+	t.Run("scan_does_not_recreate_database_deleted_before_query", func(t *testing.T) {
+		scan, ok, err := openStoreForScan(dir)
+		if err != nil || !ok {
+			t.Fatalf("open scan: found=%v err=%v", ok, err)
+		}
+		defer scan.Close()
+		// sql.Open connects lazily, so this deterministically covers cleanup
+		// between the existence probe and SQLite opening its file.
+		if err := os.Remove(DBPath(dir)); err != nil {
+			t.Fatal(err)
+		}
+		var count int
+		if err := scan.QueryRow(`SELECT count(*) FROM sessions`).Scan(&count); err == nil {
+			t.Fatal("read a database removed before connection")
+		}
+		if _, err := os.Stat(DBPath(dir)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("scan recreated deleted database: %v", err)
+		}
+	})
 }
 
 func TestHistoryContentPartsRoundTrip(t *testing.T) {

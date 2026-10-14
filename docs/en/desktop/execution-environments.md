@@ -6,6 +6,19 @@ Create a profile under **Settings → Built-in agent**, then select it as the de
 
 File tools, search, shell commands, Git, programmatic tool calling and background processes all use that environment. Process controls and completion events return to the desktop. Published artifacts are copied back as immutable snapshots, with a 256 MiB limit per artifact. Model connections, plugins, browser integration, notes and history remain on the host. This setting does not sandbox extensions.
 
+## Inspect a conversation's environment
+
+Open the workspace panel, choose its new-tab tool picker, then expand the environment
+row. It shows the conversation's saved destination, workspace and observed connection
+state. The refresh action only reads state; it does not connect, provision or move files.
+A conversation without a saved selection shows **Not initialized**, while older
+conversations continue to use local execution when run. **Not connected** means this
+host has no live transport; it does not prove that a retained machine or files are gone.
+A remote profile used with an external engine shows that the built-in agent is required.
+
+Files, Review and the user terminal still show the local workspace. The environment
+row identifies where agent workspace tools run; it does not reroute those panels.
+
 ## Start with Docker
 
 Build the supplied image from a Wuu checkout:

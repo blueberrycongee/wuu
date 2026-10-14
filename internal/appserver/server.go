@@ -1139,6 +1139,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 			}
 		}
 		return handle(ctx, req)
+	case MethodThreadExecutionEnvironment:
+		return s.handleThreadExecutionEnvironment(req)
 	case MethodThreadContextComposition:
 		return s.handleThreadContextComposition(req)
 	case MethodInstructionsList:

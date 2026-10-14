@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 func TestTransportWorker(t *testing.T) {
@@ -20,6 +23,18 @@ func TestTransportWorker(t *testing.T) {
 		var req Request
 		if json.Unmarshal(scan.Bytes(), &req) != nil {
 			os.Exit(2)
+		}
+		if req.Method == "initialize" {
+			version := ProtocolVersion
+			if os.Getenv("WUU_ENV_TEST_MISMATCH") == "1" {
+				version = 0
+			}
+			payload, _ := json.Marshal(map[string]int{"version": version})
+			_ = json.NewEncoder(os.Stdout).Encode(Response{ID: req.ID, Data: payload})
+			continue
+		}
+		if req.Method == "execute" && strings.Contains(string(req.Data), `"name":"disconnect"`) {
+			os.Exit(3)
 		}
 		if req.Method == "run_code" && string(req.Data) == `{"hold":true}` {
 			held = req.ID
@@ -131,5 +146,48 @@ func TestProgramRetirementKeepsProcessControlAvailable(t *testing.T) {
 	}
 	if err := <-next; err != nil {
 		t.Fatalf("program reuse: %v", err)
+	}
+}
+
+func TestSummaryObservesConnectionLifecycle(t *testing.T) {
+	t.Setenv("WUU_ENV_TEST_WORKER", "1")
+	store := t.TempDir()
+	profile := Profile{Backend: "command", Command: []string{os.Args[0], "-test.run=^TestTransportWorker$"}, Workspace: t.TempDir()}
+	environment := NewEnvironment(profile, "worker", "thread", store)
+	defer environment.Close()
+	if got := environment.Summary(); got.State != "not_initialized" {
+		t.Fatalf("before start: %+v", got)
+	}
+	request := ToolRequest{Actor: "thread", PermissionMode: "read_only", Call: providers.ToolCall{Name: "read_file", Arguments: `{"path":"readme"}`}}
+	if _, err := environment.Execute(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if got := environment.Summary(); got.State != "ready" {
+		t.Fatalf("connected: %+v", got)
+	}
+	request.Call.Name = "disconnect"
+	if _, err := environment.Execute(context.Background(), request); err == nil {
+		t.Fatal("disconnect succeeded")
+	}
+	if got := environment.Summary(); got.State != "disconnected" {
+		t.Fatalf("disconnected: %+v", got)
+	}
+	_ = environment.Close()
+	if got := environment.Summary(); got.State != "closed" {
+		t.Fatalf("closed: %+v", got)
+	}
+}
+
+func TestSummaryConnectionFailureDoesNotExposeDiagnostics(t *testing.T) {
+	t.Setenv("WUU_ENV_TEST_WORKER", "1")
+	t.Setenv("WUU_ENV_TEST_MISMATCH", "1")
+	profile := Profile{Backend: "command", Command: []string{os.Args[0], "-test.run=^TestTransportWorker$"}, Workspace: t.TempDir()}
+	environment := NewEnvironment(profile, "worker", "thread", t.TempDir())
+	defer environment.Close()
+	if _, err := environment.Execute(context.Background(), ToolRequest{}); err == nil {
+		t.Fatal("protocol mismatch succeeded")
+	}
+	if got := environment.Summary(); got.State != "error" {
+		t.Fatalf("failed connection: %+v", got)
 	}
 }

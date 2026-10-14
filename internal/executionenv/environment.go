@@ -30,19 +30,22 @@ import (
 // Environment pins one profile to a session. Opening it is lazy; changing user
 // defaults cannot move an existing session's tools into another filesystem.
 type Environment struct {
-	processes *process.Manager
-	mu        sync.Mutex
-	profile   Profile
-	identity  string
-	session   string
-	stateDir  string
-	client    *Client
-	closed    bool
-	prepared  bool
+	processes    *process.Manager
+	statusMu     sync.RWMutex
+	status       string
+	statusClient *Client
+	mu           sync.Mutex
+	profile      Profile
+	identity     string
+	session      string
+	stateDir     string
+	client       *Client
+	closed       bool
+	prepared     bool
 }
 
 func NewEnvironment(profile Profile, identity, session, stateDir string) *Environment {
-	return &Environment{profile: profile, identity: identity, session: session, stateDir: stateDir}
+	return &Environment{profile: profile, identity: identity, session: session, stateDir: stateDir, status: "not_initialized"}
 }
 
 func (e *Environment) Execute(ctx context.Context, request ToolRequest) (toolresult.Result, error) {
@@ -61,7 +64,7 @@ func (e *Environment) Execute(ctx context.Context, request ToolRequest) (toolres
 	return result, nil
 }
 
-func (e *Environment) connect(ctx context.Context) (*Client, error) {
+func (e *Environment) connect(ctx context.Context) (connected *Client, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.closed {
@@ -74,6 +77,12 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 		_ = e.client.Close()
 		e.client = nil
 	}
+	e.setStatus("connecting", nil)
+	defer func() {
+		if err != nil {
+			e.setStatus("error", nil)
+		}
+	}()
 	if err := e.profile.Validate(); err != nil {
 		return nil, err
 	}
@@ -146,6 +155,7 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 		return nil, err
 	}
 	e.client = client
+	e.setStatus("ready", client)
 	return client, nil
 }
 
@@ -300,6 +310,7 @@ func (e *Environment) prepareDocker(ctx context.Context) error {
 func (e *Environment) Close() error {
 	e.mu.Lock()
 	e.closed = true
+	e.setStatus("closed", nil)
 	client := e.client
 	e.mu.Unlock()
 	var closeErr error

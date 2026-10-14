@@ -2,13 +2,17 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
@@ -280,5 +284,99 @@ func runSessionWorkspaceGit(t *testing.T, cwd string, args ...string) {
 	cmd := exec.Command("git", append([]string{"-C", cwd}, args...)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+}
+
+// Exercise the read-only RPC before and after a pin, including workspace
+// ownership and an external engine which does not use Wuu's transport.
+func TestThreadExecutionEnvironmentReadOnly(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	defer srv.Close()
+	th := newThreadState("old", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	srv.threads[th.ID] = th
+	read := func(id, thread string) map[string]any {
+		t.Helper()
+		raw := fmt.Sprintf(`{"id":%q,"method":"thread/execution-environment","params":{"thread_id":%q}}`, id, thread)
+		if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
+			t.Fatal(err)
+		}
+		return responseByID(t, parseOutput(t, out.String()), id)
+	}
+	for _, missing := range []string{"directory", "database"} {
+		t.Run("missing_"+missing, func(t *testing.T) {
+			original := rt.SessionDir
+			rt.SessionDir = filepath.Join(t.TempDir(), "sessions")
+			t.Cleanup(func() { rt.SessionDir = original })
+			probe := rt.SessionDir
+			if missing == "database" {
+				if err := os.Mkdir(rt.SessionDir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				probe = session.DBPath(rt.SessionDir)
+			}
+			if response := read("missing-"+missing, "not-loaded"); response["error"] == nil {
+				t.Fatalf("missing session accepted: %+v", response)
+			}
+			if _, err := os.Stat(probe); !os.IsNotExist(err) {
+				t.Fatalf("inspection created missing %s: %v", missing, err)
+			}
+		})
+	}
+	response := read("unselected", th.ID)
+	if response["error"] != nil {
+		t.Fatal(response)
+	}
+	result := remarshal[ThreadExecutionEnvironmentResult](t, response["result"])
+	if result.Environment.State != "not_initialized" {
+		t.Fatalf("unselected: %+v", result)
+	}
+	stateDir, err := srv.workspaceStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactDir := statepath.SessionArtifactDir(stateDir, th.ID)
+	pin := filepath.Join(artifactDir, "execution-environment.json")
+	if _, err := os.Stat(pin); !os.IsNotExist(err) {
+		t.Fatalf("read selected environment: %v", err)
+	}
+	if err := os.MkdirAll(artifactDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := json.Marshal(executionenv.Selection{Name: "my-worker", Profile: &executionenv.Profile{Backend: "command", Command: []string{"not-installed", "secret-argument"}, Workspace: "/worker"}})
+	if err := os.WriteFile(pin, saved, 0600); err != nil {
+		t.Fatal(err)
+	}
+	response = read("selected", th.ID)
+	result = remarshal[ThreadExecutionEnvironmentResult](t, response["result"])
+	if result.Environment.Name != "my-worker" || result.Environment.Root != "/worker" || result.Environment.State != "not_initialized" {
+		t.Fatalf("pin: %+v", response)
+	}
+	if strings.Contains(fmt.Sprint(response), "secret-argument") {
+		t.Fatal("profile arguments leaked")
+	}
+	th.EngineID = "codex"
+	response = read("external", th.ID)
+	result = remarshal[ThreadExecutionEnvironmentResult](t, response["result"])
+	if result.Environment.State != "unsupported" || result.Environment.Name != "my-worker" {
+		t.Fatalf("external: %+v", response)
+	}
+	if err := os.Remove(pin); err != nil {
+		t.Fatal(err)
+	}
+	response = read("external-local", th.ID)
+	result = remarshal[ThreadExecutionEnvironmentResult](t, response["result"])
+	if result.Environment.State != "external" || result.Environment.Root != th.CWD || result.Environment.Name != "codex" {
+		t.Fatalf("external local: %+v", response)
+	}
+	th.WorkspaceID = "another-project"
+	if response := read("foreign-project", th.ID); response["error"] == nil {
+		t.Fatalf("read environment from the wrong project store: %+v", response)
+	}
+	for _, id := range []string{"missing", "../old", ""} {
+		if response := read("invalid-"+id, id); response["error"] == nil {
+			t.Fatalf("invalid session accepted: %+v", response)
+		}
 	}
 }

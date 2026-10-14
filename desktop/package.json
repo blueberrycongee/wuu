@@ -74,7 +74,8 @@
     "test:release-signing": "node --test scripts/test-release-signing.cjs",
     "test:e2e:onboarding-workspaces": "electron scripts/onboarding-workspaces-e2e.cjs",
     "build:app-context-mac": "node scripts/build-app-context-mac.cjs",
-    "test:e2e:app-context": "electron-vite build && electron scripts/app-context-e2e.cjs"
+    "test:e2e:app-context": "electron-vite build && electron scripts/app-context-e2e.cjs",
+    "test:e2e:session-environment": "electron-vite build && electron scripts/session-environment-e2e.cjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

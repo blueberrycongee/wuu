@@ -101,6 +101,7 @@ import type {
   TextPolishResult,
   Thread,
   ThreadContextCompositionResult,
+  ThreadExecutionEnvironmentResult,
   ThreadEditMessageResult,
   ThreadForkResult,
   ThreadForkTarget,
@@ -2246,6 +2247,9 @@ app.whenReady().then(async () => {
         turn_id: turnId,
         item_id: itemId,
       }),
+  );
+  ipcMain.handle("wuu:thread-execution-environment", (event, threadId: string) =>
+    appServerRequest<ThreadExecutionEnvironmentResult>(event, "thread/execution-environment", { thread_id: threadId }),
   );
   ipcMain.handle("wuu:thread-context-composition", (event, threadId: string) =>
     appServerRequest<ThreadContextCompositionResult>(event, "thread/context-composition", {

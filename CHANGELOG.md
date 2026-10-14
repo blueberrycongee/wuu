@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Inspect a conversation’s pinned execution environment from the workspace tool
+  picker, including its workspace and observed connection state, without starting
+  a worker or changing the selection.
+
 - iOS and Android render Mermaid diagrams offline as replies stream, preserve the
   last valid diagram during partial syntax, and expose source and copy actions.
 

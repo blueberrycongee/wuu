@@ -25,6 +25,16 @@ Responses carry the same `id` and either `result` or `error`. Notifications have
 `method` and `params` without an `id`. Check initialization's `status` and `issues`:
 a successful protocol response can still report `needs_setup`.
 
+## Inspect an execution destination
+
+`thread/execution-environment` takes `thread_id` and returns `{thread_id, environment}`.
+The read-only `environment` contains an optional opaque `id`, profile `name`, `backend`,
+`root`, and `state`. It never includes transport commands or credentials. States are
+`not_initialized`, `local`, `connecting`, `ready`, `disconnected`, `closed`, `error`,
+`external`, and `unsupported`. `ready` reports this host's observed connection, not
+an operation outcome or a fresh machine probe. `unsupported` means the saved environment
+requires Wuu's built-in engine. Missing selection records are not created by this call.
+
 ## Run a task
 
 Create a session, then use the returned `result.thread.id`:

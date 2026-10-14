@@ -22,6 +22,14 @@ wuu app-server --workdir /path/to/project
 响应使用相同的 `id`，并包含 `result` 或 `error`。通知只有 `method` 和 `params`，没有
 `id`。检查初始化结果的 `status` 和 `issues`：协议响应成功，仍可能返回 `needs_setup`。
 
+## 查看执行目标
+
+`thread/execution-environment` 接收 `thread_id`，返回 `{thread_id, environment}`。
+只读的 `environment` 包含可选的不透明 `id`、配置 `name`、`backend`、`root` 和 `state`，不包含执行命令或凭据。
+状态包括 `not_initialized`、`local`、`connecting`、`ready`、`disconnected`、`closed`、`error`、`external` 和 `unsupported`。
+`ready` 仅表示当前宿主观察到的连接状态，不代表某次操作的结果，也不会重新探测机器。`unsupported` 表示保存的环境需要内置引擎。调用不会为缺少选择记录的会话创建记录。
+
+
 ## 运行任务
 
 创建会话，再使用返回的 `result.thread.id`：

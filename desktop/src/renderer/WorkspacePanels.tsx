@@ -69,6 +69,7 @@ import {
   type WorkspaceFileDirtyState,
 } from "./WorkspaceFiles";
 import { WorkspaceReviewPanel } from "./WorkspaceReviewPanels";
+import { SessionEnvironmentStatus } from "./SessionEnvironmentStatus";
 import { ProjectPanel } from "./ProjectPanels";
 import { confirmAction } from "./ConfirmDialog";
 import { WorkspacePanelLoading } from "./LoadingViews";
@@ -1054,6 +1055,7 @@ export function WorkspaceRightPanel({
               >
                 {showingPicker ? (
                   <WorkspaceToolPicker
+                    thread={terminalThread}
                     pluginTools={pluginTools}
                     tabs={tabs}
                     onResumeTab={onResumeTab}
@@ -1316,12 +1318,14 @@ function WorkspaceViewTabPreview({
 }
 
 function WorkspaceToolPicker({
+  thread,
   pluginTools,
   tabs,
   onResumeTab,
   onSelectTool,
   onSelectPluginTool,
 }: {
+  thread?: Thread;
   pluginTools: readonly RegisteredPluginViewEntry[];
   tabs: readonly WorkspaceViewTab[];
   onResumeTab: (id: string) => void;
@@ -1409,6 +1413,7 @@ function WorkspaceToolPicker({
           </details>
         ) : null}
       </section>
+      {thread ? <SessionEnvironmentStatus key={thread.id} thread={thread} /> : null}
       {resumableTabs.length > 0 ? (
         <section className="workspace-tool-menu-section" aria-label={t("workspace.continueViewing")}>
           <h2>{t("workspace.continueViewing")}</h2>

@@ -379,6 +379,18 @@ export type ExecutionEnvironmentProfile = {
   command?: string[];
 };
 
+/** Read-only observed binding. Inspection never provisions an environment. */
+export type ThreadExecutionEnvironmentResult = {
+  thread_id: string;
+  environment: {
+    id?: string;
+    name?: string;
+    backend?: string;
+    root?: string;
+    state: "not_initialized" | "local" | "connecting" | "ready" | "disconnected" | "closed" | "error" | "external" | "unsupported";
+  };
+};
+
 export type ExecutionEnvironmentSettings = {
   default?: string;
   profiles?: Record<string, ExecutionEnvironmentProfile>;
@@ -3046,6 +3058,7 @@ export type WuuDesktopApi = {
   ) => Promise<ThreadForkResult>;
   editThreadMessage: (threadId: string, turnId: string, itemId: string) => Promise<ThreadEditMessageResult>;
   getThreadContextComposition: (threadId: string) => Promise<ThreadContextCompositionResult>;
+  getThreadExecutionEnvironment?: (threadId: string) => Promise<ThreadExecutionEnvironmentResult>;
   // Instruction files (AGENTS.md / CLAUDE.md, ...) loaded into the base
   // system prompt at session start. Read-only; used by the session view's
   // 指令文件 block to mirror Claude Code's /memory visibility.

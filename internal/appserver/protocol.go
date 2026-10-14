@@ -72,6 +72,7 @@ const (
 	MethodThreadFork                      = "thread/fork"
 	MethodThreadEditMessage               = "thread/edit-message"
 	MethodThreadContextComposition        = "thread/context-composition"
+	MethodThreadExecutionEnvironment      = "thread/execution-environment"
 	MethodSideThreadOpen                  = "sideThread/open"
 	MethodSideThreadGetHistory            = "sideThread/getHistory"
 	MethodSideThreadSend                  = "sideThread/sendMessage"
@@ -2797,4 +2798,11 @@ type UsageOverviewResponse struct {
 	TotalSessions int                  `json:"total_sessions"`
 	Metrics       SettingsUsageMetrics `json:"metrics"`
 	Days          []SettingsUsageDay   `json:"days"`
+}
+
+// ThreadExecutionEnvironmentResult reports only the observed session binding.
+// Reading it cannot select an environment or initialize a transport.
+type ThreadExecutionEnvironmentResult struct {
+	ThreadID    string               `json:"thread_id"`
+	Environment executionenv.Summary `json:"environment"`
 }

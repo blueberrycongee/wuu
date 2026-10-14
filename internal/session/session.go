@@ -475,6 +475,21 @@ func Find(sessDir, id string) (Session, bool, error) {
 	return findSessionDB(db, id)
 }
 
+// FindExisting reads session metadata without creating or migrating the store.
+// An incompatible existing schema reports an error rather than being repaired.
+func FindExisting(sessDir, id string) (Session, bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return Session{}, false, nil
+	}
+	db, ok, err := openStoreForScan(sessDir)
+	if err != nil || !ok {
+		return Session{}, false, err
+	}
+	defer db.Close()
+	return findSessionDB(db, id)
+}
+
 // PinnedArchived captures the pinned/archived state of one session. Thread
 // listing resolves these flags for child agent sessions, where a per-session
 // store open (and its schema/PRAGMA setup) dominates the cost of a big list.
@@ -1213,7 +1228,10 @@ func openStoreForScan(sessDir string) (*sql.DB, bool, error) {
 		}
 		return nil, false, fmt.Errorf("probe sessions database: %w", err)
 	}
-	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
+	// SQLite opens lazily: cleanup may remove the file after the probe above.
+	// Read-only mode prevents that connection from recreating it, while still
+	// observing committed WAL data from active writers.
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath)+"&mode=ro")
 	if err != nil {
 		return nil, false, fmt.Errorf("open sessions database: %w", err)
 	}

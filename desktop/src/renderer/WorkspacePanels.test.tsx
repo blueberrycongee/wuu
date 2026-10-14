@@ -10,7 +10,7 @@ import {
   WORKSPACE_FILE_TREE_MIN_WIDTH,
   WorkspaceRightPanel,
 } from "./WorkspacePanels";
-import type { RuntimeContext } from "../shared/protocol";
+import type { Thread, ThreadExecutionEnvironmentResult, RuntimeContext } from "../shared/protocol";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import {
   workspaceArtifactViewTab,
@@ -197,6 +197,38 @@ function baseProps(): Parameters<typeof WorkspaceRightPanel>[0] {
 vi.mock("./WorkspacePdfPreview", () => ({ WorkspacePdfPreview: () => <div>PDF preview</div> }));
 
 describe("WorkspaceRightPanel", () => {
+  it("keeps the visible picker on the current session when an old destination reply arrives", async () => {
+    let finishFirst!: (value: ThreadExecutionEnvironmentResult) => void;
+    const result = (id: string): ThreadExecutionEnvironmentResult => ({
+      thread_id: id,
+      environment: { id: `env-${id}`, name: `worker-${id}`, backend: "ssh", root: `/remote/${id}`, state: "disconnected" },
+    });
+    const read = vi.fn().mockImplementationOnce(() => new Promise<ThreadExecutionEnvironmentResult>(resolve => { finishFirst = resolve; }))
+      .mockResolvedValueOnce(result("b"));
+    window.wuu.getThreadExecutionEnvironment = read;
+    const thread = (id: string) => ({ id, status: "idle" } as Thread);
+    mount(<WorkspaceRightPanel {...baseProps()} terminalThread={thread("a")} />);
+    await act(async () => root!.render(<WorkspaceRightPanel {...baseProps()} terminalThread={thread("b")} />));
+    expect(container!.querySelector(".session-environment-summary")?.textContent).toContain("worker-b");
+    await act(async () => finishFirst(result("a")));
+    expect(container!.querySelector(".session-environment-summary")?.textContent).toContain("worker-b");
+    expect(container!.textContent).not.toContain("worker-a");
+  });
+
+  it("refreshes the same observed destination and clears a stale root when inspection fails", async () => {
+    const read = vi.fn().mockResolvedValueOnce({
+      thread_id: "a", environment: { name: "worker-a", backend: "ssh", root: "/remote/a", state: "disconnected" },
+    }).mockRejectedValueOnce(new Error("secret raw adapter diagnostic"));
+    window.wuu.getThreadExecutionEnvironment = read;
+    mount(<WorkspaceRightPanel {...baseProps()} terminalThread={{ id: "a", status: "idle" } as Thread} />);
+    await act(async () => {});
+    await act(async () => container!.querySelector<HTMLButtonElement>(".session-environment-state button")!.click());
+    expect(read.mock.calls).toEqual([["a"], ["a"]]);
+    expect(container!.querySelector('.session-environment-status [role="alert"]')).not.toBeNull();
+    expect(container!.textContent).not.toContain("secret raw");
+    expect(container!.textContent).not.toContain("/remote/a");
+  });
+
   it("exposes plugin workspace View actions as auxiliary commands", async () => {
     const pluginHost = new PluginHost({ react: React });
     const workbenchController = new WorkbenchController(pluginHost);
