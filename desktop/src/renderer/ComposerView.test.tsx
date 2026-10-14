@@ -136,7 +136,7 @@ function renderComposer(props: {
   queuedMessages?: QueuedComposerMessage[];
   guideMessages?: QueuedComposerMessage[];
   status?: string;
-  statusLiveProgress?: boolean;
+  disabledReason?: string;
   runtimeControlsDisabled?: boolean;
   connectionAvailable?: boolean;
   initialized?: InitializeResult;
@@ -195,7 +195,7 @@ function renderComposer(props: {
           running={props.running ?? false}
           runtimeControlsDisabled={props.runtimeControlsDisabled}
           status={props.status ?? "ready"}
-          statusLiveProgress={props.statusLiveProgress}
+          disabledReason={props.disabledReason}
           readOnly={props.readOnly ?? false}
           initialized={props.initialized ?? initialized(props.permissions)}
           activeEngine={props.activeEngine}
@@ -572,8 +572,6 @@ function renderSplitPaneComposer(props: {
   prompt?: string;
   running?: boolean;
   stopState?: "pending" | "retry";
-  status?: string;
-  statusLiveProgress?: boolean;
   onSend?: () => void;
   onInterrupt?: () => void;
 }): void {
@@ -591,8 +589,6 @@ function renderSplitPaneComposer(props: {
           stopState={props.stopState}
           running={props.running ?? false}
           readOnly={false}
-          status={props.status ?? "ready"}
-          statusLiveProgress={props.statusLiveProgress}
           onPasteAttachmentFiles={() => {}}
           onRemoveFile={() => {}}
           onRemoveImage={() => {}}
@@ -624,7 +620,6 @@ function renderStatefulSplitPaneComposer(props: {
           images={[]}
           running={false}
           readOnly={props.readOnly ?? false}
-          status="ready"
           requestedHandoffIntent={props.requestedHandoffIntent}
           queryHistorySessionID={props.queryHistorySessionID}
           onPasteAttachmentFiles={props.onPasteAttachmentFiles ?? (() => {})}
@@ -1921,58 +1916,13 @@ describe("Composer send control", () => {
     expect(stopButton.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }))).toBe(true);
   });
 
-  describe.each([
-    ["main", renderComposer],
-    ["split", renderSplitPaneComposer],
-  ] as const)("%s composer feedback", (_name, render) => {
-    it.each(["ready", "正在发送请求", "Sending request"])("does not announce transient status %s", (status) => {
-      render({ prompt: "queued follow-up", running: true, status });
+  it.each(["stream request failed: stream error (102503): upstream timeout", "附件无法读取，请重新选择文件"])("keeps app status text out of the composer: %s", (status) => {
+    renderComposer({ prompt: "retry later", running: true, status });
 
-      expect(container.querySelector("[role='status']")).toBeNull();
-    });
-
-    it.each(["Attachment rejected: unsupported media", "附件无法读取，请重新选择文件"])("keeps actionable feedback outside the send toolbar: %s", (status) => {
-      render({ prompt: "retry later", running: true, status });
-
-      const feedback = container.querySelector("[role='status']");
-      expect(feedback?.textContent).toBe(status);
-      expect(container.querySelector(".composer-bar")?.contains(feedback)).toBe(false);
-      expect(container.querySelector("textarea")?.value).toBe("retry later");
-    });
-  });
-
-  it.each([true, false])("only shows app feedback in the active split pane while running (active=%s)", (active) => {
-    const status = "Attachment upload rejected";
-    act(() => {
-      root = createRoot(container);
-      root.render(
-        <ImagePreviewProvider>
-          <ConversationSplitPane
-            pane="primary"
-            thread={{ id: "running-thread", status: "in_progress", turns: [] } as unknown as Thread}
-            active={active}
-            appStatus={status}
-            draft={{ prompt: "follow-up", files: [], images: [] }}
-            viewSwitchPending={false}
-            queryHistory={[]}
-            onActivate={() => {}}
-            onClose={() => {}}
-            onBodyRef={() => {}}
-            onScroll={() => {}}
-            onSetPrompt={() => {}}
-            onPasteAttachmentFiles={() => {}}
-            onRemoveFile={() => {}}
-            onRemoveImage={() => {}}
-            onSend={() => {}}
-            onInterrupt={() => {}}
-            onForkMessage={() => {}}
-            onStreamFrame={() => {}}
-          />
-        </ImagePreviewProvider>,
-      );
-    });
-
-    expect(container.querySelector("[role='status']")?.textContent ?? "").toBe(active ? status : "");
+    expect(container.querySelector(".composer-wrap")?.textContent).not.toContain(status);
+    expect(container.querySelector("textarea")?.value).toBe("retry later");
+    renderComposer({ prompt: "retry later", readOnly: true, status });
+    expect(container.querySelector(".composer-send-button")?.getAttribute("aria-description")).toBeNull();
   });
 
   it("hides session context chips in the dock composer", () => {
@@ -3925,14 +3875,17 @@ describe("Composer expand button", () => {
     expect(button?.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("disables expansion in read-only mode", () => {
-    renderComposer({ readOnly: true });
+  it("disables expansion and explains send restrictions in read-only mode", () => {
+    renderComposer({ readOnly: true, disabledReason: "Child conversations are read-only" });
     const stack = container.querySelector(".composer-stack");
     const button = container.querySelector<HTMLButtonElement>(".composer-expand-button");
     expect(button).not.toBeNull();
     expect(button?.disabled).toBe(true);
     expect(button?.getAttribute("title")).toBe("只读对话不可展开");
+    expect(container.querySelector(".composer-send-button")?.getAttribute("aria-description")).toBe("Child conversations are read-only");
     expect(stack?.classList.contains("is-expanded")).toBe(false);
+    renderComposer({ disabledReason: "Child conversations are read-only" });
+    expect(container.querySelector(".composer-send-button")?.getAttribute("aria-description")).toBeNull();
   });
 });
 

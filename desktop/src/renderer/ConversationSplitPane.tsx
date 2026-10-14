@@ -28,7 +28,6 @@ export function ConversationSplitPane({
   thread,
   active,
   activeContextCwd,
-  appStatus,
   streamStatus,
   draft,
   viewSwitchPending,
@@ -66,7 +65,6 @@ export function ConversationSplitPane({
   thread: Thread;
   active: boolean;
   activeContextCwd?: string;
-  appStatus: string;
   streamStatus?: TurnStreamStatus;
   draft: ComposerDraftState;
   viewSwitchPending: boolean;
@@ -139,7 +137,6 @@ export function ConversationSplitPane({
   };
   const paneRunning = isThreadRunning(thread);
   const paneReadOnly = Boolean(thread.read_only);
-  const paneStatus = active ? appStatus : "";
 
   return (
     <section
@@ -240,8 +237,6 @@ export function ConversationSplitPane({
           submitting={submitting}
           stopState={stopState}
           readOnly={viewSwitchPending}
-          status={paneStatus}
-          statusLiveProgress={false}
           onPasteAttachmentFiles={onPasteAttachmentFiles}
           onRemoveFile={onRemoveFile}
           onRemoveImage={onRemoveImage}

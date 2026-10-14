@@ -223,7 +223,7 @@ import {
 import { ArchiveTip } from "./ArchiveTip";
 import { TopNotice } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
-import { showErrorToast, showToast } from "./Toast";
+import { showActionErrorToast, showErrorToast, showToast } from "./Toast";
 import { useArchiveDeletion } from "./useArchiveDeletion";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { CircleAlert, RefreshCw } from "./WuuIcons";
@@ -693,11 +693,9 @@ export function App(): JSX.Element {
     threads: state.threads,
     activeContext: state.activeContext,
     activeWorkspaceID: state.activeProjectId,
-    setStatus: (status) =>
-      setState((current) => ({
-        ...current,
-        status,
-      })),
+    setStatus: (status) => {
+      showErrorToast(status);
+    },
   });
   const syncSidebarServerEventStable = useStableCallback(syncSidebarServerEvent);
   const loadWorkspaceThreadsStable = useStableCallback(loadWorkspaceThreads);
@@ -1973,6 +1971,17 @@ export function App(): JSX.Element {
       syncPendingComposerMessagesFromServerEvent(event);
       if (!serverEventTargetsActiveContext(event, appStateRef.current)) {
         return;
+      }
+      // Before initialization, the launch view already displays these failures.
+      if (appStateRef.current.initialized) {
+        if (event.kind === "server-error") {
+          showErrorToast(event.message, translateCurrent("error.server"));
+        } else if (event.kind === "server-exit") {
+          showErrorToast(event.message, translateCurrent("appState.coreExited"), "app-server:exit");
+        } else if (event.kind === "notification" && event.message.method === "config/error") {
+          const configError = (event.message.params as { message?: unknown } | undefined)?.message;
+          if (typeof configError === "string") showErrorToast(configError, "", "app-server:config-error");
+        }
       }
       const handling = handleStreamingNotification(event, appStateRef.current);
       if (handling === "stream" || handling === "stream-state") {
@@ -3337,9 +3346,9 @@ export function App(): JSX.Element {
               : t("app.childTaskReadOnly")
             : state.status
         }
-        statusLiveProgress={
-          false
-        }
+        disabledReason={activeThreadReadOnly
+          ? activeThreadIsRunning ? t("app.childTaskRunning") : t("app.childTaskReadOnly")
+          : undefined}
         readOnly={activeThreadReadOnly || submissionTargetPending}
         initialized={composerRuntime}
         engines={engineInventory?.engines}
@@ -4038,7 +4047,7 @@ export function App(): JSX.Element {
     const source = activeThreadForState(currentState);
     const activeContext = currentState.activeContext;
     if (!source || !activeContext) {
-      showErrorToast(t("app.openConversationFirst"));
+      showActionErrorToast(t("app.openConversationFirst"));
       return;
     }
     try {
@@ -4354,10 +4363,7 @@ export function App(): JSX.Element {
     const targetPane = pane ?? currentState.activePane;
     const targetThread = threadForPane(currentState, targetPane);
     if (targetThread?.read_only) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.childTaskReadOnly"),
-      }));
+      showActionErrorToast(t("app.childTaskReadOnly"));
       return false;
     }
     if (
@@ -4565,24 +4571,15 @@ export function App(): JSX.Element {
       return;
     }
     if (!targetThread) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.openConversationFirst"),
-      }));
+      showActionErrorToast(t("app.openConversationFirst"));
       return;
     }
     if (targetThread.read_only) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.childTaskReadOnly"),
-      }));
+      showActionErrorToast(t("app.childTaskReadOnly"));
       return;
     }
     if (isStateActiveThreadRunning(currentState)) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.currentTaskRunning"),
-      }));
+      showActionErrorToast(t("app.currentTaskRunning"));
       return;
     }
 
@@ -4645,7 +4642,6 @@ export function App(): JSX.Element {
       );
     } catch (error) {
       const rawMessage = rawErrorMessage(error, t("composer.compactFailed"));
-      const errorMessage = statusMessageForError(rawMessage, t("composer.compactFailed"));
       const failedTurn = failOptimisticCompactTurn(
         optimisticTurn,
         rawMessage,
@@ -4664,7 +4660,7 @@ export function App(): JSX.Element {
             ),
         ),
         running: false,
-        status: errorMessage,
+        status: "ready",
       };
       setState((current) =>
         updateThreadByID(
@@ -4677,7 +4673,7 @@ export function App(): JSX.Element {
               failedTurn,
               upsertTurn,
             ),
-          { running: false, status: errorMessage },
+          { running: false, status: "ready" },
         ),
       );
     }
@@ -4783,13 +4779,7 @@ export function App(): JSX.Element {
       removePendingComposerMessageByID(pendingKey(), message.id, "queue");
       if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
-        setState((current) => ({
-          ...current,
-          status:
-            activeThreadIDForState(current) === pendingKey()
-              ? error instanceof Error ? error.message : t("app.queueFailed")
-              : current.status,
-        }));
+        showActionErrorToast(error, t("app.queueFailed"));
       }
       return !stillPending;
     } finally {
@@ -4876,13 +4866,7 @@ export function App(): JSX.Element {
       removePendingComposerMessageByID(targetThread.id, message.id, "guide");
       if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
-        setState((current) => ({
-          ...current,
-          status:
-            activeThreadIDForState(current) === targetThread.id
-              ? error instanceof Error ? error.message : t("composer.guideFailed")
-              : current.status,
-        }));
+        showActionErrorToast(error, t("composer.guideFailed"));
       }
       return !stillPending;
     }
@@ -5196,7 +5180,7 @@ export function App(): JSX.Element {
         return stillTarget ? {
           ...next,
           running: keepAcceptedTurn,
-          status: noModelConfigured || interrupted || keepAcceptedTurn ? "" : errorMessage,
+          status: "",
         } : next;
       };
       appStateRef.current = settle(appStateRef.current);
@@ -5205,6 +5189,10 @@ export function App(): JSX.Element {
       if (!optimisticThreadID) forgetLocalTurnTiming(optimisticTurn.id);
       if (noModelConfigured) {
         showNoModelConfiguredToast();
+      } else if (!interrupted && !keepAcceptedTurn) {
+        // The rejected turn was removed from the transcript, so nothing else
+        // tells the user why their message came back to the composer.
+        showActionErrorToast(errorMessage);
       }
       if (admission.sent && optimisticThreadID && stopRequestsRef.current[optimisticThreadID]) {
         await interruptAcceptedThread(optimisticThreadID!);
@@ -6019,7 +6007,6 @@ export function App(): JSX.Element {
                   onOpenFile={openWorkspaceFile}
                   running={sideThread.entry.streaming}
                   disabledReason={sideThread.sendDisabledReason}
-                  error={sideThread.requestError}
                   mainThreadId={activeThreadID}
                   sideThreadId={sideThread.entry.summary?.side_thread_id}
                   queryHistorySessionID={
