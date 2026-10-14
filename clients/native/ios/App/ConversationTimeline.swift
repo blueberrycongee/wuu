@@ -8,7 +8,7 @@ struct ConversationTimeline: View {
     @State private var nearBottom = true
     @State private var following = true
     @State private var scrollState = TimelineScrollState()
-    @State private var historyRequest: Task<Void, Never>?
+    @State private var historyRetry = 0
     @State private var historyFailed = false
     @State private var inspectedProcess: ActivityInspection?
     @State private var presentedMessages: Set<String>
@@ -31,7 +31,7 @@ struct ConversationTimeline: View {
                             HStack {
                                 Spacer()
                                 if historyFailed {
-                                    Button("读取失败，轻点重试") { loadHistory() }.disabled(!model.connected || model.refreshing)
+                                    Button("读取失败，轻点重试") { historyRetry += 1 }.disabled(!model.connected || model.refreshing)
                                 } else if model.loadingHistory {
                                     ProgressView().accessibilityLabel("正在读取更早的消息")
                                 }
@@ -61,7 +61,6 @@ struct ConversationTimeline: View {
                             if nearBottom != next.atBottom { nearBottom = next.atBottom }
                             if following != update.following { following = update.following }
                             if update.scrollToBottom { proxy.scrollTo("bottom", anchor: .bottom) }
-                            if next.interacting && next.offset < 160 && !historyFailed { loadHistory() }
                         }
                     }
                 }.coordinateSpace(name: "conversationViewport")
@@ -124,7 +123,7 @@ struct ConversationTimeline: View {
                                         set: { model.showingHistoryEdit = $0 })) {
                 if let edit = model.historyEdit { HistoryMessageEditView(model: model, edit: edit) }
             }
-            .onDisappear { historyRequest?.cancel() }
+            .task(id: model.historyLoadID.map { "\($0):\(historyRetry)" }) { await loadHistory() }
             .onChange(of: model.activeID) { _, _ in inspectedProcess = nil }
     }
     private func timelineRow(_ row: ConversationRow, size: CGSize) -> some View {
@@ -163,20 +162,29 @@ struct ConversationTimeline: View {
         guard let edit = model.historyEdit, edit.prepared, edit.threadID == model.activeID, !model.showingHistoryEdit else { return nil }
         return edit
     }
-    private func loadHistory() {
-        guard historyRequest == nil, !scrollState.preservingPosition, model.connected, !model.refreshing, !model.loadingHistory,
-              model.live?.historyCursor.isEmpty == false else { return }
+    private func loadHistory() async {
+        guard let selection = model.historyLoadID else { return }
         historyFailed = false
-        historyRequest = Task {
-            defer { historyRequest = nil }
-            do {
-                try await model.loadOlder {
-                    following = false
-                    scrollState.preservePosition()
+        do {
+            // Let the initial snapshot render, then read ahead without another scroll gesture.
+            await Task.yield()
+            while !Task.isCancelled, model.historyLoadID == selection, model.live?.historyCursor.isEmpty == false {
+                // Lazy layout must finish restoring the previous page before capturing another anchor.
+                // A cancelled request may also still be releasing the model's single request slot.
+                if scrollState.preservingPosition || model.loadingHistory {
+                    try await Task.sleep(for: .milliseconds(16))
+                    continue
                 }
+                try await model.loadOlder {
+                    if !following || scrollState.metrics?.interacting == true {
+                        following = false
+                        scrollState.preservePosition()
+                    }
+                }
+                await Task.yield()
             }
-            catch is CancellationError {}
-            catch { if !Task.isCancelled { historyFailed = true } }
+        } catch is CancellationError {} catch {
+            if !Task.isCancelled, model.historyLoadID == selection { historyFailed = true }
         }
     }
 }
