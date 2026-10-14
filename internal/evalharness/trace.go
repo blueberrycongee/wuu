@@ -21,28 +21,29 @@ type TraceEvent struct {
 }
 
 type TraceTask struct {
-	ID                   string                 `json:"id"`
-	Name                 string                 `json:"name"`
-	Success              bool                   `json:"success"`
-	DurationMS           int64                  `json:"duration_ms"`
-	Turns                int                    `json:"turns"`
-	ToolCalls            int                    `json:"tool_calls"`
-	ToolNames            []string               `json:"tool_names,omitempty"`
-	ToolSequence         []string               `json:"tool_sequence,omitempty"`
-	MissingTools         []string               `json:"missing_tools,omitempty"`
-	ForbiddenToolsUsed   []string               `json:"forbidden_tools,omitempty"`
-	MissingToolCalls     []string               `json:"missing_tool_calls,omitempty"`
-	MissingToolSeq       []string               `json:"missing_tool_sequence,omitempty"`
-	MissingErrors        []string               `json:"missing_errors,omitempty"`
-	InputTokens          int                    `json:"input_tokens"`
-	OutputTokens         int                    `json:"output_tokens"`
-	CacheCreationTokens  int                    `json:"cache_creation_tokens,omitempty"`
-	CacheReadTokens      int                    `json:"cache_read_tokens,omitempty"`
-	CacheHitRate         float64                `json:"cache_hit_rate,omitempty"`
-	VerificationReason   string                 `json:"verification_reason,omitempty"`
-	VerificationEvidence []VerificationEvidence `json:"verification_evidence,omitempty"`
-	Error                string                 `json:"error,omitempty"`
-	Workdir              string                 `json:"workdir,omitempty"`
+	Environment          *EnvironmentObservation `json:"environment,omitempty"`
+	ID                   string                  `json:"id"`
+	Name                 string                  `json:"name"`
+	Success              bool                    `json:"success"`
+	DurationMS           int64                   `json:"duration_ms"`
+	Turns                int                     `json:"turns"`
+	ToolCalls            int                     `json:"tool_calls"`
+	ToolNames            []string                `json:"tool_names,omitempty"`
+	ToolSequence         []string                `json:"tool_sequence,omitempty"`
+	MissingTools         []string                `json:"missing_tools,omitempty"`
+	ForbiddenToolsUsed   []string                `json:"forbidden_tools,omitempty"`
+	MissingToolCalls     []string                `json:"missing_tool_calls,omitempty"`
+	MissingToolSeq       []string                `json:"missing_tool_sequence,omitempty"`
+	MissingErrors        []string                `json:"missing_errors,omitempty"`
+	InputTokens          int                     `json:"input_tokens"`
+	OutputTokens         int                     `json:"output_tokens"`
+	CacheCreationTokens  int                     `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens      int                     `json:"cache_read_tokens,omitempty"`
+	CacheHitRate         float64                 `json:"cache_hit_rate,omitempty"`
+	VerificationReason   string                  `json:"verification_reason,omitempty"`
+	VerificationEvidence []VerificationEvidence  `json:"verification_evidence,omitempty"`
+	Error                string                  `json:"error,omitempty"`
+	Workdir              string                  `json:"workdir,omitempty"`
 }
 
 type TraceObservability struct {
@@ -164,6 +165,7 @@ func TraceEvents(result Result, createdAt time.Time) []TraceEvent {
 		TaskID:    taskID,
 		CreatedAt: createdAt,
 		Data: TraceTask{
+			Environment:          result.Environment,
 			ID:                   result.TaskID,
 			Name:                 result.TaskName,
 			Success:              result.Success,
@@ -260,6 +262,7 @@ func WriteTrace(path string, result Result) error {
 func BuildValidationSummary(result Result) *ValidationReplaySummary {
 	summary := TraceReplaySummary{
 		Task: &TraceTask{
+			Environment:          result.Environment,
 			ID:                   result.TaskID,
 			Name:                 result.TaskName,
 			Success:              result.Success,

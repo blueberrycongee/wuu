@@ -368,6 +368,15 @@ func browserEnabledFromEnv() bool {
 }
 
 func NewSession(opts Options) (*Session, error) {
+	return NewSessionWithContext(context.Background(), opts)
+}
+
+// NewSessionWithContext builds the runtime with cancelable plugin initialization.
+// A successful session remains caller-owned and must be cleaned up explicitly.
+func NewSessionWithContext(ctx context.Context, opts Options) (*Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	rootDir := strings.TrimSpace(opts.RootDir)
 	if rootDir == "" {
 		return nil, fmt.Errorf("root dir is required")
@@ -501,9 +510,14 @@ func NewSession(opts Options) (*Session, error) {
 	if !opts.NonInteractive {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
-	pluginHost, pluginKernel := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions)
+	pluginHost, pluginKernel := startPluginHost(ctx, activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions)
+	if err := ctx.Err(); err != nil {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		return nil, errors.Join(err, pluginHost.Close(closeCtx))
+	}
 	activePlugins = availablePluginPackages(activePlugins, pluginHost)
-	systemPrompts, compactions, capabilityErr := buildPluginAgentCapabilities(context.Background(), pluginHost, resolvedName, providerCfg.Model, rootDir)
+	systemPrompts, compactions, capabilityErr := buildPluginAgentCapabilities(ctx, pluginHost, resolvedName, providerCfg.Model, rootDir)
 	if capabilityErr != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		closeErr := pluginHost.Close(ctx)
@@ -922,6 +936,10 @@ func NewSession(opts Options) (*Session, error) {
 	// artifact directories. Per-thread controls created by NewThreadRuntime are
 	// likewise started only after app-server installs their terminal finalizer.
 	journalOwned = false
+	if err := ctx.Err(); err != nil {
+		_, cleanupErr := runtimeSession.CleanupWithContext(ctx)
+		return nil, errors.Join(err, cleanupErr)
+	}
 	return runtimeSession, nil
 }
 
@@ -1951,6 +1969,12 @@ func applyWorkerToolFilter(kit *tools.Toolkit, wt agentcontrol.WorkerType) {
 // SetSessionID binds user-level runtime artifact paths after the UI has
 // created or resumed a session. Conversation logs live in SessionDir.
 func (s *Session) SetSessionID(id string) error {
+	return s.SetSessionIDWithContext(context.Background(), id)
+}
+
+// SetSessionIDWithContext binds session artifacts and runs startup hooks with
+// the caller's cancellation scope.
+func (s *Session) SetSessionIDWithContext(ctx context.Context, id string) error {
 	if s == nil || strings.TrimSpace(id) == "" {
 		return nil
 	}
@@ -1996,7 +2020,7 @@ func (s *Session) SetSessionID(id string) error {
 		s.AgentControl.StartQueuedWork()
 	}
 	if s.HookDispatcher != nil {
-		if _, err := s.HookDispatcher.Dispatch(context.Background(), hooks.SessionStart, &hooks.Input{SessionID: id, CWD: s.RootDir}); err != nil {
+		if _, err := s.HookDispatcher.Dispatch(ctx, hooks.SessionStart, &hooks.Input{SessionID: id, CWD: s.RootDir}); err != nil {
 			return fmt.Errorf("session start hook: %w", err)
 		}
 	}
@@ -2035,6 +2059,12 @@ func shutdownAndCleanupAgentControl(control *agentcontrol.AgentControl) error {
 
 // Cleanup stops session-scoped background work owned by the runtime.
 func (s *Session) Cleanup() (process.CleanupResult, error) {
+	return s.CleanupWithContext(context.Background())
+}
+
+// CleanupWithContext bounds end hooks by the caller's cancellation scope.
+// Runtime resource cleanup still runs when that context has been canceled.
+func (s *Session) CleanupWithContext(ctx context.Context) (process.CleanupResult, error) {
 	if s == nil {
 		return process.CleanupResult{}, nil
 	}
@@ -2046,7 +2076,7 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 		if s.Toolkit != nil {
 			sessionID = s.Toolkit.SessionID()
 		}
-		_, hookErr := s.HookDispatcher.Dispatch(context.Background(), hooks.SessionEnd, &hooks.Input{SessionID: sessionID, CWD: s.RootDir})
+		_, hookErr := s.HookDispatcher.Dispatch(ctx, hooks.SessionEnd, &hooks.Input{SessionID: sessionID, CWD: s.RootDir})
 		cleanupErr = errors.Join(cleanupErr, hookErr)
 	}
 	if s.AgentControl != nil {

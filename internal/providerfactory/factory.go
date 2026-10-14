@@ -1,6 +1,7 @@
 package providerfactory
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -267,7 +268,7 @@ func buildClient(provider config.ProviderConfig, providerName string) (providers
 		}
 		return client, nil
 	case wireAnthropicMessages:
-		apiKey, authToken, apiKeyErr := resolveAnthropicCredentials(provider, providerName)
+		apiKey, authToken, apiKeyErr := resolveAnthropicCredentials(provider, providerName, os.Getenv("HOME"))
 		if apiKeyErr != nil {
 			return nil, apiKeyErr
 		}
@@ -419,9 +420,38 @@ func resolveExplicitAPIKey(provider config.ProviderConfig) string {
 	return ""
 }
 
+// ErrHomeBackedCredentials means the provider needs its live subscription store.
+// A static credential snapshot cannot preserve refresh and account selection.
+var ErrHomeBackedCredentials = errors.New("provider requires home-backed subscription credentials")
+
+// ResolveStaticCredentials resolves API-key and bearer credentials without
+// making requests or writing a credential store. Callers may retain the pair in
+// memory before changing their runtime home; never serialize it as diagnostics.
+// Home-backed subscriptions require an explicit key supported by that provider.
+func ResolveStaticCredentials(provider config.ProviderConfig, providerName, home string) (string, string, error) {
+	profile, err := resolveProviderProfile(provider)
+	if err != nil {
+		return "", "", err
+	}
+	switch profile.Auth {
+	case authAPIKey:
+		key, err := ResolveAPIKeyWithHome(provider, providerName, home)
+		return key, "", err
+	case authAnthropicToken:
+		return resolveAnthropicCredentials(provider, providerName, home)
+	case authXAISubscription:
+		return "", "", fmt.Errorf("%w: %s", ErrHomeBackedCredentials, providerName)
+	default:
+		if key := resolveExplicitAPIKey(provider); key != "" {
+			return key, "", nil
+		}
+		return "", "", fmt.Errorf("%w: %s", ErrHomeBackedCredentials, providerName)
+	}
+}
+
 // Resolve the connection's credentials as a pair. Independently falling back
 // for each header can send an unrelated ambient credential to a custom endpoint.
-func resolveAnthropicCredentials(provider config.ProviderConfig, providerName string) (string, string, error) {
+func resolveAnthropicCredentials(provider config.ProviderConfig, providerName, home string) (string, string, error) {
 	apiKey := resolveExplicitAPIKey(provider)
 	authToken := strings.TrimSpace(provider.AuthToken)
 	if authToken == "" {
@@ -432,7 +462,7 @@ func resolveAnthropicCredentials(provider config.ProviderConfig, providerName st
 	if apiKey != "" || authToken != "" {
 		return apiKey, authToken, nil
 	}
-	if stored, ok := storedCredentials(os.Getenv("HOME"), providerName); ok && stored.Source == authstorage.SourceSaved {
+	if stored, ok := storedCredentials(home, providerName); ok && stored.Source == authstorage.SourceSaved {
 		if key := storedAPIKey(stored, provider, providerName); key != "" {
 			return key, "", nil
 		}
@@ -442,8 +472,8 @@ func resolveAnthropicCredentials(provider config.ProviderConfig, providerName st
 	}
 	// Preserve the environment/default behavior for connections without a
 	// selected credential, including older imported auth-store entries.
-	apiKey, err := resolveAPIKey(provider, providerName)
-	authToken = resolveAuthToken(provider, providerName)
+	apiKey, err := ResolveAPIKeyWithHome(provider, providerName, home)
+	authToken = resolveAuthTokenWithHome(provider, providerName, home)
 	if authToken != "" {
 		err = nil
 	}
@@ -452,7 +482,7 @@ func resolveAnthropicCredentials(provider config.ProviderConfig, providerName st
 
 // resolveAuthToken resolves a Bearer auth token from config or environment.
 // This mirrors the Anthropic SDK's ANTHROPIC_AUTH_TOKEN support.
-func resolveAuthToken(provider config.ProviderConfig, providerName string) string {
+func resolveAuthTokenWithHome(provider config.ProviderConfig, providerName, home string) string {
 	if t := strings.TrimSpace(provider.AuthToken); t != "" {
 		return t
 	}
@@ -460,7 +490,7 @@ func resolveAuthToken(provider config.ProviderConfig, providerName string) strin
 	storedToken := ""
 	saved := false
 	if providerName != "" && !shouldTreatStoredAuthTokenAsAPIKey(provider, providerName) {
-		if credentials, ok := storedCredentials(os.Getenv("HOME"), providerName); ok {
+		if credentials, ok := storedCredentials(home, providerName); ok {
 			storedToken = strings.TrimSpace(credentials.AuthToken)
 			saved = credentials.Source == authstorage.SourceSaved
 		}

@@ -79,6 +79,55 @@ wuu plugin remove my-plugin
 
 See [skills](../customize/skill-authoring.md) for lint behavior and [plugins](../customize/plugins.md) for local installation and updates. Authors can use `create`, `dev`, `validate`, `build`, `test`, and `pack`; those commands are covered in the [authoring reference](../customize/plugin-authoring.md).
 
+## Evaluate built-in tasks
+
+```bash
+wuu eval --list
+wuu eval --provider NAME --task test_failure_fix --artifacts-dir ./eval-results --json
+wuu eval --provider NAME --environment inherited --task mcp_live_discovery
+wuu eval --replay-trace /path/to/eval-trace.jsonl --json
+```
+
+Each task runs in a fresh Wuu process. The default `--environment isolated`
+creates a fresh home and Wuu state directory for every task. It keeps the selected
+provider, configured model roles and aliases, agent settings, and PTC settings.
+API keys and bearer tokens are resolved using the normal configured/environment/
+saved-credential precedence, including catalog and selected-model defaults, before
+isolation, then passed to the worker in memory.
+They are not copied into a config file or the evaluation report.
+
+Personal instructions, skills, plugins, memory, hooks, MCP servers, engine
+settings, and execution-environment settings are not imported. Bundled plugins
+and skills use their normal defaults; catalog tasks add their own declared
+fixtures and MCP dependencies. Background model-catalog refresh is disabled.
+The report and replay trace record the environment mode, agent/PTC settings,
+active plugin fingerprints, guidance fingerprints, and configured MCP names.
+
+Use `--environment inherited` when intentionally evaluating your existing
+configuration, extensions, or subscription credentials. It reads and can modify
+your normal Wuu state, and results are labeled inherited. Home-backed subscription
+authentication requires this mode; isolated runs fail with an actionable message
+rather than copying a refresh token. Providers whose selected models require
+different credential pairs also require inherited mode. The explicitly live
+`--live-codex-oauth` workflow selects inherited mode unless you supply an
+incompatible environment.
+
+`--artifacts-dir` chooses a parent for a new, private run directory; omitting it
+uses the system temporary directory. The exact directory appears in the output.
+Each run retains `report.json`, per-task `eval-trace.jsonl` and `worker.log`, and,
+in isolated mode, the task's Wuu runtime state. `--output FILE` additionally
+writes the JSON report to that file. Task workspaces and temporary homes are
+removed after execution unless `--keep-workdirs` is set. Review evidence before
+sharing it; runtime logs and tool artifacts can contain task content. Temporary
+locations may be cleaned by the operating system, so choose a durable directory
+for evidence you want to keep.
+
+This isolates Wuu home state, not the machine or network. Installed tools,
+`PATH`, other inherited environment variables, and network access still affect
+a run. Use the same machine/toolchain, selected tasks, provider/model settings,
+timeout, and environment mode when comparing results. A trace replay performs
+no model calls or tool execution.
+
 ## Integration and diagnostics
 
 [`wuu app-server`](../automation/app-server.md) provides the persistent subprocess protocol used by clients. [`wuu remote` and `wuu relay`](../automation/remote.md) run remote-control components. For a problem report, capture the version, command, workspace, and a minimal redacted error; see [troubleshooting](../help/troubleshooting.md).

@@ -201,7 +201,7 @@ if(q.method==='tool.execute'){if(q.params.tool_id==='crash'){process.exit(3)}con
 				consumer.Runtime = &pluginpkg.RuntimeSpec{Command: node, Args: []string{"runtime.mjs"}, Timeout: 5}
 				items = append(items, consumer)
 			}
-			host, services, err := buildPluginHost(items, project, "workspace", userHome, stateDir, nil, func(ctx context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+			host, services, err := buildPluginHost(context.Background(), items, project, "workspace", userHome, stateDir, nil, func(ctx context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 				return pluginhost.Start(ctx, cfg)
 			}, nil, nil)
 			if err != nil {

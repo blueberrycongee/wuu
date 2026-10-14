@@ -32,13 +32,15 @@ import (
 )
 
 type evalReport struct {
-	StartedAt  time.Time            `json:"started_at"`
-	DurationMS int64                `json:"duration_ms"`
-	Provider   string               `json:"provider,omitempty"`
-	Model      string               `json:"model,omitempty"`
-	Config     string               `json:"config,omitempty"`
-	Summary    evalSummary          `json:"summary"`
-	Results    []evalharness.Result `json:"results"`
+	Environment  string               `json:"environment,omitempty"`
+	ArtifactsDir string               `json:"artifacts_dir,omitempty"`
+	StartedAt    time.Time            `json:"started_at"`
+	DurationMS   int64                `json:"duration_ms"`
+	Provider     string               `json:"provider,omitempty"`
+	Model        string               `json:"model,omitempty"`
+	Config       string               `json:"config,omitempty"`
+	Summary      evalSummary          `json:"summary"`
+	Results      []evalharness.Result `json:"results"`
 }
 
 type evalSummary struct {
@@ -65,6 +67,8 @@ func runEval(args []string) error {
 	list := fs.Bool("list", false, "list built-in eval tasks")
 	jsonOutput := fs.Bool("json", false, "output eval report as JSON")
 	outputPath := fs.String("output", "", "write eval report JSON to this path")
+	environment := fs.String("environment", evalEnvironmentIsolated, "context environment: isolated or inherited")
+	artifactsParent := fs.String("artifacts-dir", "", "parent directory for retained evaluation evidence (default: temporary directory)")
 	keepWorkdirs := fs.Bool("keep-workdirs", false, "keep temporary task workdirs")
 	replayTrace := fs.String("replay-trace", "", "replay an eval trace JSONL file without calling a model or executing tools")
 	liveCodexOAuth := fs.Bool("live-codex-oauth", false, "run live Codex OAuth E2E eval using local Codex CLI or wuu OAuth credentials")
@@ -82,17 +86,26 @@ func runEval(args []string) error {
 		return runEvalTraceReplay(strings.TrimSpace(*replayTrace), *jsonOutput, *outputPath)
 	}
 
+	if *environment != evalEnvironmentIsolated && *environment != evalEnvironmentInherited {
+		return fmt.Errorf("invalid eval environment %q: use isolated or inherited", *environment)
+	}
 	homeDir := os.Getenv("HOME")
 	if *liveCodexOAuth {
+		explicitEnvironment := false
+		fs.Visit(func(f *flag.Flag) { explicitEnvironment = explicitEnvironment || f.Name == "environment" })
+		if explicitEnvironment && *environment != evalEnvironmentInherited {
+			return errors.New("--live-codex-oauth needs --environment inherited to use existing subscription credentials")
+		}
 		return runLiveCodexOAuthEval(liveCodexOAuthEvalConfig{
-			ModelOverride: *modelOverride,
-			TaskFilter:    *taskFilter,
-			MaxSteps:      *maxSteps,
-			Timeout:       *timeout,
-			JSONOutput:    *jsonOutput,
-			OutputPath:    *outputPath,
-			KeepWorkdirs:  *keepWorkdirs,
-			HomeDir:       homeDir,
+			ModelOverride:   *modelOverride,
+			TaskFilter:      *taskFilter,
+			MaxSteps:        *maxSteps,
+			Timeout:         *timeout,
+			JSONOutput:      *jsonOutput,
+			OutputPath:      *outputPath,
+			KeepWorkdirs:    *keepWorkdirs,
+			HomeDir:         homeDir,
+			ArtifactsParent: *artifactsParent,
 		})
 	}
 
@@ -118,10 +131,24 @@ func runEval(args []string) error {
 		return err
 	}
 
+	if *environment == evalEnvironmentIsolated {
+		cfg, err = isolatedEvalConfig(cfg, resolvedName, *modelOverride, homeDir)
+		if err != nil {
+			return err
+		}
+	}
+	artifactsDir, err := createEvalArtifactsDir(*artifactsParent)
+	if err != nil {
+		return fmt.Errorf("create eval artifacts directory: %w", err)
+	}
+	ctx, stop := execContext(0)
+	defer stop()
 	reportStarted := time.Now()
 	results := make([]evalharness.Result, 0, len(tasks))
 	for _, task := range tasks {
-		result := runEvalTask(evalTaskRunConfig{
+		result := runEvalTaskProcess(ctx, evalTaskRunConfig{
+			Environment:   *environment,
+			ArtifactsDir:  artifactsDir,
 			Task:          task,
 			Config:        cfg,
 			ConfigPath:    configPath,
@@ -136,13 +163,18 @@ func runEval(args []string) error {
 	}
 
 	report := evalReport{
-		StartedAt:  reportStarted,
-		DurationMS: time.Since(reportStarted).Milliseconds(),
-		Provider:   resolvedName,
-		Model:      providerCfg.Model,
-		Config:     configPath,
-		Summary:    summarizeEvalResults(results),
-		Results:    results,
+		Environment:  *environment,
+		ArtifactsDir: artifactsDir,
+		StartedAt:    reportStarted,
+		DurationMS:   time.Since(reportStarted).Milliseconds(),
+		Provider:     resolvedName,
+		Model:        providerCfg.Model,
+		Config:       configPath,
+		Summary:      summarizeEvalResults(results),
+		Results:      results,
+	}
+	if err := writeEvalReport(filepath.Join(artifactsDir, "report.json"), report); err != nil {
+		return err
 	}
 	if *outputPath != "" {
 		if err := writeEvalReport(*outputPath, report); err != nil {
@@ -157,6 +189,9 @@ func runEval(args []string) error {
 		fmt.Println(string(data))
 	} else {
 		printEvalReport(report)
+	}
+	if ctx.Err() != nil {
+		return execInputContextError(ctx)
 	}
 	if report.Summary.Failed > 0 {
 		return fmt.Errorf("eval failed: %d/%d passed", report.Summary.Passed, report.Summary.Total)
@@ -208,14 +243,15 @@ func runEvalTraceReplay(tracePath string, jsonOutput bool, outputPath string) er
 }
 
 type liveCodexOAuthEvalConfig struct {
-	ModelOverride string
-	TaskFilter    string
-	MaxSteps      int
-	Timeout       time.Duration
-	JSONOutput    bool
-	OutputPath    string
-	KeepWorkdirs  bool
-	HomeDir       string
+	ArtifactsParent string
+	ModelOverride   string
+	TaskFilter      string
+	MaxSteps        int
+	Timeout         time.Duration
+	JSONOutput      bool
+	OutputPath      string
+	KeepWorkdirs    bool
+	HomeDir         string
 }
 
 func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
@@ -272,10 +308,18 @@ func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
 		runtimeConfig.Providers["openai-codex"] = providerCfg
 	}
 
+	artifactsDir, err := createEvalArtifactsDir(cfg.ArtifactsParent)
+	if err != nil {
+		return fmt.Errorf("create eval artifacts directory: %w", err)
+	}
+	ctx, stop := execContext(0)
+	defer stop()
 	reportStarted := time.Now()
 	results := make([]evalharness.Result, 0, len(tasks))
 	for _, task := range tasks {
-		result := runEvalTask(evalTaskRunConfig{
+		result := runEvalTaskProcess(ctx, evalTaskRunConfig{
+			Environment:   evalEnvironmentInherited,
+			ArtifactsDir:  artifactsDir,
 			Task:          task,
 			Config:        runtimeConfig,
 			ConfigPath:    "live-codex-oauth",
@@ -290,13 +334,18 @@ func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
 	}
 
 	report := evalReport{
-		StartedAt:  reportStarted,
-		DurationMS: time.Since(reportStarted).Milliseconds(),
-		Provider:   "openai-codex",
-		Model:      providerCfg.Model,
-		Config:     "live-codex-oauth:" + source,
-		Summary:    summarizeEvalResults(results),
-		Results:    results,
+		Environment:  evalEnvironmentInherited,
+		ArtifactsDir: artifactsDir,
+		StartedAt:    reportStarted,
+		DurationMS:   time.Since(reportStarted).Milliseconds(),
+		Provider:     "openai-codex",
+		Model:        providerCfg.Model,
+		Config:       "live-codex-oauth:" + source,
+		Summary:      summarizeEvalResults(results),
+		Results:      results,
+	}
+	if err := writeEvalReport(filepath.Join(artifactsDir, "report.json"), report); err != nil {
+		return err
 	}
 	if cfg.OutputPath != "" {
 		if err := writeEvalReport(cfg.OutputPath, report); err != nil {
@@ -313,6 +362,9 @@ func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
 		fmt.Printf("live Codex OAuth source: %s\n", source)
 		printEvalReport(report)
 	}
+	if ctx.Err() != nil {
+		return execInputContextError(ctx)
+	}
 	if report.Summary.Failed > 0 {
 		return fmt.Errorf("live Codex OAuth eval failed: %d/%d passed", report.Summary.Passed, report.Summary.Total)
 	}
@@ -320,7 +372,11 @@ func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
 }
 
 type evalTaskRunConfig struct {
-	Task          evalharness.Task
+	Environment   string
+	ArtifactsDir  string
+	TaskID        string
+	Workdir       string
+	Task          evalharness.Task `json:"-"`
 	Config        config.Config
 	ConfigPath    string
 	ProviderName  string
@@ -358,34 +414,22 @@ func waitForSubAgentQuiescence(ctx context.Context, control *agentcontrol.AgentC
 	}
 }
 
-func runEvalTask(cfg evalTaskRunConfig) evalharness.Result {
+func runEvalTask(cfg evalTaskRunConfig) (result evalharness.Result) {
 	started := time.Now()
-	result := evalharness.Result{
+	result = evalharness.Result{
 		TaskID:   cfg.Task.ID,
 		TaskName: cfg.Task.Name,
 	}
 
-	taskRoot, err := os.MkdirTemp("", "wuu-eval-"+cfg.Task.ID+"-*")
-	if err != nil {
-		result.Error = err.Error()
-		result.DurationMS = time.Since(started).Milliseconds()
-		return result
-	}
+	taskRoot := cfg.Workdir
+	runtimeConfig := cfg.Config
+	result.Environment = evalEnvironmentObservation(cfg, runtimeConfig, nil)
 	if cfg.KeepWorkdir {
 		result.Workdir = taskRoot
-	} else {
-		defer os.RemoveAll(taskRoot)
-	}
-	if cfg.Task.IsolateWuuHome {
-		defer setTemporaryEnv("WUU_HOME", filepath.Join(taskRoot, ".wuu-home"))()
 	}
 
-	ctx := context.Background()
-	if cfg.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, cfg.Timeout)
-		defer cancel()
-	}
+	ctx, stop := execContext(cfg.Timeout)
+	defer stop()
 
 	if err := evalharness.SetupTask(cfg.Task, taskRoot); err != nil {
 		result.Error = err.Error()
@@ -393,33 +437,41 @@ func runEvalTask(cfg evalTaskRunConfig) evalharness.Result {
 		return result
 	}
 
-	runtimeConfig := cfg.Config
 	if cfg.Task.Configure != nil {
 		runtimeConfig = cfg.Task.Configure(taskRoot, runtimeConfig)
 	}
+	result.Environment = evalEnvironmentObservation(cfg, runtimeConfig, nil)
 
-	rt, err := runtime.NewSession(runtime.Options{
-		RootDir:       taskRoot,
-		HomeDir:       cfg.HomeDir,
-		ConfigPath:    cfg.ConfigPath,
-		Config:        runtimeConfig,
-		ProviderName:  cfg.ProviderName,
-		ModelOverride: cfg.ModelOverride,
+	rt, err := runtime.NewSessionWithContext(ctx, runtime.Options{
+		RootDir:        taskRoot,
+		HomeDir:        cfg.HomeDir,
+		ConfigPath:     cfg.ConfigPath,
+		NonInteractive: true,
+		Config:         runtimeConfig,
+		ProviderName:   cfg.ProviderName,
+		ModelOverride:  cfg.ModelOverride,
 	})
 	if err != nil {
 		result.Error = err.Error()
 		result.DurationMS = time.Since(started).Milliseconds()
 		return result
 	}
+	result.Environment = evalEnvironmentObservation(cfg, runtimeConfig, rt)
 	evalSessionID := "eval-" + cfg.Task.ID + "-" + sessionid.NewID()
-	if err := rt.SetSessionID(evalSessionID); err != nil {
-		_, _ = rt.Cleanup()
+	if err := rt.SetSessionIDWithContext(ctx, evalSessionID); err != nil {
+		_, _ = rt.CleanupWithContext(ctx)
 		result.Error = err.Error()
 		result.DurationMS = time.Since(started).Milliseconds()
 		return result
 	}
 	defer func() {
-		_, _ = rt.Cleanup()
+		if _, err := rt.CleanupWithContext(ctx); err != nil {
+			result.Success = false
+			if result.Error != "" {
+				result.Error += "; "
+			}
+			result.Error += "cleanup: " + err.Error()
+		}
 	}()
 	if cfg.MaxSteps > 0 {
 		rt.StreamRunner.MaxSteps = cfg.MaxSteps
@@ -529,9 +581,7 @@ func runEvalTask(cfg evalTaskRunConfig) evalharness.Result {
 	}
 	result.Observability = collectEvalObservability(rt, evalSessionID, taskRoot, cfg.KeepWorkdir, runResult.Content, contextRequests)
 	applyEvalAttentionIssues(&result)
-	result.Validation = evalharness.BuildValidationSummary(result)
 	result.DurationMS = time.Since(started).Milliseconds()
-	persistEvalTrace(&result)
 	return result
 }
 
@@ -541,18 +591,6 @@ func applyEvalAttentionIssues(result *evalharness.Result) {
 	}
 	if len(evalharness.AttentionValidationIssues(result.Observability.Attention)) > 0 {
 		result.Success = false
-	}
-}
-
-func setTemporaryEnv(key, value string) func() {
-	previous, existed := os.LookupEnv(key)
-	_ = os.Setenv(key, value)
-	return func() {
-		if existed {
-			_ = os.Setenv(key, previous)
-			return
-		}
-		_ = os.Unsetenv(key)
 	}
 }
 
@@ -625,15 +663,28 @@ func collectEvalObservability(rt *runtime.Session, sessionID, taskRoot string, k
 }
 
 func persistEvalTrace(result *evalharness.Result) {
-	if result == nil || result.Observability == nil {
+	if result == nil {
 		return
 	}
+	traceDir := ""
+	if result.Environment != nil {
+		traceDir = result.Environment.ArtifactsDir
+	}
+	if result.Observability == nil {
+		if traceDir == "" {
+			return
+		}
+		result.Observability = &evalharness.Observability{}
+	}
 	obs := result.Observability
-	if strings.TrimSpace(obs.SessionDir) == "" {
+	if traceDir == "" {
+		traceDir = obs.SessionDir
+	}
+	if strings.TrimSpace(traceDir) == "" {
 		obs.Warnings = append(obs.Warnings, "eval trace unavailable: session dir is empty")
 		return
 	}
-	tracePath := filepath.Join(obs.SessionDir, "eval-trace.jsonl")
+	tracePath := filepath.Join(traceDir, "eval-trace.jsonl")
 	obs.TracePath = tracePath
 	if err := evalharness.WriteTrace(tracePath, *result); err != nil {
 		obs.Warnings = append(obs.Warnings, "write eval trace: "+evalSafePreview(err.Error(), evalTextPreviewLimit))
@@ -1304,6 +1355,12 @@ func writeSessionTraceReplaySummary(path string, summary sessiontrace.ReplaySumm
 }
 
 func printEvalReport(report evalReport) {
+	if report.Environment != "" {
+		fmt.Printf("environment: %s (host tools, other environment variables and network are inherited)\n", report.Environment)
+	}
+	if report.ArtifactsDir != "" {
+		fmt.Printf("artifacts: %s\n", report.ArtifactsDir)
+	}
 	fmt.Printf("eval: %d/%d passed in %dms\n", report.Summary.Passed, report.Summary.Total, report.DurationMS)
 	if report.Summary.InputTokens > 0 || report.Summary.OutputTokens > 0 || report.Summary.CacheReadTokens > 0 || report.Summary.CacheCreationTokens > 0 {
 		fmt.Printf("tokens: input=%d output=%d cache_read=%d cache_creation=%d cache_hit_rate=%.2f\n",

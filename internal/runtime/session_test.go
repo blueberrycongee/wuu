@@ -97,6 +97,36 @@ func TestSessionLifecycleHooksDispatchOnce(t *testing.T) {
 	if got, want := strings.Fields(string(raw)), []string{"start", "end"}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("lifecycle events = %v, want %v", got, want)
 	}
+
+	for _, event := range []hooks.Event{hooks.SessionStart, hooks.SessionEnd} {
+		t.Run(string(event)+" canceled", func(t *testing.T) {
+			kit, err := tools.New(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			manager := mcp.NewManager()
+			kit.SetMCPManager(manager)
+			session := &Session{RootDir: t.TempDir(), StateDir: t.TempDir(), Toolkit: kit,
+				HookDispatcher: hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
+					event: {{Command: "sleep 60"}},
+				})),
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if event == hooks.SessionStart {
+				if err := session.SetSessionIDWithContext(ctx, "canceled-hooks"); !errors.Is(err, context.Canceled) {
+					t.Fatalf("SetSessionIDWithContext error = %v, want cancellation", err)
+				}
+			}
+			_, err = session.CleanupWithContext(ctx)
+			if event == hooks.SessionEnd && !errors.Is(err, context.Canceled) {
+				t.Fatalf("CleanupWithContext error = %v, want cancellation", err)
+			}
+			if err := manager.Connect(context.Background(), "docs"); !errors.Is(err, mcp.ErrManagerClosed) {
+				t.Fatalf("canceled lifecycle hook prevented MCP cleanup: %v", err)
+			}
+		})
+	}
 }
 
 func TestSessionCleanupPreservesWorktreesWhileTerminalFinalizationIsPending(t *testing.T) {

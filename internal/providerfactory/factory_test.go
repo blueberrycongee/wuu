@@ -438,7 +438,7 @@ func TestResolveAuthToken_NonMiniMaxStoredAuthTokenStaysBearer(t *testing.T) {
 		BaseURL: "https://api.anthropic.com",
 		Model:   "claude-3-5-sonnet-latest",
 	}
-	if got := resolveAuthToken(provider, "anthropic"); got != "bearer-token" {
+	if got := resolveAuthTokenWithHome(provider, "anthropic", os.Getenv("HOME")); got != "bearer-token" {
 		t.Fatalf("auth token = %q, want bearer-token", got)
 	}
 }
@@ -667,6 +667,17 @@ func TestResolveAPIKey_SavedKeyVersusEnvironment(t *testing.T) {
 			if err != nil || got != tc.want {
 				t.Fatalf("key = %q, err = %v, want %q", got, err, tc.want)
 			}
+			key, token, err := ResolveStaticCredentials(tc.provider, "myapi", home)
+			if err != nil || key != tc.want || token != "" {
+				t.Fatalf("static credentials changed selection: key=%q token=%q err=%v", key, token, err)
+			}
+			provider := tc.provider
+			provider.APIKey, provider.APIKeyEnv = key, ""
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("WUU_HOME", t.TempDir())
+			if got, err := resolveAPIKey(provider, "myapi"); err != nil || got != tc.want {
+				t.Fatalf("relocated credential = %q, err=%v, want %q", got, err, tc.want)
+			}
 		})
 	}
 }
@@ -683,11 +694,11 @@ func TestResolveAuthToken_SavedTokenBeatsImplicitDefaultEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := config.ProviderConfig{Type: "anthropic", BaseURL: "https://api.anthropic.com", Model: "claude"}
-	if got := resolveAuthToken(provider, "anthropic"); got != "saved-token" {
+	if got := resolveAuthTokenWithHome(provider, "anthropic", os.Getenv("HOME")); got != "saved-token" {
 		t.Fatalf("auth token = %q, want the saved token", got)
 	}
 	provider.AuthTokenEnv = "ANTHROPIC_AUTH_TOKEN"
-	if got := resolveAuthToken(provider, "anthropic"); got != "ambient-token" {
+	if got := resolveAuthTokenWithHome(provider, "anthropic", os.Getenv("HOME")); got != "ambient-token" {
 		t.Fatalf("explicit auth_token_env = %q, want it to win", got)
 	}
 }

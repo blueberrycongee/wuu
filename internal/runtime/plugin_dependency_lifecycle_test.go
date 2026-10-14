@@ -148,7 +148,7 @@ func TestInitialPluginHostFailureBlocksRequiredConsumers(t *testing.T) {
 	consumer.Requires = []string{"provider"}
 	consumer.Hooks = map[string][]config.HookEntry{string(hooks.PreToolUse): {{Type: "command", Command: "must-not-run"}}}
 	plugins := []pluginpkg.Plugin{provider, consumer}
-	host, _ := startPluginHost(plugins, t.TempDir(), "workspace", t.TempDir(), t.TempDir(), nil, nil)
+	host, _ := startPluginHost(context.Background(), plugins, t.TempDir(), "workspace", t.TempDir(), t.TempDir(), nil, nil)
 	defer host.Close(context.Background())
 	available := availablePluginPackages(plugins, host)
 	if dispatcher := buildHookDispatcher(config.Config{}, available, nil, "", nil); dispatcher.HasHooks(hooks.PreToolUse) {

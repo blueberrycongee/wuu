@@ -188,7 +188,7 @@ func TestPluginCapabilityRejectsInvalidRequestPatch(t *testing.T) {
 }
 
 func TestStartPluginHostPreservesRuntimeFailure(t *testing.T) {
-	host, _ := startPluginHost([]pluginpkg.Plugin{{
+	host, _ := startPluginHost(context.Background(), []pluginpkg.Plugin{{
 		Manifest: pluginpkg.Manifest{ID: "broken", Runtime: &pluginpkg.RuntimeSpec{
 			Protocol: pluginhost.ProtocolName,
 			Command:  "/definitely/not/a/wuu-plugin",

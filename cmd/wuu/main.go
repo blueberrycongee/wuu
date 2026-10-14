@@ -66,6 +66,10 @@ func run(args []string) error {
 		return executionworker.Serve(context.Background(), os.Stdin, os.Stdout)
 	}
 
+	if args[0] == "eval-worker" {
+		return runEvalWorker(os.Stdin, os.Stdout)
+	}
+
 	// Pre-launch installs left credential-bearing files at 0o644 / 0o755.
 	// Normalize them once, then rely on private-state writers for new paths.
 	// Rewalking a large session home on every command makes even
@@ -2362,7 +2366,9 @@ Eval flags:
   --output          write eval report JSON to path
   --max-steps       max tool loop steps per task
   --timeout         timeout per task (default 10m)
-  --keep-workdirs   keep temporary task workdirs
+  --environment     isolated (default) or inherited context and state
+  --artifacts-dir   parent directory for retained reports, traces, and isolated state
+  --keep-workdirs   also keep temporary task workdirs and homes
   --replay-trace    replay an eval trace JSONL without calling a model or tools
   --live-codex-oauth
                    run live Codex OAuth E2E eval using local Codex CLI or wuu OAuth credentials

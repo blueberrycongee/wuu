@@ -1047,8 +1047,15 @@ func TestPersistEvalTraceWritesSessionArtifact(t *testing.T) {
 		},
 	}
 
+	// Evaluation state may be removed or live elsewhere; a chosen evidence
+	// directory owns the portable trace and its environment declaration.
+	artifactDir := t.TempDir()
+	result.Environment = &evalharness.EnvironmentObservation{Mode: "isolated", ArtifactsDir: artifactDir}
 	persistEvalTrace(&result)
 
+	if result.Observability.TracePath != filepath.Join(artifactDir, "eval-trace.jsonl") {
+		t.Fatalf("trace is not retained in artifacts directory: %+v", result.Observability)
+	}
 	if result.Observability.TracePath == "" {
 		t.Fatalf("trace path not recorded: %+v", result.Observability)
 	}
@@ -1058,6 +1065,10 @@ func TestPersistEvalTraceWritesSessionArtifact(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"type":"model_profile"`) || !strings.Contains(string(data), `"type":"final"`) {
 		t.Fatalf("trace missing expected events:\n%s", string(data))
+	}
+	summary, err := evalharness.ReplayTrace(result.Observability.TracePath)
+	if err != nil || summary.Task.Environment == nil || summary.Task.Environment.Mode != "isolated" {
+		t.Fatalf("environment not preserved by replay: %+v, err=%v", summary.Task, err)
 	}
 }
 
@@ -1330,31 +1341,6 @@ func TestRunEvalReplaySessionTraceTextPrintsPolicyBlocks(t *testing.T) {
 	}
 	if strings.Contains(output, strings.Repeat("f", 64)) {
 		t.Fatalf("session replay text output should not print argument fingerprints by default:\n%s", output)
-	}
-}
-
-func TestSetTemporaryEnvRestoresPreviousValue(t *testing.T) {
-	t.Setenv("WUU_HOME", "/tmp/original-wuu-home")
-	restore := setTemporaryEnv("WUU_HOME", "/tmp/eval-wuu-home")
-	if got := os.Getenv("WUU_HOME"); got != "/tmp/eval-wuu-home" {
-		t.Fatalf("WUU_HOME = %q, want temporary value", got)
-	}
-	restore()
-	if got := os.Getenv("WUU_HOME"); got != "/tmp/original-wuu-home" {
-		t.Fatalf("WUU_HOME = %q, want original value", got)
-	}
-}
-
-func TestSetTemporaryEnvUnsetsMissingValue(t *testing.T) {
-	t.Setenv("WUU_HOME", "placeholder")
-	os.Unsetenv("WUU_HOME")
-	restore := setTemporaryEnv("WUU_HOME", "/tmp/eval-wuu-home")
-	if got := os.Getenv("WUU_HOME"); got != "/tmp/eval-wuu-home" {
-		t.Fatalf("WUU_HOME = %q, want temporary value", got)
-	}
-	restore()
-	if _, ok := os.LookupEnv("WUU_HOME"); ok {
-		t.Fatal("WUU_HOME should be unset after restore")
 	}
 }
 

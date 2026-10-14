@@ -55,6 +55,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Built-in evaluations use fresh per-task processes, homes and Wuu state by
+  default, retaining selected BYOK credentials only in memory. Explicit
+  inherited-home mode preserves existing configurations and subscription auth.
+  Reports, replay traces and isolated runtime evidence are retained in a chosen
+  run directory, with environment and plugin/guidance provenance.
+
 - Desktop text uses stronger light-theme contrast and native macOS font smoothing
   by default, with an optional grayscale setting. Content fonts can be selected
   independently for messages, drafts, and Markdown previews; code editors now

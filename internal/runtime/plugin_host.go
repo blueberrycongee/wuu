@@ -20,8 +20,8 @@ func startPluginClient(ctx context.Context, cfg pluginhost.ProcessConfig) (plugi
 	return pluginhost.Start(ctx, cfg)
 }
 
-func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker) (*pluginhost.Host, *kernelHostServices) {
-	host, kernel, err := buildPluginHost(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, turnRouter, userQuestions)
+func startPluginHost(ctx context.Context, plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker) (*pluginhost.Host, *kernelHostServices) {
+	host, kernel, err := buildPluginHost(ctx, plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, turnRouter, userQuestions)
 	if err != nil {
 		// A fatal negotiation closes the entire prepared generation. Preserve
 		// each unavailable runtime and the graph so initial-session consumers
@@ -32,10 +32,10 @@ func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 				failed.Add(pluginhost.Failed(item.ID, err))
 			}
 		}
-		failed.BlockFailedPackageDependencies(context.Background())
+		failed.BlockFailedPackageDependencies(ctx)
 		return failed, nil
 	}
-	if err := activatePluginHost(context.Background(), host); err != nil {
+	if err := activatePluginHost(ctx, host); err != nil {
 		providers.DebugLogf("activate initial plugin generation: %v", err)
 	}
 	return host, kernel
@@ -48,7 +48,7 @@ func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
 	return host.Activate(ctx)
 }
 
-func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker) (*pluginhost.Host, *kernelHostServices, error) {
+func buildPluginHost(ctx context.Context, plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker) (*pluginhost.Host, *kernelHostServices, error) {
 	host := newPluginHostWithRequirements(plugins)
 	var started []pluginhost.Client
 	kernel := newKernelHostServices(func() uint64 {
@@ -74,6 +74,9 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		return err
 	}
 	for _, item := range plugins {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, errors.Join(err, closeStarted())
+		}
 		if dependencyErr := host.PackageDependencyFailures()[item.ID]; dependencyErr != nil {
 			host.Add(pluginhost.Failed(item.ID, dependencyErr))
 			if required[item.ID] {
@@ -88,7 +91,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		handler := newPluginHostServices(item, projectRoot, wuuHome, turnRouter)
 		kernel.add(item.ID, handler)
 		registry.AllowPreflight(item.ID, pluginhost.KernelPreflightRequirements())
-		client, err := start(context.Background(), pluginhost.ProcessConfig{
+		client, err := start(ctx, pluginhost.ProcessConfig{
 			ID:                item.ID,
 			Command:           item.Runtime.Command,
 			Args:              item.Runtime.Args,
@@ -113,6 +116,9 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		}
 		started = append(started, client)
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, errors.Join(err, closeStarted())
+	}
 	// The service registry is built from the whole generation's initialize
 	// results before any client is registered, so an unsatisfied required
 	// service blocks that consumer without its capabilities ever going live.
@@ -131,7 +137,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		}
 		host.Add(client)
 	}
-	host.BlockFailedPackageDependencies(context.Background())
+	host.BlockFailedPackageDependencies(ctx)
 	if err := host.ValidateCapabilities(); err != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		closeErr := host.Close(ctx)

@@ -57,6 +57,14 @@ func TestBuildClientAnthropicCredentialIsolation(t *testing.T) {
 			defer endpoint.Close()
 			provider := tc.provider
 			provider.Type, provider.BaseURL, provider.Model = "anthropic", endpoint.URL, "synthetic-model"
+			key, token, err := ResolveStaticCredentials(provider, "gateway", os.Getenv("HOME"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider.APIKey, provider.AuthToken = key, token
+			provider.APIKeyEnv, provider.AuthTokenEnv = "", ""
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("WUU_HOME", t.TempDir())
 			client, err := BuildClient(provider, "gateway")
 			if err != nil {
 				t.Fatal(err)

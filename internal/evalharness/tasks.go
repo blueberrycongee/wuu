@@ -26,7 +26,6 @@ type Task struct {
 	RequiredToolCalls    []ToolCallRequirement
 	RequiredToolSequence []ToolCallRequirement
 	RequiredErrors       []ToolErrorRequirement
-	IsolateWuuHome       bool
 	Setup                func(root string) error
 	Configure            func(root string, cfg config.Config) config.Config
 	Verify               func(ctx context.Context, root, answer string) (Verification, error)
@@ -59,7 +58,39 @@ type VerificationEvidence struct {
 	Observed string `json:"observed,omitempty"`
 }
 
+// EnvironmentObservation records the context sources admitted to an evaluation.
+// Home isolation is not a shell sandbox or an isolated machine/network.
+type EnvironmentObservation struct {
+	Mode                     string                `json:"mode"`
+	Configuration            string                `json:"configuration"`
+	ArtifactsDir             string                `json:"artifacts_dir"`
+	HostEnvironmentInherited bool                  `json:"host_environment_inherited"`
+	Platform                 string                `json:"platform"`
+	WuuVersion               string                `json:"wuu_version"`
+	TaskMaxSteps             int                   `json:"task_max_steps"`
+	TaskTimeoutMS            int64                 `json:"task_timeout_ms"`
+	Agent                    config.AgentConfig    `json:"agent"`
+	PTC                      config.PTCConfig      `json:"ptc"`
+	MCPServers               []string              `json:"mcp_servers,omitempty"`
+	Plugins                  []PluginObservation   `json:"plugins,omitempty"`
+	Instructions             []GuidanceObservation `json:"instructions,omitempty"`
+	Skills                   []GuidanceObservation `json:"skills,omitempty"`
+}
+
+type PluginObservation struct {
+	ID          string `json:"id"`
+	Version     string `json:"version,omitempty"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+type GuidanceObservation struct {
+	Name          string `json:"name"`
+	Source        string `json:"source"`
+	ContentSHA256 string `json:"content_sha256"`
+}
+
 type Result struct {
+	Environment          *EnvironmentObservation  `json:"environment,omitempty"`
 	TaskID               string                   `json:"task_id"`
 	TaskName             string                   `json:"task_name"`
 	Success              bool                     `json:"success"`
