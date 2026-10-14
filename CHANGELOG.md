@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- iOS and Android render Mermaid diagrams offline as replies stream, preserve the
+  last valid diagram during partial syntax, and expose source and copy actions.
+
 - iOS automatically loads older conversation pages after opening a thread, with
   larger readable history pages, retained reading position, and retry on failure.
   Process details remain available on demand.

@@ -5,7 +5,30 @@ import WuuCore
 /// Read-only, local fixtures for repeatable simulator checks without touching an account.
 enum NativeUIFixture {
     static var enabled: Bool { ProcessInfo.processInfo.arguments.contains("--native-ui-fixture") }
+    static let mermaidSource = """
+    图表随回复逐步更新，宽图可以横向滚动。
+
+    ```mermaid title=流程
+    flowchart TD
+      A[收到消息] --> B[绘制图表]
+      B --> C{语法完整？}
+      C -->|是| D[更新图表]
+      C -->|否| E[保留上一帧]
+    ```
+
+    普通 **Markdown** 和 `code` 继续使用原生排版。
+    """
     static func thread() -> ChatThread {
+        if ProcessInfo.processInfo.arguments.contains("--native-mermaid-fixture") {
+            if ProcessInfo.processInfo.arguments.contains("--native-stream-fixture") {
+                return ChatThread(["id": "local-ui-fixture", "title": "Mermaid", "turns": []])
+            }
+            return ChatThread(["id": "local-ui-fixture", "title": "Mermaid", "turns": [
+                ["id": "diagram", "status": "completed", "items": [
+                    ["id": "reply", "type": "agent_message", "text": .string(mermaidSource)]
+                ]]
+            ]])
+        }
         if ProcessInfo.processInfo.arguments.contains("--native-pending-fixture") {
             let prompt = "请详细说明这项功能。" + String(repeating: "请保留关键结论和代码位置，说明实际影响。", count: 10)
             return ChatThread(["id": "local-ui-fixture", "title": "待处理消息预览", "status": "in_progress", "turns": [
@@ -103,7 +126,8 @@ struct NativeUIFixtureView: View {
         streaming = true
         stream = Task {
             let id = UUID().uuidString
-            let source = """
+            let diagram = ProcessInfo.processInfo.arguments.contains("--native-mermaid-fixture")
+            let source = diagram ? NativeUIFixture.mermaidSource : """
             ### 流式动画
 
             新收到的文字柔和淡入，已经读过的内容保持稳定。连续输出时仍然可以滚动、选择文字和打开链接。
@@ -128,13 +152,13 @@ struct NativeUIFixtureView: View {
             var output = ""
             model.live?.apply("turn/started", ["thread_id": "local-ui-fixture", "turn": ["id": .string(id), "status": "in_progress",
                 "items": [["id": "reply", "type": "agent_message", "text": ""]]]])
-            // Continuous 20ms deltas exercise coalescing without a quiet debounce interval.
+            // Continuous deltas exercise coalescing without a quiet debounce interval.
             var rest = source[...]
             while !rest.isEmpty && !Task.isCancelled {
-                let chunk = String(rest.prefix(3)); rest = rest.dropFirst(chunk.count)
+                let chunk = String(rest.prefix(diagram ? 2 : 3)); rest = rest.dropFirst(chunk.count)
                 output += chunk
                 model.live?.apply("item/agentMessage/delta", ["thread_id": "local-ui-fixture", "turn_id": .string(id), "item_id": "reply", "delta": .string(chunk)])
-                do { try await Task.sleep(for: .milliseconds(20)) } catch { break }
+                do { try await Task.sleep(for: .milliseconds(diagram ? 40 : 20)) } catch { break }
             }
             model.live?.apply("turn/completed", ["thread_id": "local-ui-fixture", "turn": ["id": .string(id), "status": "completed",
                 "items": [["id": "reply", "type": "agent_message", "text": .string(output)]]]])

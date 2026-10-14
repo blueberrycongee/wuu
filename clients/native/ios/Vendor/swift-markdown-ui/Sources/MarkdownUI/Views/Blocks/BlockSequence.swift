@@ -24,10 +24,11 @@ where
 
   var body: some View {
     VStack(alignment: self.textAlignment.alignment.horizontal, spacing: 0) {
-      ForEach(self.data, id: \.self) { element in
+      // Streaming edits keep each block's native view (including diagram WebViews).
+      ForEach(self.data, id: \.index) { element in
         self.content(element.index, element.value)
           .onPreferenceChange(BlockMarginsPreference.self) { value in
-            self.blockMargins[element.hashValue] = value
+            self.blockMargins[element.index] = value
           }
           .padding(.top, self.topPaddingLength(for: element))
       }
@@ -39,10 +40,10 @@ where
       return 0
     }
 
-    let topSpacing = self.blockMargins[element.hashValue]?.top
+    let topSpacing = self.blockMargins[element.index]?.top
     let predecessor = self.data[element.index - 1]
     let predecessorBottomSpacing =
-      self.tightSpacingEnabled ? 0 : self.blockMargins[predecessor.hashValue]?.bottom
+      self.tightSpacingEnabled ? 0 : self.blockMargins[predecessor.index]?.bottom
 
     return [topSpacing, predecessorBottomSpacing]
       .compactMap { $0 }
