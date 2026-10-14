@@ -561,6 +561,8 @@ func runSession(args []string) error {
 		return runSessionDelete(args[1:])
 	case "export":
 		return runSessionExport(args[1:])
+	case "compact":
+		return runSessionCompact(args[1:])
 	default:
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, fmt.Errorf("unknown session subcommand %q", args[0]))
 	}
@@ -2260,7 +2262,7 @@ Usage:
   wuu exec review (--uncommitted|--base REF|--commit SHA) [flags]
   wuu -c|--continue [flags] [prompt...]          shortcut: exec -c
   wuu -r|--resume THREAD_ID [flags] [prompt...]  shortcut: exec -r
-  wuu session list|show|trace|search|archive|delete|export [flags]
+  wuu session list|show|trace|search|archive|delete|export|compact [flags]
   wuu skills lint [--json] PATH...
   wuu plugin inspect|install|update|list|approve|reject|enable|disable|remove [flags]
   wuu plugin create|validate|build|test|pack [flags]

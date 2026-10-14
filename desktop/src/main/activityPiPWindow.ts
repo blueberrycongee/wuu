@@ -16,6 +16,8 @@ import type { ActivityPiPContent, ActivityPiPContentFactory } from "./activityPi
 import type { CUANativePiPEvent } from "./cuaFrameStreams";
 type Interaction = NonNullable<ActivitySession["interaction"]>;
 
+const COMPLETION_DISMISS_DELAY_MS = 30_000;
+
 export type BrowserPiPWindowHandle = BrowserParentWindowHandle & {
   setAlwaysOnTop(flag: boolean, level?: string): void;
   setVisibleOnAllWorkspaces(visible: boolean, options?: { visibleOnFullScreen?: boolean }): void;
@@ -67,6 +69,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private visible = false;
   private stopped = false;
   private completed = false;
+  private completionDismissed = false;
+  private completionTimer: ReturnType<typeof setTimeout> | undefined;
   private dark = false;
   private hoverTimer: ReturnType<typeof setInterval> | undefined;
   private hoverPoint: PipPoint | null | undefined;
@@ -188,6 +192,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     win.on("closed", () => {
       if (this.win !== win) return;
       this.stopHoverTracking();
+      this.setTurnCompleted(false);
       this.detachHostParent?.();
       this.detachHostParent = undefined;
       this.win = undefined;
@@ -202,7 +207,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   setVisible(visible: boolean): void {
     this.awaitingVisibility = false;
     this.visible = visible;
-    if (!visible) this.setTurnCompleted(false);
     this.applyVisibility();
   }
 
@@ -216,7 +220,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     // Showing a native child window can reveal its hidden parent on macOS.
     // Restore the preview from host visibility events, never by showing Wuu.
     const parentHidden = parent && (parent.isDestroyed() || !parent.isVisible() || parent.isMinimized());
-    if (this.visible && !columnGone && !parentHidden) {
+    if (this.visible && !this.completionDismissed && !columnGone && !parentHidden) {
       // On macOS, showing a native child orders its parent forward even with
       // showInactive(). Defer a new presentation until the user returns to its
       // host; an already-visible card stays put, including while it has focus.
@@ -284,9 +288,25 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   }
 
   setTurnCompleted(completed: boolean): void {
-    if (this.completed === completed) return;
+    if (this.stopped || this.completed === completed) return;
     this.completed = completed;
+    if (this.completionTimer) clearTimeout(this.completionTimer);
+    this.completionTimer = undefined;
+    const wasDismissed = this.completionDismissed;
+    this.completionDismissed = false;
     this.pushCompletion();
+    if (completed) {
+      this.completionTimer = setTimeout(() => {
+        this.completionTimer = undefined;
+        // Keep dismissal separate from requested visibility so layout and
+        // activity refreshes cannot reopen a completed preview.
+        this.completionDismissed = true;
+        this.applyVisibility();
+      }, COMPLETION_DISMISS_DELAY_MS);
+      this.completionTimer.unref?.();
+    } else if (wasDismissed && !this.awaitingVisibility) {
+      this.applyVisibility();
+    }
   }
 
   private pushCompletion(): void {
@@ -336,8 +356,12 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       this.forwardInteraction({ kind: "clear" });
     }
     if (activity.controller !== "agent") this.pendingInteraction = undefined;
+    const previous = this.activity;
     this.activity = activity;
-    if (activity.state === "stopped" || activity.state === "error" || activity.controller === "user") {
+    // Task cleanup and repeated snapshots must not erase a successful turn
+    // completion or restart its dismissal deadline.
+    if (activity.execution_id !== previous.execution_id
+      || activity.state === "error" || activity.controller === "user") {
       this.setTurnCompleted(false);
     }
     this.pushActivityState();
@@ -345,6 +369,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   }
 
   retarget(activity: ActivitySession, sink: ObservationPiPEventSink): void {
+    this.awaitingVisibility = true;
     this.setTurnCompleted(false);
     this.cancelSnap();
     const bounds = this.win?.getBounds();
@@ -358,7 +383,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.controlFailed = false;
     this.setCaptureStatus({ status: "healthy" });
     this.pendingRetarget = true;
-    this.awaitingVisibility = true;
     this.stopContent();
     this.pushActivityState();
   }
@@ -404,6 +428,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       return;
     }
     this.stopped = true;
+    if (this.completionTimer) clearTimeout(this.completionTimer);
+    this.completionTimer = undefined;
     this.pendingRetarget = false;
     this.stopHoverTracking();
     this.detachHostParent?.();
@@ -723,8 +749,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   }
 
   private forwardInteraction(hint: BrowserInteractionHint): Promise<unknown> | undefined {
-    if (hint.kind !== "clear" && (!this.mounted || !this.win?.isVisible())) return;
     if (hint.kind !== "clear") this.setTurnCompleted(false);
+    if (hint.kind !== "clear" && (!this.mounted || !this.win?.isVisible())) return;
     return this.execute(`window.wuuPipInteract?.(${JSON.stringify(hint)})`);
   }
 

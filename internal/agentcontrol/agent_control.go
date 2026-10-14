@@ -90,7 +90,7 @@ type AgentControl struct {
 	queueStartMu      sync.Mutex
 	queueStarted      bool
 	queueStopped      bool
-	queuePauses       int // concurrent StopAll calls keep queue admission paused
+	queuePauses       int // concurrent StopAll calls pause queue admission and parent wakeups
 	queueDrainMu      sync.Mutex
 	queueMu           sync.Mutex
 	queued            []preparedSpawn
@@ -1851,8 +1851,8 @@ func (c *AgentControl) StopAll() {
 	if c == nil {
 		return
 	}
-	// Releasing a running slot must not let the queue drain launch its next
-	// worker before this cancellation reaches the queued admissions.
+	// Pause queue admission and automatic parent wakeups before cancellation
+	// releases running slots or delivers child results to still-open edges.
 	c.queueStartMu.Lock()
 	c.queuePauses++
 	c.queueStartMu.Unlock()

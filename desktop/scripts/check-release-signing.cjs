@@ -14,11 +14,19 @@ function checkReleaseSigning(env = process.env) {
   const args = ["find-identity", "-v", "-p", "codesigning"];
   if (env.WUU_RELEASE_KEYCHAIN) args.push(env.WUU_RELEASE_KEYCHAIN);
   const identities = execFileSync("security", args, { encoding: "utf8" });
-  if (!identities.toUpperCase().includes(identity)) {
-    throw new Error("The persistent release signing identity is not available in the release keychain.");
+  if (!identities.split("\n").some((line) => line.toUpperCase().includes(identity) && line.includes("Developer ID Application:"))) {
+    throw new Error("The pinned Developer ID Application identity is not available in the release keychain.");
   }
   return identity;
 }
 
-module.exports = { releaseSigningIdentity, checkReleaseSigning };
-if (require.main === module) checkReleaseSigning();
+function releaseCredentials(env = process.env) {
+  releaseSigningIdentity(env);
+  for (const name of ["WUU_RELEASE_TEAM_ID", "APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER"]) {
+    if (!env[name]?.trim()) throw new Error(`Missing release credential: ${name}`);
+  }
+  if (!/^[A-Z0-9]{10}$/.test(env.WUU_RELEASE_TEAM_ID)) throw new Error("Invalid release Team ID");
+}
+
+module.exports = { releaseSigningIdentity, checkReleaseSigning, releaseCredentials };
+if (require.main === module) { releaseCredentials(); checkReleaseSigning(); }

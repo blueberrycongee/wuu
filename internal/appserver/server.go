@@ -471,12 +471,15 @@ func (s *Server) maintainSessionStoragePass(ctx context.Context) {
 			return
 		}
 		providers.DebugLogf("redundant session storage maintenance: %v", err)
-	} else if redundant.ProjectedToolResultsCleared > 0 || redundant.SupersededCheckpointsDeleted > 0 || redundant.ToolMessageContentsCompacted > 0 {
+	} else if redundant.ProjectedToolResultsCleared > 0 || redundant.SupersededCheckpointsDeleted > 0 || redundant.ToolMessageContentsCompacted > 0 || redundant.CheckpointsEncoded > 0 {
 		providers.DebugLogf(
-			"redundant session storage maintenance: projected_results=%d superseded_checkpoints=%d tool_message_projections=%d",
+			"redundant session storage maintenance: projected_results=%d superseded_checkpoints=%d tool_message_projections=%d checkpoints_encoded=%d checkpoint_bytes_before=%d checkpoint_bytes_after=%d",
 			redundant.ProjectedToolResultsCleared,
 			redundant.SupersededCheckpointsDeleted,
 			redundant.ToolMessageContentsCompacted,
+			redundant.CheckpointsEncoded,
+			redundant.CheckpointBytesBefore,
+			redundant.CheckpointBytesAfter,
 		)
 	}
 	result, err := session.MaintainModelInputReceipts(ctx, s.rt.SessionDir, time.Now().UTC())

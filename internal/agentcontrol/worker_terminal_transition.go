@@ -45,6 +45,15 @@ const workerTerminalFollowupWait = 30 * time.Second
 var errWorkerEdgeClosed = errors.New("worker edge is closed")
 
 func (c *AgentControl) workerEdgeClosed(workerID string) bool {
+	// StopAll cancels running turns before it can persist each closed edge.
+	// Treat the whole tree as closed during that wave so a cancelled child's
+	// result is released and settled instead of waking its parked parent.
+	c.queueStartMu.Lock()
+	stoppingAll := c.queuePauses > 0
+	c.queueStartMu.Unlock()
+	if stoppingAll {
+		return true
+	}
 	meta, ok := c.threads.Resolve(workerID)
 	return ok && meta.Source.EdgeStatus == agentthread.EdgeClosed
 }

@@ -223,6 +223,7 @@ export class ObservationCoordinator {
     this.goneObservations.delete(threadID);
     this.explicitlyShown.add(threadID);
     this.resetRetryBudget(threadID);
+    if (this.current?.threadID === threadID) this.current.pip.setTurnCompleted?.(false);
     if (threadID === this.activeThreadID) this.syncActiveObservation();
   }
 

@@ -829,18 +829,13 @@ jobs:
         run: npm ci --prefix plugins
 
       - name: Package macOS app
-        # Validate the same ad-hoc, capture-only resource layout on native PRs.
+        # Validate the release resource layout with ad-hoc signatures on native PRs.
         if: steps.native-packaging.outputs.required == 'true'
-        env:
-          WUU_SKIP_CUA_MAC: "1"
-          WUU_ENABLE_CUA_MAC: "0"
         run: make build-macos
 
       - name: Ad-hoc sign and verify packaged native resources
         if: steps.native-packaging.outputs.required == 'true'
         env:
-          WUU_SKIP_CUA_MAC: "1"
-          WUU_ENABLE_CUA_MAC: "0"
           # PR packaging skips electron-builder's signing hook. Explicitly use
           # the existing certificate-free signer, never a CI signing identity.
           WUU_RELEASE_SIGN_ID: ""
