@@ -328,8 +328,9 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   }
 
   updateActivity(activity: ActivitySession): void {
+    if (activity.execution_id !== this.activity.execution_id || activity.controller !== this.activity.controller
+      || activity.state === "stopped") this.controlFailed = false;
     if (activity.execution_id !== this.activity.execution_id) {
-      this.controlFailed = false;
       this.lastInteractionRevision = 0;
       this.pendingInteraction = undefined;
       this.forwardInteraction({ kind: "clear" });
