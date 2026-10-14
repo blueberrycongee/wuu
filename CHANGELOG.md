@@ -109,6 +109,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve cancelled worker results when stopping a parent races a pending
+  child-result handoff, without automatically waking the stopped parent.
+
 - Keep iOS conversations visible after sending through long histories, with stable
   latest-message following through keyboard changes and retained reading position
   while replies arrive or older history loads.
