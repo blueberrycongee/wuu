@@ -87,7 +87,7 @@ Plugins add tools and features: scheduled automation, persistent goals, task che
 
 The desktop preview runs on Apple silicon Macs. Download it from [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest), move `wuu.app` to `/Applications`, and open it.
 
-The preview is unsigned. It has ad-hoc signatures only, with no Apple Developer ID or notarization. If macOS blocks it, follow the [installation guide](docs/en/getting-started/installation.md).
+The release pipeline requires Apple Developer ID signing and notarization. Older previews used ad-hoc signatures; check the release notes and [installation guide](docs/en/getting-started/installation.md) for the downloaded version.
 
 On first launch, connect a model service and add a project folder as a workspace. Start with a small task, then check the changes and test results in Review. The [quick start](docs/en/getting-started/index.md) walks through an example.
 

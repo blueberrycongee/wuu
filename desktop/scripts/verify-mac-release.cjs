@@ -1,13 +1,12 @@
-const { execFileSync } = require("node:child_process");
+const { execFileSync, spawnSync } = require("node:child_process");
 const { statSync } = require("node:fs");
 const { join, resolve } = require("node:path");
 const { releaseSigningIdentity } = require("./check-release-signing.cjs");
 
 const app = resolve(process.argv[2] || "release/mac-arm64/wuu.app");
-// Certificate-backed local builds still verify their pinned identity. Public
-// previews use ad-hoc signatures, which seal code without asserting a publisher.
-const requirementArgs = process.env.WUU_RELEASE_SIGN_ID
-  ? ["-R", `=certificate leaf = H"${releaseSigningIdentity()}"`]
+const release = process.env.WUU_RELEASE === "1";
+const requirementArgs = release
+  ? ["-R", `=anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf = H"${releaseSigningIdentity()}" and certificate leaf[subject.OU] = "${process.env.WUU_RELEASE_TEAM_ID}"`]
   : [];
 execFileSync("codesign", ["--verify", "--deep", "--strict", ...requirementArgs, app]);
 const bin = join(app, "Contents", "Resources", "bin");
@@ -52,6 +51,14 @@ const appArchitectures = execFileSync("lipo", ["-archs", join(app, "Contents", "
 for (const binary of [appSnapshotExecutable, captureBridge]) execFileSync("lipo", [binary, "-verify_arch", ...appArchitectures]);
 const bundleID = execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIdentifier", join(app, "Contents/Info.plist")], { encoding: "utf8" }).trim();
 if (bundleID !== "com.blueberrycongee.wuu") throw new Error("Release bundle identity changed");
+if (release) {
+  for (const path of [app, ...requiredBinaries.map((name) => join(bin, name)), rg, appSnapshot, captureBridge]) {
+    const result = spawnSync("codesign", ["-d", "--verbose=4", path], { encoding: "utf8" });
+    if (result.status !== 0 || !/flags=.*\bruntime\b/.test(result.stderr) || !/^Timestamp=/m.test(result.stderr)) {
+      throw new Error(`Missing hardened runtime or secure timestamp: ${path}`);
+    }
+  }
+}
 console.log(skipCua
   ? "Verified release signature, bundle identity, and absence of CUA executables."
   : "Verified release signature, bundle identity, and bundled CUA executables.");

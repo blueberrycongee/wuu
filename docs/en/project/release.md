@@ -80,9 +80,38 @@ to Applications and launching the app. A background-only preview does not valida
 
 ## Signing configuration
 
-The macOS preview uses certificate-free ad-hoc signatures. No Apple Developer membership, signing certificate, or repository signing secrets are required. GitHub supplies `GITHUB_TOKEN` for publication. With `CSC_IDENTITY_AUTO_DISCOVERY=false`, the custom signer seals nested code and the outer app without selecting a local certificate. See the [signing reference](../../../desktop/scripts/RELEASE-SIGNING.md) for optional certificate-backed local builds.
+`npm run release:desktop` requires a pinned Apple Developer ID Application identity,
+hardened runtime, secure timestamps, and App Store Connect team API credentials.
+Missing credentials or any signing, notarization, stapling, or Gatekeeper failure
+stops the job before artifact upload or publication. Local `pack:mac` and `dist:mac`
+remain ad-hoc development builds and are not release commands.
 
-This is an unsigned preview, not Apple Developer ID signing or notarization. Ad-hoc signatures do not establish publisher identity or guarantee permission retention across updates. Users may need **System Settings → Privacy & Security → Open Anyway**, or the app-specific quarantine workaround in the [installation guide](../getting-started/installation.md), after verifying the official download. Users do not need to import a certificate or disable system security globally.
+Configure these repository Actions Secrets. Never commit their values:
+
+- `WUU_RELEASE_CERTIFICATE_P12`: base64-encoded P12 including its private key.
+- `WUU_RELEASE_CERTIFICATE_PASSWORD`: P12 export password.
+- `WUU_RELEASE_SIGN_ID`: certificate SHA-1 fingerprint.
+- `WUU_RELEASE_TEAM_ID`: Apple developer team identifier.
+- `APPLE_API_KEY_P8`: App Store Connect team API private key in PEM format.
+- `APPLE_API_KEY_ID` and `APPLE_API_ISSUER`: that key's ID and team issuer ID.
+
+Use a dedicated team API key with Developer access for notarization. The runner
+imports the certificate into a temporary keychain without adding trust roots and
+removes the keychain and API key in an `always()` cleanup step. Retain encrypted
+backups outside the repository; GitHub Secrets cannot be read back.
+
+The app is notarized and stapled before creating DMG and ZIP archives. The final
+DMG is then signed, notarized, and stapled. Verification mounts that DMG and
+extracts that ZIP, checks both apps' Developer ID identity, runtime flags,
+timestamps, ticket, Gatekeeper assessment, and version. `verification.json`
+records the commit, version, checks, notarization submission ID, and final hashes.
+These checks do not prove UI behavior or permission retention across updates.
+
+Use the Release workflow's manual dispatch for verification without publication.
+The `codex/developer-id-signing` branch also runs this verification on push so the
+workflow can be validated before landing on main. Only a `v*` tag push can enter
+the publication job. No draft or public Release is created by validation runs.
+See the [signing reference](../../../desktop/scripts/RELEASE-SIGNING.md).
 
 ## Published artifacts
 

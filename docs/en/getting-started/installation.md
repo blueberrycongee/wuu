@@ -10,7 +10,7 @@ The current release workflow builds an Apple silicon app. Check the assets and n
 2. Move `wuu.app` to `/Applications` and open it there.
 3. Complete the [first-run setup](index.md) to choose an engine and connect a model service.
 
-This is an unsigned preview: it uses ad-hoc code signatures without a publisher certificate, Apple Developer ID, or notarization. If macOS blocks the app, verify that it came from the official release, then use **System Settings → Privacy & Security → Open Anyway**. Do not disable system security globally or install a certificate to bypass this warning.
+The release pipeline requires Apple Developer ID signing and notarization, with tickets stapled to the app and DMG. Check the downloaded version's release notes: older previews used ad-hoc signatures without a verified publisher identity. The following workaround applies only to those older trusted previews. Do not disable system security globally or install a certificate to bypass a warning.
 
 If macOS still blocks the trusted official download after you move it to `/Applications`, remove quarantine only from that app, then reopen it:
 

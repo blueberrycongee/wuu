@@ -1,7 +1,10 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
+    branches:
+      - "codex/developer-id-signing"
     tags:
       - "v*"
 
@@ -12,9 +15,14 @@ jobs:
   desktop-macos:
     name: Desktop macOS
     runs-on: macos-15
+    timeout-minutes: 60
     env:
       WUU_SKIP_CUA_MAC: "1"
       WUU_ENABLE_CUA_MAC: "0"
+      WUU_RELEASE_TEAM_ID: ${{ secrets.WUU_RELEASE_TEAM_ID }}
+      WUU_RELEASE_SIGN_ID: ${{ secrets.WUU_RELEASE_SIGN_ID }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
     defaults:
       run:
         working-directory: desktop
@@ -37,6 +45,7 @@ jobs:
             clients/mobile-web/package-lock.json
 
       - name: Verify tag source
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           git fetch --no-tags origin main:refs/remotes/origin/main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
@@ -47,7 +56,24 @@ jobs:
       - name: Check release version
         run: |
           node --test ../scripts/release-version.test.mjs
-          node ../scripts/release-version.mjs check "$GITHUB_REF_NAME"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            node ../scripts/release-version.mjs check "$GITHUB_REF_NAME"
+          else
+            node ../scripts/release-version.mjs check
+          fi
+
+      - name: Install release credentials
+        env:
+          WUU_RELEASE_CERTIFICATE_P12: ${{ secrets.WUU_RELEASE_CERTIFICATE_P12 }}
+          WUU_RELEASE_CERTIFICATE_PASSWORD: ${{ secrets.WUU_RELEASE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          node scripts/install-notary-key.cjs
+          node scripts/import-release-signing.cjs
+
+      - name: Validate notarization credentials
+        run: |
+          xcrun notarytool history --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --output-format json > /dev/null
 
       - name: Check and test Go packages
         run: make -C .. check-go test-go-uncached
@@ -78,8 +104,7 @@ jobs:
 
       - name: Verify packaged app
         run: |
-          node scripts/verify-mac-release.cjs
-          echo "::notice::macOS preview uses ad-hoc signing without a certificate, excludes CUA, and is not notarized."
+          WUU_RELEASE=1 node scripts/verify-mac-release.cjs
 
           core="release/mac-arm64/wuu.app/Contents/Resources/bin/wuu-core"
           version_output="$("$core" --version)"
@@ -105,10 +130,20 @@ jobs:
             desktop/release/*.dmg
             desktop/release/*.zip
             desktop/release/*.blockmap
+            desktop/release/verification.json
           if-no-files-found: error
+
+      - name: Remove release credentials
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/wuu-release.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/wuu-release.keychain-db"
+          fi
+          rm -f "$RUNNER_TEMP/wuu-notary.p8" "$RUNNER_TEMP/wuu-release.p12"
 
   release:
     name: GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     needs:
       - desktop-macos
     runs-on: ubuntu-latest
@@ -138,9 +173,7 @@ jobs:
 
           The app includes its own private wuu core. Standalone CLI archives are not published.
 
-          This is an unsigned preview (ad-hoc code signatures only), without Apple Developer ID or notarization. After moving `wuu.app` to `/Applications`, macOS may block it. For the official asset you trust, try opening it, then use System Settings → Privacy & Security → Open Anyway.
-
-          If macOS still blocks this trusted official download, remove quarantine only from the installed app: `xattr -dr com.apple.quarantine /Applications/wuu.app`. Do not disable Gatekeeper globally. Ad-hoc signatures do not establish publisher identity or guarantee permission retention across updates.
+          This app is signed with Apple Developer ID and notarized. Both the DMG and ZIP contain an app with a stapled notarization ticket. Final packages pass signature and Gatekeeper assessment before publication.
 
           To update, quit Wuu with Cmd+Q, wait for it to exit, then replace `/Applications/wuu.app` with the new app. Open that copy, not the copy inside the DMG. No separate CUA helper installation or certificate import is needed.
 
