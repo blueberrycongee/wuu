@@ -49,6 +49,12 @@ remain visible in the conversation. Published image previews and originals load
 through the encrypted connection when needed; opening an image checks its stored
 content digest.
 
+The native iOS and Android apps render Mermaid code blocks offline, including
+while a reply is arriving. Incomplete syntax keeps the last valid diagram until
+more text arrives; invalid final syntax shows the source. Use View source or Copy
+code to inspect it, and scroll inside wide or tall diagrams. Diagram colors and
+text size follow the phone's appearance settings.
+
 Long-press your message bubble or attachments to copy, edit, select text, or
 share. Replies show copy and fork buttons after their turn finishes. Forking lets
 you choose the current folder or a new Git worktree based on the current commit;

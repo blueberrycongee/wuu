@@ -23,6 +23,8 @@ android {
     }
     buildFeatures { compose = true; buildConfig = true }
     sourceSets.getByName("main").assets.srcDir("../../licenses")
+    sourceSets.getByName("main").assets.srcDir("../../shared-ui/NativeUI")
+    androidResources { ignoreAssetsPattern = "*.sha256:mascot.html:process.js" }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
