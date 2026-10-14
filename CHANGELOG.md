@@ -104,6 +104,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Prevent stopping all agents from launching queued tasks as running agents release their slots; queued admissions are cancelled and rolled back first.
 
+- Keep tool diagnostics out of floating activity previews, show concise guidance
+  for preview failures, and remove the extra preview button from the conversation
+  title bar.
+
 - Preserve browser viewport and click/scroll coordinates in compact live previews,
   including cards scaled below 25% and transitions back to the browser panel.
 

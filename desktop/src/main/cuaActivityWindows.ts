@@ -89,6 +89,7 @@ export type ObservationPiPHandle = {
   setTurnCompleted?(completed: boolean): void;
   setAppearance?(dark: boolean, preferences?: ActivityPreviewAppearance): void;
   setControlPending?(pending: boolean): void;
+  setControlFailed?(): void;
   suspendContent?(message: string): void;
   setHostLayout?(layout: BrowserPiPScreenLayout | null): void;
   setHostParent?(parent: BrowserPiPHostWindow | null): void;
@@ -471,13 +472,16 @@ export class ObservationCoordinator {
       case "control":
         if (event.execution_id !== undefined && event.execution_id !== (entry.activity.execution_id ?? "")) return;
         if (this.control && !entry.controlPending && (event.action === "takeover" || event.action === "release" || event.action === "stop")) {
-          const executionID = entry.activity.execution_id;
+          const controlActivity = entry.activity;
+          const executionID = controlActivity.execution_id;
           entry.controlPending = true;
           entry.pip.setControlPending?.(true);
-          void this.control(entry.activity, event.action)
+          void this.control(controlActivity, event.action)
             .then((activity) => this.update(activity))
             .catch((error: unknown) => {
-              if (this.current === entry && entry.key === key && entry.activity.execution_id === executionID) entry.pip.updateActivity?.({ ...entry.activity, error: error instanceof Error ? error.message : String(error) });
+              console.warn("Activity preview control failed", error);
+              if (this.current === entry && entry.key === key && entry.activity.execution_id === executionID
+                && entry.activity.state !== "stopped" && entry.activity.controller === controlActivity.controller) entry.pip.setControlFailed?.();
             })
             .finally(() => {
               if (this.current !== entry || entry.key !== key || entry.activity.execution_id !== executionID) return;

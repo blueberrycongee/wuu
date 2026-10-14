@@ -2335,10 +2335,6 @@ app.whenReady().then(async () => {
     observationCoordinator.setAutoShow(enabled);
     broadcastToAll("wuu:activity-preview-auto-show-changed", enabled);
   });
-  ipcMain.handle("wuu:activity-preview-show", (_event, threadId: unknown) => {
-    if (typeof threadId !== "string" || !threadId.trim()) throw new Error("Missing conversation");
-    observationCoordinator.showForThread(threadId);
-  });
   ipcMain.handle("wuu:activity-preview-appearance", (event, value: unknown) => {
     // Only the main workbench supplies global presentation preferences.
     if (event.sender !== mainWindow?.webContents || !value || typeof value !== "object") return;

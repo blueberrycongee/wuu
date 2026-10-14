@@ -175,8 +175,6 @@ export const zhCN = {
   "settings.backgroundInvalid": "无法处理此图片。请选择有效的 PNG、JPEG 或 WebP，文件不超过 20 MB，像素不超过 6400 万。",
   "settings.followSystem": "跟随系统",
   "settings.sectionTheme": "主题",
-  "shell.showLiveActivity": "显示实时活动",
-  "app.activityPreviewFailed": "无法打开活动预览，请重试。",
   "settings.liveActivity": "实时活动",
   "settings.activityPreviewAutoShow": "自动显示预览",
   "settings.activityPreviewDescription": "在本机浏览器和电脑操作期间显示悬浮预览。隐藏预览不会停止任务。",
