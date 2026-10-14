@@ -15,13 +15,13 @@ afterEach(() => {
   act(() => root?.unmount());
   root = null;
   container.remove();
+  vi.useRealTimers();
 });
 
 function renderComposer({
   draft = "",
   running = false,
   disabledReason,
-  error,
   onChangeDraft = () => {},
   onSend = () => {},
   onInterrupt = () => {},
@@ -30,7 +30,6 @@ function renderComposer({
   draft?: string;
   running?: boolean;
   disabledReason?: string;
-  error?: string;
   onChangeDraft?: (draft: string) => void;
   onSend?: (prompt: string) => void;
   onInterrupt?: () => void;
@@ -43,7 +42,6 @@ function renderComposer({
         draft={draft}
         running={running}
         disabledReason={disabledReason}
-        error={error}
         queryHistorySessionID="side-1"
         queryHistory={[]}
         onChangeDraft={onChangeDraft}
@@ -84,13 +82,19 @@ describe("SideThreadComposer", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("reports a side request failure above the input and keeps the draft editable", () => {
-    renderComposer({ draft: "retry me", error: "stream request failed: HTTP 503" });
+  it("explains an unavailable side composer on the disabled send action", () => {
+    vi.useFakeTimers();
+    renderComposer({ draft: "retry me", disabledReason: "Select a workspace first" });
 
-    const feedback = container.querySelector('.composer-feedback[role="status"]');
-    expect(feedback?.textContent?.trim()).toBeTruthy();
-    expect(feedback?.textContent).not.toContain("stream request failed");
-    expect((container.querySelector("textarea") as HTMLTextAreaElement).disabled).toBe(false);
+    const send = container.querySelector<HTMLButtonElement>(".composer-send-button")!;
+    expect(send.disabled).toBe(true);
+    expect(send.getAttribute("aria-description")).toBe("Select a workspace first");
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).disabled).toBe(true);
+    act(() => {
+      send.dispatchEvent(new Event("pointerover", { bubbles: true }));
+      vi.advanceTimersByTime(400);
+    });
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe("Select a workspace first");
   });
 
   it("keeps the side composer focusable during a running turn", () => {

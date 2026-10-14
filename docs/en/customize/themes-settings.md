@@ -18,7 +18,9 @@ The picture covers the sidebar, conversation, settings and workspace canvas as o
 
 The UI font-size preference controls the interface and conversation prose together. Code size is separate, so you can make messages easier to read without enlarging code blocks and editors by the same amount. Valid saved preferences are preserved across upgrades.
 
-Appearance settings also let you choose UI and code fonts and reduce motion. A font must be available on the machine to render as intended; otherwise the interface uses its fallback fonts.
+Choose fonts separately for the interface, content, and code. Content defaults to **Same as UI** and applies to messages, drafts, and Markdown previews; its size follows the UI preference. Inline code scales with the surrounding prose, while code blocks, diffs, and editors use the independent code size. **Reset fonts** restores all three font choices without changing sizes.
+
+On macOS, **Font smoothing** defaults to the system rendering for fuller regular-text strokes; choose **Grayscale** for a lighter appearance. You can also reduce motion. Fonts must be installed locally; unavailable fonts use the fallback family.
 
 ## Control commit attribution
 

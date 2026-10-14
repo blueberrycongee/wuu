@@ -1,6 +1,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as Toast from "./Toast";
 import type {
   RuntimeContext,
   SideThreadEvent,
@@ -27,6 +28,8 @@ afterEach(() => {
   });
   roots = [];
   vi.useRealTimers();
+  vi.restoreAllMocks();
+  Toast.clearToasts();
 });
 
 function summary(overrides: Partial<SideThreadSummary> = {}): SideThreadSummary {
@@ -94,7 +97,7 @@ function mountController(
       activeContext: runtimeContext,
       ipc
     });
-    return null;
+    return createElement(Toast.ToastViewport);
   }
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -230,11 +233,16 @@ describe("useSideThreadController", () => {
     await flush();
   });
 
-  it("rolls back an optimistic message and restores the draft on send failure", async () => {
+  it("rolls back a failed request, notifies once, and reports repeated explicit attempts", async () => {
+    vi.useFakeTimers();
+    const toast = vi.spyOn(Toast, "showActionErrorToast");
+    const fail = vi.fn(async () => {
+      throw new Error("provider unavailable");
+    });
     const { ipc } = makeIPC({
-      sendSideThreadMessage: vi.fn(async () => {
-        throw new Error("provider unavailable");
-      })
+      sendSideThreadMessage: fail,
+      interruptSideThread: fail,
+      resetSideThread: fail,
     });
     const hook = mountController(ipc);
 
@@ -245,6 +253,32 @@ describe("useSideThreadController", () => {
     expect(hook.get().entry?.draft).toBe("retry me");
     expect(hook.get().entry?.streaming).toBe(false);
     expect(hook.get().entry?.lastError).toBe("provider unavailable");
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+    act(() => vi.advanceTimersByTime(7_000));
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+
+    hook.rerender("main-2");
+    hook.rerender("main-1");
+    act(() => hook.get().setDraft("keep editing"));
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+
+    for (const action of ["sendMessage", "interrupt", "interrupt", "reset", "reset"] as const) {
+      toast.mockClear();
+      act(() => hook.get()[action]("retry me"));
+      await flush();
+      expect(toast).toHaveBeenCalledTimes(1);
+      expect(document.querySelector('[role="alert"]')).not.toBeNull();
+      act(() => vi.advanceTimersByTime(7_000));
+      expect(document.querySelector('[role="alert"]')).toBeNull();
+    }
+    toast.mockClear();
+    act(() => vi.advanceTimersByTime(31_000));
+    hook.rerender("main-2");
+    hook.rerender("main-1");
+    expect(toast).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alert"]')).toBeNull();
   });
 
   it.each(["unchanged", "text", "selection", "both"] as const)("restores a failed selection request only as a pair when the next draft is %s", async (nextDraft) => {
@@ -291,7 +325,8 @@ describe("useSideThreadController", () => {
     expect(hook.get().entry?.draft).toBe("draft-a");
   });
 
-  it("ignores side-thread events from another workspace", () => {
+  it("only notifies current-workspace failures that no reply shows", () => {
+    const toast = vi.spyOn(Toast, "showActionErrorToast");
     const { ipc, emit } = makeIPC();
     const hook = mountController(ipc);
 
@@ -305,7 +340,55 @@ describe("useSideThreadController", () => {
       "/other-repo"
     );
 
+    emit({
+      type: "error",
+      side_thread_id: "side-1",
+      main_thread_id: "main-1",
+      revision: 1,
+      message_id: "missing",
+      error_message: "connection reset",
+    }, "/other-repo");
     expect(hook.get().entry?.summary).toBeNull();
+    expect(hook.get().entry?.lastError).toBeUndefined();
+    expect(toast).not.toHaveBeenCalled();
+
+    emit({
+      type: "message",
+      side_thread_id: "side-1",
+      main_thread_id: "main-1",
+      revision: 1,
+      message: {
+        id: "reply",
+        side_thread_id: "side-1",
+        role: "assistant",
+        text: "",
+        status: "failed",
+        error_message: "provider unavailable",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    emit({
+      type: "error",
+      side_thread_id: "side-1",
+      main_thread_id: "main-1",
+      revision: 1,
+      message_id: "reply",
+      error_message: "provider unavailable",
+    });
+    expect(toast).not.toHaveBeenCalled();
+
+    emit({
+      type: "error",
+      side_thread_id: "side-1",
+      main_thread_id: "main-1",
+      revision: 1,
+      message_id: "missing",
+      error_message: "connection reset",
+    });
+    expect(toast).toHaveBeenCalledTimes(1);
+    hook.rerender("main-2");
+    hook.rerender("main-1");
+    expect(toast).toHaveBeenCalledTimes(1);
   });
 
   it("refreshes an open side thread when its workspace becomes active again", async () => {

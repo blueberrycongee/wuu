@@ -59,10 +59,6 @@ export function composerStatusText(status: string): string {
   return HIDDEN_COMPOSER_STATUSES.has(resolved) ? "" : resolved;
 }
 
-export function composerStatusIsLiveProgress(liveProgress?: boolean): boolean {
-  return liveProgress === true;
-}
-
 /** Starting a new conversation in its own Git worktree, and where from. */
 export type ComposerWorktreeControl = {
   enabled: boolean;

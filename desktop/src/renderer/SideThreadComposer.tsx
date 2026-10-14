@@ -9,7 +9,6 @@ import {
 } from "./ComposerView";
 import { useI18n } from "./i18n";
 import type { SideThreadSelection } from "../shared/protocol";
-import { statusMessageForError } from "./UserFacingErrors";
 
 const EMPTY_MODEL_STATE: CodexModelLoadState = {
   loading: false,
@@ -28,8 +27,6 @@ export type SideThreadComposerProps = {
   onOpenFile?: (path: string) => void;
   running: boolean;
   disabledReason?: string;
-  /** A side request failure that no reply shows; reported above the input. */
-  error?: string;
   mainThreadId?: string;
   sideThreadId?: string;
   queryHistorySessionID: string;
@@ -52,7 +49,6 @@ export function SideThreadComposer({
   onOpenFile,
   running,
   disabledReason,
-  error,
   mainThreadId,
   sideThreadId,
   queryHistorySessionID,
@@ -71,7 +67,6 @@ export function SideThreadComposer({
   // Keep the draft editable while a side turn runs so the composer remains
   // focusable. Sending stays disabled until the current side turn settles.
   const visibleDraft = draft;
-
 
   return <Composer
       variant={variant}
@@ -92,8 +87,8 @@ export function SideThreadComposer({
       forceStopWhileRunning
       runtimeControlsDisabled
       tokensPerSecond={0}
-      status={disabledReason ?? (error ? statusMessageForError(error, t("sideThread.unavailable")) : "")}
-      statusLiveProgress={false}
+      status={disabledReason ?? ""}
+      disabledReason={disabledReason}
       readOnly={readOnly}
       projects={[]}
       codexModels={EMPTY_MODEL_STATE}

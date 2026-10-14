@@ -39,7 +39,6 @@ import {
   type QueuedComposerMessage
 } from "./ComposerMessages";
 import { useComposerQueryHistory } from "./ComposerQueryHistory";
-import { composerStatusIsLiveProgress, composerStatusText } from "./ComposerTypes";
 import { handoffPromptFromIntent } from "./HandoffDraft";
 import { useI18n } from "./i18n";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
@@ -47,7 +46,6 @@ import { ComposerAttachMenuButton, ComposerCameraPanel } from "./ComposerCamera"
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import { Tooltip } from "./Tooltip";
 import { MessageCopyButton } from "./MessageActions";
-import { ComposerFeedback } from "./ComposerFeedback";
 import type { MessageContentPart, ResponseSelection } from "../shared/protocol";
 
 const ComposerDrawer = createComposerDrawer(React);
@@ -108,8 +106,6 @@ export function SplitPaneComposer({
   sendDisabled: requestedSendDisabled = false,
   stopState,
   submitting = false,
-  status,
-  statusLiveProgress,
   queryHistorySessionID,
   turnId,
   queryHistory = [],
@@ -134,8 +130,6 @@ export function SplitPaneComposer({
   sendDisabled?: boolean;
   stopState?: "pending" | "retry";
   submitting?: boolean;
-  status: string;
-  statusLiveProgress?: boolean;
   queryHistorySessionID?: string;
   turnId?: string;
   queryHistory?: string[];
@@ -183,8 +177,6 @@ export function SplitPaneComposer({
   // mid-turn) so a typed follow-up is never blocked by the stop state.
   const showStop = Boolean(stopState) || ((running || submitting) && !sendDisabled && !hasDraft);
   const sendLabel = running ? t("composer.queueSend") : t("composer.send");
-  const statusText = composerStatusText(status);
-  const statusIsLiveProgress = composerStatusIsLiveProgress(statusLiveProgress);
 
   function focusComposerSoon(): void {
     focusComposerTextarea(textareaRef.current);
@@ -368,7 +360,6 @@ export function SplitPaneComposer({
       <div className="composer-stack">
         <div className="composer-shell" ref={shellRef}>
           <div className="composer-frame-shell">
-            <ComposerFeedback text={statusText} liveProgress={statusIsLiveProgress} />
             {cameraOpen && !readOnly ? (
               <ComposerCameraPanel onCapture={captureCamera} onClose={closeCamera} />
             ) : null}

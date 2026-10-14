@@ -61,7 +61,7 @@
   --gray-600: #737375;
   --gray-650: #5f5f61;
   --gray-700: #3c3c3e;
-  --gray-800: #232324;
+  --gray-800: #1b1b1d;
   --gray-900: #131314;
 
   --ink-strong: var(--wuu-color-text, var(--gray-900));
@@ -72,8 +72,8 @@
      roles from that endpoint and the themed canvas instead of mapping every
      role directly to --wuu-color-text-muted, which would collapse the whole
      hierarchy as soon as a plugin theme supplies the public token. */
-  --ink-tertiary: color-mix(in srgb, var(--ink-soft) 90%, var(--paper));
-  --ink-muted: color-mix(in srgb, var(--ink-soft) 70%, var(--paper));
+  --ink-tertiary: color-mix(in srgb, var(--ink-soft) 95%, var(--paper));
+  --ink-muted: color-mix(in srgb, var(--ink-soft) 85%, var(--paper));
   --ink-faint: color-mix(in srgb, var(--ink-soft) 45%, var(--paper));
 
   --paper: var(--wuu-color-canvas, var(--gray-0));
@@ -385,10 +385,12 @@
   letter-spacing: 0;
   line-height: var(--line-ui);
   text-rendering: optimizeLegibility;
-  /* macOS's default smoothing dilates every stroke: regular text reads a
-   * step heavier and light-on-dark text blooms. Grayscale rendering keeps
-   * each face at its designed weight in both themes; other platforms
-   * ignore these properties. */
+  /* Native smoothing preserves the stroke weight of regular text on macOS. */
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+}
+
+:root[data-font-smoothing="grayscale"] {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

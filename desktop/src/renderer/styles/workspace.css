@@ -1820,7 +1820,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: var(--wuu-inline-code-background, var(--surface-chip));
   color: var(--wuu-color-text, var(--ink));
   font-family: var(--wuu-font-family-mono, var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace));
-  font-size: 0.88em;
   padding: 0.1em 0.36em;
 }
 

@@ -22,7 +22,8 @@
   --font-mono: var(--appearance-code-font, ui-monospace, monospace);
   --conversation-message-font-family: var(--appearance-ui-font, system-ui, sans-serif);
   --appearance-code-size: 13px;
-  --appearance-code-line-height: round(nearest, calc(var(--appearance-code-size) * 1.5), 1px);
+  /* Initial paint fallback; AppearancePreferences applies the shared editor value. */
+  --appearance-code-line-height: 20px;
   --icon-size: round(nearest, clamp(16px, calc(var(--font-ui) * 16 / 14), 20px), 2px);
   --icon-size-sm: round(nearest, clamp(14px, calc(var(--font-ui) * 14 / 14), 18px), 2px);
   --icon-size-xs: round(nearest, clamp(12px, calc(var(--font-ui) * 12 / 14), 16px), 2px);
@@ -124,16 +125,24 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 }
 .rich-content, .composer textarea, .user-message-edit-input,
 .user-message-raw-query, .workspace-markdown-reading {
+  font-family: var(--appearance-content-font, var(--appearance-ui-font, system-ui, sans-serif));
   letter-spacing: var(--tracking-prose);
 }
-/* The face takes the page's picker width; its size field follows it. */
-.appearance-font-picker { width: var(--settings-control-width); min-width: 0; }
+/* Code actions remain interface controls inside the reading surface. */
+.rich-code-header {
+  font-family: var(--appearance-ui-font, system-ui, sans-serif);
+}
+/* Font-only and font/size rows share the same control column. */
+.settings-row-control:has(.appearance-font-picker) {
+  width: var(--settings-control-width);
+  max-width: 100%;
+}
+.appearance-font-picker { flex: 1; min-width: 0; }
 @container settings-page (max-width: 32em) {
-  .appearance-font-picker { flex: 1 1 auto; width: auto; }
+  .settings-row-control:has(.appearance-font-picker) { width: 100%; }
 }
 .appearance-font-picker .select-menu, .appearance-font-picker .settings-select-trigger { width: 100%; }
 .composer textarea, .workspace-markdown-reading {
-  font-family: var(--appearance-ui-font, system-ui, sans-serif);
   font-size: var(--font-ui);
 }
 /* Composer drafts take the conversation reading line from composer.css. */
