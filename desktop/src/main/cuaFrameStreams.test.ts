@@ -7,41 +7,53 @@ import { PassThrough, Writable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import {
   CUA_PIP_FORCE_STOP_TIMEOUT_MS,
-  CUALineDecoder,
+  CUAStreamDecoder,
   CUANativePreview,
   cuaFrameHelperCandidates,
   isSameExecutableFile,
 } from "./cuaFrameStreams";
 
-describe("CUALineDecoder", () => {
-  it("decodes fragmented native PiP events", () => {
-    const decoder = new CUALineDecoder();
-    expect(decoder.push('{"event":"rea')).toEqual([]);
-    expect(decoder.push('dy","width":320,"height":240}\n{"event":"user_input"}\n')).toEqual([
-      { event: "ready", width: 320, height: 240 },
-      { event: "user_input" },
-    ]);
+function packet(header: object, payload = Buffer.alloc(0)) {
+  const json = Buffer.from(JSON.stringify(header));
+  const prefix = Buffer.alloc(12);
+  prefix.write("WCU1"); prefix.writeUInt32BE(json.length, 4); prefix.writeUInt32BE(payload.length, 8);
+  return Buffer.concat([prefix, json, payload]);
+}
+
+describe("CUAStreamDecoder", () => {
+  it("decodes fragmented native PiP events and raw video", () => {
+    const decoder = new CUAStreamDecoder();
+    const frame = { event: "frame", sequence: 1, generation: 1, configuration: 1,
+      codec: "avc1.42E01F", keyframe: true, timestamp: 100, description: [1, 66, 224, 31], width: 320, height: 240 };
+    const payload = Buffer.from([0, 0, 0, 3, 101, 10, 255]);
+    const data = Buffer.concat([packet({ event: "ready" }), packet(frame, payload)]);
+    expect(decoder.push(data.subarray(0, 7))).toEqual([]);
+    expect(decoder.push(data.subarray(7, data.length - 2))).toEqual([{ event: "ready" }]);
+    expect(decoder.push(data.subarray(-2))).toEqual([{ ...frame, data: payload }]);
   });
 
   it("preserves UTF-8 characters split across pipe chunks", () => {
-    const decoder = new CUALineDecoder();
-    const data = Buffer.from('{"event":"capture_status","message":"窗口已关闭"}\n');
+    const decoder = new CUAStreamDecoder();
+    const data = packet({ event: "capture_status", message: "窗口已关闭" });
     const split = data.indexOf(Buffer.from("窗")) + 1;
     expect(decoder.push(data.subarray(0, split))).toEqual([]);
     expect(decoder.push(data.subarray(split))).toEqual([{ event: "capture_status", message: "窗口已关闭" }]);
   });
 
-  it("keeps an incomplete final line for the next chunk", () => {
-    const decoder = new CUALineDecoder();
-    expect(decoder.push('{"event":"capture_status","status":"idle"}')).toEqual([]);
-    expect(decoder.push("\n")).toEqual([{ event: "capture_status", status: "idle" }]);
+  it("retains incomplete records and rejects oversized declared lengths before buffering the body", () => {
+    const decoder = new CUAStreamDecoder();
+    const data = packet({ event: "capture_status", status: "idle" });
+    expect(decoder.push(data.subarray(0, -1))).toEqual([]);
+    expect(decoder.push(data.subarray(-1))).toEqual([{ event: "capture_status", status: "idle" }]);
+    const oversized = Buffer.from(data.subarray(0, 12));
+    oversized.writeUInt32BE(3_000_001, 8);
+    expect(() => decoder.push(oversized)).toThrow("size limit");
   });
 
   it("decodes user-resized PiP geometry", () => {
-    const decoder = new CUALineDecoder();
-    expect(decoder.push('{"event":"geometry","x":20,"y":30,"width":520,"height":300}\n')).toEqual([
-      { event: "geometry", x: 20, y: 30, width: 520, height: 300 },
-    ]);
+    const decoder = new CUAStreamDecoder();
+    const geometry = { event: "geometry", x: 20, y: 30, width: 520, height: 300 };
+    expect(decoder.push(packet(geometry))).toEqual([geometry]);
   });
 });
 
@@ -82,7 +94,11 @@ describe("CUANativePreview", () => {
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
     expect(onError).toHaveBeenCalledTimes(1);
 
-    child.stdout.emit("data", Buffer.from('{"event":"frame","sequence":1,"width":320,"height":240,"data":"late"}\n{"event":"capture_status","status":"healthy"}\n'));
+    child.stdout.emit("data", Buffer.concat([
+      packet({ event: "frame", sequence: 1, generation: 1, configuration: 1, codec: "avc1.42E01F",
+        keyframe: false, timestamp: 100, width: 320, height: 240 }, Buffer.from([0, 0, 0, 1, 1])),
+      packet({ event: "capture_status", status: "healthy" }),
+    ]));
     pip.start();
     expect(onFrame).not.toHaveBeenCalled();
     expect(onEvent).not.toHaveBeenCalled();

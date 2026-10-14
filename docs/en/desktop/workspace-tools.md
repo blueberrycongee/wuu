@@ -149,6 +149,8 @@ The preview separates viewing from control:
 
 Closing or stopping the preview does not quit the application being observed. Disabling or retiring the owning extension stops its preview activity. If a capture target disappears, Wuu closes its preview; unchanged activity updates do not reopen that target. Unavailable capture shows a brief recovery hint, and a retained frame is labelled paused rather than live. Individual tool errors stay in the conversation's tool records and do not cover the preview. The preview does not silently switch to another app window or the whole screen.
 
+Native app previews use a low-latency H.264 video stream with hardware acceleration where available. Hiding or pausing the preview stops capture; resuming or resizing it refreshes the video, and decoder recovery stays on the same target window.
+
 Native app previews require a macOS build with Computer Use enabled and the relevant macOS permissions. The floating preview does not itself grant Screen Recording or Accessibility access. See [installation](../getting-started/installation.md) for build availability and permissions.
 
 ## Mac app control

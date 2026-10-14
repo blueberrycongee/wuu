@@ -1,5 +1,5 @@
 import { shutdownChild } from "./childShutdown";
-import { StringDecoder } from "node:string_decoder";
+import type { NativePreviewFrame } from "../shared/nativePreview";
 import type { ActivitySession } from "../shared/protocol";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
@@ -17,41 +17,51 @@ export type CUANativePiPEvent = {
   message?: string;
 };
 
-export type CUANativePreviewFrame = {
-  sequence: number;
-  width: number;
-  height: number;
-  data: string;
-};
+export type CUANativePreviewFrame = NativePreviewFrame;
 
 type CUANativePreviewMessage = CUANativePiPEvent | (CUANativePreviewFrame & { event: "frame" });
 
 export const CUA_PIP_FORCE_STOP_TIMEOUT_MS = 2_000;
-const MAX_PREVIEW_MESSAGE_BYTES = 4_194_304;
 
-export class CUALineDecoder {
-  private buffer = "";
-  private readonly decoder = new StringDecoder("utf8");
+export class CUAStreamDecoder {
+  private buffer: Buffer = Buffer.alloc(0);
 
-  push(chunk: Buffer | string): CUANativePreviewMessage[] {
-    this.buffer += typeof chunk === "string" ? chunk : this.decoder.write(chunk);
-    const lines = this.buffer.split("\n");
-    this.buffer = lines.pop() ?? "";
-    if (this.buffer.length > MAX_PREVIEW_MESSAGE_BYTES) throw new Error("native preview event exceeds the size limit");
-    return lines.filter((line) => line.trim()).map((line) => {
-      if (line.length > MAX_PREVIEW_MESSAGE_BYTES) throw new Error("native preview event exceeds the size limit");
-      const message = JSON.parse(line) as CUANativePreviewMessage;
+  push(chunk: Buffer): CUANativePreviewMessage[] {
+    this.buffer = this.buffer.length ? Buffer.concat([this.buffer, chunk]) : chunk;
+    const messages: CUANativePreviewMessage[] = [];
+    while (this.buffer.length >= 12) {
+      if (this.buffer.toString("ascii", 0, 4) !== "WCU1") throw new Error("invalid native preview stream version");
+      const headerLength = this.buffer.readUInt32BE(4), payloadLength = this.buffer.readUInt32BE(8);
+      if (!headerLength || headerLength > 16_384 || payloadLength > 3_000_000) {
+        throw new Error("native preview event exceeds the size limit");
+      }
+      const length = 12 + headerLength + payloadLength;
+      if (this.buffer.length < length) break;
+      const message = JSON.parse(this.buffer.toString("utf8", 12, 12 + headerLength)) as CUANativePreviewMessage;
       if (!message || typeof message !== "object" || typeof message.event !== "string") {
         throw new Error("invalid native preview event");
       }
-      if (message.event === "frame" && (
-        !Number.isSafeInteger(message.sequence) || message.sequence <= 0
-        || !Number.isInteger(message.width) || message.width <= 0 || message.width > 1280
-        || !Number.isInteger(message.height) || message.height <= 0 || message.height > 1280
-        || typeof message.data !== "string" || message.data.length === 0
-      )) throw new Error("invalid native preview frame");
-      return message;
-    });
+      if (message.event === "frame") {
+        if (!Number.isSafeInteger(message.sequence) || message.sequence <= 0
+          || !Number.isSafeInteger(message.generation) || message.generation <= 0
+          || !Number.isSafeInteger(message.configuration) || message.configuration <= 0
+          || !Number.isSafeInteger(message.timestamp) || message.timestamp < 0
+          || !Number.isInteger(message.width) || message.width <= 0 || message.width > 1280
+          || !Number.isInteger(message.height) || message.height <= 0 || message.height > 1280
+          || typeof message.codec !== "string" || !/^avc1\.[0-9a-f]{6}$/i.test(message.codec)
+          || typeof message.keyframe !== "boolean" || !payloadLength
+          || (message.keyframe && (!Array.isArray(message.description) || message.description.length < 4))
+          || (message.description !== undefined && (!Array.isArray(message.description)
+            || message.description.length > 4096
+            || !message.description.every(value => Number.isInteger(value) && value >= 0 && value <= 255)))) {
+          throw new Error("invalid native preview frame");
+        }
+        message.data = this.buffer.subarray(12 + headerLength, length);
+      } else if (payloadLength) throw new Error("unexpected native preview payload");
+      messages.push(message);
+      this.buffer = this.buffer.subarray(length);
+    }
+    return messages;
   }
 }
 
@@ -82,7 +92,7 @@ export class CUANativePreview {
     const trace = (message: string) => {
       if (debug) process.stderr.write(`[cua-pip:${this.target}] ${message}\n`);
     };
-    const decoder = new CUALineDecoder();
+    const decoder = new CUAStreamDecoder();
     const child = this.spawnHelper(this.helper, [
       "--native-preview",
       this.threadID,
@@ -101,7 +111,7 @@ export class CUANativePreview {
           if (event.event === "frame") {
             this.pendingSequence = event.sequence;
             // Never serialize screen pixels into debug logs.
-            trace(`frame sequence=${event.sequence} size=${event.width}x${event.height}`);
+            trace(`frame sequence=${event.sequence} generation=${event.generation} config=${event.configuration} key=${event.keyframe} size=${event.width}x${event.height} bytes=${event.data.byteLength}`);
             this.onFrame(event);
           } else {
             trace(`event ${JSON.stringify(event)}`);
@@ -152,6 +162,8 @@ export class CUANativePreview {
   updateActivity(activity: ActivitySession): void {
     this.send({ type: "activity", state: activity.state, controller: activity.controller, error: activity.error ?? "" });
   }
+
+  requestKeyframe(): void { this.send({ type: "keyframe" }); }
 
   acknowledgeFrame(sequence: number): void {
     if (this.pendingSequence !== sequence) return;

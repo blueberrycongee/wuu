@@ -36,6 +36,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/main/preload.ts"),
+          nativePreview: resolve(__dirname, "src/main/nativePreviewPreload.ts"),
         },
         output: {
           format: "cjs",
@@ -66,6 +67,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, "index.html"),
+          nativePreview: resolve(__dirname, "native-preview.html"),
         },
       },
     },

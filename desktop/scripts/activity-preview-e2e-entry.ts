@@ -5,8 +5,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, WebContentsView, nativeImage } from "electron";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { app, BrowserWindow, WebContentsView } from "electron";
 import type { ActivitySession, JsonValue } from "../src/shared/protocol";
 import { ActivityPiPSurface } from "../src/main/activityPiPWindow";
 import type { ActivityPiPContentContext } from "../src/main/activityPiPContent";
@@ -51,13 +51,15 @@ async function emitNative(target: string, event: unknown) {
   await waitFor(`native source ${target} connected`, () => sources.has(target));
   sources.get(target)!.write(`${JSON.stringify(event)}\n`);
 }
+// Recorded AVC samples from a real VideoEncoder (160x100 solid RGB canvases,
+// baseline, avc format). The second color is a delta frame referencing the first.
+// Fixed bytes keep Linux acceptance independent of hardware encoder availability.
+const videoFrames = JSON.parse(readFileSync(join(desktop, "scripts/activity-preview-frames.json"), "utf8"));
 function frame(red: number, green: number, blue: number) {
-  const width = 160, height = 100;
-  const bitmap = Buffer.alloc(width * height * 4);
-  for (let offset = 0; offset < bitmap.length; offset += 4) {
-    bitmap[offset] = blue; bitmap[offset + 1] = green; bitmap[offset + 2] = red; bitmap[offset + 3] = 255;
-  }
-  return { event: "frame", width, height, data: nativeImage.createFromBitmap(bitmap, { width, height }).toJPEG(90).toString("base64") };
+  const sample = videoFrames.find((sample: { rgb: number[] }) => sample.rgb.join() === [red, green, blue].join());
+  assert(sample, "missing AVC color fixture");
+  const { rgb: _rgb, ...encoded } = sample;
+  return encoded;
 }
 const workdir = join(fixture, "project");
 const threadID = "activity-preview-thread";
@@ -119,7 +121,10 @@ app.whenReady().then(async () => {
         };
         contexts.push({ activity: next, context: traced });
         if (next.kind === "browser") return new BrowserPiPContent(next, host!, traced);
-        return new NativePiPContent(next, traced, { helper, isPackaged: false });
+        return new NativePiPContent(next, traced, { helper, isPackaged: false,
+          preload: join(desktop, "out-e2e/nativePreview.cjs"),
+          pageURL: pathToFileURL(join(desktop, "out-e2e/native-preview.html")).href,
+        });
       },
     });
   }, async (next, action) => {
@@ -220,6 +225,21 @@ app.whenReady().then(async () => {
   const bounds = pip.getBounds();
   const browserContext = contexts.at(-1)!.context;
   current = activity("cua", "native-a"); coordinator.update(current);
+  const nativeView = pip.contentView.children.find(view => view !== overlay) as WebContentsView;
+  await waitFor("native video page ready", () => nativeView.webContents.executeJavaScript("isSecureContext && typeof VideoDecoder === 'function' && !!document.querySelector('canvas')"));
+  // Delay delivery of a real decoded VideoFrame, preserving decoder behavior
+  // and the production ACK path while exercising a late output after reset.
+  await nativeView.webContents.executeJavaScript(`(() => {
+    const Decoder = VideoDecoder;
+    window.VideoDecoder = class extends Decoder {
+      constructor(init) { super({ ...init, output(video) {
+        if (window.fixtureHoldDecode) {
+          window.fixtureDecodeEntered = true;
+          window.fixtureReleaseDecode = () => init.output(video);
+        } else init.output(video);
+      } }); }
+    };
+  })()`);
   await emitNative("native-a", frame(20, 100, 210));
   await waitFor("native pixels presented", () => overlay.webContents.executeJavaScript("document.getElementById('ph').classList.contains('gone')"));
   check("browser to native keeps window and chrome identity", !pip.isDestroyed() && pip.id === pipID && overlay.webContents.id === overlayID && surfaceCount === 1);
@@ -228,20 +248,12 @@ app.whenReady().then(async () => {
   browserContext.onGone(); browserContext.onFailure("late old browser failure"); browserContext.setMounted(false);
   check("retired browser callbacks cannot close current native preview", !pip.isDestroyed() && pip.isVisible());
   await waitFor("first native frame acknowledged", () => readFileSync(process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_LOG!, "utf8").includes('"type":"ack"'));
-  const nativeView = pip.contentView.children.find(view => view !== overlay) as WebContentsView;
   writeFileSync(join(output, "native-content.png"), (await nativeView.webContents.capturePage()).toPNG());
   const firstNativePixel = await nativeView.webContents.executeJavaScript("Array.from(document.querySelector('canvas').getContext('2d').getImageData(0,0,1,1).data)");
-  // Hold an actual Chromium JPEG decode after decoding its image, without
-  // replacing the transport or fabricating a frame-consumption result.
-  await nativeView.webContents.executeJavaScript(`(() => {
-    const decode = Image.prototype.decode;
-    Image.prototype.decode = async function() {
-      await decode.call(this); window.fixtureDecodeEntered = true;
-      await new Promise(resolve => { window.fixtureReleaseDecode = resolve; });
-    };
-  })()`);
+  check("AVC keyframe renders the expected pixels", Math.abs(firstNativePixel[0] - 20) < 8 && Math.abs(firstNativePixel[1] - 100) < 8 && Math.abs(firstNativePixel[2] - 210) < 8, firstNativePixel);
+  await nativeView.webContents.executeJavaScript("window.fixtureHoldDecode = true");
   await emitNative("native-a", frame(220, 30, 40));
-  await waitFor("second native JPEG is decoding", () => nativeView.webContents.executeJavaScript("window.fixtureDecodeEntered === true"));
+  await waitFor("native delta frame is decoded", () => nativeView.webContents.executeJavaScript("window.fixtureDecodeEntered === true"));
   await emitNative("native-a", { event: "capture_status", status: "error", message: "Synthetic permission denied" });
   await waitFor("capture error clears live presentation", () => overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone')"));
   check("capture failure shows recovery guidance without raw diagnostics", await overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone') && document.getElementById('ph-detail').textContent.length > 0 && !document.body.innerText.includes('Synthetic permission denied')"));

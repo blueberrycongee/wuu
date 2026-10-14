@@ -14,7 +14,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   formatted paste with clipboard restoration, modifier clicks, cancellable holds,
   text insertion-point selection, and AX/visual settling before follow-up actions.
   Observations add stable AX identities, structured differences, focus and selection
-  summaries, with app-specific workflows in the Computer Use skill.
+  summaries, with app-specific workflows in the Computer Use skill. Native live
+  previews use low-latency H.264 video, bounded binary transport and accelerated
+  decoding, with keyframe recovery across capture pauses and size changes.
 
 - iOS and Android render Mermaid diagrams offline as replies stream, preserve the
   last valid diagram during partial syntax, and expose source and copy actions.

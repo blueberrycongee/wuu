@@ -16,6 +16,17 @@ async function main() {
       build.onLoad({ filter: /.*/, namespace: 'svg' }, args => ({ contents: fs.readFileSync(args.path, 'utf8'), loader: 'text' }));
     } }],
   });
+  await require('esbuild').build({
+    entryPoints: [path.join(desktop, 'src/main/nativePreviewPreload.ts')],
+    outfile: path.join(path.dirname(output), 'nativePreview.cjs'), bundle: true,
+    platform: 'node', format: 'cjs', external: ['electron'],
+  });
+  await require('esbuild').build({
+    entryPoints: [path.join(desktop, 'src/nativePreview.ts')],
+    outfile: path.join(path.dirname(output), 'nativePreview.js'), bundle: true, platform: 'browser', format: 'esm',
+  });
+  fs.writeFileSync(path.join(path.dirname(output), 'native-preview.html'),
+    fs.readFileSync(path.join(desktop, 'native-preview.html'), 'utf8').replace('/src/nativePreview.ts', './nativePreview.js'));
   if (process.env.WUU_ACTIVITY_PREVIEW_BUILD_ONLY === '1') return;
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-activity-preview-'));
   try {
