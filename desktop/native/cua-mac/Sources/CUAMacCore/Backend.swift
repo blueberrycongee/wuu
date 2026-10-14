@@ -29,9 +29,9 @@ public final class MacComputerBackend: ComputerBackend {
     private var snapshotTicket: SnapshotTicket?
     private var resourceRevision = ""
     private var snapshotWindows: [CGWindowID: CGRect] = [:]
-    private var storedSnapshotText = ""
+    private var storedSnapshot = AXSnapshot(text: "", elements: [:])
+    private var snapshotRoot: AXUIElement?
     private var snapshotProcessID: pid_t?
-    private var lastSnapshotText: [pid_t: String] = [:]
     private var axRevisions: [pid_t: UInt64] = [:]
     private var visualRevisions: [pid_t: UInt64] = [:]
     private var lastScreenshotData: [pid_t: Data] = [:]
@@ -195,7 +195,7 @@ public final class MacComputerBackend: ComputerBackend {
         if let mode = command.after {
             do {
                 let next = try ComputerCommand(arguments: ["action": "observe", "app": canonicalTarget,
-                    "mode": mode.rawValue, "control_epoch": command.controlEpoch])
+                    "mode": mode.rawValue, "control_epoch": command.controlEpoch, "disable_diff": command.disableDiff])
                 let observation = try observe(next, app: app, axApplication: axApplication, settling: settling)
                 structured["observation"] = observation.structured
                 structured["snapshot_id"] = observation.structured["snapshot_id"]
@@ -445,12 +445,19 @@ public final class MacComputerBackend: ComputerBackend {
             guard snapshotter.isCurrent(id: rootID), let element = snapshotter.element(id: rootID) else { throw ComputerError.staleSnapshot("subtree changed") }
             root = element
         }
+        let previousTicket = snapshotTicket
+        let previousSnapshot = storedSnapshot
+        let sameOwner = previousTicket?.processID == app.processIdentifier &&
+            previousTicket?.launchTime == (app.launchDate?.timeIntervalSince1970 ?? 0) &&
+            previousTicket?.controlEpoch == command.controlEpoch
+        let sameRoot = sameOwner && snapshotRoot.map { CFEqual($0, root) } == true
+        if !sameOwner { snapshotter.clear() }
         snapshotTicket = nil
+        snapshotRoot = nil
         lastCaptureGeometry[app.processIdentifier] = nil
         lastWindowIDs[app.processIdentifier] = nil
         let accessibility = AXIsProcessTrusted() && command.observationMode != .vision
         let snapshot: AXSnapshot
-        let previousText = lastSnapshotText[app.processIdentifier]
         if accessibility {
             snapshot = snapshotter.snapshot(application: root)
         } else {
@@ -461,8 +468,8 @@ public final class MacComputerBackend: ComputerBackend {
             )
         }
         snapshotProcessID = app.processIdentifier
-        lastSnapshotText[app.processIdentifier] = snapshot.text
-        if previousText != snapshot.text {
+        let axChanged = accessibility && (!sameRoot || previousSnapshot.nodes != snapshot.nodes || previousSnapshot.truncated != snapshot.truncated)
+        if axChanged {
             axRevisions[app.processIdentifier, default: 0] += 1
         }
         var structured: [String: Any] = [
@@ -554,7 +561,6 @@ public final class MacComputerBackend: ComputerBackend {
         if let geometry = lastCaptureGeometry[app.processIdentifier], screenshot != nil {
             header += " Screenshot=\(geometry.imageWidth)×\(geometry.imageHeight) pixels maps to window_frame=(\(Int(geometry.windowFrame.origin.x)),\(Int(geometry.windowFrame.origin.y)),\(Int(geometry.windowFrame.width)),\(Int(geometry.windowFrame.height))). Prefer coordinate_space=\"normalized\" (0-1000) for visual targets so provider image resizing does not affect clicks; use coordinate_space=\"screenshot\" only for original image pixels."
         }
-        let changes = previousText.map { snapshotChanges(from: $0, to: snapshot.text) } ?? []
         let ticket = SnapshotTicket(processID: app.processIdentifier, launchTime: app.launchDate?.timeIntervalSince1970 ?? 0, controlEpoch: command.controlEpoch, resourceRevision: resourceRevision)
         snapshotTicket = ticket
         snapshotWindows = currentWindowFrames(processID: app.processIdentifier)
@@ -562,14 +568,33 @@ public final class MacComputerBackend: ComputerBackend {
             let matches = snapshotWindows.filter { $0.value == frame }.map(\.key)
             if matches.count == 1 { structured["window_id"] = Int(matches[0]) }
         }
-        storedSnapshotText = snapshot.text
+        storedSnapshot = snapshot
+        snapshotRoot = accessibility ? root : nil
         let page = SnapshotPage(text: snapshot.text, query: nil, offset: command.offset, limit: command.limit)
         structured["snapshot_id"] = ticket.id
         structured["mode"] = command.observationMode.rawValue
         structured["ax_revision"] = axRevisions[app.processIdentifier] ?? 0
         structured["visual_revision"] = visualRevisions[app.processIdentifier] ?? 0
         structured["full_snapshot"] = true
-        structured["changes"] = changes
+        structured["ax_changed"] = axChanged
+        structured["ax_nodes"] = page.lineIndices.compactMap { $0 < snapshot.nodes.count ? snapshot.nodes[$0].dictionary : nil }
+        if !command.disableDiff, accessibility, sameRoot, let previousTicket {
+            let difference = snapshot.difference(from: previousSnapshot, baseID: previousTicket.id)
+            structured["ax_diff"] = difference.structured
+            structured["changes"] = difference.summary
+        }
+        let focused = axValue(axApplication, kAXFocusedUIElementAttribute as String)
+        let focusedNode = focused.flatMap { focused in
+            snapshot.nodes.first { node in snapshot.elements[node.id].map { CFEqual($0, focused) } == true }
+        } ?? snapshot.nodes.first { $0.attributes["focused"] as? Bool == true }
+        if let node = focusedNode {
+            structured["focus"] = node.dictionary
+            header += " Focused element=[\(node.id)]."
+            if let range = node.attributes["selection_range"] as? [String: Any] {
+                header += " Selection UTF-16 location=\(range["location"]!), length=\(range["length"]!)."
+            }
+        }
+        structured["selected_element_ids"] = snapshot.nodes.filter { $0.attributes["selected"] as? Bool == true }.map(\.id)
         structured["total_lines"] = page.total
         structured["next_offset"] = page.nextOffset
         header += " snapshot_id=\"\(ticket.id)\"."
@@ -707,16 +732,6 @@ public final class MacComputerBackend: ComputerBackend {
         return "foreground_native"
     }
 
-    private func snapshotChanges(from previous: String, to current: String) -> [String] {
-        guard previous != current else { return [] }
-        return Array(current.components(separatedBy: "\n").difference(from: previous.components(separatedBy: "\n")).prefix(240)).map { change in
-            switch change {
-            case let .insert(offset, line, _): return "+ line \(offset): \(line)"
-            case let .remove(offset, line, _): return "- line \(offset): \(line)"
-            }
-        }
-    }
-
     private func currentWindowFrames(processID: pid_t) -> [CGWindowID: CGRect] {
         windowFrames(processID: processID)
     }
@@ -735,10 +750,12 @@ public final class MacComputerBackend: ComputerBackend {
 
     private func querySnapshot(_ command: ComputerCommand, app: NSRunningApplication) throws -> ComputerResult {
         try validateSnapshot(command, app: app)
-        let page = SnapshotPage(text: storedSnapshotText, query: command.query, offset: command.offset, limit: command.limit)
+        let page = SnapshotPage(text: storedSnapshot.text, query: command.query, offset: command.offset, limit: command.limit)
         let id = snapshotTicket!.id
         var structured: [String: Any] = ["snapshot_id": id, "total_lines": page.total, "process_id": Int(app.processIdentifier)]
         structured["next_offset"] = page.nextOffset
+        structured["ax_truncated"] = storedSnapshot.truncated
+        structured["ax_nodes"] = page.lineIndices.compactMap { $0 < storedSnapshot.nodes.count ? storedSnapshot.nodes[$0].dictionary : nil }
         let suffix = page.nextOffset.map { " Next offset=\($0)." } ?? ""
         return ComputerResult(text: "Stored snapshot_id=\"\(id)\".\(suffix)\n" + page.text, structured: structured)
     }
@@ -1238,8 +1255,9 @@ public final class MacComputerBackend: ComputerBackend {
         guard command.title?.isEmpty == false || command.description?.isEmpty == false else {
             throw ComputerError.invalidArguments("activate_control requires title or description")
         }
-        _ = snapshotter.snapshot(application: application)
-        guard let target = snapshotter.uniqueElement(role: command.role, title: command.title, description: command.description) else {
+        let reader = AXSnapshotter()
+        _ = reader.snapshot(application: application)
+        guard let target = reader.uniqueElement(role: command.role, title: command.title, description: command.description) else {
             throw ComputerError.operationFailed("activate_control selector did not match exactly one element; observe and refine role, title, or description")
         }
         try performAXAction(target, action: kAXPressAction as String)
@@ -1272,7 +1290,7 @@ public final class MacComputerBackend: ComputerBackend {
         }
         let observation = try observe(command, app: app, axApplication: axApplication)
         var structured = observation.structured
-        let changed = notificationObserved || !(structured["changes"] as? [String] ?? []).isEmpty
+        let changed = notificationObserved || (structured["ax_changed"] as? Bool ?? false)
         structured["changed"] = changed
         structured["timed_out"] = !changed
         structured["timeout_seconds"] = timeout

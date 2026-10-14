@@ -1,16 +1,62 @@
 import ApplicationServices
 import CoreGraphics
+import CryptoKit
 import Foundation
 
 struct AXSnapshot {
     let text: String
     let elements: [Int: AXUIElement]
     let truncated: Bool
+    let nodes: [AXSnapshotNode]
 
-    init(text: String, elements: [Int: AXUIElement], truncated: Bool = false) {
+    init(text: String, elements: [Int: AXUIElement], truncated: Bool = false, nodes: [AXSnapshotNode] = []) {
         self.text = text
         self.elements = elements
         self.truncated = truncated
+        self.nodes = nodes
+    }
+
+    func difference(from previous: AXSnapshot, baseID: String) -> (structured: [String: Any], summary: [String]) {
+        let old = Dictionary(uniqueKeysWithValues: previous.nodes.map { ($0.id, $0) })
+        let currentIDs = Set(nodes.map(\.id))
+        let added = nodes.filter { old[$0.id] == nil }
+        let updated = nodes.filter { old[$0.id] != nil && old[$0.id] != $0 }
+        let removed = previous.nodes.filter { !currentIDs.contains($0.id) }.map(\.id)
+        let count = added.count + updated.count + removed.count
+        let limit = 240
+        let summary = added.map { "+ " + $0.text.trimmingCharacters(in: .whitespaces) } +
+            updated.map { "~ " + $0.text.trimmingCharacters(in: .whitespaces) } + removed.map { "- [\($0)]" }
+        return ([
+            "base_snapshot_id": baseID,
+            "added": added.prefix(limit).map(\.dictionary),
+            "updated": updated.prefix(max(0, limit - added.count)).map(\.dictionary),
+            "removed": Array(removed.prefix(max(0, limit - added.count - updated.count))),
+            "total_changes": count,
+            "truncated": count > limit,
+            // Absence from a bounded traversal is not evidence of removal from the app.
+            "complete": !truncated && !previous.truncated && count <= limit,
+        ], Array(summary.prefix(limit)))
+    }
+}
+
+struct AXSnapshotNode: Equatable {
+    let id: Int
+    let parentID: Int?
+    let index: Int
+    let attributes: [String: Any]
+    let text: String
+
+    var dictionary: [String: Any] {
+        var result = attributes
+        result["element_id"] = id
+        result["parent_id"] = parentID.map { $0 as Any } ?? NSNull()
+        result["index"] = index
+        return result
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.id == rhs.id && lhs.parentID == rhs.parentID && lhs.index == rhs.index &&
+            NSDictionary(dictionary: lhs.attributes).isEqual(to: rhs.attributes)
     }
 }
 
@@ -27,20 +73,23 @@ final class AXSnapshotter {
     private(set) var elements: [Int: AXUIElement] = [:]
     private(set) var descriptors: [Int: AXElementDescriptor] = [:]
     private var truncated = false
-    private let maxDepth = 14
+    private var nextID = 0
+    private let maxDepth = 32
     private let maxElements = 700
 
     func snapshot(application: AXUIElement) -> AXSnapshot {
+        let previous = Dictionary(grouping: elements.map { (id: $0.key, element: $0.value) }, by: { CFHash($0.element) })
         elements.removeAll(keepingCapacity: true)
         descriptors.removeAll(keepingCapacity: true)
-        var lines: [String] = []
-        var visited = Set<CFHashCode>()
+        var nodes: [AXSnapshotNode] = []
+        var visited: [CFHashCode: [AXUIElement]] = [:]
         truncated = false
-        walk(application, depth: 0, lines: &lines, visited: &visited)
+        walk(application, parentID: nil, index: 0, depth: 0, nodes: &nodes, visited: &visited, previous: previous)
+        var lines = nodes.map(\.text)
         if truncated {
-            lines.append("… accessibility tree truncated at \(maxElements) elements; use observe with root_element_id and snapshot_id to inspect a subtree.")
+            lines.append("… accessibility tree truncated (limit \(maxElements) elements / depth \(maxDepth)); use observe with root_element_id and snapshot_id to inspect a subtree.")
         }
-        return AXSnapshot(text: lines.joined(separator: "\n"), elements: elements, truncated: truncated)
+        return AXSnapshot(text: lines.joined(separator: "\n"), elements: elements, truncated: truncated, nodes: nodes)
     }
 
     func element(id: Int) -> AXUIElement? {
@@ -50,6 +99,7 @@ final class AXSnapshotter {
     func clear() {
         elements.removeAll(keepingCapacity: true)
         descriptors.removeAll(keepingCapacity: true)
+        nextID = 0
     }
 
     func isCurrent(id: Int) -> Bool {
@@ -74,17 +124,29 @@ final class AXSnapshotter {
         return matches.count == 1 ? matches[0] : nil
     }
 
-    private func walk(_ element: AXUIElement, depth: Int, lines: inout [String], visited: inout Set<CFHashCode>) {
-        guard elements.count < maxElements else { truncated = true; return }
-        guard depth <= maxDepth else { truncated = true; return }
+    private func walk(_ element: AXUIElement, parentID: Int?, index: Int, depth: Int,
+                      nodes: inout [AXSnapshotNode], visited: inout [CFHashCode: [AXUIElement]],
+                      previous: [CFHashCode: [(id: Int, element: AXUIElement)]]) {
         let hash = CFHash(element)
-        guard visited.insert(hash).inserted else { return }
-        let id = elements.count
+        guard !(visited[hash] ?? []).contains(where: { CFEqual($0, element) }) else { return }
+        guard elements.count < maxElements, depth <= maxDepth else { truncated = true; return }
+        visited[hash, default: []].append(element)
+        // Hashes are only lookup buckets. AX identity, not a title or tree position,
+        // determines whether an ID survives the next observation.
+        let id: Int
+        if let existing = previous[hash]?.first(where: { CFEqual($0.element, element) }) {
+            id = existing.id
+        } else {
+            id = nextID
+            nextID += 1
+        }
         elements[id] = element
-        descriptors[id] = descriptor(element)
-        lines.append(String(repeating: "  ", count: depth) + describe(element, id: id))
-        for child in axElements(element, attribute: kAXChildrenAttribute as String) {
-            walk(child, depth: depth + 1, lines: &lines, visited: &visited)
+        let saved = descriptor(element)
+        descriptors[id] = saved
+        nodes.append(node(element, id: id, parentID: parentID, index: index, depth: depth, descriptor: saved))
+        for (childIndex, child) in axElements(element, attribute: kAXChildrenAttribute as String).enumerated() {
+            if elements.count >= maxElements { truncated = true; break }
+            walk(child, parentID: id, index: childIndex, depth: depth + 1, nodes: &nodes, visited: &visited, previous: previous)
         }
     }
 
@@ -99,31 +161,55 @@ final class AXSnapshotter {
         )
     }
 
-    private func describe(_ element: AXUIElement, id: Int) -> String {
-        let role = axString(element, kAXRoleAttribute as String) ?? "AXUnknown"
-        var parts = ["[\(id)]", role]
-        appendQuoted(&parts, name: "subrole", value: axString(element, kAXSubroleAttribute as String))
-        appendQuoted(&parts, name: "title", value: axString(element, kAXTitleAttribute as String))
-        appendQuoted(&parts, name: "description", value: axString(element, kAXDescriptionAttribute as String))
-        appendQuoted(&parts, name: "value", value: axDisplayValue(element, kAXValueAttribute as String))
-        if let enabled = axBool(element, kAXEnabledAttribute as String) { parts.append("enabled=\(enabled)") }
-        if let focused = axBool(element, kAXFocusedAttribute as String), focused { parts.append("focused=true") }
-        if let frame = axFrame(element) {
+    private func node(_ element: AXUIElement, id: Int, parentID: Int?, index: Int, depth: Int,
+                      descriptor: AXElementDescriptor) -> AXSnapshotNode {
+        var fields: [String: Any] = ["role": descriptor.role]
+        var parts = ["[\(id)]", descriptor.role]
+        let strings: [(String, String?)] = [
+            ("subrole", axString(element, kAXSubroleAttribute as String)),
+            ("title", descriptor.title), ("description", descriptor.description),
+            ("identifier", descriptor.identifier), ("value", descriptor.value),
+            ("selected_text", axString(element, kAXSelectedTextAttribute as String)),
+        ]
+        for (name, value) in strings {
+            guard let value, !value.isEmpty else { continue }
+            let clipped = String(value.prefix(300))
+            fields[name] = clipped
+            if value.count > 300 {
+                fields[name + "_truncated"] = true
+                fields[name + "_sha256"] = SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+            }
+            let escaped = clipped.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: "\\n")
+                .replacingOccurrences(of: "\r", with: "\\r")
+            parts.append("\(name)=\"\(escaped)\(value.count > 300 ? "…" : "")\"")
+            if let digest = fields[name + "_sha256"] { parts.append("\(name)_sha256=\(digest)") }
+        }
+        for (name, attribute) in [("enabled", kAXEnabledAttribute), ("focused", kAXFocusedAttribute),
+                                  ("selected", kAXSelectedAttribute), ("expanded", kAXExpandedAttribute)] {
+            if let value = axBool(element, attribute as String) {
+                fields[name] = value
+                parts.append("\(name)=\(value)")
+            }
+        }
+        if let value = axValue(element, kAXSelectedTextRangeAttribute as String), CFGetTypeID(value) == AXValueGetTypeID() {
+            var range = CFRange()
+            if AXValueGetValue(value as! AXValue, .cfRange, &range), range.location >= 0, range.length >= 0 {
+                fields["selection_range"] = ["location": range.location, "length": range.length, "unit": "utf16"]
+                parts.append("selection=(\(range.location),\(range.length))")
+            }
+        }
+        if let frame = descriptor.frame {
+            fields["frame"] = ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height]
             parts.append("frame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)),\(Int(frame.width)),\(Int(frame.height)))")
         }
         let actions = axActions(element)
         if !actions.isEmpty {
+            fields["actions"] = actions
             parts.append("actions=[\(actions.joined(separator: ","))]")
         }
-        return parts.joined(separator: " ")
-    }
-
-    private func appendQuoted(_ parts: inout [String], name: String, value: String?) {
-        guard let value, !value.isEmpty else { return }
-        let compact = value.replacingOccurrences(of: "\n", with: "\\n")
-        let clipped = compact.count > 300 ? String(compact.prefix(300)) + "…" : compact
-        let escaped = clipped.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        parts.append("\(name)=\"\(escaped)\"")
+        return AXSnapshotNode(id: id, parentID: parentID, index: index, attributes: fields,
+                              text: String(repeating: "  ", count: depth) + parts.joined(separator: " "))
     }
 }
 

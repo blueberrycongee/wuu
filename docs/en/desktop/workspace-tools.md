@@ -159,6 +159,8 @@ Text operations include plain text, Markdown and HTML paste, selecting a unique 
 
 After input, Wuu waits briefly for Accessibility and visual changes to settle before returning or taking a requested follow-up observation. This does not prove that a save, navigation or other asynchronous task has finished: the Agent must still check the intended result.
 
+Observations include control relationships, focused text and selection ranges, and changes since the previous comparable snapshot. Large trees remain paged, and incomplete differences are marked. Input that uses elements or coordinates still needs a fresh snapshot, even when a control keeps its element ID. The Computer Use skill includes workflows for Notion blocks, Spotify playback and library updates, native text editors, and web-based editors.
+
 ## Find an action
 
 Type `/` in the composer to search workspace actions, prompt shortcuts, and skills. Disabled entries explain missing prerequisites such as a workspace, an idle conversation, or engine support.

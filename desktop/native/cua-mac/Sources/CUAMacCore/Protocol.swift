@@ -424,7 +424,7 @@ public final class MCPServer {
                     "disable_diff": [
                         "type": "boolean",
                         "default": false,
-                        "description": "Retained for compatibility. Observations always return a bounded full page with fresh IDs; query_snapshot retrieves additional pages.",
+                        "description": "Omit the optional AX diff and change summary. Observations always include a bounded full page; query_snapshot retrieves additional pages. Element identities may persist, but element and coordinate input still requires the latest unconsumed snapshot_id.",
                     ],
                     "steps": [
                         "type": "array",
