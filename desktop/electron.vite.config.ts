@@ -36,6 +36,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/main/preload.ts"),
+          permissionGuide: resolve(__dirname, "src/main/permissionGuidePreload.ts"),
         },
         output: {
           format: "cjs",
@@ -66,6 +67,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, "index.html"),
+          permissionGuide: resolve(__dirname, "permission-guide.html"),
         },
       },
     },

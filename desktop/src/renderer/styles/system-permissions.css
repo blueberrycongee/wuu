@@ -1,0 +1,108 @@
+.system-permissions {
+  display: grid;
+  gap: var(--space-3);
+  container: system-permissions / inline-size;
+}
+
+.system-permission-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.system-permission-icon {
+  width: 22px;
+  height: 22px;
+  margin-left: var(--space-3);
+  color: var(--ink-soft);
+  stroke-width: var(--icon-stroke);
+}
+
+.system-permission-row .settings-row {
+  padding-left: 0;
+}
+
+.system-permission-row:last-child .settings-row {
+  border-bottom: 0;
+}
+
+.system-permission-granted {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.system-permissions-note {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: var(--line-body);
+}
+
+.system-permissions-error {
+  display: flex;
+  align-items: start;
+  gap: var(--space-2);
+}
+
+.system-permissions-error p { flex: 1; margin: 0; }
+
+@container system-permissions (max-width: 28em) {
+  .system-permissions .system-permission-row .settings-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
+  }
+
+  .system-permission-row .settings-row-control { justify-content: flex-start; }
+
+  .system-permission-icon {
+    align-self: start;
+    margin-top: calc(var(--settings-row-pad-block) + 0.15em);
+  }
+}
+
+.permission-guide-window {
+  overflow: auto;
+  background: var(--paper);
+}
+
+.permission-guide {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  font-size: var(--font-ui);
+  color: var(--ink);
+}
+
+.permission-guide header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2);
+}
+
+.permission-guide header > .icon { margin-top: 0.2em; }
+.permission-guide p { margin: 0; line-height: 1.45; }
+
+.permission-guide-app {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--ink-strong);
+  font: inherit;
+  text-align: left;
+  cursor: grab;
+  -webkit-app-region: no-drag;
+}
+
+.permission-guide-app:active { cursor: grabbing; }
+.permission-guide-app img { width: 32px; height: 32px; flex: none; }
+.permission-guide-app span { min-width: 0; overflow-wrap: anywhere; }
+.permission-guide-help { color: var(--ink-soft); }

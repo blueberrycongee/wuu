@@ -134,6 +134,19 @@ async function run() {
   await click(empty ? '继续' : 'Continue');
   await waitFor(() => document.querySelector('.onboarding-stage-provider'));
   await click(empty ? '继续' : 'Continue');
+  if (process.platform === 'darwin') {
+    await waitFor(() => document.querySelector('.onboarding-stage-permissions'));
+    await screenshot('permissions');
+    main.setResizable(true);
+    for (const theme of ['light', 'dark']) {
+      main.setSize(620, 600);
+      await main.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--conversation-message-font-size', '20px');`);
+      await screenshot(`permissions-narrow-large-${theme}`);
+    }
+    main.setSize(920, 720);
+    await evaluate(() => { document.documentElement.dataset.theme = 'light'; document.documentElement.style.setProperty('--conversation-message-font-size', '15px'); });
+    await click(empty ? '稍后设置' : 'Set up later');
+  }
   if (empty) {
     await waitFor(() => document.querySelector('.onboarding-stage-ready') && [...document.querySelectorAll('button')].some(button => (button.textContent.trim() === '重新查找' || button.getAttribute('aria-label') === '重新查找') && !button.disabled));
     assert.equal(await evaluate(() => document.querySelectorAll('.onboarding-workspace-row').length), 0);

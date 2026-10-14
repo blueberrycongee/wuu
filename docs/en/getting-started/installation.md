@@ -30,7 +30,11 @@ Settings and conversations are stored outside the app bundle. Keep that data whe
 
 The macOS release workflow includes Computer Use and Phone access for native iOS pairing. Account login remains development-only. Older downloads may have different features; check their release notes.
 
-Computer Use includes its native helpers; no separate installation or environment variables are needed. Screen capture and desktop control require **Screen Recording** and **Accessibility** permissions. Grant access to the app you actually run when macOS requests it. After an update, macOS may ask again; do not delete Wuu data or reset unrelated privacy permissions.
+Computer Use includes its native helpers; no separate installation or environment variables are needed. Screen capture and desktop control require **Screen Recording** and **Accessibility** permissions.
+
+On macOS, first-run setup offers these permissions. You can skip this step and return to **Settings → General → System permissions** later. Choose **Enable**, then drag the app icon from the floating guide into the list in System Settings and enable access. Clicking the icon reveals the running app in Finder if you prefer to add it manually. Wuu refreshes the permission status automatically.
+
+macOS owns the authorization confirmation and may request a restart. After an update, macOS may ask again; grant access to the app you actually run without deleting Wuu data or resetting unrelated privacy permissions.
 
 ## Install the CLI
 

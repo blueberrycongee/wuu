@@ -1,4 +1,5 @@
 import { AppContextCapture } from "./appContextCapture";
+import { SystemPermissions } from "./systemPermissions";
 import { createBrowserView } from "./browserView";
 import { saveArtifactFile } from "./artifactSave";
 import { showArtifactItemMenu } from "./artifactItemMenu";
@@ -463,6 +464,7 @@ const appContextCapture = new AppContextCapture((reveal, owner) => {
   if (host.webContents.isLoadingMainFrame()) host.webContents.once("did-finish-load", send);
   else send();
 }, appContextOwner);
+const systemPermissions = new SystemPermissions(appContextCapture);
 
 function requireAppContextSender(event: IpcMainInvokeEvent): void {
   const host = windowRegistry.mainWindow();
@@ -2797,6 +2799,19 @@ app.whenReady().then(async () => {
       return { ok: true };
     },
   );
+  systemPermissions.start();
+  ipcMain.handle("wuu:system-permissions", event => {
+    requireAppContextSender(event);
+    return systemPermissions.state();
+  });
+  ipcMain.handle("wuu:system-permission-request", (event, permission: unknown) => {
+    requireAppContextSender(event);
+    return systemPermissions.open(permission, windowRegistry.mainWindow()!, resolvedThemeIsDark());
+  });
+  ipcMain.handle("wuu:system-permission-guide-close", event => {
+    requireAppContextSender(event);
+    systemPermissions.close();
+  });
   ipcMain.handle("wuu:app-context-state", (event) => {
     requireAppContextSender(event);
     return appContextCapture.state();
@@ -2810,9 +2825,11 @@ app.whenReady().then(async () => {
     requireAppContextSender(event);
     return appContextCapture.update(settings);
   });
-  ipcMain.handle("wuu:app-context-permission", (event, kind: unknown) => {
+  ipcMain.handle("wuu:app-context-permission", async (event, kind: unknown) => {
     requireAppContextSender(event);
-    return appContextCapture.requestPermission(kind);
+    if (kind !== "screen" && kind !== "text") throw new Error("Unknown app snapshot permission.");
+    await systemPermissions.open(kind === "text" ? "accessibility" : "screen", windowRegistry.mainWindow()!, resolvedThemeIsDark());
+    return appContextCapture.state();
   });
   ipcMain.handle("wuu:app-context-discard", (event, id: unknown) => {
     requireAppContextSender(event);
@@ -2839,6 +2856,7 @@ app.on("before-quit", (event) => {
   if (quitCleanupFinished) return;
   event.preventDefault();
   if (quitCleanup) return;
+  systemPermissions.close();
   appContextCapture.dispose();
   terminalSessionManager.cleanup();
   // Destroy every agent view + the hidden host window before the pool shuts

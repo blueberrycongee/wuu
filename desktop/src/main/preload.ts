@@ -143,6 +143,9 @@ try {
 }
 
 const api: WuuDesktopApi = {
+  getSystemPermissions: () => ipcRenderer.invoke("wuu:system-permissions"),
+  requestSystemPermission: permission => ipcRenderer.invoke("wuu:system-permission-request", permission),
+  closeSystemPermissionGuide: () => ipcRenderer.invoke("wuu:system-permission-guide-close"),
   getAppContextState: () => ipcRenderer.invoke("wuu:app-context-state"),
   setAppContextShortcutRecording: (recording) => ipcRenderer.invoke("wuu:app-context-recording", recording),
   updateAppContextSettings: (settings) => ipcRenderer.invoke("wuu:app-context-settings", settings),

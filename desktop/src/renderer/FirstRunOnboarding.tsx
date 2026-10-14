@@ -18,6 +18,7 @@ import { EngineIcon } from "./EngineIcons";
 import { ServiceConnector, ServiceMark, serviceIdentity, useCatalogProviders } from "./ModelServicesPage";
 import { ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
+import { SystemPermissionsPanel } from "./SystemPermissions";
 import { PREVIEW_PLUGINS, PREVIEW_WORKSPACES } from "./onboardingPreview";
 import { ProviderMark } from "./ProviderMarks";
 import { PluginIcon } from "./PublicIcon";
@@ -25,10 +26,10 @@ import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { applyThemePreference } from "./Theme";
 import { toastErrorMessage } from "./Toast";
 
-type OnboardingStep = "welcome" | "plugins" | "runtime" | "provider" | "ready";
+type OnboardingStep = "welcome" | "plugins" | "runtime" | "provider" | "permissions" | "ready";
 type PluginPreset = "minimal" | "recommended" | "all" | "custom";
 
-const STEP_ORDER: readonly OnboardingStep[] = ["welcome", "plugins", "runtime", "provider", "ready"];
+const STEP_ORDER: readonly OnboardingStep[] = ["welcome", "plugins", "runtime", "provider", "permissions", "ready"];
 const RECOMMENDED_ENGINE = "wuu";
 
 export function bundledOnboardingPlugins(
@@ -83,6 +84,7 @@ const STEP_TITLES: Readonly<Record<OnboardingStep, TranslationKey>> = {
   plugins: "onboarding.pluginsTitle",
   runtime: "onboarding.runtimeTitle",
   provider: "onboarding.providerTitle",
+  permissions: "permissions.title",
   ready: "onboarding.readyTitle",
 };
 
@@ -141,7 +143,10 @@ export function FirstRunOnboarding({
   const discoveredCodex = discoveredCodexCredential(providers);
   const providerReady = hasOnboardingProvider(providers);
   const preset = selectedPreset(selectedPluginIDs, bundledPlugins);
-  const currentStepIndex = STEP_ORDER.indexOf(step);
+  const showPermissions = preview || (window.wuu?.platform === "darwin" && Boolean(window.wuu.getSystemPermissions));
+  const steps = STEP_ORDER.filter(item => item !== "permissions" || showPermissions);
+  const afterProvider: OnboardingStep = showPermissions ? "permissions" : "ready";
+  const currentStepIndex = steps.indexOf(step);
   const busy = applyingPlugins || savingRuntime || savingProvider || finishing || choosingWorkspace;
   const wornPluginIDs = useMemo(() => bundledPlugins
     .filter((plugin) => selectedPluginIDs.has(plugin.id))
@@ -330,7 +335,7 @@ export function FirstRunOnboarding({
         });
       }
       setConnected(true);
-      setStep("ready");
+      setStep(afterProvider);
     } catch (reason) {
       failure(reason, "provider.saveFailed");
     } finally {
@@ -367,11 +372,13 @@ export function FirstRunOnboarding({
           run: () => void applyRuntimeChoices(),
         }
           // Without a connection the service tiles are the step's actions.
-          : step === "provider" ? (providerReady ? { label: t("onboarding.continue"), disabled: false, run: () => setStep("ready") } : undefined)
+          : step === "provider" ? (providerReady ? { label: t("onboarding.continue"), disabled: false, run: () => setStep(afterProvider) } : undefined)
+            : step === "permissions" ? { label: t("onboarding.continue"), disabled: false, run: () => setStep("ready") }
             : { label: finishing ? t("onboarding.finishing") : selectedPaths.size > 0 ? t("onboarding.importAndStart", { count: selectedPaths.size }) : t("onboarding.enterWuu"), disabled: busy, run: () => void finish() };
-  const back = step === "plugins" ? "welcome" : step === "runtime" ? "plugins" : step === "provider" ? "runtime" : step === "ready" ? "provider" : undefined;
+  const back = currentStepIndex > 0 ? steps[currentStepIndex - 1] : undefined;
   // Only a consequence the choices do not show earns a line under the title.
-  const lead = step === "provider" && externalEngine ? t("onboarding.externalEngineConnection", { agent: externalEngine })
+  const lead = step === "permissions" ? t("permissions.description")
+    : step === "provider" && externalEngine ? t("onboarding.externalEngineConnection", { agent: externalEngine })
     : step === "ready" && selectedEngine === RECOMMENDED_ENGINE && !providerReady && !connected ? t("onboarding.readyNoModel")
       : undefined;
 
@@ -387,7 +394,7 @@ export function FirstRunOnboarding({
       }}
       onConnected={() => {
         setConnected(true);
-        setStep("ready");
+        setStep(afterProvider);
       }}
     />
   );
@@ -406,11 +413,11 @@ export function FirstRunOnboarding({
           role="progressbar"
           aria-label={t("onboarding.progress")}
           aria-valuemin={1}
-          aria-valuemax={STEP_ORDER.length}
+          aria-valuemax={steps.length}
           aria-valuenow={currentStepIndex + 1}
-          aria-valuetext={t("onboarding.stepProgress", { current: currentStepIndex + 1, total: STEP_ORDER.length })}
+          aria-valuetext={t("onboarding.stepProgress", { current: currentStepIndex + 1, total: steps.length })}
         >
-          {STEP_ORDER.map((item, index) => (
+          {steps.map((item, index) => (
             <span
               key={item}
               className="onboarding-progress-dot"
@@ -554,6 +561,10 @@ export function FirstRunOnboarding({
             </div>
           ) : null}
 
+          {step === "permissions" ? (
+            <div className="onboarding-body" data-scroll-fade=""><SystemPermissionsPanel preview={preview} /></div>
+          ) : null}
+
           {step === "ready" ? (
             <div className="onboarding-workspace-browser">
               <div className="onboarding-workspace-toolbar">
@@ -611,9 +622,12 @@ export function FirstRunOnboarding({
             </button>
           ) : null}
           {step === "provider" && !providerReady ? (
-            <button className="settings-button" type="button" disabled={busy} onClick={() => setStep("ready")}>
+            <button className="settings-button" type="button" disabled={busy} onClick={() => setStep(afterProvider)}>
               {t("onboarding.configureLater")}
             </button>
+          ) : null}
+          {step === "permissions" ? (
+            <button className="settings-button settings-button-ghost" type="button" onClick={() => setStep("ready")}>{t("permissions.skip")}</button>
           ) : null}
           {step === "ready" && selectedPaths.size > 0 ? (
             <button className="settings-button settings-button-ghost" type="button" disabled={busy} onClick={() => void finish([])}>{t("onboarding.skipWorkspaces")}</button>
