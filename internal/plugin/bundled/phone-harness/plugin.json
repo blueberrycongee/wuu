@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "phone-harness",
+  "name": "Phone Harness",
+  "description": "Operate iPhone, Android, and connected cloud phones from a conversation.",
+  "icon": "plug",
+  "version": "0.1.0",
+  "defaultEnabled": false,
+  "author": { "name": "Wuu" },
+  "minimumWuuVersion": "2026.10.12",
+  "platforms": ["darwin", "linux"],
+  "skills": "./skills/",
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 15 },
+  "interface": {
+    "displayName": "Phone Harness",
+    "shortDescription": "Read the phone screen, open apps, tap, swipe, and type.",
+    "longDescription": "Requires the separately installed Phone Harness CLI. Personal iPhones use iPhone Mirroring on macOS; Android uses ADB; existing cloud sessions use Phone Harness Cloud. Enable after connecting your device.",
+    "developerName": "Wuu",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@wuu/phone-harness-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=phone-harness"
+  },
+  "wuu": {
+    "dev": {
+      "watch": [
+        "../../packages/plugin-sdk/src",
+        "../../scripts/build-bundled-plugins.mjs",
+        "../../internal/plugin/bundled/phone-harness/plugin.json",
+        "../../internal/plugin/bundled/phone-harness/skills"
+      ]
+    }
+  }
+}

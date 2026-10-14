@@ -63,6 +63,10 @@ await runJSONLRuntime(plugin, { input: process.stdin, output: process.stdout });
   const developmentRoot = join(pluginsRoot, id);
   await copyPackage(packageRoot, join(developmentRoot, "dist"));
   manifest.runtime.args = ["dist/runtime.mjs"];
+  if (manifest.skills) {
+    const skills = Array.isArray(manifest.skills) ? manifest.skills : [manifest.skills];
+    manifest.skills = skills.map((path) => `./dist/${path.replace(/^\.\//, "")}`);
+  }
   if (manifest.desktop) manifest.desktop.entry = `dist/${manifest.desktop.entry}`;
   for (const command of manifest.contributes?.commands ?? []) {
     if (command.prompt) command.prompt = `./dist/${command.prompt.replace(/^\.\//, "")}`;

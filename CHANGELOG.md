@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Opt-in Phone Harness plugin for iPhone mirroring, Android ADB, and existing
+  cloud phone sessions, with explicit device selection, screenshot results,
+  serialized execution, and cancellation. Requires the Phone Harness CLI.
+
 - iOS and Android render Mermaid diagrams offline as replies stream, preserve the
   last valid diagram during partial syntax, and expose source and copy actions.
 
