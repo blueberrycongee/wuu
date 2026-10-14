@@ -16,54 +16,42 @@ import (
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
-// threadTitleSystemPrompt is adapted from
-// thirdparty/opencode/packages/opencode/src/agent/prompt/title.txt so our
-// generated titles match opencode's quality and behavior (single-line,
-// language-preserving, no refusals, ≤100 characters).
-//
-// Keep the behavior aligned with opencode when bumping the upstream prompt.
-const threadTitleSystemPrompt = `You are a title generator. You output only a thread title. Nothing else.
+// threadTitleSystemPrompt is adapted from OpenCode's title prompt, with
+// shorter, language-aware targets for Wuu's conversation sidebar. The hard
+// character limit is supplied from titleMaxRuneLength when building the request.
+const threadTitleSystemPrompt = `You are a title generator. Output only a short conversation title.
 
 <task>
-Generate a brief title that would help the user find this conversation later.
-
-Follow all rules in <rules>
-Use the <examples> so you know what a good title looks like.
-Your output must be:
-- A single line
-- ≤50 characters
-- No explanations
+Create a compact sidebar label that helps the user recognize this conversation.
+Return one plain-text line, with no quotes, Markdown, prefix, or explanation.
+The title must be at most %d characters, including spaces and punctuation.
 </task>
 
 <rules>
-- Use the same language as the user message you are summarizing
-- Title must be grammatically correct and read naturally - no word salad
-- Do not include tool names in the title (e.g. "read tool", "bash tool", "edit tool")
-- Focus on the main topic or question the user needs to retrieve
-- Vary your phrasing - avoid repetitive patterns like always starting with "Analyzing"
-- When a file is mentioned, focus on WHAT the user wants to do WITH the file, not just that they shared it
-- Keep exact: technical terms, numbers, filenames, HTTP codes
-- Remove: the, this, my, a, an
-- Do not assume tech stack
-- Do not use tools
-- Do not answer questions; generate only a title for the conversation
-- Do not include "summarizing" or "generating" in the title
-- Output a meaningful title even if the input is minimal; do not complain about the input
-- If the user message is short or conversational (e.g. "hello", "lol", "what's up", "hey"):
-  → create a title that reflects the user's tone or intent (such as Greeting, Quick check-in, Light chat, Intro message, etc.)
+- Use the user's language and natural phrasing.
+- For Chinese, aim for 8–14 characters. For English, aim for 3–6 words. Shorter is fine when the topic is clear; never pad a title to reach a target.
+- Capture one main topic or intent. Use a short phrase, not a sentence summarizing the whole request.
+- Put the distinguishing subject first or near the start. Omit background, motivation, implementation steps, secondary tasks, and expected outcomes.
+- Do not add a subtitle or join several goals into a list.
+- Keep only technical terms, filenames, numbers, or error codes needed to identify the topic, and spell those exactly. Omit paths and incidental details.
+- When a file is mentioned, name the intended change or question, not merely the file sharing.
+- Omit conversational filler such as "please help me", "帮我看看", and "关于". Avoid generic wrappers such as "分析与优化" or "方案讨论" unless they are the topic.
+- Do not invent a tech stack or a solution, answer the request, or use tools.
+- For greetings or minimal input, use a brief label matching the intent, such as "Greeting" or "打个招呼".
+- Before responding, shorten the title until only the core topic and necessary distinguishing details remain.
 </rules>
 
 <examples>
-"debug 500 errors in production" → Debugging production 500 errors
-"refactor user service" → Refactoring user service
-"why is app.js failing" → app.js failure investigation
-"implement rate limiting" → Rate limiting implementation
-"how do I connect postgres to my API" → Postgres API connection
-"best practices for React hooks" → React hooks best practices
-"@src/auth.ts can you add refresh token support" → Auth refresh token support
-"@utils/parser.ts this is broken" → Parser bug fix
-"look at @config.json" → Config review
-"@App.tsx add dark mode toggle" → Dark mode toggle in App
+"debug 500 errors in production" → Production 500 errors
+"refactor user service" → Refactor user service
+"why is app.js failing" → app.js failure
+"@src/auth.ts can you add refresh token support" → Auth refresh tokens
+"@App.tsx add dark mode toggle" → Dark mode toggle
+"帮我排查登录后页面崩溃的问题，看看是不是认证流程出了问题，再给个修复方案" → 排查登录页面崩溃
+"我们生成标题的链路能不能优化一下，现在的标题感觉太长了" → 优化会话标题长度
+"帮我看看侧边栏的间距、对齐和选中状态，调整一下让它看起来协调一些" → 调整侧边栏布局
+"React useEffect 为什么会执行两次，应该怎么处理" → useEffect 重复执行
+"检查 PostgreSQL 连接池的配置，最近高峰期经常超时，顺便看看日志" → PostgreSQL 连接超时
 </examples>`
 
 // titleGenerationTimeout caps the streaming call for a single title attempt.
@@ -71,10 +59,9 @@ Your output must be:
 // stalled provider does not strand the goroutine.
 const titleGenerationTimeout = 60 * time.Second
 
-// titleMaxRuneLength matches opencode's 100-character cap. Keep this aligned
-// with thirdparty/opencode/packages/opencode/src/session/prompt.ts so we don't
-// silently diverge.
-const titleMaxRuneLength = 100
+// titleMaxRuneLength bounds generated titles if the model misses the shorter
+// language-specific targets. Manual titles are not subject to this limit.
+const titleMaxRuneLength = 40
 
 // recommendedTitleTemperature mirrors opencode's per-model temperature mapping
 // in thirdparty/opencode/packages/opencode/src/provider/transform.ts
@@ -280,7 +267,7 @@ func (s *Server) generateThreadTitleCore(threadID string, history []providers.Ch
 	req := providers.ChatRequest{
 		Model: res.Model,
 		Messages: []providers.ChatMessage{
-			{Role: "system", Content: threadTitleSystemPrompt},
+			{Role: "system", Content: fmt.Sprintf(threadTitleSystemPrompt, titleMaxRuneLength)},
 			{Role: "user", Content: "Generate a title for this conversation:\n" + firstUser},
 		},
 		Operation:       providers.NewInferenceOperation(providers.InferenceOperationTitle, providers.InferenceProfileBestEffort),
@@ -588,8 +575,7 @@ func firstUserMessageForTitle(history []providers.ChatMessage, force bool) (stri
 }
 
 // cleanGeneratedThreadTitle strips reasoning fences, optional list/title
-// prefixes, and surrounding quotes before truncating to the opencode-aligned
-// 100-rune cap.
+// prefixes, and surrounding quotes before applying the generated-title limit.
 func cleanGeneratedThreadTitle(text string) string {
 	text = stripThinkBlocks(text)
 	for _, line := range strings.Split(text, "\n") {

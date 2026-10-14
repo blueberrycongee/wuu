@@ -2164,6 +2164,8 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
 
 .thread-row-main > .thread-row-title {
   min-width: 0;
+  /* Backspacing briefly leaves an empty title; keep its line box in place. */
+  min-height: 1lh;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2193,11 +2195,6 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
 .thread-row:hover:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title,
 .thread-row:focus-within:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
-}
-
-.thread-row-main > .thread-row-title[data-title-swap] {
-  --enter-y: -1px;
-  animation: wuu-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
 /* The fork marker stays between the title and right-edge accessories. */
@@ -2244,10 +2241,6 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   .project-row-icon-state,
   .thread-list-collapse {
     transition: none;
-  }
-
-  .thread-row-main > .thread-row-title[data-title-swap] {
-    animation: none;
   }
 }
 

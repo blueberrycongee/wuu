@@ -8,9 +8,9 @@ const { openPreview } = vi.hoisted(() => ({ openPreview: vi.fn() }));
 vi.mock("./plugins/DesktopPluginRuntime", () => ({desktopWorkbenchController:{ subscribe: () => () => {}, getSnapshot: () => 0 }}));
 vi.mock("./plugins/Workbench", () => ({WorkbenchContentRenderer:({fallback}:{fallback:React.ReactNode})=>fallback}));
 vi.mock("./i18n", () => ({useI18n:()=>({t:(key:string)=>key, formatNumber:(value:number)=>String(value)})}));
-vi.mock("./ImagePreview", () => ({useImagePreview:()=>({openPreview}), useOptionalImagePreview:()=>({openPreview})}));
+vi.mock("./ImagePreview", () => ({useImagePreview:()=>({openPreview})}));
 
-it.each([true, false])("keeps image clicks in the viewer and offers a separate panel action for deliveries (delivered=%s)", async (delivered) => {
+it.each([true, false])("opens delivered and inspected images in the viewer (delivered=%s)", async (delivered) => {
   const artifact = { ...collectTurnArtifacts({ items: [presentedImage("image", "snapshot")] } as Turn)[0], foldPreview: !delivered };
   const open = vi.fn();
   openPreview.mockClear();
@@ -26,22 +26,10 @@ it.each([true, false])("keeps image clicks in the viewer and offers a separate p
     await act(async () => container.querySelector("button")!.click());
     expect(open).not.toHaveBeenCalled();
     expect(openPreview).toHaveBeenCalledWith(expect.objectContaining({ src: artifact.uri }), container.querySelector('button'));
-    const panelButton = container.querySelector<HTMLButtonElement>('[data-artifact-panel]');
-    if (delivered) {
-      await act(async () => panelButton!.click());
-      expect(open).toHaveBeenCalledWith(expect.objectContaining({ threadID: "source-thread", cwd: "source-workspace", artifact }));
-      expect(open.mock.calls[0][0].motion.origin.deref()).toBe(container.querySelector('button'));
-      expect(openPreview).toHaveBeenCalledTimes(1);
-    } else {
-      expect(panelButton).toBeNull();
-    }
-    await act(async () => root.render(<ArtifactPreview artifact={artifact} mode="panel" onClose={() => {}} />));
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="imagePreview.label"]')!.click());
-    expect(openPreview).toHaveBeenCalledWith(expect.objectContaining({ src: artifact.uri }), expect.anything());
   } finally { act(() => root.unmount()); }
 });
 
-it("loads a remote image through the separate panel action without opening the viewer", async () => {
+it("loads a remote image into the viewer and reuses the original bytes", async () => {
   const artifact = { ...collectTurnArtifacts({ items: [presentedImage("remote", "snapshot")] } as Turn)[0], uri: undefined, remoteRef: "thread:source", mimeType: "image/png" };
   const open = vi.fn();
   openPreview.mockClear();
@@ -56,9 +44,9 @@ it("loads a remote image through the separate panel action without opening the v
         </ArtifactThreadContext.Provider>
       </ArtifactPreviewContext.Provider>,
     ));
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-artifact-panel]')!.click());
-    expect(open).toHaveBeenCalledWith(expect.objectContaining({ threadID: "source-thread", artifact: expect.objectContaining({ uri: "data:image/png;base64,aW1hZ2U=" }) }));
-    expect(openPreview).not.toHaveBeenCalled();
+    await act(async () => container.querySelector<HTMLButtonElement>('button')!.click());
+    expect(open).not.toHaveBeenCalled();
+    expect(openPreview).toHaveBeenCalledWith(expect.objectContaining({ src: "data:image/png;base64,aW1hZ2U=" }), expect.anything());
     await act(async () => container.querySelector<HTMLImageElement>('img')!.click());
     expect(openPreview).toHaveBeenCalledWith(expect.objectContaining({ src: "data:image/png;base64,aW1hZ2U=" }), expect.anything());
     expect(window.wuu.readRemoteAttachment).toHaveBeenCalledTimes(1);

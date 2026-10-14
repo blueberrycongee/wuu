@@ -3976,16 +3976,27 @@ func (c *AgentControl) consumeWorkerNotification(n subagent.Notification) (worke
 				if err := c.threadStore.RecordCommunication(c.rootThreadID, c.newAgentCompletionCommunication(n.Snapshot, agentthread.RootPath)); err != nil {
 					return workerNotificationSettled, fmt.Errorf("persist root completion communication: %w", err)
 				}
-			} else if c.workerEdgeClosed(n.Snapshot.ParentID) {
-				// Stopping the parent deliberately suppresses automatic wakeup.
-				// Keep the result-ready ledger, but settle this child's terminal
-				// rather than retaining its execution lease for a stopped parent.
-			} else if workerID := firstNonEmptyString(strings.TrimSpace(n.AgentID), strings.TrimSpace(n.Snapshot.ID)); workerTerminalFinalizationPath(c.harnessDir, workerID) != "" {
-				// A busy parent (including one blocked in Wait on this very
-				// terminal transition) cannot claim yet. Defer: the durable
-				// terminal record and result-ready entry hand delivery to
-				// terminal recovery instead of this observer spinning on it.
-				return workerNotificationDeferred, nil
+			} else {
+				// Stop may close the parent after delivery failed for another
+				// reason. Settle any reservation before acknowledging this child,
+				// under the same lock that fences an explicit parent resume.
+				unlockParent := c.lockWorkerTransition(n.Snapshot.ParentID)
+				stopped := c.workerEdgeClosed(n.Snapshot.ParentID)
+				var settleErr error
+				if stopped {
+					_, settleErr = c.settleClosedParentResult(n.Snapshot.ParentID, agentResultDeliveryID(n.Snapshot))
+				}
+				unlockParent()
+				if settleErr != nil {
+					return workerNotificationSettled, fmt.Errorf("settle stopped parent result %s: %w", n.AgentID, settleErr)
+				}
+				if workerID := firstNonEmptyString(strings.TrimSpace(n.AgentID), strings.TrimSpace(n.Snapshot.ID)); !stopped && workerTerminalFinalizationPath(c.harnessDir, workerID) != "" {
+					// A busy parent (including one blocked in Wait on this very
+					// terminal transition) cannot claim yet. Defer: the durable
+					// terminal record and result-ready entry hand delivery to
+					// terminal recovery instead of this observer spinning on it.
+					return workerNotificationDeferred, nil
+				}
 			}
 		}
 		go c.maybeStartQueued(context.Background())
@@ -4342,20 +4353,11 @@ func (c *AgentControl) deliverNestedResultToParent(ctx context.Context, snap sub
 	if leaseErr != nil {
 		if errors.Is(leaseErr, errWorkerEdgeClosed) {
 			defer unlockTransition()
-			// A prior run may already have applied the result before Stop.
-			// Preserve that acknowledgement; otherwise release the reservation
-			// so the durable result remains available without waking the parent.
-			applied, err := c.parentPersistedRunContainsResult(parentID, resultID)
-			if err == nil && applied {
-				transitioned, consumer, err := c.transitionAgentResultDeliveryConsumer(resultID, agentResultConsumerNestedPending, agentResultConsumerNestedFollowup)
-				return err == nil && (transitioned || consumer == agentResultConsumerNestedFollowup)
+			applied, err := c.settleClosedParentResult(parentID, resultID)
+			if err != nil {
+				providers.DebugLogf("agentcontrol: settle stopped parent result %s: %v", resultID, err)
 			}
-			if err == nil {
-				if err := c.ReleaseAgentResultDeliveryClaim(resultID, agentResultConsumerNestedPending); err != nil {
-					providers.DebugLogf("agentcontrol: release stopped parent result %s: %v", resultID, err)
-				}
-			}
-			return false
+			return err == nil && applied
 		}
 		providers.DebugLogf("agentcontrol: acquire parent worker %s for nested result: %v", parentID, leaseErr)
 		return false

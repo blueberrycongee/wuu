@@ -527,7 +527,6 @@ export const enUS = {
   "artifacts.total": "{total} files",
   "artifacts.totalWithHidden": "{total} files · {hidden} more",
   "artifacts.imageGallery": "Image gallery",
-  "artifacts.openInPanel": "Open in side panel",
   "artifacts.gridView": "Show tiled view",
   "artifacts.carouselView": "Show carousel view",
   "artifacts.structuredData": "Tool response data",

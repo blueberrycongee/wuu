@@ -5124,8 +5124,7 @@ pre {
   min-width: 0;
 }
 
-.turn-artifact-gallery-toolbar,
-.turn-artifact-image-toolbar {
+.turn-artifact-gallery-toolbar {
   position: absolute;
   top: 8px;
   right: 8px;
@@ -5138,8 +5137,7 @@ pre {
 }
 
 /* White light supports the icon over media without a dark halo or button box. */
-.turn-artifact-gallery-toolbar::before,
-.turn-artifact-image-toolbar::before {
+.turn-artifact-gallery-toolbar::before {
   content: "";
   position: absolute;
   inset: -4px;
@@ -5150,36 +5148,27 @@ pre {
   pointer-events: none;
 }
 
-.turn-artifact-inline-list:is(:hover, :focus-within) > .turn-artifact-gallery-toolbar,
-.turn-artifact-inline-image:is(:hover, :focus-within) .turn-artifact-image-toolbar {
+.turn-artifact-inline-list:is(:hover, :focus-within) > .turn-artifact-gallery-toolbar {
   opacity: 1;
   pointer-events: auto;
 }
 
-.turn-artifact-gallery-toolbar .icon-button,
-.turn-artifact-image-toolbar .icon-button {
+.turn-artifact-gallery-toolbar .icon-button {
   color: var(--artifact-gallery-control-fg);
   background: transparent;
   border: 0;
 }
 
-.turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled),
-.turn-artifact-image-toolbar .icon-button:is(:hover, :active):not(:disabled) {
+.turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled) {
   color: var(--artifact-gallery-control-fg-hover);
   background: transparent;
 }
 
 @media (hover: none), (pointer: coarse) {
-  .turn-artifact-gallery-toolbar,
-  .turn-artifact-image-toolbar {
+  .turn-artifact-gallery-toolbar {
     opacity: 1;
     pointer-events: auto;
   }
-}
-
-.turn-artifact-image-toolbar {
-  top: auto;
-  bottom: 8px;
 }
 
 .turn-artifact-gallery-items {
@@ -5408,15 +5397,6 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
   min-height: 0;
   border: 0;
   background: var(--artifact-preview-frame-bg);
-}
-
-.artifact-preview-image {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
 }
 
 .artifact-preview-audio {
