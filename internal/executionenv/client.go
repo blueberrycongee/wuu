@@ -14,24 +14,27 @@ import (
 	"time"
 )
 
-// Version 4 requires per-program result views in the isolated interpreter.
+// Version 5 adds actor-bound durable operation receipts and read-only status.
 // Older workers fail closed rather than silently executing a different API.
-const ProtocolVersion = 4
+const ProtocolVersion = 5
 const MaxFrameBytes = 16 * 1024 * 1024
 
 type Request struct {
-	Token  string          `json:"token,omitempty"`
-	ID     string          `json:"id"`
-	Method string          `json:"method"`
-	Data   json.RawMessage `json:"data,omitempty"`
+	Token           string          `json:"token,omitempty"`
+	OperationID     string          `json:"operation_id,omitempty"`
+	OperationDigest string          `json:"operation_digest,omitempty"`
+	ID              string          `json:"id"`
+	Method          string          `json:"method"`
+	Data            json.RawMessage `json:"data,omitempty"`
 }
 
 type Response struct {
-	Method   string          `json:"method,omitempty"`
-	ParentID string          `json:"parent_id,omitempty"`
-	ID       string          `json:"id"`
-	Data     json.RawMessage `json:"data,omitempty"`
-	Error    string          `json:"error,omitempty"`
+	Method    string          `json:"method,omitempty"`
+	ParentID  string          `json:"parent_id,omitempty"`
+	ID        string          `json:"id"`
+	Data      json.RawMessage `json:"data,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	ErrorKind string          `json:"error_kind,omitempty"`
 }
 
 // Client multiplexes a private stdio connection. A transport failure is terminal:
@@ -204,7 +207,20 @@ func (c *Client) Call(ctx context.Context, method string, data any) (json.RawMes
 	return c.CallWithHandler(ctx, method, data, nil)
 }
 
+// CallOperation supplies a durable identity chosen by the host execution owner.
+// Reconnection and result lookup are explicit; this method never resends work.
+func (c *Client) CallOperation(ctx context.Context, operationID, method string, data any, handler func(context.Context, json.RawMessage) (json.RawMessage, error)) (json.RawMessage, error) {
+	if operationID == "" {
+		return nil, errors.New("durable operation identity is required")
+	}
+	return c.call(ctx, operationID, method, data, handler)
+}
+
 func (c *Client) CallWithHandler(ctx context.Context, method string, data any, handler func(context.Context, json.RawMessage) (json.RawMessage, error)) (json.RawMessage, error) {
+	return c.call(ctx, "", method, data, handler)
+}
+
+func (c *Client) call(ctx context.Context, operationID, method string, data any, handler func(context.Context, json.RawMessage) (json.RawMessage, error)) (json.RawMessage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -213,6 +229,13 @@ func (c *Client) CallWithHandler(ctx context.Context, method string, data any, h
 	payload, err := json.Marshal(data)
 	if err != nil {
 		return nil, err
+	}
+	operationDigest := ""
+	if operationID != "" {
+		operationDigest, err = OperationDigest(method, payload)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// A cancelled caller returns promptly, but reuse must wait for the worker's
 	// terminal acknowledgement before another program reuses actor state.
@@ -254,7 +277,9 @@ func (c *Client) CallWithHandler(ctx context.Context, method string, data any, h
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); delete(c.handlers, id); delete(c.contexts, id); c.mu.Unlock() }()
 	written := make(chan error, 1)
-	go func() { written <- c.write(Request{ID: id, Method: method, Data: payload}) }()
+	go func() {
+		written <- c.write(Request{ID: id, Method: method, Data: payload, OperationID: operationID, OperationDigest: operationDigest})
+	}()
 	select {
 	case err = <-written:
 	case <-ctx.Done():
@@ -268,6 +293,9 @@ func (c *Client) CallWithHandler(ctx context.Context, method string, data any, h
 	select {
 	case response := <-ch:
 		if response.Error != "" {
+			if response.ErrorKind != "" {
+				return nil, &OperationError{Kind: response.ErrorKind, ID: operationID, Message: response.Error}
+			}
 			return nil, errors.New(response.Error)
 		}
 		return response.Data, nil

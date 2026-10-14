@@ -29,14 +29,16 @@ import (
 type actor struct{ kit *tools.Toolkit }
 
 type Server struct {
-	code         *codemode.Service
-	token        string
-	requireToken bool
-	mu           sync.Mutex
-	init         *executionenv.Init
-	actors       map[string]*actor
-	processes    *process.Manager
-	exports      map[string]exportFile
+	code                *codemode.Service
+	token               string
+	requireToken        bool
+	mu                  sync.Mutex
+	init                *executionenv.Init
+	actors              map[string]*actor
+	processes           *process.Manager
+	exports             map[string]exportFile
+	operations          *operationStore
+	operationStoreError string
 }
 
 func New() *Server {
@@ -48,6 +50,8 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 		return s.process(ctx, method, data)
 	}
 	switch method {
+	case "operation/status":
+		return s.operationStatus(data)
 	case "export/read", "export/close":
 		return s.export(method, data)
 	case "initialize":
@@ -78,10 +82,10 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 		}
 		cfg.Root = root
 		if s.init != nil {
-			if s.init.Session != cfg.Session || s.init.Root != cfg.Root {
+			if s.init.Session != cfg.Session || s.init.Root != cfg.Root || s.init.Identity != cfg.Identity {
 				return nil, errors.New("execution worker identity mismatch")
 			}
-			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root})
+			return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "operation_receipts": s.operations != nil, "operation_receipts_error": s.operationStoreError})
 		}
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -100,8 +104,14 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 				return nil, err
 			}
 		}
-		s.init, s.processes = &cfg, manager
-		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root})
+		operations, err := newOperationStore(filepath.Join(runtimeDir, "operations"), cfg.Root, cfg)
+		if err != nil {
+			// Receipt availability must not disable previously valid workspaces.
+			// Identified work remains fail-closed; legacy execution has no receipt guarantee.
+			s.operationStoreError = err.Error()
+		}
+		s.init, s.processes, s.operations = &cfg, manager, operations
+		return json.Marshal(map[string]any{"version": executionenv.ProtocolVersion, "root": cfg.Root, "operation_receipts": s.operations != nil, "operation_receipts_error": s.operationStoreError})
 	case "run_code":
 		var request executionenv.CodeRequest
 		if err := json.Unmarshal(data, &request); err != nil {
@@ -310,7 +320,7 @@ func serveConnection(parent context.Context, in io.Reader, out io.Writer, server
 					return toolresult.Result{}, ctx.Err()
 				}
 			}}
-			data, err := server.Handle(toolctx.WithNestedExecutor(callCtx, bridge), req.Method, req.Data)
+			data, err := server.handleIdentified(toolctx.WithNestedExecutor(callCtx, bridge), req)
 			if req.Method == "initialize" && err == nil {
 				subscribe.Do(func() {
 					events := make(chan process.Event, 64)
@@ -335,6 +345,10 @@ func serveConnection(parent context.Context, in io.Reader, out io.Writer, server
 			response := executionenv.Response{ID: req.ID, Data: data}
 			if err != nil {
 				response.Error = err.Error()
+				var operationError *executionenv.OperationError
+				if errors.As(err, &operationError) {
+					response.ErrorKind = operationError.Kind
+				}
 			}
 			mu.Lock()
 			delete(pending, req.ID)

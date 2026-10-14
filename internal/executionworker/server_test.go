@@ -57,9 +57,88 @@ func TestWorkerFilesystemAndPermissionBoundary(t *testing.T) {
 	if _, err := call("notes", `{"action":"read"}`, "standard"); err == nil {
 		t.Fatal("host control tool accepted by worker")
 	}
+	// A response can be lost after a mutation; an identified operation must
+	// preserve its response without repeating the write on the next stream.
+	payload, _ := json.Marshal(executionenv.ToolRequest{Actor: "root", PermissionMode: "standard", Call: providers.ToolCall{Name: "write_file", Arguments: `{"path":"receipt.txt","content":"original"}`}})
+	digest, err := executionenv.OperationDigest("execute", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := executionenv.Request{ID: "transport-1", Method: "execute", Data: payload, OperationID: "durable-invocation-1", OperationDigest: digest}
+	first, err := s.handleIdentified(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "receipt.txt"), []byte("later edit"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	request.ID = "transport-2"
+	second, err := s.handleIdentified(context.Background(), request)
+	if err != nil || string(first) != string(second) {
+		t.Fatalf("receipt response changed: %s / %s: %v", first, second, err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "receipt.txt")); string(got) != "later edit" {
+		t.Fatalf("completed operation repeated: %q", got)
+	}
+	query, _ := json.Marshal(executionenv.OperationQuery{ID: request.OperationID, Digest: digest, Actor: "root", PermissionMode: "standard"})
+	statusData, err := s.Handle(context.Background(), "operation/status", query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status executionenv.OperationStatus
+	if err := json.Unmarshal(statusData, &status); err != nil || status.State != executionenv.OperationCompleted || string(status.Data) != string(first) {
+		t.Fatalf("status: %s, %v", statusData, err)
+	}
+	request.OperationDigest = strings.Repeat("0", 64)
+	if _, err := s.handleIdentified(context.Background(), request); err == nil {
+		t.Fatal("changed operation digest accepted")
+	}
+	query, _ = json.Marshal(executionenv.OperationQuery{ID: "durable-invocation-1", Digest: digest, Actor: "other", PermissionMode: "standard"})
+	if _, err := s.Handle(context.Background(), "operation/status", query); err == nil {
+		t.Fatal("another actor received an operation result")
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	restarted := New()
+	defer restarted.Close()
+	if _, err := restarted.Handle(context.Background(), "initialize", initData); err != nil {
+		t.Fatal(err)
+	}
+	request.OperationDigest = digest
+	if _, err := restarted.handleIdentified(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "receipt.txt")); string(got) != "later edit" {
+		t.Fatalf("restarted worker repeated a completed operation: %q", got)
+	}
 }
 
 func TestWorkerRejectsProtocolMismatch(t *testing.T) {
+	t.Setenv("WUU_HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	legacy := New()
+	defer legacy.Close()
+	initData, _ := json.Marshal(executionenv.Init{Version: executionenv.ProtocolVersion, Root: home, Session: "home-root"})
+	hello, err := legacy.Handle(context.Background(), "initialize", initData)
+	var capability struct {
+		Receipts   bool   `json:"operation_receipts"`
+		Diagnostic string `json:"operation_receipts_error"`
+	}
+	if err != nil || json.Unmarshal(hello, &capability) != nil || capability.Receipts || capability.Diagnostic == "" {
+		t.Fatalf("home-root receipt capability: %s %v", hello, err)
+	}
+	payload, _ := json.Marshal(executionenv.ToolRequest{Actor: "root", PermissionMode: "standard", Call: providers.ToolCall{Name: "write_file", Arguments: `{"path":"legacy.txt","content":"allowed"}`}})
+	if _, err := legacy.Handle(context.Background(), "execute", payload); err != nil {
+		t.Fatal(err)
+	}
+	digest, _ := executionenv.OperationDigest("execute", payload)
+	_, err = legacy.handleIdentified(context.Background(), executionenv.Request{ID: "write", Method: "execute", Data: payload, OperationID: "unsupported", OperationDigest: digest})
+	var rejected *executionenv.OperationError
+	if !errors.As(err, &rejected) || rejected.Kind != executionenv.OperationUnknown {
+		t.Fatalf("unsupported receipt request: %v", err)
+	}
 	for _, version := range []int{executionenv.ProtocolVersion - 1, executionenv.ProtocolVersion + 1} {
 		s := New()
 		data, _ := json.Marshal(executionenv.Init{Version: version, Root: t.TempDir(), Session: "test"})
@@ -149,12 +228,26 @@ func TestWorkerTransportResultViews(t *testing.T) {
 if (r.model_text !== "compact" || load("r").structured_content.text !== "full evidence") throw Error("canonical data changed");
 text(r); console.log({results:[r]}); return r;`,
 		}}
-		raw, err := client.CallWithHandler(ctx, "run_code", request, func(context.Context, json.RawMessage) (json.RawMessage, error) {
+		operationID := "view-" + string(view)
+		raw, err := client.CallOperation(ctx, operationID, "run_code", request, func(context.Context, json.RawMessage) (json.RawMessage, error) {
 			compact := "compact"
 			return json.Marshal(toolresult.Result{Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "content view"}}, StructuredContent: json.RawMessage(`{"text":"full evidence"}`), ModelText: &compact})
 		})
 		if err != nil {
 			t.Fatal(err)
+		}
+		replayed, err := client.CallOperation(ctx, operationID, "run_code", request, func(context.Context, json.RawMessage) (json.RawMessage, error) {
+			t.Error("completed program invoked a nested tool again")
+			return nil, errors.New("unexpected replay")
+		})
+		if err != nil || string(replayed) != string(raw) {
+			t.Fatalf("program receipt changed: %s, %v", replayed, err)
+		}
+		request.Actor = "different-actor"
+		_, err = client.CallOperation(ctx, operationID, "run_code", request, nil)
+		var conflict *executionenv.OperationError
+		if !errors.As(err, &conflict) || conflict.Kind != executionenv.OperationConflict {
+			t.Fatalf("changed authority was not rejected through transport: %v", err)
 		}
 		var result codemode.RunResult
 		if err := json.Unmarshal(raw, &result); err != nil {

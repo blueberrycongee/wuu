@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Execution-worker protocol 5 adds actor-bound operation receipts and read-only
+  status queries. Completed identified work returns its saved result; unresolved
+  admissions survive worker restart without being executed again.
+
 - iOS and Android render Mermaid diagrams offline as replies stream, preserve the
   last valid diagram during partial syntax, and expose source and copy actions.
 

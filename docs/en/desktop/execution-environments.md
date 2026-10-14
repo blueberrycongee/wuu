@@ -93,7 +93,37 @@ Desktop acceptance uses `npm --prefix desktop run test:e2e:execution-environment
 
 ## Worker compatibility
 
-The host and worker must use execution protocol version 4. Upgrade the worker
+The host and worker must use execution protocol version 5. Upgrade the worker
 binary or rebuild its image when upgrading the host. Older workers are rejected
 before execution: programs require the current isolated interpreter and
 actor-scoped JSON state and per-program result-view contracts. They cannot fall back to native program access. No existing permission is expanded.
+
+### Operation receipts
+
+Protocol 5 supports host-assigned operation IDs for `execute` and `run_code`.
+The worker durably records admission before running a tool and records its result
+before responding. An ID is bound to the environment, workspace, session, actor,
+permission mode and request digest. Reusing it with changed inputs is rejected;
+a completed operation returns its recorded result without running again.
+
+`operation/status` is a read-only lookup with the same identity and authority
+binding. It reports `running`, `completed`, `failed`, `outcome_unknown` or
+`not_found`. An admission without a recorded result remains unknown after worker
+restart and is never automatically repeated. `not_found` is not proof that an
+operation interrupted by a disconnect is safe to retry. The host remains the
+execution authority; a receipt does not authorize another tool or expand access.
+A saved response does not restore process handles, in-memory program state or
+artifact export handles that expired when the worker stopped.
+
+Initialization advertises `operation_receipts` and an unavailability diagnostic.
+A workspace containing the receipt state (for example the whole home directory)
+continues to support ordinary execution, but identified receipt requests fail
+before running. Callers must not assume receipt support from the protocol version
+alone.
+
+Receipts live in the worker user's private state outside the workspace. Storage
+is bounded to 16,384 receipts and 256 MiB per session, with 8 MiB reserved for each
+unfinished result. Full storage refuses new identified work before execution
+rather than deleting an admission. Results can contain sensitive tool output and
+are retained with the worker session state. These receipts assume a trusted worker
+account; unconfined commands and trusted adapters have that account's authority.
