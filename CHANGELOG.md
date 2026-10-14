@@ -55,6 +55,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Read-only peer discovery can be composed and filtered inside `run_code`,
+  preserving root-session and workspace boundaries. Peer messaging remains direct-only.
+
 - On macOS, desktop text uses grayscale font smoothing, so regular text keeps
   its designed weight and light text no longer blooms in dark themes. Bold
   phrases in messages use semibold to stay distinct from the lighter body text.

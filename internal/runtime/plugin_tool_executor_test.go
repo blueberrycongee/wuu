@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +17,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/hooks"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
@@ -178,6 +183,10 @@ func TestReplacePluginToolHostPreservesHookLayer(t *testing.T) {
 }
 
 func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node.js is required for the TypeScript plugin process")
+	}
 	root := t.TempDir()
 	kit, err := tools.New(root)
 	if err != nil {
@@ -189,14 +198,64 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 	service := codemode.NewService(codemode.ServiceConfig{})
 	defer service.Close()
 	kit.ConfigurePTC(service, config.PTCConfig{Enabled: true})
-	client := &pluginToolTestClient{}
-	host := pluginhost.New(client)
-	name := host.ToolDefinitions()[0].Name
+
+	// Exercise the shipped read-only helper through its real JSONL transport
+	// and registry. The fixture supplies session data, not plugin behavior.
+	item := serviceTestPlugin("peers", "plugin:peers", "fixture-generation")
+	item.Root, err = filepath.Abs("../plugin/bundled/peers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	item.Runtime = &pluginpkg.RuntimeSpec{Command: node, Args: []string{"runtime.mjs"}, Timeout: 5}
+	var listCalls atomic.Int64
+	router := NewPluginSessionRouter()
+	router.Bind(nil, nil, func(_ context.Context, pluginID string, params pluginhost.SessionListParams) (pluginhost.SessionListResult, error) {
+		listCalls.Add(1)
+		if pluginID != item.ID || params.Scope != "shared" {
+			return pluginhost.SessionListResult{}, fmt.Errorf("unexpected session owner/scope: %s/%s", pluginID, params.Scope)
+		}
+		return pluginhost.SessionListResult{Sessions: []pluginhost.SessionSummary{
+			{SessionID: "thread", WorkspaceID: "workspace"},
+			{SessionID: "peer", WorkspaceID: "workspace"},
+			{SessionID: "foreign", WorkspaceID: "other-workspace"},
+		}}, nil
+	}, nil)
+	home, state := t.TempDir(), t.TempDir()
+	makeHost := func() *pluginhost.Host {
+		host, _, err := buildPluginHost([]pluginpkg.Plugin{item}, root, "workspace", home, state, map[string]bool{item.ID: true}, startPluginClient, router, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = host.Close(context.Background()) })
+		if err := activatePluginHost(context.Background(), host); err != nil {
+			t.Fatal(err)
+		}
+		return host
+	}
+	host := makeHost()
+	name, sendName := "", ""
+	for _, definition := range host.ToolDefinitions() {
+		tool, _ := host.Tool(definition.Name)
+		switch tool.Registration.ID {
+		case "list_peers":
+			name = definition.Name
+		case "send_message":
+			sendName = definition.Name
+		}
+	}
+	if name == "" || sendName == "" {
+		t.Fatal("peer tools missing")
+	}
 	executor := newPluginToolExecutor(kit, host, "thread", root)
+	foundSend := false
 	for _, def := range executor.Definitions() {
 		if def.Name == name {
 			t.Fatalf("leaf tool exposed at top level: %s", def.Name)
 		}
+		foundSend = foundSend || def.Name == sendName
+	}
+	if !foundSend {
+		t.Fatal("peer send control missing from direct surface")
 	}
 	nested, err := kit.CodeModeNestedSurface()
 	if err != nil {
@@ -207,8 +266,8 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 		if def.Name == name {
 			found = true
 		}
-		if def.Name == "write_file" {
-			t.Fatal("catalog advertised a tool disabled in the session")
+		if def.Name == "write_file" || def.Name == sendName {
+			t.Fatalf("catalog advertised unavailable nested tool %s", def.Name)
 		}
 	}
 	if !found {
@@ -216,14 +275,51 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "thread", ExecutionID: "turn"})
 	runtime := agent.NewTurnToolRuntime(agent.ToolRuntimeConfig{Executor: executor, RunContext: ctx, Gate: agent.NewToolExecutionGate(1)})
 	defer runtime.Cancel()
-	code := "return await tools[" + strconv.Quote(name) + "]({})"
-	args, _ := json.Marshal(map[string]any{"code": code, "description": "Call plugin"})
+	code := `const catalog = await searchTools("list_peers");
+const discovered = catalog.tools.find(tool => tool.name === ` + strconv.Quote(name) + `);
+if (!discovered) throw Error("peer discovery missing");
+const result = await tools[discovered.name]({});
+return JSON.parse(result.content[0].text).peers.map(peer => peer.session_id);`
+	args, _ := json.Marshal(map[string]any{"code": code, "description": "Discover and filter peers"})
 	messages, err := runtime.ExecuteFinalCalls(ctx, []providers.ToolCall{{ID: "plugin-run", Name: "run_code", Arguments: string(args)}}, nil)
-	if err != nil || len(messages) != 1 || !client.executed || !strings.Contains(messages[0].Content, "changed") {
-		t.Fatalf("plugin bridge: %+v %v", messages, err)
+	if err != nil || len(messages) != 1 || listCalls.Load() != 1 || !strings.Contains(messages[0].Content, `["peer"]`) {
+		t.Fatalf("plugin bridge: %+v %v, calls=%d", messages, err, listCalls.Load())
 	}
+
+	nestedCtx := toolctx.WithNestedCall(ctx)
+	call := providers.ToolCall{ID: "peer-read", Name: name, Arguments: "{}"}
+	rich := executor.(agent.RichToolExecutor)
+	kit.SetBoundary(tools.ReadOnlyBoundary())
+	if result, err := rich.ExecuteResult(nestedCtx, call); err != nil || !strings.Contains(result.TextProjection(), `"session_id":"peer"`) {
+		t.Fatalf("read-only peer discovery: %+v %v", result, err)
+	}
+	beforeDenied := listCalls.Load()
+	if _, err := rich.ExecuteResult(nestedCtx, providers.ToolCall{Name: sendName, Arguments: `{}`}); err == nil || !strings.Contains(err.Error(), "must be called directly") {
+		t.Fatalf("nested peer send was not rejected: %v", err)
+	}
+	authorizer := &denyPluginAuthorizer{}
+	kit.SetAuthorizer(authorizer)
+	if _, err := rich.ExecuteResult(nestedCtx, call); err == nil || authorizer.calls != 1 || listCalls.Load() != beforeDenied {
+		t.Fatalf("peer discovery bypassed authorization: %v", err)
+	}
+	kit.SetAuthorizer(nil)
+	kit.SetAgentIdentity("child", "/root/child")
+	nested, err = kit.CodeModeNestedSurface()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, def := range nested {
+		if def.Name == name {
+			t.Fatal("root-only peer discovery exposed to child")
+		}
+	}
+	if _, err := rich.ExecuteResult(nestedCtx, call); err == nil || listCalls.Load() != beforeDenied {
+		t.Fatalf("child escaped peer execution scope: %v", err)
+	}
+	kit.SetAgentIdentity("root", "/root")
 
 	kit.DisableTools(name)
 	nested, err = kit.CodeModeNestedSurface()
@@ -235,13 +331,28 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 			t.Fatal("disabled plugin remained discoverable")
 		}
 	}
-	client.executed = false
-	_, err = executor.(agent.RichToolExecutor).ExecuteResult(toolctx.WithNestedCall(ctx), providers.ToolCall{ID: "stale-binding", Name: name, Arguments: "{}"})
-	if err == nil || client.executed {
+	if _, err := rich.ExecuteResult(nestedCtx, call); err == nil || listCalls.Load() != beforeDenied {
 		t.Fatalf("disabled plugin bypassed live authorization: %v", err)
 	}
 	kit.EnableTools(name)
 
+	// Replacement must bind the caller's session, not a process-global identity.
+	replacement := makeHost()
+	executor = replacePluginToolBindings(executor, replacement, nil, "missing-source", root)
+	if _, err := executor.(agent.RichToolExecutor).ExecuteResult(nestedCtx, call); err == nil || !strings.Contains(err.Error(), "non-archived user-visible session") {
+		t.Fatalf("unlisted source gained peer access: %v", err)
+	}
+	executor = replacePluginToolBindings(executor, replacement, nil, "thread", root)
+	if result, err := executor.(agent.RichToolExecutor).ExecuteResult(nestedCtx, call); err != nil || !strings.Contains(result.TextProjection(), `"session_id":"peer"`) || strings.Contains(result.TextProjection(), "foreign") {
+		t.Fatalf("replacement peer discovery: %+v %v", result, err)
+	}
+	if _, found := host.RetirePlugin(ctx, item.ID, fmt.Errorf("disabled")); !found {
+		t.Fatal("peer retirement failed")
+	}
+	before := listCalls.Load()
+	if _, err := rich.ExecuteResult(nestedCtx, call); err == nil || listCalls.Load() != before {
+		t.Fatalf("retired peer binding remained executable: %v", err)
+	}
 	executor = replacePluginToolBindings(executor, pluginhost.New(), nil, "thread", root)
 	nested, err = kit.CodeModeNestedSurface()
 	if err != nil {
