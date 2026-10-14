@@ -418,6 +418,7 @@ describe("main composer focus continuity", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     window.localStorage.clear();
+    window.sessionStorage.clear();
   });
 
   afterEach(() => {
