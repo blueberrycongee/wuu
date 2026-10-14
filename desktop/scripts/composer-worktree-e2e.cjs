@@ -398,18 +398,17 @@ async function run() {
   await evaluate(main, () => [...document.querySelectorAll('.cached-conversation-pane[data-active="true"] .turn-process-toggle[aria-expanded="false"]')].at(-1)?.click());
   await waitFor(main, () => document.querySelector('.cached-conversation-pane[data-active="true"] .process-surface'));
   await evaluate(main, () => document.querySelectorAll('.cached-conversation-pane[data-active="true"] .process-surface-fold.has-details:not([open]) > summary').forEach(node => node.click()));
-  await waitFor(main, () => document.querySelector('.workspace-tool-record[data-status="completed"]'));
+  await waitFor(main, () => document.querySelector('.process-surface-fold[open] .workspace-tool-details'));
   const rebound = await evaluate(main, async id => (await window.wuu.listThreads()).threads.find(candidate => candidate.id === id), thread.id);
   assert.equal(fs.realpathSync(rebound.cwd), fs.realpathSync(project));
   assert.ok(!rebound.worktree);
   assert(await evaluate(main, () => {
     const pane = document.querySelector('.cached-conversation-pane[data-active="true"]');
-    const record = pane.querySelector('.workspace-tool-record');
+    const record = pane.querySelector('.workspace-tool-details');
     const message = [...pane.querySelectorAll('.user-message-motion')].find(node => node.textContent.includes('Rebind workspace fixture'));
     return message && Boolean(message.compareDocumentPosition(record) & Node.DOCUMENT_POSITION_FOLLOWING)
       && !pane.querySelector('.fork-worktree-notice');
   }), 'The workspace operation must follow its initiating message.');
-  await click(main, '.workspace-tool-record > summary');
   assert(await evaluate(main, root => document.querySelector('.workspace-tool-details')?.textContent.includes(root), fs.realpathSync(project)));
   await capture(main, '10-workspace-tool-light.png');
   main.setSize(760, 820);
@@ -417,7 +416,7 @@ async function run() {
     document.documentElement.dataset.theme = 'dark';
     document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
     document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
-    document.querySelector('.workspace-tool-record > summary').focus();
+    document.querySelector('.workspace-tool-details').closest('.process-surface-fold').querySelector('summary').focus();
   });
   await capture(main, '11-workspace-tool-dark-large-narrow.png');
   main.setSize(1280, 820);
