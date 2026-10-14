@@ -119,6 +119,11 @@ export function showErrorToast(error: unknown, fallback = "", dedupeKey?: string
   });
 }
 
+/** Each explicit action gets feedback even when a prior identical error was dismissed. */
+export function showActionErrorToast(error: unknown, fallback = ""): number | undefined {
+  return showErrorToast(error, fallback, `action-error:${nextToastID}`);
+}
+
 export function clearToasts(): void {
   activeToast = null;
   queuedToasts = [];

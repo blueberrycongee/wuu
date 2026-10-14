@@ -23,7 +23,7 @@ import {
 } from "./SideThreadState";
 import { useI18n } from "./i18n";
 import { statusMessageForError } from "./UserFacingErrors";
-import { showErrorToast } from "./Toast";
+import { showActionErrorToast } from "./Toast";
 
 const SIDE_THREAD_RECOVERY_POLL_MS = 2_000;
 
@@ -107,7 +107,6 @@ export function useSideThreadController(
   );
   const storeRef = useRef(store);
   const announcedErrorsRef = useRef(new Map<string, string>());
-  const nextErrorToastIDRef = useRef(0);
   const openGenerationRef = useRef(new Map<string, number>());
   const pendingSendTasksRef = useRef(new Map<string, Promise<void>>());
   const lastActiveRuntimeKeyRef = useRef<string | undefined>(undefined);
@@ -130,13 +129,7 @@ export function useSideThreadController(
     const error = sideThreadRequestError(entry);
     if (!error || announcedErrorsRef.current.get(activeThreadId) === error) return;
     announcedErrorsRef.current.set(activeThreadId, error);
-    // Explicit retries are new failures even when their wording is identical;
-    // keep the shared toast's time-based dedupe from swallowing their feedback.
-    showErrorToast(
-      statusMessageForError(error, t("sideThread.unavailable")),
-      "",
-      `side-thread:${activeThreadId}:${++nextErrorToastIDRef.current}`,
-    );
+    showActionErrorToast(statusMessageForError(error, t("sideThread.unavailable")));
   }, [activeThreadId, entry, t]);
 
   useEffect(() => {

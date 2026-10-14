@@ -111,7 +111,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Keep composer inputs free of duplicate status text while surfacing rejected
   requests through toasts, preserving drafts and disabled-action explanations.
-  Revisiting a side conversation no longer repeats its previous error.
+  Explicit retries report each failure even when the error repeats. Revisiting
+  a side conversation no longer repeats its previous error.
 
 - Keep iOS conversations visible after sending through long histories, with stable
   latest-message following through keyboard changes and retained reading position

@@ -235,7 +235,7 @@ describe("useSideThreadController", () => {
 
   it("rolls back a failed request, notifies once, and reports repeated explicit attempts", async () => {
     vi.useFakeTimers();
-    const toast = vi.spyOn(Toast, "showErrorToast");
+    const toast = vi.spyOn(Toast, "showActionErrorToast");
     const fail = vi.fn(async () => {
       throw new Error("provider unavailable");
     });
@@ -326,7 +326,7 @@ describe("useSideThreadController", () => {
   });
 
   it("only notifies current-workspace failures that no reply shows", () => {
-    const toast = vi.spyOn(Toast, "showErrorToast");
+    const toast = vi.spyOn(Toast, "showActionErrorToast");
     const { ipc, emit } = makeIPC();
     const hook = mountController(ipc);
 

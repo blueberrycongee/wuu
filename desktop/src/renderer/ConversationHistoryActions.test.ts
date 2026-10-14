@@ -424,7 +424,7 @@ describe("createConversationHistoryActions", () => {
 
   it("blocks history edit while the thread has pending composer messages", () => {
     installWuuApi();
-    const toast = vi.spyOn(Toast, "showErrorToast");
+    const toast = vi.spyOn(Toast, "showActionErrorToast");
     const harness = buildActions({ hasPendingMessages: true });
 
     harness.actions.startEditingThreadMessageFromHistory(

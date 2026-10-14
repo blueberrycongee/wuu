@@ -223,7 +223,7 @@ import {
 import { ArchiveTip } from "./ArchiveTip";
 import { TopNotice } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
-import { showErrorToast, showToast } from "./Toast";
+import { showActionErrorToast, showErrorToast, showToast } from "./Toast";
 import { useArchiveDeletion } from "./useArchiveDeletion";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { CircleAlert, RefreshCw } from "./WuuIcons";
@@ -4047,7 +4047,7 @@ export function App(): JSX.Element {
     const source = activeThreadForState(currentState);
     const activeContext = currentState.activeContext;
     if (!source || !activeContext) {
-      showErrorToast(t("app.openConversationFirst"));
+      showActionErrorToast(t("app.openConversationFirst"));
       return;
     }
     try {
@@ -4363,7 +4363,7 @@ export function App(): JSX.Element {
     const targetPane = pane ?? currentState.activePane;
     const targetThread = threadForPane(currentState, targetPane);
     if (targetThread?.read_only) {
-      showErrorToast(t("app.childTaskReadOnly"));
+      showActionErrorToast(t("app.childTaskReadOnly"));
       return false;
     }
     if (
@@ -4571,15 +4571,15 @@ export function App(): JSX.Element {
       return;
     }
     if (!targetThread) {
-      showErrorToast(t("app.openConversationFirst"));
+      showActionErrorToast(t("app.openConversationFirst"));
       return;
     }
     if (targetThread.read_only) {
-      showErrorToast(t("app.childTaskReadOnly"));
+      showActionErrorToast(t("app.childTaskReadOnly"));
       return;
     }
     if (isStateActiveThreadRunning(currentState)) {
-      showErrorToast(t("app.currentTaskRunning"));
+      showActionErrorToast(t("app.currentTaskRunning"));
       return;
     }
 
@@ -4779,7 +4779,7 @@ export function App(): JSX.Element {
       removePendingComposerMessageByID(pendingKey(), message.id, "queue");
       if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
-        showErrorToast(error, t("app.queueFailed"));
+        showActionErrorToast(error, t("app.queueFailed"));
       }
       return !stillPending;
     } finally {
@@ -4866,7 +4866,7 @@ export function App(): JSX.Element {
       removePendingComposerMessageByID(targetThread.id, message.id, "guide");
       if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
-        showErrorToast(error, t("composer.guideFailed"));
+        showActionErrorToast(error, t("composer.guideFailed"));
       }
       return !stillPending;
     }
@@ -5192,7 +5192,7 @@ export function App(): JSX.Element {
       } else if (!interrupted && !keepAcceptedTurn) {
         // The rejected turn was removed from the transcript, so nothing else
         // tells the user why their message came back to the composer.
-        showErrorToast(errorMessage);
+        showActionErrorToast(errorMessage);
       }
       if (admission.sent && optimisticThreadID && stopRequestsRef.current[optimisticThreadID]) {
         await interruptAcceptedThread(optimisticThreadID!);

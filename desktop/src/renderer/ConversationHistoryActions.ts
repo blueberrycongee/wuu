@@ -29,7 +29,7 @@ import {
 } from "./ComposerMessages";
 import { lastUserMessageAnchor } from "./TurnViewHelpers";
 import { translateCurrent as t } from "./i18n";
-import { showErrorToast } from "./Toast";
+import { showActionErrorToast, showErrorToast } from "./Toast";
 import { rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
@@ -295,11 +295,11 @@ export function createConversationHistoryActions(
       return;
     }
     if (isThreadRunning(sourceThread)) {
-      showErrorToast(t("history.waitForReply"));
+      showActionErrorToast(t("history.waitForReply"));
       return;
     }
     if (deps.threadHasPendingComposerMessages(sourceThread.id)) {
-      showErrorToast(t("history.handlePendingFirst"));
+      showActionErrorToast(t("history.handlePendingFirst"));
       return;
     }
 
@@ -372,15 +372,15 @@ deps.rememberConversationScrollForEdit();
     }));
     const message = createComposerMessage(text, composerImages, composerFiles, contentParts);
     if (!message) {
-      showErrorToast(t("history.emptyEdit"));
+      showActionErrorToast(t("history.emptyEdit"));
       return;
     }
     if (isThreadRunning(sourceThread)) {
-      showErrorToast(t("history.waitForReply"));
+      showActionErrorToast(t("history.waitForReply"));
       return;
     }
     if (deps.threadHasPendingComposerMessages(sourceThread.id)) {
-      showErrorToast(t("history.handlePendingFirst"));
+      showActionErrorToast(t("history.handlePendingFirst"));
       return;
     }
 
