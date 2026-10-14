@@ -28,8 +28,8 @@ import {
   type QueuedComposerMessage,
 } from "./ComposerMessages";
 import { lastUserMessageAnchor } from "./TurnViewHelpers";
-import { localizedText, translateCurrent as t } from "./i18n";
-import { showErrorToast } from "./Toast";
+import { translateCurrent as t } from "./i18n";
+import { showActionErrorToast, showErrorToast } from "./Toast";
 import { rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
@@ -167,18 +167,10 @@ export function createConversationHistoryActions(
         }));
       }
       if (gitStatus.is_repo === false) {
-        deps.setAppState((current) => ({
-          ...current,
-          status: deps.worktreeForkNonGitReason,
-        }));
         throw new Error(deps.worktreeForkNonGitReason);
       }
     }
     
-    deps.setAppState((current) => ({
-      ...current,
-      status: localizedText("history.forking"),
-    }));
     try {
       const targetItem = sourceThread.turns
         .find((turn) => turn.id === turnID)
@@ -303,17 +295,11 @@ export function createConversationHistoryActions(
       return;
     }
     if (isThreadRunning(sourceThread)) {
-      deps.setAppState((current) => ({
-        ...current,
-        status: localizedText("history.waitForReply"),
-      }));
+      showActionErrorToast(t("history.waitForReply"));
       return;
     }
     if (deps.threadHasPendingComposerMessages(sourceThread.id)) {
-      deps.setAppState((current) => ({
-        ...current,
-        status: localizedText("history.handlePendingFirst"),
-      }));
+      showActionErrorToast(t("history.handlePendingFirst"));
       return;
     }
 
@@ -386,24 +372,15 @@ deps.rememberConversationScrollForEdit();
     }));
     const message = createComposerMessage(text, composerImages, composerFiles, contentParts);
     if (!message) {
-      deps.setAppState((current) => ({
-        ...current,
-        status: localizedText("history.emptyEdit"),
-      }));
+      showActionErrorToast(t("history.emptyEdit"));
       return;
     }
     if (isThreadRunning(sourceThread)) {
-      deps.setAppState((current) => ({
-        ...current,
-        status: localizedText("history.waitForReply"),
-      }));
+      showActionErrorToast(t("history.waitForReply"));
       return;
     }
     if (deps.threadHasPendingComposerMessages(sourceThread.id)) {
-      deps.setAppState((current) => ({
-        ...current,
-        status: localizedText("history.handlePendingFirst"),
-      }));
+      showActionErrorToast(t("history.handlePendingFirst"));
       return;
     }
 

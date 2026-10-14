@@ -38,8 +38,7 @@ export function createInitialSideThreadStore(): SideThreadStoreState {
 }
 
 // A failed reply already shows its error in the transcript. Only failures no
-// reply carries (loading history, sending, resetting) are reported beside the
-// composer.
+// reply carries (loading history, sending, resetting) need a separate notification.
 export function sideThreadRequestError(
   entry: SideThreadEntryState
 ): string | undefined {

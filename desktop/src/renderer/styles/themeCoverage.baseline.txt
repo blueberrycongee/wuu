@@ -35,7 +35,6 @@ conversation-shell.css .run-debug-phase.error background --danger-soft
 conversation-shell.css .run-debug-phase.running background --success-soft
 conversation-shell.css .run-debug-phase.success background --success-soft
 conversation-shell.css .run-debug-phase.warning background --warning-soft
-conversation-shell.css .session-tab-close:hover background --ink-overlay-8
 conversation-shell.css .session-tab-pending-count background --shell-session-tab-pending-count-bg
 conversation-shell.css .session-tab-status background --shell-session-tab-status-default
 conversation-shell.css .session-tab:hover, .session-tab:focus-within background --ink-overlay-4
@@ -159,8 +158,8 @@ turns.css .message-image-overflow:hover background --message-image-overflow-bg-h
 turns.css .process-surface-fold.has-details > .process-surface-row:hover, .process-surface-fold.has-details > .process-surface-row:focus-visible color --activity-toggle-hover-color
 turns.css .project-empty-actions button:hover background --project-empty-actions-hover-bg
 turns.css .rich-link text-decoration-color --rich-link-underline-color
-turns.css .rich-mermaid-error border-color --danger-border
-turns.css .rich-mermaid-error background --danger-soft
+turns.css .rich-mermaid[data-mermaid-state="error"] border-color --danger-border
+turns.css .rich-mermaid[data-mermaid-state="error"] background --danger-soft
 turns.css .turn-artifact-gallery-toolbar .icon-button, .turn-artifact-image-toolbar .icon-button color --artifact-gallery-control-fg
 turns.css .turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled), .turn-artifact-image-toolbar .icon-button:is(:hover, :active):not(:disabled) color --artifact-gallery-control-fg-hover
 turns.css .turn-artifact-gallery-toolbar::before, .turn-artifact-image-toolbar::before background --artifact-gallery-control-glow
@@ -176,7 +175,7 @@ workbench.css .plugin-ui-button[data-wuu-variant="primary"] background --gray-90
 workbench.css .plugin-ui-button[data-wuu-variant="primary"]:not(:disabled):hover background --gray-900
 workbench.css .plugin-workbench-view-header [role="tab"]:hover, .plugin-workbench-status button:hover, .plugin-workbench-error button:hover background --ink-overlay-6
 workspace-pdf-preview.css .pdfViewer .page background-color --pdf-page-bg
-workspace-pdf-preview.css .workspace-pdf-zoom-controls button:not(:disabled):hover background --ink-overlay-4
+workspace-pdf-preview.css .workspace-pdf-zoom-controls button:not(:disabled):hover, .workspace-pdf-retry:not(:disabled):hover background --ink-overlay-4
 workspace.css .conversation-split-resizer:hover::before, .conversation-split-resizer:focus-visible::before, .resizing-split .conversation-split-resizer::before background --sidebar-resizer-hover-bg
 workspace.css .conversation-split-resizer:hover::before, .conversation-split-resizer:focus-visible::before, .resizing-split .conversation-split-resizer::before box-shadow --sidebar-resizer-hover-ring
 workspace.css .split-composer-shell.split-composer-shell-drop-active::after box-shadow --ink-overlay-18
@@ -195,7 +194,6 @@ workspace.css .workspace-review-row:hover background --ink-overlay-4
 workspace.css .workspace-review-search background --ink-overlay-4
 workspace.css .workspace-tool-menu-item:active, .workspace-tool-menu-more > summary:active background --ink-overlay-8
 workspace.css .workspace-tool-menu-item:hover, .workspace-tool-menu-more > summary:hover background --ink-overlay-4
-workspace.css .workspace-tool-tab-close:hover background --ink-overlay-8
 workspace.css .workspace-tool-tab:hover::before, .workspace-tool-tab:focus-within::before background --workspace-tab-chip-hover-bg
 wuu-mascot.css .wuu-accessory-trim fill --wuu-mascot-mix-white
 wuu-mascot.css .wuu-mascot-activity-fill fill --wuu-mascot-mix-white

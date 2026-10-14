@@ -326,7 +326,7 @@
   --sidebar-row-height: max(28px, round(nearest, calc(var(--sidebar-label-size) * 2), 4px));
   /* Labels sit one step below conversation ink so the rail reads as quiet
    * chrome next to the message flow; icons stay on --ink-soft below them. */
-  --sidebar-label-ink: color-mix(in srgb, var(--ink) 84%, var(--paper));
+  --sidebar-label-ink: color-mix(in srgb, var(--ink) 92%, var(--paper));
   /* Group labels and list-footer actions: quieter than labels, still 4.5:1. */
   --sidebar-heading-ink: var(--ink-tertiary);
   /* One icon and text axis for navigation, plugins, projects, and account

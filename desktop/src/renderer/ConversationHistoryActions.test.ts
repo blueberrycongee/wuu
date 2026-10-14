@@ -21,7 +21,8 @@ import {
   type HistoryMessageEditState,
   type PendingForkState,
 } from "./ConversationHistoryActions";
-import { resolveLocalizedText, setActiveLocale } from "./i18n";
+import { setActiveLocale } from "./i18n";
+import * as Toast from "./Toast";
 
 // The scroll controller owns asynchronous navigation; these action tests
 // record the requested message without mounting a viewport.
@@ -345,9 +346,6 @@ describe("createConversationHistoryActions", () => {
     expect(api.gitStatus).toHaveBeenCalled();
     expect(api.forkThread).not.toHaveBeenCalled();
     expect(harness.getPendingFork()).toBe(pending);
-    expect(harness.getAppState().status).toBe(
-      "当前工作目录不是 git 仓库，不能创建 git worktree",
-    );
   });
 
   it("opens the fork picker for non-latest user messages", async () => {
@@ -426,6 +424,7 @@ describe("createConversationHistoryActions", () => {
 
   it("blocks history edit while the thread has pending composer messages", () => {
     installWuuApi();
+    const toast = vi.spyOn(Toast, "showActionErrorToast");
     const harness = buildActions({ hasPendingMessages: true });
 
     harness.actions.startEditingThreadMessageFromHistory(
@@ -435,9 +434,8 @@ describe("createConversationHistoryActions", () => {
     );
 
     expect(harness.getHistoryMessageEdit()).toBeUndefined();
-    expect(resolveLocalizedText(harness.getAppState().status)).toBe(
-      "先处理待发送消息，再编辑历史",
-    );
+    expect(toast).toHaveBeenCalledWith("先处理待发送消息，再编辑历史");
+    toast.mockRestore();
   });
 
   it("submits an edited history message and sends the replacement text", async () => {

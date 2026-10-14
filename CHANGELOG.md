@@ -55,9 +55,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- On macOS, desktop text uses grayscale font smoothing, so regular text keeps
-  its designed weight and light text no longer blooms in dark themes. Bold
-  phrases in messages use semibold to stay distinct from the lighter body text.
+- Desktop text uses stronger light-theme contrast and native macOS font smoothing
+  by default, with an optional grayscale setting. Content fonts can be selected
+  independently for messages, drafts, and Markdown previews; code editors now
+  share code-block line spacing while existing font sizes remain unchanged.
+  Bold phrases in messages use semibold to stay distinct from body text.
 
 - The agent cursor in browser pages and live previews now travels along a soft
   arc with the tip leading, a speed glow, a small follow-through, a click
@@ -111,6 +113,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Preserve cancelled worker results when stopping a parent races a pending
   child-result handoff, without automatically waking the stopped parent.
+
+- Keep composer inputs free of duplicate status text while surfacing rejected
+  requests through toasts, preserving drafts and disabled-action explanations.
+  Explicit retries report each failure even when the error repeats. Revisiting
+  a side conversation no longer repeats its previous error.
 
 - Keep iOS conversations visible after sending through long histories, with stable
   latest-message following through keyboard changes and retained reading position
