@@ -273,17 +273,21 @@ function makeSurface(opts?: { host?: FakeHost; bounds?: Rectangle; cursorPositio
 }
 
 describe("BrowserPiPSurface", () => {
-  it("waits for its host to be visible and restores after hide or minimize without new activity", () => {
+  it("waits for a foreground host before showing and preserves an existing preview through focus changes", () => {
     let visible = false;
     let minimized = false;
+    let focused = false;
     const parent = Object.assign(new EventEmitter(), {
       isDestroyed: () => false,
       isVisible: () => visible,
       isMinimized: () => minimized,
+      isFocused: () => focused,
       getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
       webContents: { getZoomFactor: () => 1 },
     });
-    const { surface, win } = makeSurface();
+    const { surface, win, host } = makeSurface();
+    const show = vi.spyOn(win, "showInactive");
+    const hide = vi.spyOn(win, "hide");
     surface.start();
     surface.setHostParent(parent);
     surface.setVisible(true);
@@ -292,13 +296,35 @@ describe("BrowserPiPSurface", () => {
 
     visible = true;
     parent.emit("show");
+    win.emit("ready-to-show");
+    surface.setVisible(true);
+    expect(show).not.toHaveBeenCalled();
+    expect(host.mounts).toHaveLength(0);
+
+    focused = true;
+    parent.emit("focus");
     expect(win.isVisible()).toBe(true);
+    expect(show).toHaveBeenCalledTimes(1);
+    const mountCount = host.mounts.length;
+    hide.mockClear();
+    focused = false;
+    parent.emit("blur");
+    surface.setVisible(true);
+    win.emit("ready-to-show");
+    expect(win.isVisible()).toBe(true);
+    expect(hide).not.toHaveBeenCalled();
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(host.mounts).toHaveLength(mountCount);
+
     visible = false;
     parent.emit("hide");
     surface.setVisible(true);
     expect(win.isVisible()).toBe(false);
     visible = true;
     parent.emit("show");
+    expect(win.isVisible()).toBe(false);
+    focused = true;
+    parent.emit("focus");
     expect(win.isVisible()).toBe(true);
     minimized = true;
     parent.emit("minimize");

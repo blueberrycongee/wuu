@@ -120,9 +120,9 @@ export interface BrowserPiPHostWindow {
   isMinimized(): boolean;
   getContentBounds(): Rectangle;
   readonly webContents: { getZoomFactor(): number };
-  on(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore", listener: () => void): void;
-  removeListener(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore", listener: () => void): void;
-  isFocused?(): boolean;
+  on(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore" | "focus", listener: () => void): void;
+  removeListener(event: "move" | "resize" | "show" | "hide" | "minimize" | "restore" | "focus", listener: () => void): void;
+  isFocused(): boolean;
 }
 
 // Surface→coordinator reporting. onEvent carries ready/user_close/geometry
@@ -530,7 +530,7 @@ export class ObservationCoordinator {
       this.browserHost &&
       this.browserHost.id !== webContentsId &&
       !this.browserHost.window.isDestroyed() &&
-      hostWindow.isFocused?.() === false
+      !hostWindow.isFocused()
     ) {
       return;
     }

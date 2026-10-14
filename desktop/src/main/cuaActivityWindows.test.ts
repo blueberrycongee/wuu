@@ -313,6 +313,7 @@ describe("browser observation surface", () => {
       isDestroyed: () => false,
       isVisible: () => true,
       isMinimized: () => false,
+      isFocused: () => true,
       getContentBounds: () => content,
       webContents: { getZoomFactor: () => 1 },
     });
