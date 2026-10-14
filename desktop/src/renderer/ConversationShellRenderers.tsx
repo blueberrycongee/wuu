@@ -13,7 +13,6 @@ import {
   type RefObject,
 } from "react";
 import {
-  PictureInPicture,
   ArrowLeft,
   SquarePen,
   Info,
@@ -532,8 +531,6 @@ export type ConversationTitleActionsProps = {
   rightPanelOpen: boolean;
   onToggleRightPanel: () => void;
   showRightPanelToggle?: boolean;
-  activityPreviewVisible?: boolean;
-  onToggleActivityPreview?: () => void;
 };
 
 export function ConversationTitleActions({
@@ -545,8 +542,6 @@ export function ConversationTitleActions({
   rightPanelOpen,
   onToggleRightPanel,
   showRightPanelToggle = true,
-  activityPreviewVisible = false,
-  onToggleActivityPreview,
 }: ConversationTitleActionsProps): JSX.Element {
   const { t } = useI18n();
   const projectActions = useProjectActions();
@@ -571,15 +566,9 @@ export function ConversationTitleActions({
     ? t("shell.hideEnvironmentInfo")
     : t("shell.showEnvironmentInfo");
   const rightPanelLabel = t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar");
-  const previewLabel = t(activityPreviewVisible ? "shell.hideActivityPreview" : "shell.showActivityPreview");
   return (
     <div className="title-actions">
       {management}
-      {onToggleActivityPreview && !pluginPageVisible ? <Tooltip content={previewLabel} side="bottom">
-        <button type="button" className="icon-button" aria-label={previewLabel} aria-pressed={activityPreviewVisible} onClick={onToggleActivityPreview}>
-          <PictureInPicture aria-hidden="true" />
-        </button>
-      </Tooltip> : null}
       {!ENABLE_ENVIRONMENT_PANEL || pluginPageVisible ? null : (
         <Tooltip content={environmentLabel} side="bottom">
           <button

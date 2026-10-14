@@ -25,7 +25,6 @@ import {
   useState,
 } from "react";
 import type {
-  ActivityPreviewState,
   ActivitySession,
   BrowserDockTarget,
   Agent,
@@ -1504,24 +1503,6 @@ export function App(): JSX.Element {
     window.addEventListener("focus", syncVisibleCUAThread);
     return () => window.removeEventListener("focus", syncVisibleCUAThread);
   }, [activeThreadID]);
-  const [activityPreview, setActivityPreview] = useState<ActivityPreviewState>();
-  useEffect(() => {
-    if (!window.wuu.getActivityPreviewState || !window.wuu.onActivityPreviewStateChange) return;
-    let disposed = false;
-    let receivedUpdate = false;
-    const unsubscribe = window.wuu.onActivityPreviewStateChange(preview => {
-      receivedUpdate = true;
-      setActivityPreview(preview);
-    });
-    void window.wuu.getActivityPreviewState().then(preview => {
-      if (!disposed && !receivedUpdate) setActivityPreview(preview);
-    }).catch(error => console.warn("Failed to read activity preview state", error));
-    return () => { disposed = true; unsubscribe(); };
-  }, []);
-  const activePreview = state.initialized?.runtime_host?.kind !== "cloud"
-    && activityPreview?.thread_id === activeThreadID
-    && activityPreview?.workdir === state.activeContext?.cwd
-    && activityPreview?.available ? activityPreview : undefined;
   const activeBrowserActivity = useMemo(
     () =>
       ENABLE_EMBEDDED_BROWSER
@@ -5757,12 +5738,6 @@ export function App(): JSX.Element {
             rightPanelOpen={rightPanelOpen}
             onToggleRightPanel={toggleRightPanel}
             showRightPanelToggle={false}
-            activityPreviewVisible={activePreview?.visible}
-            onToggleActivityPreview={activePreview && activeThreadID ? () => {
-              const toggle = activePreview.visible ? window.wuu.hideActivityPreview : window.wuu.showActivityPreview;
-              void toggle?.(activeThreadID)
-                .catch(error => showErrorToast(error, t("app.activityPreviewFailed")));
-            } : undefined}
           />
         </header>
         <ConversationSidePanels

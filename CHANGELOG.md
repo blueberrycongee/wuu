@@ -97,9 +97,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Keep tool diagnostics out of floating activity previews. Use concise recovery
-  hints for preview failures and a picture-in-picture button that switches between
-  showing and hiding the available preview.
+- Keep tool diagnostics out of floating activity previews, show concise guidance
+  for preview failures, and remove the extra preview button from the conversation
+  title bar.
 
 - Preserve browser viewport and click/scroll coordinates in compact live previews,
   including cards scaled below 25% and transitions back to the browser panel.

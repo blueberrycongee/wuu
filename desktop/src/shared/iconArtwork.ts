@@ -159,7 +159,6 @@ export const iconArtwork = {
   Minimize2: [path("M19.5 10H14V4.5m0 5.5 5.5-5.5M4.5 14H10v5.5m0-5.5-5.5 5.5")],
   Minus: [path("M4 12h16")],
   Monitor: monitor,
-  PictureInPicture: [rect(3, 4.5, 18, 15, 3.5), rect(12, 11, 6, 5.5, 1.5, true)],
   Moon: [path("M10 3a9 9 0 1 0 11 11C12 17 7 11 10 3Z")],
   MoreHorizontal: ellipsis,
   Network: inset([path("M12 8v5M5 16v-3h14v3"), rect(9, 2.5, 6, 5.5, 2), rect(2, 16, 6, 5.5, 2), rect(16, 16, 6, 5.5, 2)], 0.88),

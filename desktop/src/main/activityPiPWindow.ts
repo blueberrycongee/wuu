@@ -26,7 +26,7 @@ export type BrowserPiPWindowHandle = BrowserParentWindowHandle & {
   setBounds(bounds: Rectangle): void;
   setParentWindow?(parent: unknown): void;
   on(
-    event: "close" | "closed" | "moved" | "resize" | "ready-to-show" | "show" | "hide",
+    event: "close" | "closed" | "moved" | "resize" | "ready-to-show",
     listener: (...args: unknown[]) => void,
   ): void;
   destroy(): void;
@@ -169,8 +169,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       const b = win.getBounds();
       this.deps.sink.onEvent({ event: "geometry", x: b.x, y: b.y, width: b.width, height: b.height });
     };
-    win.on("show", () => this.deps.sink.onVisibilityChanged?.());
-    win.on("hide", () => this.deps.sink.onVisibilityChanged?.());
     win.on("moved", reportGeometry);
     win.on("resize", () => {
       reportGeometry();
@@ -199,10 +197,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     });
     this.startContent();
     this.setHostParent(this.deps.parent?.() ?? null);
-  }
-
-  isVisible(): boolean {
-    return Boolean(this.win && !this.win.isDestroyed() && this.win.isVisible());
   }
 
   setVisible(visible: boolean): void {
