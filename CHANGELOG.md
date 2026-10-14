@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- `wuu session compact` reclaims free database space and enables incremental
+  reclamation for older stores. Large provider-history checkpoints now use
+  lossless compression, with bounded migration of existing checkpoints.
+
 - iOS and Android render Mermaid diagrams offline as replies stream, preserve the
   last valid diagram during partial syntax, and expose source and copy actions.
 

@@ -57,6 +57,19 @@ Archive hides a session from ordinary lists without deleting it. Export normally
 
 Delete removes saved session data and its associated workspace artifacts. Confirm the ID and retain any results you need before using it.
 
+## Reclaim session database space
+
+```bash
+wuu session compact --json
+wuu session compact --sessions-dir /path/to/sessions --timeout 10m
+```
+
+Close Wuu and its background workers before running this command. It rebuilds the existing sessions database, reclaims free pages, and enables incremental reclamation for older databases. It retains conversation data and requires temporary disk space for the rebuild. `--timeout` defaults to five minutes; interruption or timeout rolls back an unfinished rebuild. JSON output reports allocated database bytes before and after, excluding the write-ahead log and temporary files. The command also checkpoints and truncates the write-ahead log; if another process keeps it busy, stop that process and retry.
+
+Large provider-history checkpoints are compressed losslessly when saved. Background maintenance also encodes up to 32 legacy checkpoints per pass, stopping after the checkpoint that brings the batch to 8 MiB. Ordinary history, search, exports, and full tool-output files retain their existing behavior. Routine free-page reclamation uses small batches with a 100 ms budget; full database rebuilds run only through `session compact`.
+
+Builds without compressed-checkpoint support cannot resume those checkpoints. Downgrading requires restoring a database backup from before the upgrade, which also restores history to that backup point.
+
 ## Inspect execution runs
 
 ```bash
