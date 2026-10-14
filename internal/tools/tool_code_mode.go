@@ -263,7 +263,14 @@ func codeModeToolDefinition(d providers.ToolDefinition) (codemode.ToolDefinition
 	if err != nil {
 		return codemode.ToolDefinition{}, err
 	}
-	return codemode.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: schema}, nil
+	definition := codemode.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: schema}
+	if d.OutputSchema != nil {
+		definition.OutputSchema, err = json.Marshal(d.OutputSchema)
+		if err != nil {
+			return codemode.ToolDefinition{}, err
+		}
+	}
+	return definition, nil
 }
 
 // CodeModeDirectCallAllowed is the shared top-level routing policy. Availability
@@ -300,7 +307,7 @@ const codeModeDescription = `Run JavaScript or erasable TypeScript to compose to
 Execution:
 - Call await tools.name(args). No direct filesystem, network, process, imports or timers; use tools for effects.
 - Call the directly advertised file and command tools for individual operations. Use this tool for dependent sequences, parallel independent work, or processing results before displaying them. Literal file content can go directly to write_file or edit_file without JavaScript evaluation.
-- Use the core binding declarations below directly. Find other tools with await searchTools(query, {limit:8, offset:0}); inspect exact arguments with await describeTool(name). Tool names are exact; bracket access handles punctuation.
+- Use the core binding declarations below directly. Find other tools with await searchTools(query, {limit:8, offset:0}); inspect exact arguments and declared structured-result schemas with await describeTool(name). Tool names are exact; bracket access handles punctuation.
 - Await dependent calls and writes in order within the same program when the next action is already known; return to the model when an observation requires a new decision. Use bounded Promise.all for independent reads. Await every call before returning: programs have no continuation and tool effects are not transactional.
 - For long work use bash run_in_background and process handles. Directly advertised interaction and lifecycle tools stay outside programs.
 

@@ -298,7 +298,9 @@ func modelRequestViewV1(request *providers.ChatRequest) pluginhost.ModelRequestV
 	view.Tools = make([]pluginhost.ModelToolViewV1, 0, len(request.Tools))
 	for _, tool := range request.Tools {
 		view.Tools = append(view.Tools, pluginhost.ModelToolViewV1{
-			Name: tool.Name, Description: tool.Description, InputSchema: tool.InputSchema, DeferLoading: tool.DeferLoading,
+			Name: tool.Name, Description: tool.Description,
+			InputSchema: providers.CloneRequestObject(tool.InputSchema), OutputSchema: providers.CloneRequestObject(tool.OutputSchema),
+			DeferLoading: tool.DeferLoading,
 		})
 	}
 	return view

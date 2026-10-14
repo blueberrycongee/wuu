@@ -32,8 +32,9 @@ func TestHostRegistersNamespacedToolsAndExecutesStructuredResult(t *testing.T) {
 	client := &registeredToolTestClient{
 		fakeClient: fakeClient{id: "acme.lookup", status: Status{State: StateActive}},
 		tools: []ToolRegistration{{
-			ID:          "search",
-			Description: "Search local plugin data",
+			ID:           "search",
+			Description:  "Search local plugin data",
+			OutputSchema: map[string]any{"type": "object", "properties": map[string]any{"count": map[string]any{"type": "integer"}}},
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -58,6 +59,15 @@ func TestHostRegistersNamespacedToolsAndExecutesStructuredResult(t *testing.T) {
 	registered, _ := host.Tool(publicName)
 	if registered.Registration.Display == nil || registered.Registration.Display.Label != client.tools[0].ID {
 		t.Fatalf("missing readable fallback for an unlabeled tool: %+v", registered)
+	}
+	client.tools[0].OutputSchema["properties"].(map[string]any)["count"] = nil
+	if definitions[0].OutputSchema["properties"].(map[string]any)["count"] == nil {
+		t.Fatal("host retained mutable output schema")
+	}
+	definitions[0].OutputSchema["properties"].(map[string]any)["count"] = nil
+	registered.Registration.OutputSchema["properties"].(map[string]any)["count"] = nil
+	if host.ToolDefinitions()[0].OutputSchema["properties"].(map[string]any)["count"] == nil {
+		t.Fatal("host returned mutable output schema")
 	}
 	definitions[0].InputSchema["type"] = "array"
 	if got := host.ToolDefinitions()[0].InputSchema["type"]; got != "object" {
@@ -113,6 +123,36 @@ func TestHostRejectsInvalidToolRegistrationAndExecutionErrors(t *testing.T) {
 	_, err := host.ExecuteTool(context.Background(), name, ToolExecuteInput{Arguments: json.RawMessage(`{}`)})
 	if err == nil || !strings.Contains(err.Error(), `plugin "failing"`) || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("error = %v", err)
+	}
+	{
+		for _, tc := range []struct {
+			name   string
+			schema map[string]any
+			valid  bool
+		}{
+			{"omitted", nil, true}, {"empty", map[string]any{}, true},
+			{"array result", map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, true},
+			{"non JSON", map[string]any{"bad": func() {}}, false},
+			{"oversized", map[string]any{"description": strings.Repeat("x", maxToolSchemaLen)}, false},
+		} {
+			err := validateToolRegistrations([]ToolRegistration{{ID: "result", Description: "Result", InputSchema: map[string]any{"type": "object"}, OutputSchema: tc.schema}})
+			if (err == nil) != tc.valid {
+				t.Fatalf("%s validation = %v, want valid %v", tc.name, err, tc.valid)
+			}
+			if tc.valid {
+				raw, err := json.Marshal(ToolRegistration{OutputSchema: tc.schema})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var decoded ToolRegistration
+				if err := json.Unmarshal(raw, &decoded); err != nil {
+					t.Fatal(err)
+				}
+				if (decoded.OutputSchema == nil) != (tc.schema == nil) {
+					t.Fatalf("%s optional schema identity changed: %s", tc.name, raw)
+				}
+			}
+		}
 	}
 }
 

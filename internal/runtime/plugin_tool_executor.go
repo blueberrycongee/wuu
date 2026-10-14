@@ -88,7 +88,8 @@ func (e *pluginToolExecutor) pluginDefinitions() []providers.ToolDefinition {
 	}
 	definitions := append([]providers.ToolDefinition(nil), e.frozenDefinitions...)
 	for i := range definitions {
-		definitions[i].InputSchema = providers.CloneLoadableToolDefinition(providers.LoadableToolDefinition{InputSchema: definitions[i].InputSchema}).InputSchema
+		definitions[i].InputSchema = providers.CloneRequestObject(definitions[i].InputSchema)
+		definitions[i].OutputSchema = providers.CloneRequestObject(definitions[i].OutputSchema)
 	}
 	return definitions
 }

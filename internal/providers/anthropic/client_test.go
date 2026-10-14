@@ -749,6 +749,7 @@ func TestBuildAnthropicRequest_ToolSearchNativeEnabledUsesToolReferences(t *test
       "name": "mcp_docs_search",
       "description": "Search docs through MCP",
       "input_schema": {"type":"object","properties":{"query":{"type":"string"}}},
+      "output_schema": {"description":"OUTPUT_METADATA_ONLY"},
       "defer_loading": true
     }
   ]
@@ -756,8 +757,8 @@ func TestBuildAnthropicRequest_ToolSearchNativeEnabledUsesToolReferences(t *test
 			},
 		},
 		Tools: []providers.ToolDefinition{
-			{Name: "tool_search", InputSchema: map[string]any{"type": "object"}, CacheStable: true},
-			{Name: "mcp_docs_search", InputSchema: map[string]any{"type": "object"}},
+			{Name: "tool_search", InputSchema: map[string]any{"type": "object"}, OutputSchema: map[string]any{"description": "OUTPUT_METADATA_ONLY"}, CacheStable: true},
+			{Name: "mcp_docs_search", InputSchema: map[string]any{"type": "object"}, OutputSchema: map[string]any{"description": "OUTPUT_METADATA_ONLY"}},
 		},
 	}, 1024, false, anthropicToolSearchSupport{BaseURL: "https://api.anthropic.com"})
 	if err != nil {
@@ -786,6 +787,13 @@ func TestBuildAnthropicRequest_ToolSearchNativeEnabledUsesToolReferences(t *test
 	if refs[0].Type != "tool_reference" || refs[0].ToolName != "mcp_docs_search" {
 		t.Fatalf("unexpected tool_reference: %+v", refs[0])
 	}
+	rawOutputContract, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rawOutputContract), "output_schema") || strings.Contains(string(rawOutputContract), "OUTPUT_METADATA_ONLY") {
+		t.Fatalf("discovery metadata leaked to provider wire: %s", rawOutputContract)
+	}
 }
 
 func TestBuildAnthropicRequest_RegularToolResultCanDiscoverDeferredTools(t *testing.T) {
@@ -808,14 +816,14 @@ func TestBuildAnthropicRequest_RegularToolResultCanDiscoverDeferredTools(t *test
 					Type:        "function",
 					Name:        "await_agents",
 					Description: "Wait for subagents",
-					InputSchema: map[string]any{"type": "object"},
+					InputSchema: map[string]any{"type": "object"}, OutputSchema: map[string]any{"description": "OUTPUT_METADATA_ONLY"},
 				}},
 			},
 		},
 		Tools: []providers.ToolDefinition{
-			{Name: "tool_search", InputSchema: map[string]any{"type": "object"}, CacheStable: true},
-			{Name: "spawn_agent", InputSchema: map[string]any{"type": "object"}, CacheStable: true},
-			{Name: "await_agents", InputSchema: map[string]any{"type": "object"}, DeferLoading: true},
+			{Name: "tool_search", InputSchema: map[string]any{"type": "object"}, OutputSchema: map[string]any{"description": "OUTPUT_METADATA_ONLY"}, CacheStable: true},
+			{Name: "spawn_agent", InputSchema: map[string]any{"type": "object"}, OutputSchema: map[string]any{"description": "OUTPUT_METADATA_ONLY"}, CacheStable: true},
+			{Name: "await_agents", InputSchema: map[string]any{"type": "object"}, OutputSchema: map[string]any{"description": "OUTPUT_METADATA_ONLY"}, DeferLoading: true},
 		},
 	}, 1024, false, anthropicToolSearchSupport{BaseURL: "https://api.anthropic.com"})
 	if err != nil {
@@ -845,6 +853,13 @@ func TestBuildAnthropicRequest_RegularToolResultCanDiscoverDeferredTools(t *test
 	if blocks[1].Type != "tool_reference" || blocks[1].ToolName != "await_agents" {
 		t.Fatalf("unexpected discovered tool_reference: %+v", blocks[1])
 	}
+	rawOutputContract, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rawOutputContract), "output_schema") || strings.Contains(string(rawOutputContract), "OUTPUT_METADATA_ONLY") {
+		t.Fatalf("discovery metadata leaked to provider wire: %s", rawOutputContract)
+	}
 }
 
 func TestBuildAnthropicRequest_CompactedDiscoveredToolsRestoreAsVisibleTools(t *testing.T) {
@@ -859,14 +874,14 @@ func TestBuildAnthropicRequest_CompactedDiscoveredToolsRestoreAsVisibleTools(t *
 					Type:        "function",
 					Name:        "mcp_docs_search",
 					Description: "Search docs through MCP",
-					InputSchema: map[string]any{"type": "object"},
+					InputSchema: map[string]any{"type": "object"}, OutputSchema: map[string]any{"description": "OUTPUT_METADATA_ONLY"},
 				}},
 			},
 			{Role: "user", Content: "continue"},
 		},
 		Tools: []providers.ToolDefinition{
-			{Name: "tool_search", InputSchema: map[string]any{"type": "object"}, CacheStable: true},
-			{Name: "mcp_docs_search", InputSchema: map[string]any{"type": "object"}, DeferLoading: true},
+			{Name: "tool_search", InputSchema: map[string]any{"type": "object"}, OutputSchema: map[string]any{"description": "OUTPUT_METADATA_ONLY"}, CacheStable: true},
+			{Name: "mcp_docs_search", InputSchema: map[string]any{"type": "object"}, OutputSchema: map[string]any{"description": "OUTPUT_METADATA_ONLY"}, DeferLoading: true},
 		},
 	}, 1024, false, anthropicToolSearchSupport{BaseURL: "https://api.anthropic.com"})
 	if err != nil {
@@ -880,6 +895,13 @@ func TestBuildAnthropicRequest_CompactedDiscoveredToolsRestoreAsVisibleTools(t *
 	}
 	if payload.Tools[1].Name != "mcp_docs_search" || payload.Tools[1].DeferLoading {
 		t.Fatalf("compacted discovered tool should be restored as visible schema, got %+v", payload.Tools[1])
+	}
+	rawOutputContract, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rawOutputContract), "output_schema") || strings.Contains(string(rawOutputContract), "OUTPUT_METADATA_ONLY") {
+		t.Fatalf("discovery metadata leaked to provider wire: %s", rawOutputContract)
 	}
 }
 

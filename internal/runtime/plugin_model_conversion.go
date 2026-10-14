@@ -150,6 +150,7 @@ func modelToolDefinitionToLogical(in providers.ToolDefinition) (out pluginhost.M
 	out.Name = in.Name
 	out.Description = in.Description
 	out.InputSchema = providers.CloneRequestObject(in.InputSchema)
+	out.OutputSchema = providers.CloneRequestObject(in.OutputSchema)
 	out.Freeform = in.Freeform
 	out.DirectOnly = in.DirectOnly
 	out.DeferLoading = in.DeferLoading
@@ -161,6 +162,7 @@ func modelToolDefinitionFromLogical(in pluginhost.ModelToolV1) (out providers.To
 	out.Name = in.Name
 	out.Description = in.Description
 	out.InputSchema = providers.CloneRequestObject(in.InputSchema)
+	out.OutputSchema = providers.CloneRequestObject(in.OutputSchema)
 	out.Freeform = in.Freeform
 	out.DirectOnly = in.DirectOnly
 	out.DeferLoading = in.DeferLoading
@@ -173,6 +175,7 @@ func modelLoadableToolDefinitionToLogical(in providers.LoadableToolDefinition) (
 	out.Name = in.Name
 	out.Description = in.Description
 	out.InputSchema = providers.CloneRequestObject(in.InputSchema)
+	out.OutputSchema = providers.CloneRequestObject(in.OutputSchema)
 	out.DeferLoading = in.DeferLoading
 	return
 }
@@ -182,6 +185,7 @@ func modelLoadableToolDefinitionFromLogical(in pluginhost.ModelLoadableToolV1) (
 	out.Name = in.Name
 	out.Description = in.Description
 	out.InputSchema = providers.CloneRequestObject(in.InputSchema)
+	out.OutputSchema = providers.CloneRequestObject(in.OutputSchema)
 	out.DeferLoading = in.DeferLoading
 	return
 }

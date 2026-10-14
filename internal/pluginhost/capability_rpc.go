@@ -776,6 +776,7 @@ type ModelToolViewV1 struct {
 	Name         string         `json:"name"`
 	Description  string         `json:"description,omitempty"`
 	InputSchema  map[string]any `json:"input_schema"`
+	OutputSchema map[string]any `json:"output_schema,omitzero"`
 	DeferLoading bool           `json:"defer_loading,omitempty"`
 }
 

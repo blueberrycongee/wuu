@@ -14,7 +14,7 @@ import (
 func TestCatalogDiscoveryContract(t *testing.T) {
 	definitions := make([]ToolDefinition, 1000)
 	for i := range definitions {
-		definitions[i] = ToolDefinition{Name: fmt.Sprintf("mcp__docs__search_%04d", i), Description: strings.Repeat("Search documents. ", 100), InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`)}
+		definitions[i] = ToolDefinition{Name: fmt.Sprintf("mcp__docs__search_%04d", i), Description: strings.Repeat("Search documents. ", 100), InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`), OutputSchema: json.RawMessage(`{"type":"object","properties":{"items":{"type":"array"}}}`)}
 	}
 	catalog, err := newToolCatalog(definitions)
 	if err != nil {
@@ -25,7 +25,7 @@ func TestCatalogDiscoveryContract(t *testing.T) {
 		t.Fatalf("page=%+v err=%v", page, err)
 	}
 	encoded, _ := json.Marshal(page)
-	if len(encoded) > 24000 || strings.Contains(string(encoded), "input_schema") {
+	if len(encoded) > 24000 || strings.Contains(string(encoded), "input_schema") || strings.Contains(string(encoded), "output_schema") {
 		t.Fatalf("unbounded discovery: %d", len(encoded))
 	}
 	next, err := catalog.Search(context.Background(), "documents", 20, *page.NextOffset)
@@ -37,17 +37,19 @@ func TestCatalogDiscoveryContract(t *testing.T) {
 		t.Fatalf("exact=%+v %v", exact, err)
 	}
 	detail, err := catalog.Describe(definitions[999].Name)
-	if err != nil || string(detail.InputSchema) != string(definitions[999].InputSchema) {
+	if err != nil || string(detail.InputSchema) != string(definitions[999].InputSchema) || string(detail.OutputSchema) != string(definitions[999].OutputSchema) {
 		t.Fatalf("detail=%+v %v", detail, err)
 	}
 	definitions[999].InputSchema[0] = 'x'
+	definitions[999].OutputSchema[0] = 'x'
 	again, err := catalog.Describe(detail.Name)
-	if err != nil || !json.Valid(again.InputSchema) {
+	if err != nil || !json.Valid(again.InputSchema) || !json.Valid(again.OutputSchema) {
 		t.Fatal("catalog retained mutable schema")
 	}
 	detail.InputSchema[0] = 'x'
+	detail.OutputSchema[0] = 'x'
 	again, _ = catalog.Describe(detail.Name)
-	if !json.Valid(again.InputSchema) {
+	if !json.Valid(again.InputSchema) || !json.Valid(again.OutputSchema) {
 		t.Fatal("catalog returned mutable schema")
 	}
 	if _, err := catalog.Describe("missing"); err == nil {
@@ -63,12 +65,16 @@ func TestCatalogDiscoveryContract(t *testing.T) {
 func TestCatalogRejectsAmbiguousAndOversizedDefinitions(t *testing.T) {
 	for _, definitions := range [][]ToolDefinition{
 		{{Name: "same"}, {Name: "same"}}, {{Name: ""}}, {{Name: "bad", InputSchema: json.RawMessage(`{`)}},
+		{{Name: "bad-output", OutputSchema: json.RawMessage(`{`)}},
+		{{Name: "scalar-output", OutputSchema: json.RawMessage(`42`)}},
+		{{Name: "null-output", OutputSchema: json.RawMessage(`null`)}},
+		{{Name: "huge-output", OutputSchema: json.RawMessage(`{"description":"` + strings.Repeat("x", 32*1024*1024) + `"}`)}},
 	} {
 		if _, err := newToolCatalog(definitions); err == nil {
 			t.Fatalf("invalid catalog accepted: %+v", definitions)
 		}
 	}
-	catalog, err := newToolCatalog([]ToolDefinition{{Name: "large", Description: strings.Repeat("x", 300000)}})
+	catalog, err := newToolCatalog([]ToolDefinition{{Name: "large", Description: strings.Repeat("x", 150000), OutputSchema: json.RawMessage(`{"description":"` + strings.Repeat("x", 150000) + `"}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,6 +84,20 @@ func TestCatalogRejectsAmbiguousAndOversizedDefinitions(t *testing.T) {
 	page, err := catalog.Search(context.Background(), "large", 8, 0)
 	if err != nil || len(page.Tools) != 1 {
 		t.Fatalf("oversized detail prevented discovery: %+v %v", page, err)
+	}
+	{
+		catalog, err := newToolCatalog([]ToolDefinition{{Name: "legacy"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		detail, err := catalog.Describe("legacy")
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(detail)
+		if err != nil || strings.Contains(string(raw), "output_schema") {
+			t.Fatalf("unexpected output contract: %s %v", raw, err)
+		}
 	}
 }
 

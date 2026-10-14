@@ -60,7 +60,7 @@ func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 					t.Error(readErr)
 					return
 				}
-				if bytes.Contains(payload, []byte("stale_catalog_entry")) || bytes.Contains(payload, []byte(`"direct_only"`)) || bytes.Contains(payload, []byte(`"DirectOnly"`)) {
+				if bytes.Contains(payload, []byte(`"output_schema"`)) || bytes.Contains(payload, []byte(`"OutputSchema"`)) || bytes.Contains(payload, []byte("stale_catalog_entry")) || bytes.Contains(payload, []byte(`"direct_only"`)) || bytes.Contains(payload, []byte(`"DirectOnly"`)) {
 					t.Error("stale schema or host routing metadata leaked to provider")
 				}
 				if err := json.Unmarshal(payload, &req); err != nil {
@@ -130,7 +130,11 @@ func TestCodeModeLargeCatalogCanStreamAcrossProviders(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			events, err := client.StreamChat(ctx, providers.ChatRequest{Model: tc.model, NativeDeferredToolDiscovery: true, Messages: []providers.ChatMessage{{Role: "system", Content: "Recovered context", DiscoveredTools: []providers.LoadableToolDefinition{{Name: "stale_catalog_entry", InputSchema: map[string]any{"type": "object"}}}}, {Role: "user", Content: "Reply ok"}}, Tools: kit.Definitions()})
+			definitions := kit.Definitions()
+			for i := range definitions {
+				definitions[i].OutputSchema = map[string]any{"type": "object"}
+			}
+			events, err := client.StreamChat(ctx, providers.ChatRequest{Model: tc.model, NativeDeferredToolDiscovery: true, Messages: []providers.ChatMessage{{Role: "system", Content: "Recovered context", DiscoveredTools: []providers.LoadableToolDefinition{{Name: "stale_catalog_entry", InputSchema: map[string]any{"type": "object"}}}}, {Role: "user", Content: "Reply ok"}}, Tools: definitions})
 			if err != nil {
 				t.Fatal(err)
 			}

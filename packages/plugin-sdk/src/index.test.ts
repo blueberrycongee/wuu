@@ -166,7 +166,7 @@ const plugin: RuntimePlugin = {
     return {
       protocol_version: CAPABILITY_PROTOCOL_V2,
       capabilities: [{ id: REQUEST_TRANSFORM_CAPABILITY, kind: "transform", version: 1 }],
-      tools: [{ id: "echo", description: "Echo input", input_schema: { type: "object" } }],
+      tools: [{ id: "echo", description: "Echo input", input_schema: { type: "object" }, output_schema: { type: "object", properties: { ok: { type: "boolean" } } } }],
       required_services: [requireKernelService("host.storage.compare_exchange")],
     };
   },
@@ -187,6 +187,7 @@ const initializedResult = "result" in initialized ? initialized.result as Runtim
 if (initializedResult === null || initializedResult.protocol_version === undefined) {
   throw new Error("initialize did not return the v2 descriptor");
 }
+if (initializedResult.tools?.[0]?.output_schema?.type !== "object") throw new Error("initialize lost output schema");
 if (initializedResult.protocol_version !== 3
   || initializedResult.required_services?.[0]?.name !== "host.storage.compare-exchange"
   || initializedResult.required_services[0].major_version !== 1

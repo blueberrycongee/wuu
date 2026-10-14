@@ -118,6 +118,8 @@ do not make cleanup depend on an already-aborted signal.
 
 Register model tools in the initialization result's `tools` array. Each tool needs an `id`, `description`, and object `input_schema`. The host creates a namespaced public name. `execution_scopes` can limit availability to `root` or `child`; `activity` describes read-only behavior, concurrency safety, risk, and whether the tool orchestrates child tools. Declare real effects rather than marking a writer read-only to bypass scheduling or permission checks. These declarations are trusted-extension contracts, not a sandbox.
 
+Tools may also declare an optional object-form JSON Schema in `output_schema` describing their `structured_content`. Each input or output schema is limited to 128 KiB of encoded JSON. PTC exposes this metadata through `describeTool(name)` so programs can compose structured results without guessing fields. It does not validate or change returned data, and is not sent as a provider API tool-declaration field.
+
 The TypeScript runtime adapter honors `activity.concurrency_safe: true` for tool dispatch.
 Adjacent explicitly safe tools may overlap, with at most eight tool handlers
 running per runtime. Omitted or false values, unknown tool IDs, and ordinary

@@ -831,6 +831,8 @@ export interface ToolRegistration {
   id: string;
   description: string;
   input_schema: JSONSchemaObject;
+  /** Optional JSON Schema describing structured_content; discovery metadata only. */
+  output_schema?: Readonly<Record<string, unknown>>;
   execution_scopes?: Array<"root" | "child">;
   activity?: ToolActivityMetadata;
   display?: ToolDisplayMetadata;
@@ -896,6 +898,7 @@ export interface ModelToolViewV1 {
   name: string;
   description?: string;
   input_schema: Readonly<Record<string, unknown>>;
+  output_schema?: Readonly<Record<string, unknown>>;
   defer_loading?: boolean;
 }
 

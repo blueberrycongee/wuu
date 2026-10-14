@@ -99,6 +99,7 @@ export interface ModelToolV1 {
   readonly name: string;
   readonly description?: string;
   readonly input_schema: Readonly<Record<string, unknown>>;
+  readonly output_schema?: Readonly<Record<string, unknown>>;
   readonly freeform?: boolean;
   readonly direct_only?: boolean;
   readonly defer_loading?: boolean;
@@ -110,6 +111,7 @@ export interface ModelLoadableToolV1 {
   readonly name: string;
   readonly description?: string;
   readonly input_schema?: Readonly<Record<string, unknown>>;
+  readonly output_schema?: Readonly<Record<string, unknown>>;
   readonly defer_loading?: boolean;
 }
 

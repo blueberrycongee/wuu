@@ -58,10 +58,15 @@ func (t *MCPTool) ConnectionID() string { return t.client.ConnectionID() }
 
 // Definition returns the JSON-schema tool definition for the model.
 func (t *MCPTool) Definition() providers.ToolDefinition {
+	var outputSchema map[string]any
+	if err := json.Unmarshal(t.tool.OutputSchema, &outputSchema); err != nil {
+		outputSchema = nil
+	}
 	return providers.ToolDefinition{
-		Name:        t.Name(),
-		Description: mcpToolDescription(t.serverName, t.tool.Description),
-		InputSchema: schemaToMap(t.tool.InputSchema),
+		Name:         t.Name(),
+		Description:  mcpToolDescription(t.serverName, t.tool.Description),
+		InputSchema:  schemaToMap(t.tool.InputSchema),
+		OutputSchema: outputSchema,
 	}
 }
 

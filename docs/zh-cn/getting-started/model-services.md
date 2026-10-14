@@ -142,7 +142,9 @@ await tools.read_file({path: "screenshots/settings.png"});
 入口说明在固定目录预算内提供常用文件、搜索和命令工具的完整定义，其他绑定提供预览。
 可直接使用已列出的参数定义；只有预览的绑定再查询精确参数。`await searchTools(query, {limit: 8, offset: 0})`
 返回 `tools`、`total` 和可选的 `next_offset`；空查询可分页查看全部绑定。
-`await describeTool(name)` 返回完整说明与精确的 `input_schema`。
+`await describeTool(name)` 返回完整说明、精确的 `input_schema`，以及描述工具
+`structured_content` 的可选 `output_schema`。输出 Schema 来自插件或 MCP 声明，
+不会校验返回结果。搜索摘要不包含 Schema；完整详情仍受 256 KiB 限制。
 使用 `await tools[name](args)` 调用；方括号保留带标点的原名，不创建别名或碰撞。
 
 结果保留 `content`、可选的 `structured_content`，以及供模型紧凑阅读的

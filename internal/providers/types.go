@@ -15,6 +15,9 @@ type ToolDefinition struct {
 	Name        string
 	Description string
 	InputSchema map[string]any
+	// OutputSchema describes structured result data for discovery. Providers do
+	// not send this metadata as a tool declaration or validate tool results with it.
+	OutputSchema map[string]any
 	// Freeform tools accept literal text. JSON-only providers use {"input": text}.
 	Freeform bool
 	// DirectOnly keeps interaction and lifecycle controls outside nested programs.
@@ -39,6 +42,7 @@ type LoadableToolDefinition struct {
 	Name         string         `json:"name"`
 	Description  string         `json:"description,omitempty"`
 	InputSchema  map[string]any `json:"input_schema,omitempty"`
+	OutputSchema map[string]any `json:"output_schema,omitzero"`
 	DeferLoading bool           `json:"defer_loading,omitempty"`
 }
 
@@ -48,6 +52,7 @@ func LoadableToolFromDefinition(def ToolDefinition) LoadableToolDefinition {
 		Name:         def.Name,
 		Description:  def.Description,
 		InputSchema:  cloneLoadableToolSchema(def.InputSchema),
+		OutputSchema: CloneRequestObject(def.OutputSchema),
 		DeferLoading: true,
 	}
 }

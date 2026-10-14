@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- PTC tool discovery preserves optional plugin and MCP output schemas, including
+  frozen catalogs and logical model requests, for structured cross-tool composition.
+
 - iOS and Android render Mermaid diagrams offline as replies stream, preserve the
   last valid diagram during partial syntax, and expose source and copy actions.
 

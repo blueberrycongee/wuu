@@ -2044,14 +2044,16 @@ func TestResponsesChat_RendersToolSearchHistoryAsNativeOutputAndOmitsDiscoveredT
 func TestResponsesRequest_KeepsTopLevelToolsStableAcrossToolSearchLifecycle(t *testing.T) {
 	client := &Client{}
 	toolSearch := providers.ToolDefinition{
-		Name:        "tool_search",
-		Description: "Search deferred tools",
-		InputSchema: map[string]any{"type": "object"},
+		Name:         "tool_search",
+		Description:  "Search deferred tools",
+		InputSchema:  map[string]any{"type": "object"},
+		OutputSchema: map[string]any{"description": "OUTPUT_METADATA_ONLY"},
 	}
 	discovered := providers.ToolDefinition{
-		Name:        "mcp_docs_search",
-		Description: "Search docs through MCP",
-		InputSchema: map[string]any{"type": "object"},
+		Name:         "mcp_docs_search",
+		Description:  "Search docs through MCP",
+		InputSchema:  map[string]any{"type": "object"},
+		OutputSchema: map[string]any{"description": "OUTPUT_METADATA_ONLY"},
 	}
 	cacheHint := &providers.CacheHint{PromptCacheKey: "thread-cache-key"}
 
@@ -2089,6 +2091,7 @@ func TestResponsesRequest_KeepsTopLevelToolsStableAcrossToolSearchLifecycle(t *t
       "name": "mcp_docs_search",
       "description": "Search docs through MCP",
       "input_schema": {"type":"object","properties":{"query":{"type":"string"}}},
+      "output_schema": {"description":"OUTPUT_METADATA_ONLY"},
       "defer_loading": true
     }
   ]
@@ -2130,10 +2133,11 @@ func TestResponsesRequest_KeepsTopLevelToolsStableAcrossToolSearchLifecycle(t *t
 				Role:    "system",
 				Content: "[Conversation summary]\nSummary:\nOlder turns discovered the docs search tool.",
 				DiscoveredTools: []providers.LoadableToolDefinition{{
-					Type:        "function",
-					Name:        "mcp_docs_search",
-					Description: "Search docs through MCP",
-					InputSchema: map[string]any{"type": "object"},
+					Type:         "function",
+					Name:         "mcp_docs_search",
+					Description:  "Search docs through MCP",
+					InputSchema:  map[string]any{"type": "object"},
+					OutputSchema: map[string]any{"description": "OUTPUT_METADATA_ONLY"},
 				}},
 			},
 			{Role: "user", Content: "continue"},
@@ -2152,6 +2156,13 @@ func TestResponsesRequest_KeepsTopLevelToolsStableAcrossToolSearchLifecycle(t *t
 	}
 	if len(compacted.Input) != 2 || compacted.Input[0].Type != "additional_tools" || compacted.Input[0].Role != "developer" {
 		t.Fatalf("unexpected compact restore input: %+v", compacted.Input)
+	}
+	rawOutputContract, err := json.Marshal([]any{base, followup, compacted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rawOutputContract), "output_schema") || strings.Contains(string(rawOutputContract), "OUTPUT_METADATA_ONLY") {
+		t.Fatalf("discovery metadata leaked to provider wire: %s", rawOutputContract)
 	}
 }
 
@@ -3754,7 +3765,7 @@ func TestKimiDynamicToolsPreserveRequestPrefix(t *testing.T) {
 				t.Fatal(err)
 			}
 			schema := map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string"}}}
-			loaded := providers.LoadableToolDefinition{Name: "docs_search", Description: "Search docs", InputSchema: schema}
+			loaded := providers.LoadableToolDefinition{Name: "docs_search", Description: "Search docs", InputSchema: schema, OutputSchema: map[string]any{"description": "OUTPUT_METADATA_ONLY"}}
 			req := providers.ChatRequest{Model: "kimi-k3", NativeDeferredToolDiscovery: true,
 				Messages: []providers.ChatMessage{{Role: "system", Content: "fixed"}, {Role: "user", Content: "find docs"}},
 				Tools:    []providers.ToolDefinition{{Name: "tool_search", InputSchema: schema}, {Name: "read_file", InputSchema: schema}, {Name: "docs_search", InputSchema: schema, DeferLoading: true}},
@@ -3776,7 +3787,15 @@ func TestKimiDynamicToolsPreserveRequestPrefix(t *testing.T) {
 						t.Fatal(e)
 					}
 				}
-				return <-requests
+				wire := <-requests
+				rawWire, err := json.Marshal(wire)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(rawWire), "output_schema") || strings.Contains(string(rawWire), "OUTPUT_METADATA_ONLY") {
+					t.Fatalf("output metadata leaked to dynamic provider wire: %s", rawWire)
+				}
+				return wire
 			}
 			first := call()
 			tools := first["tools"].([]any)

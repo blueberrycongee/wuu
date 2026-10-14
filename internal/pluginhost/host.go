@@ -395,10 +395,11 @@ func (h *Host) ToolDefinitions() []providers.ToolDefinition {
 			continue
 		}
 		definitions = append(definitions, providers.ToolDefinition{
-			Name:        name,
-			DirectOnly:  tool.Registration.DirectOnly,
-			Description: tool.Registration.Description,
-			InputSchema: cloneSchema(tool.Registration.InputSchema),
+			Name:         name,
+			DirectOnly:   tool.Registration.DirectOnly,
+			Description:  tool.Registration.Description,
+			InputSchema:  cloneSchema(tool.Registration.InputSchema),
+			OutputSchema: cloneSchema(tool.Registration.OutputSchema),
 		})
 	}
 	return definitions
@@ -721,6 +722,7 @@ func toolNamePart(value string) string {
 func cloneToolRegistration(registration ToolRegistration) ToolRegistration {
 	clone := registration
 	clone.InputSchema = cloneSchema(registration.InputSchema)
+	clone.OutputSchema = cloneSchema(registration.OutputSchema)
 	clone.ExecutionScopes = append([]string(nil), registration.ExecutionScopes...)
 	if registration.Activity != nil {
 		activity := *registration.Activity

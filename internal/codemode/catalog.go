@@ -43,13 +43,20 @@ func newToolCatalog(definitions []ToolDefinition) (*toolCatalog, error) {
 		if len(definition.InputSchema) == 0 {
 			definition.InputSchema = json.RawMessage(`{}`)
 		}
-		total += len(definition.Name) + len(definition.Description) + len(definition.InputSchema)
+		total += len(definition.Name) + len(definition.Description) + len(definition.InputSchema) + len(definition.OutputSchema)
 		if total > 32*1024*1024 {
 			return nil, errors.New("PTC catalog exceeds 32 MiB")
 		}
 		if !json.Valid(definition.InputSchema) {
 			return nil, fmt.Errorf("invalid input schema for %q", definition.Name)
 		}
+		if len(definition.OutputSchema) > 0 {
+			var schema map[string]json.RawMessage
+			if err := json.Unmarshal(definition.OutputSchema, &schema); err != nil || schema == nil {
+				return nil, fmt.Errorf("invalid output schema for %q: expected a JSON object", definition.Name)
+			}
+		}
+		definition.OutputSchema = append(json.RawMessage(nil), definition.OutputSchema...)
 		definition.InputSchema = append(json.RawMessage(nil), definition.InputSchema...)
 		catalog.definitions[definition.Name] = definition
 		catalog.names = append(catalog.names, definition.Name)
@@ -72,6 +79,7 @@ func (c *toolCatalog) Describe(name string) (ToolDefinition, error) {
 		return ToolDefinition{}, fmt.Errorf("tool %q description and schema exceed the 256 KiB detail limit", name)
 	}
 	definition.InputSchema = append(json.RawMessage(nil), definition.InputSchema...)
+	definition.OutputSchema = append(json.RawMessage(nil), definition.OutputSchema...)
 	return definition, nil
 }
 

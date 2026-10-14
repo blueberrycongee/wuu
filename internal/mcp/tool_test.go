@@ -18,6 +18,7 @@ func TestToolAnnotationsDecodeReadOnlyHint(t *testing.T) {
       "name": "inspect",
       "description": "Inspect state",
       "inputSchema": {},
+      "outputSchema": {"type":"object","properties":{"count":{"type":"integer"}}},
       "annotations": {
         "readOnlyHint": true
       }
@@ -32,6 +33,23 @@ func TestToolAnnotationsDecodeReadOnlyHint(t *testing.T) {
 	hint := result.Tools[0].Annotations.ReadOnlyHint
 	if hint == nil || *hint != true {
 		t.Fatalf("readOnlyHint = %v, want true", hint)
+	}
+	{
+		tool := NewMCPTool(&Client{name: "server"}, result.Tools[0])
+		definition := tool.Definition()
+		if definition.OutputSchema["type"] != "object" {
+			t.Fatalf("output schema lost: %+v", definition)
+		}
+		definition.OutputSchema["properties"].(map[string]any)["count"] = nil
+		if tool.Definition().OutputSchema["properties"].(map[string]any)["count"] == nil {
+			t.Fatal("MCP definition mutated source schema")
+		}
+		for _, schema := range []json.RawMessage{nil, json.RawMessage(`null`), json.RawMessage(`{`), json.RawMessage(`42`)} {
+			tool := NewMCPTool(&Client{name: "server"}, Tool{Name: "inspect", OutputSchema: schema})
+			if tool.Definition().OutputSchema != nil {
+				t.Fatalf("invented optional schema for %s", schema)
+			}
+		}
 	}
 }
 

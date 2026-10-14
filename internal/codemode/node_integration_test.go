@@ -469,8 +469,8 @@ func TestNodeCancellationStopsBindings(t *testing.T) {
 
 func TestNodeCatalogDiscovery(t *testing.T) {
 	s := nodeService(t)
-	result, err := s.Run(context.Background(), RunRequest{Code: `const found = await searchTools("read"); const detail = await describeTool(found.tools[0].name); let rejected = false; try { await describeTool("missing"); } catch { rejected = true; } return {total: found.total, name:detail.name, rejected};`, Tools: []ToolDefinition{{Name: "read", Description: "Read a file"}}}, RunOptions{CWD: t.TempDir()})
-	if err != nil || result.Error != "" || string(result.Value) != `{"total":1,"name":"read","rejected":true}` {
+	result, err := s.Run(context.Background(), RunRequest{Code: `const found = await searchTools("read"); const detail = await describeTool(found.tools[0].name); let rejected = false; try { await describeTool("missing"); } catch { rejected = true; } return {total: found.total, name:detail.name, output:detail.output_schema, rejected};`, Tools: []ToolDefinition{{Name: "read", Description: "Read a file", OutputSchema: json.RawMessage(`{"type":"object","properties":{"text":{"type":"string"}}}`)}}}, RunOptions{CWD: t.TempDir()})
+	if err != nil || result.Error != "" || string(result.Value) != `{"total":1,"name":"read","output":{"type":"object","properties":{"text":{"type":"string"}}},"rejected":true}` {
 		t.Fatalf("catalog: %+v %v", result, err)
 	}
 }

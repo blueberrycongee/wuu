@@ -108,6 +108,7 @@ func CloneLoadableToolDefinitions(tools []LoadableToolDefinition) []LoadableTool
 
 func CloneLoadableToolDefinition(tool LoadableToolDefinition) LoadableToolDefinition {
 	tool.InputSchema = cloneLoadableToolSchema(tool.InputSchema)
+	tool.OutputSchema = CloneRequestObject(tool.OutputSchema)
 	return tool
 }
 

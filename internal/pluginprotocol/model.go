@@ -102,6 +102,7 @@ type ModelToolV1 struct {
 	Name         string         `json:"name"`
 	Description  string         `json:"description,omitempty"`
 	InputSchema  map[string]any `json:"input_schema"`
+	OutputSchema map[string]any `json:"output_schema,omitzero"`
 	Freeform     bool           `json:"freeform,omitempty"`
 	DirectOnly   bool           `json:"direct_only,omitempty"`
 	DeferLoading bool           `json:"defer_loading,omitempty"`
@@ -113,6 +114,7 @@ type ModelLoadableToolV1 struct {
 	Name         string         `json:"name"`
 	Description  string         `json:"description,omitempty"`
 	InputSchema  map[string]any `json:"input_schema,omitempty"`
+	OutputSchema map[string]any `json:"output_schema,omitzero"`
 	DeferLoading bool           `json:"defer_loading,omitempty"`
 }
 

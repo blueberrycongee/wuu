@@ -44,10 +44,12 @@ type InitializeResult struct {
 // ToolRegistration is one model-visible tool owned by a plugin process.
 type ToolRegistration struct {
 	// DirectOnly exposes control tools directly and rejects nested invocation.
-	DirectOnly      bool                       `json:"direct_only,omitempty"`
-	ID              string                     `json:"id"`
-	Description     string                     `json:"description"`
-	InputSchema     map[string]any             `json:"input_schema"`
+	DirectOnly  bool           `json:"direct_only,omitempty"`
+	ID          string         `json:"id"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"input_schema"`
+	// OutputSchema describes structured_content; it does not enforce result validation.
+	OutputSchema    map[string]any             `json:"output_schema,omitzero"`
 	ExecutionScopes []string                   `json:"execution_scopes,omitempty"`
 	Activity        *ToolActivityMetadata      `json:"activity,omitempty"`
 	Display         *providers.ToolCallDisplay `json:"display,omitempty"`
@@ -113,6 +115,15 @@ func validateToolRegistrations(tools []ToolRegistration) error {
 		}
 		if schemaType, ok := tool.InputSchema["type"]; !ok || schemaType != "object" {
 			return fmt.Errorf("%s input_schema type must be %q", prefix, "object")
+		}
+		if tool.OutputSchema != nil {
+			raw, err := json.Marshal(tool.OutputSchema)
+			if err != nil {
+				return fmt.Errorf("%s output_schema is not valid JSON: %w", prefix, err)
+			}
+			if len(raw) > maxToolSchemaLen {
+				return fmt.Errorf("%s output_schema exceeds %d bytes", prefix, maxToolSchemaLen)
+			}
 		}
 		scopes := make(map[string]struct{}, len(tool.ExecutionScopes))
 		for _, scope := range tool.ExecutionScopes {

@@ -99,12 +99,23 @@ func TestActivatePluginHostOpensKernelServicesBeforePluginCallbacks(t *testing.T
 }
 
 func TestPluginCapabilityUsesRequestTransformRegistry(t *testing.T) {
+	original := providers.ToolDefinition{Name: "lookup", InputSchema: map[string]any{"type": "object"}, OutputSchema: map[string]any{"type": "object", "properties": map[string]any{"count": map[string]any{"type": "integer"}}}}
+	logical := modelToolDefinitionToLogical(original)
+	roundTrip := modelToolDefinitionFromLogical(logical)
+	loadable := providers.LoadableToolFromDefinition(original)
+	loadableRoundTrip := modelLoadableToolDefinitionFromLogical(modelLoadableToolDefinitionToLogical(loadable))
+	snapshot := providers.CloneLoadableToolDefinition(loadable)
+	for _, schema := range []map[string]any{roundTrip.OutputSchema, loadableRoundTrip.OutputSchema, snapshot.OutputSchema} {
+		if schema["properties"].(map[string]any)["count"] == nil {
+			t.Fatal("output schema dropped")
+		}
+	}
 	client := &runtimeCapabilityClient{id: "capability", priority: 7, mutate: func(output *pluginhost.RequestTransformOutput) {
 		output.PrependSystemMessages = []string{"capability context"}
 	}}
 	host := pluginhost.New(client)
 	intercept := pluginRequestInterceptor(host, "openai", "thread-2", "/workspace")
-	request := providers.ChatRequest{Model: "before", StepIndex: 3, Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}}}
+	request := providers.ChatRequest{Model: "before", StepIndex: 3, Tools: []providers.ToolDefinition{roundTrip}, Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}}}
 	if err := intercept(context.Background(), &request); err != nil {
 		t.Fatal(err)
 	}
@@ -113,6 +124,17 @@ func TestPluginCapabilityUsesRequestTransformRegistry(t *testing.T) {
 	}
 	if client.input.ThreadID != "thread-2" || client.input.Provider != "openai" || client.input.StepIndex != 3 || client.input.Request.Model != "before" || len(client.input.Request.Messages) != 1 {
 		t.Fatalf("input = %+v", client.input)
+	}
+
+	if client.input.Request.Tools[0].OutputSchema["properties"].(map[string]any)["count"] == nil {
+		t.Fatal("request view dropped output schema")
+	}
+	view := modelRequestViewV1(&request)
+	for _, schema := range []map[string]any{view.Tools[0].OutputSchema, loadableRoundTrip.OutputSchema, snapshot.OutputSchema} {
+		schema["properties"].(map[string]any)["count"] = nil
+	}
+	if original.OutputSchema["properties"].(map[string]any)["count"] == nil || logical.OutputSchema["properties"].(map[string]any)["count"] == nil || roundTrip.OutputSchema["properties"].(map[string]any)["count"] == nil || loadable.OutputSchema["properties"].(map[string]any)["count"] == nil {
+		t.Fatal("output schema is not isolated")
 	}
 
 	client.state = pluginhost.StateFailed
@@ -128,6 +150,10 @@ func TestPluginCapabilityUsesRequestTransformRegistry(t *testing.T) {
 	}
 	if client.invoked != 1 || len(request.Messages) != 2 {
 		t.Fatalf("retired transformer changed the next model request: calls=%d request=%+v", client.invoked, request)
+	}
+	logical.OutputSchema["properties"].(map[string]any)["count"] = nil
+	if original.OutputSchema["properties"].(map[string]any)["count"] == nil || roundTrip.OutputSchema["properties"].(map[string]any)["count"] == nil {
+		t.Fatal("logical model conversion retained mutable output schema")
 	}
 }
 

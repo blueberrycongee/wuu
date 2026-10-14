@@ -48,9 +48,10 @@ func (e *recordingToolExecutor) AuthorizeTool(_ context.Context, call providers.
 }
 
 type pluginToolTestClient struct {
-	executed   bool
-	scopes     []string
-	directOnly bool
+	executed     bool
+	scopes       []string
+	directOnly   bool
+	outputSchema map[string]any
 }
 
 type denyPluginAuthorizer struct{ calls int }
@@ -66,7 +67,7 @@ func (c *pluginToolTestClient) Status() pluginhost.Status {
 }
 func (c *pluginToolTestClient) Close(context.Context) error { return nil }
 func (c *pluginToolTestClient) Tools() []pluginhost.ToolRegistration {
-	return []pluginhost.ToolRegistration{{ID: "change", DirectOnly: c.directOnly, Description: "change state", ExecutionScopes: c.scopes, InputSchema: map[string]any{"type": "object"}}}
+	return []pluginhost.ToolRegistration{{ID: "change", DirectOnly: c.directOnly, Description: "change state", ExecutionScopes: c.scopes, OutputSchema: c.outputSchema, InputSchema: map[string]any{"type": "object"}}}
 }
 func (c *pluginToolTestClient) ExecuteTool(context.Context, pluginhost.ToolExecuteParams) (pluginhost.ToolExecuteResult, error) {
 	c.executed = true
@@ -310,7 +311,7 @@ func TestPTCProductionWrappersPinPluginSurfaceUntilRunEnds(t *testing.T) {
 	service := codemode.NewService(codemode.ServiceConfig{})
 	defer service.Close()
 	kit.ConfigurePTC(service, config.PTCConfig{Enabled: true})
-	client := &pluginToolTestClient{}
+	client := &pluginToolTestClient{outputSchema: map[string]any{"type": "object"}}
 	host := pluginhost.New(client)
 	name := host.ToolDefinitions()[0].Name
 	executor := newPluginAwareToolExecutor(kit, host, hooks.NewDispatcher(hooks.NewRegistry(nil)), "thread", "thread", kit.RootDir())
@@ -319,6 +320,14 @@ func TestPTCProductionWrappersPinPluginSurfaceUntilRunEnds(t *testing.T) {
 		t.Fatal("production wrapper lost snapshot lifecycle")
 	}
 	freezer.FreezeToolSurface()
+	frozen := &pluginToolExecutor{inner: kit, host: host}
+	frozen.FreezeToolSurface()
+	definitions := frozen.pluginDefinitions()
+	definitions[0].OutputSchema["type"] = "array"
+	if frozen.pluginDefinitions()[0].OutputSchema["type"] != "object" {
+		t.Fatal("frozen output schema mutated")
+	}
+	frozen.UnfreezeToolSurface()
 	freezer.FreezeToolSurface()
 	defer freezer.UnfreezeToolSurface()
 	_, found := host.RetirePlugin(context.Background(), client.ID(), fmt.Errorf("retired"))
@@ -333,6 +342,9 @@ func TestPTCProductionWrappersPinPluginSurfaceUntilRunEnds(t *testing.T) {
 	found = false
 	for _, def := range nested {
 		if def.Name == name {
+			if string(def.OutputSchema) != `{"type":"object"}` {
+				t.Fatalf("frozen output schema dropped: %s", def.OutputSchema)
+			}
 			found = true
 		}
 	}

@@ -102,9 +102,10 @@ const (
 )
 
 type ToolDefinition struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	InputSchema  json.RawMessage `json:"input_schema"`
+	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
 }
 
 type ServiceConfig struct{ NodeExecutable string }

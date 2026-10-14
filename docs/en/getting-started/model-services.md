@@ -206,7 +206,10 @@ fixed catalog budget, with previews for other bindings. Use included schemas
 directly; discover arguments for bindings shown only as previews. `await searchTools(query,
 {limit: 8, offset: 0})` returns `tools`, `total` and optional `next_offset`; an
 empty query pages through all bindings. `await describeTool(name)` returns the
-exact description and `input_schema`. Call `await tools[name](args)`; bracket
+exact description, `input_schema`, and optional `output_schema` describing the
+tool's `structured_content`. Output schemas come from plugin or MCP declarations
+and do not validate results. Discovery summaries omit schemas; exact details
+remain subject to the 256 KiB limit. Call `await tools[name](args)`; bracket
 access preserves names containing punctuation without aliases or collisions.
 
 Results retain `content`, optional `structured_content`, and optional
