@@ -109,6 +109,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Foreground subagents return their result once across plugin hot reloads, while
+  timed-out waits still hand completion back to the parent in the background.
+
 - Preserve subagent dispatch identities through retries and local process
   recovery, and keep prior results reachable when a follow-up cannot be confirmed.
   Recovery waits for session-service readiness, survives overlapping plugin

@@ -511,7 +511,9 @@ var objectSchema = (properties, ...required) => ({ type: "object", properties, r
 var textResult = (value) => ({ result: { content: [{ type: "text", text: JSON.stringify(value) }] } });
 var terminalState = (state) => ["completed", "failed", "interrupted", "discarded"].includes(state.trim());
 var SubagentPlugin = class {
-  concurrentCapabilities = [promptCapability, clientCapability];
+  // Completion gates can wait on a retained runtime; only state transitions
+  // serialize here so the active runtime stays available for tools and stop.
+  concurrentCapabilities = [promptCapability, clientCapability, lifecycleCapability];
   lifecycleHost;
   indexQueue = Promise.resolve();
   transitionQueue = Promise.resolve();
@@ -608,64 +610,68 @@ var SubagentPlugin = class {
     }
     const workspace = args.isolation?.trim() === "worktree" ? "worktree" : "shared";
     if (workspace === "worktree") context = "fork";
-    const { record, sent } = await this.withTransition(execution, async () => {
-      const dispatch = await this.prepareDispatch(host, {
-        id: requestID,
-        signature: dispatchSignature({ name, prompt: args.prompt.trim(), context, workspace, model: args.model?.trim(), type: args.subagent_type?.trim() }),
-        create: {
-          request_id: `create-${requestID}`,
-          name,
-          visibility: "plugin",
-          parent_session_id: parentSessionID,
-          context_source: context,
-          workspace,
-          model_alias: args.model?.trim(),
-          instructions: workerInstructions(args.subagent_type?.trim())
-        },
-        record: {
-          session_id: "",
-          parent_session_id: parentSessionID,
-          parent_turn_id: call.turn_id,
-          name,
-          request_id: `turn-${requestID}`,
-          state: "created"
-        },
-        prompt: args.prompt.trim()
+    const signature = dispatchSignature({ name, prompt: args.prompt.trim(), context, workspace, model: args.model?.trim(), type: args.subagent_type?.trim() });
+    const completionKey = completionIdentity(parentSessionID, call.turn_id, signature);
+    return this.withCompletionLock(execution, background ? void 0 : completionKey, async () => {
+      const { record, sent } = await this.withTransition(execution, async () => {
+        const dispatch = await this.prepareDispatch(host, {
+          id: requestID,
+          signature,
+          create: {
+            request_id: `create-${requestID}`,
+            name,
+            visibility: "plugin",
+            parent_session_id: parentSessionID,
+            context_source: context,
+            workspace,
+            model_alias: args.model?.trim(),
+            instructions: workerInstructions(args.subagent_type?.trim())
+          },
+          record: {
+            session_id: "",
+            parent_session_id: parentSessionID,
+            parent_turn_id: call.turn_id,
+            name,
+            request_id: `turn-${requestID}`,
+            state: "created"
+          },
+          prompt: args.prompt.trim()
+        });
+        return this.dispatchTask(host, dispatch);
       });
-      return this.dispatchTask(host, dispatch);
-    });
-    const identity = { session_id: record.session_id, task_name: name, run_in_background: background };
-    if (background) return textResult({ ...identity, state: sent.state, backgrounded: true });
-    const inspected = await host.call("host.session.inspect", {
-      session_id: record.session_id,
-      request_id: record.request_id,
-      wait: "terminal",
-      timeout_ms: foregroundAwaitBudgetMS
-    });
-    if (inspected.timed_out || !inspected.turn || !terminalState(inspected.turn.state)) {
+      const identity = { session_id: record.session_id, task_name: name, run_in_background: background };
+      if (background) return textResult({ ...identity, state: sent.state, backgrounded: true });
+      const inspected = await host.call("host.session.inspect", {
+        session_id: record.session_id,
+        request_id: record.request_id,
+        wait: "terminal",
+        timeout_ms: foregroundAwaitBudgetMS
+      });
+      if (inspected.timed_out || !inspected.turn || !terminalState(inspected.turn.state)) {
+        return textResult({
+          ...identity,
+          state: inspected.turn?.state?.trim() ? inspected.turn.state : sent.state,
+          backgrounded: true,
+          ...inspected.timed_out ? { timed_out: true } : {}
+        });
+      }
+      const completed = inspected.turn;
+      await this.withTransition(execution, async () => {
+        const current = await this.loadRecord(host, "session_id", record.session_id);
+        if (!current || current.request_id !== record.request_id) return;
+        current.state = completed.state;
+        current.turn_id = completed.turn_id;
+        current.queue_id = completed.queue_id;
+        current.suppress_completion = true;
+        await this.saveRecord(host, current);
+      });
       return textResult({
         ...identity,
-        state: inspected.turn?.state?.trim() ? inspected.turn.state : sent.state,
-        backgrounded: true,
-        ...inspected.timed_out ? { timed_out: true } : {}
+        state: inspected.turn.state,
+        backgrounded: false,
+        ...inspected.turn.final_output ? { final_output: inspected.turn.final_output } : {},
+        ...inspected.turn.error ? { error: inspected.turn.error } : {}
       });
-    }
-    const completed = inspected.turn;
-    await this.withTransition(execution, async () => {
-      const current = await this.loadRecord(host, "session_id", record.session_id);
-      if (!current || current.request_id !== record.request_id) return;
-      current.state = completed.state;
-      current.turn_id = completed.turn_id;
-      current.queue_id = completed.queue_id;
-      current.suppress_completion = true;
-      await this.saveRecord(host, current);
-    });
-    return textResult({
-      ...identity,
-      state: inspected.turn.state,
-      backgrounded: false,
-      ...inspected.turn.final_output ? { final_output: inspected.turn.final_output } : {},
-      ...inspected.turn.error ? { error: inspected.turn.error } : {}
     });
   }
   async sendMessage(host, call) {
@@ -811,9 +817,13 @@ var SubagentPlugin = class {
         if (request.method !== "status.list") throw new Error(`unknown client method ${JSON.stringify(request.method)}`);
         return { output: { result: await host.call("host.session.list", request.input ?? {}) } };
       }
-      case lifecycleCapability:
-        await this.withTransition(execution, () => this.onLifecycle(host, call.input));
+      case lifecycleCapability: {
+        const input = call.input;
+        const dispatch = !terminalState(input.state) || input.retryable ? void 0 : await this.withTransition(execution, () => this.withIndex(async () => (await this.readIndex(host)).dispatches.find((item) => item.record.request_id === input.request_id || item.result?.record.request_id === input.request_id)));
+        const key = dispatch ? completionIdentity(dispatch.record.parent_session_id, dispatch.record.parent_turn_id, dispatch.signature) : void 0;
+        await this.withCompletionLock(execution, key, () => this.withTransition(execution, () => this.onLifecycle(host, input)));
         break;
+      }
       case interruptCapability:
         await this.withTransition(execution, () => this.onInterrupted(host, call.input));
         break;
@@ -950,6 +960,17 @@ ${output}` },
         queue_id: turn.queue_id,
         state: turn.state
       });
+    }
+  }
+  async withCompletionLock(execution, key, operation) {
+    if (!key) return operation();
+    execution.signal.throwIfAborted();
+    const lock = await acquireFileLock(this.lifecycleHost, { root: "workspace_state", path: `subagent/completions/${key}.lock` }, execution.executionId || void 0);
+    try {
+      execution.signal.throwIfAborted();
+      return await operation();
+    } finally {
+      await releaseFileLock(this.lifecycleHost, lock.lock_id);
     }
   }
   // Serialize state transitions, leaving foreground waits outside the lock.
@@ -1104,6 +1125,9 @@ function trimIndex(index, limit) {
     return true;
   });
   if (excess > 0) throw new Error(`subagent task record capacity (${maxTaskRecords}) is full; unfinished records must be resolved before creating more tasks`);
+}
+function completionIdentity(parentSessionID, parentTurnID, signature) {
+  return dispatchSignature({ parentSessionID, parentTurnID, signature });
 }
 function dispatchIdentity(call) {
   if (!call.call_id?.trim()) return randomBytes(12).toString("hex");

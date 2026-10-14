@@ -151,7 +151,14 @@ try {
   const pending = before.index.dispatches.find(item => !item.result && !item.cancelled && item.record.name === 'recover_child');
   assert(pending, 'Failed host create must leave the original durable intent');
   held();
-  await wait('message', messages, message => message.method === 'turn/completed' && message.params.turn.id === first.id, 'retained foreground generation');
+  const completed = await wait('message', messages, message => message.method === 'turn/completed' && message.params.turn.id === first.id, 'retained foreground generation');
+  const foreground = JSON.parse(completed.params.turn.items.find(item => item.type === 'tool_call' && item.source_id === 'held-tool').result);
+  assert.equal(foreground.backgrounded, false);
+  assert.equal(foreground.final_output, 'Held child completed');
+  result.foreground_completion_bubbles = completed.params.turn.items.filter(item => item.cause === 'subagent.completion' && item.related_session_id === foreground.session_id).length;
+  // A pre-fix retained runtime has no delivery gate; migration cannot retrofit
+  // synchronization into an already executing tool call in that process.
+  if (!process.env.WUU_SUBAGENT_BASELINE_RUNTIME) assert.equal(result.foreground_completion_bubbles, 0);
   assert((await ledger()).index.dispatches.some(item => item.id === pending.id && !item.result), 'Retained foreground save must not erase the replacement dispatch');
   result.checks.push('same-ID hot reload preserves a failed new dispatch while the retained foreground generation writes its result');
   await wait('message', messages, message => message.params?.thread_id === parent.id && JSON.stringify(message).includes('Late child completed'), 'late retained-generation child delivery');

@@ -376,6 +376,54 @@ try {
     await runtime.host.waitCall('host.session.send', params => params.cause === 'subagent.completion' && params.input.prompt.includes('New result'), deliveryStart);
     await runtime.capability('agent.turn.lifecycle', oldTerminal);
     assert.equal(runtime.host.calls.slice(deliveryStart).filter(call => call.service === 'host.session.send' && call.params.cause === 'subagent.completion').length, 1);
+    // A replacement runtime can observe completion before the retained foreground
+    // inspect response arrives. It must wait without blocking unrelated dispatches.
+    const replacement = await launch('subagent', runtime.host);
+    for (const timedOut of [false, true]) {
+      let settleInspect, failDispatch = !timedOut, originalRequest;
+      runtime.host.intercept = call => {
+        if (failDispatch && call.service === 'host.session.send' && call.params.cause === 'subagent.task') {
+          failDispatch = false; originalRequest = call.params.request_id;
+          throw new Error('synthetic foreground dispatch failure');
+        }
+        if (call.service === 'host.session.inspect' && call.params.wait === 'terminal') {
+          return new Promise(resolve => { settleInspect = resolve; });
+        }
+      };
+      const start = runtime.host.calls.length;
+      const args = { name: `reload_${timedOut}`, description: 'Reload foreground', prompt: `Hold ${timedOut}`, run_in_background: false };
+      if (!timedOut) await assert.rejects(runtime.tool('spawn_agent', args), /foreground dispatch failure/);
+      const waiting = runtime.tool('spawn_agent', args);
+      const inspect = await runtime.host.waitCall('host.session.inspect', params => params.wait === 'terminal', start);
+      if (!timedOut) assert.equal(inspect.params.request_id, originalRequest, 'A new tool call ID retains the pending dispatch identity');
+      const terminal = { thread_id: inspect.params.session_id, request_id: inspect.params.request_id, state: 'completed', final_output: `Reload result ${timedOut}` };
+      if (!timedOut) {
+        const retryable = { ...terminal, state: 'discarded', retryable: true };
+        runtime.host.turns.set(terminal.request_id, { ...retryable, session_id: terminal.thread_id });
+        await replacement.capability('agent.turn.lifecycle', retryable);
+        assert.equal(runtime.host.turns.get(terminal.request_id).state, 'queued');
+      }
+      runtime.host.turns.set(terminal.request_id, { ...terminal, session_id: terminal.thread_id });
+      const deliveryStart = runtime.host.calls.length;
+      const delivery = replacement.capability('agent.turn.lifecycle', terminal);
+      // The replacement has received the event, but the retained waiter still
+      // decides whether to return the result directly or hand it to background.
+      await runtime.host.waitCall('host.file-lock', params => params.path?.startsWith('subagent/completions/'), deliveryStart);
+      const separate = resultJSON(await replacement.tool('spawn_agent', { name: `independent_${timedOut}`, description: 'Independent dispatch', prompt: `Other ${timedOut}` }, { turn_id: `independent-${timedOut}` }));
+      assert(separate.session_id);
+      assert.equal(resultJSON(await replacement.tool('close_agent', { target: separate.session_id })).cancelled, true);
+      await replacement.capability('agent.turn.interrupted', { thread_id: 'parent', turn_id: `independent-${timedOut}` });
+      assert.equal(runtime.host.calls.slice(start).filter(call => call.service === 'host.session.send' && call.params.cause === 'subagent.completion').length, 0);
+      settleInspect(timedOut ? { timed_out: true, turn: { state: 'running' } } : { turn: terminal });
+      const result = resultJSON(await waiting);
+      assert.equal(result.backgrounded, timedOut);
+      if (!timedOut) assert.equal(result.final_output, terminal.final_output);
+      await delivery;
+      await replacement.capability('agent.turn.lifecycle', terminal);
+      assert.equal(runtime.host.calls.slice(start).filter(call => call.service === 'host.session.send' && call.params.cause === 'subagent.completion').length, timedOut ? 1 : 0);
+    }
+    runtime.host.intercept = undefined;
+    await replacement.shutdown();
     let releaseInspect;
     runtime.host.intercept = call => {
       if (call.service === 'host.session.inspect' && call.params.wait === 'terminal') {
@@ -385,13 +433,38 @@ try {
     const before = runtime.host.calls.length;
     const waiting = runtime.tool('spawn_agent', { task_name: 'cancel_execution', description: 'Await fixture', prompt: 'Wait for host inspect', run_in_background: false }, { execution_id: 'held-execution' });
     const rejected = assert.rejects(waiting, /abort|cancel/i);
-    await runtime.host.waitCall('host.session.inspect', params => params.wait === 'terminal', before);
+    const cancelledInspect = await runtime.host.waitCall('host.session.inspect', params => params.wait === 'terminal', before);
     runtime.send({ id: 'cancel-held', method: 'execution.cancel', params: { execution_id: 'held-execution' } });
     await rejected;
     releaseInspect({ timed_out: true });
     runtime.host.intercept = undefined;
     // A late result from the old execution must not satisfy the next request.
     await runtime.capability('agent.system_prompt.section', { thread_id: 'parent' });
+    const abandoned = { thread_id: cancelledInspect.params.session_id, request_id: cancelledInspect.params.request_id, state: 'completed', final_output: 'Result after waiter cancellation' };
+    runtime.host.turns.set(abandoned.request_id, { ...abandoned, session_id: abandoned.thread_id });
+    await runtime.capability('agent.turn.lifecycle', abandoned);
+    await runtime.capability('agent.turn.lifecycle', abandoned);
+    assert.equal(runtime.host.calls.slice(before).filter(call => call.service === 'host.session.send' && call.params.cause === 'subagent.completion').length, 1);
+    assert.equal(runtime.host.lockTokens.size, 0);
+
+    // Runtime loss releases the foreground gate without persisting suppression.
+    const lostHost = runtime.host;
+    lostHost.intercept = call => call.service === 'host.session.inspect' && call.params.wait === 'terminal' ? new Promise(() => {}) : undefined;
+    const lostStart = lostHost.calls.length;
+    const lost = runtime.tool('spawn_agent', { description: 'Lost foreground', prompt: 'Recover completion after crash', run_in_background: false });
+    const crashed = assert.rejects(lost, /exited/);
+    const lostInspect = await lostHost.waitCall('host.session.inspect', params => params.wait === 'terminal', lostStart);
+    const exited = once(runtime, 'exit');
+    runtime.process.kill('SIGKILL');
+    await exited; await crashed; await runtime.shutdown();
+    lostHost.intercept = undefined;
+    runtime = await launch('subagent', lostHost);
+    const recovered = { thread_id: lostInspect.params.session_id, request_id: lostInspect.params.request_id, state: 'completed', final_output: 'Recovered foreground result' };
+    lostHost.turns.set(recovered.request_id, { ...recovered, session_id: recovered.thread_id });
+    await runtime.capability('agent.turn.lifecycle', recovered);
+    await runtime.capability('agent.turn.lifecycle', recovered);
+    assert.equal(lostHost.calls.slice(lostStart).filter(call => call.service === 'host.session.send' && call.params.cause === 'subagent.completion').length, 1);
+    assert.equal(lostHost.lockTokens.size, 0);
     await runtime.shutdown();
   });
   await scenario('subagent', 'replay-safe dispatch and transactional follow-up recovery', async () => {
