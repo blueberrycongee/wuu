@@ -15,7 +15,8 @@ import type { ContextCompositionEntry } from "./ContextCompositionCard";
 import type { InstructionFilesEntry } from "./InstructionFilesCard";
 import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
 import type { SettingsPage } from "./SettingsView";
-import { localizedText, translateCurrent } from "./i18n";
+import { translateCurrent } from "./i18n";
+import { showActionErrorToast } from "./Toast";
 
 type SetAppState = (update: SetStateAction<AppState>) => void;
 
@@ -99,10 +100,7 @@ export function createWorkspaceActions(
   function openInstructions(): void {
     const activeThread = activeThreadForActions(deps.getAppState());
     if (!activeThread) {
-      deps.setAppState((current) => ({
-        ...current,
-        status: localizedText("contextComposition.noCurrentConversation"),
-      }));
+      showActionErrorToast(translateCurrent("contextComposition.noCurrentConversation"));
       return;
     }
     const threadID = activeThread.id;
@@ -148,10 +146,7 @@ export function createWorkspaceActions(
   function openContextComposition(): void {
     const activeThread = activeThreadForActions(deps.getAppState());
     if (!activeThread) {
-      deps.setAppState((current) => ({
-        ...current,
-        status: localizedText("contextComposition.noCurrentConversation"),
-      }));
+      showActionErrorToast(translateCurrent("contextComposition.noCurrentConversation"));
       return;
     }
     const threadID = activeThread.id;

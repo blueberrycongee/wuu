@@ -6,6 +6,7 @@ import { SelectMenu } from "./SelectMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { isMonospaceFont, listLocalFonts } from "./LocalFonts";
+import { desktopPlatform } from "./platform";
 
 export function AppearanceTypography({ section = "text" }: { section?: "text" | "motion" }): JSX.Element {
   const { t } = useI18n();
@@ -54,30 +55,31 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
       {saveError}
     </SettingsSection>;
   }
-  const fontPicker = (key: "uiFont" | "codeFont"): JSX.Element => {
-    const label = key === "codeFont" ? "settings.codeFont" : "settings.uiFont";
+  const fontPicker = (key: "uiFont" | "contentFont" | "codeFont"): JSX.Element => {
+    const label = key === "codeFont" ? "settings.codeFont" : key === "contentFont" ? "settings.contentFont" : "settings.uiFont";
     const names = key === "codeFont" ? monoFonts : localFonts;
     const current = preferences[key];
-    const options = [{ value: "", label: t("settings.systemFont") }, ...names.map((name) => ({ value: name, label: name }))];
+    const options = [{ value: "", label: t(key === "contentFont" ? "settings.sameAsUI" : "settings.systemFont") }, ...names.map((name) => ({ value: name, label: name }))];
     if (current && !names.includes(current)) options.push({ value: current, label: current });
     return <div className="appearance-font-picker" onClickCapture={() => { void loadFonts(); }} onKeyDownCapture={(event) => { if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) void loadFonts(); }}>
       <SelectMenu ariaLabel={t(label)} value={current} onChange={(value) => update({ [key]: value })} options={options} searchable triggerClassName="settings-select-trigger" />
     </div>;
   };
-  const fontsAreDefault = preferences.uiFont === appearanceDefaults.uiFont && preferences.codeFont === appearanceDefaults.codeFont;
+  const fontsAreDefault = preferences.uiFont === appearanceDefaults.uiFont && preferences.contentFont === appearanceDefaults.contentFont && preferences.codeFont === appearanceDefaults.codeFont;
   // Resetting is offered only when there is something to reset.
   return <SettingsSection
     title={t("settings.sectionText")}
     testID="settings-typography"
     actions={fontsAreDefault ? undefined : <button type="button" className="settings-button settings-button-ghost"
-      onClick={() => update({ uiFont: appearanceDefaults.uiFont, codeFont: appearanceDefaults.codeFont })}>{t("settings.resetFonts")}</button>}
+      onClick={() => update({ uiFont: appearanceDefaults.uiFont, contentFont: appearanceDefaults.contentFont, codeFont: appearanceDefaults.codeFont })}>{t("settings.resetFonts")}</button>}
   >
     <SettingsGroup>
-      {/* Each row pairs a face with its size, so both rows end in the same
-       * two controls. */}
       <SettingsRow title={t("settings.textInterface")}>
         {fontPicker("uiFont")}
         <MessageFlowFontSizeControl />
+      </SettingsRow>
+      <SettingsRow title={t("settings.textContent")} hint={t("settings.contentFontHint")}>
+        {fontPicker("contentFont")}
       </SettingsRow>
       <SettingsRow title={t("settings.textCode")}>
         {fontPicker("codeFont")}
@@ -91,6 +93,14 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
           onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
       </SettingsRow>
     </SettingsGroup>
+    {desktopPlatform() === "darwin" && <SettingsGroup>
+      <SettingsRow title={t("settings.fontSmoothing")} hint={t("settings.fontSmoothingHint")}>
+        <SelectMenu ariaLabel={t("settings.fontSmoothing")} value={preferences.fontSmoothing}
+          onChange={(value) => update({ fontSmoothing: value as AppearancePreferences["fontSmoothing"] })}
+          options={[{ value: "grayscale", label: t("settings.fontSmoothingGrayscale") }, { value: "system", label: t("settings.systemFont") }]}
+          triggerClassName="settings-select-trigger" />
+      </SettingsRow>
+    </SettingsGroup>}
     {(fontStatus === "loading" || fontStatus === "error") && <p className="settings-section-note" role="status">{t(fontStatus === "error" ? "settings.fontLoadFailed" : "settings.fontLoading")}</p>}
     {saveError}
   </SettingsSection>;

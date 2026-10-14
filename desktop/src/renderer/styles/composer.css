@@ -1496,18 +1496,6 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   flex: 1 1 8px;
 }
 
-.composer-feedback {
-  min-width: 0;
-  max-height: 6em;
-  overflow: auto;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-  color: var(--ink);
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--font-ui);
-  line-height: var(--line-ui);
-}
-
 .composer-action-button {
   display: grid;
   width: 32px;

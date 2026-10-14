@@ -40,8 +40,9 @@ import {
   type ThreadPendingComposerMessages,
 } from "./ComposerPendingMessages";
 import { isRecord, recordValue, stringValue } from "./ToolActivity";
-import { localizedText, translateCurrent } from "./i18n";
+import { translateCurrent } from "./i18n";
 import { rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
+import { showActionErrorToast, showErrorToast } from "./Toast";
 
 function heldComposerMessage(
   value: unknown,
@@ -396,11 +397,7 @@ export function useComposerPendingState({
       } catch (error) {
         removePendingComposerMessageByID(threadID, message.id, "queue");
         preserveFailedComposerMessage(threadID, message);
-        setStatus(
-          error instanceof Error
-            ? error.message
-            : translateCurrent("app.queueFailed"),
-        );
+        showErrorToast(error, translateCurrent("app.queueFailed"));
       }
     }
   }
@@ -495,7 +492,7 @@ export function useComposerPendingState({
       }
       if (method === "turn/held") {
         const reason = stringValue(params, "error");
-        if (reason) setStatus(reason);
+        if (reason) showErrorToast(reason);
       }
       return;
     }
@@ -590,7 +587,7 @@ export function useComposerPendingState({
       activeThreadIDForState(getAppState()),
     );
     if (target?.message.deliveryUnconfirmed) {
-      setStatus(localizedText("composer.nativeDeliveryUnconfirmed"));
+      showActionErrorToast(translateCurrent("composer.nativeDeliveryUnconfirmed"));
       return false;
     }
     if (!target) {
@@ -634,8 +631,8 @@ export function useComposerPendingState({
         if (!materialized) {
           restoreTargetIfAbsent();
         }
-        setStatus(
-          localizedText(
+        showActionErrorToast(
+          translateCurrent(
             materialized
               ? "composer.queueAlreadyHandled"
               : "composer.queueStillPending",
@@ -646,11 +643,7 @@ export function useComposerPendingState({
       return true;
     } catch (error) {
       restoreTargetIfAbsent();
-      setStatus(
-        error instanceof Error
-          ? error.message
-          : translateCurrent("composer.cancelQueueFailed"),
-      );
+      showActionErrorToast(error, translateCurrent("composer.cancelQueueFailed"));
       return false;
     }
   }
@@ -663,7 +656,7 @@ export function useComposerPendingState({
       activeThreadIDForState(getAppState()),
     );
     if (target?.message.deliveryUnconfirmed) {
-      setStatus(localizedText("composer.nativeDeliveryUnconfirmed"));
+      showActionErrorToast(translateCurrent("composer.nativeDeliveryUnconfirmed"));
       return false;
     }
     if (!target) {
@@ -683,7 +676,7 @@ export function useComposerPendingState({
     try {
       const result = await window.wuu.unsteerTurn(target.threadID, id);
       if (!result.ok) {
-        setStatus(localizedText("composer.guideAlreadyHandled"));
+        showActionErrorToast(translateCurrent("composer.guideAlreadyHandled"));
         return false;
       }
       return true;
@@ -702,11 +695,7 @@ export function useComposerPendingState({
           ],
         };
       });
-      setStatus(
-        error instanceof Error
-          ? error.message
-          : translateCurrent("composer.cancelGuideFailed"),
-      );
+      showActionErrorToast(error, translateCurrent("composer.cancelGuideFailed"));
       return false;
     }
   }
@@ -735,7 +724,7 @@ export function useComposerPendingState({
     if (!composerDraftHasContent(getComposerDraftForThread(threadID))) {
       return true;
     }
-    setStatus(localizedText("composer.clearBeforeEditingQueue"));
+    showActionErrorToast(translateCurrent("composer.clearBeforeEditingQueue"));
     return false;
   }
 
@@ -790,7 +779,7 @@ export function useComposerPendingState({
     }
     const target = queuedTarget ?? guideTarget;
     if (target?.message.deliveryUnconfirmed) {
-      setStatus(localizedText("composer.nativeDeliveryUnconfirmed"));
+      showActionErrorToast(translateCurrent("composer.nativeDeliveryUnconfirmed"));
       return;
     }
     if (!target) {
@@ -806,7 +795,7 @@ export function useComposerPendingState({
     }
     const turnID = activeTurnIDForThread(targetThread) ?? "";
     if (!turnID && !target.message.held) {
-      setStatus(localizedText("composer.noActiveTurnToGuide"));
+      showActionErrorToast(translateCurrent("composer.noActiveTurnToGuide"));
       return;
     }
     updateThreadPendingComposerMessages(target.threadID, (previous) => ({
@@ -852,11 +841,7 @@ export function useComposerPendingState({
           message.id === id ? { ...message, operationState: undefined } : message,
         ),
       }));
-      setStatus(
-        error instanceof Error
-          ? error.message
-          : translateCurrent("composer.guideFailed"),
-      );
+      showActionErrorToast(error, translateCurrent("composer.guideFailed"));
     }
   }
 
@@ -864,7 +849,7 @@ export function useComposerPendingState({
     target: LocatedPendingComposerMessage,
   ): Promise<void> {
     if (target.message.deliveryUnconfirmed) {
-      setStatus(localizedText("composer.nativeDeliveryUnconfirmed"));
+      showActionErrorToast(translateCurrent("composer.nativeDeliveryUnconfirmed"));
       return;
     }
     const { id } = target.message;
@@ -884,7 +869,7 @@ export function useComposerPendingState({
           ...previous,
           guides: previous.guides.filter((message) => message.id !== id),
         }));
-        setStatus(localizedText("composer.guideAlreadyHandled"));
+        showActionErrorToast(translateCurrent("composer.guideAlreadyHandled"));
         return;
       }
       updateThreadPendingComposerMessages(target.threadID, (previous) => {
@@ -905,11 +890,7 @@ export function useComposerPendingState({
           message.id === id ? { ...message, operationState: undefined } : message,
         ),
       }));
-      setStatus(
-        error instanceof Error
-          ? error.message
-          : translateCurrent("composer.requeueGuideFailed"),
-      );
+      showActionErrorToast(error, translateCurrent("composer.requeueGuideFailed"));
     }
   }
 
