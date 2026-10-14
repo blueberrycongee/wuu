@@ -4,14 +4,14 @@ const { execFileSync } = require("node:child_process");
 const { checkReleaseSigning } = require("./check-release-signing.cjs");
 
 module.exports = async function signMac(options) {
-  const identity = process.env.WUU_RELEASE_SIGN_ID ? checkReleaseSigning() : "-";
+  const release = process.env.WUU_RELEASE === "1";
+  const identity = release ? checkReleaseSigning() : "-";
   await signAsync({
     ...options,
     identity,
     identityValidation: false,
     keychain: process.env.WUU_RELEASE_KEYCHAIN,
-    // These previews are not Developer ID notarized. No provisioning profile
-    // is needed; recipient Macs do not import the signing certificate.
+    // Direct Developer ID distribution does not embed a provisioning profile.
     preAutoEntitlements: false,
     preEmbedProvisioningProfile: false,
     gatekeeperAssess: false,
@@ -28,7 +28,9 @@ module.exports = async function signMac(options) {
         return !["feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "bebafeca", "cafebabf", "bfbafeca"].includes(header.toString("hex"));
       } finally { closeSync(fd); }
     }],
-    optionsForFile: () => ({ hardenedRuntime: false, timestamp: "none" }),
+    optionsForFile: () => release
+      ? { hardenedRuntime: true, timestamp: "http://timestamp.apple.com/ts01" }
+      : { hardenedRuntime: false, timestamp: "none" },
   });
   execFileSync("codesign", ["--verify", "--deep", "--strict", options.app]);
 };

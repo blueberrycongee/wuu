@@ -24,8 +24,8 @@ var bundledFS embed.FS
 
 const bundledFingerprintFile = ".fingerprint"
 
-// EnableCUAMacEnv gates the bundled Computer Use plugin. It remains off in
-// normal releases while the native integration is under internal evaluation.
+// EnableCUAMacEnv gates the bundled Computer Use plugin. Packaged macOS apps
+// enable it when both native helpers are available inside their own bundle.
 const EnableCUAMacEnv = "WUU_ENABLE_CUA_MAC"
 
 type DiscoverOptions struct {
