@@ -102,6 +102,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Prevent stopping all agents from launching queued tasks as running agents release their slots; queued admissions are cancelled and rolled back first.
+
 - Preserve browser viewport and click/scroll coordinates in compact live previews,
   including cards scaled below 25% and transitions back to the browser panel.
 
