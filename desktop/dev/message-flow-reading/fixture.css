@@ -1,5 +1,8 @@
 /* Test harness chrome only. Message typography comes from production CSS. */
 html, body, #root { height: auto; min-height: 100%; overflow: visible; }
+/* This fixture scrolls the document instead of the production .scroll-region.
+   Keep its scrollbar space reserved so answer actions cannot shift the column. */
+html { overflow-y: scroll; }
 body { margin: 0; background: var(--paper); color: var(--ink); }
 .fixture-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; padding: 14px 24px; border-bottom: 1px solid var(--hairline); font: 13px/1.5 system-ui; }
 .fixture-toolbar label { display: inline-flex; align-items: center; gap: 6px; }
