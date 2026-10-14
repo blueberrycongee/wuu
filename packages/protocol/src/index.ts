@@ -3081,7 +3081,6 @@ export type WuuDesktopApi = {
   getActivityPreviewAutoShow?: () => Promise<boolean>;
   setActivityPreviewAutoShow?: (enabled: boolean) => Promise<void>;
   onActivityPreviewAutoShowChange?: (handler: (enabled: boolean) => void) => () => void;
-  showActivityPreview?: (threadId: string) => Promise<void>;
   // Appearance. The preference persists in desktop-settings.json; the
   // renderer resolves "system" against prefers-color-scheme and stamps
   // data-theme on <html>. `initialThemePreference` is read synchronously

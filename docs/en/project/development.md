@@ -127,6 +127,15 @@ it with `xvfb-run --auto-servernum` and `-- --no-sandbox`. Measurements and
 screenshots go to `desktop/out/stream-settlement/` (`WUU_SETTLEMENT_OUTPUT`
 overrides this). Desktop CI runs the same gate and uploads its evidence.
 
+`npm --prefix desktop run test:e2e:stream-code-cursor` checks where the
+streaming cursor paints when a fenced code block ends a live reply: open and
+closed fences, with and without a language, empty and nested in a list. The bar
+must follow the last code character inside the code card, stay outside the
+copied `<code>` text, and keep the card height when the reply settles. It uses
+the same self-started fixture server across both themes, 1000/420px windows and
+15/20px text. Measurements and screenshots go to `desktop/out/stream-code-cursor/`
+(`WUU_CODE_CURSOR_OUTPUT` overrides this).
+
 ### Live activity preview acceptance
 
 Run `node desktop/scripts/activity-preview-e2e.cjs` after installing desktop dependencies. It bundles the production Electron preview shell and browser/native content adapters, opens isolated browser pages, and starts a synthetic native-frame subprocess over the real JSONL transport. It verifies stable window identity and geometry across provider changes, frame acknowledgement, stale callback rejection, capture-error presentation, sticky hide and explicit reopen, automatic-preview preference, task-control dispatch, and teardown. Results, transport logs, and rendered screenshots are saved under `desktop/out/activity-preview/`; `WUU_ACTIVITY_PREVIEW_OUTPUT` selects another directory. Headless Linux uses software rendering and a synthetic display automatically.

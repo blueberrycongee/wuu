@@ -176,7 +176,7 @@ describe("StreamingMarkdown", () => {
     mount({ streamKey: key, initialText: text, isLive: false, phase: "final_answer" });
 
     const code = document.querySelector(".rich-code-block code");
-    expect(code?.textContent).toBe("cd desktop\nnpm run dev\n");
+    expect(code?.textContent).toBe("cd desktop\nnpm run dev");
     expect(code?.textContent).not.toContain("```");
     expect(document.querySelector(".streaming-markdown")?.textContent).not.toContain("\uE000");
   });
@@ -196,15 +196,17 @@ describe("StreamingMarkdown", () => {
           rerender({ ...props, isLive });
           const surface = container!.querySelector(".streaming-markdown")!;
           const code = surface.querySelector(".rich-code-block code")!;
-          expect(code.textContent).toBe(sourceCode + "\n");
+          expect(code.textContent).toBe(sourceCode);
           const range = document.createRange();
           range.selectNodeContents(code);
-          expect(range.toString()).toBe(sourceCode + "\n");
+          expect(range.toString()).toBe(sourceCode);
           const copyButton = surface.querySelector<HTMLButtonElement>(".rich-code-copy")!;
           await act(async () => { copyButton.click(); });
           expect(copy).toHaveBeenLastCalledWith(sourceCode);
           expect(surface.querySelectorAll(".stream-cursor")).toHaveLength(1);
           expect(code.querySelector(".stream-cursor")).toBeNull();
+          // The cursor follows the last code line, inside the code surface.
+          expect(code.nextElementSibling?.classList.contains("stream-cursor")).toBe(true);
         }
       } finally {
         copy.mockRestore();
@@ -224,14 +226,15 @@ describe("StreamingMarkdown", () => {
     expect(surface.querySelector(".rich-code-block")).toBeTruthy();
     expect(surface.querySelector(".rich-paragraph")).toBeNull();
     expect(surface.textContent).not.toContain("\uE000");
-    // The cursor keeps its settle-stable DOM slot as a zero-height sibling.
+    // The cursor keeps its settle-stable DOM slot after the last code line.
     const cursor = surface.querySelector(".stream-cursor") as HTMLElement | null;
     expect(cursor).not.toBeNull();
-    expect(cursor?.classList.contains("stream-cursor-block-tail")).toBe(true);
-    expect(cursor?.parentElement).toBe(surface);
+    expect(cursor?.classList.contains("stream-cursor-block-tail")).toBe(false);
+    expect(cursor?.previousElementSibling?.tagName).toBe("CODE");
+    expect(cursor?.parentElement?.closest(".rich-code-block")).toBeTruthy();
   });
 
-  it("keeps the block-tail cursor sibling out of the markdown source while live", async () => {
+  it("keeps the code cursor out of the markdown source while live", async () => {
     const key = streamTextKey("turn", "s12", "text");
     streamTextStore.seed(key, "```bash\nnpm run dev\n```");
     mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
@@ -242,10 +245,23 @@ describe("StreamingMarkdown", () => {
 
     const surface = document.querySelector(".streaming-markdown") as HTMLElement;
     const code = surface.querySelector(".rich-code-block code");
-    expect(code?.textContent).toBe("npm run dev\n");
+    expect(code?.textContent).toBe("npm run dev");
     expect(surface.querySelector(".rich-paragraph")).toBeNull();
     const cursor = surface.querySelector(".stream-cursor") as HTMLElement | null;
-    expect(cursor?.classList.contains("stream-cursor-block-tail")).toBe(true);
+    expect(cursor?.previousElementSibling).toBe(code);
+  });
+
+  it("keeps the block-tail cursor sibling for a streaming diagram", () => {
+    const key = streamTextKey("turn", "s12-mermaid", "text");
+    const text = "```mermaid\ngraph TD\nA --> B";
+    streamTextStore.seed(key, text);
+    mount({ streamKey: key, initialText: text, isLive: true, phase: "final_answer" });
+
+    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
+    const cursors = surface.querySelectorAll(".stream-cursor");
+    expect(cursors).toHaveLength(1);
+    expect(cursors[0].classList.contains("stream-cursor-block-tail")).toBe(true);
+    expect(cursors[0].parentElement).toBe(surface);
   });
 
   it.each(["\n", "\r\n", "\n\n", "\n\n\n", "\n\n\n\n\n"])("keeps the cursor on visible prose with trailing blank lines %j", (ending) => {

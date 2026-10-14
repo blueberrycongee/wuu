@@ -1814,8 +1814,8 @@
   background: var(--stream-cursor-color);
 }
 
-/* Block-final messages carry no inline cursor slot (for example a closed
- * fence or prose ending in blank lines). The sibling cursor keeps the
+/* Diagram-final messages carry no inline cursor slot: a rendered Mermaid
+ * diagram has no text line to follow. The sibling cursor keeps the
  * settle-stable DOM presence at zero flow height so no blank paragraph
  * survives after the content. */
 .stream-cursor-block-tail {

@@ -80,6 +80,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private pendingRetarget = false;
   private appearance: ActivityPreviewAppearance | undefined;
   private controlPending = false;
+  private controlFailed = false;
   private captureState: Pick<CUANativePiPEvent, "status" | "message"> = { status: "healthy" };
   private stopCallbacks: Array<() => void> = [];
   // Resting corner inside the conversation column. A release may change it;
@@ -273,6 +274,12 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
 
   setControlPending(pending: boolean): void {
     this.controlPending = pending;
+    if (pending) this.controlFailed = false;
+    this.pushActivityState();
+  }
+
+  setControlFailed(): void {
+    this.controlFailed = true;
     this.pushActivityState();
   }
 
@@ -321,6 +328,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   }
 
   updateActivity(activity: ActivitySession): void {
+    if (activity.execution_id !== this.activity.execution_id || activity.controller !== this.activity.controller
+      || activity.state === "stopped") this.controlFailed = false;
     if (activity.execution_id !== this.activity.execution_id) {
       this.lastInteractionRevision = 0;
       this.pendingInteraction = undefined;
@@ -346,6 +355,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.lastInteractionRevision = 0;
     this.pendingInteraction = undefined;
     this.controlPending = false;
+    this.controlFailed = false;
     this.setCaptureStatus({ status: "healthy" });
     this.pendingRetarget = true;
     this.awaitingVisibility = true;
@@ -706,7 +716,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         execution_id: this.activity.execution_id,
         state: this.activity.state,
         controller: this.activity.controller,
-        error: this.activity.error,
+        controlFailed: this.controlFailed,
         controlPending: this.controlPending,
       })})`,
     );

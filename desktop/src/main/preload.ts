@@ -392,7 +392,6 @@ const api: WuuDesktopApi = {
     ipcRenderer.on("wuu:activity-preview-auto-show-changed", listener);
     return () => ipcRenderer.removeListener("wuu:activity-preview-auto-show-changed", listener);
   },
-  showActivityPreview: (threadId) => ipcRenderer.invoke("wuu:activity-preview-show", threadId),
   getThemePreference: () => ipcRenderer.invoke("wuu:theme-preference-get"),
   setThemePreference: (theme: ThemePreference) =>
     ipcRenderer.invoke("wuu:theme-preference-set", theme),

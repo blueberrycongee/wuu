@@ -52,6 +52,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- On macOS, desktop text uses grayscale font smoothing, so regular text keeps
+  its designed weight and light text no longer blooms in dark themes. Bold
+  phrases in messages use semibold to stay distinct from the lighter body text.
+
+- The agent cursor in browser pages and live previews now travels along a soft
+  arc with the tip leading, a speed glow, a small follow-through, a click
+  ripple and a gentle idle float, in a new blue cursor. Moves still arrive within
+  700 ms, and reduced motion keeps the cursor still.
+
 - iOS history loads settled processing steps as stable summaries. Tap a summary
   to page through its details without changing the conversation reading position;
   published attachments remain in the conversation.
@@ -100,6 +109,21 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep iOS conversations visible after sending through long histories, with stable
   latest-message following through keyboard changes and retained reading position
   while replies arrive or older history loads.
+
+- Tables, Mermaid diagrams and horizontal rules in messages keep the normal
+  block gap above them instead of touching the preceding line. Inline code in
+  table cells stays whole in narrow windows, and the table scrolls instead of
+  splitting addresses or paths across lines.
+
+- Keep the streaming cursor after the last line of a code block while an answer
+  writes code, instead of drawing it at the card's lower-left corner. Copied and
+  selected code is unchanged.
+
+- Prevent stopping all agents from launching queued tasks as running agents release their slots; queued admissions are cancelled and rolled back first.
+
+- Keep tool diagnostics out of floating activity previews, show concise guidance
+  for preview failures, and remove the extra preview button from the conversation
+  title bar.
 
 - Preserve browser viewport and click/scroll coordinates in compact live previews,
   including cards scaled below 25% and transitions back to the browser panel.

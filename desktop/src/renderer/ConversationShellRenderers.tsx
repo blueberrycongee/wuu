@@ -13,7 +13,6 @@ import {
   type RefObject,
 } from "react";
 import {
-  Activity,
   ArrowLeft,
   SquarePen,
   Info,
@@ -532,7 +531,6 @@ export type ConversationTitleActionsProps = {
   rightPanelOpen: boolean;
   onToggleRightPanel: () => void;
   showRightPanelToggle?: boolean;
-  onShowActivityPreview?: () => void;
 };
 
 export function ConversationTitleActions({
@@ -544,7 +542,6 @@ export function ConversationTitleActions({
   rightPanelOpen,
   onToggleRightPanel,
   showRightPanelToggle = true,
-  onShowActivityPreview,
 }: ConversationTitleActionsProps): JSX.Element {
   const { t } = useI18n();
   const projectActions = useProjectActions();
@@ -572,11 +569,6 @@ export function ConversationTitleActions({
   return (
     <div className="title-actions">
       {management}
-      {onShowActivityPreview && !pluginPageVisible ? <Tooltip content={t("shell.showLiveActivity")} side="bottom">
-        <button type="button" className="icon-button" aria-label={t("shell.showLiveActivity")} onClick={onShowActivityPreview}>
-          <Activity aria-hidden="true" />
-        </button>
-      </Tooltip> : null}
       {!ENABLE_ENVIRONMENT_PANEL || pluginPageVisible ? null : (
         <Tooltip content={environmentLabel} side="bottom">
           <button

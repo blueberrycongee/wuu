@@ -86,6 +86,18 @@ applyTheme(theme);
 
 长路径 \`desktop/src/renderer/styles/conversation-shell.css\` 在窄窗口和大字号下也应能够阅读。`;
 
+// `?stream=<name>` replaces the streaming sample to inspect where the cursor
+// sits while a fenced code block is still the last visible block.
+const streamSamples: Record<string, string> = {
+  "open-code": "先写一个辅助函数：\n\n```ts\nexport function clamp(value: number, min: number, max: number) {\n  return Math.min(max, Math.max(min, value));",
+  "open-code-newline": "先写一个辅助函数：\n\n```ts\nexport function clamp(value: number, min: number, max: number) {\n  return Math.min(max, Math.max(min, value));\n",
+  "open-code-plain": "运行下面的命令：\n\n```\ncd desktop\nnpm run dev",
+  "open-code-empty": "运行下面的命令：\n\n```bash\n",
+  "open-code-list": "- 第一步：\n\n  ```bash\n  cd desktop\n  npm run dev",
+  "closed-code": "运行下面的命令：\n\n```bash\ncd desktop\nnpm run dev\n```",
+  "closed-code-blank": "运行下面的命令：\n\n```bash\ncd desktop\nnpm run dev\n```\n\n",
+};
+
 const conversationTurns: Turn[] = [
   {
     id: "sample-first", status: "completed", items_view: "full", duration_ms: 42000,
@@ -199,6 +211,7 @@ function Fixture(): JSX.Element {
   const [playing, setPlaying] = useState(false);
   const [run, setRun] = useState(0);
   const key = `reading-fixture-${run}`;
+  const streamSample = streamSamples[params.get("stream") ?? ""] ?? sample;
   useEffect(() => applyMessageFlowFontSize(size), [size]);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
   useEffect(() => {
@@ -207,15 +220,15 @@ function Fixture(): JSX.Element {
     streamTextStore.seed(key, "");
     setLive(true);
     const timer = window.setInterval(() => {
-      const chunk = sample.slice(offset, offset + 60);
+      const chunk = streamSample.slice(offset, offset + 60);
       streamTextStore.append(key, chunk);
       offset += chunk.length;
-      if (offset >= sample.length) { setLive(false); setPlaying(false); }
+      if (offset >= streamSample.length) { setLive(false); setPlaying(false); }
     }, 70);
     return () => window.clearInterval(timer);
-  }, [key, playing]);
+  }, [key, playing, streamSample]);
   const markdown = surface === "stream"
-    ? <StreamingMarkdown key={key} streamKey={key} initialText={playing ? "" : sample} isLive={live} phase="final_answer" />
+    ? <StreamingMarkdown key={key} streamKey={key} initialText={playing ? "" : streamSample} isLive={live} phase="final_answer" />
     : <RichContent text={surface === "user" ? userSample : sample} />;
   return <ImagePreviewProvider>
     <header className="fixture-toolbar">

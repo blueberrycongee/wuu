@@ -90,6 +90,7 @@ type AgentControl struct {
 	queueStartMu      sync.Mutex
 	queueStarted      bool
 	queueStopped      bool
+	queuePauses       int // concurrent StopAll calls keep queue admission paused
 	queueDrainMu      sync.Mutex
 	queueMu           sync.Mutex
 	queued            []preparedSpawn
@@ -554,7 +555,7 @@ func (c *AgentControl) queuedWorkEnabled() bool {
 	}
 	c.queueStartMu.Lock()
 	defer c.queueStartMu.Unlock()
-	return c.queueStarted && !c.queueStopped
+	return c.queueStarted && !c.queueStopped && c.queuePauses == 0
 }
 
 // SetWorkerExecutionReleaseHookForTest installs a synchronization hook that
@@ -1850,10 +1851,24 @@ func (c *AgentControl) StopAll() {
 	if c == nil {
 		return
 	}
+	// Releasing a running slot must not let the queue drain launch its next
+	// worker before this cancellation reaches the queued admissions.
+	c.queueStartMu.Lock()
+	c.queuePauses++
+	c.queueStartMu.Unlock()
+	defer func() {
+		c.queueStartMu.Lock()
+		c.queuePauses--
+		c.queueStartMu.Unlock()
+	}()
 	// Issue the cancellation wave before waiting on queue storage or admission
 	// compensation. A durable queue outage must not leave already-running
 	// workers consuming provider calls indefinitely.
 	c.manager.StopAll()
+	// Finish any dequeue admitted before the pause before taking the final
+	// worker snapshot; it must not publish a worker behind cancellation.
+	c.queueDrainMu.Lock()
+	defer c.queueDrainMu.Unlock()
 	// Shutdown already closed all turn admission and must reach the caller's
 	// durable-terminal yield without waiting for a worker transition. A failing
 	// terminal finalizer holds that lock until yield; parked workers likewise
@@ -1866,8 +1881,6 @@ func (c *AgentControl) StopAll() {
 			c.stopWorker(worker.ID)
 		}
 	}
-	c.queueDrainMu.Lock()
-	defer c.queueDrainMu.Unlock()
 	c.queueMu.Lock()
 	queued := c.queued
 	c.queued = nil
@@ -2594,11 +2607,20 @@ func (c *AgentControl) maybeStartQueued(ctx context.Context) {
 		if !c.hasQueuedSpawns() {
 			return
 		}
+		// Coordinate the capacity check and dequeue with StopAll's pause before
+		// it cancels running workers and makes their slots available.
+		c.queueStartMu.Lock()
+		if !c.queueStarted || c.queueStopped || c.queuePauses > 0 {
+			c.queueStartMu.Unlock()
+			return
+		}
 		spawnSlot, admitted := c.tryReserveSpawnSlot("")
 		if !admitted {
+			c.queueStartMu.Unlock()
 			return
 		}
 		prepared, ok := c.popQueuedSpawn()
+		c.queueStartMu.Unlock()
 		if !ok {
 			spawnSlot.release()
 			return

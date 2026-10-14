@@ -64,6 +64,11 @@ See the [development guide](../../../docs/en/project/development.md) for CI and
 artifact options. The fixture accepts `live=1` and `content=prose|markdown` for
 manual replay of the same cases.
 
+The streaming surface also accepts `stream=open-code|open-code-newline|open-code-plain|open-code-empty|open-code-list|closed-code|closed-code-blank`
+to end the answer in a fenced code block. With `live=1` the cursor should follow
+the last code character inside the card. `npm --prefix desktop run test:e2e:stream-code-cursor`
+measures these cases and saves screenshots in `desktop/out/stream-code-cursor/`.
+
 The image surface (`?surface=images`) includes a user attachment, a tool image,
 and landscape, portrait, and panoramic Markdown images. Inspect the preview
 sizes, text-to-image gaps, narrow-window fit, and click/keyboard enlargement

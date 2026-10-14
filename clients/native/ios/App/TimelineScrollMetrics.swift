@@ -159,8 +159,12 @@ struct TimelineScrollReader: UIViewRepresentable {
         @objc private func restoreFrame() {
             scroll?.superview?.layoutIfNeeded()
             state?.restorePosition()
+            if state?.preservingPosition != true {
+                restoration?.invalidate(); restoration = nil
+                // Following must resume at the latest edge even when the final geometry is unchanged.
+                last = nil
+            }
             report()
-            if state?.preservingPosition != true { restoration?.invalidate(); restoration = nil }
         }
         func schedule() {
             guard !scheduled else { return }
