@@ -39,10 +39,21 @@ wuu session list --all-workdirs --include-archived
 wuu session show --json THREAD_ID
 wuu session show --last
 wuu session trace --json THREAD_ID
+wuu session usage --json THREAD_ID
 wuu session search --workdir /path/to/project "关键词"
 ```
 
 列表默认限定当前工作区。`show` 读取元数据和历史；`trace` 回放已保存轨迹，不重新执行工具，也不请求模型。搜索检查元数据和历史。脚本优先使用命令支持的 JSON 输出，不要解析展示文本。
+
+`session usage` 分别报告当前会话 `self`、委派后代 `delegated` 和整棵会话树
+`tree` 的 token 用量，并按会话及供应商/模型拆分。统计包含通过父会话关联的
+隐藏、已归档后代及独立 worktree 中的子会话；仅有分叉来源关系不计入委派。
+请提供 `session list` 中的会话 ID，或使用 `--thread THREAD_ID`。
+
+统计仅覆盖已持久化的回合用量，不能作为完整供应商账单。进行中的请求、重试、
+辅助调用及未报告的用量可能缺失。JSON 保留未知供应商/模型的空标识，并列出
+没有用量记录的会话；不会用当前模型填补历史归属，也不会把缺失用量当作免费。
+命令不读取对话内容，不调用模型。
 
 ## 归档、导出与删除
 

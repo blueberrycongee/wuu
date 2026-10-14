@@ -39,10 +39,24 @@ wuu session list --all-workdirs --include-archived
 wuu session show --json THREAD_ID
 wuu session show --last
 wuu session trace --json THREAD_ID
+wuu session usage --json THREAD_ID
 wuu session search --workdir /path/to/project "keyword"
 ```
 
 Lists default to the current workspace. `show` reads metadata and history; `trace` replays the saved trace without rerunning tools or contacting the model. Search checks metadata and history. Prefer supported JSON output for scripts rather than parsing display text.
+
+`session usage` reports separate `self`, `delegated`, and `tree` token totals,
+with per-session and provider/model breakdowns. It includes hidden and archived
+descendants linked by their parent session, including children in worktrees;
+fork ancestry alone does not count as delegation. Supply a session ID from
+`session list` or use `--thread THREAD_ID`.
+
+Coverage is limited to persisted turn-usage records, not complete provider
+billing. In-flight requests, retries, auxiliary calls and unreported usage may
+be missing. JSON keeps unknown provider/model identifiers empty and lists
+sessions without usage records; it never substitutes the current model or
+interprets missing usage as free. The command reads no conversation content
+and makes no model calls.
 
 ## Archive, export, and delete
 

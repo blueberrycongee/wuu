@@ -553,6 +553,8 @@ func runSession(args []string) error {
 		return runSessionShowSubcommand(args[1:])
 	case "trace":
 		return runSessionTrace(args[1:])
+	case "usage":
+		return runSessionUsage(args[1:])
 	case "search":
 		return runSessionSearch(args[1:])
 	case "archive":
@@ -2260,7 +2262,7 @@ Usage:
   wuu exec review (--uncommitted|--base REF|--commit SHA) [flags]
   wuu -c|--continue [flags] [prompt...]          shortcut: exec -c
   wuu -r|--resume THREAD_ID [flags] [prompt...]  shortcut: exec -r
-  wuu session list|show|trace|search|archive|delete|export [flags]
+  wuu session list|show|trace|usage|search|archive|delete|export [flags]
   wuu skills lint [--json] PATH...
   wuu plugin inspect|install|update|list|approve|reject|enable|disable|remove [flags]
   wuu plugin create|validate|build|test|pack [flags]
@@ -2322,6 +2324,8 @@ Session commands:
                    show session metadata and history
   trace [--json] [--last|THREAD_ID] [--workdir DIR]
                    replay a session trace artifact
+  usage [--json] THREAD_ID
+                   show recorded usage for a session and its delegated children
   search [--json] QUERY [--workdir DIR]
                    search session metadata and history
 
