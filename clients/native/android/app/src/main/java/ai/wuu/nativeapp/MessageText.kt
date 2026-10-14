@@ -96,7 +96,12 @@ private data class ParsedMessage(val source: String, val content: Spanned)
                 val from = value.getSpanStart(span)
                 val end = value.getSpanEnd(span)
                 addText(start, from)
-                add(MessagePart(SpannedString(value.subSequence(from, end)), true))
+                // Markwon 4.6.2 pads code spans with NBSP + newline and a final NBSP.
+                // Remove only that framing and the parser's terminal newline so
+                // streaming appends and incomplete-line fallback see the source.
+                val code = value.subSequence(from, end).toString()
+                    .removePrefix("\u00a0\n").removeSuffix("\u00a0").removeSuffix("\n")
+                add(MessagePart(SpannedString(code), true))
                 start = end
             }
             addText(start, value.length)
@@ -105,7 +110,7 @@ private data class ParsedMessage(val source: String, val content: Spanned)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         parts.forEachIndexed { index, part ->
             key(index) {
-                if (part.diagram) MermaidDiagram(part.text.toString().trim('\n'), isLive || snapshot.source != text)
+                if (part.diagram) MermaidDiagram(part.text.toString(), isLive || snapshot.source != text)
                 else NativeMarkdownText(part.text, renderer, bodyStyle)
             }
         }
