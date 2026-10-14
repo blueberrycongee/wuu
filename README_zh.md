@@ -87,7 +87,7 @@
 
 桌面预览版支持 Apple 芯片的 Mac。从 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 下载，把 `wuu.app` 放进 `/Applications` 后打开。
 
-预览版没有正式签名：只有 ad-hoc 签名，没有 Apple Developer ID，也没有经过公证。如果 macOS 阻止打开，请按[安装指南](docs/zh-cn/getting-started/installation.md)处理。
+发布流水线要求 Apple Developer ID 正式签名和公证。早期预览版仅使用 ad-hoc 签名，请按下载版本的发布说明和[安装指南](docs/zh-cn/getting-started/installation.md)确认。
 
 第一次打开时，先接上模型服务，再把项目文件夹添加为工作区。可以从一个小任务开始，完成后在审查面板里检查改动和测试结果。[快速开始](docs/zh-cn/getting-started/index.md)里有完整的示例。
 

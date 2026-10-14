@@ -3,7 +3,6 @@ package subagent
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -213,7 +212,7 @@ func MarkPersistedRunInterrupted(path, reason string, now time.Time) (bool, erro
 	if err != nil {
 		return false, err
 	}
-	if err := os.WriteFile(path, out, securefs.FileMode); err != nil {
+	if err := securefs.WriteFileAtomic(path, out); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -221,15 +220,12 @@ func MarkPersistedRunInterrupted(path, reason string, now time.Time) (bool, erro
 
 // persistHistory writes the sub-agent's final state to its configured
 // HistoryPath. Callers must surface errors because this snapshot is the
-// durable source used to resume a worker after restart.
+// durable source used to resume a worker after restart. Replace it atomically
+// because result delivery can read it while a terminal transition writes it.
 func persistHistory(sa *SubAgent) error {
 	if sa.historyPath == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(sa.historyPath), securefs.DirMode); err != nil {
-		return err
-	}
-
 	sa.mu.Lock()
 	rec := historyRecord{
 		Version:            ResumeSnapshotVersion,
@@ -263,5 +259,5 @@ func persistHistory(sa *SubAgent) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(sa.historyPath, data, securefs.FileMode)
+	return securefs.WriteFileAtomic(sa.historyPath, data)
 }

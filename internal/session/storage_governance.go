@@ -7,15 +7,19 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/storagecodec"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
-// RedundantStorageMaintenanceResult reports durable copies removed without
-// changing the conversation or any recovery obligation.
+// RedundantStorageMaintenanceResult reports redundant copies removed and
+// checkpoint bytes encoded without changing the conversation or recovery.
 type RedundantStorageMaintenanceResult struct {
 	ProjectedToolResultsCleared  int64
 	SupersededCheckpointsDeleted int64
 	ToolMessageContentsCompacted int64
+	CheckpointsEncoded           int64
+	CheckpointBytesBefore        int64
+	CheckpointBytesAfter         int64
 }
 
 // compactHistoryRecordForStorage removes the legacy text projection when the
@@ -45,6 +49,7 @@ func hydrateHistoryRecordFromStorage(rec *HistoryRecord) {
 // MaintainRedundantStorage removes data whose authoritative copy has already
 // crossed its durable handoff boundary. It does not prune conversation
 // messages, current provider checkpoints, or unprojected tool invocations.
+// Each pass also losslessly encodes a bounded batch of legacy checkpoints.
 func MaintainRedundantStorage(ctx context.Context, sessDir string) (RedundantStorageMaintenanceResult, error) {
 	var result RedundantStorageMaintenanceResult
 	if err := ctx.Err(); err != nil {
@@ -57,6 +62,11 @@ func MaintainRedundantStorage(ctx context.Context, sessDir string) (RedundantSto
 	defer db.Close()
 
 	compactRowIDs, err := redundantToolMessageRowIDs(ctx, db)
+	if err != nil {
+		return result, err
+	}
+
+	checkpoints, err := checkpointStorageBatch(ctx, db)
 	if err != nil {
 		return result, err
 	}
@@ -118,14 +128,75 @@ WHERE rowid = ? AND role = 'tool' AND content <> '' AND tool_result_json <> ''`)
 		}
 	}
 
+	for _, checkpoint := range checkpoints {
+		updated, err := tx.ExecContext(ctx, `
+UPDATE session_history_checkpoints SET replacement_json = ?
+WHERE session_id = ? AND version = ? AND typeof(replacement_json) = 'text'`,
+			checkpoint.stored, checkpoint.sessionID, checkpoint.version)
+		if err != nil {
+			return result, fmt.Errorf("encode legacy history checkpoint: %w", err)
+		}
+		count, err := updated.RowsAffected()
+		if err != nil {
+			return result, fmt.Errorf("count encoded history checkpoints: %w", err)
+		}
+		result.CheckpointsEncoded += count
+		result.CheckpointBytesBefore += count * checkpoint.bytesBefore
+		result.CheckpointBytesAfter += count * int64(len(checkpoint.stored))
+	}
+
 	if err := tx.Commit(); err != nil {
 		return result, fmt.Errorf("commit redundant session storage maintenance: %w", err)
 	}
-	// Reclaim at most 64 MiB per pass. The remaining free pages stay reusable by
-	// SQLite and later six-hour passes continue shrinking the file without a
-	// foreground-sized VACUUM.
-	_, _ = db.ExecContext(ctx, `PRAGMA incremental_vacuum(16384)`)
-	return result, nil
+	return result, reclaimSessionStorage(ctx, db)
+}
+
+type storedCheckpoint struct {
+	sessionID   string
+	version     int
+	bytesBefore int64
+	stored      []byte
+}
+
+func checkpointStorageBatch(ctx context.Context, db *sql.DB) ([]storedCheckpoint, error) {
+	rows, err := db.QueryContext(ctx, `
+SELECT session_id, version, replacement_json
+FROM session_history_checkpoints AS checkpoint
+WHERE typeof(replacement_json) = 'text'
+  AND NOT EXISTS (
+    SELECT 1 FROM session_history_checkpoints AS newer
+    WHERE newer.session_id = checkpoint.session_id AND newer.version > checkpoint.version
+  )
+ORDER BY checkpoint.rowid
+LIMIT 32`)
+	if err != nil {
+		return nil, fmt.Errorf("list legacy history checkpoints: %w", err)
+	}
+	defer rows.Close()
+	var batch []storedCheckpoint
+	var bytesRead int
+	for rows.Next() {
+		var checkpoint storedCheckpoint
+		var payload []byte
+		if err := rows.Scan(&checkpoint.sessionID, &checkpoint.version, &payload); err != nil {
+			return nil, fmt.Errorf("scan legacy history checkpoint: %w", err)
+		}
+		checkpoint.bytesBefore = int64(len(payload))
+		checkpoint.stored, err = storagecodec.Encode(payload)
+		if err != nil {
+			return nil, fmt.Errorf("compress legacy history checkpoint: %w", err)
+		}
+		batch = append(batch, checkpoint)
+		bytesRead += len(payload)
+		// Finish the current checkpoint, then leave the rest for a later pass.
+		if bytesRead >= 8*1024*1024 {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read legacy history checkpoints: %w", err)
+	}
+	return batch, nil
 }
 
 func redundantToolMessageRowIDs(ctx context.Context, db *sql.DB) ([]int64, error) {

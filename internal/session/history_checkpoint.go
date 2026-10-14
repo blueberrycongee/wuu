@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/storagecodec"
 )
 
 const HistoryCheckpointKindProviderRewrite = "provider_rewrite"
@@ -185,6 +187,10 @@ func storeHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []Hi
 	if err != nil {
 		return HistoryCheckpoint{}, fmt.Errorf("encode history checkpoint replacement: %w", err)
 	}
+	stored, err := storagecodec.Encode(payload)
+	if err != nil {
+		return HistoryCheckpoint{}, fmt.Errorf("compress history checkpoint replacement: %w", err)
+	}
 	var version int
 	if err := tx.QueryRow(`
 		SELECT COALESCE(MAX(version), 0) + 1
@@ -197,7 +203,7 @@ func storeHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []Hi
 		INSERT INTO session_history_checkpoints (
 			session_id, version, kind, through_seq, replacement_json, created_at
 		) VALUES (?, ?, ?, ?, ?, ?)`,
-		id, version, kind, headSeq, string(payload), timeText(createdAt),
+		id, version, kind, headSeq, stored, timeText(createdAt),
 	); err != nil {
 		return HistoryCheckpoint{}, fmt.Errorf("store history checkpoint: %w", err)
 	}
@@ -343,13 +349,18 @@ func latestHistoryCheckpointTx(tx *sql.Tx, id string) (HistoryCheckpoint, bool, 
 
 func scanHistoryCheckpoint(row historyCheckpointScanner, id string) (HistoryCheckpoint, bool, error) {
 	var checkpoint HistoryCheckpoint
-	var payload, createdAt string
+	var payload []byte
+	var createdAt string
 	if err := row.Scan(&checkpoint.Version, &checkpoint.Kind, &checkpoint.ThroughSeq, &payload, &createdAt); errors.Is(err, sql.ErrNoRows) {
 		return HistoryCheckpoint{}, false, nil
 	} else if err != nil {
 		return HistoryCheckpoint{}, false, fmt.Errorf("load latest history checkpoint: %w", err)
 	}
-	if err := json.Unmarshal([]byte(payload), &checkpoint.Replacement); err != nil {
+	decoded, err := storagecodec.Decode(payload)
+	if err != nil {
+		return HistoryCheckpoint{}, false, fmt.Errorf("decompress history checkpoint %s@%d: %w", id, checkpoint.Version, err)
+	}
+	if err := json.Unmarshal(decoded, &checkpoint.Replacement); err != nil {
 		return HistoryCheckpoint{}, false, fmt.Errorf("decode history checkpoint %s@%d: %w", id, checkpoint.Version, err)
 	}
 	for i := range checkpoint.Replacement {
