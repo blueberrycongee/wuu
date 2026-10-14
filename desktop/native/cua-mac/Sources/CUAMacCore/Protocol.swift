@@ -200,10 +200,14 @@ public struct ComputerResult: @unchecked Sendable {
 
 public protocol ComputerBackend: AnyObject {
     func perform(_ command: ComputerCommand) throws -> ComputerResult
+    func revokeControl(epoch: String)
     func shutdown()
 }
 
-public extension ComputerBackend { func shutdown() {} }
+public extension ComputerBackend {
+    func revokeControl(epoch: String) {}
+    func shutdown() {}
+}
 
 public enum ComputerError: LocalizedError, Equatable {
     case invalidArguments(String)
@@ -245,6 +249,11 @@ public final class MCPServer {
         let method = request["method"] as? String ?? ""
         let id = request["id"]
         if id == nil && method.hasPrefix("notifications/") {
+            if method == "notifications/wuu/control_revoked",
+               let params = request["params"] as? [String: Any],
+               let epoch = params["control_epoch"] as? String, !epoch.isEmpty {
+                backend.revokeControl(epoch: epoch)
+            }
             return nil
         }
         switch method {

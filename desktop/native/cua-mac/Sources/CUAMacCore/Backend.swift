@@ -45,6 +45,10 @@ public final class MacComputerBackend: ComputerBackend {
         restoration?.recoverAbandoned(using: restoreWindow)
     }
 
+    public func revokeControl(epoch: String) {
+        directedFocus.revoke(epoch: epoch)
+    }
+
     public func shutdown() {
         directedFocus.end()
         _ = try? restoration?.restore(using: restoreWindow)

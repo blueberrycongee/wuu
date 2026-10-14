@@ -597,6 +597,13 @@ func (r *Registry) BindControl(parent context.Context, lease Lease) (context.Con
 
 type boundControlContextKey struct{}
 
+// BoundControlContext returns the lease lifetime, which survives individual
+// requests and ends when control is revoked. It is absent on unbound work.
+func BoundControlContext(ctx context.Context) (context.Context, bool) {
+	control, ok := ctx.Value(boundControlContextKey{}).(context.Context)
+	return control, ok
+}
+
 // ControlErr checks both caller cancellation and the original activity lease.
 // It does not wait for the lease's asynchronous cancellation callback to run.
 func ControlErr(ctx context.Context) error {
@@ -606,7 +613,7 @@ func ControlErr(ctx context.Context) error {
 	if execution, ok := ctx.Value(executionContextKey{}).(*executionEpoch); ok && execution.control.Err() != nil {
 		return ErrControlRevoked
 	}
-	if control, ok := ctx.Value(boundControlContextKey{}).(context.Context); ok && control.Err() != nil {
+	if control, ok := BoundControlContext(ctx); ok && control.Err() != nil {
 		return context.Cause(control)
 	}
 	return nil
@@ -616,7 +623,7 @@ func ControlErr(ctx context.Context) error {
 // Unbound tools retain their caller lifetime when another UI operation's
 // execution is revoked; only BindControl opts into the local-control fence.
 func BoundControlErr(ctx context.Context) error {
-	if _, bound := ctx.Value(boundControlContextKey{}).(context.Context); bound {
+	if _, bound := BoundControlContext(ctx); bound {
 		return ControlErr(ctx)
 	}
 	return ctx.Err()

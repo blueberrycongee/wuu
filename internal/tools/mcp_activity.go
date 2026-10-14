@@ -102,6 +102,10 @@ func (t *Toolkit) executeActivityBoundToolResult(ctx context.Context, call provi
 	hooks := activityHooks{
 		run: func(ctx context.Context, session activity.Session, lease activity.Lease) (toolresult.Result, string, error) {
 			if binding.Kind == activity.KindCUA {
+				if native, ok := tool.(*mcp.MCPTool); ok && cuaSchemaProperty(tool, "control_epoch") {
+					params, _ := json.Marshal(map[string]string{"control_epoch": cuaControlEpoch(lease.Token)})
+					defer native.NotifyOnControlRevoked(ctx, "notifications/wuu/control_revoked", params)
+				}
 				// Resolving an app may invoke the native helper. Bind ownership
 				// first so even a first-call failure revokes this task's backends.
 				canonical := t.canonicalCUATarget(ctx, tool, target)
@@ -506,6 +510,10 @@ func cuaSchemaProperty(tool Tool, name string) bool {
 	return ok
 }
 
+func cuaControlEpoch(leaseToken string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(leaseToken)))
+}
+
 // Capability-driven defaults apply at the shared invocation boundary, including
 // Code Mode. Alternative CUA extensions opt in by declaring these schema fields.
 func (t *Toolkit) prepareCUAArguments(tool Tool, arguments, leaseToken string) string {
@@ -514,7 +522,7 @@ func (t *Toolkit) prepareCUAArguments(tool Tool, arguments, leaseToken string) s
 		return arguments
 	}
 	if cuaSchemaProperty(tool, "control_epoch") {
-		args["control_epoch"] = fmt.Sprintf("%x", sha256.Sum256([]byte(leaseToken)))
+		args["control_epoch"] = cuaControlEpoch(leaseToken)
 	}
 	textOnly := t.env != nil && t.env.ImageInputSupported != nil && !*t.env.ImageInputSupported
 	if cuaSchemaProperty(tool, "mode") {

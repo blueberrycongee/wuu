@@ -17,6 +17,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   summaries, with app-specific workflows in the Computer Use skill. Native live
   previews use low-latency H.264 video, bounded binary transport and accelerated
   decoding, with keyframe recovery across capture pauses and size changes.
+  Stopping or taking over app control releases background focus between tool
+  calls; delayed cleanup cannot release a newer control generation.
 
 - iOS and Android render Mermaid diagrams offline as replies stream, preserve the
   last valid diagram during partial syntax, and expose source and copy actions.

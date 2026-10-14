@@ -68,6 +68,11 @@ final class DirectedFocus: @unchecked Sendable {
         RunLoop.current.add(expiry!, forMode: .common)
     }
 
+    func revoke(epoch: String) {
+        guard self.epoch == epoch else { return }
+        end()
+    }
+
     func end() {
         expiry?.invalidate()
         expiry = nil

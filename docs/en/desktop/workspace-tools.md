@@ -155,7 +155,7 @@ Native app previews require a macOS build with Computer Use enabled and the rele
 
 ## Mac app control
 
-In builds with Computer Use enabled, the Agent can work in a background app while your current app stays in front. The preview's existing cursor shows its actions. Background focus support keeps menus available between steps; applications that require foreground input still need an explicit foreground action.
+In builds with Computer Use enabled, the Agent can work in a background app while your current app stays in front. The preview's existing cursor shows its actions. Background focus support keeps menus available between steps; applications that require foreground input still need an explicit foreground action. Stopping or taking over app control releases background focus even between tool calls.
 
 Text operations include plain text, Markdown and HTML paste, selecting a unique text match, and placing the insertion point before or after it. Paste restores the previous clipboard unless another app or you copied something in the meantime. Clicks support modifier keys and holds; held keys and mouse buttons are released when an action is cancelled.
 
