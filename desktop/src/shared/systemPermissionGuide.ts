@@ -7,10 +7,15 @@ export type SystemPermissionGuideConfig = {
   locale: AppLocale;
   theme: "light" | "dark";
   fontSize: number;
+  reducedMotion: boolean;
+  phase: "source" | "lifting" | "guiding" | "returning";
+  granted: boolean;
 };
 
 export type SystemPermissionGuideAPI = {
   config: () => Promise<SystemPermissionGuideConfig>;
+  onConfig: (handler: (config: SystemPermissionGuideConfig) => void) => () => void;
+  ready: () => void;
   drag: () => void;
   reveal: () => void;
   resize: (height: number) => void;

@@ -16,6 +16,7 @@ import {
   dialog,
   ipcMain,
   type IpcMainInvokeEvent,
+  type IpcMainEvent,
   Menu,
   nativeImage,
   nativeTheme,
@@ -466,9 +467,13 @@ const appContextCapture = new AppContextCapture((reveal, owner) => {
 }, appContextOwner);
 const systemPermissions = new SystemPermissions(appContextCapture);
 
-function requireAppContextSender(event: IpcMainInvokeEvent): void {
+function isAppContextSender(event: IpcMainInvokeEvent | IpcMainEvent): boolean {
   const host = windowRegistry.mainWindow();
-  if (!host || host.isDestroyed() || event.sender !== host.webContents || event.senderFrame !== event.sender.mainFrame) {
+  return Boolean(host && !host.isDestroyed() && event.sender === host.webContents && event.senderFrame === event.sender.mainFrame);
+}
+
+function requireAppContextSender(event: IpcMainInvokeEvent): void {
+  if (!isAppContextSender(event)) {
     throw new Error("App snapshots are available from Wuu's main window only.");
   }
 }
@@ -1048,10 +1053,12 @@ function syncThemedWindowChrome(): void {
 
 function broadcastThemePreference(): void {
   broadcastToAll("wuu:theme-preference-changed", getThemePreference());
+  systemPermissions.refreshAppearance(resolvedThemeIsDark());
 }
 
 function broadcastLanguagePreference(): void {
   broadcastToAll("wuu:language-preference-changed", getLanguagePreference());
+  systemPermissions.refreshAppearance(resolvedThemeIsDark());
 }
 
 function syncThemeAcrossWindows(): void {
@@ -2432,6 +2439,7 @@ app.whenReady().then(async () => {
         ? (fontSize as MessageFlowFontSize)
         : MESSAGE_FLOW_FONT_SIZE_RANGE.default;
       setMessageFlowFontSize(next);
+      systemPermissions.refreshAppearance(resolvedThemeIsDark());
       return { ok: true, fontSize: next };
     },
   );
@@ -2804,13 +2812,16 @@ app.whenReady().then(async () => {
     requireAppContextSender(event);
     return systemPermissions.state();
   });
-  ipcMain.handle("wuu:system-permission-request", (event, permission: unknown) => {
+  ipcMain.handle("wuu:system-permission-request", (event, permission: unknown, presentation: unknown) => {
     requireAppContextSender(event);
-    return systemPermissions.open(permission, windowRegistry.mainWindow()!, resolvedThemeIsDark());
+    return systemPermissions.open(permission, windowRegistry.mainWindow()!, resolvedThemeIsDark(), presentation);
   });
-  ipcMain.handle("wuu:system-permission-guide-close", event => {
+  ipcMain.on("wuu:system-permission-guide-update", (event, presentation: unknown) => {
+    if (isAppContextSender(event)) systemPermissions.update(presentation);
+  });
+  ipcMain.handle("wuu:system-permission-guide-close", (event, requestId: unknown) => {
     requireAppContextSender(event);
-    systemPermissions.close();
+    systemPermissions.cancel(requestId);
   });
   ipcMain.handle("wuu:app-context-state", (event) => {
     requireAppContextSender(event);
