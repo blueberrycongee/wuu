@@ -22,6 +22,8 @@ import {
   type SideThreadStoreState
 } from "./SideThreadState";
 import { useI18n } from "./i18n";
+import { statusMessageForError } from "./UserFacingErrors";
+import { showErrorToast } from "./Toast";
 
 const SIDE_THREAD_RECOVERY_POLL_MS = 2_000;
 
@@ -36,7 +38,6 @@ export type SideThreadController = {
   interrupt: () => void;
   reset: () => void;
   sendDisabledReason?: string;
-  requestError?: string;
 };
 
 export type SideThreadControllerOptions = {
@@ -105,6 +106,8 @@ export function useSideThreadController(
     createInitialSideThreadStore()
   );
   const storeRef = useRef(store);
+  const announcedErrorsRef = useRef(new Map<string, string>());
+  const nextErrorToastIDRef = useRef(0);
   const openGenerationRef = useRef(new Map<string, number>());
   const pendingSendTasksRef = useRef(new Map<string, Promise<void>>());
   const lastActiveRuntimeKeyRef = useRef<string | undefined>(undefined);
@@ -119,6 +122,22 @@ export function useSideThreadController(
   const dispatch = useCallback((action: SideThreadAction) => {
     setStore((previous) => reduceSideThreadStore(previous, action));
   }, []);
+
+  // Notification ownership outlives the keyed panel/composer. Revisiting a
+  // thread must not replay its last failure, but an explicit retry can fail again.
+  useEffect(() => {
+    if (!activeThreadId || !entry) return;
+    const error = sideThreadRequestError(entry);
+    if (!error || announcedErrorsRef.current.get(activeThreadId) === error) return;
+    announcedErrorsRef.current.set(activeThreadId, error);
+    // Explicit retries are new failures even when their wording is identical;
+    // keep the shared toast's time-based dedupe from swallowing their feedback.
+    showErrorToast(
+      statusMessageForError(error, t("sideThread.unavailable")),
+      "",
+      `side-thread:${activeThreadId}:${++nextErrorToastIDRef.current}`,
+    );
+  }, [activeThreadId, entry, t]);
 
   useEffect(() => {
     if (!ipcImpl) {
@@ -265,6 +284,7 @@ export function useSideThreadController(
     if (!activeThreadId || disabled) {
       return;
     }
+    announcedErrorsRef.current.delete(activeThreadId);
     dispatch({ type: "open", mainThreadId: activeThreadId });
     dispatch({ type: "setError", mainThreadId: activeThreadId, error: undefined });
     if (!ipcImpl || disabled || !activeContext || !activeRuntimeKey) {
@@ -367,6 +387,7 @@ export function useSideThreadController(
         return;
       }
 
+      announcedErrorsRef.current.delete(activeThreadId);
       const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const optimisticMessage = {
         id: optimisticId,
@@ -479,6 +500,8 @@ export function useSideThreadController(
     if (!activeThreadId || !ipcImpl) {
       return;
     }
+    announcedErrorsRef.current.delete(activeThreadId);
+    dispatch({ type: "setError", mainThreadId: activeThreadId, error: undefined });
     void ipcImpl.interruptSideThread(activeThreadId).catch((error: unknown) => {
       dispatch({
         type: "setError",
@@ -492,6 +515,8 @@ export function useSideThreadController(
     if (!activeThreadId || !ipcImpl || effectiveDisabled) {
       return;
     }
+    announcedErrorsRef.current.delete(activeThreadId);
+    dispatch({ type: "setError", mainThreadId: activeThreadId, error: undefined });
     // The server's reset broadcast also clears this entry; dispatching
     // locally just avoids a visible round-trip delay.
     void ipcImpl
@@ -521,7 +546,6 @@ export function useSideThreadController(
     sendDisabledReason:
       effectiveDisabled || !activeContext
         ? effectiveReason ?? t("sideThread.selectWorkspace")
-        : undefined,
-    requestError: entry ? sideThreadRequestError(entry) : undefined
+        : undefined
   };
 }

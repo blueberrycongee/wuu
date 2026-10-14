@@ -14,8 +14,8 @@ import {
   useComposerPendingState,
   type ComposerPendingStateController,
 } from "./ComposerPendingState";
-import { resolveLocalizedText } from "./i18n";
 import { readCollapsedPromptParts } from "./ComposerCollapsedPrompt";
+import { clearToasts, ToastViewport } from "./Toast";
 
 let mountedRoots: Root[] = [];
 
@@ -24,9 +24,11 @@ afterEach(() => {
     for (const root of mountedRoots) root.unmount();
   });
   mountedRoots = [];
+  clearToasts();
   document.body.innerHTML = "";
   delete (window as unknown as { wuu?: unknown }).wuu;
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 async function flushEffects(): Promise<void> {
@@ -99,7 +101,7 @@ async function renderComposerPendingState({
       setStatus,
       sendComposerMessageToThread,
     });
-    return null;
+    return createElement(ToastViewport);
   }
 
   const container = document.createElement("div");
@@ -742,15 +744,17 @@ describe("useComposerPendingState", () => {
       expect(hook.get().pendingComposerMessagesByThread["thread-a"].queued).toEqual([
         expect.objectContaining({ id: "queue-1", operationState: undefined }),
       ]);
+      expect(document.querySelector('[role="alert"]')?.textContent).toContain("offline");
     } else {
       expect(hook.get().pendingComposerMessagesByThread["thread-a"].guides).toEqual([
         expect.objectContaining({ id: "queue-1", operationState: undefined }),
       ]);
+      expect(document.querySelector('[role="alert"]')).toBeNull();
     }
   });
 
-  it("returns a guide to the queue from the drawer", async () => {
-    const requeueTurn = vi.fn().mockResolvedValue({
+  it.each([false, true])("returns a guide to the queue from the drawer or preserves it on failure (rejected: %s)", async (rejected) => {
+    const requeueTurn = rejected ? vi.fn().mockRejectedValue(new Error("requeue failed")) : vi.fn().mockResolvedValue({
       ok: true,
       state: "queued",
       queued: { id: "guide-1", thread_id: "thread-a" },
@@ -780,9 +784,16 @@ describe("useComposerPendingState", () => {
     });
 
     expect(requeueTurn).toHaveBeenCalledWith("thread-a", "guide-1");
-    expect(hook.get().pendingComposerMessagesByThread["thread-a"].queued).toEqual([
+    const pending = hook.get().pendingComposerMessagesByThread["thread-a"];
+    expect(rejected ? pending.guides : pending.queued).toEqual([
       expect.objectContaining({ id: "guide-1", operationState: undefined }),
     ]);
+    expect(rejected ? pending.queued : pending.guides).toEqual([]);
+    if (rejected) {
+      expect(document.querySelector('[role="alert"]')?.textContent).toContain("requeue failed");
+    } else {
+      expect(document.querySelector('[role="alert"]')).toBeNull();
+    }
   });
 
   it("restores a queued message into the primary composer for editing", async () => {
@@ -831,9 +842,10 @@ describe("useComposerPendingState", () => {
     });
 
     expect(hook.restorePrimaryComposerDraft).not.toHaveBeenCalled();
-    expect(resolveLocalizedText(hook.setStatus.mock.calls[0][0] as string)).toBe(
-      "先发送或清空当前输入，再编辑排队消息",
-    );
+    expect(hook.get().pendingComposerMessagesByThread["thread-a"]?.queued).toEqual([
+      message("queue-1", "Edit me"),
+    ]);
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
   });
 
   it.each(["queue", "guide"] as const)("preserves removed %s input when a newer draft arrives before cancellation acknowledgement", async (kind) => {
@@ -883,9 +895,7 @@ describe("useComposerPendingState", () => {
       hook.get().pendingComposerMessagesByThread["thread-a"]?.queued,
     ).toEqual([message("queue-1", "Too late")]);
     expect(hook.restorePrimaryComposerDraft).not.toHaveBeenCalled();
-    expect(resolveLocalizedText(hook.setStatus.mock.calls[0][0] as string)).toBe(
-      "消息仍在排队，请稍后重试",
-    );
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
   });
 
   it("does not restore a queued message that already materialized", async () => {
@@ -989,39 +999,34 @@ describe("useComposerPendingState", () => {
         .pendingComposerMessagesByThread["thread-a"]?.queued,
     ).toEqual([message("queue-1", "Keep queued")]);
     expect(hook.sendComposerMessageToThread).not.toHaveBeenCalled();
-    expect(resolveLocalizedText(hook.setStatus.mock.calls[0][0] as string)).toBe(
-      "没有可引导的任务",
-    );
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
   });
 
-  it("rolls back a queued message removal when dequeue fails", async () => {
+  it.each(["queue", "guide"] as const)("rolls back a %s message removal when cancellation fails", async (kind) => {
+    const cancel = vi.fn().mockRejectedValue(new Error("Error invoking remote method 'wuu:cancel': Error: network down"));
     installWuuStub({
-      dequeueTurn: vi.fn().mockRejectedValue(new Error("network down")),
+      dequeueTurn: cancel,
+      unsteerTurn: cancel,
     });
     const hook = await renderComposerPendingState();
+    const messages = [message("pending-1", "First"), message("pending-2", "Second")];
 
     act(() => {
-      hook
-        .get()
-        .enqueueComposerMessage("thread-a", message("queue-1", "First"));
-      hook
-        .get()
-        .enqueueComposerMessage("thread-a", message("queue-2", "Second"));
+      hook.get().setPendingComposerMessagesByThreadNow({
+        "thread-a": { queued: kind === "queue" ? messages : [], guides: kind === "guide" ? messages : [] },
+      });
     });
     let removed = true;
     await act(async () => {
-      removed = await hook.get().removeQueuedMessage("queue-1");
+      removed = kind === "queue"
+        ? await hook.get().removeQueuedMessage("pending-1")
+        : await hook.get().removeGuideMessage("pending-1");
     });
 
     expect(removed).toBe(false);
-    expect(
-      hook
-        .get()
-        .pendingComposerMessagesByThread["thread-a"]?.queued.map(
-          (item) => item.id,
-        ),
-    ).toEqual(["queue-1", "queue-2"]);
-    expect(hook.setStatus).toHaveBeenCalledWith("network down");
+    const pending = hook.get().pendingComposerMessagesByThread["thread-a"];
+    expect(kind === "queue" ? pending.queued : pending.guides).toEqual(messages);
+    expect(document.querySelector('[role="alert"] .archive-tip-message')?.textContent).toBe("network down");
   });
 
   describe("after the Core process restarts", () => {
@@ -1137,28 +1142,34 @@ describe("useComposerPendingState", () => {
 
       expect(hook.preserveFailedComposerMessage).toHaveBeenCalledWith("thread-a", expect.objectContaining({ id: "queue-1" }));
       expect(hook.get().pendingComposerMessagesByThread["thread-a"]).toBeUndefined();
+      expect(document.querySelector('[role="alert"]')?.textContent).toContain("core unavailable");
     });
   });
 
-  it("shows why queued input was held when its admission failed", async () => {
+  it("shows why queued input was held once when its admission failed", async () => {
+    vi.useFakeTimers();
     const hook = await renderComposerPendingState();
-    act(() => {
-      hook.get().syncPendingComposerMessagesFromServerEvent({
-        kind: "notification",
-        message: {
-          method: "turn/held",
-          params: {
-            thread_id: "thread-a",
-            error: "prompt rejected by configured hook",
-            messages: [{ id: "queue-1", thread_id: "thread-a", origin: "queue", prompt: "Follow up" }],
-          },
+    const event = {
+      kind: "notification",
+      message: {
+        method: "turn/held",
+        params: {
+          thread_id: "thread-a",
+          error: "prompt rejected by configured hook",
+          messages: [{ id: "queue-1", thread_id: "thread-a", origin: "queue", prompt: "Follow up" }],
         },
-      } as ServerEvent);
+      },
+    } as ServerEvent;
+    act(() => {
+      hook.get().syncPendingComposerMessagesFromServerEvent(event);
+      hook.get().syncPendingComposerMessagesFromServerEvent(event);
     });
 
     expect(hook.get().pendingComposerMessagesByThread["thread-a"]?.queued).toEqual([
       expect.objectContaining({ id: "queue-1", held: true }),
     ]);
-    expect(hook.setStatus).toHaveBeenCalledWith("prompt rejected by configured hook");
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("prompt rejected by configured hook");
+    act(() => vi.advanceTimersByTime(6_000));
+    expect(document.querySelector('[role="alert"]')).toBeNull();
   });
 });

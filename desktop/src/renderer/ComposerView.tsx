@@ -165,6 +165,7 @@ export function Composer({
   submitting = false,
   runtimeControlsDisabled = running,
   status,
+  disabledReason,
   readOnly,
   initialized,
   projects,
@@ -280,6 +281,7 @@ export function Composer({
   submitting?: boolean;
   runtimeControlsDisabled?: boolean;
   status: string;
+  disabledReason?: string;
   readOnly: boolean;
   initialized?: InitializeResult;
   gitStatus?: GitStatusResult;
@@ -489,6 +491,9 @@ export function Composer({
   const documentDrawer = useContext(WorkspaceDocumentDrawerContext);
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const showComposerStopAction = showComposerStop;
+  const sendDisabledReason = !showComposerStopAction && (readOnly || effectiveSendDisabled)
+    ? disabledReason
+    : undefined;
   const voiceActionLabel = composerSendLabel;
   const [expandedDrawer, setExpandedDrawer] = useState<ExpandedComposerDrawer>(null);
   const [dropActive, setDropActive] = useState(false);
@@ -1510,29 +1515,32 @@ export function Composer({
                     ) : null}
                   </>
                 )}
-                <button
-                  className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
-                  data-wuu-component="composer-send"
-                  data-wuu-state={stopState ?? (showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
-                  aria-busy={stopState === "pending" || (showComposerStopAction && submitting) || undefined}
-                  type="button"
-                  onPointerDown={(event) => {
-                    if (!showComposerStopAction && event.button === 0 && document.activeElement === textareaRef.current) {
-                      // Keep editing focus while the pointer activates Send;
-                      // keyboard navigation and the Stop action stay native.
-                      event.preventDefault();
+                <Tooltip content={sendDisabledReason}>
+                  <button
+                    className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
+                    data-wuu-component="composer-send"
+                    data-wuu-state={stopState ?? (showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
+                    aria-busy={stopState === "pending" || (showComposerStopAction && submitting) || undefined}
+                    type="button"
+                    onPointerDown={(event) => {
+                      if (!showComposerStopAction && event.button === 0 && document.activeElement === textareaRef.current) {
+                        // Keep editing focus while the pointer activates Send;
+                        // keyboard navigation and the Stop action stay native.
+                        event.preventDefault();
+                      }
+                    }}
+                    onClick={showComposerStopAction ? (disconnected ? undefined : onInterrupt) : submitComposer}
+                    aria-label={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pause") : voiceActionLabel}
+                    aria-description={sendDisabledReason}
+                    title={sendDisabledReason ? undefined : stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel}
+                    disabled={
+                      stopState === "pending" || (!showComposerStopAction &&
+                      (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff)))
                     }
-                  }}
-                  onClick={showComposerStopAction ? (disconnected ? undefined : onInterrupt) : submitComposer}
-                  aria-label={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pause") : voiceActionLabel}
-                  title={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel}
-                  disabled={
-                    stopState === "pending" || (!showComposerStopAction &&
-                    (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff)))
-                  }
-                >
-                  {showComposerStopAction ? <ComposerStopIcon state={stopState} submitting={submitting} /> : <ArrowUp aria-hidden="true" />}
-                </button>
+                  >
+                    {showComposerStopAction ? <ComposerStopIcon state={stopState} submitting={submitting} /> : <ArrowUp aria-hidden="true" />}
+                  </button>
+                </Tooltip>
               </div>
             </div>
           </div>
@@ -1663,7 +1671,7 @@ export function Composer({
         threadId={queryHistorySessionID}
         initialized={initialized}
         contextUsage={contextUsage}
-        disabledReason={readOnly || effectiveSendDisabled ? statusText || undefined : undefined}
+        disabledReason={readOnly || effectiveSendDisabled ? disabledReason || statusText || undefined : undefined}
         activeSubmissionMode={activeSubmissionMode}
         availableSubmissionModes={availableSubmissionModes}
         attachmentInputRef={attachmentInputRef}

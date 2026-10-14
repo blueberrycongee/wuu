@@ -2,7 +2,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SideThreadComposer } from "./SideThreadComposer";
-import * as Toast from "./Toast";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -16,13 +15,13 @@ afterEach(() => {
   act(() => root?.unmount());
   root = null;
   container.remove();
+  vi.useRealTimers();
 });
 
 function renderComposer({
   draft = "",
   running = false,
   disabledReason,
-  error,
   onChangeDraft = () => {},
   onSend = () => {},
   onInterrupt = () => {},
@@ -31,7 +30,6 @@ function renderComposer({
   draft?: string;
   running?: boolean;
   disabledReason?: string;
-  error?: string;
   onChangeDraft?: (draft: string) => void;
   onSend?: (prompt: string) => void;
   onInterrupt?: () => void;
@@ -44,7 +42,6 @@ function renderComposer({
         draft={draft}
         running={running}
         disabledReason={disabledReason}
-        error={error}
         queryHistorySessionID="side-1"
         queryHistory={[]}
         onChangeDraft={onChangeDraft}
@@ -85,14 +82,19 @@ describe("SideThreadComposer", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("reports a side request failure as a toast and keeps the draft editable", () => {
-    const toast = vi.spyOn(Toast, "showErrorToast");
-    renderComposer({ draft: "retry me", error: "stream request failed: HTTP 503" });
+  it("explains an unavailable side composer on the disabled send action", () => {
+    vi.useFakeTimers();
+    renderComposer({ draft: "retry me", disabledReason: "Select a workspace first" });
 
-    expect(toast).toHaveBeenCalledTimes(1);
-    expect(toast.mock.calls[0]?.[0]).not.toContain("stream request failed");
-    expect(container.querySelector(".composer-wrap")?.textContent).not.toContain("HTTP 503");
-    expect((container.querySelector("textarea") as HTMLTextAreaElement).disabled).toBe(false);
+    const send = container.querySelector<HTMLButtonElement>(".composer-send-button")!;
+    expect(send.disabled).toBe(true);
+    expect(send.getAttribute("aria-description")).toBe("Select a workspace first");
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).disabled).toBe(true);
+    act(() => {
+      send.dispatchEvent(new Event("pointerover", { bubbles: true }));
+      vi.advanceTimersByTime(400);
+    });
+    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe("Select a workspace first");
   });
 
   it("keeps the side composer focusable during a running turn", () => {

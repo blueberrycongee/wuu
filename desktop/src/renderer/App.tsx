@@ -693,11 +693,9 @@ export function App(): JSX.Element {
     threads: state.threads,
     activeContext: state.activeContext,
     activeWorkspaceID: state.activeProjectId,
-    setStatus: (status) =>
-      setState((current) => ({
-        ...current,
-        status,
-      })),
+    setStatus: (status) => {
+      showErrorToast(status);
+    },
   });
   const syncSidebarServerEventStable = useStableCallback(syncSidebarServerEvent);
   const loadWorkspaceThreadsStable = useStableCallback(loadWorkspaceThreads);
@@ -1974,11 +1972,16 @@ export function App(): JSX.Element {
       if (!serverEventTargetsActiveContext(event, appStateRef.current)) {
         return;
       }
-      if (event.kind === "server-exit") {
-        showErrorToast(event.message, translateCurrent("appState.coreExited"), "app-server:exit");
-      } else if (event.kind === "notification" && event.message.method === "config/error") {
-        const configError = (event.message.params as { message?: unknown } | undefined)?.message;
-        if (typeof configError === "string") showErrorToast(configError, "", "app-server:config-error");
+      // Before initialization, the launch view already displays these failures.
+      if (appStateRef.current.initialized) {
+        if (event.kind === "server-error") {
+          showErrorToast(event.message, translateCurrent("error.server"));
+        } else if (event.kind === "server-exit") {
+          showErrorToast(event.message, translateCurrent("appState.coreExited"), "app-server:exit");
+        } else if (event.kind === "notification" && event.message.method === "config/error") {
+          const configError = (event.message.params as { message?: unknown } | undefined)?.message;
+          if (typeof configError === "string") showErrorToast(configError, "", "app-server:config-error");
+        }
       }
       const handling = handleStreamingNotification(event, appStateRef.current);
       if (handling === "stream" || handling === "stream-state") {
@@ -3343,6 +3346,9 @@ export function App(): JSX.Element {
               : t("app.childTaskReadOnly")
             : state.status
         }
+        disabledReason={activeThreadReadOnly
+          ? activeThreadIsRunning ? t("app.childTaskRunning") : t("app.childTaskReadOnly")
+          : undefined}
         readOnly={activeThreadReadOnly || submissionTargetPending}
         initialized={composerRuntime}
         engines={engineInventory?.engines}
@@ -4773,13 +4779,7 @@ export function App(): JSX.Element {
       removePendingComposerMessageByID(pendingKey(), message.id, "queue");
       if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
-        setState((current) => ({
-          ...current,
-          status:
-            activeThreadIDForState(current) === pendingKey()
-              ? error instanceof Error ? error.message : t("app.queueFailed")
-              : current.status,
-        }));
+        showErrorToast(error, t("app.queueFailed"));
       }
       return !stillPending;
     } finally {
@@ -4866,13 +4866,7 @@ export function App(): JSX.Element {
       removePendingComposerMessageByID(targetThread.id, message.id, "guide");
       if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
-        setState((current) => ({
-          ...current,
-          status:
-            activeThreadIDForState(current) === targetThread.id
-              ? error instanceof Error ? error.message : t("composer.guideFailed")
-              : current.status,
-        }));
+        showErrorToast(error, t("composer.guideFailed"));
       }
       return !stillPending;
     }
@@ -6013,7 +6007,6 @@ export function App(): JSX.Element {
                   onOpenFile={openWorkspaceFile}
                   running={sideThread.entry.streaming}
                   disabledReason={sideThread.sendDisabledReason}
-                  error={sideThread.requestError}
                   mainThreadId={activeThreadID}
                   sideThreadId={sideThread.entry.summary?.side_thread_id}
                   queryHistorySessionID={

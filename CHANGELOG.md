@@ -102,6 +102,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep composer inputs free of duplicate status text while surfacing rejected
+  requests through toasts, preserving drafts and disabled-action explanations.
+  Revisiting a side conversation no longer repeats its previous error.
+
 - Keep the streaming cursor after the last line of a code block while an answer
   writes code, instead of drawing it at the card's lower-left corner. Copied and
   selected code is unchanged.

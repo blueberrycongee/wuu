@@ -136,6 +136,7 @@ function renderComposer(props: {
   queuedMessages?: QueuedComposerMessage[];
   guideMessages?: QueuedComposerMessage[];
   status?: string;
+  disabledReason?: string;
   runtimeControlsDisabled?: boolean;
   connectionAvailable?: boolean;
   initialized?: InitializeResult;
@@ -194,6 +195,7 @@ function renderComposer(props: {
           running={props.running ?? false}
           runtimeControlsDisabled={props.runtimeControlsDisabled}
           status={props.status ?? "ready"}
+          disabledReason={props.disabledReason}
           readOnly={props.readOnly ?? false}
           initialized={props.initialized ?? initialized(props.permissions)}
           activeEngine={props.activeEngine}
@@ -1919,6 +1921,8 @@ describe("Composer send control", () => {
 
     expect(container.querySelector(".composer-wrap")?.textContent).not.toContain(status);
     expect(container.querySelector("textarea")?.value).toBe("retry later");
+    renderComposer({ prompt: "retry later", readOnly: true, status });
+    expect(container.querySelector(".composer-send-button")?.getAttribute("aria-description")).toBeNull();
   });
 
   it("hides session context chips in the dock composer", () => {
@@ -3871,14 +3875,17 @@ describe("Composer expand button", () => {
     expect(button?.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("disables expansion in read-only mode", () => {
-    renderComposer({ readOnly: true });
+  it("disables expansion and explains send restrictions in read-only mode", () => {
+    renderComposer({ readOnly: true, disabledReason: "Child conversations are read-only" });
     const stack = container.querySelector(".composer-stack");
     const button = container.querySelector<HTMLButtonElement>(".composer-expand-button");
     expect(button).not.toBeNull();
     expect(button?.disabled).toBe(true);
     expect(button?.getAttribute("title")).toBe("只读对话不可展开");
+    expect(container.querySelector(".composer-send-button")?.getAttribute("aria-description")).toBe("Child conversations are read-only");
     expect(stack?.classList.contains("is-expanded")).toBe(false);
+    renderComposer({ disabledReason: "Child conversations are read-only" });
+    expect(container.querySelector(".composer-send-button")?.getAttribute("aria-description")).toBeNull();
   });
 });
 
