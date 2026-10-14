@@ -114,6 +114,13 @@ make build-go
 测量结果和截图保存在 `desktop/out/stream-settlement/`，可用 `WUU_SETTLEMENT_OUTPUT`
 更改目录。桌面 CI 运行同一检查并上传证据。
 
+`npm --prefix desktop run test:e2e:stream-code-cursor` 检查代码块位于流式回复末尾时
+光标的绘制位置，覆盖未闭合和已闭合的围栏、有无语言标记、空代码块以及列表内的代码块。
+光标必须紧跟最后一个代码字符并留在代码卡片内，不能进入被复制的 `<code>` 文本，回复完成
+后代码卡片高度保持不变。脚本使用同样的自启动测试页面服务器，覆盖浅色/深色、1000/420px
+窗口和 15/20px 字号。测量结果和截图保存在 `desktop/out/stream-code-cursor/`，可用
+`WUU_CODE_CURSOR_OUTPUT` 更改目录。
+
 ### MCP 连接生命周期
 
 构建核心后，运行 loopback 生命周期验收：

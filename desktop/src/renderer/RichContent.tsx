@@ -74,6 +74,10 @@ type RichTextRenderOptions = {
 };
 
 const MermaidStreamingContext = createContext(false);
+// The code block whose source reaches `end` hosts the streaming cursor. The
+// cursor travels through context so the Markdown components keep a stable
+// identity while the source grows.
+const CodeCursorContext = createContext<{ end: number; cursor: ReactNode } | undefined>(undefined);
 
 type MermaidState =
   | { status: "rendering" }
@@ -182,6 +186,7 @@ function MarkdownContentView({
   allowRawHtml = false,
   sourceMapping = false,
   documentContext,
+  codeCursor,
 }: {
   text: string;
   cwd?: string;
@@ -195,23 +200,33 @@ function MarkdownContentView({
   allowRawHtml?: boolean;
   sourceMapping?: boolean;
   documentContext?: MarkdownFragmentContext;
+  /** Rendered after the last code line when a code block ends the source. */
+  codeCursor?: ReactNode;
 }): JSX.Element {
   const components = useMemo(
     () => markdownComponents(cwd, renderText, renderMermaid, onOpenFile, onOpenURL, sourceMapping),
     [cwd, renderText, renderMermaid, onOpenFile, onOpenURL, sourceMapping]
   );
+  const source = documentContext?.referenceDefinitions ? `${documentContext.referenceDefinitions}\n${text}` : text;
+  const sourceEnd = source.trimEnd().length;
+  const codeCursorTarget = useMemo(
+    () => codeCursor ? { end: sourceEnd, cursor: codeCursor } : undefined,
+    [codeCursor, sourceEnd]
+  );
   return (
     <MermaidStreamingContext.Provider value={mermaidStreaming}>
-      <ReactMarkdown
-        components={components}
-        // CommonMark links and GFM autolinks are the only text-to-link rules.
-        // File mentions stay literal; file navigation uses explicit link targets.
-        remarkPlugins={markdownRemarkPlugins}
-        rehypePlugins={[...(allowRawHtml ? [rehypeRaw] : []), [rehypeHeadingIDs, documentContext?.headingIDs], ...(sourceMapping ? [rehypeFileSelectionMapping] : [])]}
-        urlTransform={richMarkdownUrlTransform}
-      >
-        {documentContext?.referenceDefinitions ? `${documentContext.referenceDefinitions}\n${text}` : text}
-      </ReactMarkdown>
+      <CodeCursorContext.Provider value={codeCursorTarget}>
+        <ReactMarkdown
+          components={components}
+          // CommonMark links and GFM autolinks are the only text-to-link rules.
+          // File mentions stay literal; file navigation uses explicit link targets.
+          remarkPlugins={markdownRemarkPlugins}
+          rehypePlugins={[...(allowRawHtml ? [rehypeRaw] : []), [rehypeHeadingIDs, documentContext?.headingIDs], ...(sourceMapping ? [rehypeFileSelectionMapping] : [])]}
+          urlTransform={richMarkdownUrlTransform}
+        >
+          {source}
+        </ReactMarkdown>
+      </CodeCursorContext.Provider>
     </MermaidStreamingContext.Provider>
   );
 }
@@ -319,7 +334,8 @@ function markdownComponents(
       }
       return <RichImage source={src} alt={alt ?? ""} cwd={cwd} inline />;
     },
-    pre({ children }) {
+    pre({ children, node }) {
+      const codeCursorTarget = useContext(CodeCursorContext);
       const child = Children.toArray(children)[0];
       if (isValidElement<CodeElementProps>(child)) {
         const language = languageFromClassName(child.props.className);
@@ -332,8 +348,17 @@ function markdownComponents(
         }
         const displayedCode = reactNodeText(child.props.children);
         const code = displayedCode.replace(/\n$/, "");
+        // An unclosed fence ends at the source end; a closed one ends at its
+        // closing marker, which is the end of the whitespace-trimmed source.
+        const endsSource = codeCursorTarget !== undefined &&
+          (node?.position?.end.offset ?? -1) >= codeCursorTarget.end;
         return (
-          <RichCodeBlock code={code} displayedCode={displayedCode} language={language} />
+          <RichCodeBlock
+            code={code}
+            displayedCode={displayedCode}
+            language={language}
+            cursor={endsSource ? codeCursorTarget.cursor : undefined}
+          />
         );
       }
       return <pre className="rich-code">{children}</pre>;
@@ -391,28 +416,41 @@ function markdownComponents(
 export function RichCodeBlock({
   code,
   displayedCode,
-  language
+  language,
+  cursor,
 }: {
   code: string;
   displayedCode: string;
   language: string;
+  /** Painted after the last code character, outside the copied <code>. */
+  cursor?: ReactNode;
 }): JSX.Element {
   const { t } = useI18n();
   // Reveal is pinned to one snapshot. A growing stream must not re-run
   // highlight.js on every token after the reader opts in.
   const [revealedText, setRevealedText] = useState<string | null>(null);
   const highlight = shouldHighlightCode(displayedCode, revealedText);
+  // The parser ends code with a newline that <pre> does not paint. An inline
+  // cursor after it would start an extra line, so move that newline after the
+  // cursor: the bar follows the last character and the block keeps its height.
+  const codeBody = cursor ? displayedCode.replace(/\n$/, "") : displayedCode;
   const highlighted = useMemo(
-    () => highlight ? highlightCode(language, displayedCode) : null,
-    [displayedCode, highlight, language]
+    () => highlight ? highlightCode(language, codeBody) : null,
+    [codeBody, highlight, language]
   );
-  const highlightedCode = highlighted ? (
-    <code
-      className={`hljs language-${highlighted.language}`}
-      dangerouslySetInnerHTML={{ __html: highlighted.html }}
-    />
-  ) : (
-    <code className="hljs">{displayedCode}</code>
+  const highlightedCode = (
+    <>
+      {highlighted ? (
+        <code
+          className={`hljs language-${highlighted.language}`}
+          dangerouslySetInnerHTML={{ __html: highlighted.html }}
+        />
+      ) : (
+        <code className="hljs">{codeBody}</code>
+      )}
+      {cursor}
+      {cursor && codeBody !== displayedCode ? "\n" : null}
+    </>
   );
   const oversized = displayedCode.length > CODE_HIGHLIGHT_CHAR_LIMIT;
   const canReveal = oversized && displayedCode.length <= CODE_HIGHLIGHT_HARD_LIMIT && !highlight;

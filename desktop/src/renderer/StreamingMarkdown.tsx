@@ -67,6 +67,9 @@ const CURSOR_CLASS_NAME = "stream-cursor";
 const CURSOR_BLOCK_TAIL_CLASS_NAME = "stream-cursor-block-tail";
 const CURSOR_SENTINEL = "";
 const CURSOR_MARKDOWN_BOUNDARY = " ";
+// A trailing code block hosts this cursor after its last line. It lives
+// outside <code>, so copied and selected code stays exact.
+const CODE_CURSOR = <span className={CURSOR_CLASS_NAME} aria-hidden="true" />;
 
 export function StreamingMarkdown({
   streamKey,
@@ -218,8 +221,9 @@ export function StreamingMarkdown({
   // When trailing blank lines promote the visible tail into a stable prose
   // block, keep the cursor inside that last block. The old absolute sibling
   // had no inline anchor and could paint at the top of the message instead of
-  // after the last visible character. Fences and diagrams cannot safely
-  // accept the sentinel, so they keep the zero-flow-height sibling fallback.
+  // after the last visible character. Code cannot accept the sentinel, so a
+  // block that ends in a fence receives the cursor after its last code line.
+  // Diagrams have no text line and keep the zero-flow-height sibling fallback.
   // Repeated blank lines are preserved by the scanner, but must not become
   // empty flex children: each would add a prose gap and could draw the cursor
   // in an otherwise empty paragraph below the visible message.
@@ -234,22 +238,19 @@ export function StreamingMarkdown({
     `${streamKey}:${renderedReplacementVersionRef.current}`, visibleBlocks.length, renderActive,
   );
   const lastStableBlockIndex = visibleBlocks.length - 1;
-  const lastStableBlock = visibleBlocks[lastStableBlockIndex]?.text ?? "";
   const tailIsEmpty = !tailContext.hasContent;
-  const cursorStableBlockIndex = showCursor &&
-    tailIsEmpty &&
-    lastStableBlockIndex >= 0 &&
-    !visibleBlocks[lastStableBlockIndex].context.hasMermaid &&
-    !endsWithFenceCloser(lastStableBlock.trimEnd())
-      ? lastStableBlockIndex
-      : -1;
-  // Keep the synthetic cursor outside an open code fence so copied and
-  // selected code stays exact, including when an unfinished fence settles.
-  const cursorNeedsBlockTail = showCursor && (
-    endsWithFenceCloser(split.tail) ||
-    split.inFence || tailContext.hasMermaid ||
-    (tailIsEmpty && lastStableBlockIndex >= 0 && cursorStableBlockIndex < 0)
-  );
+  // With an empty tail the cursor belongs to the last stable block.
+  const cursorBlock = showCursor && tailIsEmpty ? visibleBlocks[lastStableBlockIndex] : undefined;
+  const cursorBlockEndsInCode = cursorBlock !== undefined && !cursorBlock.context.hasMermaid &&
+    endsWithFenceCloser(cursorBlock.text);
+  const cursorStableBlockIndex = cursorBlock && !cursorBlock.context.hasMermaid && !cursorBlockEndsInCode
+    ? lastStableBlockIndex
+    : -1;
+  const codeCursorBlockIndex = cursorBlockEndsInCode ? lastStableBlockIndex : -1;
+  const tailEndsInCode = showCursor && !tailContext.hasMermaid &&
+    (split.inFence || endsWithFenceCloser(split.tail));
+  const cursorNeedsBlockTail = showCursor &&
+    (tailContext.hasMermaid || cursorBlock?.context.hasMermaid === true);
   // A cursor after a trailing newline creates an extra line box even when
   // settled CSS hides it. Anchor it to the last visible text in the tail too.
   const displayTail = useMemo(
@@ -261,7 +262,7 @@ export function StreamingMarkdown({
     },
     [isLive, split.tail, tailContext.hasContent, tailContext.hasMermaid],
   );
-  const tailText = showCursor && !cursorNeedsBlockTail && cursorStableBlockIndex < 0
+  const tailText = showCursor && !cursorNeedsBlockTail && !tailEndsInCode && !cursorBlock
     ? insertCursorBeforeTrailingWhitespace(displayTail)
     : displayTail;
 
@@ -292,6 +293,7 @@ export function StreamingMarkdown({
             }
             renderMermaid={context.hasMermaid}
             documentContext={context}
+            codeCursor={index === codeCursorBlockIndex ? CODE_CURSOR : undefined}
           />
         </div>
       ))}
@@ -303,6 +305,7 @@ export function StreamingMarkdown({
         renderMermaid={tailContext.hasMermaid}
         documentContext={tailContext}
         mermaidStreaming={isLive && tailContext.hasMermaid}
+        codeCursor={tailEndsInCode ? CODE_CURSOR : undefined}
       />
       {cursorNeedsBlockTail ? (
         <span
