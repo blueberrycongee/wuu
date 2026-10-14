@@ -109,6 +109,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Anthropic requests keep tool continuations and reusable conversation prefixes
+  stable as cache markers advance, preserving reasoning with injected context
+  and tool attachments even when prompt caching is disabled.
+
 - Keep iOS conversations visible after sending through long histories, with stable
   latest-message following through keyboard changes and retained reading position
   while replies arrive or older history loads.
