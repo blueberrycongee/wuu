@@ -64,6 +64,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Read-only peer discovery can be composed and filtered inside `run_code`,
+  preserving root-session and workspace boundaries. Peer messaging remains direct-only.
+
 - Desktop text uses stronger light-theme contrast and native macOS font smoothing
   by default, with an optional grayscale setting. Content fonts can be selected
   independently for messages, drafts, and Markdown previews; code editors now
@@ -122,6 +125,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Preserve cancelled worker results when stopping a parent races a pending
   child-result handoff, without automatically waking the stopped parent.
+
+- Keep parallel file-read tracking synchronized from the first tool call, so
+  concurrent reads retain their edit-safety state without racing initialization.
+
+- Anthropic requests keep tool continuations and reusable conversation prefixes
+  stable as cache markers advance, preserving reasoning with injected context
+  and tool attachments even when prompt caching is disabled.
 
 - Stop all workers without letting cancelled child results wake parked parents
   before their edges close. Write worker snapshots atomically so concurrent result
