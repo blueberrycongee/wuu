@@ -5,6 +5,10 @@ import (
 	"errors"
 )
 
+// Conversation pages carry readable history; activity details have their own budget.
+const conversationPageTurns = 100
+const conversationPageBytes = 1024 * 1024
+
 // ConversationActivity describes a contiguous folded region. Its address is the
 // first source item, so paging older turns cannot change its identity.
 type ConversationActivity struct {
@@ -72,17 +76,10 @@ func conversationTurn(turn Turn) Turn {
 	return turn
 }
 
-func conversationTurns(turns []Turn) []Turn {
-	result := make([]Turn, len(turns))
-	for i, turn := range turns {
-		result[i] = conversationTurn(turn)
-	}
-	return result
-}
-
 func conversationSnapshot(thread Thread) Thread {
-	thread.Turns = conversationTurns(thread.Turns)
-	thread = pageThreadSnapshot(thread)
+	// Project only the requested page, rather than rescanning all older tool logs.
+	thread.Turns, thread.HistoryCursor = historyPage(thread.ID, thread.Turns, len(thread.Turns)-1, -1, true)
+	thread.HistoryPaged = true
 	if thread.HistoryCursor != "" {
 		thread.HistoryCursor = "conversation:" + thread.HistoryCursor
 	}

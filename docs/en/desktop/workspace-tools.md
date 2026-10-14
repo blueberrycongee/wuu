@@ -137,7 +137,7 @@ The active conversation has one watch-only floating preview for browser and supp
 
 In **Settings → General → Live activity**, **Show preview automatically** controls whether local activity opens the preview. The setting is saved across restarts. It does not enable an extension or give the Agent control. Hiding a preview leaves the task running; later activity updates do not reopen a preview you hid. Use **Show live activity** in the conversation title bar to open it again. This action appears when the conversation has a local activity that has not stopped.
 
-Hiding or minimizing Wuu hides the preview too. Restoring Wuu shows it again only when it was not explicitly hidden. Drag the preview to place it in a corner of the conversation column, clear of the composer, or resize it from an edge or corner. The browser page keeps its layout size and is scaled to fit. The preview follows the app's appearance and text settings and respects reduced motion.
+A new or hidden preview waits until you return to its Wuu window before appearing, so background activity does not bring Wuu in front of another app. An already-visible preview stays in place when focus changes. Hiding or minimizing Wuu hides the preview too. Returning to Wuu shows it again only when it was not explicitly hidden. Drag the preview to place it in a corner of the conversation column, clear of the composer, or resize it from an edge or corner. The browser page keeps its layout size and is scaled to fit. The preview follows the app's appearance and text settings and respects reduced motion.
 
 The preview separates viewing from control:
 

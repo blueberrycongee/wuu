@@ -113,10 +113,13 @@ the summary ID is its first source item ID. `has_final_answer` on a turn preserv
 folding context when paging splits the turn. Active turns retain their live items.
 Published attachments remain at their source addresses. Pass the opaque
 `history_cursor` back to `thread/history/read`; clients must not parse it.
+Conversation pages currently allow up to 100 turns and 1 MiB of serialized item
+data, compared with 20 turns and 256 KiB for ordinary item history. Only turns
+visited by the requested page are projected.
 
 `thread/activity/read` takes `thread_id`, `turn_id`, `item_id` (the summary ID),
 `last_item_id`, and an optional `cursor`. It returns `thread_id`, a `turn` with
-up to 100 detail items within the history byte budget, and optional `next_cursor`.
+up to 100 detail items within a separate 256 KiB budget, and optional `next_cursor`.
 Detail pages run forward and do not affect the conversation cursor. Oversized
 items use the existing content and attachment references. A removed or regrouped
 boundary fails explicitly. Clients without the opt-in retain the original format;
