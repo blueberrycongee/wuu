@@ -202,12 +202,15 @@ use PTC while it is enabled.
 On Responses connections with a recognized GPT-5-or-later model, `run_code` accepts raw JavaScript source through a custom text tool. Do not wrap custom-tool input in JSON or Markdown fences. Older GPT models, unknown models, and other provider APIs accept the same source as `{"input":"..."}`. For a Responses gateway that does not support custom tools, set `providers.<provider>.models.<model>.options.freeform_tool` to `false`; use `true` only when the endpoint supports that wire format. Unknown models use JSON tools by default. This setting changes the wire format, not whether PTC is enabled. Historical calls are converted for the current request without changing saved conversation history. An optional first-line `// @run_code: {...}` comment sets `description`, `timeout_ms`, `result_view`, and `max_output_tokens`; unknown options fail before execution. Previously recorded `code` calls remain executable when resuming a session.
 The description is display metadata; omitting it does not prevent execution.
 Its description includes core file, search and command definitions within a
-fixed catalog budget, with previews for other bindings. Use included schemas
-directly; discover arguments for bindings shown only as previews. `await searchTools(query,
+fixed catalog budget, with previews for other built-in bindings. Use included
+schemas directly; discover arguments for bindings shown only as previews.
+MCP and plugin tools are discovered inside programs, so changes to their catalog
+do not rewrite the `run_code` description. `await searchTools(query,
 {limit: 8, offset: 0})` returns `tools`, `total` and optional `next_offset`; an
-empty query pages through all bindings. `await describeTool(name)` returns the
-exact description and `input_schema`. Call `await tools[name](args)`; bracket
-access preserves names containing punctuation without aliases or collisions.
+empty query pages through all bindings, including extensions.
+`await describeTool(name)` returns the exact description and `input_schema`.
+Call `await tools[name](args)`; bracket access preserves names containing
+punctuation without aliases or collisions.
 
 Results retain `content`, optional `structured_content`, and optional
 `model_text` for the compact model projection. Catch `ToolCallError` to inspect

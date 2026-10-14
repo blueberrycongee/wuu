@@ -56,7 +56,7 @@ import type { RuntimePlugin } from "@wuu/plugin-sdk";
 const version = %q;
 const lifecycle = %q;
 export default {
- initialize() { return { protocol_version: 2, tools: [{ id: "read", description: "Self extension %s", input_schema: { type: "object" } }], capabilities: [
+ initialize() { return { protocol_version: 2, tools: [{ id: "read", description: "Self extension %s", input_schema: { type: "object", properties: { revision: { type: "string", enum: [version] } }, required: ["revision"], additionalProperties: false } }], capabilities: [
   { id: "agent.system_prompt.section", kind: "transform", version: 1 },
   { id: "agent.request.transform", kind: "transform", version: 1 }
  ] }; },
@@ -108,6 +108,19 @@ check();`) + " " + shellQuote(lifecyclePath)
 	var problems []string
 	var providerTranscript bytes.Buffer
 	toolPattern := regexp.MustCompile(`plugin_local_[a-z0-9_]+_read_[a-f0-9]{16}`)
+	var discoveredName string
+	// Discovery, exact schema lookup and invocation share one run_code call, so
+	// extension metadata stays out of the bootstrap without another model step.
+	discover := `const matches = (await searchTools("Self extension")).tools.filter(tool => tool.description.startsWith("Self extension "));
+const details = await Promise.all(matches.map(async tool => {
+ const detail = await describeTool(tool.name);
+ if (detail.name !== tool.name || detail.description !== tool.description) throw new Error("Discovery and exact metadata disagree");
+ return detail;
+}));
+text("DISCOVERY_RECEIPT:" + JSON.stringify(details));
+`
+	readDiscovered := discover + `if (details.length !== 1) throw new Error("Expected exactly one self-extension tool");
+text(await tools[details[0].name]({revision: details[0].input_schema.properties.revision.enum[0]}));`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var request struct {
@@ -154,16 +167,8 @@ check();`) + " " + shellQuote(lifecyclePath)
 		call := calls[stage]
 		fmt.Fprintf(&providerTranscript, "stage=%s call=%d request=%s\n", stage, call, body)
 		fail := func(format string, args ...any) { problems = append(problems, fmt.Sprintf(format, args...)) }
-		name := toolPattern.FindString(surface)
-		if stage == "install" || stage == "disabled" || stage == "discover-manager" {
-			if name != "" {
-				fail("%s advertised plugin tool %s", stage, name)
-			}
-		} else if stage != "disable-manager" && name == "" {
-			fail("%s did not advertise the installed plugin tool", stage)
-		}
-		if stage == "update" && strings.Contains(surface, "Self extension v2") {
-			fail("active update turn adopted v2 before completion")
+		if toolPattern.MatchString(surface) || strings.Contains(surface, "Self extension ") {
+			fail("%s step %d advertised dynamic plugin metadata", stage, call)
 		}
 		// Prompt providers and request interceptors must follow the same pinned
 		// generation as tools, including later model calls in an updating turn.
@@ -202,12 +207,13 @@ check();`) + " " + shellQuote(lifecyclePath)
 			case "install":
 				code = writeAndPublish(fixture("v1"))
 			case "read-v1", "read-v2", "after-invalid":
-				code = "text(await tools." + name + "({}));"
+				code = readDiscovered
 			case "update":
-				code = writeAndPublish(fixture("v2")) + " text(await tools." + name + "({}));"
+				code = writeAndPublish(fixture("v2")) + readDiscovered
 			case "invalid":
-				code = writeAndPublish("export default {") + " text(await tools." + name + "({}));"
+				code = writeAndPublish("export default {") + readDiscovered
 			case "disabled":
+				code = discover + "let unavailable = false; try { await describeTool(" + encode(discoveredName) + `); } catch (error) { unavailable = String(error).includes("unavailable"); } text("DISABLED_TOOL_UNAVAILABLE:" + unavailable);`
 			default:
 				fail("unexpected acceptance stage %q", stage)
 			}
@@ -255,6 +261,39 @@ check();`) + " " + shellQuote(lifecyclePath)
 			}
 			if stage == "discover-manager" && !strings.Contains(result, "plugin_manager") && !strings.Contains(result, `"action":"status"`) {
 				fail("manager discovery failed: %s", result)
+			}
+			switch stage {
+			case "read-v1", "update", "read-v2", "invalid", "after-invalid", "disabled":
+				var details []struct {
+					Name        string         `json:"name"`
+					Description string         `json:"description"`
+					InputSchema map[string]any `json:"input_schema"`
+				}
+				found := false
+				for _, line := range strings.Split(result, "\n") {
+					if strings.HasPrefix(line, "DISCOVERY_RECEIPT:") {
+						found = true
+						if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "DISCOVERY_RECEIPT:")), &details); err != nil {
+							fail("%s invalid discovery receipt: %v", stage, err)
+						}
+					}
+				}
+				if !found {
+					fail("%s missing discovery receipt: %s", stage, result)
+				} else if stage == "disabled" {
+					if len(details) != 0 || !strings.Contains(result, "DISABLED_TOOL_UNAVAILABLE:true") {
+						fail("disabled plugin remained discoverable: %s", result)
+					}
+				} else if len(details) != 1 {
+					fail("%s did not discover exactly one plugin tool: %s", stage, result)
+				} else {
+					detail := details[0]
+					wantSchema := map[string]any{"type": "object", "properties": map[string]any{"revision": map[string]any{"type": "string", "enum": []string{expectedVersion}}}, "required": []string{"revision"}, "additionalProperties": false}
+					if toolPattern.FindString(detail.Name) != detail.Name || detail.Name == "" || detail.Description != "Self extension "+expectedVersion || encode(detail.InputSchema) != encode(wantSchema) {
+						fail("%s discovered incorrect %s tool metadata: %+v", stage, expectedVersion, detail)
+					}
+					discoveredName = detail.Name
+				}
 			}
 			switch stage {
 			case "install", "update":
@@ -438,9 +477,6 @@ check();`) + " " + shellQuote(lifecyclePath)
 			t.Fatal(failures)
 		}
 		wantCalls := 2
-		if stage == "disabled" {
-			wantCalls = 1
-		}
 		if count != wantCalls {
 			t.Fatalf("stage %s made %d provider calls, want %d", stage, count, wantCalls)
 		}

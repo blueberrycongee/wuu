@@ -157,10 +157,17 @@ func (t *Toolkit) codeModeEntryDefinitions() []providers.ToolDefinition {
 	return out
 }
 func (t *Toolkit) codeModeToolCatalog() string {
-	nested := t.codeModeNestedDefinitions()
+	// Extension catalogs change independently of the built-in tool surface.
+	// Discover them inside programs instead of rewriting the provider prefix.
+	var nested []providers.ToolDefinition
+	for _, d := range t.registry.Definitions() {
+		if d.Name != codeModeExecToolName && !d.DirectOnly && d.Name != "tool_search" && t.SupportsTool(d.Name) {
+			nested = append(nested, d)
+		}
+	}
 	sort.Slice(nested, func(i, j int) bool { return nested[i].Name < nested[j].Name })
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n\nAvailable bindings: %d. Core bindings below include their complete arguments; invoke them directly without a discovery call. Other bindings have previews; use describeTool for their exact arguments and searchTools for further discovery.\n", len(nested))
+	b.WriteString("\n\nCore bindings below include their complete arguments; invoke them directly without a discovery call. Other built-in bindings have previews; use describeTool for their exact arguments. Find extension tools and further bindings with searchTools; an empty query lists all available bindings.\n")
 	var previews strings.Builder
 	coreBytes := 0
 	shown := 0
@@ -202,11 +209,11 @@ func (t *Toolkit) codeModeToolCatalog() string {
 		shown++
 	}
 	if previews.Len() > 0 {
-		b.WriteString("\nOther binding previews:\n")
+		b.WriteString("\nOther built-in binding previews:\n")
 		b.WriteString(previews.String())
 	}
 	if shown < len(nested) {
-		fmt.Fprintf(&b, "%d more bindings available through searchTools.\n", len(nested)-shown)
+		fmt.Fprintf(&b, "%d more built-in bindings available through searchTools.\n", len(nested)-shown)
 	}
 	return b.String()
 }

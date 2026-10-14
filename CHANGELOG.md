@@ -111,6 +111,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the programmatic tool entry description stable when MCP or plugin catalogs
+  change, while retaining built-in guidance and on-demand extension discovery.
+
 - Keep composer inputs free of duplicate status text while surfacing rejected
   requests through toasts, preserving drafts and disabled-action explanations.
   Explicit retries report each failure even when the error repeats. Revisiting
