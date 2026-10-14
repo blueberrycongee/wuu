@@ -129,7 +129,7 @@ jobs:
           path: |
             desktop/release/*.dmg
             desktop/release/*.zip
-            desktop/release/*.blockmap
+            desktop/release/*.zip.blockmap
             desktop/release/verification.json
           if-no-files-found: error
 
