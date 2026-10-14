@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webFrame } from "electron";
 import {
   MESSAGE_FLOW_FONT_SIZE_RANGE,
   isLanguagePreference,
+  type ActivityPreviewState,
   type DesktopPlatform,
   type MessageFlowFontSize,
   type PopOutInitResult,
@@ -393,6 +394,13 @@ const api: WuuDesktopApi = {
     return () => ipcRenderer.removeListener("wuu:activity-preview-auto-show-changed", listener);
   },
   showActivityPreview: (threadId) => ipcRenderer.invoke("wuu:activity-preview-show", threadId),
+  hideActivityPreview: (threadId) => ipcRenderer.invoke("wuu:activity-preview-hide", threadId),
+  getActivityPreviewState: () => ipcRenderer.invoke("wuu:activity-preview-state"),
+  onActivityPreviewStateChange: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: ActivityPreviewState) => handler(state);
+    ipcRenderer.on("wuu:activity-preview-state-changed", listener);
+    return () => ipcRenderer.removeListener("wuu:activity-preview-state-changed", listener);
+  },
   getThemePreference: () => ipcRenderer.invoke("wuu:theme-preference-get"),
   setThemePreference: (theme: ThemePreference) =>
     ipcRenderer.invoke("wuu:theme-preference-set", theme),

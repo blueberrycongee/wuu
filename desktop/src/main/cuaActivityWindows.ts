@@ -1,5 +1,5 @@
 import { screen, type Rectangle } from "electron";
-import type { ActivitySession, ServerEvent } from "../shared/protocol";
+import type { ActivityPreviewState, ActivitySession, ServerEvent } from "../shared/protocol";
 import {
   browserPiPScreenRect,
   PIP_ANCHOR_MARGIN,
@@ -89,6 +89,8 @@ export type ObservationPiPHandle = {
   setTurnCompleted?(completed: boolean): void;
   setAppearance?(dark: boolean, preferences?: ActivityPreviewAppearance): void;
   setControlPending?(pending: boolean): void;
+  setControlFailed?(): void;
+  isVisible?(): boolean;
   suspendContent?(message: string): void;
   setHostLayout?(layout: BrowserPiPScreenLayout | null): void;
   setHostParent?(parent: BrowserPiPHostWindow | null): void;
@@ -115,6 +117,7 @@ export type ObservationPiPEventSink = {
   onEvent(event: CUANativePiPEvent): void;
   onFailure(message: string): void;
   onGone(): void;
+  onVisibilityChanged?(): void;
 };
 
 export type ObservationPiPFactory = (
@@ -179,7 +182,33 @@ export class ObservationCoordinator {
     private readonly snapshot?: ActivitySnapshot,
     private readonly pipFactory?: ObservationPiPFactory,
     private readonly control?: (activity: ActivitySession, action: ActivityControlAction) => Promise<ActivitySession>,
+    private readonly onPreviewStateChanged?: (state: ActivityPreviewState) => void,
   ) {}
+
+  previewState(): ActivityPreviewState {
+    const threadID = this.activeThreadID;
+    const activity = threadID ? this.observations.get(threadID) : undefined;
+    const available = Boolean(activity && activity.state !== "stopped"
+      && isObservableActivity(activity) && activity.target?.trim()
+      && !this.observationIsGone(activity) && !this.browserInPanel?.(activity));
+    return {
+      thread_id: threadID,
+      workdir: activity?.workdir,
+      available,
+      visible: available && this.current?.threadID === threadID && Boolean(this.current?.pip.isVisible?.()),
+    };
+  }
+
+  private publishPreviewState(): void {
+    this.onPreviewStateChanged?.(this.previewState());
+  }
+
+  hideForThread(threadID: string): void {
+    this.dismissedThreads.add(threadID);
+    this.explicitlyShown.delete(threadID);
+    if (this.current?.threadID === threadID) this.current.pip.setVisible(false);
+    this.publishPreviewState();
+  }
 
   handleServerEvent(event: ServerEvent): void {
     const activity = observationActivityFromServerEvent(event);
@@ -234,8 +263,8 @@ export class ObservationCoordinator {
   }
 
   refreshBrowserPresentation(): void {
-    if (!this.current) return;
-    this.current.pip.setVisible(this.pipVisibility(this.current.activity));
+    if (this.current) this.current.pip.setVisible(this.pipVisibility(this.current.activity));
+    this.publishPreviewState();
   }
 
   private pipVisibility(activity: ActivitySession): boolean {
@@ -277,8 +306,14 @@ export class ObservationCoordinator {
       if (live) retained.pip.setLive?.(true);
       retained.activity = activity;
     }
-    if (!isObservableActivity(activity)) return;
-    if (!activity.target?.trim()) return;
+    if (!isObservableActivity(activity) || !activity.target?.trim()) {
+      const previous = this.observations.get(activity.thread_id);
+      if (previous?.id === activity.id && acceptsActivityUpdate(previous, activity)) {
+        this.observations.set(activity.thread_id, activity);
+        if (activity.thread_id === this.activeThreadID) this.syncActiveObservation();
+      }
+      return;
+    }
     const current = this.observations.get(activity.thread_id);
     if (current && !acceptsActivityUpdate(current, activity)) return;
     const targetChanged = current && observationKey(current) !== observationKey(activity);
@@ -307,6 +342,7 @@ export class ObservationCoordinator {
     }
     if (this.replacement?.activity.workdir === workdir) this.replacement = undefined;
     if (this.current?.activity.workdir === workdir) this.stopCurrent();
+    this.publishPreviewState();
   }
 
   shutdown(): Promise<void> {
@@ -325,13 +361,21 @@ export class ObservationCoordinator {
   }
 
   private syncActiveObservation(): void {
+    try {
+      this.syncPreview();
+    } finally {
+      this.publishPreviewState();
+    }
+  }
+
+  private syncPreview(): void {
     const threadID = this.activeThreadID;
     if (!threadID || this.dismissedThreads.has(threadID) || (!this.autoShow && !this.explicitlyShown.has(threadID))) {
       this.current?.pip.setVisible(false);
       return;
     }
     const activity = this.observations.get(threadID);
-    if (!activity || this.observationIsGone(activity)) {
+    if (!activity || !isObservableActivity(activity) || !activity.target?.trim() || this.observationIsGone(activity)) {
       this.current?.pip.setVisible(false);
       return;
     }
@@ -397,6 +441,7 @@ export class ObservationCoordinator {
     pip.setLive?.(activityPreviewIsLive(activity));
     pip.updateActivity?.(activity);
     this.animateInteractionIfNew(activity, pip);
+    this.publishPreviewState();
   }
 
   private replaceCurrent(activity: ActivitySession, key: string): void {
@@ -419,6 +464,7 @@ export class ObservationCoordinator {
     // cannot let a replacement start before the old process has closed.
     this.replacementInFlight = true;
     this.current = undefined;
+    this.publishPreviewState();
     this.pendingStop = new Promise<void>((resolve) => {
       outgoing.pip.stop(() => {
         this.replacementInFlight = false;
@@ -447,6 +493,7 @@ export class ObservationCoordinator {
       onEvent: (event) => this.handlePiPEvent(key, event),
       onFailure: (message) => this.handlePiPFailure(key, message),
       onGone: () => this.handlePiPGone(key),
+      onVisibilityChanged: () => this.publishPreviewState(),
     };
   }
 
@@ -461,9 +508,7 @@ export class ObservationCoordinator {
         this.retryAttempts.delete(entry.threadID);
         return;
       case "user_close":
-        this.dismissedThreads.add(entry.threadID);
-        this.explicitlyShown.delete(entry.threadID);
-        entry.pip.setVisible(false);
+        this.hideForThread(entry.threadID);
         return;
       case "expand":
         if (entry.activity.kind === "browser") this.onBrowserExpand?.(entry.activity);
@@ -477,7 +522,8 @@ export class ObservationCoordinator {
           void this.control(entry.activity, event.action)
             .then((activity) => this.update(activity))
             .catch((error: unknown) => {
-              if (this.current === entry && entry.key === key && entry.activity.execution_id === executionID) entry.pip.updateActivity?.({ ...entry.activity, error: error instanceof Error ? error.message : String(error) });
+              console.warn("Activity preview control failed", error);
+              if (this.current === entry && entry.key === key && entry.activity.execution_id === executionID) entry.pip.setControlFailed?.();
             })
             .finally(() => {
               if (this.current !== entry || entry.key !== key || entry.activity.execution_id !== executionID) return;

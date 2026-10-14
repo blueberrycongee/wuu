@@ -155,17 +155,17 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     // Stopping capture leaves the last mounted frame valid, but no longer live.
     var capturePaused=capture.status==="stopped";
     var captureBlocked=["blank","suspended","error"].includes(capture.status);
-    var unavailable=activity.state==="error"||capture.status==="error";
+    var unavailable=capture.status==="error";
     var pending=activity.controlPending;
     var placeholder=!mounted||captureBlocked;
     ph.classList.toggle("gone",!placeholder);
     ph.setAttribute("aria-hidden",String(!placeholder));
     phTitle.textContent=text(terminal?"activityStopped":activity.state==="waiting_confirmation"?"activityWaiting":unavailable?"activityUnavailable":captureBlocked||capturePaused?"activityPaused":"activityPreparing");
-    var detail=activity.error||capture.message||
+    var detail=unavailable?text(activity.kind==="cua"?"activityCaptureRecovery":"activityPreviewRecovery"):
       (capture.status==="blank"?text("activityBlank"):capture.status==="suspended"?text("activitySuspended"):"");
     if(activity.state==="waiting_confirmation"&&!detail)detail=text("activityConfirmationHint");
     phDetail.textContent=detail;phDetail.hidden=!detail;
-    var statusText=pending?text("activityChangingControl"):activity.error||
+    var statusText=pending?text("activityChangingControl"):activity.controlFailed?text("activityControlFailed"):
       (terminal?text("activityStopped"):activity.state==="waiting_confirmation"?text("activityWaiting"):
       capturePaused?text("activityPaused"):manual?text("activityControlled"):
       activity.controller==="none"&&activity.state!=="starting"?text("activityIdle"):"");

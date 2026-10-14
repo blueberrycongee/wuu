@@ -236,7 +236,7 @@ app.whenReady().then(async () => {
   await waitFor("second native JPEG is decoding", () => nativeView.webContents.executeJavaScript("window.fixtureDecodeEntered === true"));
   await emitNative("native-a", { event: "capture_status", status: "error", message: "Synthetic permission denied" });
   await waitFor("capture error clears live presentation", () => overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone')"));
-  check("capture permission failure is visible", await overlay.webContents.executeJavaScript("document.body.innerText.includes('Synthetic permission denied')"));
+  check("capture failure shows recovery guidance without raw diagnostics", await overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone') && document.getElementById('ph-detail').textContent.length > 0 && !document.body.innerText.includes('Synthetic permission denied')"));
   await nativeView.webContents.executeJavaScript("window.fixtureReleaseDecode()");
   await waitFor("invalidated frame is acknowledged after discard", () => readFileSync(process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_LOG!, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)).some(entry => entry.target === "native-a" && entry.command?.type === "ack" && entry.command.sequence === 2));
   check("a late decoded frame cannot overwrite pixels after capture failure", JSON.stringify(await nativeView.webContents.executeJavaScript("Array.from(document.querySelector('canvas').getContext('2d').getImageData(0,0,1,1).data)")) === JSON.stringify(firstNativePixel));

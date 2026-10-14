@@ -371,6 +371,7 @@ const observationCoordinator = new ObservationCoordinator(
     );
     return result.activity;
   },
+  (state) => broadcastToAll("wuu:activity-preview-state-changed", state),
 );
 observationCoordinator.setAppearance(resolvedThemeIsDark());
 observationCoordinator.setAutoShow(getActivityPreviewAutoShow());
@@ -2339,6 +2340,11 @@ app.whenReady().then(async () => {
     if (typeof threadId !== "string" || !threadId.trim()) throw new Error("Missing conversation");
     observationCoordinator.showForThread(threadId);
   });
+  ipcMain.handle("wuu:activity-preview-hide", (_event, threadId: unknown) => {
+    if (typeof threadId !== "string" || !threadId.trim()) throw new Error("Missing conversation");
+    observationCoordinator.hideForThread(threadId);
+  });
+  ipcMain.handle("wuu:activity-preview-state", () => observationCoordinator.previewState());
   ipcMain.handle("wuu:activity-preview-appearance", (event, value: unknown) => {
     // Only the main workbench supplies global presentation preferences.
     if (event.sender !== mainWindow?.webContents || !value || typeof value !== "object") return;

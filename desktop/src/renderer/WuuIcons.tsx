@@ -122,6 +122,7 @@ export const MessagesSquare = createIcon("MessagesSquare");
 export const Minimize2 = createIcon("Minimize2");
 export const Minus = createIcon("Minus");
 export const Monitor = createIcon("Monitor");
+export const PictureInPicture = createIcon("PictureInPicture");
 export const Moon = createIcon("Moon");
 export const MoreHorizontal = createIcon("MoreHorizontal");
 export const Network = createIcon("Network");

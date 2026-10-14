@@ -2867,6 +2867,13 @@ export type ActiveDocumentContext = {
   path: string;
 };
 
+export type ActivityPreviewState = {
+  thread_id?: string;
+  workdir?: string;
+  available: boolean;
+  visible: boolean;
+};
+
 export type WuuDesktopApi = {
   getAppContextState?: () => Promise<AppContextState>;
   setAppContextShortcutRecording?: (recording: boolean) => Promise<AppContextState>;
@@ -3082,6 +3089,9 @@ export type WuuDesktopApi = {
   setActivityPreviewAutoShow?: (enabled: boolean) => Promise<void>;
   onActivityPreviewAutoShowChange?: (handler: (enabled: boolean) => void) => () => void;
   showActivityPreview?: (threadId: string) => Promise<void>;
+  hideActivityPreview?: (threadId: string) => Promise<void>;
+  getActivityPreviewState?: () => Promise<ActivityPreviewState>;
+  onActivityPreviewStateChange?: (handler: (state: ActivityPreviewState) => void) => () => void;
   // Appearance. The preference persists in desktop-settings.json; the
   // renderer resolves "system" against prefers-color-scheme and stamps
   // data-theme on <html>. `initialThemePreference` is read synchronously

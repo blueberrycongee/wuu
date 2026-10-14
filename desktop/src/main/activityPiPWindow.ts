@@ -26,7 +26,7 @@ export type BrowserPiPWindowHandle = BrowserParentWindowHandle & {
   setBounds(bounds: Rectangle): void;
   setParentWindow?(parent: unknown): void;
   on(
-    event: "close" | "closed" | "moved" | "resize" | "ready-to-show",
+    event: "close" | "closed" | "moved" | "resize" | "ready-to-show" | "show" | "hide",
     listener: (...args: unknown[]) => void,
   ): void;
   destroy(): void;
@@ -80,6 +80,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private pendingRetarget = false;
   private appearance: ActivityPreviewAppearance | undefined;
   private controlPending = false;
+  private controlFailed = false;
   private captureState: Pick<CUANativePiPEvent, "status" | "message"> = { status: "healthy" };
   private stopCallbacks: Array<() => void> = [];
   // Resting corner inside the conversation column. A release may change it;
@@ -168,6 +169,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       const b = win.getBounds();
       this.deps.sink.onEvent({ event: "geometry", x: b.x, y: b.y, width: b.width, height: b.height });
     };
+    win.on("show", () => this.deps.sink.onVisibilityChanged?.());
+    win.on("hide", () => this.deps.sink.onVisibilityChanged?.());
     win.on("moved", reportGeometry);
     win.on("resize", () => {
       reportGeometry();
@@ -196,6 +199,10 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     });
     this.startContent();
     this.setHostParent(this.deps.parent?.() ?? null);
+  }
+
+  isVisible(): boolean {
+    return Boolean(this.win && !this.win.isDestroyed() && this.win.isVisible());
   }
 
   setVisible(visible: boolean): void {
@@ -273,6 +280,12 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
 
   setControlPending(pending: boolean): void {
     this.controlPending = pending;
+    if (pending) this.controlFailed = false;
+    this.pushActivityState();
+  }
+
+  setControlFailed(): void {
+    this.controlFailed = true;
     this.pushActivityState();
   }
 
@@ -322,6 +335,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
 
   updateActivity(activity: ActivitySession): void {
     if (activity.execution_id !== this.activity.execution_id) {
+      this.controlFailed = false;
       this.lastInteractionRevision = 0;
       this.pendingInteraction = undefined;
       this.forwardInteraction({ kind: "clear" });
@@ -346,6 +360,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.lastInteractionRevision = 0;
     this.pendingInteraction = undefined;
     this.controlPending = false;
+    this.controlFailed = false;
     this.setCaptureStatus({ status: "healthy" });
     this.pendingRetarget = true;
     this.awaitingVisibility = true;
@@ -706,7 +721,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         execution_id: this.activity.execution_id,
         state: this.activity.state,
         controller: this.activity.controller,
-        error: this.activity.error,
+        controlFailed: this.controlFailed,
         controlPending: this.controlPending,
       })})`,
     );
