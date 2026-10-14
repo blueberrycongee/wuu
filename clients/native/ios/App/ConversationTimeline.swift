@@ -20,95 +20,98 @@ struct ConversationTimeline: View {
     private let rowSpacing: CGFloat = 18
     var body: some View {
         GeometryReader { geometry in
-            ScrollViewReader { proxy in
-                ScrollView {
-                    let rows = model.conversationRows
-                    let latestTurnID = rows.last?.messages[0].turnID
-                    let previousTurnID = rows.last { $0.messages[0].turnID != latestTurnID }?.messages[0].turnID
-                    let recentStart = rows.firstIndex { $0.messages[0].turnID == (previousTurnID ?? latestTurnID) } ?? rows.endIndex
-                    // One lazy stack owns every row's position. A nested history stack can
-                    // revise its estimated height without moving the eager replies below it.
-                    LazyVStack(alignment: .leading, spacing: rowSpacing) {
-                        if model.live?.historyCursor.isEmpty == false {
-                            HStack {
-                                Spacer()
-                                if historyFailed {
-                                    Button("读取失败，轻点重试") { historyRetry += 1 }.disabled(!model.connected || model.refreshing)
-                                } else if model.loadingHistory {
-                                    ProgressView().accessibilityLabel("正在读取更早的消息")
-                                }
-                                Spacer()
-                            }.frame(minHeight: 24)
-                        }
-                        ForEach(rows[..<recentStart]) { row in timelineRow(row, size: geometry.size) }
-                        // Keep adjacent turns together until iOS stops looping row phases
-                        // around embedded UIKit views at the growing turn's boundary.
-                        VStack(alignment: .leading, spacing: rowSpacing) {
-                            ForEach(rows[recentStart...]) { row in timelineRow(row, size: geometry.size) }
-                        }
-                        if model.live?.running == true && model.messages.last?.tool == nil && model.conversationRows.last?.processActive != true {
-                            ConversationActivityMark(activity: model.messages.last?.role == "assistant" ? "responding" : "thinking", settings: model.live?.settings)
-                                .accessibilityElement().accessibilityLabel("正在处理")
-                        }
-                    }.padding(inset)
-                        // Fill the viewport even without rows so refresh overlays keep their width and center.
-                        // Short conversations start at the top; once filled, normal bottom following takes over.
-                        .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .topLeading)
-                        .overlay(alignment: .bottom) { Color.clear.frame(height: 1).id("bottom") }
-                        .background {
-                        TimelineScrollReader(state: scrollState) { next in
-                            let update = scrollState.update(next, following: following)
-                            if nearBottom != next.atBottom { nearBottom = next.atBottom }
-                            if following != update.following { following = update.following }
-                            if update.scrollToBottom { proxy.scrollTo("bottom", anchor: .bottom) }
-                        }
+            let rows = model.conversationRows
+            ScrollView {
+                // Lay out from the newest edge so following never targets a lazy height estimate.
+                LazyVStack(alignment: .leading, spacing: rowSpacing) {
+                    if model.live?.running == true && model.messages.last?.tool == nil && model.conversationRows.last?.processActive != true {
+                        ConversationActivityMark(activity: model.messages.last?.role == "assistant" ? "responding" : "thinking", settings: model.live?.settings)
+                            .accessibilityElement().accessibilityLabel("正在处理")
+                            .scaleEffect(x: 1, y: -1)
                     }
-                }.coordinateSpace(name: "conversationViewport")
-                    .defaultScrollAnchor(.bottom)
-                    .scrollDismissesKeyboard(.interactively)
-                    .onChange(of: model.messages.last) { _, _ in
-                        if following && scrollState.metrics?.interacting != true { proxy.scrollTo("bottom", anchor: .bottom) }
-                    }
-                    .overlay(alignment: .bottomTrailing) {
-                        ZStack {
-                            if !nearBottom {
-                                Button { scrollState.cancelRestoration(); following = true; proxy.scrollTo("bottom", anchor: .bottom) } label: {
-                                    Label("最新消息", systemImage: "arrow.down").font(.caption).padding(10).background(.regularMaterial, in: Capsule())
-                                        .frame(minHeight: 44)
-                                }.padding(12).transition(.opacity)
+                    ForEach(rows.reversed()) { row in timelineRow(row, size: geometry.size).scaleEffect(x: 1, y: -1) }
+                    if model.live?.historyCursor.isEmpty == false {
+                        HStack {
+                            Spacer()
+                            if historyFailed {
+                                Button("读取失败，轻点重试") { historyRetry += 1 }.disabled(!model.connected || model.refreshing)
+                            } else if model.loadingHistory {
+                                ProgressView().accessibilityLabel("正在读取更早的消息")
                             }
-                        }.animation(chromeAnimation(reduceMotion), value: nearBottom)
+                            Spacer()
+                        }.frame(minHeight: 24).scaleEffect(x: 1, y: -1)
                     }
-                    .safeAreaInset(edge: .bottom) {
-                        ZStack {
-                            if let edit = pausedEdit {
-                                HistoryEditResumeBanner(model: model, edit: edit)
-                                    .padding(.horizontal, 12).padding(.vertical, 8)
-                                    .transition(.opacity)
-                            }
-                        }.animation(chromeAnimation(reduceMotion), value: pausedEdit?.id)
+                }.padding(inset)
+                    // Fill the viewport even without rows so refresh overlays keep their width and center.
+                    // Short conversations start at the top; once filled, normal bottom following takes over.
+                    .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .bottomLeading)
+                    .background {
+                    TimelineScrollReader(state: scrollState) { next in
+                        let update = scrollState.update(next, following: following)
+                        if nearBottom != next.atBottom { nearBottom = next.atBottom }
+                        if following != update.following { following = update.following }
+                        if update.scrollToBottom { scrollState.scrollToBottom() }
                     }
-                    // Floats over retained content so the reading position never moves.
-                    .overlay(alignment: .top) {
-                        // Animate only the indicator; the snapshot's row changes apply without motion.
-                        ZStack {
-                            if model.updating {
-                                Label { Text("正在更新…") } icon: { ProgressView().controlSize(.small) }
-                                    .font(.caption).foregroundStyle(.secondary)
-                                    .padding(10).background(.regularMaterial, in: Capsule())
-                                    .padding(12).transition(.opacity).allowsHitTesting(false)
-                            } else if model.refreshing && model.connected, let id = model.activeID {
-                                Button {
-                                    model.perform { try await model.open(id, preservingContent: true) }
-                                } label: {
-                                    Label("重新加载会话", systemImage: "arrow.clockwise")
-                                        .font(.caption).padding(10).background(.regularMaterial, in: Capsule())
-                                }.padding(12)
-                            }
+                }
+            }.scaleEffect(x: 1, y: -1)
+                .accessibilityScrollAction { edge in
+                    guard let scroll = scrollState.scroll, edge == .top || edge == .bottom else { return }
+                    // Accessibility directions describe the display, not the flipped scroll axis.
+                    scrollState.cancelRestoration(); following = false
+                    let minimum = -scroll.adjustedContentInset.top
+                    let maximum = max(minimum, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+                    let offset = scroll.contentOffset.y + (edge == .top ? 1 : -1) * scroll.bounds.height * 0.9
+                    scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: min(maximum, max(minimum, offset))), animated: false)
+                }
+                .coordinateSpace(name: "conversationViewport")
+                // Interactive dismissal assumes an untransformed vertical scroll axis.
+                .scrollDismissesKeyboard(.immediately)
+                .onChange(of: geometry.size) { _, _ in
+                    if !following && !scrollState.preservingPosition { scrollState.preservePosition() }
+                }
+                .onChange(of: model.messages.last) { _, _ in
+                    // New rows and streamed text grow before the reader in reversed coordinates.
+                    if !following && !scrollState.preservingPosition { scrollState.preservePosition() }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    ZStack {
+                        if !nearBottom {
+                            Button { scrollState.cancelRestoration(); following = true; scrollState.scrollToBottom() } label: {
+                                Label("最新消息", systemImage: "arrow.down").font(.caption).padding(10).background(.regularMaterial, in: Capsule())
+                                    .frame(minHeight: 44)
+                            }.padding(12).transition(.opacity)
                         }
-                            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: model.updating)
+                    }.animation(chromeAnimation(reduceMotion), value: nearBottom)
+                }
+                .safeAreaInset(edge: .bottom) {
+                    ZStack {
+                        if let edit = pausedEdit {
+                            HistoryEditResumeBanner(model: model, edit: edit)
+                                .padding(.horizontal, 12).padding(.vertical, 8)
+                                .transition(.opacity)
+                        }
+                    }.animation(chromeAnimation(reduceMotion), value: pausedEdit?.id)
+                }
+                // Floats over retained content so the reading position never moves.
+                .overlay(alignment: .top) {
+                    // Animate only the indicator; the snapshot's row changes apply without motion.
+                    ZStack {
+                        if model.updating {
+                            Label { Text("正在更新…") } icon: { ProgressView().controlSize(.small) }
+                                .font(.caption).foregroundStyle(.secondary)
+                                .padding(10).background(.regularMaterial, in: Capsule())
+                                .padding(12).transition(.opacity).allowsHitTesting(false)
+                        } else if model.refreshing && model.connected, let id = model.activeID {
+                            Button {
+                                model.perform { try await model.open(id, preservingContent: true) }
+                            } label: {
+                                Label("重新加载会话", systemImage: "arrow.clockwise")
+                                    .font(.caption).padding(10).background(.regularMaterial, in: Capsule())
+                            }.padding(12)
+                        }
                     }
-            }
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: model.updating)
+                }
         }.sheet(item: $model.attachmentPreview) { attachment in AttachmentPreview(attachment: attachment) }
             // Owned here, not by the row, so a turn finishing or regrouping cannot close it.
             .sheet(item: $inspectedProcess) { inspection in
@@ -178,7 +181,7 @@ struct ConversationTimeline: View {
                 try await model.loadOlder {
                     if !following || scrollState.metrics?.interacting == true {
                         following = false
-                        scrollState.preservePosition()
+                        scrollState.preservePosition(at: .bottom)
                     }
                 }
                 await Task.yield()

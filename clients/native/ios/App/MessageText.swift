@@ -102,16 +102,20 @@ private struct MessageMarkdownView: View {
             .markdownInlineImageProvider(ExternalImageLink())
             .markdownBlockStyle(\.codeBlock) { block in
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text(block.language ?? "代码").font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("复制代码") { UIPasteboard.general.string = block.content; Haptics.tap() }.font(.caption)
-                            .frame(minHeight: 44)
-                    }
-                    ScrollView(.horizontal) {
-                        StreamingTextReveal(text: block.content, reveal: rendered.reveal) {
-                            block.label.markdownTextStyle { FontSize(.rem(MobileTypography.baseCodeSize / MobileTypography.baseTextSize)) }
-                                .fixedSize(horizontal: true, vertical: false)
+                    if block.language?.split(whereSeparator: { $0.isWhitespace }).first?.lowercased() == "mermaid" {
+                        MermaidDiagram(code: block.content, live: rendered.live)
+                    } else {
+                        HStack {
+                            Text(block.language ?? "代码").font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            Button("复制代码") { UIPasteboard.general.string = block.content; Haptics.tap() }.font(.caption)
+                                .frame(minHeight: 44)
+                        }
+                        ScrollView(.horizontal) {
+                            StreamingTextReveal(text: block.content, reveal: rendered.reveal) {
+                                block.label.markdownTextStyle { FontSize(.rem(MobileTypography.baseCodeSize / MobileTypography.baseTextSize)) }
+                                    .fixedSize(horizontal: true, vertical: false)
+                            }
                         }
                     }
                 }.padding(12).background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
@@ -152,6 +156,7 @@ private struct MessageMarkdownView: View {
 @MainActor private final class MessageMarkdown: ObservableObject {
     struct Input: Equatable { let text: String; let live: Bool }
     @Published var content: MarkdownContent
+    @Published var live: Bool
     @Published var reveal = StreamingTextRevealState()
     private var desired: Input
     private var rendered: Input
@@ -162,6 +167,7 @@ private struct MessageMarkdownView: View {
     init(_ input: Input) {
         let value = ParsedMarkdown(input.text)
         content = value.content
+        live = input.live
         desired = input
         rendered = input
         reveal.update(value.plainText, animated: false)
@@ -173,7 +179,7 @@ private struct MessageMarkdownView: View {
         let stamp = generation
         work = Task {
             while rendered != desired {
-                if rendered.text == desired.text { rendered = desired; break }
+                if rendered.text == desired.text { rendered = desired; live = desired.live; break }
                 // A fixed cadence cannot be starved by continuously arriving tokens.
                 if desired.live {
                     let deadline = lastParse + .milliseconds(100)
@@ -187,6 +193,7 @@ private struct MessageMarkdownView: View {
                 if desired.text.hasPrefix(snapshot.text) {
                     reveal.update(value.plainText, animated: snapshot.live || rendered.live)
                     content = value.content
+                    live = snapshot.live
                     rendered = snapshot
                 }
                 lastParse = .now

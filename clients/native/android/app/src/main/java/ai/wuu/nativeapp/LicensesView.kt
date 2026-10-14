@@ -18,7 +18,7 @@ import kotlinx.coroutines.withContext
     var paragraphs by remember { mutableStateOf<List<String>>(emptyList()) }
     LaunchedEffect(Unit) {
         paragraphs = withContext(Dispatchers.IO) {
-            try { listOf("Notices.txt", "Apache-2.0.txt", "Google-Notices.txt").flatMap { context.assets.open(it).bufferedReader().use { reader -> reader.readText().split(Regex("\\n\\s*\\n")) } } }
+            try { listOf("Notices.txt", "Apache-2.0.txt", "Google-Notices.txt", "Mermaid-Notices.txt").flatMap { context.assets.open(it).bufferedReader().use { reader -> reader.readText().split(Regex("\\n\\s*\\n")) } } }
             catch (e: Exception) { listOf("无法读取许可文件：${e.message}") }
         }
     }

@@ -26,7 +26,7 @@ iOS 会话将连续工具调用收成当前动作或操作数量，点开查看�
 
 iOS 的摘要规则在一个 JavaScriptCore 实例中执行，文字由 SwiftUI 排版，历史工具组不创建 WebView。读取、查看图片的结果默认收在操作详情中，展开后才加载缩略图；明确展示给用户的图片仍显示在消息流中。消息投影按更新缓存，Markdown 解析离开主线程；列表从滚动容器读取实际位置，手动上翻不被新消息拉回底部。流式 Markdown 按 100ms 的节奏合并解析，连续增量不会一直推迟显示。iOS 18 及以上使用原生文字绘制让新增内容在 300ms 内淡入，动画帧不重新解析 Markdown；iOS 17 使用新段落淡入。历史初次显示、系统减少动态效果和超过 128 KB 的普通文本不播放流式动画。当前淡入的段落在动画结束后恢复文字选择，整条消息和代码的复制入口始终可用；MarkdownUI 无法区分位置的重复同文段落直接显示，避免旧段落重复闪烁。
 
-助手消息使用原生 Markdown 排版，支持代码、列表、表格和网页链接；超过 128 KB 的单条文本使用普通文本显示。iOS 使用 [MarkdownUI 2.4.1 的本地兼容副本](ios/Vendor/swift-markdown-ui/README.md)，修复纯文本、Markdown 和 HTML 转换的 C 缓冲区泄漏；Android 使用 Markwon 4.6.2 的原生 TextView，聊天文字不使用 WebView。Agent 回复中明确以 Markdown 图片语法引用的工作区图片，通过同一加密通道读取；代码块和普通文件链接不会触发图片读取。Markdown 不自动下载外部网络图片，网页链接仅打开 HTTP/HTTPS 地址。MarkdownUI 已进入维护期；其后继 Textual 要求 iOS 18，本客户端目前支持 iOS 17。
+助手消息使用原生 Markdown 排版，支持代码、列表、表格和网页链接；超过 128 KB 的单条文本使用普通文本显示。iOS 使用 [MarkdownUI 2.4.1 的本地兼容副本](ios/Vendor/swift-markdown-ui/README.md)，修复纯文本、Markdown 和 HTML 转换的 C 缓冲区泄漏；Android 使用 Markwon 4.6.2 的原生 TextView。两端的 Mermaid 代码块单独使用离线 WebView，打包与桌面相同的 Mermaid 引擎；聊天文字仍是原生视图。图表约每 500ms 合并一次流式更新，保留有效中间图，结束时立即处理最终源码；宽图、高图可内部滚动，支持查看和复制源码。图表禁止外部请求与导航，桥接仅报告高度。Agent 回复中明确以 Markdown 图片语法引用的工作区图片，通过同一加密通道读取；代码块和普通文件链接不会触发图片读取。Markdown 不自动下载外部网络图片，网页链接仅打开 HTTP/HTTPS 地址。MarkdownUI 已进入维护期；其后继 Textual 要求 iOS 18，本客户端目前支持 iOS 17。
 
 账号设置中的开源许可可离线阅读；两端安装包包含同一份依赖署名和许可文本，位于 [licenses](licenses)。更新依赖时同步核对这份清单。
 
@@ -56,6 +56,8 @@ node clients/native/shared-ui/build.mjs --check
 ```
 
 更新时一起提交 `NativeUI/mascot.html`、`NativeUI/process.js` 和 `NativeUI/sources.sha256`。`--check` 用于确认主动更新后的快照与当前源码一致，不是两端构建的前置条件。入口与边界见 [shared-ui](shared-ui/README.md)。
+
+Mermaid 资源与小球快照独立更新：运行 `node clients/native/shared-ui/build-mermaid.mjs`，再加 `--check` 验证，并提交 `NativeUI/mermaid.html`、`NativeUI/mermaid.sha256` 和 `licenses/Mermaid-Notices.txt`。两端原生构建直接打包快照。真实浏览器检查与模拟器样本命令见 [shared-ui](shared-ui/README.md)。
 
 回复操作的复制、分叉和成功勾号复用 `desktop/src/shared/iconArtwork.ts`，以 14pt 矢量图标显示，按钮中心间距为 32pt，触控区域为 32×44pt。运行 `node clients/native/shared-ui/export-icons.mjs` 导出，再用同一命令加 `--check` 验证；一起提交 `ios/App/Assets.xcassets` 中三个 `Wuu*.imageset` 目录。Xcode 直接编译已提交的 SVG，无需 Node 或 WebView。
 

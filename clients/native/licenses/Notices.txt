@@ -1,7 +1,7 @@
 Wuu native mobile — open-source notices
 
 iOS
-MarkdownUI 2.4.1 (local output-buffer ownership fix) — https://github.com/gonzalezreal/swift-markdown-ui
+MarkdownUI 2.4.1 (local output-buffer ownership and streaming block identity fixes) — https://github.com/gonzalezreal/swift-markdown-ui
 Copyright (c) 2020 Guillermo Gonzalez — MIT
 NetworkImage 6.0.1 — https://github.com/gonzalezreal/NetworkImage
 Copyright (c) 2020 Guille Gonzalez — MIT

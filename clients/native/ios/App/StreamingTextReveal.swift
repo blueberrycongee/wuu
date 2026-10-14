@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Keep paint ranges outside MarkdownUI's content-keyed blocks, which remount on append.
+/// Keep paint ranges at message scope so blocks share one streaming timeline.
 struct StreamingTextRevealState {
     static let duration = 0.3
     struct Chunk {
