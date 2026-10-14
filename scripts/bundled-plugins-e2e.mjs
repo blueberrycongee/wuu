@@ -23,7 +23,7 @@ const active = new Set();
 const evidence = { started_at: new Date().toISOString(), node: process.version, scenarios: [], artifacts: {} };
 const services = ['host.service.call', 'host.storage.get', 'host.storage.set', 'host.storage.delete',
   'host.storage.keys', 'host.storage.compare_exchange', 'host.session.create', 'host.session.send',
-  'host.session.list', 'host.session.inspect', 'host.session.cancel', 'host.session.control',
+  'host.session.list', 'host.session.inspect', 'host.session.ready', 'host.session.cancel', 'host.session.control',
   'host.session.history.read', 'host.session.history.search', 'host.workspace.status'];
 await mkdir(output, { recursive: true });
 
@@ -62,7 +62,7 @@ class FixtureHost extends EventEmitter {
       this.on('call', listener);
     }), `${this.id}: ${service}`);
   }
-  async call(frame) {
+  async call(frame, owner) {
     assert.equal(frame.method, 'host.service.call', 'Plugins must use the public service gateway');
     const { service, params = {}, execution_id, method } = frame.params;
     const call = { service, method, params, execution_id };
@@ -72,7 +72,9 @@ class FixtureHost extends EventEmitter {
     let result;
     switch (service) {
       case 'host.storage.get': return { value: this.storage.get(this.key(params)) ?? null };
-      case 'host.storage.set': this.storage.set(this.key(params), params.value); result = {}; break;
+      case 'host.storage.set':
+        assert(Buffer.byteLength(params.value) <= 1048576, 'host storage limit exceeded');
+        this.storage.set(this.key(params), params.value); result = {}; break;
       case 'host.storage.delete': this.storage.delete(this.key(params)); result = {}; break;
       case 'host.storage.keys': return { keys: [...this.storage.keys()].filter(key => key.startsWith(`${params.scope}:`)).map(key => key.slice(params.scope.length + 1)) };
       case 'host.storage.compare-exchange': {
@@ -81,6 +83,7 @@ class FixtureHost extends EventEmitter {
         if (params.value == null) this.storage.delete(this.key(params)); else this.storage.set(this.key(params), params.value);
         result = { swapped: true, value: params.value ?? null }; break;
       }
+      case 'host.session.ready': return { ready: true };
       case 'host.session.create': {
         const id = `session-${params.request_id}`;
         const existed = this.sessions.has(id);
@@ -117,13 +120,14 @@ class FixtureHost extends EventEmitter {
           this.locks.set(key, held);
           if (previous) await previous;
           const lock_id = `fixture-lock-${++this.lockSequence}`;
-          this.lockTokens.set(lock_id, () => { if (this.locks.get(key) === held) this.locks.delete(key); unlock(); });
+          if (owner?.exited) { unlock(); throw new Error('generation closed'); }
+          this.lockTokens.set(lock_id, { owner, release: () => { if (this.locks.get(key) === held) this.locks.delete(key); unlock(); } });
           return { lock_id };
         }
         assert.equal(method, 'release');
         const release = this.lockTokens.get(params.lock_id);
         this.lockTokens.delete(params.lock_id);
-        release?.();
+        release?.release();
         return { released: !!release };
       }
       case 'host.user-question.offer': return { request_id: 'question-fixture', expires_at: new Date(Date.now() + 30000).toISOString() };
@@ -150,13 +154,13 @@ class Runtime extends EventEmitter {
     active.add(this);
     this.process.stderr.setEncoding('utf8').on('data', chunk => { this.stderr += chunk; });
     this.process.on('error', error => this.fail(error));
-    this.process.on('exit', (code, signal) => { this.exited = { code, signal }; active.delete(this); this.fail(new Error(`${id} exited ${code}/${signal}: ${this.stderr}`)); this.emit('exit'); });
+    this.process.on('exit', (code, signal) => { this.exited = { code, signal }; active.delete(this); for (const [id, lock] of host.lockTokens) if (lock.owner === this) { host.lockTokens.delete(id); lock.release(); } this.fail(new Error(`${id} exited ${code}/${signal}: ${this.stderr}`)); this.emit('exit'); });
     createInterface({ input: this.process.stdout }).on('line', line => {
       let frame;
       try { frame = JSON.parse(line); } catch { this.fail(new Error(`${id} wrote non-JSON stdout: ${line}`)); return; }
       this.frames.push({ direction: 'plugin', frame });
       if (frame.method) {
-        void this.host.call(frame).then(result => this.send({ id: frame.id, result }), error => this.send({ id: frame.id, error: { code: error.code ?? 'fixture_host_error', message: error.message } }));
+        void this.host.call(frame, this).then(result => this.send({ id: frame.id, result }), error => this.send({ id: frame.id, error: { code: error.code ?? 'fixture_host_error', message: error.message } }));
       } else {
         const pending = this.pending.get(frame.id);
         if (!pending) return;
@@ -349,17 +353,29 @@ try {
     const foreground = runtime.tool('spawn_agent', { name: 'overlap', description: 'Overlap fixture', prompt: 'First task', run_in_background: false });
     const inspectedCall = await runtime.host.waitCall('host.session.inspect', params => params.wait === 'terminal', overlapStart);
     await runtime.tool('send_message', { target: inspectedCall.params.session_id, message: 'New task' });
-    const current = runtime.host.state('tasks.v2').records.find(record => record.session_id === inspectedCall.params.session_id);
+    const current = runtime.host.state('tasks.v3').records.find(record => record.session_id === inspectedCall.params.session_id);
     assert.notEqual(current.request_id, inspectedCall.params.request_id);
     finishForeground({ session: runtime.host.sessions.get(current.session_id), turn: { request_id: inspectedCall.params.request_id, state: 'completed', final_output: 'First result' } });
     assert.equal(resultJSON(await foreground).final_output, 'First result');
-    const retained = runtime.host.state('tasks.v2').records.find(record => record.session_id === current.session_id);
+    const retained = runtime.host.state('tasks.v3').records.find(record => record.session_id === current.session_id);
     assert.equal(retained.request_id, current.request_id);
     assert.equal(retained.suppress_completion, false);
     runtime.host.intercept = undefined;
     const deliveryStart = runtime.host.calls.length;
+    const oldTerminal = { session_id: current.session_id, request_id: inspectedCall.params.request_id, state: 'completed', final_output: 'Obsolete first result' };
+    // The host persists terminal state before notifying the plugin.
+    runtime.host.turns.get(oldTerminal.request_id).state = 'completed';
+    await runtime.capability('agent.turn.lifecycle', oldTerminal);
+    const oldReceipt = runtime.host.state('tasks.v3').dispatches.find(item => item.record.request_id === oldTerminal.request_id);
+    assert.equal(oldReceipt.settled, true);
+    assert.equal(oldReceipt.prompt, undefined);
+    assert.equal(runtime.host.state('tasks.v3').records.find(item => item.session_id === current.session_id).request_id, current.request_id);
+    assert.equal(runtime.host.calls.slice(deliveryStart).filter(call => call.service === 'host.session.send' && call.params.cause === 'subagent.completion').length, 0);
+    runtime.host.turns.get(current.request_id).state = 'completed';
     await runtime.capability('agent.turn.lifecycle', { session_id: current.session_id, request_id: current.request_id, state: 'completed', final_output: 'New result' });
     await runtime.host.waitCall('host.session.send', params => params.cause === 'subagent.completion' && params.input.prompt.includes('New result'), deliveryStart);
+    await runtime.capability('agent.turn.lifecycle', oldTerminal);
+    assert.equal(runtime.host.calls.slice(deliveryStart).filter(call => call.service === 'host.session.send' && call.params.cause === 'subagent.completion').length, 1);
     let releaseInspect;
     runtime.host.intercept = call => {
       if (call.service === 'host.session.inspect' && call.params.wait === 'terminal') {
@@ -376,6 +392,202 @@ try {
     runtime.host.intercept = undefined;
     // A late result from the old execution must not satisfy the next request.
     await runtime.capability('agent.system_prompt.section', { thread_id: 'parent' });
+    await runtime.shutdown();
+  });
+  await scenario('subagent', 'replay-safe dispatch and transactional follow-up recovery', async () => {
+    let runtime = await launch('subagent');
+    const args = { name: 'durable_child', description: 'Durable fixture', prompt: 'Return one result' };
+    const identity = { call_id: 'durable-spawn', turn_id: 'durable-parent-turn' };
+    const child = resultJSON(await runtime.tool('spawn_agent', args, identity));
+    const initial = runtime.host.state('tasks.v3').records.find(record => record.session_id === child.session_id);
+    const calls = runtime.host.calls.length;
+    assert.equal(resultJSON(await runtime.tool('spawn_agent', args, identity)).session_id, child.session_id);
+    assert.equal(runtime.host.calls.slice(calls).filter(call => ['host.session.create', 'host.session.send'].includes(call.service)).length, 0);
+    await assert.rejects(runtime.tool('spawn_agent', { ...args, prompt: 'Different task' }, identity), /different input/);
+
+    const retryable = { thread_id: child.session_id, request_id: initial.request_id, state: 'discarded', retryable: true };
+    runtime.host.turns.set(initial.request_id, { ...retryable, session_id: child.session_id });
+    const replayStart = runtime.host.calls.length;
+    await runtime.capability('agent.turn.lifecycle', retryable);
+    assert.equal(runtime.host.turns.get(initial.request_id).state, 'queued');
+    assert.equal(runtime.host.calls.slice(replayStart).filter(call => call.service === 'host.session.send' && call.params.cause === 'subagent.completion').length, 0);
+
+    // An uncertain follow-up must not replace the still-running result route.
+    runtime.host.intercept = call => {
+      if (call.service === 'host.session.send' && call.params.cause === 'subagent.followup') throw new Error('synthetic send failure');
+    };
+    const followup = { target: child.session_id, message: 'Continue the same child' };
+    const followupIdentity = { call_id: 'durable-followup' };
+    await assert.rejects(runtime.tool('send_message', followup, followupIdentity), /synthetic send failure/);
+    assert.equal(runtime.host.state('tasks.v3').records.find(record => record.session_id === child.session_id).request_id, initial.request_id);
+    await assert.rejects(runtime.tool('send_message', { ...followup, message: 'Do not replace the pending request' }), /unconfirmed/);
+    runtime.host.intercept = undefined;
+    const beforeResult = runtime.host.calls.length;
+    await runtime.capability('agent.turn.lifecycle', { thread_id: child.session_id, request_id: initial.request_id, state: 'completed', final_output: 'Original child result' });
+    await runtime.host.waitCall('host.session.send', params => params.cause === 'subagent.completion' && params.input.prompt.includes('Original child result'), beforeResult);
+    const host = runtime.host;
+    await runtime.shutdown();
+    runtime = await launch('subagent', host);
+    await host.waitCall('host.session.send', params => params.cause === 'subagent.followup', beforeResult);
+    await runtime.capability('agent.turn.lifecycle', { state: 'running' });
+    const recovered = host.state('tasks.v3').records.find(record => record.session_id === child.session_id);
+    assert.notEqual(recovered.request_id, initial.request_id);
+    const acceptedCount = host.turns.size;
+    await runtime.tool('send_message', followup, followupIdentity);
+    assert.equal(host.turns.size, acceptedCount);
+    await runtime.shutdown();
+
+    // Kill the actual plugin process after intent persistence, before creation.
+    runtime = await launch('subagent');
+    runtime.host.intercept = call => call.service === 'host.session.create' ? new Promise(() => {}) : undefined;
+    const crashedHost = runtime.host;
+    const pending = runtime.tool('spawn_agent', args, identity);
+    const crashed = assert.rejects(pending, /exited/);
+    await crashedHost.waitCall('host.session.create');
+    const exited = once(runtime, 'exit');
+    runtime.process.kill('SIGKILL');
+    await exited;
+    await crashed;
+    await runtime.shutdown();
+    crashedHost.intercept = undefined;
+    runtime = await launch('subagent', crashedHost);
+    const relaunched = resultJSON(await runtime.tool('spawn_agent', args, identity));
+    assert.equal([...crashedHost.sessions.values()].filter(session => session.parent_session_id === 'parent').length, 1);
+    assert.equal([...crashedHost.turns.values()].filter(turn => turn.session_id === relaunched.session_id).length, 1);
+    await runtime.shutdown();
+
+    // Reject receipt persistence after the host accepted the turn.
+    runtime = await launch('subagent');
+    let failCommit = true;
+    runtime.host.intercept = call => {
+      if (failCommit && call.service === 'host.storage.set' && JSON.parse(call.params.value).dispatches?.some(item => item.result)) {
+        failCommit = false;
+        throw new Error('synthetic dispatch commit failure');
+      }
+    };
+    await assert.rejects(runtime.tool('spawn_agent', args, identity), /dispatch commit failure/);
+    const acceptedHost = runtime.host;
+    assert.equal(acceptedHost.turns.size, 1);
+    await runtime.shutdown();
+    acceptedHost.intercept = undefined;
+    runtime = await launch('subagent', acceptedHost);
+    assert.equal(acceptedHost.turns.size, 1);
+    const acceptedChild = resultJSON(await runtime.tool('spawn_agent', args, identity));
+    const acceptedRecord = acceptedHost.state('tasks.v3').records.find(record => record.session_id === acceptedChild.session_id);
+    const terminal = { thread_id: acceptedChild.session_id, request_id: acceptedRecord.request_id, state: 'completed', final_output: 'Accepted once' };
+    acceptedHost.turns.set(terminal.request_id, { ...terminal, session_id: acceptedChild.session_id });
+    const deliveryStart = acceptedHost.calls.length;
+    await runtime.capability('agent.turn.lifecycle', terminal);
+    await runtime.capability('agent.turn.lifecycle', terminal);
+    assert.equal(acceptedHost.calls.slice(deliveryStart).filter(call => call.service === 'host.session.send' && call.params.cause === 'subagent.completion').length, 1);
+    await runtime.shutdown();
+
+    // A stopped unconfirmed launch is never resurrected by activation replay.
+    runtime = await launch('subagent');
+    runtime.host.intercept = call => {
+      if (call.service === 'host.session.send' && call.params.cause === 'subagent.task') throw new Error('synthetic launch failure');
+    };
+    await assert.rejects(runtime.tool('spawn_agent', args, identity), /launch failure/);
+    const cancelledHost = runtime.host;
+    const cancelledChild = cancelledHost.state('tasks.v3').records[0];
+    await runtime.tool('close_agent', { target: cancelledChild.session_id });
+    await runtime.shutdown();
+    cancelledHost.intercept = undefined;
+    runtime = await launch('subagent', cancelledHost);
+    assert.equal(cancelledHost.turns.size, 0);
+    await assert.rejects(runtime.tool('spawn_agent', args, identity), /cancelled/);
+    await runtime.shutdown();
+
+    runtime = await launch('subagent');
+    runtime.host.intercept = call => {
+      if (call.service === 'host.session.create') throw new Error('synthetic unavailable model');
+    };
+    await assert.rejects(runtime.tool('spawn_agent', args, identity), /unavailable model/);
+    assert.equal(resultJSON(await runtime.tool('close_agent', { target: args.name })).cancelled, true);
+    const uncreatedHost = runtime.host;
+    await runtime.shutdown();
+    uncreatedHost.intercept = undefined;
+    runtime = await launch('subagent', uncreatedHost);
+    assert.equal(uncreatedHost.turns.size, 0);
+    assert.equal([...uncreatedHost.sessions.values()].filter(session => session.parent_session_id === 'parent').length, 0);
+    await runtime.shutdown();
+  });
+  await scenario('subagent', 'bounded receipts, readiness and overlapping generations', async () => {
+    let runtime = await launch('subagent');
+    const host = runtime.host;
+    const args = { description: 'Byte bounded', prompt: '任務'.repeat(10000) };
+    for (let i = 0; i < 64; i++) {
+      const child = resultJSON(await runtime.tool('spawn_agent', args, { call_id: `size-${i}` }));
+      const record = host.state('tasks.v3').records.find(item => item.session_id === child.session_id);
+      await runtime.capability('agent.turn.lifecycle', { thread_id: child.session_id, request_id: record.request_id, state: 'completed', final_output: 'Done' });
+    }
+    assert.equal(host.state('tasks.v3').dispatches.length, 64);
+    assert(host.state('tasks.v3').dispatches.every(item => item.signature.length === 64 && item.prompt === undefined));
+    const before = host.calls.length;
+    for (const prompt of ['x'.repeat(1048576), '<'.repeat(200000)]) {
+      await assert.rejects(runtime.tool('spawn_agent', { ...args, prompt }), /capacity/);
+    }
+    assert.equal(host.calls.slice(before).filter(call => ['host.session.create', 'host.session.send'].includes(call.service)).length, 0);
+    await runtime.shutdown();
+
+    // Persist an unconfirmed intent, then cold-start before the router binds.
+    runtime = await launch('subagent');
+    const cold = runtime.host;
+    cold.intercept = call => { if (call.service === 'host.session.create') throw new Error('unavailable'); };
+    await assert.rejects(runtime.tool('spawn_agent', { description: 'Wait ready', prompt: 'Recover once ready' }, { call_id: 'cold-start' }), /unavailable/);
+    await runtime.shutdown();
+    let bind;
+    cold.intercept = call => call.service === 'host.session.ready' ? new Promise(resolve => { bind = resolve; }) : undefined;
+    runtime = await launch('subagent', cold);
+    await cold.waitCall('host.session.ready', () => true, cold.calls.length - 1);
+    await runtime.client('status.list');
+    assert.equal(cold.turns.size, 0, 'activation must not send before readiness');
+    const start = cold.calls.length;
+    bind({ ready: true });
+    await cold.waitCall('host.session.send', params => params.cause === 'subagent.task', start);
+    await runtime.capability('agent.turn.lifecycle', { state: 'running' });
+    assert.equal(cold.turns.size, 1);
+    cold.intercept = undefined;
+
+    // Two retained new-version runtimes share one durable transition lock.
+    const second = await launch('subagent', cold);
+    await Promise.all([
+      runtime.tool('spawn_agent', { description: 'Generation one', prompt: 'First' }, { call_id: 'generation-one' }),
+      second.tool('spawn_agent', { description: 'Generation two', prompt: 'Second' }, { call_id: 'generation-two' }),
+    ]);
+    assert.equal(cold.state('tasks.v3').dispatches.length, 3);
+    // A retained baseline writer replaces only its old schema, never v3.
+    cold.seed('workspace', 'tasks.v2', { records: [] });
+    assert.equal(cold.state('tasks.v3').dispatches.length, 3);
+    await second.shutdown();
+    await runtime.shutdown();
+
+    // Stop wins while another generation holds a stale recovery ID snapshot.
+    runtime = await launch('subagent');
+    const stopped = runtime.host;
+    stopped.intercept = call => { if (call.service === 'host.session.send') throw new Error('unconfirmed'); };
+    await assert.rejects(runtime.tool('spawn_agent', { name: 'stop_during_recovery', description: 'Stop recovery', prompt: 'Do not restart' }), /unconfirmed/);
+    let resumeRecovery, markRecoveryBlocked, acquisitions = 0;
+    const recoveryBlocked = new Promise(resolve => { markRecoveryBlocked = resolve; });
+    stopped.intercept = call => {
+      if (call.service === 'host.file-lock' && call.method === 'acquire' && !call.execution_id && ++acquisitions === 2) {
+        return new Promise(resolve => { resumeRecovery = resolve; markRecoveryBlocked(); });
+      }
+    };
+    const replacement = await launch('subagent', stopped);
+    await deadline(recoveryBlocked, 'replacement recovery lock');
+    await runtime.tool('close_agent', { target: 'stop_during_recovery' });
+    const afterStop = stopped.calls.length;
+    resumeRecovery();
+    await replacement.capability('agent.turn.lifecycle', { state: 'running' });
+    assert.equal(stopped.calls.slice(afterStop).filter(call => call.service === 'host.session.send').length, 0);
+    assert(stopped.state('tasks.v3').dispatches.every(item => item.cancelled));
+    await replacement.shutdown(); await runtime.shutdown();
+
+    // Readiness wait remains cancellable if a server is never bound.
+    const unavailable = new FixtureHost('subagent');
+    unavailable.intercept = call => call.service === 'host.session.ready' ? new Promise(() => {}) : undefined;
+    runtime = await launch('subagent', unavailable);
     await runtime.shutdown();
   });
   await scenario('peers', 'stable request identity, reply and stored policy', async () => {

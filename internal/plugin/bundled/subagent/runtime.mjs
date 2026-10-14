@@ -147,6 +147,7 @@ var encoder = new TextEncoder();
 // packages/plugin-sdk/src/index.ts
 var CAPABILITY_PROTOCOL_V3 = 3;
 var KERNEL_SERVICE_METHOD = "call";
+var FILE_LOCK_SERVICE = "host.file-lock";
 var KERNEL_SERVICE_NAMES = {
   "host.storage.get": "host.storage.get",
   "host.storage.set": "host.storage.set",
@@ -160,6 +161,7 @@ var KERNEL_SERVICE_NAMES = {
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
   "host.session.inspect": "host.session.inspect",
+  "host.session.ready": "host.session.ready",
   "host.session.control": "host.session.control",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
@@ -185,6 +187,21 @@ var RuntimeHostServiceError = class extends Error {
     this.code = error.code;
   }
 };
+async function acquireFileLock(host, params, executionId) {
+  return await host.call("host.service.call", {
+    service: FILE_LOCK_SERVICE,
+    method: "acquire",
+    execution_id: executionId,
+    params
+  });
+}
+async function releaseFileLock(host, lockId, options) {
+  return await host.call("host.service.call", {
+    service: FILE_LOCK_SERVICE,
+    method: "release",
+    params: { lock_id: lockId }
+  }, options);
+}
 async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHost, execution = idleRuntimeExecution, lifecycle = idleRuntimeExecution) {
   const executionHost = scopedRuntimeHost(host, execution);
   try {
@@ -484,7 +501,9 @@ var promptCapability = "agent.system_prompt.section";
 var clientCapability = "plugin.client.request";
 var lifecycleCapability = "agent.turn.lifecycle";
 var interruptCapability = "agent.turn.interrupted";
-var taskIndexKey = "tasks.v2";
+var taskIndexKey = "tasks.v3";
+var legacyTaskIndexKey = "tasks.v2";
+var maxTaskIndexBytes = 1 << 20;
 var maxTaskRecords = 128;
 var foregroundAwaitBudgetMS = 10 * 60 * 1e3;
 var stringField = (description) => ({ type: "string", description });
@@ -493,19 +512,21 @@ var textResult = (value) => ({ result: { content: [{ type: "text", text: JSON.st
 var terminalState = (state) => ["completed", "failed", "interrupted", "discarded"].includes(state.trim());
 var SubagentPlugin = class {
   concurrentCapabilities = [promptCapability, clientCapability];
+  lifecycleHost;
   indexQueue = Promise.resolve();
   transitionQueue = Promise.resolve();
-  initialize() {
+  initialize(_params, host) {
+    this.lifecycleHost = host;
     const services = [
       "host.session.create",
       "host.session.send",
       "host.session.list",
       "host.session.cancel",
       "host.session.inspect",
+      "host.session.ready",
       "host.storage.get",
       "host.storage.set",
-      "host.storage.keys",
-      "host.storage.delete"
+      "host.storage.keys"
     ];
     return {
       protocol_version: 3,
@@ -550,7 +571,7 @@ var SubagentPlugin = class {
         { id: lifecycleCapability, kind: "observe", version: 1, error_policy: "isolate" },
         { id: interruptCapability, kind: "observe", version: 1, error_policy: "isolate" }
       ],
-      required_services: services.map(requireKernelService)
+      required_services: [...services.map(requireKernelService), { name: FILE_LOCK_SERVICE, major_version: 1, required: true }]
     };
   }
   async executeTool(call, host, execution) {
@@ -573,7 +594,7 @@ var SubagentPlugin = class {
     const parentSessionID = call.session_id;
     const background = args.run_in_background ?? true;
     const name = args.name?.trim() || deriveTaskName(args.description);
-    const requestID = randomBytes(12).toString("hex");
+    const requestID = dispatchIdentity(call);
     let context = "fresh";
     switch (args.context?.trim() ?? "") {
       case "":
@@ -588,35 +609,30 @@ var SubagentPlugin = class {
     const workspace = args.isolation?.trim() === "worktree" ? "worktree" : "shared";
     if (workspace === "worktree") context = "fork";
     const { record, sent } = await this.withTransition(execution, async () => {
-      const record2 = await this.createTask(host, {
-        request_id: `create-${requestID}`,
-        name,
-        visibility: "plugin",
-        parent_session_id: parentSessionID,
-        context_source: context,
-        workspace,
-        model_alias: args.model?.trim(),
-        instructions: workerInstructions(args.subagent_type?.trim())
-      }, {
-        session_id: "",
-        parent_session_id: parentSessionID,
-        parent_turn_id: call.turn_id,
-        name,
-        request_id: `turn-${requestID}`,
-        state: "created"
+      const dispatch = await this.prepareDispatch(host, {
+        id: requestID,
+        signature: dispatchSignature({ name, prompt: args.prompt.trim(), context, workspace, model: args.model?.trim(), type: args.subagent_type?.trim() }),
+        create: {
+          request_id: `create-${requestID}`,
+          name,
+          visibility: "plugin",
+          parent_session_id: parentSessionID,
+          context_source: context,
+          workspace,
+          model_alias: args.model?.trim(),
+          instructions: workerInstructions(args.subagent_type?.trim())
+        },
+        record: {
+          session_id: "",
+          parent_session_id: parentSessionID,
+          parent_turn_id: call.turn_id,
+          name,
+          request_id: `turn-${requestID}`,
+          state: "created"
+        },
+        prompt: args.prompt.trim()
       });
-      const sent2 = await host.call("host.session.send", {
-        request_id: record2.request_id,
-        session_id: record2.session_id,
-        input: { prompt: args.prompt.trim() },
-        presentation: { kind: "query_bubble", text: `\u5B50\u4EFB\u52A1 ${name} \u5DF2\u5F00\u59CB`, name },
-        cause: "subagent.task"
-      });
-      record2.state = sent2.state;
-      record2.turn_id = sent2.turn_id;
-      record2.queue_id = sent2.queue_id;
-      await this.saveRecord(host, record2);
-      return { record: record2, sent: sent2 };
+      return this.dispatchTask(host, dispatch);
     });
     const identity = { session_id: record.session_id, task_name: name, run_in_background: background };
     if (background) return textResult({ ...identity, state: sent.state, backgrounded: true });
@@ -654,38 +670,139 @@ var SubagentPlugin = class {
   }
   async sendMessage(host, call) {
     const args = call.arguments;
-    const record = await this.resolveTask(host, call.session_id ?? "", args.target);
-    const previousRequestID = record.request_id;
-    record.request_id = `turn-${randomBytes(12).toString("hex")}`;
-    record.parent_session_id = call.session_id ?? "";
-    record.parent_turn_id = call.turn_id;
-    record.suppress_completion = false;
-    record.state = "created";
-    await this.saveRecord(host, record);
+    const prompt = args.message?.trim() ?? "";
+    if (!prompt) throw new Error("send_message requires a message");
+    const previous = await this.resolveTask(host, call.session_id ?? "", args.target);
+    const requestID = dispatchIdentity(call);
+    const dispatch = await this.prepareDispatch(host, {
+      id: requestID,
+      signature: dispatchSignature({ session_id: previous.session_id, prompt }),
+      prompt,
+      previous_request_id: previous.request_id,
+      record: {
+        ...previous,
+        request_id: `turn-${requestID}`,
+        parent_session_id: call.session_id ?? "",
+        parent_turn_id: call.turn_id,
+        suppress_completion: false,
+        legacy: void 0,
+        state: "created",
+        turn_id: void 0,
+        queue_id: void 0
+      }
+    });
+    const { record, sent } = await this.dispatchTask(host, dispatch);
+    return textResult({ session_id: record.session_id, state: sent.state, steered: sent.steered ?? false });
+  }
+  activate(host, lifecycle) {
+    void this.recoverDispatches(host, lifecycle).catch((error) => {
+      if (!lifecycle.signal.aborted) console.error("subagent recovery:", error);
+    });
+  }
+  async recoverDispatches(host, lifecycle) {
+    await host.call("host.session.ready", {}, { signal: lifecycle.signal });
+    const execution = { executionId: "", signal: lifecycle.signal };
+    const ids = await this.withTransition(execution, async () => (await this.readIndex(host)).dispatches.filter((item) => !item.result && !item.cancelled).map((item) => item.id));
+    for (const id of ids) {
+      lifecycle.signal.throwIfAborted();
+      await this.withTransition(execution, async () => {
+        const dispatch = (await this.readIndex(host)).dispatches.find((item) => item.id === id);
+        if (!dispatch || dispatch.result || dispatch.cancelled) return;
+        try {
+          await this.dispatchTask(host, dispatch);
+        } catch {
+        }
+      });
+    }
+  }
+  prepareDispatch(host, dispatch) {
+    return this.withIndex(async () => {
+      const index = await this.readIndex(host);
+      const prior = index.dispatches.find((item) => item.id === dispatch.id);
+      if (prior) {
+        if (prior.signature !== dispatch.signature) throw new Error("subagent tool call identity was reused with different input");
+        if (prior.cancelled) throw new Error("subagent dispatch was cancelled");
+        return prior;
+      }
+      const pending = index.dispatches.find((item) => !item.result && !item.cancelled && item.record.parent_session_id === dispatch.record.parent_session_id && (dispatch.create ? item.create && item.signature === dispatch.signature && item.record.parent_turn_id === dispatch.record.parent_turn_id : item.record.session_id === dispatch.record.session_id));
+      if (pending) {
+        if (pending.signature !== dispatch.signature) throw new Error("the previous child dispatch is unconfirmed; retry it before sending a different message");
+        return pending;
+      }
+      compactDispatches(index);
+      while (index.dispatches.length >= maxTaskRecords || reservedIndexBytes({ ...index, dispatches: [...index.dispatches, dispatch] }) > maxTaskIndexBytes) {
+        const settled = index.dispatches.findIndex((item) => item.cancelled || item.settled);
+        if (settled < 0) throw new Error("subagent dispatch storage capacity is full; shorten this task brief or resolve pending tasks before creating more");
+        index.dispatches.splice(settled, 1);
+      }
+      index.dispatches.push(dispatch);
+      await this.writeIndex(host, index);
+      return dispatch;
+    });
+  }
+  async dispatchTask(host, dispatch) {
+    if (dispatch.cancelled) throw new Error("subagent dispatch was cancelled");
+    if (dispatch.result) return dispatch.result;
+    if (!dispatch.prompt) throw new Error("subagent dispatch has no recoverable input");
+    const record = dispatch.create ? await this.createTask(host, dispatch.create, { ...dispatch.record }, dispatch.id) : { ...dispatch.record };
     const sent = await host.call("host.session.send", {
       request_id: record.request_id,
       session_id: record.session_id,
-      input: { prompt: args.message?.trim() ?? "" },
-      presentation: { kind: "query_bubble", text: "\u7236\u4EFB\u52A1\u5DF2\u66F4\u65B0\u8981\u6C42", name: record.name },
-      cause: "subagent.followup",
-      if_running: "steer"
+      input: { prompt: dispatch.prompt },
+      presentation: { kind: "query_bubble", text: dispatch.create ? `\u5B50\u4EFB\u52A1 ${record.name} \u5DF2\u5F00\u59CB` : "\u7236\u4EFB\u52A1\u5DF2\u66F4\u65B0\u8981\u6C42", name: record.name },
+      cause: dispatch.create ? "subagent.task" : "subagent.followup",
+      ...dispatch.create ? {} : { if_running: "steer" }
     });
-    if (sent.steered) record.request_id = previousRequestID;
+    if (sent.steered) record.request_id = dispatch.previous_request_id ?? record.request_id;
     record.state = sent.state;
     record.turn_id = sent.turn_id;
     record.queue_id = sent.queue_id;
-    await this.saveRecord(host, record);
-    return textResult({ session_id: record.session_id, state: sent.state, steered: sent.steered ?? false });
+    const result = { record, sent };
+    await this.withIndex(async () => {
+      const index = await this.readIndex(host);
+      const current = index.dispatches.find((item) => item.id === dispatch.id);
+      if (!current || current.cancelled) throw new Error("subagent dispatch was cancelled");
+      current.result = result;
+      index.records = index.records.filter((item) => item.session_id !== record.session_id);
+      index.records.push(record);
+      trimIndex(index, maxTaskRecords);
+      await this.writeIndex(host, index);
+    });
+    return result;
+  }
+  cancelDispatches(host, matches) {
+    return this.withIndex(async () => {
+      const index = await this.readIndex(host);
+      for (const dispatch of index.dispatches) {
+        if (matches(dispatch.record)) dispatch.cancelled = true;
+      }
+      await this.writeIndex(host, index);
+    });
   }
   async closeAgent(host, call) {
     const { target } = call.arguments;
-    const record = await this.resolveTask(host, call.session_id ?? "", target);
+    const parentID = call.session_id?.trim() ?? "";
+    const uncreated = await this.withIndex(async () => (await this.readIndex(host)).dispatches.filter((dispatch) => !dispatch.result && !dispatch.cancelled && !dispatch.record.session_id && dispatch.record.parent_session_id === parentID && dispatch.record.name === target?.trim()));
+    if (uncreated.length > 0) {
+      if (uncreated.length > 1) throw new Error(`task name ${JSON.stringify(target)} is ambiguous`);
+      const dispatch = uncreated[0];
+      if (dispatch.create) {
+        try {
+          await this.createTask(host, dispatch.create, { ...dispatch.record }, dispatch.id);
+        } catch {
+          await this.cancelDispatches(host, (task) => task.request_id === dispatch.record.request_id);
+          return textResult({ task_name: dispatch.record.name, cancelled: true });
+        }
+      }
+    }
+    const record = await this.resolveTask(host, parentID, target);
+    await this.cancelDispatches(host, (task) => task.session_id === record.session_id || task.request_id === record.request_id);
     record.suppress_completion = true;
     await this.saveRecord(host, record);
     const result = await host.call("host.session.cancel", { session_id: record.session_id, turn_id: record.turn_id, queue_id: record.queue_id });
     return textResult({ session_id: result.session_id, cancelled: result.cancelled });
   }
-  async invokeCapability(call, host) {
+  async invokeCapability(call, host, execution) {
     switch (call.capability) {
       case promptCapability:
         return { output: { text: promptSection } };
@@ -695,10 +812,10 @@ var SubagentPlugin = class {
         return { output: { result: await host.call("host.session.list", request.input ?? {}) } };
       }
       case lifecycleCapability:
-        await this.onLifecycle(host, call.input);
+        await this.withTransition(execution, () => this.onLifecycle(host, call.input));
         break;
       case interruptCapability:
-        await this.onInterrupted(host, call.input);
+        await this.withTransition(execution, () => this.onInterrupted(host, call.input));
         break;
       default:
         throw new Error(`unknown capability ${JSON.stringify(call.capability)}`);
@@ -707,6 +824,26 @@ var SubagentPlugin = class {
   }
   async onLifecycle(host, input) {
     if (!terminalState(input.state)) return;
+    const pending = await this.withIndex(async () => {
+      const index = await this.readIndex(host);
+      const dispatch = index.dispatches.find((item) => !item.cancelled && !item.settled && item.record.request_id === input.request_id && (!item.result || input.retryable));
+      if (dispatch && input.retryable) {
+        dispatch.result = void 0;
+        await this.writeIndex(host, index);
+      }
+      return dispatch;
+    });
+    if (pending) {
+      await this.dispatchTask(host, pending);
+      if (input.retryable) return;
+    }
+    await this.withIndex(async () => {
+      const index = await this.readIndex(host);
+      for (const dispatch of index.dispatches) {
+        if (dispatch.result?.record.request_id === input.request_id) dispatch.settled = true;
+      }
+      await this.writeIndex(host, index);
+    });
     let record = await this.loadRecord(host, "request_id", input.request_id);
     if (!record) {
       await this.reconcileOwnedSessions(host);
@@ -762,6 +899,7 @@ ${output}` },
   }
   async onInterrupted(host, input) {
     if (!input.thread_id?.trim() || !input.turn_id?.trim()) return;
+    await this.cancelDispatches(host, (task) => task.parent_session_id === input.thread_id && task.parent_turn_id === input.turn_id);
     const listed = await host.call("host.session.list", { parent_session_id: input.thread_id });
     for (const child of listed.sessions ?? []) {
       const record = await this.loadRecord(host, "session_id", child.session_id);
@@ -816,9 +954,15 @@ ${output}` },
   }
   // Serialize state transitions, leaving foreground waits outside the lock.
   withTransition(execution, operation) {
-    const next = this.transitionQueue.then(() => {
+    const next = this.transitionQueue.then(async () => {
       execution.signal.throwIfAborted();
-      return operation();
+      const lock = await acquireFileLock(this.lifecycleHost, { root: "workspace_state", path: "subagent/dispatch.lock" }, execution.executionId || void 0);
+      try {
+        execution.signal.throwIfAborted();
+        return await operation();
+      } finally {
+        await releaseFileLock(this.lifecycleHost, lock.lock_id);
+      }
     });
     this.transitionQueue = next.catch(() => void 0);
     return next;
@@ -828,13 +972,18 @@ ${output}` },
     this.indexQueue = next.catch(() => void 0);
     return next;
   }
-  createTask(host, params, record) {
+  createTask(host, params, record, dispatchID) {
     return this.withIndex(async () => {
       const index = await this.readIndex(host);
+      const existing = index.records.find((item) => item.request_id === record.request_id);
+      if (existing) return { ...record, session_id: existing.session_id };
       if (index.records.length >= maxTaskRecords) await this.refreshIndex(host, index);
       trimIndex(index, maxTaskRecords - 1);
       const created = await host.call("host.session.create", params);
       record.session_id = created.session_id;
+      const dispatch = index.dispatches.find((item) => item.id === dispatchID);
+      if (dispatch) dispatch.record.session_id = created.session_id;
+      index.records = index.records.filter((item) => item.session_id !== record.session_id);
       index.records.push(record);
       await this.writeIndex(host, index);
       return record;
@@ -865,12 +1014,26 @@ ${output}` },
     });
   }
   loadRecord(host, key, value) {
-    return this.withIndex(async () => (await this.readIndex(host)).records.find((record) => record[key] === value.trim()));
+    return this.withIndex(async () => {
+      const current = (await this.readIndex(host)).records.find((record2) => record2[key] === value.trim());
+      if (current && (!current.legacy || current.suppress_completion)) return current;
+      const legacy = await host.call("host.storage.get", { scope: "workspace", key: legacyTaskIndexKey });
+      const records = legacy.value === null ? [] : JSON.parse(legacy.value).records ?? [];
+      const record = records.find((item) => item[key] === value.trim());
+      return record ? { ...record, legacy: true } : void 0;
+    });
   }
   deleteRecord(host, sessionID) {
     return this.withIndex(async () => {
       const index = await this.readIndex(host);
-      index.records = index.records.filter((record) => record.session_id !== sessionID.trim());
+      index.records = index.records.filter((record) => {
+        if (record.session_id !== sessionID.trim()) return true;
+        if (record.legacy) {
+          record.suppress_completion = true;
+          return true;
+        }
+        return false;
+      });
       await this.writeIndex(host, index);
     });
   }
@@ -878,7 +1041,17 @@ ${output}` },
     const result = await host.call("host.storage.get", { scope: "workspace", key: taskIndexKey });
     if (result.value !== null) {
       const index2 = JSON.parse(result.value);
-      return { records: index2.records ?? [] };
+      return { records: index2.records ?? [], dispatches: index2.dispatches ?? [] };
+    }
+    const legacy = await host.call("host.storage.get", { scope: "workspace", key: legacyTaskIndexKey });
+    if (legacy.value !== null) {
+      const old = JSON.parse(legacy.value);
+      const index2 = { records: (old.records ?? []).map((record) => ({ ...record, legacy: true })), dispatches: old.dispatches ?? [] };
+      for (const dispatch of index2.dispatches) {
+        if (!/^[a-f0-9]{64}$/.test(dispatch.signature)) dispatch.signature = createHash("sha256").update(dispatch.signature).digest("hex");
+      }
+      await this.writeIndex(host, index2);
+      return index2;
     }
     const { keys } = await host.call("host.storage.keys", { scope: "workspace" });
     const records = [];
@@ -893,17 +1066,33 @@ ${output}` },
         records.push(record);
       }
     }
-    const index = { records: records.slice(-maxTaskRecords) };
+    const index = { records: records.slice(-maxTaskRecords), dispatches: [] };
     await this.writeIndex(host, index);
-    for (const key of keys ?? []) {
-      if (key.startsWith("session.") || key.startsWith("request.")) await host.call("host.storage.delete", { scope: "workspace", key });
-    }
     return index;
   }
   async writeIndex(host, index) {
+    compactDispatches(index);
+    if (reservedIndexBytes(index) > maxTaskIndexBytes) throw new Error("subagent dispatch storage capacity is full; resolve pending tasks before creating more");
     await host.call("host.storage.set", { scope: "workspace", key: taskIndexKey, value: JSON.stringify(index) });
   }
 };
+function compactDispatches(index) {
+  for (const dispatch of index.dispatches) {
+    if (dispatch.cancelled || dispatch.settled) {
+      dispatch.prompt = void 0;
+      dispatch.create = void 0;
+    }
+  }
+}
+function reservedIndexBytes(index) {
+  return storageStringBytes(JSON.stringify(index)) + index.dispatches.reduce((bytes, dispatch) => bytes + (!dispatch.result && !dispatch.cancelled ? 2 * storageStringBytes(JSON.stringify(dispatch.record)) + 2048 : 0), 0);
+}
+function storageStringBytes(value) {
+  return Buffer.byteLength(JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`));
+}
+function dispatchSignature(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
 function trimIndex(index, limit) {
   let excess = index.records.length - limit;
   if (excess <= 0) return;
@@ -915,6 +1104,10 @@ function trimIndex(index, limit) {
     return true;
   });
   if (excess > 0) throw new Error(`subagent task record capacity (${maxTaskRecords}) is full; unfinished records must be resolved before creating more tasks`);
+}
+function dispatchIdentity(call) {
+  if (!call.call_id?.trim()) return randomBytes(12).toString("hex");
+  return createHash("sha256").update(`${call.session_id ?? ""}\0${call.turn_id ?? ""}\0${call.call_id}`).digest("hex").slice(0, 24);
 }
 function deriveTaskName(description) {
   return description.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40).replace(/_+$/, "") || "task";

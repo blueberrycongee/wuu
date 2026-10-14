@@ -81,6 +81,15 @@ make build-go
 
 这些检查不验证 ScreenCaptureKit、原生应用输入、macOS 权限、系统窗口合成或安装包签名。在启用 Computer Use 的 macOS 构建中，还需检查浏览器 → 原生应用 → 浏览器切换、同一应用的两个窗口、将终端和 Wuu 作为普通目标、隐藏或最小化窗口、目标关闭、屏幕录制权限拒绝或撤销，以及待发送输入期间的接管。隐藏和停止不能退出被观察的应用；停用或替换扩展必须停止它的流。还需检查明暗主题、默认与大字号、减少动态效果，以及输入框附近的拖拽和缩放。`node desktop/scripts/inspect-cua-pip.cjs` 可为运行中的原生预览记录进程/窗口诊断与截图；辅助进程正在运行本身不能证明画面实时有效。
 
+### 子代理投递恢复验收
+
+构建核心与内置插件后，运行 `WUU_E2E_CORE=bin/wuu node scripts/subagent-dispatch-e2e.mjs`。
+脚本使用真实 app-server、插件热重载、SQLite 和回环合成模型，检查保留的前台调用、
+失败投递、冷启动恢复与重复重启。可通过 `WUU_SUBAGENT_BASELINE_RUNTIME` 指定旧版
+Subagent 的 runtime.mjs，验证跨版本升级。证据与二进制哈希保存在
+`.tmp/e2e/subagent-dispatch/`；`WUU_SUBAGENT_E2E_OUTPUT` 可修改目录。
+不使用真实模型凭据，也不验证桌面 UI。
+
 ## 选择相关检查
 
 | 命令 | 检查或构建内容 |

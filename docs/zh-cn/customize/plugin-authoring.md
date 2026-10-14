@@ -187,6 +187,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.background` | 调用插件自己服务的 generation 所属后台工作 |
 | `host.settings.get/list` | 声明的设置值 |
 | `host.session.create/send/list/inspect/cancel/control` | 按宿主生命周期规则创建和管理会话 |
+| `host.session.ready` | 等待活动 app-server 绑定会话服务 |
 | `host.session.history.read/search` | 使用序列快照和续读游标访问有限历史 |
 | `host.workspace.status/apply/discard` | 检查或处理所拥有会话工作区中的改动 |
 | `execution.update` | 报告活动执行的进展 |
@@ -197,6 +198,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 大多数核心服务使用 `call` 方法。存储不提供跨 key 事务；并发更新单个值时应使用 compare-exchange，检查 `swapped`，并限制重试次数。先读取再无条件写入会丢失并发更新。不存在的值为 `null`；结构化数据可编码为 JSON 等字符串存储。
 
 创建会话时提供稳定的 `request_id`、`visibility=user|plugin` 和 `context_source=fresh|fork|seed`。发送也需要稳定的请求 ID 和 `input.prompt`。请求被接纳或排队不代表完成，应检查轮次或处理生命周期事件后再消费结果。模型提示、业务状态和重试策略由插件负责，执行、历史、工作区改动和恢复交给宿主。
+
+插件激活可能早于 app-server 构造。恢复任务应在 `activate` 返回后异步调用 `host.session.ready`，传入生命周期取消信号，并在返回 `{ ready: true }` 后发起会话操作。等待期间不要持有状态锁。就绪结果不保留绑定；之后服务关闭仍可能导致操作失败。运行时退出会取消尚未结束的等待。
 
 `host.workspace.status` 和 `apply` 以创建工作区时冻结的提交为基线，比较已跟踪文件，包含已提交、已暂存和未暂存的改动。`apply` 将累计补丁写入父工作目录，不创建提交，随后移除独立工作区并重新绑定会话。存在冲突、未跟踪文件或基线不可用时，调用失败并保留工作区及其绑定。自动清理也会保留已提交成果和无法验证基线的工作区。
 

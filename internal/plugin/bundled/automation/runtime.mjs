@@ -161,6 +161,7 @@ var KERNEL_SERVICE_NAMES = {
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
   "host.session.inspect": "host.session.inspect",
+  "host.session.ready": "host.session.ready",
   "host.session.control": "host.session.control",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",

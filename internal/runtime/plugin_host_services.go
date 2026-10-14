@@ -76,6 +76,9 @@ func (s *pluginHostServices) activate() {
 }
 
 func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostServiceMethod, raw json.RawMessage) (json.RawMessage, error) {
+	if method == pluginhost.HostServiceSessionReady {
+		return s.sessionReady(ctx, raw)
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -271,6 +274,37 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 	}
 }
 
+func (s *pluginHostServices) sessionReady(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	if err := decodeServiceParams(raw, &struct{}{}); err != nil {
+		return nil, err
+	}
+	// Do not hold the generation mutex while waiting: close must be able to
+	// cancel this wait even when no app-server was ever bound.
+	s.mu.RLock()
+	open, active := s.open, s.active
+	valid := strings.TrimSpace(s.subjectID) != "" && strings.TrimSpace(s.fingerprint) != ""
+	router, lifetime := s.turnRouter, s.lockContext
+	s.mu.RUnlock()
+	if !open {
+		return nil, serviceError("generation_closed", "plugin generation is no longer active")
+	}
+	if !active {
+		return nil, serviceError("service_unavailable", "host service is unavailable during generation prepare")
+	}
+	if !valid {
+		return nil, serviceError("generation_invalid", "plugin generation has no stable package identity")
+	}
+	wait, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(lifetime, cancel)
+	defer func() { stop(); cancel() }()
+	if err := router.WaitReady(wait); err != nil {
+		return nil, err
+	}
+	return marshalServiceResult(struct {
+		Ready bool `json:"ready"`
+	}{Ready: true})
+}
+
 func (s *pluginHostServices) settingsGet(raw json.RawMessage) (json.RawMessage, error) {
 	var params pluginhost.SettingsGetParams
 	if err := decodeServiceParams(raw, &params); err != nil {
@@ -452,7 +486,7 @@ func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRe
 		pluginhost.HostServiceStorageCompareExchange, pluginhost.HostServiceSettingsGet,
 		pluginhost.HostServiceSettingsList, pluginhost.HostServiceSessionCreate,
 		pluginhost.HostServiceSessionSend, pluginhost.HostServiceSessionList,
-		pluginhost.HostServiceSessionCancel, pluginhost.HostServiceSessionInspect,
+		pluginhost.HostServiceSessionCancel, pluginhost.HostServiceSessionInspect, pluginhost.HostServiceSessionReady,
 		pluginhost.HostServiceSessionHistoryRead, pluginhost.HostServiceSessionHistorySearch,
 		pluginhost.HostServiceWorkspaceStatus, pluginhost.HostServiceWorkspaceApply,
 		pluginhost.HostServiceWorkspaceDiscard,

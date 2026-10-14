@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
-  requireKernelService,
+  requireKernelService, acquireFileLock, releaseFileLock, FILE_LOCK_SERVICE,
   type AgentTurnInterruptedInput,
   type CapabilityInvokeParams,
   type HostServiceContracts,
@@ -8,6 +8,8 @@ import {
   type KernelHostServiceMethod,
   type RuntimeExecutionContext,
   type RuntimeHost,
+  type RuntimeInitializeParams,
+  type RuntimeLifecycleContext,
   type RuntimePlugin,
   type ToolExecuteParams,
   type ToolExecuteResult,
@@ -18,7 +20,9 @@ const promptCapability = "agent.system_prompt.section";
 const clientCapability = "plugin.client.request";
 const lifecycleCapability = "agent.turn.lifecycle";
 const interruptCapability = "agent.turn.interrupted";
-const taskIndexKey = "tasks.v2";
+const taskIndexKey = "tasks.v3";
+const legacyTaskIndexKey = "tasks.v2";
+const maxTaskIndexBytes = 1 << 20;
 const maxTaskRecords = 128;
 const foregroundAwaitBudgetMS = 10 * 60 * 1000;
 
@@ -32,8 +36,21 @@ type TaskRecord = {
   queue_id?: string;
   state: string;
   suppress_completion?: boolean;
+  legacy?: boolean;
 };
-type TaskIndex = { records: TaskRecord[] };
+type SessionSendResult = HostServiceContracts["host.session.send"]["result"];
+type TaskDispatch = {
+  id: string;
+  signature: string;
+  record: TaskRecord;
+  create?: SessionCreateParams;
+  prompt?: string;
+  settled?: boolean;
+  previous_request_id?: string;
+  cancelled?: boolean;
+  result?: { record: TaskRecord; sent: SessionSendResult };
+};
+type TaskIndex = { records: TaskRecord[]; dispatches: TaskDispatch[] };
 type SpawnArguments = {
   description: string;
   prompt: string;
@@ -54,13 +71,15 @@ const terminalState = (state: string): boolean => ["completed", "failed", "inter
 
 class SubagentPlugin implements RuntimePlugin {
   readonly concurrentCapabilities = [promptCapability, clientCapability];
+  private lifecycleHost!: RuntimeHost;
   private indexQueue: Promise<unknown> = Promise.resolve();
   private transitionQueue: Promise<unknown> = Promise.resolve();
 
-  initialize() {
+  initialize(_params: RuntimeInitializeParams, host: RuntimeHost) {
+    this.lifecycleHost = host;
     const services: KernelHostServiceMethod[] = [
-      "host.session.create", "host.session.send", "host.session.list", "host.session.cancel", "host.session.inspect",
-      "host.storage.get", "host.storage.set", "host.storage.keys", "host.storage.delete",
+      "host.session.create", "host.session.send", "host.session.list", "host.session.cancel", "host.session.inspect", "host.session.ready",
+      "host.storage.get", "host.storage.set", "host.storage.keys",
     ];
     return {
       protocol_version: 3 as const,
@@ -99,7 +118,7 @@ class SubagentPlugin implements RuntimePlugin {
         { id: lifecycleCapability, kind: "observe" as const, version: 1, error_policy: "isolate" as const },
         { id: interruptCapability, kind: "observe" as const, version: 1, error_policy: "isolate" as const },
       ],
-      required_services: services.map(requireKernelService),
+      required_services: [...services.map(requireKernelService), { name: FILE_LOCK_SERVICE, major_version: 1, required: true }],
     };
   }
 
@@ -120,7 +139,7 @@ class SubagentPlugin implements RuntimePlugin {
     const parentSessionID = call.session_id;
     const background = args.run_in_background ?? true;
     const name = args.name?.trim() || deriveTaskName(args.description);
-    const requestID = randomBytes(12).toString("hex");
+    const requestID = dispatchIdentity(call);
     let context: "fresh" | "fork" = "fresh";
     switch (args.context?.trim() ?? "") {
       case "": case "fresh": break;
@@ -130,22 +149,20 @@ class SubagentPlugin implements RuntimePlugin {
     const workspace = args.isolation?.trim() === "worktree" ? "worktree" : "shared";
     if (workspace === "worktree") context = "fork";
     const { record, sent } = await this.withTransition(execution, async () => {
-      const record = await this.createTask(host, {
-        request_id: `create-${requestID}`, name, visibility: "plugin", parent_session_id: parentSessionID,
-        context_source: context, workspace, model_alias: args.model?.trim(), instructions: workerInstructions(args.subagent_type?.trim()),
-      }, {
-        session_id: "", parent_session_id: parentSessionID, parent_turn_id: call.turn_id,
-        name, request_id: `turn-${requestID}`, state: "created",
+      const dispatch = await this.prepareDispatch(host, {
+        id: requestID,
+        signature: dispatchSignature({ name, prompt: args.prompt.trim(), context, workspace, model: args.model?.trim(), type: args.subagent_type?.trim() }),
+        create: {
+          request_id: `create-${requestID}`, name, visibility: "plugin", parent_session_id: parentSessionID,
+          context_source: context, workspace, model_alias: args.model?.trim(), instructions: workerInstructions(args.subagent_type?.trim()),
+        },
+        record: {
+          session_id: "", parent_session_id: parentSessionID, parent_turn_id: call.turn_id,
+          name, request_id: `turn-${requestID}`, state: "created",
+        },
+        prompt: args.prompt.trim(),
       });
-      const sent = await host.call("host.session.send", {
-        request_id: record.request_id, session_id: record.session_id, input: { prompt: args.prompt.trim() },
-        presentation: { kind: "query_bubble", text: `子任务 ${name} 已开始`, name }, cause: "subagent.task",
-      });
-      record.state = sent.state;
-      record.turn_id = sent.turn_id;
-      record.queue_id = sent.queue_id;
-      await this.saveRecord(host, record);
-      return { record, sent };
+      return this.dispatchTask(host, dispatch);
     });
     const identity = { session_id: record.session_id, task_name: name, run_in_background: background };
     if (background) return textResult({ ...identity, state: sent.state, backgrounded: true });
@@ -177,30 +194,142 @@ class SubagentPlugin implements RuntimePlugin {
 
   private async sendMessage(host: RuntimeHost, call: ToolExecuteParams): Promise<ToolExecuteResult> {
     const args = call.arguments as { target: string; message: string };
-    const record = await this.resolveTask(host, call.session_id ?? "", args.target);
-    const previousRequestID = record.request_id;
-    record.request_id = `turn-${randomBytes(12).toString("hex")}`;
-    record.parent_session_id = call.session_id ?? "";
-    record.parent_turn_id = call.turn_id;
-    record.suppress_completion = false;
-    record.state = "created";
-    await this.saveRecord(host, record);
-    const sent = await host.call("host.session.send", {
-      request_id: record.request_id, session_id: record.session_id, input: { prompt: args.message?.trim() ?? "" },
-      presentation: { kind: "query_bubble", text: "父任务已更新要求", name: record.name },
-      cause: "subagent.followup", if_running: "steer",
+    const prompt = args.message?.trim() ?? "";
+    if (!prompt) throw new Error("send_message requires a message");
+    const previous = await this.resolveTask(host, call.session_id ?? "", args.target);
+    const requestID = dispatchIdentity(call);
+    const dispatch = await this.prepareDispatch(host, {
+      id: requestID, signature: dispatchSignature({ session_id: previous.session_id, prompt }), prompt,
+      previous_request_id: previous.request_id,
+      record: {
+        ...previous, request_id: `turn-${requestID}`, parent_session_id: call.session_id ?? "",
+        parent_turn_id: call.turn_id, suppress_completion: false, legacy: undefined, state: "created",
+        turn_id: undefined, queue_id: undefined,
+      },
     });
-    if (sent.steered) record.request_id = previousRequestID;
+    const { record, sent } = await this.dispatchTask(host, dispatch);
+    return textResult({ session_id: record.session_id, state: sent.state, steered: sent.steered ?? false });
+  }
+
+  activate(host: RuntimeHost, lifecycle: RuntimeLifecycleContext): void {
+    // Runtime construction precedes app-server binding. Do not block activation
+    // or acquire the dispatch lock until Session services can accept recovery.
+    void this.recoverDispatches(host, lifecycle).catch((error: unknown) => {
+      if (!lifecycle.signal.aborted) console.error("subagent recovery:", error);
+    });
+  }
+
+  private async recoverDispatches(host: RuntimeHost, lifecycle: RuntimeLifecycleContext): Promise<void> {
+    await host.call("host.session.ready", {}, { signal: lifecycle.signal });
+    const execution = { executionId: "", signal: lifecycle.signal };
+    const ids = await this.withTransition(execution, async () =>
+      (await this.readIndex(host)).dispatches.filter((item) => !item.result && !item.cancelled).map((item) => item.id));
+    for (const id of ids) {
+      lifecycle.signal.throwIfAborted();
+      await this.withTransition(execution, async () => {
+        // A retained generation may have accepted or cancelled this intent
+        // while recovery waited for the cross-process transition lock.
+        const dispatch = (await this.readIndex(host)).dispatches.find((item) => item.id === id);
+        if (!dispatch || dispatch.result || dispatch.cancelled) return;
+        try { await this.dispatchTask(host, dispatch); }
+        catch { /* Preserve uncertain intent for an explicit, same-identity retry. */ }
+      });
+    }
+  }
+
+  private prepareDispatch(host: RuntimeHost, dispatch: TaskDispatch): Promise<TaskDispatch> {
+    return this.withIndex(async () => {
+      const index = await this.readIndex(host);
+      const prior = index.dispatches.find((item) => item.id === dispatch.id);
+      if (prior) {
+        if (prior.signature !== dispatch.signature) throw new Error("subagent tool call identity was reused with different input");
+        if (prior.cancelled) throw new Error("subagent dispatch was cancelled");
+        return prior;
+      }
+      const pending = index.dispatches.find((item) => !item.result && !item.cancelled &&
+        item.record.parent_session_id === dispatch.record.parent_session_id &&
+        (dispatch.create ? item.create && item.signature === dispatch.signature && item.record.parent_turn_id === dispatch.record.parent_turn_id
+          : item.record.session_id === dispatch.record.session_id));
+      if (pending) {
+        if (pending.signature !== dispatch.signature) throw new Error("the previous child dispatch is unconfirmed; retry it before sending a different message");
+        return pending;
+      }
+      // Retain recent replay receipts within both count and byte bounds. Never
+      // evict live/unconfirmed work to admit a new operation.
+      compactDispatches(index);
+      while (index.dispatches.length >= maxTaskRecords || reservedIndexBytes({ ...index, dispatches: [...index.dispatches, dispatch] }) > maxTaskIndexBytes) {
+        const settled = index.dispatches.findIndex((item) => item.cancelled || item.settled);
+        if (settled < 0) throw new Error("subagent dispatch storage capacity is full; shorten this task brief or resolve pending tasks before creating more");
+        index.dispatches.splice(settled, 1);
+      }
+      index.dispatches.push(dispatch);
+      await this.writeIndex(host, index);
+      return dispatch;
+    });
+  }
+
+  private async dispatchTask(host: RuntimeHost, dispatch: TaskDispatch): Promise<{ record: TaskRecord; sent: SessionSendResult }> {
+    if (dispatch.cancelled) throw new Error("subagent dispatch was cancelled");
+    if (dispatch.result) return dispatch.result;
+    if (!dispatch.prompt) throw new Error("subagent dispatch has no recoverable input");
+    const record = dispatch.create
+      ? await this.createTask(host, dispatch.create, { ...dispatch.record }, dispatch.id)
+      : { ...dispatch.record };
+    const sent = await host.call("host.session.send", {
+      request_id: record.request_id, session_id: record.session_id, input: { prompt: dispatch.prompt },
+      presentation: { kind: "query_bubble", text: dispatch.create ? `子任务 ${record.name} 已开始` : "父任务已更新要求", name: record.name },
+      cause: dispatch.create ? "subagent.task" : "subagent.followup",
+      ...(dispatch.create ? {} : { if_running: "steer" as const }),
+    });
+    if (sent.steered) record.request_id = dispatch.previous_request_id ?? record.request_id;
     record.state = sent.state;
     record.turn_id = sent.turn_id;
     record.queue_id = sent.queue_id;
-    await this.saveRecord(host, record);
-    return textResult({ session_id: record.session_id, state: sent.state, steered: sent.steered ?? false });
+    const result = { record, sent };
+    await this.withIndex(async () => {
+      const index = await this.readIndex(host);
+      const current = index.dispatches.find((item) => item.id === dispatch.id);
+      if (!current || current.cancelled) throw new Error("subagent dispatch was cancelled");
+      current.result = result;
+      index.records = index.records.filter((item) => item.session_id !== record.session_id);
+      index.records.push(record);
+      trimIndex(index, maxTaskRecords);
+      await this.writeIndex(host, index);
+    });
+    return result;
+  }
+
+  private cancelDispatches(host: RuntimeHost, matches: (record: TaskRecord) => boolean): Promise<void> {
+    return this.withIndex(async () => {
+      const index = await this.readIndex(host);
+      for (const dispatch of index.dispatches) {
+        if (matches(dispatch.record)) dispatch.cancelled = true;
+      }
+      await this.writeIndex(host, index);
+    });
   }
 
   private async closeAgent(host: RuntimeHost, call: ToolExecuteParams): Promise<ToolExecuteResult> {
     const { target } = call.arguments as { target: string };
-    const record = await this.resolveTask(host, call.session_id ?? "", target);
+    const parentID = call.session_id?.trim() ?? "";
+    const uncreated = await this.withIndex(async () => (await this.readIndex(host)).dispatches.filter((dispatch) =>
+      !dispatch.result && !dispatch.cancelled && !dispatch.record.session_id &&
+      dispatch.record.parent_session_id === parentID && dispatch.record.name === target?.trim()));
+    if (uncreated.length > 0) {
+      if (uncreated.length > 1) throw new Error(`task name ${JSON.stringify(target)} is ambiguous`);
+      const dispatch = uncreated[0];
+      // Recover the idempotent create receipt if the host accepted creation
+      // before its reply was lost. A rejected create has no execution to stop.
+      if (dispatch.create) {
+        try { await this.createTask(host, dispatch.create, { ...dispatch.record }, dispatch.id); }
+        catch {
+          await this.cancelDispatches(host, (task) => task.request_id === dispatch.record.request_id);
+          return textResult({ task_name: dispatch.record.name, cancelled: true });
+        }
+      }
+    }
+    const record = await this.resolveTask(host, parentID, target);
+    await this.cancelDispatches(host, (task) => task.session_id === record.session_id || task.request_id === record.request_id);
     // Persist dismissal before cancellation can produce an interrupted event.
     record.suppress_completion = true;
     await this.saveRecord(host, record);
@@ -208,7 +337,7 @@ class SubagentPlugin implements RuntimePlugin {
     return textResult({ session_id: result.session_id, cancelled: result.cancelled });
   }
 
-  async invokeCapability(call: CapabilityInvokeParams, host: RuntimeHost) {
+  async invokeCapability(call: CapabilityInvokeParams, host: RuntimeHost, execution: RuntimeExecutionContext) {
     switch (call.capability) {
       case promptCapability: return { output: { text: promptSection } };
       case clientCapability: {
@@ -216,8 +345,8 @@ class SubagentPlugin implements RuntimePlugin {
         if (request.method !== "status.list") throw new Error(`unknown client method ${JSON.stringify(request.method)}`);
         return { output: { result: await host.call("host.session.list", request.input ?? {}) } };
       }
-      case lifecycleCapability: await this.onLifecycle(host, call.input as TurnLifecycleInput); break;
-      case interruptCapability: await this.onInterrupted(host, call.input as AgentTurnInterruptedInput); break;
+      case lifecycleCapability: await this.withTransition(execution, () => this.onLifecycle(host, call.input as TurnLifecycleInput)); break;
+      case interruptCapability: await this.withTransition(execution, () => this.onInterrupted(host, call.input as AgentTurnInterruptedInput)); break;
       default: throw new Error(`unknown capability ${JSON.stringify(call.capability)}`);
     }
     return { output: {} };
@@ -225,6 +354,31 @@ class SubagentPlugin implements RuntimePlugin {
 
   private async onLifecycle(host: RuntimeHost, input: TurnLifecycleInput): Promise<void> {
     if (!terminalState(input.state)) return;
+    const pending = await this.withIndex(async () => {
+      const index = await this.readIndex(host);
+      const dispatch = index.dispatches.find((item) => !item.cancelled && !item.settled && item.record.request_id === input.request_id &&
+        (!item.result || input.retryable));
+      if (dispatch && input.retryable) {
+        dispatch.result = undefined;
+        await this.writeIndex(host, index);
+      }
+      return dispatch;
+    });
+    // Settle lost acknowledgements before delivering results. Only the host's
+    // explicit shutdown-discard receipt permits replaying an accepted input.
+    if (pending) {
+      await this.dispatchTask(host, pending);
+      if (input.retryable) return;
+    }
+    // Receipt settlement follows the request, even after a queued follow-up
+    // replaces its visible task record. Do not restore the old delivery route.
+    await this.withIndex(async () => {
+      const index = await this.readIndex(host);
+      for (const dispatch of index.dispatches) {
+        if (dispatch.result?.record.request_id === input.request_id) dispatch.settled = true;
+      }
+      await this.writeIndex(host, index);
+    });
     let record = await this.loadRecord(host, "request_id", input.request_id);
     if (!record) {
       await this.reconcileOwnedSessions(host);
@@ -270,6 +424,7 @@ class SubagentPlugin implements RuntimePlugin {
 
   private async onInterrupted(host: RuntimeHost, input: AgentTurnInterruptedInput): Promise<void> {
     if (!input.thread_id?.trim() || !input.turn_id?.trim()) return;
+    await this.cancelDispatches(host, (task) => task.parent_session_id === input.thread_id && task.parent_turn_id === input.turn_id);
     const listed = await host.call("host.session.list", { parent_session_id: input.thread_id });
     for (const child of listed.sessions ?? []) {
       const record = await this.loadRecord(host, "session_id", child.session_id);
@@ -316,9 +471,15 @@ class SubagentPlugin implements RuntimePlugin {
 
   // Serialize state transitions, leaving foreground waits outside the lock.
   private withTransition<T>(execution: RuntimeExecutionContext, operation: () => Promise<T>): Promise<T> {
-    const next = this.transitionQueue.then(() => {
+    const next = this.transitionQueue.then(async () => {
       execution.signal.throwIfAborted();
-      return operation();
+      const lock = await acquireFileLock(this.lifecycleHost, { root: "workspace_state", path: "subagent/dispatch.lock" }, execution.executionId || undefined);
+      try {
+        execution.signal.throwIfAborted();
+        return await operation();
+      } finally {
+        await releaseFileLock(this.lifecycleHost, lock.lock_id);
+      }
     });
     this.transitionQueue = next.catch(() => undefined);
     return next;
@@ -330,15 +491,20 @@ class SubagentPlugin implements RuntimePlugin {
     return next;
   }
 
-  private createTask(host: RuntimeHost, params: SessionCreateParams, record: TaskRecord): Promise<TaskRecord> {
+  private createTask(host: RuntimeHost, params: SessionCreateParams, record: TaskRecord, dispatchID: string): Promise<TaskRecord> {
     // Creation and reservation share a lock; concurrent requests cannot both
     // consume the last free slot before either record is registered.
     return this.withIndex(async () => {
       const index = await this.readIndex(host);
+      const existing = index.records.find((item) => item.request_id === record.request_id);
+      if (existing) return { ...record, session_id: existing.session_id };
       if (index.records.length >= maxTaskRecords) await this.refreshIndex(host, index);
       trimIndex(index, maxTaskRecords - 1);
       const created = await host.call("host.session.create", params);
       record.session_id = created.session_id;
+      const dispatch = index.dispatches.find((item) => item.id === dispatchID);
+      if (dispatch) dispatch.record.session_id = created.session_id;
+      index.records = index.records.filter((item) => item.session_id !== record.session_id);
       index.records.push(record);
       await this.writeIndex(host, index);
       return record;
@@ -373,13 +539,28 @@ class SubagentPlugin implements RuntimePlugin {
   }
 
   private loadRecord(host: RuntimeHost, key: "session_id" | "request_id", value: string): Promise<TaskRecord | undefined> {
-    return this.withIndex(async () => (await this.readIndex(host)).records.find((record) => record[key] === value.trim()));
+    return this.withIndex(async () => {
+      const current = (await this.readIndex(host)).records.find((record) => record[key] === value.trim());
+      if (current && (!current.legacy || current.suppress_completion)) return current;
+      // Retained baseline tools can still add tasks and settle foreground waits
+      // after v3 migration. Read their correlation without writing their key.
+      const legacy = await host.call("host.storage.get", { scope: "workspace", key: legacyTaskIndexKey });
+      const records = legacy.value === null ? [] : (JSON.parse(legacy.value) as TaskIndex).records ?? [];
+      const record = records.find((item) => item[key] === value.trim());
+      return record ? { ...record, legacy: true } : undefined;
+    });
   }
 
   private deleteRecord(host: RuntimeHost, sessionID: string): Promise<void> {
     return this.withIndex(async () => {
       const index = await this.readIndex(host);
-      index.records = index.records.filter((record) => record.session_id !== sessionID.trim());
+      index.records = index.records.filter((record) => {
+        if (record.session_id !== sessionID.trim()) return true;
+        // Keep a bounded completion tombstone while an old writer still owns
+        // its source record; otherwise a repeated event would import it again.
+        if (record.legacy) { record.suppress_completion = true; return true; }
+        return false;
+      });
       await this.writeIndex(host, index);
     });
   }
@@ -388,7 +569,19 @@ class SubagentPlugin implements RuntimePlugin {
     const result = await host.call("host.storage.get", { scope: "workspace", key: taskIndexKey });
     if (result.value !== null) {
       const index = JSON.parse(result.value) as TaskIndex;
-      return { records: index.records ?? [] };
+      return { records: index.records ?? [], dispatches: index.dispatches ?? [] };
+    }
+    // Retained pre-v3 generations still write tasks.v2. Copy their correlation
+    // records once, but leave their key intact and never share the new ledger.
+    const legacy = await host.call("host.storage.get", { scope: "workspace", key: legacyTaskIndexKey });
+    if (legacy.value !== null) {
+      const old = JSON.parse(legacy.value) as TaskIndex;
+      const index = { records: (old.records ?? []).map((record) => ({ ...record, legacy: true })), dispatches: old.dispatches ?? [] };
+      for (const dispatch of index.dispatches) {
+        if (!/^[a-f0-9]{64}$/.test(dispatch.signature)) dispatch.signature = createHash("sha256").update(dispatch.signature).digest("hex");
+      }
+      await this.writeIndex(host, index);
+      return index;
     }
     const { keys } = await host.call("host.storage.keys", { scope: "workspace" });
     const records: TaskRecord[] = [];
@@ -400,19 +593,45 @@ class SubagentPlugin implements RuntimePlugin {
       const record = JSON.parse(value) as TaskRecord;
       if (!seen.has(record.session_id)) { seen.add(record.session_id); records.push(record); }
     }
-    const index = { records: records.slice(-maxTaskRecords) };
-    // Write the replacement before removing the old keys so an interrupted
-    // migration cannot discard the only durable task correlation.
+    const index: TaskIndex = { records: records.slice(-maxTaskRecords), dispatches: [] };
+    // Older retained generations can still need their original keys.
     await this.writeIndex(host, index);
-    for (const key of keys ?? []) {
-      if (key.startsWith("session.") || key.startsWith("request.")) await host.call("host.storage.delete", { scope: "workspace", key });
-    }
     return index;
   }
 
   private async writeIndex(host: RuntimeHost, index: TaskIndex): Promise<void> {
+    compactDispatches(index);
+    if (reservedIndexBytes(index) > maxTaskIndexBytes) throw new Error("subagent dispatch storage capacity is full; resolve pending tasks before creating more");
     await host.call("host.storage.set", { scope: "workspace", key: taskIndexKey, value: JSON.stringify(index) });
   }
+}
+
+function compactDispatches(index: TaskIndex): void {
+  for (const dispatch of index.dispatches) {
+    if (dispatch.cancelled || dispatch.settled) {
+      // Keep the receipt and fingerprint for replay without retaining task text.
+      dispatch.prompt = undefined;
+      dispatch.create = undefined;
+    }
+  }
+}
+
+function reservedIndexBytes(index: TaskIndex): number {
+  // Reserve record/receipt expansion before creation or send has effects.
+  // Host-generated session/turn/queue identifiers fit within the fixed slack;
+  // Include the outer JSON string escaping used by plugin storage as well as
+  // UTF-8 bytes, so quote-heavy or HTML task briefs cannot bypass admission.
+  return storageStringBytes(JSON.stringify(index)) + index.dispatches.reduce((bytes, dispatch) =>
+    bytes + (!dispatch.result && !dispatch.cancelled ? 2 * storageStringBytes(JSON.stringify(dispatch.record)) + 2048 : 0), 0);
+}
+
+function storageStringBytes(value: string): number {
+  return Buffer.byteLength(JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, (character) =>
+    `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`));
+}
+
+function dispatchSignature(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 function trimIndex(index: TaskIndex, limit: number): void {
@@ -423,6 +642,11 @@ function trimIndex(index: TaskIndex, limit: number): void {
     return true;
   });
   if (excess > 0) throw new Error(`subagent task record capacity (${maxTaskRecords}) is full; unfinished records must be resolved before creating more tasks`);
+}
+
+function dispatchIdentity(call: ToolExecuteParams): string {
+  if (!call.call_id?.trim()) return randomBytes(12).toString("hex");
+  return createHash("sha256").update(`${call.session_id ?? ""}\0${call.turn_id ?? ""}\0${call.call_id}`).digest("hex").slice(0, 24);
 }
 
 function deriveTaskName(description: string): string {

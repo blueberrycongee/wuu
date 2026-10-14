@@ -84,6 +84,17 @@ clipboard content, ordinary held input controls, and wide/default-font and
 narrow/large-font layouts. Results and screenshots are saved to
 `desktop/out/e2e/native-steering/`; set `WUU_STEER_UI_OUTPUT` to override it.
 
+### Subagent dispatch recovery acceptance
+
+Build the core and bundled plugins, then run
+`WUU_E2E_CORE=bin/wuu node scripts/subagent-dispatch-e2e.mjs`.
+It uses the real app-server, plugin hot reload, SQLite and a loopback synthetic
+model to check retained foreground calls, failed dispatches, cold-start recovery
+and repeated restarts. Set `WUU_SUBAGENT_BASELINE_RUNTIME` to an older Subagent
+`runtime.mjs` to exercise a cross-version upgrade. Evidence and binary hashes go
+to `.tmp/e2e/subagent-dispatch/`; `WUU_SUBAGENT_E2E_OUTPUT` overrides that directory.
+It uses no real model credentials and does not validate desktop UI.
+
 ## Choose the relevant checks
 
 | Command | What it checks or builds |

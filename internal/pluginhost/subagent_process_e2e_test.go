@@ -28,6 +28,10 @@ type foregroundRouter struct {
 func (r *foregroundRouter) RouteServiceCall(ctx context.Context, _ string, call pluginhost.ServiceCallParams) (json.RawMessage, *pluginhost.HostServiceError) {
 	var result any = struct{}{}
 	switch call.Service {
+	case pluginhost.KernelSessionReadyService:
+		result = map[string]any{"ready": true}
+	case pluginhost.KernelFileLockService:
+		result = map[string]any{"lock_id": "fixture", "released": true}
 	case pluginhost.KernelStorageGetService:
 		r.mu.Lock()
 		result = pluginhost.StorageGetResult{Value: r.stored}

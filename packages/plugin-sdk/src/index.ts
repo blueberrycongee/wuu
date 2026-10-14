@@ -584,6 +584,7 @@ export const HOST_SERVICE_METHODS = [
   "host.session.list",
   "host.session.cancel",
   "host.session.inspect",
+  "host.session.ready",
   "host.session.control",
   "host.session.history.read",
   "host.session.history.search",
@@ -620,6 +621,7 @@ export const KERNEL_SERVICE_NAMES = {
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
   "host.session.inspect": "host.session.inspect",
+  "host.session.ready": "host.session.ready",
   "host.session.control": "host.session.control",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
@@ -1147,6 +1149,9 @@ export interface HostServiceContracts {
     params: { session_id: string; state?: "active" | "paused" | "released"; revision?: number };
     result: { session_id: string; manager_id?: string; state?: string; revision: number };
   };
+  /** Wait until the live app-server binds Session services. Use asynchronously
+   * after activate with a lifecycle signal; this does not reserve the binding. */
+  "host.session.ready": { params: Record<string, never>; result: { ready: true } };
   "host.session.inspect": {
     params: {
       session_id: string;

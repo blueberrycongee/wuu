@@ -190,6 +190,7 @@ const (
 	HostServiceSessionList          HostServiceMethod = "host.session.list"
 	HostServiceSessionCancel        HostServiceMethod = "host.session.cancel"
 	HostServiceSessionInspect       HostServiceMethod = "host.session.inspect"
+	HostServiceSessionReady         HostServiceMethod = "host.session.ready"
 	HostServiceSessionHistoryRead   HostServiceMethod = "host.session.history.read"
 	HostServiceSessionHistorySearch HostServiceMethod = "host.session.history.search"
 

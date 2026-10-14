@@ -204,6 +204,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.background` | Generation-owned calls to a plugin’s own service |
 | `host.settings.get/list` | Declared setting values |
 | `host.session.create/send/list/inspect/cancel/control` | Create and manage sessions through host lifecycle rules |
+| `host.session.ready` | Wait for the live app-server to bind Session services |
 | `host.session.history.read/search` | Bounded history access with sequence snapshots and continuation cursors |
 | `host.workspace.status/apply/discard` | Inspect or resolve work from an owned session workspace |
 | `execution.update` | Progress for a live execution |
@@ -214,6 +215,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 Most kernel services use method `call`. Storage is not a transaction across keys: use compare-exchange for concurrent updates to one value, check `swapped`, and bound retries. A separate read followed by an unconditional set can lose updates. Missing values are `null`; store structured values as strings, for example JSON.
 
 For session creation, provide a stable `request_id`, `visibility=user|plugin`, and `context_source=fresh|fork|seed`. Sending also needs a stable request ID and `input.prompt`. Admission or queueing is not completion: inspect the turn or handle lifecycle events before consuming its result. Keep model prompts, business state, and retry policy in the plugin; use the host for execution, history, workspace changes, and recovery.
+
+Plugin activation can precede app-server construction. Start recovery asynchronously after `activate` returns, call `host.session.ready` with the lifecycle cancellation signal, and wait for `{ ready: true }` before session operations. Do not hold a state lock while waiting. Readiness does not reserve the binding: operations can still fail if the server subsequently closes. Runtime retirement cancels an outstanding wait.
 
 `host.workspace.status` and `apply` compare tracked files against the commit frozen at workspace creation, including committed, staged, and unstaged changes. `apply` writes the cumulative patch into the parent working tree without committing it, then removes the isolated workspace and rebinds the session. Conflicts, untracked files, or an unavailable baseline fail without discarding the workspace or its binding. Automatic cleanup also preserves committed work and workspaces whose baseline cannot be verified.
 

@@ -33,6 +33,22 @@ When the next step needs the result immediately, the parent can set `run_in_back
 
 Ask the parent to send a correction or cancel a named subtask. The plugin uses `send_message` for follow-up input and `close_agent` for cancellation. Stopping the parent's current reply is not a substitute for explicitly cancelling a child.
 
+The plugin saves a dispatch before starting or updating a child. Replaying the same
+tool call reuses its session and input identity. After a local process restart,
+recovery waits for the host session service before retrying unconfirmed dispatches
+and host-confirmed retryable queued inputs;
+an explicit cancellation is not. A failed follow-up keeps the earlier result
+route intact. If its acceptance is still uncertain, retry that message before
+sending a different one to the same child.
+
+Dispatch changes are serialized across overlapping plugin generations. Upgrades
+copy active task correlations into a separate ledger, so a retained foreground
+call cannot overwrite new recovery records. The ledger keeps up to 128 recent
+settled receipts within a 1 MiB storage budget; completed task briefs are removed
+while replay identities remain. Pending or live dispatches are never evicted to
+admit another task. If storage is full, shorten the new brief or finish/cancel
+pending work before retrying.
+
 Child execution remains subject to the host's session and permission rules. A returned result is still evidence to review, not proof of correctness. Check changed files and tests before integrating it, and do not assume work completed if the runtime was interrupted.
 
 A subagent is a model session, unlike a [background command](../reference/agent-command-system.md), which is a local process, or a [scheduled task](../automation/scheduled-tasks.md), which dispatches work later.

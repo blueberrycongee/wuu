@@ -224,6 +224,8 @@ await scenario("bundled subagent foreground overlap and stale-result protection"
     if (frame.method !== "host.service.call") return;
     const {service,params} = frame.params;
     switch(service) {
+      case "host.session.ready": p.reply(frame,{ready:true}); break;
+      case "host.file-lock": p.reply(frame,{lock_id:"fixture",released:true}); break;
       case "host.storage.get": p.reply(frame,{value:stored}); break;
       case "host.storage.keys": p.reply(frame,{keys:[]}); break;
       case "host.storage.set": stored = params.value; p.reply(frame); break;

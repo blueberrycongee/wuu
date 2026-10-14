@@ -35,9 +35,12 @@ type PluginSessionRouter struct {
 	workspaceApply   PluginWorkspaceApplyHandler
 	workspaceDiscard PluginWorkspaceDiscardHandler
 	binding          uint64
+	changed          chan struct{}
 }
 
-func NewPluginSessionRouter() *PluginSessionRouter { return &PluginSessionRouter{} }
+func NewPluginSessionRouter() *PluginSessionRouter {
+	return &PluginSessionRouter{changed: make(chan struct{})}
+}
 
 // Bind replaces the live handler and returns an idempotent unbind closure.
 // The closure only clears the handler it installed, so closing an older server
@@ -67,6 +70,7 @@ func (r *PluginSessionRouter) BindExtended(create PluginSessionCreateHandler, se
 	r.workspaceStatus = workspaceStatus
 	r.workspaceApply = workspaceApply
 	r.workspaceDiscard = workspaceDiscard
+	r.notifyBindingChanged()
 	r.mu.Unlock()
 	var once sync.Once
 	return func() {
@@ -82,10 +86,48 @@ func (r *PluginSessionRouter) BindExtended(create PluginSessionCreateHandler, se
 				r.workspaceStatus = nil
 				r.workspaceApply = nil
 				r.workspaceDiscard = nil
+				r.notifyBindingChanged()
 			}
 			r.mu.Unlock()
 		})
 	}
+}
+
+// WaitReady waits for the live Session surface after runtime construction. It
+// observes binding rather than retrying any effectful session operation. A
+// successful wait is not a lease: callers still handle a later server closure.
+func (r *PluginSessionRouter) WaitReady(ctx context.Context) error {
+	if r == nil {
+		return errors.New("session service is unavailable")
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		r.mu.Lock()
+		ready := r.create != nil && r.send != nil && r.list != nil && r.cancel != nil && r.inspect != nil
+		if r.changed == nil {
+			r.changed = make(chan struct{})
+		}
+		changed := r.changed
+		r.mu.Unlock()
+		if ready {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-changed:
+		}
+	}
+}
+
+// Caller holds r.mu. Replace the channel so rebinding wakes every waiter.
+func (r *PluginSessionRouter) notifyBindingChanged() {
+	if r.changed != nil {
+		close(r.changed)
+	}
+	r.changed = make(chan struct{})
 }
 
 func (r *PluginSessionRouter) Control(ctx context.Context, pluginID string, params pluginhost.SessionControlParams) (pluginhost.SessionControlResult, error) {
