@@ -136,6 +136,16 @@ the same self-started fixture server across both themes, 1000/420px windows and
 15/20px text. Measurements and screenshots go to `desktop/out/stream-code-cursor/`
 (`WUU_CODE_CURSOR_OUTPUT` overrides this).
 
+For artifact evidence export without a display, run
+`WUU_ARTIFACT_E2E_ONLY=evidence node desktop/scripts/artifact-preview-e2e.cjs`.
+It exercises production turn grouping, streaming copies, integrity checks and
+archive writing against synthetic managed snapshots, then extracts the archive
+with Python. It covers missing/changed files, copy-time changes, cancellation,
+atomic replacement and cleanup. Results and the roundtrip archive go to
+`desktop/out/artifact-preview-e2e/` (`WUU_ARTIFACT_OUTPUT` overrides it).
+This mode does not validate the native file menu, save picker or rendered UI;
+the ordinary artifact and session-message Electron drivers cover those paths.
+
 ### Live activity preview acceptance
 
 Run `node desktop/scripts/activity-preview-e2e.cjs` after installing desktop dependencies. It bundles the production Electron preview shell and browser/native content adapters, opens isolated browser pages, and starts a synthetic native-frame subprocess over the real JSONL transport. It verifies stable window identity and geometry across provider changes, frame acknowledgement, stale callback rejection, capture-error presentation, sticky hide and explicit reopen, automatic-preview preference, task-control dispatch, and teardown. Results, transport logs, and rendered screenshots are saved under `desktop/out/activity-preview/`; `WUU_ACTIVITY_PREVIEW_OUTPUT` selects another directory. Headless Linux uses software rendering and a synthetic display automatically.

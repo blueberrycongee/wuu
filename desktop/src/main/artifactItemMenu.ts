@@ -1,6 +1,7 @@
-import { Menu, nativeImage, shell, type BrowserWindow, type MenuItemConstructorOptions } from "electron";
+import { dialog, Menu, nativeImage, shell, type BrowserWindow, type MenuItemConstructorOptions } from "electron";
 import type { ArtifactItemMenuParams, ArtifactItemMenuResult } from "../shared/protocol";
 import { artifactMenuFile, canOpenArtifactExternally, exportArtifactCopy } from "./artifactExternalFile";
+import { exportArtifactEvidence, type ArtifactEvidenceGroup } from "./artifactEvidence";
 import { mainTranslate } from "./i18n";
 import { macWorkspaceApplications, openMacWorkspaceItemWithApplication, type MacWorkspaceApplication } from "./macWorkspaceApplications";
 
@@ -9,6 +10,7 @@ export async function showArtifactItemMenu(
   input: ArtifactItemMenuParams,
   wuuHome: string,
   isCurrentSource: () => boolean,
+  evidence: ArtifactEvidenceGroup,
 ): Promise<ArtifactItemMenuResult> {
   const artifact = await artifactMenuFile(input, wuuHome);
   const openable = process.platform === "darwin" && await canOpenArtifactExternally(artifact.filePath);
@@ -62,6 +64,24 @@ export async function showArtifactItemMenu(
     template.push({
       label: mainTranslate("saveArtifactAs"),
       click: choose(async () => ({ action: "save" })),
+    }, {
+      label: mainTranslate("exportTurnArtifacts"),
+      click: choose(async () => {
+        const result = await dialog.showSaveDialog(owner, {
+          defaultPath: "wuu-evidence.tar.gz",
+          filters: [{ name: mainTranslate("artifactEvidenceArchive"), extensions: ["tar.gz"] }],
+          message: mainTranslate("artifactEvidenceDescription", { count: String(evidence.artifacts.length) }),
+        });
+        if (result.canceled || !result.filePath || !isCurrentSource()) return { action: "none" };
+        owner.setProgressBar(0);
+        try {
+          await exportArtifactEvidence(evidence, wuuHome, result.filePath, isCurrentSource,
+            fraction => { if (!owner.isDestroyed()) owner.setProgressBar(fraction); });
+        } finally {
+          if (!owner.isDestroyed()) owner.setProgressBar(-1);
+        }
+        return { action: "none" };
+      }),
     }, {
       label: mainTranslate(process.platform === "darwin" ? "showInFinder" : process.platform === "win32" ? "showInExplorer" : "showInFileManager"),
       click: choose(async () => {

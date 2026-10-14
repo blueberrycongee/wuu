@@ -547,7 +547,7 @@ function useArtifactFileActions(cwd?: string, sourceThreadID?: string): {
     if (nativeArtifactActionsAvailable(artifact, threadID)) {
       nativeArtifactMenuPending = true;
       setMenu(undefined);
-      void window.wuu!.showArtifactItemMenu!({ uri: artifact.uri!, threadId: threadID! })
+      void window.wuu!.showArtifactItemMenu!({ uri: artifact.uri!, threadId: threadID!, itemId: artifact.itemId || undefined })
         .then(async result => {
           if (result.action === "save") await downloadArtifact(artifact.name, artifact.uri!);
         })

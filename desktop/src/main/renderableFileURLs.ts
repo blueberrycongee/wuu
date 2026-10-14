@@ -40,6 +40,15 @@ export function filePathFromRenderableURL(rawURL: string): string | undefined {
 export interface ManagedArtifactFile {
   filePath: string;
   sha256: string;
+  sizeBytes: number;
+  provenance: {
+    artifact_id: string;
+    name: string;
+    plugin_id?: string;
+    execution_id?: string;
+    tool_call_id?: string;
+    mime_type?: string;
+  };
 }
 
 const verifiedArtifactFiles = new Map<string, string>();
@@ -106,13 +115,25 @@ export function managedArtifactFileFromURL(rawURL: string, wuuHome: string): Man
     ) {
       return undefined;
     }
-    return { filePath: realFilePath, sha256: digests[0] };
+    return {
+      filePath: realFilePath, sha256: digests[0], sizeBytes: fileInfo.size,
+      // Only portable host identity is exportable. Never expose source paths,
+      // arbitrary plugin metadata, conversation contents or configuration.
+      provenance: {
+        artifact_id: artifactID, name,
+        plugin_id: portableIdentity(manifest.plugin_id),
+        execution_id: portableIdentity(manifest.execution_id),
+        tool_call_id: portableIdentity(manifest.call_id),
+        mime_type: typeof manifest.mime_type === "string" && /^[\w.+-]+\/[\w.+-]+$/.test(manifest.mime_type.split(";", 1)[0])
+          ? manifest.mime_type.split(";", 1)[0] : undefined,
+      },
+    };
   } catch {
     return undefined;
   }
 }
 
-export async function verifyManagedArtifactFile(artifact: ManagedArtifactFile): Promise<boolean> {
+export async function verifyManagedArtifactFile(artifact: Pick<ManagedArtifactFile, "filePath" | "sha256">): Promise<boolean> {
   try {
     const info = statSync(artifact.filePath);
     const cacheKey = `${artifact.filePath}\0${info.size}\0${info.mtimeMs}\0${info.ctimeMs}`;
@@ -131,6 +152,10 @@ export async function verifyManagedArtifactFile(artifact: ManagedArtifactFile): 
   } catch {
     return false;
   }
+}
+
+function portableIdentity(value: unknown): string | undefined {
+  return typeof value === "string" && /^[a-zA-Z0-9_.:@+-]{1,256}$/.test(value) ? value : undefined;
 }
 
 function safeArtifactSegment(value: string): boolean {

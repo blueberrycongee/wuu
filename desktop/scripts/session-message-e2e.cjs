@@ -103,6 +103,7 @@ Menu.prototype.popup = function (options) {
 dialog.showSaveDialog = async (_parent, options) => {
   assert.ok(requestedDownload, 'Only an explicitly tested artifact download may open a picker');
   assert.equal(options.defaultPath, requestedDownload.name);
+  if (requestedDownload.canceled) return { canceled: true };
   const filePath = path.join(fixture, 'saved-' + requestedDownload.name);
   savedDownloads.push({ name: requestedDownload.name, filePath });
   return { canceled: false, filePath };
@@ -378,6 +379,48 @@ async function saveZipFromNativeMenu(selector, mouseButton, previewExpected) {
   // A fresh destination makes the next independent save completion observable.
   fs.unlinkSync(savedPath);
   return nativeMenus[menuCount];
+}
+
+async function exportTurnFromNativeMenu(canceled = false) {
+  await openArtifactScene(7);
+  const menuOffset = rpc.length, menuCount = nativeMenus.length;
+  expectedNativeMenu = true;
+  requestedDownload = { name: 'wuu-evidence.tar.gz', canceled };
+  await click(`${artifactCard(7)} .turn-edit-summary-row`, 0.5, 'right');
+  await hostUntil(() => nativeMenus.length === menuCount + 1 && nativeMenus[menuCount].shown, 'actual evidence export menu shown');
+  assert.equal(nativeMenus[menuCount].labels[1], 'Export turn artifacts…');
+  const selected = spawnSync('xdotool', ['key', '--clearmodifiers', 'Home', 'Down', 'Return'], { encoding: 'utf8', timeout: 5000 });
+  assert.equal(selected.status, 0, selected.stderr || String(selected.error));
+  await hostUntil(() => nativeMenus[menuCount].closed && rpc.slice(menuOffset).some(entry =>
+    entry.channel === 'wuu:artifact-show-menu' && entry.completed && entry.result?.action === 'none'), 'native evidence export completed');
+  const saved = path.join(fixture, 'saved-wuu-evidence.tar.gz');
+  if (canceled) {
+    assert.equal(fs.existsSync(saved), false, 'Cancel must not create an archive');
+  } else {
+    assert.ok(fs.existsSync(saved));
+    const inspected = spawnSync('python3', ['-c', `
+import hashlib,json,sys,tarfile
+with tarfile.open(sys.argv[1]) as archive:
+    manifest=json.load(archive.extractfile('evidence.json'))
+    for item in manifest['artifacts']:
+        data=archive.extractfile(item['path']).read()
+        assert hashlib.sha256(data).hexdigest()==item['sha256']
+        assert len(data)==item['size_bytes']
+    print(json.dumps(manifest))
+`, saved], { encoding: 'utf8' });
+    assert.equal(inspected.status, 0, inspected.stderr);
+    const manifest = JSON.parse(inspected.stdout);
+    assert.equal(manifest.thread_id, 'peer-files-multiple');
+    assert.deepEqual(manifest.artifacts.map(item => item.name), files.slice(2).map(file => file.name));
+    assert.deepEqual(manifest.artifacts.map(item => item.sha256), files.slice(2).map(file => createHash('sha256').update(file.bytes).digest('hex')));
+    assert.ok(rpc.slice(menuOffset).some(entry => entry.artifact?.itemId), 'Exact source item reaches the host for forwarded snapshots');
+    fs.copyFileSync(saved, path.join(output, 'native-turn-evidence.tar.gz'));
+    fs.writeFileSync(path.join(output, 'native-turn-evidence.json'), JSON.stringify(manifest, null, 2));
+    fs.unlinkSync(saved);
+  }
+  requestedDownload = undefined;
+  expectedNativeMenu = false;
+  pass(canceled ? 'Canceling native evidence export writes no archive' : 'Native artifact menu exports all eight owning-turn snapshots with matching hashes');
 }
 
 async function capture(name) {
@@ -690,6 +733,8 @@ db.commit()
     }
   }
   pass('Eight files reveal in batches of three without a title row, retaining order and total/remaining counts');
+  await exportTurnFromNativeMenu();
+  await exportTurnFromNativeMenu(true);
 
   await openArtifactScene(5);
   assert.equal(process.platform, 'linux', 'Native menu acceptance runs on the supported Linux Xvfb worker');

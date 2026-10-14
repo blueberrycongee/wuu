@@ -101,7 +101,8 @@
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
-    "unified": "^11.0.5"
+    "unified": "^11.0.5",
+    "tar": "^7.5.19"
   },
   "build": {
     "appId": "com.blueberrycongee.wuu",

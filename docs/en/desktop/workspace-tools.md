@@ -53,6 +53,34 @@ When a live turn finishes successfully with exactly one delivered file, desktop 
 
 Automatic previews leave an occupied panel and foreground browser alone. Using the panel during the turn, opening an overlay, or switching to a narrow window suppresses automatic opening for that turn. Navigation cancels pending preview checks, and closing a preview does not reopen it on later updates. Downloads always require an explicit action.
 
+### Export a turn’s artifacts
+
+On desktop, right-click a file output card or open its **File actions** menu and
+choose **Export turn artifacts…**. Choose where to save the `.tar.gz` archive.
+The export includes the immutable tool-output snapshots recorded in that turn
+when the menu opened, including screenshots and recordings. It excludes user
+attachments, other turns, remote links, and conversation text. The desktop’s
+Dock/taskbar progress indicator tracks preparation; closing or reloading
+the source window cancels an unfinished export.
+
+The archive contains `evidence.json` and one directory per file under `artifacts/`.
+Duplicate names are kept separate. The version 1 manifest identifies its format
+as `wuu-artifact-evidence` and records the export time, source conversation and
+turn, recorded turn status, and each file’s relative archive path, original name,
+size and SHA-256 checksum. Available host-recorded artifact, execution, tool-call
+and extension identifiers accompany each file. Local source paths, arbitrary
+extension metadata and configuration are omitted. Review file contents before
+sharing the archive.
+
+Extract the archive with an ordinary archive tool and compare each file’s SHA-256
+with its manifest entry. These checksums establish byte integrity; they do not
+prove test success, an approved review, a tested commit, or the authenticity of a
+manifest supplied by someone else. An in-progress turn can have more outputs
+later. Limits are 128 files, 256 MiB per file and 512 MiB in total. A missing or
+changed snapshot fails the whole export. Cancellation or failure leaves an
+existing destination unchanged; a successful export replaces it only after the
+complete archive is ready.
+
 For agents and integrations, the built-in `present_artifact` tool accepts an existing local file:
 
 ```json

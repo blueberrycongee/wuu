@@ -4,7 +4,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createHash } = require("node:crypto");
-const { app, BrowserWindow } = require("electron");
+const evidenceOnly = process.env.WUU_ARTIFACT_E2E_ONLY === "evidence";
+const { app, BrowserWindow } = evidenceOnly ? {} : require("electron");
 const { buildSync } = require("esbuild");
 
 const desktopRoot = path.resolve(__dirname, "..");
@@ -12,15 +13,15 @@ const output = path.resolve(process.env.WUU_ARTIFACT_OUTPUT || path.join(desktop
 const inspectionOnly = process.env.WUU_ARTIFACT_E2E_ONLY === "inspection";
 fs.mkdirSync(output, { recursive: true });
 const profile = fs.mkdtempSync(path.join(output, "profile-"));
-app.setPath("userData", profile);
+if (!evidenceOnly) app.setPath("userData", profile);
 process.env.WUU_STREAM_E2E_CWD = output;
 const protocolModule = path.join(output, "protocol.cjs");
 buildSync({
   entryPoints: [path.join(desktopRoot, "src/main/renderableFileProtocol.ts")],
   outfile: protocolModule, bundle: true, platform: "node", format: "cjs", external: ["electron"],
 });
-const { registerRenderableFileScheme, registerRenderableFileProtocol } = require(protocolModule);
-registerRenderableFileScheme();
+const { registerRenderableFileScheme, registerRenderableFileProtocol } = evidenceOnly ? {} : require(protocolModule);
+if (!evidenceOnly) registerRenderableFileScheme();
 
 const threadID = "thread-immediate-title-e2e";
 const html = "<!doctype html><style>body{font:18px system-ui;padding:24px}p{line-height:1.6}</style><h1>Delivered report</h1>"
@@ -44,7 +45,10 @@ function delivery(index) {
   fs.writeFileSync(path.join(directory, fixture.name), fixture.bytes);
   fs.writeFileSync(path.join(directory, ".artifact.json"), JSON.stringify({
     version: 1, id, thread_id: threadID, plugin_id: "fixture", name: fixture.name,
-    sha256, size: Buffer.byteLength(fixture.bytes),
+    sha256, size: Buffer.byteLength(fixture.bytes), mime_type: fixture.mime,
+    execution_id: `execution-${index}`, call_id: `deliver-${index}`,
+    source_name: "/private/source/not-exportable", arbitrary_private_metadata: "not-exportable",
+
   }));
   return {
     id: `deliver-${index}`, type: "tool_call", name: "present_artifact", status: "completed",
@@ -88,7 +92,133 @@ async function complete(win, index) {
   return turn;
 }
 
-app.whenReady().then(async () => {
+// File-system acceptance uses the production grouping, copy/hash and archive
+// implementation. Its evidence-only mode runs without Electron or a display;
+// it is not native-menu or rendered-UI acceptance.
+async function checkEvidenceExport() {
+  const modulePath = path.join(output, "evidence.cjs");
+  buildSync({ entryPoints: [path.join(desktopRoot, "src/main/artifactEvidence.ts")],
+    outfile: modulePath, bundle: true, platform: "node", format: "cjs" });
+  const { artifactEvidenceGroup, exportArtifactEvidence } = require(modulePath);
+  const first = delivery(0), second = delivery(1), previous = delivery(2);
+  const input = { uri: first.result_detail.content[0].uri, threadId: threadID };
+  const turn = { id: "evidence-turn", status: "completed", items: [
+    { id: "user", type: "user_message", files: [{ uri: previous.result_detail.content[0].uri }] },
+    first, second, first,
+    { id: "other-sources", type: "tool_call", result_detail: { content: [
+      { type: "file", uri: "https://example.invalid/private-output" },
+      { type: "text", uri: previous.result_detail.content[0].uri },
+      { type: "file", uri: previous.result_detail.content[0].uri, remote_ref: "deferred" },
+    ] } },
+  ] };
+  const thread = { id: threadID, turns: [{ id: "previous", items: [previous] }, turn] };
+  const group = artifactEvidenceGroup(thread, input);
+  assert.equal(group.artifacts.length, 2, "Only unique immutable tool outputs from the owning turn belong in the bundle");
+  const forwarded = { id: "forwarded-turn", status: "completed", items: [{ ...first, id: "forwarded-output" }] };
+  const repeated = { ...thread, turns: [...thread.turns, forwarded] };
+  assert.throws(() => artifactEvidenceGroup(repeated, input), "Repeated snapshots require an exact source item");
+  assert.equal(artifactEvidenceGroup(repeated, { ...input, itemId: "forwarded-output" }).turnID, "forwarded-turn");
+  assert.throws(() => artifactEvidenceGroup({ ...thread, id: "other" }, input));
+  const archive = path.join(output, "evidence-roundtrip.tar.gz");
+  const progress = [];
+  assert.equal(await exportArtifactEvidence(group, profile, archive, () => true, value => progress.push(value)), true);
+  assert.equal(progress.at(-1), 1);
+  assert.ok(progress.every((value, index) => value >= (progress[index - 1] ?? 0) && value <= 1));
+  const { spawnSync } = require("node:child_process");
+  const extracted = path.join(output, "evidence-roundtrip");
+  fs.mkdirSync(extracted, { recursive: true });
+  const extraction = spawnSync("python3", ["-c", `
+import json, pathlib, sys, tarfile
+with tarfile.open(sys.argv[1]) as archive:
+    for entry in archive:
+        assert not entry.issym() and not entry.islnk()
+        assert not pathlib.PurePosixPath(entry.name).is_absolute()
+        assert '..' not in pathlib.PurePosixPath(entry.name).parts
+        assert entry.uid == 0 and entry.gid == 0
+    archive.extractall(sys.argv[2], filter='data')
+`, archive, extracted], { encoding: "utf8" });
+  assert.equal(extraction.status, 0, extraction.stderr);
+  const manifest = JSON.parse(fs.readFileSync(path.join(extracted, "evidence.json"), "utf8"));
+  assert.equal(manifest.format, "wuu-artifact-evidence");
+  assert.equal(manifest.version, 1);
+  assert.equal(manifest.thread_id, threadID);
+  assert.equal(manifest.turn_id, turn.id);
+  assert.equal(manifest.artifacts.length, 2);
+  assert.ok(!JSON.stringify(manifest).includes("not-exportable"));
+  assert.ok(!JSON.stringify(manifest).includes(profile));
+  for (const [index, artifact] of manifest.artifacts.entries()) {
+    const bytes = fs.readFileSync(path.join(extracted, artifact.path));
+    assert.deepEqual(bytes, Buffer.from(fixtures[index].bytes));
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), artifact.sha256);
+    assert.equal(bytes.length, artifact.size_bytes);
+    assert.equal(artifact.execution_id, `execution-${index}`);
+    assert.equal(artifact.tool_call_id, `deliver-${index}`);
+  }
+  const original = fs.readFileSync(archive);
+  const secondPath = path.join(profile, "workspaces/fixture/sessions", threadID, "artifacts", "2".padStart(32, "0"), fixtures[1].name);
+  const originalSecond = fs.readFileSync(secondPath);
+  for (const failure of ["tampered", "missing", "changed-during-copy", "deleted-during-copy", "navigation"]) {
+    let current = true, changed = false;
+    if (failure === "tampered") fs.writeFileSync(secondPath, Buffer.alloc(originalSecond.length, 33));
+    if (failure === "missing") fs.unlinkSync(secondPath);
+    await assert.rejects(exportArtifactEvidence(group, profile, archive, () => current, () => {
+      if (changed) return;
+      changed = true;
+      if (failure === "changed-during-copy") fs.writeFileSync(secondPath, Buffer.alloc(originalSecond.length, 42));
+      if (failure === "deleted-during-copy") fs.unlinkSync(secondPath);
+      if (failure === "navigation") current = false;
+    }).then(result => { if (result === false) throw new Error("Source navigation canceled export"); }));
+    assert.deepEqual(fs.readFileSync(archive), original, "Failure must preserve the previously saved archive");
+    fs.writeFileSync(secondPath, originalSecond);
+    assert.equal(fs.readdirSync(output).some(name => name.startsWith(".wuu-evidence-")), false, "Failed export must remove staging files");
+  }
+  assert.equal(await exportArtifactEvidence(group, profile, archive, () => false, () => {}), false);
+  await assert.rejects(exportArtifactEvidence({ ...group, artifacts: Array(129).fill(input) }, profile, archive, () => true, () => {}));
+  assert.deepEqual(fs.readFileSync(archive), original);
+  const secondManifest = path.join(path.dirname(secondPath), ".artifact.json");
+  const manifestBytes = fs.readFileSync(secondManifest);
+  try {
+    const oversized = JSON.parse(manifestBytes);
+    oversized.size = 256 * 1024 * 1024 + 1;
+    fs.truncateSync(secondPath, oversized.size);
+    fs.writeFileSync(secondManifest, JSON.stringify(oversized));
+    await assert.rejects(exportArtifactEvidence(group, profile, archive, () => true, () => {}), /size limit/);
+  } finally {
+    fs.writeFileSync(secondPath, originalSecond);
+    fs.writeFileSync(secondManifest, manifestBytes);
+  }
+  assert.deepEqual(fs.readFileSync(archive), original);
+  const portableItems = ["CON.txt", "notes.txt", "notes.txt", "report:review?.txt"].map(name => {
+    const index = fixtures.length;
+    fixtures.push({ name, mime: "text/plain", bytes: `Evidence ${index}\n` });
+    return delivery(index);
+  });
+  const portableInput = { uri: portableItems[0].result_detail.content[0].uri, threadId: threadID };
+  const portableGroup = artifactEvidenceGroup({ id: threadID, turns: [{ id: "portable", status: "completed", items: portableItems }] }, portableInput);
+  const portableArchive = path.join(output, "evidence-portable-names.tar.gz");
+  assert.equal(await exportArtifactEvidence(portableGroup, profile, portableArchive, () => true, () => {}), true);
+  const portable = spawnSync("python3", ["-c", `
+import json,sys,tarfile
+with tarfile.open(sys.argv[1]) as archive:
+    manifest=json.load(archive.extractfile('evidence.json'))
+    paths=[item['path'] for item in manifest['artifacts']]
+    assert len(set(paths)) == 4
+    assert all(':' not in name and '?' not in name for name in paths)
+    assert paths[0].endswith('/artifact-CON.txt')
+    assert manifest['artifacts'][1]['name'] == manifest['artifacts'][2]['name'] == 'notes.txt'
+    assert archive.extractfile(paths[1]).read() != archive.extractfile(paths[2]).read()
+`, portableArchive], { encoding: "utf8" });
+  assert.equal(portable.status, 0, portable.stderr);
+  const evidence = { boundary: "Production artifact grouping, verified streaming copy and archive creation; independent Python extraction. Synthetic persisted manifests. No renderer or native save picker is exercised in evidence-only mode.",
+    files: manifest.artifacts.length, checks: ["owning-turn membership", "forwarded-snapshot source identity", "input/previous-turn/remote exclusion", "deduplication", "portable archive paths and duplicate names", "private metadata exclusion", "checksum roundtrip", "tampered and missing snapshot rejection", "copy-time mutation/deletion rejection", "source navigation cancellation", "atomic replacement preservation", "temporary cleanup", "count and per-file size limits"], archive: path.basename(archive) };
+  fs.writeFileSync(path.join(output, "evidence-export-results.json"), JSON.stringify(evidence, null, 2) + "\n");
+  console.log("Artifact evidence export passed: " + evidence.checks.join(", "));
+}
+
+if (evidenceOnly) {
+  checkEvidenceExport().catch(error => { console.error(error); process.exitCode = 1; });
+} else app.whenReady().then(async () => {
+  if (!inspectionOnly) await checkEvidenceExport();
   registerRenderableFileProtocol(profile);
   const win = new BrowserWindow({ width: 1440, height: 900, show: false,
     titleBarStyle: 'hiddenInset', webPreferences: {

@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Export a turn’s managed artifacts from their desktop file menu as a portable
+  evidence archive, with verified snapshot bytes, source identifiers and SHA-256
+  checksums. Missing or changed files fail the export without replacing an existing
+  destination; conversation text and local source paths are excluded.
+
 - iOS and Android render Mermaid diagrams offline as replies stream, preserve the
   last valid diagram during partial syntax, and expose source and copy actions.
 

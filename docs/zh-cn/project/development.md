@@ -73,6 +73,14 @@ make build-go
 以及宽窗口默认字号和窄窗口大字号布局。结果和截图保存在
 `desktop/out/e2e/native-steering/`；可用 `WUU_STEER_UI_OUTPUT` 更改目录。
 
+无需图形显示时，可运行
+`WUU_ARTIFACT_E2E_ONLY=evidence node desktop/scripts/artifact-preview-e2e.cjs`
+验收产物证据导出。脚本对合成托管快照运行生产代码中的轮次分组、流式复制、完整性校验
+和归档写入，再用 Python 独立解压；覆盖文件缺失或变化、复制期间变化、取消、原子替换和清理。
+结果及往返验证压缩包保存在 `desktop/out/artifact-preview-e2e/`，可用 `WUU_ARTIFACT_OUTPUT`
+覆盖目录。该模式不验收原生文件菜单、保存对话框或实际渲染；普通产物与会话消息 Electron
+验收脚本覆盖这些路径。
+
 ### 实时活动预览验收
 
 安装桌面依赖后，运行 `node desktop/scripts/activity-preview-e2e.cjs`。脚本会打包产品中的 Electron 预览窗口与浏览器/原生内容适配器，打开独立的合成网页，并通过真实 JSONL 传输启动合成原生画面子进程。它检查切换提供方时的窗口身份和几何保持、画面确认、旧回调拒绝、捕获错误呈现、手动隐藏与重新打开、自动预览设置、任务控制派发以及关闭清理。结果、传输日志与渲染截图保存在 `desktop/out/activity-preview/`；可用 `WUU_ACTIVITY_PREVIEW_OUTPUT` 修改目录。无图形会话的 Linux 自动使用软件渲染和合成显示器。

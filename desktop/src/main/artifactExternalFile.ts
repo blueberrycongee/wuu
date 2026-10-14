@@ -17,6 +17,7 @@ const EXTERNAL_DOCUMENT_EXTENSIONS = new Set([
 export async function artifactMenuFile(
   input: ArtifactItemMenuParams,
   wuuHome: string,
+  maximumBytes = Infinity,
 ): Promise<ManagedArtifactFile> {
   if (!input || typeof input.uri !== "string" || typeof input.threadId !== "string" || !input.threadId) {
     throw new Error("Invalid artifact reference");
@@ -26,6 +27,7 @@ export async function artifactMenuFile(
     throw new Error("Artifact does not belong to the source conversation");
   }
   const artifact = managedArtifactFileFromURL(input.uri, wuuHome);
+  if (artifact && artifact.sizeBytes > maximumBytes) throw new Error("Artifact exceeds the evidence export size limit");
   if (!artifact || !await verifyManagedArtifactFile(artifact)) {
     throw new Error("Artifact is unavailable or has changed");
   }

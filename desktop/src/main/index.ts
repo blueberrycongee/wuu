@@ -2,6 +2,7 @@ import { AppContextCapture } from "./appContextCapture";
 import { createBrowserView } from "./browserView";
 import { saveArtifactFile } from "./artifactSave";
 import { showArtifactItemMenu } from "./artifactItemMenu";
+import { artifactEvidenceGroup } from "./artifactEvidence";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
@@ -1806,7 +1807,8 @@ app.whenReady().then(async () => {
     if (!parent || parent.isDestroyed() || !sourceFrame || sourceFrame !== event.sender.mainFrame) {
       throw new Error("Artifact window is no longer available");
     }
-    if (!input || typeof input.threadId !== "string" || !input.threadId || typeof input.uri !== "string") {
+    if (!input || typeof input.threadId !== "string" || !input.threadId || typeof input.uri !== "string"
+      || (input.itemId !== undefined && typeof input.itemId !== "string")) {
       throw new Error("Invalid artifact reference");
     }
     let navigated = false;
@@ -1826,17 +1828,8 @@ app.whenReady().then(async () => {
         { session_id: input.threadId, response_only: true },
       );
       if (!isCurrentSource()) return { action: "none" };
-      const belongsToThread = thread.id === input.threadId && thread.turns.some(turn => turn.items.some(item =>
-        item.type === "tool_call" && item.result_detail?.content?.some(part => {
-          if (part.type === "text" || part.remote_ref) return false;
-          const resource = part.resource !== null && typeof part.resource === "object" && !Array.isArray(part.resource)
-            ? part.resource as Record<string, unknown> : undefined;
-          const uri = typeof part.uri === "string" && part.uri.trim() ? part.uri : resource?.uri;
-          return typeof uri === "string" && uri.trim() === input.uri;
-        }),
-      ));
-      if (!belongsToThread) throw new Error("Artifact is not available in the source conversation");
-      return await showArtifactItemMenu(parent, input, wuuHomePath(), isCurrentSource);
+      const evidence = artifactEvidenceGroup(thread, input);
+      return await showArtifactItemMenu(parent, input, wuuHomePath(), isCurrentSource, evidence);
     } finally {
       event.sender.removeListener("did-start-navigation", onNavigation);
       event.sender.removeListener("render-process-gone", onProcessGone);

@@ -122,6 +122,7 @@ export type WorkspaceItemMenuResult = {
 export type ArtifactItemMenuParams = {
   uri: string;
   threadId: string;
+  itemId?: string;
 };
 
 export type ArtifactItemMenuResult = {
