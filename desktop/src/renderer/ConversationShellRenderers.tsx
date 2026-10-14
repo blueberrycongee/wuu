@@ -171,7 +171,6 @@ export function ConversationSplitPaneRenderer({
       thread={thread}
       active={state.activePane === pane}
       activeContextCwd={state.activeContext?.cwd}
-      appStatus={state.status}
       streamStatus={turnStreamStatusForThread(state, thread)}
       draft={splitComposerDrafts[pane] ?? emptyComposerDraft()}
       viewSwitchPending={viewSwitchPending}

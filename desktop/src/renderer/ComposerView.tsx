@@ -74,7 +74,6 @@ import {
   useCollapsedComposerPrompt
 } from "./ComposerCollapsedPrompt";
 import { useFileSelectionActions } from "./FileSelectionContext";
-import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
 import {
   WORKSPACE_FILE_DRAG_MIME,
@@ -113,7 +112,7 @@ import type {
   ComposerWorktreeControl,
   PermissionMode
 } from "./ComposerTypes";
-import { COMPOSER_COMMAND_MENU_WIDTH, COMPOSER_PROJECT_MENU_WIDTH, composerStatusIsLiveProgress, composerStatusText } from "./ComposerTypes";
+import { COMPOSER_COMMAND_MENU_WIDTH, COMPOSER_PROJECT_MENU_WIDTH, composerStatusText } from "./ComposerTypes";
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import { ComposerRuntimeMeters } from "./ComposerRuntimeMeters";
 import { ComposerPresentation } from "./plugins/ComposerPresentation";
@@ -166,7 +165,6 @@ export function Composer({
   submitting = false,
   runtimeControlsDisabled = running,
   status,
-  statusLiveProgress,
   readOnly,
   initialized,
   projects,
@@ -282,7 +280,6 @@ export function Composer({
   submitting?: boolean;
   runtimeControlsDisabled?: boolean;
   status: string;
-  statusLiveProgress?: boolean;
   readOnly: boolean;
   initialized?: InitializeResult;
   gitStatus?: GitStatusResult;
@@ -442,7 +439,6 @@ export function Composer({
     commitPrompt(value);
   }
   const statusText = composerStatusText(status);
-  const statusIsLiveProgress = composerStatusIsLiveProgress(statusLiveProgress);
   const className = `composer-wrap ${
     variant === "hero"
       ? "hero-composer-wrap"
@@ -1242,7 +1238,6 @@ export function Composer({
           onEditQueuedMessage={onEditQueuedMessage}
         />
         <div className="composer-frame-shell">
-          <ComposerFeedback text={statusText} liveProgress={statusIsLiveProgress} />
           {canSelectWorkspace ? (
             <div className="composer-workspace-bar" ref={menuRef}>
               <div className="hero-project-pill-anchor composer-project-control composer-workspace-group">

@@ -1974,6 +1974,12 @@ export function App(): JSX.Element {
       if (!serverEventTargetsActiveContext(event, appStateRef.current)) {
         return;
       }
+      if (event.kind === "server-exit") {
+        showErrorToast(event.message, translateCurrent("appState.coreExited"), "app-server:exit");
+      } else if (event.kind === "notification" && event.message.method === "config/error") {
+        const configError = (event.message.params as { message?: unknown } | undefined)?.message;
+        if (typeof configError === "string") showErrorToast(configError, "", "app-server:config-error");
+      }
       const handling = handleStreamingNotification(event, appStateRef.current);
       if (handling === "stream" || handling === "stream-state") {
         // The first visible delta still needs to mount and reveal the live
@@ -3337,9 +3343,6 @@ export function App(): JSX.Element {
               : t("app.childTaskReadOnly")
             : state.status
         }
-        statusLiveProgress={
-          false
-        }
         readOnly={activeThreadReadOnly || submissionTargetPending}
         initialized={composerRuntime}
         engines={engineInventory?.engines}
@@ -4354,10 +4357,7 @@ export function App(): JSX.Element {
     const targetPane = pane ?? currentState.activePane;
     const targetThread = threadForPane(currentState, targetPane);
     if (targetThread?.read_only) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.childTaskReadOnly"),
-      }));
+      showErrorToast(t("app.childTaskReadOnly"));
       return false;
     }
     if (
@@ -4565,24 +4565,15 @@ export function App(): JSX.Element {
       return;
     }
     if (!targetThread) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.openConversationFirst"),
-      }));
+      showErrorToast(t("app.openConversationFirst"));
       return;
     }
     if (targetThread.read_only) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.childTaskReadOnly"),
-      }));
+      showErrorToast(t("app.childTaskReadOnly"));
       return;
     }
     if (isStateActiveThreadRunning(currentState)) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.currentTaskRunning"),
-      }));
+      showErrorToast(t("app.currentTaskRunning"));
       return;
     }
 
@@ -4645,7 +4636,6 @@ export function App(): JSX.Element {
       );
     } catch (error) {
       const rawMessage = rawErrorMessage(error, t("composer.compactFailed"));
-      const errorMessage = statusMessageForError(rawMessage, t("composer.compactFailed"));
       const failedTurn = failOptimisticCompactTurn(
         optimisticTurn,
         rawMessage,
@@ -4664,7 +4654,7 @@ export function App(): JSX.Element {
             ),
         ),
         running: false,
-        status: errorMessage,
+        status: "ready",
       };
       setState((current) =>
         updateThreadByID(
@@ -4677,7 +4667,7 @@ export function App(): JSX.Element {
               failedTurn,
               upsertTurn,
             ),
-          { running: false, status: errorMessage },
+          { running: false, status: "ready" },
         ),
       );
     }
@@ -5196,7 +5186,7 @@ export function App(): JSX.Element {
         return stillTarget ? {
           ...next,
           running: keepAcceptedTurn,
-          status: noModelConfigured || interrupted || keepAcceptedTurn ? "" : errorMessage,
+          status: "",
         } : next;
       };
       appStateRef.current = settle(appStateRef.current);
@@ -5205,6 +5195,10 @@ export function App(): JSX.Element {
       if (!optimisticThreadID) forgetLocalTurnTiming(optimisticTurn.id);
       if (noModelConfigured) {
         showNoModelConfiguredToast();
+      } else if (!interrupted && !keepAcceptedTurn) {
+        // The rejected turn was removed from the transcript, so nothing else
+        // tells the user why their message came back to the composer.
+        showErrorToast(errorMessage);
       }
       if (admission.sent && optimisticThreadID && stopRequestsRef.current[optimisticThreadID]) {
         await interruptAcceptedThread(optimisticThreadID!);

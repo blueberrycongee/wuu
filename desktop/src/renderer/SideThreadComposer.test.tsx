@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SideThreadComposer } from "./SideThreadComposer";
+import * as Toast from "./Toast";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -84,12 +85,13 @@ describe("SideThreadComposer", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("reports a side request failure above the input and keeps the draft editable", () => {
+  it("reports a side request failure as a toast and keeps the draft editable", () => {
+    const toast = vi.spyOn(Toast, "showErrorToast");
     renderComposer({ draft: "retry me", error: "stream request failed: HTTP 503" });
 
-    const feedback = container.querySelector('.composer-feedback[role="status"]');
-    expect(feedback?.textContent?.trim()).toBeTruthy();
-    expect(feedback?.textContent).not.toContain("stream request failed");
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast.mock.calls[0]?.[0]).not.toContain("stream request failed");
+    expect(container.querySelector(".composer-wrap")?.textContent).not.toContain("HTTP 503");
     expect((container.querySelector("textarea") as HTMLTextAreaElement).disabled).toBe(false);
   });
 

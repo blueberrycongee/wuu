@@ -92,7 +92,6 @@ function Fixture(): JSX.Element {
           runtimeControlsDisabled
           tokensPerSecond={0}
           status=""
-          statusLiveProgress={false}
           readOnly={false}
           projects={[]}
           codexModels={EMPTY_MODELS}

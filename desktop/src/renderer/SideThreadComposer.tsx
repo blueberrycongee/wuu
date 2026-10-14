@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
 import { ComposerFileSelectionCard } from "./ComposerFileSelectionCard";
 import { buildSideThreadSlashCommands } from "./ComposerSlashCommands";
@@ -10,6 +10,7 @@ import {
 import { useI18n } from "./i18n";
 import type { SideThreadSelection } from "../shared/protocol";
 import { statusMessageForError } from "./UserFacingErrors";
+import { showErrorToast } from "./Toast";
 
 const EMPTY_MODEL_STATE: CodexModelLoadState = {
   loading: false,
@@ -71,7 +72,12 @@ export function SideThreadComposer({
   // Keep the draft editable while a side turn runs so the composer remains
   // focusable. Sending stays disabled until the current side turn settles.
   const visibleDraft = draft;
-
+  // Failed replies already show their error in the side transcript; the
+  // remaining request failures (send, history, interrupt, reset) have no other
+  // surface, so announce each one once.
+  useEffect(() => {
+    if (error) showErrorToast(statusMessageForError(error, t("sideThread.unavailable")));
+  }, [error]);
 
   return <Composer
       variant={variant}
@@ -92,8 +98,7 @@ export function SideThreadComposer({
       forceStopWhileRunning
       runtimeControlsDisabled
       tokensPerSecond={0}
-      status={disabledReason ?? (error ? statusMessageForError(error, t("sideThread.unavailable")) : "")}
-      statusLiveProgress={false}
+      status={disabledReason ?? ""}
       readOnly={readOnly}
       projects={[]}
       codexModels={EMPTY_MODEL_STATE}
