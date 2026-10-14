@@ -127,3 +127,16 @@ func WaitInterrupt(ctx context.Context) <-chan struct{} {
 	interrupt, _ := ctx.Value(waitInterruptKey{}).(<-chan struct{})
 	return interrupt
 }
+
+// WithInvocationID carries the host ledger identity through a tool execution.
+// Nested tools receive their own identity; provider call IDs are not durable IDs.
+func WithInvocationID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, invocationIDKey{}, id)
+}
+
+type invocationIDKey struct{}
+
+func InvocationID(ctx context.Context) string {
+	id, _ := ctx.Value(invocationIDKey{}).(string)
+	return id
+}

@@ -43,8 +43,22 @@ type OperationError struct {
 	Kind    string
 	ID      string
 	Message string
+	Cause   error
+	Binding *OperationBinding
 }
 
+// OperationBinding preserves the original lookup authority with an unresolved
+// host result. It is a diagnostic reference, not permission to retry or reconcile.
+type OperationBinding struct {
+	Environment       string         `json:"environment"`
+	Session           string         `json:"session"`
+	Workspace         string         `json:"workspace"`
+	Method            string         `json:"method"`
+	ReceiptsSupported bool           `json:"receipts_supported"`
+	Query             OperationQuery `json:"query"`
+}
+
+func (e *OperationError) Unwrap() error         { return e.Cause }
 func (e *OperationError) Error() string         { return e.Message }
 func (e *OperationError) ToolErrorKind() string { return e.Kind }
 

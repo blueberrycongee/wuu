@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -34,7 +35,7 @@ func TestTransportWorker(t *testing.T) {
 			_ = json.NewEncoder(os.Stdout).Encode(Response{ID: req.ID, Error: "new program overtook cancelled execution"})
 			continue
 		}
-		if req.Method == "disconnect" {
+		if req.Method == "disconnect" || req.Method == "execute" && string(req.Data) == `{"disconnect":true}` {
 			os.Exit(3)
 		}
 		if req.Method == "wait" {
@@ -61,6 +62,23 @@ func testClient(t *testing.T) *Client {
 }
 
 func TestTransportCancellationAndNoReplay(t *testing.T) {
+	// Recovery is best-effort and cannot wait behind unrelated provisioning.
+	environment := NewEnvironment(Profile{Backend: "command"}, "env", "session", t.TempDir())
+	environment.mu.Lock()
+	lookup := make(chan error, 1)
+	go func() {
+		_, err := environment.lookupOperation(context.Background(), nil, OperationQuery{})
+		lookup <- err
+	}()
+	select {
+	case err := <-lookup:
+		if err == nil {
+			t.Error("busy environment unexpectedly allowed lookup")
+		}
+	case <-time.After(time.Second):
+		t.Error("receipt lookup blocked behind environment initialization")
+	}
+	environment.mu.Unlock()
 	c := testClient(t)
 	if _, err := c.Call(context.Background(), "hello", nil); err != nil {
 		t.Fatal(err)
@@ -83,6 +101,16 @@ func TestTransportCancellationAndNoReplay(t *testing.T) {
 	}
 	if _, err := c.Call(context.Background(), "hello", nil); err == nil {
 		t.Fatal("failed worker was automatically restarted")
+	}
+	c = testClient(t)
+	_, err := c.CallOperation(context.Background(), "invocation-loss", "execute", map[string]bool{"disconnect": true}, nil)
+	var outcome *OperationError
+	if !errors.As(err, &outcome) || outcome.Kind != OperationUnknown || outcome.ID != "invocation-loss" {
+		t.Fatalf("dispatched work lost its unknown outcome: %v", err)
+	}
+	_, err = c.CallOperation(context.Background(), "not-dispatched", "execute", nil, nil)
+	if !errors.As(err, &outcome) || outcome.Kind != OperationNotStarted {
+		t.Fatalf("closed transport should reject before dispatch: %v", err)
 	}
 }
 

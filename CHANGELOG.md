@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Recover confirmed execution results with a bounded, status-only receipt lookup
+  after a lost response. Unconfirmed effects stay explicitly unknown in durable
+  tool history, without automatic tool replay or cloud-adapter provisioning.
+
 - Execution-worker protocol 5 adds actor-bound operation receipts and read-only
   status queries. Completed identified work returns its saved result; unresolved
   admissions survive worker restart without being executed again.

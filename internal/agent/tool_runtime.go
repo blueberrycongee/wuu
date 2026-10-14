@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolerrors"
@@ -296,6 +297,7 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 		base = r.runContext
 	}
 	runCtx, cancel := context.WithCancel(base)
+	runCtx = toolctx.WithInvocationID(runCtx, run.invocationID)
 	if r.stepIndex != nil {
 		runCtx = toolctx.WithStepIndex(runCtx, *r.stepIndex)
 	}
@@ -326,7 +328,11 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 				result = finalizer.FinalizeToolResult(call, result)
 			}
 			if r.ledger != nil {
-				if settleErr := r.ledger.Settle(context.WithoutCancel(runCtx), run.invocationID, result); settleErr != nil {
+				settle := r.ledger.Settle
+				if toolerrors.Kind(executionErr) == executionenv.OperationUnknown {
+					settle = r.ledger.SettleUnknown
+				}
+				if settleErr := settle(context.WithoutCancel(runCtx), run.invocationID, result); settleErr != nil {
 					run.complete(toolresult.Result{}, fmt.Errorf("settle tool invocation: %w", settleErr))
 					return
 				}

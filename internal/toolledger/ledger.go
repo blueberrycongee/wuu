@@ -34,6 +34,7 @@ const (
 	InvocationRunning            InvocationState = "running"
 	InvocationSucceeded          InvocationState = "succeeded"
 	InvocationFailed             InvocationState = "failed"
+	InvocationOutcomeUnknown     InvocationState = "outcome_unknown"
 	InvocationInterruptedUnknown InvocationState = "interrupted_unknown"
 	InvocationAbandoned          InvocationState = "abandoned"
 )
@@ -266,6 +267,23 @@ func (l *Ledger) Start(ctx context.Context, invocationID string) error {
 }
 
 func (l *Ledger) Settle(ctx context.Context, invocationID string, result toolresult.Result) error {
+	state := InvocationSucceeded
+	if result.IsError {
+		state = InvocationFailed
+	}
+	return l.settle(ctx, invocationID, result, state)
+}
+
+// SettleUnknown preserves a completed host observation whose remote effects
+// cannot be confirmed. The result is projected normally, but replay stays blocked.
+func (l *Ledger) SettleUnknown(ctx context.Context, invocationID string, result toolresult.Result) error {
+	if !result.IsError {
+		return errors.New("unknown execution outcome requires an error result")
+	}
+	return l.settle(ctx, invocationID, result, InvocationOutcomeUnknown)
+}
+
+func (l *Ledger) settle(ctx context.Context, invocationID string, result toolresult.Result, state InvocationState) error {
 	invocationID = strings.TrimSpace(invocationID)
 	if invocationID == "" {
 		return errors.New("tool invocation is required")
@@ -277,15 +295,11 @@ func (l *Ledger) Settle(ctx context.Context, invocationID string, result toolres
 	if err != nil {
 		return fmt.Errorf("encode tool result: %w", err)
 	}
-	state := InvocationSucceeded
-	if result.IsError {
-		state = InvocationFailed
-	}
 	now := time.Now().UTC().UnixMilli()
 	return l.write(ctx, func(tx *sql.Tx) error {
 		var batchID, existingState, existingResult string
 		var projectedAt int64
-		if err := tx.QueryRowContext(ctx, `SELECT batch_id, state, result_json, projected_at FROM tool_invocations WHERE id = ?`, invocationID).
+		if err := tx.QueryRowContext(ctx, `SELECT batch_id, state, result_json, projected_at FROM tool_invocations WHERE id = ? AND batch_id IN (SELECT id FROM tool_batches WHERE owner_id = ?)`, invocationID, l.ownerID).
 			Scan(&batchID, &existingState, &existingResult, &projectedAt); err != nil {
 			return err
 		}
@@ -323,10 +337,10 @@ func (l *Ledger) MarkProjected(ctx context.Context, invocationIDs []string) erro
 				continue
 			}
 			var batchID, state string
-			if err := tx.QueryRowContext(ctx, `SELECT batch_id, state FROM tool_invocations WHERE id = ?`, id).Scan(&batchID, &state); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT batch_id, state FROM tool_invocations WHERE id = ? AND batch_id IN (SELECT id FROM tool_batches WHERE owner_id = ?)`, id, l.ownerID).Scan(&batchID, &state); err != nil {
 				return err
 			}
-			if state != string(InvocationSucceeded) && state != string(InvocationFailed) {
+			if state != string(InvocationSucceeded) && state != string(InvocationFailed) && state != string(InvocationOutcomeUnknown) {
 				return fmt.Errorf("tool invocation %q cannot project from %s", id, state)
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE tool_invocations SET projected_at = MAX(projected_at, ?), result_json = '' WHERE id = ?`, now, id); err != nil {
@@ -357,8 +371,8 @@ SELECT i.id, i.batch_id, i.provider_call_id, i.tool_name, i.tool_kind,
        i.arguments_json, i.replay_policy, i.state, i.result_json
 FROM tool_invocations i
 JOIN tool_batches b ON b.id = i.batch_id
-WHERE b.owner_id = ? AND i.state IN (?, ?) AND i.projected_at = 0 AND i.parent_invocation_id = ''
-ORDER BY b.created_at, b.id, i.prepared_at, i.id`, l.ownerID, InvocationSucceeded, InvocationFailed)
+WHERE b.owner_id = ? AND i.state IN (?, ?, ?) AND i.projected_at = 0 AND i.parent_invocation_id = ''
+ORDER BY b.created_at, b.id, i.prepared_at, i.id`, l.ownerID, InvocationSucceeded, InvocationFailed, InvocationOutcomeUnknown)
 	if err != nil {
 		return nil, err
 	}
@@ -430,7 +444,7 @@ SELECT id, state, replay_policy FROM tool_invocations WHERE batch_id = ? ORDER B
 				priority = 2
 			}
 			decision.BlockingInvocationIDs = append(decision.BlockingInvocationIDs, id)
-		case InvocationInterruptedUnknown:
+		case InvocationInterruptedUnknown, InvocationOutcomeUnknown:
 			decision.Action = ReplayBlock
 			if priority < 4 {
 				decision.Reason = ReplayReasonInvocationUnknown
@@ -556,8 +570,8 @@ func (l *Ledger) write(ctx context.Context, fn func(*sql.Tx) error) error {
 func settleBatchIfReadyTx(ctx context.Context, tx *sql.Tx, batchID string, now int64) error {
 	var pending int
 	if err := tx.QueryRowContext(ctx, `
-SELECT COUNT(*) FROM tool_invocations WHERE batch_id = ? AND state NOT IN (?, ?, ?, ?)`,
-		batchID, InvocationSucceeded, InvocationFailed, InvocationInterruptedUnknown, InvocationAbandoned).Scan(&pending); err != nil {
+SELECT COUNT(*) FROM tool_invocations WHERE batch_id = ? AND state NOT IN (?, ?, ?, ?, ?)`,
+		batchID, InvocationSucceeded, InvocationFailed, InvocationOutcomeUnknown, InvocationInterruptedUnknown, InvocationAbandoned).Scan(&pending); err != nil {
 		return err
 	}
 	if pending != 0 {
@@ -573,8 +587,8 @@ func projectBatchIfReadyTx(ctx context.Context, tx *sql.Tx, batchID string, now 
 	var pending int
 	if err := tx.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM tool_invocations
-WHERE batch_id = ? AND state IN (?, ?) AND projected_at = 0`,
-		batchID, InvocationSucceeded, InvocationFailed).Scan(&pending); err != nil {
+WHERE batch_id = ? AND state IN (?, ?, ?) AND projected_at = 0`,
+		batchID, InvocationSucceeded, InvocationFailed, InvocationOutcomeUnknown).Scan(&pending); err != nil {
 		return err
 	}
 	if pending != 0 {

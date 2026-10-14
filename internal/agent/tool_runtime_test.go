@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
@@ -16,13 +17,14 @@ import (
 )
 
 type runtimeTestTools struct {
-	mu         sync.Mutex
-	metadata   map[string]ToolMetadata
-	results    map[string]string
-	delays     map[string]time.Duration
-	discovered map[string][]providers.LoadableToolDefinition
-	calls      []providers.ToolCall
-	steps      []int
+	mu          sync.Mutex
+	metadata    map[string]ToolMetadata
+	results     map[string]string
+	delays      map[string]time.Duration
+	discovered  map[string][]providers.LoadableToolDefinition
+	calls       []providers.ToolCall
+	steps       []int
+	invocations []string
 }
 
 type cancelAwareRuntimeTools struct {
@@ -92,6 +94,7 @@ func (f *runtimeTestTools) ToolMetadata(call providers.ToolCall) (ToolMetadata, 
 func (f *runtimeTestTools) Execute(ctx context.Context, call providers.ToolCall) (string, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, call)
+	f.invocations = append(f.invocations, toolctx.InvocationID(ctx))
 	if stepIndex, ok := toolctx.StepIndex(ctx); ok {
 		f.steps = append(f.steps, stepIndex)
 	}
@@ -554,11 +557,15 @@ func (*finalizingRuntimeTools) FinalizeToolResult(_ providers.ToolCall, result t
 }
 
 func TestTurnToolRuntimeFinalizesBeforeDurableSettlement(t *testing.T) {
-	for _, failed := range []bool{false, true} {
+	for _, outcome := range []string{"succeeded", "failed", "outcome_unknown"} {
+		failed := outcome != "succeeded"
 		ctx := context.Background()
 		executor := &finalizingRuntimeTools{runtimeTestTools: runtimeTestTools{results: map[string]string{"call-1": "producer"}}}
 		if failed {
 			executor.err = errors.New("execution failed")
+		}
+		if outcome == "outcome_unknown" {
+			executor.err = &executionenv.OperationError{Kind: executionenv.OperationUnknown, ID: "saved-operation", Message: "execution outcome is unknown", Binding: &executionenv.OperationBinding{Environment: "pinned", Session: "owner", Workspace: "/workspace", Query: executionenv.OperationQuery{ID: "saved-operation", Actor: "root", Digest: strings.Repeat("a", 64)}}}
 		}
 		dir := t.TempDir()
 		ledger, err := toolledger.New(dir, "owner")
@@ -580,6 +587,18 @@ func TestTurnToolRuntimeFinalizesBeforeDurableSettlement(t *testing.T) {
 		pending, err := reopened.PendingProjection(ctx)
 		if err != nil || len(pending) != 1 {
 			t.Fatalf("replay: %v pending=%v", err, pending)
+		}
+		if string(pending[0].State) != outcome || len(executor.invocations) != 1 || executor.invocations[0] != pending[0].ID {
+			t.Fatalf("durable identity/state lost: %+v / %+v", pending[0], executor.invocations)
+		}
+		if outcome == "outcome_unknown" {
+			decision, err := reopened.DecideReplay(ctx, pending[0].BatchID)
+			if err != nil || decision.Reason != toolledger.ReplayReasonInvocationUnknown || decision.Action != toolledger.ReplayBlock {
+				t.Fatalf("unknown outcome replay policy: %+v, %v", decision, err)
+			}
+			if !strings.Contains(pending[0].Result.TextProjection(), `"execution_operation"`) || !strings.Contains(pending[0].Result.TextProjection(), `"environment":"pinned"`) {
+				t.Fatal("saved recovery binding missing from durable result")
+			}
 		}
 		result := pending[0].Result
 		if result.ModelText == nil || !strings.HasPrefix(*result.ModelText, "settled: ") || result.IsError != failed {

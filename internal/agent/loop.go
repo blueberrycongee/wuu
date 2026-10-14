@@ -12,6 +12,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/compact"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
@@ -1616,6 +1617,20 @@ func errorJSON(err error) string {
 	}
 	if kind != "" {
 		payload["error_kind"] = kind
+	}
+	var operation *executionenv.OperationError
+	if errors.As(err, &operation) {
+		payload["operation_id"] = operation.ID
+		payload["retry_safe"] = false
+		if operation.Binding != nil {
+			payload["execution_operation"] = operation.Binding
+		}
+		switch operation.Kind {
+		case executionenv.OperationUnknown:
+			payload["next_suggestions"] = []string{"The operation may already have changed the workspace. Inspect existing files or process state before deciding what to do; do not repeat it automatically."}
+		case executionenv.OperationNotStarted:
+			payload["next_suggestions"] = []string{"This attempt did not start execution. This does not establish the outcome of an earlier attempt with the same identity; inspect any earlier attempt before deciding to retry."}
+		}
 	}
 	b, marshalErr := json.Marshal(payload)
 	if marshalErr != nil {

@@ -127,3 +127,29 @@ unfinished result. Full storage refuses new identified work before execution
 rather than deleting an admission. Results can contain sensitive tool output and
 are retained with the worker session state. These receipts assume a trusted worker
 account; unconfined commands and trusted adapters have that account's authority.
+
+### Results after a connection loss
+
+The host sends its durable tool-invocation ID to workers that advertise receipt
+support. If a response is lost, it makes one bounded status lookup on the existing
+connection, or reconnects using the already-pinned Docker, SSH or Singularity
+transport command and the original worker-resolved workspace path. This lookup
+does not run provisioning or workspace preparation, and it never resends the
+tool. Reinitialization requires the original workspace to exist. A completed receipt restores the ordinary result;
+a recorded worker failure is returned as a failure.
+
+The outcome stays explicitly `outcome_unknown` when the receipt is absent,
+incomplete, corrupt or unavailable, when the caller has cancelled, or when no
+safe lookup connection is available. Cloud and custom adapters are never
+restarted for this lookup because their startup may provision resources. If
+receipts are unavailable for the workspace, ordinary execution still works once,
+but a lost response cannot be recovered this way. A connection-status indicator
+does not establish whether the last tool completed.
+
+Unknown outcomes are saved and projected to the conversation as errors with the
+original environment, workspace, session, actor, permission and request-digest
+binding. They remain blocked from automatic replay. A pre-dispatch rejection
+only describes that attempt, not the history of a reused operation ID; it does
+not grant retry authority. Inspect existing files or process state before taking
+a new action. There is no automatic reconciliation after a host restart, and
+this recovery does not restore expired process or artifact handles.

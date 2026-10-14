@@ -34,6 +34,13 @@ func TestLedgerPersistsLifecycleAndProjection(t *testing.T) {
 	if err := ledger.Start(ctx, invocation.ID); err != nil {
 		t.Fatal(err)
 	}
+	foreign, err := New(dir, "different-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := foreign.SettleUnknown(ctx, invocation.ID, toolresult.FromErrorText("unknown")); err == nil {
+		t.Fatal("foreign owner settled an invocation")
+	}
 	result := toolresult.FromText("/workspace")
 	if err := ledger.Settle(ctx, invocation.ID, result); err != nil {
 		t.Fatal(err)
@@ -51,6 +58,9 @@ func TestLedgerPersistsLifecycleAndProjection(t *testing.T) {
 	}
 	if decision.Action != ReplayBlock || decision.Reason != ReplayReasonInvocationSettled || len(decision.BlockingInvocationIDs) != 1 {
 		t.Fatalf("settled replay decision = %+v", decision)
+	}
+	if err := foreign.MarkProjected(ctx, []string{invocation.ID}); err == nil {
+		t.Fatal("foreign owner projected an invocation")
 	}
 	if err := ledger.MarkProjected(ctx, []string{invocation.ID}); err != nil {
 		t.Fatal(err)

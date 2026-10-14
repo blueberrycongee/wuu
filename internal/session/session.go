@@ -2391,7 +2391,7 @@ func projectToolInvocationTx(tx *sql.Tx, ownerID, invocationID string) error {
 	now := time.Now().UTC().UnixMilli()
 	result, err := tx.Exec(`
 UPDATE tool_invocations SET projected_at = MAX(projected_at, ?), result_json = ''
-WHERE id = ? AND state IN ('succeeded', 'failed')
+WHERE id = ? AND state IN ('succeeded', 'failed', 'outcome_unknown')
   AND batch_id IN (SELECT id FROM tool_batches WHERE owner_id = ?)`, now, invocationID, ownerID)
 	if err != nil {
 		return fmt.Errorf("project tool invocation: %w", err)
@@ -2405,7 +2405,7 @@ WHERE owner_id = ? AND status = 'settled'
   AND id = (SELECT batch_id FROM tool_invocations WHERE id = ?)
   AND NOT EXISTS (
     SELECT 1 FROM tool_invocations
-    WHERE batch_id = tool_batches.id AND state IN ('succeeded', 'failed') AND projected_at = 0
+    WHERE batch_id = tool_batches.id AND state IN ('succeeded', 'failed', 'outcome_unknown') AND projected_at = 0
   )`, now, now, ownerID, invocationID)
 	if err != nil {
 		return fmt.Errorf("project tool batch: %w", err)

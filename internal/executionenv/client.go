@@ -29,6 +29,8 @@ type Request struct {
 }
 
 type Response struct {
+	transportFailure bool
+
 	Method    string          `json:"method,omitempty"`
 	ParentID  string          `json:"parent_id,omitempty"`
 	ID        string          `json:"id"`
@@ -40,6 +42,9 @@ type Response struct {
 // Client multiplexes a private stdio connection. A transport failure is terminal:
 // tools with unknown outcomes must never be replayed automatically.
 type Client struct {
+	noOperationReceipts bool
+	initializedRoot     string
+
 	closeGrace time.Duration
 	event      func(json.RawMessage)
 	handlers   map[string]func(context.Context, json.RawMessage) (json.RawMessage, error)
@@ -183,7 +188,7 @@ func (c *Client) fail(err error) {
 		delete(c.retiring, id)
 	}
 	for id, ch := range c.pending {
-		ch <- Response{ID: id, Error: c.failed.Error()}
+		ch <- Response{ID: id, Error: c.failed.Error(), transportFailure: true}
 		delete(c.pending, id)
 	}
 }
@@ -207,8 +212,9 @@ func (c *Client) Call(ctx context.Context, method string, data any) (json.RawMes
 	return c.CallWithHandler(ctx, method, data, nil)
 }
 
-// CallOperation supplies a durable identity chosen by the host execution owner.
-// Reconnection and result lookup are explicit; this method never resends work.
+// CallOperation carries the identity chosen by the host execution owner.
+// A worker without receipts receives one ordinary request; its lost result stays
+// unknown. Reconnection and lookup are explicit; this method never resends work.
 func (c *Client) CallOperation(ctx context.Context, operationID, method string, data any, handler func(context.Context, json.RawMessage) (json.RawMessage, error)) (json.RawMessage, error) {
 	if operationID == "" {
 		return nil, errors.New("durable operation identity is required")
@@ -221,20 +227,30 @@ func (c *Client) CallWithHandler(ctx context.Context, method string, data any, h
 }
 
 func (c *Client) call(ctx context.Context, operationID, method string, data any, handler func(context.Context, json.RawMessage) (json.RawMessage, error)) (json.RawMessage, error) {
+	failure := func(kind string, err error) error {
+		if operationID == "" {
+			return err
+		}
+		message := "this execution attempt was not started: " + err.Error()
+		if kind == OperationUnknown {
+			message = "execution outcome is unknown; do not repeat the operation: " + err.Error()
+		}
+		return &OperationError{Kind: kind, ID: operationID, Message: message, Cause: err}
+	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, failure(OperationNotStarted, err)
 	}
 	ctx, cancelScope := context.WithCancel(ctx)
 	defer cancelScope()
 	payload, err := json.Marshal(data)
 	if err != nil {
-		return nil, err
+		return nil, failure(OperationNotStarted, err)
 	}
 	operationDigest := ""
 	if operationID != "" {
 		operationDigest, err = OperationDigest(method, payload)
 		if err != nil {
-			return nil, err
+			return nil, failure(OperationNotStarted, err)
 		}
 	}
 	// A cancelled caller returns promptly, but reuse must wait for the worker's
@@ -245,7 +261,7 @@ func (c *Client) call(ctx context.Context, operationID, method string, data any,
 		if c.failed != nil {
 			err = c.failed
 			c.mu.Unlock()
-			return nil, err
+			return nil, failure(OperationNotStarted, err)
 		}
 		var drained chan struct{}
 		if method == "run_code" {
@@ -261,12 +277,12 @@ func (c *Client) call(ctx context.Context, operationID, method string, data any,
 		select {
 		case <-drained:
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, failure(OperationNotStarted, ctx.Err())
 		}
 	}
 	if err = c.startLocked(); err != nil {
 		c.mu.Unlock()
-		return nil, err
+		return nil, failure(OperationNotStarted, err)
 	}
 	c.sequence++
 	id := strconv.FormatUint(c.sequence, 10)
@@ -278,7 +294,11 @@ func (c *Client) call(ctx context.Context, operationID, method string, data any,
 	defer func() { c.mu.Lock(); delete(c.handlers, id); delete(c.contexts, id); c.mu.Unlock() }()
 	written := make(chan error, 1)
 	go func() {
-		written <- c.write(Request{ID: id, Method: method, Data: payload, OperationID: operationID, OperationDigest: operationDigest})
+		request := Request{ID: id, Method: method, Data: payload}
+		if !c.noOperationReceipts {
+			request.OperationID, request.OperationDigest = operationID, operationDigest
+		}
+		written <- c.write(request)
 	}()
 	select {
 	case err = <-written:
@@ -288,11 +308,14 @@ func (c *Client) call(ctx context.Context, operationID, method string, data any,
 	}
 	if err != nil {
 		c.fail(err)
-		return nil, err
+		return nil, failure(OperationUnknown, err)
 	}
 	select {
 	case response := <-ch:
 		if response.Error != "" {
+			if response.transportFailure {
+				return nil, failure(OperationUnknown, errors.New(response.Error))
+			}
 			if response.ErrorKind != "" {
 				return nil, &OperationError{Kind: response.ErrorKind, ID: operationID, Message: response.Error}
 			}
@@ -313,7 +336,7 @@ func (c *Client) call(ctx context.Context, operationID, method string, data any,
 				c.fail(err)
 			}
 		}()
-		return nil, ctx.Err()
+		return nil, failure(OperationUnknown, ctx.Err())
 	}
 }
 

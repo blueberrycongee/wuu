@@ -48,9 +48,9 @@ func NewEnvironment(profile Profile, identity, session, stateDir string) *Enviro
 func (e *Environment) Execute(ctx context.Context, request ToolRequest) (toolresult.Result, error) {
 	client, err := e.connect(ctx)
 	if err != nil {
-		return toolresult.Result{}, err
+		return toolresult.Result{}, &OperationError{Kind: OperationNotStarted, ID: toolctx.InvocationID(ctx), Message: "execution attempt could not connect: " + err.Error(), Cause: err}
 	}
-	data, err := client.Call(ctx, "execute", request)
+	data, err := e.callOperation(ctx, client, "execute", request, request.Actor, request.PermissionMode, nil)
 	if err != nil {
 		return toolresult.Result{}, err
 	}
@@ -135,7 +135,9 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 		return nil, err
 	}
 	var hello struct {
-		Version int `json:"version"`
+		Version  int    `json:"version"`
+		Receipts bool   `json:"operation_receipts"`
+		Root     string `json:"root"`
 	}
 	if err = json.Unmarshal(data, &hello); err != nil || hello.Version != ProtocolVersion {
 		_ = client.Close()
@@ -145,6 +147,8 @@ func (e *Environment) connect(ctx context.Context) (*Client, error) {
 		_ = client.Close()
 		return nil, err
 	}
+	client.noOperationReceipts = !hello.Receipts
+	client.initializedRoot = hello.Root
 	e.client = client
 	return client, nil
 }
@@ -377,9 +381,9 @@ func (e *Environment) Download(ctx context.Context, token string, size int64, ou
 func (e *Environment) RunCode(ctx context.Context, request CodeRequest, executor toolctx.NestedExecutor) (codemode.RunResult, error) {
 	client, err := e.connect(ctx)
 	if err != nil {
-		return codemode.RunResult{}, err
+		return codemode.RunResult{}, &OperationError{Kind: OperationNotStarted, ID: toolctx.InvocationID(ctx), Message: "execution attempt could not connect: " + err.Error(), Cause: err}
 	}
-	data, err := client.CallWithHandler(ctx, "run_code", request, func(callCtx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	data, err := e.callOperation(ctx, client, "run_code", request, request.Actor, request.PermissionMode, func(callCtx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 		var call providers.ToolCall
 		if err := json.Unmarshal(raw, &call); err != nil {
 			return nil, err
