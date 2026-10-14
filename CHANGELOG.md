@@ -106,6 +106,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Tables, Mermaid diagrams and horizontal rules in messages keep the normal
+  block gap above them instead of touching the preceding line. Inline code in
+  table cells stays whole in narrow windows, and the table scrolls instead of
+  splitting addresses or paths across lines.
+
 - Keep the streaming cursor after the last line of a code block while an answer
   writes code, instead of drawing it at the card's lower-left corner. Copied and
   selected code is unchanged.

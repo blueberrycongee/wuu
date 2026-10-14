@@ -157,9 +157,16 @@
 
 /* The message column already owns the gap between sibling blocks. Remove
  * component-level outer margins so tables, rules and media do not receive a
- * second, unrelated spacing system. */
+ * second, unrelated spacing system. Keep this reset less specific than the
+ * column's adjacency rules, so a table, diagram or rule after another block
+ * takes the same block gap instead of touching the line above. A compound
+ * selector in this list would tie with them and win by source order. */
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble)
-  :is(.rich-table-wrap, .rich-rule, .rich-image-block.inline, .rich-mermaid) {
+  :is(.rich-table-wrap, .rich-rule, .rich-mermaid) {
+  margin-block: 0;
+}
+
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-image-block.inline {
   margin-block: 0;
 }
 
@@ -173,6 +180,12 @@
   min-width: calc(4em + 2 * var(--space-3));
   overflow-wrap: break-word;
   word-break: normal;
+}
+
+/* Inline code breaks anywhere in prose; in a cell that would again shrink the
+ * column, so addresses and paths ("192.168./8.174") stay whole and scroll. */
+:is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-table-wrap :is(th, td) code {
+  overflow-wrap: break-word;
 }
 
 :is(.agent-block, .reasoning-block, .user-message, .chat-bubble) .rich-table-wrap th {
