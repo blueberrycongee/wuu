@@ -120,6 +120,8 @@ final class AgentDisplayLease: @unchecked Sendable {
         throw ComputerError.operationFailed("the agent display did not become ready")
     }
 
+    var isValid: Bool { AgentDisplay.readyDisplayID() == displayID }
+
     var bounds: CGRect { CGDisplayBounds(displayID) }
 
     /// Windows cascade so none is fully covered by another parked window;
@@ -210,6 +212,21 @@ private final class AgentDisplayDaemon {
         idleSince = since
         if now.timeIntervalSince(since) >= idleLifetime {
             try? FileManager.default.removeItem(at: AgentDisplay.readyFile)
+            // Acquirers publish their locked lease before reading ready. Once
+            // readiness is withdrawn, a final scan either sees every helper
+            // that could have received this display or makes new helpers wait
+            // for the next daemon instead of accepting a disappearing display.
+            guard !FileManager.default.fileExists(atPath: AgentDisplay.readyFile.path) else { return }
+            if liveAgentDisplayLeases() > 0 {
+                idleSince = nil
+                do {
+                    try String(display.displayID).write(to: AgentDisplay.readyFile, atomically: true, encoding: .utf8)
+                } catch {
+                    agentDisplayLog("could not restore display readiness")
+                    exit(1)
+                }
+                return
+            }
             agentDisplayLog("idle; removing display")
             exit(0)
         }
@@ -254,17 +271,33 @@ public func runAgentDisplayDaemon() -> Never {
     // Session scope lets the WindowServer remember the placement, so a later
     // daemon in this login session does not shift the real displays again.
     var configuration: CGDisplayConfigRef?
-    if CGBeginDisplayConfiguration(&configuration) == .success {
-        for (real, bounds) in zip(realDisplays, realBounds) {
-            CGConfigureDisplayOrigin(configuration, real, Int32(bounds.minX), Int32(bounds.minY))
-        }
-        let origin = agentDisplayOrigin(realDisplays: realBounds)
-        CGConfigureDisplayOrigin(configuration, displayID, Int32(origin.x), Int32(origin.y))
-        if CGCompleteDisplayConfiguration(configuration, .forSession) != .success {
+    guard CGBeginDisplayConfiguration(&configuration) == .success, let configuration else {
+        log("display arrangement could not begin")
+        exit(1)
+    }
+    for (real, bounds) in zip(realDisplays, realBounds) {
+        guard CGConfigureDisplayOrigin(configuration, real, Int32(bounds.minX), Int32(bounds.minY)) == .success else {
+            CGCancelDisplayConfiguration(configuration)
             log("display arrangement failed")
+            exit(1)
         }
     }
-    try? String(displayID).write(to: AgentDisplay.readyFile, atomically: true, encoding: .utf8)
+    let origin = agentDisplayOrigin(realDisplays: realBounds)
+    guard CGConfigureDisplayOrigin(configuration, displayID, Int32(origin.x), Int32(origin.y)) == .success else {
+        CGCancelDisplayConfiguration(configuration)
+        log("agent display placement failed")
+        exit(1)
+    }
+    guard CGCompleteDisplayConfiguration(configuration, .forSession) == .success else {
+        log("display arrangement failed")
+        exit(1)
+    }
+    do {
+        try String(displayID).write(to: AgentDisplay.readyFile, atomically: true, encoding: .utf8)
+    } catch {
+        log("could not publish display readiness")
+        exit(1)
+    }
     log("ready display=\(displayID) bounds=\(CGDisplayBounds(displayID))")
 
     let daemon = AgentDisplayDaemon(display: display)

@@ -501,6 +501,7 @@ private final class NativePiPWindowStage {
     private var stagedWindows: [NativePiPResolvedWindow] = []
     private var stagedFrames: [Int: CGRect] = [:]
     private var staged = false
+    private var preparationGeneration: UInt64 = 0
     // Kept until the preview exits so stopping and restarting capture does not
     // add and remove a display.
     private var agentDisplay: AgentDisplayLease?
@@ -521,9 +522,12 @@ private final class NativePiPWindowStage {
         guard let targetSnapshotIndex,
               originalWindows.indices.contains(targetSnapshotIndex),
               wasHidden || originalWindows[targetSnapshotIndex].wasMinimized else { return }
+        preparationGeneration &+= 1
+        let generation = preparationGeneration
         // Without the agent display a hidden or minimized window stays where the
         // user left it; the PiP then shows no frames instead of a clamped sliver.
         guard let display = try? await Task.detached(operation: { try AgentDisplayLease.acquire() }).value else { return }
+        guard generation == preparationGeneration else { return }
         agentDisplay = display
         staged = true
         let parked = display.parkingOrigin(index: 0)
@@ -537,6 +541,7 @@ private final class NativePiPWindowStage {
         var prepared = false
         var settledFrame: CGRect?
         for _ in 0..<20 {
+            guard generation == preparationGeneration else { return }
             // Hiding and revealing some custom apps destroys and recreates their
             // AXWindows. Keep valid resolved elements, but rematch all windows to
             // their staged frame whenever the target goes stale or the hidden
@@ -600,6 +605,7 @@ private final class NativePiPWindowStage {
             }
             try? await Task.sleep(for: .milliseconds(50))
         }
+        guard generation == preparationGeneration else { return }
         guard prepared else {
             restore()
             return
@@ -608,6 +614,9 @@ private final class NativePiPWindowStage {
     }
 
     func restore() {
+        // A stop or user takeover may arrive while display acquisition or an AX
+        // retry is suspended. Invalidate that work even before anything is staged.
+        preparationGeneration &+= 1
         guard staged else { return }
         staged = false
         var concealedBeforeRestore = wasHidden

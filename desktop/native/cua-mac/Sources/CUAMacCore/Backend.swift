@@ -816,6 +816,9 @@ public final class MacComputerBackend: ComputerBackend {
             throw ComputerError.operationFailed("no window to conceal yet; observe the app or wait for its window before concealing")
         }
         guard let restoration else { throw ComputerError.operationFailed("window restoration journal is unavailable") }
+        // A daemon crash or display removal invalidates even a held lease.
+        // Reacquire before moving another window so recovery needs no helper restart.
+        if agentDisplay?.isValid == false { agentDisplay = nil }
         let display = try agentDisplay ?? AgentDisplayLease.acquire()
         agentDisplay = display
         let frames = currentWindowFrames(processID: app.processIdentifier)

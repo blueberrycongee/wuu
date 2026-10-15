@@ -244,7 +244,7 @@ app.whenReady().then(async () => {
   await waitFor("second native JPEG is decoding", () => nativeView.webContents.executeJavaScript("window.fixtureDecodeEntered === true"));
   await emitNative("native-a", { event: "capture_status", status: "error", message: "Synthetic permission denied" });
   await waitFor("capture error clears live presentation", () => overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone')"));
-  check("capture failure shows recovery guidance without raw diagnostics", await overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone') && document.getElementById('ph-detail').textContent.length > 0 && !document.body.innerText.includes('Synthetic permission denied')"));
+  check("capture failure keeps its symbol and task controls available without raw diagnostics", await overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone') && document.getElementById('ph-icon').checkVisibility() && !document.getElementById('takeover').hidden && !document.getElementById('stop').hidden && !document.body.innerText.includes('Synthetic permission denied')"));
   await nativeView.webContents.executeJavaScript("window.fixtureReleaseDecode()");
   await waitFor("invalidated frame is acknowledged after discard", () => readFileSync(process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_LOG!, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)).some(entry => entry.target === "native-a" && entry.command?.type === "ack" && entry.command.sequence === 2));
   check("a late decoded frame cannot overwrite pixels after capture failure", JSON.stringify(await nativeView.webContents.executeJavaScript("Array.from(document.querySelector('canvas').getContext('2d').getImageData(0,0,1,1).data)")) === JSON.stringify(firstNativePixel));
@@ -347,8 +347,11 @@ app.whenReady().then(async () => {
   coordinator.update({ ...hiddenStop, updated_at: new Date(Date.now() + 10_000).toISOString() });
   check("late old-epoch stop cannot hide the new preview", finalPip.isVisible());
   await emitNative("native-d", { event: "capture_status", status: "stopped" });
-  await waitFor("retained frame is labelled paused", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('status').hidden && document.getElementById('status').textContent === 'Preview paused'"));
-  check("stopped capture retains its frame with an explicit paused label", await controlOverlay.webContents.executeJavaScript("document.getElementById('ph').classList.contains('gone')"));
+  await waitFor("capture stop reaches the preview", () => events.some(entry => {
+    const received = entry as { target: string; event?: { event: string; status?: string } };
+    return received.target === "native-d" && received.event?.event === "capture_status" && received.event.status === "stopped";
+  }));
+  check("stopped capture retains its frame and task controls", await controlOverlay.webContents.executeJavaScript("document.getElementById('ph').classList.contains('gone') && !document.getElementById('takeover').hidden && !document.getElementById('stop').hidden"));
   check("stopped capture never implies task completion", await controlOverlay.webContents.executeJavaScript("document.getElementById('completion').getAttribute('aria-hidden') === 'true'"));
   await controlOverlay.webContents.executeJavaScript("document.getElementById('takeover').click();document.getElementById('takeover').click()");
   await waitFor("takeover command handled", () => controls.length === 1);
@@ -368,13 +371,11 @@ app.whenReady().then(async () => {
   coordinator.update(current);
   failedLiveTakeover.reject(new Error("Synthetic task control failure"));
   await waitFor("failed live takeover settles", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('takeover').disabled"));
-  const liveFailure = await controlOverlay.webContents.executeJavaScript("document.getElementById('status').textContent");
-  check("ordinary live state changes retain localized control failure", liveFailure && !liveFailure.includes("Synthetic task control failure")
-    && await controlOverlay.webContents.executeJavaScript("!document.getElementById('status').hidden"));
+  check("failed live takeover leaves task control available for retry without raw diagnostics", await controlOverlay.webContents.executeJavaScript("!document.getElementById('takeover').hidden && !document.getElementById('takeover').disabled && document.getElementById('release').hidden && !document.getElementById('stop').hidden && !document.getElementById('stop').disabled && !document.body.innerText.includes('Synthetic task control failure')"));
   current = activity("browser", "browser-b", { execution_id: "fixture-run-3", state: "stopped", controller: "none" });
   coordinator.update(current);
   await waitFor("authoritative stop hides task controls", () => controlOverlay!.webContents.executeJavaScript("document.getElementById('takeover').hidden && document.getElementById('stop').hidden"));
-  check("authoritative task stop replaces stale control failure", await controlOverlay.webContents.executeJavaScript("document.getElementById('status').textContent") !== liveFailure);
+  check("authoritative task stop leaves no takeover or release controls", await controlOverlay.webContents.executeJavaScript("document.getElementById('takeover').hidden && document.getElementById('release').hidden && document.getElementById('stop').hidden"));
   await controlOverlay.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
   writeFileSync(join(output, "control-failure-then-stopped.png"), (await controlOverlay.webContents.capturePage()).toPNG());
   current = activity("browser", "browser-b", { execution_id: "fixture-run-4" });
@@ -387,7 +388,7 @@ app.whenReady().then(async () => {
   coordinator.update(current);
   stoppedTakeover.reject(new Error("Synthetic stale control failure"));
   await waitFor("late rejected takeover settles", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('takeover').disabled"));
-  check("late control failure cannot overwrite authoritative task stop", await controlOverlay.webContents.executeJavaScript("document.getElementById('status').textContent") !== liveFailure);
+  check("late control failure cannot restore controls after authoritative task stop", await controlOverlay.webContents.executeJavaScript("document.getElementById('takeover').hidden && document.getElementById('release').hidden && document.getElementById('stop').hidden"));
   current = activity("browser", "browser-b", { execution_id: "fixture-run-5" });
   coordinator.update(current);
   await waitFor("old execution control is available", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('takeover').hidden"));
@@ -402,8 +403,7 @@ app.whenReady().then(async () => {
   await waitFor("new execution takeover is pending", () => controls.length === 6);
   oldExecutionTakeover.reject(new Error("Synthetic retired execution failure"));
   await new Promise<void>(resolve => setImmediate(resolve));
-  check("retired execution rejection cannot clear or fail a newer pending control", await controlOverlay.webContents.executeJavaScript("document.getElementById('takeover').disabled && !document.getElementById('status').hidden")
-    && await controlOverlay.webContents.executeJavaScript("document.getElementById('status').textContent") !== liveFailure);
+  check("retired execution rejection cannot clear a newer pending control", await controlOverlay.webContents.executeJavaScript("!document.getElementById('takeover').hidden && document.getElementById('takeover').disabled && document.getElementById('release').hidden && !document.getElementById('stop').hidden && document.getElementById('stop').disabled"));
   newExecutionTakeover.resolve();
   await waitFor("new execution takeover succeeds", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('release').hidden && !document.getElementById('release').disabled"));
   await coordinator.shutdown();
