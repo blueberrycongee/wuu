@@ -37,6 +37,8 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, "src/main/preload.ts"),
           nativePreview: resolve(__dirname, "src/main/nativePreviewPreload.ts"),
+
+          permissionGuide: resolve(__dirname, "src/main/permissionGuidePreload.ts"),
         },
         output: {
           format: "cjs",
@@ -64,10 +66,15 @@ export default defineConfig({
       },
     },
     build: {
+      // Local font files satisfy the renderer's self-only font policy; Vite's
+      // small-asset data URLs would be blocked by the production CSP.
+      assetsInlineLimit: (filePath) => /\.(?:woff2?|ttf|otf)$/i.test(filePath) ? false : undefined,
       rollupOptions: {
         input: {
           index: resolve(__dirname, "index.html"),
           nativePreview: resolve(__dirname, "native-preview.html"),
+
+          permissionGuide: resolve(__dirname, "permission-guide.html"),
         },
       },
     },

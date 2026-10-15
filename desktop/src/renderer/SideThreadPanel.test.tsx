@@ -6,6 +6,7 @@ import {
   type SideThreadPanelHandle,
 } from "./SideThreadPanel";
 import { ArtifactPreviewContext } from "./ArtifactPreviewContext";
+import { ImagePreviewProvider } from "./ImagePreview";
 import type { SideThreadEntryState } from "./SideThreadState";
 
 vi.mock("./WorkspacePdfPreview", () => ({ WorkspacePdfPreview: () => <div>Side PDF</div> }));
@@ -17,7 +18,7 @@ function mount(element: React.ReactElement): HTMLElement {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
-  act(() => root.render(element));
+  act(() => root.render(<ImagePreviewProvider>{element}</ImagePreviewProvider>));
   mountedRoots.push(root);
   mountedContainers.push(container);
   return container;

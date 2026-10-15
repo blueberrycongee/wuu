@@ -303,9 +303,10 @@ async function flushAsync(): Promise<void> {
 }
 
 function threadRowButton(previewText: string): HTMLButtonElement | undefined {
+  // Accessible names stay complete while the visible title animates.
   return Array.from(
     container.querySelectorAll<HTMLButtonElement>(".thread-row-main"),
-  ).find((button) => button.textContent?.includes(previewText));
+  ).find((button) => button.getAttribute("aria-label")?.includes(previewText));
 }
 
 function activeSessionTabLabel(): string {

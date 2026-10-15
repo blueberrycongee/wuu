@@ -1,9 +1,8 @@
 import { lazy, Suspense, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { Archive, ChevronRight, Download, Ellipsis, FileDiff, FileText, Film, Images, LayoutGrid, Maximize2, PanelRight, X } from "./WuuIcons";
+import { Archive, ChevronRight, Download, Ellipsis, FileDiff, FileText, Film, Images, LayoutGrid, X } from "./WuuIcons";
 
 import type { ThreadItem, ToolResultContentPart, Turn } from "../shared/protocol";
-import { useImagePreview, useOptionalImagePreview } from "./ImagePreview";
-import type { ArtifactPreviewMotion } from "./ArtifactPreviewMotion";
+import { useImagePreview } from "./ImagePreview";
 import { useImagePreviewRegistration } from "./ImagePreviewGallery";
 import { useI18n } from "./i18n";
 import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
@@ -25,7 +24,7 @@ import { hostSupports } from "./HostCapabilities";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { showErrorToast } from "./Toast";
 import { TruncatedText } from "./TruncatedText";
-import { ArtifactPreviewContext, ArtifactThreadContext, useArtifactPreview } from "./ArtifactPreviewContext";
+import { ArtifactPreviewContext, ArtifactThreadContext, restoreArtifactPreviewFocus } from "./ArtifactPreviewContext";
 import { VideoPreview } from "./VideoPreview";
 import { videoMimeType } from "../shared/videoMimeType";
 
@@ -116,6 +115,29 @@ export function TurnArtifactSummaryPresentation({
       />
     </TurnOutputSummaryPresentation>
   );
+}
+
+function useArtifactPreview(
+  fallback: (artifact: TurnArtifact) => void,
+  cwd?: string,
+): (artifact: TurnArtifact, origin?: HTMLElement) => void {
+  const panel = useContext(ArtifactPreviewContext);
+  const threadID = useContext(ArtifactThreadContext);
+  const { openPreview } = useImagePreview();
+  return (artifact, origin) => {
+    if (artifact.mimeType.startsWith("image/")) {
+      openPreview({
+        src: artifactSource(artifact, cwd) ?? "", alt: artifact.name, title: artifact.name,
+        loadSource: artifact.remoteRef && !artifact.data
+          ? async () => `data:${artifact.mimeType};base64,${await window.wuu.readRemoteAttachment!(artifact.remoteRef!)}`
+          : undefined,
+      }, origin);
+    } else if (panel && threadID) {
+      panel({ threadID, cwd, artifact, origin: origin ? new WeakRef(origin) : undefined });
+    } else {
+      fallback(artifact);
+    }
+  };
 }
 
 export function TurnInlineArtifactOutputs({
@@ -228,7 +250,7 @@ export function TurnEndArtifactOutputs({
   if (files.length === 0) return null;
 
   const openArtifact = (artifact: TurnArtifact, origin: HTMLElement): void => {
-    openArtifactInPanel(artifact, origin, cwd, onOpenFile, openPreview);
+    openArtifactFile(artifact, origin, cwd, onOpenFile, openPreview);
   };
 
   if (compact) {
@@ -398,25 +420,7 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   const { t } = useI18n();
   const { openPreview } = useImagePreview();
   const [failedSource, setFailedSource] = useState<string>();
-  const frameRef = useRef<HTMLDivElement>(null);
-  const panel = useContext(ArtifactPreviewContext);
-  const threadID = useContext(ArtifactThreadContext);
   const source = artifactSource(artifact, cwd);
-  const openImage = (item: TurnArtifact, origin?: HTMLElement): void => {
-    const src = artifactSource(item, cwd);
-    if (src) openPreview({ src, alt: item.name, title: item.name }, origin);
-  };
-  const openArtifact = useArtifactPreview(openImage, cwd);
-  const renderPanelAction = (onClick: () => void, disabled: boolean): ReactNode => panel && threadID && !artifact.foldPreview ? (
-    <div className="turn-artifact-image-toolbar">
-      <Tooltip content={t("artifacts.openInPanel")}>
-        <button type="button" className="icon-button" data-artifact-panel=""
-          aria-label={t("artifacts.openInPanel")} disabled={disabled} onClick={onClick}>
-          <PanelRight className="icon" aria-hidden="true" />
-        </button>
-      </Tooltip>
-    </div>
-  ) : null;
   const register = useImagePreviewRegistration(source && failedSource !== source && artifact.mimeType.startsWith("image/")
     ? { src: source, alt: artifact.name, title: artifact.name } : null);
   let image: ReactNode;
@@ -427,8 +431,6 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
         label={t("imagePreview.label")}
         previewTitle={artifact.name}
         onOpen={(src, origin) => openPreview({ src, alt: artifact.name, title: artifact.name }, origin)}
-        renderActions={(open, disabled) => renderPanelAction(() => open((src, origin) =>
-          openArtifact({ ...artifact, uri: src, data: undefined, text: undefined }, origin)), disabled)}
       />
     );
   } else if (!source || !artifact.mimeType.startsWith("image/")) {
@@ -438,7 +440,7 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
       <button
         type="button"
         ref={register}
-        onClick={event => openImage(artifact, event.currentTarget)}
+        onClick={event => openPreview({ src: source, alt: artifact.name, title: artifact.name }, event.currentTarget)}
         aria-label={t("artifacts.previewNamed", { name: artifact.name })}
         disabled={failedSource === source}
       >
@@ -452,10 +454,7 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   }
   return (
     <figure className="turn-artifact-inline-image">
-      <div className="turn-artifact-image-preview" ref={frameRef}>
-        {image}
-        {!artifact.remoteRef ? renderPanelAction(() => openArtifact(artifact, frameRef.current!.querySelector("button")!), failedSource === source) : null}
-      </div>
+      <div className="turn-artifact-image-preview">{image}</div>
     </figure>
   );
 }
@@ -495,7 +494,7 @@ function ArtifactMetadata({ artifact }: { artifact: TurnArtifact }): JSX.Element
   );
 }
 
-function openArtifactInPanel(
+function openArtifactFile(
   artifact: TurnArtifact,
   origin: HTMLElement,
   cwd: string | undefined,
@@ -600,7 +599,7 @@ function ArtifactCard({
         title={artifact.name}
         subtitle={<ArtifactMetadata artifact={artifact} />}
         trailing={<TurnOutputSummaryChevron />}
-        onOpen={(event) => openArtifactInPanel(artifact, event.currentTarget, cwd, onOpenFile, onPreview)}
+        onOpen={(event) => openArtifactFile(artifact, event.currentTarget, cwd, onOpenFile, onPreview)}
         onContextMenu={(event) => fileActions.show(artifact, event)}
         openLabel={t("artifacts.openNamed", { name: artifact.name })}
         wrapOverview={(overview) => <Tooltip content={artifact.name}>{overview}</Tooltip>}
@@ -617,7 +616,7 @@ export function ArtifactPreview({
   cwd,
   onClose,
   mode = "overlay",
-  motion, initialPage, pageRequest,
+  origin, initialPage, pageRequest,
 }: {
   artifact: TurnArtifact;
   threadID?: string;
@@ -625,7 +624,7 @@ export function ArtifactPreview({
   cwd?: string;
   onClose: () => void;
   mode?: "overlay" | "panel";
-  motion?: ArtifactPreviewMotion;
+  origin?: WeakRef<HTMLElement>;
   initialPage?: number;
   pageRequest?: string;
 }): JSX.Element {
@@ -635,13 +634,11 @@ export function ArtifactPreview({
   const ownerThreadID = threadID ?? contextualThreadID;
   const fileActions = useArtifactFileActions(cwd, ownerThreadID);
   const nativeActions = nativeArtifactActionsAvailable(artifact, ownerThreadID);
-  const imagePreview = useOptionalImagePreview();
   const [downloadError,setDownloadError] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    if (mode === "panel" && dialogRef.current) return motion?.attach(dialogRef.current);
-  }, [motion, mode]);
-  useLayoutEffect(() => { if (!active) motion?.close(); }, [active, motion]);
+    if (mode === "panel" && !active) restoreArtifactPreviewFocus(origin);
+  }, [active, mode, origin]);
   useEffect(() => {
     if (mode === "panel") return;
     const previouslyFocused = document.activeElement instanceof HTMLElement
@@ -710,8 +707,6 @@ export function ArtifactPreview({
         referrerPolicy="no-referrer"
       />
     );
-  } else if (artifact.mimeType.startsWith("image/")) {
-    body = <img className="artifact-preview-image" src={source} alt={artifact.name} />;
   } else if (artifact.mimeType.startsWith("audio/")) {
     body = <audio className="artifact-preview-audio" src={source} controls />;
   } else if (artifact.mimeType.startsWith("video/")) {
@@ -738,21 +733,6 @@ export function ArtifactPreview({
             <TruncatedText as="strong" text={artifact.name} />
           </div>
           <div className="artifact-preview-actions">
-            {source && artifact.mimeType.startsWith("image/") && imagePreview ? (
-              <Tooltip content={t("imagePreview.label")}>
-                <button
-                  className="artifact-preview-enlarge"
-                  type="button"
-                  aria-label={t("imagePreview.label")}
-                  onClick={(event) => {
-                    motion?.cancel();
-                    imagePreview.openPreview({ src: source, alt: artifact.name, title: artifact.name }, motion?.origin.deref() ?? event.currentTarget);
-                  }}
-                >
-                  <Maximize2 className="icon" aria-hidden="true" />
-                </button>
-              </Tooltip>
-            ) : null}
             {nativeActions ? (
               <Tooltip content={t("artifacts.fileActions")}>
                 <button type="button" aria-label={t("artifacts.fileActions")} onClick={event => fileActions.show(artifact, event)}>

@@ -697,6 +697,7 @@ describe("FirstRunOnboarding", () => {
         document.querySelector<HTMLButtonElement>("[data-testid=settings-provider-connect]")!.click();
       });
     }
+    await clickButton("稍后设置");
     expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
     await clickButton("导入并开始（2）");
 

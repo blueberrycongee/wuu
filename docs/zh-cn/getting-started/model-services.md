@@ -135,6 +135,9 @@ await tools.read_file({path: "screenshots/settings.png"});
 参数依赖计算或前序结果时，仍可在 `run_code` 内调用这些工具。
 两条路径使用相同的执行、权限和工作区检查；其他普通工具在启用 PTC 时通过程序调用。
 
+Peers 插件的只读 `list_peers` 工具支持在 `run_code` 内发现并筛选会话，
+仍仅供根会话使用，且只返回当前工作区的同级会话。发送协作请求继续使用独立直调工具。
+
 ### 发现、执行与结果
 
 在已识别的 GPT-5 及更新模型 Responses 连接上，`run_code` 通过自定义文本工具直接接收 JavaScript 源码，不要给这类输入加 JSON 包装或 Markdown 围栏。旧版 GPT、未知模型和其他 provider API 使用 `{"input":"..."}` 传入同一份源码。若 Responses 网关不支持自定义工具，将 `providers.<provider>.models.<model>.options.freeform_tool` 设为 `false`；只有确认端点支持时才设为 `true`。未知模型默认使用 JSON 工具。这个选项只改变传输格式，不改变 PTC 开关。历史调用会按当前请求转换，已保存的会话历史保持不变。可选的首行 `// @run_code: {...}` 注释设置 `description`、`timeout_ms`、`result_view` 和 `max_output_tokens`；未知选项会在执行前报错。恢复历史会话时，原有 `code` 调用仍可执行。

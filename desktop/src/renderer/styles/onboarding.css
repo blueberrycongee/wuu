@@ -121,11 +121,11 @@
 /* On a display narrower than the window the choices keep the full width;
  * the companion is decoration and steps aside. */
 @media (max-width: 640px) {
-  :is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider) {
+  :is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider, .onboarding-stage-permissions) {
     grid-template: "panel" minmax(0, 1fr) "actions" auto / minmax(0, 1fr);
   }
 
-  :is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider) > .onboarding-plugin-mascot-stage {
+  :is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider, .onboarding-stage-permissions) > .onboarding-plugin-mascot-stage {
     display: none;
   }
 }
@@ -443,6 +443,19 @@
     transition: none !important;
   }
 }
+
+.onboarding-stage-permissions {
+  grid-template: "panel" minmax(0, 1fr) "actions" auto / minmax(0, 1fr);
+}
+
+.onboarding-stage-permissions > .onboarding-plugin-mascot-stage { display: none; }
+.onboarding-stage-permissions .onboarding-panel {
+  width: min(100%, 38em);
+  justify-self: center;
+  gap: var(--space-6);
+}
+.onboarding-stage-permissions .onboarding-heading { text-align: left; }
+.onboarding-stage-permissions .onboarding-lead { max-width: 34em; }
 
 .onboarding-stage-ready {
   --onboarding-workspace-inset: var(--space-3);

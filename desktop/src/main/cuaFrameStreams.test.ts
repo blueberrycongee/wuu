@@ -58,6 +58,36 @@ describe("CUAStreamDecoder", () => {
 });
 
 describe("CUANativePreview", () => {
+  it("routes binary frames and acknowledgements to independent sessions on one helper", () => {
+    const commands: Array<Record<string, unknown>> = [];
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new Writable({ write: (chunk, _encoding, callback) => { commands.push(JSON.parse(chunk.toString())); callback(); } }),
+      stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => true), pid: 1234,
+    }) as unknown as ChildProcessWithoutNullStreams;
+    const spawnHelper = vi.fn(() => child);
+    const firstFrame = vi.fn(), secondFrame = vi.fn();
+    const first = new CUANativePreview("/tmp/wuu-cua-mac-pip", "first", "Finder", 1, 10, vi.fn(), vi.fn(), firstFrame, spawnHelper as unknown as typeof spawn);
+    const second = new CUANativePreview("/tmp/wuu-cua-mac-pip", "second", "TextEdit", 2, 20, vi.fn(), vi.fn(), secondFrame, spawnHelper as unknown as typeof spawn);
+    first.start(); second.start();
+    const sessions = commands.filter(command => command.type === "open").map(command => command.session);
+    expect(spawnHelper).toHaveBeenCalledTimes(1);
+    const header = { event: "frame", sequence: 1, generation: 1, configuration: 1,
+      codec: "avc1.42E01F", keyframe: false, timestamp: 100, width: 320, height: 240 };
+    const payload = Buffer.from([0, 0, 0, 1, 1]);
+    child.stdout.emit("data", Buffer.concat(sessions.map(session => packet({ ...header, session }, payload))));
+    expect(firstFrame).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ session: sessions[0], data: payload }));
+    expect(secondFrame).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ session: sessions[1], data: payload }));
+    first.acknowledgeFrame(1); second.acknowledgeFrame(1);
+    expect(commands.filter(command => command.type === "ack")).toEqual(sessions.map(session => ({ type: "ack", sequence: 1, session })));
+    first.stop();
+    child.stdout.emit("data", packet({ event: "closed", session: sessions[0] }));
+    expect(second.isLive()).toBe(true);
+    expect(child.kill).not.toHaveBeenCalled();
+    second.stop();
+    child.stdout.emit("data", packet({ event: "closed", session: sessions[1] }));
+    child.emit("exit", 0, null);
+  });
+
   it("turns an asynchronous EPIPE into a recoverable helper failure", async () => {
     const pipeError = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
     const stdin = new Writable({

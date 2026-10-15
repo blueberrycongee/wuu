@@ -34,8 +34,10 @@ export class NativePiPContent implements ActivityPiPContent {
 
   start(): void {
     if (this.stopped || this.view) return;
+    // A card shows only once it has pixels, so its first frames are decoded
+    // while the window is still hidden.
     const view = new WebContentsView({ webPreferences: {
-      contextIsolation: true, nodeIntegration: false, sandbox: true, preload: this.deps.preload,
+      contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, preload: this.deps.preload,
       ...appShellWebPreferences(this.deps.isPackaged),
     } });
     this.view = view;
@@ -134,6 +136,13 @@ export class NativePiPContent implements ActivityPiPContent {
 
   layout(bounds: Rectangle): void {
     this.view?.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height });
+  }
+
+  async snapshot(): Promise<string | undefined> {
+    const view = this.view;
+    if (!view || !this.presented || view.webContents.isDestroyed()) return undefined;
+    const src = await view.webContents.executeJavaScript("document.querySelector('canvas').toDataURL('image/jpeg',0.86)") as string;
+    return src || undefined;
   }
 
   stop(onStopped: () => void): void {

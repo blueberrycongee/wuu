@@ -82,8 +82,18 @@ final class WindowRestorationJournal {
     }
 
     func recoverAbandoned(using restore: (WindowRestorationRecord) -> Bool) {
+        Self.recoverAbandoned(in: directory, excluding: file, using: restore)
+    }
+
+    /// Restores windows recorded by helpers that exited without restoring them.
+    /// A journal is abandoned once no live helper holds its lock.
+    static func recoverAbandoned(
+        in directory: URL = defaultDirectory,
+        excluding ownFile: URL? = nil,
+        using restore: (WindowRestorationRecord) -> Bool
+    ) {
         guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
-        for candidate in files where candidate.pathExtension == "json" && candidate != file {
+        for candidate in files where candidate.pathExtension == "json" && candidate != ownFile {
             let lockPath = candidate.appendingPathExtension("lock")
             let fd = open(lockPath.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
             guard fd >= 0 else { continue }

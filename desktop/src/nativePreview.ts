@@ -67,8 +67,9 @@ function receive(command: NativePreviewCommand) {
         error(error) { if (decoder === next) recover(error.message); },
       });
       decoder = next;
+      // Let Chromium select software decoding when hardware is unavailable.
       next.configure({ codec: frame.codec, codedWidth: frame.width, codedHeight: frame.height,
-        description: new Uint8Array(frame.description), optimizeForLatency: true, hardwareAcceleration: "prefer-hardware" });
+        description: new Uint8Array(frame.description), optimizeForLatency: true });
       configuration = frame.configuration;
       generation = frame.generation;
     }

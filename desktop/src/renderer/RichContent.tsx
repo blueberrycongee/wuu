@@ -6,6 +6,10 @@ import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform 
 import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
+import remarkMathDelimiters from "./remarkMathDelimiters";
 import { unified } from "unified";
 import { toMarkdown } from "mdast-util-to-markdown";
 import type { Definition, Root as MarkdownRoot } from "mdast";
@@ -31,7 +35,7 @@ import {
 import { currentAppliedTheme, observeAppliedTheme, type AppliedTheme } from "./Theme";
 import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { WorkbenchContentRenderer } from "./plugins/Workbench";
-import { rehypeFileSelectionMapping, type SelectionASTNode } from "./FileSelectionMapping";
+import { rehypeFileSelectionMapping, rehypePreserveMathSourcePositions, type SelectionASTNode } from "./FileSelectionMapping";
 import {
   CODE_HIGHLIGHT_CHAR_LIMIT,
   CODE_HIGHLIGHT_HARD_LIMIT,
@@ -39,7 +43,7 @@ import {
   shouldHighlightCode,
 } from "./WorkspaceCodeHighlight";
 
-const markdownRemarkPlugins = [remarkGfm, remarkCjkAutolinkBoundary, remarkCjkStrongBoundary];
+const markdownRemarkPlugins = [remarkGfm, remarkMath, remarkMathDelimiters, remarkCjkAutolinkBoundary, remarkCjkStrongBoundary];
 
 type RichContentProps = {
   text?: string;
@@ -221,7 +225,13 @@ function MarkdownContentView({
           // CommonMark links and GFM autolinks are the only text-to-link rules.
           // File mentions stay literal; file navigation uses explicit link targets.
           remarkPlugins={markdownRemarkPlugins}
-          rehypePlugins={[...(allowRawHtml ? [rehypeRaw] : []), [rehypeHeadingIDs, documentContext?.headingIDs], ...(sourceMapping ? [rehypeFileSelectionMapping] : [])]}
+          rehypePlugins={[
+            ...(allowRawHtml ? [rehypeRaw] : []),
+            ...(sourceMapping ? [rehypePreserveMathSourcePositions] : []),
+            [rehypeKatex, { trust: false, maxSize: 20, maxExpand: 1000 }],
+            [rehypeHeadingIDs, documentContext?.headingIDs],
+            ...(sourceMapping ? [rehypeFileSelectionMapping] : []),
+          ]}
           urlTransform={richMarkdownUrlTransform}
         >
           {source}
@@ -890,6 +900,7 @@ type MarkdownFragmentMetadata = {
   definitionSource: string;
   headingSlugs: string[];
   hasMermaid: boolean;
+  endsInMath: boolean;
   hasContent: boolean;
 };
 
@@ -897,6 +908,7 @@ export type MarkdownFragmentContext = {
   referenceDefinitions: string;
   headingIDs: readonly string[];
   hasMermaid: boolean;
+  endsInMath: boolean;
   hasContent: boolean;
 };
 
@@ -926,16 +938,19 @@ export function inspectMarkdownFragment(text: string): MarkdownFragmentMetadata 
       hasMermaid ||= node.lang.toLowerCase() === "mermaid";
     }
   });
+  let lastNode = tree.children.at(-1) as MarkdownASTNode | undefined;
+  while (lastNode?.children?.length) lastNode = lastNode.children.at(-1);
   return {
     definitionSource: definitions.length ? toMarkdown({ type: "root", children: definitions }) : "",
     headingSlugs,
     hasMermaid,
+    endsInMath: lastNode?.type === "math",
     hasContent: tree.children.some(node => node.type !== "definition"),
   };
 }
 
 function markdownSourceText(node: MarkdownASTNode): string {
-  if (node.type === "text" || node.type === "inlineCode") return node.value ?? "";
+  if (node.type === "text" || node.type === "inlineCode" || node.type === "inlineMath") return node.value ?? "";
   return node.children?.map(markdownSourceText).join("") ?? "";
 }
 
@@ -959,11 +974,12 @@ export function createMarkdownDocument(texts: readonly string[], previous?: Mark
     const headingIDs = resolved.headingSlugs.map(slug => uniqueHeadingID(slug, usedIDs));
     const context = sameDefinitions
       && old.context.hasMermaid === resolved.hasMermaid
+      && old.context.endsInMath === resolved.endsInMath
       && old.context.hasContent === resolved.hasContent
       && old.context.headingIDs.length === headingIDs.length
       && old.context.headingIDs.every((id, position) => id === headingIDs[position])
       ? old.context
-      : { referenceDefinitions, headingIDs, hasMermaid: resolved.hasMermaid, hasContent: resolved.hasContent };
+      : { referenceDefinitions, headingIDs, hasMermaid: resolved.hasMermaid, endsInMath: resolved.endsInMath, hasContent: resolved.hasContent };
     return { text, parsed: parsed[index], resolved, context };
   });
   return { fragments };

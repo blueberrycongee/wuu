@@ -13,6 +13,14 @@ app.commandLine.appendSwitch('disable-gpu');
 app.on('window-all-closed', () => {});
 const empty = () => ({ available: true, settings: { enabled: false, shortcut: 'Control+Alt+Space', include_text: false }, shortcut_registered: false, phase: 'idle' });
 let state = empty(), sends = 0, recording = false;
+let permissions = { available: true, screen: false, accessibility: false }, permissionFailure = false;
+let permissionRequested, guideClosed = 0;
+ipcMain.handle('permissions:state', () => {
+  if (permissionFailure) throw new Error('Synthetic permission status failure');
+  return permissions;
+});
+ipcMain.handle('permissions:request', (_event, permission) => { permissionRequested = permission; });
+ipcMain.handle('permissions:close', () => { guideClosed++; });
 const screenshots = process.env.WUU_APP_CONTEXT_E2E_SCREENSHOTS !== '0';
 let holdNextStateRead = false, releaseStateRead, stateReadStarted;
 ipcMain.handle('snapshot:state', () => {
@@ -53,6 +61,9 @@ preload = preload.replace('contextBridge.exposeInMainWorld("wuu", {', `contextBr
   setAppContextShortcutRecording: value => ipcRenderer.invoke('snapshot:recording', value),
   updateAppContextSettings: value => ipcRenderer.invoke('snapshot:save', value),
   requestAppContextPermission: () => ipcRenderer.invoke('snapshot:state'),
+  getSystemPermissions: () => ipcRenderer.invoke('permissions:state'),
+  requestSystemPermission: permission => ipcRenderer.invoke('permissions:request', permission),
+  closeSystemPermissionGuide: () => ipcRenderer.invoke('permissions:close'),
   discardAppContextSnapshot: id => ipcRenderer.invoke('snapshot:discard', id),
   onAppContextChanged: handler => { const listener = () => handler(); ipcRenderer.on('snapshot:changed', listener); return () => ipcRenderer.removeListener('snapshot:changed', listener); },`);
 preload = preload.replace('startTurn: async (threadId, text, images = [], _files, _permission, _document, _parts, _context, clientId) => {', 'startTurn: async (threadId, text, images = [], _files, _permission, _document, _parts, _context, clientId) => { ipcRenderer.send("snapshot:send");');
@@ -146,7 +157,29 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--font-ui', '${size}px');document.querySelector('[data-testid="settings-app-context"]').scrollIntoView({block:'center'});`);
     await capture(win, `setup-${theme}-${width}-${size}`);
   }
-  await evaluate(win, () => { const button = document.querySelector('[data-app-context-shortcut]'); button.focus(); button.click(); });
+  await waitFor(win, () => document.querySelectorAll('.system-permission-row button:not(:disabled)').length === 2);
+  await evaluate(win, () => document.querySelector('.system-permission-row button').click());
+  await waitFor(win, () => !document.querySelector('.system-permission-row button').disabled);
+  assert.equal(permissionRequested, 'screen');
+  permissions = { ...permissions, screen: true };
+  await evaluate(win, () => window.dispatchEvent(new Event('focus')));
+  await waitFor(win, () => document.querySelectorAll('.system-permission-granted').length === 1);
+  for (const [theme, width, size] of [['light', 1150, 15], ['dark', 1150, 15], ['light', 620, 20], ['dark', 620, 20]]) {
+    win.setContentSize(width, 900);
+    await win.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--font-ui', '${size}px');document.querySelector('[data-testid="settings-system-permissions"]').scrollIntoView({block:'center'});`);
+    await capture(win, `permissions-${theme}-${width}-${size}`);
+  }
+  permissionFailure = true;
+  await evaluate(win, () => window.dispatchEvent(new Event('focus')));
+  await waitFor(win, () => document.querySelector('.system-permissions [role="alert"]'));
+  assert.equal(await evaluate(win, () => document.querySelectorAll('.system-permission-granted').length), 0);
+  await capture(win, 'permissions-error');
+  permissionFailure = false;
+  permissions = { ...permissions, accessibility: true };
+  await evaluate(win, () => document.querySelector('.system-permissions-error button').click());
+  await waitFor(win, () => document.querySelectorAll('.system-permission-granted').length === 2);
+  await capture(win, 'permissions-granted');
+  await evaluate(win, () => { const button = document.querySelector('[data-app-context-shortcut]'); button.scrollIntoView({block:'center'}); button.focus(); button.click(); });
   await waitFor(win, () => document.querySelector('[data-app-context-shortcut]').getAttribute('aria-pressed') === 'true');
   assert.equal(recording, true);
   await capture(win, 'shortcut-recording');
@@ -176,6 +209,7 @@ app.whenReady().then(async () => {
   await evaluate(win, () => { document.documentElement.dataset.theme = 'light'; document.documentElement.style.setProperty('--font-ui', '15px'); });
   await waitFor(win, async () => (await window.wuu.getAppContextState()).phase === 'idle');
   assert.equal(recording, false);
+  assert.ok(guideClosed > 0, 'Leaving permission settings closes the guide');
   publish(win, { ...state, phase: 'ready', snapshot });
   await waitFor(win, () => document.querySelectorAll('.composer-attachment-tray-item').length === 2);
   assert.equal(await evaluate(win, () => Boolean(document.querySelector('.app-context-dialog'))), false);
@@ -304,7 +338,7 @@ app.whenReady().then(async () => {
   assert.equal(state.snapshot?.id, 'draft-changed', 'Failed preparation must leave the snapshot unconsumed');
   assert.equal(sends, 0);
   await click(win, 'cancel');
-  const report = { result: 'passed', coverage: ['opt-in setup', 'shortcut recording with Option symbols, modifier-only keys, Escape and blur', 'direct attachment and focus', 'late state reads cannot duplicate attachments', 'draft changes during preparation are rejected', 'pending navigation cannot consume captures', 'preserves draft text', 'no implicit send', 'target failure', 'revoked capture cannot attach', 'light/dark narrow/large renderer layouts', 'returns from Settings to draft', 'covered split routes to actual active draft'], native_macos_capture: 'not exercised', screenshots: screenshots ? 'captured' : 'not exercised (functional-only mode)', console_errors: errors };
+  const report = { result: 'passed', coverage: ['permission request, grant refresh and retry', 'opt-in setup', 'shortcut recording with Option symbols, modifier-only keys, Escape and blur', 'direct attachment and focus', 'late state reads cannot duplicate attachments', 'draft changes during preparation are rejected', 'pending navigation cannot consume captures', 'preserves draft text', 'no implicit send', 'target failure', 'revoked capture cannot attach', 'light/dark narrow/large renderer layouts', 'returns from Settings to draft', 'covered split routes to actual active draft'], native_macos_capture: 'not exercised', screenshots: screenshots ? 'captured' : 'not exercised (functional-only mode)', console_errors: errors };
   assert.deepEqual(errors, []);
   fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report)); console.log(`Evidence: ${output}`); app.exit(0);
