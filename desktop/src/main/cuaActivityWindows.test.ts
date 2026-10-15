@@ -3,11 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ActivitySession, ServerEvent } from "../shared/protocol";
 import type { CUANativePiPEvent } from "./cuaFrameStreams";
 import type { WindowRegistry } from "./windowRegistry";
+import type { ObservationPiPEventSink } from "./cuaActivityWindows";
 import {
   ObservationCoordinator,
   activityControlMethod,
   pipVisibleForActivity,
-  activityVisibleForThread,
   frameStreamRetryDelay,
   browserPiPInitialBounds,
   observationActivityFromServerEvent,
@@ -37,12 +37,6 @@ afterEach(() => {
 });
 
 describe("CUA native picture-in-picture", () => {
-  it("scopes the native PiP to the active session", () => {
-    expect(activityVisibleForThread("thread-1", "thread-1")).toBe(true);
-    expect(activityVisibleForThread("thread-1", "thread-2")).toBe(false);
-    expect(activityVisibleForThread("thread-1", undefined)).toBe(false);
-  });
-
   it("places the PiP inside the Wuu window corner and active work area", () => {
     expect(browserPiPInitialBounds(
       { x: 100, y: 80, width: 1200, height: 800 },
@@ -95,13 +89,14 @@ describe("CUA native picture-in-picture", () => {
     expect(retarget).toHaveBeenCalledTimes(8);
 
     coordinator.showForThread("thread-1");
-    fail("Retry after returning to this conversation");
+    const failFirst = fail;
+    failFirst("Retry while another conversation is in view");
+    // Another thread's task gets a card of its own instead of the retrying one.
     coordinator.setActiveThread("thread-2");
     coordinator.update(activity({ thread_id: "thread-2", execution_id: "other-turn", target: "other-app" }));
-    expect(retarget).toHaveBeenCalledTimes(10);
-    coordinator.setActiveThread("thread-1");
+    expect(retarget).toHaveBeenCalledTimes(9);
     vi.advanceTimersByTime(frameStreamRetryDelay(1));
-    expect(retarget).toHaveBeenCalledTimes(11);
+    expect(retarget).toHaveBeenCalledTimes(10);
     void coordinator.shutdown();
   });
 
@@ -147,7 +142,7 @@ describe("CUA native picture-in-picture", () => {
     expect(control).toHaveBeenCalledWith(expect.objectContaining({ workdir: "/repo", id: "activity-1" }), "takeover");
   });
 
-  it("waits for the outgoing helper to close and coalesces replacements", () => {
+  it("replaces a card that cannot retarget without waiting for the outgoing helper", () => {
     const events: string[] = [];
     const helpers: Array<{ target: string; finishStop?: () => void }> = [];
     const coordinator = new ObservationCoordinator(
@@ -172,12 +167,12 @@ describe("CUA native picture-in-picture", () => {
     coordinator.update(activity({ target: "app-b", updated_at: "2026-07-10T10:00:02Z" }));
     coordinator.update(activity({ target: "app-c", updated_at: "2026-07-10T10:00:03Z" }));
 
-    expect(events).toEqual(["start:app-a", "stop:app-a"]);
-    expect(helpers).toHaveLength(1);
-
+    // One helper process streams every preview, so a replacement starts at once.
+    expect(events).toEqual(["start:app-a", "stop:app-a", "start:app-b", "stop:app-b", "start:app-c"]);
     helpers[0].finishStop?.();
-    expect(events).toEqual(["start:app-a", "stop:app-a", "start:app-c"]);
-    expect(helpers.map((helper) => helper.target)).toEqual(["app-a", "app-c"]);
+    helpers[1].finishStop?.();
+    expect(events).toEqual(["start:app-a", "stop:app-a", "start:app-b", "stop:app-b", "start:app-c"]);
+    expect(helpers.map((helper) => helper.target)).toEqual(["app-a", "app-b", "app-c"]);
   });
 
   it("keeps a user-closed preview hidden across activity updates until explicitly reopened", () => {
@@ -185,10 +180,12 @@ describe("CUA native picture-in-picture", () => {
     vi.setSystemTime("2026-07-10T10:00:01.500Z");
     const events: string[] = [];
     const helpers: Array<{ target: string; finishStop?: () => void }> = [];
+    const sinks: ObservationPiPEventSink[] = [];
     const coordinator = new ObservationCoordinator(
       { mainWindow: () => undefined } as unknown as WindowRegistry,
       undefined,
-      (next) => {
+      (next, _key, sink) => {
+        sinks.push(sink);
         const helper: { target: string; finishStop?: () => void } = { target: next.target ?? "" };
         helpers.push(helper);
         return {
@@ -205,10 +202,7 @@ describe("CUA native picture-in-picture", () => {
     const initial = activity({ target: "app-a" });
     coordinator.setActiveThread("thread-1");
     coordinator.update(initial);
-    const testCoordinator = coordinator as unknown as {
-      handlePiPEvent: (key: string, event: CUANativePiPEvent) => void;
-    };
-    testCoordinator.handlePiPEvent(observationKey(initial), { event: "user_close" });
+    sinks[0].onEvent({ event: "user_close" });
     coordinator.update(activity({ target: "app-b", updated_at: "2026-07-10T10:00:02Z" }));
 
     expect(events).toEqual(["start:app-a"]);
@@ -217,8 +211,6 @@ describe("CUA native picture-in-picture", () => {
     coordinator.setActiveThread("thread-1");
     expect(events).toEqual(["start:app-a"]);
     coordinator.showForThread("thread-1");
-    expect(events).toEqual(["start:app-a", "stop:app-a"]);
-    helpers[0].finishStop?.();
     expect(events).toEqual(["start:app-a", "stop:app-a", "start:app-b"]);
     expect(helpers.map((helper) => helper.target)).toEqual(["app-a", "app-b"]);
   });
@@ -254,14 +246,17 @@ describe("browser observation surface", () => {
   function makeCoordinator(snapshot?: (threadID: string) => Promise<ActivitySession[]>): {
     coordinator: ObservationCoordinator;
     surfaces: FakeSurface[];
+    sinks: ObservationPiPEventSink[];
     stops: string[];
   } {
     const surfaces: FakeSurface[] = [];
+    const sinks: ObservationPiPEventSink[] = [];
     const stops: string[] = [];
     const coordinator = new ObservationCoordinator(
       { mainWindow: () => undefined } as unknown as WindowRegistry,
       snapshot,
-      (next) => {
+      (next, _key, sink) => {
+        sinks.push(sink);
         const surface: FakeSurface = {
           start: vi.fn(),
           setVisible: vi.fn(),
@@ -278,7 +273,7 @@ describe("browser observation surface", () => {
         return surface;
       },
     );
-    return { coordinator, surfaces, stops };
+    return { coordinator, surfaces, sinks, stops };
   }
 
   it("shows completion only for a successful final turn on the visible owning browser", () => {
@@ -316,18 +311,20 @@ describe("browser observation surface", () => {
     coordinator.handleServerEvent(event);
     expect(completed).not.toHaveBeenCalled();
     coordinator.setBrowserInPanel(() => false);
+    // A card stays up while another conversation is in view, completion included.
     coordinator.setActiveThread("other");
     coordinator.handleServerEvent(event);
-    expect(completed).not.toHaveBeenCalled();
+    expect(completed).toHaveBeenLastCalledWith(true);
     void coordinator.shutdown();
   });
 
   it("passes the owning browser activity when docking its preview", () => {
     const onExpand = vi.fn();
+    let sink: ObservationPiPEventSink | undefined;
     const coordinator = new ObservationCoordinator(
       { mainWindow: () => undefined } as unknown as WindowRegistry,
       undefined,
-      () => ({
+      (_next, _key, next) => (sink = next, {
         start: vi.fn(),
         setVisible: vi.fn(),
         animateInteraction: vi.fn(),
@@ -339,10 +336,7 @@ describe("browser observation surface", () => {
     coordinator.setActiveThread("thread-2");
     coordinator.update(current);
 
-    const internal = coordinator as unknown as {
-      handlePiPEvent: (key: string, event: CUANativePiPEvent) => void;
-    };
-    internal.handlePiPEvent(observationKey(current), { event: "expand" });
+    sink?.onEvent({ event: "expand" });
 
     expect(onExpand).toHaveBeenCalledWith(current);
   });
@@ -419,21 +413,21 @@ describe("browser observation surface", () => {
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
   });
 
-  it.each(["thread-2", undefined])("keeps an inactive preview hidden during presentation refresh (%s)", async (threadID) => {
+  it.each(["thread-2", undefined])("keeps a card visible while another conversation is in view (%s)", async (threadID) => {
     const { coordinator, surfaces } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity());
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
 
     coordinator.setActiveThread(threadID);
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
     coordinator.setBrowserInPanel(() => false);
     coordinator.refreshBrowserPresentation();
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
 
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:02Z" }));
     coordinator.refreshBrowserPresentation();
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
     expect(surfaces).toHaveLength(1);
 
     coordinator.setActiveThread("thread-1");
@@ -497,13 +491,10 @@ describe("browser observation surface", () => {
   it("does not reconcile a gone target until its source changes or the user retries", async () => {
     vi.useFakeTimers();
     let latest = browserActivity({ execution_id: "turn-1" });
-    const { coordinator, surfaces, stops } = makeCoordinator(async () => [latest]);
+    const { coordinator, surfaces, sinks, stops } = makeCoordinator(async () => [latest]);
     coordinator.setActiveThread("thread-1");
     coordinator.update(latest);
-    const testCoordinator = coordinator as unknown as {
-      handlePiPGone: (key: string) => void;
-    };
-    testCoordinator.handlePiPGone(observationKey(latest));
+    sinks[0].onGone();
     expect(stops).toEqual(["tab-1"]);
     const unrelated: ServerEvent = { workdir: "/repo", kind: "notification", message: {
       method: "turn/started", params: { thread_id: "thread-1" },
@@ -519,14 +510,14 @@ describe("browser observation surface", () => {
     latest = browserActivity({ execution_id: "turn-1", target: "tab-2", updated_at: "2026-07-10T10:00:02Z" });
     coordinator.update(latest);
     expect(surfaces).toHaveLength(2);
-    testCoordinator.handlePiPGone(observationKey(latest));
+    sinks[1].onGone();
     coordinator.update(browserActivity({ execution_id: "turn-1" }));
     coordinator.update({ ...latest, updated_at: "2026-07-10T10:00:02.5Z" });
     expect(surfaces).toHaveLength(2);
     latest = { ...latest, execution_id: "turn-2", updated_at: "2026-07-10T10:00:03Z" };
     coordinator.update(latest);
     expect(surfaces).toHaveLength(3);
-    testCoordinator.handlePiPGone(observationKey(latest));
+    sinks[2].onGone();
     coordinator.showForThread("thread-1");
     expect(surfaces).toHaveLength(4);
     await coordinator.shutdown();
@@ -547,26 +538,88 @@ describe("browser observation surface", () => {
 });
 
 
-it("shutdown waits for preview exit and prevents a queued replacement from starting", async () => {
-  let stopped: (() => void) | undefined;
+describe("observation card stack", () => {
+  function makeStack() {
+    const cards: Array<{
+      thread: string;
+      sink: ObservationPiPEventSink;
+      position: ReturnType<typeof vi.fn>;
+      raise: ReturnType<typeof vi.fn>;
+    }> = [];
+    const raised: string[] = [];
+    const coordinator = new ObservationCoordinator(
+      { mainWindow: () => undefined } as unknown as WindowRegistry,
+      undefined,
+      (next, _key, sink) => {
+        const card = { thread: next.thread_id, sink, position: vi.fn(), raise: vi.fn(() => raised.push(next.thread_id)) };
+        cards.push(card);
+        return {
+          start: vi.fn(), setVisible: vi.fn(), setLive: vi.fn(), updateActivity: vi.fn(), setTurnCompleted: vi.fn(),
+          animateInteraction: vi.fn(), stop: (onStopped?: () => void) => onStopped?.(),
+          setStackPosition: card.position, raise: card.raise,
+          stackLead: () => ({ frame: { x: 24, y: 24, width: 320, height: 240 }, alignment: "top-left" as const, dragging: false }),
+        };
+      },
+    );
+    return { coordinator, cards, raised };
+  }
+
+  it("closes the gap when a completed card leaves", () => {
+    const { coordinator, cards } = makeStack();
+    coordinator.update(activity({ thread_id: "thread-a" }));
+    coordinator.update(activity({ thread_id: "thread-b", target: "com.apple.Notes" }));
+    const [a, b] = cards;
+    expect(a.position).toHaveBeenLastCalledWith(1, expect.anything());
+    b.sink.onEvent({ event: "completion_expired" });
+    expect(a.position).toHaveBeenLastCalledWith(0, expect.anything());
+    void coordinator.shutdown();
+  });
+
+  it("restores the stack order when cards show again", () => {
+    const { coordinator, cards, raised } = makeStack();
+    coordinator.update(activity({ thread_id: "thread-a" }));
+    coordinator.update(activity({ thread_id: "thread-b", target: "com.apple.Notes" }));
+    coordinator.setActiveThread("thread-a");
+    raised.length = 0;
+    // A hidden host shows its cards again one by one; the last shown lands on top.
+    cards[0].sink.onEvent({ event: "shown" });
+    cards[1].sink.onEvent({ event: "shown" });
+    expect(raised.at(-1)).toBe("thread-a");
+    void coordinator.shutdown();
+  });
+
+  it("keeps the chosen corner for a card that starts after the stack emptied", () => {
+    const { coordinator, cards } = makeStack();
+    coordinator.update(activity({ thread_id: "thread-a" }));
+    cards[0].sink.onGone();
+    coordinator.update(activity({ thread_id: "thread-b", target: "com.apple.Notes" }));
+    expect(cards[1].position).toHaveBeenLastCalledWith(0, expect.objectContaining({ alignment: "top-left" }));
+    void coordinator.shutdown();
+  });
+});
+
+it("shutdown waits for every card to exit and starts nothing afterwards", async () => {
+  const stops: Array<() => void> = [];
   const starts = vi.fn();
   const coordinator = new ObservationCoordinator(
     { mainWindow: () => undefined } as unknown as WindowRegistry,
     undefined,
     () => ({
       start: starts, setVisible: vi.fn(), setLive: vi.fn(), animateInteraction: vi.fn(),
-      stop: (callback?: () => void) => { stopped = callback; },
+      stop: (callback?: () => void) => { if (callback) stops.push(callback); },
     }),
   );
   coordinator.setActiveThread("thread-1");
   coordinator.update(activity());
   coordinator.update(activity({ process_id: 43, updated_at: "2026-07-10T10:00:02Z" }));
+  coordinator.update(activity({ thread_id: "thread-2", updated_at: "2026-07-10T10:00:02Z" }));
+  expect(starts).toHaveBeenCalledTimes(3);
   let finished = false;
   const done = coordinator.shutdown().then(() => { finished = true; });
   await Promise.resolve();
   expect(finished).toBe(false);
-  stopped?.();
+  for (const stop of stops) stop();
   await done;
   coordinator.update(activity({ updated_at: "2026-07-10T10:00:03Z" }));
-  expect(starts).toHaveBeenCalledTimes(1);
+  expect(starts).toHaveBeenCalledTimes(3);
 });

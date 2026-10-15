@@ -1,12 +1,11 @@
-import { createContext, useContext } from "react";
+import { createContext } from "react";
 import type { TurnArtifact } from "./ArtifactOutputs";
-import { createArtifactPreviewMotion, type ArtifactPreviewMotion } from "./ArtifactPreviewMotion";
 
 export type ArtifactPreviewRequest = {
   threadID: string;
   cwd?: string;
   artifact: TurnArtifact;
-  motion?: ArtifactPreviewMotion;
+  origin?: WeakRef<HTMLElement>;
   page?: number;
   pageRequest?: string;
 };
@@ -14,14 +13,13 @@ export type ArtifactPreviewRequest = {
 export const ArtifactPreviewContext = createContext<((request: ArtifactPreviewRequest) => void) | undefined>(undefined);
 export const ArtifactThreadContext = createContext<string | undefined>(undefined);
 
-export function useArtifactPreview(
-  fallback: (artifact: TurnArtifact, origin?: HTMLElement) => void,
-  cwd?: string,
-): (artifact: TurnArtifact, origin?: HTMLElement) => void {
-  const open = useContext(ArtifactPreviewContext);
-  const threadID = useContext(ArtifactThreadContext);
-  return (artifact, origin) => {
-    if (open && threadID) open({ threadID, cwd, artifact, ...(origin ? { motion: createArtifactPreviewMotion(origin, artifact.name) } : {}) });
-    else fallback(artifact, origin);
-  };
+export function restoreArtifactPreviewFocus(origin?: WeakRef<HTMLElement>): void {
+  const node = origin?.deref();
+  if (!node?.isConnected || node.closest('[inert], [aria-hidden="true"]')
+    || !document.activeElement?.closest(".workspace-right-panel")) return;
+  const rect = node.getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight
+    && rect.right > 0 && rect.left < innerWidth) {
+    node.focus({ preventScroll: true });
+  }
 }

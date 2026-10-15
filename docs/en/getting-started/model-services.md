@@ -197,6 +197,10 @@ succeed before the file is written. These tools remain available inside
 use the same execution, permission and workspace checks. Other ordinary tools
 use PTC while it is enabled.
 
+The Peers plugin’s read-only `list_peers` tool supports discovery and filtering
+inside `run_code`. It remains limited to root sessions and peers in the current
+workspace. Sending a peer request remains a separate direct tool.
+
 ### Discover, execute and inspect results
 
 On Responses connections with a recognized GPT-5-or-later model, `run_code` accepts raw JavaScript source through a custom text tool. Do not wrap custom-tool input in JSON or Markdown fences. Older GPT models, unknown models, and other provider APIs accept the same source as `{"input":"..."}`. For a Responses gateway that does not support custom tools, set `providers.<provider>.models.<model>.options.freeform_tool` to `false`; use `true` only when the endpoint supports that wire format. Unknown models use JSON tools by default. This setting changes the wire format, not whether PTC is enabled. Historical calls are converted for the current request without changing saved conversation history. An optional first-line `// @run_code: {...}` comment sets `description`, `timeout_ms`, `result_view`, and `max_output_tokens`; unknown options fail before execution. Previously recorded `code` calls remain executable when resuming a session.

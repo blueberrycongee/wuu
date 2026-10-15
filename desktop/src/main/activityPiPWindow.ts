@@ -16,6 +16,47 @@ import type { ActivityPiPContent, ActivityPiPContentFactory } from "./activityPi
 import type { CUANativePiPEvent } from "./cuaFrameStreams";
 type Interaction = NonNullable<ActivitySession["interaction"]>;
 
+const COMPLETION_DISMISS_DELAY_MS = 30_000;
+// A card grows out of its resting corner on a soft spring while it fades in
+// and comes into focus; leaving reverses the motion slightly faster.
+const APPEAR_SCALE = 0.72;
+const APPEAR_SPRING = { stiffness: 185, damping: 18 };
+const APPEAR_BLUR = 18;
+const FADE_IN_MS = 200;
+const FADE_OUT_MS = 220;
+const BLUR_IN_MS = 280;
+const BLUR_OUT_MS = 240;
+// The first frame waits briefly for a content snapshot; without one the card
+// only fades, because live content cannot scale with the window.
+const SNAPSHOT_WAIT_MS = 120;
+
+// Snapping to a corner after a drag, and a new lead taking its place.
+const SNAP_SPRING = { stiffness: 260, damping: 32 };
+const LEAD_SPRING = { stiffness: 320, damping: 42 };
+// Trailing cards: softer at rest, stiffer while the lead is being dragged.
+const FOLLOW_SPRING = { stiffness: 150, damping: 30 };
+const FOLLOW_DRAG_SPRING = { stiffness: 260, damping: 32 };
+const STACK_OFFSET = 22;
+// Cards deeper than this share the last offset and sit fully behind.
+const STACK_DEPTH = 2;
+
+export type PiPStackLead = { frame: Rectangle; alignment: PipAlignment; dragging: boolean };
+
+type PiPTransition = {
+  direction: "in" | "out";
+  // Resting frame of the card; the animated frame scales about its corner.
+  target: Rectangle;
+  scale: number;
+  velocity: number;
+  opacity: number;
+  fromOpacity: number;
+  scales: boolean;
+  startedAt: number | undefined;
+  previousAt: number;
+  timer: ReturnType<typeof setTimeout> | undefined;
+  done: Array<() => void>;
+};
+
 export type BrowserPiPWindowHandle = BrowserParentWindowHandle & {
   setAlwaysOnTop(flag: boolean, level?: string): void;
   setVisibleOnAllWorkspaces(visible: boolean, options?: { visibleOnFullScreen?: boolean }): void;
@@ -24,6 +65,9 @@ export type BrowserPiPWindowHandle = BrowserParentWindowHandle & {
   isVisible(): boolean;
   getBounds(): Rectangle;
   setBounds(bounds: Rectangle): void;
+  setOpacity?(opacity: number): void;
+  setIgnoreMouseEvents?(ignore: boolean): void;
+  moveTop?(): void;
   setParentWindow?(parent: unknown): void;
   on(
     event: "close" | "closed" | "moved" | "resize" | "ready-to-show",
@@ -67,6 +111,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private visible = false;
   private stopped = false;
   private completed = false;
+  private completionDismissed = false;
+  private completionTimer: ReturnType<typeof setTimeout> | undefined;
   private dark = false;
   private hoverTimer: ReturnType<typeof setInterval> | undefined;
   private hoverPoint: PipPoint | null | undefined;
@@ -103,6 +149,20 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private layoutViewport: { width: number; height: number } | undefined;
   private resizeGesture: { edge: PipResizeEdge; start: PipRect; pointer: PipPoint } | undefined;
   private snapTimer: ReturnType<typeof setTimeout> | undefined;
+  private transition: PiPTransition | undefined;
+  private motion: {
+    origin: PipPoint;
+    card: { width: number; height: number };
+    spring: { stiffness: number; damping: number };
+    point: PipPoint;
+    speed: PipPoint;
+    previous: number;
+  } | undefined;
+  // 0 leads the stack; -1 until the coordinator first places the card.
+  private stackIndex = -1;
+  // Shown transparent and click-through while content renders its first
+  // pixels; Chromium decodes nothing for a window that was never shown.
+  private preparing = false;
 
   constructor(private readonly deps: ActivityPiPSurfaceDeps) {
     this.activity = deps.activity;
@@ -165,12 +225,14 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       })
       .catch(() => undefined);
     const reportGeometry = (): void => {
-      if (win.isDestroyed() || this.win !== win) return;
+      // Appearance frames are not user geometry.
+      if (win.isDestroyed() || this.win !== win || this.transition) return;
       const b = win.getBounds();
       this.deps.sink.onEvent({ event: "geometry", x: b.x, y: b.y, width: b.width, height: b.height });
     };
     win.on("moved", reportGeometry);
     win.on("resize", () => {
+      if (this.transition) return;
       reportGeometry();
       this.refit();
     });
@@ -188,6 +250,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     win.on("closed", () => {
       if (this.win !== win) return;
       this.stopHoverTracking();
+      this.setTurnCompleted(false);
       this.detachHostParent?.();
       this.detachHostParent = undefined;
       this.win = undefined;
@@ -202,7 +265,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   setVisible(visible: boolean): void {
     this.awaitingVisibility = false;
     this.visible = visible;
-    if (!visible) this.setTurnCompleted(false);
     this.applyVisibility();
   }
 
@@ -216,14 +278,22 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     // Showing a native child window can reveal its hidden parent on macOS.
     // Restore the preview from host visibility events, never by showing Wuu.
     const parentHidden = parent && (parent.isDestroyed() || !parent.isVisible() || parent.isMinimized());
-    if (this.visible && !columnGone && !parentHidden) {
+    const shown = win.isVisible() && !this.preparing && this.transition?.direction !== "out";
+    if (this.visible && !this.completionDismissed && !columnGone && !parentHidden) {
       // On macOS, showing a native child orders its parent forward even with
       // showInactive(). Defer a new presentation until the user returns to its
       // host; an already-visible card stays put, including while it has focus.
-      if (!win.isVisible() && parent && !parent.isFocused()) return;
+      if (!shown && parent && !parent.isFocused()) return;
       this.content?.setVisible(true);
       if (this.win !== win || win.isDestroyed()) return;
-      if (!win.isVisible()) win.showInactive();
+      if (!shown) {
+        // A card appears with its first pixels; until then nothing is visible.
+        if (!this.mounted) {
+          this.prepare();
+          return;
+        }
+        this.present();
+      }
       if (!this.hoverTimer) {
         this.syncHover();
         // Native pointer delivery can pause while another app is active.
@@ -231,15 +301,18 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         this.hoverTimer = setInterval(() => this.syncHover(), 80);
         this.hoverTimer.unref?.();
       }
-    } else if (!this.visible) {
-      this.stopHoverTracking();
-      this.content?.setVisible(false);
-      if (this.win !== win || win.isDestroyed()) return;
-      win.hide();
     } else {
       this.stopHoverTracking();
-      this.content?.setVisible(false);
-      win.hide();
+      // A hidden or minimized host takes its children with it immediately, and
+      // a card that never appeared has nothing to animate.
+      if (parentHidden || !win.isVisible() || this.preparing) {
+        this.endPreparing();
+        this.settleTransition();
+        this.content?.setVisible(false);
+        if (this.win === win && !win.isDestroyed()) win.hide();
+        return;
+      }
+      this.dismiss(() => this.content?.setVisible(false));
     }
   }
 
@@ -284,9 +357,26 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   }
 
   setTurnCompleted(completed: boolean): void {
-    if (this.completed === completed) return;
+    if (this.stopped || this.completed === completed) return;
     this.completed = completed;
+    if (this.completionTimer) clearTimeout(this.completionTimer);
+    this.completionTimer = undefined;
+    const wasDismissed = this.completionDismissed;
+    this.completionDismissed = false;
     this.pushCompletion();
+    if (completed) {
+      this.completionTimer = setTimeout(() => {
+        this.completionTimer = undefined;
+        // Keep dismissal separate from requested visibility so layout and
+        // activity refreshes cannot reopen a completed preview.
+        this.completionDismissed = true;
+        this.applyVisibility();
+        this.deps.sink.onEvent({ event: "completion_expired" });
+      }, COMPLETION_DISMISS_DELAY_MS);
+      this.completionTimer.unref?.();
+    } else if (wasDismissed && !this.awaitingVisibility) {
+      this.applyVisibility();
+    }
   }
 
   private pushCompletion(): void {
@@ -336,8 +426,12 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       this.forwardInteraction({ kind: "clear" });
     }
     if (activity.controller !== "agent") this.pendingInteraction = undefined;
+    const previous = this.activity;
     this.activity = activity;
-    if (activity.state === "stopped" || activity.state === "error" || activity.controller === "user") {
+    // Task cleanup and repeated snapshots must not erase a successful turn
+    // completion or restart its dismissal deadline.
+    if (activity.execution_id !== previous.execution_id
+      || activity.state === "error" || activity.controller === "user") {
       this.setTurnCompleted(false);
     }
     this.pushActivityState();
@@ -345,6 +439,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   }
 
   retarget(activity: ActivitySession, sink: ObservationPiPEventSink): void {
+    this.awaitingVisibility = true;
     this.setTurnCompleted(false);
     this.cancelSnap();
     const bounds = this.win?.getBounds();
@@ -358,7 +453,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.controlFailed = false;
     this.setCaptureStatus({ status: "healthy" });
     this.pendingRetarget = true;
-    this.awaitingVisibility = true;
     this.stopContent();
     this.pushActivityState();
   }
@@ -404,12 +498,16 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       return;
     }
     this.stopped = true;
+    if (this.completionTimer) clearTimeout(this.completionTimer);
+    this.completionTimer = undefined;
     this.pendingRetarget = false;
     this.stopHoverTracking();
     this.detachHostParent?.();
     this.detachHostParent = undefined;
     this.cancelSnap();
-    this.stopContent();
+    const win = this.win;
+    if (win && !win.isDestroyed() && win.isVisible()) this.dismiss(() => this.stopContent());
+    else this.stopContent();
   }
 
   private finishStop(): void {
@@ -442,6 +540,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         this.syncOverlayMode();
         if (mounted) {
           this.raiseOverlay();
+          this.applyVisibility();
           const interaction = this.pendingInteraction;
           this.pendingInteraction = undefined;
           if (interaction) this.animateInteraction(interaction);
@@ -509,7 +608,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private placeCommitted(): void {
     const layout = this.screenLayout;
     const win = this.win;
-    if (!layout || !win || win.isDestroyed()) return;
+    // A trailing card rests relative to its lead, never at a corner of its own.
+    if (!layout || !win || win.isDestroyed() || this.stackIndex > 0) return;
     this.cancelSnap();
     const card = this.userSize
       ? browserPiPFitCard(layout.host, this.userSize)
@@ -526,6 +626,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     if (!win || win.isDestroyed()) return;
     const bounds = win.getBounds();
     if (command.phase === "start") {
+      if (this.stackIndex > 0) this.deps.sink.onEvent({ event: "promote" });
+      this.settleTransition();
       this.cancelSnap();
       this.resizing = false;
       this.resizeGesture = undefined;
@@ -567,6 +669,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     const win = this.win;
     if (!win || win.isDestroyed()) return;
     if (command.phase === "start") {
+      this.settleTransition();
       this.cancelSnap();
       this.dragging = false;
       this.resizing = true;
@@ -620,41 +723,343 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     };
   }
 
-  private animateTo(origin: PipPoint, card: { width: number; height: number }, velocity: PipPoint): void {
+  // -------------------------------------------------------------------------
+  // Appearance. The window frame scales about the resting corner and fades;
+  // a snapshot of the content in the overlay carries the blur and the scaled
+  // pixels, so live content never re-lays out during the motion.
+  // -------------------------------------------------------------------------
+  private reducedMotion(): boolean {
+    return this.appearance?.reducedMotion
+      ?? (this.deps.reducedMotion ?? (() => systemPreferences.getAnimationSettings().prefersReducedMotion))();
+  }
+
+  private prepare(): void {
+    const win = this.win;
+    if (!win || win.isDestroyed() || this.stopped || win.isVisible()) return;
+    this.preparing = true;
+    win.setOpacity?.(0);
+    win.setIgnoreMouseEvents?.(true);
+    win.showInactive();
+    // Showing orders the window in front; the stack restores its own order.
+    this.deps.sink.onEvent({ event: "shown" });
+  }
+
+  private endPreparing(): void {
+    if (!this.preparing) return;
+    this.preparing = false;
+    this.win?.setIgnoreMouseEvents?.(false);
+  }
+
+  // Shows a hidden card, or turns a leaving one around from where it is.
+  private present(): void {
+    const win = this.win;
+    // Mounting content re-enters visibility; an appearance already under way
+    // owns the resting frame.
+    if (!win || win.isDestroyed() || this.stopped || this.transition?.direction === "in") return;
+    this.endPreparing();
+    const leaving = this.transition?.direction === "out" ? this.transition : undefined;
+    const reduced = this.reducedMotion();
+    const transition = this.beginTransition("in", leaving?.target ?? win.getBounds(), {
+      scale: leaving?.scale ?? (reduced ? 1 : APPEAR_SCALE),
+      velocity: leaving?.velocity ?? 0,
+      opacity: leaving?.opacity ?? 0,
+      scales: !reduced && Boolean(leaving?.scales),
+    });
+    this.applyTransitionFrame(transition);
+    if (!win.isVisible()) {
+      win.showInactive();
+      this.deps.sink.onEvent({ event: "shown" });
+    }
+    if (leaving || reduced) this.runTransition(transition);
+    else this.withSnapshot(transition, () => this.runTransition(transition));
+  }
+
+  private dismiss(done: () => void): void {
+    const win = this.win;
+    if (!win || win.isDestroyed() || !win.isVisible()) {
+      done();
+      return;
+    }
+    if (this.transition?.direction === "out") {
+      this.transition.done.push(done);
+      return;
+    }
+    const appearing = this.transition;
+    const reduced = this.reducedMotion();
+    const transition = this.beginTransition("out", appearing?.target ?? win.getBounds(), {
+      scale: appearing?.scale ?? 1,
+      velocity: appearing?.velocity ?? 0,
+      opacity: appearing?.opacity ?? 1,
+      scales: !reduced && Boolean(appearing?.scales),
+    });
+    transition.done.push(done);
+    if (reduced || transition.scales) this.runTransition(transition);
+    else this.withSnapshot(transition, () => this.runTransition(transition));
+  }
+
+  private beginTransition(
+    direction: PiPTransition["direction"],
+    target: Rectangle,
+    from: { scale: number; velocity: number; opacity: number; scales: boolean },
+  ): PiPTransition {
+    const previous = this.transition;
+    if (previous?.timer) clearTimeout(previous.timer);
+    const transition: PiPTransition = {
+      direction, target,
+      scale: from.scale, velocity: from.velocity, opacity: from.opacity, fromOpacity: from.opacity,
+      scales: from.scales, startedAt: undefined, previousAt: Date.now(), timer: undefined, done: [],
+    };
+    this.transition = transition;
+    return transition;
+  }
+
+  // Waits briefly for the content snapshot that carries scale and blur.
+  private withSnapshot(transition: PiPTransition, run: () => void): void {
+    let settled = false;
+    const proceed = (src: string | undefined): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (this.transition !== transition) return;
+      if (src) {
+        transition.scales = true;
+        const rect = this.contentFraction(transition.target);
+        this.execute(`window.wuuPipAppear?.(${JSON.stringify({ src, rect, blur: transition.direction === "in" ? APPEAR_BLUR : 0 })})`);
+      } else {
+        transition.scale = 1;
+        transition.velocity = 0;
+        this.applyTransitionFrame(transition);
+      }
+      run();
+    };
+    const timer = setTimeout(() => proceed(undefined), SNAPSHOT_WAIT_MS);
+    timer.unref?.();
+    const snapshot = this.content?.snapshot?.();
+    if (!snapshot) proceed(undefined);
+    else void snapshot.then(proceed, () => proceed(undefined));
+  }
+
+  private runTransition(transition: PiPTransition): void {
+    if (this.transition !== transition) return;
+    transition.startedAt = Date.now();
+    transition.previousAt = transition.startedAt;
+    if (transition.scales) {
+      const entering = transition.direction === "in";
+      this.execute(`window.wuuPipAppear?.(${JSON.stringify({
+        blur: entering ? 0 : APPEAR_BLUR,
+        duration: entering ? BLUR_IN_MS : BLUR_OUT_MS,
+        easing: entering ? "ease-out" : "ease-in",
+      })})`);
+    }
+    this.scheduleTransitionFrame(transition);
+  }
+
+  private scheduleTransitionFrame(transition: PiPTransition): void {
+    transition.timer = setTimeout(() => this.transitionFrame(transition), 16);
+    transition.timer.unref?.();
+  }
+
+  private transitionFrame(transition: PiPTransition): void {
+    transition.timer = undefined;
+    if (this.transition !== transition) return;
+    const win = this.win;
+    if (!win || win.isDestroyed()) {
+      this.finishTransition(transition);
+      return;
+    }
+    const now = Date.now();
+    const dt = Math.min(1 / 30, Math.max(1 / 120, (now - transition.previousAt) / 1000));
+    transition.previousAt = now;
+    const elapsed = now - (transition.startedAt ?? now);
+    const entering = transition.direction === "in";
+    if (transition.scales) {
+      const goal = entering ? 1 : APPEAR_SCALE;
+      transition.velocity += (APPEAR_SPRING.stiffness * (goal - transition.scale) - APPEAR_SPRING.damping * transition.velocity) * dt;
+      transition.scale += transition.velocity * dt;
+    }
+    const fade = entering ? FADE_IN_MS : FADE_OUT_MS;
+    const progress = Math.min(1, elapsed / fade);
+    // Ease-out while arriving and ease-in while leaving.
+    transition.opacity = entering
+      ? transition.fromOpacity + (1 - transition.fromOpacity) * (1 - (1 - progress) ** 2)
+      : transition.fromOpacity * (1 - progress ** 2);
+    this.applyTransitionFrame(transition);
+    const duration = Math.max(fade, transition.scales ? (entering ? BLUR_IN_MS : BLUR_OUT_MS) : 0);
+    const settled = !entering || !transition.scales
+      || (Math.abs(1 - transition.scale) < 0.002 && Math.abs(transition.velocity) < 0.02);
+    if (elapsed >= duration && settled) this.finishTransition(transition);
+    else this.scheduleTransitionFrame(transition);
+  }
+
+  private applyTransitionFrame(transition: PiPTransition): void {
     const win = this.win;
     if (!win || win.isDestroyed()) return;
-    this.cancelSnap();
-    if (this.appearance?.reducedMotion ?? (this.deps.reducedMotion ?? (() => systemPreferences.getAnimationSettings().prefersReducedMotion))()) {
+    const { target, scale } = transition;
+    const width = Math.max(1, Math.round(target.width * scale));
+    const height = Math.max(1, Math.round(target.height * scale));
+    const right = this.alignment.endsWith("right");
+    const bottom = this.alignment.startsWith("bottom");
+    win.setBounds({
+      x: Math.round(right ? target.x + target.width - width : target.x),
+      y: Math.round(bottom ? target.y + target.height - height : target.y),
+      width,
+      height,
+    });
+    this.overlay?.setBounds({ x: 0, y: 0, width, height });
+    win.setOpacity?.(transition.opacity);
+  }
+
+  // Completes the current transition at once, at its final frame.
+  private settleTransition(): void {
+    if (this.transition) this.finishTransition(this.transition);
+  }
+
+  private finishTransition(transition: PiPTransition): void {
+    if (this.transition !== transition) return;
+    if (transition.timer) clearTimeout(transition.timer);
+    this.transition = undefined;
+    const win = this.win;
+    if (win && !win.isDestroyed()) {
+      if (transition.direction === "out") win.hide();
+      win.setBounds(transition.target);
+      win.setOpacity?.(1);
+      this.refit();
+    }
+    this.execute("window.wuuPipAppear?.(null)");
+    for (const done of transition.done.splice(0)) done();
+  }
+
+  // The content rectangle as fractions of a card frame, so the snapshot scales
+  // with the window.
+  private contentFraction(frame: Rectangle): { x: number; y: number; width: number; height: number } {
+    const viewport = this.layoutViewport;
+    if (!viewport || frame.width <= 0 || frame.height <= 0) return { x: 0, y: 0, width: 1, height: 1 };
+    const rect = pipContainRect(viewport.width, viewport.height, frame.width, frame.height);
+    return { x: rect.x / frame.width, y: rect.y / frame.height, width: rect.width / frame.width, height: rect.height / frame.height };
+  }
+
+  // A running spring takes a new target without losing its momentum, so a
+  // trailing card follows a moving leader smoothly.
+  private animateTo(
+    origin: PipPoint,
+    card: { width: number; height: number },
+    velocity: PipPoint,
+    spring: { stiffness: number; damping: number } = SNAP_SPRING,
+  ): void {
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
+    if (this.reducedMotion()) {
+      this.cancelSnap();
       this.applyBounds({ ...origin, ...card });
       return;
     }
+    if (this.motion && this.snapTimer !== undefined) {
+      Object.assign(this.motion, { origin, card, spring });
+      return;
+    }
+    this.cancelSnap();
     const start = win.getBounds();
-    const point = { x: start.x, y: start.y };
     // Match the reference PiP's damped release, without carrying full flick
     // speed into the spring. Keep fractional positions across native rounding.
     const release = Math.hypot(velocity.x, velocity.y) >= 120 ? 0.25 : 0;
-    const speed = { x: velocity.x * release, y: velocity.y * release };
-    let previous = Date.now();
+    const motion = {
+      origin, card, spring,
+      point: { x: start.x, y: start.y },
+      speed: { x: velocity.x * release, y: velocity.y * release },
+      previous: Date.now(),
+    };
+    this.motion = motion;
     const frame = (): void => {
       this.snapTimer = undefined;
       const current = this.win;
-      if (!current || current.isDestroyed() || this.dragging || this.resizing) return;
+      if (this.motion !== motion || !current || current.isDestroyed() || this.dragging || this.resizing) return;
       const now = Date.now();
-      const dt = Math.min(1 / 30, Math.max(1 / 120, (now - previous) / 1000));
-      previous = now;
-      speed.x += (260 * (origin.x - point.x) - 32 * speed.x) * dt;
-      speed.y += (260 * (origin.y - point.y) - 32 * speed.y) * dt;
+      const dt = Math.min(1 / 30, Math.max(1 / 120, (now - motion.previous) / 1000));
+      motion.previous = now;
+      const { point, speed } = motion;
+      speed.x += (motion.spring.stiffness * (motion.origin.x - point.x) - motion.spring.damping * speed.x) * dt;
+      speed.y += (motion.spring.stiffness * (motion.origin.y - point.y) - motion.spring.damping * speed.y) * dt;
       point.x += speed.x * dt;
       point.y += speed.y * dt;
-      const settled = Math.hypot(origin.x - point.x, origin.y - point.y) <= 0.5
+      const settled = Math.hypot(motion.origin.x - point.x, motion.origin.y - point.y) <= 0.5
         && Math.hypot(speed.x, speed.y) <= 2;
-      const next = settled ? origin : point;
+      const next = settled ? motion.origin : point;
       const confined = this.screenLayout
-        ? browserPiPClampOrigin(next, card, this.screenLayout.visibleFrame) : next;
-      this.applyBounds({ ...confined, width: card.width, height: card.height });
-      if (!settled) this.scheduleSnap(frame);
+        ? browserPiPClampOrigin(next, motion.card, this.screenLayout.visibleFrame) : next;
+      this.applyBounds({ ...confined, width: motion.card.width, height: motion.card.height });
+      if (settled) this.motion = undefined;
+      else this.scheduleSnap(frame);
     };
     this.scheduleSnap(frame);
+  }
+
+  // -------------------------------------------------------------------------
+  // Stack. Several live tasks share one corner: the lead card rests at the
+  // committed corner and the others rest behind it, each offset toward the
+  // column so its edge stays visible.
+  // -------------------------------------------------------------------------
+  // A new lead takes over the corner of the card it replaces: the committed
+  // corner of the column, or without a measured column that card's frame.
+  setStackPosition(index: number, lead?: PiPStackLead): void {
+    const wasLead = this.stackIndex === 0;
+    this.stackIndex = index;
+    const win = this.win;
+    if (index === 0) {
+      if (wasLead || !win || win.isDestroyed()) return;
+      if (lead) this.alignment = lead.alignment;
+      if (this.screenLayout || !lead) {
+        this.placeCommitted();
+        return;
+      }
+      const card = this.restingFrame();
+      const origin = {
+        x: lead.alignment.endsWith("right") ? lead.frame.x + lead.frame.width - card.width : lead.frame.x,
+        y: lead.alignment.startsWith("bottom") ? lead.frame.y + lead.frame.height - card.height : lead.frame.y,
+      };
+      if (!win.isVisible() || this.transition) this.applyBounds({ ...origin, width: card.width, height: card.height });
+      else this.animateTo(origin, { width: card.width, height: card.height }, { x: 0, y: 0 }, LEAD_SPRING);
+      return;
+    }
+    if (!lead || !win || win.isDestroyed()) return;
+    this.alignment = lead.alignment;
+    const resting = this.restingFrame();
+    const card = { width: resting.width, height: resting.height };
+    const offset = STACK_OFFSET * Math.min(index, STACK_DEPTH);
+    const right = lead.alignment.endsWith("right");
+    const bottom = lead.alignment.startsWith("bottom");
+    const origin = {
+      x: right ? lead.frame.x + lead.frame.width - card.width : lead.frame.x,
+      y: bottom ? lead.frame.y + lead.frame.height - card.height - offset : lead.frame.y + offset,
+    };
+    if (!win.isVisible() || this.transition) {
+      this.applyBounds({ ...origin, ...card });
+      return;
+    }
+    // Cards farther back trail on softer springs.
+    const base = lead.dragging ? FOLLOW_DRAG_SPRING : FOLLOW_SPRING;
+    this.animateTo(origin, card, { x: 0, y: 0 }, {
+      stiffness: base.stiffness / (1 + 0.18 * index),
+      damping: base.damping / (1 + 0.08 * index),
+    });
+  }
+
+  stackLead(): PiPStackLead | undefined {
+    const win = this.win;
+    if (!win || win.isDestroyed()) return undefined;
+    return { frame: this.restingFrame(), alignment: this.alignment, dragging: this.dragging };
+  }
+
+  // Where the card is headed: a running spring's target, an appearance's
+  // resting frame, or its current frame. A drag follows the pointer.
+  private restingFrame(): Rectangle {
+    const bounds = this.win!.getBounds();
+    if (this.motion && !this.dragging) return { ...this.motion.origin, ...this.motion.card };
+    return this.transition?.target ?? bounds;
+  }
+
+  raise(): void {
+    const win = this.win;
+    if (win && !win.isDestroyed() && win.isVisible()) win.moveTop?.();
   }
 
   private scheduleSnap(frame: () => void): void {
@@ -664,6 +1069,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   }
 
   private cancelSnap(): void {
+    this.motion = undefined;
     if (this.snapTimer === undefined) return;
     clearTimeout(this.snapTimer);
     this.snapTimer = undefined;
@@ -678,10 +1084,18 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       width: Math.max(1, Math.round(bounds.width)),
       height: Math.max(1, Math.round(bounds.height)),
     };
+    // A layout change during an appearance moves its resting frame; the next
+    // animation frame scales about the new corner.
+    if (this.transition) {
+      this.transition.target = next;
+      return;
+    }
     const current = win.getBounds();
     if (current.x === next.x && current.y === next.y && current.width === next.width && current.height === next.height) return;
     win.setBounds(next);
     if (current.width !== next.width || current.height !== next.height) this.refit();
+    // Trailing cards follow every frame of their lead.
+    if (this.stackIndex === 0) this.deps.sink.onEvent({ event: "geometry", ...next });
   }
 
   private raiseOverlay(): void {
@@ -723,8 +1137,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   }
 
   private forwardInteraction(hint: BrowserInteractionHint): Promise<unknown> | undefined {
-    if (hint.kind !== "clear" && (!this.mounted || !this.win?.isVisible())) return;
     if (hint.kind !== "clear") this.setTurnCompleted(false);
+    if (hint.kind !== "clear" && (!this.mounted || !this.win?.isVisible())) return;
     return this.execute(`window.wuuPipInteract?.(${JSON.stringify(hint)})`);
   }
 

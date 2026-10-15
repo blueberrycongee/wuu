@@ -9,8 +9,7 @@ export function automaticPreviewArtifact(turn: Turn): TurnArtifact | undefined {
   if (files.length !== 1) return undefined;
   const artifact = files[0];
   const supported = artifact.mimeType === "application/pdf"
-    || artifact.mimeType.startsWith("text/")
-    || artifact.mimeType.startsWith("image/");
+    || artifact.mimeType.startsWith("text/");
   const limit = artifact.mimeType.startsWith("text/") && artifact.mimeType !== "text/html"
     ? 2 * 1024 * 1024 : 20 * 1024 * 1024;
   // Automatic reads are restricted to immutable, host-managed deliveries.

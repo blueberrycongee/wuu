@@ -13,6 +13,23 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Signed macOS builds check GitHub stable releases for updates, with separate
   confirmation before downloading and restarting to install.
 
+- Live activity previews of concurrent tasks stack in one corner. Opening a
+  conversation or grabbing a preview behind the front one brings it forward, and
+  the previews behind follow the front one as it moves.
+
+- Guide macOS Screen Recording and Accessibility setup from onboarding and General
+  settings, with a draggable app icon beside System Settings and automatic status
+  refresh. Permissions remain optional during onboarding.
+
+- Enable Computer Use in macOS desktop releases with bundled native control and
+  live-preview helpers. Releases require Developer ID signing and notarization;
+  screen capture and desktop control use macOS Screen Recording and Accessibility
+  permissions.
+
+- `wuu session compact` reclaims free database space and enables incremental
+  reclamation for older stores. Large provider-history checkpoints now use
+  lossless compression, with bounded migration of existing checkpoints.
+
 - iOS and Android render Mermaid diagrams offline as replies stream, preserve the
   last valid diagram during partial syntax, and expose source and copy actions.
 
@@ -20,7 +37,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   larger readable history pages, retained reading position, and retry on failure.
   Process details remain available on demand.
 
-- Add opt-in macOS app snapshots: record a shortcut and configure permissions in Settings → General → App snapshot, then capture a single frontmost window directly into the active draft with its image and optional available text. Capturing focuses the composer and preserves existing text without sending. Computer Use remains excluded from release builds.
+- Add opt-in macOS app snapshots: record a shortcut in Settings → General → App snapshot and configure access under System permissions, then capture a single frontmost window directly into the active draft with its image and optional available text. Capturing focuses the composer and preserves existing text without sending.
 
 - Automatically recover unsent text after a renderer reload, with no settings
   toggle. Recovery copies are limited to the current window, 20 drafts, 32K
@@ -57,6 +74,39 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   is registered by default.
 
 ### Changed
+
+- Desktop navigation reads as its own layer: the sidebar rail steps one tone
+  darker, hover and selection become tone steps without outline rings, section
+  headings drop to regular weight and reveal their actions only under the
+  pointer or keyboard focus, and the conversation titlebar no longer draws a
+  divider above scrolling messages.
+
+- Live activity previews appear once their first picture is ready, growing from
+  their corner while fading in and coming into focus, and leave the same way. A
+  completed turn's preview leaves 30 seconds after showing completion; a stopped
+  or failed turn's preview leaves at once.
+
+- Live activity previews show state through symbols and controls instead of status
+  text: the placeholder icon breathes while frames load and rests when capture is
+  blocked; the conversation explains details.
+
+- Soften desktop composer corners and lighten the surrounding shadow while
+  retaining the fine border and custom theme overrides.
+
+- Remove the flying file card and title animation when opening or closing desktop
+  artifact previews; keep the right panel's normal transition.
+
+- Conversation images and image output cards open directly in the full-window
+  image viewer. Remove the image side-panel action and automatic image previews.
+
+- Generated conversation titles focus on one topic, with shorter Chinese and
+  English targets and a shared 40-character generation and storage limit.
+
+- Desktop sidebar titles backspace the visible old text before typing the new
+  title, with bounded timing, stable row layout, and reduced-motion support.
+
+- Read-only peer discovery can be composed and filtered inside `run_code`,
+  preserving root-session and workspace boundaries. Peer messaging remains direct-only.
 
 - Desktop text uses stronger light-theme contrast and native macOS font smoothing
   by default, with an optional grayscale setting. Content fonts can be selected
@@ -113,6 +163,30 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   require omission of the `store` field.
 
 ### Fixed
+
+- Computer Use on macOS parks concealed windows on an invisible agent display
+  instead of beyond the screen edge, so no sliver stays visible and live previews
+  show the whole window at the correct scale on multi-display setups with mixed
+  pixel densities. Live previews leave minimized and hidden apps where the user
+  put them and resume once a window is shown again.
+
+- Preserve cancelled worker results when stopping a parent races a pending
+  child-result handoff, without automatically waking the stopped parent.
+
+- Keep parallel file-read tracking synchronized from the first tool call, so
+  concurrent reads retain their edit-safety state without racing initialization.
+
+- Anthropic requests keep tool continuations and reusable conversation prefixes
+  stable as cache markers advance, preserving reasoning with injected context
+  and tool attachments even when prompt caching is disabled.
+
+- Stop all workers without letting cancelled child results wake parked parents
+  before their edges close. Write worker snapshots atomically so concurrent result
+  delivery can read complete history and release results for explicit recovery.
+
+- Automatically hide completed activity previews after 30 seconds while retaining
+  browser pages. New work cancels the pending dismissal, and previews can be
+  reopened explicitly without being revived by routine state refreshes.
 
 - Keep composer inputs free of duplicate status text while surfacing rejected
   requests through toasts, preserving drafts and disabled-action explanations.

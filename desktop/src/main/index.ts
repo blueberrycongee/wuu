@@ -1,4 +1,5 @@
 import { AppContextCapture } from "./appContextCapture";
+import { SystemPermissions } from "./systemPermissions";
 import { createBrowserView } from "./browserView";
 import { saveArtifactFile } from "./artifactSave";
 import { showArtifactItemMenu } from "./artifactItemMenu";
@@ -15,6 +16,7 @@ import {
   dialog,
   ipcMain,
   type IpcMainInvokeEvent,
+  type IpcMainEvent,
   Menu,
   nativeImage,
   nativeTheme,
@@ -464,10 +466,15 @@ const appContextCapture = new AppContextCapture((reveal, owner) => {
   if (host.webContents.isLoadingMainFrame()) host.webContents.once("did-finish-load", send);
   else send();
 }, appContextOwner);
+const systemPermissions = new SystemPermissions(appContextCapture);
+
+function isAppContextSender(event: IpcMainInvokeEvent | IpcMainEvent): boolean {
+  const host = windowRegistry.mainWindow();
+  return Boolean(host && !host.isDestroyed() && event.sender === host.webContents && event.senderFrame === event.sender.mainFrame);
+}
 
 function requireAppContextSender(event: IpcMainInvokeEvent): void {
-  const host = windowRegistry.mainWindow();
-  if (!host || host.isDestroyed() || event.sender !== host.webContents || event.senderFrame !== event.sender.mainFrame) {
+  if (!isAppContextSender(event)) {
     throw new Error("App snapshots are available from Wuu's main window only.");
   }
 }
@@ -1047,10 +1054,12 @@ function syncThemedWindowChrome(): void {
 
 function broadcastThemePreference(): void {
   broadcastToAll("wuu:theme-preference-changed", getThemePreference());
+  systemPermissions.refreshAppearance(resolvedThemeIsDark());
 }
 
 function broadcastLanguagePreference(): void {
   broadcastToAll("wuu:language-preference-changed", getLanguagePreference());
+  systemPermissions.refreshAppearance(resolvedThemeIsDark());
 }
 
 function syncThemeAcrossWindows(): void {
@@ -2433,6 +2442,7 @@ app.whenReady().then(async () => {
         ? (fontSize as MessageFlowFontSize)
         : MESSAGE_FLOW_FONT_SIZE_RANGE.default;
       setMessageFlowFontSize(next);
+      systemPermissions.refreshAppearance(resolvedThemeIsDark());
       return { ok: true, fontSize: next };
     },
   );
@@ -2800,6 +2810,22 @@ app.whenReady().then(async () => {
       return { ok: true };
     },
   );
+  systemPermissions.start();
+  ipcMain.handle("wuu:system-permissions", event => {
+    requireAppContextSender(event);
+    return systemPermissions.state();
+  });
+  ipcMain.handle("wuu:system-permission-request", (event, permission: unknown, presentation: unknown) => {
+    requireAppContextSender(event);
+    return systemPermissions.open(permission, windowRegistry.mainWindow()!, resolvedThemeIsDark(), presentation);
+  });
+  ipcMain.on("wuu:system-permission-guide-update", (event, presentation: unknown) => {
+    if (isAppContextSender(event)) systemPermissions.update(presentation);
+  });
+  ipcMain.handle("wuu:system-permission-guide-close", (event, requestId: unknown) => {
+    requireAppContextSender(event);
+    systemPermissions.cancel(requestId);
+  });
   ipcMain.handle("wuu:app-context-state", (event) => {
     requireAppContextSender(event);
     return appContextCapture.state();
@@ -2813,9 +2839,11 @@ app.whenReady().then(async () => {
     requireAppContextSender(event);
     return appContextCapture.update(settings);
   });
-  ipcMain.handle("wuu:app-context-permission", (event, kind: unknown) => {
+  ipcMain.handle("wuu:app-context-permission", async (event, kind: unknown) => {
     requireAppContextSender(event);
-    return appContextCapture.requestPermission(kind);
+    if (kind !== "screen" && kind !== "text") throw new Error("Unknown app snapshot permission.");
+    await systemPermissions.open(kind === "text" ? "accessibility" : "screen", windowRegistry.mainWindow()!, resolvedThemeIsDark());
+    return appContextCapture.state();
   });
   ipcMain.handle("wuu:app-context-discard", (event, id: unknown) => {
     requireAppContextSender(event);
@@ -2849,6 +2877,7 @@ app.on("before-quit", (event) => {
 function prepareToQuit(): Promise<void> {
   if (quitCleanup) return quitCleanup;
   desktopUpdates?.stop();
+  systemPermissions.close();
   appContextCapture.dispose();
   terminalSessionManager.cleanup();
   // Destroy every agent view + the hidden host window before the pool shuts

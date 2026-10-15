@@ -264,10 +264,7 @@ WHERE rowid IN (
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
-	// New databases use incremental auto-vacuum. Existing databases safely
-	// ignore this until their one-time offline compaction has enabled it.
-	_, _ = db.ExecContext(ctx, `PRAGMA incremental_vacuum(2048)`)
-	return result, nil
+	return result, reclaimSessionStorage(ctx, db)
 }
 
 func compressModelInputReceiptBatch(ctx context.Context, db *sql.DB, limit int) (ModelInputReceiptMaintenanceResult, error) {

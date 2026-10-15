@@ -26,9 +26,8 @@
     var(--session-composer-width) + var(--session-outer-padding-inline) +
       var(--session-outer-padding-inline)
   );
-  /* The panel radius: the composer's send circle (14px) sits 8px inside
-   * its corner, concentric with it. */
-  --session-composer-radius: var(--radius-md);
+  /* Give the input a gentler corner while honoring themed panel geometry. */
+  --session-composer-radius: var(--wuu-radius-panel, 20px);
 }
 
 /* Shared outer rhythm + 12-col grid for the session views.

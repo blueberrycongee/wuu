@@ -1,4 +1,6 @@
 import type { AppContextSettings, AppContextState } from "./appContext";
+import type { SystemPermission, SystemPermissionsState, SystemPermissionPresentation, SystemPermissionGuideState } from "./systemPermissions";
+export type { SystemPermission, SystemPermissionsState, SystemPermissionPresentation, SystemPermissionGuideState } from "./systemPermissions";
 export type { AppContextSettings, AppContextSnapshot, AppContextState } from "./appContext";
 export type JsonValue =
   | null
@@ -2868,6 +2870,11 @@ export type ActiveDocumentContext = {
 };
 
 export type WuuDesktopApi = {
+  getSystemPermissions?: () => Promise<SystemPermissionsState>;
+  requestSystemPermission?: (permission: SystemPermission, presentation?: SystemPermissionPresentation) => Promise<void>;
+  updateSystemPermissionGuide?: (presentation: SystemPermissionPresentation) => void;
+  onSystemPermissionGuideChanged?: (handler: (state: SystemPermissionGuideState) => void) => () => void;
+  closeSystemPermissionGuide?: (requestId?: string) => Promise<void>;
   getAppContextState?: () => Promise<AppContextState>;
   setAppContextShortcutRecording?: (recording: boolean) => Promise<AppContextState>;
   updateAppContextSettings?: (settings: AppContextSettings) => Promise<AppContextState>;

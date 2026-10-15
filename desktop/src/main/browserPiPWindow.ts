@@ -13,7 +13,7 @@ export type { BrowserPiPWindowHandle, BrowserPiPOverlayHandle } from "./activity
 
 export type BrowserPiPTabHost = Pick<BrowserHostCoordinator,
   | "tabBounds" | "tabSurfaceMeta" | "mountTabOnWindow" | "unmountTabIfOwner"
-  | "relayoutMountedTab" | "addInteractionListener" | "addTabClosedListener"
+  | "relayoutMountedTab" | "captureMountedTab" | "addInteractionListener" | "addTabClosedListener"
   | "addNavigateListener" | "addTabReparentedListener"
 >;
 
@@ -93,6 +93,11 @@ export class BrowserPiPContent implements ActivityPiPContent {
     const fit = this.fit();
     this.host.relayoutMountedTab(this.workdir, this.tabID, this.context.window.contentView,
       { x: fit.x, y: fit.y, width: fit.width, height: fit.height }, fit.scale);
+  }
+
+  snapshot(): Promise<string | undefined> {
+    if (!this.mounted) return Promise.resolve(undefined);
+    return this.host.captureMountedTab(this.workdir, this.tabID, this.context.window.contentView);
   }
 
   stop(onStopped: () => void): void {

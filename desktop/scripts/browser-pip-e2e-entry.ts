@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { app, BrowserWindow, WebContentsView } from "electron";
@@ -34,8 +34,8 @@ const page = `<!doctype html><html><style>
 <button id="target">Explore the page</button><article>One page, two views.<br>The pointer stays clear as the preview resizes.<br>Open the panel to continue browsing.</article>
 <script>window.clicks=0;document.getElementById('target').onclick=()=>{window.clicks++;document.querySelector('p').textContent='Completed actions: '+window.clicks};</script></body></html>`;
 
-async function waitFor(label: string, check: () => Promise<boolean> | boolean): Promise<void> {
-  const deadline = Date.now() + 5000;
+async function waitFor(label: string, check: () => Promise<boolean> | boolean, timeout = 5000): Promise<void> {
+  const deadline = Date.now() + timeout;
   while (!(await check())) {
     if (Date.now() > deadline) throw new Error(`Timed out: ${label}`);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -133,11 +133,20 @@ app.whenReady().then(async () => {
   coordinator.setActiveThread(activity.thread_id);
   assert.equal(pip.isVisible(), true, "Returning to the owning conversation restores its preview");
   const click = () => request("browser/cdp", { method: "click", params: { x: 240, y: 200 } });
-  const pointer = (wc: typeof contents) => wc.executeJavaScript(`(()=>{const el=document.getElementById('__wuu_agent_cursor');if(!el)return null;const m=new DOMMatrix(getComputedStyle(el).transform);return {x:m.e,y:m.f,width:el.offsetWidth,svg:el.querySelector('svg')?.outerHTML};})()`);
+  const pointer = (wc: typeof contents) => wc.executeJavaScript(`(() => {
+    const el = document.getElementById('__wuu_agent_cursor');
+    if (!el) return null;
+    const style = getComputedStyle(el);
+    const matrix = new DOMMatrix(style.transform);
+    const [tipX, tipY] = style.transformOrigin.split(' ').map(parseFloat);
+    return { x: matrix.e + tipX, y: matrix.f + tipY, width: el.offsetWidth, svg: el.querySelector('svg')?.outerHTML };
+  })()`);
 
-  coordinator.handleServerEvent({ workdir, kind: "notification", message: {
+  const completedEvent = { workdir, kind: "notification" as const, message: {
     method: "turn/completed", params: { thread_id: activity.thread_id, turn: { status: "completed" } },
-  } });
+  } };
+  const completedAt = Date.now();
+  coordinator.handleServerEvent(completedEvent);
   await waitFor("completion shown", () => overlay.executeJavaScript(`document.getElementById('completion').getAttribute('aria-hidden') === 'false'`));
   // Seek the real animations, rather than racing screenshots against timers.
   for (const [time, name] of [[600, "icon"], [1800, "check"], [3200, "badge"]] as const) {
@@ -149,28 +158,77 @@ app.whenReady().then(async () => {
   }
   await capture(pip, "pip-completed.png");
   await overlay.executeJavaScript(`document.getElementById('expand').focus();
-    Promise.all(document.getAnimations().filter(a=>a.playState==='running').map(a=>a.finished))`);
+    Promise.all(document.getAnimations().filter(a=>a.playState==='running' && Number.isFinite(a.effect.getComputedTiming().endTime)).map(a=>a.finished))`);
   await capture(pip, "pip-controls-focused.png");
   assert.equal(await overlay.executeJavaScript(`document.activeElement.id`), "expand");
   await overlay.executeJavaScript(`document.activeElement.blur()`);
 
+  const stoppedActivity: ActivitySession = {
+    ...activity, state: "stopped", controller: "none", updated_at: new Date().toISOString(),
+  };
+  coordinator.update(stoppedActivity);
+  coordinator.setActiveThread("other-thread");
+  coordinator.setActiveThread(activity.thread_id);
+  coordinator.handleServerEvent(completedEvent);
+  assert.equal(pip.isVisible(), true, "Completion remains visible before its deadline");
+  await waitFor("completed preview dismissed", () => !pip.isVisible(), 35_000);
+  const dismissedAfterMs = Date.now() - completedAt;
+  assert.ok(dismissedAfterMs >= 30_000 && dismissedAfterMs < 33_000, `Dismissed after ${dismissedAfterMs}ms`);
+  assert.equal(contents.isDestroyed(), false, "Auto-dismiss retains the browser page");
+  coordinator.update(stoppedActivity);
+  coordinator.refreshBrowserPresentation();
+  coordinator.setActiveThread("other-thread");
+  coordinator.setActiveThread(activity.thread_id);
+  assert.equal(pip.isVisible(), false, "Snapshots and conversation changes cannot reopen an expired preview");
+  await capture(main, "pip-auto-dismissed.png");
+  // Reopening is a foreground user action; the preview deliberately waits
+  // when its parent has lost focus during the real-time dismissal check.
+  main.focus();
+  await waitFor("host focused for reopen", () => main.isFocused());
+  coordinator.showForThread(activity.thread_id);
+  await waitFor("explicitly reopened preview", () => pip.isVisible());
+  await waitFor("reopen clears completion", () => overlay.executeJavaScript(`document.getElementById('completion').getAttribute('aria-hidden') === 'true'`));
+
+  coordinator.handleServerEvent(completedEvent);
+  const restartedAt = Date.now();
+  coordinator.handleServerEvent({ workdir, kind: "notification", message: {
+    method: "turn/started", params: { thread_id: activity.thread_id },
+  } });
+  coordinator.update({ ...activity, execution_id: "next-execution", updated_at: new Date().toISOString() });
+  await waitFor("new turn clears completion", () => overlay.executeJavaScript(`document.getElementById('completion').getAttribute('aria-hidden') === 'true'`));
+  // Cross the previous completion's real deadline while checking that new work
+  // stays visible, including throughout the timer's cancellation boundary.
+  await waitFor("old completion deadline passed", () => {
+    assert.equal(pip.isVisible(), true, "An old completion cannot dismiss the next task");
+    return Date.now() - restartedAt >= 31_000;
+  }, 35_000);
+  await capture(pip, "pip-new-task-retained.png");
+  writeFileSync(join(artifacts, "completion-dismissal.json"), JSON.stringify({
+    dismissedAfterMs, retainedPage: !contents.isDestroyed(),
+    stayedDismissedAfterRefresh: true, explicitReopen: true, newTaskSurvivedOldDeadline: true,
+  }, null, 2));
+
   await click();
   await waitFor("new work clears completion", () => overlay.executeJavaScript(`document.getElementById('completion').getAttribute('aria-hidden') === 'true'`));
   assert.equal(await contents.executeJavaScript("window.clicks"), 1, "PiP input reaches the page target");
+  // Input dispatch waits for arrival; the pointer can still be settling onto
+  // its exact destination when the click response returns.
+  await waitFor("PiP pointer settled", async () => {
+    const point = await pointer(overlay);
+    return point && Math.abs(point.x - 240 * .3) < .1 && Math.abs(point.y - 200 * .3) < .1;
+  });
   const first = await pointer(overlay);
   assert.ok(first);
-  assert.ok(Math.abs(first.x - (240 * .3 - 3)) < .1);
-  assert.ok(Math.abs(first.y - (200 * .3 - 2.5)) < .1);
   assert.equal(await pointer(contents), null, "PiP paints only one pointer");
   await capture(pip, "pip-light.png");
 
   pip.setBounds({ x: 120, y: 120, width: 512, height: 320 });
-  await waitFor("resize projection", async () => Math.abs((await pointer(overlay)).x - (240 * .4 - 3)) < .1);
+  await waitFor("resize projection", async () => Math.abs((await pointer(overlay)).x - 240 * .4) < .1);
   assert.equal((await pointer(overlay)).width, first.width, "Pointer size is independent of page zoom");
   await contents.executeJavaScript("document.body.classList.add('dark')");
   await capture(pip, "pip-dark.png");
   await overlay.executeJavaScript(`window.wuuPipAppearance({dark:true});document.getElementById('close').focus();
-    Promise.all(document.getAnimations().filter(a=>a.playState==='running').map(a=>a.finished))`);
+    Promise.all(document.getAnimations().filter(a=>a.playState==='running' && Number.isFinite(a.effect.getComputedTiming().endTime)).map(a=>a.finished))`);
   await capture(pip, "pip-dark-controls.png");
   await overlay.executeJavaScript("document.activeElement.blur()");
   pip.setSize(160, 120);
@@ -186,9 +244,12 @@ app.whenReady().then(async () => {
   assert.equal(pip.isVisible(), false, "Docking the page replaces its preview");
   await click();
   assert.equal(await contents.executeJavaScript("window.clicks"), 2);
+  await waitFor("panel pointer settled", async () => {
+    const point = await pointer(contents);
+    return point && Math.abs(point.x - 240) < .1 && Math.abs(point.y - 200) < .1;
+  });
   const panel = await pointer(contents);
   assert.equal(panel.svg, first.svg, "Both surfaces use the same pointer artwork");
-  assert.ok(Math.abs(panel.x - 237) < .1);
   await waitFor("PiP pointer removed", async () => (await pointer(overlay)) === null);
   await capture(main, "panel-dark.png");
 
@@ -207,7 +268,7 @@ app.whenReady().then(async () => {
   await coordinator.shutdown();
   host.destroyAll();
   assert.ok(pip.isDestroyed());
-  console.log(`browser-pip-e2e: PASS (default preview, session visibility, docking, completion, PiP/panel input, projection, resize, navigation, reduced motion, takeover; ${artifacts})`);
+  console.log(`browser-pip-e2e: PASS (default preview, session visibility, docking, completion auto-dismiss/reopen/cancellation, PiP/panel input, projection, resize, navigation, reduced motion, takeover; ${artifacts})`);
   main.destroy();
   app.exit(0);
 }).catch((error) => { console.error(error); app.exit(1); });

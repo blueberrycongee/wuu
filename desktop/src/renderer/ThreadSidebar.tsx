@@ -30,6 +30,7 @@ import {
 import { isProjectCoordinator, type ProjectRowSummary } from "./ProjectSessions";
 import { resolveLocalizedText, useI18n } from "./i18n";
 import { useHoverReveal } from "./HoverReveal";
+import { motionDurationMs, useReducedMotion } from "./motion";
 import {
   SidebarHoverCardLayer,
   ThreadHoverCardContent,
@@ -618,6 +619,7 @@ function ThreadList({
               className="thread-row-main"
               type="button"
               aria-busy="true"
+              aria-label={pending.title}
               onClick={() => onSelectPendingConversation?.(pending.id)}
             >
               <ThreadRowTitle title={pending.title} />
@@ -1248,37 +1250,76 @@ export function OrganizationThreadList({
   );
 }
 
-/**
- * ThreadRowTitle renders the sidebar title with a soft crossfade whenever the
- * displayed text changes (typically when the LLM-generated title replaces the
- * fallback preview after the first turn completes).
- *
- * Design intent: the streaming-state visual and the post-stable visual should
- * not switch abruptly. A pure DOM-text swap reads as a flicker because the
- * fallback (first user query, often long) and the final title (short,
- * grammar-normalized) are visually very different. We crossfade between them
- * with a key remount so the user perceives a settle, not a snap.
- *
- * The first appearance of a title does not animate — only swaps after the
- * component has been mounted with prior content. This avoids the entire
- * sidebar fading in on project switch / cold boot, which would itself feel
- * like a loading state.
- */
+const titleGraphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Backspace the visible title, then type its replacement. Initial titles appear immediately. */
 export function ThreadRowTitle({ title }: { title: string }): JSX.Element {
-  const previousTitleRef = useRef(title);
-  const swapCountRef = useRef(0);
-  if (previousTitleRef.current !== title) {
-    previousTitleRef.current = title;
-    swapCountRef.current += 1;
-  }
-  const hasSwapped = swapCountRef.current > 0;
-  return (
-    <span
-      className="thread-row-title"
-      data-title-swap={hasSwapped ? swapCountRef.current : undefined}
-      key={swapCountRef.current}
-    >
-      {title}
-    </span>
-  );
+  const reducedMotion = useReducedMotion();
+  const [displayed, setDisplayed] = useState(title);
+  const displayedRef = useRef(title);
+  const elementRef = useRef<HTMLSpanElement>(null);
+
+  useLayoutEffect(() => {
+    const previous = displayedRef.current;
+    if (reducedMotion || previous === title) {
+      displayedRef.current = title;
+      setDisplayed(title);
+      return;
+    }
+
+    let outgoing = Array.from(titleGraphemes.segment(previous), part => part.segment);
+    const incoming = Array.from(titleGraphemes.segment(title), part => part.segment);
+    const element = elementRef.current!;
+    // Start at the visible ellipsis instead of spending the erase phase on a hidden suffix.
+    if (element.scrollWidth > element.clientWidth) {
+      const style = getComputedStyle(element);
+      const width = element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const context = document.createElement("canvas").getContext("2d")!;
+      context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      let low = 0;
+      let high = outgoing.length;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        if (context.measureText(outgoing.slice(0, middle).join("") + "…").width <= width) {
+          low = middle;
+        } else {
+          high = middle - 1;
+        }
+      }
+      outgoing = [...outgoing.slice(0, low), "…"];
+    }
+
+    const step = motionDurationMs("--motion-fast", 120) / 3;
+    const phaseLimit = motionDurationMs("--motion-slower", 440);
+    const eraseDuration = Math.min(outgoing.length * step, phaseLimit);
+    const pauseDuration = step * 2;
+    // Typing is a little slower than backspacing; cap both phases for long titles.
+    const typeDuration = Math.min(incoming.length * step * 1.5, phaseLimit * 1.5);
+    const duration = eraseDuration + pauseDuration + typeDuration;
+    const started = performance.now();
+    let frame: number;
+    const update = (now: number): void => {
+      const elapsed = now - started;
+      let next: string;
+      if (elapsed >= duration) {
+        next = title;
+      } else if (elapsed < eraseDuration) {
+        const remaining = outgoing.length - Math.floor(elapsed / eraseDuration * outgoing.length);
+        next = outgoing.slice(0, remaining).join("");
+      } else if (elapsed < eraseDuration + pauseDuration) {
+        next = "";
+      } else {
+        const count = Math.floor((elapsed - eraseDuration - pauseDuration) / typeDuration * incoming.length);
+        next = incoming.slice(0, count).join("");
+      }
+      displayedRef.current = next;
+      setDisplayed(next);
+      if (elapsed < duration) frame = requestAnimationFrame(update);
+    };
+    update(started);
+    return () => cancelAnimationFrame(frame);
+  }, [title, reducedMotion]);
+
+  // Each parent button exposes the complete title, without announcing every typing frame.
+  return <span ref={elementRef} className="thread-row-title" aria-hidden="true">{displayed}</span>;
 }

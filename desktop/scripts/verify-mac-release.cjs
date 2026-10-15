@@ -11,7 +11,7 @@ const requirementArgs = release
   : [];
 execFileSync("codesign", ["--verify", "--deep", "--strict", ...requirementArgs, app]);
 const bin = join(app, "Contents", "Resources", "bin");
-const skipCua = process.env.WUU_SKIP_CUA_MAC === "1";
+const skipCua = !release && process.env.WUU_SKIP_CUA_MAC === "1";
 const requiredBinaries = skipCua
   ? ["wuu-core"]
   : ["wuu-core", "wuu-cua-mac", "wuu-cua-mac-pip"];
@@ -49,7 +49,9 @@ if (!bridgeNotice.isFile() || bridgeNotice.size === 0) throw new Error("Capture 
 execFileSync("codesign", ["--verify", "--strict", ...requirementArgs, captureBridge]);
 const mainExecutable = execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleExecutable", join(app, "Contents/Info.plist")], { encoding: "utf8" }).trim();
 const appArchitectures = execFileSync("lipo", ["-archs", join(app, "Contents", "MacOS", mainExecutable)], { encoding: "utf8" }).trim().split(/\s+/);
-for (const binary of [appSnapshotExecutable, captureBridge]) execFileSync("lipo", [binary, "-verify_arch", ...appArchitectures]);
+for (const binary of [...requiredBinaries.map((name) => join(bin, name)), appSnapshotExecutable, captureBridge]) {
+  execFileSync("lipo", [binary, "-verify_arch", ...appArchitectures]);
+}
 const bundleID = execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIdentifier", join(app, "Contents/Info.plist")], { encoding: "utf8" }).trim();
 if (bundleID !== "com.blueberrycongee.wuu") throw new Error("Release bundle identity changed");
 if (release) {

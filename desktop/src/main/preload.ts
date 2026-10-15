@@ -143,6 +143,15 @@ try {
 }
 
 const api: WuuDesktopApi = {
+  getSystemPermissions: () => ipcRenderer.invoke("wuu:system-permissions"),
+  requestSystemPermission: (permission, presentation) => ipcRenderer.invoke("wuu:system-permission-request", permission, presentation),
+  updateSystemPermissionGuide: presentation => ipcRenderer.send("wuu:system-permission-guide-update", presentation),
+  onSystemPermissionGuideChanged: handler => {
+    const listener = (_event: Electron.IpcRendererEvent, state: Parameters<typeof handler>[0]) => handler(state);
+    ipcRenderer.on("wuu:system-permission-guide-changed", listener);
+    return () => ipcRenderer.removeListener("wuu:system-permission-guide-changed", listener);
+  },
+  closeSystemPermissionGuide: requestId => ipcRenderer.invoke("wuu:system-permission-guide-close", requestId),
   getAppContextState: () => ipcRenderer.invoke("wuu:app-context-state"),
   setAppContextShortcutRecording: (recording) => ipcRenderer.invoke("wuu:app-context-recording", recording),
   updateAppContextSettings: (settings) => ipcRenderer.invoke("wuu:app-context-settings", settings),

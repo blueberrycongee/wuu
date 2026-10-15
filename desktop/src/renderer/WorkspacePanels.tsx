@@ -1073,7 +1073,7 @@ export function WorkspaceRightPanel({
                     threadID={activeTab.threadID}
                     initialPage={activeTab.page}
                     pageRequest={activeTab.pageRequest}
-                    motion={activeTab.motion}
+                    origin={activeTab.origin}
                     cwd={activeTab.cwd}
                     mode="panel"
                     onClose={() => onCloseTab(activeTab.id)}

@@ -1,0 +1,290 @@
+.system-permissions {
+  display: grid;
+  gap: var(--space-3);
+  container: system-permissions / inline-size;
+  font-size: var(--font-ui);
+}
+
+.system-permission-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.system-permission-slot,
+.permission-guide-source {
+  container: system-permission / inline-size;
+  min-width: 0;
+}
+
+/* Visibility preserves the entire card's footprint throughout the transfer. */
+.system-permission-slot[data-floating] { visibility: hidden; }
+
+.system-permission-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+  box-shadow: var(--shadow-soft);
+  font-size: var(--font-ui);
+}
+
+.system-permission-symbol {
+  display: grid;
+  place-items: center;
+  width: 2.4em;
+  height: 2.4em;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--info) 12%, var(--paper));
+  color: var(--info);
+}
+
+.system-permission-row[data-permission="screen"] .system-permission-symbol {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.system-permission-icon {
+  width: var(--icon-size-lg);
+  height: var(--icon-size-lg);
+  stroke-width: var(--icon-stroke);
+}
+
+.system-permission-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+  line-height: var(--line-body);
+  overflow-wrap: anywhere;
+}
+
+.system-permission-title {
+  color: var(--ink-strong);
+  font-weight: var(--weight-medium);
+}
+
+.system-permission-description { color: var(--ink-soft); }
+
+/* Keep launch, Enable and granted states from shifting the text column. */
+.system-permission-action {
+  display: grid;
+  min-width: 5.7em;
+}
+
+.system-permission-enable.settings-button {
+  min-width: 5.7em;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-pill);
+  background: var(--paper);
+}
+
+.system-permission-granted {
+  display: inline-flex;
+  min-height: var(--control-field-height);
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  color: var(--success);
+  white-space: nowrap;
+}
+
+.system-permissions-note {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: var(--line-body);
+}
+
+.system-permission-feedback {
+  display: grid;
+  grid-template-columns: var(--icon-size) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
+  line-height: var(--line-body);
+  overflow-wrap: anywhere;
+}
+
+.system-permission-feedback > .icon {
+  justify-self: center;
+  margin-block-start: calc((1lh - var(--icon-size)) / 2);
+}
+
+.system-permissions-error {
+  display: grid;
+  grid-template-columns: 2.4em minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  /* Share the cards’ content columns, including their border inset. */
+  padding-inline: calc(var(--space-4) + 1px);
+}
+
+.system-permissions-error > .system-permission-feedback {
+  grid-column: 1 / 3;
+  grid-template-columns: subgrid;
+  column-gap: inherit;
+}
+
+@container system-permissions (max-width: 28em) {
+  .system-permissions-error > button {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+}
+
+@container system-permission (max-width: 25em) {
+  .system-permission-row { grid-template-columns: auto minmax(0, 1fr); }
+  .system-permission-symbol { align-self: start; }
+  .system-permission-action { grid-column: 2; justify-self: start; }
+}
+
+.permission-guide-window {
+  overflow: hidden;
+  background: var(--paper);
+}
+
+.permission-guide-window #root { height: 100%; }
+
+.permission-guide {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--paper);
+  font-size: var(--font-ui);
+  color: var(--ink);
+}
+
+/* The native window bounds are the source card bounds, with no outer inset. */
+.permission-guide-source {
+  position: absolute;
+  inset: 0;
+}
+
+.permission-guide-source .system-permission-row {
+  min-height: 100%;
+  box-shadow: none;
+}
+
+.permission-guide-source,
+.permission-guide-compact {
+  transition: opacity var(--motion-base) var(--ease-out), filter var(--motion-base) var(--ease-out), visibility 0s var(--motion-base);
+}
+
+.permission-guide-compact {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  opacity: 0;
+  filter: blur(2px);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.permission-guide[data-phase="lifting"] .permission-guide-source,
+.permission-guide[data-phase="guiding"] .permission-guide-source {
+  opacity: 0;
+  filter: blur(2px);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.permission-guide[data-phase="lifting"] .permission-guide-compact,
+.permission-guide[data-phase="guiding"] .permission-guide-compact {
+  opacity: 1;
+  filter: none;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: var(--motion-fast), var(--motion-fast), 0s;
+}
+
+.permission-guide[data-phase="returning"] .permission-guide-source {
+  transition-delay: var(--motion-fast), var(--motion-fast), 0s;
+}
+
+.permission-guide p { margin: 0; line-height: var(--line-body); }
+
+.permission-guide-instruction {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-1);
+  color: var(--ink);
+}
+
+.permission-guide-instruction > .icon {
+  flex: none;
+  width: var(--icon-size-lg);
+  height: var(--icon-size-lg);
+  color: var(--info);
+}
+
+.permission-guide-controls {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Feedback follows the app row; the Back control keeps its own column. */
+.permission-guide-feedback {
+  grid-column: 2;
+  grid-template-columns: 20px minmax(0, 1fr);
+  padding-inline: calc(var(--space-2) + 1px);
+}
+
+.permission-guide-back.settings-button {
+  border-radius: var(--radius-circle);
+  background: var(--surface-2);
+  color: var(--ink-soft);
+}
+
+.permission-guide-app {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-field-height);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--ink-strong);
+  font: inherit;
+  text-align: left;
+  cursor: grab;
+  -webkit-app-region: no-drag;
+  transition: background var(--motion-base) var(--ease-out);
+}
+
+.permission-guide-app:is(:hover, :focus-visible) { background: var(--surface-2); }
+.permission-guide-app:active { cursor: grabbing; }
+.permission-guide-app img {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  object-fit: contain;
+  pointer-events: none;
+}
+.permission-guide-app span { min-width: 0; overflow-wrap: anywhere; }
+
+.permission-guide[data-reduced-motion] .permission-guide-source,
+.permission-guide[data-reduced-motion] .permission-guide-compact {
+  transition: none;
+  filter: none;
+}
+
+@container style(--motion-reduced: 1) {
+  .permission-guide-source,
+  .permission-guide-compact {
+    transition: none;
+    filter: none;
+  }
+}

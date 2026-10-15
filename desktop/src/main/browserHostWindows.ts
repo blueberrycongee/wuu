@@ -464,6 +464,21 @@ export class BrowserHostCoordinator {
     entry.view.setBounds(rect);
   }
 
+  // The tab as displayed on its observation window, for appearance motion.
+  // Ownership-checked like relayoutMountedTab.
+  async captureMountedTab(
+    workdir: string,
+    tabID: string,
+    owner: BrowserParentWindowHandle["contentView"],
+  ): Promise<string | undefined> {
+    const entry = this.tabs.get(tabKey(workdir, tabID));
+    if (!entry || entry.contents.isDestroyed() || entry.currentParent !== owner) return undefined;
+    const image = await entry.contents.capturePage(undefined, { stayHidden: true });
+    const size = image.getSize();
+    if (size.width <= 0 || size.height <= 0) return undefined;
+    return `data:image/png;base64,${image.toPNG().toString("base64")}`;
+  }
+
   // Park the tab back on the hidden host — but only when the observation
   // window still owns it. A visibility takeover may have adopted the view in
   // between, and yanking it back would tear the page out of the user's panel.

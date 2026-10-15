@@ -13,6 +13,8 @@ export interface ActivityPiPContent {
   updateActivity?(activity: ActivitySession): void;
   refresh?(): void;
   layout(bounds: Rectangle): void;
+  // A data URL of the content as currently displayed, for appearance motion.
+  snapshot?(): Promise<string | undefined>;
   stop(onStopped: () => void): void;
 }
 

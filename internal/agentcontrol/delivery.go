@@ -521,6 +521,21 @@ func (c *AgentControl) parentPersistedRunContainsResult(parentID, resultID strin
 	return false, nil
 }
 
+// settleClosedParentResult requires the parent's transition lock and a closed
+// edge. Keep an applied result acknowledged; otherwise release its reservation
+// so stopping the parent preserves the result without waking it.
+func (c *AgentControl) settleClosedParentResult(parentID, resultID string) (bool, error) {
+	applied, err := c.parentPersistedRunContainsResult(parentID, resultID)
+	if err != nil {
+		return false, err
+	}
+	if applied {
+		transitioned, consumer, err := c.transitionAgentResultDeliveryConsumer(resultID, agentResultConsumerNestedPending, agentResultConsumerNestedFollowup)
+		return transitioned || consumer == agentResultConsumerNestedFollowup, err
+	}
+	return false, c.ReleaseAgentResultDeliveryClaim(resultID, agentResultConsumerNestedPending)
+}
+
 // commitDurablyAppliedNestedResults advances pending parent-inbox reservations
 // only after the parent's terminal persisted history contains the stable result
 // ID. A crash before that point leaves the pending claim replayable; a crash

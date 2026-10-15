@@ -38,6 +38,9 @@ public final class MacComputerBackend: ComputerBackend {
     private var lastWindowIDs: [pid_t: CGWindowID] = [:]
     private var foregroundCaptureProcessIDs = Set<pid_t>()
     private var restoration: WindowRestorationJournal?
+    // Acquired on first concealment and kept until shutdown: adding or removing
+    // a display reconfigures every app's screens, so it should happen rarely.
+    private var agentDisplay: AgentDisplayLease?
 
     public init() {
         restoration = try? WindowRestorationJournal()
@@ -47,6 +50,7 @@ public final class MacComputerBackend: ComputerBackend {
     public func shutdown() {
         _ = try? restoration?.restore(using: restoreWindow)
         restoration?.finish()
+        agentDisplay = nil
     }
 
     public func perform(_ command: ComputerCommand) throws -> ComputerResult {
@@ -88,8 +92,8 @@ public final class MacComputerBackend: ComputerBackend {
             }
         } else if command.foregroundPolicy == .allow {
             // A foreground input action must not post global events at a concealed
-            // window's off-screen coordinates (the WindowServer would clamp them to a
-            // screen edge and hit whatever is there). Bring the windows back first, so
+            // window's agent display coordinates: the real pointer would vanish onto
+            // a display the user cannot see. Bring the windows back first, so
             // element frames and coordinates resolve against the on-screen window.
             switch command.action {
             case .observe, .querySnapshot, .concealApp, .revealApp, .waitForChange, .waitFor,
@@ -790,19 +794,6 @@ public final class MacComputerBackend: ComputerBackend {
         }
     }
 
-    // A rendered window keeps its full Accessibility tree and its ScreenCaptureKit
-    // backing surface no matter where it sits, so parking it beyond every display
-    // hides it from the user while background control and the live PiP keep working.
-    // The Dock icon, Cmd-Tab entry, and Mission Control presence follow the target
-    // app's own activation policy, which only that process can change; conceal_app
-    // does not claim to remove them.
-    private func offscreenOrigin() -> CGPoint {
-        let union = NSScreen.screens.reduce(CGRect.zero) { $0.union($1.frame) }
-        let width = max(union.width, 4000)
-        let height = max(union.height, 4000)
-        return CGPoint(x: union.maxX + width, y: union.maxY + height)
-    }
-
     private func appWindows(_ application: AXUIElement) -> [AXUIElement] {
         axElements(application, attribute: kAXWindowsAttribute as String)
     }
@@ -813,25 +804,35 @@ public final class MacComputerBackend: ComputerBackend {
         return AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value) == .success
     }
 
+    // A window parked on the invisible agent display keeps rendering, its
+    // Accessibility tree, and its capture surface, so background control and the
+    // live PiP keep working while no physical screen shows it. The Dock icon,
+    // Cmd-Tab entry, and Mission Control presence follow the target app's own
+    // activation policy, which only that process can change.
     private func concealApp(app: NSRunningApplication, application: AXUIElement) throws -> ComputerResult {
         try requireAccessibility()
         let windows = appWindows(application)
         guard !windows.isEmpty else {
             throw ComputerError.operationFailed("no window to conceal yet; observe the app or wait for its window before concealing")
         }
-        let target = offscreenOrigin()
         guard let restoration else { throw ComputerError.operationFailed("window restoration journal is unavailable") }
+        // A daemon crash or display removal invalidates even a held lease.
+        // Reacquire before moving another window so recovery needs no helper restart.
+        if agentDisplay?.isValid == false { agentDisplay = nil }
+        let display = try agentDisplay ?? AgentDisplayLease.acquire()
+        agentDisplay = display
         let frames = currentWindowFrames(processID: app.processIdentifier)
         var concealed = 0
-        var clamped = 0
+        var unsupported = 0
+        var moved: [CGWindowID] = []
         for (index, window) in windows.enumerated() {
             try ComputerExecution.checkpoint()
-            guard let frame = axFrame(window) else { clamped += 1; continue }
+            guard let frame = axFrame(window) else { unsupported += 1; continue }
             let ids = frames.filter { $0.value == frame }.map(\.key)
-            guard ids.count == 1 else { clamped += 1; continue }
-            let parked = CGPoint(x: target.x + CGFloat(index) * 32, y: target.y + CGFloat(index) * 32)
+            guard ids.count == 1 else { unsupported += 1; continue }
+            let parked = display.parkingOrigin(index: index)
             if let previous = restoration.records.first(where: { $0.processID == app.processIdentifier && $0.windowID == ids[0] }) {
-                if previous.parked == frame { concealed += 1; continue }
+                if previous.parked == frame, frames[ids[0]].map(display.holds) == true { concealed += 1; continue }
                 try restoration.discard(processID: app.processIdentifier, windowID: ids[0])
             }
             try restoration.record(WindowRestorationRecord(processID: app.processIdentifier,
@@ -839,27 +840,36 @@ public final class MacComputerBackend: ComputerBackend {
                 identifier: axString(window, kAXIdentifierAttribute as String) ?? "", original: frame,
                 parked: CGRect(origin: parked, size: frame.size)))
             try ComputerExecution.input()
-            guard setWindowOrigin(window, to: parked) else { clamped += 1; continue }
-            if let actual = axFrame(window) {
-                try restoration.updateParked(processID: app.processIdentifier, windowID: ids[0], frame: actual)
-                if abs(actual.minX - parked.x) < 2, abs(actual.minY - parked.y) < 2 { concealed += 1 }
-                else { clamped += 1 }
-            } else { clamped += 1 }
+            guard setWindowOrigin(window, to: parked) else { unsupported += 1; continue }
+            guard let actual = axFrame(window) else { unsupported += 1; continue }
+            try restoration.updateParked(processID: app.processIdentifier, windowID: ids[0], frame: actual)
+            moved.append(ids[0])
+        }
+        // AX reports the requested origin at once, but the WindowServer animates
+        // the move. Report success only once the real geometry is on the display.
+        let deadline = Date().addingTimeInterval(1.5)
+        var settled = currentWindowFrames(processID: app.processIdentifier)
+        while Date() < deadline, !moved.allSatisfy({ settled[$0].map(display.holds) == true }) {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.03))
+            settled = currentWindowFrames(processID: app.processIdentifier)
+        }
+        for id in moved {
+            if settled[id].map(display.holds) == true { concealed += 1 } else { unsupported += 1 }
         }
         let canonicalTarget = app.bundleIdentifier ?? app.bundleURL?.path ?? String(app.processIdentifier)
-        var text = "Concealed \(concealed) window(s) for app=\"\(canonicalTarget)\" off-screen; Accessibility control and live capture continue."
-        if clamped > 0 {
-            text += " \(clamped) window(s) refused the off-screen position and stay visible."
+        var text = "Concealed \(concealed) window(s) for app=\"\(canonicalTarget)\" on the invisible agent display; Accessibility control and live capture continue."
+        if unsupported > 0 {
+            text += " \(unsupported) window(s) refused the move and stay visible."
         }
         return ComputerResult(text: text, structured: [
             "action": "conceal_app",
             "app": canonicalTarget,
             "process_id": Int(app.processIdentifier),
-            "status": clamped == 0 ? "concealed" : "partial",
+            "status": unsupported == 0 ? "concealed" : "partial",
             "mechanism": "background_ax",
             "foreground_changed": false,
             "concealed_windows": concealed,
-            "unsupported_windows": clamped,
+            "unsupported_windows": unsupported,
         ])
     }
 

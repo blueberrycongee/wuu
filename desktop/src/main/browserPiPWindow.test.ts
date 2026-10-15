@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { Rectangle } from "electron";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ActivitySession } from "../shared/protocol";
 import type { BrowserInteractionHint } from "./browserHostWindows";
 import {
@@ -15,6 +15,9 @@ import {
 import type { ObservationPiPEventSink } from "./cuaActivityWindows";
 
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+// Cards animate in and out on timers; assertions about resting state run once
+// the motion has finished.
+const finishMotion = (): void => { vi.advanceTimersByTime(1_000); };
 
 describe("browser PiP pure helpers", () => {
   it("extracts the host for the surface chrome", () => {
@@ -59,8 +62,16 @@ class FakePipWindow {
     },
   };
 
+  opacity = 1;
+  ignoringMouse = false;
   setAlwaysOnTop(): void {}
   setVisibleOnAllWorkspaces(): void {}
+  setOpacity(opacity: number): void {
+    this.opacity = opacity;
+  }
+  setIgnoreMouseEvents(ignore: boolean): void {
+    this.ignoringMouse = ignore;
+  }
   showInactive(): void {
     if (this.destroyed) throw new Error("Object has been destroyed");
     this.visible = true;
@@ -164,6 +175,9 @@ class FakeHost {
   relayoutMountedTab(_w: string, _t: string, _o: unknown, rect: Rectangle, zoom: number): void {
     this.relayouts.push({ rect, zoom });
   }
+  async captureMountedTab(): Promise<string | undefined> {
+    return undefined;
+  }
   addTabClosedListener(listener: (workdir: string, tabID: string) => void): () => void {
     this.listeners.closed.add(listener);
     return () => this.listeners.closed.delete(listener);
@@ -244,7 +258,9 @@ function makeSink(): ObservationPiPEventSink & {
   };
 }
 
-function makeSurface(opts?: { host?: FakeHost; bounds?: Rectangle; cursorPosition?: () => { x: number; y: number } }): {
+function makeSurface(opts?: {
+  host?: FakeHost; bounds?: Rectangle; cursorPosition?: () => { x: number; y: number }; reducedMotion?: boolean;
+}): {
   surface: BrowserPiPSurface;
   win: FakePipWindow;
   overlay: FakeOverlay;
@@ -266,13 +282,16 @@ function makeSurface(opts?: { host?: FakeHost; bounds?: Rectangle; cursorPositio
     isPackaged: false,
     createWindow: () => win.asHandle(),
     createOverlay: () => overlay.asHandle(),
-    reducedMotion: () => false,
+    reducedMotion: () => opts?.reducedMotion ?? false,
     cursorPosition: opts?.cursorPosition ?? (() => ({ x: -1000, y: -1000 })),
   });
   return { surface, win, overlay, host, sink };
 }
 
 describe("BrowserPiPSurface", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] }); });
+  afterEach(() => { vi.useRealTimers(); });
+
   it("waits for a foreground host before showing and preserves an existing preview through focus changes", () => {
     let visible = false;
     let minimized = false;
@@ -339,13 +358,14 @@ describe("BrowserPiPSurface", () => {
   });
 
   it("tracks pointer entry without focus and releases tracking when hidden or closed", async () => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
       const cursor = { x: 10, y: 10 };
-      const { surface, overlay } = makeSurface({ cursorPosition: () => cursor });
+      // Without scaling, the card rests at its full frame as soon as it shows.
+      const { surface, overlay } = makeSurface({ cursorPosition: () => cursor, reducedMotion: true });
       surface.start();
       surface.setVisible(true);
       await settle();
+      finishMotion();
       overlay.executed.length = 0;
       cursor.x = 120;
       cursor.y = 120;
@@ -358,13 +378,17 @@ describe("BrowserPiPSurface", () => {
       vi.advanceTimersByTime(100);
       expect(overlay.executed).toContain("window.wuuPipHover?.(null)");
       surface.setHostLayout(null);
+      finishMotion();
       expect(vi.getTimerCount()).toBe(0);
       surface.setHostLayout({ host: { x: 0, y: 0, width: 900, height: 700 }, obstacles: [], visibleFrame: { x: 0, y: 0, width: 900, height: 700 } });
+      finishMotion();
       expect(vi.getTimerCount()).toBe(1);
       surface.setVisible(false);
+      finishMotion();
       expect(vi.getTimerCount()).toBe(0);
       surface.setVisible(true);
       surface.stop();
+      finishMotion();
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
@@ -388,6 +412,8 @@ describe("BrowserPiPSurface", () => {
     expect(overlay.executed.some((code) => code.includes('"mounted":true'))).toBe(true);
 
     surface.setVisible(false);
+    expect(win.visible).toBe(true);
+    finishMotion();
     expect(host.unmounts).toEqual([{ restore: { x: 0, y: 0, width: 1000, height: 500 } }]);
     expect(win.visible).toBe(false);
     surface.stop();
@@ -412,8 +438,11 @@ describe("BrowserPiPSurface", () => {
     surface.start();
     surface.setVisible(true);
 
+    // A card appears with its first pixels, never as an empty placeholder:
+    // until then it is transparent and lets clicks through.
     expect(sink.gone).toBe(0);
-    expect(win.visible).toBe(true);
+    expect(win.opacity).toBe(0);
+    expect(win.ignoringMouse).toBe(true);
     expect(host.mounts).toHaveLength(0);
 
     host.bounds = { x: 0, y: 0, width: 1000, height: 500 };
@@ -421,6 +450,10 @@ describe("BrowserPiPSurface", () => {
     surface.setVisible(true);
 
     expect(host.mounts).toHaveLength(1);
+    finishMotion();
+    expect(win.visible).toBe(true);
+    expect(win.opacity).toBe(1);
+    expect(win.ignoringMouse).toBe(false);
     expect(sink.gone).toBe(0);
     surface.stop();
   });
@@ -462,6 +495,8 @@ describe("BrowserPiPSurface", () => {
     surface.start();
     surface.setVisible(true);
     await settle();
+    finishMotion();
+    host.relayouts.length = 0;
 
     win.bounds = { ...win.bounds, width: 520, height: 340 };
     const detached = win.removed.length;
@@ -481,6 +516,7 @@ describe("BrowserPiPSurface", () => {
     surface.start();
     surface.setVisible(true);
     await settle();
+    finishMotion();
     const viewport = [...overlay.executed].reverse().find((code) => code.includes("wuuPipViewport"));
     expect(viewport).toContain('"scale":0.26');
     expect(viewport).toContain('"y":20');
@@ -514,6 +550,7 @@ describe("BrowserPiPSurface", () => {
     surface.setVisible(true);
     const preventDefault = vi.fn();
     win.emit("close", { preventDefault });
+    finishMotion();
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(win.destroyed).toBe(false);
     expect(host.unmounts).toEqual([{ restore: { x: 0, y: 0, width: 1000, height: 500 } }]);
@@ -588,6 +625,7 @@ describe("BrowserPiPSurface", () => {
     if (layoutBeforeMount) surface.setHostLayout(layout);
     surface.setVisible(true);
     if (!layoutBeforeMount) surface.setHostLayout(layout);
+    finishMotion();
     const placed = { ...win.bounds };
     expect(win.bounds.width / win.bounds.height).toBeCloseTo(2);
 
@@ -596,9 +634,11 @@ describe("BrowserPiPSurface", () => {
         // The panel takes ownership before the coordinator hides the card.
         host.emitReparented({});
         surface.setVisible(false);
+        finishMotion();
         host.bounds = { x: 0, y: 0, ...viewport };
         surface.setVisible(true);
         surface.setHostLayout(layout);
+        finishMotion();
         expect(win.bounds).toEqual(placed);
         const mounted = host.mounts.at(-1)!;
         expect(mounted.zoom).toBeCloseTo(placed.height / viewport.height);
@@ -675,6 +715,30 @@ describe("BrowserPiPSurface", () => {
     surface.setVisible(true);
     expect(host.mounts).toHaveLength(2);
     surface.stop();
+  });
+
+  it("starts a new front card at the corner the stack already rests in", () => {
+    const layout = {
+      host: { x: 0, y: 0, width: 800, height: 600 },
+      obstacles: [],
+      visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
+    };
+    const first = makeSurface();
+    first.surface.start();
+    first.surface.setHostLayout(layout);
+    first.overlay.navigate("wuu-pip://drag?phase=start&x=476&y=356&vx=0&vy=0");
+    first.overlay.navigate("wuu-pip://drag?phase=end&x=140&y=120&vx=0&vy=0");
+    finishMotion();
+    expect(first.win.bounds).toMatchObject({ x: 24, y: 24 });
+
+    const second = makeSurface();
+    second.surface.start();
+    second.surface.setHostLayout(layout);
+    second.surface.setStackPosition(0, first.surface.stackLead());
+    finishMotion();
+    expect(second.win.bounds).toMatchObject({ x: 24, y: 24 });
+    first.surface.stop();
+    second.surface.stop();
   });
 
   it("snaps a drag to the nearest corner of the conversation column", () => {

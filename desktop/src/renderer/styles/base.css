@@ -120,10 +120,10 @@
   --shadow-color-heavy: rgba(0, 0, 0, 0.14);
   --shadow-soft: var(--wuu-elevation-panel, 0 1px 2px var(--shadow-color-subtle));
   --shadow-card: var(--wuu-elevation-panel, 0 2px 8px -2px var(--shadow-color-medium));
-  /* Center the ambient shadow so the top edge stays as legible as the sides. */
+  /* Keep the ambient falloff close and light; the fine border defines the edge. */
   --shadow-composer: var(
     --wuu-elevation-panel,
-    0 1px 2px var(--shadow-color-subtle), 0 0 16px -2px var(--shadow-color-medium)
+    0 1px 2px var(--shadow-color-subtle), 0 0 12px -2px var(--shadow-color-subtle)
   );
   --shadow-pop: var(
     --wuu-elevation-overlay,

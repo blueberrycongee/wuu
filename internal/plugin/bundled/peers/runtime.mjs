@@ -516,7 +516,6 @@ var PeersPlugin = class {
       tools: [
         {
           id: "list_peers",
-          direct_only: true,
           description: "List independent, user-visible peer sessions in the current workspace that can receive a coordination request. Session ids are stable addresses; names are display labels and may be ambiguous.",
           input_schema: objectSchema(),
           execution_scopes: ["root"],

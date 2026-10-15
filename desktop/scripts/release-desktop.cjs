@@ -4,11 +4,11 @@ const { releaseCredentials, checkReleaseSigning } = require("./check-release-sig
 
 releaseCredentials();
 checkReleaseSigning();
-const env = { ...process.env, WUU_RELEASE: "1", WUU_SKIP_CUA_MAC: "1", WUU_ENABLE_CUA_MAC: "0",
+const env = { ...process.env, WUU_RELEASE: "1", WUU_SKIP_CUA_MAC: "0", WUU_ENABLE_CUA_MAC: "1",
   CSC_IDENTITY_AUTO_DISCOVERY: "false", CSC_KEYCHAIN: process.env.WUU_RELEASE_KEYCHAIN };
 // Old archives must never be uploaded alongside the verified build.
 rmSync("release", { recursive: true, force: true });
-for (const script of ["build:core", "build:ripgrep", "build:app-context-mac", "build"]) {
+for (const script of ["build:core", "build:ripgrep", "build:cua-mac", "build:app-context-mac", "build"]) {
   execFileSync("npm", ["run", script], { env, stdio: "inherit" });
 }
 execFileSync("node_modules/.bin/electron-builder", ["--config", "scripts/release-builder.cjs", "--mac", "dmg", "zip",

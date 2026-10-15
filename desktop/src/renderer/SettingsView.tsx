@@ -85,6 +85,7 @@ import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot, type SettingsStatusTone } from "./SettingsSection";
 import { ActivityPreviewPreferenceSection } from "./ActivityPreviewPreferenceSection";
 import { AppContextSettingsSection } from "./AppContextSettingsSection";
+import { SystemPermissionsSection } from "./SystemPermissions";
 import { toastErrorMessage } from "./Toast";
 import type { ArchiveDeletionState } from "./useArchiveDeletion";
 import { DefaultEngineRow, EngineSettingsSection } from "./EngineSettingsSection";
@@ -1323,6 +1324,7 @@ function SettingsGeneralPage({
 
       <ActivityPreviewPreferenceSection />
       <AppContextSettingsSection />
+      <SystemPermissionsSection />
 
       <SettingsSection title={t("settings.about")} testID="settings-about">
         <SettingsGroup>

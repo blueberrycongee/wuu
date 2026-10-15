@@ -43,11 +43,11 @@ CalVer describes release recency, not Extension API, service, remote protocol, o
 
 The macOS job checks Go modules, formatting, vet, cross-builds, and uncached Go tests. It installs locked desktop and shared Web dependencies, explicitly installs and verifies the Electron binary, and runs desktop and release-signing tests. Build scripts consume the committed module manifests rather than repairing them during release.
 
-The local `make release-check` also runs the macOS native Computer Use helper tests. The tagged release build itself excludes that feature: `WUU_SKIP_CUA_MAC=1` and `WUU_ENABLE_CUA_MAC=0` prevent its inclusion, and the packaged-app verifier rejects either CUA executable if present.
+Both `make release-check` and the release workflow run the macOS native Computer Use helper tests. The release command builds and packages `wuu-cua-mac` and `wuu-cua-mac-pip`; the packaged app enables Computer Use from these bundled executables. Release verification requires both helpers, their matching architectures, signatures, hardened runtime, and secure timestamps. Screen Recording and Accessibility authorization remain macOS permission checks on the installed app.
 
 Production desktop builds expose Phone access for native iOS pairing. The release workflow enables `VITE_ENABLE_REMOTE_CONTROL`; builders can set it to `false` to hide the entry. Account login remains development-only even if `VITE_ENABLE_ACCOUNT=true`, and the workflow sets it to `false`. The iOS app still requires a separate build and signing for device installation; enabling desktop pairing does not publish a mobile store release. Model connections and the subscription dashboard remain available in production. Project Agent requires the development-only `project_agent` build tag, which release builds omit. Source-development capabilities should not be presented as features shipped by this build.
 
-Before publication, the workflow verifies the app's signature and bundle identity, required executables, absence of CUA helpers, and clean packaged-core version. It also runs `hdiutil verify` on the DMG and `unzip -t` on the ZIP. These checks establish packaging properties; they do not replace opening the app and testing affected user flows.
+Before publication, the workflow verifies the app's signature and bundle identity, required executables including both CUA helpers, and clean packaged-core version. It also runs `hdiutil verify` on the DMG and `unzip -t` on the ZIP. These checks establish packaging properties; they do not replace opening the app and testing affected user flows.
 
 The DMG window layout is configured in `desktop/package.json`.
 `desktop/scripts/generate-dmg-background.cjs` draws the background around the
@@ -117,9 +117,8 @@ receipt requires the exact same archive hash. A fresh CI build creates new signe
 archives and must obtain its own notarization results.
 
 Use the Release workflow's manual dispatch for verification without publication.
-The `codex/developer-id-signing` branch also runs this verification on push so the
-workflow can be validated before landing on main. Only a `v*` tag push can enter
-the publication job. No draft or public Release is created by validation runs.
+Only a `v*` tag push can enter the publication job. No draft or public Release is
+created by validation runs.
 See the [signing reference](../../../desktop/scripts/RELEASE-SIGNING.md).
 
 ## Automatic updates
@@ -144,10 +143,10 @@ controller tests or a successful package build do not prove an installed upgrade
 
 ## Published artifacts
 
-The release contains `wuu-<version>-mac-arm64.dmg`, `wuu-<version>-mac-arm64.zip`, and matching ZIP `.blockmap` files produced by electron-builder. DMG blockmaps are excluded because signing and stapling modify the disk image after electron-builder creates its blockmap. The app includes its own private `wuu-core` subprocess. The workflow does not publish standalone CLI archives, Windows installers, native phone apps, or CUA helpers.
+The release contains `wuu-<version>-mac-arm64.dmg`, `wuu-<version>-mac-arm64.zip`, and matching ZIP `.blockmap` files produced by electron-builder. DMG blockmaps are excluded because signing and stapling modify the disk image after electron-builder creates its blockmap. The app includes its own private `wuu-core` subprocess. The workflow does not publish standalone CLI archives, Windows installers, native phone apps, or separate CUA downloads; CUA helpers are bundled inside the macOS app.
 
 A separately source-installed CLI can coexist with the app and may have a different version. When checking a desktop release, inspect the bundled core and installed app rather than assuming `wuu --version` on `PATH` identifies the desktop build.
 
 ### Read-only app snapshot helper
 
-macOS builds separately compile and package `Wuu App Snapshot.app` for explicit one-window attachments. A small private Node-API module pins target metadata synchronously at shortcut dispatch; the helper validates that exact target before reading content. Neither component has a Computer Use input or MCP interface. The bridge’s pinned Node-API headers dependency retains its complete upstream MIT notice beside the packaged binary. The packaged-app verifier checks both native binaries, matching app architectures, and nested signatures while continuing to reject the autonomous CUA helpers in tagged previews. The macOS CI job compiles the helper and bridge, verifies signatures/architecture and bridge loading in Node/Electron, and reads permission status without capturing a screen or requesting permissions. Real macOS permission, revocation, shortcut, and window-capture acceptance is a separate gate.
+macOS builds separately compile and package `Wuu App Snapshot.app` for explicit one-window attachments. A small private Node-API module pins target metadata synchronously at shortcut dispatch; the helper validates that exact target before reading content. Neither component has a Computer Use input or MCP interface. The bridge’s pinned Node-API headers dependency retains its complete upstream MIT notice beside the packaged binary. The packaged-app verifier checks both snapshot binaries, matching app architectures, and nested signatures alongside the bundled Computer Use helpers. The macOS CI job compiles the helper and bridge, verifies signatures/architecture and bridge loading in Node/Electron, and reads permission status without capturing a screen or requesting permissions. Real macOS permission, revocation, shortcut, and window-capture acceptance is a separate gate.

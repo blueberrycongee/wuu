@@ -73,6 +73,9 @@ func (r *readFileState) hasBeenRead(absPath string) bool {
 func (r *readFileState) snapshot() map[string]ReadFileEntry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	if r.state == nil {
+		return nil
+	}
 	out := make(map[string]ReadFileEntry, len(r.state))
 	for path, entry := range r.state {
 		out[path] = entry
@@ -227,7 +230,7 @@ type Env struct {
 	// workspace move before subsequent tools start resolving paths there.
 	OnSessionWorkspaceChanged func(root string) error
 
-	readState *readFileState
+	readState readFileState
 	webState  webEvidenceState
 
 	toolTelemetry toolTelemetry
@@ -345,9 +348,6 @@ type BrowserTabStore interface {
 
 // RecordRead records a successful read_file invocation.
 func (e *Env) RecordRead(absPath string, entry ReadFileEntry) {
-	if e.readState == nil {
-		e.readState = &readFileState{}
-	}
 	e.readState.record(absPath, entry)
 }
 
@@ -371,7 +371,7 @@ func (e *Env) RecordWriteState(absPath string, content []byte) {
 }
 
 func (e *Env) ForgetRead(absPath string) {
-	if e == nil || e.readState == nil {
+	if e == nil {
 		return
 	}
 	e.readState.delete(absPath)
@@ -379,16 +379,10 @@ func (e *Env) ForgetRead(absPath string) {
 
 // HasBeenRead reports whether a file has been read via read_file.
 func (e *Env) HasBeenRead(absPath string) bool {
-	if e.readState == nil {
-		return false
-	}
 	return e.readState.hasBeenRead(absPath)
 }
 
 func (e *Env) ReadEntries() map[string]ReadFileEntry {
-	if e.readState == nil {
-		return nil
-	}
 	return e.readState.snapshot()
 }
 
