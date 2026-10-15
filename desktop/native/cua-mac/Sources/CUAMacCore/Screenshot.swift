@@ -40,6 +40,20 @@ public struct CaptureGeometry: Sendable {
     }
 }
 
+// A small raster is enough to notice transitions without PNG encoding or
+// changing the screenshot geometry/ticket used by the next input action.
+func windowVisualFingerprint(processID: pid_t) -> Int? {
+    let windows = windowFrames(processID: processID)
+    guard let window = windows.max(by: { $0.value.width * $0.value.height < $1.value.width * $1.value.height }),
+          let image = CGWindowListCreateImage(.null, .optionIncludingWindow, window.key, [.boundsIgnoreFraming, .nominalResolution]),
+          let context = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 256,
+              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+          let data = context.data else { return nil }
+    context.interpolationQuality = .low
+    context.draw(image, in: CGRect(x: 0, y: 0, width: 64, height: 64))
+    return Data(bytes: data, count: 64 * 256).hashValue
+}
+
 struct WindowCapture {
     let data: Data
     let geometry: CaptureGeometry

@@ -7,9 +7,6 @@ import {
 const zhCN = {
   activityHide: "隐藏预览，任务继续运行",
   activityExpand: "在侧边栏中打开",
-  activityTakeover: "接管并暂停任务",
-  activityRelease: "结束接管",
-  activityStop: "停止任务",
   activityCompleted: "任务已完成",
   activityBrowser: "浏览器活动",
   activityComputer: "电脑活动",
@@ -64,9 +61,6 @@ export type MainTranslationKey = keyof typeof zhCN;
 const enUS = {
   activityHide: "Hide preview; keep task running",
   activityExpand: "Open in the side panel",
-  activityTakeover: "Take over and pause task",
-  activityRelease: "Finish takeover",
-  activityStop: "Stop task",
   activityCompleted: "Task completed",
   activityBrowser: "Browser activity",
   activityComputer: "Computer activity",

@@ -119,7 +119,7 @@ Each conversation owns its browser tabs, including pages opened in a new window.
 
 Page-opened windows keep their original content and opener connection, including script-filled blank pages and forms submitted to a new window. When a turn finishes or is interrupted, Wuu closes temporary task pages and releases automation control. Pages you opened or took over, pages retained for handoff, and deliverables stay available. Keeping a popup also keeps its live opener so messaging and review context continue working. A later instruction can use a retained page with fresh control authority.
 
-Clicking or typing in the Agent's page, submitting an address, or using its navigation buttons pauses the current task and leaves the page available for you to use. Hovering and scrolling alone do not pause it. Send your next instruction in the conversation when you are ready to continue; background updates do not restore browser input. Use the conversation's Stop action or the preview's Stop task control to interrupt a task.
+Clicking or typing in the Agent's page, submitting an address, or using its navigation buttons pauses the current task and leaves the page available for you to use. Hovering and scrolling alone do not pause it. Send your next instruction in the conversation when you are ready to continue; background updates do not restore browser input. Use the conversation's Stop action to interrupt a task.
 
 The floating preview and workspace panel share an animated pointer. It stays legible when the page is scaled, moves to the target before input, and shows click, typing, and scroll feedback. Direct page input clears it. Reduced-motion settings disable travel and idle movement.
 
@@ -139,17 +139,28 @@ In **Settings → General → Live activity**, **Show preview automatically** co
 
 A new or hidden preview waits until you return to its Wuu window before appearing, so background activity does not bring Wuu in front of another app. An already-visible preview stays in place when focus changes. Hiding or minimizing Wuu hides the preview too. Returning to Wuu shows it again only when it was not explicitly hidden. Drag the preview to place it in a corner of the conversation column, clear of the composer, or resize it from an edge or corner. The browser page keeps its layout size and is scaled to fit. The preview follows the app's appearance and text settings and respects reduced motion.
 
-The preview separates viewing from control:
+The preview has two display controls for browser pages, and only Hide for native apps:
 
 - **Hide preview** hides the card and leaves the task running.
 - **Open in side panel** opens a browser page at full size.
-- **Take over and pause task** pauses the whole task and revokes its browser and computer-use control. You can then use the page or application yourself.
-- **Finish takeover** ends a takeover. It does not restart the interrupted task; send another instruction to continue with fresh authority.
-- **Stop task** interrupts the task and stops its activity. Old requests remain revoked. A later explicit instruction can start a new run.
 
-Closing or stopping the preview does not quit the application being observed. Disabling or retiring the owning extension stops its preview activity. If a capture target disappears, Wuu closes its preview; unchanged activity updates do not reopen that target. Unavailable capture shows a brief recovery hint, and a retained frame is labelled paused rather than live. Individual tool errors stay in the conversation's tool records and do not cover the preview. The preview does not silently switch to another app window or the whole screen.
+Use **Stop** in the conversation to interrupt the task. To take over a browser page, open it in the side panel and click or type in it. Send another instruction in the conversation to continue with fresh control authority.
+
+Hiding the preview or stopping the task does not quit the application being observed. Disabling or retiring the owning extension stops its preview activity. If a capture target disappears, Wuu closes its preview; unchanged activity updates do not reopen that target. Unavailable capture shows a brief recovery hint, and a retained frame is labelled paused rather than live. Individual tool errors stay in the conversation's tool records and do not cover the preview. The preview does not silently switch to another app window or the whole screen.
+
+Native app previews use a low-latency H.264 video stream with hardware acceleration where available. Hiding or pausing the preview stops capture; resuming or resizing it refreshes the video, and decoder recovery stays on the same target window.
 
 Native app previews require a macOS build with Computer Use enabled and the relevant macOS permissions. The floating preview does not itself grant Screen Recording or Accessibility access. See [installation](../getting-started/installation.md) for build availability and permissions.
+
+## Mac app control
+
+In builds with Computer Use enabled, the Agent can work in a background app while your current app stays in front. The preview's existing cursor shows its actions. Background focus support keeps menus available between steps; applications that require foreground input still need an explicit foreground action. Stopping or taking over app control releases background focus even between tool calls.
+
+Text operations include plain text, Markdown and HTML paste, selecting a unique text match, and placing the insertion point before or after it. Paste restores the previous clipboard unless another app or you copied something in the meantime. Clicks support modifier keys and holds; held keys and mouse buttons are released when an action is cancelled.
+
+After input, Wuu waits briefly for Accessibility and visual changes to settle before returning or taking a requested follow-up observation. This does not prove that a save, navigation or other asynchronous task has finished: the Agent must still check the intended result.
+
+Observations include control relationships, focused text and selection ranges, and changes since the previous comparable snapshot. Large trees remain paged, and incomplete differences are marked. Input that uses elements or coordinates still needs a fresh snapshot, even when a control keeps its element ID. The Computer Use skill includes workflows for Notion blocks, Spotify playback and library updates, native text editors, and web-based editors.
 
 ## Find an action
 

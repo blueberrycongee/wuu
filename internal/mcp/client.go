@@ -106,6 +106,7 @@ type Client struct {
 	connectionErr            error
 	connectionClosedNotified bool
 	closed                   bool
+	controlNotifications     map[context.Context]func() bool
 	closeOnce                sync.Once
 	closeErr                 error
 	toolRefreshMu            sync.Mutex
@@ -557,6 +558,10 @@ func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
 		c.mu.Lock()
 		c.closed = true
+		for _, stop := range c.controlNotifications {
+			stop()
+		}
+		c.controlNotifications = nil
 		c.mu.Unlock()
 		c.readLoop.signalStop()
 		c.closeErr = c.transport.Close()

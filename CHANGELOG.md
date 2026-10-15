@@ -10,6 +10,16 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Computer Use-enabled macOS builds support background focus and menu tracking,
+  formatted paste with clipboard restoration, modifier clicks, cancellable holds,
+  text insertion-point selection, and AX/visual settling before follow-up actions.
+  Observations add stable AX identities, structured differences, focus and selection
+  summaries, with app-specific workflows in the Computer Use skill. Native live
+  previews use low-latency H.264 video, bounded binary transport and accelerated
+  decoding, with keyframe recovery across capture pauses and size changes.
+  Stopping or taking over app control releases background focus between tool
+  calls; delayed cleanup cannot release a newer control generation.
+
 - Live activity previews of concurrent tasks stack in one corner. Opening a
   conversation or grabbing a preview behind the front one brings it forward, and
   the previews behind follow the front one as it moves.
@@ -71,6 +81,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   is registered by default.
 
 ### Changed
+
+- Live activity previews show only display controls: Hide for native apps, plus
+  Open in side panel for browser pages. Use the conversation's Stop action to
+  interrupt a task, or interact with a browser page in the side panel to take over.
 
 - Desktop navigation reads as its own layer: the sidebar rail steps one tone
   darker, hover and selection become tone steps without outline rings, section

@@ -13,6 +13,7 @@ public enum ComputerAction: String, CaseIterable, Sendable {
     case scroll
     case setValue = "set_value"
     case typeText = "type_text"
+    case paste
     case selectText = "select_text"
     case performAction = "perform_action"
     case waitForChange = "wait_for_change"
@@ -39,6 +40,8 @@ public enum CaptureScope: String, Sendable {
 }
 
 public enum ObservationMode: String, Sendable { case ax, vision, both }
+public enum PasteFormat: String, Sendable { case text, markdown, html }
+public enum TextSelectionType: String, Sendable { case text, cursorBefore = "cursor_before", cursorAfter = "cursor_after" }
 
 public struct ComputerCommand: @unchecked Sendable {
     public let action: ComputerAction
@@ -51,6 +54,10 @@ public struct ComputerCommand: @unchecked Sendable {
     public let toY: Double?
     public let mouseButton: String?
     public let clickCount: Int?
+    public let modifiers: KeyModifiers
+    public let duration: TimeInterval
+    public let format: PasteFormat
+    public let selectionType: TextSelectionType
     public let key: String?
     public let keys: [String]?
     public let text: String?
@@ -115,6 +122,20 @@ public struct ComputerCommand: @unchecked Sendable {
         toY = Self.double(arguments["to_y"])
         mouseButton = arguments["mouse_button"] as? String
         clickCount = Self.int(arguments["click_count"])
+        let modifierNames = arguments["modifiers"] as? [String] ?? []
+        modifiers = try KeyModifiers.parse(modifierNames)
+        duration = Self.double(arguments["duration"]) ?? 0
+        guard duration.isFinite, (0...10).contains(duration) else {
+            throw ComputerError.invalidArguments("duration must be between 0 and 10 seconds")
+        }
+        guard let format = PasteFormat(rawValue: arguments["format"] as? String ?? "text") else {
+            throw ComputerError.invalidArguments("format must be text, markdown, or html")
+        }
+        self.format = format
+        guard let selectionType = TextSelectionType(rawValue: arguments["selection_type"] as? String ?? "text") else {
+            throw ComputerError.invalidArguments("selection_type must be text, cursor_before, or cursor_after")
+        }
+        self.selectionType = selectionType
         key = arguments["key"] as? String
         keys = arguments["keys"] as? [String]
         text = arguments["text"] as? String
@@ -179,10 +200,14 @@ public struct ComputerResult: @unchecked Sendable {
 
 public protocol ComputerBackend: AnyObject {
     func perform(_ command: ComputerCommand) throws -> ComputerResult
+    func revokeControl(epoch: String)
     func shutdown()
 }
 
-public extension ComputerBackend { func shutdown() {} }
+public extension ComputerBackend {
+    func revokeControl(epoch: String) {}
+    func shutdown() {}
+}
 
 public enum ComputerError: LocalizedError, Equatable {
     case invalidArguments(String)
@@ -224,6 +249,11 @@ public final class MCPServer {
         let method = request["method"] as? String ?? ""
         let id = request["id"]
         if id == nil && method.hasPrefix("notifications/") {
+            if method == "notifications/wuu/control_revoked",
+               let params = request["params"] as? [String: Any],
+               let epoch = params["control_epoch"] as? String, !epoch.isEmpty {
+                backend.revokeControl(epoch: epoch)
+            }
             return nil
         }
         switch method {
@@ -328,6 +358,7 @@ public final class MCPServer {
                 ["required": ["text"]],
             ]),
             variant(.typeText, required: ["app", "text"]),
+            variant(.paste, required: ["app", "text"]),
             variant(.selectText, required: ["app", "element_id", "text", "snapshot_id"]),
             variant(.performAction, required: ["app", "element_id", "action_name", "snapshot_id"]),
             variant(.waitForChange, required: ["app"]),
@@ -373,15 +404,19 @@ public final class MCPServer {
                     "from_y": ["type": "number", "description": "Drag start vertical coordinate in the declared coordinate_space."],
                     "mouse_button": ["type": "string", "enum": ["left", "right", "middle"]],
                     "click_count": ["type": "integer", "minimum": 1, "maximum": 3],
-                    "key": stringProperty,
+                    "modifiers": ["type": "array", "items": ["type": "string", "enum": ["command", "shift", "option", "control", "function"]], "description": "Modifiers held during click. Modified, repeated, right, and long clicks use native input instead of AXPress."],
+                    "duration": ["type": "number", "minimum": 0, "maximum": 10, "description": "Seconds to hold a click or press_key/press_keys chord before releasing. Cancellation always releases held input."],
+                    "format": ["type": "string", "enum": ["text", "markdown", "html"], "default": "text", "description": "paste content format. Rich formats include a plain-text fallback. The previous clipboard is restored unless another writer changes it."],
+                    "selection_type": ["type": "string", "enum": ["text", "cursor_before", "cursor_after"], "default": "text", "description": "Select the matched text or place the insertion point immediately before/after it."],
+                    "key": ["type": "string", "description": "Key or chord for press_key, or a key held throughout click (for example space or shift+a)."],
                     "keys": ["type": "array", "minItems": 1, "maxItems": 64, "items": stringProperty, "description": "Ordered key sequence, for example [\"3\", \"7\", \"*\", \"2\", \"4\", \"return\"]."],
                     "text": stringProperty,
                     "value": stringProperty,
                     "direction": ["type": "string", "enum": ["up", "down", "left", "right"]],
                     "pages": ["type": "integer", "minimum": 1, "maximum": 20, "description": "Approximate scroll distance. The runtime emits a short sequence of natural line-scroll events rather than one oversized wheel event."],
                     "action_name": stringProperty,
-                    "prefix": stringProperty,
-                    "suffix": stringProperty,
+                    "prefix": ["type": "string", "description": "Immediate text before a select_text match; use with suffix to disambiguate repeated text."],
+                    "suffix": ["type": "string", "description": "Immediate text after a select_text match. Missing or ambiguous matches fail without changing the selection."],
                     "timeout": ["type": "number", "minimum": 0.1, "maximum": 30, "description": "Maximum wait in seconds. wait_for_change returns changed=false and timed_out=true when this duration elapses without an Accessibility change."],
                     "foreground_policy": [
                         "type": "string",
@@ -398,7 +433,7 @@ public final class MCPServer {
                     "disable_diff": [
                         "type": "boolean",
                         "default": false,
-                        "description": "Retained for compatibility. Observations always return a bounded full page with fresh IDs; query_snapshot retrieves additional pages.",
+                        "description": "Omit the optional AX diff and change summary. Observations always include a bounded full page; query_snapshot retrieves additional pages. Element identities may persist, but element and coordinate input still requires the latest unconsumed snapshot_id.",
                     ],
                     "steps": [
                         "type": "array",

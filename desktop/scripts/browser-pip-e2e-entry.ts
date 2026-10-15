@@ -124,12 +124,14 @@ app.whenReady().then(async () => {
   const restored = once(main, "restore", { signal: AbortSignal.timeout(5000) });
   main.restore();
   await restored;
+  main.focus();
+  await waitFor("restored host focused", () => main.isFocused());
   await waitFor("preview restored after minimize", () => pip.isVisible());
   coordinator.setActiveThread("other-thread");
   coordinator.refreshBrowserPresentation();
-  assert.equal(pip.isVisible(), false, "Switching conversations hides the preview");
+  assert.equal(pip.isVisible(), true, "Switching conversations preserves the running task's preview");
   coordinator.update({ ...activity, updated_at: new Date().toISOString() });
-  assert.equal(pip.isVisible(), false, "Background updates cannot reveal another conversation's preview");
+  assert.equal(pip.isVisible(), true, "Background updates preserve another conversation's visible preview");
   coordinator.setActiveThread(activity.thread_id);
   assert.equal(pip.isVisible(), true, "Returning to the owning conversation restores its preview");
   const click = () => request("browser/cdp", { method: "click", params: { x: 240, y: 200 } });
@@ -241,7 +243,7 @@ app.whenReady().then(async () => {
   await overlay.executeJavaScript("window.wuuPipCompleted(false)");
 
   host.reportBounds(workdir, tabID, main as unknown as BrowserHostWindowHandle, { x: 0, y: 42, width: 950, height: 620 }, 1, true);
-  assert.equal(pip.isVisible(), false, "Docking the page replaces its preview");
+  await waitFor("docking the page dismisses its preview", () => !pip.isVisible());
   await click();
   assert.equal(await contents.executeJavaScript("window.clicks"), 2);
   await waitFor("panel pointer settled", async () => {

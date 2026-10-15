@@ -151,7 +151,7 @@ import type {
 } from "../shared/protocol";
 import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
-import { ObservationCoordinator, activityControlMethod, observationActivityFromServerEvent } from "./cuaActivityWindows";
+import { ObservationCoordinator, observationActivityFromServerEvent } from "./cuaActivityWindows";
 import type { ActivityPreviewAppearance } from "../shared/activityPreview";
 import { browserPiPHostClient } from "./browserPiPPlacement";
 import { createObservationPiPFactory } from "./browserPiPWindow";
@@ -367,12 +367,6 @@ const observationCoordinator = new ObservationCoordinator(
     isPackaged: app.isPackaged,
     parent: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined),
   }),
-  async (activity, action) => {
-    const result = await appServerClientPool.requestForWorkdir<ActivityActionResult>(
-      activity.workdir, activityControlMethod(action), { thread_id: activity.thread_id, activity_id: activity.id, execution_id: activity.execution_id },
-    );
-    return result.activity;
-  },
 );
 observationCoordinator.setAppearance(resolvedThemeIsDark());
 observationCoordinator.setAutoShow(getActivityPreviewAutoShow());
