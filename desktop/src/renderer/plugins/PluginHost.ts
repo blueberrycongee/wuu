@@ -1,5 +1,5 @@
 import type * as React from "react";
-import type { ExtensionIconDescriptor } from "../../shared/protocol";
+import type { ExtensionIconDescriptor, PluginVisibleHistoryRequest, PluginVisibleHistoryResult } from "../../shared/protocol";
 import { settleOnAbort } from "./activation";
 
 import type {
@@ -177,6 +177,7 @@ export interface PluginGenerationApi {
   /** Aborted when staging fails, is superseded, or this generation is disposed. */
   readonly signal: AbortSignal;
   invokeRuntime(method: string, input?: unknown, options?: PluginRuntimeInvokeOptions): Promise<unknown>;
+  readVisibleHistory(request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult>;
   listWorkspaces(): Promise<PluginWorkspaceSnapshot>;
   /** List live threads inside a workspace, addressed by its root path (the
    * `root` value returned by listWorkspaces). Read-only kernel session state;
@@ -218,6 +219,7 @@ export interface PluginGenerationApi {
 
 export interface PluginRuntimeInvokeOptions {
   readonly workspaceId?: string;
+  readonly workspaceRoot?: string;
   /** Cancel this invocation and the host work owned by its execution. */
   readonly signal?: AbortSignal;
 }
@@ -232,6 +234,7 @@ export interface PluginWorkspace {
 export interface PluginWorkspaceSnapshot {
   readonly workspaces: readonly PluginWorkspace[];
   readonly activeWorkspaceId?: string;
+  readonly activeRoot?: string;
 }
 
 export interface PluginThreadSummary {
@@ -395,10 +398,12 @@ export interface PluginHostOptions {
     method: string;
     input?: unknown;
     workspaceId?: string;
+    workspaceRoot?: string;
     signal?: AbortSignal;
   }>) => Promise<unknown>;
   listWorkspaces?: () => Promise<PluginWorkspaceSnapshot>;
   listThreads?: (workspaceRoot: string) => Promise<readonly PluginThreadSummary[]>;
+  readVisibleHistory?: (request: PluginVisibleHistoryRequest) => Promise<PluginVisibleHistoryResult>;
 }
 
 interface OrderedRecord {
@@ -577,6 +582,7 @@ export class PluginHost {
   private readonly runtimeInvoker?: PluginHostOptions["invokeRuntime"];
   private readonly workspaceLister?: PluginHostOptions["listWorkspaces"];
   private readonly threadLister?: PluginHostOptions["listThreads"];
+  private readonly visibleHistoryReader?: PluginHostOptions["readVisibleHistory"];
   private readonly activeGenerations = new Map<string, GenerationState>();
   private readonly pendingActivations = new Map<string, PendingActivation>();
   private readonly slotSnapshots = new Map<PluginSlotId, readonly RegisteredPluginSlotContribution[]>();
@@ -621,6 +627,7 @@ export class PluginHost {
     this.runtimeInvoker = options.invokeRuntime;
     this.workspaceLister = options.listWorkspaces;
     this.threadLister = options.listThreads;
+    this.visibleHistoryReader = options.readVisibleHistory;
   }
 
   async activateGeneration(options: ActivatePluginGenerationOptions): Promise<Disposable> {
@@ -1054,6 +1061,7 @@ export class PluginHost {
             input,
             signal: controller.signal,
             ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
+            ...(options?.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
           });
           this.assertActive(state);
           controller.signal.throwIfAborted();
@@ -1062,6 +1070,13 @@ export class PluginHost {
           state.runtimeRequests.delete(controller);
           options?.signal?.removeEventListener("abort", abort);
         }
+      },
+      readVisibleHistory: async (request: PluginVisibleHistoryRequest) => {
+        if (!this.visibleHistoryReader) throw new Error("Visible conversation history is unavailable");
+        this.assertActive(state);
+        const result = await this.visibleHistoryReader(request);
+        this.assertActive(state);
+        return result;
       },
       listWorkspaces: async () => {
         if (!this.workspaceLister) {

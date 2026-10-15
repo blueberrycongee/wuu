@@ -61,6 +61,13 @@ module.exports = (api) => {
       messages: [{ id: "synthetic-side-answer", side_thread_id: "next-message-side", role: "assistant", text: "Synthetic side conversation", status: "completed", created_at: new Date().toISOString() }] }),
     getPluginConflictPreferences: async () => ({}),
     requestPluginRuntime: (params) => ipcRenderer.invoke("test:next-message-runtime", params),
+    readPluginVisibleHistory: async (request) => ({ turns: request.kind === "main"
+      ? threads.find(item => item.id === request.threadId && item.cwd === request.workspaceRoot)?.turns
+        .filter(turn => turn.id !== request.beforeTurnId && turn.status === "completed")
+        .map(turn => ({ id: turn.id, userText: turn.items.find(item => item.type === "user_message")?.text ?? "",
+          assistantText: turn.items.find(item => item.type === "agent_message" && item.terminal)?.text ?? "",
+          imageCount: 0, fileCount: 0 })).filter(turn => turn.userText.trim() && turn.assistantText.trim()).slice(-20) ?? []
+      : [] }),
     cancelPluginRuntime: (params) => ipcRenderer.invoke("test:next-message-cancel", params),
     loadPluginDesktopModule: async ({ id, fingerprint }) => ({
       id, fingerprint, digest: fixture.pluginDigest,

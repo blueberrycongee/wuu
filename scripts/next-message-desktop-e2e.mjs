@@ -16,6 +16,8 @@ async function fixture() {
   let provider, listener;
   const cleanup = [];
   const calls = [];
+  const historyRequests = [];
+  let history = async () => ({ turns: [] });
   const refreshes = [];
   let response = async () => ({ suggestion: "Run the relevant tests" });
   const lifetime = new AbortController();
@@ -24,6 +26,10 @@ async function fixture() {
     ui: {},
     signal: lifetime.signal,
     listWorkspaces: async () => ({ workspaces }),
+    readVisibleHistory: async (request) => {
+      historyRequests.push(request);
+      return history(request);
+    },
     invokeRuntime: async (method, input, options) => {
       calls.push({ method, input, options });
       return response(method, input, options);
@@ -105,6 +111,7 @@ async function fixture() {
   return {
     api,
     calls,
+    historyRequests,
     refreshes,
     context,
     event,
@@ -117,6 +124,7 @@ async function fixture() {
     setResponse: (f) => {
       response = f;
     },
+    setHistory: (f) => { history = f; },
     close() {
       lifetime.abort();
       cleanup.forEach((f) => f());
@@ -148,8 +156,7 @@ await scenario(
     assert.deepEqual(f.calls[0].input, {
       threadId: "same",
       turnId: "t",
-      userText: "Fix error handling",
-      assistantText: "Fixed it; tests have not run.",
+      turns: [{ id: "t", userText: "Fix error handling", assistantText: "Fixed it; tests have not run.", imageCount: 0, fileCount: 0 }],
     });
     assert.equal(f.calls[0].options.workspaceId, "a");
     f.complete();
@@ -202,7 +209,7 @@ await scenario(
   },
 );
 await scenario(
-  "truncated partial or attachment-bearing source text is never forwarded",
+  "truncated or partial source text is never forwarded",
   async (f) => {
     const cases = [
       { truncated: true },
@@ -239,17 +246,6 @@ await scenario(
       },
       {
         items: [
-          { type: "user_message", text: "User" },
-          {
-            type: "agent_message",
-            terminal: true,
-            text: "Answer",
-            images: [{ data: "DO NOT TRANSMIT" }],
-          },
-        ],
-      },
-      {
-        items: [
           { type: "user_message", text: "User", files: {} },
           { type: "agent_message", terminal: true, text: "Answer" },
         ],
@@ -274,12 +270,69 @@ await scenario("only exact empty ordinary inputs qualify", async (f) => {
     { attachmentCount: 1 },
     { queuedCount: 1 },
     { pendingCount: 1 },
-    { workspaceId: undefined },
     { workspaceRoot: "/unregistered" },
   ])
     assert.equal(await f.provide(patch), null);
   assert.equal(f.calls.length, 0);
   assert.ok(await f.provide());
+});
+await scenario("recent visible turns precede the live source turn", async (f) => {
+  const older = { id: "older", userText: "First question", assistantText: "First answer", imageCount: 0, fileCount: 0 };
+  f.setHistory(async () => ({ turns: [older] }));
+  f.start();
+  f.complete();
+  assert.ok(await f.provide());
+  assert.deepEqual(f.calls[0].input.turns.map((turn) => turn.id), ["older", "t"]);
+  assert.equal(f.historyRequests[0].beforeTurnId, "t");
+});
+await scenario("no-project live conversation uses its own root without a project ID", async (f) => {
+  f.start("scratch", "/scratch");
+  f.complete("scratch", {}, "/scratch");
+  assert.ok(await f.provide({ workspaceId: undefined, workspaceRoot: "/scratch" }));
+  assert.equal(f.calls[0].options.workspaceId, undefined);
+  assert.equal(f.historyRequests[0].workspaceRoot, "/scratch");
+});
+await scenario("side conversation uses only its own completed message history", async (f) => {
+  f.setHistory(async () => ({ turns: [{ id: "reply", userText: "Side question", assistantText: "Side answer", imageCount: 0, fileCount: 0 }] }));
+  const emit = (params) => f.emit({ kind: "notification", workdir: "/a", message: { method: "sideThread/event", params: {
+    main_thread_id: "same", side_thread_id: "side-one", ...params,
+  } } });
+  emit({ type: "status", summary: { status: "running", revision: 1 } });
+  emit({ type: "message", revision: 2, message: { id: "reply", role: "assistant", text: "Side answer", status: "completed" } });
+  assert.ok(await f.provide({ kind: "side", sideThreadId: "side-one" }));
+  assert.equal(f.calls[0].input.threadId, "side-one");
+  assert.equal(f.historyRequests[0].kind, "side");
+  assert.equal(await f.provide({ kind: "side", sideThreadId: "side-one", revision: 2 }), null);
+});
+await scenario("attachment source sends category counts but never media bytes", async (f) => {
+  f.start();
+  f.complete("t", { items: [
+    { type: "user_message", text: "What next?", images: [{ data: "SECRET_IMAGE" }] },
+    { type: "agent_message", terminal: true, text: "I summarized it." },
+  ] });
+  assert.ok(await f.provide());
+  assert.equal(f.calls[0].input.turns.at(-1).imageCount, 1);
+  assert.equal(JSON.stringify(f.calls[0].input).includes("SECRET_IMAGE"), false);
+  f.start("selection");
+  f.complete("selection", { items: [
+    { type: "user_message", text: "SECRET_FILE_PATH\nWhat next?", content_parts: [
+      { type: "file_selection", text: "SECRET_FILE_PATH\n" },
+      { type: "text", text: "What next?" },
+    ] },
+    { type: "agent_message", terminal: true, text: "I reviewed it." },
+  ] });
+  assert.ok(await f.provide());
+  assert.deepEqual(f.calls[1].input.turns.at(-1), {
+    id: "selection", userText: "What next?", assistantText: "I reviewed it.", imageCount: 0, fileCount: 1,
+  });
+  assert.equal(JSON.stringify(f.calls[1].input).includes("SECRET_FILE_PATH"), false);
+  f.start("image-only");
+  f.complete("image-only", { items: [
+    { type: "user_message", text: "", images: [{ data: "SECRET_IMAGE" }] },
+    { type: "agent_message", terminal: true, text: "I looked at it." },
+  ] });
+  assert.equal(await f.provide(), null);
+  assert.equal(f.calls.length, 2);
 });
 await scenario("same thread ID is isolated across workspaces", async (f) => {
   f.start();

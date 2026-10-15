@@ -68,7 +68,6 @@ export function useComposerInlineCompletion({
   const providers = useSyncExternalStore(subscribe, getProviders, getProviders);
   const composing = useRef(compositionActive);
   composing.current = compositionActive;
-  const windowFocused = useRef(true);
   const revision = useRef(0);
   const observed = useRef<Observation | null>(null);
   const request = useRef<AbortController | null>(null);
@@ -87,16 +86,15 @@ export function useComposerInlineCompletion({
       accepted.current = [];
       attributionContext.current = { composerId, resetKey };
     }
-    const focused = document.activeElement === input;
     const menuOpen = Boolean(document.querySelector(
       '[data-floating-menu-owner], .composer-textarea-context-menu, [aria-modal="true"]',
     ));
-    const eligible = enabled && providers.length > 0 && focused && !input.disabled && !input.readOnly
-      && windowFocused.current && !composing.current && !menuOpen && !input.closest("[hidden], [inert]")
+    const eligible = enabled && providers.length > 0 && !input.disabled && !input.readOnly
+      && !composing.current && !menuOpen && !input.closest("[hidden], [inert]")
       && input.selectionStart === input.value.length && input.selectionEnd === input.value.length
       && !parseComposerSlashDraft(input.value);
     const key = JSON.stringify([composerId, kind, revisionKey, threadId, sideThreadId, workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount, running, input.value,
-      input.selectionStart, input.selectionEnd, focused, windowFocused.current, composing.current, eligible]);
+      input.selectionStart, input.selectionEnd, composing.current, eligible]);
     const previous = observed.current;
     if (previous?.key === key && previous.providers === providers) return previous;
     request.current?.abort();
@@ -125,19 +123,13 @@ export function useComposerInlineCompletion({
     const input = inputRef.current;
     if (!input) return;
     const refresh = () => { observeRef.current(); };
-    const blurWindow = () => { windowFocused.current = false; refresh(); };
-    const focusWindow = () => { windowFocused.current = true; refresh(); };
     document.addEventListener("selectionchange", refresh);
-    window.addEventListener("blur", blurWindow);
-    window.addEventListener("focus", focusWindow);
     // Menus may be owned by toolbar plugins rather than Composer props.
     const layer = document.querySelector("[data-wuu-layer-host]");
     const menus = layer ? new MutationObserver(refresh) : null;
     if (layer) menus?.observe(layer, { childList: true, subtree: true });
     return () => {
       document.removeEventListener("selectionchange", refresh);
-      window.removeEventListener("blur", blurWindow);
-      window.removeEventListener("focus", focusWindow);
       menus?.disconnect();
     };
   }, [inputRef, providers.length]);

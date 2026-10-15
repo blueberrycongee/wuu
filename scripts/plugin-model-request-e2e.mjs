@@ -87,6 +87,15 @@ const provider = createServer(async (request, response) => {
     closed.push(tag);
     events.emit("closed", tag);
   });
+  if (tag === "codex-best-effort") {
+    assert.equal(value.stream, true, "Codex backend requires streaming responses");
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.end("event: response.output_text.delta\n"
+      + `data: ${JSON.stringify({ type: "response.output_text.delta", delta: `fixture:${tag}` })}\n\n`
+      + "event: response.completed\n"
+      + 'data: {"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":7,"output_tokens":3}}}\n\n');
+    return;
+  }
   response.writeHead(200, { "Content-Type": "application/json" });
   if (tag.startsWith("hold-")) {
     response.flushHeaders();
@@ -191,7 +200,7 @@ runJSONLRuntime({
       anthropic: fixtureConfig("anthropic", "claude-test"),
       grok: fixtureConfig("grok-build", "grok-test"),
       unsupported: {
-      type: "openai-codex", base_url: `http://127.0.0.1:${provider.address().port}`,
+      type: "openai-codex", base_url: `http://127.0.0.1:${provider.address().port}`, stream_transport: "sse",
       api_key: "synthetic-no-real-key", model: "gpt-test",
     } },
     agent: { permission_mode: "standard", model_aliases: {
@@ -423,6 +432,11 @@ runJSONLRuntime({
   assert.equal(unsupported.error?.code, "unsupported_limit", JSON.stringify(unsupported));
   assert.equal(providerCalls.length, count, "unsupported output cap reached the provider");
   result.checks.push("adapter dropping output cap is rejected before inference");
+  const bestEffort = await call("codex-best-effort", { ...input("codex-best-effort"), model_alias: "unsupported", allow_unbounded_output: true });
+  assert.equal(bestEffort.text, "fixture:codex-best-effort", JSON.stringify(bestEffort));
+  assert.equal(providerCalls.at(-1).body.max_output_tokens, undefined);
+  result.checks.push("explicit best-effort cap allows Codex request without output-token field");
+  const validCount = providerCalls.length;
   for (const [name, value] of [
     ["bad-role", { messages: [{ role: "tool", content: "bad" }] }],
     ["oversize", input("x".repeat(262145))],
@@ -434,7 +448,7 @@ runJSONLRuntime({
     assert((await call(name, value)).error, name);
     result.checks.push(`rejected ${name}`);
   }
-  assert.equal(providerCalls.length, count, "invalid requests reached the provider");
+  assert.equal(providerCalls.length, validCount, "invalid requests reached the provider");
   const timedOut = await call("timeout", { ...input("hold-timeout"), timeout_ms: 200 });
   assert.equal(timedOut.error.code, "deadline_exceeded", JSON.stringify(timedOut));
   await waitFor("closed", closed, tag => tag === "hold-timeout", "provider timeout disconnect");
@@ -473,13 +487,13 @@ runJSONLRuntime({
     };
   } finally { db.close(); }
   const accounting = result.accounting;
-  assert.equal(accounting.operations.length, 8);
+  assert.equal(accounting.operations.length, 9);
   assert(accounting.operations.every(operation => operation.owner_id === "plugin:model-fixture" && operation.kind === "auxiliary" && operation.status !== "active"));
   assert(accounting.workflows.every(workflow => workflow.status !== "active"));
-  assert.equal(accounting.submissions.length, 8);
+  assert.equal(accounting.submissions.length, 9);
   const reported = accounting.submissions.filter(submission => submission.has_reported_usage);
-  assert.equal(reported.length, 5);
-  assert.equal(reported.reduce((total, usage) => total + usage.reported_input_tokens + usage.reported_output_tokens, 0), 50);
+  assert.equal(reported.length, 6);
+  assert.equal(reported.reduce((total, usage) => total + usage.reported_input_tokens + usage.reported_output_tokens, 0), 60);
   assert.equal(accounting.sessions, 0);
   assert.equal(accounting.messages, 0);
   result.checks.push("durable terminal accounting, reported usage, zero sessions/messages");

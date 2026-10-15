@@ -50,6 +50,10 @@ type Client struct {
 	nativeCompaction bool
 }
 
+// RequiresStreamingChat reports the transport requirement of the Codex backend.
+// One-shot callers can still collect the stream into a single text response.
+func (*Client) RequiresStreamingChat() bool { return true }
+
 // ModelInfo describes one model advertised by the OAuth-backed Codex backend.
 type ModelInfo struct {
 	Slug                  string   `json:"slug"`

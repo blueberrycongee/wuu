@@ -85,8 +85,11 @@ async function focus() {
 }
 async function draft(text) {
   await focus();
-  await key("A", [process.platform === "darwin" ? "meta" : "control"]);
-  if (text) await win.webContents.insertText(text); else await key("Backspace");
+  await evaluate(({ selector, text }) => {
+    const input = document.querySelector(selector);
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(input, text);
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+  }, { selector: inputSelector, text });
   await until(({ selector, text }) => document.querySelector(selector)?.value === text, { selector: inputSelector, text });
   await frames();
 }
@@ -143,11 +146,7 @@ async function screenshot(name) {
   await frames();
   await evaluate(async () => {
     await document.fonts.ready;
-    // Settle theme/layout transitions without awaiting unrelated timeline
-    // animations, some of which intentionally have very long finite lifetimes.
-    await Promise.all(document.getAnimations().filter(animation => animation instanceof CSSTransition
-      && animation.playState === "running" && animation.effect?.getComputedTiming().endTime < 1000)
-      .map(animation => animation.finished.catch(() => {})));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
   const filename = `${name}.png`;
   fs.writeFileSync(path.join(output, filename), (await win.webContents.capturePage()).toPNG());
@@ -247,9 +246,13 @@ app.whenReady().then(async () => {
   });
   await check("successful live turn shows gray host ghost; Tab inserts and never sends", async () => {
     const { request } = await offer();
-    assert.equal(request.modelRequest.max_output_tokens, 128); assert.equal(request.modelRequest.timeout_ms, 4000);
+    assert.equal(request.modelRequest.max_output_tokens, 128); assert.equal(request.modelRequest.allow_unbounded_output, true);
+    assert.equal(request.modelRequest.timeout_ms, 15000);
     assert.equal(request.modelRequest.messages.length, 2); assert.equal(request.modelRequest.tools, undefined);
-    assert.deepEqual(JSON.parse(request.modelRequest.messages[1].content), { user: request.params.input.userText, assistant: request.params.input.assistantText });
+    const sent = JSON.parse(request.modelRequest.messages[1].content);
+    assert.equal(sent.turns.at(-1).user, request.params.input.turns.at(-1).userText);
+    assert.equal(sent.turns.at(-1).assistant, request.params.input.turns.at(-1).assistantText);
+    assert.equal(sent.turns.length, 2, "recent visible history should precede the live turn");
     assert.ok(request.modelRequest.messages.reduce((bytes, message) => bytes + Buffer.byteLength(message.content), 0) <= 8192);
     const geometry = await screenshot("wide-light-default-ghost");
     assert.equal(await value(), ""); assert.equal(geometry.ariaHidden, "true");
@@ -263,6 +266,18 @@ app.whenReady().then(async () => {
     const request = await requestFor(live); await resolve(request);
     await until(({ selector, suggestion }) => document.querySelector(selector)?.textContent === suggestion, { selector: ghostSelector, suggestion });
     assert.equal(predictions().filter(item => item.params.input.turnId === live.turn.id).length, 1); await key("Escape");
+  });
+  await check("an unfocused empty composer still predicts and accepts after focus returns", async () => {
+    await draft("");
+    await evaluate(() => document.querySelector('[data-main-conversation-composer] .composer-plus-button').focus());
+    const live = await startTurn(); await completeTurn(live);
+    const request = await requestFor(live);
+    assert.equal(await evaluate(selector => document.activeElement === document.querySelector(selector), inputSelector), false);
+    await resolve(request);
+    await until(({ selector, suggestion }) => document.querySelector(selector)?.textContent === suggestion,
+      { selector: ghostSelector, suggestion });
+    await focus(); await key("Tab");
+    assert.equal(await value(), suggestion);
   });
   await check("Escape dismisses and focus changes do not retry the turn", async () => {
     await offer(); const count = predictions().length;
@@ -344,7 +359,7 @@ app.whenReady().then(async () => {
     await delay(400); assert.equal(predictions().length, before); await noGhost("queued instructions suppress suggestions");
     event("turn/held", { thread_id: threadId, messages: [] }); await frames();
   });
-  await check("side composer does not request next-message predictions", async () => {
+  await check("main-turn notifications do not arm the side composer", async () => {
     await draft("/side");
     await until(() => Boolean(document.querySelector('.slash-command-item[data-command-name="side"]')));
     await evaluate(() => document.querySelector('.slash-command-item[data-command-name="side"]').click());
@@ -408,7 +423,7 @@ app.whenReady().then(async () => {
     await screenshot("workspace-b-isolated-suggestion");
     await selectWorkspace("workspace-a"); await noGhost("returning to A cannot revive either old result");
   });
-  await check("cross-workspace split uses its own source and focus transfer cancels work", async () => {
+  await check("cross-workspace split keeps its prediction across focus transfer", async () => {
     await draft("");
     const linkTurn = await startTurn();
     linkTurn.turn.items[0].related_session_id = "workspace-b-split";
@@ -429,10 +444,16 @@ app.whenReady().then(async () => {
     await screenshot("cross-workspace-split-ghost"); await key("Tab");
     assert.equal(await evaluate(selector => document.querySelector(selector).value, splitSelector), "Check the workspace B split changes.");
     assert.equal(report.submissions.length, 0);
-    await key("A", [process.platform === "darwin" ? "meta" : "control"]); await key("Backspace");
+    await evaluate(selector => {
+      const input = document.querySelector(selector);
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(input, "");
+      input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+    }, splitSelector);
     const pendingTurn = await startTurn({ cwd: otherWorkdir, target: "workspace-b-split" }); await completeTurn(pendingTurn); const old = await requestFor(pendingTurn);
     await evaluate(() => document.querySelector('.conversation-split-pane:first-child [data-wuu-component="composer-input"]').focus()); await frames();
-    await waitMain(() => old.cancelled, "split focus transfer cancels request"); await resolve(old, "STALE SPLIT FOCUS"); await noGhost("late split reply is suppressed");
+    assert.equal(old.cancelled, false, "focus transfer keeps the split prediction running");
+    await resolve(old, "Check the split after focus moves.");
+    await until(selector => document.querySelector(selector)?.closest('.conversation-split-pane').querySelector('[data-wuu-component="composer-inline-completion-text"]')?.textContent === "Check the split after focus moves.", splitSelector);
     await evaluate(() => document.querySelector('.conversation-split-close').click()); await until(() => !document.querySelector('.conversation-split-pane')); await focus();
   });
   await check("history restoration and server errors invalidate pending predictions", async () => {

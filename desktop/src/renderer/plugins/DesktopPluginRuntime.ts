@@ -27,7 +27,7 @@ export interface DesktopPluginFailure {
 
 export const desktopPluginHost = new PluginHost({
   react: React,
-  invokeRuntime: async ({ pluginId, generation, method, input, workspaceId, signal }) => {
+  invokeRuntime: async ({ pluginId, generation, method, input, workspaceId, workspaceRoot, signal }) => {
     signal?.throwIfAborted();
     const bridge = window.wuu;
     if (!bridge?.requestPluginRuntime || !bridge.cancelPluginRuntime) {
@@ -39,6 +39,7 @@ export const desktopPluginHost = new PluginHost({
       method,
       input,
       ...(workspaceId ? { workspace_id: workspaceId } : {}),
+      ...(workspaceRoot ? { workspace_root: workspaceRoot } : {}),
     });
     const cancel = () => {
       void bridge.cancelPluginRuntime(identity).catch((error: unknown) => {
@@ -55,6 +56,10 @@ export const desktopPluginHost = new PluginHost({
       signal?.removeEventListener("abort", cancel);
     }
   },
+  readVisibleHistory: async (request) => {
+    if (!window.wuu?.readPluginVisibleHistory) throw new Error("Visible conversation history is unavailable");
+    return window.wuu.readPluginVisibleHistory(request);
+  },
   listWorkspaces: async () => {
     const result = await window.wuu?.listProjects?.();
     if (!result) throw new Error("Workspace listing is unavailable");
@@ -66,6 +71,7 @@ export const desktopPluginHost = new PluginHost({
         available: project.missing !== true,
       })),
       activeWorkspaceId: result.active_project_id,
+      activeRoot: result.active_context?.cwd,
     };
   },
   listThreads: async (workspaceRoot) => {

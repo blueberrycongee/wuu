@@ -61,6 +61,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   model requests through configured providers, with cancellation and lifecycle
   handling. Completion plugins supply their own policy; no completion provider
   is registered by default.
+- Add an opt-in next-message plugin that suggests a short draft from recent visible
+  conversation turns after a successful reply. It supports main and side chats,
+  conversations outside projects, and Codex models; Tab inserts without sending.
 
 ### Changed
 

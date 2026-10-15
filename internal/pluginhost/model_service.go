@@ -11,14 +11,16 @@ func KernelModelRequestDescriptor() ServiceDescriptor {
 	}
 }
 
-// ModelRequestParams describes one bounded, text-only inference operation.
+// ModelRequestParams describes one text-only inference operation with bounded
+// input and duration. Output tokens are strict unless explicitly relaxed.
 // ModelAlias selects an existing host-configured alias; an empty alias uses
 // the workspace's configured main model. Credentials and tools stay host-owned.
 type ModelRequestParams struct {
-	Messages        []ModelRequestMessage `json:"messages"`
-	ModelAlias      string                `json:"model_alias,omitempty"`
-	MaxOutputTokens int                   `json:"max_output_tokens,omitempty"`
-	TimeoutMS       int                   `json:"timeout_ms,omitempty"`
+	Messages             []ModelRequestMessage `json:"messages"`
+	ModelAlias           string                `json:"model_alias,omitempty"`
+	MaxOutputTokens      int                   `json:"max_output_tokens,omitempty"`
+	AllowUnboundedOutput bool                  `json:"allow_unbounded_output,omitempty"`
+	TimeoutMS            int                   `json:"timeout_ms,omitempty"`
 }
 
 type ModelRequestMessage struct {

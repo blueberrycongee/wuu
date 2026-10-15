@@ -122,12 +122,20 @@ func TestClientUsesCodexCLIAuthReadOnlyWhenEnabled(t *testing.T) {
 		if text["verbosity"] != "low" {
 			t.Fatalf("Codex request must default text.verbosity to low, got %#v", text["verbosity"])
 		}
+		if body["stream"] == true {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("event: response.output_text.delta\n" +
+				"data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n" +
+				"event: response.completed\n" +
+				"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n"))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer server.Close()
 
-	client, err := New(ClientConfig{BaseURL: server.URL, Home: home, HTTPClient: server.Client(), ReuseCodexCredentials: true})
+	client, err := New(ClientConfig{BaseURL: server.URL, Home: home, HTTPClient: server.Client(), ReuseCodexCredentials: true, StreamTransport: providers.StreamTransportSSE})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -163,7 +171,7 @@ func TestClientUsesCodexCLIAuthReadOnlyWhenEnabled(t *testing.T) {
 			{Role: "system", Content: "sys"},
 			{Role: "user", Content: "hello"},
 		},
-	})
+	}, modelrequest.Options{})
 	if err != nil || resp.Content != "ok" {
 		t.Fatalf("journaled text request: content=%q err=%v", resp.Content, err)
 	}

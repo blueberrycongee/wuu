@@ -17,21 +17,33 @@ var (
 )
 
 // Execute preserves the caller's client, route, context, tuning, and inference
-// journal. A positive MaxTokens is a strict requested cap; zero keeps the
-// provider's existing token policy. Callers supply the explicit text messages
+// journal. A positive MaxTokens is a strict requested cap unless the caller
+// permits an adapter to omit it; zero keeps the provider's existing token policy.
+// Callers supply the explicit text messages
 // and tool-free request; this helper adds no context or agent loop and retains
 // the supplied client's preparation and transport behavior.
-func Execute(ctx context.Context, client providers.Client, request providers.ChatRequest) (providers.ChatResponse, error) {
+func Execute(ctx context.Context, client providers.Client, request providers.ChatRequest, options Options) (providers.ChatResponse, error) {
 	if err := ctx.Err(); err != nil {
 		return providers.ChatResponse{}, err
 	}
 	if client == nil {
 		return providers.ChatResponse{}, errors.New("text request client is required")
 	}
-	base := textClient{Client: client, maxOutputTokens: request.MaxTokens}
+	base := textClient{Client: client, maxOutputTokens: request.MaxTokens, allowUnboundedOutput: options.AllowUnboundedOutput}
 	var scoped providers.Client = base
+	if transport, ok := client.(interface{ RequiresStreamingChat() bool }); ok && transport.RequiresStreamingChat() {
+		stream, ok := client.(providers.StreamClient)
+		if !ok {
+			return providers.ChatResponse{}, errors.New("streaming model client is required")
+		}
+		scoped = streamingTextClient{textClient: base, stream: stream}
+	}
 	if recovery, ok := client.(providers.InferenceRecoveryApplier); ok {
-		scoped = recoveringTextClient{textClient: base, InferenceRecoveryApplier: recovery}
+		if stream, ok := scoped.(streamingTextClient); ok {
+			scoped = recoveringStreamingTextClient{streamingTextClient: stream, InferenceRecoveryApplier: recovery}
+		} else {
+			scoped = recoveringTextClient{textClient: base, InferenceRecoveryApplier: recovery}
+		}
 	}
 	response, err := providers.ExecuteChat(ctx, scoped, request, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
 	if err != nil {
@@ -46,9 +58,16 @@ func Execute(ctx context.Context, client providers.Client, request providers.Cha
 	return response, nil
 }
 
+type Options struct {
+	// AllowUnboundedOutput lets adapters that cannot preserve MaxTokens use
+	// their normal output policy. Providers that support the cap still receive it.
+	AllowUnboundedOutput bool
+}
+
 type textClient struct {
 	providers.Client
-	maxOutputTokens int
+	maxOutputTokens      int
+	allowUnboundedOutput bool
 }
 
 // Preparation stays inside the ordinary executor, including retries, so the
@@ -62,7 +81,7 @@ func (c textClient) PrepareInferenceRequest(ctx context.Context, request provide
 			return request, err
 		}
 	}
-	if c.maxOutputTokens > 0 && (request.MaxTokens <= 0 || request.MaxTokens > c.maxOutputTokens) {
+	if c.maxOutputTokens > 0 && !c.allowUnboundedOutput && (request.MaxTokens <= 0 || request.MaxTokens > c.maxOutputTokens) {
 		return request, ErrUnsupportedLimit
 	}
 	// Keep trusted provider normalization intact. Native clients can prepare the
@@ -75,6 +94,61 @@ func (c textClient) PrepareInferenceRequest(ctx context.Context, request provide
 // client can refresh authentication.
 type recoveringTextClient struct {
 	textClient
+	providers.InferenceRecoveryApplier
+}
+
+type streamingTextClient struct {
+	textClient
+	stream providers.StreamClient
+}
+
+// Keep the unary executor's preparation, journal and retry ownership while
+// using a provider that requires a streaming wire request.
+func (c streamingTextClient) Chat(ctx context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
+	events, err := c.stream.StreamChat(ctx, request)
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+	var response providers.ChatResponse
+	for {
+		select {
+		case <-ctx.Done():
+			return response, ctx.Err()
+		case event, open := <-events:
+			if !open {
+				return response, errors.New("model stream ended before completion")
+			}
+			switch event.Type {
+			case providers.EventContentDelta:
+				response.Content += event.Content
+			case providers.EventContentReplace:
+				response.Content = event.Content
+			case providers.EventToolUseEnd:
+				if event.ToolCall != nil {
+					response.ToolCalls = append(response.ToolCalls, *event.ToolCall)
+				}
+			case providers.EventUsage:
+				response.Usage = event.Usage
+			case providers.EventError:
+				if event.Error != nil {
+					return response, event.Error
+				}
+				return response, errors.New("model stream failed")
+			case providers.EventDone:
+				if event.Usage != nil {
+					response.Usage = event.Usage
+				}
+				response.StopReason = event.StopReason
+				response.FinishReason = event.FinishReason
+				response.Truncated = event.Truncated
+				return response, nil
+			}
+		}
+	}
+}
+
+type recoveringStreamingTextClient struct {
+	streamingTextClient
 	providers.InferenceRecoveryApplier
 }
 

@@ -139,6 +139,8 @@ import type {
   PluginClientCancelParams,
   PluginClientCancelResult,
   PluginClientRequestResult,
+  PluginVisibleHistoryRequest,
+  PluginVisibleHistoryResult,
   WorkspaceFileSaveParams,
   CodexPetFeed,
   CodexPetSubmitResult,
@@ -148,6 +150,7 @@ import type {
   SideThreadSendResult,
 } from "../shared/protocol";
 import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
+import { visibleMainTurns, visibleSideTurns } from "./pluginVisibleHistory";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
 import { ObservationCoordinator, activityControlMethod, observationActivityFromServerEvent } from "./cuaActivityWindows";
 import type { ActivityPreviewAppearance } from "../shared/activityPreview";
@@ -681,7 +684,7 @@ async function requestPluginRuntime(
   onResponse?: (response: AppServerResponse) => void,
   onOwnerCreated?: () => void,
 ): Promise<PluginClientRequestResult> {
-  const { workspace_id: _workspaceID, ...request } = params;
+  const { workspace_id: _workspaceID, workspace_root: _workspaceRoot, ...request } = params;
   if (params.request_id === undefined) {
     return appServerClientPool.requestInContext<PluginClientRequestResult>(context, "plugin/client/request", request, onResponse);
   }
@@ -2032,6 +2035,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:plugin-runtime-request", (event, params: PluginClientRequestParams) => {
     const workspaceID = params.workspace_id?.trim();
     const context = workspaceID ? runtimeContextForWorkspaceID(workspaceID) : runtimeContextForEvent(event);
+    if (params.workspace_root && resolve(params.workspace_root) !== resolve(context.cwd)) {
+      throw new Error("Plugin runtime workspace changed");
+    }
     const owner = `window:${event.sender.id}`;
     return requestPluginRuntime(owner, context, params, undefined, () => {
       event.sender.once("destroyed", () => cancelPluginRuntimeOwner(owner));
@@ -2039,6 +2045,33 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("wuu:plugin-runtime-cancel", (event, params: PluginClientCancelParams) =>
     cancelPluginRuntime(`window:${event.sender.id}`, params));
+  ipcMain.handle("wuu:plugin-visible-history", async (event, request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult> => {
+    if (!request || !request.threadId?.trim() || !request.workspaceRoot?.trim()) throw new Error("Conversation identity is required");
+    const context = request.workspaceId
+      ? runtimeContextForWorkspaceID(request.workspaceId)
+      : runtimeContextForEvent(event);
+    if (resolve(context.cwd) !== resolve(request.workspaceRoot)
+      || (!request.workspaceId && context.kind !== "no_project")) throw new Error("Conversation workspace changed");
+    if (request.kind === "main") {
+      if (!request.beforeTurnId?.trim() || request.sideThreadId) throw new Error("Main conversation turn is required");
+      const history = await appServerClientPool.requestInContext<{ thread_id: string; turns: Turn[] }>(
+        context, "thread/history/read", { thread_id: request.threadId, cursor: `conversation:turn:${request.beforeTurnId}` },
+      );
+      if (history.thread_id !== request.threadId) throw new Error("Conversation identity changed");
+      return { turns: visibleMainTurns(history.turns) };
+    }
+    if (request.kind === "side") {
+      if (!request.sideThreadId?.trim() || request.beforeTurnId) throw new Error("Side conversation identity is required");
+      const history = await appServerClientPool.requestInContext<SideThreadHistoryResult>(
+        context, "sideThread/getHistory", { main_thread_id: request.threadId },
+      );
+      if (history.summary.main_thread_id !== request.threadId || history.summary.side_thread_id !== request.sideThreadId) {
+        throw new Error("Side conversation identity changed");
+      }
+      return { turns: visibleSideTurns(history, request.sideThreadId) };
+    }
+    throw new Error("Unknown conversation kind");
+  });
   ipcMain.handle(
     "wuu:config-provider-remove",
     (

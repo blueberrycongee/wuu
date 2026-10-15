@@ -63,7 +63,8 @@ const call = async (method, input, requestID) =>
   (await rpc("plugin/client/request", clientParams(method, input, requestID))).result;
 const turn = (tag, extra = {}) => ({
   threadId: "fixture-visible-thread", turnId: `fixture-turn-${tag}`,
-  userText: tag, assistantText: "The requested check is complete.", ...extra,
+  turns: [{ id: `fixture-turn-${tag}`, userText: tag, assistantText: "The requested check is complete.",
+    imageCount: 0, fileCount: 0, ...extra }],
 });
 const predict = (tag, extra) => call("next-message.predict", turn(tag, extra));
 
@@ -93,7 +94,7 @@ const provider = createServer(async (request, response) => {
   for await (const chunk of request) body += chunk;
   const value = JSON.parse(body);
   const context = JSON.parse(value.messages.at(-1).content);
-  const tag = context.user;
+  const tag = context.turns.at(-1).user;
   const captured = { tag, at: Date.now(), url: request.url, body: value };
   providerCalls.push(captured);
   response.on("close", () => {
@@ -115,6 +116,8 @@ const provider = createServer(async (request, response) => {
   }
   const text = tag === "ambiguous" ? '{"suggestion":null}'
     : tag === "malformed" ? '{"suggestion":"first","suggestion":"second"}'
+      : tag === "too-long" ? JSON.stringify({ suggestion: "x".repeat(101) })
+        : tag === "length-boundary" ? JSON.stringify({ suggestion: "x".repeat(100) })
       : JSON.stringify({ suggestion: "Run the focused checks" });
   response.end(JSON.stringify({
     id: "fixture-response", object: "chat.completion", model: value.model,
@@ -159,7 +162,7 @@ try {
   });
   const initialized = await rpc("initialize", { protocol_version: "wuu-app-server/v0.1", client: { name: "next-message-model-e2e" } });
   item = initialized.extension_inventory.find(plugin => plugin.id.endsWith(":next-message"));
-  assert(item, "bundled next-message package is missing from the built core");
+  assert(item, `bundled next-message package is missing from the built core: ${JSON.stringify(initialized.extension_inventory.map(plugin => plugin.id))}; ${stderr}`);
   assert.equal(item.enabled, false);
   assert.equal(item.runtime_state, "inactive");
   result.default_plugin = item;
@@ -182,7 +185,7 @@ try {
   assert(!first.body.store);
   assert.deepEqual(first.body.messages.map(message => message.role), ["system", "user"]);
   assert.deepEqual(JSON.parse(first.body.messages[1].content), {
-    user: "success", assistant: turn("success").assistantText,
+    turns: [{ user: "success", assistant: turn("success").turns[0].assistantText }],
   });
   assert(!JSON.stringify(first.body).includes("fixture-visible-thread"));
   assert(!JSON.stringify(first.body).includes("fixture-turn-success"));
@@ -192,8 +195,8 @@ try {
   result.checks.push("real plugin uses main model, explicit visible text, no identifiers/history/tools, and 128-token wire cap", "one inference per completed turn");
 
   const promptBytes = Buffer.byteLength(first.body.messages[0].content);
-  const contextOverhead = Buffer.byteLength(JSON.stringify({ user: "", assistant: "a" }));
-  const boundaryText = "x".repeat(8192 - promptBytes - contextOverhead);
+  const contextOverhead = Buffer.byteLength(JSON.stringify({ turns: [{ user: "x", assistant: "a" }] }));
+  const boundaryText = "x".repeat(8192 - promptBytes - contextOverhead + 1);
   assert.deepEqual(await predict("byte-boundary", { userText: boundaryText, assistantText: "a" }), { suggestion: "Run the focused checks" });
   assert.equal(providerCalls.at(-1).body.messages.reduce((sum, message) => sum + Buffer.byteLength(message.content), 0), 8192);
   const beforeInvalid = providerCalls.length;
@@ -219,25 +222,26 @@ try {
   await call("next-message.update", {});
   result.checks.push("configured alias reaches provider and persists across plugin restart; unknown alias abstains without fallback");
 
-  for (const tag of ["ambiguous", "malformed", "truncated", "provider-error"]) {
+  assert.deepEqual(await predict("length-boundary"), { suggestion: "x".repeat(100) });
+  for (const tag of ["ambiguous", "malformed", "too-long", "truncated", "provider-error"]) {
     const count = providerCalls.length;
     assert.deepEqual(await predict(tag), { suggestion: null });
     assert.equal(providerCalls.length, count + 1);
     assert.deepEqual(await predict(tag), { suggestion: null });
     assert.equal(providerCalls.length, count + 1, `${tag} retried inference`);
   }
-  result.checks.push("null, malformed, truncated and permanent provider errors abstain without logical retry");
+  result.checks.push("100-character boundary accepted; longer, null, malformed, truncated and provider errors abstain without retry");
 
   const timed = predict("hold-timeout");
   const timeoutCall = await waitFor("provider", providerCalls, call => call.tag === "hold-timeout", "timeout request started");
   assert.deepEqual(await timed, { suggestion: null });
   const timeoutClosed = await waitFor("closed", closed, entry => entry.tag === "hold-timeout", "timeout disconnect");
   result.timeout_transport_ms = timeoutClosed.at - timeoutCall.at;
-  assert(result.timeout_transport_ms >= 3300 && result.timeout_transport_ms < 7000, `unexpected 4-second budget: ${result.timeout_transport_ms}ms`);
+  assert(result.timeout_transport_ms >= 14000 && result.timeout_transport_ms < 18000, `unexpected 15-second budget: ${result.timeout_transport_ms}ms`);
   const afterTimeout = providerCalls.length;
   assert.deepEqual(await predict("hold-timeout"), { suggestion: null });
   assert.equal(providerCalls.length, afterTimeout);
-  result.checks.push("4-second request budget disconnects real HTTP transport and does not retry");
+  result.checks.push("15-second request budget disconnects real HTTP transport and does not retry");
 
   const cancelledParams = clientParams("next-message.predict", turn("hold-cancel"), "cancel-prediction");
   const cancelled = rpcRaw("plugin/client/request", cancelledParams);
@@ -291,8 +295,8 @@ try {
   assert(accounting.operations.every(operation => operation.owner_id === "plugin:next-message" && operation.kind === "auxiliary" && operation.status !== "active"));
   assert(accounting.workflows.every(workflow => workflow.status !== "active"));
   const reported = accounting.submissions.filter(submission => submission.has_reported_usage);
-  assert.equal(reported.length, 6);
-  assert.equal(reported.reduce((total, usage) => total + usage.reported_input_tokens + usage.reported_output_tokens, 0), 60);
+  assert.equal(reported.length, 8);
+  assert.equal(reported.reduce((total, usage) => total + usage.reported_input_tokens + usage.reported_output_tokens, 0), 80);
   assert.equal(accounting.sessions, 0);
   assert.equal(accounting.messages, 0);
   result.checks.push("durable plugin-owned terminal accounting and reported usage; zero sessions/messages persisted");

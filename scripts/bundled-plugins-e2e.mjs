@@ -588,7 +588,11 @@ try {
   });
   await scenario('next-message', 'bounded visible-turn request uses the live execution and optional alias', async () => {
     const host = new FixtureHost('next-message-request');
-    const input = { threadId: 'private-thread-id', turnId: 'turn-one', userText: '请检查这段代码', assistantText: '已经检查完了。' };
+    const input = { threadId: 'private-thread-id', turnId: 'turn-one', turns: [
+      { id: 'turn-one', userText: '请检查这段代码', assistantText: '已经检查完了。', imageCount: 0, fileCount: 0 },
+    ] };
+    const withId = (source, id) => ({ ...source, turnId: id, turns: source.turns.map((turn, index) =>
+      index === source.turns.length - 1 ? { ...turn, id } : turn) });
     host.intercept = call => {
       if (call.service === 'host.model.request') return { text: '{"suggestion":"修复这个问题"}', provider: 'fixture', model: 'fixture', finish_reason: 'stop', truncated: false };
     };
@@ -602,23 +606,33 @@ try {
     assert.equal(first.params.max_output_tokens, 128);
     assert.deepEqual(first.params.messages.map(message => message.role), ['system', 'user']);
     const context = JSON.parse(first.params.messages[1].content);
-    assert.deepEqual(context, { user: input.userText, assistant: input.assistantText });
+    assert.deepEqual(context, { turns: [{ user: input.turns[0].userText, assistant: input.turns[0].assistantText }] });
     assert(!JSON.stringify(first.params).includes(input.threadId));
     assert(first.params.messages.reduce((bytes, message) => bytes + Buffer.byteLength(message.content), 0) <= 8192);
     await runtime.client('next-message.update', { model_alias: 'fixture-small' });
-    await runtime.client('next-message.predict', { ...input, turnId: 'turn-two' });
+    await runtime.client('next-message.predict', withId(input, 'turn-two'));
     assert.equal(host.calls.filter(call => call.service === 'host.model.request').at(-1).params.model_alias, 'fixture-small');
     // The cap includes prompt framing and JSON escaping, not just visible text length.
-    const emptyContext = JSON.stringify({ user: '', assistant: 'a' });
+    const emptyContext = JSON.stringify({ turns: [{ user: 'x', assistant: 'a' }] });
     const remaining = 8192 - Buffer.byteLength(first.params.messages[0].content) - Buffer.byteLength(emptyContext);
     assert(remaining > 0);
-    await runtime.client('next-message.predict', { ...input, turnId: 'exact-budget', userText: 'x'.repeat(remaining), assistantText: 'a' });
+    await runtime.client('next-message.predict', { ...withId(input, 'exact-budget'), turns: [
+      { id: 'exact-budget', userText: 'x'.repeat(remaining + 1), assistantText: 'a', imageCount: 0, fileCount: 0 },
+    ] });
     assert.equal(host.calls.filter(call => call.service === 'host.model.request').at(-1).params.messages.reduce((bytes, message) => bytes + Buffer.byteLength(message.content), 0), 8192);
+    await runtime.client('next-message.predict', { threadId: input.threadId, turnId: 'recent', turns: [
+      { id: 'older', userText: 'x'.repeat(8000), assistantText: 'Old answer', imageCount: 0, fileCount: 0 },
+      { id: 'recent', userText: 'Continue', assistantText: 'Ready', imageCount: 1, fileCount: 0 },
+    ] });
+    assert.deepEqual(JSON.parse(host.calls.filter(call => call.service === 'host.model.request').at(-1).params.messages[1].content),
+      { turns: [{ user: 'Continue', assistant: 'Ready', images: 1 }] });
     const count = host.calls.filter(call => call.service === 'host.model.request').length;
     for (const invalid of [null, [], {}, { ...input, extra: 'hidden context' }, { ...input, threadId: '' },
-      { ...input, turnId: ' ' }, { ...input, userText: 3 }, { ...input, assistantText: '' },
-      { ...input, userText: 'x'.repeat(remaining + 1), assistantText: 'a' },
-      { ...input, userText: '界'.repeat(3000) }, { ...input, userText: '\\'.repeat(5000) }]) {
+      { ...input, turnId: ' ' }, { ...input, turns: [{ ...input.turns[0], userText: 3 }] },
+      { ...input, turns: [{ ...input.turns[0], assistantText: '' }] },
+      { ...input, turns: [{ ...input.turns[0], userText: 'x'.repeat(remaining + 2), assistantText: 'a' }] },
+      { ...input, turns: [{ ...input.turns[0], userText: '界'.repeat(3000) }] },
+      { ...input, turns: [{ ...input.turns[0], userText: '\\'.repeat(5000) }] }]) {
       await assert.rejects(runtime.client('next-message.predict', invalid));
     }
     assert.equal(host.calls.filter(call => call.service === 'host.model.request').length, count);
@@ -635,7 +649,9 @@ try {
       return { text: response, provider: 'fixture', model: 'fixture', finish_reason: 'stop', truncated: false };
     };
     const runtime = await launch('next-message', host);
-    const predict = turnId => runtime.client('next-message.predict', { threadId: 'parent', turnId, userText: 'Check this', assistantText: 'Checked' });
+    const predict = turnId => runtime.client('next-message.predict', { threadId: 'parent', turnId, turns: [
+      { id: turnId, userText: 'Check this', assistantText: 'Checked', imageCount: 0, fileCount: 0 },
+    ] });
     const outputs = ['{"suggestion":null}', 'not JSON', '```json\n{"suggestion":"Continue"}\n```', '{}', 'null', '[]',
       '{"suggestion":true}', '{"suggestion":"Continue","extra":true}', '{"suggestion":"First","suggestion":"Second"}',
       '{"suggestion":""}', '{"suggestion":"  "}', JSON.stringify({ suggestion: 'two\nlines' }),
@@ -660,7 +676,10 @@ try {
     let release;
     host.intercept = call => call.service === 'host.model.request' ? new Promise(resolve => { release = resolve; }) : undefined;
     const runtime = await launch('next-message', host);
-    const input = { threadId: 'parent', turnId: 'same-turn', userText: 'Check this', assistantText: 'Checked' };
+    const input = { threadId: 'parent', turnId: 'same-turn', turns: [
+      { id: 'same-turn', userText: 'Check this', assistantText: 'Checked', imageCount: 0, fileCount: 0 },
+    ] };
+    const withId = id => ({ ...input, turnId: id, turns: [{ ...input.turns[0], id }] });
     const first = runtime.client('next-message.predict', input);
     await host.waitCall('host.model.request');
     const duplicate = runtime.client('next-message.predict', input);
@@ -671,7 +690,7 @@ try {
     assert.equal(host.calls.filter(call => call.service === 'host.model.request').length, 1);
     const before = host.calls.length;
     const waiting = runtime.request('capability.invoke', { capability: 'plugin.client.request', input: {
-      method: 'next-message.predict', input: { ...input, turnId: 'cancelled-turn' },
+      method: 'next-message.predict', input: withId('cancelled-turn'),
     }, output: {}, execution_id: 'next-message-held-execution' });
     const rejected = assert.rejects(waiting, /abort|cancel/i);
     const call = await host.waitCall('host.model.request', () => true, before);
@@ -679,11 +698,11 @@ try {
     runtime.send({ id: 'cancel-next-message', method: 'execution.cancel', params: { execution_id: call.execution_id } });
     await rejected;
     release({ text: '{"suggestion":"Late result"}', provider: 'fixture', model: 'fixture', finish_reason: 'stop', truncated: false });
-    assert.deepEqual(await runtime.client('next-message.predict', { ...input, turnId: 'cancelled-turn' }), { suggestion: null });
+    assert.deepEqual(await runtime.client('next-message.predict', withId('cancelled-turn')), { suggestion: null });
     assert.equal(host.calls.filter(call => call.service === 'host.model.request').length, 2);
     host.intercept = call => { if (call.service === 'host.model.request') throw new Error('Synthetic timeout'); };
-    assert.deepEqual(await runtime.client('next-message.predict', { ...input, turnId: 'failed-turn' }), { suggestion: null });
-    assert.deepEqual(await runtime.client('next-message.predict', { ...input, turnId: 'failed-turn' }), { suggestion: null });
+    assert.deepEqual(await runtime.client('next-message.predict', withId('failed-turn')), { suggestion: null });
+    assert.deepEqual(await runtime.client('next-message.predict', withId('failed-turn')), { suggestion: null });
     assert.equal(host.calls.filter(call => call.service === 'host.model.request').length, 3);
     await runtime.shutdown();
   });
