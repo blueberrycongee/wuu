@@ -88,6 +88,7 @@
     "blobatar": "file:vendor/blobatar",
     "cordis": "4.0.0-rc.8",
     "highlight.js": "^11.11.1",
+    "katex": "^0.16.47",
     "lucide-react": "^0.562.0",
     "mdast-util-to-markdown": "^2.1.2",
     "mermaid": "^11.15.0",
@@ -98,8 +99,10 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "remark-parse": "^11.0.0",
     "unified": "^11.0.5"
   },

@@ -3187,6 +3187,26 @@
   white-space: normal;
 }
 
+.rich-content .katex-display {
+  max-width: 100%;
+  margin: 0;
+  padding-block: 0.25em;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.rich-content .katex-display > .katex {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
+.rich-content .katex {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 /* Compact Markdown fallback. Conversation reading surfaces refine the
  * hierarchy and block adjacency in message-reading.css; document previews
  * retain their own heading scale in workspace.css. */
