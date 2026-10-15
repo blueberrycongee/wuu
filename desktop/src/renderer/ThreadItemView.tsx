@@ -1,4 +1,5 @@
 import { ConversationTriggers } from "./ConversationTriggers";
+import { ENABLE_CONVERSATION_TRIGGERS } from "./FeatureFlags";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import {
   memo,
@@ -459,7 +460,7 @@ function BuiltInThreadItemView({
               getText={() => streamFieldValue(turnID, item, "text")}
               placement={actionsPersistent ? "persistent" : "overlay"}
               timestamp={turnAnswerReadyAt}
-              trailingAction={item.id === latestAgentMessageID && owningThreadId
+              trailingAction={ENABLE_CONVERSATION_TRIGGERS && item.id === latestAgentMessageID && owningThreadId
                 ? <ConversationTriggers key={owningThreadId} threadID={owningThreadId} /> : undefined}
               showCopy={copyable}
               showFork={forkVisible}

@@ -5765,6 +5765,7 @@ export function App(): JSX.Element {
         {state.initialized ? (
           <div
             data-pip-anchor-host="conversation"
+            data-scroll-fade={!emptyConversation && !splitConversation && !showingManagementCatalog ? "" : undefined}
             className={`scroll-region${emptyConversation ? " empty-scroll-region" : ""}${
               splitConversation ? " split-scroll-region" : ""
             }${showingManagementCatalog ? " skills-scroll-region" : ""}`}

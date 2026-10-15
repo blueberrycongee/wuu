@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 const requireFromMain = createRequire(import.meta.url);
 import type { AppContextSettings, AppContextSnapshot, AppContextState, SystemPermissionsState } from "../shared/protocol";
 import { normalizeAppContextShortcut } from "../shared/appContextShortcut";
+import { ENABLE_APP_SNAPSHOTS } from "../shared/featureFlags";
 import { writeTextFileAtomicSync } from "./atomicFile";
 import { wuuHomePath } from "./projects";
 
@@ -58,13 +59,16 @@ export class AppContextCapture {
   constructor(private readonly notify: (reveal: boolean, owner?: string) => void, private readonly currentOwner: () => string | undefined) {}
 
   start(): void {
+    if (!ENABLE_APP_SNAPSHOTS) return;
     try { this.settings = parseSettings(JSON.parse(readFileSync(this.file, "utf8"))); } catch { /* Missing or invalid saved settings use opt-out defaults. */ }
     if (this.available() && this.settings.enabled) {
       try { this.register(this.settings.shortcut); } catch (error) { this.error = (error as Error).message; }
     }
   }
 
-  private available(): boolean { return process.platform === "darwin" && Number.parseInt(release(), 10) >= 23 && existsSync(this.helper) && existsSync(this.bridge); }
+  private available(): boolean { return ENABLE_APP_SNAPSHOTS && this.helperAvailable(); }
+
+  private helperAvailable(): boolean { return process.platform === "darwin" && Number.parseInt(release(), 10) >= 23 && existsSync(this.helper) && existsSync(this.bridge); }
 
   state(): AppContextState {
     if (this.owner && this.owner !== this.currentOwner()) this.cancel();
@@ -152,7 +156,7 @@ export class AppContextCapture {
   }
 
   async permissionStatus(): Promise<{ state: SystemPermissionsState; settingsWindow?: Rectangle; settingsVisible: boolean }> {
-    if (!this.available()) return { state: { available: false, screen: false, accessibility: false }, settingsVisible: false };
+    if (!this.helperAvailable()) return { state: { available: false, screen: false, accessibility: false }, settingsVisible: false };
     // Each check and each capture runs in a new process, so granting access
     // does not require discarding the user's desktop window or conversations.
     const output = await new Promise<string>((resolve, reject) => {

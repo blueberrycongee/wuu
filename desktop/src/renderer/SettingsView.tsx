@@ -85,6 +85,7 @@ import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot, type SettingsStatusTone } from "./SettingsSection";
 import { ActivityPreviewPreferenceSection } from "./ActivityPreviewPreferenceSection";
 import { AppContextSettingsSection } from "./AppContextSettingsSection";
+import { ENABLE_APP_SNAPSHOTS } from "../shared/featureFlags";
 import { SystemPermissionsSection } from "./SystemPermissions";
 import { toastErrorMessage } from "./Toast";
 import type { ArchiveDeletionState } from "./useArchiveDeletion";
@@ -1323,7 +1324,7 @@ function SettingsGeneralPage({
       </SettingsSection>
 
       <ActivityPreviewPreferenceSection />
-      <AppContextSettingsSection />
+      {ENABLE_APP_SNAPSHOTS && <AppContextSettingsSection />}
       <SystemPermissionsSection />
 
       <SettingsSection title={t("settings.about")} testID="settings-about">

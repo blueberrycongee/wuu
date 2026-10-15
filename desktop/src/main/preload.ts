@@ -143,6 +143,14 @@ try {
 }
 
 const api: WuuDesktopApi = {
+  getDesktopUpdateState: () => ipcRenderer.invoke("wuu:desktop-update-state"),
+  downloadDesktopUpdate: () => ipcRenderer.invoke("wuu:desktop-update-download"),
+  restartDesktopUpdate: () => ipcRenderer.invoke("wuu:desktop-update-restart"),
+  onDesktopUpdateChanged: handler => {
+    const listener = (_event: Electron.IpcRendererEvent, state: Parameters<typeof handler>[0]) => handler(state);
+    ipcRenderer.on("wuu:desktop-update-changed", listener);
+    return () => ipcRenderer.removeListener("wuu:desktop-update-changed", listener);
+  },
   getSystemPermissions: () => ipcRenderer.invoke("wuu:system-permissions"),
   requestSystemPermission: (permission, presentation) => ipcRenderer.invoke("wuu:system-permission-request", permission, presentation),
   updateSystemPermissionGuide: presentation => ipcRenderer.send("wuu:system-permission-guide-update", presentation),

@@ -1,7 +1,7 @@
 const { join } = require("node:path");
 const { mkdtempSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
-const { notarizeArchive } = require("./notarization.cjs");
+const { notarizeArchive, stapleArtifact } = require("./notarization.cjs");
 const { execFileSync } = require("node:child_process");
 const { releaseCredentials } = require("./check-release-signing.cjs");
 
@@ -14,7 +14,7 @@ module.exports = async ({ appOutDir, packager }) => {
     const archive = join(temp, "wuu.zip");
     execFileSync("ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", appPath, archive]);
     await notarizeArchive(archive, join("release", "notarization", "app.json"));
-    execFileSync("xcrun", ["stapler", "staple", appPath], { stdio: "inherit" });
+    await stapleArtifact(appPath);
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

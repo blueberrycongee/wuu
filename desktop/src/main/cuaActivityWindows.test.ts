@@ -6,7 +6,6 @@ import type { WindowRegistry } from "./windowRegistry";
 import type { ObservationPiPEventSink } from "./cuaActivityWindows";
 import {
   ObservationCoordinator,
-  activityControlMethod,
   pipVisibleForActivity,
   frameStreamRetryDelay,
   browserPiPInitialBounds,
@@ -111,35 +110,9 @@ describe("CUA native picture-in-picture", () => {
       .toBe("activity-1");
   });
 
-  it("maps Activity controls onto RPC methods", () => {
-    expect(activityControlMethod("takeover")).toBe("activity/takeover");
-    expect(activityControlMethod("release")).toBe("activity/release");
-    expect(activityControlMethod("stop")).toBe("activity/stop");
-  });
-
   it("rebinds native preview when resolved process or window changes", () => {
     expect(observationKey(activity({ process_id: 42 }))).not.toBe(observationKey(activity({ process_id: 43 })));
     expect(observationKey(activity({ window_id: 99 }))).not.toBe(observationKey(activity({ window_id: 100 })));
-  });
-
-  it("routes native control to the owning workdir and waits for authoritative state", async () => {
-    let emit: ((event: CUANativePiPEvent) => void) | undefined;
-    const updateActivity = vi.fn();
-    const control = vi.fn(async (current: ActivitySession) => ({ ...current, controller: "user" as const, state: "user_controlled" as const, updated_at: "2026-07-10T10:00:02Z" }));
-    const coordinator = new ObservationCoordinator(
-      { mainWindow: () => undefined } as unknown as WindowRegistry, undefined,
-      (_activity, _key, sink) => {
-        emit = sink.onEvent;
-        return { start: vi.fn(), setVisible: vi.fn(), setLive: vi.fn(), updateActivity, animateInteraction: vi.fn(), stop: vi.fn() };
-      }, control,
-    );
-    coordinator.setActiveThread("thread-1");
-    coordinator.update(activity({ plugin_id: "community-driver", process_id: 0 }));
-    expect(emit).toBeUndefined();
-    coordinator.update(activity({ plugin_id: "community-driver" }));
-    emit?.({ event: "control", action: "takeover" });
-    await vi.waitFor(() => expect(updateActivity).toHaveBeenLastCalledWith(expect.objectContaining({ controller: "user" })));
-    expect(control).toHaveBeenCalledWith(expect.objectContaining({ workdir: "/repo", id: "activity-1" }), "takeover");
   });
 
   it("replaces a card that cannot retarget without waiting for the outgoing helper", () => {

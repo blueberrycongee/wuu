@@ -100,6 +100,33 @@ imports the certificate into a temporary keychain without adding trust roots and
 removes the keychain and API key in an `always()` cleanup step. Retain encrypted
 backups outside the repository; GitHub Secrets cannot be read back.
 
+### Public material and private credentials
+
+| Material | Storage and publication |
+| --- | --- |
+| Workflow code, signing scripts, secret names, and placeholder examples | Commit to the public repository. |
+| Verified DMG/ZIP files, checksums, and `verification.json` | Publish after the release gates pass. Check diagnostic logs for credentials and private paths before sharing them. |
+| Signing certificate subject, Team ID, public key, and certificate fingerprint | Public metadata embedded in signed apps; the developer name on the certificate is visible to recipients. These values do not grant signing access. |
+| P12/PFX exports containing private keys, their passwords, P8 API keys, keychains, and credential handoff archives | Keep outside Git and release assets. Use the local keychain or restricted private storage, and the designated Actions Secrets for CI. |
+
+An encrypted P12 or a ZIP containing it is still private material. Base64 encoding
+is not encryption. Ignore rules reduce accidental staging but do not protect a
+file already committed or added with `git add -f`. Never paste credentials into
+PR descriptions, issues, build logs, or public artifacts. See
+[GitHub's secrets guidance](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
+and [Apple's signing identity guidance](https://developer.apple.com/documentation/Xcode/sharing-your-teams-signing-certificates).
+
+Reuse the configured Developer ID identity across releases; do not generate a new
+certificate for each build. Re-exporting the same certificate with a new P12
+password does not change its fingerprint. If replacing the CI export, update the
+P12 and password secrets together before running the workflow. Certificate renewal
+is a deliberate credential change: update the pinned fingerprint with the new
+certificate, retain the team and bundle identity, and repeat signing, notarization,
+and update acceptance before publishing. Stable signing does not by itself prove
+that macOS permissions survive an update.
+
+### Artifact verification
+
 The app is notarized and stapled before creating DMG and ZIP archives. The final
 DMG is then signed, notarized, and stapled. Verification mounts that DMG and
 extracts that ZIP, checks both apps' Developer ID identity, runtime flags,
@@ -116,10 +143,41 @@ the build fails; they contain no credentials. Resuming the helper with an existi
 receipt requires the exact same archive hash. A fresh CI build creates new signed
 archives and must obtain its own notarization results.
 
+After acceptance, App and DMG ticket stapling retries transient network failures
+up to three total attempts, waiting 30 seconds between attempts. These retries
+retrieve the ticket for the same artifact without resubmitting it for notarization.
+Other failures and exhausted retries stop the build; ticket validation and
+Gatekeeper assessment must still pass.
+
 Use the Release workflow's manual dispatch for verification without publication.
 Only a `v*` tag push can enter the publication job. No draft or public Release is
 created by validation runs.
 See the [signing reference](../../../desktop/scripts/RELEASE-SIGNING.md).
+
+## Automatic updates
+
+Release builds embed an `app-update.yml` GitHub provider for `blueberrycongee/wuu`.
+The desktop uses electron-updater 6 with stable releases only, no downgrades,
+explicit download consent, and explicit restart consent. Development and ad-hoc
+builds do not carry this configuration and never check for updates. Background
+checks start 30 seconds after launch and repeat every six hours while idle. A
+new release appears beside the account control at the bottom of the sidebar;
+click to download, watch the progress ring, then click the ready indicator to
+confirm restart. Failed downloads remain available for retry. Background checks
+do not open dialogs. The native Wuu menu also displays download progress and
+offers manual checks or restart. Restart first drains the same child-process
+cleanup used by ordinary application quit.
+
+The release verifier checks the embedded provider in both archives, and refreshes
+the generated `*-mac.yml` file sizes and SHA-512 hashes after final signing and
+stapling. The workflow uploads that metadata with the ZIP and DMG. A tagged run
+creates a draft Release, uploads all assets, and only then publishes the Release
+so clients cannot discover an incomplete update. Non-tag verification runs still
+create no Release. Keep the bundle identity and Developer ID team consistent.
+
+An older build without the updater requires one manual installation. A complete
+installation acceptance test needs two signed versions and an update feed;
+controller tests or a successful package build do not prove an installed upgrade.
 
 ## Published artifacts
 

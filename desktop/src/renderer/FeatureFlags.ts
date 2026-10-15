@@ -13,6 +13,9 @@ export const ENABLE_ENVIRONMENT_PANEL = false;
 /** Explicit file deliveries remain accessible beside their conversation. */
 export const ENABLE_TURN_ARTIFACT_SUMMARY = true;
 
+/** Keep the Trigger entry hidden until it is ready to return to answer actions. */
+export const ENABLE_CONVERSATION_TRIGGERS = false;
+
 /**
  * Account and device-linking UI stays available in development. All production
  * builds, including local packages, hide it until the flow is ready for users;

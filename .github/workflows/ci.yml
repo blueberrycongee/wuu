@@ -291,7 +291,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Guard app snapshot draft flow
+      - name: Guard disabled app snapshots and system permissions
         if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
         timeout-minutes: 3
         shell: bash

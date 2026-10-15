@@ -1,4 +1,13 @@
 export const zhCN = {
+  "desktopUpdate.available": "Wuu {version} 已可用，点击下载",
+  "desktopUpdate.downloading": "正在下载更新 · {percent}%",
+  "desktopUpdate.ready": "Wuu {version} 已下载，点击重启安装",
+  "desktopUpdate.failed": "更新下载失败，点击重试",
+  "desktopUpdate.actionFailed": "更新操作未完成，点击重试",
+  "desktopUpdate.installing": "正在重启安装更新…",
+  "desktopUpdate.prompting": "请在更新对话框中选择",
+  "desktopUpdate.checking": "正在检查更新…",
+  "desktopUpdate.progress": "正在下载 Wuu 更新",
   "composer.appContext.title": "应用快照",
   "settings.appContext.permissions": "系统权限",
   "permissions.title": "连接你的应用",

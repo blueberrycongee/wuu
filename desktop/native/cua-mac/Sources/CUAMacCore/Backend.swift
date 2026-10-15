@@ -25,12 +25,13 @@ private final class ApplicationBox: @unchecked Sendable {
 
 public final class MacComputerBackend: ComputerBackend {
     private let snapshotter = AXSnapshotter()
+    private let directedFocus = DirectedFocus()
     private var snapshotTicket: SnapshotTicket?
     private var resourceRevision = ""
     private var snapshotWindows: [CGWindowID: CGRect] = [:]
-    private var storedSnapshotText = ""
+    private var storedSnapshot = AXSnapshot(text: "", elements: [:])
+    private var snapshotRoot: AXUIElement?
     private var snapshotProcessID: pid_t?
-    private var lastSnapshotText: [pid_t: String] = [:]
     private var axRevisions: [pid_t: UInt64] = [:]
     private var visualRevisions: [pid_t: UInt64] = [:]
     private var lastScreenshotData: [pid_t: Data] = [:]
@@ -47,7 +48,12 @@ public final class MacComputerBackend: ComputerBackend {
         restoration?.recoverAbandoned(using: restoreWindow)
     }
 
+    public func revokeControl(epoch: String) {
+        directedFocus.revoke(epoch: epoch)
+    }
+
     public func shutdown() {
+        directedFocus.end()
         _ = try? restoration?.restore(using: restoreWindow)
         restoration?.finish()
         agentDisplay = nil
@@ -76,6 +82,8 @@ public final class MacComputerBackend: ComputerBackend {
         resourceRevision = appActionLock.revision
         try ComputerExecution.checkpoint()
         let axApplication = AXUIElementCreateApplication(app.processIdentifier)
+        directedFocus.reconcile(app: app, epoch: command.controlEpoch, foreground: command.foregroundPolicy != .avoid)
+        defer { directedFocus.idle() }
         enableElectronAccessibility(axApplication)
         if command.action == .querySnapshot {
             return try querySnapshot(command, app: app)
@@ -107,10 +115,25 @@ public final class MacComputerBackend: ComputerBackend {
         // Resolve the visual target before the action mutates or removes it. The
         // overlay is explanatory UI, so a best-effort position is sufficient.
         let intendedInteraction = interactionMetadata(command, app: app, application: axApplication)
+        let activity = command.isMutation ? AXActivityMonitor(application: axApplication, processID: app.processIdentifier) : nil
+        if command.isMutation, command.foregroundPolicy == .avoid,
+           command.action != .concealApp, command.action != .revealApp {
+            let frames = currentWindowFrames(processID: app.processIdentifier)
+            let point: CGPoint? = if command.elementID != nil {
+                try axFrame(element(command, app: app)).map { CGPoint(x: $0.midX, y: $0.midY) }
+            } else if let x = command.x, let y = command.y {
+                try inputPoint(x: x, y: y, coordinateSpace: command.coordinateSpace, app: app)
+            } else { nil }
+            let window = point.flatMap { point in frames.filter { $0.value.contains(point) }.min { $0.value.width * $0.value.height < $1.value.width * $1.value.height }?.key }
+                ?? lastWindowIDs[app.processIdentifier]
+                ?? frames.max { $0.value.width * $0.value.height < $1.value.width * $1.value.height }?.key
+            if let window { try directedFocus.begin(app: app, windowID: window) }
+        }
         let mechanism: String
         switch command.action {
         case .observe:
-            return try observe(command, app: app, axApplication: axApplication)
+            let settling = try settle(AXActivityMonitor(application: axApplication, processID: app.processIdentifier), app: app, application: axApplication)
+            return try observe(command, app: app, axApplication: axApplication, settling: settling)
         case .concealApp:
             return try concealApp(app: app, application: axApplication)
         case .revealApp:
@@ -130,6 +153,8 @@ public final class MacComputerBackend: ComputerBackend {
             mechanism = "background_ax"
         case .typeText:
             mechanism = try typeText(command, app: app)
+        case .paste:
+            mechanism = try paste(command, app: app)
         case .selectText:
             try selectText(command, app: app)
             mechanism = "background_ax"
@@ -154,11 +179,13 @@ public final class MacComputerBackend: ComputerBackend {
             preconditionFailure("global actions returned before target resolution")
         }
         ComputerExecution.current?.finishInput()
+        let settling = try activity.map { try settle($0, app: app, application: axApplication) } ?? "not_requested"
         let verification = try command.expectation.map { try verify($0, application: axApplication, timeout: command.timeout ?? 5) } ?? "not_requested"
         let frontmostAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let canonicalTarget = app.bundleIdentifier ?? app.bundleURL?.path ?? target
         var structured: [String: Any] = [
             "delivery": "delivered",
+            "settling": settling,
             "verification": verification,
             "action": command.action.rawValue,
             "app": canonicalTarget,
@@ -176,8 +203,8 @@ public final class MacComputerBackend: ComputerBackend {
         if let mode = command.after {
             do {
                 let next = try ComputerCommand(arguments: ["action": "observe", "app": canonicalTarget,
-                    "mode": mode.rawValue, "control_epoch": command.controlEpoch])
-                let observation = try observe(next, app: app, axApplication: axApplication)
+                    "mode": mode.rawValue, "control_epoch": command.controlEpoch, "disable_diff": command.disableDiff])
+                let observation = try observe(next, app: app, axApplication: axApplication, settling: settling)
                 structured["observation"] = observation.structured
                 structured["snapshot_id"] = observation.structured["snapshot_id"]
                 structured["window_id"] = observation.structured["window_id"]
@@ -201,7 +228,7 @@ public final class MacComputerBackend: ComputerBackend {
         case .click, .performAction, .activateControl: kind = "click"
         case .drag: kind = "drag"
         case .scroll: kind = "scroll"
-        case .setValue, .typeText, .selectText, .pressKey, .pressKeys: kind = "type"
+        case .setValue, .typeText, .paste, .selectText, .pressKey, .pressKeys: kind = "type"
         default: return nil
         }
         let frame: CGRect? = {
@@ -254,35 +281,6 @@ public final class MacComputerBackend: ComputerBackend {
             x: max(0, min(1, (point.x - frame.minX) / frame.width)),
             y: max(0, min(1, (point.y - frame.minY) / frame.height))
         )
-    }
-
-    // Capture the target window once and update the stored visual revision if the
-    // pixels changed. Best effort: any capture failure simply reports no change.
-    // Both capture paths run without activating the app. This never touches
-    // lastCaptureGeometry — only observe, which hands the geometry back to the
-    // model, may change the coordinate space the model is clicking against.
-    private func captureVisualRevision(app: NSRunningApplication) -> Bool {
-        guard #available(macOS 14.0, *) else { return false }
-        let pid = app.processIdentifier
-        var capture: WindowCapture?
-        // Prefer the non-activating window capture. Current macOS releases may
-        // proxy this legacy Core Graphics API through the system capture service,
-        // so the live PiP uses a separate executable path and therefore a distinct
-        // capture-client identity.
-        if let foreground = try? captureForegroundWindowPNG(processID: pid) {
-            capture = foreground
-        } else if ProcessInfo.processInfo.environment["WUU_CUA_NO_SCK_OBSERVE"] != "1",
-                  let background = try? captureWindowPNG(processID: pid) {
-            foregroundCaptureProcessIDs.remove(pid)
-            capture = background
-        }
-        guard let capture else { return false }
-        let changed = lastScreenshotData[pid] != capture.data
-        if changed {
-            visualRevisions[pid, default: 0] += 1
-            lastScreenshotData[pid] = capture.data
-        }
-        return changed
     }
 
     private func permissionStatus() -> ComputerResult {
@@ -448,19 +446,26 @@ public final class MacComputerBackend: ComputerBackend {
         }
     }
 
-    private func observe(_ command: ComputerCommand, app: NSRunningApplication, axApplication: AXUIElement) throws -> ComputerResult {
+    private func observe(_ command: ComputerCommand, app: NSRunningApplication, axApplication: AXUIElement, settling: String? = nil) throws -> ComputerResult {
         var root = command.scope == .window ? preferredAXWindow(axApplication) ?? axApplication : axApplication
         if let rootID = command.rootElementID {
             try validateSnapshot(command, app: app)
             guard snapshotter.isCurrent(id: rootID), let element = snapshotter.element(id: rootID) else { throw ComputerError.staleSnapshot("subtree changed") }
             root = element
         }
+        let previousTicket = snapshotTicket
+        let previousSnapshot = storedSnapshot
+        let sameOwner = previousTicket?.processID == app.processIdentifier &&
+            previousTicket?.launchTime == (app.launchDate?.timeIntervalSince1970 ?? 0) &&
+            previousTicket?.controlEpoch == command.controlEpoch
+        let sameRoot = sameOwner && snapshotRoot.map { CFEqual($0, root) } == true
+        if !sameOwner { snapshotter.clear() }
         snapshotTicket = nil
+        snapshotRoot = nil
         lastCaptureGeometry[app.processIdentifier] = nil
         lastWindowIDs[app.processIdentifier] = nil
         let accessibility = AXIsProcessTrusted() && command.observationMode != .vision
         let snapshot: AXSnapshot
-        let previousText = lastSnapshotText[app.processIdentifier]
         if accessibility {
             snapshot = snapshotter.snapshot(application: root)
         } else {
@@ -471,8 +476,8 @@ public final class MacComputerBackend: ComputerBackend {
             )
         }
         snapshotProcessID = app.processIdentifier
-        lastSnapshotText[app.processIdentifier] = snapshot.text
-        if previousText != snapshot.text {
+        let axChanged = accessibility && (!sameRoot || previousSnapshot.nodes != snapshot.nodes || previousSnapshot.truncated != snapshot.truncated)
+        if axChanged {
             axRevisions[app.processIdentifier, default: 0] += 1
         }
         var structured: [String: Any] = [
@@ -484,6 +489,7 @@ public final class MacComputerBackend: ComputerBackend {
             "ax_preferred": accessibility,
             "ax_truncated": snapshot.truncated,
         ]
+        structured["settling"] = settling
         var screenshot: Data?
         if command.observationMode != .ax {
         do {
@@ -563,7 +569,6 @@ public final class MacComputerBackend: ComputerBackend {
         if let geometry = lastCaptureGeometry[app.processIdentifier], screenshot != nil {
             header += " Screenshot=\(geometry.imageWidth)×\(geometry.imageHeight) pixels maps to window_frame=(\(Int(geometry.windowFrame.origin.x)),\(Int(geometry.windowFrame.origin.y)),\(Int(geometry.windowFrame.width)),\(Int(geometry.windowFrame.height))). Prefer coordinate_space=\"normalized\" (0-1000) for visual targets so provider image resizing does not affect clicks; use coordinate_space=\"screenshot\" only for original image pixels."
         }
-        let changes = previousText.map { snapshotChanges(from: $0, to: snapshot.text) } ?? []
         let ticket = SnapshotTicket(processID: app.processIdentifier, launchTime: app.launchDate?.timeIntervalSince1970 ?? 0, controlEpoch: command.controlEpoch, resourceRevision: resourceRevision)
         snapshotTicket = ticket
         snapshotWindows = currentWindowFrames(processID: app.processIdentifier)
@@ -571,14 +576,33 @@ public final class MacComputerBackend: ComputerBackend {
             let matches = snapshotWindows.filter { $0.value == frame }.map(\.key)
             if matches.count == 1 { structured["window_id"] = Int(matches[0]) }
         }
-        storedSnapshotText = snapshot.text
+        storedSnapshot = snapshot
+        snapshotRoot = accessibility ? root : nil
         let page = SnapshotPage(text: snapshot.text, query: nil, offset: command.offset, limit: command.limit)
         structured["snapshot_id"] = ticket.id
         structured["mode"] = command.observationMode.rawValue
         structured["ax_revision"] = axRevisions[app.processIdentifier] ?? 0
         structured["visual_revision"] = visualRevisions[app.processIdentifier] ?? 0
         structured["full_snapshot"] = true
-        structured["changes"] = changes
+        structured["ax_changed"] = axChanged
+        structured["ax_nodes"] = page.lineIndices.compactMap { $0 < snapshot.nodes.count ? snapshot.nodes[$0].dictionary : nil }
+        if !command.disableDiff, accessibility, sameRoot, let previousTicket {
+            let difference = snapshot.difference(from: previousSnapshot, baseID: previousTicket.id)
+            structured["ax_diff"] = difference.structured
+            structured["changes"] = difference.summary
+        }
+        let focused = axValue(axApplication, kAXFocusedUIElementAttribute as String)
+        let focusedNode = focused.flatMap { focused in
+            snapshot.nodes.first { node in snapshot.elements[node.id].map { CFEqual($0, focused) } == true }
+        } ?? snapshot.nodes.first { $0.attributes["focused"] as? Bool == true }
+        if let node = focusedNode {
+            structured["focus"] = node.dictionary
+            header += " Focused element=[\(node.id)]."
+            if let range = node.attributes["selection_range"] as? [String: Any] {
+                header += " Selection UTF-16 location=\(range["location"]!), length=\(range["length"]!)."
+            }
+        }
+        structured["selected_element_ids"] = snapshot.nodes.filter { $0.attributes["selected"] as? Bool == true }.map(\.id)
         structured["total_lines"] = page.total
         structured["next_offset"] = page.nextOffset
         header += " snapshot_id=\"\(ticket.id)\"."
@@ -675,18 +699,20 @@ public final class MacComputerBackend: ComputerBackend {
         return element
     }
 
-    private func settleAccessibility(app: NSRunningApplication, application: AXUIElement, previous: String) -> AXSnapshot {
-        guard AXIsProcessTrusted() else {
-            return AXSnapshot(text: previous, elements: [:])
+    private func settle(_ activity: AXActivityMonitor, app: NSRunningApplication, application: AXUIElement) throws -> String {
+        let reader = AXSnapshotter()
+        let accessibility = AXIsProcessTrusted()
+        let capture = CGPreflightScreenCaptureAccess()
+        return try activity.settle {
+            var samples: [String] = []
+            if accessibility {
+                samples.append(reader.snapshot(application: preferredAXWindow(application) ?? application).text)
+            }
+            if capture, let pixels = windowVisualFingerprint(processID: app.processIdentifier) {
+                samples.append(String(pixels))
+            }
+            return samples.isEmpty ? nil : samples.joined(separator: "\n")
         }
-        waitForAccessibilitySettle(application: application, processID: app.processIdentifier, debounce: 0.12, timeout: 1.5)
-        let latest = snapshotter.snapshot(application: application)
-        if latest.text != previous {
-            axRevisions[app.processIdentifier, default: 0] += 1
-        }
-        lastSnapshotText[app.processIdentifier] = latest.text
-        snapshotProcessID = app.processIdentifier
-        return latest
     }
 
     // A single input action's control level, chosen deterministically by policy:
@@ -714,16 +740,6 @@ public final class MacComputerBackend: ComputerBackend {
         return "foreground_native"
     }
 
-    private func snapshotChanges(from previous: String, to current: String) -> [String] {
-        guard previous != current else { return [] }
-        return Array(current.components(separatedBy: "\n").difference(from: previous.components(separatedBy: "\n")).prefix(240)).map { change in
-            switch change {
-            case let .insert(offset, line, _): return "+ line \(offset): \(line)"
-            case let .remove(offset, line, _): return "- line \(offset): \(line)"
-            }
-        }
-    }
-
     private func currentWindowFrames(processID: pid_t) -> [CGWindowID: CGRect] {
         windowFrames(processID: processID)
     }
@@ -742,10 +758,12 @@ public final class MacComputerBackend: ComputerBackend {
 
     private func querySnapshot(_ command: ComputerCommand, app: NSRunningApplication) throws -> ComputerResult {
         try validateSnapshot(command, app: app)
-        let page = SnapshotPage(text: storedSnapshotText, query: command.query, offset: command.offset, limit: command.limit)
+        let page = SnapshotPage(text: storedSnapshot.text, query: command.query, offset: command.offset, limit: command.limit)
         let id = snapshotTicket!.id
         var structured: [String: Any] = ["snapshot_id": id, "total_lines": page.total, "process_id": Int(app.processIdentifier)]
         structured["next_offset"] = page.nextOffset
+        structured["ax_truncated"] = storedSnapshot.truncated
+        structured["ax_nodes"] = page.lineIndices.compactMap { $0 < storedSnapshot.nodes.count ? storedSnapshot.nodes[$0].dictionary : nil }
         let suffix = page.nextOffset.map { " Next offset=\($0)." } ?? ""
         return ComputerResult(text: "Stored snapshot_id=\"\(id)\".\(suffix)\n" + page.text, structured: structured)
     }
@@ -898,6 +916,13 @@ public final class MacComputerBackend: ComputerBackend {
 
     private func click(_ command: ComputerCommand, app: NSRunningApplication) throws -> String {
         var point: CGPoint
+        let heldKey = try command.key.map { key in
+            let chord = try KeyChord.parse(key)
+            return KeyChord(keyCode: chord.keyCode, modifiers: chord.modifiers.union(command.modifiers))
+        }
+        let modifiers = command.modifiers.union(heldKey?.modifiers ?? [])
+        let semanticClick = heldKey == nil && modifiers.isEmpty && command.duration == 0
+            && (command.clickCount ?? 1) == 1 && (command.mouseButton ?? "left") == "left"
         if command.elementID != nil {
             let target = try element(command, app: app)
             let hasPress = axActions(target).contains(kAXPressAction as String)
@@ -908,13 +933,13 @@ public final class MacComputerBackend: ComputerBackend {
             // escalate to a real click at the element's frame (the doc's "AX silently
             // swallowed, fall to a physical click" path); AXPress remains the fallback
             // for frameless elements such as some menu items.
-            if command.foregroundPolicy == .avoid, hasPress {
+            if command.foregroundPolicy == .avoid, hasPress, semanticClick {
                 try performAXAction(target, action: kAXPressAction as String)
                 return "background_ax"
             }
             if let frame {
                 point = CGPoint(x: frame.midX, y: frame.midY)
-            } else if hasPress {
+            } else if hasPress, semanticClick {
                 try performAXAction(target, action: kAXPressAction as String)
                 return "background_ax"
             } else {
@@ -928,11 +953,18 @@ public final class MacComputerBackend: ComputerBackend {
         }
         let pid = app.processIdentifier
         return try performDirectedOrForeground(command, app: app,
-            directed: { try postClickToPid(pid, point: point, button: command.mouseButton, count: command.clickCount ?? 1) },
-            foreground: { try self.postClick(point: point, button: command.mouseButton, count: command.clickCount ?? 1) })
+            directed: {
+                try withHeldKey(heldKey, post: { $0.postToPid(pid) }) {
+                    try postClickToPid(pid, point: point, button: command.mouseButton, count: command.clickCount ?? 1, modifiers: modifiers, duration: command.duration)
+                }
+            }, foreground: {
+                try withHeldKey(heldKey, post: { $0.post(tap: .cghidEventTap) }) {
+                    try self.postClick(point: point, button: command.mouseButton, count: command.clickCount ?? 1, modifiers: modifiers, duration: command.duration)
+                }
+            })
     }
 
-    private func postClick(point: CGPoint, button name: String?, count: Int) throws {
+    private func postClick(point: CGPoint, button name: String?, count: Int, modifiers: KeyModifiers, duration: TimeInterval) throws {
         let source = syntheticEventSource()
         let button: CGMouseButton
         let downType: CGEventType
@@ -950,12 +982,14 @@ public final class MacComputerBackend: ComputerBackend {
                   let up = markSynthetic(CGEvent(mouseEventSource: source, mouseType: upType, mouseCursorPosition: point, mouseButton: button)) else {
                 throw ComputerError.operationFailed("could not create mouse event")
             }
+            down.flags = modifiers.eventFlags
+            up.flags = modifiers.eventFlags
             down.setIntegerValueField(.mouseEventClickState, value: Int64(click))
             up.setIntegerValueField(.mouseEventClickState, value: Int64(click))
             try ComputerExecution.input()
             down.post(tap: .cghidEventTap)
-            usleep(35_000)
-            up.post(tap: .cghidEventTap)
+            defer { up.post(tap: .cghidEventTap) }
+            try holdInput(for: max(0.035, duration))
         }
     }
 
@@ -1035,8 +1069,8 @@ public final class MacComputerBackend: ComputerBackend {
         let chord = try KeyChord.parse(key)
         let pid = app.processIdentifier
         return try performDirectedOrForeground(command, app: app,
-            directed: { try postKeyChordToPid(pid, chord: chord) },
-            foreground: { try self.postKey(key) })
+            directed: { try postKeyChordToPid(pid, chord: chord, duration: command.duration) },
+            foreground: { try self.postKey(key, duration: command.duration) })
     }
 
     private func pressKeys(_ command: ComputerCommand, app: NSRunningApplication) throws -> String {
@@ -1046,30 +1080,20 @@ public final class MacComputerBackend: ComputerBackend {
         return try performDirectedOrForeground(command, app: app,
             directed: {
                 for chord in chords {
-                    try postKeyChordToPid(pid, chord: chord)
+                    try postKeyChordToPid(pid, chord: chord, duration: command.duration)
                     usleep(20_000)
                 }
             },
             foreground: {
                 for key in keys {
-                    try self.postKey(key)
+                    try self.postKey(key, duration: command.duration)
                     usleep(20_000)
                 }
             })
     }
 
-    private func postKey(_ key: String) throws {
-        let chord = try KeyChord.parse(key)
-        let source = syntheticEventSource()
-        guard let down = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: chord.keyCode, keyDown: true)),
-              let up = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: chord.keyCode, keyDown: false)) else {
-            throw ComputerError.operationFailed("could not create keyboard event")
-        }
-        down.flags = chord.modifiers.eventFlags
-        up.flags = chord.modifiers.eventFlags
-        try ComputerExecution.input()
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
+    private func postKey(_ key: String, duration: TimeInterval = 0) throws {
+        try withHeldKey(KeyChord.parse(key), post: { $0.post(tap: .cghidEventTap) }) { try holdInput(for: duration) }
     }
 
     private func scroll(_ command: ComputerCommand, app: NSRunningApplication) throws -> String {
@@ -1139,26 +1163,55 @@ public final class MacComputerBackend: ComputerBackend {
         if command.elementID != nil {
             let resolved = try element(command, app: app)
             target = resolved
-            try ComputerExecution.input()
-            _ = AXUIElementSetAttributeValue(resolved, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            try setAXValue(resolved, attribute: kAXFocusedAttribute as String, value: kCFBooleanTrue)
         }
         return try performDirectedOrForeground(command, app: app,
             directed: { try postUnicodeToPid(pid, text: text) },
             foreground: {
                 if let target {
-                    try ComputerExecution.input()
-                    _ = AXUIElementSetAttributeValue(target, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                    try setAXValue(target, attribute: kAXFocusedAttribute as String, value: kCFBooleanTrue)
                 }
                 try self.postUnicodeGlobal(text: text)
             })
     }
 
+    private func paste(_ command: ComputerCommand, app: NSRunningApplication) throws -> String {
+        guard let text = command.text else { throw ComputerError.invalidArguments("text is required") }
+        let target = command.elementID == nil ? nil : try element(command, app: app)
+        let application = AXUIElementCreateApplication(app.processIdentifier)
+        return try withPasteContent(text, format: command.format) {
+            let activity = AXActivityMonitor(application: application, processID: app.processIdentifier)
+            let focus = {
+                if let target { try setAXValue(target, attribute: kAXFocusedAttribute as String, value: kCFBooleanTrue) }
+            }
+            let mechanism = try performDirectedOrForeground(command, app: app,
+                directed: {
+                    try focus()
+                    try postKeyChordToPid(app.processIdentifier, chord: KeyChord.parse("command+v"))
+                }, foreground: {
+                    try focus()
+                    try self.postKey("command+v")
+                })
+            // A cancelled request can still have queued Cmd-V. Keep the paste
+            // content available during delivery even when the wait is interrupted;
+            // restoring immediately could paste the user's previous clipboard.
+            let clipboardReadDeadline = Date().addingTimeInterval(0.25)
+            defer { RunLoop.current.run(until: clipboardReadDeadline) }
+            try holdInput(for: max(0, clipboardReadDeadline.timeIntervalSinceNow))
+            _ = try settle(activity, app: app, application: application)
+            return mechanism
+        }
+    }
+
     private func postUnicodeGlobal(text: String) throws {
+        let source = syntheticEventSource()
         for units in unicodeChunks(text) {
-            guard let down = markSynthetic(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true)),
-                  let up = markSynthetic(CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false)) else {
+            guard let down = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)),
+                  let up = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)) else {
                 throw ComputerError.operationFailed("could not create text input event")
             }
+            down.flags = []
+            up.flags = []
             units.withUnsafeBufferPointer { buffer in
                 guard let baseAddress = buffer.baseAddress else { return }
                 down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
@@ -1177,17 +1230,32 @@ public final class MacComputerBackend: ComputerBackend {
         guard let fullText = axString(target, kAXValueAttribute as String) else {
             throw ComputerError.unsupported("element has no string AXValue")
         }
-        var searchStart = fullText.startIndex
-        if let prefix = command.prefix, let range = fullText.range(of: prefix) { searchStart = range.upperBound }
-        let suffixBound = command.suffix.flatMap { fullText.range(of: $0, range: searchStart..<fullText.endIndex)?.lowerBound } ?? fullText.endIndex
-        guard let range = fullText.range(of: needle, range: searchStart..<suffixBound) else {
-            throw ComputerError.invalidArguments("text was not found in the target element")
+        var matches: [Range<String.Index>] = []
+        var start = fullText.startIndex
+        while start < fullText.endIndex, let range = fullText.range(of: needle, range: start..<fullText.endIndex) {
+            if command.prefix.map({ fullText[..<range.lowerBound].hasSuffix($0) }) ?? true,
+               command.suffix.map({ fullText[range.upperBound...].hasPrefix($0) }) ?? true {
+                matches.append(range)
+                if matches.count > 1 { break }
+            }
+            start = fullText.index(after: range.lowerBound)
         }
-        let nsRange = NSRange(range, in: fullText)
-        var cfRange = CFRange(location: nsRange.location, length: nsRange.length)
+        guard matches.count == 1 else {
+            throw ComputerError.invalidArguments(matches.isEmpty
+                ? "text and its prefix/suffix context were not found in the target element"
+                : "text is ambiguous; supply prefix and/or suffix to select one occurrence")
+        }
+        let nsRange = NSRange(matches[0], in: fullText)
+        var cfRange: CFRange
+        switch command.selectionType {
+        case .text: cfRange = CFRange(location: nsRange.location, length: nsRange.length)
+        case .cursorBefore: cfRange = CFRange(location: nsRange.location, length: 0)
+        case .cursorAfter: cfRange = CFRange(location: nsRange.location + nsRange.length, length: 0)
+        }
         guard let value = AXValueCreate(.cfRange, &cfRange) else {
             throw ComputerError.operationFailed("could not create selected text range")
         }
+        try setAXValue(target, attribute: kAXFocusedAttribute as String, value: kCFBooleanTrue)
         try setAXValue(target, attribute: kAXSelectedTextRangeAttribute as String, value: value)
     }
 
@@ -1201,8 +1269,9 @@ public final class MacComputerBackend: ComputerBackend {
         guard command.title?.isEmpty == false || command.description?.isEmpty == false else {
             throw ComputerError.invalidArguments("activate_control requires title or description")
         }
-        _ = snapshotter.snapshot(application: application)
-        guard let target = snapshotter.uniqueElement(role: command.role, title: command.title, description: command.description) else {
+        let reader = AXSnapshotter()
+        _ = reader.snapshot(application: application)
+        guard let target = reader.uniqueElement(role: command.role, title: command.title, description: command.description) else {
             throw ComputerError.operationFailed("activate_control selector did not match exactly one element; observe and refine role, title, or description")
         }
         try performAXAction(target, action: kAXPressAction as String)
@@ -1230,9 +1299,12 @@ public final class MacComputerBackend: ComputerBackend {
             processID: app.processIdentifier,
             timeout: timeout
         )
+        if notificationObserved {
+            _ = try settle(AXActivityMonitor(application: axApplication, processID: app.processIdentifier), app: app, application: axApplication)
+        }
         let observation = try observe(command, app: app, axApplication: axApplication)
         var structured = observation.structured
-        let changed = notificationObserved || !(structured["changes"] as? [String] ?? []).isEmpty
+        let changed = notificationObserved || (structured["ax_changed"] as? Bool ?? false)
         structured["changed"] = changed
         structured["timed_out"] = !changed
         structured["timeout_seconds"] = timeout

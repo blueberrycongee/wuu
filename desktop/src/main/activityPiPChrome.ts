@@ -70,23 +70,20 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 @keyframes completion-move{from{transform:translate(0,0)}to{transform:translate(18px,18px)}}
 #hover-shade{position:absolute;inset:0;pointer-events:none;opacity:0;
   background:rgba(0,0,0,.06);transition:opacity .12s ease-in-out}
-#actions{position:absolute;inset:6px 6px auto;z-index:6;display:flex;justify-content:space-between;gap:8px;
+#actions{position:absolute;top:6px;left:6px;z-index:6;display:flex;gap:2px;
   opacity:0;pointer-events:none;transition:opacity .12s ease-in-out}
-.action-group{display:flex;gap:2px;position:relative}
-.action-group:not(:has(button:not([hidden]))){display:none}
 #root:is(:focus-within,.hovered,.dragging,.resizing,.attention) :is(#actions,#hover-shade){opacity:1}
 #root:is(:focus-within,.hovered,.dragging,.resizing,.attention) #actions{pointer-events:auto}
 /* A sibling WebContentsView cannot sample the page with backdrop-filter.
-   Local scrims keep each control group legible over browser and native pixels. */
-.action-group::before{content:"";position:absolute;inset:-4px -3px;z-index:-1;
+   A local scrim keeps the controls legible over browser and native pixels. */
+#actions::before{content:"";position:absolute;inset:-4px -3px;z-index:-1;
   border-radius:14px;background:rgba(0,0,0,.58);filter:blur(4px);pointer-events:none}
 #actions button{width:28px;height:28px;flex:none;border:none;border-radius:6px;padding:0;
   display:grid;place-items:center;cursor:pointer;color:#fff;background:transparent;
   transition:background .12s ease-in-out}
-#actions button:is(:hover,.hovered):not(:disabled){background:rgba(255,255,255,.17)}
-#actions button:active:not(:disabled){background:rgba(255,255,255,.26)}
+#actions button:is(:hover,.hovered){background:rgba(255,255,255,.17)}
+#actions button:active{background:rgba(255,255,255,.26)}
 #actions button:focus-visible{outline:2px solid #fff;outline-offset:1px}
-#actions button:disabled{opacity:.45;cursor:default}
 :root.reduce-motion #root *, :root.reduce-motion #root *::before{animation:none!important;transition:none!important}
 :root.reduce-motion #completion[data-completed="true"] #completion-check,
 :root.reduce-motion #completion[data-completed="true"] #completion-check::before{opacity:1}
@@ -118,15 +115,8 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   </div>
   <div id="hover-shade"></div>
   <div id="actions">
-    <div class="action-group">
-      <button id="close" type="button">${iconSVG("X", 16)}</button>
-      <button id="expand" type="button">${iconSVG("ExternalLink", 16)}</button>
-    </div>
-    <div class="action-group">
-      <button id="takeover" type="button" data-control="takeover">${iconSVG("Hand", 16)}</button>
-      <button id="release" type="button" data-control="release" hidden>${iconSVG("Check", 16)}</button>
-      <button id="stop" type="button" data-control="stop">${iconSVG("Square", 14)}</button>
-    </div>
+    <button id="close" type="button">${iconSVG("X", 16)}</button>
+    <button id="expand" type="button">${iconSVG("ExternalLink", 16)}</button>
   </div>
   <div data-resize="nw"></div><div data-resize="n"></div><div data-resize="ne"></div>
   <div data-resize="w"></div><div data-resize="e"></div>
@@ -139,7 +129,7 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   var root=document.getElementById("root");
   var completion=document.getElementById("completion");
   var label=${label},locale=${language},translations=${strings};
-  var activity={kind:"browser",state:"starting",controller:"none",controlPending:false};
+  var activity={kind:"browser",state:"starting",controller:"none"};
   var mounted=false,capture={status:"idle",message:""};
   function text(key){return translations[locale][key];}
   function buttonLabel(id,key){var button=document.getElementById(id);button.title=text(key);button.setAttribute("aria-label",text(key));}
@@ -148,34 +138,21 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     // Stopping capture leaves the last mounted frame valid, but no longer live.
     var capturePaused=capture.status==="stopped";
     var captureBlocked=["blank","suspended","error"].includes(capture.status);
-    var pending=activity.controlPending;
     var placeholder=!mounted||captureBlocked;
     // The preview speaks through symbols: the icon breathes while frames are on
     // their way and rests when capture is blocked; the conversation explains.
     ph.classList.toggle("gone",!placeholder);
     ph.classList.toggle("preparing",placeholder&&!captureBlocked&&!capturePaused&&!terminal);
     // States that ask for a decision keep the controls visible.
-    var notable=pending||activity.controlFailed||terminal||activity.state==="waiting_confirmation"||
+    var notable=terminal||activity.state==="waiting_confirmation"||
       capturePaused||manual||(activity.controller==="none"&&activity.state!=="starting");
     root.classList.toggle("attention",Boolean(placeholder||notable));
     root.setAttribute("aria-label",text(activity.kind==="cua"?"activityComputer":"activityBrowser")+(label?": "+label:""));
     document.getElementById("expand").hidden=activity.kind!=="browser";
-    document.getElementById("takeover").hidden=manual||terminal||activity.controller!=="agent";
-    document.getElementById("release").hidden=!manual||terminal;
-    document.getElementById("stop").hidden=terminal||activity.controller==="none";
-    root.querySelectorAll("[data-control]").forEach(function(button){button.disabled=Boolean(pending);});
-    var labels={close:"activityHide",expand:"activityExpand",takeover:"activityTakeover",release:"activityRelease",stop:"activityStop"};
+    var labels={close:"activityHide",expand:"activityExpand"};
     Object.keys(labels).forEach(function(id){buttonLabel(id,labels[id]);});
     completion.setAttribute("aria-label",text("activityCompleted"));
   }
-  root.querySelectorAll("[data-control]").forEach(function(button){
-    button.addEventListener("click",function(e){
-      e.stopPropagation();
-      if(activity.controlPending)return;
-      activity.controlPending=true;render();
-      window.location.href="wuu-pip://control?action="+button.dataset.control+"&execution_id="+encodeURIComponent(activity.execution_id||"");
-    });
-  });
   document.addEventListener("keydown",function(e){
     if(e.key==="Escape"){e.preventDefault();window.location.href="wuu-pip://close";}
   });
@@ -273,7 +250,7 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   window.wuuPipCapture=function(next){capture=next;render();};
   window.wuuPipHover=function(point){
     root.classList.toggle("hovered",!!point);
-    ["close","expand","takeover","release","stop"].forEach(function(id){
+    ["close","expand"].forEach(function(id){
       var button=document.getElementById(id),r=button.getBoundingClientRect();
       button.classList.toggle("hovered",!!point&&point.x>=r.left&&point.x<r.right&&point.y>=r.top&&point.y<r.bottom);
     });

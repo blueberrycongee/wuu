@@ -25,6 +25,19 @@ npm --prefix desktop run dev:onboarding
 
 [小球实验室（英文）](../../../desktop/dev/mascot/README.md)使用 `npm --prefix desktop run lab:mascot`。修改依赖原生行为、IPC 或真实会话状态时，使用完整的 `make dev` 路径。临时截图放入已忽略的产物目录，提交的夹具使用合成内容。
 
+## 桌面更新
+
+签名的 macOS 正式发布版发现 GitHub 稳定新版后，会在侧栏底部的账户控件旁显示下载箭头。
+点击开始下载，圆环显示下载进度；下载完成后变成绿色重启图标，点击后仍需确认重启。
+下载失败时保留重试入口。悬停或键盘聚焦可查看版本、进度；系统和应用内的减少动态效果
+设置都会关闭出现与完成时的动画。
+
+紧凑的状态反馈参考 Motionbook 的
+[Micro progress button](https://github.com/blueberrycongee/motionbook/tree/main/examples/micro-progress-button)，
+原始设计参考来自 [withAnimationUI](https://x.com/withAnimationUI/status/2107359197511692380)。
+Wuu 独立绘制形状，使用共享图标与实际下载进度，没有引入参考素材或字体。
+发布要求见[自动更新（英文）](../../en/project/release.md#automatic-updates)。
+
 ## 归档会话
 
 设置 → 归档列出所有工作区中的归档会话。**删除全部归档**会先刷新归档清单，再确认准确

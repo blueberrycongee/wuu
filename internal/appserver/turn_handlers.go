@@ -140,8 +140,6 @@ type turnRuntimeSnapshot struct {
 	HistoryBaselineSeq       int
 	AgentCompletionResultIDs []string
 	ProcessCompletionIDs     []string
-	// Only explicit user work may recover a terminal completion failure.
-	RecoverFailedCompletions bool
 	ExecutionRunID           string
 	PluginTurn               *pluginTurnReference
 	Control                  *session.Control
@@ -229,7 +227,6 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	}
 	snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
 	snapshot.PermissionExplicit = params.PermissionMode != nil
-	snapshot.RecoverFailedCompletions = true
 	snapshot.ForceCompact = isManualCompactPrompt(params.Prompt)
 	snapshot.RequestContext = activeDocumentRequestContext(params.ActiveDocument)
 	resumeActivities, err := s.rt.ActivityRegistry.PrepareRun(params.ThreadID)
@@ -948,20 +945,22 @@ func (s *Server) steerAgentCompletion(threadID, resultID string, msg providers.C
 		return false
 	}
 	th.mu.Lock()
-	running := th.running && th.currentTurn != "" && th.currentTurnKind != TurnKindCompact
 	answered := agentCompletionMarkerAnswered(th.History, resultID)
 	th.mu.Unlock()
-	if !running || answered {
-		// Answer receipts must reach admission to retry the acknowledgement.
+	if answered {
+		// Admission reconciles a saved answer without another model request.
 		return false
 	}
-	if gateFailedCompletionTurns(th, []string{resultID}, nil) != nil {
-		// Keep the durable result pending until explicit user work collects it.
+	if th.completionDeliveryPaused([]string{resultID}, nil) {
 		return true
 	}
 	th.mu.Lock()
 	defer th.mu.Unlock()
 	if !th.running || th.currentTurn == "" || th.currentTurnKind == TurnKindCompact {
+		return false
+	}
+	// A previous turn may have saved its answer while the pause gate ran.
+	if agentCompletionMarkerAnswered(th.History, resultID) {
 		return false
 	}
 	clientID := agentCompletionClientIDForResult(resultID)
@@ -2886,8 +2885,8 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			}
 			th.mu.Lock()
 			s.pruneRevokedSteersLocked(th)
-			// A completion event may arrive after the pending-result scan below
-			// has already included it in this turn.
+			// A terminal event can arrive after the durable pending-result scan
+			// has already included that result in this turn.
 			th.pendingSteers = slices.DeleteFunc(th.pendingSteers, func(message providers.ChatMessage) bool {
 				ids := agentCompletionResultIDs(message.ClientID)
 				if len(ids) == 0 {
@@ -2909,9 +2908,6 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			notifyBatch(batch)
 			reviewIntent.append(steers)
 			for _, steer := range steers {
-				if isHumanUserMessage(steer) {
-					turnRuntime.RecoverFailedCompletions = true
-				}
 				if ids := agentCompletionResultIDs(steer.ClientID); len(ids) > 0 {
 					turnRuntime.AgentCompletionResultIDs = append(turnRuntime.AgentCompletionResultIDs, ids...)
 				}
@@ -2919,9 +2915,11 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			if len(steers) > 0 {
 				messages = append(messages, steers...)
 			}
-			// A new user request can recover unacknowledged agent results even when
-			// the runtime was reused and no new completion event will arrive.
-			if turnRuntime.RecoverFailedCompletions && threadRuntime != nil && threadRuntime.AgentControl != nil {
+			var completionBatch []outboundNotification
+			// Reused runtimes have no installation replay to collect retained
+			// agent results after a human message permits recovery. Collect them
+			// with the same pause and answer-receipt gates as process results.
+			if threadRuntime != nil && threadRuntime.AgentControl != nil {
 				control := threadRuntime.AgentControl
 				pending, pendingErr := control.PendingRootAgentCompletions()
 				if pendingErr != nil {
@@ -2937,11 +2935,17 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 						}
 						continue
 					}
+					if th.completionDeliveryPaused([]string{completion.ResultID}, nil) {
+						continue
+					}
 					message := control.AgentCompletionChatMessage(completion.Snapshot, agentthread.RootPath)
 					message.ClientID = agentCompletionClientIDForResult(completion.ResultID)
 					message.Steered = true
 					messages = append(messages, message)
 					turnRuntime.AgentCompletionResultIDs = append(turnRuntime.AgentCompletionResultIDs, completion.ResultID)
+					th.mu.Lock()
+					completionBatch = append(completionBatch, th.materializeSteerLocked(turnID, message, time.Now().UTC())...)
+					th.mu.Unlock()
 				}
 			}
 			// Completed processes join the next request while work is active.
@@ -2958,7 +2962,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 					if slices.Contains(turnRuntime.ProcessCompletionIDs, p.ID) || !processEventBelongsToThread(th.ID, threadRuntime.AgentControl, event) {
 						continue
 					}
-					if !turnRuntime.RecoverFailedCompletions && gateFailedCompletionTurns(th, nil, []string{p.ID}) != nil {
+					if th.completionDeliveryPaused(nil, []string{p.ID}) {
 						continue
 					}
 					// An answer can survive a restart before its delivery acknowledgement.
@@ -2973,8 +2977,14 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 					message.Steered = true
 					messages = append(messages, message)
 					turnRuntime.ProcessCompletionIDs = append(turnRuntime.ProcessCompletionIDs, p.ID)
+					th.mu.Lock()
+					completionBatch = append(completionBatch, th.materializeSteerLocked(turnID, message, time.Now().UTC())...)
+					th.mu.Unlock()
 				}
 			}
+			// The pause gate reads the turn projection, including a failed
+			// explicit recovery that collected results without a new event.
+			notifyBatch(completionBatch)
 			return messages
 		}
 		turnRequestContext := cloneContextSegments(requestContext)
@@ -3290,10 +3300,9 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			s.prependQueuedUserTurns(th.ID, ready)
 		}
 	}
-	// Provider recovery has already applied its bounded retry/backoff policy.
-	// A terminal turn must never open a new inference budget for the same
-	// completion. Only acknowledgement failures retry below; the answer receipt
-	// lets admission settle them without another provider request.
+	// Retry only acknowledgement writes after a saved answer. Inference and
+	// persistence failures leave the obligation pending for explicit recovery;
+	// replaying them here would reset the request layer's retry budget.
 	completionClaimFailed := false
 	if err == nil && completionAnswerReady && persistErr == nil && threadRuntime != nil && threadRuntime.AgentControl != nil {
 		for _, resultID := range turnRuntime.AgentCompletionResultIDs {
@@ -4239,7 +4248,6 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	turnRuntime.HistoryBaselineSeq = th.historyHeadSeq
 	turnRuntime.AgentCompletionResultIDs = append([]string(nil), snapshot.AgentCompletionResultIDs...)
 	turnRuntime.ProcessCompletionIDs = append([]string(nil), snapshot.ProcessCompletionIDs...)
-	turnRuntime.RecoverFailedCompletions = snapshot.RecoverFailedCompletions || isHumanUserMessage(userMsg)
 	// Completion results folded from a lifted tree freeze are answered by
 	// this user turn (foldFrozenWorkerTree staged them under the same lock
 	// discipline as the snapshot fields).
@@ -4332,8 +4340,8 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 				if err := gateAlreadyDeliveredCompletions(admitted.History, threadRuntime, snapshot.AgentCompletionResultIDs, snapshot.ProcessCompletionIDs); err != nil {
 					return err
 				}
-				if !snapshot.RecoverFailedCompletions && !isHumanUserMessage(entry.msg) {
-					return gateFailedCompletionTurns(admitted, snapshot.AgentCompletionResultIDs, snapshot.ProcessCompletionIDs)
+				if admitted.completionDeliveryPaused(snapshot.AgentCompletionResultIDs, snapshot.ProcessCompletionIDs) {
+					return errCompletionDeliveryPaused
 				}
 				return nil
 			},
@@ -4345,7 +4353,7 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 			},
 		},
 	)
-	if errors.Is(err, errAgentCompletionAlreadyDelivered) || errors.Is(err, errCompletionAwaitingUser) {
+	if errors.Is(err, errAgentCompletionAlreadyDelivered) || errors.Is(err, errCompletionDeliveryPaused) {
 		return true, nil
 	}
 	if err != nil || !ok {
@@ -4770,8 +4778,8 @@ func (s *Server) startSyntheticTurn(ctx context.Context, threadID string, userMs
 				if err := gateAlreadyDeliveredCompletions(admitted.History, threadRuntime, completionResultIDs, processCompletionIDs); err != nil {
 					return err
 				}
-				if err := gateFailedCompletionTurns(admitted, completionResultIDs, processCompletionIDs); err != nil {
-					return err
+				if admitted.completionDeliveryPaused(completionResultIDs, processCompletionIDs) {
+					return errCompletionDeliveryPaused
 				}
 				// Rechecks belong to live processes, so they must not pass through
 				// the natural-exit completion gate or acquire its delivery marker.
@@ -4797,7 +4805,7 @@ func (s *Server) startSyntheticTurn(ctx context.Context, threadID string, userMs
 			},
 		},
 	)
-	if errors.Is(err, errAgentCompletionAlreadyDelivered) || errors.Is(err, errCompletionAwaitingUser) {
+	if errors.Is(err, errAgentCompletionAlreadyDelivered) || errors.Is(err, errCompletionDeliveryPaused) {
 		return true, nil
 	}
 	if err != nil || !ok {

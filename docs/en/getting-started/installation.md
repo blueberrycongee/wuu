@@ -22,7 +22,9 @@ Ad-hoc signatures do not establish publisher identity or guarantee that macOS pe
 
 ## Update the app
 
-Download the new release, quit Wuu with **Cmd+Q**, and replace `/Applications/wuu.app`. Closing a window alone does not quit the application. Open the replacement from Applications rather than running a second copy from the download or mounted disk image.
+Signed macOS builds with the **Wuu > Check for Updates** menu check GitHub stable releases shortly after launch and every six hours. Confirm the download, then choose **Restart and Install Update** when your work is saved and running tasks can stop. Choosing **Later** leaves the app running; a normal quit does not install the downloaded update automatically. Prereleases and downgrades are not offered.
+
+Older builds without this menu need one manual update: download the new release, quit Wuu with **Cmd+Q**, and replace `/Applications/wuu.app`. Closing a window alone does not quit the application. Open the replacement from Applications rather than running a second copy from the download or mounted disk image. Development and ad-hoc builds do not check for updates.
 
 Settings and conversations are stored outside the app bundle. Keep that data when replacing the app, and read the release notes for any version-specific migration requirements.
 

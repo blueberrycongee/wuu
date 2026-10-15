@@ -91,6 +91,7 @@ jobs:
           npm run test:release-signing
           npm run test:cua-mac
           node --test scripts/test-notarization.cjs
+          node --test scripts/test-update-metadata.cjs
 
       - name: Build desktop release
         run: npm run release:desktop
@@ -128,6 +129,7 @@ jobs:
             desktop/release/*.dmg
             desktop/release/*.zip
             desktop/release/*.zip.blockmap
+            desktop/release/*-mac.yml
             desktop/release/verification.json
           if-no-files-found: error
 
@@ -183,7 +185,7 @@ jobs:
 
           This app is signed with Apple Developer ID and notarized. Both the DMG and ZIP contain an app with a stapled notarization ticket. Final packages pass signature and Gatekeeper assessment before publication.
 
-          To update, quit Wuu with Cmd+Q, wait for it to exit, then replace `/Applications/wuu.app` with the new app. Open that copy, not the copy inside the DMG. No separate CUA helper installation or certificate import is needed.
+          Signed builds with automatic updates check stable releases from GitHub. Use Wuu > Check for Updates to download an update, then confirm Restart and Install after saving work. Older builds without this menu need one manual installation into `/Applications/wuu.app`. No separate CUA helper installation or certificate import is needed.
 
           Computer Use is included. Grant Screen Recording and Accessibility permissions in System Settings when requested to observe and control native macOS apps.
 
@@ -195,7 +197,9 @@ jobs:
           fi
 
           gh release create "$GITHUB_REF_NAME" desktop-release/* \
+            --draft \
             --verify-tag \
             --title "wuu ${GITHUB_REF_NAME}" \
             --notes-file release-notes.md \
             "${release_args[@]}"
+          gh release edit "$GITHUB_REF_NAME" --draft=false

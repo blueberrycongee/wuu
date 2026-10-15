@@ -2869,7 +2869,17 @@ export type ActiveDocumentContext = {
   path: string;
 };
 
+export type DesktopUpdateState =
+  | { kind: "unsupported" | "idle" | "checking" | "prompting" | "installing" }
+  | { kind: "available" | "ready" | "error"; version: string }
+  | { kind: "downloading"; version: string; percent: number };
+
 export type WuuDesktopApi = {
+  /** Desktop release updates; absent on remote and mobile hosts. */
+  getDesktopUpdateState?: () => Promise<DesktopUpdateState>;
+  onDesktopUpdateChanged?: (handler: (state: DesktopUpdateState) => void) => () => void;
+  downloadDesktopUpdate?: () => Promise<void>;
+  restartDesktopUpdate?: () => Promise<void>;
   getSystemPermissions?: () => Promise<SystemPermissionsState>;
   requestSystemPermission?: (permission: SystemPermission, presentation?: SystemPermissionPresentation) => Promise<void>;
   updateSystemPermissionGuide?: (presentation: SystemPermissionPresentation) => void;

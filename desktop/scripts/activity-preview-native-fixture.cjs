@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Synthetic frame producer for the live-preview E2E. It exercises the real
-// subprocess/JSONL/renderer path, not ScreenCaptureKit or macOS permissions.
+// subprocess/binary AVC/renderer path, not ScreenCaptureKit or macOS permissions.
 // Like the native helper, one host process serves every preview session.
 const http = require('node:http');
 const fs = require('node:fs');
@@ -11,8 +11,12 @@ const sessions = new Map();
 const record = (session, entry) => fs.appendFileSync(process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_LOG,
   JSON.stringify({ target: session.target, session: session.id, ...entry }) + '\n');
 const send = (session, event) => {
-  record(session, { direction: 'out', event });
-  process.stdout.write(JSON.stringify({ ...event, session: session.id }) + '\n');
+  const { data, ...metadata } = event;
+  const payload = Buffer.from(data || []);
+  record(session, { direction: 'out', event: { ...metadata, bytes: payload.length } });
+  const header = Buffer.from(JSON.stringify({ ...metadata, session: session.id })), prefix = Buffer.alloc(12);
+  prefix.write('WCU1'); prefix.writeUInt32BE(header.length, 4); prefix.writeUInt32BE(payload.length, 8);
+  process.stdout.write(Buffer.concat([prefix, header, payload]));
 };
 function flush(session) {
   if (!session.visible || !session.live || session.inFlight || !session.pending) return;

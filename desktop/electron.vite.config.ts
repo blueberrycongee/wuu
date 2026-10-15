@@ -36,6 +36,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/main/preload.ts"),
+          nativePreview: resolve(__dirname, "src/main/nativePreviewPreload.ts"),
+
           permissionGuide: resolve(__dirname, "src/main/permissionGuidePreload.ts"),
         },
         output: {
@@ -70,6 +72,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, "index.html"),
+          nativePreview: resolve(__dirname, "native-preview.html"),
+
           permissionGuide: resolve(__dirname, "permission-guide.html"),
         },
       },

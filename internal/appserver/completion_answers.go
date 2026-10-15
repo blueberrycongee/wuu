@@ -2,7 +2,6 @@ package appserver
 
 import (
 	"encoding/json"
-	"errors"
 	"slices"
 	"strings"
 
@@ -81,36 +80,4 @@ func markCompletionAnswer(res *agent.LoopResult, receipts completionAnswerReceip
 		}
 	}
 	return marked
-}
-
-// A terminal failure keeps the delivery obligation, but ordinary event replay
-// and restart must not reopen its model turn. The persisted turn projection is
-// refreshed under the execution lease before this admission gate is checked.
-var errCompletionAwaitingUser = errors.New("completion recovery requires a user request")
-
-func gateFailedCompletionTurns(th *threadState, agentResultIDs, processIDs []string) error {
-	if len(agentResultIDs) == 0 && len(processIDs) == 0 {
-		return nil
-	}
-	th.mu.Lock()
-	defer th.mu.Unlock()
-	for _, turn := range th.Turns {
-		if turn.Status != TurnStatusFailed && turn.Status != TurnStatusInterrupted {
-			continue
-		}
-		// Completions can also have joined an ordinary turn as steering input.
-		for _, item := range turn.Items {
-			for _, id := range agentCompletionResultIDs(item.SourceID) {
-				if slices.Contains(agentResultIDs, id) {
-					return errCompletionAwaitingUser
-				}
-			}
-			for _, id := range processCompletionIDs(item.SourceID) {
-				if slices.Contains(processIDs, id) {
-					return errCompletionAwaitingUser
-				}
-			}
-		}
-	}
-	return nil
 }

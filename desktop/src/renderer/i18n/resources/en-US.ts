@@ -1,6 +1,15 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "desktopUpdate.available": "Wuu {version} is available. Click to download",
+  "desktopUpdate.downloading": "Downloading update · {percent}%",
+  "desktopUpdate.ready": "Wuu {version} is ready. Click to restart and install",
+  "desktopUpdate.failed": "Update download failed. Click to retry",
+  "desktopUpdate.actionFailed": "Update action failed. Click to retry",
+  "desktopUpdate.installing": "Restarting to install update…",
+  "desktopUpdate.prompting": "Choose an action in the update dialog",
+  "desktopUpdate.checking": "Checking for updates…",
+  "desktopUpdate.progress": "Downloading Wuu update",
   "composer.appContext.title": "App snapshot",
   "settings.appContext.permissions": "System permissions",
   "permissions.title": "Connect your apps",

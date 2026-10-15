@@ -175,7 +175,7 @@ func threadHasOutstandingProcessCompletion(th *threadState, control *agentcontro
 		case process.StatusStarting, process.StatusRunning, process.StatusStopping:
 			return true
 		case process.StatusStopped, process.StatusFailed:
-			if p.TerminalCause == process.EventCauseNaturalExit && p.CompletionDeliveredAt.IsZero() && gateFailedCompletionTurns(th, nil, []string{p.ID}) == nil {
+			if p.TerminalCause == process.EventCauseNaturalExit && p.CompletionDeliveredAt.IsZero() && !th.completionDeliveryPaused(nil, []string{p.ID}) {
 				return true
 			}
 		}

@@ -25,6 +25,22 @@ It renders the real first-run component without the product preload, app-server,
 
 The [mascot lab](../../../desktop/dev/mascot/README.md) uses `npm --prefix desktop run lab:mascot`. Use the full `make dev` path when the change depends on native behavior, IPC, or real session state. Keep temporary screenshots in ignored output directories and use synthetic content in committed fixtures.
 
+## Desktop updates
+
+Signed macOS release builds show available GitHub stable releases beside the
+account control at the bottom of the sidebar. Click the download arrow to start;
+a ring tracks download progress and a green restart icon marks a ready update.
+Restart still requires confirmation. Failed downloads keep a retry action.
+Hover or keyboard focus reveals the version or progress. OS and in-app reduced
+motion preferences disable the arrival and completion animations.
+
+The compact state feedback draws on Motionbook's
+[Micro progress button](https://github.com/blueberrycongee/motionbook/tree/main/examples/micro-progress-button),
+referencing [withAnimationUI](https://x.com/withAnimationUI/status/2107359197511692380).
+Wuu uses independently drawn geometry, its shared icons and measured download
+progress; no reference artwork or font assets are included. See
+[automatic updates](release.md#automatic-updates) for release requirements.
+
 ## Archived conversations
 
 Settings → Archive lists archived conversations across all workspaces. **Delete

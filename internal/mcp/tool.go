@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -55,6 +56,38 @@ func (t *MCPTool) ServerName() string {
 // ConnectionID returns the exact transport owner captured by this tool. A
 // frozen tool catalog must never borrow a replacement connection's authority.
 func (t *MCPTool) ConnectionID() string { return t.client.ConnectionID() }
+
+// NotifyOnControlRevoked retains one pending best-effort cleanup notification
+// per lease on this connection, including between requests. Call after dispatch
+// so an already revoked lease sends cleanup after its final request has reached
+// the server.
+func (t *MCPTool) NotifyOnControlRevoked(ctx context.Context, method string, params json.RawMessage) {
+	control, ok := activity.BoundControlContext(ctx)
+	if !ok {
+		return
+	}
+	c := t.client
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.controlNotifications[control] != nil {
+		return
+	}
+	if c.controlNotifications == nil {
+		c.controlNotifications = make(map[context.Context]func() bool)
+	}
+	c.controlNotifications[control] = context.AfterFunc(control, func() {
+		c.mu.Lock()
+		delete(c.controlNotifications, control)
+		closed := c.closed
+		c.mu.Unlock()
+		if closed {
+			return
+		}
+		notifyCtx, cancel := context.WithTimeout(context.Background(), cancelNotificationTimeout)
+		defer cancel()
+		_ = c.transport.Send(notifyCtx, Request{JSONRPC: "2.0", Method: method, Params: params})
+	})
+}
 
 // Definition returns the JSON-schema tool definition for the model.
 func (t *MCPTool) Definition() providers.ToolDefinition {

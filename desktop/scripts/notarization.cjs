@@ -4,6 +4,31 @@ const { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } = requi
 const { dirname, basename } = require("node:path");
 const { setTimeout } = require("node:timers/promises");
 
+function isTransientNetworkError(error) {
+  const diagnostic = `${error.message}\n${error.stderr || ""}\n${error.stdout || ""}`;
+  return error.code === "ETIMEDOUT" || /NSURLErrorDomain|ECONNRESET|ENETUNREACH|EAI_AGAIN|timed out|network|offline|connection|\b50[234]\b|\b429\b/i.test(diagnostic);
+}
+
+async function stapleArtifact(artifact, { run = execFileSync, sleep = setTimeout } = {}) {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const output = run("xcrun", ["stapler", "staple", artifact], { encoding: "utf8", timeout: 60_000 });
+      if (output) console.log(output.trimEnd());
+      return;
+    } catch (error) {
+      if (!isTransientNetworkError(error) || attempt === maxAttempts) {
+        if (error.stdout) process.stdout.write(error.stdout);
+        if (error.stderr) process.stderr.write(error.stderr);
+        throw error;
+      }
+      // Retrieve the existing accepted ticket again; never resubmit the archive.
+      console.warn(`Ticket download interrupted; retry ${attempt}/${maxAttempts - 1} for ${artifact}`);
+      await sleep(30_000);
+    }
+  }
+}
+
 async function notarizeArchive(archive, receiptPath, {
   run = execFileSync, sleep = setTimeout, maxPolls = 60, maxNetworkErrors = 5,
 } = {}) {
@@ -43,9 +68,7 @@ async function notarizeArchive(archive, receiptPath, {
     try {
       output = run("xcrun", ["notarytool", "info", receipt.id, ...auth], { encoding: "utf8", timeout: 60_000 });
     } catch (error) {
-      const diagnostic = `${error.message}\n${error.stderr || ""}\n${error.stdout || ""}`;
-      const transient = error.code === "ETIMEDOUT" || /NSURLErrorDomain|ECONNRESET|ENETUNREACH|EAI_AGAIN|timed out|network|offline|connection|\b50[234]\b|\b429\b/i.test(diagnostic);
-      if (!transient) throw new Error(`Notarization query failed for ${receipt.id}; check credentials and service response`);
+      if (!isTransientNetworkError(error)) throw new Error(`Notarization query failed for ${receipt.id}; check credentials and service response`);
       if (++networkErrors >= maxNetworkErrors) throw new Error(`Notarization network retry limit reached for ${receipt.id}`);
       console.warn(`Notarization query interrupted; retry ${networkErrors}/${maxNetworkErrors} for ${receipt.id}`);
       await sleep(30_000);
@@ -64,4 +87,4 @@ async function notarizeArchive(archive, receiptPath, {
   throw new Error(`Notarization waiting limit reached for ${receipt.id}; Apple may still be processing`);
 }
 
-module.exports = { notarizeArchive };
+module.exports = { notarizeArchive, stapleArtifact };

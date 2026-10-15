@@ -77,3 +77,67 @@ test("notarization never retries an upload with an unknown outcome", async () =>
     assert.equal(calls, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("ticket stapling retries a lost CloudKit connection against the same app or DMG", async () => {
+  const { stapleArtifact } = require("./notarization.cjs");
+  for (const artifact of ["release/wuu.app", "release/wuu.dmg"]) {
+    const calls = [];
+    let waits = 0;
+    await stapleArtifact(artifact, {
+      run: (command, args) => {
+        calls.push([command, ...args]);
+        if (calls.length === 1) throw Object.assign(new Error("Command failed"), {
+          status: 68, stdout: 'Error Domain=NSURLErrorDomain Code=-1005 "The network connection was lost."',
+        });
+        return "";
+      },
+      sleep: async () => { waits++; },
+    });
+    assert.deepEqual(calls, Array(2).fill(["xcrun", "stapler", "staple", artifact]));
+    assert.equal(waits, 1);
+  }
+});
+
+test("ticket stapling fails closed when transient errors exhaust the retry limit", async () => {
+  const { stapleArtifact } = require("./notarization.cjs");
+  const failure = Object.assign(new Error("stapler timed out"), { code: "ETIMEDOUT" });
+  let calls = 0;
+  let waits = 0;
+  await assert.rejects(stapleArtifact("release/wuu.app", {
+    run: () => { calls++; throw failure; },
+    sleep: async () => { waits++; },
+  }), (error) => error === failure);
+  assert.equal(calls, 3);
+  assert.equal(waits, 2);
+});
+
+test("ticket stapling does not retry invalid artifacts or unexplained CloudKit failures", async () => {
+  const { stapleArtifact } = require("./notarization.cjs");
+  for (const failure of [
+    Object.assign(new Error("Invalid code signature"), { status: 65 }),
+    Object.assign(new Error("CloudKit's response is inconsistent with expectations"), { status: 68 }),
+  ]) {
+    let calls = 0;
+    await assert.rejects(stapleArtifact("release/wuu.app", {
+      run: () => { calls++; throw failure; },
+      sleep: async () => { assert.fail("permanent failures must not retry"); },
+    }), (error) => error === failure);
+    assert.equal(calls, 1);
+  }
+});
+
+test("ticket stapling preserves final command diagnostics", async (t) => {
+  const { stapleArtifact } = require("./notarization.cjs");
+  const failure = Object.assign(new Error("Command failed"), {
+    status: 68, stdout: "stapler service diagnostic\n", stderr: "ticket lookup failed\n",
+  });
+  const stdout = [];
+  const stderr = [];
+  t.mock.method(process.stdout, "write", (chunk) => { stdout.push(chunk); return true; });
+  t.mock.method(process.stderr, "write", (chunk) => { stderr.push(chunk); return true; });
+  await assert.rejects(stapleArtifact("release/wuu.app", {
+    run: () => { throw failure; },
+  }), (error) => error === failure);
+  assert.equal(stdout.join(""), failure.stdout);
+  assert.equal(stderr.join(""), failure.stderr);
+});

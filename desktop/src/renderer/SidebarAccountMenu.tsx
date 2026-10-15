@@ -1,5 +1,6 @@
 import { useContext, useEffect, useId, useRef, useState } from "react";
 import { PhoneNavigationContext } from './PhoneNavigationContext';
+import { DesktopUpdateButton } from "./DesktopUpdateButton";
 import { BarChart3, ChevronsUpDown, LogOut, Settings, Smartphone, UserRound } from "./WuuIcons";
 import type { AccountView } from "./AccountPanel";
 import { hostSupports } from "./HostCapabilities";
@@ -86,6 +87,7 @@ export function SidebarAccountMenu({ disabled, localOnly = false, onOpenSettings
       }}>
       {avatar}<span className="sidebar-account-name">{account.display_name || account.username || t("account.localMode")}</span><ChevronsUpDown size={14} aria-hidden="true" />
     </button>
+    <DesktopUpdateButton />
     {open &&
       <div ref={panel} id={id} role="menu" aria-label={t("account.menu")} className="select-menu-panel sidebar-account-menu"
         onBlur={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node) && event.relatedTarget !== anchor.current) setOpen(false); }}
