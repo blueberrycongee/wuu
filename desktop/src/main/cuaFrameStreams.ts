@@ -6,7 +6,7 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 export type CUANativePiPEvent = {
-  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry" | "control" | "gone" | "expand";
+  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry" | "control" | "gone" | "expand" | "promote";
   action?: "takeover" | "release" | "stop";
   execution_id?: string;
   x?: number;

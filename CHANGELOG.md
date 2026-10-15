@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Live activity previews of concurrent tasks stack in one corner. Opening a
+  conversation or grabbing a preview behind the front one brings it forward, and
+  the previews behind follow the front one as it moves.
+
 - Guide macOS Screen Recording and Accessibility setup from onboarding and General
   settings, with a draggable app icon beside System Settings and automatic status
   refresh. Permissions remain optional during onboarding.
@@ -67,6 +71,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   is registered by default.
 
 ### Changed
+
+- Live activity previews appear once their first picture is ready, growing from
+  their corner while fading in and coming into focus, and leave the same way. A
+  completed turn's preview leaves 30 seconds after showing completion; a stopped
+  or failed turn's preview leaves at once.
 
 - Live activity previews show state through symbols and controls instead of status
   text: the placeholder icon breathes while frames load and rests when capture is

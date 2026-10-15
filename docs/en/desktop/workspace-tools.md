@@ -133,7 +133,7 @@ Use the address and port of your own proxy. This setting does not configure mode
 
 ## Live activity preview
 
-The active conversation has one watch-only floating preview for browser and supported local computer-use activity. Switching browser tabs or app windows changes the content inside that same preview. Switching conversations changes which activity you see. Moving or resizing the preview does not send clicks, scrolling, or keyboard input to the target.
+Each conversation with live browser or supported local computer-use activity has one watch-only floating preview. Switching browser tabs or app windows changes the content inside that same preview. A preview appears once its first picture is ready, growing from its corner, and leaves the same way. When several tasks run at once, their previews stack in one corner: opening a conversation brings its preview to the front, and grabbing a preview behind the front one does the same. After a successful turn the preview shows completion and leaves after 30 seconds; a stopped or failed turn removes it until the next turn. A minimized or hidden target app stays where you put it, and its preview waits until you show it again. Moving or resizing the preview does not send clicks, scrolling, or keyboard input to the target.
 
 In **Settings → General → Live activity**, **Show preview automatically** controls whether local activity opens the preview. The setting is saved across restarts. It does not enable an extension or give the Agent control. Hiding a preview leaves the task running; later activity updates do not reopen a preview you hid. There is no title-bar control for manually reopening a hidden preview.
 

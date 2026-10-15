@@ -30,8 +30,10 @@ export class NativePiPContent implements ActivityPiPContent {
 
   start(): void {
     if (this.stopped || this.view) return;
+    // A card shows only once it has pixels, so its first frames are decoded
+    // while the window is still hidden.
     const view = new WebContentsView({ webPreferences: {
-      contextIsolation: true, nodeIntegration: false, sandbox: true,
+      contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false,
       ...appShellWebPreferences(this.deps.isPackaged),
     } });
     this.view = view;
@@ -113,6 +115,13 @@ export class NativePiPContent implements ActivityPiPContent {
     this.view?.setBounds({ x: 0, y: 0, width: bounds.width, height: bounds.height });
   }
 
+  async snapshot(): Promise<string | undefined> {
+    const view = this.view;
+    if (!view || !this.presented || view.webContents.isDestroyed()) return undefined;
+    const src = await view.webContents.executeJavaScript("window.wuuNativeSnapshot()") as string;
+    return src || undefined;
+  }
+
   stop(onStopped: () => void): void {
     this.stopped = true;
     this.context.setMounted(false);
@@ -171,6 +180,7 @@ const nativePreviewHTML = `<!doctype html><html><head><meta charset="utf-8">
 const canvas=document.querySelector('canvas'),context=canvas.getContext('2d',{alpha:false});
 let sequence=0,activeEpoch=0;
 window.wuuNativeEpoch=function(epoch){activeEpoch=Math.max(activeEpoch,epoch);};
+window.wuuNativeSnapshot=function(){return sequence>0?canvas.toDataURL('image/jpeg',0.86):'';};
 window.wuuNativeFrame=async function(frame,epoch){
   if(epoch!==activeEpoch||frame.sequence<=sequence)return false;
   sequence=frame.sequence;

@@ -40,7 +40,8 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 #ph.preparing #ph-icon{animation:ph-breathe 1.6s ease-in-out infinite alternate}
 @keyframes ph-breathe{from{opacity:1}to{opacity:.35}}
 #ph.gone{opacity:0;pointer-events:none}
-#completion{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;
+#appear{position:absolute;z-index:1;pointer-events:none;display:block}
+#completion{position:absolute;inset:0;z-index:1;display:grid;place-items:center;pointer-events:none;
   background:rgba(0,0,0,.17);opacity:0;transition:opacity .35s ease}
 #completion[data-completed="true"]{opacity:1}
 #completion-mark{position:relative;width:50px;height:50px}
@@ -108,6 +109,7 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 <body>
 <div id="root" role="group">
   <div id="ph"><span id="ph-icon" aria-hidden="true">${iconSVG("Globe", 28)}</span></div>
+  <img id="appear" alt="" aria-hidden="true" draggable="false" hidden />
   <div id="completion" role="status" aria-hidden="true" data-completed="false">
     <div id="completion-mark">
       <img id="completion-icon" src="${icon}" alt="" draggable="false" />
@@ -296,6 +298,22 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     completion.setAttribute("aria-hidden",String(!done));
     if(done)cursor.hide();
     render();
+  };
+  // Appearance stand-in: a content snapshot placed over the live content while
+  // the host scales and fades the window. It carries the focus blur.
+  var appear=document.getElementById("appear");
+  window.wuuPipAppear=function(a){
+    if(!a){appear.hidden=true;appear.removeAttribute("src");appear.style.transition="none";appear.style.filter="none";return;}
+    if(a.src){
+      appear.src=a.src;
+      appear.style.left=a.rect.x*100+"%";appear.style.top=a.rect.y*100+"%";
+      appear.style.width=a.rect.width*100+"%";appear.style.height=a.rect.height*100+"%";
+      appear.style.transition="none";appear.style.filter="blur("+a.blur+"px)";appear.hidden=false;
+      return;
+    }
+    void appear.offsetWidth;
+    appear.style.transition="filter "+a.duration+"ms "+a.easing;
+    appear.style.filter="blur("+a.blur+"px)";
   };
   window.wuuPipInteract=function(it){
     if(it.kind==="clear"){cursor.hide();return;}

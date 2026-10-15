@@ -37,6 +37,18 @@ async function waitFor(label: string, predicate: () => Promise<unknown> | unknow
     await new Promise(resolve => setTimeout(resolve, 15));
   }
 }
+// Samples a card's frame until its appearance or dismissal motion has ended.
+async function settledMotion(window: BrowserWindow) {
+  const samples: { x: number; y: number; width: number; height: number; opacity: number; visible: boolean }[] = [];
+  await waitFor("card motion settled", () => {
+    samples.push({ ...window.getBounds(), opacity: window.getOpacity(), visible: window.isVisible() });
+    // Long enough to rule out a spring momentarily at its peak.
+    const last = samples.slice(-16);
+    return last.length === 16 && last.every(sample => JSON.stringify(sample) === JSON.stringify(last[0]))
+      && (!last[0].visible || last[0].opacity === 1);
+  });
+  return samples;
+}
 const sources = new Map<string, ServerResponse>();
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -143,6 +155,16 @@ app.whenReady().then(async () => {
   check("preview does not reveal a hidden main window", !main.isVisible() && !pip.isVisible());
   main.show();
   await waitFor("browser shown", () => pip.isVisible());
+  // Evidence only: the blurred stand-in over the content partway through.
+  const midway = new Promise<void>(resolve => setTimeout(() => void overlay.webContents.capturePage()
+    .then(image => writeFileSync(join(output, "appearance-midway.png"), image.toPNG())).finally(resolve), 90));
+  const appearance = await settledMotion(pip);
+  await midway;
+  const rest = appearance.at(-1)!;
+  check("a card grows from its resting corner while fading in", appearance[0].width < rest.width * 0.85 && appearance[0].opacity < 0.5
+    && appearance.every(sample => sample.x + sample.width === rest.x + rest.width && sample.y + sample.height === rest.y + rest.height),
+    { first: appearance[0], rest, frames: appearance.length });
+  writeFileSync(join(output, "appearance-frames.json"), JSON.stringify(appearance, null, 2));
   check("watch-only preview never focuses its target", !browserViews[0].webContents.isFocused());
   let browserRequest = 0;
   async function browserAction(method: string, params: Record<string, JsonValue>) {
@@ -275,11 +297,39 @@ app.whenReady().then(async () => {
   coordinator.setAutoShow(false);
   coordinator.setActiveThread("auto-off-thread");
   coordinator.update(activity("browser", "browser-b", { thread_id: "auto-off-thread" }));
-  check("automatic preview can be disabled without changing task control", !pip.isVisible() && controls.length === 0);
+  check("automatic preview can be disabled without changing task control", surfaceCount === 1 && controls.length === 0);
+  check("another conversation in view keeps a task's card up", pip.isVisible());
+  const cards = () => BrowserWindow.getAllWindows().filter(window => window.getParentWindow() === main);
   coordinator.showForThread("auto-off-thread");
-  await waitFor("manual show while auto-show is disabled", () => pip.isVisible());
-  check("explicit show works while auto-show is off", controls.length === 0 && surfaceCount === 1);
+  await waitFor("manual show while auto-show is disabled", () => surfaceCount === 2 && cards().length === 2 && cards().every(card => card.isVisible()));
+  check("explicit show works while auto-show is off", controls.length === 0 && surfaceCount === 2);
+  const second = cards().find(card => card.id !== pipID)!;
+  const secondID = second.id;
+  async function stackFrames() {
+    await Promise.all([settledMotion(second), settledMotion(pip)]);
+    return { pip: pip.getBounds(), second: second.getBounds() };
+  }
+  const trailsBehind = (lead: Electron.Rectangle, trailing: Electron.Rectangle) =>
+    trailing.x + trailing.width === lead.x + lead.width && lead.y + lead.height - (trailing.y + trailing.height) === 22;
+  const stacked = await stackFrames();
+  check("concurrent tasks share one corner, led by the conversation in view", trailsBehind(stacked.second, stacked.pip), stacked);
   coordinator.setAutoShow(true);
+  coordinator.setActiveThread(threadID);
+  const reopened = await stackFrames();
+  check("opening a conversation brings its card to the front", trailsBehind(reopened.pip, reopened.second), reopened);
+  let secondOverlay: WebContentsView | undefined;
+  for (const child of second.contentView.children) {
+    if (child instanceof WebContentsView && await child.webContents.executeJavaScript("typeof window.wuuPipState === 'function'")) secondOverlay = child;
+  }
+  assert(secondOverlay);
+  const grip = { x: reopened.second.x + 30, y: reopened.second.y + 8 };
+  await secondOverlay.webContents.executeJavaScript(`window.location.href="wuu-pip://drag?phase=start&x=${grip.x}&y=${grip.y}&vx=0&vy=0"`);
+  await secondOverlay.webContents.executeJavaScript(`window.location.href="wuu-pip://drag?phase=end&x=${grip.x}&y=${grip.y}&vx=0&vy=0"`);
+  const promoted = await stackFrames();
+  check("grabbing a trailing card brings it to the front", trailsBehind(promoted.second, promoted.pip), promoted);
+  writeFileSync(join(output, "stack-frames.json"), JSON.stringify({ stacked, reopened, promoted }, null, 2));
+  await secondOverlay.webContents.executeJavaScript("document.getElementById('close').click()");
+  await waitFor("second card dismissed", () => !second.isVisible());
   coordinator.setActiveThread(threadID);
   const otherWindow = new BrowserWindow({ width: 400, height: 300, show: false, frame: false });
   await otherWindow.loadURL("data:text/html,<body>Foreground fixture window</body>");
@@ -320,9 +370,13 @@ app.whenReady().then(async () => {
   await waitFor("registry snapshot reconciles after target disappearance", () => reconciliationCount > reconciliationBeforeGone);
   check("unchanged registry snapshot cannot resurrect a disappeared target", surfaceCount === surfacesAfterGone && !sources.has("native-b"));
   snapshotActivities = [];
+  // The disappeared target retired its card; the next target gets a new one
+  // while the old card may still be leaving.
+  const retiredCards = new Set(cards().map(card => card.id));
   current = activity("cua", "native-c"); coordinator.update(current);
   await emitNative("native-c", frame(120, 30, 170));
-  const finalPip = BrowserWindow.getAllWindows().find(window => window.getParentWindow() === main)!;
+  await waitFor("card for the next target", () => cards().some(card => !retiredCards.has(card.id)));
+  const finalPip = cards().find(card => !retiredCards.has(card.id))!;
   // Context loss may retire the old shell. Locate its chrome through the real
   // renderer hook instead of relying on child-view ordering.
   let controlOverlay: WebContentsView | undefined;
