@@ -4,6 +4,10 @@ import Foundation
 import Darwin
 
 _ = NSApplication.shared
+if CommandLine.arguments.count == 2, CommandLine.arguments[1] == "--agent-display" {
+    NSApplication.shared.setActivationPolicy(.prohibited)
+    runAgentDisplayDaemon()
+}
 if CommandLine.arguments.count >= 7, CommandLine.arguments[1] == "--native-preview" {
     let activityID = CommandLine.arguments[2]
     let target = CommandLine.arguments[3]

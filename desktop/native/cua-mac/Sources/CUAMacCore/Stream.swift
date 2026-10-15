@@ -413,24 +413,6 @@ private func windowFrameDistance(_ left: CGRect, _ right: CGRect) -> CGFloat {
     abs(left.minX - right.minX) + abs(left.minY - right.minY) + abs(left.width - right.width) + abs(left.height - right.height)
 }
 
-func captureStageOffscreenOrigin(screenFrames: [CGRect]) -> CGPoint {
-    let union = screenFrames.reduce(CGRect.zero) { $0.union($1) }
-    return CGPoint(
-        x: union.maxX + max(union.width * 3, 5800),
-        y: union.maxY + max(union.height * 3, 4000)
-    )
-}
-
-func captureStageVisibleFraction(windowFrame: CGRect, screenFrames: [CGRect]) -> CGFloat {
-    let windowArea = max(1, windowFrame.width * windowFrame.height)
-    let visibleArea = screenFrames.reduce(CGFloat.zero) { total, screen in
-        let intersection = windowFrame.intersection(screen)
-        guard !intersection.isNull, !intersection.isEmpty else { return total }
-        return total + intersection.width * intersection.height
-    }
-    return min(1, visibleArea / windowArea)
-}
-
 func captureStageTargetIndex(
     windowFrames: [CGRect],
     requestedFrame: CGRect?,
@@ -476,17 +458,6 @@ func captureStageWindowAssignments(
     }
 }
 
-private func captureDisplayFrames() -> [CGRect] {
-    var count: UInt32 = 0
-    guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
-    var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
-    let result = displays.withUnsafeMutableBufferPointer {
-        CGGetActiveDisplayList(count, $0.baseAddress, &count)
-    }
-    guard result == .success else { return [] }
-    return displays.prefix(Int(count)).map(CGDisplayBounds)
-}
-
 private func requestedWindowFrame(windowID: CGWindowID?, processID: pid_t) -> CGRect? {
     guard let windowID, windowID > 0,
           let windows = CGWindowListCopyWindowInfo(.optionIncludingWindow, windowID) as? [[String: Any]],
@@ -523,15 +494,20 @@ private func windowSnapshots(_ application: AXUIElement) -> [NativePiPWindowSnap
 @MainActor
 private final class NativePiPWindowStage {
     private let axApplication: AXUIElement
+    private let processID: pid_t
     private let originalWindows: [NativePiPWindowSnapshot]
     private let targetSnapshotIndex: Int?
     private let wasHidden: Bool
     private var stagedWindows: [NativePiPResolvedWindow] = []
     private var stagedFrames: [Int: CGRect] = [:]
     private var staged = false
+    // Kept until the preview exits so stopping and restarting capture does not
+    // add and remove a display.
+    private var agentDisplay: AgentDisplayLease?
 
     init(application: NSRunningApplication, requestedFrame: CGRect?, focusedFrame: CGRect?) {
         axApplication = AXUIElementCreateApplication(application.processIdentifier)
+        processID = application.processIdentifier
         originalWindows = windowSnapshots(axApplication)
         targetSnapshotIndex = captureStageTargetIndex(
             windowFrames: originalWindows.map(\.frame),
@@ -545,17 +521,19 @@ private final class NativePiPWindowStage {
         guard let targetSnapshotIndex,
               originalWindows.indices.contains(targetSnapshotIndex),
               wasHidden || originalWindows[targetSnapshotIndex].wasMinimized else { return }
-        let displayFrames = captureDisplayFrames()
-        guard !displayFrames.isEmpty else { return }
+        // Without the agent display a hidden or minimized window stays where the
+        // user left it; the PiP then shows no frames instead of a clamped sliver.
+        guard let display = try? await Task.detached(operation: { try AgentDisplayLease.acquire() }).value else { return }
+        agentDisplay = display
         staged = true
-        let parked = captureStageOffscreenOrigin(screenFrames: displayFrames)
+        let parked = display.parkingOrigin(index: 0)
         if wasHidden {
             _ = AXUIElementSetAttributeValue(axApplication, kAXHiddenAttribute as CFString, kCFBooleanFalse)
         }
         // Custom apps apply hidden/minimized changes asynchronously and may
-        // initially clamp a newly revealed window back onto a display. Retry the
-        // public AX writes briefly so the window settles offscreen before SCK
-        // resolves it, without ever activating the target app.
+        // initially place a newly revealed window back on a real display. Retry
+        // the public AX writes briefly so the window settles on the agent display
+        // before SCK resolves it, without ever activating the target app.
         var prepared = false
         var settledFrame: CGRect?
         for _ in 0..<20 {
@@ -584,10 +562,7 @@ private final class NativePiPWindowStage {
                 for (offset, other) in stagedWindows.enumerated() where other.snapshotIndex != targetSnapshotIndex {
                     _ = AXUIElementSetAttributeValue(other.element, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
                     if axBool(other.element, kAXMinimizedAttribute as String) != true {
-                        _ = setOrigin(other.element, CGPoint(
-                            x: parked.x + CGFloat(offset + 1) * 32,
-                            y: parked.y + CGFloat(offset + 1) * 32
-                        ))
+                        _ = setOrigin(other.element, display.parkingOrigin(index: offset + 1))
                     }
                 }
             }
@@ -605,14 +580,20 @@ private final class NativePiPWindowStage {
                 guard other.snapshotIndex != targetSnapshotIndex else { return true }
                 if axBool(other.element, kAXMinimizedAttribute as String) == true { return true }
                 guard let frame = axFrame(other.element) else { return false }
-                return captureStageVisibleFraction(windowFrame: frame, screenFrames: displayFrames) <= 0.02
+                return display.holds(frame)
             }
+            // AX reports the requested origin at once while the WindowServer
+            // animates the move; SCK must not resolve a window still in flight.
+            let serverSettled = currentFrame.map { target in
+                windowFrames(processID: processID).values.contains { $0.size == target.size && display.holds($0) }
+            } == true
             if hidden != true,
                minimized != true,
                allOriginalWindowsResolved,
                otherWindowsAreConcealed,
                let currentFrame,
-               captureStageVisibleFraction(windowFrame: currentFrame, screenFrames: displayFrames) <= 0.02 {
+               display.holds(currentFrame),
+               serverSettled {
                 prepared = true
                 settledFrame = currentFrame
                 break
@@ -711,13 +692,15 @@ private final class NativePiPWindowStage {
     }
 }
 
+// The filter reports the backing scale of the display that currently hosts the
+// window. A buffer sized from another display leaves the frame partly empty.
 @available(macOS 14.0, *)
-private func streamConfiguration(for window: SCWindow) -> SCStreamConfiguration {
+private func streamConfiguration(for filter: SCContentFilter) -> SCStreamConfiguration {
     let configuration = SCStreamConfiguration()
-    let scale = window.owningApplication == nil ? 1 : NSScreen.main?.backingScaleFactor ?? 2
-    let previewScale = min(scale, 1280 / max(1, max(window.frame.width, window.frame.height)))
-    configuration.width = max(1, Int(window.frame.width * previewScale))
-    configuration.height = max(1, Int(window.frame.height * previewScale))
+    let size = filter.contentRect.size
+    let previewScale = min(CGFloat(filter.pointPixelScale), 1280 / max(1, max(size.width, size.height)))
+    configuration.width = max(1, Int(size.width * previewScale))
+    configuration.height = max(1, Int(size.height * previewScale))
     configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
     configuration.queueDepth = 3
     configuration.showsCursor = false
@@ -772,11 +755,8 @@ private func shareableContent(timeout: TimeInterval) async -> SCShareableContent
 
 @available(macOS 14.0, *)
 private func startWindowStream(window: SCWindow, output: NativePiPStreamOutput, timeout: TimeInterval) async throws -> SCStream {
-    let stream = SCStream(
-        filter: SCContentFilter(desktopIndependentWindow: window),
-        configuration: streamConfiguration(for: window),
-        delegate: output
-    )
+    let filter = SCContentFilter(desktopIndependentWindow: window)
+    let stream = SCStream(filter: filter, configuration: streamConfiguration(for: filter), delegate: output)
     try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: DispatchQueue(label: "com.blueberrycongee.wuu.cua.native-pip"))
     // ScreenCaptureKit can report a startup failure through the delegate's
     // didStopWithError instead of resuming startCapture's completion handler,
@@ -1048,7 +1028,7 @@ public func runNativePreview(configuration: NativePreviewConfiguration) async th
         }
         guard windowFrameDistance(nextWindow.frame, trackedFrame) > 1 else { continue }
         do {
-            try await activeStream.updateConfiguration(streamConfiguration(for: nextWindow))
+            try await activeStream.updateConfiguration(streamConfiguration(for: SCContentFilter(desktopIndependentWindow: nextWindow)))
             trackedFrame = nextWindow.frame
         } catch { activeOutput.lockFailure(error) }
     }

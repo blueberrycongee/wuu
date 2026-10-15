@@ -11,7 +11,16 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "CUAVirtualDisplay",
+            path: "Sources/CUAVirtualDisplay",
+            linkerSettings: [
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("Foundation"),
+            ]
+        ),
+        .target(
             name: "CUAMacCore",
+            dependencies: ["CUAVirtualDisplay"],
             path: "Sources/CUAMacCore",
             linkerSettings: [
                 .linkedFramework("AppKit"),

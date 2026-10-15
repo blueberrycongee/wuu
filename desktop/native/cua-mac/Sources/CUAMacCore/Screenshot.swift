@@ -94,11 +94,13 @@ func captureWindowPNG(
             semaphore.signal()
             return
         }
-        let configuration = SCStreamConfiguration()
-        configuration.width = max(1, Int(window.frame.width * 2))
-        configuration.height = max(1, Int(window.frame.height * 2))
-        configuration.showsCursor = false
         let filter = SCContentFilter(desktopIndependentWindow: window)
+        // Size from the hosting display's scale; a fixed 2x leaves a 1x window
+        // in one quarter of the image.
+        let configuration = SCStreamConfiguration()
+        configuration.width = max(1, Int(filter.contentRect.width * CGFloat(filter.pointPixelScale)))
+        configuration.height = max(1, Int(filter.contentRect.height * CGFloat(filter.pointPixelScale)))
+        configuration.showsCursor = false
         let windowFrame = window.frame
         SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration) { image, captureError in
             if let captureError {
@@ -290,9 +292,10 @@ struct WindowScreenshotInfo {
 // app's windows (scope=screen); a concrete pid selects one app (scope=app).
 //
 // .optionOnScreenOnly is deliberate: its array order (front to back) is the only
-// dependable z-order signal, and it excludes off-screen (e.g. concealed) windows,
-// which therefore never appear in a composite. .excludeDesktopElements drops the
-// wallpaper/desktop backing so the union frame is not inflated to the full screen.
+// dependable z-order signal. .excludeDesktopElements drops the wallpaper/desktop
+// backing so the union frame is not inflated to the full screen. Concealed
+// windows sit on the invisible agent display: an app composite includes them,
+// while a screen composite covers only what the user's displays show.
 func appWindowInfos(processID: pid_t?) -> [AppWindowInfo] {
     guard let windowList = CGWindowListCopyWindowInfo(
         [.optionOnScreenOnly, .excludeDesktopElements],
@@ -300,6 +303,7 @@ func appWindowInfos(processID: pid_t?) -> [AppWindowInfo] {
     ) as? [[String: Any]] else {
         return []
     }
+    let agentDisplay = processID == nil ? AgentDisplay.activeDisplayID().map(CGDisplayBounds) : nil
     var infos: [AppWindowInfo] = []
     for info in windowList {
         if let processID,
@@ -310,7 +314,8 @@ func appWindowInfos(processID: pid_t?) -> [AppWindowInfo] {
               let bounds = info[kCGWindowBounds as String] as? [String: Any],
               let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
               frame.width > 1,
-              frame.height > 1 else {
+              frame.height > 1,
+              agentDisplay?.contains(CGPoint(x: frame.midX, y: frame.midY)) != true else {
             continue
         }
         let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0

@@ -2,39 +2,6 @@
 import XCTest
 
 final class StreamRecoveryTests: XCTestCase {
-    func testCaptureStageOriginFallsOutsideEveryDisplay() {
-        let displays = [
-            CGRect(x: 0, y: 0, width: 1800, height: 1169),
-            CGRect(x: 0, y: -900, width: 1440, height: 900),
-        ]
-        let origin = captureStageOffscreenOrigin(screenFrames: displays)
-        let parkedWindow = CGRect(origin: origin, size: CGSize(width: 1002, height: 670))
-        XCTAssertTrue(displays.allSatisfy { parkedWindow.intersection($0).isNull })
-    }
-
-    func testCaptureStageVisibleFractionUsesQuartzCoordinatesForAnUpperDisplay() {
-        let displays = [
-            CGRect(x: 0, y: 0, width: 1800, height: 1169),
-            CGRect(x: 0, y: -900, width: 1440, height: 900),
-        ]
-        let upperDisplayWindow = CGRect(x: 100, y: -800, width: 1000, height: 700)
-        XCTAssertEqual(
-            captureStageVisibleFraction(windowFrame: upperDisplayWindow, screenFrames: displays),
-            1,
-            accuracy: 0.0001
-        )
-    }
-
-    func testCaptureStageAcceptsSystemClampedWindowWithOnlyASliverVisible() {
-        let displays = [CGRect(x: 0, y: 0, width: 1800, height: 1169)]
-        let clamped = CGRect(x: 1760, y: 1086, width: 1002, height: 670)
-        XCTAssertLessThan(captureStageVisibleFraction(windowFrame: clamped, screenFrames: displays), 0.01)
-        XCTAssertGreaterThan(captureStageVisibleFraction(
-            windowFrame: CGRect(x: 900, y: 400, width: 1002, height: 670),
-            screenFrames: displays
-        ), 0.5)
-    }
-
     func testCaptureStageTargetPrefersRequestedThenFocusedBeforeLargestWindow() {
         let largest = CGRect(x: 20, y: 40, width: 1200, height: 800)
         let requested = CGRect(x: 500, y: 120, width: 320, height: 240)

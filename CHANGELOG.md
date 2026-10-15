@@ -142,6 +142,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Computer Use on macOS parks concealed and minimized windows on an invisible
+  agent display instead of beyond the screen edge, so no sliver stays visible and
+  live previews show the whole window at the correct scale on multi-display
+  setups with mixed pixel densities.
+
 - Preserve cancelled worker results when stopping a parent races a pending
   child-result handoff, without automatically waking the stopped parent.
 

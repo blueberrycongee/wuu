@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Opt-in macOS acceptance test using a disposable app, never a user's document."""
+import base64
 import json
 import os
 import pathlib
@@ -63,6 +64,36 @@ def frame(result):
     return tuple(int(value) for value in re.search(r"frame=\(([^)]*)\)", text(result)).group(1).split(","))
 
 
+AGENT_DISPLAY_PROBE = """
+import CoreGraphics
+var count: UInt32 = 0
+CGGetActiveDisplayList(0, nil, &count)
+var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+CGGetActiveDisplayList(count, &ids, &count)
+for id in ids where CGDisplayVendorNumber(id) == 0x7775 && CGDisplayModelNumber(id) == 0xC0A1 {
+    let b = CGDisplayBounds(id)
+    print(Int(b.minX), Int(b.minY), Int(b.width), Int(b.height))
+}
+"""
+
+
+def agent_display_bounds(temporary):
+    probe = pathlib.Path(temporary) / "agent-display.swift"
+    probe.write_text(AGENT_DISPLAY_PROBE)
+    output = subprocess.run(["swift", str(probe)], capture_output=True, text=True, timeout=60).stdout.split()
+    return tuple(int(value) for value in output[:4]) if len(output) >= 4 else None
+
+
+def save_artifact(result, name):
+    """Keeps the captured frame for review when CUA_MAC_TEST_ARTIFACTS names a directory."""
+    directory = os.environ.get("CUA_MAC_TEST_ARTIFACTS")
+    image = next((part for part in result["content"] if part["type"] == "image"), None)
+    if not directory or not image:
+        return
+    pathlib.Path(directory).mkdir(parents=True, exist_ok=True)
+    (pathlib.Path(directory) / name).write_bytes(base64.b64decode(image["data"]))
+
+
 def main():
     client = Client()
     pid = None
@@ -119,12 +150,27 @@ def main():
             original = frame(state)
             hidden = client.call(args("conceal_app"))
             assert hidden["structuredContent"].get("concealed_windows") == 1, hidden
+            # The parked window lives on the invisible HiDPI agent display and is
+            # captured whole, not as a sliver clamped onto a physical display.
+            parked = client.call(args("observe", mode="both"))
+            shot = parked["structuredContent"]["screenshot"]
+            window = shot["window_frame"]
+            assert (window["width"], window["height"]) == original[2:], (window, original)
+            agent = agent_display_bounds(temporary)
+            assert agent, "agent display is not online while a window is concealed"
+            assert (agent[0] <= window["x"] and agent[1] <= window["y"]
+                    and window["x"] + window["width"] <= agent[0] + agent[2]
+                    and window["y"] + window["height"] <= agent[1] + agent[3]), (agent, window)
+            assert shot["width"] == 2 * window["width"], shot
+            visible = shot["visible_image_frame"]
+            assert visible["width"] * visible["height"] >= 0.95 * shot["width"] * shot["height"], shot
+            save_artifact(parked, "concealed-window.png")
             client.process.kill()
             client.process.wait(timeout=5)
             client = Client()
             restored = client.call(args("observe", mode="ax"))
             assert frame(restored) == original, (original, frame(restored))
-            print("PASS: AX-only observation, verified write, stale and moved-window rejection, matched capture, partial cancellation, crash restoration")
+            print("PASS: AX-only observation, verified write, stale and moved-window rejection, matched capture, partial cancellation, agent display concealment, crash restoration")
         return 0
     finally:
         client.close()
