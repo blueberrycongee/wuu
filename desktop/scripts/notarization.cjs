@@ -17,7 +17,11 @@ async function stapleArtifact(artifact, { run = execFileSync, sleep = setTimeout
       if (output) console.log(output.trimEnd());
       return;
     } catch (error) {
-      if (!isTransientNetworkError(error) || attempt === maxAttempts) throw error;
+      if (!isTransientNetworkError(error) || attempt === maxAttempts) {
+        if (error.stdout) process.stdout.write(error.stdout);
+        if (error.stderr) process.stderr.write(error.stderr);
+        throw error;
+      }
       // Retrieve the existing accepted ticket again; never resubmit the archive.
       console.warn(`Ticket download interrupted; retry ${attempt}/${maxAttempts - 1} for ${artifact}`);
       await sleep(30_000);

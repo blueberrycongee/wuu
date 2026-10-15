@@ -125,3 +125,19 @@ test("ticket stapling does not retry invalid artifacts or unexplained CloudKit f
     assert.equal(calls, 1);
   }
 });
+
+test("ticket stapling preserves final command diagnostics", async (t) => {
+  const { stapleArtifact } = require("./notarization.cjs");
+  const failure = Object.assign(new Error("Command failed"), {
+    status: 68, stdout: "stapler service diagnostic\n", stderr: "ticket lookup failed\n",
+  });
+  const stdout = [];
+  const stderr = [];
+  t.mock.method(process.stdout, "write", (chunk) => { stdout.push(chunk); return true; });
+  t.mock.method(process.stderr, "write", (chunk) => { stderr.push(chunk); return true; });
+  await assert.rejects(stapleArtifact("release/wuu.app", {
+    run: () => { throw failure; },
+  }), (error) => error === failure);
+  assert.equal(stdout.join(""), failure.stdout);
+  assert.equal(stderr.join(""), failure.stderr);
+});
