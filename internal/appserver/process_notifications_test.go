@@ -234,10 +234,10 @@ func TestThreadHasOutstandingProcessCompletionIgnoresDetachedProcesses(t *testin
 		_, _ = manager.Stop(detached.ID)
 	})
 
-	if !threadHasOutstandingProcessCompletion(threadID, nil, manager) {
+	if !threadHasOutstandingProcessCompletion(&threadState{ID: threadID}, nil, manager) {
 		t.Fatal("resume process should keep automatic continuation outstanding")
 	}
-	if threadHasOutstandingProcessCompletion("thread-detached", nil, manager) {
+	if threadHasOutstandingProcessCompletion(&threadState{ID: "thread-detached"}, nil, manager) {
 		t.Fatal("detached process should not keep automatic continuation outstanding")
 	}
 }
@@ -393,7 +393,7 @@ func TestProcessCompletionDrainContinuesPastDeliveredResult(t *testing.T) {
 	if !found {
 		t.Fatal("pending result was stranded behind the delivered result")
 	}
-	if outstanding := threadHasOutstandingProcessCompletion(threadID, nil, manager); outstanding {
+	if outstanding := threadHasOutstandingProcessCompletion(&threadState{ID: threadID}, nil, manager); outstanding {
 		t.Fatal("completed turn left a process completion outstanding")
 	}
 }

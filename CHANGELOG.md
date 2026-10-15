@@ -161,6 +161,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Stop background process and agent-result continuations after a terminal model
+  failure or cancellation instead of reopening them with a fresh retry budget.
+  Keep the undelivered result for an explicit retry or new user request, including
+  across restarts; successful-answer acknowledgement recovery remains automatic.
+
 - Computer Use on macOS parks concealed windows on an invisible agent display
   instead of beyond the screen edge, so no sliver stays visible and live previews
   show the whole window at the correct scale on multi-display setups with mixed
