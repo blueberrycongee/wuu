@@ -1120,6 +1120,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	s.updateIdleThreadAdvancedRuntime(cfg)
 	if s.rt.Toolkit != nil {
 		s.rt.Toolkit.ConfigureSurfaceForProviderModel(ruleProviderName, apiModel, true)
+		s.rt.Toolkit.SetImageInputSupported(!roleSelections.Main.Capabilities.ImageInputKnown || roleSelections.Main.Capabilities.ImageInput)
 	}
 	return s.writeResponse(req.ID, ConfigAdvancedUpdateResult{
 		AdvancedSettings: s.currentAdvancedSettingsSummary(),
@@ -1683,6 +1684,7 @@ func (s *Server) applyModelSelectionToRuntime(
 	}
 	if explicitSelection && s.rt.Toolkit != nil {
 		s.rt.Toolkit.ConfigureSurfaceForProviderModel(ruleProviderName, apiModel, true)
+		s.rt.Toolkit.SetImageInputSupported(!roleSelections.Main.Capabilities.ImageInputKnown || roleSelections.Main.Capabilities.ImageInput)
 	}
 	if explicitSelection {
 		if err := s.rt.ReconfigureToolLoading(cfg.Agent, ruleProviderCfg, apiModel, selection.ProviderOptions); err != nil {

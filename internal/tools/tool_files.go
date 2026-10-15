@@ -33,9 +33,13 @@ func (t *ReadFileTool) IsReadOnly() bool        { return true }
 func (t *ReadFileTool) IsConcurrencySafe() bool { return true }
 
 func (t *ReadFileTool) Definition() providers.ToolDefinition {
+	mediaDescription := "Read a local text file or inspect a PNG, JPEG, static GIF, or WebP image. Images are returned as visual content, with large dimensions resized. SVG is read as text. "
+	if !t.env.supportsImageInput() {
+		mediaDescription = "Read a local text file, including SVG source. The selected model does not support image input; this tool cannot inspect images. "
+	}
 	return providers.ToolDefinition{
 		Name:        "read_file",
-		Description: "Read a local text file or inspect a PNG, JPEG, static GIF, or WebP image. Images are returned as visual content for image-capable models, with large dimensions resized. SVG is read as text. Text files return a continuous range: the first displayed line and every absolute line divisible by 10 use NUMBER|CONTENT; other lines use |CONTENT. The optional number and first | are display metadata; copy only CONTENT when editing, preserving its indentation. For Code Mode, structured_content.text contains the selected source without line markers, preserving line endings; it remains available on unchanged rereads. Use offset and limit for focused reads. If projected, pass continuation.next as the next call arguments to read the rest of the requested range. Results include displayed range, omitted ranges, and workspace_revision. Use list_files for directories.",
+		Description: mediaDescription + "Text files return a continuous range: the first displayed line and every absolute line divisible by 10 use NUMBER|CONTENT; other lines use |CONTENT. The optional number and first | are display metadata; copy only CONTENT when editing, preserving its indentation. For Code Mode, structured_content.text contains the selected source without line markers, preserving line endings; it remains available on unchanged rereads. Use offset and limit for focused reads. If projected, pass continuation.next as the next call arguments to read the rest of the requested range. Results include displayed range, omitted ranges, and workspace_revision. Use list_files for directories.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -181,6 +185,9 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	}
 	mediaType := http.DetectContentType(sample)
 	if strings.HasPrefix(mediaType, "image/") {
+		if !t.env.supportsImageInput() {
+			return toolresult.Result{}, errors.New("the selected model does not support image input; read_file can only read text files. Switch to an image-capable model to inspect this image")
+		}
 		if _, err := resolveReadTarget(ctx, t.env, t.Name(), resolved, managedArtifact); err != nil {
 			return toolresult.Result{}, err
 		}

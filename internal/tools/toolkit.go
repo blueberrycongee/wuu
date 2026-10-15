@@ -288,6 +288,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		AgentPath:                   t.env.AgentPath,
 		ToolSearchEnabled:           t.env.ToolSearchEnabled,
 		NativeDeferredToolDiscovery: t.env.NativeDeferredToolDiscovery,
+		ImageInputSupported:         t.env.ImageInputSupported,
 		GitAttributionDisabled:      t.env.GitAttributionDisabled,
 		GitWrapperExecutable:        t.env.GitWrapperExecutable,
 		ProcessMgr:                  t.env.ProcessMgr,
@@ -465,7 +466,8 @@ func (t *Toolkit) SetAgentControl(c *agentcontrol.AgentControl) {
 }
 
 // SetImageInputSupported installs the active model's resolved image-input
-// capability for rich tool-result projection.
+// capability for tool descriptions, image reads and rich tool-result projection.
+// Call only between turns; unknown model capabilities should pass true.
 func (t *Toolkit) SetImageInputSupported(supported bool) {
 	if t == nil || t.env == nil {
 		return
@@ -838,7 +840,7 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 		return t.codeModeEntryDefinitions()
 	}
 	t.refreshMCPToolSnapshot(false)
-	all := t.registry.Definitions()
+	all := t.modelToolDefinitions()
 	surface := t.activeCompiledSurface()
 	hasSurface := surface.ProfileName != ""
 	stable := make([]providers.ToolDefinition, 0, len(all))
@@ -887,6 +889,18 @@ func (t *Toolkit) Definitions() []providers.ToolDefinition {
 		}
 	}
 	return out
+}
+
+// modelToolDefinitions overlays model-dependent declarations without changing
+// the registry's cached schemas, including after a model switch.
+func (t *Toolkit) modelToolDefinitions() []providers.ToolDefinition {
+	definitions := append([]providers.ToolDefinition(nil), t.registry.Definitions()...)
+	for i := range definitions {
+		if definitions[i].Name == "read_file" {
+			definitions[i] = t.registry.Lookup("read_file").Definition()
+		}
+	}
+	return definitions
 }
 
 // SupportsTool reports whether the active model surface can use the named

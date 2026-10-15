@@ -236,6 +236,11 @@ type Env struct {
 	toolTelemetry toolTelemetry
 }
 
+// Unknown capabilities retain provider-validated image input.
+func (e *Env) supportsImageInput() bool {
+	return e == nil || e.ImageInputSupported == nil || *e.ImageInputSupported
+}
+
 // prepareSessionWorkspaceChange constructs every fallible runtime dependency
 // before persistence. Its commit function only applies prepared state and is
 // called after the app-server has durably accepted the new workspace.

@@ -516,7 +516,7 @@ func (t *Toolkit) prepareCUAArguments(tool Tool, arguments, leaseToken string) s
 	if cuaSchemaProperty(tool, "control_epoch") {
 		args["control_epoch"] = fmt.Sprintf("%x", sha256.Sum256([]byte(leaseToken)))
 	}
-	textOnly := t.env != nil && t.env.ImageInputSupported != nil && !*t.env.ImageInputSupported
+	textOnly := !t.env.supportsImageInput()
 	if cuaSchemaProperty(tool, "mode") {
 		if _, present := args["mode"]; !present || textOnly {
 			if textOnly {

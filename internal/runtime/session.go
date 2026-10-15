@@ -550,6 +550,7 @@ func NewSession(opts Options) (*Session, error) {
 		}
 		configureToolkitSecurityExtensions(kit, securityRegistry)
 		kit.ConfigureSurfaceForProviderModel(ruleProviderName, toolModeModel, true)
+		kit.SetImageInputSupported(!mainRole.Capabilities.ImageInputKnown || mainRole.Capabilities.ImageInput)
 		kit.SetBrowserEnabled(browserEnabledFromEnv())
 		kit.SetToolSearchEnabled(toolSearchEnabled)
 		kit.SetNativeDeferredToolDiscovery(nativeDeferredDiscovery)
@@ -687,6 +688,7 @@ func NewSession(opts Options) (*Session, error) {
 				runtimeSession.bindLocalSkillRefresh(wkit, workerRoot, workerGeneration)
 				wkit.SetAgentControl(agentControl)
 				wkit.ConfigureSurfaceForProviderModel(workerToolProviderName, workerToolModeModel, false)
+				wkit.SetImageInputSupported(!roleSelections.Worker.Capabilities.ImageInputKnown || roleSelections.Worker.Capabilities.ImageInput)
 				wkit.SetToolSearchEnabled(workerToolSearchEnabled)
 				wkit.SetNativeDeferredToolDiscovery(workerNativeDeferredDiscovery)
 				wkit.SetAgentIdentity(meta.ID, meta.Path)
@@ -1033,6 +1035,7 @@ func (s *Session) ReconfigureToolLoading(agentCfg config.AgentConfig, providerCf
 	s.ToolSearchEnabled = toolSearchEnabled
 	s.NativeDeferredToolDiscovery = nativeDeferredDiscovery
 	if s.Toolkit != nil {
+		s.Toolkit.SetImageInputSupported(!s.ModelRoles.Main.Capabilities.ImageInputKnown || s.ModelRoles.Main.Capabilities.ImageInput)
 		s.Toolkit.SetToolSearchEnabled(toolSearchEnabled)
 		s.Toolkit.SetNativeDeferredToolDiscovery(nativeDeferredDiscovery)
 		catalog, err := deferredToolCatalogPromptForToolkit(s.Toolkit)
@@ -1350,7 +1353,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetSessionsDir(s.SessionDir)
 		kit.SetWorkingNotesHome(wuuHome)
 		kit.SetBrowserTabs(browserTabs)
-		kit.SetImageInputSupported(s.ModelRoles.Main.Capabilities.ImageInput)
+		kit.SetImageInputSupported(!s.ModelRoles.Main.Capabilities.ImageInputKnown || s.ModelRoles.Main.Capabilities.ImageInput)
 		kit.SetAgentIdentity(id, agentthread.RootPath)
 		fileScopeExtras := []string{artifactDir}
 		// Rebase the file-scope whitelist on the thread root (the clone
@@ -1447,6 +1450,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					// the standard workspace boundary roots.
 					workerKit.SetFileScopeRoots(workspaces.BoundaryRoots(workerRoot, wuuHome))
 					workerKit.ConfigureSurfaceForProviderModel(workerToolProviderName, workerToolModeModel, false)
+					workerKit.SetImageInputSupported(!s.ModelRoles.Worker.Capabilities.ImageInputKnown || s.ModelRoles.Worker.Capabilities.ImageInput)
 					workerStateDir := stateDir
 					if !sameRuntimeRoot(workerRoot, threadRoot) {
 						if home, err := statepath.Home(""); err == nil {

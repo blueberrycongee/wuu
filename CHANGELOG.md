@@ -155,6 +155,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep `read_file` descriptions and image reads aligned with the selected model's
+  image-input capability, including Code Mode, session clones, and model switches.
+  Text-only models retain text reads and receive a recoverable tool error when
+  attempting to inspect an image.
+
 - Computer Use on macOS parks concealed windows on an invisible agent display
   instead of beyond the screen edge, so no sliver stays visible and live previews
   show the whole window at the correct scale on multi-display setups with mixed

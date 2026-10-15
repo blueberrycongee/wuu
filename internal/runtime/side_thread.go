@@ -64,6 +64,7 @@ func (s *Session) newSideThreadRunner(sideThreadID, rootDir string, selected Thr
 			model = strings.TrimSpace(runner.Model)
 		}
 		kit.ConfigureSurfaceForProviderModel(runner.ProviderName, model, true)
+		kit.SetImageInputSupported(!runner.MediaInput.ImageKnown || runner.MediaInput.Image)
 		ConfigureToolkitPermissions(kit, config.ResolvedPermissions{Mode: config.PermissionModeReadOnly})
 		kit.SetSessionID(id)
 		if len(parentSession) > 0 {

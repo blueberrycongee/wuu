@@ -146,7 +146,7 @@ func (t *Toolkit) withCodeModeSurface(surface capability.Surface) capability.Sur
 }
 func (t *Toolkit) codeModeEntryDefinitions() []providers.ToolDefinition {
 	var out []providers.ToolDefinition
-	for _, d := range t.registry.Definitions() {
+	for _, d := range t.modelToolDefinitions() {
 		if t.CodeModeDirectCallAllowed(d.Name) && t.SupportsTool(d.Name) {
 			if d.Name == codeModeExecToolName {
 				d.Description += t.codeModeToolCatalog()
@@ -234,7 +234,7 @@ func (t *Toolkit) CodeModeNestedSurface() ([]codemode.ToolDefinition, error) {
 
 func (t *Toolkit) codeModeNestedDefinitions() []providers.ToolDefinition {
 	t.refreshMCPToolSnapshot(false)
-	all := t.registry.Definitions()
+	all := t.modelToolDefinitions()
 	for _, tool := range t.mcpToolsSnapshot() {
 		all = append(all, tool.Definition())
 	}
