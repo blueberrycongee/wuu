@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Signed macOS builds check GitHub stable releases for updates, with separate
+  confirmation before downloading and restarting to install.
+
 - Computer Use-enabled macOS builds support background focus and menu tracking,
   formatted paste with clipboard restoration, modifier clicks, cancellable holds,
   text insertion-point selection, and AX/visual settling before follow-up actions.

@@ -5,6 +5,21 @@ import {
 } from "../shared/protocol";
 
 const zhCN = {
+  updateCheck: "检查更新…",
+  updateChecking: "正在检查更新…",
+  updateProgress: "正在下载更新… {percent}%",
+  updateAvailable: "Wuu {version} 已可用",
+  updateDownloadDetail: "下载完成后，你可以选择何时重启安装。",
+  updateDownload: "下载更新",
+  updateLater: "稍后",
+  updateReady: "Wuu {version} 已下载",
+  updateRestart: "重启并安装更新…",
+  updateRestartDetail: "重启将停止当前任务和终端。请先保存工作，等待重要任务完成。",
+  updateCurrent: "当前已是最新稳定版本。",
+  updateFailed: "更新未完成",
+  updateRetryDetail: "请检查网络连接，稍后从 Wuu 菜单重新检查更新。",
+  updateInstallRecovery: "安装未完成。请重新打开 Wuu 恢复会话服务，再检查更新。",
+  updateReopen: "重新打开 Wuu",
   activityHide: "隐藏预览，任务继续运行",
   activityExpand: "在侧边栏中打开",
   activityCompleted: "任务已完成",
@@ -59,6 +74,21 @@ const zhCN = {
 export type MainTranslationKey = keyof typeof zhCN;
 
 const enUS = {
+  updateCheck: "Check for Updates…",
+  updateChecking: "Checking for Updates…",
+  updateProgress: "Downloading Update… {percent}%",
+  updateAvailable: "Wuu {version} is available",
+  updateDownloadDetail: "After downloading, you can choose when to restart and install.",
+  updateDownload: "Download Update",
+  updateLater: "Later",
+  updateReady: "Wuu {version} is downloaded",
+  updateRestart: "Restart and Install Update…",
+  updateRestartDetail: "Restarting stops running tasks and terminals. Save your work and let important tasks finish first.",
+  updateCurrent: "You are running the latest stable version.",
+  updateFailed: "Update could not be completed",
+  updateRetryDetail: "Check your network connection, then check for updates again from the Wuu menu.",
+  updateInstallRecovery: "Installation did not complete. Reopen Wuu to restore session services, then check for updates again.",
+  updateReopen: "Reopen Wuu",
   activityHide: "Hide preview; keep task running",
   activityExpand: "Open in the side panel",
   activityCompleted: "Task completed",

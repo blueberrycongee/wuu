@@ -196,6 +196,7 @@ import { openExternalURL, wireExternalNavigationGuards } from "./externalNavigat
 import { ProjectManager, wuuHomePath } from "./projects";
 import { discoverRecentWorkspaces } from "./recentWorkspaces";
 import { mainTranslate, resolveMainLocale, setMainLocale } from "./i18n";
+import { installDesktopUpdates } from "./desktopUpdateMenu";
 import { sideThreadEventFromServerEvent } from "./sideThreadEvents";
 import {
   registerRenderableFileProtocol,
@@ -1377,6 +1378,7 @@ async function directorySize(path: string): Promise<number> {
   return total;
 }
 
+let desktopUpdates: ReturnType<typeof installDesktopUpdates>;
 app.whenReady().then(async () => {
   await inheritSystemProxy();
   if (app.isPackaged) configurePackagedCUA(process.env, process.resourcesPath, process.platform);
@@ -2391,6 +2393,7 @@ app.whenReady().then(async () => {
     setLanguagePreference(next);
     setMainLocale(resolveMainLocale(next, app.getLocale()));
     codexPetWindowManager.refreshLocale();
+    desktopUpdates?.refresh();
     broadcastLanguagePreference();
     return { ok: true, language: next };
   });
@@ -2844,6 +2847,7 @@ app.whenReady().then(async () => {
   appContextCapture.start();
   syncNativeThemeSource();
   createWindow();
+  desktopUpdates = installDesktopUpdates(prepareToQuit);
   void phoneAccess.run(() => phoneAccess.restore(projectManager.ensureRuntimeContext().cwd));
 
   app.on("activate", () => {
@@ -2861,6 +2865,12 @@ app.on("before-quit", (event) => {
   if (quitCleanupFinished) return;
   event.preventDefault();
   if (quitCleanup) return;
+  void prepareToQuit().finally(() => app.quit());
+});
+
+function prepareToQuit(): Promise<void> {
+  if (quitCleanup) return quitCleanup;
+  desktopUpdates?.stop();
   systemPermissions.close();
   appContextCapture.dispose();
   terminalSessionManager.cleanup();
@@ -2875,9 +2885,9 @@ app.on("before-quit", (event) => {
     })
     .finally(() => {
       quitCleanupFinished = true;
-      app.quit();
     });
-});
+  return quitCleanup;
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
