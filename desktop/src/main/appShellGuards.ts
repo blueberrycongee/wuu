@@ -32,9 +32,17 @@ export function appShellWebPreferences(isPackaged: boolean): { devTools?: false 
 
 export function productionApplicationMenuTemplate(
   platform: string,
+  updateItem?: MenuItemConstructorOptions,
 ): MenuItemConstructorOptions[] {
   return [
-    { role: platform === "darwin" ? "appMenu" : "fileMenu" },
+    platform === "darwin" && updateItem ? {
+      role: "appMenu", submenu: [
+        { role: "about" }, { type: "separator" }, updateItem,
+        { type: "separator" }, { role: "services" }, { type: "separator" },
+        { role: "hide" }, { role: "hideOthers" }, { role: "unhide" },
+        { type: "separator" }, { role: "quit" },
+      ],
+    } : { role: platform === "darwin" ? "appMenu" : "fileMenu" },
     { role: "editMenu" },
     { role: "windowMenu" },
   ];

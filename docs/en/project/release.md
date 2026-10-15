@@ -122,6 +122,26 @@ workflow can be validated before landing on main. Only a `v*` tag push can enter
 the publication job. No draft or public Release is created by validation runs.
 See the [signing reference](../../../desktop/scripts/RELEASE-SIGNING.md).
 
+## Automatic updates
+
+Release builds embed an `app-update.yml` GitHub provider for `blueberrycongee/wuu`.
+The desktop uses electron-updater 6 with stable releases only, no downgrades,
+explicit download consent, and explicit restart consent. Development and ad-hoc
+builds do not carry this configuration and never check for updates. The native
+Wuu menu displays download progress and offers manual checks or restart. Restart
+first drains the same child-process cleanup used by ordinary application quit.
+
+The release verifier checks the embedded provider in both archives, and refreshes
+the generated `*-mac.yml` file sizes and SHA-512 hashes after final signing and
+stapling. The workflow uploads that metadata with the ZIP and DMG. A tagged run
+creates a draft Release, uploads all assets, and only then publishes the Release
+so clients cannot discover an incomplete update. Non-tag verification runs still
+create no Release. Keep the bundle identity and Developer ID team consistent.
+
+An older build without the updater requires one manual installation. A complete
+installation acceptance test needs two signed versions and an update feed;
+controller tests or a successful package build do not prove an installed upgrade.
+
 ## Published artifacts
 
 The release contains `wuu-<version>-mac-arm64.dmg`, `wuu-<version>-mac-arm64.zip`, and matching ZIP `.blockmap` files produced by electron-builder. DMG blockmaps are excluded because signing and stapling modify the disk image after electron-builder creates its blockmap. The app includes its own private `wuu-core` subprocess. The workflow does not publish standalone CLI archives, Windows installers, native phone apps, or CUA helpers.

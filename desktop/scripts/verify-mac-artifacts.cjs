@@ -5,6 +5,7 @@ const { join, resolve } = require("node:path");
 const { createHash } = require("node:crypto");
 const { releaseCredentials, releaseSigningIdentity } = require("./check-release-signing.cjs");
 const { notarizeArchive } = require("./notarization.cjs");
+const { finalizeUpdateMetadata } = require("./update-metadata.cjs");
 
 async function main() {
   releaseCredentials();
@@ -42,7 +43,9 @@ async function main() {
       const actual = execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", join(app, "Contents/Info.plist")], { encoding: "utf8" }).trim();
       if (actual !== version) throw new Error(`Unexpected ${format} app version`);
     }
+    const updateManifests = finalizeUpdateMetadata(root, version);
     const evidence = {
+      updateManifests,
       version, commit: process.env.GITHUB_SHA || null, notarization: submission.id,
       checks: ["Developer ID", "hardened runtime", "secure timestamp", "DMG ticket", "DMG Gatekeeper", "DMG app ticket and Gatekeeper", "ZIP app ticket and Gatekeeper"],
       sha256: Object.fromEntries([dmg, zip].map((path) => [path.split("/").pop(), createHash("sha256").update(readFileSync(path)).digest("hex")])),
