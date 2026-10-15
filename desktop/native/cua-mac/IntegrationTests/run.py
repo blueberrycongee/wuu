@@ -94,6 +94,55 @@ def save_artifact(result, name):
     (pathlib.Path(directory) / name).write_bytes(base64.b64decode(image["data"]))
 
 
+def set_app_visible(pid, visible):
+    script = f'tell application "System Events" to set visible of (first process whose unix id is {pid}) to {str(visible).lower()}'
+    subprocess.run(["osascript", "-e", script], check=True, capture_output=True, timeout=20)
+
+
+def app_visible(pid):
+    script = f'tell application "System Events" to get visible of (first process whose unix id is {pid})'
+    return subprocess.run(["osascript", "-e", script], check=True, capture_output=True, text=True, timeout=20).stdout.strip() == "true"
+
+
+def preview_events(preview, seconds):
+    events = []
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        if not select.select([preview.stdout], [], [], 0.2)[0]:
+            continue
+        line = preview.stdout.readline()
+        if not line:
+            break
+        event = json.loads(line)
+        events.append(event)
+        if event["event"] == "frame":
+            preview.stdin.write(json.dumps({"type": "ack", "sequence": event["sequence"]}) + "\n")
+            preview.stdin.flush()
+    return events
+
+
+def check_preview_leaves_hidden_app_alone(pid, target, original, current_frame):
+    """A hidden app stays hidden and in place while previewed; frames resume when the user shows it."""
+    set_app_visible(pid, False)
+    time.sleep(0.5)
+    preview = subprocess.Popen([str(HELPER), "--native-preview", "fixture", target, str(pid), "0", str(os.getpid())],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        events = preview_events(preview, 3)
+        assert not any(event["event"] == "frame" for event in events), events
+        assert any(event.get("status") == "suspended" for event in events), events
+        assert not app_visible(pid), "the preview revealed a hidden app"
+        set_app_visible(pid, True)
+        events = preview_events(preview, 8)
+        assert any(event["event"] == "frame" for event in events), "no frames after the user showed the app"
+        assert current_frame() == original, (original, current_frame())
+    finally:
+        if preview.poll() is None:
+            preview.stdin.write(json.dumps({"type": "close"}) + "\n")
+            preview.stdin.flush()
+            preview.wait(timeout=10)
+
+
 def main():
     client = Client()
     pid = None
@@ -170,7 +219,8 @@ def main():
             client = Client()
             restored = client.call(args("observe", mode="ax"))
             assert frame(restored) == original, (original, frame(restored))
-            print("PASS: AX-only observation, verified write, stale and moved-window rejection, matched capture, partial cancellation, agent display concealment, crash restoration")
+            check_preview_leaves_hidden_app_alone(pid, "dev.wuu.cua.integration", original, lambda: frame(client.call(args("observe", mode="ax"))))
+            print("PASS: AX-only observation, verified write, stale and moved-window rejection, matched capture, partial cancellation, agent display concealment, crash restoration, preview of a hidden app")
         return 0
     finally:
         client.close()
