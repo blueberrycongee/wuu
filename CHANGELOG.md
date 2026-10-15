@@ -68,6 +68,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Live activity previews show state through symbols and controls instead of status
+  text: the placeholder icon breathes while frames load and rests when capture is
+  blocked; the conversation explains details.
+
 - Soften desktop composer corners and lighten the surrounding shadow while
   retaining the fine border and custom theme overrides.
 

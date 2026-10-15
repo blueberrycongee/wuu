@@ -34,16 +34,11 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 #root{position:relative;width:100%;height:100%;cursor:grab;touch-action:none;
   background:rgba(0,0,0,0.004)}
 #root.dragging{cursor:grabbing}
-#ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:safe center;
-  gap:8px;padding:40px 16px 16px;text-align:center;overflow:auto;
+#ph{position:absolute;inset:0;display:grid;place-items:center;
   background:var(--surface);color:var(--muted);transition:opacity .2s ease}
-#ph-icon{display:flex;flex:none}
-#ph-title{color:var(--text);font-size:1em;line-height:1.35}
-#ph-detail{font-size:.87em;line-height:1.4;overflow-wrap:anywhere;min-height:0;overflow:auto}
-@media(max-height:180px){#ph-icon{display:none}#ph{padding:40px 12px 12px}}
-#status{position:absolute;bottom:8px;left:8px;right:8px;z-index:3;pointer-events:none;
-  width:fit-content;max-width:calc(100% - 16px);margin-inline:auto;padding:5px 9px;border-radius:8px;
-  background:rgba(0,0,0,.72);color:white;font-size:.87em;line-height:1.35;text-align:center;overflow-wrap:anywhere}
+#ph-icon{display:flex}
+#ph.preparing #ph-icon{animation:ph-breathe 1.6s ease-in-out infinite alternate}
+@keyframes ph-breathe{from{opacity:1}to{opacity:.35}}
 #ph.gone{opacity:0;pointer-events:none}
 #completion{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;
   background:rgba(0,0,0,.17);opacity:0;transition:opacity .35s ease}
@@ -112,9 +107,7 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 </style></head>
 <body>
 <div id="root" role="group">
-  <div id="ph" role="status"><span id="ph-icon" aria-hidden="true">${iconSVG("Globe", 28)}</span>
-    <span id="ph-title"></span><span id="ph-detail" hidden></span></div>
-  <div id="status" role="status" hidden></div>
+  <div id="ph"><span id="ph-icon" aria-hidden="true">${iconSVG("Globe", 28)}</span></div>
   <div id="completion" role="status" aria-hidden="true" data-completed="false">
     <div id="completion-mark">
       <img id="completion-icon" src="${icon}" alt="" draggable="false" />
@@ -146,8 +139,6 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   var label=${label},locale=${language},translations=${strings};
   var activity={kind:"browser",state:"starting",controller:"none",controlPending:false};
   var mounted=false,capture={status:"idle",message:""};
-  var phTitle=document.getElementById("ph-title"),phDetail=document.getElementById("ph-detail");
-  var status=document.getElementById("status");
   function text(key){return translations[locale][key];}
   function buttonLabel(id,key){var button=document.getElementById(id);button.title=text(key);button.setAttribute("aria-label",text(key));}
   function render(){
@@ -155,22 +146,16 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     // Stopping capture leaves the last mounted frame valid, but no longer live.
     var capturePaused=capture.status==="stopped";
     var captureBlocked=["blank","suspended","error"].includes(capture.status);
-    var unavailable=capture.status==="error";
     var pending=activity.controlPending;
     var placeholder=!mounted||captureBlocked;
+    // The preview speaks through symbols: the icon breathes while frames are on
+    // their way and rests when capture is blocked; the conversation explains.
     ph.classList.toggle("gone",!placeholder);
-    ph.setAttribute("aria-hidden",String(!placeholder));
-    phTitle.textContent=text(terminal?"activityStopped":activity.state==="waiting_confirmation"?"activityWaiting":unavailable?"activityUnavailable":captureBlocked||capturePaused?"activityPaused":"activityPreparing");
-    var detail=unavailable?text(activity.kind==="cua"?"activityCaptureRecovery":"activityPreviewRecovery"):
-      (capture.status==="blank"?text("activityBlank"):capture.status==="suspended"?text("activitySuspended"):"");
-    if(activity.state==="waiting_confirmation"&&!detail)detail=text("activityConfirmationHint");
-    phDetail.textContent=detail;phDetail.hidden=!detail;
-    var statusText=pending?text("activityChangingControl"):activity.controlFailed?text("activityControlFailed"):
-      (terminal?text("activityStopped"):activity.state==="waiting_confirmation"?text("activityWaiting"):
-      capturePaused?text("activityPaused"):manual?text("activityControlled"):
-      activity.controller==="none"&&activity.state!=="starting"?text("activityIdle"):"");
-    status.textContent=statusText;status.hidden=placeholder||!statusText||completion.dataset.completed==="true";
-    root.classList.toggle("attention",Boolean(placeholder||statusText));
+    ph.classList.toggle("preparing",placeholder&&!captureBlocked&&!capturePaused&&!terminal);
+    // States that ask for a decision keep the controls visible.
+    var notable=pending||activity.controlFailed||terminal||activity.state==="waiting_confirmation"||
+      capturePaused||manual||(activity.controller==="none"&&activity.state!=="starting");
+    root.classList.toggle("attention",Boolean(placeholder||notable));
     root.setAttribute("aria-label",text(activity.kind==="cua"?"activityComputer":"activityBrowser")+(label?": "+label:""));
     document.getElementById("expand").hidden=activity.kind!=="browser";
     document.getElementById("takeover").hidden=manual||terminal||activity.controller!=="agent";
