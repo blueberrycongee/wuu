@@ -538,6 +538,66 @@ describe("browser observation surface", () => {
 });
 
 
+describe("observation card stack", () => {
+  function makeStack() {
+    const cards: Array<{
+      thread: string;
+      sink: ObservationPiPEventSink;
+      position: ReturnType<typeof vi.fn>;
+      raise: ReturnType<typeof vi.fn>;
+    }> = [];
+    const raised: string[] = [];
+    const coordinator = new ObservationCoordinator(
+      { mainWindow: () => undefined } as unknown as WindowRegistry,
+      undefined,
+      (next, _key, sink) => {
+        const card = { thread: next.thread_id, sink, position: vi.fn(), raise: vi.fn(() => raised.push(next.thread_id)) };
+        cards.push(card);
+        return {
+          start: vi.fn(), setVisible: vi.fn(), setLive: vi.fn(), updateActivity: vi.fn(), setTurnCompleted: vi.fn(),
+          animateInteraction: vi.fn(), stop: (onStopped?: () => void) => onStopped?.(),
+          setStackPosition: card.position, raise: card.raise,
+          stackLead: () => ({ frame: { x: 24, y: 24, width: 320, height: 240 }, alignment: "top-left" as const, dragging: false }),
+        };
+      },
+    );
+    return { coordinator, cards, raised };
+  }
+
+  it("closes the gap when a completed card leaves", () => {
+    const { coordinator, cards } = makeStack();
+    coordinator.update(activity({ thread_id: "thread-a" }));
+    coordinator.update(activity({ thread_id: "thread-b", target: "com.apple.Notes" }));
+    const [a, b] = cards;
+    expect(a.position).toHaveBeenLastCalledWith(1, expect.anything());
+    b.sink.onEvent({ event: "completion_expired" });
+    expect(a.position).toHaveBeenLastCalledWith(0, expect.anything());
+    void coordinator.shutdown();
+  });
+
+  it("restores the stack order when cards show again", () => {
+    const { coordinator, cards, raised } = makeStack();
+    coordinator.update(activity({ thread_id: "thread-a" }));
+    coordinator.update(activity({ thread_id: "thread-b", target: "com.apple.Notes" }));
+    coordinator.setActiveThread("thread-a");
+    raised.length = 0;
+    // A hidden host shows its cards again one by one; the last shown lands on top.
+    cards[0].sink.onEvent({ event: "shown" });
+    cards[1].sink.onEvent({ event: "shown" });
+    expect(raised.at(-1)).toBe("thread-a");
+    void coordinator.shutdown();
+  });
+
+  it("keeps the chosen corner for a card that starts after the stack emptied", () => {
+    const { coordinator, cards } = makeStack();
+    coordinator.update(activity({ thread_id: "thread-a" }));
+    cards[0].sink.onGone();
+    coordinator.update(activity({ thread_id: "thread-b", target: "com.apple.Notes" }));
+    expect(cards[1].position).toHaveBeenLastCalledWith(0, expect.objectContaining({ alignment: "top-left" }));
+    void coordinator.shutdown();
+  });
+});
+
 it("shutdown waits for every card to exit and starts nothing afterwards", async () => {
   const stops: Array<() => void> = [];
   const starts = vi.fn();

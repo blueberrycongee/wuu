@@ -717,6 +717,30 @@ describe("BrowserPiPSurface", () => {
     surface.stop();
   });
 
+  it("starts a new front card at the corner the stack already rests in", () => {
+    const layout = {
+      host: { x: 0, y: 0, width: 800, height: 600 },
+      obstacles: [],
+      visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
+    };
+    const first = makeSurface();
+    first.surface.start();
+    first.surface.setHostLayout(layout);
+    first.overlay.navigate("wuu-pip://drag?phase=start&x=476&y=356&vx=0&vy=0");
+    first.overlay.navigate("wuu-pip://drag?phase=end&x=140&y=120&vx=0&vy=0");
+    finishMotion();
+    expect(first.win.bounds).toMatchObject({ x: 24, y: 24 });
+
+    const second = makeSurface();
+    second.surface.start();
+    second.surface.setHostLayout(layout);
+    second.surface.setStackPosition(0, first.surface.stackLead());
+    finishMotion();
+    expect(second.win.bounds).toMatchObject({ x: 24, y: 24 });
+    first.surface.stop();
+    second.surface.stop();
+  });
+
   it("snaps a drag to the nearest corner of the conversation column", () => {
     vi.useFakeTimers();
     try {

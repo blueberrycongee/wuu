@@ -160,6 +160,8 @@ export class ObservationCoordinator {
   private stackOrder: string[] = [];
   private stackSignature = "";
   private stackLeadEntry: PiPEntry | undefined;
+  // Where the stack last rested, kept after its cards leave.
+  private lastStackLead: PiPStackLead | undefined;
   private readonly pendingStops = new Set<Promise<void>>();
   private closed = false;
   private userBounds: Rectangle | undefined;
@@ -449,18 +451,25 @@ export class ObservationCoordinator {
     const signature = visible.map((entry) => entry.key).join("\n");
     if (signature === this.stackSignature) return;
     this.stackSignature = signature;
+    this.raiseStack(visible);
+  }
+
+  private raiseStack(visible = this.visibleStack()): void {
     for (const entry of [...visible].reverse()) entry.pip.raise?.();
   }
 
   private layoutStack(visible = this.visibleStack()): void {
     const lead = visible[0];
     if (!lead) return;
-    // A new lead takes over the resting place of the card it replaces.
-    const previous = this.stackLeadEntry !== lead && this.stackLeadEntry && this.entries.get(this.stackLeadEntry.threadID) === this.stackLeadEntry
-      ? this.stackLeadEntry.pip.stackLead?.() : undefined;
+    // A new lead takes over the resting place of the card it replaces, or of
+    // the last stack when none remains.
+    const replaced = this.stackLeadEntry;
+    const previous = replaced === lead ? undefined
+      : replaced && this.entries.get(replaced.threadID) === replaced ? replaced.pip.stackLead?.() : this.lastStackLead;
     this.stackLeadEntry = lead;
     lead.pip.setStackPosition?.(0, previous);
     const frame = lead.pip.stackLead?.();
+    this.lastStackLead = frame;
     visible.slice(1).forEach((entry, index) => entry.pip.setStackPosition?.(index + 1, frame));
   }
 
@@ -496,6 +505,15 @@ export class ObservationCoordinator {
       case "promote":
         this.promote(entry.threadID);
         this.restack();
+        return;
+      case "shown":
+        this.raiseStack();
+        return;
+      case "completion_expired":
+        // A completed card that has left returns with the next turn, like an
+        // ended one, so it no longer holds a place in the stack.
+        this.endedThreads.add(entry.threadID);
+        this.syncThread(entry.threadID);
         return;
       case "expand":
         if (entry.activity.kind === "browser") this.onBrowserExpand?.(entry.activity);

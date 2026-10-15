@@ -290,6 +290,10 @@ app.whenReady().then(async () => {
   check("a later action cannot undo explicit hide", !pip.isVisible());
   coordinator.setActiveThread("different-thread"); coordinator.setActiveThread(threadID);
   check("conversation switching preserves explicit hide", !pip.isVisible());
+  // A hidden card returns only while its window has focus; another app may
+  // hold focus on a machine in use.
+  app.focus({ steal: true }); main.focus();
+  await waitFor("main window focused for reopen", () => main!.isFocused());
   coordinator.showForThread(threadID);
   await waitFor("explicit reopen", () => pip.isVisible());
   check("show preview never changes control authority", controls.length === 0);

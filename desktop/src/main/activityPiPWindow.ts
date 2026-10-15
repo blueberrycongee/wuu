@@ -158,8 +158,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     speed: PipPoint;
     previous: number;
   } | undefined;
-  // 0 leads the stack.
-  private stackIndex = 0;
+  // 0 leads the stack; -1 until the coordinator first places the card.
+  private stackIndex = -1;
   // Shown transparent and click-through while content renders its first
   // pixels; Chromium decodes nothing for a window that was never shown.
   private preparing = false;
@@ -371,6 +371,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         // activity refreshes cannot reopen a completed preview.
         this.completionDismissed = true;
         this.applyVisibility();
+        this.deps.sink.onEvent({ event: "completion_expired" });
       }, COMPLETION_DISMISS_DELAY_MS);
       this.completionTimer.unref?.();
     } else if (wasDismissed && !this.awaitingVisibility) {
@@ -739,6 +740,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     win.setOpacity?.(0);
     win.setIgnoreMouseEvents?.(true);
     win.showInactive();
+    // Showing orders the window in front; the stack restores its own order.
+    this.deps.sink.onEvent({ event: "shown" });
   }
 
   private endPreparing(): void {
@@ -763,7 +766,10 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       scales: !reduced && Boolean(leaving?.scales),
     });
     this.applyTransitionFrame(transition);
-    if (!win.isVisible()) win.showInactive();
+    if (!win.isVisible()) {
+      win.showInactive();
+      this.deps.sink.onEvent({ event: "shown" });
+    }
     if (leaving || reduced) this.runTransition(transition);
     else this.withSnapshot(transition, () => this.runTransition(transition));
   }
@@ -992,25 +998,26 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   // committed corner and the others rest behind it, each offset toward the
   // column so its edge stays visible.
   // -------------------------------------------------------------------------
-  // A new lead takes the committed corner, or without a measured column the
-  // resting frame of the card it replaces.
+  // A new lead takes over the corner of the card it replaces: the committed
+  // corner of the column, or without a measured column that card's frame.
   setStackPosition(index: number, lead?: PiPStackLead): void {
     const wasLead = this.stackIndex === 0;
     this.stackIndex = index;
     const win = this.win;
     if (index === 0) {
       if (wasLead || !win || win.isDestroyed()) return;
+      if (lead) this.alignment = lead.alignment;
       if (this.screenLayout || !lead) {
         this.placeCommitted();
         return;
       }
-      this.alignment = lead.alignment;
       const card = this.restingFrame();
       const origin = {
         x: lead.alignment.endsWith("right") ? lead.frame.x + lead.frame.width - card.width : lead.frame.x,
         y: lead.alignment.startsWith("bottom") ? lead.frame.y + lead.frame.height - card.height : lead.frame.y,
       };
-      this.animateTo(origin, { width: card.width, height: card.height }, { x: 0, y: 0 }, LEAD_SPRING);
+      if (!win.isVisible() || this.transition) this.applyBounds({ ...origin, width: card.width, height: card.height });
+      else this.animateTo(origin, { width: card.width, height: card.height }, { x: 0, y: 0 }, LEAD_SPRING);
       return;
     }
     if (!lead || !win || win.isDestroyed()) return;
