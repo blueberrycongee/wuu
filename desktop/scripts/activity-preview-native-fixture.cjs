@@ -1,34 +1,59 @@
 #!/usr/bin/env node
 // Synthetic frame producer for the live-preview E2E. It exercises the real
 // subprocess/JSONL/renderer path, not ScreenCaptureKit or macOS permissions.
+// Like the native helper, one host process serves every preview session.
 const http = require('node:http');
 const fs = require('node:fs');
 const readline = require('node:readline');
-const target = process.argv[4];
 const endpoint = process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_URL;
-if (!endpoint || process.argv[2] !== '--native-preview') process.exit(2);
-let visible = false, live = true, pending, inFlight, sequence = 0;
-const record = (entry) => fs.appendFileSync(process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_LOG, JSON.stringify({ target, ...entry }) + '\n');
-const send = (event) => { record({ direction: 'out', event }); process.stdout.write(JSON.stringify(event) + '\n'); };
-function flush() {
-  if (!visible || !live || inFlight || !pending) return;
-  const frame = pending; pending = undefined; inFlight = ++sequence;
-  send({ ...frame, event: 'frame', sequence });
+if (!endpoint || process.argv[2] !== '--native-preview-host') process.exit(2);
+const sessions = new Map();
+const record = (session, entry) => fs.appendFileSync(process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_LOG,
+  JSON.stringify({ target: session.target, session: session.id, ...entry }) + '\n');
+const send = (session, event) => {
+  record(session, { direction: 'out', event });
+  process.stdout.write(JSON.stringify({ ...event, session: session.id }) + '\n');
+};
+function flush(session) {
+  if (!session.visible || !session.live || session.inFlight || !session.pending) return;
+  const frame = session.pending; session.pending = undefined; session.inFlight = ++session.sequence;
+  send(session, { ...frame, event: 'frame', sequence: session.sequence });
 }
-const request = http.get(`${endpoint}/source?target=${encodeURIComponent(target)}`, response => {
-  readline.createInterface({ input: response }).on('line', line => {
-    const event = JSON.parse(line);
-    if (event.event === 'frame') { pending = event; flush(); }
-    else send(event);
+function close(session) {
+  if (!sessions.has(session.id)) return;
+  sessions.delete(session.id);
+  session.request.destroy();
+  send(session, { event: 'closed' });
+}
+function open(id, target) {
+  const session = { id, target, visible: false, live: true, pending: undefined, inFlight: undefined, sequence: 0 };
+  sessions.set(id, session);
+  session.request = http.get(`${endpoint}/source?target=${encodeURIComponent(target)}`, response => {
+    readline.createInterface({ input: response }).on('line', line => {
+      const event = JSON.parse(line);
+      if (event.event === 'frame') { session.pending = event; flush(session); }
+      else if (event.event === 'gone') { send(session, event); close(session); }
+      else send(session, event);
+    });
   });
-});
-request.on('error', error => { process.stderr.write(error.message); process.exit(1); });
+  session.request.on('error', error => {
+    if (!sessions.has(id)) return;
+    send(session, { event: 'failed', message: error.message });
+    close(session);
+  });
+}
 readline.createInterface({ input: process.stdin }).on('line', line => {
   const command = JSON.parse(line);
-  record({ direction: 'in', command });
-  if (command.type === 'close') { request.destroy(); process.exit(0); }
-  if (command.type === 'visible') visible = command.visible === true;
-  if (command.type === 'live') live = command.live === true;
-  if (command.type === 'ack' && command.sequence === inFlight) inFlight = undefined;
-  flush();
-}).on('close', () => { request.destroy(); process.exit(0); });
+  if (command.type === 'open') { open(command.session, command.target); }
+  const session = sessions.get(command.session);
+  if (!session) return;
+  record(session, { direction: 'in', command });
+  if (command.type === 'close') { close(session); return; }
+  if (command.type === 'visible') session.visible = command.visible === true;
+  if (command.type === 'live') session.live = command.live === true;
+  if (command.type === 'ack' && command.sequence === session.inFlight) session.inFlight = undefined;
+  flush(session);
+}).on('close', () => {
+  for (const session of [...sessions.values()]) close(session);
+  process.exit(0);
+});

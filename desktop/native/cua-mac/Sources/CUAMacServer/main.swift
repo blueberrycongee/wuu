@@ -8,6 +8,17 @@ if CommandLine.arguments.count == 2, CommandLine.arguments[1] == "--agent-displa
     NSApplication.shared.setActivationPolicy(.prohibited)
     runAgentDisplayDaemon()
 }
+if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--native-preview-host" {
+    guard let parentProcessID = Int32(CommandLine.arguments[2]), parentProcessID > 0 else {
+        FileHandle.standardError.write(Data("wuu-cua-mac native preview failed: invalid parent process\n".utf8))
+        exit(2)
+    }
+    NSApplication.shared.setActivationPolicy(.prohibited)
+    let host = NativePreviewHost(parentProcessID: parentProcessID)
+    host.run()
+    withExtendedLifetime(host) { NSApplication.shared.run() }
+    exit(0)
+}
 if CommandLine.arguments.count >= 7, CommandLine.arguments[1] == "--native-preview" {
     let activityID = CommandLine.arguments[2]
     let target = CommandLine.arguments[3]
@@ -18,23 +29,15 @@ if CommandLine.arguments.count >= 7, CommandLine.arguments[1] == "--native-previ
         exit(2)
     }
     NSApplication.shared.setActivationPolicy(.prohibited)
-    Task {
-        do {
-            try await runNativePreview(configuration: NativePreviewConfiguration(
-                activityID: activityID,
-                target: target,
-                processID: processID > 0 ? processID : nil,
-                windowID: windowID > 0 ? windowID : nil,
-                parentProcessID: parentProcessID
-            ))
-            exit(0)
-        } catch {
-            let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            FileHandle.standardError.write(Data("wuu-cua-mac native preview failed: \(message)\n".utf8))
-            exit(1)
-        }
-    }
-    NSApplication.shared.run()
+    let host = NativePreviewHost(parentProcessID: parentProcessID, singleSession: NativePreviewConfiguration(
+        activityID: activityID,
+        target: target,
+        processID: processID > 0 ? processID : nil,
+        windowID: windowID > 0 ? windowID : nil,
+        parentProcessID: parentProcessID
+    ))
+    host.run()
+    withExtendedLifetime(host) { NSApplication.shared.run() }
     exit(0)
 }
 let requests = MCPRequestQueue(backend: MacComputerBackend())

@@ -24,13 +24,20 @@ public struct NativePreviewConfiguration: Sendable {
     }
 }
 
+// Every preview session writes to the one stdout pipe; a shared queue keeps
+// each event a single line.
+private let pipEventQueue = DispatchQueue(label: "com.blueberrycongee.wuu.cua.pip-events")
+
 private final class PiPEventWriter: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "com.blueberrycongee.wuu.cua.pip-events")
+    private let session: String?
+
+    init(session: String?) { self.session = session }
 
     func send(_ event: String, fields: [String: Any] = [:]) {
-        queue.sync {
+        pipEventQueue.sync {
             var payload = fields
             payload["event"] = event
+            if let session { payload["session"] = session }
             payload["timestamp_ns"] = DispatchTime.now().uptimeNanoseconds
             guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
             FileHandle.standardOutput.write(data)
@@ -175,6 +182,7 @@ private final class NativePreviewControl {
     private var requestedLive = true
     private var lastController = "agent"
     private var lastState = "starting"
+    var closed = false
     var shouldCapture: Bool { requestedVisible && requestedLive }
 
     func setVisible(_ visible: Bool) { requestedVisible = visible }
@@ -532,8 +540,130 @@ private func stopWindowStream(_ stream: SCStream, output: NativePiPStreamOutput)
     stream.stopCapture { _ in }
 }
 
+/// Delivers host commands to one preview session, buffering those that arrive
+/// before the session installs its handler.
 @MainActor
-public func runNativePreview(configuration: NativePreviewConfiguration) async throws {
+private final class NativePreviewInbox {
+    private var handler: (([String: Any]) -> Void)?
+    private var pending: [[String: Any]] = []
+
+    func deliver(_ command: [String: Any]) {
+        if let handler { handler(command) } else { pending.append(command) }
+    }
+
+    func setHandler(_ next: @escaping ([String: Any]) -> Void) {
+        handler = next
+        let queued = pending
+        pending = []
+        for command in queued { next(command) }
+    }
+}
+
+/// One helper process streams every live preview. replayd groups capture
+/// clients by executable path, so separate helper processes of one executable
+/// would interrupt each other's streams.
+///
+/// Commands arrive as JSON lines on stdin. In host mode every line names its
+/// session; `open` starts one and `close` ends it. A single-session helper
+/// starts its session at launch, accepts unnamed commands, and exits with it.
+@MainActor
+public final class NativePreviewHost {
+    private let parentProcessID: pid_t?
+    private let singleSession: NativePreviewConfiguration?
+    private var sessions: [String: NativePreviewInbox] = [:]
+    private var signalSources: [DispatchSourceSignal] = []
+
+    public init(parentProcessID: pid_t?, singleSession: NativePreviewConfiguration? = nil) {
+        self.parentProcessID = parentProcessID
+        self.singleSession = singleSession
+    }
+
+    public func run() {
+        signalSources = [SIGTERM, SIGINT].map { code in
+            signal(code, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: code, queue: .main)
+            source.setEventHandler { exit(0) }
+            source.resume()
+            return source
+        }
+        let reader = PiPCommandReader()
+        FileHandle.standardInput.readabilityHandler = { input in
+            let data = input.availableData
+            if data.isEmpty {
+                Task { @MainActor in exit(0) }
+                return
+            }
+            for encoded in reader.append(data) {
+                guard let commandData = encoded.data(using: .utf8),
+                      let command = try? JSONSerialization.jsonObject(with: commandData) as? [String: Any] else { continue }
+                let box = UncheckedBox(command)
+                Task { @MainActor in self.route(box.value) }
+            }
+        }
+        if let singleSession {
+            open(session: nil, configuration: singleSession)
+        } else {
+            Task { @MainActor in
+                while processIsAlive(self.parentProcessID) { try? await Task.sleep(for: .seconds(1)) }
+                exit(0)
+            }
+        }
+    }
+
+    private func route(_ command: [String: Any]) {
+        if singleSession != nil {
+            sessions[""]?.deliver(command)
+            return
+        }
+        guard let session = command["session"] as? String, !session.isEmpty else { return }
+        if command["type"] as? String == "open" {
+            guard sessions[session] == nil, let target = command["target"] as? String else { return }
+            let processID = (command["process_id"] as? NSNumber)?.int32Value ?? 0
+            let windowID = (command["window_id"] as? NSNumber)?.uint32Value ?? 0
+            open(session: session, configuration: NativePreviewConfiguration(
+                activityID: command["activity_id"] as? String ?? session,
+                target: target,
+                processID: processID > 0 ? processID : nil,
+                windowID: windowID > 0 ? windowID : nil,
+                parentProcessID: parentProcessID
+            ))
+            return
+        }
+        sessions[session]?.deliver(command)
+    }
+
+    private func open(session: String?, configuration: NativePreviewConfiguration) {
+        let key = session ?? ""
+        let inbox = NativePreviewInbox()
+        sessions[key] = inbox
+        let writer = PiPEventWriter(session: session)
+        Task { @MainActor in
+            var failure: String?
+            do {
+                try await runNativePreview(configuration: configuration, writer: writer, inbox: inbox)
+            } catch {
+                failure = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+            self.sessions[key] = nil
+            if session == nil {
+                if let failure {
+                    FileHandle.standardError.write(Data("wuu-cua-mac native preview failed: \(failure)\n".utf8))
+                    exit(1)
+                }
+                exit(0)
+            }
+            if let failure { writer.send("failed", fields: ["message": failure]) }
+            writer.send("closed")
+        }
+    }
+}
+
+@MainActor
+private func runNativePreview(
+    configuration: NativePreviewConfiguration,
+    writer: PiPEventWriter,
+    inbox: NativePreviewInbox
+) async throws {
     guard CGPreflightScreenCaptureAccess() else {
         throw ComputerError.permissionDenied("Screen Recording permission is required for live window capture")
     }
@@ -547,7 +677,6 @@ public func runNativePreview(configuration: NativePreviewConfiguration) async th
     }) else { throw ComputerError.appNotFound(configuration.target) }
 
     pipDebugLog("preview activity=\(configuration.activityID) process=\(app.processIdentifier)")
-    let writer = PiPEventWriter()
     let frames = NativePreviewFrames(writer: writer)
     let controller = NativePreviewControl()
     let requestedFrame = requestedWindowFrame(windowID: configuration.windowID, processID: app.processIdentifier)
@@ -555,32 +684,11 @@ public func runNativePreview(configuration: NativePreviewConfiguration) async th
         writer.send("gone")
         return
     }
-    let terminationSignals = [SIGTERM, SIGINT].map { code in
-        signal(code, SIG_IGN)
-        let source = DispatchSource.makeSignalSource(signal: code, queue: .main)
-        source.setEventHandler { frames.invalidate(); exit(0) }
-        source.resume()
-        return source
-    }
-    defer { for source in terminationSignals { source.cancel() } }
-
-    // Install the command reader before capture work. Stream startup suspends
-    // instead of blocking the main actor, so close/stdin EOF exits immediately.
-    let commandReader = PiPCommandReader()
-    FileHandle.standardInput.readabilityHandler = { input in
-        let data = input.availableData
-        if data.isEmpty {
+    // Install the command handler before capture work. Stream startup suspends
+    // instead of blocking the main actor, so a close ends the session promptly.
+    inbox.setHandler { command in
             Task { @MainActor in
-                frames.invalidate()
-                exit(0)
-            }
-            return
-        }
-        for encoded in commandReader.append(data) {
-            Task { @MainActor in
-                guard let commandData = encoded.data(using: .utf8),
-                      let command = try? JSONSerialization.jsonObject(with: commandData) as? [String: Any],
-                      let type = command["type"] as? String else { return }
+                guard let type = command["type"] as? String else { return }
                 switch type {
                 case "visible":
                     controller.setVisible(command["visible"] as? Bool == true)
@@ -606,14 +714,12 @@ public func runNativePreview(configuration: NativePreviewConfiguration) async th
                         }
                     }
                 case "close":
+                    controller.closed = true
                     frames.invalidate()
-                    exit(0)
                 default: break
                 }
             }
-        }
     }
-    defer { FileHandle.standardInput.readabilityHandler = nil }
 
     let geometryMonitor = WindowGeometryMonitor(processID: app.processIdentifier, windowFrame: .zero)
     let captureStartTimeout: TimeInterval = 3
@@ -636,7 +742,7 @@ public func runNativePreview(configuration: NativePreviewConfiguration) async th
     var lastSafetyRefresh = Date.distantPast
     var putAway = false
 
-    while !app.isTerminated && processIsAlive(configuration.parentProcessID) {
+    while !controller.closed && !app.isTerminated && processIsAlive(configuration.parentProcessID) {
         if let failure = frames.failureMessage() { throw ComputerError.operationFailed(failure) }
         if !controller.shouldCapture {
             if let existing = stream, let existingOutput = output {
