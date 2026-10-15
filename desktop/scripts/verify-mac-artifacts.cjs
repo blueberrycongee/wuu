@@ -4,7 +4,7 @@ const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const { createHash } = require("node:crypto");
 const { releaseCredentials, releaseSigningIdentity } = require("./check-release-signing.cjs");
-const { notarizeArchive, stapleArtifact } = require("./notarization.cjs");
+const { notarizeArchive, stapleArtifact, validateArtifact } = require("./notarization.cjs");
 const { finalizeUpdateMetadata } = require("./update-metadata.cjs");
 
 async function main() {
@@ -21,7 +21,7 @@ async function main() {
     "--timestamp", dmg]);
   const submission = await notarizeArchive(dmg, join(root, "notarization", "dmg.json"));
   await stapleArtifact(dmg);
-  run("xcrun", ["stapler", "validate", dmg]);
+  await validateArtifact(dmg);
   run("codesign", ["--verify", "--strict", "-R", `=anchor apple generic and certificate leaf = H"${releaseSigningIdentity()}"`, dmg]);
   run("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=4", dmg]);
   run("hdiutil", ["verify", dmg]);
@@ -38,7 +38,7 @@ async function main() {
       if (apps.length !== 1 || apps[0] !== "wuu.app") throw new Error(`Unexpected ${format} contents`);
       const app = join(directory, apps[0]);
       run(process.execPath, [join(__dirname, "verify-mac-release.cjs"), app]);
-      run("xcrun", ["stapler", "validate", app]);
+      await validateArtifact(app);
       run("spctl", ["--assess", "--type", "execute", "--verbose=4", app]);
       const actual = execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", join(app, "Contents/Info.plist")], { encoding: "utf8" }).trim();
       if (actual !== version) throw new Error(`Unexpected ${format} app version`);

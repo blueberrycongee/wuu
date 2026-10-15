@@ -143,11 +143,12 @@ the build fails; they contain no credentials. Resuming the helper with an existi
 receipt requires the exact same archive hash. A fresh CI build creates new signed
 archives and must obtain its own notarization results.
 
-After acceptance, App and DMG ticket stapling retries transient network failures
-up to three total attempts, waiting 30 seconds between attempts. These retries
-retrieve the ticket for the same artifact without resubmitting it for notarization.
-Other failures and exhausted retries stop the build; ticket validation and
-Gatekeeper assessment must still pass.
+After acceptance, App and DMG ticket stapling and validation retry transient
+network failures up to three total attempts per operation, waiting 30 seconds
+between attempts. This also covers validation of the apps extracted from the
+final DMG and ZIP. Retries query the ticket for the same artifact without
+resubmitting it for notarization. Other failures and exhausted retries stop the
+build; ticket validation and Gatekeeper assessment must still pass.
 
 Use the Release workflow's manual dispatch for verification without publication.
 Only a `v*` tag push can enter the publication job. No draft or public Release is
