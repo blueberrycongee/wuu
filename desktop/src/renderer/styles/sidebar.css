@@ -1,10 +1,11 @@
 /* Component color tokens for sidebar.css.
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
-  /* One opaque near-white step below the canvas on every platform. A
-   * translucent system material took its gray from the wallpaper and read
+  /* An opaque neutral two steps below the canvas on every platform, so the
+   * rail reads as its own layer and a white selection reads by tone alone.
+   * A translucent system material took its gray from the wallpaper and read
    * as dirt beside the white canvas. */
-  --sidebar-material-fill: var(--surface-1);
+  --sidebar-material-fill: var(--surface-2);
   /* Rail/content boundary: a crisp dark hairline instead of the old white
    * edge + white inset pair, which were invisible against the white content
    * column and left the boundary to be read from the gray brightness step.
@@ -16,23 +17,26 @@
   --sidebar-brand-wordmark-color: var(--ink-strong);
   --sidebar-resizer-hover-bg: var(--ink-overlay-18);
   --sidebar-resizer-hover-ring: rgba(255, 255, 255, 0.4);
-  --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, rgba(255, 255, 255, 0.42));
+  /* Hover is a tone step; a light inner ring would outline the darker fill
+   * on the opaque rail. */
+  --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, transparent);
   --sidebar-nav-item-focus-shadow: var(--focus-ring);
   /* Selection is the row's only location signal. In light it is a sheet
-   * of paper lifted off the rail (an edge and a soft shadow) rather than a
-   * darker fill, so the rail stays clean while the row still reads. */
+   * of paper on the rail rather than a darker fill: the tone step carries
+   * it and the control shadow lifts it. An outline plus a shadow read as a
+   * card floating over the list. */
   --sidebar-row-selected-bg: var(
     --wuu-nav-item-active-background,
     var(--wuu-color-surface-elevated, var(--paper))
   );
-  --sidebar-row-selected-shadow: 0 0 0 1px var(--hairline-soft), 0 1px 2px var(--shadow-color-medium);
+  --sidebar-row-selected-shadow: var(--shadow-soft);
   --sidebar-project-row-pending-bg: var(--ink-overlay-4);
   --sidebar-project-loading-notch: rgba(19, 19, 20, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(184, 79, 53, 0.1);
   --sidebar-thread-list-button-hover-bg: var(--ink-overlay-4);
   --sidebar-thread-spinner-notch: rgba(19, 19, 20, 0.18);
-  --sidebar-settings-button-hover-ring: rgba(255, 255, 255, 0.42);
+  --sidebar-settings-button-hover-ring: transparent;
   /* Collapsed-drawer chrome. */
   --sidebar-drawer-edge: rgba(19, 19, 20, 0.09);
   --sidebar-drawer-inner-edge: transparent;
@@ -1201,7 +1205,9 @@ html[data-focus-modality="keyboard"] :is(
   flex: 0 1 auto;
   overflow: hidden;
   font-size: var(--sidebar-heading-size, var(--font-sm));
-  font-weight: var(--weight-medium);
+  /* Size and ink already set the label below the rows; weight would make
+   * the structure louder than the conversations it groups. */
+  font-weight: var(--weight-regular);
   line-height: var(--line-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1252,9 +1258,14 @@ html[data-focus-modality="keyboard"] :is(
 
 /* An open group shows its contents; the chevron only returns as the toggle
  * affordance under the pointer or keyboard focus. A collapsed group keeps it
- * as the cue that content is hidden. Touch keeps it visible: no hover. */
+ * as the cue that content is hidden. Section actions keep their footprint
+ * and appear the same way, so at rest the label stands alone; an open menu
+ * keeps its button. Touch keeps both visible: no hover. */
 @media (hover: hover) {
-  .sidebar-functional-heading:not(:hover, :focus-within) .sidebar-functional-heading-chevron[data-expanded="true"] {
+  .sidebar-functional-heading:not(:hover, :focus-within) :is(
+    .sidebar-functional-heading-chevron[data-expanded="true"],
+    .sidebar-functional-action:not([aria-expanded="true"])
+  ) {
     opacity: 0;
   }
 }
@@ -1483,6 +1494,7 @@ html[data-focus-modality="keyboard"] :is(
   transition:
     background-color var(--motion-fast) var(--ease-out),
     color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out),
     transform var(--motion-fast) var(--ease-out);
 }
 

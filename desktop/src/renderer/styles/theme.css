@@ -212,7 +212,7 @@
   --plugin-ui-card-bg: var(--wuu-color-surface-elevated, var(--surface-3));
 
   /* sidebar.css */
-  /* The rail sits one step below the canvas, as the light rail does, so
+  /* The rail sits below the canvas, as the light rail does, so
      navigation recedes behind the reading surface. Derived from the canvas
      so extension canvases keep the relationship. Opaque fill prevents
      native wallpaper and browser backing surfaces from changing contrast. */

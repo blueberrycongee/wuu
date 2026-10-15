@@ -72,6 +72,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Desktop navigation reads as its own layer: the sidebar rail steps one tone
+  darker, hover and selection become tone steps without outline rings, section
+  headings drop to regular weight and reveal their actions only under the
+  pointer or keyboard focus, and the conversation titlebar no longer draws a
+  divider above scrolling messages.
+
 - Live activity previews appear once their first picture is ready, growing from
   their corner while fading in and coming into focus, and leave the same way. A
   completed turn's preview leaves 30 seconds after showing completion; a stopped
