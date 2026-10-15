@@ -1,12 +1,13 @@
 ---
 name: release-check
 description: Run final release gates before publishing or handing off a build.
-trigger-condition: Use before release, packaging, publish, install, or production build claims.
 allowed-tools: [read_file, grep, glob, bash]
-required-context: [target version, changed files, release command, verification policy, known risks]
-examples: [run make install verification, check desktop production debug gates, summarize release blockers]
-verification-checklist: [build command passed, version identity checked, release blockers documented]
-progressive-disclosure: Load release-specific docs and commands only after identifying the release target.
+metadata:
+  trigger-condition: Use before release, packaging, publish, install, or production build claims.
+  required-context: [target version, changed files, release command, verification policy, known risks]
+  examples: [run make install verification, check desktop production debug gates, summarize release blockers]
+  verification-checklist: [build command passed, version identity checked, release blockers documented]
+  progressive-disclosure: Load release-specific docs and commands only after identifying the release target.
 ---
 
 # Release Check
@@ -35,8 +36,10 @@ When the user asks to compile or update the local CLI to the latest source:
 
 - Treat `docs/en/project/release.md` and `.github/workflows/release.yml` as the source of truth and keep them in sync.
 - Before tagging, require the tag version, root `VERSION`, and `desktop/package.json` version to match exactly.
-- GitHub Releases contain only the unsigned arm64 macOS Desktop preview. Do not publish standalone CLI archives or describe artifacts as signed, notarized, or Gatekeeper-ready.
-- Release notes and README must state the unsigned preview status and trusted-download quarantine workaround.
+- GitHub Releases contain the arm64 macOS desktop app signed with the pinned Developer ID Application identity and notarized by Apple. Do not publish standalone CLI archives or substitute local ad-hoc builds.
+- Reuse the configured signing identity across releases. Keep private keys, P12 passwords, API keys, and handoff archives outside Git and release assets; use the local keychain or Actions Secrets as described in the release guide.
+- Require successful signing, notarization, stapling, and Gatekeeper checks for the exact release artifacts before publication. Fixture tests and an earlier version's CI run do not establish that a new build passed.
+- Release notes and README must distinguish the signed release pipeline from older ad-hoc previews. Quarantine workarounds apply only to those trusted older previews, never as a substitute for a failed release gate.
 - Do not push tags, publish releases, or upload assets unless the user explicitly requests that external action.
 
 ## Agent-run release workflow

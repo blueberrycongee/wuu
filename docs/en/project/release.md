@@ -100,6 +100,33 @@ imports the certificate into a temporary keychain without adding trust roots and
 removes the keychain and API key in an `always()` cleanup step. Retain encrypted
 backups outside the repository; GitHub Secrets cannot be read back.
 
+### Public material and private credentials
+
+| Material | Storage and publication |
+| --- | --- |
+| Workflow code, signing scripts, secret names, and placeholder examples | Commit to the public repository. |
+| Verified DMG/ZIP files, checksums, and `verification.json` | Publish after the release gates pass. Check diagnostic logs for credentials and private paths before sharing them. |
+| Signing certificate subject, Team ID, public key, and certificate fingerprint | Public metadata embedded in signed apps; the developer name on the certificate is visible to recipients. These values do not grant signing access. |
+| P12/PFX exports containing private keys, their passwords, P8 API keys, keychains, and credential handoff archives | Keep outside Git and release assets. Use the local keychain or restricted private storage, and the designated Actions Secrets for CI. |
+
+An encrypted P12 or a ZIP containing it is still private material. Base64 encoding
+is not encryption. Ignore rules reduce accidental staging but do not protect a
+file already committed or added with `git add -f`. Never paste credentials into
+PR descriptions, issues, build logs, or public artifacts. See
+[GitHub's secrets guidance](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
+and [Apple's signing identity guidance](https://developer.apple.com/documentation/Xcode/sharing-your-teams-signing-certificates).
+
+Reuse the configured Developer ID identity across releases; do not generate a new
+certificate for each build. Re-exporting the same certificate with a new P12
+password does not change its fingerprint. If replacing the CI export, update the
+P12 and password secrets together before running the workflow. Certificate renewal
+is a deliberate credential change: update the pinned fingerprint with the new
+certificate, retain the team and bundle identity, and repeat signing, notarization,
+and update acceptance before publishing. Stable signing does not by itself prove
+that macOS permissions survive an update.
+
+### Artifact verification
+
 The app is notarized and stapled before creating DMG and ZIP archives. The final
 DMG is then signed, notarized, and stapled. Verification mounts that DMG and
 extracts that ZIP, checks both apps' Developer ID identity, runtime flags,
