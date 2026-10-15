@@ -4,7 +4,7 @@ const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const { createHash } = require("node:crypto");
 const { releaseCredentials, releaseSigningIdentity } = require("./check-release-signing.cjs");
-const { notarizeArchive } = require("./notarization.cjs");
+const { notarizeArchive, stapleArtifact } = require("./notarization.cjs");
 
 async function main() {
   releaseCredentials();
@@ -19,7 +19,7 @@ async function main() {
   run("codesign", ["--force", "--sign", releaseSigningIdentity(), ...(process.env.WUU_RELEASE_KEYCHAIN ? ["--keychain", process.env.WUU_RELEASE_KEYCHAIN] : []),
     "--timestamp", dmg]);
   const submission = await notarizeArchive(dmg, join(root, "notarization", "dmg.json"));
-  run("xcrun", ["stapler", "staple", dmg]);
+  await stapleArtifact(dmg);
   run("xcrun", ["stapler", "validate", dmg]);
   run("codesign", ["--verify", "--strict", "-R", `=anchor apple generic and certificate leaf = H"${releaseSigningIdentity()}"`, dmg]);
   run("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=4", dmg]);
