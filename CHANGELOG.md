@@ -142,6 +142,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Anthropic requests identify their conversation through `metadata.user_id`,
+  so Claude Code-compatible gateways keep each session on one upstream account
+  and prompt-cache reads continue from turn starts into tool loops.
+
 - Preserve cancelled worker results when stopping a parent races a pending
   child-result handoff, without automatically waking the stopped parent.
 

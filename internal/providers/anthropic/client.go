@@ -3,6 +3,7 @@ package anthropic
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -462,6 +463,11 @@ func buildAnthropicRequestWithSupport(req providers.ChatRequest, maxTokens int, 
 		Messages:        make([]anthropicMessage, 0, len(req.Messages)),
 		Stream:          stream,
 		UseDefaultBetas: useDefaultBetas,
+	}
+	if req.CacheHint != nil {
+		if userID := anthropicMetadataUserID(req.CacheHint.PromptCacheKey); userID != "" {
+			payload.Metadata = &anthropicMetadata{UserID: userID}
+		}
 	}
 	if toolSearchEnabled {
 		payload.Betas = append(payload.Betas, toolSearchBetaHeader1P)
@@ -1649,8 +1655,32 @@ type anthropicRequest struct {
 	Speed           string                 `json:"speed,omitempty"`
 	Thinking        *anthropicThinking     `json:"thinking,omitempty"`
 	OutputConfig    *anthropicOutputConfig `json:"output_config,omitempty"`
+	Metadata        *anthropicMetadata     `json:"metadata,omitempty"`
 	UseDefaultBetas bool                   `json:"-"`
 	Betas           []string               `json:"-"`
+}
+
+type anthropicMetadata struct {
+	UserID string `json:"user_id"`
+}
+
+// anthropicMetadataUserID derives metadata.user_id from the conversation's
+// prompt cache key, hashed because Anthropic requires an opaque identifier.
+// Claude Code-compatible gateways pin upstream accounts by the session in
+// Claude Code's format. Without it, requests ending in user text and tool
+// continuations can reach accounts whose prompt caches are isolated.
+func anthropicMetadataUserID(cacheKey string) string {
+	cacheKey = strings.TrimSpace(cacheKey)
+	if cacheKey == "" {
+		return ""
+	}
+	user := sha256.Sum256([]byte("wuu-user\x00" + cacheKey))
+	session := sha256.Sum256([]byte("wuu-session\x00" + cacheKey))
+	// Format the session as an RFC 4122 UUID like Claude Code's random ids.
+	session[6] = session[6]&0x0f | 0x40
+	session[8] = session[8]&0x3f | 0x80
+	return fmt.Sprintf("user_%x_account__session_%x-%x-%x-%x-%x",
+		user, session[0:4], session[4:6], session[6:8], session[8:10], session[10:16])
 }
 
 // anthropicThinking configures extended thinking.
