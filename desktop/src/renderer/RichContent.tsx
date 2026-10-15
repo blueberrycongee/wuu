@@ -35,7 +35,7 @@ import {
 import { currentAppliedTheme, observeAppliedTheme, type AppliedTheme } from "./Theme";
 import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { WorkbenchContentRenderer } from "./plugins/Workbench";
-import { rehypeFileSelectionMapping, type SelectionASTNode } from "./FileSelectionMapping";
+import { rehypeFileSelectionMapping, rehypePreserveMathSourcePositions, type SelectionASTNode } from "./FileSelectionMapping";
 import {
   CODE_HIGHLIGHT_CHAR_LIMIT,
   CODE_HIGHLIGHT_HARD_LIMIT,
@@ -225,7 +225,13 @@ function MarkdownContentView({
           // CommonMark links and GFM autolinks are the only text-to-link rules.
           // File mentions stay literal; file navigation uses explicit link targets.
           remarkPlugins={markdownRemarkPlugins}
-          rehypePlugins={[...(allowRawHtml ? [rehypeRaw] : []), [rehypeKatex, { trust: false, maxSize: 20, maxExpand: 1000 }], [rehypeHeadingIDs, documentContext?.headingIDs], ...(sourceMapping ? [rehypeFileSelectionMapping] : [])]}
+          rehypePlugins={[
+            ...(allowRawHtml ? [rehypeRaw] : []),
+            ...(sourceMapping ? [rehypePreserveMathSourcePositions] : []),
+            [rehypeKatex, { trust: false, maxSize: 20, maxExpand: 1000 }],
+            [rehypeHeadingIDs, documentContext?.headingIDs],
+            ...(sourceMapping ? [rehypeFileSelectionMapping] : []),
+          ]}
           urlTransform={richMarkdownUrlTransform}
         >
           {source}
