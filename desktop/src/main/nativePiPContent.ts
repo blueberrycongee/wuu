@@ -1,4 +1,5 @@
-import { WebContentsView, type Rectangle } from "electron";
+import { MessageChannelMain, WebContentsView, type MessagePortMain, type Rectangle } from "electron";
+import type { NativePreviewReply } from "../shared/nativePreview";
 import type { ActivitySession } from "../shared/protocol";
 import { activityPreviewIsLive, type ActivityPiPContent, type ActivityPiPContentContext } from "./activityPiPContent";
 import type { BrowserViewHandle } from "./browserHostWindows";
@@ -11,7 +12,10 @@ import { CUANativePreview, type CUANativePreviewFrame } from "./cuaFrameStreams"
 export class NativePiPContent implements ActivityPiPContent {
   private view: WebContentsView | undefined;
   private preview: CUANativePreview | undefined;
-  private ready: Promise<unknown> | undefined;
+  private ready: Promise<void> | undefined;
+  private port: MessagePortMain | undefined;
+  private startupTimer: ReturnType<typeof setTimeout> | undefined;
+  private inFlight: { frame: CUANativePreviewFrame; epoch: number } | undefined;
   private stopped = false;
   private announced = false;
   private presented = false;
@@ -25,7 +29,7 @@ export class NativePiPContent implements ActivityPiPContent {
   constructor(
     private activity: ActivitySession,
     private readonly context: ActivityPiPContentContext,
-    private readonly deps: { helper: string; isPackaged: boolean },
+    private readonly deps: { helper: string; isPackaged: boolean; preload: string; pageURL: string },
   ) {}
 
   start(): void {
@@ -33,7 +37,7 @@ export class NativePiPContent implements ActivityPiPContent {
     // A card shows only once it has pixels, so its first frames are decoded
     // while the window is still hidden.
     const view = new WebContentsView({ webPreferences: {
-      contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false,
+      contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, preload: this.deps.preload,
       ...appShellWebPreferences(this.deps.isPackaged),
     } });
     this.view = view;
@@ -42,8 +46,31 @@ export class NativePiPContent implements ActivityPiPContent {
     view.webContents.on("will-navigate", (event) => event.preventDefault());
     this.context.window.contentView.addChildView(view as unknown as BrowserViewHandle);
     this.layout(this.context.window.getBounds());
-    this.ready = view.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(nativePreviewHTML)}`);
+    const { port1, port2 } = new MessageChannelMain();
+    this.port = port1;
+    let rendererReady = false;
+    this.ready = new Promise<void>((resolve, reject) => {
+      this.startupTimer = setTimeout(() => reject(new Error("Native preview renderer did not become ready")), 5_000);
+      port1.on("message", ({ data }: { data: NativePreviewReply }) => {
+        if (this.stopped) return;
+        if (data.type === "ready") {
+          rendererReady = true;
+          clearTimeout(this.startupTimer);
+          port1.postMessage({ type: "reset", epoch: this.captureEpoch });
+          resolve();
+        } else if (data.type === "error") {
+          if (rendererReady) this.context.onFailure(data.message);
+          else reject(new Error(data.message));
+        } else this.acknowledge(data);
+      });
+      port1.start();
+      void view.webContents.loadURL(this.deps.pageURL).then(() => {
+        if (!this.stopped) view.webContents.postMessage("wuu-native-preview-port", null, [port2]);
+        else port2.close();
+      }).catch(reject);
+    });
     this.ready.catch((error: unknown) => {
+      clearTimeout(this.startupTimer);
       if (!this.stopped) this.context.onFailure(error instanceof Error ? error.message : String(error));
     });
     view.webContents.on("render-process-gone", () => {
@@ -97,13 +124,9 @@ export class NativePiPContent implements ActivityPiPContent {
   }
 
   private invalidateFrames(): void {
-    const epoch = ++this.captureEpoch;
-    const view = this.view;
-    void this.ready?.then(() => {
-      if (!this.stopped && this.view === view && view && !view.webContents.isDestroyed()) {
-        return view.webContents.executeJavaScript(`window.wuuNativeEpoch(${epoch})`);
-      }
-    }).catch(() => undefined);
+    this.captureEpoch++;
+    this.port?.postMessage({ type: "reset", epoch: this.captureEpoch });
+    this.preview?.requestKeyframe();
   }
 
   refresh(): void {
@@ -118,12 +141,16 @@ export class NativePiPContent implements ActivityPiPContent {
   async snapshot(): Promise<string | undefined> {
     const view = this.view;
     if (!view || !this.presented || view.webContents.isDestroyed()) return undefined;
-    const src = await view.webContents.executeJavaScript("window.wuuNativeSnapshot()") as string;
+    const src = await view.webContents.executeJavaScript("document.querySelector('canvas').toDataURL('image/jpeg',0.86)") as string;
     return src || undefined;
   }
 
   stop(onStopped: () => void): void {
     this.stopped = true;
+    clearTimeout(this.startupTimer);
+    this.port?.close();
+    this.port = undefined;
+    this.inFlight = undefined;
     this.context.setMounted(false);
     const view = this.view;
     this.view = undefined;
@@ -139,57 +166,48 @@ export class NativePiPContent implements ActivityPiPContent {
 
   private async present(frame: CUANativePreviewFrame): Promise<void> {
     const preview = this.preview;
-    const view = this.view;
-    if (!preview || !view || this.stopped || frame.sequence <= this.lastFrameSequence) return;
-    this.lastFrameSequence = frame.sequence;
+    if (!preview || this.stopped) return;
     const epoch = this.captureEpoch;
-    const accepts = (): boolean => !this.stopped && this.view === view && this.visible
-      && this.live && activityPreviewIsLive(this.activity)
-      && !this.captureUnavailable && this.captureEpoch === epoch;
+    if (frame.sequence <= this.lastFrameSequence) { preview.acknowledgeFrame(frame.sequence); return; }
+    this.lastFrameSequence = frame.sequence;
     try {
       await this.ready;
-      if (!accepts()) return;
-      const painted = await view.webContents.executeJavaScript(`window.wuuNativeFrame(${JSON.stringify(frame)},${epoch})`);
-      if (!painted || !accepts()) return;
-      if (this.viewport?.width !== frame.width || this.viewport.height !== frame.height) {
-        this.viewport = { width: frame.width, height: frame.height };
-        this.context.setViewport(this.viewport);
-      }
-      if (!this.presented) {
-        this.presented = true;
-        this.context.setMounted(true);
-      }
-      if (!this.announced) {
-        this.announced = true;
-        this.context.onEvent({ event: "ready" });
-      }
+      if (!this.accepts(epoch)) { preview.acknowledgeFrame(frame.sequence); return; }
+      this.inFlight = { frame, epoch };
+      // Structured clone carries bytes directly. Pixels never enter JavaScript
+      // source strings or the application's general-purpose preload bridge.
+      this.port!.postMessage({ type: "frame", frame, epoch });
     } catch (error) {
+      preview.acknowledgeFrame(frame.sequence);
       if (!this.stopped) this.context.onFailure(error instanceof Error ? error.message : String(error));
-    } finally {
-      // Only one frame can cross native stdout/main/renderer at a time. A frame
-      // is acknowledged after decode/draw (or intentional discard), never on receipt.
-      if (!this.stopped && this.preview === preview) preview.acknowledgeFrame(frame.sequence);
+    }
+  }
+
+  private accepts(epoch: number): boolean {
+    return !this.stopped && this.visible && this.live && activityPreviewIsLive(this.activity)
+      && !this.captureUnavailable && this.captureEpoch === epoch;
+  }
+
+  private acknowledge(reply: Extract<NativePreviewReply, { type: "ack" }>): void {
+    const current = this.inFlight;
+    if (!current || reply.sequence !== current.frame.sequence || reply.epoch !== current.epoch) return;
+    this.inFlight = undefined;
+    if (reply.recovery && this.accepts(reply.epoch)) this.preview?.requestKeyframe();
+    // ACK follows actual decode/draw or deliberate discard, not IPC receipt.
+    this.preview?.acknowledgeFrame(reply.sequence);
+    if (!reply.painted || !this.accepts(reply.epoch)) return;
+    const frame = current.frame;
+    if (this.viewport?.width !== frame.width || this.viewport.height !== frame.height) {
+      this.viewport = { width: frame.width, height: frame.height };
+      this.context.setViewport(this.viewport);
+    }
+    if (!this.presented) {
+      this.presented = true;
+      this.context.setMounted(true);
+    }
+    if (!this.announced) {
+      this.announced = true;
+      this.context.onEvent({ event: "ready" });
     }
   }
 }
-
-const nativePreviewHTML = `<!doctype html><html><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
-<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}canvas{width:100%;height:100%;object-fit:scale-down;display:block;pointer-events:none}</style>
-</head><body><canvas></canvas><script>
-const canvas=document.querySelector('canvas'),context=canvas.getContext('2d',{alpha:false});
-let sequence=0,activeEpoch=0;
-window.wuuNativeEpoch=function(epoch){activeEpoch=Math.max(activeEpoch,epoch);};
-window.wuuNativeSnapshot=function(){return sequence>0?canvas.toDataURL('image/jpeg',0.86):'';};
-window.wuuNativeFrame=async function(frame,epoch){
-  if(epoch!==activeEpoch||frame.sequence<=sequence)return false;
-  sequence=frame.sequence;
-  const image=new Image();
-  image.src='data:image/jpeg;base64,'+frame.data;
-  await image.decode();
-  if(epoch!==activeEpoch||sequence!==frame.sequence)return false;
-  if(canvas.width!==frame.width||canvas.height!==frame.height){canvas.width=frame.width;canvas.height=frame.height;}
-  context.drawImage(image,0,0,frame.width,frame.height);
-  return true;
-};
-</script></body></html>`;

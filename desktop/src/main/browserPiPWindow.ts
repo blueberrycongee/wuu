@@ -1,4 +1,5 @@
 import type { Rectangle } from "electron";
+import { fileURLToPath } from "node:url";
 import type { ActivitySession } from "../shared/protocol";
 import { ActivityPiPSurface, type ActivityPiPSurfaceDeps } from "./activityPiPWindow";
 import { pipContainRect, type ActivityPiPContent, type ActivityPiPContentContext } from "./activityPiPContent";
@@ -177,7 +178,13 @@ export function createObservationPiPFactory(deps: {
     createContent: (next, context) => {
       if (next.kind === "browser") return new BrowserPiPContent(next, deps.browserHost, context);
       const helper = resolveCUAFrameHelper();
-      return helper ? new NativePiPContent(next, context, { helper, isPackaged: deps.isPackaged }) : undefined;
+      return helper ? new NativePiPContent(next, context, {
+        helper, isPackaged: deps.isPackaged,
+        preload: fileURLToPath(new URL("../preload/nativePreview.cjs", import.meta.url)),
+        pageURL: !deps.isPackaged && process.env.ELECTRON_RENDERER_URL
+          ? new URL("native-preview.html", process.env.ELECTRON_RENDERER_URL).href
+          : new URL("../renderer/native-preview.html", import.meta.url).href,
+      }) : undefined;
     },
   });
 }

@@ -125,8 +125,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private awaitingVisibility = false;
   private pendingRetarget = false;
   private appearance: ActivityPreviewAppearance | undefined;
-  private controlPending = false;
-  private controlFailed = false;
   private captureState: Pick<CUANativePiPEvent, "status" | "message"> = { status: "healthy" };
   private stopCallbacks: Array<() => void> = [];
   // Resting corner inside the conversation column. A release may change it;
@@ -194,12 +192,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
           this.handleResize(resize);
           this.execute("window.wuuPipDragAck?.()");
           return;
-        }
-        if (rawURL.startsWith("wuu-pip://control?")) {
-          const action = new URL(rawURL).searchParams.get("action");
-          if (!this.controlPending && (action === "takeover" || action === "release" || action === "stop")) {
-            this.deps.sink.onEvent({ event: "control", action, execution_id: new URL(rawURL).searchParams.get("execution_id") ?? "" });
-          }
         }
         if (rawURL === "wuu-pip://close") this.deps.sink.onEvent({ event: "user_close" });
         if (rawURL === "wuu-pip://expand") this.deps.sink.onEvent({ event: "expand" });
@@ -345,17 +337,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.execute(`window.wuuPipAppearance?.(${JSON.stringify({ dark, ...this.appearance })})`);
   }
 
-  setControlPending(pending: boolean): void {
-    this.controlPending = pending;
-    if (pending) this.controlFailed = false;
-    this.pushActivityState();
-  }
-
-  setControlFailed(): void {
-    this.controlFailed = true;
-    this.pushActivityState();
-  }
-
   setTurnCompleted(completed: boolean): void {
     if (this.stopped || this.completed === completed) return;
     this.completed = completed;
@@ -418,8 +399,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   }
 
   updateActivity(activity: ActivitySession): void {
-    if (activity.execution_id !== this.activity.execution_id || activity.controller !== this.activity.controller
-      || activity.state === "stopped") this.controlFailed = false;
     if (activity.execution_id !== this.activity.execution_id) {
       this.lastInteractionRevision = 0;
       this.pendingInteraction = undefined;
@@ -449,8 +428,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.activity = activity;
     this.lastInteractionRevision = 0;
     this.pendingInteraction = undefined;
-    this.controlPending = false;
-    this.controlFailed = false;
     this.setCaptureStatus({ status: "healthy" });
     this.pendingRetarget = true;
     this.stopContent();
@@ -1127,11 +1104,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.execute(
       `window.wuuPipState?.(${JSON.stringify({
         kind: this.activity.kind,
-        execution_id: this.activity.execution_id,
         state: this.activity.state,
         controller: this.activity.controller,
-        controlFailed: this.controlFailed,
-        controlPending: this.controlPending,
       })})`,
     );
   }

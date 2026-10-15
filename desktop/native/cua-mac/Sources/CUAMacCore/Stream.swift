@@ -1,11 +1,9 @@
 import AppKit
 import ApplicationServices
-@preconcurrency import CoreImage
 @preconcurrency import CoreMedia
 import CoreVideo
 import Darwin
 import Foundation
-import ImageIO
 @preconcurrency import ScreenCaptureKit
 
 public struct NativePreviewConfiguration: Sendable {
@@ -25,7 +23,7 @@ public struct NativePreviewConfiguration: Sendable {
 }
 
 // Every preview session writes to the one stdout pipe; a shared queue keeps
-// each event a single line.
+// each binary packet contiguous.
 private let pipEventQueue = DispatchQueue(label: "com.blueberrycongee.wuu.cua.pip-events")
 
 private final class PiPEventWriter: @unchecked Sendable {
@@ -33,15 +31,23 @@ private final class PiPEventWriter: @unchecked Sendable {
 
     init(session: String?) { self.session = session }
 
-    func send(_ event: String, fields: [String: Any] = [:]) {
+    func send(_ event: String, fields: [String: Any] = [:], payload: Data = Data()) {
         pipEventQueue.sync {
-            var payload = fields
-            payload["event"] = event
-            if let session { payload["session"] = session }
-            payload["timestamp_ns"] = DispatchTime.now().uptimeNanoseconds
-            guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
-            FileHandle.standardOutput.write(data)
-            FileHandle.standardOutput.write(Data([0x0A]))
+            var header = fields
+            header["event"] = event
+            if let session { header["session"] = session }
+            header["timestamp_ns"] = DispatchTime.now().uptimeNanoseconds
+            guard let data = try? JSONSerialization.data(withJSONObject: header, options: [.sortedKeys]),
+                  data.count <= 16_384, payload.count <= 3_000_000 else { return }
+            // WCU1, two big-endian lengths, JSON metadata, then raw AVC bytes.
+            var packet = Data("WCU1".utf8)
+            for length in [data.count, payload.count] {
+                var value = UInt32(length).bigEndian
+                withUnsafeBytes(of: &value) { packet.append(contentsOf: $0) }
+            }
+            packet.append(data)
+            packet.append(payload)
+            FileHandle.standardOutput.write(packet)
         }
     }
 }
@@ -64,22 +70,24 @@ private final class PiPCommandReader: @unchecked Sendable {
     }
 }
 
-/// Only the latest uncoded frame and one acknowledged transport frame are kept.
+/// Keep the latest capture for idle recovery and one frame being encoded or awaiting ACK.
 /// Encoding never runs on the main actor or the ScreenCaptureKit callback queue.
 private final class NativePreviewFrames: @unchecked Sendable {
-    private struct Frame {
+    private struct Frame: @unchecked Sendable {
         let image: CVPixelBuffer
+        let timestamp: CMTime
         let generation: UInt64
     }
 
     private let lock = NSLock()
     private let queue = DispatchQueue(label: "com.blueberrycongee.wuu.cua.preview-encode", qos: .userInitiated)
-    private let context = CIContext(options: [.cacheIntermediates: false])
-    private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+    private let encoder = PreviewEncoder()
     private let writer: PiPEventWriter
     private var generation: UInt64 = 0
     private var sequence: UInt64 = 0
     private var pending: Frame?
+    private var latest: Frame?
+    private var needsKeyframe = true
     private var encoding = false
     private var awaitingAcknowledgement: UInt64?
     private var failure: String?
@@ -90,6 +98,8 @@ private final class NativePreviewFrames: @unchecked Sendable {
         lock.withLock {
             generation += 1
             pending = nil
+            latest = nil
+            needsKeyframe = true
             awaitingAcknowledgement = nil
             return generation
         }
@@ -99,6 +109,8 @@ private final class NativePreviewFrames: @unchecked Sendable {
         lock.withLock {
             generation += 1
             pending = nil
+            latest = nil
+            needsKeyframe = true
             awaitingAcknowledgement = nil
         }
     }
@@ -106,10 +118,20 @@ private final class NativePreviewFrames: @unchecked Sendable {
     func isCurrent(_ generation: UInt64) -> Bool { lock.withLock { generation == self.generation } }
     func failureMessage() -> String? { lock.withLock { failure } }
 
-    func submit(_ image: CVPixelBuffer, generation: UInt64) {
+    func submit(_ image: CVPixelBuffer, timestamp: CMTime, generation: UInt64) {
         lock.withLock {
             guard generation == self.generation else { return }
-            pending = Frame(image: image, generation: generation)
+            let frame = Frame(image: image, timestamp: timestamp, generation: generation)
+            latest = frame
+            pending = frame
+            scheduleIfReady()
+        }
+    }
+
+    func requestKeyframe() {
+        lock.withLock {
+            needsKeyframe = true
+            pending = latest
             scheduleIfReady()
         }
     }
@@ -131,7 +153,7 @@ private final class NativePreviewFrames: @unchecked Sendable {
     }
 
     private func encodeLatest() {
-        let selected: (Frame, UInt64)? = lock.withLock {
+        let selected: (Frame, UInt64, Bool)? = lock.withLock {
             guard let frame = pending, awaitingAcknowledgement == nil else {
                 encoding = false
                 return nil
@@ -139,39 +161,48 @@ private final class NativePreviewFrames: @unchecked Sendable {
             pending = nil
             sequence += 1
             awaitingAcknowledgement = sequence
-            return (frame, sequence)
+            let keyframe = needsKeyframe
+            needsKeyframe = false
+            return (frame, sequence, keyframe)
         }
-        guard let (frame, sequence) = selected else { return }
-        let data = autoreleasepool {
-            context.jpegRepresentation(
-                of: CIImage(cvPixelBuffer: frame.image),
-                colorSpace: colorSpace,
-                options: [CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): 0.82]
-            )
-        }
+        guard let (frame, sequence, keyframe) = selected else { return }
+        do {
+            try encoder.encode(frame.image, generation: frame.generation, timestamp: frame.timestamp, keyframe: keyframe) { [self] result in
+                queue.async { [self] in complete(result, frame: frame, sequence: sequence) }
+            }
+        } catch { complete(.failure(error), frame: frame, sequence: sequence) }
+    }
+
+    private func complete(_ result: Result<PreviewEncoder.Output?, Error>, frame: Frame, sequence: UInt64) {
         lock.withLock {
             encoding = false
             guard frame.generation == generation, awaitingAcknowledgement == sequence else {
                 scheduleIfReady()
                 return
             }
-            // A preview is bounded to 1280 pixels on its longest edge. Reject a
-            // malformed/oversized result instead of allowing unbounded pipe data.
-            guard let data, data.count <= 3_000_000 else {
+            switch result {
+            case .failure(let error):
                 generation += 1
                 awaitingAcknowledgement = nil
                 pending = nil
-                let message = "native preview frame encoding failed"
-                failure = message
-                writer.send("capture_status", fields: ["status": "error", "message": message])
-                return
+                latest = nil
+                failure = error.localizedDescription
+                writer.send("capture_status", fields: ["status": "error", "message": error.localizedDescription])
+            case .success(nil):
+                awaitingAcknowledgement = nil
+                needsKeyframe = true
+                scheduleIfReady()
+            case .success(let output?):
+                var fields: [String: Any] = [
+                    "sequence": sequence, "generation": frame.generation,
+                    "configuration": output.configuration, "codec": output.codec,
+                    "keyframe": output.keyframe, "timestamp": output.timestamp,
+                    "width": CVPixelBufferGetWidth(frame.image),
+                    "height": CVPixelBufferGetHeight(frame.image),
+                ]
+                if output.keyframe { fields["description"] = Array(output.description) }
+                writer.send("frame", fields: fields, payload: output.data)
             }
-            writer.send("frame", fields: [
-                "sequence": sequence,
-                "width": CVPixelBufferGetWidth(frame.image),
-                "height": CVPixelBufferGetHeight(frame.image),
-                "data": data.base64EncodedString(),
-            ])
         }
     }
 }
@@ -352,7 +383,7 @@ private final class NativePiPStreamOutput: NSObject, SCStreamOutput, SCStreamDel
                 writer.send("capture_status", fields: ["status": "suspended"])
             }
             if shouldDisplay, let imageBuffer {
-                frames.submit(imageBuffer, generation: generation)
+                frames.submit(imageBuffer, timestamp: sampleBuffer.presentationTimeStamp, generation: generation)
             }
         }
     }
@@ -448,12 +479,14 @@ private func streamConfiguration(for filter: SCContentFilter) -> SCStreamConfigu
     let configuration = SCStreamConfiguration()
     let size = filter.contentRect.size
     let previewScale = min(CGFloat(filter.pointPixelScale), 1280 / max(1, max(size.width, size.height)))
-    configuration.width = max(1, Int(size.width * previewScale))
-    configuration.height = max(1, Int(size.height * previewScale))
+    // AVC uses 4:2:0 chroma, so scaled dimensions must remain even.
+    configuration.width = max(2, Int(size.width * previewScale) / 2 * 2)
+    configuration.height = max(2, Int(size.height * previewScale) / 2 * 2)
     configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
     configuration.queueDepth = 3
     configuration.showsCursor = false
     configuration.pixelFormat = kCVPixelFormatType_32BGRA
+    configuration.colorSpaceName = CGColorSpace.sRGB
     configuration.ignoreShadowsSingleWindow = true
     return configuration
 }
@@ -698,6 +731,8 @@ private func runNativePreview(
                     if !controller.shouldCapture { frames.invalidate() }
                 case "ack":
                     if let sequence = command["sequence"] as? UInt64 { frames.acknowledge(sequence) }
+                case "keyframe":
+                    if controller.shouldCapture { frames.requestKeyframe() }
                 case "activity":
                     let nextController = command["controller"] as? String ?? "agent"
                     if nextController == "none" || command["state"] as? String == "stopped" {

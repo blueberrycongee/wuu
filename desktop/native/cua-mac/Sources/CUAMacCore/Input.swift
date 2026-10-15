@@ -6,15 +6,19 @@ public enum ForegroundInputLock {
     private static let path = "/tmp/wuu-cua-foreground-input-\(getuid()).lock"
 
     public static func withLock<T>(_ body: () throws -> T) throws -> T {
-        let descriptor = open(path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
-        guard descriptor >= 0 else {
-            throw ComputerError.operationFailed("could not open the global foreground input lock")
-        }
-        defer { close(descriptor) }
-        try acquireCancellableLock(descriptor)
-        defer { flock(descriptor, LOCK_UN) }
-        return try body()
+        try withInputResourceLock(path: path, body: body)
     }
+}
+
+func withInputResourceLock<T>(path: String, body: () throws -> T) throws -> T {
+    let descriptor = open(path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+    guard descriptor >= 0 else {
+        throw ComputerError.operationFailed("could not open input resource lock")
+    }
+    defer { close(descriptor) }
+    try acquireCancellableLock(descriptor)
+    defer { flock(descriptor, LOCK_UN) }
+    return try body()
 }
 
 public final class AppActionLock {
@@ -66,9 +70,44 @@ func markSynthetic(_ event: CGEvent?) -> CGEvent? {
 }
 
 func syntheticEventSource() -> CGEventSource? {
-    let source = CGEventSource(stateID: .hidSystemState)
+    // Do not inherit the user's held keys or leave synthetic modifier state in
+    // the shared HID source used by later Unicode input.
+    let source = CGEventSource(stateID: .privateState)
     source?.localEventsSuppressionInterval = 0
     return source
+}
+
+func withHeldKey<T>(_ chord: KeyChord?, post: (CGEvent) -> Void, body: () throws -> T) throws -> T {
+    guard let chord else { return try body() }
+    let source = syntheticEventSource()
+    var releases: [CGEvent] = []
+    defer { for release in releases.reversed() { post(release) } }
+    var flags: CGEventFlags = []
+    let modifierKeys: [(KeyModifiers, CGKeyCode)] = [(.command, 55), (.shift, 56), (.option, 58), (.control, 59), (.function, 63)]
+    for (modifier, code) in modifierKeys where chord.modifiers.contains(modifier) {
+        guard let down = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true)),
+              let up = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false)) else {
+            throw ComputerError.operationFailed("could not create modifier event")
+        }
+        down.type = .flagsChanged
+        up.type = .flagsChanged
+        up.flags = flags
+        flags.formUnion(modifier.eventFlags)
+        down.flags = flags
+        try ComputerExecution.input()
+        post(down)
+        releases.append(up)
+    }
+    guard let down = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: chord.keyCode, keyDown: true)),
+          let up = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: chord.keyCode, keyDown: false)) else {
+        throw ComputerError.operationFailed("could not create keyboard event")
+    }
+    down.flags = flags
+    up.flags = flags
+    try ComputerExecution.input()
+    post(down)
+    releases.append(up)
+    return try body()
 }
 
 public struct KeyModifiers: OptionSet, Sendable {
@@ -80,6 +119,21 @@ public struct KeyModifiers: OptionSet, Sendable {
     public static let option = KeyModifiers(rawValue: 1 << 2)
     public static let control = KeyModifiers(rawValue: 1 << 3)
     public static let function = KeyModifiers(rawValue: 1 << 4)
+
+    public static func parse(_ names: [String]) throws -> KeyModifiers {
+        var modifiers: KeyModifiers = []
+        for name in names {
+            switch name.lowercased() {
+            case "command", "cmd", "super", "meta": modifiers.insert(.command)
+            case "shift": modifiers.insert(.shift)
+            case "option", "alt": modifiers.insert(.option)
+            case "control", "ctrl": modifiers.insert(.control)
+            case "fn", "function": modifiers.insert(.function)
+            default: throw ComputerError.invalidArguments("unsupported key modifier \(name)")
+            }
+        }
+        return modifiers
+    }
 
     var eventFlags: CGEventFlags {
         var flags: CGEventFlags = []
@@ -116,17 +170,7 @@ public struct KeyChord: Sendable {
         guard !keyPart.isEmpty else {
             throw ComputerError.invalidArguments("key is required")
         }
-        var modifiers: KeyModifiers = []
-        for part in modifierParts {
-            switch part.lowercased() {
-            case "command", "cmd", "super", "meta": modifiers.insert(.command)
-            case "shift": modifiers.insert(.shift)
-            case "option", "alt": modifiers.insert(.option)
-            case "control", "ctrl": modifiers.insert(.control)
-            case "fn", "function": modifiers.insert(.function)
-            default: throw ComputerError.invalidArguments("unsupported key modifier \(part)")
-            }
-        }
+        var modifiers = try KeyModifiers.parse(modifierParts)
         if keyPart.count == 1, keyPart != keyPart.lowercased() {
             modifiers.insert(.shift)
         }
