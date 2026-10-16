@@ -646,6 +646,7 @@ export class AppServerClient {
     const appServerArgs = [
       ...command.args,
       "app-server",
+      "--desktop-execution-defaults",
       "--workdir",
       this.workdir,
     ];

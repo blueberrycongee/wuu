@@ -1,6 +1,6 @@
 # Configuration
 
-The desktop settings page does not expose maximum steps or temperature. Manual `agent.max_steps` and `agent.temperature` configuration remains supported in user and project configuration, including existing saved values. To remove an old step limit, delete `agent.max_steps` or set it to `0` in the configuration that defines it. To restore automatic model/provider temperature, delete `agent.temperature` or set it to `0`. Check project overlays as well as user configuration: a project value can override the user value. Without overrides, execution uses unlimited steps and automatic temperature.
+The desktop settings page does not expose maximum steps or temperature. Built-in desktop conversations, including resumed conversations and delegated workers, use unlimited steps and automatic model/provider temperature. Desktop execution ignores saved `agent.max_steps` and `agent.temperature` values in both user configuration and project overlays without rewriting those files. CLI execution and explicit automation configuration continue to honor these values; omit them or set them to `0` for unlimited steps and automatic temperature. External engines retain their own execution settings.
 
 Wuu keeps model connections and execution choices in user configuration, while projects can supply additional behavior. Start with `wuu init` for CLI use or desktop onboarding, then edit only the settings you need. Wuu rejects unknown configuration fields rather than silently ignoring typos.
 

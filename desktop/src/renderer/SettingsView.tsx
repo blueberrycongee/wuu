@@ -1149,7 +1149,6 @@ function SettingsRuntimePage({
         <SettingsGroup>
           <SettingsRow
             title={t("settings.providerContextLimit")}
-            hideDescriptionWhenNarrow={!providerContextWindowCurrent}
             description={`${providerContextWindowSource}${
               providerContextWindowCurrent ? `；${t("settings.currentTokenLimit", { count: providerContextWindowCurrent })}` : ""
             }`}

@@ -2117,6 +2117,7 @@ func runAppServer(args []string) error {
 	instanceID := fs.String("instance-id", "", "cloud runtime instance identity")
 	noTools := fs.Bool("no-tools", false, "disable local tools")
 	safeMode := fs.Bool("safe-mode", false, "start without activating plugins")
+	desktopExecutionDefaults := fs.Bool("desktop-execution-defaults", false, "use unlimited steps and automatic temperature for desktop conversations")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2132,11 +2133,12 @@ func runAppServer(args []string) error {
 		enginecatalog.InstallUserPath()
 	}
 	rt, err := wuusdk.New(wuusdk.Options{
-		WorkDir:               *workdir,
-		WorkspaceID:           *workspaceID,
-		HomeDir:               os.Getenv("HOME"),
-		ConfigPath:            *configFile,
-		CreateConfigIfMissing: strings.TrimSpace(*configFile) == "",
+		WorkDir:                  *workdir,
+		WorkspaceID:              *workspaceID,
+		HomeDir:                  os.Getenv("HOME"),
+		ConfigPath:               *configFile,
+		CreateConfigIfMissing:    strings.TrimSpace(*configFile) == "",
+		DesktopExecutionDefaults: *desktopExecutionDefaults,
 		Host: wuusdk.Host{
 			Kind:       wuusdk.HostKind(host.Kind),
 			InstanceID: host.InstanceID,

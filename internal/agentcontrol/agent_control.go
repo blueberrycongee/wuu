@@ -59,6 +59,8 @@ type ParticipantStore interface {
 
 // AgentControl owns the orchestration runtime for one wuu session.
 type AgentControl struct {
+	useCurrentTemperatureOnRestore bool
+
 	manager       *subagent.Manager
 	workspaceMu   sync.RWMutex
 	worktrees     *worktree.Manager // nil when workspace is not a git repo
@@ -235,15 +237,18 @@ type Config struct {
 	// worker runners so worker-produced native state carries its provider
 	// of origin, and it seeds the worker-provider identity used by
 	// model-pin comparisons.
-	ProviderName                   string
-	DefaultModel                   string
-	DefaultEffort                  string
-	DefaultOptions                 map[string]any
-	DefaultContextWindow           int
-	DefaultMaxInputTokens          int
-	DefaultOutputReserveTokens     int
-	DefaultCompactThresholdTokens  int
-	DefaultTemperature             float64
+	ProviderName                  string
+	DefaultModel                  string
+	DefaultEffort                 string
+	DefaultOptions                map[string]any
+	DefaultContextWindow          int
+	DefaultMaxInputTokens         int
+	DefaultOutputReserveTokens    int
+	DefaultCompactThresholdTokens int
+	DefaultTemperature            float64
+	// UseCurrentTemperatureOnRestore lets a host retire saved sampling overrides
+	// without changing a worker's pinned provider, model, or other runtime options.
+	UseCurrentTemperatureOnRestore bool
 	DefaultCompactThresholdPct     float64
 	DefaultCompactKeepRecentTokens int
 	DefaultDisableAutoCompact      bool
@@ -326,6 +331,8 @@ func New(cfg Config) (*AgentControl, error) {
 		harnessDir = filepath.Join(filepath.Dir(cfg.ThreadDir), "harness")
 	}
 	c := &AgentControl{
+		useCurrentTemperatureOnRestore: cfg.UseCurrentTemperatureOnRestore,
+
 		manager:                  mgr,
 		workerProviderName:       strings.TrimSpace(cfg.ProviderName),
 		worktrees:                wt,
@@ -4745,8 +4752,9 @@ func (c *AgentControl) rehydrateAgent(id string) (*subagent.SubAgent, error) {
 	var modelOverride string
 	if run.Runtime != nil {
 		// The snapshot was started with an aliased/default runtime. Rebuild
-		// only the client for the persisted provider; the rest of the runtime
-		// must stay exactly as it was at first run. If the persisted provider
+		// only the client for the persisted provider; model and provider options
+		// stay pinned. A host may retire the saved temperature override below.
+		// If the persisted provider
 		// is non-empty, a missing/failing resolver must fail explicitly rather
 		// than routing through the current default client, which would violate
 		// the frozen runtime provenance. An empty persisted provider safely
@@ -4769,6 +4777,9 @@ func (c *AgentControl) rehydrateAgent(id string) (*subagent.SubAgent, error) {
 			providerOverride = provider
 		}
 		cloned := run.Runtime.Clone()
+		if c.useCurrentTemperatureOnRestore {
+			cloned.Temperature = c.manager.DefaultWorkerRuntime().Temperature
+		}
 		runtime = &cloned
 		runtime.Client = clientOverride
 	} else {

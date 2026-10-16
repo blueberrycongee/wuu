@@ -64,6 +64,9 @@ type Options struct {
 	AgentProfile string
 	// MaxTurns overrides the agent step limit. Zero keeps the configured value.
 	MaxTurns int
+	// DesktopExecutionDefaults uses unlimited steps and automatic temperature
+	// for desktop conversations, ignoring persisted overrides without rewriting them.
+	DesktopExecutionDefaults bool
 	// Effort and Variant override model reasoning controls.
 	Effort  string
 	Variant string
@@ -147,19 +150,20 @@ func New(opts Options) (*Runtime, error) {
 	}
 
 	core, err := runtime.NewSession(runtime.Options{
-		RootDir:                rootDir,
-		Host:                   host,
-		WorkspaceID:            strings.TrimSpace(opts.WorkspaceID),
-		HomeDir:                homeDir,
-		ConfigPath:             configPath,
-		ConfigLoadMode:         configLoadMode,
-		Config:                 cfg,
-		ProviderName:           strings.TrimSpace(opts.Provider),
-		ModelOverride:          strings.TrimSpace(opts.Model),
-		PermissionModeExplicit: strings.TrimSpace(opts.PermissionMode) != "",
-		NoTools:                opts.NoTools,
-		NonInteractive:         opts.NonInteractive,
-		SafeMode:               opts.SafeMode,
+		RootDir:                  rootDir,
+		Host:                     host,
+		WorkspaceID:              strings.TrimSpace(opts.WorkspaceID),
+		HomeDir:                  homeDir,
+		ConfigPath:               configPath,
+		ConfigLoadMode:           configLoadMode,
+		DesktopExecutionDefaults: opts.DesktopExecutionDefaults,
+		Config:                   cfg,
+		ProviderName:             strings.TrimSpace(opts.Provider),
+		ModelOverride:            strings.TrimSpace(opts.Model),
+		PermissionModeExplicit:   strings.TrimSpace(opts.PermissionMode) != "",
+		NoTools:                  opts.NoTools,
+		NonInteractive:           opts.NonInteractive,
+		SafeMode:                 opts.SafeMode,
 	})
 	if err != nil {
 		return nil, err

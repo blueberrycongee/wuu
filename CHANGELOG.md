@@ -23,9 +23,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- Hide optional built-in agent setting explanations in narrow columns while retaining current context limits and errors.
+- Hide optional built-in agent setting explanations in narrow columns while retaining context-limit status, warnings, and errors.
 
-- Remove maximum-step and temperature controls from desktop settings. Manual configuration remains supported, including existing saved values; unset values use unlimited steps and automatic temperature.
+- Remove maximum-step and temperature controls from desktop settings. Built-in desktop conversations use unlimited steps and automatic temperature, including when old user/project settings exist. CLI and explicit automation settings remain supported without rewriting saved configuration.
 
 - Show the current inherited font in the default body-font option, updating it with the interface font while preserving saved font choices.
 
