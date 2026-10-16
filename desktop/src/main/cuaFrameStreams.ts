@@ -6,12 +6,13 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 export type CUANativePiPEvent = {
-  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry" | "gone" | "expand" | "promote" | "shown" | "completion_expired";
+  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry" | "gone" | "expand" | "promote" | "shown" | "completion_expired" | "retry";
   x?: number;
   y?: number;
   width?: number;
   height?: number;
   status?: "healthy" | "idle" | "blank" | "suspended" | "stopped" | "error";
+  reason?: "target_hidden";
   message?: string;
 };
 

@@ -294,7 +294,9 @@
 
 /* The choices scroll under the title when they outgrow the frame, and the
  * edge fade says when there are more. The inline bleed keeps row hover surfaces and
- * focus rings inside the scroller while the text stays on the column edge. */
+ * focus rings inside the scroller while the text stays on the column edge.
+ * Keep entrance animations off this scroll owner: their animation shorthand
+ * would replace the shared scroll-fade animations and reset their timelines. */
 .onboarding-body {
   display: flex;
   min-height: 0;
@@ -306,11 +308,9 @@
   padding: var(--space-1) var(--space-2);
 }
 
-/* The choices enter as one block: rows sliding inside the scroller would
- * leave Chromium with stale scrollable overflow once they settle. */
-.onboarding-body {
-  --enter-y: 8px;
-  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
+.onboarding-body[data-scroll-fade-fitting] {
+  animation: none;
+  mask-image: none;
 }
 
 .onboarding-presets {

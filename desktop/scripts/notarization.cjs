@@ -9,11 +9,11 @@ function isTransientNetworkError(error) {
   return error.code === "ETIMEDOUT" || /NSURLErrorDomain|ECONNRESET|ENETUNREACH|EAI_AGAIN|timed out|network|offline|connection|\b50[234]\b|\b429\b/i.test(diagnostic);
 }
 
-async function stapleArtifact(artifact, { run = execFileSync, sleep = setTimeout } = {}) {
+async function runStapler(action, artifact, { run = execFileSync, sleep = setTimeout } = {}) {
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const output = run("xcrun", ["stapler", "staple", artifact], { encoding: "utf8", timeout: 60_000 });
+      const output = run("xcrun", ["stapler", action, artifact], { encoding: "utf8", timeout: 60_000 });
       if (output) console.log(output.trimEnd());
       return;
     } catch (error) {
@@ -22,11 +22,19 @@ async function stapleArtifact(artifact, { run = execFileSync, sleep = setTimeout
         if (error.stderr) process.stderr.write(error.stderr);
         throw error;
       }
-      // Retrieve the existing accepted ticket again; never resubmit the archive.
-      console.warn(`Ticket download interrupted; retry ${attempt}/${maxAttempts - 1} for ${artifact}`);
+      // Both stapling and validation query CloudKit; retry without resubmitting the archive.
+      console.warn(`Ticket ${action} interrupted; retry ${attempt}/${maxAttempts - 1} for ${artifact}`);
       await sleep(30_000);
     }
   }
+}
+
+function stapleArtifact(artifact, options) {
+  return runStapler("staple", artifact, options);
+}
+
+function validateArtifact(artifact, options) {
+  return runStapler("validate", artifact, options);
 }
 
 async function notarizeArchive(archive, receiptPath, {
@@ -87,4 +95,4 @@ async function notarizeArchive(archive, receiptPath, {
   throw new Error(`Notarization waiting limit reached for ${receipt.id}; Apple may still be processing`);
 }
 
-module.exports = { notarizeArchive, stapleArtifact };
+module.exports = { notarizeArchive, stapleArtifact, validateArtifact };

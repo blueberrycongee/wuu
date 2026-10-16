@@ -6,7 +6,7 @@
 
 当前发布流程构建 Apple 芯片版本。安装前，请查看 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases) 中对应版本的附件和说明。
 
-1. 下载 `wuu-<version>-mac-arm64.dmg` 或 `wuu-<version>-mac-arm64.zip`。
+1. 下载 `wuu-mac-arm64.dmg` 或 `wuu-mac-arm64.zip`。
 2. 将 `wuu.app` 移入 `/Applications`，从那里打开。
 3. 按[首次设置](index.md)选择执行引擎并连接模型服务。
 
@@ -19,6 +19,8 @@ xattr -dr com.apple.quarantine /Applications/wuu.app
 ```
 
 ad-hoc 签名不能证明发布者身份，也不能保证更新后保留 macOS 权限。
+
+下载文件名不再包含版本号；应用和发布说明仍保留版本，自动更新通过版本元数据和压缩包校验值识别更新。旧版本的下载文件名可能仍带版本号。
 
 ## 更新应用
 

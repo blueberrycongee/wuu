@@ -3,7 +3,9 @@
 远程控制通过 Relay 将已配对客户端连接到 Wuu Host。Host 运行 Agent 并访问工作区，
 Relay 转发端到端加密的 app-server 连接。配对授予的是 Host 控制权，不只是只读查看权限。
 
-桌面的「设置 → 手机访问」可以直接配对原生 iOS App，无需账号。App 目前需要从
+手机配对目前是开发预览：用 `npm --prefix desktop run dev:remote` 启动桌面，
+可在「设置 → 手机访问」中直接配对原生 iOS App，无需账号。发布验收完成前，
+正式构建暂不展示手机访问入口。App 目前需要从
 [原生客户端项目](../../../clients/native/README.md)构建，尚未提供公开 App Store 分发。
 桌面账号登录仍仅在开发模式开放。CLI 构建方法见[开发指南](../project/development.md)。
 

@@ -241,14 +241,14 @@ describe("SettingsView shell", () => {
     expect(container.querySelector('[data-testid="settings-pet"]')).toBeNull();
   });
 
-  it("exposes phone access on a native host", async () => {
+  it("hides phone access without development opt-in", async () => {
     installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "today" } });
     window.wuu.getRemoteControlSnapshot = vi.fn().mockResolvedValue({ status: null, host_running: false, pair_uri: null });
     window.wuu.onRemoteControlEvent = vi.fn(() => () => {});
     renderSettings({ initialized: baseInitialized(), initialPage: "remote" });
     await act(async () => { await Promise.resolve(); });
-    expect(container.querySelector('[data-testid="settings-remote-page"]')).not.toBeNull();
-    expect(window.wuu.getRemoteControlSnapshot).toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="settings-remote-page"]')).toBeNull();
+    expect(window.wuu.getRemoteControlSnapshot).not.toHaveBeenCalled();
   });
 
   it.each([false, true])("exposes the sidebar state and invokes the toggle action (collapsed=%s)", (sidebarCollapsed) => {

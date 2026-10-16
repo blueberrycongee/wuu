@@ -292,7 +292,7 @@ describe("BrowserPiPSurface", () => {
   beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] }); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it("waits for a foreground host before showing and preserves an existing preview through focus changes", () => {
+  it("starts with an unfocused visible host and follows host visibility without taking focus", () => {
     let visible = false;
     let minimized = false;
     let focused = false;
@@ -317,8 +317,8 @@ describe("BrowserPiPSurface", () => {
     parent.emit("show");
     win.emit("ready-to-show");
     surface.setVisible(true);
-    expect(show).not.toHaveBeenCalled();
-    expect(host.mounts).toHaveLength(0);
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(host.mounts).toHaveLength(1);
 
     focused = true;
     parent.emit("focus");
@@ -341,7 +341,7 @@ describe("BrowserPiPSurface", () => {
     expect(win.isVisible()).toBe(false);
     visible = true;
     parent.emit("show");
-    expect(win.isVisible()).toBe(false);
+    expect(win.isVisible()).toBe(true);
     focused = true;
     parent.emit("focus");
     expect(win.isVisible()).toBe(true);
@@ -438,8 +438,7 @@ describe("BrowserPiPSurface", () => {
     surface.start();
     surface.setVisible(true);
 
-    // A card appears with its first pixels, never as an empty placeholder:
-    // until then it is transparent and lets clicks through.
+    // Fast captures paint before the delayed loading state is exposed.
     expect(sink.gone).toBe(0);
     expect(win.opacity).toBe(0);
     expect(win.ignoringMouse).toBe(true);

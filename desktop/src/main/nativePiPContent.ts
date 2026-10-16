@@ -15,6 +15,7 @@ export class NativePiPContent implements ActivityPiPContent {
   private ready: Promise<void> | undefined;
   private port: MessagePortMain | undefined;
   private startupTimer: ReturnType<typeof setTimeout> | undefined;
+  private firstFrameTimer: ReturnType<typeof setTimeout> | undefined;
   private inFlight: { frame: CUANativePreviewFrame; epoch: number } | undefined;
   private stopped = false;
   private announced = false;
@@ -25,6 +26,7 @@ export class NativePiPContent implements ActivityPiPContent {
   private lastFrameSequence = 0;
   private captureEpoch = 0;
   private captureUnavailable = false;
+  private captureSuspended = false;
 
   constructor(
     private activity: ActivitySession,
@@ -34,8 +36,8 @@ export class NativePiPContent implements ActivityPiPContent {
 
   start(): void {
     if (this.stopped || this.view) return;
-    // A card shows only once it has pixels, so its first frames are decoded
-    // while the window is still hidden.
+    // Capture and renderer readiness are independent; the surface can expose
+    // loading or recovery while the first frame is still pending.
     const view = new WebContentsView({ webPreferences: {
       contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, preload: this.deps.preload,
       ...appShellWebPreferences(this.deps.isPackaged),
@@ -82,6 +84,7 @@ export class NativePiPContent implements ActivityPiPContent {
       (event) => {
         if (this.stopped || event.event === "ready") return;
         if (event.event === "capture_status") {
+          this.captureSuspended = event.status === "suspended" && event.reason === "target_hidden";
           if (event.status === "blank" || event.status === "suspended" || event.status === "error") {
             this.invalidateFrames();
             this.captureUnavailable = true;
@@ -89,6 +92,7 @@ export class NativePiPContent implements ActivityPiPContent {
             this.context.setMounted(false);
           } else if (event.status === "healthy") this.captureUnavailable = false;
           else if (event.status === "stopped") this.invalidateFrames();
+          this.watchFirstFrame();
         }
         if (event.event === "gone") this.context.onGone();
         else this.context.onEvent(event);
@@ -107,12 +111,14 @@ export class NativePiPContent implements ActivityPiPContent {
     if (this.visible !== visible) this.invalidateFrames();
     this.visible = visible;
     this.preview?.setVisible(visible);
+    this.watchFirstFrame();
   }
 
   setLive(live: boolean): void {
     if (this.live !== live) this.invalidateFrames();
     this.live = live;
     this.preview?.setLive(live && activityPreviewIsLive(this.activity));
+    this.watchFirstFrame();
   }
 
   updateActivity(activity: ActivitySession): void {
@@ -121,6 +127,20 @@ export class NativePiPContent implements ActivityPiPContent {
     this.activity = activity;
     this.preview?.updateActivity(activity);
     this.preview?.setLive(this.live && activityPreviewIsLive(activity));
+    this.watchFirstFrame();
+  }
+
+  private watchFirstFrame(): void {
+    if (this.stopped || this.presented || this.captureSuspended || !this.visible || !this.live || !activityPreviewIsLive(this.activity)) {
+      clearTimeout(this.firstFrameTimer);
+      this.firstFrameTimer = undefined;
+      return;
+    }
+    if (this.firstFrameTimer) return;
+    this.firstFrameTimer = setTimeout(() => {
+      this.firstFrameTimer = undefined;
+      this.context.onFailure("Native preview did not deliver its first frame");
+    }, 10_000);
   }
 
   private invalidateFrames(): void {
@@ -148,6 +168,8 @@ export class NativePiPContent implements ActivityPiPContent {
   stop(onStopped: () => void): void {
     this.stopped = true;
     clearTimeout(this.startupTimer);
+    clearTimeout(this.firstFrameTimer);
+    this.firstFrameTimer = undefined;
     this.port?.close();
     this.port = undefined;
     this.inFlight = undefined;
@@ -203,6 +225,7 @@ export class NativePiPContent implements ActivityPiPContent {
     }
     if (!this.presented) {
       this.presented = true;
+      this.watchFirstFrame();
       this.context.setMounted(true);
     }
     if (!this.announced) {

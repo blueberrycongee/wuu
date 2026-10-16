@@ -161,6 +161,9 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   // Shown transparent and click-through while content renders its first
   // pixels; Chromium decodes nothing for a window that was never shown.
   private preparing = false;
+  private overlayReady = false;
+  private placeholderTimer: ReturnType<typeof setTimeout> | undefined;
+  private showPlaceholder = false;
 
   constructor(private readonly deps: ActivityPiPSurfaceDeps) {
     this.activity = deps.activity;
@@ -195,6 +198,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         }
         if (rawURL === "wuu-pip://close") this.deps.sink.onEvent({ event: "user_close" });
         if (rawURL === "wuu-pip://expand") this.deps.sink.onEvent({ event: "expand" });
+        if (rawURL === "wuu-pip://retry") this.deps.sink.onEvent({ event: "retry" });
       }
     });
     const initialLabel = this.activity.target ?? "";
@@ -206,6 +210,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         if (this.overlay !== overlay || this.win !== win || win.isDestroyed()) return;
         // The hooks only exist after the page loads; replay the state that
         // mount/state pushes before this moment silently dropped.
+        this.overlayReady = true;
         this.syncOverlayMode();
         this.pushActivityState();
         this.setCaptureStatus(this.captureState);
@@ -214,6 +219,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         this.pushCompletion();
         this.hoverPoint = undefined;
         this.syncHover();
+        this.applyVisibility();
       })
       .catch(() => undefined);
     const reportGeometry = (): void => {
@@ -262,7 +268,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
 
   private applyVisibility(): void {
     const win = this.win;
-    if (!win || win.isDestroyed()) return;
+    if (!win || win.isDestroyed() || this.stopped || this.awaitingVisibility) return;
     // Unknown layout (no report yet) still shows, so a card can appear before
     // the first measurement. An explicit empty layout means the column is gone.
     const columnGone = this.screenLayout === null;
@@ -272,15 +278,13 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     const parentHidden = parent && (parent.isDestroyed() || !parent.isVisible() || parent.isMinimized());
     const shown = win.isVisible() && !this.preparing && this.transition?.direction !== "out";
     if (this.visible && !this.completionDismissed && !columnGone && !parentHidden) {
-      // On macOS, showing a native child orders its parent forward even with
-      // showInactive(). Defer a new presentation until the user returns to its
-      // host; an already-visible card stays put, including while it has focus.
-      if (!shown && parent && !parent.isFocused()) return;
+      // The nonactivating panel can start while CUA owns the foreground.
+      // Host visibility, not keyboard focus, determines whether it may appear.
       this.content?.setVisible(true);
       if (this.win !== win || win.isDestroyed()) return;
       if (!shown) {
-        // A card appears with its first pixels; until then nothing is visible.
-        if (!this.mounted) {
+        // Give fast captures time to paint, then expose loading or failure.
+        if (!this.mounted && (!this.overlayReady || !this.showPlaceholder)) {
           this.prepare();
           return;
         }
@@ -294,6 +298,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         this.hoverTimer.unref?.();
       }
     } else {
+      clearTimeout(this.placeholderTimer);
+      this.placeholderTimer = undefined;
       this.stopHoverTracking();
       // A hidden or minimized host takes its children with it immediately, and
       // a card that never appeared has nothing to animate.
@@ -419,6 +425,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
 
   retarget(activity: ActivitySession, sink: ObservationPiPEventSink): void {
     this.awaitingVisibility = true;
+    clearTimeout(this.placeholderTimer);
+    this.placeholderTimer = undefined;
     this.setTurnCompleted(false);
     this.cancelSnap();
     const bounds = this.win?.getBounds();
@@ -475,6 +483,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       return;
     }
     this.stopped = true;
+    clearTimeout(this.placeholderTimer);
+    this.placeholderTimer = undefined;
     if (this.completionTimer) clearTimeout(this.completionTimer);
     this.completionTimer = undefined;
     this.pendingRetarget = false;
@@ -516,6 +526,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         this.mounted = mounted;
         this.syncOverlayMode();
         if (mounted) {
+          clearTimeout(this.placeholderTimer);
+          this.placeholderTimer = undefined;
           this.raiseOverlay();
           this.applyVisibility();
           const interaction = this.pendingInteraction;
@@ -540,6 +552,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.syncOverlayMode();
     if (!content) {
       this.setCaptureStatus({ status: "error", message: "Preview is unavailable" });
+      this.applyVisibility();
       return;
     }
     content.start();
@@ -712,7 +725,15 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
 
   private prepare(): void {
     const win = this.win;
-    if (!win || win.isDestroyed() || this.stopped || win.isVisible()) return;
+    if (!win || win.isDestroyed() || this.stopped) return;
+    if (!this.mounted && !this.showPlaceholder && !this.placeholderTimer) {
+      this.placeholderTimer = setTimeout(() => {
+        this.placeholderTimer = undefined;
+        this.showPlaceholder = true;
+        this.applyVisibility();
+      }, 1_500);
+    }
+    if (win.isVisible()) return;
     this.preparing = true;
     win.setOpacity?.(0);
     win.setIgnoreMouseEvents?.(true);
@@ -1098,6 +1119,12 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private setCaptureStatus(status: Pick<CUANativePiPEvent, "status" | "message">): void {
     this.captureState = status;
     this.execute(`window.wuuPipCapture?.(${JSON.stringify(status)})`);
+    if (status.status === "error" || status.status === "blank" || status.status === "suspended") {
+      this.showPlaceholder = true;
+      clearTimeout(this.placeholderTimer);
+      this.placeholderTimer = undefined;
+      this.applyVisibility();
+    }
   }
 
   private pushActivityState(): void {
