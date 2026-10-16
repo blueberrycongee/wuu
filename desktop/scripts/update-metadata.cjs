@@ -4,7 +4,7 @@ const { join } = require("node:path");
 const yaml = require("js-yaml");
 
 function finalizeUpdateMetadata(root, version) {
-  const expected = ["zip", "dmg"].map((ext) => `wuu-${version}-mac-arm64.${ext}`);
+  const expected = ["zip", "dmg"].map((ext) => `wuu-mac-arm64.${ext}`);
   const manifests = readdirSync(root).filter((name) => name.endsWith("-mac.yml"));
   if (!manifests.length) throw new Error("Missing macOS update metadata");
   for (const name of manifests) {

@@ -118,8 +118,8 @@ jobs:
             exit 1
           fi
 
-          hdiutil verify release/wuu-*-mac-arm64.dmg
-          unzip -t release/wuu-*-mac-arm64.zip >/tmp/wuu-desktop-zip-test.txt
+          hdiutil verify release/wuu-mac-arm64.dmg
+          unzip -t release/wuu-mac-arm64.zip >/tmp/wuu-desktop-zip-test.txt
 
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@v4
@@ -178,8 +178,8 @@ jobs:
           cat >> release-notes.md <<'EOF'
           This release contains the macOS arm64 desktop app:
 
-          - `wuu-<version>-mac-arm64.dmg`
-          - `wuu-<version>-mac-arm64.zip`
+          - `wuu-mac-arm64.dmg`
+          - `wuu-mac-arm64.zip`
 
           The app includes its own private wuu core. Standalone CLI archives are not published.
 
