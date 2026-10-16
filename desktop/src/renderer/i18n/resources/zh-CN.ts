@@ -1,4 +1,7 @@
 export const zhCN = {
+  "app.expandPopOut": "展开会话窗口",
+  "app.compactPopOut": "紧凑会话窗口",
+  "app.resizePopOutFailed": "无法调整会话窗口大小",
   "desktopUpdate.available": "Wuu {version} 已可用，点击下载",
   "desktopUpdate.downloading": "正在下载更新 · {percent}%",
   "desktopUpdate.ready": "Wuu {version} 已下载，点击重启安装",

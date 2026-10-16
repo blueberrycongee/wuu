@@ -2,6 +2,12 @@
 
 A conversation keeps messages, tool activity, and results together. Continue the same conversation for follow-up work; create a new one for an unrelated task or fork an earlier point to explore another approach.
 
+## Compact conversation windows
+
+Open a conversation in its own window using the sidebar's **Open in new window** action. In that window, select **Compact conversation window** in the title bar for a smaller workspace, then **Expand conversation window** to restore its previous size and position. The same conversation, running reply, and unsent input stay in place. If the original display is no longer available, the expanded window stays within an available display.
+
+Compact mode belongs to the current window and survives a renderer reload, but is not saved after closing the window. Exit native full screen before switching sizes. This does not add a global shortcut or change whether the window stays above other apps.
+
 ## Start and organize conversations
 
 Select a workspace, then start a conversation. Click the title in the conversation title bar to rename it. The name is saved immediately for an existing conversation, and a new conversation keeps it when the first message creates the session. The sidebar menu still provides rename, pin, and archive. An archived conversation is hidden from the normal list and can be restored through **Settings → Archive**.

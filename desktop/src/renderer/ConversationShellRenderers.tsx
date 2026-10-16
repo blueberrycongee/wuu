@@ -11,6 +11,7 @@ import {
   type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
+  type ReactNode,
 } from "react";
 import {
   ArrowLeft,
@@ -521,6 +522,7 @@ export function ConversationTitleContent({
 }
 
 export type ConversationTitleActionsProps = {
+  children?: ReactNode;
   state: AppState;
   /** A primary plugin page covers the conversation and its environment panel. */
   pluginPageVisible?: boolean;
@@ -533,6 +535,7 @@ export type ConversationTitleActionsProps = {
 };
 
 export function ConversationTitleActions({
+  children,
   state,
   pluginPageVisible,
   environmentToggleRef,
@@ -567,6 +570,7 @@ export function ConversationTitleActions({
   const rightPanelLabel = t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar");
   return (
     <div className="title-actions">
+      {children}
       {management}
       {!ENABLE_ENVIRONMENT_PANEL || pluginPageVisible ? null : (
         <Tooltip content={environmentLabel} side="bottom">

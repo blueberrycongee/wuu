@@ -1,3 +1,4 @@
+import { Maximize2, Minimize2 } from "./WuuIcons";
 import { useAppContextDraftTarget } from "./AppContextCapture";
 import { readComposerDraftRecovery, sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { validPdfSelectionReference } from "./PdfSelection";
@@ -461,6 +462,9 @@ export function App(): JSX.Element {
   const { locale, t } = useI18n();
   const [popOutInit] = useState<PopOutInitResult | null>(() => readPopOutInit());
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
+  const [popOutCompact, setPopOutCompact] = useState(popOutInit?.compact ?? false);
+  const [popOutResizing, setPopOutResizing] = useState(false);
+  const popOutResizePending = useRef(false);
   const [recoveredDrafts] = useState(readComposerDraftRecovery);
   const [state, setState] = useState<AppState>(() => ({
     ...initialState,
@@ -5726,7 +5730,33 @@ export function App(): JSX.Element {
             rightPanelOpen={rightPanelOpen}
             onToggleRightPanel={toggleRightPanel}
             showRightPanelToggle={false}
-          />
+          >
+            {poppedOutMode && window.wuu.setPopOutCompact ? (
+              <button
+                type="button"
+                className="icon-button pop-out-size-toggle"
+                aria-label={t(popOutCompact ? "app.expandPopOut" : "app.compactPopOut")}
+                title={t(popOutCompact ? "app.expandPopOut" : "app.compactPopOut")}
+                aria-pressed={popOutCompact}
+                disabled={popOutResizing}
+                onClick={async () => {
+                  if (popOutResizePending.current) return;
+                  popOutResizePending.current = true;
+                  setPopOutResizing(true);
+                  try {
+                    setPopOutCompact(await window.wuu.setPopOutCompact!(!popOutCompact));
+                  } catch (error) {
+                    showErrorToast(error, t("app.resizePopOutFailed"));
+                  } finally {
+                    popOutResizePending.current = false;
+                    setPopOutResizing(false);
+                  }
+                }}
+              >
+                {popOutCompact ? <Maximize2 /> : <Minimize2 />}
+              </button>
+            ) : null}
+          </ConversationTitleActions>
         </header>
         <ConversationSidePanels
           state={state}

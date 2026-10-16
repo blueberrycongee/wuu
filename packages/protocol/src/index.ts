@@ -3294,6 +3294,8 @@ export type WuuDesktopApi = {
    * routed by that window identity.
    */
   popOutInit: () => PopOutInitResult;
+  /** Resize this pop-out in place; other window roles cannot use this channel. */
+  setPopOutCompact?: (compact: boolean) => Promise<boolean>;
   // Side-thread IPC is keyed by the owning main thread.
   // Non-Electron hosts may omit these optional methods.
   openSideThread?: (
@@ -3373,6 +3375,8 @@ export type WuuDesktopApi = {
  * it carries identity, not conversation data.
  */
 export type PopOutInitResult = {
+  /** Window-local presentation retained across renderer reloads. */
+  compact?: boolean;
   /** Window kind, or null when this is the main window. */
   kind: "thread" | "draft" | null;
   /** The popped-out thread id, or null when this is the main window. */

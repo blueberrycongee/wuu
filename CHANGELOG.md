@@ -8,6 +8,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Switch popped-out conversations to a compact window and back without replacing the conversation or losing unsent input.
+
 ## [2026.10.16] - 2026-10-16
 
 ### Contributors

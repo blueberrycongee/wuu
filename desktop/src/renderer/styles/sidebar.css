@@ -2742,3 +2742,8 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
 .sidebar-hover-card-fact[data-tone="warning"] .sidebar-hover-card-fact-icon {
   color: var(--warning);
 }
+
+.app-shell.popped-out-shell .pop-out-size-toggle {
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}

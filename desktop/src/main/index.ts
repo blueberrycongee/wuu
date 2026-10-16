@@ -1,3 +1,4 @@
+import { PopOutCompactMode } from "./popOutCompactMode";
 import { AppContextCapture } from "./appContextCapture";
 import { SystemPermissions } from "./systemPermissions";
 import { createBrowserView } from "./browserView";
@@ -1076,6 +1077,8 @@ type PopOutWindowParams =
       sourceWindow?: BrowserWindow | null;
     };
 
+const popOutCompactMode = new PopOutCompactMode();
+
 function createPopOutWindow(params: PopOutWindowParams): BrowserWindow {
   // Plan §2.2 #1 (vs Reviewer S1): cursor position is read by main
   // process via `screen.getCursorScreenPoint()` so the preload bridge
@@ -1483,6 +1486,14 @@ app.whenReady().then(async () => {
       return { windowID: win.webContents.id };
     },
   );
+  ipcMain.handle("wuu:pop-out-set-compact", (event, compact: boolean) => {
+    const win = windowRegistry.windowForID(event.sender.id);
+    if (!win || win.isDestroyed() || windowRegistry.roleForWindow(event.sender.id) !== "popped-out") {
+      throw new Error("Compact mode is only available in a popped-out conversation.");
+    }
+    if (typeof compact !== "boolean") throw new Error("compact must be a boolean");
+    return popOutCompactMode.set(win, compact, (bounds) => screen.getDisplayMatching(bounds).workArea);
+  });
   ipcMain.handle(
     "wuu:pop-out-closed",
     (_event, params: { threadID: string }) => {
@@ -1499,12 +1510,14 @@ app.whenReady().then(async () => {
   ipcMain.on(
     "wuu:pop-out-init",
     (event) => {
+      const win = windowRegistry.windowForID(event.sender.id);
       const threadID = windowRegistry.threadForWindow(event.sender.id);
       const context = windowRegistry.runtimeContextForWindow(event.sender.id);
       event.returnValue = {
         kind: context ? (threadID ? "thread" : "draft") : null,
         threadID: threadID ?? null,
         context: context ?? null,
+        compact: win ? popOutCompactMode.isCompact(win) : false,
       } satisfies PopOutInitResult;
     },
   );

@@ -581,6 +581,7 @@ const api: WuuDesktopApi = {
   },
   popOutSession: (params) =>
     ipcRenderer.invoke("wuu:pop-out-session", params),
+  setPopOutCompact: (compact) => ipcRenderer.invoke("wuu:pop-out-set-compact", compact),
   popOutClosed: (params) =>
     ipcRenderer.invoke("wuu:pop-out-closed", params),
   // Requests are keyed by the owning main thread. The main process derives
