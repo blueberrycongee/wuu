@@ -251,6 +251,41 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
 
+      - name: Capture sidebar surface review
+        # Before/after review evidence is scoped to this visual-change branch.
+        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' && github.head_ref == 'fix/sidebar-selection-insets' }}
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="${{ runner.temp }}/wuu-sidebar-surface-evidence"
+          mkdir -p "$output"
+          git rev-parse HEAD > "$output/source-commit.txt"
+          (cd desktop && node_modules/.bin/vite --config dev/sidebar-accessories/vite.config.ts) > "$output/vite.log" 2>&1 &
+          vite_pid=$!
+          trap 'kill "$vite_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:5208/dev/sidebar-accessories/ > /dev/null; then break; fi
+            kill -0 "$vite_pid"
+            sleep 0.5
+          done
+          curl --fail --silent http://127.0.0.1:5208/dev/sidebar-accessories/ > /dev/null
+          for variant in before after; do
+            baseline=0
+            if [ "$variant" = before ]; then baseline=1; fi
+            WUU_SIDEBAR_BASELINE="$baseline" WUU_SIDEBAR_OUTPUT="$output/$variant" \
+              xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/dev/sidebar-accessories/capture.cjs 2>&1 | tee "$output/$variant.log"
+          done
+
+      - name: Upload sidebar surface evidence
+        if: ${{ always() && github.head_ref == 'fix/sidebar-selection-insets' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidebar-surface-evidence
+          path: ${{ runner.temp }}/wuu-sidebar-surface-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Verify onboarding scroll-edge fades
         if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
         timeout-minutes: 3

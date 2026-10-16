@@ -3,7 +3,9 @@
 const { app, BrowserWindow } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
-const output = path.resolve(__dirname, "../../../artifacts/sidebar-accessories");
+const output = process.env.WUU_SIDEBAR_OUTPUT || path.resolve(__dirname, "../../../artifacts/sidebar-accessories");
+// Review the sole visual delta against the prior row inset in the same renderer.
+const baseline = process.env.WUU_SIDEBAR_BASELINE === "1";
 fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
 
@@ -52,7 +54,7 @@ app.whenReady().then(async () => {
   const errors = [];
   win.webContents.on("console-message", event => { if (event.level === "error") { errors.push(event.message); console.error(event.message); } });
   const report = {};
-  for (const theme of ["light", "dark"]) for (const size of [14, 20]) {
+  for (const theme of ["light", "dark"]) for (const size of [15, 20]) {
     const name = `${theme}-${size}`;
     win.setContentSize(size === 20 ? 900 : 1100, 960);
     await win.loadURL(`http://127.0.0.1:5208/dev/sidebar-accessories/?theme=${theme}&size=${size}&width=${size === 20 ? 260 : 296}`);
@@ -64,6 +66,7 @@ app.whenReady().then(async () => {
         requestAnimationFrame(ready);
       } ready();
     })`);
+    if (baseline) await win.webContents.insertCSS(".sidebar-content { --sidebar-content-pad-x: var(--space-2); }");
     // Settle section transitions before measuring; no live application is touched.
     await new Promise(resolve => setTimeout(resolve, 350));
     report[name] = { idle: await win.webContents.executeJavaScript(`(${measure})()`) };
@@ -80,6 +83,7 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(`document.querySelector('.thread-row:has(.thread-row-fork-icon) .thread-row-action').focus()`);
     await new Promise(resolve => setTimeout(resolve, 350));
     report[name].focus = await win.webContents.executeJavaScript(`(${measure})()`);
+    fs.writeFileSync(path.join(output, `${name}-focus.png`), (await win.webContents.capturePage()).toPNG());
     console.log(`captured ${name}`);
   }
   await win.loadURL("http://127.0.0.1:5208/dev/sidebar-accessories/?empty&size=20");

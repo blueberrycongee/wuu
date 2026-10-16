@@ -318,9 +318,9 @@
 }
 
 .sidebar-content {
-  /* Rows are inset from the rail so their selection surface floats; the row
-   * padding takes up the rest, putting the leading glyph on the pane inset. */
-  --sidebar-content-pad-x: var(--space-2);
+  /* Give row surfaces more breathing room at the rail edges. Compensating
+   * inner padding keeps labels, glyphs, and trailing actions on their axes. */
+  --sidebar-content-pad-x: var(--space-3);
   --sidebar-row-pad-x: calc(var(--pane-inset) - var(--sidebar-content-pad-x));
   --sidebar-label-weight: 400;
   --sidebar-label-size: var(--font-ui);
