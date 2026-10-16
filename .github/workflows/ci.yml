@@ -447,6 +447,31 @@ jobs:
         id: build-fixture-core
         run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
 
+      - name: Validate shareable conversation corpus
+        run: npm --prefix desktop run test:corpus
+
+      - name: Replay conversation corpus through desktop and core
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success' }}
+        timeout-minutes: 12
+        shell: bash
+        env:
+          WUU_CORPUS_SKIP_BUILD: '1'
+          WUU_TOUR_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_TOUR_OUTPUT: ${{ runner.temp }}/wuu-conversation-corpus
+        run: |
+          mkdir -p "$WUU_TOUR_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum npm --prefix desktop run test:e2e:conversation-corpus -- --no-sandbox 2>&1 | tee "$WUU_TOUR_OUTPUT/run.log"
+
+      - name: Upload conversation corpus acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-corpus-evidence
+          path: ${{ runner.temp }}/wuu-conversation-corpus/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Verify incoming session cards and split drafts
         if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
         timeout-minutes: 4

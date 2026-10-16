@@ -29,14 +29,15 @@ const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow } = require('electron');
 
+const corpusMode = process.env.WUU_TOUR_CORPUS === '1';
 const desktop = path.resolve(__dirname, '..');
-const output = path.resolve(process.env.WUU_TOUR_OUTPUT || path.join(desktop, '../artifacts/ui-tour-e2e'));
+const output = path.resolve(process.env.WUU_TOUR_OUTPUT || path.join(desktop, corpusMode ? '../artifacts/conversation-corpus' : '../artifacts/ui-tour-e2e'));
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-ui-tour-'));
 const home = path.join(fixture, 'wuu-home');
 const userHome = path.join(fixture, 'user-home');
 const projects = path.join(fixture, 'projects');
 for (const dir of [home, userHome, projects]) fs.mkdirSync(dir);
-fs.rmSync(output, { recursive: true, force: true });
+if (!corpusMode) fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
 app.setPath('userData', path.join(fixture, 'profile'));
 process.env.WUU_HOME = home;
@@ -59,7 +60,7 @@ if (process.env.WUU_E2E_HIDDEN === 'true') {
 
 const only = process.env.WUU_TOUR_ONLY ? process.env.WUU_TOUR_ONLY.split(',') : null;
 const matrix = (process.env.WUU_TOUR_MATRIX
-  || 'light:14.5:1280,dark:14.5:1280,light:20:1280,light:14.5:720')
+  || (corpusMode ? 'light:15:1280,dark:15:1280,light:20:720,dark:20:720' : 'light:14.5:1280,dark:14.5:1280,light:20:1280,light:14.5:720'))
   .split(',').map(item => {
     const [theme, size = '14.5', width = '1280'] = item.split(':');
     return { theme, size: Number(size), width: Number(width) };
@@ -127,6 +128,7 @@ const scenarios = {
   unauthorized: [{ status: 401 }],
   short: [{ text: '好的，已经处理完成。' }],
 };
+let corpusTour;
 const holds = new Set();
 const textOf = message => typeof message?.content === 'string' ? message.content : JSON.stringify(message?.content || '');
 function chunk(res, delta, finish) {
@@ -149,7 +151,7 @@ const server = http.createServer((req, res) => {
     const userText = textOf(messages[lastUser]);
     if (!textOf(messages[0]).startsWith('You are wuu, a coding agent')) {
       // Auxiliary requests (conversation titles) get a short plain title.
-      const title = userText.replace(/[\s\S]*?\[[a-z]+\]\s*/, '').replace(/["\n].*$/s, '').slice(0, 22) || '新对话';
+      const title = corpusMode ? (userText.match(/\[sample-\d{2}\]/)?.[0] || 'Corpus') : userText.replace(/[\s\S]*?\[[a-z]+\]\s*/, '').replace(/["\n].*$/s, '').slice(0, 22) || '新对话';
       if (payload.stream) {
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         chunk(res, { role: 'assistant', content: title });
@@ -158,6 +160,10 @@ const server = http.createServer((req, res) => {
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ id: 'tour', object: 'chat.completion', choices: [{ index: 0, message: { role: 'assistant', content: title }, finish_reason: 'stop' }], usage: { prompt_tokens: 20, completion_tokens: 6, total_tokens: 26 } }));
+    }
+    if (corpusMode) {
+      await corpusTour.respond(res, userText.match(/\[(sample-\d{2})\]/)?.[1]);
+      return;
     }
     const name = Object.keys(scenarios).find(key => userText.includes(`[${key}]`)) || 'md';
     const step = messages.slice(lastUser + 1).filter(message => message.role === 'assistant').length;
@@ -511,6 +517,14 @@ async function run() {
   while (!main) await delay(25);
   main.setContentSize(1280, height);
   await waitFor(main, () => document.querySelector('.composer textarea'));
+  if (corpusMode) {
+    write(path.join(repo, 'corpus-tool-result.txt'), 'Example tool result. No original tool arguments or output are replayed.\n');
+    corpusTour = require('./conversation-corpus-tour.cjs').createCorpusTour({
+      output, matrix, evaluate, waitFor, draft, setAppearance, audit, chunk, errors,
+    });
+    await corpusTour.run(main);
+    return;
+  }
 
   // Conversations with every kind of turn, made through the real composer.
   await send(main, '[md] 请把设置页的间距整理一下，并说明改了什么');
