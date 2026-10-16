@@ -1,0 +1,32 @@
+{
+  "suites": [
+    "unit",
+    "selection",
+    "corpus",
+    "layout",
+    "session",
+    "shell"
+  ],
+  "entries": {
+    "desktop/scripts/file-selection-e2e.cjs": "selection",
+    "desktop/scripts/response-selection-e2e.cjs": "selection",
+    "desktop/scripts/artifact-preview-e2e.cjs": "layout",
+    "desktop/scripts/image-layout-e2e.cjs": "layout",
+    "desktop/scripts/resize-live-layout-e2e.cjs": "layout",
+    "desktop/scripts/session-message-e2e.cjs": "session",
+    "desktop/scripts/document-context-e2e.mjs": "session",
+    "desktop/scripts/fast-mode-e2e.cjs": "session",
+    "desktop/scripts/conversation-search-e2e.cjs": "session",
+    "desktop/scripts/conversation-scroll-e2e.cjs": "session",
+    "desktop/scripts/composer-worktree-e2e.cjs": "session",
+    "desktop/scripts/request-lifecycle-e2e.cjs": "session",
+    "desktop/scripts/session-switch-e2e.cjs": "session",
+    "desktop/scripts/sidebar-scroll-fade-e2e.cjs": "shell",
+    "desktop/scripts/composer-inline-e2e.cjs": "shell",
+    "desktop/scripts/app-context-e2e.cjs": "shell",
+    "desktop/scripts/workspace-new-tab-e2e.cjs": "shell",
+    "desktop/scripts/titlebar-rename-e2e.cjs": "shell",
+    "desktop/scripts/subscription-quota-e2e.cjs": "shell",
+    "desktop/scripts/ptc-settings-e2e.cjs": "shell"
+  }
+}

@@ -20,6 +20,7 @@ jobs:
     outputs:
       go: ${{ steps.select.outputs.go }}
       desktop: ${{ steps.select.outputs.desktop }}
+      desktop_suites: ${{ steps.select.outputs.desktop_suites }}
       clients: ${{ steps.select.outputs.clients }}
       native: ${{ steps.select.outputs.native }}
     steps:
@@ -46,6 +47,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
+
+      - name: Verify CI selection contracts
+        run: node --test .github/scripts/select-ci.test.mjs
 
       - name: Check repository metadata
         run: make repository-check
@@ -218,11 +222,15 @@ jobs:
             test "$PROJECT_AGENT_RESULT" = skipped
           fi
 
-  desktop-check:
-    name: Desktop check
+  desktop-suite:
+    name: Desktop / ${{ matrix.suite }}
     needs: changes
     if: needs.changes.outputs.desktop == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJSON(needs.changes.outputs.desktop_suites) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -246,9 +254,11 @@ jobs:
           node -e 'require("./desktop/node_modules/electron")'
 
       - name: Typecheck
+        if: ${{ matrix.suite == 'unit' }}
         run: make check-desktop
 
       - name: Guard development renderer recovery
+        if: ${{ matrix.suite == 'unit' }}
         timeout-minutes: 3
         shell: bash
         run: |
@@ -257,7 +267,7 @@ jobs:
           xvfb-run --auto-servernum npm --prefix desktop run test:renderer-recovery -- --no-sandbox 2>&1 | tee "${{ runner.temp }}/wuu-renderer-recovery-evidence/run.log"
 
       - name: Upload renderer recovery evidence
-        if: always()
+        if: ${{ matrix.suite == 'unit' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: renderer-recovery-evidence
@@ -275,14 +285,14 @@ jobs:
           find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > "${{ runner.temp }}/wuu-initial-renderer.sha256"
 
       - name: Install fonts for multilingual selection captures
-        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        if: ${{ matrix.suite != 'unit' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         run: |
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
 
       - name: Capture sidebar surface review
         # Before/after review evidence is scoped to this visual-change branch.
-        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' && github.head_ref == 'fix/sidebar-selection-insets' }}
+        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success' && github.head_ref == 'fix/sidebar-selection-insets') }}
         timeout-minutes: 3
         shell: bash
         run: |
@@ -322,7 +332,7 @@ jobs:
             xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/sidebar-scroll-fade-e2e.cjs 2>&1 | tee "$output/full.log"
 
       - name: Upload sidebar surface evidence
-        if: ${{ always() && github.head_ref == 'fix/sidebar-selection-insets' }}
+        if: ${{ matrix.suite == 'shell' && (always() && github.head_ref == 'fix/sidebar-selection-insets') }}
         uses: actions/upload-artifact@v4
         with:
           name: sidebar-surface-evidence
@@ -331,7 +341,7 @@ jobs:
           retention-days: 14
 
       - name: Verify onboarding scroll-edge fades
-        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 3
         shell: bash
         env:
@@ -344,7 +354,7 @@ jobs:
           xvfb-run --auto-servernum --server-args='-screen 0 1800x1800x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/sidebar-scroll-fade-e2e.cjs 2>&1 | tee "$WUU_SCROLL_FADE_OUTPUT/run.log"
 
       - name: Upload onboarding scroll evidence
-        if: always()
+        if: ${{ matrix.suite == 'shell' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: onboarding-scroll-evidence
@@ -353,7 +363,7 @@ jobs:
           retention-days: 14
 
       - name: Guard streamed reply settlement layout
-        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        if: ${{ matrix.suite == 'layout' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 4
         shell: bash
         env:
@@ -364,7 +374,7 @@ jobs:
           xvfb-run --auto-servernum npm --prefix desktop run test:e2e:stream-settlement -- --no-sandbox 2>&1 | tee "$WUU_SETTLEMENT_OUTPUT/run.log"
 
       - name: Upload streamed reply settlement evidence
-        if: always()
+        if: ${{ matrix.suite == 'layout' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: stream-settlement-evidence
@@ -373,7 +383,7 @@ jobs:
           retention-days: 14
 
       - name: Guard composer inline extension foundation
-        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 3
         shell: bash
         env:
@@ -384,7 +394,7 @@ jobs:
           xvfb-run --auto-servernum --server-args='-screen 0 1600x1200x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-inline-e2e.cjs 2>&1 | tee "$WUU_INLINE_E2E_OUTPUT/run.log"
 
       - name: Upload composer inline extension evidence
-        if: always()
+        if: ${{ matrix.suite == 'shell' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: composer-inline-extension-evidence
@@ -393,7 +403,7 @@ jobs:
           retention-days: 14
 
       - name: Guard disabled app snapshots and system permissions
-        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 3
         shell: bash
         run: |
@@ -402,7 +412,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/app-context-e2e.cjs 2>&1 | tee desktop/out/app-context-e2e/run.log
 
       - name: Upload app snapshot renderer evidence
-        if: always()
+        if: ${{ matrix.suite == 'shell' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: app-snapshot-renderer-evidence
@@ -414,7 +424,7 @@ jobs:
           retention-days: 14
 
       - name: Guard workspace tabs and navigation
-        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 3
         shell: bash
         run: |
@@ -423,7 +433,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/workspace-new-tab-e2e.cjs 2>&1 | tee desktop/out/workspace-new-tab-e2e/run.log
 
       - name: Upload workspace tab evidence
-        if: always()
+        if: ${{ matrix.suite == 'shell' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: workspace-tab-evidence
@@ -435,7 +445,7 @@ jobs:
           retention-days: 14
 
       - name: Guard file selections and side-chat chips
-        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        if: ${{ matrix.suite == 'selection' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 5
         shell: bash
         env:
@@ -447,7 +457,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/file-selection-e2e.cjs 2>&1 | tee "$WUU_E2E_OUTPUT/run.log"
 
       - name: Guard response selections and native comment focus
-        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        if: ${{ matrix.suite == 'selection' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 3
         shell: bash
         env:
@@ -459,7 +469,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/response-selection-e2e.cjs 2>&1 | tee "$WUU_SELECTION_E2E_OUTPUT/run.log"
 
       - name: Upload selection visual evidence
-        if: always()
+        if: ${{ matrix.suite == 'selection' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: selection-visual-evidence
@@ -474,6 +484,7 @@ jobs:
           retention-days: 14
 
       - name: Guard titlebar rename interactions
+        if: ${{ matrix.suite == 'shell' }}
         timeout-minutes: 3
         env:
           WUU_TITLEBAR_OUTPUT: ${{ runner.temp }}/wuu-titlebar-evidence
@@ -483,7 +494,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/titlebar-rename-e2e.cjs 2>&1 | tee "$WUU_TITLEBAR_OUTPUT/run.log"
 
       - name: Upload titlebar rename evidence
-        if: always()
+        if: ${{ matrix.suite == 'shell' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: titlebar-rename-evidence
@@ -495,6 +506,7 @@ jobs:
           retention-days: 14
 
       - name: Guard image inspection aggregation
+        if: ${{ matrix.suite == 'layout' }}
         timeout-minutes: 3
         shell: bash
         env:
@@ -506,7 +518,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/artifact-preview-e2e.cjs 2>&1 | tee "$WUU_ARTIFACT_OUTPUT/run.log"
 
       - name: Upload image inspection evidence
-        if: always()
+        if: ${{ matrix.suite == 'layout' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: image-inspection-evidence
@@ -518,19 +530,22 @@ jobs:
           retention-days: 14
 
       - uses: actions/setup-go@v5
+        if: ${{ matrix.suite != 'selection' && matrix.suite != 'layout' }}
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
       - name: Build desktop fixture core
+        if: ${{ contains(fromJSON('["unit","corpus","session"]'), matrix.suite) }}
         id: build-fixture-core
         run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
 
       - name: Validate shareable conversation corpus
+        if: ${{ matrix.suite == 'corpus' }}
         run: npm --prefix desktop run test:corpus
 
       - name: Replay conversation corpus through desktop and core
-        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success' }}
+        if: ${{ matrix.suite == 'corpus' && (!cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 12
         shell: bash
         env:
@@ -546,7 +561,7 @@ jobs:
             xvfb-run --auto-servernum npm --prefix desktop run test:e2e:conversation-corpus -- --no-sandbox 2>&1 | tee "$WUU_TOUR_OUTPUT/text-only/run.log"
 
       - name: Upload conversation corpus acceptance evidence
-        if: always()
+        if: ${{ matrix.suite == 'corpus' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: conversation-corpus-evidence
@@ -555,7 +570,7 @@ jobs:
           retention-days: 14
 
       - name: Verify incoming session cards and split drafts
-        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success') }}
         timeout-minutes: 4
         shell: bash
         env:
@@ -567,7 +582,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-message-e2e.cjs 2>&1 | tee "$WUU_SESSION_MESSAGE_OUTPUT/process.log"
 
       - name: Upload session card acceptance evidence
-        if: always()
+        if: ${{ matrix.suite == 'session' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: session-message-evidence
@@ -576,7 +591,7 @@ jobs:
           retention-days: 14
 
       - name: Verify PDF context through the desktop and core
-        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 4
         shell: bash
         env:
@@ -589,7 +604,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/document-context-e2e.mjs 2>&1 | tee "$WUU_DOCUMENT_OUTPUT/run.log"
 
       - name: Upload PDF context evidence
-        if: always()
+        if: ${{ matrix.suite == 'session' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: document-context-evidence
@@ -598,10 +613,11 @@ jobs:
           retention-days: 14
 
       - name: Test
+        if: ${{ matrix.suite == 'unit' }}
         run: make test-desktop
 
       - name: Verify compact Fast mode controls
-        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success') }}
         timeout-minutes: 5
         shell: bash
         env:
@@ -613,7 +629,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/fast-mode-e2e.cjs 2>&1 | tee "$WUU_FAST_OUTPUT/run.log"
 
       - name: Verify conversation search navigation
-        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success') }}
         timeout-minutes: 7
         shell: bash
         env:
@@ -625,7 +641,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-search-e2e.cjs 2>&1 | tee "$WUU_SEARCH_OUTPUT/process.log"
 
       - name: Guard conversation history jump
-        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success') }}
         timeout-minutes: 3
         shell: bash
         env:
@@ -637,7 +653,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-scroll-e2e.cjs 2>&1 | tee "$WUU_SCROLL_E2E_OUTPUT/run.log"
 
       - name: Upload conversation history jump evidence
-        if: always()
+        if: ${{ matrix.suite == 'session' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: conversation-history-jump-evidence
@@ -646,7 +662,7 @@ jobs:
           retention-days: 14
 
       - name: Guard submitted query reflow
-        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success') }}
         timeout-minutes: 3
         shell: bash
         env:
@@ -658,7 +674,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/conversation-scroll-e2e.cjs 2>&1 | tee "$WUU_SCROLL_E2E_OUTPUT/run.log"
 
       - name: Upload submitted query reflow evidence
-        if: always()
+        if: ${{ matrix.suite == 'session' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: submission-reflow-evidence
@@ -670,7 +686,7 @@ jobs:
           retention-days: 14
 
       - name: Upload conversation search evidence
-        if: always()
+        if: ${{ matrix.suite == 'session' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: conversation-search-evidence
@@ -679,7 +695,7 @@ jobs:
           retention-days: 14
 
       - name: Upload Fast mode evidence
-        if: always()
+        if: ${{ matrix.suite == 'session' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: fast-mode-evidence
@@ -688,7 +704,7 @@ jobs:
           retention-days: 14
 
       - name: Verify worktree skill selection
-        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success') }}
         timeout-minutes: 5
         shell: bash
         env:
@@ -698,7 +714,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-worktree-e2e.cjs 2>&1 | tee "$WUU_WORKTREE_OUTPUT.log"
 
       - name: Upload worktree skill evidence
-        if: always()
+        if: ${{ matrix.suite == 'session' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: composer-worktree-skill-evidence
@@ -707,6 +723,7 @@ jobs:
           retention-days: 14
 
       - name: Guard request lifecycle
+        if: ${{ matrix.suite == 'session' }}
         timeout-minutes: 5
         shell: bash
         env:
@@ -716,7 +733,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/request-lifecycle-e2e.cjs 2>&1 | tee "$WUU_REQUEST_LIFECYCLE_OUTPUT/run.log"
 
       - name: Upload request lifecycle evidence
-        if: always()
+        if: ${{ matrix.suite == 'session' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: request-lifecycle-evidence
@@ -725,6 +742,7 @@ jobs:
           retention-days: 14
 
       - name: Guard account quota behavior and layout
+        if: ${{ matrix.suite == 'shell' }}
         timeout-minutes: 5
         shell: bash
         env:
@@ -735,7 +753,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/subscription-quota-e2e.cjs 2>&1 | tee "$WUU_QUOTA_OUTPUT/run.log"
 
       - name: Upload account quota evidence
-        if: always()
+        if: ${{ matrix.suite == 'shell' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: subscription-quota-evidence
@@ -744,6 +762,7 @@ jobs:
           retention-days: 14
 
       - name: Guard image layout stability
+        if: ${{ matrix.suite == 'layout' }}
         shell: bash
         env:
           # Keep native windows visible inside Xvfb so rAF checks use display cadence.
@@ -753,7 +772,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/image-layout-e2e.cjs 2>&1 | tee "$WUU_IMAGE_LAYOUT_OUTPUT/run.log"
 
       - name: Upload image layout evidence
-        if: always()
+        if: ${{ matrix.suite == 'layout' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: image-layout-evidence
@@ -766,14 +785,16 @@ jobs:
           retention-days: 14
 
       - name: Check session switch budget ratchet
+        if: ${{ matrix.suite == 'session' }}
         env:
-          PERF_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          PERF_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
         run: |
           node --test desktop/scripts/session-switch-budget.test.cjs
           git fetch --no-tags --depth=1 origin "$PERF_BASE_SHA"
           node desktop/scripts/session-switch-budget.cjs "$PERF_BASE_SHA"
 
       - name: Guard session switch work
+        if: ${{ matrix.suite == 'session' }}
         # Preserve Electron failures through the evidence log pipeline.
         shell: bash
         env:
@@ -785,7 +806,7 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
 
       - name: Upload session switch evidence
-        if: always()
+        if: ${{ matrix.suite == 'session' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: session-switch-evidence
@@ -795,6 +816,7 @@ jobs:
 
 
       - name: Verify programmatic tool settings
+        if: ${{ matrix.suite == 'shell' }}
         shell: bash
         run: |
           mkdir -p desktop/out/e2e/ptc
@@ -805,7 +827,7 @@ jobs:
           cmp desktop/out/e2e/ptc/renderer-before.sha256 desktop/out/e2e/ptc/renderer-after.sha256
 
       - name: Upload programmatic tool settings evidence
-        if: always()
+        if: ${{ matrix.suite == 'shell' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: ptc-settings-evidence
@@ -818,6 +840,7 @@ jobs:
           retention-days: 14
 
       - name: Guard live resize layout
+        if: ${{ matrix.suite == 'layout' }}
         timeout-minutes: 3
         env:
           WUU_RESIZE_OUTPUT: ${{ runner.temp }}/wuu-resize-live-evidence/results.json
@@ -827,13 +850,32 @@ jobs:
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/resize-live-layout-e2e.cjs 2>&1 | tee "$(dirname "$WUU_RESIZE_OUTPUT")/run.log"
 
       - name: Upload live resize evidence
-        if: always()
+        if: ${{ matrix.suite == 'layout' && (always()) }}
         uses: actions/upload-artifact@v4
         with:
           name: resize-live-evidence
           path: ${{ runner.temp }}/wuu-resize-live-evidence
           if-no-files-found: ignore
           retention-days: 14
+
+  desktop-check:
+    name: Desktop check
+    needs: [changes, desktop-suite]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every selected Desktop suite
+        env:
+          SELECTION_RESULT: ${{ needs.changes.result }}
+          DESKTOP_REQUIRED: ${{ needs.changes.outputs.desktop }}
+          SUITES_RESULT: ${{ needs.desktop-suite.result }}
+        run: |
+          test "$SELECTION_RESULT" = success
+          if [ "$DESKTOP_REQUIRED" = true ]; then
+            test "$SUITES_RESULT" = success
+          else
+            test "$SUITES_RESULT" = skipped
+          fi
 
   clients-check:
     name: Clients check
@@ -1074,7 +1116,7 @@ jobs:
               'changes': True,
               'repository-check': os.environ['EVENT'] != 'push',
               'go-check': True,
-              'desktop-check': selected.get('desktop') == 'true',
+              'desktop-check': True,
               'clients-check': selected.get('clients') == 'true',
               'macos-check': selected.get('native') == 'true',
               'windows-check': selected.get('native') == 'true',

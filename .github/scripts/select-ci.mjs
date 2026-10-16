@@ -1,8 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 
+const { suites, entries } = JSON.parse(readFileSync(new URL('./desktop-ci-suites.json', import.meta.url)));
+const desktopSuites = new Set();
+let fullDesktop = false;
 const selected = { go: false, desktop: false, clients: false, native: false };
-const all = () => Object.keys(selected).forEach(key => { selected[key] = true; });
+const all = () => {
+  Object.keys(selected).forEach(key => { selected[key] = true; });
+  fullDesktop = true;
+};
 const event = process.env.GITHUB_EVENT_NAME;
 if (!['pull_request', 'push', 'workflow_dispatch'].includes(event)) {
   throw new Error(`Unsupported CI event: ${event}`);
@@ -25,10 +31,15 @@ if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
       || /^(README(?:\.[^/]+)?\.md|README\.md|CHANGELOG\.md|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|AGENTS\.md)$/.test(path)) continue;
     // Native apps have their own workflow; shared client packages do not.
     if (/^clients\/native\//.test(path)) continue;
-    if (/^desktop\/src\/renderer\//.test(path)) {
+    if (Object.hasOwn(entries, path)) {
+      selected.desktop = true;
+      desktopSuites.add(entries[path]);
+    } else if (/^desktop\/src\/renderer\//.test(path)) {
+      fullDesktop = true;
       // mobile-web imports production renderer modules, styles and assets.
       selected.desktop = selected.clients = true;
     } else if (/^desktop\//.test(path)) {
+      fullDesktop = true;
       // Config, native helpers, scripts, vendored modules and dependencies can
       // affect both Web builds and native packaging.
       selected.desktop = selected.clients = selected.native = true;
@@ -49,6 +60,8 @@ const outputs = {
   desktop: event !== 'push' && selected.desktop,
   clients: event !== 'push' && selected.clients,
   native: selected.native,
+  desktop_suites: JSON.stringify(event !== 'push' && selected.desktop
+    ? suites.filter(suite => fullDesktop || desktopSuites.has(suite)) : []),
 };
 for (const [key, value] of Object.entries(outputs)) {
   const line = `${key}=${value}\n`;
