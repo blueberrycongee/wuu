@@ -172,6 +172,10 @@ app.whenReady().then(async () => {
       await waitFor(() => Boolean(document.querySelector(".onboarding-stage-runtime")));
       console.log("PASS: onboarding fades, fitting content, fixed regions, switches, keyboard focus, and Back/Continue across light/dark, 15/20px, wide/narrow.");
     } else if (process.env.WUU_SIDEBAR_FULL_CAPTURE === "1") {
+      // Linux-hosted preview of macOS chrome, not native Mac acceptance.
+      // The fallback platform stamp follows this preview-only user agent.
+      win.webContents.setUserAgent(win.webContents.getUserAgent().replace(/\([^)]*\)/, "(Macintosh; Intel Mac OS X 10_15_7)"));
+      results.push({ previewChrome: "simulated macOS traffic lights on Linux Electron", position: { x: 18, y: 17 }, diameter: 14 });
       // Full product shell with the existing synthetic IPC bridge; no user data.
       for (const theme of ["light", "dark"]) {
         await win.loadFile(path.join(desktop, "out/renderer/index.html"));
@@ -183,6 +187,18 @@ app.whenReady().then(async () => {
           document.documentElement.style.setProperty("--conversation-message-font-size", "15px");
           window.dispatchEvent(new Event("wuu-content-size-change"));
         }, theme);
+        await evaluate(() => {
+          // Match MAC_TRAFFIC_LIGHT_POSITION and the 48px titlebar in main/index.ts.
+          const lights = document.createElement("div");
+          lights.setAttribute("aria-hidden", "true");
+          Object.assign(lights.style, { position: "fixed", left: "18px", top: "17px", display: "flex", gap: "6px", zIndex: "9999", pointerEvents: "none" });
+          for (const color of ["#ff5f57", "#febc2e", "#28c840"]) {
+            const light = document.createElement("span");
+            Object.assign(light.style, { width: "14px", height: "14px", borderRadius: "50%", background: color, boxShadow: "inset 0 0 0 0.5px #0002" });
+            lights.append(light);
+          }
+          document.body.append(lights);
+        });
         const turn = {
           id: "sidebar-surface-preview", status: "in_progress", started_at: new Date().toISOString(), items_view: "full",
           items: [
