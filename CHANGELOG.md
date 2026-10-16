@@ -22,6 +22,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Show the current inherited font in the default body-font option, updating it with the interface font while preserving saved font choices.
+
 - Use flatter, quieter sidebar selection and hover surfaces with tighter inner padding and softer corners, preserving text, icon, and action alignment.
 
 - Desktop downloads use stable product/platform filenames without a version suffix; app versions and automatic update verification are unchanged.
