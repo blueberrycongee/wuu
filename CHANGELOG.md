@@ -10,6 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Align first-run plugin switches with their icons and names while keeping descriptions below the names.
 - Acknowledge retained agent results when a later user message recovers a failed
   completion, including when the conversation runtime is reused. Paused process
   notifications no longer keep unrelated successful work waiting indefinitely.
@@ -25,6 +26,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Hide optional built-in agent setting explanations in narrow columns while retaining current context limits and errors.
 
 - Remove maximum-step and temperature controls from desktop settings. Manual configuration remains supported, including existing saved values; unset values use unlimited steps and automatic temperature.
+
+- Show the current inherited font in the default body-font option, updating it with the interface font while preserving saved font choices.
 
 - Use flatter, quieter sidebar selection and hover surfaces with tighter inner padding and softer corners, preserving text, icon, and action alignment.
 
