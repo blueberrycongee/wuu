@@ -4,7 +4,7 @@ const { app, BrowserWindow } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const output = process.env.WUU_SIDEBAR_OUTPUT || path.resolve(__dirname, "../../../artifacts/sidebar-accessories");
-// Review the sole visual delta against the prior row inset in the same renderer.
+// Compare the pre-refinement surfaces with the current product renderer.
 const baseline = process.env.WUU_SIDEBAR_BASELINE === "1";
 fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
@@ -71,7 +71,7 @@ app.whenReady().then(async () => {
         requestAnimationFrame(ready);
       } ready();
     })`);
-    if (baseline) await win.webContents.insertCSS(".sidebar-content { --sidebar-content-pad-x: var(--space-2) !important; }");
+    if (baseline) await win.webContents.insertCSS(require("./baseline.cjs"));
     await win.webContents.executeJavaScript(`document.querySelector('.project-section .thread-row-main').click(); document.fonts.ready`);
     // Settle section transitions before measuring; no live application is touched.
     await new Promise(resolve => setTimeout(resolve, 350));
@@ -98,7 +98,7 @@ app.whenReady().then(async () => {
     console.log(`captured ${name}`);
   }
   await win.loadURL("http://127.0.0.1:5208/dev/sidebar-accessories/?empty&size=20");
-  if (baseline) await win.webContents.insertCSS(".sidebar-content { --sidebar-content-pad-x: var(--space-2) !important; }");
+  if (baseline) await win.webContents.insertCSS(require("./baseline.cjs"));
   await win.webContents.executeJavaScript("document.fonts.ready");
   await new Promise(resolve => setTimeout(resolve, 500));
   fs.writeFileSync(path.join(output, "empty.png"), (await win.webContents.capturePage()).toPNG());
