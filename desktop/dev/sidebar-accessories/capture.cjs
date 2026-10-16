@@ -45,11 +45,12 @@ const measure = () => {
     return row.querySelector(".thread-row-fork-icon").getBoundingClientRect().left - end;
   });
   out.focus = document.activeElement?.className;
+  out.keyboardFocusVisible = document.documentElement.dataset.focusModality === "keyboard" && document.activeElement?.matches(":focus-visible");
   return out;
 };
 
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ show: false, width: 1100, height: 960,
+  const win = new BrowserWindow({ show: true, width: 1100, height: 960,
     webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
   const errors = [];
   win.webContents.on("console-message", event => { if (event.level === "error") { errors.push(event.message); console.error(event.message); } });
@@ -67,6 +68,7 @@ app.whenReady().then(async () => {
       } ready();
     })`);
     if (baseline) await win.webContents.insertCSS(".sidebar-content { --sidebar-content-pad-x: var(--space-2); }");
+    await win.webContents.executeJavaScript("document.fonts.ready");
     // Settle section transitions before measuring; no live application is touched.
     await new Promise(resolve => setTimeout(resolve, 350));
     report[name] = { idle: await win.webContents.executeJavaScript(`(${measure})()`) };
@@ -80,13 +82,20 @@ app.whenReady().then(async () => {
     report[name].hover = await win.webContents.executeJavaScript(`(${measure})()`);
     fs.writeFileSync(path.join(output, `${name}-hover.png`), (await win.webContents.capturePage()).toPNG());
     win.webContents.sendInputEvent({ type: "mouseMove", x: 800, y: 10 });
-    await win.webContents.executeJavaScript(`document.querySelector('.thread-row:has(.thread-row-fork-icon) .thread-row-action').focus()`);
+    win.focus();
+    win.webContents.focus();
+    await win.webContents.executeJavaScript(`document.querySelector('.thread-row:has(.thread-row-fork-icon) .thread-row-main').focus()`);
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" });
     await new Promise(resolve => setTimeout(resolve, 350));
     report[name].focus = await win.webContents.executeJavaScript(`(${measure})()`);
+    if (!report[name].focus.keyboardFocusVisible) throw new Error(`${name}: keyboard focus is not visible`);
     fs.writeFileSync(path.join(output, `${name}-focus.png`), (await win.webContents.capturePage()).toPNG());
     console.log(`captured ${name}`);
   }
   await win.loadURL("http://127.0.0.1:5208/dev/sidebar-accessories/?empty&size=20");
+  if (baseline) await win.webContents.insertCSS(".sidebar-content { --sidebar-content-pad-x: var(--space-2); }");
+  await win.webContents.executeJavaScript("document.fonts.ready");
   await new Promise(resolve => setTimeout(resolve, 500));
   fs.writeFileSync(path.join(output, "empty.png"), (await win.webContents.capturePage()).toPNG());
   fs.writeFileSync(path.join(output, "geometry.json"), JSON.stringify({ report, errors }, null, 2));
