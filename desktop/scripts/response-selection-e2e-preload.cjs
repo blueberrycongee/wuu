@@ -40,8 +40,6 @@ contextBridge.exposeInMainWorld("wuu", {
   listGitChanges: async () => ({ is_repo: false, root: cwd, files: [] }),
   listWorkspaceFiles: async () => ({ root: cwd, paths: [], truncated: false }),
   listWorkspaceDirectory: async () => ({ root: cwd, path: "", entries: [], truncated: false }),
-  getRemoteControlSnapshot: async () => ({ status: null, host_enabled: false, host_running: false, pair_uri: null }),
-  onRemoteControlEvent: () => () => {},
   listMCPServers: async () => ({ servers: [] }),
   startTurn: async (...args) => {
     record("startTurn", args);

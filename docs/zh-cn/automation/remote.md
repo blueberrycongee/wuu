@@ -5,8 +5,7 @@ Relay 转发端到端加密的 app-server 连接。配对授予的是 Host 控�
 
 手机配对目前是开发预览：用 `npm --prefix desktop run dev:remote` 启动桌面，
 可在「设置 → 手机访问」中直接配对原生 iOS App，无需账号。发布验收完成前，
-正式构建隐藏新增手机访问；此前已经开启的用户仍可在此关闭访问或撤销已配对设备，
-但不能新增配对。App 目前需要从
+正式构建暂不展示手机访问入口。App 目前需要从
 [原生客户端项目](../../../clients/native/README.md)构建，尚未提供公开 App Store 分发。
 桌面账号登录仍仅在开发模式开放。CLI 构建方法见[开发指南](../project/development.md)。
 

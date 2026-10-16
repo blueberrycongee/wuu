@@ -29,8 +29,6 @@ export type RemoteStatusView = {
 };
 
 export type SettingsRemotePageProps = {
-  managementOnly?: boolean;
-  statusUnknown?: boolean;
   status: RemoteStatusView | null;
   statusError: string;
   hostRunning: boolean;
@@ -44,8 +42,6 @@ export type SettingsRemotePageProps = {
 };
 
 export function SettingsRemotePage({
-  managementOnly = false,
-  statusUnknown = false,
   status,
   statusError,
   hostRunning,
@@ -67,16 +63,12 @@ export function SettingsRemotePage({
         * the switch allows, and the switch alone shows whether it is on. */}
       <SettingsSection>
         <SettingsGroup>
-          <SettingsRow title={t("remote.allowAccess")} description={managementOnly ? undefined : t(status?.account_server ? "remote.accountDescription" : "remote.lanDescription")}>
-            {managementOnly && statusUnknown ? (
-              <button className="settings-button" type="button" disabled={busy} onClick={() => onToggleHost(false)}>
-                {t("remote.disableAccess")}
-              </button>
-            ) : <button className="settings-switch" type="button" role="switch" aria-checked={hostEnabled}
-              disabled={busy || (managementOnly && !hostEnabled)} onClick={() => onToggleHost(!hostEnabled)}>
+          <SettingsRow title={t("remote.allowAccess")} description={t(status?.account_server ? "remote.accountDescription" : "remote.lanDescription")}>
+            <button className="settings-switch" type="button" role="switch" aria-checked={hostEnabled}
+              disabled={busy} onClick={() => onToggleHost(!hostEnabled)}>
               <span className="settings-switch-thumb" aria-hidden="true" />
               <span className="sr-only">{hostEnabled ? t("remote.disableAccess") : t("remote.enableAccess")}</span>
-            </button>}
+            </button>
           </SettingsRow>
           {hostRunning && webUrl && !status?.account_server ? <SettingsRow title={t("remote.webAddress")}>
             <code>{webUrl}</code>
@@ -84,7 +76,7 @@ export function SettingsRemotePage({
         </SettingsGroup>
       </SettingsSection>
 
-      {!status?.account_server && <>{!managementOnly && <SettingsSection title={t("remote.pairSection")} description={t("remote.pairSectionDescription")}>
+      {!status?.account_server && <><SettingsSection title={t("remote.pairSection")} description={t("remote.pairSectionDescription")}>
         <SettingsGroup>
           {pairUri ? (
             <div className="settings-remote-pairing" data-testid="remote-pair-panel">
@@ -110,7 +102,7 @@ export function SettingsRemotePage({
             </SettingsRow>
           )}
         </SettingsGroup>
-      </SettingsSection>}
+      </SettingsSection>
 
       <SettingsSection title={t("remote.devicesSection")} description={t("remote.devicesSectionDescription")}>
         <SettingsGroup>

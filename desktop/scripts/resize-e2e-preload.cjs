@@ -198,8 +198,6 @@ const desktopAPI = {
     days: [],
     entries: []
   }),
-  getRemoteControlSnapshot: async () => ({ status: null, host_enabled: false, host_running: false, pair_uri: null }),
-  onRemoteControlEvent: () => () => {},
   listMCPServers: async () => ({ servers: [] }),
   listWorkspaceDirectory: async (path = "") => ({
     root: cwd,

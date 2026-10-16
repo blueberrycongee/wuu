@@ -6,9 +6,7 @@ app-server connection. Pairing grants control of the host, not just a read-only 
 
 Phone pairing is a development preview: start the desktop with `npm --prefix desktop run dev:remote`
 to show Settings → Phone access and pair the native iOS app without an account.
-Release builds hide new phone access until mobile release acceptance is complete.
-If access was enabled in an earlier version, its page remains available to disable access
-or revoke paired devices; it does not offer new pairing. Build the app from [the native client project](../../../clients/native/README.md);
+Release builds hide the phone access page until mobile release acceptance is complete. Build the app from [the native client project](../../../clients/native/README.md);
 there is no public App Store distribution yet. Account login on the desktop remains
 development-only. Build the CLI using the [development guide](../project/development.md).
 
