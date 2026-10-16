@@ -92,6 +92,7 @@ app.whenReady().then(async () => {
           for (const width of [920, 620]) {
             const label = `onboarding-${theme}-${size}-${width}`;
             win.setContentSize(width, 600);
+            await waitFor(width => innerWidth === width && innerHeight === 600, width);
             await evaluate(({ theme, size }) => {
               document.documentElement.dataset.theme = theme;
               document.documentElement.style.setProperty("--conversation-message-font-size", `${size}px`);
@@ -124,11 +125,19 @@ app.whenReady().then(async () => {
           }
         }
         win.setContentSize(1100, 1600);
+        await waitFor(() => {
+          const node = document.querySelector(".onboarding-body");
+          const style = getComputedStyle(node);
+          return innerWidth === 1100 && innerHeight === 1600 && node.scrollHeight === node.clientHeight
+            && parseFloat(style.getPropertyValue("--scroll-fade-top")) === 0
+            && parseFloat(style.getPropertyValue("--scroll-fade-bottom")) === 0;
+        });
         const fitting = await sample(`onboarding-${theme}-fitting`, body);
         assert.ok(fitting.scrollHeight === fitting.clientHeight && fitting.top === 0 && fitting.bottom === 0, "fitting onboarding has no fades");
         await capture(`onboarding-${theme}-fitting`);
       }
       win.setContentSize(920, 720);
+      await waitFor(() => innerWidth === 920 && innerHeight === 720);
       await evaluate(() => { document.documentElement.style.setProperty("--conversation-message-font-size", "15px"); document.querySelector(".onboarding-body").scrollTop = 0; });
       await sample("onboarding-controls", body);
       const firstSwitch = '.onboarding-plugin:first-child [role="switch"]';
