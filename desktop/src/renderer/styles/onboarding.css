@@ -344,7 +344,7 @@
 
 .onboarding-plugin > .settings-switch {
   grid-column: 3;
-  grid-row: 1 / span 2;
+  grid-row: 1;
 }
 
 .onboarding-engine {

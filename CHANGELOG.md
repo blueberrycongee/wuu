@@ -10,6 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Align first-run plugin switches with their icons and names while keeping descriptions below the names.
 - Acknowledge retained agent results when a later user message recovers a failed
   completion, including when the conversation runtime is reused. Paused process
   notifications no longer keep unrelated successful work waiting indefinitely.
