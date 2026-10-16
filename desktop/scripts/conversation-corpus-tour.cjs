@@ -97,15 +97,15 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
           const scrollRect = scroll.getBoundingClientRect();
           const clip = { left: 0, top: 0, right: innerWidth, bottom: innerHeight };
           let painted = true;
-          for (let node = content; node; node = node.parentElement) {
+          for (let node = range.startContainer.parentElement; node; node = node.parentElement) {
             const style = getComputedStyle(node);
             painted &&= style.visibility === 'visible' && style.display !== 'none' && Number(style.opacity) > 0;
             const r = node.getBoundingClientRect();
             if (/(auto|scroll|hidden|clip)/.test(style.overflowY)) { clip.top = Math.max(clip.top, r.top); clip.bottom = Math.min(clip.bottom, r.bottom); }
             if (/(auto|scroll|hidden|clip)/.test(style.overflowX)) { clip.left = Math.max(clip.left, r.left); clip.right = Math.min(clip.right, r.right); }
           }
-          const visible = painted && markerRect.width > 0 && markerRect.height > 0
-            && markerRect.y >= clip.top - 1 && markerRect.y + markerRect.height <= clip.bottom + 1
+          const verticallyVisible = markerRect.y >= clip.top - 1 && markerRect.y + markerRect.height <= clip.bottom + 1;
+          const visible = painted && markerRect.width > 0 && markerRect.height > 0 && verticallyVisible
             && markerRect.x >= clip.left - 1 && markerRect.x + markerRect.width <= clip.right + 1;
           return {
             viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
@@ -113,14 +113,23 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
             blocks: [...document.querySelectorAll('.cached-conversation-pane[data-active="true"] .agent-text')].map(rect),
             markdown: [...content.querySelectorAll('p,h1,h2,h3,li,pre,table')].map(node => ({ tag: node.tagName, ...rect(node) })),
             target: { itemID: content.closest('[data-response-item-id]').dataset.responseItemId, ...rect(content) },
-            marker: { text: needle, ...markerRect, visible }, clip,
-            scroll: { x: Math.round(scrollRect.left + scrollRect.width * 0.6), y: Math.round(scrollRect.top + scrollRect.height * 0.4) },
+            marker: { text: needle, ...markerRect, visible, verticallyVisible }, clip,
+            scroll: { x: Math.round(scrollRect.left + scrollRect.width * 0.6), y: Math.round(scrollRect.top + scrollRect.height * 0.4), viewportTop: scrollRect.top },
           };
         }, { selector, needle, fromStart });
         if (geometry.marker.visible) break;
-        const distance = geometry.marker.y - (geometry.clip.top + 40);
-        win.webContents.sendInputEvent({ type: 'mouseWheel', ...geometry.scroll,
-          deltaX: 0, deltaY: -Math.sign(distance) * Math.min(Math.abs(distance), 400), canScroll: true });
+        const horizontal = geometry.marker.verticallyVisible;
+        const distance = horizontal
+          ? (geometry.marker.x < geometry.clip.left ? geometry.marker.x - geometry.clip.left - 8
+            : geometry.marker.x + geometry.marker.width - geometry.clip.right + 8)
+          : geometry.marker.y - (geometry.scroll.viewportTop + 40);
+        const delta = -Math.sign(distance) * Math.min(Math.abs(distance), 400);
+        // Table and code panes own horizontal scrolling. Aim inside the visible
+        // target row so wheel input reaches that pane instead of the outer view.
+        win.webContents.sendInputEvent({ type: 'mouseWheel',
+          x: horizontal ? Math.round((geometry.clip.left + geometry.clip.right) / 2) : geometry.scroll.x,
+          y: horizontal ? Math.round(geometry.marker.y + geometry.marker.height / 2) : geometry.scroll.y,
+          deltaX: horizontal ? delta : 0, deltaY: horizontal ? 0 : delta, canScroll: true });
         await settle();
       }
       const name = `${active.id}-${stage}-${appearance.theme}-${appearance.size}-${appearance.width}.png`;
