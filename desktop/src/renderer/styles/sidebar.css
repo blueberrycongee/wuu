@@ -318,7 +318,7 @@
    * inner padding keeps labels, glyphs, and trailing actions on their axes. */
   --sidebar-content-pad-x: var(--space-3);
   --sidebar-row-pad-x: calc(var(--pane-inset) - var(--sidebar-content-pad-x));
-  --sidebar-row-radius: var(--wuu-radius-inner, 10px);
+  --sidebar-row-radius: calc(var(--radius-xs) + 4px);
   --sidebar-label-weight: 400;
   --sidebar-label-size: var(--font-ui);
   --sidebar-heading-size: max(12px, round(nearest, calc(var(--sidebar-label-size) - 2px), 1px));
