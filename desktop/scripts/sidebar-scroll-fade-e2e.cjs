@@ -215,7 +215,7 @@ app.whenReady().then(async () => {
           await new Promise(requestAnimationFrame);
           await new Promise(requestAnimationFrame);
           await Promise.all(document.getAnimations()
-            .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
+            .filter(animation => animation.timeline instanceof DocumentTimeline && animation.effect?.getComputedTiming().iterations !== Infinity)
             .map(animation => animation.finished.catch(() => {})));
           const row = document.querySelector(".thread-row.active");
           return { row: row.getBoundingClientRect().toJSON(), title: row.querySelector(".thread-row-title").getBoundingClientRect().toJSON() };
