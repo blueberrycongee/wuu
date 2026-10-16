@@ -8,31 +8,19 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
-### Fixed
+## [2026.10.16] - 2026-10-16
 
-- Align first-run plugin switches with their icons and names while keeping descriptions below the names.
-- Acknowledge retained agent results when a later user message recovers a failed
-  completion, including when the conversation runtime is reused. Paused process
-  notifications no longer keep unrelated successful work waiting indefinitely.
-  Saved-answer replay during active turns settles acknowledgements without
-  injecting duplicate results.
-- Show Side's chat accessory in onboarding so every offered plugin has visual feedback when selected.
-- Restore scroll-edge fades in onboarding choice lists so remaining content is visible without masking the title, companion, or navigation buttons.
-- Fix live activity previews waiting for Wuu to regain keyboard focus, and expose delayed startup and capture failures with a preview-only retry action.
-- Computer Use and browser previews now follow the selected conversation. Switching conversations hides the previous preview while its task continues in the background; returning restores ongoing work without reviving tasks that finished offscreen.
+### Contributors
 
-### Changed
+@blueberrycongee
 
-- Hide optional built-in agent setting explanations in narrow columns while retaining context-limit status, warnings, and errors.
+### Highlights
 
-- Remove maximum-step and temperature controls from desktop settings. Built-in desktop conversations use unlimited steps and automatic temperature, including when old user/project settings exist. CLI and explicit automation settings remain supported without rewriting saved configuration.
-
-- Refresh the complete shared UI icon family with consistent contours, open details, and lighter visual weight while preserving the Wuu ball and Project identities.
-- Show the current inherited font in the default body-font option, updating it with the interface font while preserving saved font choices.
-
-- Use flatter, quieter sidebar selection and hover surfaces with tighter inner padding and softer corners, preserving text, icon, and action alignment.
-
-- Desktop downloads use stable product/platform filenames without a version suffix; app versions and automatic update verification are unchanged.
+- Refresh the shared icon family and sidebar surfaces for a lighter, more consistent desktop interface.
+- Simplify settings, improve narrow layouts, and show the inherited font in the default body-font option.
+- Improve first-run plugin selection with aligned switches, Side chat visual feedback, and restored scroll-edge hints.
+- Live previews follow the selected conversation and appear without waiting for keyboard focus, with clearer startup failures and retry.
+- Recover retained agent results after failed completion without duplicate delivery or unrelated work waiting indefinitely.
 
 ## [2026.10.15] - 2026-10-15
 
