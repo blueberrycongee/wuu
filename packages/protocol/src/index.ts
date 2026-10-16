@@ -2874,6 +2874,17 @@ export type DesktopUpdateState =
   | { kind: "available" | "ready" | "error"; version: string }
   | { kind: "downloading"; version: string; percent: number };
 
+// Desktop-only presentation state; these actions never change task authority.
+export type ActivityPreviewPlacement = "home" | "floating" | "pet";
+export type ActivityPreviewAction = "show" | "hide" | ActivityPreviewPlacement;
+export interface ActivityPreviewState {
+  threadID: string;
+  workdir: string;
+  visible: boolean;
+  placement: ActivityPreviewPlacement;
+  petAvailable: boolean;
+}
+
 export type WuuDesktopApi = {
   /** Desktop release updates; absent on remote and mobile hosts. */
   getDesktopUpdateState?: () => Promise<DesktopUpdateState>;
@@ -3095,6 +3106,9 @@ export type WuuDesktopApi = {
   windowIsMaximized?: () => Promise<boolean>;
   onWindowMaximizedChange?: (handler: (maximized: boolean) => void) => () => void;
   // Desktop-only presentation preference. Does not enable or disable extensions.
+  getActivityPreview?: (threadID: string) => Promise<ActivityPreviewState | null>;
+  setActivityPreview?: (threadID: string, action: ActivityPreviewAction) => Promise<ActivityPreviewState | null>;
+  onActivityPreviewChange?: (handler: (state: ActivityPreviewState) => void) => () => void;
   getActivityPreviewAutoShow?: () => Promise<boolean>;
   setActivityPreviewAutoShow?: (enabled: boolean) => Promise<void>;
   onActivityPreviewAutoShowChange?: (handler: (enabled: boolean) => void) => () => void;

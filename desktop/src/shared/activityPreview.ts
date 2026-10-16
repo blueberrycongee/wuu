@@ -10,3 +10,5 @@ export interface ActivityPreviewAppearance {
   text: string;
   muted: string;
 }
+
+export type { ActivityPreviewPlacement, ActivityPreviewAction, ActivityPreviewState } from "./protocol";

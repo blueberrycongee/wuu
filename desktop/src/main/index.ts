@@ -381,17 +381,6 @@ observationCoordinator.setBrowserInPanel((activity) =>
   activity.kind === "browser" &&
   browserHostCoordinator.isInPanel(activity.workdir, activity.target || activity.id),
 );
-observationCoordinator.setBrowserExpandHandler((activity) => {
-  // The workspace panel belongs to the main window. A broadcast also changes
-  // unrelated popped-out conversations and lets them compete for the tab.
-  const host = windowRegistry.mainWindow();
-  if (!host || host.isDestroyed()) return;
-  host.webContents.send("wuu:browser-dock", {
-    thread_id: activity.thread_id,
-    workdir: activity.workdir,
-    tabID: activity.target || activity.id,
-  });
-});
 // The pet is a standalone always-on-top window owned by the main process, so
 // it stays on the desktop when the main window is hidden, minimized, or
 // closed. Its right-click menu disables the setting, which also tears the
@@ -399,6 +388,7 @@ observationCoordinator.setBrowserExpandHandler((activity) => {
 // which owns conversation navigation and sending; the relay opens the main
 // window when none is attached.
 const codexPetWindowManager = new CodexPetWindowManager({
+  onPreviewHostChanged: () => observationCoordinator.refreshPetHost(),
   onClose: () => {
     updateCodexPetSettings({ enabled: false });
   },
@@ -422,6 +412,16 @@ const codexPetWindowManager = new CodexPetWindowManager({
   },
   isPackaged: app.isPackaged,
 });
+observationCoordinator.setPetHost(
+  () => codexPetWindowManager.previewHost(),
+  (active) => codexPetWindowManager.setPreviewActive(active),
+  () => codexPetWindowManager.requestPreviewHost(),
+);
+observationCoordinator.setReturnHomeHandler((activity) => {
+  revealMainWindow();
+  codexPetCommandRelay.jump(activity.thread_id);
+});
+observationCoordinator.setPresentationListener((state) => broadcastToAll("wuu:activity-preview-changed", state));
 const codexPetCommandRelay = new CodexPetCommandRelay({
   timeoutMs: 30_000,
   // A submit sent while the main window is closed opens it without taking
@@ -2744,6 +2744,21 @@ app.whenReady().then(async () => {
   // while an agent view is taken over (rAF-polled — pure motion isn't caught by
   // ResizeObserver), so main can position the reparented WebContentsView. The
   // target window is derived from event.sender, not trusted from the payload.
+  const previewForSender = (senderID: number, threadID: unknown) => {
+    if (typeof threadID !== "string") return null;
+    const role = windowRegistry.roleForWindow(senderID);
+    if (role !== "main" && role !== "popped-out") return null;
+    const state = observationCoordinator.presentationForThread(threadID);
+    if (role === "popped-out" && (windowRegistry.threadForWindow(senderID) !== threadID
+      || windowRegistry.runtimeContextForWindow(senderID)?.cwd !== state?.workdir)) return null;
+    return state;
+  };
+  ipcMain.handle("wuu:activity-preview-get", (event, threadID: unknown) => previewForSender(event.sender.id, threadID));
+  ipcMain.handle("wuu:activity-preview-set", (event, threadID: unknown, action: unknown) => {
+    const state = previewForSender(event.sender.id, threadID);
+    if (!state || typeof action !== "string" || !["show", "hide", "home", "floating", "pet"].includes(action)) return null;
+    return observationCoordinator.setPresentation(state.threadID, action as import("../shared/activityPreview").ActivityPreviewAction);
+  });
   ipcMain.handle("wuu:browser-pip-host-layout", (event, payload: unknown) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
     if (!senderWindow || senderWindow.isDestroyed()) return { ok: false };

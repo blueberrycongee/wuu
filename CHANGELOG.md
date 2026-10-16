@@ -22,6 +22,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Live previews keep the picture clear with hover-only controls and a soft local
+  backdrop. Move a preview between Wuu, the desktop, and the selected pet without
+  stopping its task; restore hidden previews from the conversation menu. Desktop
+  hosting works with the Pet shape switched off, waits for readiness before
+  handoff, and keeps previews clear of Pet controls and within the display.
 - Use flatter, quieter sidebar selection and hover surfaces with tighter inner padding and softer corners, preserving text, icon, and action alignment.
 
 - Desktop downloads use stable product/platform filenames without a version suffix; app versions and automatic update verification are unchanged.

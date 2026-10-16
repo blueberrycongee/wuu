@@ -73,22 +73,22 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 @keyframes completion-grow{from{transform:scale(.01)}to{transform:scale(1)}}
 @keyframes completion-mini{from{transform:scale(1)}to{transform:scale(.5)}}
 @keyframes completion-move{from{transform:translate(0,0)}to{transform:translate(18px,18px)}}
-#hover-shade{position:absolute;inset:0;pointer-events:none;opacity:0;
-  background:rgba(0,0,0,.06);transition:opacity .12s ease-in-out}
-#actions{position:absolute;top:6px;left:6px;z-index:6;display:flex;gap:2px;
-  opacity:0;pointer-events:none;transition:opacity .12s ease-in-out}
-#root:is(:focus-within,.hovered,.dragging,.resizing,.attention) :is(#actions,#hover-shade){opacity:1}
-#root:is(:focus-within,.hovered,.dragging,.resizing,.attention) #actions{pointer-events:auto}
-/* A sibling WebContentsView cannot sample the page with backdrop-filter.
-   A local scrim keeps the controls legible over browser and native pixels. */
-#actions::before{content:"";position:absolute;inset:-4px -3px;z-index:-1;
-  border-radius:14px;background:rgba(0,0,0,.58);filter:blur(4px);pointer-events:none}
-#actions button{width:28px;height:28px;flex:none;border:none;border-radius:6px;padding:0;
-  display:grid;place-items:center;cursor:pointer;color:#fff;background:transparent;
-  transition:background .12s ease-in-out}
-#actions button:is(:hover,.hovered){background:rgba(255,255,255,.17)}
-#actions button:active{background:rgba(255,255,255,.26)}
-#actions button:focus-visible{outline:2px solid #fff;outline-offset:1px}
+#control-fog{position:absolute;top:-14px;left:-14px;width:140px;height:84px;z-index:5;
+  pointer-events:none;opacity:0;transition:opacity .14s ease;overflow:hidden;
+  mask-image:radial-gradient(ellipse at 30% 28%,#000 18%,transparent 72%)}
+#control-fog img{position:absolute;max-width:none;filter:blur(6px);object-fit:fill}
+#control-fog::after{content:"";position:absolute;inset:0;
+  background:color-mix(in srgb,var(--control-surface,var(--surface)) 72%,transparent)}
+#actions{position:absolute;top:6px;left:6px;z-index:6;display:flex;gap:1px;
+  opacity:0;pointer-events:none;transition:opacity .14s ease}
+#root:is(:focus-within,.hovered,.dragging,.resizing) :is(#actions,#control-fog){opacity:1}
+#root:is(:focus-within,.hovered,.dragging,.resizing) #actions{pointer-events:auto}
+#actions button{width:26px;height:26px;flex:none;border:none;border-radius:4px;padding:0;
+  display:grid;place-items:center;cursor:pointer;color:var(--control-text,var(--text));background:transparent;
+  opacity:.72;transition:opacity .12s ease}
+#actions button:is(:hover,.hovered,:focus-visible){opacity:1}
+#actions button:active{opacity:.55}
+#actions button:focus-visible{outline:2px solid var(--control-text,var(--text));outline-offset:1px}
 :root.reduce-motion #root *, :root.reduce-motion #root *::before{animation:none!important;transition:none!important}
 :root.reduce-motion #completion[data-completed="true"] #completion-check,
 :root.reduce-motion #completion[data-completed="true"] #completion-check::before{opacity:1}
@@ -118,10 +118,10 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
       <div id="completion-check">${iconSVG("Check", 34)}</div>
     </div>
   </div>
-  <div id="hover-shade"></div>
+  <div id="control-fog" aria-hidden="true"><img id="control-backdrop" alt="" hidden /></div>
   <div id="actions">
     <button id="close" type="button">${iconSVG("X", 16)}</button>
-    <button id="expand" type="button">${iconSVG("ExternalLink", 16)}</button>
+    <button id="pet" type="button" hidden>${iconSVG("Bot", 18)}</button>
   </div>
   <div data-resize="nw"></div><div data-resize="n"></div><div data-resize="ne"></div>
   <div data-resize="w"></div><div data-resize="e"></div>
@@ -135,6 +135,7 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   var completion=document.getElementById("completion");
   var label=${label},locale=${language},translations=${strings};
   var activity={kind:"browser",state:"starting",controller:"none"};
+  var placement="home",petAvailable=false;
   var mounted=false,capture={status:"idle",message:""};
   function text(key){return translations[locale][key];}
   function buttonLabel(id,key){var button=document.getElementById(id);button.title=text(key);button.setAttribute("aria-label",text(key));}
@@ -150,14 +151,12 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     retry.hidden=!captureBlocked||terminal||activity.controller==="none";
     ph.classList.toggle("gone",!placeholder);
     ph.classList.toggle("preparing",placeholder&&!captureBlocked&&!capturePaused&&!terminal);
-    // States that ask for a decision keep the controls visible.
-    var notable=terminal||activity.state==="waiting_confirmation"||
-      capturePaused||manual||(activity.controller==="none"&&activity.state!=="starting");
-    root.classList.toggle("attention",Boolean(placeholder||notable));
     root.setAttribute("aria-label",text(activity.kind==="cua"?"activityComputer":"activityBrowser")+(label?": "+label:""));
-    document.getElementById("expand").hidden=activity.kind!=="browser";
-    var labels={close:"activityHide",expand:"activityExpand"};
-    Object.keys(labels).forEach(function(id){buttonLabel(id,labels[id]);});
+    var home=placement==="home";
+    buttonLabel("close",home?"activityHide":"activityReturnHome");
+    buttonLabel("pet","activitySendToPet");
+    document.getElementById("pet").hidden=placement==="pet"||!petAvailable;
+    document.getElementById("control-fog").style.width=(document.getElementById("actions").offsetWidth+68)+"px";
     completion.setAttribute("aria-label",text("activityCompleted"));
   }
   document.addEventListener("keydown",function(e){
@@ -172,9 +171,9 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     e.stopPropagation();
     window.location.href="wuu-pip://close";
   });
-  document.getElementById("expand").addEventListener("click",function(e){
+  document.getElementById("pet").addEventListener("click",function(e){
     e.stopPropagation();
-    window.location.href="wuu-pip://expand";
+    window.location.href="wuu-pip://pet";
   });
   function postDrag(phase,x,y,vx,vy){
     postUrl("wuu-pip://drag?phase="+phase+"&x="+x+"&y="+y+"&vx="+vx+"&vy="+vy);
@@ -261,10 +260,34 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   window.wuuPipCapture=function(next){capture=next;render();};
   window.wuuPipHover=function(point){
     root.classList.toggle("hovered",!!point);
-    ["close","expand"].forEach(function(id){
+    ["close","pet"].forEach(function(id){
       var button=document.getElementById(id),r=button.getBoundingClientRect();
       button.classList.toggle("hovered",!!point&&point.x>=r.left&&point.x<r.right&&point.y>=r.top&&point.y<r.bottom);
     });
+  };
+  window.wuuPipPlacement=function(next){
+    placement=next.placement;petAvailable=next.petAvailable;render();
+  };
+  window.wuuPipControlBackdrop=function(next){
+    var img=document.getElementById("control-backdrop");
+    if(!next){
+      img.hidden=true;img.removeAttribute("src");img.onload=null;
+      root.style.removeProperty("--control-surface");root.style.removeProperty("--control-text");return;
+    }
+    img.onload=function(){
+      var sample=document.createElement("canvas");sample.width=80;sample.height=36;
+      var ctx=sample.getContext("2d");
+      ctx.drawImage(img,next.rect.x,next.rect.y,next.rect.width,next.rect.height);
+      var pixels=ctx.getImageData(0,0,80,36).data,total=0,count=0;
+      for(var i=0;i<pixels.length;i+=4){if(pixels[i+3]<128)continue;total+=pixels[i]*.2126+pixels[i+1]*.7152+pixels[i+2]*.0722;count++;}
+      if(!count)return;
+      var light=total/count>140;
+      root.style.setProperty("--control-surface",light?"#f8f8fa":"#242426");
+      root.style.setProperty("--control-text",light?"#131314":"#f4f4f5");
+    };
+    img.src=next.src;img.hidden=false;
+    img.style.left=(next.rect.x+14)+"px";img.style.top=(next.rect.y+14)+"px";
+    img.style.width=next.rect.width+"px";img.style.height=next.rect.height+"px";
   };
   window.wuuPipAppearance=function(a){
     var html=document.documentElement;

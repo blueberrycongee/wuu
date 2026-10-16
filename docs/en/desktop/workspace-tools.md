@@ -115,7 +115,7 @@ The shortcut starts disabled, and no background history or audio is recorded. Ad
 
 Open **Browser** or enter `/browser` to view a page in the workspace panel beside the conversation. That panel and the page the agent is using are the same tab: the address bar, back, forward, and reload all drive it. Clicking a web link in a message, a turn source capsule, or a compact browser activity row also opens or focuses that panel and navigates to the page. Hold Command (Ctrl on Windows) or middle-click to open it in the system browser instead. If you are already using another workspace tool, the page still navigates in that tab and does not steal the panel.
 
-Desktop browser automation is available by default. The active conversation can show the Agent's page in the [live activity preview](#live-activity-preview), including during background browser actions. Open the browser or expand the preview to use that same page in the panel. Showing the page in the panel replaces its floating preview. Set `WUU_ENABLE_BROWSER=0` before launching Wuu to hide the automation tool.
+Desktop browser automation is available by default. The active conversation can show the Agent's page in the [live activity preview](#live-activity-preview), including during background browser actions. Open the workspace browser to use that same page in the panel. Showing the page in the panel replaces its floating preview. Set `WUU_ENABLE_BROWSER=0` before launching Wuu to hide the automation tool.
 
 Each conversation owns its browser tabs, including pages opened in a new window. Listing or cleaning up tabs in one conversation leaves other conversations' pages alone. Tabs still share the app's browser profile and signed-in sessions; task ownership is not a separate login profile.
 
@@ -137,14 +137,17 @@ Use the address and port of your own proxy. This setting does not configure mode
 
 Each conversation with live browser or supported local computer-use activity has one watch-only floating preview. Switching browser tabs or app windows changes the content inside that same preview. A preview appears once its first picture is ready, growing from its corner, and leaves the same way. When several tasks run at once, their previews stack in one corner: opening a conversation brings its preview to the front, and grabbing a preview behind the front one does the same. After a successful turn the preview shows completion and leaves after 30 seconds; a stopped or failed turn removes it until the next turn. A minimized or hidden target app stays where you put it, and its preview waits until you show it again. Moving or resizing the preview does not send clicks, scrolling, or keyboard input to the target.
 
-In **Settings → General → Live activity**, **Show preview automatically** controls whether local activity opens the preview. The setting is saved across restarts. It does not enable an extension or give the Agent control. Hiding a preview leaves the task running; later activity updates do not reopen a preview you hid. There is no title-bar control for manually reopening a hidden preview.
+In **Settings → General → Live activity**, **Show preview automatically** controls whether local activity opens the preview. The setting is saved across restarts. It does not enable an extension or give the Agent control. Hiding a preview leaves the task running; later activity updates do not reopen it. Right-click its conversation in the sidebar to show or hide the preview or change its location.
 
-A new or hidden preview waits until you return to its Wuu window before appearing, so background activity does not bring Wuu in front of another app. An already-visible preview stays in place when focus changes. Hiding or minimizing Wuu hides the preview too. Returning to Wuu shows it again only when it was not explicitly hidden. Drag the preview to place it in a corner of the conversation column, clear of the composer, or resize it from an edge or corner. The browser page keeps its layout size and is scaled to fit. The preview follows the app's appearance and text settings and respects reduced motion.
+A preview in Wuu follows the selected conversation and hides when its window is hidden or minimized. A preview moved to the desktop or pet stays with its own task when you switch conversations or hide Wuu. Returning it to Wuu opens its owning conversation. Previews in different locations keep separate stacks. Closing or disabling the pet returns its previews to Wuu; it does not stop their tasks.
 
-The preview has two display controls for browser pages, and only Hide for native apps:
+The picture fills the preview. Controls appear on hover or keyboard focus over a soft local backdrop:
 
-- **Hide preview** hides the card and leaves the task running.
-- **Open in side panel** opens a browser page at full size.
+- In Wuu, **×** hides the preview. The pet icon moves it beside your selected pet when the pet is enabled.
+- On the desktop, **×** returns it to Wuu; the pet icon moves it to the pet.
+- Beside the pet, **×** returns it to Wuu.
+
+Drag a preview to a corner or resize it from an edge. A pet preview follows the pet as it moves. The browser page keeps its layout size and scales to fit. The preview follows the app's appearance and text settings and respects reduced motion. Showing or moving it never changes task control or brings the observed application to the front.
 
 Use **Stop** in the conversation to interrupt the task. To take over a browser page, open it in the side panel and click or type in it. Send another instruction in the conversation to continue with fresh control authority.
 

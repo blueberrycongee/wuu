@@ -19,6 +19,7 @@ import { appShellWebPreferences } from "./appShellGuards";
 import { getMainLocale, mainTranslate } from "./i18n";
 
 export type CodexPetView = {
+  visible: boolean;
   spritesheetURL: string;
   mood: CodexPetMood;
   label: string;
@@ -174,6 +175,8 @@ const CODEX_PET_LOOK_SHEET_HEIGHT = (CODEX_PET_LOOK_FIRST_ROW + 2) * CODEX_PET_C
 const CODEX_PET_LOOK_POLL_MS = 120;
 const CODEX_PET_LOOK_RADIUS = 480;
 const CODEX_PET_LOOK_IDLE_MS = 2000;
+// A failed page or stalled sheet must not hold the activity preview off-screen.
+const CODEX_PET_PREVIEW_LOAD_TIMEOUT_MS = 15_000;
 
 // One-shot animations the host can request, with how many passes each plays.
 const CODEX_PET_REACTION_LOOPS: Record<CodexPetReaction | "waving", number> = {
@@ -190,7 +193,7 @@ export function selectedCodexPet(snapshot: CodexPetsSnapshot | undefined): Codex
 }
 
 export function codexPetView(
-  pet: CodexPet,
+  pet: CodexPet | undefined,
   {
     mood,
     hints,
@@ -216,16 +219,17 @@ export function codexPetView(
   // geometry.
   const rendered = renderedSprite(size, customScale);
   return {
-    spritesheetURL: pet.spritesheet_url,
+    visible: Boolean(pet),
+    spritesheetURL: pet?.spritesheet_url ?? "",
     mood,
-    label: pet.display_name,
-    hints,
-    layout,
-    expanded,
-    workspaceName,
+    label: pet?.display_name ?? "",
+    hints: pet ? hints : [],
+    layout: pet ? layout : "hidden",
+    expanded: Boolean(pet) && expanded,
+    workspaceName: pet ? workspaceName : "",
     size,
-    spriteWidth: rendered.width,
-    spriteHeight: rendered.height,
+    spriteWidth: pet ? rendered.width : 0,
+    spriteHeight: pet ? rendered.height : 0,
     scale: rendered.scale,
     spriteShift,
   };
@@ -241,6 +245,7 @@ export type CodexPetAction =
   | { action: "dismiss"; thread_id: string }
   | { action: "show" }
   | { action: "look"; capable: boolean }
+  | { action: "sheet"; url: string; generation: number; ready: boolean; capable: boolean }
   | undefined;
 
 // Continuous resize pushes the live scale as a number. Clamp the parser
@@ -276,6 +281,21 @@ export function codexPetActionFromURL(rawURL: string): CodexPetAction {
     }
     if (actionName === "look") {
       return { action: "look", capable: url.searchParams.get("capable") === "1" };
+    }
+    if (actionName === "sheet") {
+      const sheetURL = url.searchParams.get("url");
+      const generationValue = url.searchParams.get("generation");
+      const generation = Number(generationValue);
+      const ready = url.searchParams.get("ready");
+      if (!sheetURL || !generationValue || !Number.isSafeInteger(generation) || generation < 0 ||
+        (ready !== "0" && ready !== "1")) return undefined;
+      return {
+        action: "sheet",
+        url: sheetURL,
+        generation,
+        ready: ready === "1",
+        capable: url.searchParams.get("capable") === "1",
+      };
     }
     if (actionName === "resize") {
       // Only forward ids the preset list knows about. A stale page that names
@@ -468,6 +488,7 @@ function codexPetIcon(name: keyof typeof CODEX_PET_ICON_PATHS, size: number): st
 export function codexPetWindowHTML(
   view: CodexPetView,
   locale: AppLocale = getMainLocale(),
+  initialSheetGeneration = 0,
 ): string {
   const resizeLabel = mainTranslate("resize", {}, locale);
   // `{title}` and `{workspace}` placeholders survive translation and are
@@ -552,6 +573,7 @@ html,body{width:100%;height:100%;margin:0;background:transparent;overflow:hidden
 @media (prefers-color-scheme:dark){.stage{--surface:rgba(36,36,41,.92);--fg:#e5e7e9;--muted:#a1a8ae;--edge:rgba(255,255,255,.1);--shadow:inset 0 0 0 .5px var(--edge),0 0 0 .5px rgba(0,0,0,.5),0 10px 28px -8px rgba(0,0,0,.55);--hover-bg:rgba(220,228,235,.08);--accent:#e5e7e9;--accent-fg:#111315;--target-bg:rgba(220,228,235,.12);--status-running:#8fade0;--status-done:#72b892;--status-failed:#e3826f;--status-review:#d8ad5e}}
 .stage.is-expanded{--dock-width:${CODEX_PET_COMPOSER_WIDTH}px}
 .stage{position:relative;width:100%;height:100%;padding:${pad}px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;cursor:grab;-webkit-user-select:none;user-select:none}
+.stage[hidden]{display:none}
 .stage.is-dragging{cursor:grabbing}
 .stage[data-layout=hidden]{padding:0 0 ${pad}px}
 .stage[data-layout=below]{flex-direction:column-reverse}
@@ -630,7 +652,7 @@ button:focus-visible,.card:focus-visible{outline:2px solid var(--accent);outline
 .resize-handle.corner-sw{bottom:-4px;left:-6px;width:16px;height:14px;cursor:nesw-resize}
 .resize-handle.corner-se{bottom:-4px;right:-6px;width:16px;height:14px;cursor:nwse-resize}
 @media (prefers-reduced-motion:reduce){.card,.cards.is-swapping .card,.dock-handle,.toolbar,.pet:hover .toolbar{transition:none}.stage.is-expanded .composer{animation:none}}
-</style></head><body><div class="stage" data-layout="${escapeHTML(view.layout)}" style="${escapeHTML(styleVars)}">
+</style></head><body><div class="stage"${view.visible ? "" : " hidden"} data-layout="${escapeHTML(view.layout)}" style="${escapeHTML(styleVars)}">
 <div class="bubble" hidden><div class="cards"></div></div>
 <div class="pet">
 <div class="sprite-frame"><div class="sprite" role="img" aria-label="${escapeHTML(view.label)}"></div><div class="badge" hidden></div>
@@ -670,6 +692,8 @@ ${resizeHandles}
   const fill = (template, value) => template.replace(/[{][a-z]+[}]/i, () => value);
   const send = (path) => { location.href = 'wuu-pet://action/' + path; };
   let view = ${scriptJSON(view)};
+  let sheetGeneration = ${scriptJSON(initialSheetGeneration)};
+  let sheetProbed = false;
 
   // Animation. One sequence is on screen at a time, chosen by priority:
   // dragging > a one-shot (reaction or interaction) > looking at the
@@ -734,13 +758,21 @@ ${resizeHandles}
     if (sequence() !== shown || shown === 'look') animate();
   };
   reducedMotion.addEventListener('change', animate);
-  // Report whether this sheet has the look-direction rows, so the host only
-  // tracks the cursor for pets that can use it.
+  // Report the current sheet's load outcome and look rows together. Source
+  // and generation both matter when switching away from a sheet and back.
   const probeSheet = (url) => {
+    sheetProbed = true;
+    if (!url) return;
+    const generation = sheetGeneration;
     const probe = new Image();
-    probe.onload = () => {
-      if (view.spritesheetURL === url) send('look?capable=' + (probe.naturalHeight >= ${CODEX_PET_LOOK_SHEET_HEIGHT} ? '1' : '0'));
+    const report = (ready) => {
+      if (view.spritesheetURL !== url || sheetGeneration !== generation) return;
+      send('sheet?url=' + encodeURIComponent(url) + '&generation=' + generation
+        + '&ready=' + (ready ? '1' : '0')
+        + '&capable=' + (ready && probe.naturalHeight >= ${CODEX_PET_LOOK_SHEET_HEIGHT} ? '1' : '0'));
     };
+    probe.onload = () => report(true);
+    probe.onerror = () => report(false);
     probe.src = url;
   };
   const scheduleFidget = () => {
@@ -968,10 +1000,24 @@ ${resizeHandles}
     if (expanded && !sending) send('panel?open=0');
   });
 
-  window.wuuPetView = (next) => {
-    const sheetChanged = next.spritesheetURL !== view.spritesheetURL;
+  window.wuuPetView = (next, generation) => {
+    const sheetChanged = next.spritesheetURL !== view.spritesheetURL || generation !== sheetGeneration;
     view = next;
-    stage.style.setProperty('--pet-sheet', 'url("' + next.spritesheetURL + '")');
+    sheetGeneration = generation;
+    stage.hidden = !next.visible;
+    if (!next.visible) {
+      pointerID = null;
+      dragging = false;
+      dragState = null;
+      stage.classList.remove('is-dragging');
+      clearTimeout(restTimer);
+      resizePointerID = null;
+      pendingScale = null;
+      resizeMoved = false;
+      cancelAnimationFrame(resizeRAF);
+      resizeRAF = 0;
+    }
+    stage.style.setProperty('--pet-sheet', next.spritesheetURL ? 'url("' + next.spritesheetURL + '")' : 'none');
     stage.style.setProperty('--pet-scale', String(next.scale));
     stage.style.setProperty('--pet-frame-width', next.spriteWidth + 'px');
     stage.style.setProperty('--pet-frame-height', next.spriteHeight + 'px');
@@ -987,7 +1033,7 @@ ${resizeHandles}
     setExpanded(next.expanded);
     syncComposer();
     syncBadge();
-    if (sheetChanged) probeSheet(next.spritesheetURL);
+    if (sheetChanged || !sheetProbed) probeSheet(next.spritesheetURL);
   };
   window.addEventListener('contextmenu', (event) => {
     event.preventDefault();
@@ -1211,7 +1257,8 @@ ${resizeHandles}
   syncBadge();
   syncComposer();
   play('waving', 1, true);
-  probeSheet(view.spritesheetURL);
+  // The host's first view arrives after did-finish-load. Reporting the sheet
+  // sooner can abort the initial data: load through the navigation bridge.
   scheduleFidget();
 })();
 </script></body></html>`;
@@ -1219,6 +1266,7 @@ ${resizeHandles}
 
 export type CodexPetWindowOptions = {
   onClose: () => void;
+  onPreviewHostChanged?: () => void;
   // Opens a bubble row's conversation in the main window.
   onJump: (threadID: string) => void;
   // Sends text to Wuu as a reply or as a new conversation.
@@ -1232,6 +1280,17 @@ export type CodexPetWindowOptions = {
 export class CodexPetWindowManager {
   private win: BrowserWindow | undefined;
   private loaded = false;
+  private previewActive = false;
+  private previewRequested = false;
+  private previewSheetURL = "";
+  private previewSheetGeneration = 0;
+  private previewSheetState: "loading" | "ready" | "failed" = "loading";
+  private previewPageFailed = false;
+  private previewPageGeneration = 0;
+  private previewPageURL = "";
+  private previewHidden = false;
+  private previewHasShown = false;
+  private previewLoadTimer: ReturnType<typeof setTimeout> | undefined;
   private pendingView: CodexPetView | undefined;
   private lastViewSignature = "";
   private mood: CodexPetMood = "idle";
@@ -1269,6 +1328,7 @@ export class CodexPetWindowManager {
   private appliedScale: number | undefined;
   // Likewise the dock width that produced the current bounds.
   private appliedExpanded = false;
+  private appliedPetVisible = true;
   // Cursor following, for sheets with look-direction rows.
   private lookCapable = false;
   private lookTimer: ReturnType<typeof setInterval> | undefined;
@@ -1278,11 +1338,70 @@ export class CodexPetWindowManager {
 
   constructor(private readonly options: CodexPetWindowOptions) {}
 
+  previewHost(): {
+    window: BrowserWindow;
+    anchor: { x: number; y: number };
+    sprite: { width: number; height: number };
+    ready: boolean;
+    occupiedBounds: Rectangle;
+  } | undefined {
+    const win = this.win;
+    if (!win || win.isDestroyed() || this.previewPageFailed ||
+      this.previewSheetState === "failed" || this.previewHidden || win.isMinimized()) return undefined;
+    const visible = win.isVisible();
+    if (this.previewHasShown && !visible) return undefined;
+    const bounds = win.getBounds();
+    return {
+      window: win,
+      anchor: this.anchorFromBounds(bounds, this.currentLayout),
+      sprite: this.appliedPetVisible ? renderedSprite(this.size, this.appliedScale) : { width: 0, height: 0 },
+      // A newly created or locale-rebuilt Pet keeps its placement while its
+      // page and current sheet load, but cannot host visible preview content.
+      ready: this.loaded && this.previewSheetState === "ready" && visible,
+      occupiedBounds: bounds,
+    };
+  }
+
+  requestPreviewHost(): void {
+    // An explicit preview request owns the desktop host independently of the
+    // saved Pet-shape setting. The coordinator releases it when intent ends.
+    this.previewRequested = true;
+    this.sync(this.snapshot);
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
+    if (this.previewSheetState === "failed" && !this.previewPageFailed) {
+      const view = this.view(selectedCodexPet(this.snapshot), this.currentLayout);
+      this.beginSheetLoad(win, view.spritesheetURL);
+      if (this.loaded) this.pushView(win, view);
+      else this.pendingView = view;
+    }
+    this.previewHidden = false;
+    if (win.isMinimized()) win.restore();
+    win.showInactive();
+    this.notifyPreviewHost();
+  }
+
+  setPreviewActive(active: boolean): void {
+    if (this.previewActive === active && !this.previewRequested) return;
+    this.previewRequested = false;
+    this.previewActive = active;
+    if (!active && !selectedCodexPet(this.snapshot)) {
+      this.destroy();
+      return;
+    }
+    this.refresh();
+  }
+
   refreshLocale(): void {
-    const pet = selectedCodexPet(this.snapshot);
-    if (!pet || !this.win || this.win.isDestroyed()) return;
-    this.destroy();
-    this.createWindow(pet);
+    const win = this.win;
+    if (!win || win.isDestroyed()) return;
+    // Keep the native parent alive while its localized page reloads, so an
+    // attached preview can wait without losing its browser/native content.
+    this.loadPage(win, this.view(selectedCodexPet(this.snapshot), this.currentLayout));
+  }
+
+  private notifyPreviewHost(): void {
+    this.options.onPreviewHostChanged?.();
   }
 
   setSize(size: CodexPetSize, commit = true): void {
@@ -1313,11 +1432,18 @@ export class CodexPetWindowManager {
   sync(snapshot: CodexPetsSnapshot | undefined): void {
     this.snapshot = snapshot;
     const pet = selectedCodexPet(snapshot);
-    if (!pet) {
+    if (!pet && !this.previewActive && !this.previewRequested) {
       this.destroy();
       return;
     }
-    if (!this.win || this.win.isDestroyed()) {
+    if (!pet) {
+      this.expanded = false;
+      this.panelWorkspace = undefined;
+    }
+    if (!this.win || this.win.isDestroyed() || this.previewPageFailed) {
+      // A fresh enabled snapshot may recover a failed renderer. Ordinary
+      // mood, hint, and geometry refreshes never restart it in a loop.
+      this.destroy();
       this.createWindow(pet);
       return;
     }
@@ -1382,23 +1508,32 @@ export class CodexPetWindowManager {
   }
 
   private forgetWindow(): void {
+    this.clearPreviewLoadTimeout();
     this.win = undefined;
     this.loaded = false;
+    this.previewSheetURL = "";
+    this.previewPageURL = "";
+    this.previewSheetState = "loading";
+    this.previewPageFailed = false;
+    this.previewHidden = false;
+    this.previewHasShown = false;
     this.pendingView = undefined;
     this.lastViewSignature = "";
     this.currentLayout = "hidden";
     this.spriteShift = 0;
     this.appliedScale = undefined;
     this.appliedExpanded = false;
+    this.appliedPetVisible = true;
     this.expanded = false;
     this.panelWorkspace = undefined;
     this.lookCapable = false;
     this.updateLook();
+    this.notifyPreviewHost();
   }
 
   private refresh(): void {
     const pet = selectedCodexPet(this.snapshot);
-    if (pet && this.win && !this.win.isDestroyed()) this.applyView(pet);
+    if (this.win && !this.win.isDestroyed()) this.applyView(pet);
   }
 
   private setExpanded(expanded: boolean): void {
@@ -1423,6 +1558,8 @@ export class CodexPetWindowManager {
   // has not hidden. The open panel lists every recent conversation, so any
   // of them can be a reply target.
   private visibleHints(): CodexPetHint[] {
+    if (!selectedCodexPet(this.snapshot)) return [];
+    if (this.previewActive && !this.expanded) return [];
     if (this.expanded) return this.hints;
     return this.hints.filter(
       (hint) => hint.status !== "idle" && this.dismissed.get(hint.thread_id) !== hint.status,
@@ -1443,7 +1580,7 @@ export class CodexPetWindowManager {
       .then(({ ok }) => this.runScript(`window.wuuPetSubmitResult?.(${JSON.stringify({ ok: ok === true })})`));
   }
 
-  private createWindow(pet: CodexPet): void {
+  private createWindow(pet: CodexPet | undefined): void {
     const workArea = screen.getPrimaryDisplay().workArea;
     // Startup rehydration may have pushed a persisted continuous scale
     // via setScale() before the window exists; honor it here the same
@@ -1466,7 +1603,9 @@ export class CodexPetWindowManager {
     const view = this.view(pet, layout);
     this.appliedScale = rendered.scale;
     this.appliedExpanded = this.expanded;
+    this.appliedPetVisible = Boolean(pet);
     this.lastViewSignature = JSON.stringify(view);
+    this.pendingView = view;
     const win = new BrowserWindow({
       ...bounds,
       frame: false,
@@ -1491,6 +1630,29 @@ export class CodexPetWindowManager {
     });
     this.win = win;
     this.loaded = false;
+    this.previewPageFailed = false;
+    this.previewHidden = false;
+    this.previewHasShown = false;
+    if (!pet) win.setIgnoreMouseEvents(true);
+    win.on("move", () => this.notifyPreviewHost());
+    win.on("show", () => {
+      if (this.win !== win) return;
+      this.previewHasShown = true;
+      this.previewHidden = false;
+      this.notifyPreviewHost();
+    });
+    const hidePreviewHost = () => {
+      if (this.win !== win) return;
+      this.previewHidden = true;
+      this.notifyPreviewHost();
+    };
+    win.on("hide", hidePreviewHost);
+    win.on("minimize", hidePreviewHost);
+    win.on("restore", () => {
+      if (this.win !== win) return;
+      this.previewHidden = false;
+      this.notifyPreviewHost();
+    });
     win.setAlwaysOnTop(true, "floating");
     win.setHasShadow(false);
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -1499,6 +1661,7 @@ export class CodexPetWindowManager {
       const parsed = codexPetActionFromURL(rawURL);
       if (!parsed) return;
       navigationEvent.preventDefault();
+      if (this.win !== win || (!this.appliedPetVisible && parsed.action !== "sheet")) return;
       switch (parsed.action) {
         case "menu":
           this.popupMenu(win);
@@ -1524,6 +1687,15 @@ export class CodexPetWindowManager {
           this.lookCapable = parsed.capable;
           this.updateLook();
           return;
+        case "sheet":
+          if (parsed.url !== this.previewSheetURL || parsed.generation !== this.previewSheetGeneration ||
+            this.previewPageFailed || this.previewSheetState !== "loading") return;
+          this.previewSheetState = parsed.ready ? "ready" : "failed";
+          this.lookCapable = parsed.ready && parsed.capable;
+          this.updateLook();
+          if (!parsed.ready || this.loaded) this.clearPreviewLoadTimeout();
+          this.notifyPreviewHost();
+          return;
         case "resize":
           this.setSize(parsed.id);
           return;
@@ -1532,29 +1704,109 @@ export class CodexPetWindowManager {
           return;
       }
     });
+    win.webContents.on("did-start-navigation", (_event, rawURL, isInPlace, isMainFrame) => {
+      // Electron emits this before will-navigate, where bridge messages are
+      // cancelled. Those messages do not replace or reload the current page.
+      if (!isMainFrame || isInPlace || this.win !== win || codexPetActionFromURL(rawURL)) return;
+      if (rawURL !== this.previewPageURL) {
+        this.previewPageGeneration += 1;
+        this.previewPageURL = rawURL;
+      }
+      this.loaded = false;
+      this.previewPageFailed = false;
+      this.previewSheetState = this.previewSheetURL ? "loading" : "ready";
+      this.lookCapable = false;
+      this.updateLook();
+      this.pendingView = this.view(selectedCodexPet(this.snapshot), this.currentLayout);
+      this.watchPreviewLoad(win);
+      this.notifyPreviewHost();
+    });
+    win.webContents.on("did-fail-load", (_event, _errorCode, _description, rawURL, isMainFrame) => {
+      if (isMainFrame && rawURL === this.previewPageURL && !codexPetActionFromURL(rawURL)) this.failPage(win);
+    });
+    win.webContents.on("render-process-gone", () => this.failPage(win));
     win.webContents.on("did-finish-load", () => {
-      if (win.isDestroyed() || this.win !== win) return;
+      if (win.isDestroyed() || this.win !== win || this.previewPageFailed) return;
       this.loaded = true;
       const pending = this.pendingView;
       this.pendingView = undefined;
       if (pending) this.pushView(win, pending);
+      if (this.previewSheetState === "ready") this.clearPreviewLoadTimeout();
       // Belt-and-suspenders: ready-to-show is unreliable for data: URLs
       // in current Electron, so surface the window from the load event
       // when it is still hidden. showInactive() is a no-op once the
       // window is already up, so calling it after ready-to-show
       // already ran is safe.
-      if (!win.isVisible()) {
+      if (!win.isVisible() && !this.previewHidden) {
         win.showInactive();
       }
+      this.notifyPreviewHost();
     });
     win.once("ready-to-show", () => {
-      if (win.isDestroyed() || this.win !== win) return;
+      if (win.isDestroyed() || this.win !== win || this.previewPageFailed || this.previewHidden) return;
       win.showInactive();
+    });
+    win.on("close", () => {
+      // Publish unavailability while native children can still be reparented.
+      if (this.win === win) this.forgetWindow();
     });
     win.on("closed", () => {
       if (this.win === win) this.forgetWindow();
     });
-    void win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(codexPetWindowHTML(view))}`);
+    this.loadPage(win, view);
+  }
+
+  private loadPage(win: BrowserWindow, view: CodexPetView): void {
+    this.loaded = false;
+    this.previewPageFailed = false;
+    this.pendingView = view;
+    this.beginSheetLoad(win, view.spritesheetURL);
+    const pageGeneration = ++this.previewPageGeneration;
+    this.previewPageURL = `data:text/html;charset=utf-8,${encodeURIComponent(
+      codexPetWindowHTML(view, getMainLocale(), this.previewSheetGeneration),
+    )}`;
+    void Promise.resolve(win.loadURL(this.previewPageURL)).catch(() => this.failPage(win, pageGeneration));
+    this.notifyPreviewHost();
+  }
+
+  private failPage(win: BrowserWindow, pageGeneration = this.previewPageGeneration): void {
+    if (win.isDestroyed() || this.win !== win || pageGeneration !== this.previewPageGeneration) return;
+    this.loaded = false;
+    this.previewPageFailed = true;
+    this.clearPreviewLoadTimeout();
+    this.lookCapable = false;
+    this.updateLook();
+    this.notifyPreviewHost();
+  }
+
+  private beginSheetLoad(win: BrowserWindow, url: string): void {
+    this.previewSheetURL = url;
+    this.previewSheetGeneration += 1;
+    this.previewSheetState = url ? "loading" : "ready";
+    this.lookCapable = false;
+    this.updateLook();
+    this.watchPreviewLoad(win);
+  }
+
+  private watchPreviewLoad(win: BrowserWindow): void {
+    this.clearPreviewLoadTimeout();
+    if (this.loaded && this.previewSheetState === "ready") return;
+    const generation = this.previewSheetGeneration;
+    this.previewLoadTimer = setTimeout(() => {
+      this.previewLoadTimer = undefined;
+      if (this.win !== win || win.isDestroyed() || generation !== this.previewSheetGeneration) return;
+      if (!this.loaded) this.previewPageFailed = true;
+      if (this.previewSheetState === "loading") this.previewSheetState = "failed";
+      this.lookCapable = false;
+      this.updateLook();
+      this.notifyPreviewHost();
+    }, CODEX_PET_PREVIEW_LOAD_TIMEOUT_MS);
+    this.previewLoadTimer.unref();
+  }
+
+  private clearPreviewLoadTimeout(): void {
+    if (this.previewLoadTimer) clearTimeout(this.previewLoadTimer);
+    this.previewLoadTimer = undefined;
   }
 
   private popupMenu(win: BrowserWindow): void {
@@ -1578,7 +1830,7 @@ export class CodexPetWindowManager {
     Menu.buildFromTemplate(template).popup({ window: win });
   }
 
-  private view(pet: CodexPet, layout: CodexPetBubbleLayout): CodexPetView {
+  private view(pet: CodexPet | undefined, layout: CodexPetBubbleLayout): CodexPetView {
     return codexPetView(pet, {
       mood: this.mood,
       hints: this.visibleHints(),
@@ -1594,6 +1846,13 @@ export class CodexPetWindowManager {
   // Window bounds that keep the sprite's bottom-center at `anchor`, with
   // the cards (when there are any) in the first direction that fits.
   private layoutAround(anchor: { x: number; y: number }, workArea: Rectangle): CodexPetLayoutDecision {
+    if (!selectedCodexPet(this.snapshot)) {
+      return { layout: "hidden", bounds: {
+        x: Math.round(Math.max(workArea.x, Math.min(workArea.x + workArea.width - 1, anchor.x))),
+        y: Math.round(Math.max(workArea.y, Math.min(workArea.y + workArea.height - 1, anchor.y))),
+        width: 1, height: 1,
+      } };
+    }
     const count = this.visibleHints().length;
     return selectCodexPetBubbleLayout({
       workArea,
@@ -1605,7 +1864,7 @@ export class CodexPetWindowManager {
     });
   }
 
-  private applyView(pet: CodexPet): void {
+  private applyView(pet: CodexPet | undefined): void {
     const win = this.win;
     if (!win || win.isDestroyed()) return;
     const currentBounds = win.getBounds();
@@ -1614,6 +1873,14 @@ export class CodexPetWindowManager {
     const { layout, bounds, spriteShift = 0 } = this.layoutAround(anchor, workArea);
     this.currentLayout = layout;
     this.spriteShift = spriteShift;
+    const view = this.view(pet, layout);
+    this.appliedScale = view.scale;
+    this.appliedExpanded = this.expanded;
+    if (this.appliedPetVisible !== Boolean(pet)) {
+      this.appliedPetVisible = Boolean(pet);
+      win.setIgnoreMouseEvents(!pet);
+    }
+    if (view.spritesheetURL !== this.previewSheetURL) this.beginSheetLoad(win, view.spritesheetURL);
     if (
       currentBounds.x !== bounds.x ||
       currentBounds.y !== bounds.y ||
@@ -1622,9 +1889,7 @@ export class CodexPetWindowManager {
     ) {
       win.setBounds(bounds);
     }
-    const view = this.view(pet, layout);
-    this.appliedScale = view.scale;
-    this.appliedExpanded = this.expanded;
+    this.notifyPreviewHost();
     const signature = JSON.stringify(view);
     if (signature === this.lastViewSignature && this.loaded) return;
     this.lastViewSignature = signature;
@@ -1639,6 +1904,7 @@ export class CodexPetWindowManager {
     bounds: Rectangle,
     layout: CodexPetBubbleLayout,
   ): { x: number; y: number } {
+    if (!this.appliedPetVisible) return { x: bounds.x, y: bounds.y };
     // anchor = sprite's bottom-center on screen. Reads sprite footprint from
     // the scale that produced these bounds (see appliedScale) so a resize
     // that happens between snapshots still extracts the right anchor.
@@ -1725,7 +1991,7 @@ export class CodexPetWindowManager {
 
   private pushView(win: BrowserWindow, view: CodexPetView): void {
     void win.webContents
-      .executeJavaScript(`window.wuuPetView?.(${JSON.stringify(view)})`, true)
+      .executeJavaScript(`window.wuuPetView?.(${JSON.stringify(view)}, ${this.previewSheetGeneration})`, true)
       .catch(() => undefined);
   }
 }

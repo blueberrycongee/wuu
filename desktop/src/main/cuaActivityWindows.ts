@@ -4,11 +4,12 @@ import {
   browserPiPScreenRect,
   PIP_ANCHOR_MARGIN,
   PIP_CARD_SIZE,
+  PIP_WINDOW_MIN_SIZE,
   type BrowserPiPScreenLayout,
   type PipRect,
 } from "./browserPiPPlacement";
 import type { CUANativePiPEvent } from "./cuaFrameStreams";
-import type { ActivityPreviewAppearance } from "../shared/activityPreview";
+import type { ActivityPreviewAction, ActivityPreviewPlacement, ActivityPreviewState, ActivityPreviewAppearance } from "../shared/activityPreview";
 import { activityTimestamp } from "../shared/activityTimestamp";
 import type { WindowRegistry } from "./windowRegistry";
 import { activityPreviewIsLive } from "./activityPiPContent";
@@ -76,6 +77,7 @@ export type ObservationPiPHandle = {
   setTurnCompleted?(completed: boolean): void;
   setAppearance?(dark: boolean, preferences?: ActivityPreviewAppearance): void;
   suspendContent?(message: string): void;
+  setPlacement?(placement: ActivityPreviewPlacement, petAvailable: boolean): void;
   setHostLayout?(layout: BrowserPiPScreenLayout | null): void;
   setHostParent?(parent: BrowserPiPHostWindow | null): void;
   // Stack placement: index 0 leads at its corner; others rest behind the lead.
@@ -129,8 +131,8 @@ type PiPEntry = {
  * Owns the observation cards of every thread with a live, observable task
  * (CUA windows, embedded-browser tabs). Each thread has at most one card;
  * activity events retarget it, but an individual action ending never owns its
- * lifetime. Only the active conversation presents its card; other tasks keep
- * their observations and continue running while their cards are hidden.
+ * lifetime. Home cards follow the selected conversation; desktop and Pet cards
+ * retain their own task while other conversations or apps are foregrounded.
  */
 export class ObservationCoordinator {
   private readonly observations = new Map<string, ActivitySession>();
@@ -145,9 +147,9 @@ export class ObservationCoordinator {
   // Most recently started or promoted first.
   private stackOrder: string[] = [];
   private stackSignature = "";
-  private stackLeadEntry: PiPEntry | undefined;
+  private readonly stackLeadEntries = new Map<ActivityPreviewPlacement, PiPEntry>();
   // Where the stack last rested, kept after its cards leave.
-  private lastStackLead: PiPStackLead | undefined;
+  private readonly lastStackLeads = new Map<ActivityPreviewPlacement, PiPStackLead>();
   private readonly pendingStops = new Set<Promise<void>>();
   private closed = false;
   private userBounds: Rectangle | undefined;
@@ -167,7 +169,15 @@ export class ObservationCoordinator {
   private autoShow = true;
   private readonly explicitlyShown = new Set<string>();
   private browserInPanel: ((activity: ActivitySession) => boolean) | undefined;
-  private onBrowserExpand: ((activity: ActivitySession) => void) | undefined;
+  private readonly placements = new Map<string, ActivityPreviewPlacement>();
+  private readonly presentationSignatures = new Map<string, string>();
+  private presentationListener: ((state: ActivityPreviewState) => void) | undefined;
+  private petHost: (() => { window: BrowserPiPHostWindow; anchor: { x: number; y: number }; sprite: { width: number; height: number }; ready: boolean; occupiedBounds: Rectangle } | undefined) | undefined;
+  private readonly pendingPetThreads = new Set<string>();
+  private requestingPetHost = false;
+  private requestPetHost: (() => void) | undefined;
+  private petPreviewActive: ((active: boolean) => void) | undefined;
+  private onReturnHome: ((activity: ActivitySession) => void) | undefined;
 
   constructor(
     private readonly registry: WindowRegistry,
@@ -196,7 +206,7 @@ export class ObservationCoordinator {
           // Stopping a browser activity is not evidence that its task succeeded.
           const succeeded = turn?.turn?.status === "completed" && !turn.awaiting_auto_continuation && !turn.truncated;
           if (!succeeded || this.pipVisibility(entry.activity)) entry.pip.setTurnCompleted?.(succeeded);
-          if ((succeeded && this.activeThreadID !== threadID)
+          if ((succeeded && !this.pipVisibility(entry.activity))
             || turn?.turn?.status === "interrupted" || turn?.turn?.status === "failed") {
             // A task that finishes offscreen must not return as a running preview.
             this.endedThreads.add(threadID);
@@ -230,12 +240,85 @@ export class ObservationCoordinator {
     this.syncThread(threadID);
   }
 
-  setBrowserInPanel(check: (activity: ActivitySession) => boolean): void {
-    this.browserInPanel = check;
+  setPresentationListener(listener: (state: ActivityPreviewState) => void): void {
+    this.presentationListener = listener;
   }
 
-  setBrowserExpandHandler(handler: (activity: ActivitySession) => void): void {
-    this.onBrowserExpand = handler;
+  setPetHost(provider: NonNullable<ObservationCoordinator["petHost"]>, active: (active: boolean) => void, request?: () => void): void {
+    this.requestPetHost = request;
+    this.petHost = provider;
+    this.petPreviewActive = active;
+  }
+
+  setReturnHomeHandler(handler: (activity: ActivitySession) => void): void { this.onReturnHome = handler; }
+
+  presentationForThread(threadID: string): ActivityPreviewState | null {
+    const activity = this.observations.get(threadID);
+    if (!activity) return null;
+    return { threadID, workdir: activity.workdir, visible: this.wantsCard(threadID) && !this.observationIsGone(activity),
+      placement: this.placements.get(threadID) ?? "home", petAvailable: Boolean(this.requestPetHost || this.petHost?.()?.ready) };
+  }
+
+  setPresentation(threadID: string, action: ActivityPreviewAction): ActivityPreviewState | null {
+    if (this.closed || !this.observations.has(threadID)) return null;
+    if (action !== "show") this.pendingPetThreads.delete(threadID);
+    if (action === "hide") {
+      this.dismissedThreads.add(threadID);
+      this.explicitlyShown.delete(threadID);
+      this.syncThread(threadID);
+    } else {
+      if (action === "pet" && !this.petHost?.()?.ready) {
+        if (!this.requestPetHost) return this.presentationForThread(threadID);
+        // Keep the current owner until the requested desktop host can receive
+        // the existing content. A second action cancels this pending intent.
+        this.pendingPetThreads.add(threadID);
+        this.requestingPetHost = true;
+        try { this.showForThread(threadID); this.requestPetHost(); }
+        finally { this.requestingPetHost = false; this.refreshPetHost(); }
+        return this.presentationForThread(threadID);
+      }
+      if (action !== "show") this.placements.set(threadID, action);
+      this.pushBrowserHost(this.entries.get(threadID));
+      this.showForThread(threadID);
+    }
+    this.publishPresentation(threadID);
+    return this.presentationForThread(threadID);
+  }
+
+  refreshPetHost(): void {
+    if (this.closed || this.requestingPetHost) return;
+    const host = this.petHost?.();
+    if (host?.ready) {
+      for (const threadID of this.pendingPetThreads) {
+        if (this.wantsCard(threadID) && this.observations.has(threadID)) this.placements.set(threadID, "pet");
+      }
+      this.pendingPetThreads.clear();
+    } else if (!host) this.pendingPetThreads.clear();
+    if (!host) {
+      for (const [threadID, placement] of this.placements) {
+        if (placement === "pet") this.placements.set(threadID, "home");
+      }
+    }
+    for (const entry of this.entries.values()) {
+      this.pushBrowserHost(entry);
+      entry.pip.setVisible(this.pipVisibility(entry.activity));
+      this.publishPresentation(entry.threadID);
+    }
+    for (const threadID of this.observations.keys()) this.publishPresentation(threadID);
+    this.restack();
+  }
+
+  private publishPresentation(threadID: string): void {
+    const state = this.presentationForThread(threadID);
+    if (!state) return;
+    const signature = JSON.stringify(state);
+    if (this.presentationSignatures.get(threadID) === signature) return;
+    this.presentationSignatures.set(threadID, signature);
+    this.presentationListener?.(state);
+  }
+
+  setBrowserInPanel(check: (activity: ActivitySession) => boolean): void {
+    this.browserInPanel = check;
   }
 
   refreshBrowserPresentation(): void {
@@ -249,7 +332,8 @@ export class ObservationCoordinator {
   }
 
   private pipVisibility(activity: ActivitySession): boolean {
-    return activity.thread_id === this.activeThreadID && this.wantsCard(activity.thread_id)
+    const placement = this.placements.get(activity.thread_id) ?? "home";
+    return (placement !== "home" || activity.thread_id === this.activeThreadID) && this.wantsCard(activity.thread_id)
       && pipVisibleForActivity(activity, this.browserInPanel?.(activity) ?? false);
   }
 
@@ -310,8 +394,13 @@ export class ObservationCoordinator {
   dropWorkdir(workdir: string): void {
     for (const [threadID, activity] of [...this.observations]) {
       if (activity.workdir === workdir) {
+        const state = this.presentationForThread(threadID);
         this.observations.delete(threadID);
         this.goneObservations.delete(threadID);
+        this.placements.delete(threadID);
+        this.pendingPetThreads.delete(threadID);
+        this.presentationSignatures.delete(threadID);
+        if (state) this.presentationListener?.({ ...state, visible: false });
       }
     }
     for (const entry of [...this.entries.values()]) {
@@ -321,6 +410,8 @@ export class ObservationCoordinator {
 
   shutdown(): Promise<void> {
     this.closed = true;
+    this.pendingPetThreads.clear();
+    this.petPreviewActive?.(false);
     this.activeThreadID = undefined;
     this.observations.clear();
     this.goneObservations.clear();
@@ -340,9 +431,11 @@ export class ObservationCoordinator {
 
   private syncThread(threadID: string, restack = true): void {
     if (this.closed) return;
+    this.publishPresentation(threadID);
     const entry = this.entries.get(threadID);
     const activity = this.observations.get(threadID);
     if (!this.wantsCard(threadID) || !activity || this.observationIsGone(activity)) {
+      this.pendingPetThreads.delete(threadID);
       entry?.pip.setVisible(false);
       if (restack) this.restack();
       return;
@@ -402,7 +495,7 @@ export class ObservationCoordinator {
     this.stackOrder = behind ? [order[0], activity.thread_id, ...order.slice(1)] : [activity.thread_id, ...order];
     pip.start();
     if (this.darkAppearance !== undefined) pip.setAppearance?.(this.darkAppearance, this.appearance);
-    this.pushBrowserHost(pip);
+    this.pushBrowserHost(entry);
     pip.setVisible(this.pipVisibility(activity));
     pip.setLive?.(activityPreviewIsLive(activity));
     pip.updateActivity?.(activity);
@@ -412,6 +505,7 @@ export class ObservationCoordinator {
   private stopEntry(entry: PiPEntry): void {
     if (this.entries.get(entry.threadID) !== entry) return;
     this.entries.delete(entry.threadID);
+    this.pendingPetThreads.delete(entry.threadID);
     this.stackOrder = this.stackOrder.filter((id) => id !== entry.threadID);
     const stopped = new Promise<void>((resolve) => entry.pip.stop(resolve));
     this.pendingStops.add(stopped);
@@ -429,6 +523,10 @@ export class ObservationCoordinator {
   private restack(): void {
     if (this.closed) return;
     const visible = this.visibleStack();
+    // Browser-panel takeover temporarily hides pixels, not the user's desktop
+    // ownership. Explicit hide, completion and target loss release that intent.
+    this.petPreviewActive?.(this.pendingPetThreads.size > 0 || [...this.entries.values()].some(entry =>
+      this.placements.get(entry.threadID) === "pet" && this.wantsCard(entry.threadID) && !this.observationIsGone(entry.activity)));
     this.layoutStack(visible);
     const signature = visible.map((entry) => entry.key).join("\n");
     if (signature === this.stackSignature) return;
@@ -441,18 +539,21 @@ export class ObservationCoordinator {
   }
 
   private layoutStack(visible = this.visibleStack()): void {
-    const lead = visible[0];
-    if (!lead) return;
-    // A new lead takes over the resting place of the card it replaces, or of
-    // the last stack when none remains.
-    const replaced = this.stackLeadEntry;
-    const previous = replaced === lead ? undefined
-      : replaced && this.entries.get(replaced.threadID) === replaced ? replaced.pip.stackLead?.() : this.lastStackLead;
-    this.stackLeadEntry = lead;
-    lead.pip.setStackPosition?.(0, previous);
-    const frame = lead.pip.stackLead?.();
-    this.lastStackLead = frame;
-    visible.slice(1).forEach((entry, index) => entry.pip.setStackPosition?.(index + 1, frame));
+    for (const placement of ["home", "floating", "pet"] as const) {
+      const group = visible.filter(entry => (this.placements.get(entry.threadID) ?? "home") === placement);
+      const lead = group[0];
+      if (!lead) continue;
+      const replaced = this.stackLeadEntries.get(placement);
+      // Never inherit geometry from a card that moved to a different host.
+      const previous = replaced === lead ? undefined
+        : replaced && (this.placements.get(replaced.threadID) ?? "home") === placement
+          && this.entries.get(replaced.threadID) === replaced ? replaced.pip.stackLead?.() : this.lastStackLeads.get(placement);
+      this.stackLeadEntries.set(placement, lead);
+      lead.pip.setStackPosition?.(0, previous);
+      const frame = lead.pip.stackLead?.();
+      if (frame) this.lastStackLeads.set(placement, frame);
+      group.slice(1).forEach((entry, index) => entry.pip.setStackPosition?.(index + 1, frame));
+    }
   }
 
   private visibleStack(): PiPEntry[] {
@@ -485,10 +586,7 @@ export class ObservationCoordinator {
         this.syncThread(entry.threadID);
         return;
       case "user_close":
-        this.dismissedThreads.add(entry.threadID);
-        this.explicitlyShown.delete(entry.threadID);
-        entry.pip.setVisible(false);
-        this.restack();
+        this.setPresentation(entry.threadID, "hide");
         return;
       case "promote":
         this.promote(entry.threadID);
@@ -503,8 +601,12 @@ export class ObservationCoordinator {
         this.endedThreads.add(entry.threadID);
         this.syncThread(entry.threadID);
         return;
-      case "expand":
-        if (entry.activity.kind === "browser") this.onBrowserExpand?.(entry.activity);
+      case "return_home":
+        this.setPresentation(entry.threadID, "home");
+        this.onReturnHome?.(entry.activity);
+        return;
+      case "send_to_pet":
+        this.setPresentation(entry.threadID, "pet");
         return;
       case "gone":
         this.handlePiPGone(entry);
@@ -512,10 +614,12 @@ export class ObservationCoordinator {
       case "user_input":
         return;
       case "geometry":
-        if (this.visibleStack()[0] !== entry) return;
+        if (this.visibleStack().find(candidate => (this.placements.get(candidate.threadID) ?? "home")
+          === (this.placements.get(entry.threadID) ?? "home")) !== entry) return;
         if ([event.x, event.y, event.width, event.height].every((value) => typeof value === "number")) {
           this.userBounds = { x: event.x!, y: event.y!, width: event.width!, height: event.height! };
         }
+        if (this.placements.get(entry.threadID) === "pet") this.pushBrowserHostToAll();
         this.layoutStack();
         return;
       case "capture_status":
@@ -561,6 +665,7 @@ export class ObservationCoordinator {
     }
     this.resetRetryBudget(entry.threadID);
     this.stopEntry(entry);
+    this.publishPresentation(entry.threadID);
   }
 
   private observationIsGone(activity: ActivitySession): boolean {
@@ -617,7 +722,7 @@ export class ObservationCoordinator {
       this.browserHost.detach();
       this.browserHost = undefined;
       this.browserScreenLayout = null;
-      for (const entry of this.entries.values()) entry.pip.setHostLayout?.(null);
+      this.pushBrowserHostToAll();
       return;
     }
     if (!this.browserHost || this.browserHost.id !== webContentsId || this.browserHost.window !== hostWindow) {
@@ -675,16 +780,64 @@ export class ObservationCoordinator {
   private pushBrowserHostToAll(): void {
     const stack = this.visibleStack();
     for (const entry of this.entries.values()) {
-      if (entry !== stack[0]) this.pushBrowserHost(entry.pip);
+      if (entry !== stack[0]) this.pushBrowserHost(entry);
     }
-    if (stack[0]) this.pushBrowserHost(stack[0].pip);
+    if (stack[0]) this.pushBrowserHost(stack[0]);
     this.layoutStack(stack);
   }
 
-  private pushBrowserHost(pip: ObservationPiPHandle | undefined): void {
-    if (!pip?.setHostLayout || this.browserScreenLayout === undefined) return;
-    pip.setHostParent?.(this.browserHost && !this.browserHost.window.isDestroyed() ? this.browserHost.window : null);
-    pip.setHostLayout(this.browserScreenLayout);
+  private pushBrowserHost(entry: PiPEntry | undefined): void {
+    if (!entry?.pip.setHostLayout) return;
+    const pip = entry.pip;
+    const placement = this.placements.get(entry.threadID) ?? "home";
+    const pet = this.petHost?.();
+    pip.setPlacement?.(placement, Boolean(this.requestPetHost || pet?.ready));
+    if (placement === "pet" && pet) {
+      pip.setHostParent?.(pet.window);
+      // A loading replacement retains ownership, but has no usable pixels yet.
+      if (!pet.ready) { pip.setHostLayout?.(null); return; }
+      const frame = screen.getDisplayNearestPoint(pet.anchor).workArea;
+      const lead = this.visibleStack().find(candidate => this.placements.get(candidate.threadID) === "pet");
+      const wanted = lead?.pip.stackLead?.()?.frame ?? pip.stackLead?.()?.frame ?? PIP_CARD_SIZE;
+      const occupied = pet.occupiedBounds;
+      const gap = 8;
+      const right = frame.x + frame.width, bottom = frame.y + frame.height;
+      // Reserve the whole Pet panel, including its dock and expanded cards.
+      // Prefer above/below, then the sides; shrink into available screen space
+      // rather than carrying an oversized frame onto a smaller display.
+      const regions = [
+        { side: "above", x: frame.x, y: frame.y, width: frame.width, height: Math.max(0, Math.min(bottom, occupied.y - gap) - frame.y) },
+        { side: "below", x: frame.x, y: Math.max(frame.y, occupied.y + occupied.height + gap), width: frame.width, height: Math.max(0, bottom - Math.max(frame.y, occupied.y + occupied.height + gap)) },
+        { side: "left", x: frame.x, y: frame.y, width: Math.max(0, Math.min(right, occupied.x - gap) - frame.x), height: frame.height },
+        { side: "right", x: Math.max(frame.x, occupied.x + occupied.width + gap), y: frame.y, width: Math.max(0, right - Math.max(frame.x, occupied.x + occupied.width + gap)), height: frame.height },
+      ].filter(region => region.width >= PIP_WINDOW_MIN_SIZE.width && region.height >= PIP_WINDOW_MIN_SIZE.height);
+      const region = regions.sort((a, b) =>
+        Math.min(wanted.width, b.width) * Math.min(wanted.height, b.height)
+        - Math.min(wanted.width, a.width) * Math.min(wanted.height, a.height))[0];
+      if (!region) { pip.setHostLayout?.(null); return; }
+      const size = { width: Math.min(wanted.width, region.width), height: Math.min(wanted.height, region.height) };
+      const x = region.side === "left" ? region.x + region.width - size.width
+        : region.side === "right" ? region.x
+          : Math.max(region.x, Math.min(pet.anchor.x + pet.sprite.width / 2 - size.width, region.x + region.width - size.width));
+      const y = region.side === "above" ? region.y + region.height - size.height
+        : region.side === "below" ? region.y
+          : Math.max(region.y, Math.min(pet.anchor.y - pet.sprite.height / 2 - size.height / 2, region.y + region.height - size.height));
+      pip.setHostLayout?.({ host: { x: x - PIP_ANCHOR_MARGIN, y: y - PIP_ANCHOR_MARGIN,
+        width: size.width + PIP_ANCHOR_MARGIN * 2, height: size.height + PIP_ANCHOR_MARGIN * 2 },
+        obstacles: [], visibleFrame: frame, stackBounds: region });
+      return;
+    }
+    if (placement === "floating") {
+      const bounds = pip.stackLead?.()?.frame ?? this.initialBounds();
+      const frame = screen.getDisplayMatching(bounds).workArea;
+      pip.setHostParent?.(null);
+      pip.setHostLayout?.({ host: frame, obstacles: [], visibleFrame: frame });
+      return;
+    }
+    const parent = this.browserHost?.window ?? this.registry.mainWindow();
+    pip.setHostParent?.(parent && !parent.isDestroyed() ? parent as BrowserPiPHostWindow : null);
+    if (this.browserScreenLayout !== undefined) pip.setHostLayout?.(this.browserScreenLayout);
+
   }
 
   private initialBounds(): Rectangle {

@@ -11,6 +11,7 @@ import {
 import { SidebarNameDialog } from "./SidebarNameDialog";
 import { confirmAction } from "./ConfirmDialog";
 import type { DesktopProject, RuntimeContext } from "../shared/protocol";
+import type { ActivityPreviewAction, ActivityPreviewState } from "../shared/activityPreview";
 import {
   copyToClipboard,
   ThreadContextMenu,
@@ -28,7 +29,8 @@ import {
   type ThreadSummary,
 } from "./AppState";
 import { isProjectCoordinator, type ProjectRowSummary } from "./ProjectSessions";
-import { resolveLocalizedText, useI18n } from "./i18n";
+import { resolveLocalizedText, translateCurrent, useI18n } from "./i18n";
+import { showActionErrorToast, showErrorToast } from "./Toast";
 import { useHoverReveal } from "./HoverReveal";
 import { motionDurationMs, useReducedMotion } from "./motion";
 import {
@@ -770,6 +772,37 @@ function ThreadRows({
     thread: ThreadSummary;
     mode: "all" | "folder";
   } | null>(null);
+  const [activityPreview, setActivityPreview] = useState<ActivityPreviewState | null>(null);
+  const previewThreadID = contextMenu?.mode === "all" ? contextMenu.thread.id : undefined;
+  useEffect(() => {
+    setActivityPreview(null);
+    if (!previewThreadID || !window.wuu?.getActivityPreview || !window.wuu.setActivityPreview) return;
+    let active = true;
+    let revision = 0;
+    const refresh = async (): Promise<void> => {
+      const current = ++revision;
+      try {
+        const preview = await window.wuu.getActivityPreview!(previewThreadID);
+        if (active && current === revision) setActivityPreview(preview);
+      } catch (error) {
+        if (active && current === revision) showErrorToast(error, translateCurrent("activityPreview.updateFailed"));
+      }
+    };
+    const unsubscribe = window.wuu.onActivityPreviewChange?.(() => void refresh());
+    void refresh();
+    return () => { active = false; unsubscribe?.(); };
+  }, [previewThreadID]);
+  const menuPreview = activityPreview && activityPreview.threadID === previewThreadID
+    && activityPreview.workdir === contextMenu?.thread.cwd ? activityPreview : null;
+  async function updateActivityPreview(action: ActivityPreviewAction): Promise<void> {
+    if (!menuPreview) return;
+    if (action !== "hide") onSelect(menuPreview.threadID);
+    try {
+      await window.wuu.setActivityPreview!(menuPreview.threadID, action);
+    } catch (error) {
+      showActionErrorToast(error, t("activityPreview.updateFailed"));
+    }
+  }
   const [renameDialog, setRenameDialog] = useState<{
     thread: ThreadSummary;
     initialTitle: string;
@@ -1103,6 +1136,28 @@ function ThreadRows({
                 void copyToClipboard(contextMenu.thread.id);
               },
             },
+            ...(menuPreview ? [
+              { separator: true as const },
+              {
+                label: t(menuPreview.visible ? "activityPreview.hide" : "activityPreview.show"),
+                onSelect: () => updateActivityPreview(menuPreview.visible ? "hide" : "show"),
+              },
+              {
+                label: t("activityPreview.mainWindow"),
+                disabled: menuPreview.placement === "home",
+                onSelect: () => updateActivityPreview("home"),
+              },
+              {
+                label: t("activityPreview.desktop"),
+                disabled: menuPreview.placement === "floating",
+                onSelect: () => updateActivityPreview("floating"),
+              },
+              ...(menuPreview.petAvailable ? [{
+                label: t("activityPreview.pet"),
+                disabled: menuPreview.placement === "pet",
+                onSelect: () => updateActivityPreview("pet"),
+              }] : []),
+            ] : []),
             { separator: true },
             {
               label: t("threadSidebar.delete"),

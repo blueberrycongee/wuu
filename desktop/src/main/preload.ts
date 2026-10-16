@@ -402,6 +402,13 @@ const api: WuuDesktopApi = {
       ipcRenderer.removeListener("wuu:language-preference-changed", listener);
   },
   initialMessageFlowFontSize,
+  getActivityPreview: (threadID) => ipcRenderer.invoke("wuu:activity-preview-get", threadID),
+  setActivityPreview: (threadID, action) => ipcRenderer.invoke("wuu:activity-preview-set", threadID, action),
+  onActivityPreviewChange: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: import("../shared/activityPreview").ActivityPreviewState) => handler(state);
+    ipcRenderer.on("wuu:activity-preview-changed", listener);
+    return () => ipcRenderer.removeListener("wuu:activity-preview-changed", listener);
+  },
   getActivityPreviewAutoShow: () => ipcRenderer.invoke("wuu:activity-preview-auto-show-get"),
   setActivityPreviewAutoShow: (enabled) => ipcRenderer.invoke("wuu:activity-preview-auto-show-set", enabled),
   onActivityPreviewAutoShowChange: (handler) => {

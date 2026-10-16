@@ -75,7 +75,7 @@ make build-go
 
 ### 实时活动预览验收
 
-安装桌面依赖后，运行 `node desktop/scripts/activity-preview-e2e.cjs`。脚本会打包产品中的 Electron 预览窗口与浏览器/原生内容适配器，打开独立的合成网页，并通过 JSONL 命令与二进制 AVC 会话输出启动合成原生画面宿主子进程。它检查切换提供方时的窗口身份和几何保持、从停靠角落展开的出现动画、切换会话时仅显示所属预览且后台任务继续运行、画面确认、旧回调拒绝、捕获错误呈现、手动隐藏与重新打开、自动预览设置、外部任务控制状态更新以及关闭清理。结果、传输日志、出现动画帧采样与会话可见性结果以及渲染截图保存在 `desktop/out/activity-preview/`；可用 `WUU_ACTIVITY_PREVIEW_OUTPUT` 修改目录。无图形会话的 Linux 自动使用软件渲染和合成显示器。
+安装桌面依赖后，运行 `node desktop/scripts/activity-preview-e2e.cjs`。脚本会打包产品中的 Electron 预览窗口与浏览器/原生内容适配器，打开独立的合成网页，并通过 JSONL 命令与二进制 AVC 会话输出启动合成原生画面宿主子进程。它检查切换提供方时的窗口身份和几何保持、从停靠角落展开的出现动画、切换会话时仅显示所属预览且后台任务继续运行、画面确认、旧回调拒绝、捕获错误呈现、手动隐藏与重新打开、自动预览设置、主窗口/桌面/Pet 三个位置的真实父窗口、Pet 移动与可用性变化、形象关闭时的等待交接与取消、同宿主切换形象、素材和渲染进程失败恢复、展开面板与多卡避让、小屏尺寸限制、多个会话同时显示时的归属、外部任务控制状态更新以及关闭清理。悬停控件截图在 Electron 中将产品控件渲染到捕获的网页之上，同时保留内容与控件的独立截图，因此不代表原生兄弟视图的系统合成验收。结果、传输日志、出现动画帧采样与会话可见性结果以及渲染截图保存在 `desktop/out/activity-preview/`；可用 `WUU_ACTIVITY_PREVIEW_OUTPUT` 修改目录。无图形会话的 Linux 自动使用软件渲染和合成显示器。
 
 构建 core 后，运行 `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs`，检查真实 Go 执行归属和 Chromium 输入。停止必须中断当前任务；之后的新指令应取得新的操作权限，旧执行 ID 仍须被拒绝。该脚本也覆盖浏览器任务隔离、保留页面、待发送输入期间接管与清理。证据保存在 `desktop/out/browser-task-ownership/`。
 

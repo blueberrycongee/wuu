@@ -161,10 +161,10 @@ app.whenReady().then(async () => {
     await capture(pip, `pip-completion-${name}.png`);
   }
   await capture(pip, "pip-completed.png");
-  await overlay.executeJavaScript(`document.getElementById('expand').focus();
+  await overlay.executeJavaScript(`document.getElementById('close').focus();
     Promise.all(document.getAnimations().filter(a=>a.playState==='running' && Number.isFinite(a.effect.getComputedTiming().endTime)).map(a=>a.finished))`);
   await capture(pip, "pip-controls-focused.png");
-  assert.equal(await overlay.executeJavaScript(`document.activeElement.id`), "expand");
+  assert.equal(await overlay.executeJavaScript(`document.activeElement.id`), "close");
   await overlay.executeJavaScript(`document.activeElement.blur()`);
 
   const stoppedActivity: ActivitySession = {

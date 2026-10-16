@@ -13,6 +13,8 @@ export const PIP_OBSTACLE_PAD = 12;
 export const PIP_CARD_SIZE = { width: 250, height: 250 };
 export const PIP_MAX_EDGE = 320;
 export const PIP_MIN_SIZE = { width: 160, height: 120 };
+// Native shell floor, including when a smaller display constrains a card.
+export const PIP_WINDOW_MIN_SIZE = { width: 80, height: 64 };
 export const PIP_RESIZE_EDGES = ["n", "s", "e", "w", "ne", "nw", "se", "sw"] as const;
 export type PipResizeEdge = (typeof PIP_RESIZE_EDGES)[number];
 
@@ -50,6 +52,8 @@ export interface BrowserPiPScreenLayout {
   host: PipRect;
   obstacles: PipRect[];
   visibleFrame: PipRect;
+  // Shared safe region for a desktop-host stack, excluding its own UI.
+  stackBounds?: PipRect;
 }
 
 interface LocalRect {
