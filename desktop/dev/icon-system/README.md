@@ -1,17 +1,17 @@
 # Icon-system review surface
 
-A complete review-only candidate for Wuu's 148 shared product-control icon names.
-The full family is unapproved. The robot-shaped Bot and layered folder proposal
-from the first study are withdrawn; the current candidate restores the ball
-identity and single-contour folder family. All other proposals remain provisional.
-The production source remains `desktop/src/shared/iconArtwork.ts`. Nothing in
-this directory is imported into the application bundle.
+The complete family is integrated into `desktop/src/shared/iconArtwork.ts`, the
+single artwork source used by React controls and main-process HTML. All 148 names
+are retained; 147 drawings change and Project preserves its distinctive mark.
+The comparison keeps the pinned baseline and exports the updated column from
+production, so it cannot drift into a separate candidate implementation.
 
 ## Preview
 
 From the repository root, run:
 
 ```sh
+node desktop/dev/icon-system/build-preview.mjs
 python3 -m http.server 5178 --bind 127.0.0.1 --directory desktop/dev/icon-system
 ```
 
@@ -38,13 +38,13 @@ external product-control paths or generated raster tracing are used.
   and energy marks use the same outline weight as adjacent controls.
 - Keep familiar direction/action semantics and Wuu-specific identity. Bot stays
   a ball with two capsule eyes. Project retains its existing distinctive mark
-  pending its own review. Message tails and panel partitions stay explicit.
+  unchanged. Message tails and panel partitions stay explicit.
 - Wuu's application icon is outside this change and remains unchanged.
   Third-party provider, engine and GitHub identities remain their own marks.
 
 ## Source coverage
 
-`candidate-artwork.mjs` contains the full six-group catalog. The groups contain
+`icon-groups.mjs` contains the full six-group catalog. The groups contain
 35 navigation/layout, 25 editing/action, 14 message/people, 36 tool/workspace,
 15 file/content and 23 status/feedback names. Aliases retain named entries.
 
@@ -93,7 +93,7 @@ TypeScript stripping enabled):
 node desktop/dev/icon-system/build-preview.mjs
 ```
 
-This validates catalog coverage and writes the SVG atlases plus a local source
+This validates catalog coverage and writes `production-artwork.json`, the SVG atlases and a local source
 inventory. The current snapshot is retained, not silently replaced on each run.
 To render the atlases with Inkscape:
 
@@ -110,10 +110,10 @@ A successful catalog render does not replace live desktop visual acceptance.
 
 ## 中文说明
 
-这是完整 148 项控件图标的独立验收入口，现版与候选并排。可切换
-14、15、16、20px、浅深色、控件尺寸和禁用状态。候选全部直接绘制为 SVG，
-没有接入生产图标库，也没有改变点击范围、布局、交互或无障碍标签。
+这是完整 148 项控件图标的对照入口，固定基线与已接入的新版并排。可切换
+14、15、16、20px、浅深色、控件尺寸和禁用状态。新版直接绘制为 SVG，已接入共享生产图标库；147 项图形变化，Project 保持原样。
+点击范围、布局、交互和无障碍标签不变。
 
 重点是统一外轮廓、曲面转角和内部留白，减少局部实心块的视觉重量。
 Wuu 应用图标不在本次改动范围内；第三方品牌标识保留。SVG 渲染图不等同于
-真实软件截图，确认方向后仍需检查实际界面。
+真实软件截图，实际界面需单独验收。

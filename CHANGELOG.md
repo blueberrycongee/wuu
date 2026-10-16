@@ -17,7 +17,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- Refine refresh and retry icons with consistent circular arcs and compact arrowheads.
+- Refresh the complete shared UI icon family with consistent contours, open details, and lighter visual weight while preserving the Wuu ball and Project identities.
 
 - Desktop downloads use stable product/platform filenames without a version suffix; app versions and automatic update verification are unchanged.
 
