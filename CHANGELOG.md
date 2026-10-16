@@ -10,6 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Restore scroll-edge fades in onboarding choice lists so remaining content is visible without masking the title, companion, or navigation buttons.
 - Fix live activity previews waiting for Wuu to regain keyboard focus, and expose delayed startup and capture failures with a preview-only retry action.
 - Computer Use and browser previews now follow the selected conversation. Switching conversations hides the previous preview while its task continues in the background; returning restores ongoing work without reviving tasks that finished offscreen.
 
