@@ -236,6 +236,8 @@ function installWuuApi(
   let activeContext: RuntimeContext = { kind: "no_project", cwd: scratchCwd };
   const thread = persistedThread();
   const api = {
+    getRemoteControlSnapshot: vi.fn().mockResolvedValue({ status: null, host_enabled: false, host_running: false, pair_uri: null }),
+    onRemoteControlEvent: vi.fn(() => () => {}),
     listProjects: vi.fn().mockImplementation(() =>
       Promise.resolve({ projects: [project], active_context: activeContext }),
     ),

@@ -115,6 +115,8 @@ function installWuuApi(): void {
     turns: [],
   };
   const api = {
+    getRemoteControlSnapshot: vi.fn().mockResolvedValue({ status: null, host_enabled: false, host_running: false, pair_uri: null }),
+    onRemoteControlEvent: vi.fn(() => () => {}),
     listProjects: vi.fn().mockImplementation(() => Promise.resolve(workspaceState())),
     selectNoProject: vi
       .fn()

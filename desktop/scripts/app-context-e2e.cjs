@@ -36,6 +36,8 @@ ipcRenderer.on('snapshot:changed', () => ipcRenderer.send('snapshot:delivered'))
 contextBridge.exposeInMainWorld("wuu", {
   platform: 'darwin',
   getBuildInfo: async () => ({ core: undefined, desktop: { version: 'app-snapshot-e2e', date: '2026-10-09' } }),
+  getRemoteControlSnapshot: async () => ({ status: null, host_enabled: false, host_running: false, pair_uri: null }),
+  onRemoteControlEvent: () => () => {},
   listMCPServers: async () => ({ servers: [] }),
   getAppContextState: () => ipcRenderer.invoke('snapshot:state'),
   setAppContextShortcutRecording: value => ipcRenderer.invoke('snapshot:recording', value),

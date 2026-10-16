@@ -70,6 +70,8 @@ contextBridge.exposeInMainWorld("wuu", {
   gitStatus: async () => ({ is_repo: true, branch: "selection-e2e", branches: ["selection-e2e"], dirty_count: 0,
     diff: { files: 0, additions: 0, deletions: 0 }, staged_diff: { files: 0, additions: 0, deletions: 0 } }),
   listGitChanges: async () => ({ is_repo: true, root: cwd, files: [] }),
+  getRemoteControlSnapshot: async () => ({ status: null, host_enabled: false, host_running: false, pair_uri: null }),
+  onRemoteControlEvent: () => () => {},
   listMCPServers: async () => ({ servers: [] }),
   listWorkspaceFiles: async () => ({ root: cwd, paths: Object.keys(files), truncated: false }),
   listWorkspaceDirectory: async (directory = "") => ({ root: cwd, path: directory, truncated: false,
