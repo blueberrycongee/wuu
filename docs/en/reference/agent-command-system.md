@@ -57,6 +57,8 @@ Start a server, watcher, or interactive command with `run_in_background` rather 
 
 The call returns the process ID immediately. Background commands run in a pseudo-terminal so the desktop can take them over; macOS and Linux support PTYs, while Windows falls back to pipes. A natural exit is delivered at the next model step when the owning conversation is active; otherwise it starts a continuation, which `wuu exec` waits for. Results already read by the model do not trigger another delivery. Successful consumption is persisted with the answer so restart recovery does not repeat an acknowledged result. For a long-lived service whose exit should not resume or hold open the task, set `completion_mode=detached` with `process action=update`.
 
+If a completion continuation fails or is interrupted, its notification stays pending. Provider retries use the existing bounded backoff policy; reaching a terminal failure does not start another automatic turn. Reopening the conversation or receiving another process event does not retry the failed notification. A later human message permits recovery. Paused notifications do not keep unrelated successful work waiting for an automatic continuation.
+
 `process` works on running processes:
 
 | Action | Use |

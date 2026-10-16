@@ -85,6 +85,13 @@ function CompanionEquipment({
             </g>
           </g>
         ) : null}
+        {capability("side", <g className="equipment-side-chat">
+          {/* A side conversation sits clear of the eyes, headband and belt pocket. */}
+          <path className="equipment-edge" d="M87 44 H96 Q99 44 99 47 V52 Q99 55 96 55 H90 L85 58 V54 Q83 53 83 51 V48 Q83 44 87 44 Z" />
+          <path className="equipment-shell" d="M87 45.5 H96 Q97.5 45.5 97.5 47 V52 Q97.5 53.5 96 53.5 H89.5 L86.5 55.5 V53 L85.5 52.5 Q84.5 52 84.5 51 V48 Q84.5 45.5 87 45.5 Z" />
+          <circle className="equipment-bookmark" cx="88" cy="49.5" r="1" />
+          <path className="equipment-detail" d="M91 49.5 H94" />
+        </g>)}
         {hasBelt ? (
           <g className="onboarding-equipment-belt">
             <path className="equipment-edge" d="M14 65 Q49 84 86 64 L83 74 Q51 94 18 76 Z" />

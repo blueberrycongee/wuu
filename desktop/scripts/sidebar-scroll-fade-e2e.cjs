@@ -164,6 +164,68 @@ app.whenReady().then(async () => {
       assert.ok(focus.role === "switch" && focus.visible && focus.outline !== "none", "keyboard switch focus remains visible");
       results.push({ label: "onboarding-keyboard-focus", ...focus });
       await capture("onboarding-keyboard-focus");
+      // Exercise the same selection controls that drive the mascot equipment.
+      const selectedCapabilities = () => evaluate(() => ({
+        selected: [...document.querySelectorAll('.onboarding-plugin')].filter(node => node.querySelector('[role="switch"]').getAttribute('aria-checked') === 'true').map(node => node.dataset.plugin).sort(),
+        worn: [...document.querySelectorAll('[data-onboarding-capability]')].map(node => node.dataset.onboardingCapability).sort(),
+        split: document.querySelector('[data-testid="onboarding-mascot-stage"]').hasAttribute('data-onboarding-split'),
+      }));
+      const checkOutfit = async (label, expected) => {
+        await waitFor(expected => JSON.stringify([...document.querySelectorAll('.onboarding-plugin')]
+          .filter(node => node.querySelector('[role="switch"]').getAttribute('aria-checked') === 'true')
+          .map(node => node.dataset.plugin).sort()) === JSON.stringify(expected), [...expected].sort());
+        await evaluate(async () => {
+          await new Promise(requestAnimationFrame);
+          await Promise.all(document.querySelector('.onboarding-plugin-mascot-stage').getAnimations({ subtree: true })
+            .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
+            .map(animation => animation.finished.catch(() => {})));
+        });
+        const state = await selectedCapabilities();
+        assert.deepEqual(state.worn, state.selected.filter(id => id !== 'subagent'), `${label}: selected plugins match equipment`);
+        assert.equal(state.split, state.selected.includes('subagent'), `${label}: Subagent controls companions`);
+        results.push({ label, ...state });
+      };
+      const preset = async (index) => {
+        await evaluate(() => { document.querySelector('.onboarding-body').scrollTop = 0; });
+        await click(`.onboarding-presets button:nth-child(${index})`);
+        await checkOutfit(`preset-${index}`, index === 1 ? [] : index === 2 ? ["side", "automation"] : pluginIDs);
+      };
+      const pluginIDs = await evaluate(() => [...document.querySelectorAll('.onboarding-plugin')].map(node => node.dataset.plugin));
+      win.setContentSize(920, 720);
+      await preset(1);
+      for (const id of pluginIDs) {
+        const selector = `.onboarding-plugin[data-plugin="${id}"] [role="switch"]`;
+        await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), selector);
+        await click(selector);
+        await checkOutfit(`single-${id}`, [id]);
+        await capture(`mascot-single-${id}`);
+        await click(selector);
+        await checkOutfit(`removed-${id}`, []);
+        assert.deepEqual((await selectedCapabilities()).selected, []);
+      }
+      for (const theme of ['light', 'dark']) {
+        for (const size of [15, 20]) {
+          for (const width of [920, 620]) {
+            win.setContentSize(width, 600);
+            await waitFor(width => innerWidth === width && innerHeight === 600, width);
+            await evaluate(({ theme, size }) => {
+              document.documentElement.dataset.theme = theme;
+              document.documentElement.style.setProperty('--conversation-message-font-size', `${size}px`);
+            }, { theme, size });
+            for (const [name, index] of [['minimal', 1], ['recommended', 2], ['all', 3]]) {
+              await preset(index);
+              await evaluate(async () => {
+                await document.fonts.ready;
+                await Promise.all(document.querySelector('.onboarding-plugin-mascot-stage').getAnimations({ subtree: true })
+                  .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
+                  .map(animation => animation.finished.catch(() => {})));
+              });
+              await capture(`mascot-${theme}-${size}-${width}-${name}`);
+            }
+          }
+        }
+      }
+      await preset(2);
       await click(".onboarding-actions .settings-button-ghost");
       await waitFor(() => Boolean(document.querySelector(".onboarding-stage-welcome")));
       await click(".onboarding-actions .settings-button-primary");

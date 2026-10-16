@@ -439,3 +439,52 @@ macOS pull requests test the native helper; pushes to `main` also package a desk
 `cmd/wuu` and `internal` contain the CLI and Go core. `desktop` owns Electron main/preload, renderer UI, IPC, and packaging. `packages/protocol` holds shared client protocol types; `clients/core` implements UI-free remote behavior. The official TypeScript plugin SDK lives in `packages/plugin-sdk`; bundled implementations live in `plugins`. `internal/sdk` is the internal application-embedding facade for the Go host, not a plugin authoring API. Other language runtimes can implement the same language-independent JSONL process contract.
 
 Keep Electron APIs in the desktop shell. A new shell should communicate with `wuu app-server` through its [protocol](../integrations/app-server-protocol.md), rather than importing desktop internals or creating a separate core. Update both language versions of affected public docs with behavior changes; [documentation maintenance](../../../docs/README.md) describes placement and checks.
+
+### Conversation corpus acceptance
+
+Run `npm --prefix desktop run test:e2e:conversation-corpus` to build the current
+checkout and replay twelve sanitized local conversation excerpts through the
+existing UI tour. macOS uses the checkout's Wuu Dev host with an existing signing
+identity (`Wuu Dev Signing` by default, or `WUU_DEV_SIGN_ID`). If none is available,
+set `WUU_DEV_SIGN_ID=-` for ad-hoc signing. Acceptance never creates a signing key,
+imports a certificate or changes keychain trust. Linux needs a graphical
+session or `xvfb-run --auto-servernum`; CI supplies `-- --no-sandbox`.
+`npm --prefix desktop run test:corpus` checks the package's sharing boundary.
+
+The package lives in `desktop/scripts/fixtures/conversation-corpus/corpus.json`.
+It preserves original wording, Markdown, whitespace, response order and tool-call
+counts, with targeted replacements for identifying names, private services,
+credential fragments, paths and historical references. Original session IDs,
+provider configuration, hidden reasoning, tool arguments/results and attachments
+are not included. Tool calls execute only reads of a disposable synthetic file.
+Model labels describe the recorded source; replay uses one scripted local
+provider, so this does not verify vendor protocols or current model behavior.
+
+The runner pauses at partial and complete target responses and before final
+completion, captures light/dark, 15px/wide and 20px/narrow appearances, then
+captures the completed answer and reloads the shell to verify persisted history.
+Streaming chunks and timing are simulated; original token timing was unavailable.
+Each checkpoint binds the expected response step to its protocol item and exact
+source text, then scrolls its rendered marker into view and checks its clipped
+geometry. Process history is expanded only when the sample includes tool calls.
+Page overflow, missing/offscreen content, missing history and renderer errors fail the run. Screenshots
+and geometry remain evidence for visual review, not an automatic aesthetic score.
+
+Each run writes screenshots and `corpus-report.json` below
+`artifacts/conversation-corpus/`. `WUU_TOUR_OUTPUT` sets an explicit destination;
+`WUU_TOUR_MATRIX` overrides appearances, for example `light:15:1280,dark:20:720`.
+Use `WUU_TOUR_ONLY=sample-04` to reproduce one sample; the report records the
+selected IDs. `WUU_CORPUS_TEXT_ONLY=1` replays just each selected sample's final
+answer as a single no-tool turn; reports label this `final-answer-only`, rather
+than the original response sequence. CI also runs this regression with sample-02
+and uploads both runs in `conversation-corpus-evidence`.
+`WUU_CORPUS_SKIP_BUILD=1` reuses a prepared build; `WUU_TOUR_CORE` selects its core.
+Only use these overrides when the binaries match the checkout under review.
+
+To add a sample, review the complete local excerpt first, apply targeted
+replacements consistently, and compare Markdown structure, newline counts and
+length changes locally. Keep raw sources and replacement maps outside the public
+checkout. The validator rejects unexpected fields, common secrets and non-example
+HTTP URLs; it cannot establish that arbitrary prose is safe to share. Review each
+new sample manually. Keep source claims in sample text as historical fixture
+content, not current product documentation. No real account or model key is needed.

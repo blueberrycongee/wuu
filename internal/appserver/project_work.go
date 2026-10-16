@@ -649,7 +649,7 @@ func (s *Server) recordWorkTurn(th *threadState, turn Turn) (bool, error) {
 		return true, nil
 	}
 	if turn.Status == TurnStatusCompleted && w.Phase != "verifying" &&
-		(threadRuntimeAwaitsAutoContinuation(th.ID, rt) || threadHasOutstandingProcessCompletion(th.ID, nil, s.processManagerForThread(th.ID))) {
+		(threadRuntimeAwaitsAutoContinuation(th, rt) || threadHasOutstandingProcessCompletion(th, nil, s.processManagerForThread(th.ID))) {
 		return true, nil
 	}
 	if th.ID == w.ExecutorID {

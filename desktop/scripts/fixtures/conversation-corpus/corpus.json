@@ -1,0 +1,811 @@
+{
+  "version": 1,
+  "timing": "simulated",
+  "tools": "synthetic-read-file",
+  "samples": [
+    {
+      "id": "sample-01",
+      "family": "gpt",
+      "model": "gpt-6-astra",
+      "focus": "short_process",
+      "target_step": 2,
+      "prompt": "还没公证完么",
+      "steps": [
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "还没。首次提交在拿到编号后就连接超时，并没有确认上传完成；此前仅凭 `In Progress` 判断是在等审核，不够准确。我改用非加速上传重试，不需要重新打包。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "已开始重新上传公证，正在后台处理。我会继续跟进，通过后补齐公证票据和最终验证，再通知你。",
+          "tool_count": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-02",
+      "family": "gpt",
+      "model": "gpt-6-astra",
+      "focus": "plain_answer",
+      "target_step": 3,
+      "prompt": "以及我在想顶部的 tab 真的还有价值吗 没价值了是不是可以考虑去掉 顶部有 tab 的 agent 产品我一个都没见到有",
+      "steps": [
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "**结合 named agent 搬进左侧栏这个方向，我倾向于去掉顶部的会话 tab。** 不过理由不是别的 agent 产品没做，而是它在我们这里还能不能提供独立价值。\n\nTab 真正有用的地方，是把“当前正在处理的几个会话”从全部历史里挑出来，方便反复切换。但如果左侧栏已经能置顶、切换会话、展示运行状态，再加一排 tab，就相当于维护两套导航。用户还要理解“关闭 tab”和“删除、归档会话”的区别。\n\n加入 named agent 后，这个问题会更明显：左侧选的是 agent，顶部选的是 session，到底哪个代表当前上下文？与其补一套关联规则，不如让**左侧负责去哪里，顶部只说明现在在哪里**。顶部保留当前 agent／会话名称、状态和必要操作就够了，不是把整个标题栏去掉。\n\n但去掉 tab 不应该损失能力：切换后草稿和执行状态要保留，正在运行的任务要容易找到，常用会话要能快速返回。现有 tab 还带有独立窗口入口，这类能力可以迁到会话菜单，而不是一起删掉。\n\n所以我的建议是：**统一左侧入口，同时移除顶部会话 tab；保留多任务能力，不保留“打开了一堆标签页”这层概念。**",
+          "tool_count": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-03",
+      "family": "gpt",
+      "model": "gpt-6-astra",
+      "focus": "table",
+      "target_step": 12,
+      "prompt": "明白 那现在这里出现一个回归问题  这个设计是不是和 ReferenceAgent 的会很像的呢 要不你 clone 一下 他们的最新的代码到 third-party 下面 然后看看他们的 IM 的结构和设计呢",
+      "steps": [
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "`third-party/reference-agent` 已经有一份干净的仓库，我会直接更新它。初步看到 ReferenceAgent 也采用“模型输出与 IM 发送分离”，但它用单个消费者按队列顺序处理文本和分段边界；这正是 SD 这次异步改造缺少的约束。我会基于最新版本继续核对。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "最新版已更新到 `0000000000`。结论更清楚了：两者总体架构相似，但 ReferenceAgent 把分段、权限提示和结束信号都放进同一条有序队列，还统一管理后台会话任务的取消。它也不只做 `send/edit`：Slack 支持可选的原生流式 API，Telegram 对发送和编辑共用限流额度，这些都值得 SD 借鉴。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "**很像，但 ReferenceAgent 对“异步之后如何保序、如何停止”的设计更完整。** SD 这次的方向没有错，回归出在这些约束没有一起补齐。\n\n`third-party/reference-agent` 原本已有仓库，我已更新到本次查询的上游最新提交 **`0000000000`**，没有改动 SD 代码。\n\nReferenceAgent 的核心结构是：\n\n```mermaid\nflowchart LR\n    A[平台适配器收消息] --> B[统一会话任务管理]\n    B --> C[Agent]\n    C --> D[有序事件队列]\n    D --> E[单个流式消费者]\n    E --> F[平台适配器发送与编辑]\n```\n\n与 #111 最相关的区别有四处：\n\n| 方面 | SD #111 | ReferenceAgent |\n|---|---|---|\n| 模型与发送解耦 | 后台调度发送、合并更新 | 模型回调只入队，独立消费者负责发送 |\n| 分段顺序 | 后台任务可能读取已经切换的当前段 | 文本、分段、结束都在同一队列，遇到边界先处理完再继续 |\n| 任务生命周期 | Slack、Telegram 各自维护队列，停止主要关闭连接 | 基类统一跟踪会话任务；清理后台任务与断开连接是独立步骤 |\n| 平台能力 | 主要靠发送后反复编辑 | 支持普通编辑、草稿和原生流式，并提供降级处理 |\n\n**最值得借鉴的是“单个消费者拥有发送状态”。**\n\nReferenceAgent 的 [`on_delta()`](third-party/reference-agent/gateway/stream_consumer.py#L527) 只把文本放入队列。[`run()`](third-party/reference-agent/gateway/stream_consumer.py#L544) 按顺序取出内容、合并、发送；碰到分段标记就停止本次合并，先完成当前段。超长回复也由同一个消费者[依次发送前面的分块](third-party/reference-agent/gateway/stream_consumer.py#L752)，留下最后一块继续编辑。\n\n因此，网络慢时模型仍可继续生成，但下一段不能越过上一段。**SD 现在是让多个后台操作共享可变的“当前段”；ReferenceAgent 是让一个后台消费者依次推进“当前段”。** 这个差异直接对应我们复现的 A → C → B。\n\n权限提示也走同样的顺序约束：它把“先交付前文，再展示审批”的边界[放进队列](third-party/reference-agent/gateway/stream_consumer.py#L679)，比单纯等待当前网络请求结束更完整，因为缓冲中尚未发出的文字也包含在内。\n\n停止方面，ReferenceAgent 有明确的[后台任务取消和队列清理](third-party/reference-agent/gateway/platforms/base.py#L4774)，关闭流程会[先清理任务，再断开适配器](third-party/reference-agent/gateway/run_adapters.py#L110)。流式消费者还会检查本轮是否已因 `/new`、`/stop` 失效。这些机制可以作为 SD 修复第二处问题的参考，但不代表 ReferenceAgent 所有重连和停止场景都已被我验证。\n\n对于“IM 很慢”，还有两个后续值得借鉴的点：\n\n- **Slack 原生流式：**使用 `chat.startStream / appendStream / stopStream`，能力或权限不满足时退回编辑模式。[实现](third-party/reference-agent/plugins/platforms/slack/adapter.py#L2450)\n- **Telegram 统一限流：**发送和编辑共用每个聊天的额度，避免只节流编辑，却被分段发送、提示消息一起耗尽额度。[实现](third-party/reference-agent/plugins/platforms/telegram/adapter.py#L5535)\n\n**我的建议是保留 #111 的接入和提速方向，先把输出控制器收敛成“有序事件队列＋单个消费者”，再补全停止流程。** 原生流式支持可以后续做；当前无需照搬 ReferenceAgent 整套复杂实现。\n\n以上结论来自最新版源码和现有测试用例阅读，未运行 ReferenceAgent 或连接真实 IM。",
+          "tool_count": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-04",
+      "family": "claude",
+      "model": "claude-opus-5-5",
+      "focus": "short_process",
+      "target_step": 6,
+      "prompt": "好的 其实也就是先把拓展名做好  那这个你开个 PR 到远端吧  我觉得这个改动是比较小的 直接开 PR 到远端就行",
+      "steps": [
+        {
+          "text": "好，单独开一个小 PR：上传落盘时保留原文件的扩展名。我会基于最新的 `upstream/main` 新建分支，不和之前附件草稿那个分支混在一起；推到你的 fork 后，向 example-org/SampleDesk 发 PR。先看看 `UploadStore` 的现有测试，以及还有哪些地方依赖存储路径的格式。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "现有测试全部通过。接下来做端到端验证：用真实的 `UploadStore` 写入文件，看文件名里是否带上了扩展名，再交给 `read_file` 和附件解析器。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "你之前的 PR 都是“先讲问题，再讲改法，最后列验证”的简洁写法，这次沿用同样的风格。下面提交并推送。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 2
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "PR 已经开好了：[example-org/SampleDesk#111](https://example.test/example-org/SampleDesk/pull/642)。分支是你 fork 上的 `fix/example-extension`，基于最新的 `upstream/main`，跟之前附件草稿那个分支是分开的。PR 已标记为可合并，CI 刚开始跑，还没出结果。\n\n**改了什么**\n\n只改了一个文件 [UploadStore.ts](.worktrees/example-extension/src/gateway/dialog/UploadStore.ts)，大约 8 行。上传的文件原来存成 `files/<id>`，现在存成 `files/<id><原扩展名>`，例如 `report.pdf` 存成 `id-0.pdf`，`Screen Shot.PNG` 存成 `id-1.png`。扩展名会转成小写，只接受 1 到 16 位的字母或数字。不符合的文件名，比如没有扩展名、或者扩展名里有空格，照旧不带扩展名。`attachmentId` 不变；已有的上传记录也不受影响，因为所有读取都走记录里保存的 `attachment.path`。\n\n**验证结果**\n\n我用真实的 `UploadStore` 写入文件，再对存下来的路径调用 `read_file`：\n\n| 文件 | 改之前 | 改之后 |\n| --- | --- | --- |\n| PDF | 报“看起来是二进制文件” | 作为 PDF 文档读出 |\n| PNG | 报“看起来是二进制文件” | 作为图片读出 |\n| DOCX | 报“看起来是二进制文件” | 提示改用文档技能 |\n| 没有扩展名的文件 | 按文本读 | 不变 |\n\n现有测试也都跑过了：`tests/gateway` 下 78 个用例，以及上传路由、文件卡片、附件说明相关的 UI 测试，全部通过；根目录类型检查也通过。我没有在本地跑完整的 `npm test`，这部分交给 CI。PR 里也没有加新测试；如果维护者想要一条回归测试，补一条很简单。\n\n这个修复只解决“能不能读”的问题。另外两个问题仍然存在：已发送的附件 24 小时后会被删掉，以及超过 5 MiB 的图片会被跳过而不是压缩。这两件放在后续的改动里做。",
+          "tool_count": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-05",
+      "family": "claude",
+      "model": "claude-opus-5-5",
+      "focus": "table",
+      "target_step": 20,
+      "prompt": "这是啥时候 引入的问题 blame 一下 然后 修一下这个问题",
+      "steps": [
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 2
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "Next I'll check that the new tests actually fail on the old code, so they aren't passing by accident.",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "我修好了这个问题，并补了回归测试。这个 bug 不是 SampleDesk 自己写出来的，是从上游 `example-org/sample-ui` 继承来的。SampleDesk 引入 `ui/` 的第一天，这段代码就在里面。\n\n## 什么时候引入的\n\n本地仓库是浅克隆，`git blame` 只能追到截断边界 `00000000`（2026-01-01），往前看不到。所以我用 `gh` 查了远端历史。\n\n| 时间 | 仓库 / 提交 | 做了什么 |\n|---|---|---|\n| 2026-01-01 | sample-ui `00000000`（ReviewerA） | 新增 `POST /create-workspace`，第一次写入\"先 `mkdir`，token 查不到就 `rm -rf absolutePath`\"。当时仓库直接克隆到 `absolutePath` 里，这个清理还算说得通。 |\n| 2026-01-01 | sample-ui `00000000`（ReviewerB） | 改成克隆到子目录 `absolutePath/<repoName>`，`absolutePath` 从此成了可能早已存在的父目录。token 分支的 `rm` 没跟着改，**从这里开始 `create-workspace` 会误删父目录**。 |\n| 2026-01-01 | sample-ui `00000000`（ReviewerB，PR #111） | 给 `GET /clone-progress` 也加了同样的 `rm -rf absolutePath`，原来这里查不到 token 只是跳过。这个提交的标题是 \"fix: simplify project wizard labels for clarity\"，一个改文案的标题里夹着删除逻辑，review 时很容易漏掉。**向导实际走的就是这条接口。** |\n| 2026-01-01 | SampleDesk `00000000`（ReviewerC） | \"rewrite ui/ with SampleShell-derived front-end\"，把这两处原样带进 SampleDesk。之后一直没人动过。 |\n\n## 怎么修的\n\n改动在 [ui/server/routes/projects.js](ui/server/routes/projects.js#L405-L426)，两个接口改法一样。token 查询挪到了 `mkdir` 前面，查不到就直接报错返回，文件系统一点不碰。两处 `fs.rm(absolutePath, …)` 已经删掉，这个路径上再也不会删用户选的目录。克隆失败后只清理 `clonePath` 的原有逻辑没动。\n\n新增的测试文件是 [projects.workspace-cleanup.test.js](ui/server/routes/projects.workspace-cleanup.test.js)。它模拟凭据已被删除或停用，覆盖三种情况：\n\n- `/clone-progress` 选一个已有的 `dev` 目录，里面的其他项目要保留；\n- `/clone-progress` 选一个新路径，不能留下空目录；\n- `/create-workspace` 选已有的父目录，里面的其他项目要保留。\n\n我先把修复撤掉跑了一遍，前后两个\"保留其他项目\"的用例都失败了，说明测试确实能抓住这个 bug。恢复修复后，`ui/server/routes` 下 15 个测试文件、191 个用例全部通过。改动还没有提交。\n\n## 还没处理的\n\n上次提到的\"GET 接口 + 默认不登录 + CORS 全放开 + 源码模式监听 `0.0.0.0`\"这组问题这次没动。修复之后，这个接口在 token 查不到时不会再删目录。但它仍然允许同一局域网里的机器在没有登录的情况下触发克隆，所以还是建议单独处理。\n\n另外，克隆失败时的清理还有一个很窄的竞态：`clonePath` 检查完之后、`git clone` 执行之前，如果有别的进程刚好建了同名目录，这个目录也会被删掉。触发概率很低，需要的话可以在 git 报 \"already exists\" 时跳过清理。",
+          "tool_count": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-06",
+      "family": "claude",
+      "model": "claude-opus-5-5",
+      "focus": "code",
+      "target_step": 37,
+      "prompt": "不错 现在可以追加修复 然后同步到远端 停在 开 PR 前的一步",
+      "steps": [
+        {
+          "text": "我先把要做的修复列清楚，再记一个进度检查点，然后开始改代码。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "持久化可以照搬企业微信的做法：mapper 状态变化时调用 `onStateChange`，由 `ChannelStatePersistence` 写盘。先改 controller 的丢字问题：",
+          "tool_count": 1
+        },
+        {
+          "text": "接下来改 Slack：`apps.connections.open` 返回后、收到 `hello` 时，各检查一次是否已停止。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "现在给 Slack 和 Telegram 加上会话映射持久化。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "接着让 `loadEnabledChannels` 接收状态持久化对象，把已保存的状态传给 Slack 和 Telegram。",
+          "tool_count": 1
+        },
+        {
+          "text": "然后改 `sampledeskServer`：同一个渠道的启动和停止按顺序排队执行，并记录每个渠道最近一次上报的状态，供热重载判断是否需要重启。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "热重载改完了。再处理飞书 `domainName` 的优先级问题：让构造参数优先，和其他字段保持一致。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 2
+        },
+        {
+          "text": "",
+          "tool_count": 3
+        },
+        {
+          "text": "JSON 里的换行是字面量 `\\n`，我的替换文本写成了真实换行，所以没匹配上。改用 node 解析 JSON 后再改字段，避免转义出错。",
+          "tool_count": 2
+        },
+        {
+          "text": "文案改好了。现在写 controller 的回归测试，先参照一个现有测试的写法。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 2
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "类型检查通过，5 个新测试全部通过。为了确认这些测试真能抓到问题，我临时把 controller 和 SlackChannel 恢复成修复前的版本，再跑一次。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 2
+        },
+        {
+          "text": "",
+          "tool_count": 3
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "可以在这个文件里补一个测试：同一个渠道连续热启动两次再停止，断言任何时刻最多只有一个实例在运行，并且每个实例最后都被停掉了。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 2
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "类型检查通过，120 个测试全部通过。提交前我先把完整 diff 过一遍。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "三个提交都已创建，工作区是干净的（`.worktrees/` 本来就是未跟踪目录）。远端分支目前停在 `00000000`，这次推送是快进，不需要强推。",
+          "tool_count": 1
+        },
+        {
+          "text": "已推送，远端和本地都在 `00000000`。按你的要求停在开 PR 前。最后确认一下 PR 应该指向哪个仓库，再把标题和描述准备好。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "三处修复和一些小问题都改好了，已推送到 `origin/fix/example-stream-channels`（`00000000`）。PR 还没开，按你说的停在这一步。\n\n**修复内容**\n\n1. **Slack 长回复丢字。** 现在按格式化后的长度决定什么时候换消息，转义后多出来的文字会顺延到下一条，不会再被截掉。之前约 11k 字、代码较多的回复会丢 4.2k 字，现在一个字都不丢。\n2. **Slack 停止后仍会建立连接。** `apps.connections.open` 返回后和收到 `hello` 时，都会再检查一次渠道是否已停止。已停止的实例也不再回 ack，Slack 会把事件重投给新连接，不会丢消息。\n3. **同一渠道被启动两份。** 同一渠道的启动和停止现在按顺序执行。热重载也只重启配置真的变了、或者当前处于失败或停止状态的渠道。保存飞书配置不会再顺带重启 Slack 和 Telegram，它们的连接、排队中的消息和待确认的权限提示都会保留。\n4. **几个小问题：**\n   - Slack 和 Telegram 的 `/new` 会话现在会持久化，重启后不再回到默认会话。\n   - Slack 设置引导补上了 App Home 的 Messages Tab 开关（不开的话用户没法私聊机器人），以及私有频道需要的权限。\n\n另外，修第 4 条时发现了一个原来没注意到的 bug：热重载时渠道读到的仍是启动时的旧配置。用户把飞书切到 Lark 后，新实例会被改回 feishu；`permissionMode` 的修改也要重启才生效。这两处现在都改为读取当前配置。\n\n**测试**\n\n- 类型检查通过，gateway 和 adapters 目录下 120 个测试全部通过。\n- 新增 6 个测试：controller 4 个、Slack 停止竞态 1 个、渠道启动串行化 1 个。其中丢字、停止竞态、重复启动这 3 个，我把代码临时恢复成修复前的版本跑过，确认它们会失败，修复后通过。\n- 这些都是用模拟渠道验证的，还没在真实的 Slack、Telegram 或飞书工作区里跑过。合并前最好用真实 token 实际收发几条消息。\n\n一个小瑕疵：Slack 会话持久化的代码落在了第二个提交（Slack 那个）里，但写在第三个提交的说明中。代码本身没问题，只是提交拆分不够干净，需要的话可以再整理。\n\n**开 PR 前要注意**\n\nPR 应该提到上游 `example-org/SampleDesk` 的 main。这个分支的基点在上游 main 上，上游之后多了 11 个提交，但可以干净合并，diff 是 28 个文件。如果提到你 fork 的 main，会混进 735 个文件。\n\n标题和描述已经写在 `/tmp/example-review/pr-body.md`，包括问题、改动、测试结果和前后对比表。确认后可以这样开 PR：\n\n```bash\ngh pr create --repo example-org/SampleDesk --base main \\\n  --head example-user:fix/example-stream-channels \\\n  --title \"fix(im): stream IM replies without lag; add working Slack and Telegram channels\" \\\n  --body-file <(sed '1,2d' /tmp/example-review/pr-body.md)\n```",
+          "tool_count": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-07",
+      "family": "claude",
+      "model": "claude-fable-5-1",
+      "focus": "short_process",
+      "target_step": 0,
+      "prompt": "帮我配置个模型吧 就用 wuu 这个配置好的 那个 fable",
+      "steps": [
+        {
+          "text": "我先找一下 \"fable\" 到底是什么——在你现有的 wuu 配置里很可能已经有这个模型/provider 的名字,我看看它的地址、协议、密钥这些能不能直接用。",
+          "tool_count": 2
+        },
+        {
+          "text": "我找到了 `fable` 的线索,就在 `~/.example-app/config.json` 里。我看看这份配置的结构,确认里面有哪些 model provider 信息(尤其是端点/协议,这些可以复用)。",
+          "tool_count": 1
+        },
+        {
+          "text": "\"fable\" 找到了。在 `~/.example-app/config.json` 里它是 `claude-fable-5-1` 模型,走 **anthropic 协议**、端点 `https://example.test/models/v1`,一个 API key(在 wuu 配置里是 `example-provider` 这个 provider)。为了让 sampledesk 的 schema 匹配,我确认一下它读配置的协议名怎么叫、模型名怎么写。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "我确认下 sampledesk 的 provider 配置结构和 `agent.model` 怎么引用,看几处关键代码。",
+          "tool_count": 1
+        },
+        {
+          "text": "看下 `ProviderConfig` 和 `ModelProtocol` 的准确定义,以及配置里 protocol 可用的字符串。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "协议确认:sampledesk 支持 `anthropic | openai | openai-responses | google`。`fable` 对应的是 wuu 里的 `claude-fable-5-1` 模型,走 **anthropic 协议**、端点 `https://example.test/models/v1`、用 `example-provider` 那个 key。\n\n我确认几件事:key 从 wuu 配置读出来(只写进 sampledesk,不打印)、sampledesk 主页路由、以及配置写入后如何触发 gateway 生效。",
+          "tool_count": 1
+        },
+        {
+          "text": "关键信息齐了:\n\n- **fable** = wuu 里 `example-provider` 的模型 `claude-fable-5-1`,协议 **anthropic**,端点 `https://example.test/models/v1`,key 有 35 位(只做末四位确认 `xxxx`,不打印明文)\n- 3000 在 dev 模式会 **302 重定向到 5101**,所以正确入口就是 **https://example.test/**\n\n我确认下 gateway 进程是否已在跑、以及配置写入后怎么被加载,然后写配置。",
+          "tool_count": 1
+        },
+        {
+          "text": "gateway 进程当前没在跑(server 在 3000 正常监听着,正在等配置)。sampledesk 是**配置驱动**:写入 `~/.sampledesk/sampledesk.yaml` 后,那个 `[sampledesk-config-watcher]` 会监听并拉起 gateway。我写配置。",
+          "tool_count": 1
+        },
+        {
+          "text": "填入真实的 key(从 wuu 配置读取,直接替换占位符,不打印明文)。",
+          "tool_count": 1
+        },
+        {
+          "text": "配置已写入。现在看 config-watcher 是否有反应——gateway 应该随之启动,以及是否有配置校验报错。",
+          "tool_count": 1
+        },
+        {
+          "text": "Gateway 起来了:日志显示 `Gateway ready on 127.0.0.1:18000`、`sampledesk-bridge connected`,以及关键一行 **`Config reloaded, invalidating runtimes: model.providers.example-provider.apiKey`** —— 说明配置被正确加载、key 已生效。\n\n现在做一次真实调用,验证 fable 模型和这个端点确实能通。用同一个 key 直连测试(不经过 sampledesk,只探端点)。",
+          "tool_count": 1
+        },
+        {
+          "text": "配好了,而且**实测通了**。\n\n## 用的什么\n\n我直接复用了 wuu 里 `example-provider` 那套:`claude-fable-5-1` 模型 + `https://example.test/models/v1` 端点 + 那个 key,协议走 **anthropic**。刚 `curl` 了一条真实请求,端点 **HTTP 200**,模型回了\"通\"——key 有效,模型可用。\n\n## 我做了什么\n\n1. 在 `~/.sampledesk/sampledesk.yaml` 里写入了 provider + 主模型:\n\n```yaml\nschemaVersion: 1\nagent:\n  model: example-provider/claude-fable-5-1\nmodel:\n  providers:\n    example-provider:\n      protocol: anthropic\n      url: https://example.test/models/v1\n      apiKey: <来自 wuu 的 key,未打印>\n      models:\n        claude-fable-5-1: {}\n```\n\n2. key 是从 `~/.example-app/config.json` 读出来填进去的,全程没打印明文。\n3. gateway 已经因为这个配置自动起来了 —— 日志里 `[runtime-supervisor] Gateway ready on 127.0.0.1:18000` + `Config reloaded`。\n\n## 现在跑起来的状态\n\n- **入口:https://example.test/**(3000 会 302 到 5101,浏览器直接开这个就对)\n- Web 后端:3000 · Gateway:18000 · Vite 前端:5101\n- Wuu 的 5100 没动,互不干扰\n\n## 下一步\n\n打开 **https://example.test/**,应该能看到模型已经选好是 `claude-fable-5-1`,能直接开聊了。如果 UI 里模型下拉没有自动带上这个,刷新一次页面,或在 chat 的模型选择里选 `example-provider / claude-fable-5-1`。\n\n要我帮你在这个模型上发一条测试消息、确认 sampledesk 内部的 agent 链路(而不是只是端点)也通吗?",
+          "tool_count": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-08",
+      "family": "claude",
+      "model": "claude-fable-5-1",
+      "focus": "heading",
+      "target_step": 30,
+      "prompt": "继续",
+      "steps": [
+        {
+          "text": "继续。先确认这个 transient chip 到底何时出现、何时消失，以及完成帧是不是只有它一个高度源，避免修一半。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "闭环确认：`turn/completed` 事件里 `clearTurnStreamStatus(turn.id, {clearTransport:true})` 直接把 `turnStreamStatus[turnID]` 删除（AppState.ts:817, 939-967），于是 `activeThreadStreamStatus` 变 `undefined`，`StreamStatusNotice` 卸载。它在 `.turn` 里是 in-flow 块（display:block、min-height 20px、padding/margin 0），卸载后 `.turn` 高度回落 20~28px，自动跟随重钉把已有文本往上带——这就是完成帧的跳动。\n\n在改之前，我要确认 `StreamStatusNotice` 只在这一个条件出现、且流式期没有别的占位元素，避免动了这里反而露出另一处的跳动。我看 `.turn` 的定位与 `TurnEventNotice`（事件提示）是否也用同一行。",
+          "tool_count": 1
+        },
+        {
+          "text": "`.turn` 在 `turns.css:104` 已经是 `position: relative`。我看一下它完整规则，以及 `StreamStatusNotice` 应落在哪个位置，然后决定\"绝对定位\"还是\"保留高度\"。",
+          "tool_count": 1
+        },
+        {
+          "text": "`.turn` 是 `position: relative`（turns.css:104），且是 flex-column、item-gap 8px。所以完成帧的高度回落 = notice 行高(≥20px) + 8px 间隙。为避免破坏历史 turn 的间距，我只对\"本次实时完成\"的那个 turn 保留这行占位。\n\n我确认 `animateCompletionActions` 的语义是否正好等于\"这个 turn 是本次从 in_progress 走过来的\"，用它作为保留占位的条件。",
+          "tool_count": 1
+        },
+        {
+          "text": "`animateCompletionActions` 正好等于\"本次从 in_progress 走过来的最新 turn\"——用它判定要保留占位的那一个。但光有 boolean 还不够，我需要 `streamStatus` 在 turn 完成时是否可读，来决定占位与 chip 的统一渲染。先看 `streamStatus` 在 `isLatestTurn` 为真时传入的条件。",
+          "tool_count": 1
+        },
+        {
+          "text": "机制确认完毕，方向也定了。我把要点记录到工作笔记，然后动手改。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "笔记工具需要 revision 配对，我改用 list + write 同批。先记录，再实施。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "笔记工具写不进去（revision 校验问题），不影响主线。直接实施修复。先精确给出 `.turn` 的占位方案，改 `TurnView.tsx`。",
+          "tool_count": 1
+        },
+        {
+          "text": "确定方案：在 `TurnView.tsx` 里，对\"本次实时完成的最新 turn\"渲染一个占位行，保留与 streaming 状态 chip 一致的足迹（28px 行 + flex gap），使完成帧 `.turn` 高度不回落、文本不上跳；历史 turn 不受影响。\n\n先改 `TurnView.tsx`。",
+          "tool_count": 1
+        },
+        {
+          "text": "现在补 CSS。先在 `turns.css` 里给占位行定高度，放在 `.turn-notice.system-event-notice` 后面。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "改完两处。现在验证：跑桌面 renderer 的类型检查和相关测试，确认没破坏。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "我的改动（`TurnView.tsx`、`turns.css`）没有任何类型错误。报错全部来自一批外部并发产生的 `tmp-*.test.ts` 文件——不是本任务的。我确认这些 tmp 文件的归属，并只对我的改动做一次定向校验。",
+          "tool_count": 1
+        },
+        {
+          "text": "我的改动类型检查无错误。这 4 个 `tmp-*.test.ts` 是外部会话的未跟踪文件，不属于本任务，我不动它们。\n\n跑与 `TurnView` / 完成帧相关的既有单测，确认没破坏布局断言。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "5 个测试文件、126 个用例全绿。\n\n但我要收紧一个边界：`!streamStatus` 除了在完成帧为真，流式中途若 transport 状态暂时缺席也会为真——那会让占位在流式中途闪现、造成另一处跳动。加一个 `turn.status !== \"in_progress\"` 条件，只在\"真正完成\"这一帧占位。",
+          "tool_count": 1
+        },
+        {
+          "text": "加上 guard 后再验证一次类型与相关单测，并核对最终 diff。",
+          "tool_count": 1
+        },
+        {
+          "text": "类型与相关测试全绿。我核对最终 diff，并补一个回归用例锁定这个行为（避免以后又被误触）。",
+          "tool_count": 1
+        },
+        {
+          "text": "最终 diff 干净。让我看一下现有 `TurnView.test.tsx` 的挂载方式，补一个针对完成帧占位的回归用例。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "测试挂载方式清楚了。我在\"新增 turn 完成后仍保持焦点\"用例后面补两个回归用例：本次实时完成的 turn 应出现占位行、历史完成的 turn 不应出现。",
+          "tool_count": 1
+        },
+        {
+          "text": "在 `does not replay the action entrance...` 用例后面插入两个回归用例。",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "29 个用例全绿（含新增的两个回归）。我做最后的核对，确认改动集与未跟踪的外来文件。",
+          "tool_count": 1
+        },
+        {
+          "text": "完成。根因、修复、验证我都处理好了。\n\n## 根因\n\n回答流在完成那一帧\"上跳\"的元凶，不是按钮，而是**流式状态提示条**（`StreamStatusNotice`）。\n\n- 生成期间，这条\"正在生成\"的提示行（`.process-surface-row`，最小高 20px，in-progress 时还会带一个 28px 的 mascot）作为**文档流内**的块，渲染在回答内容下方（`TurnView.tsx:237`）。\n- turn 从 `in_progress` 翻到 `completed` 时，`activeThreadStreamStatus` 变 `undefined`（`App.tsx:2605`），`turn/completed` 事件同时调 `clearTurnStreamStatus` 把该 turn 的状态删掉（`AppState.ts:817`）。\n- 于是这个提示条**整行卸载**，`.turn` 高度回落约 28px + 8px 的 flex 间隙。`ConversationScrollState` 的 `ResizeObserver` 感知到高度变化后重钉到底部，已渲染好的文字就被往上带了一截——就是你看到的\"时间节点上的变化\"。\n\n## 修复\n\n让完成帧不再收缩：对\"本次实时完成的最新 turn\"，在提示条卸载的位置补一个**占位行**，宽度铺满、高 28px、`visibility:hidden`，把原来的足迹原样保住。历史 turn（重载）不会出现，间距不受影响。\n\n- [TurnView.tsx](desktop/src/renderer/TurnView.tsx#L240)：`animateCompletionActions && turn.status !== \"in_progress\" && !streamStatus` 时渲染 `<div className=\"turn-stream-status-spacer\" aria-hidden=\"true\" />`。\n- [turns.css](desktop/src/renderer/styles/turns.css#L2696)：`.turn-stream-status-spacer { height: 28px; visibility: hidden; pointer-events: none; }`。\n- [TurnView.test.tsx](desktop/src/renderer/TurnView.test.tsx#L226)：加两个回归用例，锁定\"实时完成保留占位 / 历史完成不渲染占位\"。\n\n三个 guard 各有用途：`animateCompletionActions`（只当本次流式 turn，历史 turn 不占位）、`status !== \"in_progress\"`（流式中途 transport 短暂缺席时不闪现占位）、`!streamStatus`（只在提示条真正消失后接管）。\n\n## 验证\n\n- `tsc --noEmit`：`TurnView.tsx` / `turns.css` 无类型错误。\n- 相关单测：`TurnView`（29，含新增 2 个）、`TurnNotice`（34）、`AssistantTurnShell`（44）、`ThreadItemView`（18）、`TurnMemoization`（3）全部通过，共 126 个用例全绿。\n\n## 需要你知道的两点\n\n1. **没有提交**。仓库最近一直有外部并发改动（比如那批未跟踪的 `desktop/src/renderer/tmp-pos.test.ts` 等 4 个文件），它们不是我创建的，我没动也要提醒你别顺手带进去。你确认没问题后我可以只提交这 3 个文件。\n2. 我判断的是\"完整流式期间\"的一次性收尾跳动。如果你实际遇到的是**每次流式都有多次微小位移**，那可能是 `liveProgress` 在中途翻转、提示条在 28px↔20px 之间变化所致——那种情况我这个占位修不到，得再看 transport 状态机。要不要你跑一次 `npm run dev` 实测下收尾这一下还跳不跳？",
+          "tool_count": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-09",
+      "family": "deepseek",
+      "model": "deepseek-chat",
+      "focus": "table",
+      "target_step": 3,
+      "prompt": "ok 我明白了 我就在示例团队  sampledesk 是我们的中台项目  相当于我们要针对这个去开发 明白我意思吗",
+      "steps": [
+        {
+          "text": "明白，你是示例团队的，SampleDesk 是你们的中台，示例助手（还有历史那些 workflow 智能体）要往 SampleDesk 上迁/对着它开发。那我直接帮你把\"能往哪开发\"摸清楚——SampleDesk 的扩展点在哪、怎么挂进去。",
+          "tool_count": 2
+        },
+        {
+          "text": "",
+          "tool_count": 2
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "明白，而且这下整个图景就闭环了：你在示例团队，**SampleDesk 是你们的中台**，示例助手（以及那批示例工作流智能体）是跑在这个中台之上的业务，你们要做的不是\"用现成产品\"，而是**在 SampleDesk 上开发**。基于代码，我把\"能往哪几个口子写\"摸了一遍：\n\n## SampleDesk 的四层扩展点\n\n| 层 | 是什么 | 代码位置 | 适合放什么 |\n|---|---|---|---|\n| **Skill** | 一个 `SKILL.md` 目录（front-matter 写 name/description + 正文流程），agent 按需加载 | `skills/`（内置 30+）、`skills/skill-creator/` | 校园业务的操作流程、领域知识——**这是工作流最自然的替代品** |\n| **Plugin** | `plugin.json` 清单，能挂 commands / agents / skills / hooks / **mcpServers** / lsp / outputStyles / marketplace | `src/extension/plugins/protocol/manifest.ts`，示例见 `builtin/browser-use` | 打包一组技能 + 外接能力（比如把校园 API 包成 MCP 挂进来） |\n| **Contribution** | 七个官方贡献点：Tool、Hook、Command、Prompt、Router、PermissionRule、Mcp | `src/extension/contributions/` | 要动 agent 行为时改这里：加工具、工具调用前后埋审计钩子、加斜杠命令、改提示词、调路由和权限策略 |\n| **Product** | 产品定制目录：`config/sampledesk.yaml`（记忆/模型/工具/品牌覆盖）+ `plugins/` + `brand/theme.json` | `products/_example/`，README 原话\"复制此目录并重命名为客户标识即可开始\" | **示例桌面端 应该是一个 product，而不是改 core** |\n\n另外 `src/adapters/channel/` 下已经有飞书、企微、钉钉、Slack、Discord 等 20 多个渠道适配器，要加\"示例\"这个渠道照着写一个就行；`src/cli` + `src/gateway` 是本地 server / WS 网关的启动方式。\n\n## 按这个结构看，你们这条改造路径基本是清晰的\n\n原来\"示例工作流编排\"的每一个能力，落到 SampleDesk 上就是**一个 skill**（SKILL.md + 一个脚本或一条 CLI 调用），由 agent 自己决定何时用、怎么组合——这正是\"workflow → agent\"的迁移手法。而校园数据、知识库、智能体调用这些后端能力，走**一个 plugin 里挂的 MCP server**（可以是新的 MCP 封装，也可以直接复用 sample-cli，它本身就是按\"给 agent 用\"设计的：SKILL.md 写得明明白白、凭证走 device flow、channel 隔离）。\n\n再往上，**示例桌面端 桌面端 = `products/sample-pro/` 这样一个 product 目录**：brand 换皮、config 覆盖模型/记忆、plugins 里挂校园能力，凭证和 sample 后端的 device flow 对接。高校场景特有的合规诉求（工具调用审计、敏感操作拦截）正好落在 Hook 和 PermissionRule 这两个贡献点上——SampleDesk 里已经有 `products/_example/plugins/example-compliance` 这个合规模板可以直接抄。\n\n一个提醒：sample-pro 是 upstream example-org/SampleDesk 的自家分支，两边的 main 已经不一致了。**尽量把定制都做在 products/ 和 plugins/ 这两个\"官方留的口子\"里**，少动 core，否则以后同步上游会很痛。\n\n我需要跟你确认一件事，好决定接下来往哪挖：你们这次是**给示例桌面端 做 product/plugin 层的定制**（我帮你把 MCP 封装、skill 迁移、合规模板这条线细化），还是**要动 SampleDesk 本体**（那我得先摸清 core 的改动面和上游同步策略）？方向定了我就往下走。",
+          "tool_count": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-10",
+      "family": "glm",
+      "model": "glm-5.3-mb",
+      "focus": "heading",
+      "target_step": 5,
+      "prompt": "这个创建路径在实际的使用上真的有使用吗  我想确保我们修复的内容都是代码仓库内实际上在用的路径",
+      "steps": [
+        {
+          "text": "好问题——这正是 review 前值得确认的。我来从仓库里追一下调用链：路由有没有挂载、前端有没有真的在调这两个接口。",
+          "tool_count": 1
+        },
+        {
+          "text": "路由确认挂载在 `app.use('/api/projects', ...)`，前端也有 5 个文件在调。再往上追一层，确认这些组件确实在产品流程里（onboarding / 新建项目向导），而不是死代码：",
+          "tool_count": 1
+        },
+        {
+          "text": "再确认最后一环：前端是不是真的会带上 `githubTokenId`（bug 触发的必要条件），以及这个弹窗从哪儿打开：",
+          "tool_count": 1
+        },
+        {
+          "text": "快补最后几个证据点：`selectedGithubToken` 的来源、新建入口按钮，以及顺带确认其他 3 个 PR 修的路径是不是也都在线上主链路里：",
+          "tool_count": 1
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "确认了，**#111 修的不是死代码，是产品主链路**，而且另外 3 个 PR 修的路径我也顺手核了一遍，全都在线上必经路径上。证据如下：\n\n## #111 的完整调用链（从按钮到 bug 代码）\n\n**后端挂载**：[ui/server/index.js:584](ui/server/index.js#L584) `app.use('/api/projects', authenticateToken, projectsRoutes)` → 两个接口定义在 [projects.js:353](ui/server/routes/projects.js#L353)（POST /create-workspace）和 [:513](ui/server/routes/projects.js#L513)（GET /clone-progress）。\n\n**前端有三条真实入口在调它**：\n\n1. **主界面“新建项目”**：[AppShellV2.tsx:387](ui/src/components/app-shell/AppShellV2.tsx#L387) `handleOpenNewProject` → 打开 `CreateWorkspaceModal`（[:789](ui/src/components/app-shell/AppShellV2.tsx#L789)）→ [api.js:275](ui/src/utils/api.js#L275) `authenticatedFetch('/api/projects/create-workspace')`\n2. **Onboarding 流程**：`onboarding/.../WorkspaceStep.tsx` + `CreateWorkspaceModal.tsx` 也在调同一接口\n3. **项目创建向导的流式 clone**：[ProjectCreationWizard.tsx](ui/src/components/project-creation-wizard/ProjectCreationWizard.tsx#L44) 管理表单里的 `selectedGithubToken`（token 下拉选择器，:189 传给子组件）→ [workspaceApi.ts:108](ui/src/components/project-creation-wizard/data/workspaceApi.ts#L108) 把 `githubTokenId` 塞进 query → [:130](ui/src/components/project-creation-wizard/data/workspaceApi.ts#L130) `new EventSource('/api/projects/clone-progress?...')`\n\n关键是：**bug 触发的必要条件 `githubTokenId` 确实由向导 UI 真实发出**，不是只在测试里出现的参数。而且这几个文件近期一直在活跃维护（git log 里有 onboarding 重设计、PR review 修复等 commit），不是弃用区域。\n\n## 其他 3 个 PR 的路径核实\n\n| PR | 修的位置 | 是否主链路 |\n|---|---|---|\n| #111 | [editFile.ts:27](src/tool/builtin/editFile.ts#L27)（`name: \"edit_file\"`，builtin 注册） | ✅ agent 每次编辑文件必经 |\n| #111 | [writeFile.ts:110](src/tool/builtin/writeFile.ts#L110)、[editFile.ts:60](src/tool/builtin/editFile.ts#L60) 调 `checkFilesystemWritePermission` | ✅ 每次 write_file/edit_file 的权限检查必经 |\n| #111 | [index.js:2292-2294](ui/server/index.js#L2292) 附近，`/shell`、`/ws` 的 WS 连接处理 | ✅ 每个 UI 会话建立 WebSocket 必经，日志行就在连接回调里 |\n\n## 一个诚实的边界\n\n代码层面能确认的是：**接口被真实挂载、被主 UI 真实调用、参数真实传递**。“用户实际踩到『已有目录 + token 失效』这个组合的频率”从代码是看不出来的——但这不影响 PR 的价值：一旦踩到就是 `rm -rf` 用户数据，属于低频高破坏性，回归测试锁的就是这个。\n\n所以可以放心跟同事说：4 个 PR 修的都是线上真实在跑的路径，没有一个是“只在测试里存在”的逻辑。",
+          "tool_count": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-11",
+      "family": "grok",
+      "model": "grok-4.7",
+      "focus": "short_process",
+      "target_step": 0,
+      "prompt": "feat/example-dashboard 里还有 24 个未提交改动 这个能提交一下 弄到远端的分支吗",
+      "steps": [
+        {
+          "text": "可以。我先看 `feat/example-dashboard` 上这 24 个未提交改动的内容和分支状态，确认没有混进别的工作后，再提交并推到远端对应分支。",
+          "tool_count": 2
+        },
+        {
+          "text": "",
+          "tool_count": 1
+        },
+        {
+          "text": "当前会话在别的分支上，订阅面板的改动在独立 worktree 里，共 14 个已改文件和 10 个新文件，分支还没有远端跟踪。我先看提交风格和 diff，确认这是同一批功能再提交。",
+          "tool_count": 2
+        },
+        {
+          "text": "这批改动都是订阅用量面板，远端还没有同名分支。我先扫一遍 diff，排除密钥和生成垃圾，再按一个功能提交推上去。",
+          "tool_count": 2
+        },
+        {
+          "text": "grep 搜到了主仓库，不是这个 worktree。我改到订阅分支目录里再查一遍密钥和新增文件。",
+          "tool_count": 1
+        },
+        {
+          "text": "改动是同一套订阅用量面板，没有密钥文件。我现在只提交这些路径，并推到新的远端分支。",
+          "tool_count": 1
+        },
+        {
+          "text": "提交已经落在本地 `000000000`，工作区是干净的。接下来推到 `origin/feat/example-dashboard` 并设置上游。",
+          "tool_count": 1
+        },
+        {
+          "text": "已经提交并推到远端。`feat/example-dashboard` 现在跟踪 `origin/feat/example-dashboard`，本地和远端都在 `000000000`。\n\n提交是 `feat(desktop): show subscription usage in settings`，25 个文件，+1416/−4。工作区已经干净。这是新建的远端分支，还没有 PR：https://example.test/example-user/wuu/pull/new/feat/example-dashboard\n\n当前会话所在的 `fix/example-paths` 没有动。",
+          "tool_count": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-12",
+      "family": "minicpm",
+      "model": "MiniCPM5-2B-0822",
+      "focus": "heading",
+      "target_step": 9,
+      "prompt": "这个项目的话 裁剪投影是如何实现的",
+      "steps": [
+        {
+          "text": "\n\n",
+          "tool_count": 2
+        },
+        {
+          "text": "\n\n",
+          "tool_count": 2
+        },
+        {
+          "text": "\n\n",
+          "tool_count": 2
+        },
+        {
+          "text": "\n\n",
+          "tool_count": 2
+        },
+        {
+          "text": "\n\n",
+          "tool_count": 1
+        },
+        {
+          "text": "\n\n",
+          "tool_count": 1
+        },
+        {
+          "text": "\n\n",
+          "tool_count": 2
+        },
+        {
+          "text": "\n\n",
+          "tool_count": 2
+        },
+        {
+          "text": "\n\n",
+          "tool_count": 2
+        },
+        {
+          "text": "\n\n根据我对 wuu 项目的代码搜索，\"裁剪投影\"（crop projection）在项目中是一个概念描述而非特定功能组件。Wuu 项目中与\"裁剪\"相关的主要实现集中在 **图像缩放与预览** 模块和**线程附件** 机制中。以下是实现方式：\n\n## 核心裁剪/预览实现\n\n**文件位置**：`internal/appserver/thread_attachment.go`\n\n### `attachmentThumbnail(data)` 函数\n\n这是 Wuu 中处理大图裁剪/缩放的核心逻辑：\n\n1. **尺寸检查** - 使用 Go 的 `image.DecodeConfig` 获取图像的宽高\n2. **超大图限制** - 判断图像是否大于 `40,000,000` 像素像素（宽×高），如果是则返回错误\n3. **动态缩放** - 若宽高均大于 384px，强制缩放到 384px 限制：\n   - 若宽 ≥ 高：高压缩为 `max(1, h*384/w)`，宽设为 384\n   - 否则：宽压缩为 `max(1, w*384/h)`，高设为 384\n4. **空白填充** - 使用 `draw.Draw(preview, preview.Bounds(), image.White, ...)` 在预览画布上绘制白色背景\n5. **比例缩放** - 使用 `draw.ApproxBiLinear.Scale(preview, preview.Bounds(), source, source.Bounds(), draw.Over, nil)` 进行精确的抗锯齿缩放\n\n### 功能特性\n\n| 特性 | 说明 |\n|------|------|\n| 最大缩放 | 384×384 (或 192×384) |\n| 质量 | JPEG 质量 75 |\n| 源图像限制 | 256 MiB 总大小 |\n| 格式支持 | PNG, JPEG, GIF, WebP |\n| 支持 SVG | 同样进行缩放 |\n| 超大图处理 | 返回错误，不自动裁剪 |\n\n### 在协议层的工作流\n\n1. 应用服务器收到包含大图附件的消息时，会调用 `readAttachmentChunk` 并传入 `preview=true`\n2. 该函数调用 `attachmentThumbnail(data)` 生成缩放后的预览\n3. 返回给客户端，包括 `offset` 和 `media_type: \"image/jpeg\"` 参数\n4. 客户端使用 `message/image/read` RPC 请求图片读取，预览由服务端在客户端本地生成（通过 `Canvas.save()` 保存为独立文件）\n\n### 与客户端交互\n\n客户端渲染层通过 `internal/appserver/markdown_image_test.go` 中的测试规格确认了预览的预期行为：\n- `config.Width == 384` 或 `Height == 192`（按长宽比）\n- 媒体类型必须为 `\"image/jpeg\"`\n- 数据必须非空\n\n---\n\n如果您问的是文档中提到的\"裁剪记录原图偏移\"（用于视觉设计审查的测量坐标转换），那属于 [视觉设计审查](.agents/skills/visual-design-review/ 技能体系) 范畴，与 Wuu 的 UI 渲染系统相关但非其核心功能。Wuu 自身的裁剪能力仅限于通过 `attachmentThumbnail` 实现的标准图像缩放与预览，不包含坐标记录或裁剪偏移的复杂处理。",
+          "tool_count": 0
+        }
+      ]
+    }
+  ]
+}
