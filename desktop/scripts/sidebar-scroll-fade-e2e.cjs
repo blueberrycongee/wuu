@@ -232,6 +232,48 @@ app.whenReady().then(async () => {
         const sidebarBounds = await evaluate(() => document.querySelector(".sidebar").getBoundingClientRect().toJSON());
         fs.writeFileSync(path.join(output, `sidebar-${theme}-after.png`), (await win.webContents.capturePage({ x: 0, y: 0, width: Math.ceil(sidebarBounds.right), height: 820 })).toPNG());
         results.push({ label: `full-${theme}`, before, after });
+
+        // Review-only radius candidates on the approved inset/color baseline.
+        // CSS is injected only into this disposable capture window. Product
+        // styles remain unchanged until a candidate is explicitly selected.
+        const radiusBaseline = {};
+        const hoverPoint = await evaluate(() => {
+          const bounds = document.querySelector(".thread-row:not(.active)").getBoundingClientRect();
+          return { x: Math.round(bounds.x + bounds.width / 2), y: Math.round(bounds.y + bounds.height / 2) };
+        });
+        for (const radius of [null, 8, 10]) {
+          const variant = radius === null ? "before" : `after-${radius}`;
+          const candidateCSS = radius === null ? null : await win.webContents.insertCSS(
+            `.sidebar-content :is(.nav-item, .project-row, .thread-row) { border-radius: ${radius}px !important; }`,
+          );
+          for (const state of ["idle", "hover"]) {
+            win.webContents.sendInputEvent({ type: "mouseMove", ...(state === "hover" ? hoverPoint : { x: 1000, y: 20 }) });
+            await geometry();
+            const measurement = await evaluate(() => {
+              const row = document.querySelector(".thread-row.active");
+              const style = getComputedStyle(row);
+              return {
+                radius: style.borderRadius,
+                layout: [...document.querySelectorAll(".sidebar :is(.nav-item, .project-row, .thread-row, .thread-row-title, .thread-row-action, svg)")]
+                  .map(node => ({ tag: node.tagName, class: node.getAttribute("class"), bounds: node.getBoundingClientRect().toJSON() })),
+                appearance: { background: style.backgroundColor, shadow: style.boxShadow, color: style.color, fontSize: style.fontSize },
+              };
+            });
+            if (radius === null) radiusBaseline[state] = measurement;
+            else {
+              assert.deepEqual(measurement.layout, radiusBaseline[state].layout, `${theme}/${state}: radius preserves all sidebar axes`);
+              assert.deepEqual(measurement.appearance, radiusBaseline[state].appearance, `${theme}/${state}: radius preserves tone and type`);
+            }
+            const label = `radius-${theme}-${variant}-${state}`;
+            if (state === "idle") {
+              await capture(`${label}-full`);
+              fs.writeFileSync(path.join(output, `${label}-sidebar.png`), (await win.webContents.capturePage({ x: 0, y: 0, width: Math.ceil(sidebarBounds.right), height: 820 })).toPNG());
+            }
+            fs.writeFileSync(path.join(output, `${label}-detail.png`), (await win.webContents.capturePage({ x: 0, y: Math.max(0, Math.floor(after.row.y - 72)), width: Math.ceil(sidebarBounds.right), height: 200 })).toPNG());
+            results.push({ label, candidateCSSOnly: radius !== null, ...measurement });
+          }
+          if (candidateCSS) await win.webContents.removeInsertedCSS(candidateCSS);
+        }
       }
       console.log("PASS: full production shell before/after with synthetic conversation content.");
     } else {
