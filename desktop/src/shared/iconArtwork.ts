@@ -46,6 +46,8 @@ const clock = [ring, path("M12 6.5V12l4 2.5")];
 const alert = [ring, path("M12 7v5"), circle(12, 16, 1, true)];
 const triangleAlert = [path("M9.6 4.8c1.1-2 3.7-2 4.8 0l6.2 11.7c1.1 2.1 0 4-2.4 4H5.8c-2.4 0-3.5-1.9-2.4-4Z"), path("M12 8.5v4"), circle(12, 16.5, 1, true)];
 const ellipsis = [circle(5, 12, 1.5, true), circle(12, 12, 1.5, true), circle(19, 12, 1.5, true)];
+const refreshArc = [path("M5.203 8.830A7.5 7.5 0 0 1 18.495 8.250 M18.495 4.250V8.250H14.495")];
+const rotateArrow = path("M18.144 16.302A7.5 7.5 0 1 1 18.495 8.250 M18.495 4.250V8.250H14.495");
 const loader = [path("M20.5 12a8.5 8.5 0 1 1-8.5-8.5")];
 const pencil = [path("m4 20 1-5L16.5 3.5a2.8 2.8 0 0 1 4 4L9 19ZM14.5 5.5l4 4")];
 const squarePen = [path("M12 3.5H8A4.5 4.5 0 0 0 3.5 8v8A4.5 4.5 0 0 0 8 20.5h8a4.5 4.5 0 0 0 4.5-4.5v-4"), path("m10 14 .8-3.6 7.3-7.3a1.8 1.8 0 0 1 2.5 2.5l-7.3 7.3Z", true)];
@@ -189,9 +191,9 @@ export const iconArtwork = {
   ],
   Presentation: [rect(3, 3.5, 18, 13, 3), path("M12 16.5v5m-5 0h10M7 12l3-4 3 2 4-4")],
   Puzzle: [path("M9 4c0-3 6-3 6 0h5v5c-3 0-3 6 0 6v5h-5c0-3-6-3-6 0H4v-5c3 0 3-6 0-6V4Z")],
-  RefreshCw: [path("M4 9a8.5 8.5 0 0 1 14.5-3L21 8M21 3v5h-5M20 15a8.5 8.5 0 0 1-14.5 3L3 16m0 5v-5h5")],
-  RotateCcw: [path("M3 4v6h6M3.5 9a8.5 8.5 0 1 1 .5 7")],
-  RotateCw: [path("M21 4v6h-6M20.5 9a8.5 8.5 0 1 0-.5 7")],
+  RefreshCw: [...refreshArc, ...rotate(refreshArc, 180)],
+  RotateCcw: [[rotateArrow[0], { ...rotateArrow[1], transform: "translate(24 0) scale(-1 1)" }]],
+  RotateCw: [rotateArrow],
   ScrollText: [path("M6 8H3V6a3 3 0 0 1 6 0v12a3 3 0 0 0 6 0v-2h7v2c0 2-1 3-3 3H12M6 3h11c2 0 3 1 3 3v6M12 7h5m-5 4h5")],
   Search: search,
   Send: [path("m12 3 8.5 17-8.5-4-8.5 4Zm0 0v13")],
