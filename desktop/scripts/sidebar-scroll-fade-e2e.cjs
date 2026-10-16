@@ -233,17 +233,16 @@ app.whenReady().then(async () => {
         fs.writeFileSync(path.join(output, `sidebar-${theme}-after.png`), (await win.webContents.capturePage({ x: 0, y: 0, width: Math.ceil(sidebarBounds.right), height: 820 })).toPNG());
         results.push({ label: `full-${theme}`, before, after });
 
-        // Review-only radius candidates on the approved inset/color baseline.
-        // CSS is injected only into this disposable capture window. Product
-        // styles remain unchanged until a candidate is explicitly selected.
+        // Compare the previous corners with the approved production radius.
+        // Only the before capture injects CSS into this disposable window.
         const radiusBaseline = {};
         const hoverPoint = await evaluate(() => {
           const bounds = document.querySelector(".thread-row:not(.active)").getBoundingClientRect();
           return { x: Math.round(bounds.x + bounds.width / 2), y: Math.round(bounds.y + bounds.height / 2) };
         });
-        for (const radius of [null, 8, 10]) {
-          const variant = radius === null ? "before" : `after-${radius}`;
-          const candidateCSS = radius === null ? null : await win.webContents.insertCSS(
+        for (const radius of [6, null]) {
+          const variant = radius === null ? "after" : "before";
+          const baselineRadiusCSS = radius === null ? null : await win.webContents.insertCSS(
             `.sidebar-content :is(.nav-item, .project-row, .thread-row) { border-radius: ${radius}px !important; }`,
           );
           for (const state of ["idle", "hover"]) {
@@ -259,7 +258,7 @@ app.whenReady().then(async () => {
                 appearance: { background: style.backgroundColor, shadow: style.boxShadow, color: style.color, fontSize: style.fontSize },
               };
             });
-            if (radius === null) radiusBaseline[state] = measurement;
+            if (radius !== null) radiusBaseline[state] = measurement;
             else {
               assert.deepEqual(measurement.layout, radiusBaseline[state].layout, `${theme}/${state}: radius preserves all sidebar axes`);
               assert.deepEqual(measurement.appearance, radiusBaseline[state].appearance, `${theme}/${state}: radius preserves tone and type`);
@@ -270,9 +269,9 @@ app.whenReady().then(async () => {
               fs.writeFileSync(path.join(output, `${label}-sidebar.png`), (await win.webContents.capturePage({ x: 0, y: 0, width: Math.ceil(sidebarBounds.right), height: 820 })).toPNG());
             }
             fs.writeFileSync(path.join(output, `${label}-detail.png`), (await win.webContents.capturePage({ x: 0, y: Math.max(0, Math.floor(after.row.y - 72)), width: Math.ceil(sidebarBounds.right), height: 200 })).toPNG());
-            results.push({ label, candidateCSSOnly: radius !== null, ...measurement });
+            results.push({ label, baselineCSSOnly: radius !== null, ...measurement });
           }
-          if (candidateCSS) await win.webContents.removeInsertedCSS(candidateCSS);
+          if (baselineRadiusCSS) await win.webContents.removeInsertedCSS(baselineRadiusCSS);
         }
       }
       console.log("PASS: full production shell before/after with synthetic conversation content.");
