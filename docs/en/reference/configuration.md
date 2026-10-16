@@ -1,6 +1,6 @@
 # Configuration
 
-Normal startup uses unlimited agent steps and automatic model/provider temperature. Saved `agent.max_steps` and `agent.temperature` values in user and project settings are ignored without rewriting the files. Explicit CLI configuration (`--config` or `--ignore-user-config`) still supports these low-level overrides.
+The desktop settings page does not expose maximum steps or temperature. Manual `agent.max_steps` and `agent.temperature` configuration remains supported in user and project configuration, including existing saved values. To remove an old step limit, delete `agent.max_steps` or set it to `0` in the configuration that defines it. To restore automatic model/provider temperature, delete `agent.temperature` or set it to `0`. Check project overlays as well as user configuration: a project value can override the user value. Without overrides, execution uses unlimited steps and automatic temperature.
 
 Wuu keeps model connections and execution choices in user configuration, while projects can supply additional behavior. Start with `wuu init` for CLI use or desktop onboarding, then edit only the settings you need. Wuu rejects unknown configuration fields rather than silently ignoring typos.
 

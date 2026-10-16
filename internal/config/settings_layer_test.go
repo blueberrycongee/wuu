@@ -70,7 +70,8 @@ const layerBaseConfigJSON = `{
 }`
 
 // TestLoadFrom_NoSettingsLayers_MatchesBase verifies that when neither project
-// settings layer file exists, LoadFrom preserves supported base settings.
+// settings layer file exists, LoadFrom returns exactly the base config and its
+// path, i.e. the pre-layering behavior is unchanged.
 func TestLoadFrom_NoSettingsLayers_MatchesBase(t *testing.T) {
 	home := isolatedHome(t)
 	workdir := t.TempDir()
@@ -86,8 +87,8 @@ func TestLoadFrom_NoSettingsLayers_MatchesBase(t *testing.T) {
 	if got := cfg.Providers["main"].Model; got != "base-model" {
 		t.Fatalf("model = %q, want base-model (base must be untouched)", got)
 	}
-	if cfg.Agent.MaxSteps != 0 {
-		t.Fatalf("max_steps = %d, want 0", cfg.Agent.MaxSteps)
+	if cfg.Agent.MaxSteps != 5 {
+		t.Fatalf("max_steps = %d, want 5", cfg.Agent.MaxSteps)
 	}
 	if cfg.Agent.Effort != "" {
 		t.Fatalf("effort = %q, want empty (no layer applied)", cfg.Agent.Effort)
@@ -214,13 +215,13 @@ func TestLoadFrom_ProjectLayersPreserveUserOwnedSettings(t *testing.T) {
 	if cfg.Agent.Effort != "low" {
 		t.Fatalf("agent.effort = %q, want low (local outranks shared)", cfg.Agent.Effort)
 	}
-	// Retired execution controls cannot be restored by project layers.
-	if cfg.Agent.Temperature != 0 {
-		t.Fatalf("agent.temperature = %v, want 0 (auto)", cfg.Agent.Temperature)
+	// agent.temperature: local wins over base.
+	if cfg.Agent.Temperature != 0.4 {
+		t.Fatalf("agent.temperature = %v, want 0.4", cfg.Agent.Temperature)
 	}
-	// A saved base step limit must not silently stop normal tasks.
-	if cfg.Agent.MaxSteps != 0 {
-		t.Fatalf("agent.max_steps = %d, want 0 (unlimited)", cfg.Agent.MaxSteps)
+	// agent.max_steps: only set in base, preserved through both layers.
+	if cfg.Agent.MaxSteps != 5 {
+		t.Fatalf("agent.max_steps = %d, want 5 (base value preserved)", cfg.Agent.MaxSteps)
 	}
 	if len(cfg.Instructions.Filenames) != 1 || cfg.Instructions.Filenames[0] != "BASE.md" {
 		t.Fatalf("instructions.filenames = %v, want user-owned [BASE.md]", cfg.Instructions.Filenames)

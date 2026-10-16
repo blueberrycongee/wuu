@@ -86,41 +86,8 @@ func TestLoadFrom_UsesUserProviderAndProjectAgentSettings(t *testing.T) {
 	if _, ok := cfg.Providers["local"]; ok {
 		t.Fatalf("project provider must not be introduced: %+v", cfg.Providers)
 	}
-	if cfg.Agent.MaxSteps != 0 || cfg.Agent.Temperature != 0 {
-		t.Fatalf("retired execution settings must not affect normal startup: %+v", cfg.Agent)
-	}
-}
-
-func TestLoadFromRetiredExecutionSettingsPreservesExplicitConfig(t *testing.T) {
-	home := isolatedHome(t)
-	workdir := t.TempDir()
-	path := writeBaseConfig(t, home, layerBaseConfigJSON)
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		cfg, _, err := LoadFrom(workdir, home)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if cfg.Agent.MaxSteps != 0 || cfg.Agent.Temperature != 0 {
-			t.Fatalf("normal startup retained execution overrides: %+v", cfg.Agent)
-		}
-	}
-	explicit, _, err := LoadPath(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if explicit.Agent.MaxSteps != 5 || explicit.Agent.Temperature != 0.1 {
-		t.Fatalf("explicit config lost execution overrides: %+v", explicit.Agent)
-	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(before) != string(after) {
-		t.Fatal("normal startup modified the config file")
+	if cfg.Agent.MaxSteps != 3 || cfg.Agent.Temperature != 0.3 {
+		t.Fatalf("project agent settings were not applied: %+v", cfg.Agent)
 	}
 }
 
