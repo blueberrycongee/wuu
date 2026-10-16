@@ -229,9 +229,22 @@ app.whenReady().then(async () => {
         assert.ok(after.row.width < before.row.width, "selection surface narrows");
         assert.equal(after.title.x, before.title.x, "title axis stays fixed");
         assert.equal(after.title.width, before.title.width, "title space stays fixed");
-        results.push({ label: `full-${theme}`, before, after });
+        // A review-only alternative; this does not change production theme tokens.
+        const candidateCSS = await win.webContents.insertCSS(`.sidebar-content {
+          --sidebar-row-selected-bg: color-mix(in srgb, var(--ink) 8%, transparent) !important;
+          --sidebar-row-selected-shadow: none !important;
+          --wuu-nav-item-hover-background: color-mix(in srgb, var(--ink) 6%, transparent) !important;
+          --sidebar-label-ink: color-mix(in srgb, var(--ink) 82%, var(--paper)) !important;
+        }`);
+        const candidate = await geometry();
+        await capture(`full-${theme}-candidate`);
+        const sidebarBounds = await evaluate(() => document.querySelector(".sidebar").getBoundingClientRect().toJSON());
+        fs.writeFileSync(path.join(output, `sidebar-${theme}-candidate.png`), (await win.webContents.capturePage({ x: 0, y: 0, width: Math.ceil(sidebarBounds.right), height: 820 })).toPNG());
+        assert.deepEqual(candidate, after, "flatter candidate preserves row and title geometry");
+        await win.webContents.removeInsertedCSS(candidateCSS);
+        results.push({ label: `full-${theme}`, before, after, candidate });
       }
-      console.log("PASS: full production shell before/after with synthetic conversation content.");
+      console.log("PASS: full production shell main, inset-only and flatter candidate with synthetic conversation content.");
     } else {
     const threadID = "sidebar-fade-0";
     const now = new Date().toISOString();
