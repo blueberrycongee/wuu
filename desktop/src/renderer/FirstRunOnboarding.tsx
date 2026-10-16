@@ -116,6 +116,7 @@ export function FirstRunOnboarding({
   const { t, locale } = useI18n();
   const titleID = useId();
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const pluginBodyRef = useRef<HTMLDivElement>(null);
   // Preview keeps connections isolated but uses real CLI discovery.
   const inventory = preview ? PREVIEW_PLUGINS : liveInventory;
   const providers = preview ? undefined : liveProviders;
@@ -180,6 +181,21 @@ export function FirstRunOnboarding({
     initializedPluginSelection.current = true;
     setSelectedPluginIDs(initialPluginSubjectIDs(bundledPlugins));
   }, [bundledPlugins]);
+
+  useLayoutEffect(() => {
+    if (step !== "plugins") return;
+    const body = pluginBodyRef.current!;
+    // Chromium can retain a filled animation after its scroll timeline becomes
+    // inactive. Remove this guard when overflow-to-fitting resets both fades.
+    const syncFitting = () => {
+      body.toggleAttribute("data-scroll-fade-fitting", body.scrollHeight <= body.clientHeight);
+    };
+    const observer = new ResizeObserver(syncFitting);
+    observer.observe(body);
+    for (const child of body.children) observer.observe(child);
+    syncFitting();
+    return () => observer.disconnect();
+  }, [step, bundledPlugins]);
 
   useEffect(() => {
     setSelectedEngine((current) => {
@@ -456,7 +472,7 @@ export function FirstRunOnboarding({
           </div>
 
           {step === "plugins" ? (
-            <div className="onboarding-body" data-scroll-fade="">
+            <div className="onboarding-body" ref={pluginBodyRef} data-scroll-fade="">
               <div className="theme-segmented onboarding-presets" role="group" aria-label={t("onboarding.presets")}>
                 {(["minimal", "recommended", "all"] as const).map((item) => (
                   <button

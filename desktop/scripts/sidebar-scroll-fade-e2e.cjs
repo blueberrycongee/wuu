@@ -135,22 +135,13 @@ app.whenReady().then(async () => {
           }
         }
         win.setContentSize(1100, 1600);
-        try { await waitFor(() => {
+        await waitFor(() => {
           const node = document.querySelector(".onboarding-body");
           const style = getComputedStyle(node);
           return innerWidth === 1100 && innerHeight === 1600 && node.scrollHeight === node.clientHeight
             && parseFloat(style.getPropertyValue("--scroll-fade-top")) === 0
             && parseFloat(style.getPropertyValue("--scroll-fade-bottom")) === 0;
-        }); } catch (error) {
-          await sample(`onboarding-${theme}-fitting-timeout`, body);
-          await capture(`onboarding-${theme}-fitting-timeout`);
-          await win.reload();
-          await waitFor(() => Boolean(document.querySelector(".onboarding-stage-welcome")));
-          await click(".onboarding-actions .settings-button-primary");
-          await waitFor(() => document.querySelectorAll(".onboarding-plugin").length === 9);
-          await sample(`onboarding-${theme}-initial-fitting`, body);
-          throw error;
-        }
+        });
         const fitting = await sample(`onboarding-${theme}-fitting`, body);
         assert.ok(fitting.scrollHeight === fitting.clientHeight && fitting.top === 0 && fitting.bottom === 0, "fitting onboarding has no fades");
         await capture(`onboarding-${theme}-fitting`);
