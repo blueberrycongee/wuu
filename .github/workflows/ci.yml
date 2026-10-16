@@ -251,6 +251,28 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
 
+      - name: Verify onboarding scroll-edge fades
+        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_SCROLL_FADE_ONBOARDING: "1"
+          WUU_SCROLL_FADE_OUTPUT: ${{ runner.temp }}/wuu-onboarding-scroll-evidence
+        run: |
+          mkdir -p "$WUU_SCROLL_FADE_OUTPUT"
+          set -o pipefail
+          (cd desktop && node_modules/.bin/electron-vite build --config dev/onboarding/electron.vite.config.ts --ignoreConfigWarning)
+          xvfb-run --auto-servernum --server-args='-screen 0 1800x1800x24' desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/sidebar-scroll-fade-e2e.cjs 2>&1 | tee "$WUU_SCROLL_FADE_OUTPUT/run.log"
+
+      - name: Upload onboarding scroll evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboarding-scroll-evidence
+          path: ${{ runner.temp }}/wuu-onboarding-scroll-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard streamed reply settlement layout
         if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
         timeout-minutes: 4

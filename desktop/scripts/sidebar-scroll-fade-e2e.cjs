@@ -6,7 +6,9 @@ const path = require("node:path");
 const { app, BrowserWindow } = require("electron");
 
 const desktop = path.resolve(__dirname, "..");
-const output = fs.mkdtempSync(path.join(desktop, "out", "sidebar-scroll-fade-e2e-"));
+const output = process.env.WUU_SCROLL_FADE_OUTPUT || fs.mkdtempSync(path.join(desktop, "out", "sidebar-scroll-fade-e2e-"));
+fs.mkdirSync(output, { recursive: true });
+const onboarding = process.env.WUU_SCROLL_FADE_ONBOARDING === "1";
 app.setPath("userData", path.join(output, "profile"));
 process.env.WUU_STREAM_E2E_CWD = path.resolve(desktop, "..");
 process.env.WUU_STREAM_E2E_SIDEBAR_THREADS = "48";
@@ -17,7 +19,7 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1100, height: 820, show: true,
     webPreferences: {
-      preload: path.join(__dirname, "streaming-e2e-preload.cjs"),
+      ...(onboarding ? {} : { preload: path.join(__dirname, "streaming-e2e-preload.cjs") }),
       contextIsolation: true, sandbox: false, backgroundThrottling: false,
     },
   });
@@ -26,10 +28,10 @@ app.whenReady().then(async () => {
     if (level === "error") console.error(`Renderer: ${message}`);
   });
   const evaluate = (fn, value) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(value)})`);
-  const waitFor = async (fn) => {
+  const waitFor = async (fn, value) => {
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
-      if (await evaluate(fn)) return;
+      if (await evaluate(fn, value)) return;
       await new Promise(resolve => setTimeout(resolve, 25));
     }
     throw new Error(`Timed out: ${fn}`);
@@ -45,6 +47,12 @@ app.whenReady().then(async () => {
         focused: document.hasFocus(),
         scrollTop: node.scrollTop, scrollHeight: node.scrollHeight, clientHeight: node.clientHeight,
         mask: style.maskImage,
+        bounds: node.getBoundingClientRect().toJSON(),
+        animations: node.getAnimations().map(animation => ({
+          name: animation.animationName, playState: animation.playState,
+          currentTime: String(animation.currentTime), timelineTime: String(animation.timeline?.currentTime),
+          progress: animation.effect.getComputedTiming().progress,
+        })),
         top: parseFloat(style.getPropertyValue("--scroll-fade-top")),
         bottom: parseFloat(style.getPropertyValue("--scroll-fade-bottom")),
       };
@@ -68,6 +76,164 @@ app.whenReady().then(async () => {
       media, features: [{ name: "prefers-reduced-motion", value: "no-preference" }, ...features],
     });
     await media();
+    if (onboarding) {
+      const body = ".onboarding-stage-plugins .onboarding-body";
+      const click = async (selector) => {
+        const point = await evaluate((selector) => {
+          const node = document.querySelector(selector);
+          const box = node.getBoundingClientRect();
+          const x = Math.round(box.x + box.width / 2), y = Math.round(box.y + box.height / 2);
+          if (!node.contains(document.elementFromPoint(x, y))) throw new Error(`Obscured control: ${selector}`);
+          return { x, y };
+        }, selector);
+        win.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount: 1 });
+        win.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount: 1 });
+      };
+      await win.loadFile(path.join(desktop, "out-dev/onboarding/renderer/dev/onboarding/index.html"), { query: { lang: "en" } });
+      await waitFor(() => Boolean(document.querySelector(".onboarding-stage-welcome")));
+      await click(".onboarding-actions .settings-button-primary");
+      await waitFor(() => document.querySelectorAll(".onboarding-plugin").length === 9);
+      await evaluate(async () => {
+        await document.fonts.ready;
+        await Promise.all(document.querySelector(".onboarding-heading").getAnimations().map(animation => animation.finished));
+      });
+      for (const theme of ["light", "dark"]) {
+        for (const size of [15, 20]) {
+          for (const width of [920, 620]) {
+            const label = `onboarding-${theme}-${size}-${width}`;
+            win.setContentSize(width, 600);
+            await waitFor(width => innerWidth === width && innerHeight === 600, width);
+            await evaluate(({ theme, size }) => {
+              document.documentElement.dataset.theme = theme;
+              document.documentElement.style.setProperty("--conversation-message-font-size", `${size}px`);
+            }, { theme, size });
+            for (const position of ["top", "middle", "bottom"]) {
+              await evaluate((position) => {
+                const node = document.querySelector(".onboarding-body");
+                node.scrollTop = position === "top" ? 0 : position === "bottom" ? node.scrollHeight : (node.scrollHeight - node.clientHeight) / 2;
+              }, position);
+              const state = await sample(`${label}-${position}`, body);
+              assert.ok(state.scrollHeight > state.clientHeight, `${label}: list overflows`);
+              assert.ok(position === "top" ? state.top === 0 && state.bottom > 0
+                : position === "bottom" ? state.top > 0 && state.bottom === 0
+                  : state.top > 0 && state.bottom > 0, `${label}-${position}: fades follow remaining content`);
+              const layout = await evaluate(() => {
+                const body = document.querySelector(".onboarding-body").getBoundingClientRect();
+                const heading = document.querySelector(".onboarding-heading");
+                const actions = document.querySelector(".onboarding-actions");
+                const mascot = document.querySelector(".onboarding-plugin-mascot-stage");
+                return { body: body.toJSON(), heading: heading.getBoundingClientRect().toJSON(), actions: actions.getBoundingClientRect().toJSON(),
+                  masks: [heading, actions, mascot].map(node => getComputedStyle(node).maskImage),
+                  pageWidth: document.documentElement.scrollWidth, viewportWidth: innerWidth };
+              });
+              assert.ok(layout.heading.bottom <= layout.body.top && layout.body.bottom <= layout.actions.top, `${label}: fixed regions remain outside list`);
+              assert.ok(layout.pageWidth <= layout.viewportWidth, `${label}: no horizontal overflow`);
+              assert.deepEqual(layout.masks, ["none", "none", "none"]);
+              results.push({ label: `${label}-${position}-layout`, ...layout });
+              await capture(`${label}-${position}`);
+            }
+          }
+        }
+        win.setContentSize(1100, 1600);
+        await waitFor(() => {
+          const node = document.querySelector(".onboarding-body");
+          const style = getComputedStyle(node);
+          return innerWidth === 1100 && innerHeight === 1600 && node.scrollHeight === node.clientHeight
+            && parseFloat(style.getPropertyValue("--scroll-fade-top")) === 0
+            && parseFloat(style.getPropertyValue("--scroll-fade-bottom")) === 0;
+        });
+        const fitting = await sample(`onboarding-${theme}-fitting`, body);
+        assert.ok(fitting.scrollHeight === fitting.clientHeight && fitting.top === 0 && fitting.bottom === 0, "fitting onboarding has no fades");
+        await capture(`onboarding-${theme}-fitting`);
+      }
+      win.setContentSize(920, 720);
+      await waitFor(() => innerWidth === 920 && innerHeight === 720);
+      await evaluate(() => { document.documentElement.style.setProperty("--conversation-message-font-size", "15px"); document.querySelector(".onboarding-body").scrollTop = 0; });
+      await sample("onboarding-controls", body);
+      const firstSwitch = '.onboarding-plugin:first-child [role="switch"]';
+      const selected = await evaluate(selector => document.querySelector(selector).getAttribute("aria-checked"), firstSwitch);
+      await click(firstSwitch);
+      await waitFor(selected => document.querySelector('.onboarding-plugin:first-child [role="switch"]').getAttribute("aria-checked") !== selected, selected);
+      assert.notEqual(await evaluate(selector => document.querySelector(selector).getAttribute("aria-checked"), firstSwitch), selected, "switch remains clickable");
+      win.focus();
+      win.webContents.focus();
+      win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
+      win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" });
+      await waitFor(() => document.activeElement === document.querySelector('.onboarding-plugin:nth-child(2) [role="switch"]') && document.activeElement.matches(":focus-visible"));
+      const focus = await evaluate(() => ({ role: document.activeElement.getAttribute("role"), visible: document.activeElement.matches(":focus-visible"), outline: getComputedStyle(document.activeElement, "::before").outlineStyle }));
+      assert.ok(focus.role === "switch" && focus.visible && focus.outline !== "none", "keyboard switch focus remains visible");
+      results.push({ label: "onboarding-keyboard-focus", ...focus });
+      await capture("onboarding-keyboard-focus");
+      // Exercise the same selection controls that drive the mascot equipment.
+      const selectedCapabilities = () => evaluate(() => ({
+        selected: [...document.querySelectorAll('.onboarding-plugin')].filter(node => node.querySelector('[role="switch"]').getAttribute('aria-checked') === 'true').map(node => node.dataset.plugin).sort(),
+        worn: [...document.querySelectorAll('[data-onboarding-capability]')].map(node => node.dataset.onboardingCapability).sort(),
+        split: document.querySelector('[data-testid="onboarding-mascot-stage"]').hasAttribute('data-onboarding-split'),
+      }));
+      const checkOutfit = async (label, expected) => {
+        await waitFor(expected => JSON.stringify([...document.querySelectorAll('.onboarding-plugin')]
+          .filter(node => node.querySelector('[role="switch"]').getAttribute('aria-checked') === 'true')
+          .map(node => node.dataset.plugin).sort()) === JSON.stringify(expected), [...expected].sort());
+        await evaluate(async () => {
+          await new Promise(requestAnimationFrame);
+          await Promise.all(document.querySelector('.onboarding-plugin-mascot-stage').getAnimations({ subtree: true })
+            .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
+            .map(animation => animation.finished.catch(() => {})));
+        });
+        const state = await selectedCapabilities();
+        assert.deepEqual(state.worn, state.selected.filter(id => id !== 'subagent'), `${label}: selected plugins match equipment`);
+        assert.equal(state.split, state.selected.includes('subagent'), `${label}: Subagent controls companions`);
+        results.push({ label, ...state });
+      };
+      const preset = async (index) => {
+        await evaluate(() => { document.querySelector('.onboarding-body').scrollTop = 0; });
+        await click(`.onboarding-presets button:nth-child(${index})`);
+        await checkOutfit(`preset-${index}`, index === 1 ? [] : index === 2 ? ["side", "automation"] : pluginIDs);
+      };
+      const pluginIDs = await evaluate(() => [...document.querySelectorAll('.onboarding-plugin')].map(node => node.dataset.plugin));
+      win.setContentSize(920, 720);
+      await preset(1);
+      for (const id of pluginIDs) {
+        const selector = `.onboarding-plugin[data-plugin="${id}"] [role="switch"]`;
+        await evaluate(selector => document.querySelector(selector).scrollIntoView({ block: 'center' }), selector);
+        await click(selector);
+        await checkOutfit(`single-${id}`, [id]);
+        await capture(`mascot-single-${id}`);
+        await click(selector);
+        await checkOutfit(`removed-${id}`, []);
+        assert.deepEqual((await selectedCapabilities()).selected, []);
+      }
+      for (const theme of ['light', 'dark']) {
+        for (const size of [15, 20]) {
+          for (const width of [920, 620]) {
+            win.setContentSize(width, 600);
+            await waitFor(width => innerWidth === width && innerHeight === 600, width);
+            await evaluate(({ theme, size }) => {
+              document.documentElement.dataset.theme = theme;
+              document.documentElement.style.setProperty('--conversation-message-font-size', `${size}px`);
+            }, { theme, size });
+            for (const [name, index] of [['minimal', 1], ['recommended', 2], ['all', 3]]) {
+              await preset(index);
+              await evaluate(async () => {
+                await document.fonts.ready;
+                await Promise.all(document.querySelector('.onboarding-plugin-mascot-stage').getAnimations({ subtree: true })
+                  .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
+                  .map(animation => animation.finished.catch(() => {})));
+              });
+              await capture(`mascot-${theme}-${size}-${width}-${name}`);
+            }
+          }
+        }
+      }
+      await preset(2);
+      await click(".onboarding-actions .settings-button-ghost");
+      await waitFor(() => Boolean(document.querySelector(".onboarding-stage-welcome")));
+      await click(".onboarding-actions .settings-button-primary");
+      await waitFor(() => Boolean(document.querySelector(".onboarding-stage-plugins")));
+      await click(".onboarding-actions .settings-button-primary");
+      await waitFor(() => Boolean(document.querySelector(".onboarding-stage-runtime")));
+      console.log("PASS: onboarding fades, fitting content, fixed regions, switches, keyboard focus, and Back/Continue across light/dark, 15/20px, wide/narrow.");
+    } else {
     const threadID = "sidebar-fade-0";
     const now = new Date().toISOString();
     const turn = {
@@ -215,6 +381,7 @@ app.whenReady().then(async () => {
     await evaluate(() => { document.documentElement.dataset.appearanceMotion = "reduce"; });
     assert.equal((await sample("app-reduced-motion")).mask, "none");
     console.log("PASS: sidebar fades track scroll bounds across stream, control/window focus, light/dark, 14/20px, wide/narrow, and accessibility states.");
+    }
   } catch (error) {
     await capture("failure");
     throw error;

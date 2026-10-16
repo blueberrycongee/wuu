@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
 
-/** Native phone pairing is available wherever the host supports remote control. */
+/** Keep new phone pairing in explicitly opted-in development builds until mobile release acceptance. */
 export const ENABLE_REMOTE_CONTROL =
-  import.meta.env.VITE_ENABLE_REMOTE_CONTROL !== "false";
+  import.meta.env.DEV && import.meta.env.VITE_ENABLE_REMOTE_CONTROL === "true";
 
 /** Temporarily hidden to keep the conversation focused; retain the edit data and components. */
 export const ENABLE_TURN_EDIT_SUMMARY = false;
