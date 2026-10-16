@@ -57,3 +57,22 @@ test('documentation excludes Desktop; manual runs restore full coverage', () => 
 test('main push retains existing no-duplicate-test policy', () => {
   assert.deepEqual(JSON.parse(select(['desktop/scripts/image-layout-e2e.cjs'], 'push').desktop_suites), []);
 });
+
+test('ordinary renderer edits pass source paths to dependency-based unit selection', () => {
+  const result = select(['desktop/src/renderer/LanguagePreferenceSection.tsx']);
+  assert.deepEqual(JSON.parse(result.desktop_related), ['src/renderer/LanguagePreferenceSection.tsx']);
+  assert.deepEqual(JSON.parse(result.desktop_suites), suites);
+});
+for (const path of ['desktop/src/renderer/styles.css', 'desktop/src/renderer/test/setup.ts', 'desktop/vitest.config.ts', 'desktop/package-lock.json']) {
+  test(`global or non-source input disables related mode: ${path}`, () => {
+    assert.deepEqual(JSON.parse(select(['desktop/src/renderer/LanguagePreferenceSection.tsx', path]).desktop_related), []);
+  });
+}
+test('deleted UI sources and manual dispatch use full unit coverage', () => {
+  const paths = ['desktop/src/renderer/LanguagePreferenceSection.tsx'];
+  assert.deepEqual(JSON.parse(select(paths, 'pull_request', true).desktop_related), []);
+  assert.deepEqual(JSON.parse(select(paths, 'workflow_dispatch').desktop_related), []);
+});
+test('documentation does not broaden a renderer-only change', () => {
+  assert.deepEqual(JSON.parse(select(['docs/en/project/development.md', 'desktop/src/renderer/LanguagePreferenceSection.tsx']).desktop_related), ['src/renderer/LanguagePreferenceSection.tsx']);
+});

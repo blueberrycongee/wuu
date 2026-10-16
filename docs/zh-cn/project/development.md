@@ -339,6 +339,10 @@ Desktop 验证拆为六个独立 Linux 任务并行运行：单元测试、类�
 
 仅修改[分组映射](../../../.github/scripts/desktop-ci-suites.json)中独立 E2E 入口时，CI 运行所属组的并集，不触发无关 Clients/native 检查。共享 helper、preload、fixture、产品代码、样式、依赖、CI 配置和未知路径仍保守回退全部组，避免根据组件文件名猜测完整依赖关系。原有测试命令、断言、场景矩阵和证据上传均保留；手动运行执行全部组。扩展映射前应确认入口不是共享 helper。使用 `node --test .github/scripts/select-ci.test.mjs` 通过临时 Git 改动验证范围选择，包括删除文件和混合范围。
 
+PR 仅修改已有 renderer TypeScript/TSX 模块（可同时修改文档）时，单元测试按解析出的 import/export 依赖选择测试，覆盖重导出、静态动态导入、实际 Vite 别名和 setup 文件依赖；测试清单由 Vitest 提供。包含计算式加载、文件读取或进程执行、解析失败、无法解析的本地导入的测试保守保留。找不到受影响消费者时回退完整单元测试。选择证据上传为 `unit-dependency-selection`；测试执行失败不会通过重跑来掩盖。
+
+样式、资源、测试环境、运行时插件模块、新增／删除／重命名、依赖、配置和混合范围保持全量单元覆盖。类型检查、开发启动器检查、串行 Git 服务测试及原有 E2E 组均保留。现有 E2E 加载完整 App，共享其依赖闭包，不能因为某测试没有打开某页面就按静态依赖排除该组。安装桌面依赖后，使用 `node --test desktop/scripts/ci-unit-dependencies.test.mjs` 验证依赖选择契约。
+
 桌面 CI 在并行单元测试前串行安装 Electron 二进制，避免并发解压同一目录。macOS 和 Windows 在相关 PR 上保留平台专属测试；macOS 在原生资源或打包输入变化时还验证打包。
 
 `main` 推送不再重复 Go、Desktop、Clients 或原生测试套件，只在改动路径选中原生检查时运行 macOS／Windows 打包。手动 `workflow_dispatch` 执行全部检查及两平台打包。因此直接推送 main 不具备 PR 测试覆盖；需要完整验证时应使用 PR 或手动运行 CI。

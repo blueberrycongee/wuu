@@ -21,6 +21,7 @@ jobs:
       go: ${{ steps.select.outputs.go }}
       desktop: ${{ steps.select.outputs.desktop }}
       desktop_suites: ${{ steps.select.outputs.desktop_suites }}
+      desktop_related: ${{ steps.select.outputs.desktop_related }}
       clients: ${{ steps.select.outputs.clients }}
       native: ${{ steps.select.outputs.native }}
     steps:
@@ -612,9 +613,24 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Verify unit dependency selection
+        if: ${{ matrix.suite == 'unit' }}
+        run: node --test desktop/scripts/ci-unit-dependencies.test.mjs
+
       - name: Test
         if: ${{ matrix.suite == 'unit' }}
-        run: make test-desktop
+        env:
+          WUU_CI_RELATED: ${{ needs.changes.outputs.desktop_related }}
+        run: node desktop/scripts/test-ci-unit.mjs
+
+      - name: Upload unit dependency selection evidence
+        if: ${{ always() && matrix.suite == 'unit' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-dependency-selection
+          path: desktop/out/ci/unit-related.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Verify compact Fast mode controls
         if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success') }}

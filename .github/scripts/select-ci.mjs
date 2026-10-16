@@ -4,10 +4,13 @@ import { appendFileSync, readFileSync } from 'node:fs';
 const { suites, entries } = JSON.parse(readFileSync(new URL('./desktop-ci-suites.json', import.meta.url)));
 const desktopSuites = new Set();
 let fullDesktop = false;
+let relatedEligible = true;
+const relatedSources = [];
 const selected = { go: false, desktop: false, clients: false, native: false };
 const all = () => {
   Object.keys(selected).forEach(key => { selected[key] = true; });
   fullDesktop = true;
+  relatedEligible = false;
 };
 const event = process.env.GITHUB_EVENT_NAME;
 if (!['pull_request', 'push', 'workflow_dispatch'].includes(event)) {
@@ -29,6 +32,15 @@ if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
     // plugins, or fixtures can be executable input and is not ignored globally.
     if (/^(docs\/|docs-site\/|landing\/|\.github\/(ISSUE_TEMPLATE\/|PULL_REQUEST_TEMPLATE\.md$))/.test(path)
       || /^(README(?:\.[^/]+)?\.md|README\.md|CHANGELOG\.md|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|AGENTS\.md)$/.test(path)) continue;
+    // Only existing renderer modules use parsed import dependencies. Global inputs,
+    // plugin loading, and additions/deletions retain the full suite.
+    if (/^desktop\/src\/renderer\/(?!test\/|plugins\/).*\.(ts|tsx)$/.test(path) && !path.endsWith('.d.ts')) {
+      const status = execFileSync('git', ['diff', '--name-status', '--no-renames', process.env.CI_BASE, process.env.CI_HEAD, '--', path], { encoding: 'utf8' });
+      if (status.startsWith('M\t')) relatedSources.push(path.slice('desktop/'.length));
+      else relatedEligible = false;
+    } else {
+      relatedEligible = false;
+    }
     // Native apps have their own workflow; shared client packages do not.
     if (/^clients\/native\//.test(path)) continue;
     if (Object.hasOwn(entries, path)) {
@@ -60,6 +72,7 @@ const outputs = {
   desktop: event !== 'push' && selected.desktop,
   clients: event !== 'push' && selected.clients,
   native: selected.native,
+  desktop_related: JSON.stringify(event === 'pull_request' && relatedEligible ? relatedSources : []),
   desktop_suites: JSON.stringify(event !== 'push' && selected.desktop
     ? suites.filter(suite => fullDesktop || desktopSuites.has(suite)) : []),
 };
