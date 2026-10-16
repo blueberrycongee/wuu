@@ -29,7 +29,9 @@ func TestKernelHostServicesRouteThroughRegistryAndPreserveStorageScope(t *testin
 			t.Fatal(err)
 		}
 		fmt.Println("file-lock-ready")
-		select {}
+		// Keep an external wakeup source so the runtime cannot declare deadlock.
+		_, _ = bufio.NewReader(os.Stdin).ReadByte()
+		return
 	}
 	home, workspace := t.TempDir(), t.TempDir()
 	item := serviceTestPlugin("demo", "plugin:user:demo", "generation")
@@ -93,6 +95,11 @@ func TestKernelHostServicesRouteThroughRegistryAndPreserveStorageScope(t *testin
 		}
 		helper := exec.Command(os.Args[0], "-test.run=^TestKernelHostServicesRouteThroughRegistryAndPreserveStorageScope$")
 		helper.Env = append(os.Environ(), "WUU_FILE_LOCK_E2E_HELPER="+workspace)
+		stdin, err := helper.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = stdin.Close() })
 		stdout, err := helper.StdoutPipe()
 		if err != nil {
 			t.Fatal(err)
