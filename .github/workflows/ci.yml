@@ -2,15 +2,9 @@ name: CI
 
 on:
   pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "docs-site/**"
   push:
-    branches:
-      - main
-    paths-ignore:
-      - "docs/**"
-      - "docs-site/**"
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -20,8 +14,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Select affected checks
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.select.outputs.go }}
+      desktop: ${{ steps.select.outputs.desktop }}
+      clients: ${{ steps.select.outputs.clients }}
+      native: ${{ steps.select.outputs.native }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: Select jobs from the complete change
+        id: select
+        env:
+          CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          CI_HEAD: ${{ github.sha }}
+        run: node .github/scripts/select-ci.mjs
+
   repository-check:
     name: Repository check
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +52,8 @@ jobs:
 
   go-validation:
     name: Go validation
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     env:
       WUU_TEST_DATABASE_URL: postgres://wuu:wuu_test@127.0.0.1:5432/wuu_test?sslmode=disable
@@ -145,6 +164,8 @@ jobs:
 
   project-agent-check:
     name: Project Agent check
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     env:
       WUU_TEST_DATABASE_URL: postgres://wuu:wuu_test@127.0.0.1:5432/wuu_test?sslmode=disable
@@ -178,21 +199,29 @@ jobs:
   go-check:
     name: Go check
     runs-on: ubuntu-latest
-    needs: [go-validation, project-agent-check]
-    # Cancelled post-merge pushes need no new failure; PRs and real Go failures
-    # keep the strict gate because skipped required checks can permit merging.
-    if: ${{ always() && (github.event_name != 'push' || !cancelled() || contains(needs.*.result, 'failure')) }}
+    needs: [changes, go-validation, project-agent-check]
+    if: always()
     steps:
-      - name: Require both Go suites
+      - name: Require selected Go suites
         env:
+          SELECTION_RESULT: ${{ needs.changes.result }}
+          GO_REQUIRED: ${{ needs.changes.outputs.go }}
           GO_VALIDATION_RESULT: ${{ needs.go-validation.result }}
           PROJECT_AGENT_RESULT: ${{ needs.project-agent-check.result }}
         run: |
-          test "$GO_VALIDATION_RESULT" = success
-          test "$PROJECT_AGENT_RESULT" = success
+          test "$SELECTION_RESULT" = success
+          if [ "$GO_REQUIRED" = true ]; then
+            test "$GO_VALIDATION_RESULT" = success
+            test "$PROJECT_AGENT_RESULT" = success
+          else
+            test "$GO_VALIDATION_RESULT" = skipped
+            test "$PROJECT_AGENT_RESULT" = skipped
+          fi
 
   desktop-check:
     name: Desktop check
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -808,6 +837,8 @@ jobs:
 
   clients-check:
     name: Clients check
+    needs: changes
+    if: needs.changes.outputs.clients == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -857,6 +888,8 @@ jobs:
 
   macos-check:
     name: macOS native check
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -869,9 +902,9 @@ jobs:
         id: native-packaging
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = push ]; then
+          if [ "${{ github.event_name }}" != pull_request ]; then
             echo "required=true" >> "$GITHUB_OUTPUT"
-          elif git diff --quiet HEAD^ HEAD -- desktop/native desktop/package.json desktop/package-lock.json 'desktop/scripts/*mac*.cjs' 'desktop/scripts/*release*.cjs' .github/workflows/ci.yml; then
+          elif git diff --quiet HEAD^ HEAD -- desktop/native desktop/package.json desktop/package-lock.json desktop/scripts desktop/electron.vite.config.ts .github/scripts/select-ci.mjs .github/workflows/ci.yml; then
             echo "required=false" >> "$GITHUB_OUTPUT"
           else
             status=$?
@@ -901,21 +934,26 @@ jobs:
           node -e 'require("electron")'
 
       - name: Test macOS process sandbox
+        if: github.event_name != 'push'
         run: go test ./internal/processsandbox -count=1
 
       - name: Test macOS PTY lifecycle
+        if: github.event_name != 'push'
         run: go test ./internal/process -run '^Test(PTY|ManagerTTY|StartTTY|WriteStdinToTTY)' -count=1
 
       - name: Test macOS release signing fixtures
+        if: github.event_name != 'push'
         run: npm --prefix desktop run test:release-signing
 
       - name: Build read-only app snapshot helper
+        if: github.event_name != 'push'
         run: |
           npm --prefix desktop run build:app-context-mac
           "desktop/build/app-context/Wuu App Snapshot.app/Contents/MacOS/wuu-app-context" --status
           ELECTRON_RUN_AS_NODE=1 desktop/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron -e 'if (typeof require(process.cwd() + "/desktop/build/app-context/capture-target.node").pinTarget !== "function") process.exit(1)'
 
       - name: Test native helper
+        if: github.event_name != 'push'
         run: make test-native
 
       - name: Install phone Web dependencies
@@ -929,8 +967,8 @@ jobs:
         run: npm ci --prefix plugins
 
       - name: Package macOS app
-        # Validate the release resource layout with ad-hoc signatures on native PRs.
         if: steps.native-packaging.outputs.required == 'true'
+        # Validate the release resource layout with ad-hoc signatures on native PRs.
         run: make build-macos
 
       - name: Ad-hoc sign and verify packaged native resources
@@ -961,6 +999,8 @@ jobs:
 
   windows-check:
     name: Windows native check
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -983,6 +1023,7 @@ jobs:
       # contracts. Keep this job focused on the Windows-native boundaries it can
       # validate rather than turning expected POSIX differences into a red gate.
       - name: Test Windows-native runtime boundaries
+        if: github.event_name != 'push'
         run: |
           go test ./internal/process -run '^Test(VerifyProcessGroupRejectsMismatchedRecords|LookupProcessGroupIsPid|PTYUnsupported|TaskkillTreeIgnoresInvalidPids|ProcessExistsSelf)$'
           go test ./internal/mcp -run '^TestStdioTransportCloseTerminatesWindowsDescendants$' -count=1
@@ -990,24 +1031,57 @@ jobs:
           go test ./internal/tools -run '^TestProcessSandbox(PolicyMapsWorkspaceBoundary|TempRejectsSymlink|PolicyFailsClosedWithoutBackend)$'
 
       - name: Test Windows plugin generation leases
+        if: github.event_name != 'push'
         run: go test ./internal/session -run '^Test(PluginGenerationLease|ReadPluginGenerationEpoch|PluginCatalogMutation|PluginCatalogReadLease)' -count=1 -v
 
       - name: Install Desktop dependencies
         run: npm ci --prefix desktop
 
       - name: Typecheck Desktop on Windows
+        if: github.event_name != 'push'
         run: npm --prefix desktop run typecheck
 
       - name: Install phone Web dependencies
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         run: |
           npm ci --prefix clients/core
           npm ci --prefix clients/mobile-web
 
       - name: Install plugin build dependencies
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         run: npm ci --prefix plugins
 
       - name: Package unpacked Windows app
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         run: npm --prefix desktop run pack:win
+
+  ci-check:
+    name: CI check
+    runs-on: ubuntu-latest
+    needs: [changes, repository-check, go-check, desktop-check, clients-check, macos-check, windows-check]
+    if: always()
+    steps:
+      - name: Require successful selection and all selected jobs
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          needs = json.loads(os.environ['RESULTS'])
+          selected = needs['changes']['outputs']
+          expected = {
+              'changes': True,
+              'repository-check': os.environ['EVENT'] != 'push',
+              'go-check': True,
+              'desktop-check': selected.get('desktop') == 'true',
+              'clients-check': selected.get('clients') == 'true',
+              'macos-check': selected.get('native') == 'true',
+              'windows-check': selected.get('native') == 'true',
+          }
+          for job, required in expected.items():
+              result = needs[job]['result']
+              wanted = 'success' if required else 'skipped'
+              if result != wanted:
+                  raise SystemExit(f'{job}: expected {wanted}, got {result}')
+          PYTHON
