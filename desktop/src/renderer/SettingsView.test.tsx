@@ -53,6 +53,8 @@ afterEach(() => {
 function installBuildInfoStub(info: BuildInfoResult): void {
   const stub: Partial<WuuDesktopApi> = {
     getBuildInfo: vi.fn().mockResolvedValue(info),
+    getRemoteControlSnapshot: vi.fn().mockResolvedValue({ status: null, host_enabled: false, host_running: false, pair_uri: null }),
+    onRemoteControlEvent: vi.fn(() => () => {}),
     listMCPServers: vi.fn().mockResolvedValue({ servers: [] }),
     connectMCPServer: vi.fn(),
     disconnectMCPServer: vi.fn(),
@@ -241,12 +243,15 @@ describe("SettingsView shell", () => {
     expect(container.querySelector('[data-testid="settings-pet"]')).toBeNull();
   });
 
-  it("exposes phone access on a native host", async () => {
+  it("keeps previously enabled phone access manageable on a native host", async () => {
     installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "today" } });
-    window.wuu.getRemoteControlSnapshot = vi.fn().mockResolvedValue({ status: null, host_running: false, pair_uri: null });
+    window.wuu.getRemoteControlSnapshot = vi.fn().mockResolvedValue({ status: null, host_enabled: true, host_running: false, pair_uri: null });
     window.wuu.onRemoteControlEvent = vi.fn(() => () => {});
     renderSettings({ initialized: baseInitialized(), initialPage: "remote" });
     await act(async () => { await Promise.resolve(); });
+    const remoteButton = Array.from(container.querySelectorAll<HTMLButtonElement>(".settings-nav-item"))
+      .find((button) => button.textContent?.includes("手机访问"))!;
+    await act(async () => remoteButton.click());
     expect(container.querySelector('[data-testid="settings-remote-page"]')).not.toBeNull();
     expect(window.wuu.getRemoteControlSnapshot).toHaveBeenCalled();
   });

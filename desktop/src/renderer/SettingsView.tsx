@@ -149,13 +149,13 @@ const NATIVE_PAGE_ICONS: Record<NativeSettingsPage, IconComponent> = {
   archive: Archive,
 };
 
-function remoteControlAvailable(): boolean {
-  return ENABLE_REMOTE_CONTROL && hostSupports("getRemoteControlSnapshot");
+function remoteControlAvailable(existingAccess = false): boolean {
+  return (ENABLE_REMOTE_CONTROL || existingAccess) && hostSupports("getRemoteControlSnapshot");
 }
 
 // One flat list: with this few pages, group headings cost more reading
 // than they save. Plugin pages follow after a gap.
-function nativeSettingsPages(): NativeSettingsPage[] {
+function nativeSettingsPages(remoteAvailable: boolean): NativeSettingsPage[] {
   return [
     "providers",
     "agents",
@@ -163,7 +163,7 @@ function nativeSettingsPages(): NativeSettingsPage[] {
     "mcp",
     "appearance",
     "general",
-    ...(remoteControlAvailable() ? ["remote" as const] : []),
+    ...(remoteAvailable ? ["remote" as const] : []),
     "usage",
     ...(ENABLE_SUBSCRIPTIONS ? ["subscriptions" as const] : []),
     "archive",
@@ -174,12 +174,12 @@ type CopyState = "idle" | "copying" | "copied";
 
 const COPY_RESET_MS = 1500;
 
-function availableSettingsPage(page: SettingsPage | undefined): SettingsPage {
+function availableSettingsPage(page: SettingsPage | undefined, remoteAvailable = remoteControlAvailable()): SettingsPage {
   const next = page ?? "providers";
   if (next === "subscriptions" && !ENABLE_SUBSCRIPTIONS) {
     return "providers";
   }
-  if (next === "remote" && !remoteControlAvailable()) {
+  if (next === "remote" && !remoteAvailable) {
     return "providers";
   }
   return next;
@@ -277,9 +277,34 @@ export function SettingsView({
     [runningProviderNames],
   );
   const [desktopBuild, setDesktopBuild] = useState<DesktopBuildInfo | undefined>();
-  const [activePage, setActivePage] = useState<SettingsPage>(() =>
+  // Keep an off/revoke path for people who enabled access in an earlier release.
+  // Latch visibility for this visit so disabling access does not dismiss its page.
+  const [existingPhoneAccess, setExistingPhoneAccess] = useState(false);
+  const remoteAvailable = remoteControlAvailable(existingPhoneAccess);
+  useEffect(() => {
+    if (ENABLE_REMOTE_CONTROL || !hostSupports("getRemoteControlSnapshot")) return;
+    let cancelled = false;
+    const refresh = () => {
+      void window.wuu.getRemoteControlSnapshot().then((snapshot) => {
+        if (!cancelled && (snapshot.host_enabled || snapshot.host_running)) setExistingPhoneAccess(true);
+      }).catch(() => {
+        // An unreadable status must not remove the user's only off control.
+        if (!cancelled) setExistingPhoneAccess(true);
+      });
+    };
+    refresh();
+    const off = window.wuu.onRemoteControlEvent(refresh);
+    return () => { cancelled = true; off(); };
+  }, []);
+  const [activePage, setActivePageState] = useState<SettingsPage>(() =>
     availableSettingsPage(initialPage),
   );
+  const pendingRemotePage = useRef(initialPage === "remote" && !remoteAvailable);
+  const previousInitialPage = useRef(initialPage);
+  const setActivePage = (page: SettingsPage) => {
+    pendingRemotePage.current = false;
+    setActivePageState(page);
+  };
   const customPluginSettingsPages = useSyncExternalStore(
     (listener) => pluginHost.subscribe(listener),
     () => pluginHost.getSettingsPages(),
@@ -333,8 +358,15 @@ export function SettingsView({
   const advancedCommittedRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
-    setActivePage(availableSettingsPage(initialPage));
-  }, [initialPage]);
+    if (previousInitialPage.current !== initialPage) {
+      previousInitialPage.current = initialPage;
+      pendingRemotePage.current = initialPage === "remote" && !remoteAvailable;
+      setActivePageState(availableSettingsPage(initialPage, remoteAvailable));
+    } else if (pendingRemotePage.current && remoteAvailable) {
+      pendingRemotePage.current = false;
+      setActivePageState("remote");
+    }
+  }, [initialPage, remoteAvailable]);
 
   useLayoutEffect(() => {
     const missingGeneratedPage = activePage.startsWith("plugin-settings:")
@@ -636,7 +668,7 @@ export function SettingsView({
   }${sidebarAnimating ? " sidebar-animating" : ""}`;
 
   const pluginPageTitle = activePluginSettingsRecord?.name ?? activeCustomPluginPage?.title;
-  const nativePages = nativeSettingsPages();
+  const nativePages = nativeSettingsPages(remoteAvailable);
   const availablePages = useMemo<readonly SettingsPageSummaryV1[]>(() => Object.freeze([
     ...nativePages.map((page) => Object.freeze({
       id: page,
@@ -650,10 +682,9 @@ export function SettingsView({
       id: pluginViewSettingsPageId(entry.pluginId, entry.id),
       label: entry.title,
     })),
-    // nativePages is derived from build flags and host capabilities,
-    // which do not change while the page is mounted.
+    // The remaining native page capabilities are fixed while mounted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ]), [customPluginSettingsPages, pluginSettingsRecords, t]);
+  ]), [customPluginSettingsPages, pluginSettingsRecords, remoteAvailable, t]);
 
   const sidebarToggle = (
     <button
@@ -885,7 +916,7 @@ export function SettingsView({
                   onMCPAuthFinish={finishMCPAuth}
                   onMCPAuthRemove={removeMCPAuth}
                 />
-              ) : activePage === "remote" && remoteControlAvailable() ? (
+              ) : activePage === "remote" && remoteAvailable ? (
                 <>
                   <SettingsPageHeader title={t("settings.remote")} />
                   <SettingsRemotePageContainer />
@@ -920,7 +951,7 @@ export function SettingsView({
       busy={running || usageLoading || mcpLoading || codexPetsLoading || Boolean(mcpBusyServer)}
       hasError={Boolean(advancedError || usageError || mcpError || codexPetsError)}
       fallback={nativeSettings}
-      onOpenPage={(pageId) => setActivePage(pageId as SettingsPage)}
+      onOpenPage={(pageId) => setActivePage(availableSettingsPage(pageId as SettingsPage, remoteAvailable))}
       onAdvancedSave={onAdvancedSave}
       onGeneralSave={onGeneralSave}
       onRefresh={onRefreshModelCatalog}
@@ -2648,6 +2679,7 @@ function mcpAuthLabel(status: string, t: Translate): string {
  *  URI shown, phone paired, host exit), and maps panel actions to IPC. */
 function SettingsRemotePageContainer(): JSX.Element {
   const [snapshot, setSnapshot] = useState<RemoteControlSnapshot | null>(null);
+  const [snapshotError, setSnapshotError] = useState("");
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -2659,10 +2691,13 @@ function SettingsRemotePageContainer(): JSX.Element {
         .then((snap) => {
           if (!cancelled) {
             setSnapshot(snap);
+            setSnapshotError("");
             if (snap.pair_uri) setActionError("");
           }
         })
-        .catch(() => {});
+        .catch((err: unknown) => {
+          if (!cancelled) setSnapshotError(err instanceof Error ? err.message : String(err));
+        });
     };
     refresh();
     const off = window.wuu.onRemoteControlEvent(() => refresh());
@@ -2676,7 +2711,7 @@ function SettingsRemotePageContainer(): JSX.Element {
     setBusy(true);
     setActionError("");
     action()
-      .then(setSnapshot)
+      .then((snap) => { setSnapshot(snap); setSnapshotError(""); })
       .catch((err: unknown) => {
         setActionError(err instanceof Error ? err.message : String(err));
       })
@@ -2685,8 +2720,10 @@ function SettingsRemotePageContainer(): JSX.Element {
 
   return (
     <SettingsRemotePage
+      managementOnly={!ENABLE_REMOTE_CONTROL}
+      statusUnknown={snapshot === null}
       status={snapshot?.status ?? null}
-      statusError={actionError || snapshot?.status_error || ""}
+      statusError={actionError || snapshotError || snapshot?.status_error || ""}
       hostRunning={snapshot?.host_running ?? false}
       hostEnabled={snapshot?.host_enabled ?? snapshot?.host_running ?? false}
       pairUri={snapshot?.pair_uri ?? null}
