@@ -129,8 +129,8 @@ type PiPEntry = {
  * Owns the observation cards of every thread with a live, observable task
  * (CUA windows, embedded-browser tabs). Each thread has at most one card;
  * activity events retarget it, but an individual action ending never owns its
- * lifetime. Cards of concurrent tasks share one corner as a stack; opening a
- * conversation or clicking a card brings it to the front.
+ * lifetime. Only the active conversation presents its card; other tasks keep
+ * their observations and continue running while their cards are hidden.
  */
 export class ObservationCoordinator {
   private readonly observations = new Map<string, ActivitySession>();
@@ -192,12 +192,13 @@ export class ObservationCoordinator {
           if (this.endedThreads.delete(threadID)) this.syncThread(threadID);
         } else if (method === "turn/error") {
           entry?.pip.setTurnCompleted?.(false);
-        } else if (method === "turn/completed" && entry && this.pipVisibility(entry.activity)) {
+        } else if (method === "turn/completed" && entry) {
           // Stopping a browser activity is not evidence that its task succeeded.
           const succeeded = turn?.turn?.status === "completed" && !turn.awaiting_auto_continuation && !turn.truncated;
-          entry.pip.setTurnCompleted?.(succeeded);
-          if (turn?.turn?.status === "interrupted" || turn?.turn?.status === "failed") {
-            // An interrupted or failed turn leaves nothing to watch.
+          if (!succeeded || this.pipVisibility(entry.activity)) entry.pip.setTurnCompleted?.(succeeded);
+          if ((succeeded && this.activeThreadID !== threadID)
+            || turn?.turn?.status === "interrupted" || turn?.turn?.status === "failed") {
+            // A task that finishes offscreen must not return as a running preview.
             this.endedThreads.add(threadID);
             this.syncThread(threadID);
           }
@@ -248,14 +249,15 @@ export class ObservationCoordinator {
   }
 
   private pipVisibility(activity: ActivitySession): boolean {
-    return this.wantsCard(activity.thread_id)
+    return activity.thread_id === this.activeThreadID && this.wantsCard(activity.thread_id)
       && pipVisibleForActivity(activity, this.browserInPanel?.(activity) ?? false);
   }
 
-  // Opening a conversation brings its card to the front; it never hides other tasks.
+  // Session selection changes presentation only, never task execution.
   setActiveThread(threadID?: string): void {
     if (this.closed) return;
     this.activeThreadID = threadID?.trim() || undefined;
+    this.refreshBrowserPresentation();
     if (this.activeThreadID) {
       this.promote(this.activeThreadID);
       this.syncThread(this.activeThreadID);

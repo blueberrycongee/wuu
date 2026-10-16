@@ -10,8 +10,8 @@ test("update metadata binds downloads to final artifacts and rejects unexpected 
   const { finalizeUpdateMetadata } = require("./update-metadata.cjs");
   const dir = mkdtempSync(join(tmpdir(), "wuu-update-metadata-"));
   const version = "2026.10.12";
-  const zip = `wuu-${version}-mac-arm64.zip`;
-  const dmg = `wuu-${version}-mac-arm64.dmg`;
+  const zip = "wuu-mac-arm64.zip";
+  const dmg = "wuu-mac-arm64.dmg";
   const metadata = { version, files: [{ url: zip, sha512: "old" }, { url: dmg, sha512: "old" }], path: zip, sha512: "old" };
   const path = join(dir, "latest-mac.yml");
   try {

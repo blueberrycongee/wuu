@@ -6,7 +6,7 @@ The desktop app includes the Wuu core. You only need a separate CLI installation
 
 The current release workflow builds an Apple silicon app. Check the assets and notes on [GitHub Releases](https://github.com/blueberrycongee/wuu/releases) for the version you are installing.
 
-1. Download `wuu-<version>-mac-arm64.dmg` or `wuu-<version>-mac-arm64.zip`.
+1. Download `wuu-mac-arm64.dmg` or `wuu-mac-arm64.zip`.
 2. Move `wuu.app` to `/Applications` and open it there.
 3. Complete the [first-run setup](index.md) to choose an engine and connect a model service.
 
@@ -19,6 +19,8 @@ xattr -dr com.apple.quarantine /Applications/wuu.app
 ```
 
 Ad-hoc signatures do not establish publisher identity or guarantee that macOS permissions persist across updates.
+
+Download filenames omit the version; the app and release notes still identify it, and automatic updates use version metadata and verified archive hashes. Older releases may have a version in their filenames.
 
 ## Update the app
 

@@ -8,7 +8,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
 - Fix live activity previews waiting for Wuu to regain keyboard focus, and expose delayed startup and capture failures with a preview-only retry action.
+- Computer Use and browser previews now follow the selected conversation. Switching conversations hides the previous preview while its task continues in the background; returning restores ongoing work without reviving tasks that finished offscreen.
+
+### Changed
+
+- Desktop downloads use stable product/platform filenames without a version suffix; app versions and automatic update verification are unchanged.
 
 ## [2026.10.15] - 2026-10-15
 

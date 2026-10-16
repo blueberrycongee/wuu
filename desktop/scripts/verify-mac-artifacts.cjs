@@ -12,8 +12,8 @@ async function main() {
   if (process.env.WUU_RELEASE !== "1") throw new Error("Artifact verification requires release mode");
   const root = resolve("release");
   const version = require("../package.json").version;
-  const dmg = join(root, `wuu-${version}-mac-arm64.dmg`);
-  const zip = join(root, `wuu-${version}-mac-arm64.zip`);
+  const dmg = join(root, "wuu-mac-arm64.dmg");
+  const zip = join(root, "wuu-mac-arm64.zip");
   const run = (command, args) => execFileSync(command, args, { stdio: "inherit" });
 
   // Notarize the final disk image as well as the already-stapled application.

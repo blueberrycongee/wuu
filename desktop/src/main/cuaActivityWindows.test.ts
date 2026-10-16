@@ -284,10 +284,12 @@ describe("browser observation surface", () => {
     coordinator.handleServerEvent(event);
     expect(completed).not.toHaveBeenCalled();
     coordinator.setBrowserInPanel(() => false);
-    // A card stays up while another conversation is in view, completion included.
+    // Offscreen completion retires the card without presenting it in another session.
     coordinator.setActiveThread("other");
     coordinator.handleServerEvent(event);
-    expect(completed).toHaveBeenLastCalledWith(true);
+    expect(completed).not.toHaveBeenCalled();
+    coordinator.setActiveThread("thread-1");
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
     void coordinator.shutdown();
   });
 
@@ -386,21 +388,21 @@ describe("browser observation surface", () => {
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
   });
 
-  it.each(["thread-2", undefined])("keeps a card visible while another conversation is in view (%s)", async (threadID) => {
+  it.each(["thread-2", undefined])("hides a card while another conversation is in view (%s)", async (threadID) => {
     const { coordinator, surfaces } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity());
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
 
     coordinator.setActiveThread(threadID);
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
     coordinator.setBrowserInPanel(() => false);
     coordinator.refreshBrowserPresentation();
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
 
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:02Z" }));
     coordinator.refreshBrowserPresentation();
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
     expect(surfaces).toHaveLength(1);
 
     coordinator.setActiveThread("thread-1");
@@ -537,14 +539,17 @@ describe("observation card stack", () => {
     return { coordinator, cards, raised };
   }
 
-  it("closes the gap when a completed card leaves", () => {
-    const { coordinator, cards } = makeStack();
+  it("does not present another session when the selected card completes", () => {
+    const { coordinator, cards, raised } = makeStack();
+    coordinator.setActiveThread("thread-b");
     coordinator.update(activity({ thread_id: "thread-a" }));
     coordinator.update(activity({ thread_id: "thread-b", target: "com.apple.Notes" }));
     const [a, b] = cards;
-    expect(a.position).toHaveBeenLastCalledWith(1, expect.anything());
+    expect(a.position).not.toHaveBeenCalled();
+    raised.length = 0;
     b.sink.onEvent({ event: "completion_expired" });
-    expect(a.position).toHaveBeenLastCalledWith(0, expect.anything());
+    expect(a.position).not.toHaveBeenCalled();
+    expect(raised).toEqual([]);
     void coordinator.shutdown();
   });
 
@@ -563,8 +568,10 @@ describe("observation card stack", () => {
 
   it("keeps the chosen corner for a card that starts after the stack emptied", () => {
     const { coordinator, cards } = makeStack();
+    coordinator.setActiveThread("thread-a");
     coordinator.update(activity({ thread_id: "thread-a" }));
     cards[0].sink.onGone();
+    coordinator.setActiveThread("thread-b");
     coordinator.update(activity({ thread_id: "thread-b", target: "com.apple.Notes" }));
     expect(cards[1].position).toHaveBeenLastCalledWith(0, expect.objectContaining({ alignment: "top-left" }));
     void coordinator.shutdown();

@@ -182,7 +182,9 @@ controller tests or a successful package build do not prove an installed upgrade
 
 ## Published artifacts
 
-The release contains `wuu-<version>-mac-arm64.dmg`, `wuu-<version>-mac-arm64.zip`, and matching ZIP `.blockmap` files produced by electron-builder. DMG blockmaps are excluded because signing and stapling modify the disk image after electron-builder creates its blockmap. The app includes its own private `wuu-core` subprocess. The workflow does not publish standalone CLI archives, Windows installers, native phone apps, or separate CUA downloads; CUA helpers are bundled inside the macOS app.
+The release contains `wuu-mac-arm64.dmg`, `wuu-mac-arm64.zip`, and matching ZIP `.blockmap` files produced by electron-builder. DMG blockmaps are excluded because signing and stapling modify the disk image after electron-builder creates its blockmap. The app includes its own private `wuu-core` subprocess. The workflow does not publish standalone CLI archives, Windows installers, native phone apps, or separate CUA downloads; CUA helpers are bundled inside the macOS app.
+
+Artifact filenames omit the version; the app bundle, release tag, and update metadata retain it. GitHub download URLs include the release tag, so the same filename identifies a different asset in each release. Updates compare metadata versions and verify archive hashes, not filename dates. Older releases keep their original versioned filenames. The first update from a versioned filename may download the full ZIP if the previous blockmap is not cached; archive hash verification still applies.
 
 A separately source-installed CLI can coexist with the app and may have a different version. When checking a desktop release, inspect the bundled core and installed app rather than assuming `wuu --version` on `PATH` identifies the desktop build.
 

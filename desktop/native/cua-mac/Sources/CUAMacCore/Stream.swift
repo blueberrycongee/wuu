@@ -797,7 +797,7 @@ private func runNativePreview(
             output = nil
             if !putAway {
                 putAway = true
-                writer.send("capture_status", fields: ["status": "suspended"])
+                writer.send("capture_status", fields: ["status": "suspended", "reason": "target_hidden"])
             }
             establishFailures = 0
             try await Task.sleep(for: .milliseconds(250))
@@ -805,6 +805,8 @@ private func runNativePreview(
         }
         if putAway {
             putAway = false
+            // Resume the first-frame deadline even if capture cannot produce a frame.
+            writer.send("capture_status", fields: ["status": "idle"])
             lastVerifiedCaptureAt = ProcessInfo.processInfo.systemUptime
         }
         if establishFailures >= 4 {

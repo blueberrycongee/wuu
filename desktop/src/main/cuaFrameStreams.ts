@@ -12,6 +12,7 @@ export type CUANativePiPEvent = {
   width?: number;
   height?: number;
   status?: "healthy" | "idle" | "blank" | "suspended" | "stopped" | "error";
+  reason?: "target_hidden";
   message?: string;
 };
 

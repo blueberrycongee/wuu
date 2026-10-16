@@ -129,11 +129,13 @@ app.whenReady().then(async () => {
   await waitFor("preview restored after minimize", () => pip.isVisible());
   coordinator.setActiveThread("other-thread");
   coordinator.refreshBrowserPresentation();
-  assert.equal(pip.isVisible(), true, "Switching conversations preserves the running task's preview");
+  await waitFor("switching conversations hides preview", () => !pip.isVisible());
   coordinator.update({ ...activity, updated_at: new Date().toISOString() });
-  assert.equal(pip.isVisible(), true, "Background updates preserve another conversation's visible preview");
+  assert.equal(pip.isVisible(), false, "Background updates cannot show another conversation's preview");
+  await contents.executeJavaScript("window.sessionSwitchProbe = 42");
+  assert.equal(await contents.executeJavaScript("window.sessionSwitchProbe"), 42, "The hidden browser remains operational");
   coordinator.setActiveThread(activity.thread_id);
-  assert.equal(pip.isVisible(), true, "Returning to the owning conversation restores its preview");
+  await waitFor("returning restores preview", () => pip.isVisible());
   const click = () => request("browser/cdp", { method: "click", params: { x: 240, y: 200 } });
   const pointer = (wc: typeof contents) => wc.executeJavaScript(`(() => {
     const el = document.getElementById('__wuu_agent_cursor');

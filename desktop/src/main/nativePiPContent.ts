@@ -26,6 +26,7 @@ export class NativePiPContent implements ActivityPiPContent {
   private lastFrameSequence = 0;
   private captureEpoch = 0;
   private captureUnavailable = false;
+  private captureSuspended = false;
 
   constructor(
     private activity: ActivitySession,
@@ -83,6 +84,7 @@ export class NativePiPContent implements ActivityPiPContent {
       (event) => {
         if (this.stopped || event.event === "ready") return;
         if (event.event === "capture_status") {
+          this.captureSuspended = event.status === "suspended" && event.reason === "target_hidden";
           if (event.status === "blank" || event.status === "suspended" || event.status === "error") {
             this.invalidateFrames();
             this.captureUnavailable = true;
@@ -90,6 +92,7 @@ export class NativePiPContent implements ActivityPiPContent {
             this.context.setMounted(false);
           } else if (event.status === "healthy") this.captureUnavailable = false;
           else if (event.status === "stopped") this.invalidateFrames();
+          this.watchFirstFrame();
         }
         if (event.event === "gone") this.context.onGone();
         else this.context.onEvent(event);
@@ -128,7 +131,7 @@ export class NativePiPContent implements ActivityPiPContent {
   }
 
   private watchFirstFrame(): void {
-    if (this.stopped || this.presented || !this.visible || !this.live || !activityPreviewIsLive(this.activity)) {
+    if (this.stopped || this.presented || this.captureSuspended || !this.visible || !this.live || !activityPreviewIsLive(this.activity)) {
       clearTimeout(this.firstFrameTimer);
       this.firstFrameTimer = undefined;
       return;
