@@ -276,6 +276,19 @@ jobs:
             WUU_SIDEBAR_BASELINE="$baseline" WUU_SIDEBAR_OUTPUT="$output/$variant" \
               xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/dev/sidebar-accessories/capture.cjs 2>&1 | tee "$output/$variant.log"
           done
+          python3 - "$output" <<'PYTHON'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          before = json.loads((root / "before/geometry.json").read_text())["report"]
+          after = json.loads((root / "after/geometry.json").read_text())["report"]
+          for name, states in before.items():
+              for state, measurement in states.items():
+                  for old, new in zip(measurement["rows"], after[name][state]["rows"], strict=True):
+                      assert new["bounds"]["width"] < old["bounds"]["width"], (name, state, "surface did not narrow")
+                      for key in ("x", "width", "height"):
+                          assert abs(new["title"][key] - old["title"][key]) < 0.1, (name, state, key, "title geometry changed")
+          print("PASS: before/after surfaces narrow while title geometry stays fixed")
+          PYTHON
 
       - name: Upload sidebar surface evidence
         if: ${{ always() && github.head_ref == 'fix/sidebar-selection-insets' }}

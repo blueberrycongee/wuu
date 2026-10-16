@@ -44,6 +44,10 @@ const measure = () => {
     const end = rect.right - parseFloat(getComputedStyle(title).paddingRight);
     return row.querySelector(".thread-row-fork-icon").getBoundingClientRect().left - end;
   });
+  out.rows = [...document.querySelectorAll(".thread-row")].map(row => ({
+    bounds: row.getBoundingClientRect().toJSON(),
+    title: row.querySelector(".thread-row-title").getBoundingClientRect().toJSON(),
+  }));
   out.focus = document.activeElement?.className;
   out.keyboardFocusVisible = document.documentElement.dataset.focusModality === "keyboard" && document.activeElement?.matches(":focus-visible");
   return out;
@@ -67,8 +71,8 @@ app.whenReady().then(async () => {
         requestAnimationFrame(ready);
       } ready();
     })`);
-    if (baseline) await win.webContents.insertCSS(".sidebar-content { --sidebar-content-pad-x: var(--space-2); }");
-    await win.webContents.executeJavaScript("document.fonts.ready");
+    if (baseline) await win.webContents.insertCSS(".sidebar-content { --sidebar-content-pad-x: var(--space-2) !important; }");
+    await win.webContents.executeJavaScript(`document.querySelector('.project-section .thread-row-main').click(); document.fonts.ready`);
     // Settle section transitions before measuring; no live application is touched.
     await new Promise(resolve => setTimeout(resolve, 350));
     report[name] = { idle: await win.webContents.executeJavaScript(`(${measure})()`) };
@@ -94,7 +98,7 @@ app.whenReady().then(async () => {
     console.log(`captured ${name}`);
   }
   await win.loadURL("http://127.0.0.1:5208/dev/sidebar-accessories/?empty&size=20");
-  if (baseline) await win.webContents.insertCSS(".sidebar-content { --sidebar-content-pad-x: var(--space-2); }");
+  if (baseline) await win.webContents.insertCSS(".sidebar-content { --sidebar-content-pad-x: var(--space-2) !important; }");
   await win.webContents.executeJavaScript("document.fonts.ready");
   await new Promise(resolve => setTimeout(resolve, 500));
   fs.writeFileSync(path.join(output, "empty.png"), (await win.webContents.capturePage()).toPNG());
