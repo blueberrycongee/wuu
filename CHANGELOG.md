@@ -27,6 +27,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Remove maximum-step and temperature controls from desktop settings. Built-in desktop conversations use unlimited steps and automatic temperature, including when old user/project settings exist. CLI and explicit automation settings remain supported without rewriting saved configuration.
 
+- Refresh the complete shared UI icon family with consistent contours, open details, and lighter visual weight while preserving the Wuu ball and Project identities.
 - Show the current inherited font in the default body-font option, updating it with the interface font while preserving saved font choices.
 
 - Use flatter, quieter sidebar selection and hover surfaces with tighter inner padding and softer corners, preserving text, icon, and action alignment.
