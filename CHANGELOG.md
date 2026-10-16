@@ -10,6 +10,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Acknowledge retained agent results when a later user message recovers a failed
+  completion, including when the conversation runtime is reused. Paused process
+  notifications no longer keep unrelated successful work waiting indefinitely.
+  Saved-answer replay during active turns settles acknowledgements without
+  injecting duplicate results.
 - Show Side's chat accessory in onboarding so every offered plugin has visual feedback when selected.
 - Restore scroll-edge fades in onboarding choice lists so remaining content is visible without masking the title, companion, or navigation buttons.
 - Fix live activity previews waiting for Wuu to regain keyboard focus, and expose delayed startup and capture failures with a preview-only retry action.
@@ -18,6 +23,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Changed
 
 - Refresh the complete shared UI icon family with consistent contours, open details, and lighter visual weight while preserving the Wuu ball and Project identities.
+- Use flatter, quieter sidebar selection and hover surfaces with tighter inner padding and softer corners, preserving text, icon, and action alignment.
 
 - Desktop downloads use stable product/platform filenames without a version suffix; app versions and automatic update verification are unchanged.
 

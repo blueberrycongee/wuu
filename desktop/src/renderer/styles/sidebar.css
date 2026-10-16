@@ -1,10 +1,8 @@
 /* Component color tokens for sidebar.css.
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
-  /* An opaque neutral two steps below the canvas on every platform, so the
-   * rail reads as its own layer and a white selection reads by tone alone.
-   * A translucent system material took its gray from the wallpaper and read
-   * as dirt beside the white canvas. */
+  /* An opaque neutral rail keeps navigation separate from the reading canvas
+   * without depending on wallpaper or browser backing colors. */
   --sidebar-material-fill: var(--surface-2);
   /* Rail/content boundary: a crisp dark hairline instead of the old white
    * edge + white inset pair, which were invisible against the white content
@@ -21,15 +19,13 @@
    * on the opaque rail. */
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, transparent);
   --sidebar-nav-item-focus-shadow: var(--focus-ring);
-  /* Selection is the row's only location signal. In light it is a sheet
-   * of paper on the rail rather than a darker fill: the tone step carries
-   * it and the control shadow lifts it. An outline plus a shadow read as a
-   * card floating over the list. */
+  /* A quiet tone step identifies the current row without lifting it into a
+   * separate card. Derive it from ink so the same treatment works in both themes. */
   --sidebar-row-selected-bg: var(
     --wuu-nav-item-active-background,
-    var(--wuu-color-surface-elevated, var(--paper))
+    color-mix(in srgb, var(--ink) 8%, transparent)
   );
-  --sidebar-row-selected-shadow: var(--shadow-soft);
+  --sidebar-row-selected-shadow: none;
   --sidebar-project-row-pending-bg: var(--ink-overlay-4);
   --sidebar-project-loading-notch: rgba(19, 19, 20, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
@@ -318,19 +314,21 @@
 }
 
 .sidebar-content {
-  /* Rows are inset from the rail so their selection surface floats; the row
-   * padding takes up the rest, putting the leading glyph on the pane inset. */
-  --sidebar-content-pad-x: var(--space-2);
+  /* Give row surfaces more breathing room at the rail edges. Compensating
+   * inner padding keeps labels, glyphs, and trailing actions on their axes. */
+  --sidebar-content-pad-x: var(--space-3);
   --sidebar-row-pad-x: calc(var(--pane-inset) - var(--sidebar-content-pad-x));
+  --sidebar-row-radius: calc(var(--radius-xs) + 4px);
   --sidebar-label-weight: 400;
   --sidebar-label-size: var(--font-ui);
   --sidebar-heading-size: max(12px, round(nearest, calc(var(--sidebar-label-size) - 2px), 1px));
   /* Dense rows, clear groups: rows sit two label heights tall, and the
    * separation between functional groups carries the structure. */
   --sidebar-row-height: max(28px, round(nearest, calc(var(--sidebar-label-size) * 2), 4px));
-  /* Labels sit one step below conversation ink so the rail reads as quiet
-   * chrome next to the message flow; icons stay on --ink-soft below them. */
-  --sidebar-label-ink: color-mix(in srgb, var(--ink) 92%, var(--paper));
+  /* Regular labels recede from the current location; selected labels retain
+   * full ink. Keep group headings on their separate tertiary-text role. */
+  --sidebar-label-ink: color-mix(in srgb, var(--ink) 82%, var(--paper));
+  --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, color-mix(in srgb, var(--ink) 6%, transparent));
   /* Group labels and list-footer actions: quieter than labels, still 4.5:1. */
   --sidebar-heading-ink: var(--ink-tertiary);
   /* One icon and text axis for navigation, plugins, projects, and account
@@ -1031,7 +1029,7 @@
     var(--sidebar-tree-icon-col)
     minmax(0, 1fr)
     auto;
-  border-radius: var(--radius-xs);
+  border-radius: var(--sidebar-row-radius, var(--radius-xs));
   background: transparent;
   /* Idle chrome sits on --ink-soft so 16px Lucide outlines stay readable
    * without matching the conversation's --ink-strong. Hover/selected still
@@ -1948,7 +1946,6 @@ html[data-focus-modality="keyboard"] :is(
   position: relative;
   height: 30px;
   min-width: 0;
-  border-radius: var(--radius-xs);
   column-gap: var(--sidebar-nav-column-gap);
   color: var(--ink-soft);
   font-size: var(--sidebar-label-size, var(--font-ui));

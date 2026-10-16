@@ -425,7 +425,7 @@ func (s *Server) settleExecutionRunTurn(runID, turnID, tracePath string, turn Tu
 }
 
 func (s *Server) executionRunAwaitsContinuation(threadID string, threadRuntime *runtime.ThreadRuntime) (bool, error) {
-	return threadRuntimeAwaitsAutoContinuation(threadID, threadRuntime), nil
+	return threadRuntimeAwaitsAutoContinuation(s.thread(threadID), threadRuntime), nil
 }
 
 func (s *Server) executionRunSuccessfulTurnOutcome(runID, threadID string, threadRuntime *runtime.ThreadRuntime, content string) (awaitingContinuation bool, retryPrompt string, validationErr error) {

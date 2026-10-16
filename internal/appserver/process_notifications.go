@@ -150,10 +150,11 @@ func (s *Server) replayPendingProcessCompletions(threadID string, control *agent
 	}
 }
 
-func threadHasOutstandingProcessCompletion(threadID string, control *agentcontrol.AgentControl, manager *process.Manager) bool {
-	if manager == nil {
+func threadHasOutstandingProcessCompletion(th *threadState, control *agentcontrol.AgentControl, manager *process.Manager) bool {
+	if th == nil || manager == nil {
 		return false
 	}
+	threadID := th.ID
 	processes, err := manager.List()
 	if err != nil {
 		providers.DebugLogf("inspect outstanding process completions for thread %q: %v", threadID, err)
@@ -174,7 +175,7 @@ func threadHasOutstandingProcessCompletion(threadID string, control *agentcontro
 		case process.StatusStarting, process.StatusRunning, process.StatusStopping:
 			return true
 		case process.StatusStopped, process.StatusFailed:
-			if p.TerminalCause == process.EventCauseNaturalExit && p.CompletionDeliveredAt.IsZero() {
+			if p.TerminalCause == process.EventCauseNaturalExit && p.CompletionDeliveredAt.IsZero() && !th.completionDeliveryPaused(nil, []string{p.ID}) {
 				return true
 			}
 		}

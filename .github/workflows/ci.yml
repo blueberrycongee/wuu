@@ -251,6 +251,56 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
 
+      - name: Capture sidebar surface review
+        # Before/after review evidence is scoped to this visual-change branch.
+        if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' && github.head_ref == 'fix/sidebar-selection-insets' }}
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="${{ runner.temp }}/wuu-sidebar-surface-evidence"
+          mkdir -p "$output"
+          git rev-parse HEAD > "$output/source-commit.txt"
+          (cd desktop && node_modules/.bin/vite --config dev/sidebar-accessories/vite.config.ts) > "$output/vite.log" 2>&1 &
+          vite_pid=$!
+          trap 'kill "$vite_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:5208/dev/sidebar-accessories/ > /dev/null; then break; fi
+            kill -0 "$vite_pid"
+            sleep 0.5
+          done
+          curl --fail --silent http://127.0.0.1:5208/dev/sidebar-accessories/ > /dev/null
+          for variant in before after; do
+            baseline=0
+            if [ "$variant" = before ]; then baseline=1; fi
+            WUU_SIDEBAR_BASELINE="$baseline" WUU_SIDEBAR_OUTPUT="$output/$variant" \
+              xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/dev/sidebar-accessories/capture.cjs 2>&1 | tee "$output/$variant.log"
+          done
+          python3 - "$output" <<'PYTHON'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          before = json.loads((root / "before/geometry.json").read_text())["report"]
+          after = json.loads((root / "after/geometry.json").read_text())["report"]
+          for name, states in before.items():
+              for state, measurement in states.items():
+                  for old, new in zip(measurement["rows"], after[name][state]["rows"], strict=True):
+                      assert new["bounds"]["width"] < old["bounds"]["width"], (name, state, "surface did not narrow")
+                      for key in ("x", "width", "height"):
+                          assert abs(new["title"][key] - old["title"][key]) < 0.1, (name, state, key, "title geometry changed")
+          print("PASS: before/after surfaces narrow while title geometry stays fixed")
+          PYTHON
+          WUU_SIDEBAR_FULL_CAPTURE=1 WUU_SCROLL_FADE_OUTPUT="$output/full" \
+            xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/sidebar-scroll-fade-e2e.cjs 2>&1 | tee "$output/full.log"
+
+      - name: Upload sidebar surface evidence
+        if: ${{ always() && github.head_ref == 'fix/sidebar-selection-insets' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidebar-surface-evidence
+          path: ${{ runner.temp }}/wuu-sidebar-surface-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Verify onboarding scroll-edge fades
         if: ${{ !cancelled() && steps.build-renderer.outcome == 'success' }}
         timeout-minutes: 3
@@ -446,6 +496,34 @@ jobs:
       - name: Build desktop fixture core
         id: build-fixture-core
         run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
+
+      - name: Validate shareable conversation corpus
+        run: npm --prefix desktop run test:corpus
+
+      - name: Replay conversation corpus through desktop and core
+        if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success' }}
+        timeout-minutes: 12
+        shell: bash
+        env:
+          WUU_CORPUS_SKIP_BUILD: '1'
+          WUU_TOUR_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_TOUR_OUTPUT: ${{ runner.temp }}/wuu-conversation-corpus
+        run: |
+          mkdir -p "$WUU_TOUR_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum npm --prefix desktop run test:e2e:conversation-corpus -- --no-sandbox 2>&1 | tee "$WUU_TOUR_OUTPUT/run.log"
+          mkdir -p "$WUU_TOUR_OUTPUT/text-only"
+          WUU_CORPUS_TEXT_ONLY=1 WUU_TOUR_ONLY=sample-02 WUU_TOUR_OUTPUT="$WUU_TOUR_OUTPUT/text-only" \
+            xvfb-run --auto-servernum npm --prefix desktop run test:e2e:conversation-corpus -- --no-sandbox 2>&1 | tee "$WUU_TOUR_OUTPUT/text-only/run.log"
+
+      - name: Upload conversation corpus acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-corpus-evidence
+          path: ${{ runner.temp }}/wuu-conversation-corpus/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Verify incoming session cards and split drafts
         if: ${{ !cancelled() && steps.build-fixture-core.outcome == 'success' }}

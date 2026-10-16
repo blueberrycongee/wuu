@@ -233,6 +233,110 @@ app.whenReady().then(async () => {
       await click(".onboarding-actions .settings-button-primary");
       await waitFor(() => Boolean(document.querySelector(".onboarding-stage-runtime")));
       console.log("PASS: onboarding fades, fitting content, fixed regions, switches, keyboard focus, and Back/Continue across light/dark, 15/20px, wide/narrow.");
+    } else if (process.env.WUU_SIDEBAR_FULL_CAPTURE === "1") {
+      // Linux-hosted preview of macOS chrome, not native Mac acceptance.
+      // The fallback platform stamp follows this preview-only user agent.
+      win.webContents.setUserAgent(win.webContents.getUserAgent().replace(/\([^)]*\)/, "(Macintosh; Intel Mac OS X 10_15_7)"));
+      results.push({ previewChrome: "simulated macOS traffic lights on Linux Electron", position: { x: 18, y: 17 }, diameter: 14 });
+      // Full product shell with the existing synthetic IPC bridge; no user data.
+      for (const theme of ["light", "dark"]) {
+        await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+        await waitFor(() => Boolean(document.querySelector(".thread-list-more")));
+        await evaluate(() => document.querySelector(".thread-row-main").click());
+        await waitFor(() => Boolean(document.querySelector(".thread-row.active")));
+        await evaluate(theme => {
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.setProperty("--conversation-message-font-size", "15px");
+          window.dispatchEvent(new Event("wuu-content-size-change"));
+        }, theme);
+        await evaluate(() => {
+          // Match MAC_TRAFFIC_LIGHT_POSITION and the 48px titlebar in main/index.ts.
+          const lights = document.createElement("div");
+          lights.setAttribute("aria-hidden", "true");
+          Object.assign(lights.style, { position: "fixed", left: "18px", top: "17px", display: "flex", gap: "6px", zIndex: "9999", pointerEvents: "none" });
+          for (const color of ["#ff5f57", "#febc2e", "#28c840"]) {
+            const light = document.createElement("span");
+            Object.assign(light.style, { width: "14px", height: "14px", borderRadius: "50%", background: color, boxShadow: "inset 0 0 0 0.5px #0002" });
+            lights.append(light);
+          }
+          document.body.append(lights);
+        });
+        const turn = {
+          id: "sidebar-surface-preview", status: "in_progress", started_at: new Date().toISOString(), items_view: "full",
+          items: [
+            { id: "surface-user", type: "user_message", status: "completed", text: "把侧边栏的选中底色收窄一些，保留文字和图标的对齐。" },
+            { id: "surface-answer", type: "agent_message", status: "completed", terminal: true, text: "侧边栏视觉调整\n\n选中底色向内收窄，文字、图标和右侧操作仍然保持对齐。\n\n- 文件夹与会话的层级保持清楚\n- 长标题继续在操作按钮前省略\n- 浅色与深色模式使用相同的间距\n\n这段对话是用于界面验收的示例内容。" },
+          ],
+        };
+        emit("turn/started", { thread_id: "sidebar-fade-0", turn });
+        await waitFor(() => document.querySelector(".agent-text")?.textContent.includes("侧边栏视觉调整"));
+        emit("turn/completed", { thread_id: "sidebar-fade-0", turn: { ...turn, status: "completed", completed_at: new Date().toISOString() } });
+        await waitFor(() => !document.querySelector(".composer-stop-button"));
+        const geometry = () => evaluate(async () => {
+          await document.fonts.ready;
+          await new Promise(requestAnimationFrame);
+          await new Promise(requestAnimationFrame);
+          await Promise.all(document.getAnimations()
+            .filter(animation => animation.timeline instanceof DocumentTimeline && animation.effect?.getComputedTiming().iterations !== Infinity)
+            .map(animation => animation.finished.catch(() => {})));
+          const row = document.querySelector(".thread-row.active");
+          return { row: row.getBoundingClientRect().toJSON(), title: row.querySelector(".thread-row-title").getBoundingClientRect().toJSON() };
+        });
+        const baselineCSS = await win.webContents.insertCSS(require("../dev/sidebar-accessories/baseline.cjs"));
+        const before = await geometry();
+        await capture(`full-${theme}-before`);
+        await win.webContents.removeInsertedCSS(baselineCSS);
+        const after = await geometry();
+        await capture(`full-${theme}-after`);
+        assert.ok(after.row.width < before.row.width, "selection surface narrows");
+        assert.equal(after.title.x, before.title.x, "title axis stays fixed");
+        assert.equal(after.title.width, before.title.width, "title space stays fixed");
+        const sidebarBounds = await evaluate(() => document.querySelector(".sidebar").getBoundingClientRect().toJSON());
+        fs.writeFileSync(path.join(output, `sidebar-${theme}-after.png`), (await win.webContents.capturePage({ x: 0, y: 0, width: Math.ceil(sidebarBounds.right), height: 820 })).toPNG());
+        results.push({ label: `full-${theme}`, before, after });
+
+        // Compare the previous corners with the approved production radius.
+        // Only the before capture injects CSS into this disposable window.
+        const radiusBaseline = {};
+        const hoverPoint = await evaluate(() => {
+          const bounds = document.querySelector(".thread-row:not(.active)").getBoundingClientRect();
+          return { x: Math.round(bounds.x + bounds.width / 2), y: Math.round(bounds.y + bounds.height / 2) };
+        });
+        for (const radius of [6, null]) {
+          const variant = radius === null ? "after" : "before";
+          const baselineRadiusCSS = radius === null ? null : await win.webContents.insertCSS(
+            `.sidebar-content :is(.nav-item, .project-row, .thread-row) { border-radius: ${radius}px !important; }`,
+          );
+          for (const state of ["idle", "hover"]) {
+            win.webContents.sendInputEvent({ type: "mouseMove", ...(state === "hover" ? hoverPoint : { x: 1000, y: 20 }) });
+            await geometry();
+            const measurement = await evaluate(() => {
+              const row = document.querySelector(".thread-row.active");
+              const style = getComputedStyle(row);
+              return {
+                radius: style.borderRadius,
+                layout: [...document.querySelectorAll(".sidebar :is(.nav-item, .project-row, .thread-row, .thread-row-title, .thread-row-action, svg)")]
+                  .map(node => ({ tag: node.tagName, class: node.getAttribute("class"), bounds: node.getBoundingClientRect().toJSON() })),
+                appearance: { background: style.backgroundColor, shadow: style.boxShadow, color: style.color, fontSize: style.fontSize },
+              };
+            });
+            if (radius !== null) radiusBaseline[state] = measurement;
+            else {
+              assert.deepEqual(measurement.layout, radiusBaseline[state].layout, `${theme}/${state}: radius preserves all sidebar axes`);
+              assert.deepEqual(measurement.appearance, radiusBaseline[state].appearance, `${theme}/${state}: radius preserves tone and type`);
+            }
+            const label = `radius-${theme}-${variant}-${state}`;
+            if (state === "idle") {
+              await capture(`${label}-full`);
+              fs.writeFileSync(path.join(output, `${label}-sidebar.png`), (await win.webContents.capturePage({ x: 0, y: 0, width: Math.ceil(sidebarBounds.right), height: 820 })).toPNG());
+            }
+            fs.writeFileSync(path.join(output, `${label}-detail.png`), (await win.webContents.capturePage({ x: 0, y: Math.max(0, Math.floor(after.row.y - 72)), width: Math.ceil(sidebarBounds.right), height: 200 })).toPNG());
+            results.push({ label, baselineCSSOnly: radius !== null, ...measurement });
+          }
+          if (baselineRadiusCSS) await win.webContents.removeInsertedCSS(baselineRadiusCSS);
+        }
+      }
+      console.log("PASS: full production shell before/after with synthetic conversation content.");
     } else {
     const threadID = "sidebar-fade-0";
     const now = new Date().toISOString();
