@@ -289,6 +289,8 @@ jobs:
                           assert abs(new["title"][key] - old["title"][key]) < 0.1, (name, state, key, "title geometry changed")
           print("PASS: before/after surfaces narrow while title geometry stays fixed")
           PYTHON
+          WUU_SIDEBAR_FULL_CAPTURE=1 WUU_SCROLL_FADE_OUTPUT="$output/full" \
+            xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/sidebar-scroll-fade-e2e.cjs 2>&1 | tee "$output/full.log"
 
       - name: Upload sidebar surface evidence
         if: ${{ always() && github.head_ref == 'fix/sidebar-selection-insets' }}

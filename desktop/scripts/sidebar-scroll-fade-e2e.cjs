@@ -171,6 +171,51 @@ app.whenReady().then(async () => {
       await click(".onboarding-actions .settings-button-primary");
       await waitFor(() => Boolean(document.querySelector(".onboarding-stage-runtime")));
       console.log("PASS: onboarding fades, fitting content, fixed regions, switches, keyboard focus, and Back/Continue across light/dark, 15/20px, wide/narrow.");
+    } else if (process.env.WUU_SIDEBAR_FULL_CAPTURE === "1") {
+      // Full product shell with the existing synthetic IPC bridge; no user data.
+      for (const theme of ["light", "dark"]) {
+        await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+        await waitFor(() => Boolean(document.querySelector(".thread-list-more")));
+        await evaluate(() => document.querySelector(".thread-row-main").click());
+        await waitFor(() => Boolean(document.querySelector(".thread-row.active")));
+        await evaluate(theme => {
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.setProperty("--conversation-message-font-size", "15px");
+          window.dispatchEvent(new Event("wuu-content-size-change"));
+        }, theme);
+        const turn = {
+          id: "sidebar-surface-preview", status: "in_progress", started_at: new Date().toISOString(), items_view: "full",
+          items: [
+            { id: "surface-user", type: "user_message", status: "completed", text: "把侧边栏的选中底色收窄一些，保留文字和图标的对齐。" },
+            { id: "surface-answer", type: "agent_message", status: "completed", terminal: true, text: "侧边栏视觉调整\n\n选中底色向内收窄，文字、图标和右侧操作仍然保持对齐。\n\n- 文件夹与会话的层级保持清楚\n- 长标题继续在操作按钮前省略\n- 浅色与深色模式使用相同的间距\n\n这段对话是用于界面验收的示例内容。" },
+          ],
+        };
+        emit("turn/started", { thread_id: "sidebar-fade-0", turn });
+        await waitFor(() => document.querySelector(".agent-text")?.textContent.includes("侧边栏视觉调整"));
+        emit("turn/completed", { thread_id: "sidebar-fade-0", turn: { ...turn, status: "completed", completed_at: new Date().toISOString() } });
+        await waitFor(() => !document.querySelector(".composer-stop-button"));
+        const geometry = () => evaluate(async () => {
+          await document.fonts.ready;
+          await new Promise(requestAnimationFrame);
+          await new Promise(requestAnimationFrame);
+          await Promise.all(document.getAnimations()
+            .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
+            .map(animation => animation.finished.catch(() => {})));
+          const row = document.querySelector(".thread-row.active");
+          return { row: row.getBoundingClientRect().toJSON(), title: row.querySelector(".thread-row-title").getBoundingClientRect().toJSON() };
+        });
+        const baselineCSS = await win.webContents.insertCSS(".sidebar-content { --sidebar-content-pad-x: var(--space-2) !important; }");
+        const before = await geometry();
+        await capture(`full-${theme}-before`);
+        await win.webContents.removeInsertedCSS(baselineCSS);
+        const after = await geometry();
+        await capture(`full-${theme}-after`);
+        assert.ok(after.row.width < before.row.width, "selection surface narrows");
+        assert.equal(after.title.x, before.title.x, "title axis stays fixed");
+        assert.equal(after.title.width, before.title.width, "title space stays fixed");
+        results.push({ label: `full-${theme}`, before, after });
+      }
+      console.log("PASS: full production shell before/after with synthetic conversation content.");
     } else {
     const threadID = "sidebar-fade-0";
     const now = new Date().toISOString();
