@@ -10,6 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Show Side's chat accessory in onboarding so every offered plugin has visual feedback when selected.
 - Fix live activity previews waiting for Wuu to regain keyboard focus, and expose delayed startup and capture failures with a preview-only retry action.
 - Computer Use and browser previews now follow the selected conversation. Switching conversations hides the previous preview while its task continues in the background; returning restores ongoing work without reviving tasks that finished offscreen.
 
