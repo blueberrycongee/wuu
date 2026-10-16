@@ -1946,7 +1946,6 @@ html[data-focus-modality="keyboard"] :is(
   position: relative;
   height: 30px;
   min-width: 0;
-  border-radius: var(--radius-xs);
   column-gap: var(--sidebar-nav-column-gap);
   color: var(--ink-soft);
   font-size: var(--sidebar-label-size, var(--font-ui));
