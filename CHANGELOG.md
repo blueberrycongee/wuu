@@ -8,6 +8,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Desktop downloads use stable product/platform filenames without a version suffix; app versions and automatic update verification are unchanged.
+
 ## [2026.10.15] - 2026-10-15
 
 ### Contributors

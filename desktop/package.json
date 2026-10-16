@@ -110,7 +110,7 @@
   "build": {
     "appId": "com.blueberrycongee.wuu",
     "productName": "wuu",
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "artifactName": "${productName}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release"
     },
@@ -176,7 +176,7 @@
       ]
     },
     "dmg": {
-      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+      "artifactName": "${productName}-${os}-${arch}.${ext}",
       "background": "build/dmg-background.png",
       "iconSize": 128,
       "iconTextSize": 14,
@@ -204,7 +204,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "${productName}-${version}-${os}-${arch}-setup.${ext}"
+      "artifactName": "${productName}-${os}-${arch}-setup.${ext}"
     }
   },
   "devDependencies": {
