@@ -456,7 +456,7 @@ export class ObservationCoordinator {
   private visibleStack(): PiPEntry[] {
     return this.stackOrder
       .map((id) => this.entries.get(id))
-      .filter((entry): entry is PiPEntry => Boolean(entry && entry.phase !== "failed" && this.pipVisibility(entry.activity)));
+      .filter((entry): entry is PiPEntry => Boolean(entry && this.pipVisibility(entry.activity)));
   }
 
   private eventSink(entry: PiPEntry): ObservationPiPEventSink {
@@ -475,6 +475,12 @@ export class ObservationCoordinator {
         entry.phase = "live";
         this.retryAttempts.delete(entry.threadID);
         this.restack();
+        return;
+      case "retry":
+        if (!activityPreviewIsLive(entry.activity)) return;
+        this.resetRetryBudget(entry.threadID);
+        entry.phase = "failed";
+        this.syncThread(entry.threadID);
         return;
       case "user_close":
         this.dismissedThreads.add(entry.threadID);

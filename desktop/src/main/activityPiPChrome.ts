@@ -36,7 +36,12 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 #root.dragging{cursor:grabbing}
 #ph{position:absolute;inset:0;display:grid;place-items:center;
   background:var(--surface);color:var(--muted);transition:opacity .2s ease}
+#ph-content{display:flex;flex-direction:column;align-items:center;gap:12px;padding:40px 16px 16px;max-width:100%;text-align:center}
 #ph-icon{display:flex}
+@media(max-height:160px){#ph{overflow-y:auto;align-content:start}#ph-content{gap:8px;padding:38px 12px 12px}#ph-icon{display:none}}
+#ph-status{font-size:var(--ui-size);overflow-wrap:anywhere}
+#retry{border:1px solid var(--muted);border-radius:6px;padding:6px 10px;font:inherit;color:var(--text);background:transparent;cursor:pointer}
+#retry:focus-visible{outline:2px solid var(--text);outline-offset:3px}
 #ph.preparing #ph-icon{animation:ph-breathe 1.6s ease-in-out infinite alternate}
 @keyframes ph-breathe{from{opacity:1}to{opacity:.35}}
 #ph.gone{opacity:0;pointer-events:none}
@@ -105,7 +110,7 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 </style></head>
 <body>
 <div id="root" role="group">
-  <div id="ph"><span id="ph-icon" aria-hidden="true">${iconSVG("Globe", 28)}</span></div>
+  <div id="ph"><div id="ph-content"><span id="ph-icon" aria-hidden="true">${iconSVG("Globe", 28)}</span><span id="ph-status" role="status"></span><button id="retry" type="button" hidden></button></div></div>
   <img id="appear" alt="" aria-hidden="true" draggable="false" hidden />
   <div id="completion" role="status" aria-hidden="true" data-completed="false">
     <div id="completion-mark">
@@ -139,8 +144,10 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     var capturePaused=capture.status==="stopped";
     var captureBlocked=["blank","suspended","error"].includes(capture.status);
     var placeholder=!mounted||captureBlocked;
-    // The preview speaks through symbols: the icon breathes while frames are on
-    // their way and rests when capture is blocked; the conversation explains.
+    document.getElementById("ph-status").textContent=text(captureBlocked?"activityPreviewUnavailable":capturePaused||terminal||activity.controller==="none"?"activityPreviewPaused":"activityPreviewLoading");
+    var retry=document.getElementById("retry");
+    retry.textContent=text("activityPreviewRetry");
+    retry.hidden=!captureBlocked||terminal||activity.controller==="none";
     ph.classList.toggle("gone",!placeholder);
     ph.classList.toggle("preparing",placeholder&&!captureBlocked&&!capturePaused&&!terminal);
     // States that ask for a decision keep the controls visible.
@@ -157,6 +164,10 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     if(e.key==="Escape"){e.preventDefault();window.location.href="wuu-pip://close";}
   });
   var dragAck=true,dragQueued=null,ackTimer=0,grabbing=false,resizing=false,resizeEdge="",last=null,velocity={x:0,y:0};
+  document.getElementById("retry").addEventListener("click",function(e){
+    e.stopPropagation();
+    window.location.href="wuu-pip://retry";
+  });
   document.getElementById("close").addEventListener("click",function(e){
     e.stopPropagation();
     window.location.href="wuu-pip://close";

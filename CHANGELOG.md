@@ -8,6 +8,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+- Fix live activity previews waiting for Wuu to regain keyboard focus, and expose delayed startup and capture failures with a preview-only retry action.
+
 ## [2026.10.15] - 2026-10-15
 
 ### Contributors
