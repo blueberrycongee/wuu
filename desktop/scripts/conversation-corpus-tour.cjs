@@ -71,8 +71,13 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
     const fromStart = stage === 'history-expanded';
     const needle = marker(text, fromStart);
     await waitFor(win, ({ selector, needle }) => document.querySelector(selector)?.textContent.includes(needle), { selector, needle });
+    // Keep the selected conversation visible so these whole-window captures
+    // cover sidebar, reply and composer together, including after reloads.
+    await evaluate(win, () => document.querySelectorAll('.project-row[aria-expanded="false"]').forEach(row => row.click()));
+    await waitFor(win, () => Boolean(document.querySelector('.sidebar-content .thread-row.active')));
     for (const appearance of matrix) {
       await setAppearance(win, appearance);
+      await evaluate(win, () => document.querySelector('.sidebar-content .thread-row.active').scrollIntoView({ block: 'nearest' }));
       await settle();
       let geometry;
       // Wheel input preserves reader scroll ownership; a programmatic jump can
@@ -107,6 +112,9 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
           const verticallyVisible = markerRect.y >= clip.top - 1 && markerRect.y + markerRect.height <= clip.bottom + 1;
           const visible = painted && markerRect.width > 0 && markerRect.height > 0 && verticallyVisible
             && markerRect.x >= clip.left - 1 && markerRect.x + markerRect.width <= clip.right + 1;
+          const selectedRow = document.querySelector('.sidebar-content .thread-row.active');
+          const selectedRect = rect(selectedRow);
+          const selectedStyle = getComputedStyle(selectedRow);
           return {
             viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
             font: getComputedStyle(content).fontFamily,
@@ -114,6 +122,10 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
             markdown: [...content.querySelectorAll('p,h1,h2,h3,li,pre,table')].map(node => ({ tag: node.tagName, ...rect(node) })),
             target: { itemID: content.closest('[data-response-item-id]').dataset.responseItemId, ...rect(content) },
             marker: { text: needle, ...markerRect, visible, verticallyVisible }, clip,
+            sidebarSelection: { ...selectedRect, label: selectedRow.querySelector('.thread-row-main')?.getAttribute('aria-label'),
+              radius: selectedStyle.borderRadius, background: selectedStyle.backgroundColor,
+              visible: selectedRect.width > 0 && selectedRect.x >= 0 && selectedRect.y >= 0
+                && selectedRect.x + selectedRect.width <= innerWidth && selectedRect.y + selectedRect.height <= innerHeight },
             scroll: { x: Math.round(scrollRect.left + scrollRect.width * 0.6), y: Math.round(scrollRect.top + scrollRect.height * 0.4), viewportTop: scrollRect.top },
           };
         }, { selector, needle, fromStart });
@@ -134,6 +146,7 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
       }
       const name = `${active.id}-${stage}-${appearance.theme}-${appearance.size}-${appearance.width}.png`;
       assert.ok(geometry.marker.visible, `${name}: target marker is offscreen: ${JSON.stringify(geometry)}`);
+      assert.ok(geometry.sidebarSelection.visible, `${name}: selected sidebar row is offscreen`);
       fs.writeFileSync(path.join(output, name), (await win.webContents.capturePage()).toPNG());
       const result = await audit(win);
       const details = [];
