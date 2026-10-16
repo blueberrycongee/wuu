@@ -365,7 +365,9 @@ fake Codex 子进程，并使用临时存储，不使用供应商凭据或真实
 
 运行 `npm --prefix desktop run test:e2e:conversation-corpus`，构建当前 checkout，
 通过现有 UI tour 回放十二份经过脱敏的本机会话片段。macOS 使用当前 checkout 的
-Wuu Dev host。Linux 需要图形会话或 `xvfb-run --auto-servernum`；CI 传入
+Wuu Dev host，复用已有签名身份（默认 `Wuu Dev Signing`，也可设置
+`WUU_DEV_SIGN_ID`）。若没有可用身份，可设 `WUU_DEV_SIGN_ID=-` 使用临时签名。
+验收流程不会创建签名密钥、导入证书或修改钥匙串信任。Linux 需要图形会话或 `xvfb-run --auto-servernum`；CI 传入
 `-- --no-sandbox`。`npm --prefix desktop run test:corpus` 检查样本包的共享边界。
 
 样本包位于 `desktop/scripts/fixtures/conversation-corpus/corpus.json`。
@@ -377,14 +379,17 @@ Wuu Dev host。Linux 需要图形会话或 `xvfb-run --auto-servernum`；CI 传�
 运行器在目标回复输出到一半、完整输出和最终回答完成前暂停，采集明暗主题、
 15px 宽窗口和 20px 窄窗口，再采集完成态并重新载入应用，验证持久化历史。
 原始数据没有逐字时间记录，分块和节奏明确标记为模拟。
-页面横向溢出、内容或历史缺失、渲染器错误会使运行失败；截图和布局数据用于人工视觉复核，
+每个检查点通过协议条目 ID 和完整源文本定位当前回复步骤，再滚动目标文字到可见区域，
+检查裁剪后的实际几何位置。只有包含工具调用的样本才展开过程历史。
+页面横向溢出、内容缺失或不可见、历史缺失、渲染器错误会使运行失败；截图和布局数据用于人工视觉复核，
 不代表自动审美评分。
 
 每次运行把截图和 `corpus-report.json` 写到 `artifacts/conversation-corpus/` 下。
 `WUU_TOUR_OUTPUT` 指定输出目录；`WUU_TOUR_MATRIX` 可覆盖外观组合，例如
 `light:15:1280,dark:20:720`。`WUU_TOUR_ONLY=sample-04` 可单独复现一份样本，
-报告会记录所选 ID。CI 使用同一个入口运行全部样本，上传
-`conversation-corpus-evidence`。`WUU_CORPUS_SKIP_BUILD=1` 复用已有构建，
+报告会记录所选 ID。`WUU_CORPUS_TEXT_ONLY=1` 只将所选样本的最终回答作为单步、
+无工具的对话回放，报告明确标记为 `final-answer-only`，不视作原始回复序列。
+CI 额外使用 sample-02 运行此回归，两次运行一起上传为 `conversation-corpus-evidence`。`WUU_CORPUS_SKIP_BUILD=1` 复用已有构建，
 `WUU_TOUR_CORE` 指定核心二进制；仅在确认它们对应待验收 checkout 时使用。
 
 新增样本时，先在本地阅读完整片段，一致替换敏感内容，并比较 Markdown 结构、换行数量和

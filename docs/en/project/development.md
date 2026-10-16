@@ -444,7 +444,10 @@ Keep Electron APIs in the desktop shell. A new shell should communicate with `wu
 
 Run `npm --prefix desktop run test:e2e:conversation-corpus` to build the current
 checkout and replay twelve sanitized local conversation excerpts through the
-existing UI tour. macOS uses the checkout's Wuu Dev host. Linux needs a graphical
+existing UI tour. macOS uses the checkout's Wuu Dev host with an existing signing
+identity (`Wuu Dev Signing` by default, or `WUU_DEV_SIGN_ID`). If none is available,
+set `WUU_DEV_SIGN_ID=-` for ad-hoc signing. Acceptance never creates a signing key,
+imports a certificate or changes keychain trust. Linux needs a graphical
 session or `xvfb-run --auto-servernum`; CI supplies `-- --no-sandbox`.
 `npm --prefix desktop run test:corpus` checks the package's sharing boundary.
 
@@ -461,14 +464,20 @@ The runner pauses at partial and complete target responses and before final
 completion, captures light/dark, 15px/wide and 20px/narrow appearances, then
 captures the completed answer and reloads the shell to verify persisted history.
 Streaming chunks and timing are simulated; original token timing was unavailable.
-Page overflow, missing content/history and renderer errors fail the run. Screenshots
+Each checkpoint binds the expected response step to its protocol item and exact
+source text, then scrolls its rendered marker into view and checks its clipped
+geometry. Process history is expanded only when the sample includes tool calls.
+Page overflow, missing/offscreen content, missing history and renderer errors fail the run. Screenshots
 and geometry remain evidence for visual review, not an automatic aesthetic score.
 
 Each run writes screenshots and `corpus-report.json` below
 `artifacts/conversation-corpus/`. `WUU_TOUR_OUTPUT` sets an explicit destination;
 `WUU_TOUR_MATRIX` overrides appearances, for example `light:15:1280,dark:20:720`.
 Use `WUU_TOUR_ONLY=sample-04` to reproduce one sample; the report records the
-selected IDs. CI runs all samples and uploads `conversation-corpus-evidence`.
+selected IDs. `WUU_CORPUS_TEXT_ONLY=1` replays just each selected sample's final
+answer as a single no-tool turn; reports label this `final-answer-only`, rather
+than the original response sequence. CI also runs this regression with sample-02
+and uploads both runs in `conversation-corpus-evidence`.
 `WUU_CORPUS_SKIP_BUILD=1` reuses a prepared build; `WUU_TOUR_CORE` selects its core.
 Only use these overrides when the binaries match the checkout under review.
 
