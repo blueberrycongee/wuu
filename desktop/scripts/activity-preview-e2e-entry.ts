@@ -259,6 +259,15 @@ app.whenReady().then(async () => {
   writeFileSync(join(output, "native-content.png"), (await nativeView.webContents.capturePage()).toPNG());
   const firstNativePixel = await nativeView.webContents.executeJavaScript("Array.from(document.querySelector('canvas').getContext('2d').getImageData(0,0,1,1).data)");
   check("AVC keyframe renders the expected pixels", Math.abs(firstNativePixel[0] - 20) < 8 && Math.abs(firstNativePixel[1] - 100) < 8 && Math.abs(firstNativePixel[2] - 210) < 8, firstNativePixel);
+  coordinator.setActiveThread("different-thread");
+  await waitFor("native preview hides on session switch", () => !pip.isVisible());
+  current = activity("cua", "native-a"); coordinator.update(current);
+  coordinator.refreshBrowserPresentation();
+  check("native activity stays hidden and connected in the background", !pip.isVisible() && sources.has("native-a") && current.controller === "agent");
+  coordinator.setActiveThread(threadID);
+  await emitNative("native-a", frame(20, 100, 210));
+  await waitFor("native preview returns to its session", () => pip.isVisible());
+  check("native session switching retains its window and source", pip.id === pipID && surfaceCount === 1 && sources.has("native-a"));
   await nativeView.webContents.executeJavaScript("window.fixtureHoldDecode = true");
   await emitNative("native-a", frame(220, 30, 40));
   await waitFor("native delta frame is decoded", () => nativeView.webContents.executeJavaScript("window.fixtureDecodeEntered === true"));
@@ -266,7 +275,7 @@ app.whenReady().then(async () => {
   await waitFor("capture error clears live presentation", () => overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone')"));
   check("capture failure keeps its symbol and hide control available without raw diagnostics", await overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone') && document.getElementById('ph-icon').checkVisibility() && !document.getElementById('close').hidden && document.getElementById('expand').hidden && !document.body.innerText.includes('Synthetic permission denied')"));
   await nativeView.webContents.executeJavaScript("window.fixtureReleaseDecode()");
-  await waitFor("invalidated frame is acknowledged after discard", () => readFileSync(process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_LOG!, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)).some(entry => entry.target === "native-a" && entry.command?.type === "ack" && entry.command.sequence === 2));
+  await waitFor("invalidated frame is acknowledged after discard", () => readFileSync(process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_LOG!, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)).some(entry => entry.target === "native-a" && entry.command?.type === "ack" && entry.command.sequence === 3));
   check("a late decoded frame cannot overwrite pixels after capture failure", JSON.stringify(await nativeView.webContents.executeJavaScript("Array.from(document.querySelector('canvas').getContext('2d').getImageData(0,0,1,1).data)")) === JSON.stringify(firstNativePixel));
   check("discarding a late decode cannot restore live presentation", await overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone')"));
   coordinator.setAppearance(true, { reducedMotion: true, fontSize: 20, fontFamily: "system-ui", locale: "en-US", surface: "#20242c", text: "#f8f8f8", muted: "#adb5c2" });
@@ -300,39 +309,35 @@ app.whenReady().then(async () => {
   coordinator.setActiveThread("auto-off-thread");
   coordinator.update(activity("browser", "browser-b", { thread_id: "auto-off-thread" }));
   check("automatic preview can be disabled without changing task control", surfaceCount === 1);
-  check("another conversation in view keeps a task's card up", pip.isVisible());
+  await waitFor("switching hides the previous session", () => !pip.isVisible());
   const cards = () => BrowserWindow.getAllWindows().filter(window => window.getParentWindow() === main);
   coordinator.showForThread("auto-off-thread");
-  await waitFor("manual show while auto-show is disabled", () => surfaceCount === 2 && cards().length === 2 && cards().every(card => card.isVisible()));
-  check("explicit show works while auto-show is off", surfaceCount === 2);
+  await waitFor("manual show while auto-show is disabled", () => surfaceCount === 2 && cards().length === 2 && cards().some(card => card.id !== pipID && card.isVisible()));
+  check("explicit show works while auto-show is off", surfaceCount === 2 && !pip.isVisible());
   const second = cards().find(card => card.id !== pipID)!;
   const secondID = second.id;
-  async function stackFrames() {
-    await Promise.all([settledMotion(second), settledMotion(pip)]);
-    return { pip: pip.getBounds(), second: second.getBounds() };
-  }
-  const trailsBehind = (lead: Electron.Rectangle, trailing: Electron.Rectangle) =>
-    trailing.x + trailing.width === lead.x + lead.width && lead.y + lead.height - (trailing.y + trailing.height) === 22;
-  const stacked = await stackFrames();
-  check("concurrent tasks share one corner, led by the conversation in view", trailsBehind(stacked.second, stacked.pip), stacked);
   coordinator.setAutoShow(true);
   coordinator.setActiveThread(threadID);
-  const reopened = await stackFrames();
-  check("opening a conversation brings its card to the front", trailsBehind(reopened.pip, reopened.second), reopened);
-  let secondOverlay: WebContentsView | undefined;
-  for (const child of second.contentView.children) {
-    if (child instanceof WebContentsView && await child.webContents.executeJavaScript("typeof window.wuuPipState === 'function'")) secondOverlay = child;
-  }
-  assert(secondOverlay);
-  const grip = { x: reopened.second.x + 30, y: reopened.second.y + 8 };
-  await secondOverlay.webContents.executeJavaScript(`window.location.href="wuu-pip://drag?phase=start&x=${grip.x}&y=${grip.y}&vx=0&vy=0"`);
-  await secondOverlay.webContents.executeJavaScript(`window.location.href="wuu-pip://drag?phase=end&x=${grip.x}&y=${grip.y}&vx=0&vy=0"`);
-  const promoted = await stackFrames();
-  check("grabbing a trailing card brings it to the front", trailsBehind(promoted.second, promoted.pip), promoted);
-  writeFileSync(join(output, "stack-frames.json"), JSON.stringify({ stacked, reopened, promoted }, null, 2));
-  await secondOverlay.webContents.executeJavaScript("document.getElementById('close').click()");
-  await waitFor("second card dismissed", () => !second.isVisible());
+  await waitFor("returning restores only the owning preview", () => pip.isVisible() && !second.isVisible());
+  check("switching sessions retains both preview windows", pip.id === pipID && second.id === secondID && surfaceCount === 2);
+  const backgroundActivity = activity("browser", "browser-b", { thread_id: "auto-off-thread" });
+  coordinator.update(backgroundActivity);
+  coordinator.refreshBrowserPresentation();
+  check("background updates cannot reveal another session", pip.isVisible() && !second.isVisible());
+  coordinator.setActiveThread(undefined);
+  await waitFor("empty selection hides all previews", () => !pip.isVisible() && !second.isVisible());
+  coordinator.setActiveThread("auto-off-thread");
+  await waitFor("second session restores its own preview", () => second.isVisible() && !pip.isVisible());
+  coordinator.handleServerEvent({ workdir, kind: "notification", message: {
+    method: "turn/completed", params: { thread_id: threadID, turn: { status: "completed" } },
+  } });
   coordinator.setActiveThread(threadID);
+  await waitFor("offscreen completion stays retired on return", () => !pip.isVisible() && !second.isVisible());
+  coordinator.handleServerEvent({ workdir, kind: "notification", message: {
+    method: "turn/started", params: { thread_id: threadID },
+  } });
+  await waitFor("next turn restores the owning preview", () => pip.isVisible());
+  writeFileSync(join(output, "session-visibility.json"), JSON.stringify({ firstWindow: pipID, secondWindow: secondID, backgroundUpdatesHidden: true, backgroundCompletionRetired: true, windowsRetained: surfaceCount === 2 }, null, 2));
   const otherWindow = new BrowserWindow({ width: 400, height: 300, show: false, frame: false });
   await otherWindow.loadURL("data:text/html,<body>Foreground fixture window</body>");
   // Explicitly blur because the headless platform can mark two windows focused.
