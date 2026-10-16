@@ -22,6 +22,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Hide optional built-in agent setting explanations in narrow columns while retaining current context limits and errors.
+
 - Remove maximum-step and temperature controls from desktop settings. Normal startup ignores saved overrides and uses unlimited steps with automatic temperature; explicitly selected CLI configuration files retain low-level overrides.
 
 - Use flatter, quieter sidebar selection and hover surfaces with tighter inner padding and softer corners, preserving text, icon, and action alignment.

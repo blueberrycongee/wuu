@@ -1149,6 +1149,7 @@ function SettingsRuntimePage({
         <SettingsGroup>
           <SettingsRow
             title={t("settings.providerContextLimit")}
+            hideDescriptionWhenNarrow={!providerContextWindowCurrent}
             description={`${providerContextWindowSource}${
               providerContextWindowCurrent ? `；${t("settings.currentTokenLimit", { count: providerContextWindowCurrent })}` : ""
             }`}
@@ -1162,6 +1163,7 @@ function SettingsRuntimePage({
           </SettingsRow>
           <SettingsRow
             title={t("settings.unknownModelLimit")}
+            hideDescriptionWhenNarrow
             hint={t("settings.unknownModelLimitDescription")}
             error={fieldError("maxContextTokens")}
           >
@@ -1176,7 +1178,7 @@ function SettingsRuntimePage({
       <ExecutionEnvironmentSettings value={initialized?.general_settings?.execution_environments ?? {}} disabled={fieldsDisabled} onSave={onGeneralSave} />
       <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
         <SettingsGroup>
-          <SettingsRow title={t("settings.ptcEnabled")} description={t("settings.ptcDescription")}>
+          <SettingsRow title={t("settings.ptcEnabled")} hideDescriptionWhenNarrow description={t("settings.ptcDescription")}>
             <button className="settings-switch" type="button" role="switch"
               aria-label={t("settings.ptcEnabled")} aria-checked={ptc.enabled}
               data-testid="settings-ptc-enabled" disabled={!initialized || running || ptcBusy}
@@ -1191,6 +1193,7 @@ function SettingsRuntimePage({
         <SettingsGroup>
           <SettingsRow
             title={t("settings.gitAttribution")}
+            hideDescriptionWhenNarrow
             hint={t("settings.gitAttributionDescription")}
             error={gitAttributionError}
           >

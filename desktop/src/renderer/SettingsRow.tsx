@@ -8,6 +8,7 @@ export function SettingsRow({
   error,
   children,
   block = false,
+  hideDescriptionWhenNarrow = false,
 }: {
   title: string;
   description?: ReactNode;
@@ -15,9 +16,10 @@ export function SettingsRow({
   error?: string;
   children: ReactNode;
   block?: boolean;
+  hideDescriptionWhenNarrow?: boolean;
 }): JSX.Element {
   return (
-    <div className={`settings-row${block ? " settings-row-block" : ""}`} data-wuu-component="settings-row">
+    <div className={`settings-row${block ? " settings-row-block" : ""}`} data-wuu-component="settings-row" data-hide-description-when-narrow={hideDescriptionWhenNarrow || undefined}>
       <div className="settings-row-label">
         <span className="settings-row-label-title">{title}</span>
         {description ? <span className="settings-row-label-description">{description}</span> : null}
