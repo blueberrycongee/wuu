@@ -763,12 +763,8 @@ describe("SettingsView advanced settings", () => {
     ).toBe(false);
 
     const inputs = Array.from(container.querySelectorAll("input"));
-    expect(inputs.length).toBeGreaterThanOrEqual(6);
-    const [compactThreshold, compactKeepRecent, providerContextWindow, maxContextTokens, maxSteps, temperature] = inputs;
-    expect((temperature as HTMLInputElement).value).toBe("");
-    // The placeholder carries the automatic-value meaning instead of the row description.
-    expect((temperature as HTMLInputElement).placeholder).toBe("自动");
-
+    expect(inputs.length).toBeGreaterThanOrEqual(4);
+    const [compactThreshold, compactKeepRecent, providerContextWindow, maxContextTokens] = inputs;
     const commit = async (input: Element) => {
       await act(async () => {
         input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
@@ -801,21 +797,9 @@ describe("SettingsView advanced settings", () => {
     await commit(maxContextTokens);
     expect(onAdvancedSave).toHaveBeenLastCalledWith({ max_context_tokens: 256000 });
 
-    await act(async () => {
-      setInputValue(maxSteps, "12");
-    });
-    await commit(maxSteps);
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ max_steps: 12 });
-
-    await act(async () => {
-      setInputValue(temperature, "0.4");
-    });
-    await commit(temperature);
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ temperature: 0.4 });
-
     // Blurring an untouched field does not round-trip the same value.
     const callsBefore = onAdvancedSave.mock.calls.length;
-    await commit(temperature);
+    await commit(maxContextTokens);
     expect(onAdvancedSave.mock.calls.length).toBe(callsBefore);
 
     const switchButton = container.querySelector(".settings-switch") as HTMLButtonElement;
@@ -824,46 +808,6 @@ describe("SettingsView advanced settings", () => {
       await Promise.resolve();
     });
     expect(onAdvancedSave).toHaveBeenLastCalledWith({ disable_auto_compact: true });
-  });
-
-  it("saves cleared temperature as Auto on commit", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    const onAdvancedSave = vi.fn().mockResolvedValue(undefined);
-    renderSettings({
-      initialPage: "advanced",
-      initialized: baseInitialized({
-        provider: "openrouter",
-        model: "openai/gpt-5.5",
-        advanced_settings: {
-          max_steps: 0,
-          max_context_tokens: 0,
-          temperature: 0,
-          disable_auto_compact: false,
-        },
-      }),
-      onAdvancedSave,
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    const temperature = Array.from(container.querySelectorAll("input")).at(-1) as HTMLInputElement;
-    await act(async () => {
-      setInputValue(temperature, "0.4");
-      temperature.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
-      await Promise.resolve();
-    });
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ temperature: 0.4 });
-
-    await act(async () => {
-      setInputValue(temperature, "");
-      temperature.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
-      await Promise.resolve();
-    });
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ temperature: 0 });
   });
 });
 

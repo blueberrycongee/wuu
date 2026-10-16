@@ -450,6 +450,9 @@ func (a AgentConfig) GitAttributionEnabledValue() bool {
 // workspace, or loosen the user's permission mode. This prevents a repository
 // from choosing where user credentials are sent merely by being opened.
 //
+// Normal startup ignores persisted agent.max_steps and agent.temperature,
+// using unlimited steps and provider-default sampling without rewriting files.
+//
 // Callers that deliberately trust a project config must opt into
 // LoadProjectConfig or LoadPath; an empty home argument is never a hidden
 // switch that grants project files this authority.
@@ -480,6 +483,10 @@ func LoadFrom(workdir, home string) (Config, string, error) {
 			return Config{}, "", layerErr
 		}
 		cfg = layered
+		// The retired settings controls must not leave hidden execution overrides.
+		// Explicit LoadPath/LoadProjectConfig callers retain these low-level knobs.
+		cfg.Agent.MaxSteps = 0
+		cfg.Agent.Temperature = 0
 		// Read and translate Claude Code's project-level `.mcp.json`, if
 		// present. Approved servers (per the mcp_json trust section, now
 		// fully merged into cfg above) are merged into cfg.MCPServers. This

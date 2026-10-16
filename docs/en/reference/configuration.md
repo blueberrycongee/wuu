@@ -1,5 +1,7 @@
 # Configuration
 
+Normal startup uses unlimited agent steps and automatic model/provider temperature. Saved `agent.max_steps` and `agent.temperature` values in user and project settings are ignored without rewriting the files. Explicit CLI configuration (`--config` or `--ignore-user-config`) still supports these low-level overrides.
+
 Wuu keeps model connections and execution choices in user configuration, while projects can supply additional behavior. Start with `wuu init` for CLI use or desktop onboarding, then edit only the settings you need. Wuu rejects unknown configuration fields rather than silently ignoring typos.
 
 The built-in agent can use ordinary file tools to edit configuration in Standard or Unconfined mode; Read only permits inspection but refuses edits. Wuu home is part of the normal file scope, so no separate configuration tool is needed. To add a provider or change the default model, edit the user file described below; project-layer restrictions still apply. The desktop uses its existing refresh path for valid model changes, while other settings retain their documented restart requirements.
