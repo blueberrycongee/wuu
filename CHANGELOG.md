@@ -11,6 +11,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Keep the macOS Dock icon visible when the desktop pet is enabled.
+- Restore filled open-state indicators for the left and right desktop sidebar
+  toggle icons.
 - Restore next-message suggestions after clearing or undoing a Tab-accepted draft,
   allowing repeated acceptance without another model request.
 - Use the same quiet gray for completed tool summaries, running tool summaries,
