@@ -1767,6 +1767,8 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 /* The side inset follows the panel, not the window. */
 .workspace-markdown-reading {
+  box-sizing: border-box;
+  min-width: 0;
   width: min(100%, calc(var(--session-composer-width) + 2 * var(--workspace-reading-gutter, 44px)));
   min-height: 100%;
   color: var(--ink);
