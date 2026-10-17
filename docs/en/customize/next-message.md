@@ -1,6 +1,6 @@
 # Next-message suggestions
 
-The optional **Next message** plugin predicts one message you might type after a successful live reply. It is installed but disabled by default. Enable it in **Settings → Extensions**, then open its settings page to choose and save a model.
+The optional **Next message** plugin predicts one message you might type after a successful live reply. It is installed but disabled by default. Enable it during first-run plugin selection (individually or with the **Everything** preset), or in **Settings → Extensions**, then open its settings page to choose and save a model. The **Recommended** preset leaves it off.
 
 The suggestion appears as gray text inside an empty composer, even when it is not focused. **Tab** inserts it into the draft when the composer has focus, without sending; you can edit it before sending. Clearing the accepted draft or undoing the insertion shows the same suggestion again, so you can press Tab again without another model request. **Escape** dismisses it. Switching tabs, conversations or workspaces does not interrupt a prediction already underway; returning shows that conversation's result if the composer is still eligible. Typing, opening a menu or adding an attachment temporarily hides the suggestion. Starting a new turn or disabling the plugin cancels the old prediction and prevents stale results from entering the draft. Slash commands and menus retain keyboard priority. No suggestion leaves ordinary Tab navigation unchanged.
 

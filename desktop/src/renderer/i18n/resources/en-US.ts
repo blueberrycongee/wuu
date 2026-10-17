@@ -2164,6 +2164,7 @@ export const enUS = {
   "onboarding.loadingPlugins": "Loading plugins…",
   "onboarding.pluginsUnavailable": "Plugins could not be loaded. Restart Wuu and try again.",
   "onboarding.plugin.side": "Ask about progress, output, or alternatives in a side chat",
+  "onboarding.plugin.nextMessage": "Suggests your next message. Set a model in plugin settings.",
   "onboarding.plugin.askUser": "Pauses to ask you when an important detail is missing.",
   "onboarding.plugin.todo": "Lists the steps of longer tasks and shows progress.",
   "onboarding.plugin.goal": "Keeps working toward a goal until it is complete or paused.",

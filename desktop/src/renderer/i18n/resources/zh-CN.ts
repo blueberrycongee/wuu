@@ -2161,6 +2161,7 @@ export const zhCN = {
   "onboarding.loadingPlugins": "正在读取插件…",
   "onboarding.pluginsUnavailable": "未能读取插件。请重新启动 Wuu 后再试。",
   "onboarding.plugin.side": "在侧聊中询问进度、解释输出或比较方案",
+  "onboarding.plugin.nextMessage": "建议你可能输入的下一句话；启用后需在插件设置中选择模型。",
   "onboarding.plugin.askUser": "需要关键信息时暂停并向你提问。",
   "onboarding.plugin.todo": "把多步任务列成清单，显示进度。",
   "onboarding.plugin.goal": "设定目标后持续推进，直到完成或暂停。",
