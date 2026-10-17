@@ -8,6 +8,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep Claude provider failures inside the conversation error notice instead of duplicating diagnostics as assistant replies; preserve any useful partial reply and failure details after reopening the conversation.
+
 ## [2026.10.15] - 2026-10-15
 
 ### Contributors
