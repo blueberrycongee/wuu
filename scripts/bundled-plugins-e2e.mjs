@@ -572,12 +572,14 @@ try {
     await runtime.shutdown();
     runtime = await launch('next-message', host);
     assert.deepEqual(await runtime.client('next-message.get'), { settings: { model_alias: 'fixture-small' } });
-    assert.deepEqual(await runtime.client('next-message.update', { model_alias: '  ' }), { settings: {} });
+    await assert.rejects(runtime.client('next-message.update', { model_alias: '  ' }), /Select a model/);
+    assert.deepEqual(await runtime.client('next-message.update', { provider: 'fixture', model: 'small', variant: 'low' }),
+      { settings: { provider: 'fixture', model: 'small', variant: 'low' } });
     await assert.rejects(runtime.client('next-message.unknown'));
     assert(!host.calls.some(call => call.service === 'host.model.request'));
     await runtime.shutdown();
     runtime = await launch('next-message', host);
-    assert.deepEqual(await runtime.client('next-message.get'), { settings: {} });
+    assert.deepEqual(await runtime.client('next-message.get'), { settings: { provider: 'fixture', model: 'small', variant: 'low' } });
     await runtime.shutdown();
     for (const value of ['not JSON', JSON.stringify({ model_alias: 3 })]) {
       host.storage.set('workspace:next-message.settings.v1', value);
@@ -597,19 +599,20 @@ try {
       if (call.service === 'host.model.request') return { text: '{"suggestion":"修复这个问题"}', provider: 'fixture', model: 'fixture', finish_reason: 'stop', truncated: false };
     };
     const runtime = await launch('next-message', host);
+    await runtime.client('next-message.update', { model_alias: 'fixture-small' });
     assert.deepEqual(await runtime.client('next-message.predict', input), { suggestion: '修复这个问题' });
     const first = await host.waitCall('host.model.request');
     assert.match(first.execution_id, /^capability-/);
     assert.equal(first.method, 'call');
-    assert.deepEqual(Object.keys(first.params).sort(), ['max_output_tokens', 'messages', 'timeout_ms']);
-    assert.equal(first.params.timeout_ms, 4000);
+    assert.deepEqual(Object.keys(first.params).sort(), ['allow_unbounded_output', 'max_output_tokens', 'messages', 'model_alias', 'timeout_ms']);
+    assert.equal(first.params.timeout_ms, 30000);
     assert.equal(first.params.max_output_tokens, 128);
+    assert.equal(first.params.allow_unbounded_output, true);
     assert.deepEqual(first.params.messages.map(message => message.role), ['system', 'user']);
     const context = JSON.parse(first.params.messages[1].content);
     assert.deepEqual(context, { turns: [{ user: input.turns[0].userText, assistant: input.turns[0].assistantText }] });
     assert(!JSON.stringify(first.params).includes(input.threadId));
     assert(first.params.messages.reduce((bytes, message) => bytes + Buffer.byteLength(message.content), 0) <= 8192);
-    await runtime.client('next-message.update', { model_alias: 'fixture-small' });
     await runtime.client('next-message.predict', withId(input, 'turn-two'));
     assert.equal(host.calls.filter(call => call.service === 'host.model.request').at(-1).params.model_alias, 'fixture-small');
     // The cap includes prompt framing and JSON escaping, not just visible text length.
@@ -649,6 +652,7 @@ try {
       return { text: response, provider: 'fixture', model: 'fixture', finish_reason: 'stop', truncated: false };
     };
     const runtime = await launch('next-message', host);
+    await runtime.client('next-message.update', { model_alias: 'fixture-small' });
     const predict = turnId => runtime.client('next-message.predict', { threadId: 'parent', turnId, turns: [
       { id: turnId, userText: 'Check this', assistantText: 'Checked', imageCount: 0, fileCount: 0 },
     ] });
@@ -657,14 +661,14 @@ try {
       '{"suggestion":""}', '{"suggestion":"  "}', JSON.stringify({ suggestion: 'two\nlines' }),
       JSON.stringify({ suggestion: 'two\rline' }), JSON.stringify({ suggestion: 'two\tparts' }),
       JSON.stringify({ suggestion: 'two\u2028lines' }), JSON.stringify({ suggestion: 'two\u0085lines' }),
-      JSON.stringify({ suggestion: '😀'.repeat(241) }), new Error('Synthetic provider timeout'),
+      JSON.stringify({ suggestion: '😀'.repeat(101) }), new Error('Synthetic provider timeout'),
       Object.assign(new Error('Synthetic unavailable alias'), { code: 'model_alias_not_found' })];
     for (const [index, value] of outputs.entries()) {
       response = value;
       assert.deepEqual(await predict(`invalid-${index}`), { suggestion: null });
     }
-    response = JSON.stringify({ suggestion: '😀'.repeat(240) });
-    assert.deepEqual(await predict('unicode-limit'), { suggestion: '😀'.repeat(240) });
+    response = JSON.stringify({ suggestion: '😀'.repeat(100) });
+    assert.deepEqual(await predict('unicode-limit'), { suggestion: '😀'.repeat(100) });
     host.intercept = call => call.service === 'host.model.request'
       ? { text: '{"suggestion":"Truncated yet valid JSON"}', provider: 'fixture', model: 'fixture', finish_reason: 'length', truncated: true } : undefined;
     assert.deepEqual(await predict('truncated'), { suggestion: null });
@@ -676,6 +680,7 @@ try {
     let release;
     host.intercept = call => call.service === 'host.model.request' ? new Promise(resolve => { release = resolve; }) : undefined;
     const runtime = await launch('next-message', host);
+    await runtime.client('next-message.update', { model_alias: 'fixture-small' });
     const input = { threadId: 'parent', turnId: 'same-turn', turns: [
       { id: 'same-turn', userText: 'Check this', assistantText: 'Checked', imageCount: 0, fileCount: 0 },
     ] };
