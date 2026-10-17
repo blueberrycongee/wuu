@@ -365,7 +365,10 @@ app.whenReady().then(async () => {
         });
         await waitFor(() => document.querySelectorAll(".thread-row").length === 48);
         await evaluate(() => document.querySelector(".thread-row-main").click());
-        await waitFor(() => Boolean(document.querySelector(".thread-row.active")));
+        // Active content appears before the reveal finishes. Wait for the
+        // pending row to clear before choosing an independent reading position.
+        await waitFor(() => Boolean(document.querySelector(".thread-row.active"))
+          && !document.querySelector(".thread-row.pending-switch"));
         app.focus({ steal: true });
         win.focus();
         await waitFor(() => document.hasFocus());
