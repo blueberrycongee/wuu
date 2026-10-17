@@ -72,7 +72,7 @@
   width: auto;
   contain: strict;
   container-type: inline-size;
-  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
+  grid-template-rows: var(--canvas-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
   border-left: 1px solid transparent;
   background: var(--paper);
@@ -96,12 +96,12 @@
   justify-self: start;
 }
 
-/* The panel's full-size chips share the window chrome's centerline. The
- * common row reserves enough space to clear the canvas's painted top edge. */
+/* Center compact chips in the painted header. Its compact lower edge
+ * preserves the shared native-control axis without an oversized bottom gap. */
 .workspace-right-panel {
   --workspace-tab-chip-hover-bg: var(--ink-overlay-4);
-  --workspace-tab-chip-height: var(--control-size-roomy);
-  --workspace-tab-chip-inset: max(0px, calc((var(--window-titlebar-height) - var(--workspace-tab-chip-height)) / 2));
+  --workspace-tab-chip-height: var(--control-size-inline);
+  --workspace-tab-chip-inset: max(0px, calc((var(--canvas-titlebar-height) - var(--conversation-pane-inset) - var(--workspace-tab-chip-height)) / 2));
   /* Tab chips, tool rows, and tree rows float inside the pane like sidebar
    * rows; their own padding takes up the rest, putting the leading glyph on
    * the pane inset. */
@@ -112,13 +112,13 @@
 .workspace-panel-tabbar {
   display: flex;
   min-width: 0;
-  height: var(--window-titlebar-height);
+  height: var(--canvas-titlebar-height);
   align-items: center;
   gap: 4px;
   background: var(--paper);
   /* Clear native window controls and reserve the shell-owned sidebar toggle,
      including while the reading canvas is a full-width sheet. */
-  padding: 0 calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap)) 0 var(--workspace-row-inset);
+  padding: var(--conversation-pane-inset) calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap)) 0 var(--workspace-row-inset);
   -webkit-app-region: drag;
   position: relative;
   z-index: 1;
@@ -485,7 +485,7 @@
   /* Portaled outside the panel: restate the tokens it reads. */
   --workspace-tab-chip-inset: 0px;
   --workspace-row-pad-x: calc(var(--pane-inset) - var(--space-2));
-  height: var(--control-size-roomy);
+  height: var(--control-size-inline);
   border-radius: var(--radius-sm);
   background: var(--paper);
   color: var(--ink-strong);

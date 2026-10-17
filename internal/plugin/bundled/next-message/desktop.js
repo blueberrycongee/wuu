@@ -159,7 +159,9 @@ export async function activate(api) {
   const provider = api.registerComposerInlineCompletionProvider({
     id: "next-message",
     onDidInteract(event) {
-      if (event.type !== "accepted" && event.type !== "dismissed") return;
+      // Insertion remains reversible: keep the cached suggestion until the
+      // user sends the draft or explicitly dismisses it.
+      if (event.type !== "dispatched" && event.type !== "dismissed") return;
       let identity;
       try { identity = JSON.parse(event.suggestionId); } catch { return; }
       if (!Array.isArray(identity) || identity.length !== 4) return;

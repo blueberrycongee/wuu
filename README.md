@@ -65,6 +65,12 @@ Select text in a file to add it to the conversation, leave a comment, ask about 
   <img src="landing/assets/readme/files-en.jpg" alt="Selection actions in Files">
 </p>
 
+### Work inside Mac apps
+
+Computer Use lets the agent observe and operate native macOS apps through Accessibility and native input. A floating preview follows its pointer and shows each click and keystroke while the target app stays in the background. The agent saves through the app itself, so Review shows the real file change. Screen Recording and Accessibility permissions apply.
+
+![Computer Use in wuu](landing/assets/readme/cua-en.webp)
+
 ### Steer without starting over
 
 Press Enter while a task runs to steer it, or Command + Enter to queue the next message. Fork from any earlier message into the same folder or a new Git worktree. Start a conversation in its own worktree so experiments stay off your branch. Use `/side` for a quick question that stays out of the main thread, and search to find any past conversation.
@@ -129,3 +135,5 @@ See [Contributing](CONTRIBUTING.md) to work on wuu, or [open an issue](https://g
 ## Acknowledgements
 
 Licensed under [MIT](LICENSE). Agent avatars use [blobatar](https://github.com/Alain00/blobatar), also MIT-licensed.
+
+Wuu's macOS Computer Use implementation draws on the design of [Cua Driver](https://github.com/trycua/cua/tree/main/libs/cua-driver), an [MIT-licensed](https://github.com/trycua/cua/blob/main/LICENSE.md) project by Cua AI, Inc. Thanks to its contributors for their work on native computer use.

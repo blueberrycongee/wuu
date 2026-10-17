@@ -31,4 +31,10 @@ Regenerate them after a release changes what they show. Build the app being desc
 node desktop/scripts/generate-readme-media.cjs <app>/desktop
 ```
 
+The Computer Use demos, `cua-en.webp` and `cua-zh.webp`, are captured separately on macOS. The generator builds the disposable AppKit invoice app in `desktop/scripts/fixtures/` and records the real desktop window while the Computer Use helper edits and saves that app. It therefore needs Screen Recording and Accessibility permission, plus `swiftc`, `screencapture`, `ffmpeg`, and libwebp:
+
+```sh
+node desktop/scripts/generate-cua-readme-media.cjs <app>/desktop
+```
+
 Review both languages and both hero themes before committing new images.

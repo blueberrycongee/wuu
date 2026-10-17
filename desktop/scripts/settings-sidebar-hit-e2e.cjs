@@ -215,7 +215,7 @@ async function verifyTitlebarContinuity(win) {
             assert.ok(Math.abs(main[key] - settings[key]) < 0.1, `Switching pages moved/resized ${key}: ${context}`);
           }
           assert.equal(settings.icon, main.icon, `Switching pages changed the sidebar glyph: ${context}`);
-          if (Math.abs(main.header.height * zoom - 56) < 0.1) {
+          if (Math.abs((main.header.height + (main.canvasTop ?? 0)) * zoom - 56) < 0.1) {
             assert.ok(Math.abs((main.y + main.height / 2) * zoom - 28) < 0.1, `Renderer must meet the expected native chrome axis: ${context}`);
           }
           assert.ok(main.hit && settings.hit, `The visible toggle must own its center hit: ${context}`);
@@ -389,11 +389,12 @@ function delay(ms) {
 
 function assertTopRow(geometry, context) {
   const details = JSON.stringify({ ...context, geometry });
-  const axis = geometry.header.y + geometry.header.height / 2;
+  const axis = ((geometry.canvasTop ?? geometry.header.y) + geometry.header.bottom) / 2;
   assert.ok(geometry.peers.length >= 3, `The actual page chrome must be present: ${details}`);
   if (context.zoom === 1) {
     assert.ok(Math.abs(axis - 28) < 0.1, `Default zoom keeps the shared 28 DIP axis: ${details}`);
-    assert.ok(Math.abs(geometry.header.height - 56) < 0.1, `Default zoom reserves the full titlebar row: ${details}`);
+    if (geometry.canvasTop !== null) assert.ok(geometry.header.height < 56,
+      `The canvas header stays compact without moving controls: ${details}`);
   }
   if (geometry.canvasTop !== null) {
     assert.ok(geometry.canvasTop > 0 && geometry.canvasTop <= 8.1,

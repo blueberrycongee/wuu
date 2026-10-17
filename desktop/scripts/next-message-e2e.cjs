@@ -264,6 +264,33 @@ app.whenReady().then(async () => {
     await key("Tab"); assert.equal(await value(), suggestion); assert.equal(report.submissions.length, before);
     await noGhost("accepted suggestion is ordinary input"); await screenshot("tab-inserted-not-sent");
   });
+  await check("clearing or undoing acceptance restores the suggestion without another prediction", async () => {
+    const count = predictions().length;
+    const before = report.submissions.length;
+    for (const action of ["delete", "undo"]) {
+      if (action === "delete") {
+        await evaluate(selector => document.querySelector(selector).select(), inputSelector);
+        await key("Backspace");
+      } else {
+        await evaluate(() => document.execCommand("undo"));
+      }
+      await until(selector => document.querySelector(selector)?.value === "", inputSelector);
+      await until(({ selector, suggestion }) => document.querySelector(selector)?.textContent === suggestion,
+        { selector: ghostSelector, suggestion }, `suggestion returns after ${action}`);
+      await screenshot(`suggestion-restored-after-${action}`);
+      await key("Tab");
+      assert.equal(await value(), suggestion);
+      await noGhost("reaccepted suggestion is ordinary input");
+      assert.equal(predictions().length, count);
+      assert.equal(report.submissions.length, before);
+    }
+    await draft("");
+    await until(selector => Boolean(document.querySelector(selector)), ghostSelector);
+    await key("Escape");
+    await draft("temporary draft"); await draft("");
+    await noGhost("explicit dismissal still survives clearing the draft");
+    assert.equal(predictions().length, count);
+  });
   await check("direct running-to-completed transition also produces one suggestion", async () => {
     await draft(""); const live = await startTurn(); await completeTurn(live, "completed", false);
     const request = await requestFor(live); await resolve(request);

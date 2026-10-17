@@ -19,6 +19,7 @@ export class SystemPermissions {
   private guide?: BrowserWindow;
   private owner?: BrowserWindow;
   private timer?: ReturnType<typeof setTimeout>;
+  private followTimer?: ReturnType<typeof setTimeout>;
   private generation = 0;
   private dark = false;
   private pending?: ReturnType<AppContextCapture["permissionStatus"]>;
@@ -67,7 +68,7 @@ export class SystemPermissions {
     return this.pending;
   }
 
-  async state(): Promise<SystemPermissionsState> { return (await this.read()).state; }
+  async state(): Promise<SystemPermissionsState> { return this.read(); }
 
   private parsePresentation(value: unknown): SystemPermissionPresentation | undefined {
     if (!value || typeof value !== "object") return;
@@ -151,8 +152,8 @@ export class SystemPermissions {
     try {
       const status = await this.read();
       if (generation !== this.generation || owner.isDestroyed()) return;
-      if (!status.state.available) throw new Error("System permissions require the macOS capture helper.");
-      if (status.state[permission]) { this.notify("closed", true); this.presentation = undefined; this.close(); return; }
+      if (!status.available) throw new Error("System permissions require the macOS capture helper.");
+      if (status[permission]) { this.notify("closed", true); this.presentation = undefined; this.close(); return; }
       if (!this.appBundle.endsWith(".app")) throw new Error("Open Wuu from its macOS application bundle to grant access.");
       const appImage = nativeImage.createFromPath(appIcon);
       this.icon = appImage.resize({ width: 64, height: 64 });
@@ -164,8 +165,8 @@ export class SystemPermissions {
         phase: source ? "source" : "guiding", granted: false,
       };
       this.compactHeight = 108 * this.config.fontSize / 15 * owner.webContents.getZoomFactor();
-      this.settingsBounds = status.settingsWindow;
-      const bounds = source ?? this.destination(status.settingsWindow ?? owner.getBounds());
+      this.settingsBounds = this.capture.permissionGuideWindow() ?? undefined;
+      const bounds = source ?? this.destination(this.settingsBounds ?? owner.getBounds());
       // Keep this unparented: a native child can raise its owner over Settings.
       const guide = new BrowserWindow({
         x: Math.round(bounds.x), y: Math.round(bounds.y), width: Math.round(bounds.width), height: Math.round(bounds.height),
@@ -214,6 +215,7 @@ export class SystemPermissions {
       // long-lived Electron process. Authorization still belongs to macOS.
       await shell.openExternal(settingsURLs[permission]);
       if (generation !== this.generation) return;
+      void this.follow(generation);
       void this.poll(permission, generation);
     } catch (error) {
       if (generation !== this.generation) return;
@@ -273,6 +275,8 @@ export class SystemPermissions {
     if (!this.config || this.config.phase === "returning") return;
     const generation = this.generation;
     clearTimeout(this.timer);
+    clearTimeout(this.followTimer);
+    this.finishMotion?.(false);
     this.config = { ...this.config, phase: "returning", granted };
     this.sendConfig();
     this.notify("returning");
@@ -285,34 +289,50 @@ export class SystemPermissions {
     if (generation === this.generation) this.close();
   }
 
-  private async poll(permission: SystemPermission, generation: number): Promise<void> {
+  private async follow(generation: number): Promise<void> {
+    if (generation !== this.generation || !this.guide || !this.config || this.config.phase === "returning") return;
+    // Geometry uses public window metadata in-process, independently of the
+    // slower fresh-process permission check. Keep tracking during the lift too.
+    this.followTimer = setTimeout(() => void this.follow(generation), 16);
     try {
-      const result = await this.read();
-      if (generation !== this.generation || !this.guide || this.config?.phase === "returning") return;
-      if (result.state[permission]) { await this.returnToOwner(true); return; }
-      this.settingsBounds = result.settingsWindow;
-      if (result.settingsVisible && result.settingsWindow) {
-        const target = this.destination(result.settingsWindow);
-        const source = this.sourceBounds();
-        if (this.config?.phase === "source" && source) {
-          this.applyBounds(source);
-          this.guide.showInactive();
-          this.config.phase = "lifting";
-          this.sendConfig();
-          if (!await this.animateTo(() => this.destination(result.settingsWindow!), generation)) return;
+      this.settingsBounds = this.capture.permissionGuideWindow() ?? undefined;
+      if (!this.settingsBounds) { this.guide.hide(); return; }
+      const source = this.sourceBounds();
+      if (this.config.phase === "source" && source) {
+        this.applyBounds(source);
+        this.guide.showInactive();
+        this.config.phase = "lifting";
+        this.sendConfig();
+        if (!await this.animateTo(() => this.settingsBounds ? this.destination(this.settingsBounds) : undefined, generation)
+          || generation !== this.generation || this.config?.phase !== "lifting") return;
+        this.config.phase = "guiding";
+        this.sendConfig();
+        this.notify("guiding");
+      } else if (this.config.phase !== "lifting") {
+        const entering = this.config.phase !== "guiding" || !this.guide.isVisible();
+        if (this.config.phase === "source") {
           this.config.phase = "guiding";
           this.sendConfig();
-          this.notify("guiding");
-        } else {
-          if (this.config?.phase === "source") {
-            this.config.phase = "guiding";
-            this.sendConfig();
-          }
-          this.applyBounds(target);
-          this.guide.showInactive();
-          this.notify("guiding");
         }
-      } else this.guide.hide();
+        this.applyBounds(this.destination(this.settingsBounds));
+        if (entering) { this.guide.showInactive(); this.notify("guiding"); }
+      }
+    } catch {
+      if (generation !== this.generation) return;
+      // Unknown native window state must not leave a stale always-on-top guide.
+      this.settingsBounds = undefined;
+      if (this.guide?.isVisible()) {
+        this.guide.hide();
+        this.guide.webContents.send("wuu:permission-guide-error");
+      }
+    }
+  }
+
+  private async poll(permission: SystemPermission, generation: number): Promise<void> {
+    try {
+      const state = await this.read();
+      if (generation !== this.generation || !this.guide || this.config?.phase === "returning") return;
+      if (state[permission]) { await this.returnToOwner(true); return; }
     } catch {
       if (generation !== this.generation) return;
       this.guide?.webContents.send("wuu:permission-guide-error");
@@ -324,6 +344,8 @@ export class SystemPermissions {
     this.generation += 1;
     clearTimeout(this.timer);
     this.timer = undefined;
+    clearTimeout(this.followTimer);
+    this.followTimer = undefined;
     this.finishMotion?.(false);
     this.painted?.();
     this.notify("closed");

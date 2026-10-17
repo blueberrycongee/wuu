@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
@@ -115,6 +116,85 @@ func (s *Session) SetEnginesForTest(reg *agentengine.Registry) {
 	s.engines = reg
 }
 
+// DefaultEngine returns the settings default for new threads. Reading the
+// snapshot never waits for binary discovery or external engine registration.
+func (s *Session) DefaultEngine() agentengine.EngineID {
+	s.defaultEngineMu.RLock()
+	defer s.defaultEngineMu.RUnlock()
+	return s.defaultEngine
+}
+
+// RefreshEngineSettings reapplies persisted choices after binary discovery.
+// Serialize the entire config snapshot/application with explicit settings edits
+// so an older background refresh cannot undo a newer disable or binary change.
+func (s *Session) RefreshEngineSettings() error {
+	s.engineSettingsMu.Lock()
+	defer s.engineSettingsMu.Unlock()
+	return s.refreshEngineSettings()
+}
+
+// UpdateEngineSettings persists and applies an explicit settings edit without
+// allowing a concurrent discovery refresh to publish an older snapshot.
+func (s *Session) UpdateEngineSettings(update config.EnginesSettingsUpdate) error {
+	s.engineSettingsMu.Lock()
+	defer s.engineSettingsMu.Unlock()
+	if err := config.UpdateEnginesSettings(s.ConfigPath, update); err != nil {
+		return err
+	}
+	return s.refreshEngineSettings()
+}
+
+func (s *Session) refreshEngineSettings() error {
+	cfg, _, err := s.LoadEffectiveConfig()
+	if err != nil {
+		return err
+	}
+	codexBinary, codexResolveErr := codexengine.ResolveBinary()
+	codexEnabled := codexResolveErr == nil
+	claudeBinary, claudeResolveErr := claudeengine.ResolveBinary()
+	claudeEnabled := claudeResolveErr == nil
+	defaultEngine := agentengine.EngineWuu
+	if engineCfg := cfg.Engines; engineCfg != nil {
+		if trimmed := strings.TrimSpace(engineCfg.DefaultEngine); trimmed != "" {
+			defaultEngine = agentengine.NormalizeEngineID(trimmed)
+		}
+		if codexCfg := engineCfg.Codex; codexCfg != nil {
+			enabled, explicit := codexCfg.EngineEnabled()
+			if explicit {
+				codexEnabled = enabled
+			}
+			if path := strings.TrimSpace(codexCfg.BinaryPath); path != "" {
+				codexBinary = path
+				if !explicit {
+					codexEnabled = true
+				}
+			}
+		}
+		if claudeCfg := engineCfg.Claude; claudeCfg != nil {
+			enabled, explicit := claudeCfg.EngineEnabled()
+			if explicit {
+				claudeEnabled = enabled
+			}
+			if path := strings.TrimSpace(claudeCfg.BinaryPath); path != "" {
+				claudeBinary = path
+				if !explicit {
+					claudeEnabled = true
+				}
+			}
+		}
+	}
+	s.RebuildCodexEngine(codexEnabled, codexBinary)
+	s.RebuildClaudeEngine(claudeEnabled, claudeBinary)
+	s.RebuildProtocolEngines(cfg.Engines)
+	if !s.EngineAvailable(defaultEngine) {
+		defaultEngine = agentengine.EngineWuu
+	}
+	s.defaultEngineMu.Lock()
+	s.defaultEngine = defaultEngine
+	s.defaultEngineMu.Unlock()
+	return nil
+}
+
 // RebuildCodexEngine re-registers the codex engine after a settings change
 // (binary path override or enable/disable). Existing turn leases keep their
 // old host alive; future bindings use the newly registered host.
@@ -137,8 +217,8 @@ func (s *Session) RebuildClaudeEngine(enabled bool, binaryPath string) {
 	if s == nil || s.engines == nil {
 		return
 	}
-	s.engines.Unregister(agentengine.EngineID("claude"))
 	if !enabled {
+		s.engines.Unregister(agentengine.EngineID("claude"))
 		return
 	}
 	if err := s.engines.Register(claudeengine.NewEngine(binaryPath, s.RootDir)); err != nil {
@@ -156,9 +236,9 @@ func (s *Session) RebuildProtocolEngines(cfg *config.EnginesConfig) {
 		if entry.Protocol != "acp" && entry.Protocol != "opencode" {
 			continue
 		}
-		s.engines.Unregister(agentengine.EngineID(entry.ID))
 		setting := cfg.Binary(entry.ID)
 		if enabled, _ := setting.EngineEnabled(); !enabled {
+			s.engines.Unregister(agentengine.EngineID(entry.ID))
 			continue
 		}
 		override := ""
@@ -167,6 +247,7 @@ func (s *Session) RebuildProtocolEngines(cfg *config.EnginesConfig) {
 		}
 		binary, err := entry.Resolve(override)
 		if err != nil {
+			s.engines.Unregister(agentengine.EngineID(entry.ID))
 			continue
 		}
 		_ = s.engines.Register(externalengine.New(entry, binary, s.RootDir))
