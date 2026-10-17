@@ -25,8 +25,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Reuse streaming HTTP connection pools across model turns, including Codex
-  credential adapters, instead of rebuilding a pool for every request.
+- Reuse streaming HTTP connection pools across model turns, including Codex,
+  Grok Build and SuperGrok credential adapters, instead of rebuilding a pool for
+  every request.
 - Keep scroll-edge fades visible in thinking and process panels while a
   response streams.
 - Align native window controls, sidebar toggles, conversation titles, and

@@ -15,16 +15,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/anthropic"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
+	"github.com/blueberrycongee/wuu/internal/providers/grokbuild"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
+	"github.com/blueberrycongee/wuu/internal/providers/xaisub"
 )
 
 // Completed turns must reuse the transport pool, including Codex's per-turn
 // credential adapter and the client wrapper used for compressed redirects.
 func TestSSEClientsReuseConnections(t *testing.T) {
-	for _, protocol := range []string{"chat", "responses", "anthropic", "codex"} {
+	for _, protocol := range []string{"chat", "responses", "anthropic", "codex", "grokbuild", "xaisub"} {
 		for _, compressed := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/gzip=%v", protocol, compressed), func(t *testing.T) {
 				terminal := "data: [DONE]\n\n"
@@ -44,7 +47,7 @@ func TestSSEClientsReuseConnections(t *testing.T) {
 				defer server.Close()
 				endpoint := "/responses"
 				switch protocol {
-				case "chat":
+				case "chat", "grokbuild":
 					endpoint = "/chat/completions"
 				case "anthropic":
 					endpoint = "/v1/messages"
@@ -61,6 +64,20 @@ func TestSSEClientsReuseConnections(t *testing.T) {
 					client, err = anthropic.New(anthropic.ClientConfig{BaseURL: server.URL, APIKey: "test", HTTPClient: server.Client()})
 				case "codex":
 					client, err = codex.New(codex.ClientConfig{BaseURL: server.URL, APIKey: "test", HTTPClient: server.Client(), StreamTransport: providers.StreamTransportSSE})
+				case "grokbuild":
+					client, err = grokbuild.New(grokbuild.ClientConfig{BaseURL: server.URL, APIKey: "test", HTTPClient: server.Client()})
+				case "xaisub":
+					// Use a disposable credential store, never the developer's login.
+					t.Setenv("WUU_HOME", "")
+					home := t.TempDir()
+					store, storeErr := authstorage.ForHome(home)
+					if storeErr != nil {
+						t.Fatal(storeErr)
+					}
+					if storeErr = store.Set(xaisub.AuthProviderID, authstorage.Credentials{Type: "oauth", AccessToken: "test", ExpiresAt: time.Now().Add(time.Hour)}); storeErr != nil {
+						t.Fatal(storeErr)
+					}
+					client, err = xaisub.New(xaisub.ClientConfig{BaseURL: server.URL, Home: home, HTTPClient: server.Client(), StreamTransport: providers.StreamTransportSSE})
 				default:
 					client, err = openai.New(openai.ClientConfig{BaseURL: server.URL, APIKey: "test", HTTPClient: server.Client(), WireAPI: protocol, ResponsesTransport: providers.StreamTransportSSE})
 				}

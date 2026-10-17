@@ -156,7 +156,7 @@ Connect 和 Refresh 能覆盖尚在排队的启动任务。它不使用真实凭
 ### 服务商延迟评估
 
 内置服务商分别减少连接准备和上传工作：每个服务商持有一个流式 HTTP 客户端与连接池；
-Codex 凭证适配器共享连接池，但逐请求重建认证信息。自定义 HTTP transport 保留代理与
+Codex、Grok Build 和 SuperGrok 凭证适配器共享连接池，但逐请求重建认证信息。自定义 HTTP transport 保留代理与
 超时行为。Codex `auto` 可复用预热的 WebSocket，并在兼容续接时只发送历史增量。
 gzip 仍是按端点显式开启的 HTTP 请求体实验；API 格式兼容不代表支持压缩。
 这些机制保留载荷语义、取消与提交计量约束，运行边界见

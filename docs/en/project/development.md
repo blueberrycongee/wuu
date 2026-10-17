@@ -198,8 +198,8 @@ another evidence directory.
 ### Provider latency evaluation
 
 The built-in provider path minimizes setup and upload work independently: one
-streaming HTTP client per provider owns its pool; Codex credential adapters share
-that pool while rebuilding authentication per request. Custom HTTP transports
+streaming HTTP client per provider owns its pool; Codex, Grok Build and SuperGrok
+credential adapters share that pool while rebuilding authentication per request. Custom HTTP transports
 retain their proxy and deadline behavior. Codex `auto` can reuse a prewarmed
 WebSocket and send a history delta on compatible continuations. Gzip remains an
 explicit endpoint experiment for HTTP bodies; API compatibility alone cannot

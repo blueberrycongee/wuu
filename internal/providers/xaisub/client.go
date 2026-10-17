@@ -26,13 +26,14 @@ type ClientConfig struct {
 // Client uses a Wuu-owned SuperGrok OAuth session as an OpenAI Responses
 // provider while leaving the agent loop in Wuu.
 type Client struct {
-	baseURL         string
-	auth            *OAuthSource
-	headers         map[string]string
-	httpClient      *http.Client
-	streamConfig    *providers.StreamTransportConfig
-	streamTransport providers.StreamTransportMode
-	coordinator     *providers.ProviderCoordinator
+	baseURL          string
+	auth             *OAuthSource
+	headers          map[string]string
+	httpClient       *http.Client
+	streamHTTPClient *http.Client
+	streamConfig     providers.StreamTransportConfig
+	streamTransport  providers.StreamTransportMode
+	coordinator      *providers.ProviderCoordinator
 }
 
 // New creates a SuperGrok subscription-backed provider client.
@@ -49,14 +50,16 @@ func New(cfg ClientConfig) (*Client, error) {
 	if streamTransport == "" {
 		streamTransport = providers.StreamTransportSSE
 	}
+	streamConfig := providers.ResolveStreamTransportConfig(cfg.StreamConfig)
 	return &Client{
-		baseURL:         baseURL,
-		auth:            NewOAuthSource(OAuthConfig{BaseURL: baseURL, Home: home, HTTPClient: cfg.HTTPClient}),
-		headers:         cloneHeaders(cfg.Headers),
-		httpClient:      cfg.HTTPClient,
-		streamConfig:    cfg.StreamConfig,
-		streamTransport: streamTransport,
-		coordinator:     cfg.Coordinator,
+		baseURL:          baseURL,
+		auth:             NewOAuthSource(OAuthConfig{BaseURL: baseURL, Home: home, HTTPClient: cfg.HTTPClient}),
+		headers:          cloneHeaders(cfg.Headers),
+		httpClient:       cfg.HTTPClient,
+		streamConfig:     streamConfig,
+		streamHTTPClient: providers.BuildStreamingHTTPClient(cfg.HTTPClient, streamConfig),
+		streamTransport:  streamTransport,
+		coordinator:      cfg.Coordinator,
 	}, nil
 }
 
@@ -152,15 +155,16 @@ func (c *Client) openAIClient(ctx context.Context, forceRefresh bool) (*openai.C
 		headers["User-Agent"] = userAgent()
 	}
 	client, err := openai.New(openai.ClientConfig{
-		BaseURL:            c.baseURL,
-		WireAPI:            "responses",
-		APIKey:             creds.accessToken,
-		Headers:            headers,
-		HTTPClient:         c.httpClient,
-		StreamConfig:       c.streamConfig,
-		ResponsesTransport: c.streamTransport,
-		Coordinator:        c.coordinator,
-		ProviderScope:      providers.NewProviderScope(c.baseURL, creds.accessToken, ""),
+		BaseURL:             c.baseURL,
+		WireAPI:             "responses",
+		APIKey:              creds.accessToken,
+		Headers:             headers,
+		HTTPClient:          c.httpClient,
+		StreamConfig:        &c.streamConfig,
+		StreamingHTTPClient: c.streamHTTPClient,
+		ResponsesTransport:  c.streamTransport,
+		Coordinator:         c.coordinator,
+		ProviderScope:       providers.NewProviderScope(c.baseURL, creds.accessToken, ""),
 	})
 	if err != nil {
 		return nil, credentials{}, err
