@@ -20,6 +20,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Align native window controls, sidebar toggles, conversation titles, and
   workspace tabs on one shared titlebar row without clipping full-size tabs.
+- Keep Claude provider failures inside the conversation error notice instead of
+  duplicating diagnostics as assistant replies; preserve any useful partial reply
+  and failure details after reopening the conversation.
 - Keep project and branch names identifiable in compact conversation composers
   without reducing text or control sizes.
 - Enable Computer Use by default in macOS development launches, with an explicit

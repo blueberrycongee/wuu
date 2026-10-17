@@ -135,7 +135,8 @@ records the commit, version, checks, notarization submission ID, and final hashe
 These checks do not prove UI behavior or permission retention across updates.
 
 App and DMG uploads return a submission ID before polling begins. The pipeline
-records each ID and archive SHA-256 in `release/notarization/` and retries transient
+records each ID and archive SHA-256 in `release/notarization/`, uploads the
+submission receipt before polling begins, and retries transient
 query failures against that same ID, never by uploading again. Five consecutive
 network failures, a non-transient query failure, rejection, or a 30-minute polling
 limit stops the job. The workflow saves the signed app before contacting Apple,
@@ -148,8 +149,11 @@ run. Successful build jobs are not repeated. Failed app/DMG jobs download their
 original signed checkpoint and the latest receipt from an earlier attempt of that
 run. Archive hashes must match before receipt reuse. Accepted submissions skip
 submission and polling; stapling, ticket validation and Gatekeeper still run.
-Receipts are retained as `app-receipts-<attempt>` and `dmg-receipts-<attempt>` even
-when the job fails. An upload with an unknown outcome is recorded before the
+Receipts are retained as `app-submission-<attempt>` / `dmg-submission-<attempt>`
+before waiting, then `app-receipts-<attempt>` / `dmg-receipts-<attempt>` on success
+or failure. Recovery uses the newest attempt, preferring its final receipt. If
+an earlier Apple step started but no receipt survived, recovery stops for Apple
+history reconciliation instead of assuming nothing was submitted. An upload with an unknown outcome is recorded before the
 request and blocks automatic resubmission until Apple history is reconciled.
 Expired checkpoints require a new build; do not attach an old receipt to new bytes.
 
@@ -167,7 +171,32 @@ to a commit on main, and its product versions must match. Product sources stay a
 the tag; release tooling is checked out separately, so no source overlay dirties
 the packaged core. Evidence records the product commit, not the tooling commit.
 This explicit dispatch publishes after all gates pass and does not move the tag.
-Tag pushes also publish. Validation runs create no Release. A partially uploaded
+Tag pushes also publish. Validation runs create no Release.
+
+To reuse signed bytes with newer tooling, also set `checkpoint_run` to a completed
+Release run ID. The prepare job imports its furthest saved checkpoint: a signed
+app skips building/signing, and a signed distribution also skips app notarization
+and packaging. The source run must belong to this repository's Release workflow,
+come from a tag push or manual dispatch, and use tooling from the history of
+`main`. The checkpoint must match the selected product commit and version, bind
+every consumed archive and update manifest, and contain the exact signed DMG
+submitted to Apple. A mismatched or expired checkpoint fails rather than silently
+rebuilding or mixing artifacts.
+
+Imported checkpoints and the latest receipt are saved in the new run as
+`resume-<attempt>-signed-app` or `resume-<attempt>-distribution` before any Apple
+work. This permits recovery from a recovery run without depending on a hidden
+chain of earlier runs. A newer receipt from the current run takes precedence.
+Accepted submissions remain accepted. Ambiguous receipts, or missing receipts
+after an earlier Apple step started, never cause a fresh upload automatically. Every recovery still runs the same ticket,
+Developer ID, Gatekeeper, mounted-DMG and extracted-ZIP validation before
+publication. Submission steps have a 12-minute limit, and polling/package or
+polling/verification steps have a 40-minute limit within their 60-minute jobs,
+leaving room to retain receipts and clean up credentials after a step failure.
+
+`checkpoint_run` does not authorize publication by itself: `release_tag` retains
+its existing meaning. For an older tagged product, provide its matching tag;
+the run will publish only after the gates pass. A partially uploaded
 draft can be resumed; an already-public Release is never overwritten.
 See the [signing reference](../../../desktop/scripts/RELEASE-SIGNING.md).
 

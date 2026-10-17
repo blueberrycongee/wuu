@@ -19,6 +19,14 @@ async function main() {
   const builder = args => run('node_modules/.bin/electron-builder', ['--config', script('release-builder.cjs'), '--mac', ...args, '--arm64', '--publish=never', '--config.electronDist=node_modules/electron/dist']);
   mkdirSync(root, { recursive: true });
   switch (process.argv[2]) {
+    case 'submit-app':
+    case 'submit-dmg': {
+      const isApp = process.argv[2] === 'submit-app';
+      verifyCheckpoint(root, identity(isApp ? 'signed-app' : 'distribution'));
+      await notarizeArchive(join(root, isApp ? 'signed-app.zip' : 'signed-dmg.dmg'),
+        join(root, `notarization/${isApp ? 'app' : 'dmg'}.json`), { submitOnly: true });
+      break;
+    }
     case 'sign-app': {
       checkReleaseSigning();
       builder(['dir']);
@@ -54,7 +62,7 @@ async function main() {
       run(process.execPath, [script('verify-mac-artifacts.cjs')]);
       run('unzip', ['-t', join(root, 'wuu-mac-arm64.zip')]);
       break;
-    default: throw new Error('Expected sign-app, package or verify');
+    default: throw new Error('Expected sign-app, submit-app, package, submit-dmg or verify');
   }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
