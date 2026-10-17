@@ -26,7 +26,7 @@ describe("ToolActivityPresenter", () => {
   it("adapts only public fields, preserves raw arguments, and deeply freezes structured data", () => {
     const item = toolItem({
       seq: 9,
-      source_id: "private-source",
+      source_id: "provider-call",
       arguments: '{"unfinished":',
       result: "done",
       result_detail: {
@@ -41,6 +41,7 @@ describe("ToolActivityPresenter", () => {
     expect(snapshot).toEqual({
       contractVersion: 1,
       id: "call",
+      callId: "provider-call",
       toolName: "echo",
       capability: "tool.echo",
       kind: "test",

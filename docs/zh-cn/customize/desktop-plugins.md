@@ -54,6 +54,8 @@ Presenter 接收 `contractVersion`、目标、可选匹配键、公开 `snapshot
 
 工具活动 Presenter 定制执行摘要和控件。富结果正文由宿主单独放置：`inline` 输出位于回答之前，`turn_end` 输出位于回答之后。应使用 `tool-result` renderer 定制这些正文，而不是在工具活动 Presenter 中重复渲染 `structuredResult.content`。
 
+工具 Presenter 在折叠的原生过程组之间保持可见。快照可提供 `threadId`、`callId` 和 `locale`；渲染条目 ID 与提供商调用 ID 不同时，`callId` 标识后者。消息快照还可包含 `origin`、`sourceName`、`relatedSessionId`、`presentationKind` 和 `locale`。插件替换其他会话的通知或读取记录前，必须验证归属。重新打开已有 View 时，传入的 `context` 会在激活前更新。
+
 ## View、卡片和状态
 
 View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、`inspector`、`settings` 或 `overlay`。`registerViewPlacement` 请求初始位置；manifest 的 `contributes.navigation`、`workspaceTools`、`settingsPages` 为用户提供宿主管理的打开入口，每个入口都必须引用该插件注册的视图。

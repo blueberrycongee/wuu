@@ -54,6 +54,8 @@ For example, `conversation.composer.set-draft` accepts a string; attachment remo
 
 Tool activity presenters customize execution summaries and controls. Rich result bodies have separate host-owned placement: `inline` output precedes the answer and `turn_end` output follows it. Use a `tool-result` renderer for those bodies instead of rendering `structuredResult.content` again inside the activity presenter.
 
+Tool presenters remain visible between folded native process groups. Their snapshots include optional `threadId`, `callId`, and `locale`; `callId` identifies the provider call when the rendered item has a different ID. Item snapshots can include `origin`, `sourceName`, `relatedSessionId`, `presentationKind`, and `locale`. Plugins must verify ownership before replacing another session's notification or reading its records. Reopening an existing view with `context` updates its context before activation.
+
 ## Views, cards, and status
 
 A view is a registered component placed in `navigation`, `primary`, `auxiliary`, `inspector`, `settings`, or `overlay`. `registerViewPlacement` requests an initial placement. Manifest entries in `contributes.navigation`, `workspaceTools`, or `settingsPages` give users a host-owned way to open the view; each must refer to a view registered by that plugin.

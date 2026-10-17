@@ -56,15 +56,14 @@ describe("first-party desktop plugin lifecycle", () => {
       });
     }
 
-    expect(host.getComposerStatusSources().map((item) => item.pluginId)).toEqual([
-      "subagent",
-    ]);
+    expect(host.getComposerStatusSources()).toEqual([]);
     expect(host.getSlotSnapshot("composer.toolbar")).toEqual([]);
     expect(host.getViewTypes().map((item) => `${item.pluginId}:${item.id}`)).toEqual([
       "automation:automation.catalog",
       "dream:dream.settings",
       "memory:memory.settings",
       "subagent:subagent.settings",
+      "subagent:subagent.tasks",
     ]);
     expect(host.getNavigationEntries().map((item) => `${item.pluginId}:${item.view}`)).toEqual([
       "automation:automation.catalog",
@@ -78,7 +77,7 @@ describe("first-party desktop plugin lifecycle", () => {
       "todo:current-todo",
     ]);
     expect(host.getPresenters("conversation.tool-activity", "todo").at(-1)?.pluginId).toBe("todo");
-    expect(document.head.querySelectorAll("style[data-wuu-plugin-id]")).toHaveLength(5);
+    expect(document.head.querySelectorAll("style[data-wuu-plugin-id]")).toHaveLength(6);
 
     for (const pluginId of firstPartyPluginIds) {
       host.disable(pluginId);
@@ -116,7 +115,7 @@ describe("first-party desktop plugin lifecycle", () => {
     expect(host.isGenerationActive(pluginId, "old-generation")).toBe(false);
     expect(host.isGenerationActive(pluginId, "new-generation")).toBe(true);
     expect(document.head.querySelector(`style[data-wuu-plugin-id="${pluginId}"][data-wuu-plugin-generation="old-generation"]`)).toBeNull();
-    expect(document.head.querySelectorAll(`style[data-wuu-plugin-id="${pluginId}"][data-wuu-plugin-generation="new-generation"]`)).toHaveLength(1);
+    expect(document.head.querySelectorAll(`style[data-wuu-plugin-id="${pluginId}"][data-wuu-plugin-generation="new-generation"]`)).toHaveLength(pluginId === "subagent" ? 2 : 1);
     expect([
       ...host.getComposerStatusSources(),
       ...host.getSlotSnapshot("composer.toolbar"),
@@ -125,49 +124,32 @@ describe("first-party desktop plugin lifecycle", () => {
       .toBe(true);
   });
 
-  it("scopes structured subagent status snapshots to the active session", async () => {
+  it("scopes subagent task views to their parent session", async () => {
     const pending = new Map<string, (value: unknown) => void>();
-    let runtimeCalls = 0;
     const host = new PluginHost({
       react: React,
       invokeRuntime: ({ method, input }) => {
-        if (method !== "status.list") {
-          return Promise.reject(new Error(`Unexpected subagent runtime method: ${method}`));
-        }
-        runtimeCalls += 1;
-        const threadId = String((input as { parent_session_id?: string })?.parent_session_id ?? "");
-        return new Promise((resolve) => pending.set(threadId, resolve));
+        if (method !== "status.list") throw new Error(method);
+        return new Promise(resolve => pending.set(String((input as { parent_session_id: string }).parent_session_id), resolve));
       },
     });
     const { manifest, module } = await loadFirstPartyPlugin("subagent");
-    await host.activateGeneration({
-      pluginId: "subagent",
-      generation: "session-status-test",
-      contributions: contributionDeclarations(manifest),
-      register: module.activate,
-    });
-    const source = host.getComposerStatusSources()[0];
-    if (!source) throw new Error("Missing subagent composer status source");
-    const contextA = Object.freeze({ threadId: "thread-a", mainConversation: true as const });
-    const contextB = Object.freeze({ threadId: "thread-b", mainConversation: true as const });
-    let updates = 0;
-    const cleanup = source.subscribe(contextA, () => { updates += 1; });
+    await host.activateGeneration({ pluginId: "subagent", generation: "scoping", contributions: contributionDeclarations(manifest), register: module.activate });
+    const controller = new WorkbenchController(host);
+    const container = document.createElement("div");
+    const root = createRoot(container);
     try {
-      act(() => {
-        host.publishHostEvent({ kind: "notification", message: { method: "turn/event" } });
-        host.publishHostEvent({ kind: "notification", message: { method: "turn/usage" } });
-      });
-      expect(runtimeCalls).toBe(1);
+      await act(async () => root.render(React.createElement(PluginViewContent, { controller, pluginId: "subagent", viewTypeId: "subagent.tasks", context: { parent: "thread-a" } })));
+      await act(async () => root.render(React.createElement(PluginViewContent, { controller, pluginId: "subagent", viewTypeId: "subagent.tasks", context: { parent: "thread-b" } })));
       await act(async () => {
         pending.get("thread-a")?.({ sessions: [{ session_id: "child-a", name: "from-a", state: "running" }] });
+        pending.get("thread-b")?.({ sessions: [{ session_id: "child-b", name: "from-b", state: "running" }] });
       });
-      expect(updates).toBe(1);
-      expect(source.getSnapshot(contextA)).toMatchObject([
-        { id: "child-a", label: "from-a", state: "running", action: { kind: "open-session", sessionId: "child-a" } },
-      ]);
-      expect(source.getSnapshot(contextB)).toEqual([]);
+      expect(container.textContent).toContain("from-b");
+      expect(container.textContent).not.toContain("from-a");
     } finally {
-      cleanup();
+      act(() => root.unmount());
+      controller.dispose();
       host.disable("subagent");
     }
   });

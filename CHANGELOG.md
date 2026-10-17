@@ -8,6 +8,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Open named subagents and completion notifications from the conversation in a right-side panel with active/finished tasks and paged saved work records.
+
 ### Fixed
 
 - Keep the macOS Dock icon visible when the desktop pet is enabled.

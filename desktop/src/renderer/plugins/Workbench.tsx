@@ -52,6 +52,8 @@ export interface WorkbenchServices {
   reportError?(pluginId: string, generation: string, error: unknown): void;
   /** Ask the shell to reveal a placement region (e.g. open a collapsible panel). */
   requestRegionVisible?(region: ViewPlacementRegion): void;
+  /** Release an auxiliary region when its last plugin view closes. */
+  requestRegionHidden?(region: ViewPlacementRegion): void;
 }
 
 export interface WorkbenchSnapshot extends WorkbenchLayoutState {
@@ -145,6 +147,15 @@ export class WorkbenchController {
       const existing = this.state.views.find((view) =>
         view.pluginId === definition.pluginId && view.viewTypeId === definition.id && view.region === region);
       if (existing) {
+        // Reusing a view must also navigate it to the newly requested context.
+        // Omitting context keeps the current selection when merely revealing it.
+        if (options.context !== undefined) {
+          this.replaceState({
+            ...this.state,
+            views: this.state.views.map(view => view.id === existing.id
+              ? Object.freeze({ ...view, context: freezeContext(options.context) }) : view),
+          });
+        }
         this.activateView(existing.id);
         return existing.id;
       }
@@ -171,6 +182,9 @@ export class WorkbenchController {
     const closing = this.state.views.find((view) => view.id === instanceId);
     if (!closing) return;
     const views = this.state.views.filter((view) => view.id !== instanceId);
+    if (closing.region === "auxiliary" && !views.some(view => view.region === closing.region)) {
+      this.services.requestRegionHidden?.(closing.region);
+    }
     const activeViewByRegion = { ...this.state.activeViewByRegion };
     if (activeViewByRegion[closing.region] === instanceId) {
       activeViewByRegion[closing.region] = [...views].reverse().find((view) => view.region === closing.region)?.id;

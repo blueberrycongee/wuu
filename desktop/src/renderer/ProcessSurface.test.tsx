@@ -325,7 +325,7 @@ describe("ProcessSurface", () => {
     expect(container.querySelector(".process-surface")).toBeNull();
   });
 
-  it("dispatches matching presenter rows in an expanded multi-tool timeline", async () => {
+  it("keeps matching presenter rows outside the folded native tool group", async () => {
     await desktopPluginHost.activateGeneration({
       pluginId: "test:tool-activity-presenter",
       generation: "one",
@@ -341,10 +341,9 @@ describe("ProcessSurface", () => {
     presented.display = { capability: "activity.read" };
     const native = makeReadFile("tool-2", "b.ts");
     const { container } = render({ processItems: [presented, native], streaming: false });
-    setProcessFoldOpen(container.querySelector("details"), true);
-
     expect(container.querySelector("[data-timeline-presenter=tool-1]")).toBeTruthy();
-    expect(container.querySelectorAll(".activity-timeline-item")).toHaveLength(1);
+    expect(container.querySelector("[data-timeline-presenter=tool-1]")?.closest("details")).toBeNull();
+    expect(container.querySelectorAll(".process-surface")).toHaveLength(1);
   });
 
   it("keeps the same surface node when items grow from one to many (no unmount)", () => {
