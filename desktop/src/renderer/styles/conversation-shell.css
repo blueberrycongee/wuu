@@ -155,6 +155,7 @@
 .app-shell {
   /* Share the canvas edge with the sibling sidebar resize target. */
   --conversation-pane-inset: clamp(0px, calc(2vw - var(--space-2)), var(--space-2));
+  --conversation-canvas-radius: min(var(--radius-lg), calc(var(--conversation-pane-inset) * 2));
 }
 
 .conversation-pane {
@@ -179,7 +180,7 @@
         var(--environment-panel-edge-gap) + var(--environment-panel-flow-gap) +
         var(--environment-panel-flow-gap) - 100vw + var(--sidebar-width, 0px) +
         var(--workspace-right-panel-reserved-width, 0px) +
-        var(--conversation-pane-inset)
+        var(--conversation-pane-inset) * 2
     ),
     var(--environment-panel-reserved-width)
   );
@@ -197,8 +198,15 @@
   overflow: hidden;
   background: transparent;
   margin: 0 0 var(--conversation-pane-inset) var(--conversation-pane-inset);
-  border-radius: min(var(--radius-lg), calc(var(--conversation-pane-inset) * 2));
-  transition: grid-template-columns var(--environment-panel-motion-duration) var(--environment-panel-motion-easing);
+  border-radius: var(--conversation-canvas-radius);
+  transition:
+    grid-template-columns var(--environment-panel-motion-duration) var(--environment-panel-motion-easing),
+    border-radius var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
+}
+
+.app-shell.right-panel-open:not(.workspace-conversation-active) .conversation-pane {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 /* Paint the top inset independently of the titlebar so native chrome keeps
@@ -264,9 +272,8 @@
   --conversation-visible-inset-right: var(--environment-panel-content-inset);
 }
 
-/* The workspace tab strip keeps its rule. The conversation titlebar shares
- * the canvas with the messages that scroll under it, so it draws no edge of
- * its own. */
+/* Both headers share the same row height and continuous baseline. */
+.titlebar,
 .workspace-panel-tabbar {
   box-shadow: inset 0 -1px 0 var(--hairline-soft);
 }

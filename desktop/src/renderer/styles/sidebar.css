@@ -50,8 +50,11 @@
   min-width: 0;
   min-height: 0;
   height: 100%;
-  overflow: hidden;
+  /* Keep the fixed-width closing panel out of the outer canvas gutter. */
+  overflow: clip;
+  overflow-clip-margin: content-box;
   background: var(--sidebar-material-fill);
+  padding-right: var(--conversation-pane-inset);
 }
 
 .app-shell.sidebar-animating {
@@ -74,7 +77,7 @@
 .shell-right-sidebar-toggle {
   position: absolute;
   top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
-  right: max(var(--control-toolbar-inset), var(--window-controls-inset-right));
+  right: calc(var(--conversation-pane-inset) + max(var(--control-toolbar-inset), var(--window-controls-inset-right)));
   z-index: 151;
   -webkit-app-region: no-drag;
 }
@@ -117,7 +120,8 @@
 .app-shell .workspace-right-panel[data-sheet="open"],
 .app-shell .workspace-right-panel[data-sheet="parked"] {
   position: fixed;
-  inset: 0 0 0 var(--workspace-sheet-left, 0px);
+  inset: 0 var(--conversation-pane-inset) 0 calc(var(--workspace-sheet-left, 0px) + var(--conversation-pane-inset));
+  clip-path: inset(var(--conversation-pane-inset) 0 0 round var(--conversation-canvas-radius));
   /* Above the conversation, below an open sidebar drawer. A docked sidebar
    * remains outside the sheet's left edge and stays interactive. */
   z-index: 130;
@@ -220,7 +224,7 @@
  * the tabbar's buttons opt out via the `.workspace-panel-tabbar button`
  * rule in workspace.css. */
 .app-shell.right-panel-globalized.sidebar-collapsed .workspace-panel-tabbar {
-  padding-left: var(--window-titlebar-leading-inset);
+  padding-left: calc(var(--window-titlebar-leading-inset) - var(--conversation-pane-inset));
   -webkit-app-region: drag;
 }
 
@@ -246,7 +250,7 @@
     10px,
     calc(
       var(--window-controls-inset-left) -
-        (100vw - var(--workspace-right-panel-width, 360px))
+        (100vw - var(--conversation-pane-inset) - var(--workspace-right-panel-width, 360px))
     ),
     max(10px, var(--window-controls-inset-left))
   );
@@ -657,7 +661,7 @@
 .app-shell.resizing-sidebar.right-panel-open:not(.right-panel-globalized) .workspace-right-panel {
   position: absolute;
   top: 0;
-  right: 0;
+  right: var(--conversation-pane-inset);
   bottom: 0;
   width: var(--workspace-right-panel-width, 360px);
   transition: none;
@@ -666,7 +670,7 @@
 .workspace-right-panel-resizer {
   position: absolute;
   top: 0;
-  right: calc(var(--workspace-right-panel-width, 360px) - 5px);
+  right: calc(var(--conversation-pane-inset) + var(--workspace-right-panel-width, 360px) - 5px);
   bottom: 0;
   z-index: 18;
   width: 10px;
