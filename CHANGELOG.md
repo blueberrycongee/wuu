@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Clarify Next message settings with aligned model and reasoning controls, an
+  inline suggestion example, keyboard hints, and a separate save area. Adapt the
+  layout to narrow windows and larger text in light and dark themes.
+
 ### Fixed
 
 - Keep the context compaction ring on the process summary line when a long

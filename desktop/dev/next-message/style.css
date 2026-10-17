@@ -1,0 +1,8 @@
+html, body, #root { width: 100%; height: 100%; margin: 0; }
+body { background: var(--paper); }
+.preview-main { height: 100%; }
+.preview-main .settings-titlebar { padding-inline: var(--space-6); }
+.preview-main .settings-scroll { flex: 1; }
+.preview-main .settings-page { padding-top: var(--space-6); }
+.preview-theme { border: 0; border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); background: transparent; color: var(--ink-soft); font: inherit; cursor: pointer; }
+.preview-theme:hover { background: var(--surface-2); }
