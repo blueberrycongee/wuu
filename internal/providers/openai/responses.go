@@ -99,8 +99,7 @@ func (c *Client) responsesStreamChatSSE(ctx context.Context, payload responsesRe
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	streamClient := newStreamingHTTPClient(c.httpClient, c.streamConfig)
-	resp, lease, err := c.doSingleResponsesRequest(ctx, streamClient, body, true, payload.ExtraHeaders, payload.Attempt, payload.SubmissionReason)
+	resp, lease, err := c.doSingleResponsesRequest(ctx, c.streamHTTPClient, body, true, payload.ExtraHeaders, payload.Attempt, payload.SubmissionReason)
 	if err != nil {
 		return nil, err
 	}

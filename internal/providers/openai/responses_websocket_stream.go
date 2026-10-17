@@ -422,7 +422,7 @@ func (c *Client) responsesWebSocketDial(ctx context.Context, wsURL string, extra
 	headers.Set("OpenAI-Beta", CodexWebSocketBetaTag)
 	return (CodexWebSocketDialer{
 		ConnectTimeout: c.streamConfig.ConnectTimeout,
-		HTTPClient:     newStreamingHTTPClient(c.httpClient, c.streamConfig),
+		HTTPClient:     c.streamHTTPClient,
 	}).dialCodexWebSocket(ctx, wsURL, headers)
 }
 

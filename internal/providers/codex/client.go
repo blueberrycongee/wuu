@@ -43,7 +43,8 @@ type Client struct {
 	auth             *OAuthSource
 	headers          map[string]string
 	httpClient       *http.Client
-	streamConfig     *providers.StreamTransportConfig
+	streamHTTPClient *http.Client
+	streamConfig     providers.StreamTransportConfig
 	streamTransport  providers.StreamTransportMode
 	coordinator      *providers.ProviderCoordinator
 	wsCache          *openai.ResponsesWebSocketCache
@@ -80,12 +81,14 @@ func New(cfg ClientConfig) (*Client, error) {
 	if cfg.NativeCompaction != nil {
 		nativeCompaction = *cfg.NativeCompaction
 	}
+	streamConfig := providers.ResolveStreamTransportConfig(cfg.StreamConfig)
 	return &Client{
 		baseURL:          baseURL,
 		auth:             NewOAuthSource(OAuthConfig{BaseURL: baseURL, APIKey: cfg.APIKey, Home: home, HTTPClient: cfg.HTTPClient, ReuseCodexCredentials: cfg.ReuseCodexCredentials}),
 		headers:          cloneHeaders(cfg.Headers),
 		httpClient:       cfg.HTTPClient,
-		streamConfig:     cfg.StreamConfig,
+		streamConfig:     streamConfig,
+		streamHTTPClient: providers.BuildStreamingHTTPClient(cfg.HTTPClient, streamConfig),
 		streamTransport:  streamTransport,
 		coordinator:      cfg.Coordinator,
 		wsCache:          openai.NewResponsesWebSocketCache(),
@@ -320,7 +323,8 @@ func (c *Client) openAIClient(ctx context.Context, forceRefresh bool) (*openai.C
 		APIKey:                  creds.accessToken,
 		Headers:                 headers,
 		HTTPClient:              c.httpClient,
-		StreamConfig:            c.streamConfig,
+		StreamConfig:            &c.streamConfig,
+		StreamingHTTPClient:     c.streamHTTPClient,
 		ResponsesStore:          &store,
 		ResponsesTransport:      c.streamTransport,
 		ResponsesWebSocketCache: c.wsCache,

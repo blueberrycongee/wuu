@@ -122,6 +122,7 @@ type Client struct {
 	authToken                       string
 	headers                         map[string]string
 	httpClient                      *http.Client
+	streamHTTPClient                *http.Client
 	maxTokens                       int
 	streamConfig                    providers.StreamTransportConfig
 	coordinator                     *providers.ProviderCoordinator
@@ -153,6 +154,7 @@ func New(cfg ClientConfig) (*Client, error) {
 		providerScope = providers.NewProviderScope(cfg.BaseURL, credential, "")
 	}
 
+	streamConfig := streamTransportConfig(cfg.StreamConfig)
 	return &Client{
 		baseURL:                         strings.TrimRight(cfg.BaseURL, "/"),
 		messagesURL:                     anthropicMessagesURL(cfg.BaseURL),
@@ -160,8 +162,9 @@ func New(cfg ClientConfig) (*Client, error) {
 		authToken:                       cfg.AuthToken,
 		headers:                         cloneHeaders(cfg.Headers),
 		httpClient:                      hc,
+		streamHTTPClient:                providers.BuildStreamingHTTPClient(hc, streamConfig),
 		maxTokens:                       maxTokens,
-		streamConfig:                    streamTransportConfig(cfg.StreamConfig),
+		streamConfig:                    streamConfig,
 		coordinator:                     cfg.Coordinator,
 		providerScope:                   providerScope,
 		cacheCreationInputTokensOmitted: cfg.CacheCreationInputTokensOmitted,
@@ -339,7 +342,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	sseClient := providers.BuildStreamingHTTPClient(c.httpClient, c.streamConfig)
+	sseClient := c.streamHTTPClient
 	// Use the single-attempt request — ReliableStreamClient handles retries
 	// with proper UI feedback at the caller layer.
 	providers.DebugLogf("StreamChat: sending %d bytes to %s/v1/messages (max_tokens=%d, model=%s, msgs=%d)",

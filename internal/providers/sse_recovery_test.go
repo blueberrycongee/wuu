@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,8 +17,90 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/anthropic"
+	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
 )
+
+// Completed turns must reuse the transport pool, including Codex's per-turn
+// credential adapter and the client wrapper used for compressed redirects.
+func TestSSEClientsReuseConnections(t *testing.T) {
+	for _, protocol := range []string{"chat", "responses", "anthropic", "codex"} {
+		for _, compressed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/gzip=%v", protocol, compressed), func(t *testing.T) {
+				terminal := "data: [DONE]\n\n"
+				if protocol == "anthropic" {
+					terminal = "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+				}
+				var calls atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls.Add(1)
+					if got := r.Header.Get("Content-Encoding") == "gzip"; got != compressed {
+						t.Errorf("gzip=%v, want %v", got, compressed)
+					}
+					_, _ = io.Copy(io.Discard, r.Body)
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprint(w, terminal)
+				}))
+				defer server.Close()
+				endpoint := "/responses"
+				switch protocol {
+				case "chat":
+					endpoint = "/chat/completions"
+				case "anthropic":
+					endpoint = "/v1/messages"
+				}
+				optIn := ""
+				if compressed {
+					optIn = server.URL + endpoint
+				}
+				t.Setenv("WUU_EXPERIMENTAL_REQUEST_GZIP_ENDPOINTS", optIn)
+				var client providers.StreamClient
+				var err error
+				switch protocol {
+				case "anthropic":
+					client, err = anthropic.New(anthropic.ClientConfig{BaseURL: server.URL, APIKey: "test", HTTPClient: server.Client()})
+				case "codex":
+					client, err = codex.New(codex.ClientConfig{BaseURL: server.URL, APIKey: "test", HTTPClient: server.Client(), StreamTransport: providers.StreamTransportSSE})
+				default:
+					client, err = openai.New(openai.ClientConfig{BaseURL: server.URL, APIKey: "test", HTTPClient: server.Client(), WireAPI: protocol, ResponsesTransport: providers.StreamTransportSSE})
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				var reused atomic.Int32
+				for i := 0; i < 3; i++ {
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
+						if info.Reused {
+							reused.Add(1)
+						}
+					}})
+					events, err := client.StreamChat(ctx, providers.ChatRequest{Model: "test", Messages: []providers.ChatMessage{{Role: "user", Content: strings.Repeat("synthetic record ", 5000)}}})
+					if err != nil {
+						cancel()
+						t.Fatal(err)
+					}
+					done := 0
+					for event := range events {
+						if event.Type == providers.EventError {
+							t.Error(event.Error)
+						}
+						if event.Type == providers.EventDone {
+							done++
+						}
+					}
+					cancel()
+					if done != 1 {
+						t.Fatalf("terminal events=%d", done)
+					}
+				}
+				if calls.Load() != 3 || reused.Load() != 2 {
+					t.Fatalf("requests=%d reused=%d; want 3 requests on one connection", calls.Load(), reused.Load())
+				}
+			})
+		}
+	}
+}
 
 func TestSSEClientsRecoverTruncatedEvent(t *testing.T) {
 	for _, protocol := range []string{"chat", "responses", "anthropic"} {

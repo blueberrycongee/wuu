@@ -35,10 +35,6 @@ func streamConnectTimeout() time.Duration {
 	return streamTransportConfig(nil).ConnectTimeout
 }
 
-func newStreamingHTTPClient(base *http.Client, cfg providers.StreamTransportConfig) *http.Client {
-	return providers.BuildStreamingHTTPClient(base, cfg)
-}
-
 func normalizeWireAPI(value string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", wireAPIChat:
@@ -93,12 +89,16 @@ func isFirstPartyOpenAIBaseURL(raw string) bool {
 
 // ClientConfig configures an OpenAI-compatible endpoint.
 type ClientConfig struct {
-	DisableVideoInput       bool
-	BaseURL                 string
-	WireAPI                 string
-	APIKey                  string
-	Headers                 map[string]string
-	HTTPClient              *http.Client
+	DisableVideoInput bool
+	BaseURL           string
+	WireAPI           string
+	APIKey            string
+	Headers           map[string]string
+	HTTPClient        *http.Client
+	// StreamingHTTPClient shares a preconfigured pool across credential adapters.
+	// When set, its transport deadlines must match StreamConfig and Timeout must
+	// be zero. Otherwise New builds and owns a streaming client from HTTPClient.
+	StreamingHTTPClient     *http.Client
 	StreamConfig            *providers.StreamTransportConfig
 	Coordinator             *providers.ProviderCoordinator
 	ProviderScope           providers.ProviderScope
@@ -115,6 +115,7 @@ type Client struct {
 	apiKey             string
 	headers            map[string]string
 	httpClient         *http.Client
+	streamHTTPClient   *http.Client
 	reasoningFormat    reasoningEffortFormat
 	streamConfig       providers.StreamTransportConfig
 	coordinator        *providers.ProviderCoordinator
@@ -154,6 +155,12 @@ func New(cfg ClientConfig) (*Client, error) {
 		providerScope = providers.NewProviderScope(cfg.BaseURL, cfg.APIKey, openAIOrganization(cfg.Headers))
 	}
 
+	streamConfig := streamTransportConfig(cfg.StreamConfig)
+	streamClient := cfg.StreamingHTTPClient
+	if streamClient == nil {
+		streamClient = providers.BuildStreamingHTTPClient(hc, streamConfig)
+	}
+
 	return &Client{
 		disableVideoInput:  cfg.DisableVideoInput,
 		baseURL:            strings.TrimRight(cfg.BaseURL, "/"),
@@ -161,8 +168,9 @@ func New(cfg ClientConfig) (*Client, error) {
 		apiKey:             cfg.APIKey,
 		headers:            cloneHeaders(cfg.Headers),
 		httpClient:         hc,
+		streamHTTPClient:   streamClient,
 		reasoningFormat:    detectReasoningEffortFormat(cfg.BaseURL),
-		streamConfig:       streamTransportConfig(cfg.StreamConfig),
+		streamConfig:       streamConfig,
 		coordinator:        cfg.Coordinator,
 		providerScope:      providerScope,
 		responsesStore:     cfg.ResponsesStore,
@@ -413,8 +421,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	// Let the caller's ctx and the idle watchdog own cancellation instead.
 	// Use the single-attempt request — ReliableStreamClient handles retries
 	// with proper UI feedback at the caller layer.
-	streamClient := newStreamingHTTPClient(c.httpClient, c.streamConfig)
-	resp, lease, err := c.doSingleChatCompletionsRequest(ctx, streamClient, body, true, req.Attempt)
+	resp, lease, err := c.doSingleChatCompletionsRequest(ctx, c.streamHTTPClient, body, true, req.Attempt)
 	if err != nil {
 		return nil, err
 	}
