@@ -372,8 +372,8 @@ jobs:
           node desktop/node_modules/electron/install.js
       - name: Require a working Linux filesystem sandbox
         run: |
-          go test -json ./internal/processsandbox -run '^TestLinuxFilesystemBoundary$' -count=1 > linux-sandbox.json
-          node -e 'const e=require("fs").readFileSync("linux-sandbox.json","utf8").trim().split("\n").map(JSON.parse); const cases=e.filter(x=>x.Test?.startsWith("TestLinuxFilesystemBoundary/") && x.Action==="pass"); if(e.some(x=>x.Action==="skip") || cases.length!==5) throw Error("Linux release requires all five Landlock boundary cases, with no skips")'
+          go test -json ./internal/processsandbox -run '^TestLinuxFilesystemBoundary$' -count=1 > "$RUNNER_TEMP/linux-sandbox.json"
+          node -e 'const e=require("fs").readFileSync(require("path").join(process.env.RUNNER_TEMP,"linux-sandbox.json"),"utf8").trim().split("\n").map(JSON.parse); const cases=e.filter(x=>x.Test?.startsWith("TestLinuxFilesystemBoundary/") && x.Action==="pass"); if(e.some(x=>x.Action==="skip") || cases.length!==5) throw Error("Linux release requires all five Landlock boundary cases, with no skips")'
       - name: Build and verify Linux artifacts
         run: npm --prefix desktop run release:linux
       - name: Launch both extracted packages with sandboxing
@@ -396,7 +396,7 @@ jobs:
           name: linux-package-evidence
           path: |
             desktop/release/linux-package-evidence/
-            linux-sandbox.json
+            ${{ runner.temp }}/linux-sandbox.json
           if-no-files-found: ignore
           retention-days: 30
 
