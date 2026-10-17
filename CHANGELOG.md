@@ -10,6 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep workspace and branch names aligned with their icons in narrow composers.
 - Keep the macOS Dock icon visible when the desktop pet is enabled.
 - Restore filled open-state indicators for the left and right desktop sidebar
   toggle icons.
