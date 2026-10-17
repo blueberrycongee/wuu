@@ -18,8 +18,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Align sidebar resize feedback with the conversation canvas's rounded corners
-  and keep docked panel dividers within its vertical insets.
+- Show a local edge light on sidebar hover and the full boundary line while
+  focused or resizing, both inside the conversation canvas's rounded corners.
+  Inset docked panel dividers to the same height.
 - Enable Computer Use by default in macOS development launches, with an explicit
   `WUU_ENABLE_CUA_MAC=0` override to disable it.
 - Match settings navigation, account controls, and sidebar drag-and-drop surfaces

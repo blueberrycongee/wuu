@@ -576,6 +576,7 @@ export function App(): JSX.Element {
     animateRightPanelLayout,
     animateSidebarLayout,
     startSidebarResize,
+    trackSidebarResizerPointer,
     startRightPanelResize,
     handleRightPanelSeparatorKey,
     resetWorkspaceRightPanelWidth,
@@ -5651,6 +5652,8 @@ export function App(): JSX.Element {
             aria-valuenow={sidebarWidth}
             tabIndex={0}
             onPointerDown={startSidebarResize}
+            onPointerEnter={trackSidebarResizerPointer}
+            onPointerMove={trackSidebarResizerPointer}
             onDoubleClick={toggleSidebar}
             onKeyDown={handleSidebarSeparatorKey}
           />

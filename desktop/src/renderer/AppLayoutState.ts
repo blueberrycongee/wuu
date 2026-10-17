@@ -305,6 +305,7 @@ export function useAppLayoutState({
   animateRightPanelLayout: () => void;
   animateSidebarLayout: () => void;
   startSidebarResize: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  trackSidebarResizerPointer: (event: ReactPointerEvent<HTMLDivElement>) => void;
   startRightPanelResize: (event: ReactPointerEvent<HTMLDivElement>) => void;
   handleRightPanelSeparatorKey: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
   resetWorkspaceRightPanelWidth: () => void;
@@ -721,6 +722,19 @@ export function useAppLayoutState({
     setRightPanelAnimating(false);
   }
 
+  function trackSidebarResizerPointer(event: ReactPointerEvent<HTMLDivElement>): void {
+    // The hover light is hidden during a drag, so avoid a layout read on every
+    // pointermove while the width is already changing.
+    if (resizingSidebar) {
+      return;
+    }
+    const bounds = event.currentTarget.getBoundingClientRect();
+    event.currentTarget.style.setProperty(
+      "--sidebar-resizer-pointer-y",
+      `${Math.round(event.clientY - bounds.top)}px`
+    );
+  }
+
   function startSidebarResize(event: ReactPointerEvent<HTMLDivElement>): void {
     if (event.button !== 0) {
       return;
@@ -862,6 +876,7 @@ export function useAppLayoutState({
     animateRightPanelLayout: startRightPanelMotion,
     animateSidebarLayout: startSidebarMotion,
     startSidebarResize,
+    trackSidebarResizerPointer,
     startRightPanelResize,
     handleRightPanelSeparatorKey,
     resetWorkspaceRightPanelWidth,
