@@ -196,7 +196,13 @@ export async function activate(api) {
   });
   api.registerLocale({ id: "next-message-en", locale: "en-US", entries: {
     "nextMessage.title": "Next message",
-    "nextMessage.help": "After a reply, suggest a message in the empty composer. Tab inserts it; Escape dismisses it.",
+    "nextMessage.help": "After a reply, suggest a follow-up in the empty composer. You decide what to send.",
+    "nextMessage.preview": "Example",
+    "nextMessage.example": "Help me turn this into a concrete plan",
+    "nextMessage.accept": "Insert draft",
+    "nextMessage.dismiss": "Dismiss",
+    "nextMessage.modelDescription": "A fast, lightweight model works well here.",
+    "nextMessage.variantDescription": "Lower reasoning levels keep suggestions quick.",
     "nextMessage.model": "Suggestion model", "nextMessage.choose": "Choose a model",
     "nextMessage.variant": "Reasoning level", "nextMessage.defaultVariant": "Model default",
     "nextMessage.fixedVariant": "Set by the model alias",
@@ -217,7 +223,13 @@ export async function activate(api) {
   } });
   api.registerLocale({ id: "next-message-zh", locale: "zh-CN", entries: {
     "nextMessage.title": "下一句建议",
-    "nextMessage.help": "回复完成后，在空输入框显示建议。Tab 填入草稿，Escape 取消。",
+    "nextMessage.help": "回复结束后，在空输入框里建议下一句。由你决定是否发送。",
+    "nextMessage.preview": "效果示意",
+    "nextMessage.example": "帮我把这个思路整理成具体的执行计划",
+    "nextMessage.accept": "填入草稿",
+    "nextMessage.dismiss": "忽略建议",
+    "nextMessage.modelDescription": "选择响应快的轻量模型即可。",
+    "nextMessage.variantDescription": "较低的推理档位能更快给出建议。",
     "nextMessage.model": "建议模型", "nextMessage.choose": "选择模型",
     "nextMessage.variant": "推理档位", "nextMessage.defaultVariant": "模型默认",
     "nextMessage.fixedVariant": "由模型别名决定",
@@ -237,10 +249,31 @@ export async function activate(api) {
     "nextMessage.save": "保存更改", "nextMessage.saved": "已保存",
   } });
   api.registerStyle({ id: "next-message-settings", css: `
-    .plugin-next-message .plugin-next-message-model-row { display:grid; width:100%; max-width:48ch; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:var(--space-3); align-items:end; }
-    .plugin-next-message .plugin-next-message-model-help,
-    .plugin-next-message .plugin-next-message-data-summary { color: var(--ink-soft); font-size: var(--font-ui); line-height: 1.5; }
-    @media (max-width: 760px) { .plugin-next-message .plugin-next-message-model-row { grid-template-columns:minmax(0, 1fr); } }
+    .plugin-next-message { container-type: inline-size; }
+    .plugin-next-message .plugin-ui-section { gap: var(--space-6); }
+    .plugin-next-message .plugin-ui-section-header { gap: var(--space-2); }
+    .plugin-next-message .plugin-ui-section-header p { max-width: none; font-size: var(--font-ui); }
+    .plugin-next-message-demo { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--surface-1); }
+    .plugin-next-message-demo-title { color: var(--ink-soft); }
+    .plugin-next-message-demo-composer { display: flex; align-items: baseline; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: 1px solid var(--field-border); border-radius: var(--radius-sm); background: var(--field-bg); color: var(--ink-soft); line-height: 1.6; }
+    .plugin-next-message-demo-composer::before { content: ""; width: 1px; height: 1.15em; flex: 0 0 1px; background: var(--ink); align-self: center; }
+    .plugin-next-message-shortcuts { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); color: var(--ink-soft); }
+    .plugin-next-message-shortcuts span { display: inline-flex; align-items: center; gap: var(--space-2); }
+    .plugin-next-message kbd { padding: 0 var(--space-1); border: 1px solid var(--hairline); border-radius: var(--radius-xs); background: var(--paper); color: var(--ink); font: inherit; line-height: 1.5; }
+    .plugin-next-message-model-row { display: grid; }
+    .plugin-next-message .plugin-ui-field { grid-template-columns: minmax(0, 1fr) minmax(0, var(--settings-control-width, 16em)); align-items: center; gap: var(--space-3) var(--space-6); padding-block: var(--space-4); }
+    .plugin-next-message .plugin-ui-field + .plugin-ui-field { border-top: 1px solid var(--hairline); }
+    .plugin-next-message-field-copy { display: grid; gap: var(--space-1); }
+    .plugin-next-message-field-description,
+    .plugin-next-message-model-help,
+    .plugin-next-message-data-summary { color: var(--ink-soft); font-size: var(--font-ui); line-height: 1.5; }
+    .plugin-next-message .plugin-ui-input { text-overflow: ellipsis; }
+    .plugin-next-message-footer { display: grid; gap: var(--space-4); padding-top: var(--space-5); border-top: 1px solid var(--hairline); }
+    .plugin-next-message-actions { justify-content: flex-end; }
+    .plugin-next-message-actions [role="status"] { color: var(--ink-soft); }
+    .plugin-next-message [role="alert"] { color: var(--danger); overflow-wrap: anywhere; }
+    @container (max-width: 480px) { .plugin-next-message .plugin-ui-field { grid-template-columns: minmax(0, 1fr); } }
+    @media (prefers-reduced-motion: reduce) { .plugin-next-message .plugin-ui-button { transition: none; } }
   ` });
   function Settings({ host, translate: tr }) {
     const levelLabel = (level) => ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(level)
@@ -301,9 +334,18 @@ export async function activate(api) {
     }
     return h(Page, { className: "plugin-next-message" },
       h(Section, { title: tr("nextMessage.title"), description: tr("nextMessage.help") },
+        h("div", { className: "plugin-next-message-demo" },
+          h("span", { className: "plugin-next-message-demo-title" }, tr("nextMessage.preview")),
+          h("div", { className: "plugin-next-message-demo-composer" }, tr("nextMessage.example")),
+          h("div", { className: "plugin-next-message-shortcuts" },
+            h("span", null, h("kbd", null, "Tab"), tr("nextMessage.accept")),
+            h("span", null, h("kbd", null, "Esc"), tr("nextMessage.dismiss")))),
         h("div", { className: "plugin-next-message-model-row" },
-          h("label", { className: "plugin-ui-field" }, h("span", { className: "plugin-ui-field-label" }, tr("nextMessage.model")),
-            h("select", { className: "plugin-ui-input", value: selection ?? "", disabled: busy || selection === null || (models.length === 0 && aliases.length === 0),
+          h("label", { className: "plugin-ui-field" },
+            h("span", { className: "plugin-next-message-field-copy" },
+              h("span", { className: "plugin-ui-field-label" }, tr("nextMessage.model")),
+              h("span", { className: "plugin-next-message-field-description" }, tr("nextMessage.modelDescription"))),
+            h("select", { className: "plugin-ui-input", "aria-label": tr("nextMessage.model"), value: selection ?? "", disabled: busy || selection === null || (models.length === 0 && aliases.length === 0),
               onChange: (event) => {
                 setSelection(event.target.value);
                 const model = models.find((entry) => JSON.stringify([entry.provider, entry.model]) === event.target.value);
@@ -316,8 +358,11 @@ export async function activate(api) {
                   h("option", { key: model.model, value: JSON.stringify([model.provider, model.model]) }, model.label)))),
               aliases.length ? h("optgroup", { label: tr("nextMessage.aliases") }, aliases.map(([name]) =>
                 h("option", { key: name, value: `alias:${name}` }, name))) : null)),
-          h("label", { className: "plugin-ui-field" }, h("span", { className: "plugin-ui-field-label" }, tr("nextMessage.variant")),
-            h("select", { className: "plugin-ui-input", value: selectedAlias ? "" : selectedVariant ?? "",
+          h("label", { className: "plugin-ui-field" },
+            h("span", { className: "plugin-next-message-field-copy" },
+              h("span", { className: "plugin-ui-field-label" }, tr("nextMessage.variant")),
+              h("span", { className: "plugin-next-message-field-description" }, tr("nextMessage.variantDescription"))),
+            h("select", { className: "plugin-ui-input", "aria-label": tr("nextMessage.variant"), value: selectedAlias ? "" : selectedVariant ?? "",
               disabled: busy || variant === null || !selectedModel || availableVariants.length === 0,
               onChange: (event) => { setVariant(event.target.value); setSaved(false); } },
               h("option", { value: "" }, selectedAlias
@@ -328,10 +373,12 @@ export async function activate(api) {
         selectedModel && !validVariant ? h("div", { role: "alert" }, tr("nextMessage.invalidVariant")) : null,
         selectedModel && ["high", "xhigh", "max", "ultra"].includes(selectedVariant)
           ? h("div", { className: "plugin-next-message-model-help" }, tr("nextMessage.slowVariant")) : null,
-        h(Row, null, h(Button, { variant: "primary", disabled: busy || selection === null || (!selectedModel && !selectedAlias) || (selectedModel && !validVariant), onClick: () => void save() }, tr("nextMessage.save")),
-          saved ? h("span", { role: "status" }, tr("nextMessage.saved")) : null,
-          error ? h("span", { role: "alert" }, error) : null),
-        h("div", { className: "plugin-next-message-data-summary" }, tr("nextMessage.dataSummary"))));
+        h("div", { className: "plugin-next-message-footer" },
+          h("div", { className: "plugin-next-message-data-summary" }, tr("nextMessage.dataSummary")),
+          error ? h("div", { role: "alert" }, error) : null,
+          h(Row, { className: "plugin-next-message-actions" },
+            saved ? h("span", { role: "status" }, tr("nextMessage.saved")) : null,
+            h(Button, { variant: "primary", disabled: busy || selection === null || (!selectedModel && !selectedAlias) || (selectedModel && !validVariant), onClick: () => void save() }, tr("nextMessage.save"))))));
   }
   api.registerViewType({ id: "next-message.settings", title: "Next message", icon: "message-square",
     defaultRegion: "settings", persistence: "durable", render: (props) => h(Settings, props) });
