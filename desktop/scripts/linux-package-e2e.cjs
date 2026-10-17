@@ -12,25 +12,16 @@ const output = resolve(process.env.WUU_LINUX_PACKAGE_OUTPUT || join(root, "linux
 const scratch = mkdtempSync(join(tmpdir(), "wuu-linux-package-e2e-"));
 mkdirSync(output, { recursive: true });
 
-function rendererSandbox(processID) {
-  const renderers = [];
-  const visit = pid => {
-    let children;
-    try { children = readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8").trim(); }
-    catch (error) { if (error.code === "ENOENT") return; throw error; }
-    for (const child of children.split(/\s+/).filter(Boolean)) visit(Number(child));
-    let args;
-    try { args = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0"); }
-    catch (error) { if (error.code === "ENOENT") return; throw error; }
-    if (!args.includes("--type=renderer")) return;
+function rendererSandbox(processes) {
+  const renderers = processes.filter(process => process.type === "renderer").map(({ id: pid }) => {
+    const args = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
     const status = readFileSync(`/proc/${pid}/status`, "utf8");
     assert.ok(!args.some(arg => /^--(?:no-sandbox|disable-setuid-sandbox)(?:=|$)/.test(arg)), "Renderer disabled sandboxing");
     const noNewPrivileges = /^NoNewPrivs:\s+1$/m.test(status);
     const seccompFiltering = /^Seccomp:\s+2$/m.test(status);
     assert.ok(noNewPrivileges && seccompFiltering, "Renderer lacks Linux sandbox process restrictions");
-    renderers.push({ pid, noNewPrivileges, seccompFiltering });
-  };
-  visit(processID);
+    return { pid, noNewPrivileges, seccompFiltering };
+  });
   assert.ok(renderers.length, "No packaged renderer process found");
   return renderers;
 }
@@ -64,7 +55,8 @@ async function launch(name, executable, extraEnv = {}) {
       await delay(200);
     }
     assert.ok(page, `${name} did not expose its packaged renderer: ${log}`);
-    socket = new WebSocket(page.webSocketDebuggerUrl);
+    const browser = await fetch(`http://127.0.0.1:${port}/json/version`).then(response => response.json());
+    socket = new WebSocket(browser.webSocketDebuggerUrl);
     await once(socket, "open");
     let id = 0;
     const pending = new Map();
@@ -76,15 +68,16 @@ async function launch(name, executable, extraEnv = {}) {
       if (response.error) request.reject(new Error(JSON.stringify(response.error)));
       else request.resolve(response.result);
     });
-    const send = (method, params = {}) => new Promise((resolve, reject) => {
+    const send = (method, params = {}, sessionId) => new Promise((resolve, reject) => {
       const requestId = ++id;
       const timer = setTimeout(() => { pending.delete(requestId); reject(new Error(`${method} timed out`)); }, 15000);
       pending.set(requestId, { resolve: value => { clearTimeout(timer); resolve(value); }, reject: error => { clearTimeout(timer); reject(error); } });
-      socket.send(JSON.stringify({ id: requestId, method, params }));
+      socket.send(JSON.stringify({ id: requestId, method, params, sessionId }));
     });
+    const { sessionId } = await send("Target.attachToTarget", { targetId: page.id, flatten: true });
     let state;
     while (Date.now() < deadline) {
-      const response = await send("Runtime.evaluate", { expression: `(async () => { if (!window.wuu) return { preload: false }; await window.wuu.initialize(); const onboarding = document.querySelector('[data-testid="first-run-onboarding"]'); const bounds = onboarding?.getBoundingClientRect(); return { text: document.body.innerText, preload: true, onboarding: Boolean(bounds?.width && bounds?.height), build: await window.wuu.getBuildInfo(), updater: await window.wuu.getDesktopUpdateState() }; })()`, awaitPromise: true, returnByValue: true });
+      const response = await send("Runtime.evaluate", { expression: `(async () => { if (!window.wuu) return { preload: false }; await window.wuu.initialize(); const onboarding = document.querySelector('[data-testid="first-run-onboarding"]'); const bounds = onboarding?.getBoundingClientRect(); return { text: document.body.innerText, preload: true, onboarding: Boolean(bounds?.width && bounds?.height), build: await window.wuu.getBuildInfo(), updater: await window.wuu.getDesktopUpdateState() }; })()`, awaitPromise: true, returnByValue: true }, sessionId);
       assert.ok(!response.exceptionDetails, JSON.stringify(response.exceptionDetails));
       state = response.result.value;
       if (state?.preload && state.onboarding) break;
@@ -95,10 +88,11 @@ async function launch(name, executable, extraEnv = {}) {
     assert.equal(state.build?.desktop.version, version, "Packaged desktop version mismatch");
     assert.ok(state.build?.core.version.includes(version), "Packaged core did not initialize");
     assert.equal(state.updater.kind, name === "appimage" ? "idle" : "unsupported", "Wrong package updater");
-    const sandbox = rendererSandbox(child.pid);
-    const screenshot = await send("Page.captureScreenshot", { format: "png" });
+    const screenshot = await send("Page.captureScreenshot", { format: "png" }, sessionId);
     writeFileSync(join(output, `${name}.png`), Buffer.from(screenshot.data, "base64"));
     writeFileSync(join(output, `${name}.json`), JSON.stringify(state, null, 2) + "\n");
+    // Ask this browser for its renderer PIDs; zygote ancestry varies by host.
+    const sandbox = rendererSandbox((await send("SystemInfo.getProcessInfo")).processInfo);
     return { renderer: true, preload: true, core: true, updater: state.updater.kind, build: state.build, sandbox };
   } finally {
     socket?.close();
