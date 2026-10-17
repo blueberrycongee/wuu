@@ -11,7 +11,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Changed
 
 - Frame desktop conversations in a rounded canvas with matching top and bottom
-  insets, a flush right edge, and a lower input box.
+  insets, a flush right edge, and a lower input box. Keep the sidebar resize
+  target aligned with the visible canvas edge.
 
 ## [2026.10.16] - 2026-10-16
 

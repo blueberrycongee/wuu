@@ -152,8 +152,12 @@
   --conversation-activity-gap: 8px;
 }
 
-.conversation-pane {
+.app-shell {
+  /* Share the canvas edge with the sibling sidebar resize target. */
   --conversation-pane-inset: clamp(0px, calc(2vw - var(--space-2)), var(--space-2));
+}
+
+.conversation-pane {
   /* The info card is UI text, so it widens with the text size: 280px at the
    * 14.5px default (App.tsx's room check uses the same ratio), with a 44px
    * gap between the card and the conversation it reserves room beside. */

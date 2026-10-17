@@ -604,6 +604,10 @@
   z-index: 10;
 }
 
+.app-shell > .sidebar-resizer {
+  left: calc(var(--sidebar-width, 296px) + var(--conversation-pane-inset) - 5px);
+}
+
 .sidebar-resizer::before {
   /* Spans the full sidebar height so the hover/drag feedback lights the
    * entire right edge of the left sidebar, not just a short indicator
