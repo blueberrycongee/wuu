@@ -34,6 +34,7 @@ import {
   emptyComposerDraft,
   isThreadPresentationRunning,
   queryTextsForThread,
+  resolveThreadRuntimeContext,
   requestedHandoffIntentForThread,
   turnStreamStatusForThread,
   type AppState,
@@ -53,6 +54,7 @@ import {
 } from "./ComposerView";
 import { ConversationSplitPane } from "./ConversationSplitPane";
 import type { HistoryMessageEditState } from "./ConversationHistoryActions";
+import type { ThreadPendingComposerMessages } from "./ComposerPendingMessages";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { Tooltip } from "./Tooltip";
 import { ViewSwitchLoading } from "./LoadingViews";
@@ -79,6 +81,7 @@ export type ConversationSplitPaneRendererProps = {
   splitComposerDrafts: Record<ConversationPaneID, ComposerDraftState>;
   splitPaneRefs: MutableRefObject<Record<ConversationPaneID, HTMLElement | null>>;
   viewSwitchPending: boolean;
+  pendingComposerMessagesForThread?: (threadID: string) => ThreadPendingComposerMessages;
   stopRequests?: Record<string, "pending" | "retry">;
   submittingThreadIDs?: ReadonlySet<string>;
   historyMessageEdit?: HistoryMessageEditState;
@@ -136,6 +139,7 @@ export function ConversationSplitPaneRenderer({
   splitComposerDrafts,
   splitPaneRefs,
   viewSwitchPending,
+  pendingComposerMessagesForThread,
   stopRequests,
   submittingThreadIDs,
   historyMessageEdit,
@@ -165,15 +169,21 @@ export function ConversationSplitPaneRenderer({
   onCancelUserQuestion,
 }: ConversationSplitPaneRendererProps): JSX.Element {
   const queryHistory = useMemo(() => queryTextsForThread(thread), [thread]);
+  const pending = pendingComposerMessagesForThread?.(thread.id);
+  const completionWorkspace = resolveThreadRuntimeContext(thread, state.projects);
   return (
     <ConversationSplitPane
       pane={pane}
       thread={thread}
       active={state.activePane === pane}
       activeContextCwd={state.activeContext?.cwd}
+      workspaceId={completionWorkspace.kind === "project" ? completionWorkspace.project_id : undefined}
+      workspaceRoot={completionWorkspace.cwd}
       streamStatus={turnStreamStatusForThread(state, thread)}
       draft={splitComposerDrafts[pane] ?? emptyComposerDraft()}
       viewSwitchPending={viewSwitchPending}
+      queuedCount={pending?.queued.length}
+      pendingCount={pending?.guides.length}
       submitting={submittingThreadIDs?.has(thread.id)}
       stopState={stopRequests?.[thread.id]}
       queryHistory={queryHistory}

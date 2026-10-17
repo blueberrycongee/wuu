@@ -112,6 +112,13 @@ export interface SettingsModelAliasV1 {
   readonly variant?: string;
 }
 
+export interface SettingsAvailableModelV1 {
+  readonly provider: string;
+  readonly model: string;
+  readonly label: string;
+  readonly variants: readonly string[];
+}
+
 export interface SettingsValueMapV1 {
   readonly "runtime.modelAliases": Readonly<Record<string, SettingsModelAliasV1>>;
 }
@@ -123,6 +130,7 @@ export interface SettingsPageHostAPI {
   readonly contractVersion: 1;
   getValue<Key extends SettingsValueKeyV1>(key: Key): SettingsValueMapV1[Key];
   updateValue<Key extends SettingsValueKeyV1>(key: Key, value: SettingsValueMapV1[Key]): Promise<void>;
+  listAvailableModels?(): readonly SettingsAvailableModelV1[];
 }
 
 export interface ViewHostAPI {
@@ -477,6 +485,8 @@ export interface PluginGenerationApi {
   readonly signal: AbortSignal;
   /** Invoke one method owned by this plugin's active runtime generation. */
   invokeRuntime(method: string, input?: unknown, options?: PluginRuntimeInvokeOptions): Promise<unknown>;
+  /** Read bounded, display-only completed turns from the addressed conversation. */
+  readVisibleHistory(request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult>;
   /** List registered project workspaces that a trusted extension may target. */
   listWorkspaces(): Promise<PluginWorkspaceSnapshot>;
   /** Observe host lifecycle events; disposal is bound to this generation. */
@@ -503,8 +513,29 @@ export interface PluginGenerationApi {
   registerToolActivityPresenter(definition: ToolActivityPresenterDefinition): Disposable;
 }
 
+interface PluginVisibleHistoryScope {
+  readonly threadId: string;
+  readonly workspaceRoot: string;
+  readonly workspaceId?: string;
+}
+export type PluginVisibleHistoryRequest = PluginVisibleHistoryScope & (
+  | { readonly kind: "main"; readonly beforeTurnId: string; readonly sideThreadId?: never }
+  | { readonly kind: "side"; readonly sideThreadId: string; readonly beforeTurnId?: never }
+);
+
+export interface PluginVisibleHistoryResult {
+  readonly turns: readonly {
+    readonly id: string;
+    readonly userText: string;
+    readonly assistantText: string;
+    readonly imageCount: number;
+    readonly fileCount: number;
+  }[];
+}
+
 export interface PluginRuntimeInvokeOptions {
   readonly workspaceId?: string;
+  readonly workspaceRoot?: string;
   /** Cancel this invocation and the host work owned by its execution. */
   readonly signal?: AbortSignal;
 }
@@ -519,6 +550,7 @@ export interface PluginWorkspace {
 export interface PluginWorkspaceSnapshot {
   readonly workspaces: readonly PluginWorkspace[];
   readonly activeWorkspaceId?: string;
+  readonly activeRoot?: string;
 }
 
 /** Minimal type for the host-owned React instance; plugins never bundle React. */
@@ -1349,12 +1381,22 @@ export interface ModelRequestParams {
   readonly messages: readonly ModelRequestMessage[];
   /** Existing configured model alias; omitted uses the host's configured model. */
   readonly model_alias?: string;
+  /** Explicit configured provider and model; supply both, without model_alias. */
+  readonly provider?: string;
+  readonly model?: string;
+  /** Strict configured variant for an explicit provider/model. Unsupported values fail. */
+  readonly variant?: string;
+  /** For an explicit provider/model, use this reasoning tier if the model supports it. */
+  readonly preferred_effort?: string;
   /**
    * Requested output-token limit, integer 1–8192; defaults to 1024.
    * An adapter that cannot preserve the limit fails with unsupported_limit
-   * before inference. Remote-server enforcement and billing are not guaranteed.
+   * before inference unless allow_unbounded_output is true. Remote-server
+   * enforcement and billing are not guaranteed.
    */
   readonly max_output_tokens?: number;
+  /** Permit an adapter to omit the output cap; defaults to false. */
+  readonly allow_unbounded_output?: boolean;
   /** Integer 1–45000 milliseconds; defaults to 45000. */
   readonly timeout_ms?: number;
 }
@@ -2061,6 +2103,13 @@ export interface ComposerInlineCompletionContext {
   readonly threadId?: string;
   /** Side-conversation identity; threadId remains its owning main conversation. */
   readonly sideThreadId?: string;
+  /** Project ID is absent outside a project; the event-routing root is available for no-project conversations. */
+  readonly workspaceId?: string;
+  readonly workspaceRoot?: string;
+  /** Counts only; providers never receive attachment bytes or queued draft content. */
+  readonly attachmentCount?: number;
+  readonly queuedCount?: number;
+  readonly pendingCount?: number;
   readonly draftText: string;
   /** UTF-16 offsets into draftText. The host requests only at a collapsed end caret. */
   readonly selectionStart: number;

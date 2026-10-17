@@ -72,7 +72,7 @@ View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、
 
 `running` 表示输入框的展示状态。最终回答就绪后，主输入框和分栏输入框可能已显示空闲，而运行时仍在收尾。值为 false 不代表该轮已成功结束。仅在成功完成后提供建议的策略应观察回合生命周期事件，并明确激活或重载后的行为。
 
-需要主会话上下文时，通过 `api.invokeRuntime` 传入 `threadId`，在运行时处理函数中调用已声明的 `host.session.history.read` 服务。重载后也能读取普通用户会话，其他插件的私有会话仍不可访问。插件自行选择有限的历史范围。侧会话历史独立存储，此运行时服务未开放读取；不要把 `sideThreadId` 当成它的 `session_id`。需要主会话历史的 provider 可以对 `kind: "side"` 返回 `null`，无需访问宿主私有状态。
+需要最近的可见对话时，调用 `api.readVisibleHistory({ kind, threadId, sideThreadId, workspaceRoot, workspaceId, beforeTurnId })`。主会话以 `beforeTurnId` 为排他边界，最多返回此前 20 个完整可见轮次；侧会话按自身的 `sideThreadId` 读取，最多返回 20 次完整对话。结果只有显示的用户文字、最终回复和图片／文件数量，不含媒体字节、名称、路径、工具输出或推理。预测前仍需核对实时成功完成的源轮次；恢复历史不能触发请求。另一个 `host.session.history.read` 运行时服务返回可能含已撤回或隐藏消息的物理审计记录，不应当作可见对话文本。
 
 Provider 按 `order` 升序调用，再依次按插件 ID、注册 ID 排序，逐个尝试。第一个非空结果生效；无结果或 provider 出错时继续尝试下一项。宿主渲染建议文本，并在接受前核对请求是否仍然有效。上下文获取、提示词、防抖和请求预算由插件负责。该 API 不会安装补全 provider 或自动调用模型的策略。
 
@@ -102,6 +102,12 @@ Provider 按 `order` 升序调用，再依次按插件 ID、注册 ID 排序，�
 Provider 会收到尚未发送的草稿。应明确选择哪些数据可以离开机器，并向用户说明模型或网络用途。通过 `api.invokeRuntime` 委派时，将同一 signal 传入 options，再把运行时执行的 signal 继续传给下游工作。[单次模型请求](plugin-authoring.md#单次模型请求)使用已配置的提供商，可能产生费用；取消不会撤销已完成的请求，也不保证提供商已接收的请求免费。
 
 兼容旧桌面宿主时，注册前先检查 `typeof api.registerComposerInlineCompletionProvider === "function"`。对于已支持注册的旧宿主，通过 `typeof handle.refresh === "function"` 检测刷新和交互能力。context 中的 `contractVersion: 1` 只描述此回调结构，与运行时服务版本、Wuu 产品 CalVer 分开判断。准确的公开类型见 [TypeScript SDK](../../../packages/plugin-sdk/src/index.ts)。
+
+工作区相关 provider 还可读取可选的 `workspaceId`（注册项目 ID）、`workspaceRoot`（宿主事件路由根目录）以及 `attachmentCount`、`queuedCount`、`pendingCount`。计数不包含附件字节或排队草稿正文。旧宿主缺少字段时表示未知，不能当作零。这些值参与请求失效判定，分屏也一样。调用运行时应传入已验证的工作区 ID，不应假定当前活动工作区或会话 ID 全局唯一。
+
+`host.session.history.read` 返回物理审计记录，可能包含已撤回或隐藏的消息，不等于可见对话文本。使用多轮上下文时应通过 `api.readVisibleHistory` 读取可见历史，并与实时成功 `turn/completed` 的源轮次核对。
+
+监听 `api.onHostEvent` 的连接相关逻辑应在 `kind: "connection-reset"` 时清除待处理临时任务。远程通知标记 `replayed: true` 时，表示事件到达时有序恢复屏障尚未完成，不能用来触发新的实时任务。普通桌面与实时事件省略该标记。连接重置不表示内核失败，也不会丢弃用户草稿。
 
 ## 外观和清理
 

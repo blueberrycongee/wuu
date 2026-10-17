@@ -10,6 +10,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/modelrequest"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
+	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -97,6 +98,16 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	if len(input.ModelAlias) > 128 {
 		return nil, serviceError("invalid_params", "model_alias exceeds 128 bytes")
 	}
+	input.Provider = strings.TrimSpace(input.Provider)
+	input.Model = strings.TrimSpace(input.Model)
+	input.Variant = strings.TrimSpace(input.Variant)
+	input.PreferredEffort = strings.TrimSpace(input.PreferredEffort)
+	if (input.Provider == "") != (input.Model == "") || (input.ModelAlias != "" && input.Provider != "") ||
+		len(input.Provider) > 128 || len(input.Model) > 256 || len(input.Variant) > 256 || len(input.PreferredEffort) > 32 ||
+		((input.Variant != "" || input.PreferredEffort != "") && input.Provider == "") ||
+		(input.Variant != "" && input.PreferredEffort != "") {
+		return nil, serviceError("invalid_params", "select a model alias or a configured provider and model")
+	}
 	ctx, cancel := context.WithTimeout(scope.Context, time.Duration(input.TimeoutMS)*time.Millisecond)
 	defer cancel()
 	stop := context.AfterFunc(callCtx, cancel)
@@ -118,13 +129,41 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 			return nil, serviceError("invalid_params", "configured model alias is unavailable")
 		}
 	} else {
-		roles, resolveErr := modelroles.Resolve(cfg, modelroles.ResolveOptions{
-			Effort: cfg.Agent.Effort, Variant: cfg.Agent.Variant,
-		})
+		opts := modelroles.ResolveOptions{Effort: cfg.Agent.Effort, Variant: cfg.Agent.Variant}
+		if input.Provider != "" {
+			opts = modelroles.ResolveOptions{ProviderName: input.Provider, Model: input.Model}
+		}
+		roles, resolveErr := modelroles.Resolve(cfg, opts)
 		if resolveErr != nil {
+			if input.Provider != "" {
+				return nil, serviceError("invalid_params", "selected model is unavailable")
+			}
 			return nil, serviceError("service_unavailable", "configured default model is unavailable")
 		}
 		selection = roles.Main
+		if input.Variant != "" {
+			if _, supported := modelvariant.OptionsForProvider(selection.RuleProvider, selection.RuleProviderConfig, selection.Model, input.Variant); !supported {
+				return nil, serviceError("invalid_params", "selected model variant is unavailable")
+			}
+			selected, resolveErr := modelroles.Resolve(cfg, modelroles.ResolveOptions{
+				ProviderName: input.Provider, Model: input.Model, Variant: input.Variant,
+			})
+			if resolveErr != nil {
+				return nil, serviceError("service_unavailable", "selected model variant is unavailable")
+			}
+			selection = selected.Main
+		}
+		if input.PreferredEffort != "" && input.Provider != "" {
+			if _, supported := modelvariant.OptionsForProvider(selection.RuleProvider, selection.RuleProviderConfig, selection.Model, input.PreferredEffort); supported {
+				preferred, resolveErr := modelroles.Resolve(cfg, modelroles.ResolveOptions{
+					ProviderName: input.Provider, Model: input.Model, Effort: input.PreferredEffort,
+				})
+				if resolveErr != nil {
+					return nil, serviceError("service_unavailable", "preferred model effort is unavailable")
+				}
+				selection = preferred.Main
+			}
+		}
 	}
 	client, err := providerfactory.BuildClient(selection.RuleProviderConfig, selection.Provider)
 	if err != nil {
@@ -149,7 +188,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	// This auxiliary request intentionally has no agent-loop callbacks, injected
 	// history or tools. Provider preparation, credentials, capacity, retry and
 	// durable accounting use the ordinary host inference path.
-	response, err := modelrequest.Execute(ctx, client, request)
+	response, err := modelrequest.Execute(ctx, client, request, modelrequest.Options{AllowUnboundedOutput: input.AllowUnboundedOutput})
 	if err != nil {
 		if errors.Is(err, modelrequest.ErrUnsupportedLimit) {
 			return nil, serviceError("unsupported_limit", err.Error())

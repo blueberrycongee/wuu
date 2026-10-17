@@ -142,7 +142,7 @@ func (r nativeToolReviewer) reviewWithModel(ctx context.Context, request approve
 		Temperature:     runner.Temperature,
 		Effort:          runner.Effort,
 		ProviderOptions: runner.ProviderOptions,
-	})
+	}, modelrequest.Options{})
 	if err != nil {
 		return "", "", err
 	}

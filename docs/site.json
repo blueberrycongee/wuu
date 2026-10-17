@@ -48,7 +48,8 @@
           "title": "个性化",
           "pages": [
             "zh-cn/customize/memory.md",
-            "zh-cn/customize/dream.md"
+            "zh-cn/customize/dream.md",
+            "zh-cn/customize/next-message.md"
           ]
         },
         {
@@ -141,7 +142,8 @@
           "title": "Personalize",
           "pages": [
             "en/customize/memory.md",
-            "en/customize/dream.md"
+            "en/customize/dream.md",
+            "en/customize/next-message.md"
           ]
         },
         {

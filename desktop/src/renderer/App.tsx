@@ -576,6 +576,7 @@ export function App(): JSX.Element {
     animateRightPanelLayout,
     animateSidebarLayout,
     startSidebarResize,
+    trackSidebarResizerPointer,
     startRightPanelResize,
     handleRightPanelSeparatorKey,
     resetWorkspaceRightPanelWidth,
@@ -3418,6 +3419,7 @@ export function App(): JSX.Element {
         }}
         projects={state.projects}
         activeContext={state.activeContext}
+        inlineCompletionWorkspace={activeThread ? resolveThreadRuntimeContext(activeThread, state.projects) : state.activeContext}
         activeWorkspace={activeWorkspace}
         compactDisabledReason={
           !activeThread
@@ -5651,6 +5653,8 @@ export function App(): JSX.Element {
             aria-valuenow={sidebarWidth}
             tabIndex={0}
             onPointerDown={startSidebarResize}
+            onPointerEnter={trackSidebarResizerPointer}
+            onPointerMove={trackSidebarResizerPointer}
             onDoubleClick={toggleSidebar}
             onKeyDown={handleSidebarSeparatorKey}
           />
@@ -5790,6 +5794,7 @@ export function App(): JSX.Element {
                 {splitConversation && state.thread && state.secondaryThread ? (
                   <ConversationSplitLayoutRenderer
                     state={state}
+                    pendingComposerMessagesForThread={pendingComposerMessagesForActiveThread}
                     primaryThread={state.thread}
                     secondaryThread={state.secondaryThread}
                     splitLeftPercent={splitLeftPercent}

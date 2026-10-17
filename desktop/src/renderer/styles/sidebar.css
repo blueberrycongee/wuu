@@ -607,12 +607,14 @@
 
 .app-shell > .sidebar-resizer {
   left: calc(var(--sidebar-width, 296px) + var(--conversation-pane-inset) - 5px);
+  /* Container height lets the light clamp its transform to this rail without
+   * measuring layout on pointermove or changing its top every frame. */
+  container-type: size;
 }
 
 .sidebar-resizer::before {
-  /* Spans the full sidebar height so the hover/drag feedback lights the
-   * entire right edge of the left sidebar, not just a short indicator
-   * segment that leaves the top and bottom 12px dark. */
+  /* The settings rail is a full-height divider. The shell overrides the
+   * vertical ends below to meet the conversation canvas. */
   position: absolute;
   inset: 0;
   left: 50%;
@@ -633,6 +635,88 @@
 .resizing-sidebar .sidebar-resizer::before {
   background: var(--sidebar-resizer-hover-bg);
   box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
+}
+
+/* Keep pointer feedback local to the grab point. Pressing gathers the hover
+ * light into a soft bead; releasing lets it stretch back along the edge. */
+.app-shell > .sidebar-resizer::before {
+  --sidebar-resizer-light-height: 96px;
+  --sidebar-resizer-light-inset: calc(
+    var(--conversation-pane-inset) + var(--conversation-canvas-radius) +
+    var(--sidebar-resizer-light-height) / 2 + 4px
+  );
+  top: 0;
+  translate: 0 clamp(
+    var(--sidebar-resizer-light-inset),
+    var(--sidebar-resizer-pointer-y, 50cqh),
+    calc(100cqh - var(--sidebar-resizer-light-inset))
+  );
+  right: auto;
+  bottom: auto;
+  width: 2px;
+  height: var(--sidebar-resizer-light-height);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--sidebar-resizer-hover-bg);
+  box-shadow: 0 0 12px 3px var(--sidebar-resizer-hover-bg);
+  opacity: 0;
+  pointer-events: none;
+  /* Long, soft tails keep the feedback visible above and below the cursor. */
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    rgb(0 0 0 / 0.16) 12.5%,
+    rgb(0 0 0 / 0.5) 25%,
+    rgb(0 0 0 / 0.84) 37.5%,
+    #000 50%,
+    rgb(0 0 0 / 0.84) 62.5%,
+    rgb(0 0 0 / 0.5) 75%,
+    rgb(0 0 0 / 0.16) 87.5%,
+    transparent
+  );
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out),
+    transform var(--motion-slow) cubic-bezier(0.22, 1.35, 0.36, 1);
+}
+
+.app-shell > .sidebar-resizer:hover::before {
+  opacity: 1;
+}
+
+/* Keyboard focus identifies the entire adjustable boundary. */
+.app-shell > .sidebar-resizer::after {
+  position: absolute;
+  top: calc(var(--conversation-pane-inset) + var(--conversation-canvas-radius));
+  bottom: calc(var(--conversation-pane-inset) + var(--conversation-canvas-radius));
+  left: 50%;
+  width: 1px;
+  border-radius: var(--radius-pill);
+  background: var(--sidebar-resizer-hover-bg);
+  box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
+  content: "";
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+
+.app-shell > .sidebar-resizer:focus-visible::before {
+  opacity: 0;
+}
+
+.app-shell > .sidebar-resizer:focus-visible::after {
+  opacity: 1;
+}
+
+.app-shell.resizing-sidebar > .sidebar-resizer::before {
+  opacity: 1;
+  background: color-mix(in srgb, var(--ink) 40%, transparent);
+  transform: translate(calc(-50% + var(--sidebar-resizer-grab-x, 0px)), -50%) scale(2.5, 0.72);
+}
+
+.app-shell.resizing-sidebar > .sidebar-resizer::after {
+  opacity: 0;
 }
 
 .resizing-sidebar,
@@ -698,10 +782,9 @@
 }
 
 .workspace-right-panel-resizer::before {
-  /* Match the left sidebar resizer: hover and drag feedback follows the
-   * panel's complete left edge instead of stopping 12px from each end. */
+  /* The dock divider is straight, but shares the canvas's vertical insets. */
   position: absolute;
-  inset: 0;
+  inset: var(--conversation-pane-inset) 0;
   left: 50%;
   width: 1px;
   border-radius: var(--radius-pill);

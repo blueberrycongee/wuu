@@ -107,6 +107,10 @@ export function SplitPaneComposer({
   stopState,
   submitting = false,
   queryHistorySessionID,
+  workspaceId,
+  workspaceRoot,
+  queuedCount,
+  pendingCount,
   turnId,
   queryHistory = [],
   requestedHandoffIntent,
@@ -131,6 +135,10 @@ export function SplitPaneComposer({
   stopState?: "pending" | "retry";
   submitting?: boolean;
   queryHistorySessionID?: string;
+  workspaceId?: string;
+  workspaceRoot?: string;
+  queuedCount?: number;
+  pendingCount?: number;
   turnId?: string;
   queryHistory?: string[];
   requestedHandoffIntent?: string;
@@ -245,9 +253,11 @@ export function SplitPaneComposer({
     host: desktopPluginHost, inputRef: textareaRef, value: visiblePromptValue,
     kind: "main",
     enabled: !readOnly && connected && !hasCollapsedPromptBlocks && !cameraOpen,
-    contextKey: queryHistorySessionID ?? "", revisionKey: JSON.stringify([submissionRevision, turnId, requestedHandoffIntent]),
+    contextKey: JSON.stringify([workspaceId, workspaceRoot, queryHistorySessionID]), revisionKey: JSON.stringify([submissionRevision, turnId, requestedHandoffIntent]),
     resetKey: JSON.stringify([externalDraft.current.revision, requestedHandoffIntent]),
-    threadId: queryHistorySessionID, running, compositionActive: composing.current, onInsert: updateVisiblePrompt,
+    threadId: queryHistorySessionID, workspaceId, workspaceRoot,
+    attachmentCount: files.length + images.length + selections.length, queuedCount, pendingCount,
+    running, compositionActive: composing.current, onInsert: updateVisiblePrompt,
   });
 
   useEffect(() => {

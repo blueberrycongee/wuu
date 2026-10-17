@@ -777,6 +777,8 @@ export interface PluginClientRequestParams extends PluginIdentityParams {
   /** Desktop routing hint. The main process resolves this stable project id
    * to a registered workspace and does not forward it to the app-server. */
   workspace_id?: string;
+  /** Desktop routing fence; checked against the selected runtime context and not forwarded. */
+  workspace_root?: string;
 }
 export interface PluginClientRequestResult { result?: unknown; }
 export interface PluginClientCancelParams extends PluginIdentityParams { request_id: string; }
@@ -2089,6 +2091,29 @@ export type SideThreadHistoryResult = {
   messages: SideThreadMessage[];
 };
 
+/** Bounded, display-only history for trusted desktop extensions. */
+type PluginVisibleHistoryScope = {
+  threadId: string;
+  workspaceRoot: string;
+  workspaceId?: string;
+};
+export type PluginVisibleHistoryRequest = PluginVisibleHistoryScope & (
+  | { kind: "main"; beforeTurnId: string; sideThreadId?: never }
+  | { kind: "side"; sideThreadId: string; beforeTurnId?: never }
+);
+
+export type PluginVisibleTurn = {
+  id: string;
+  userText: string;
+  assistantText: string;
+  imageCount: number;
+  fileCount: number;
+};
+
+export type PluginVisibleHistoryResult = {
+  turns: PluginVisibleTurn[];
+};
+
 export type SideThreadSendParams = {
   // Public plugin command ID (plugin.command); omitted selects the first active side command.
   command_id?: string;
@@ -2261,6 +2286,9 @@ export type Turn = {
   /** Folding context retained across conversation-history page boundaries. */
   has_final_answer?: boolean;
   status: TurnStatus;
+  finish_reason?: string;
+  stop_reason?: string;
+  truncated?: boolean;
   // Structured turn-end error populated by the Go core's BuildTurnError.
   // Older clients that only read `message` still work because every new
   // field is optional; shells use these diagnostic facts to derive a
@@ -2482,6 +2510,9 @@ export type ThreadItem = {
   result_detail?: ToolResult;
   error?: string;
   reason?: string;
+  finish_reason?: string;
+  stop_reason?: string;
+  truncated?: boolean;
   // Replacement-context body of a completed context_compaction item — the
   // compacted history the model now runs on. Empty for failed/no-op passes
   // and for other item types.
@@ -2554,7 +2585,15 @@ export type ThreadResumeResult = {
 export type ServerEvent = {
   workdir: string;
 } & (
-  | { kind: "notification"; message: AppServerNotification }
+  | {
+      kind: "notification";
+      message: AppServerNotification;
+      /** Received before connection restoration completed; must not trigger new live work. */
+      replayed?: boolean;
+    }
+  // Invalidates connection-bound ephemeral work without treating a brief
+  // transport replacement as an app-server failure.
+  | { kind: "connection-reset" }
   | { kind: "server-request"; message: Required<AppServerRequest> }
   | { kind: "server-error"; message: string }
   | { kind: "server-exit"; code: number | null; message: string }
@@ -2875,6 +2914,7 @@ export type DesktopUpdateState =
   | { kind: "downloading"; version: string; percent: number };
 
 export type WuuDesktopApi = {
+  readPluginVisibleHistory?: (request: PluginVisibleHistoryRequest) => Promise<PluginVisibleHistoryResult>;
   /** Desktop release updates; absent on remote and mobile hosts. */
   getDesktopUpdateState?: () => Promise<DesktopUpdateState>;
   onDesktopUpdateChanged?: (handler: (state: DesktopUpdateState) => void) => () => void;

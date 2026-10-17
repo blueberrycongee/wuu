@@ -23,8 +23,8 @@ embedding the host in Wuu entry points; it is not a plugin authoring API.
 
 ## Bundled TypeScript runtimes
 
-The eight bundled business plugins are `todo`, `ask-user`, `memory`, `subagent`,
-`peers`, `automation`, `goal`, and `dream`. Their source lives under
+The nine bundled business plugins are `todo`, `ask-user`, `memory`, `subagent`,
+`peers`, `automation`, `goal`, `dream`, and `next-message`. Their source lives under
 `plugins/<id>/src/`; each exports the public TypeScript `RuntimePlugin` contract.
 The build produces self-contained `runtime.mjs` files beside the bundled
 manifests. Go embeds those packages and remains the runtime host. The former

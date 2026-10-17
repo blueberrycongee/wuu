@@ -179,11 +179,12 @@ func TestDiscoverWithOptionsIncludesBundledPeers(t *testing.T) {
 
 func TestBundledOptionalPluginsAreInstalledButDisabledByDefault(t *testing.T) {
 	plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
-		GOOS:      runtime.GOOS,
-		LookPath:  func(command string) (string, error) { return command, nil },
-		LookupEnv: func(string) (string, bool) { return "", false },
+		WuuVersion: "2026.10.12",
+		GOOS:       runtime.GOOS,
+		LookPath:   func(command string) (string, error) { return command, nil },
+		LookupEnv:  func(string) (string, bool) { return "", false },
 	})
-	want := map[string]bool{"ask-user": false, "subagent": false, "dream": false, "memory": false}
+	want := map[string]bool{"ask-user": false, "subagent": false, "dream": false, "memory": false, "next-message": false}
 	for _, item := range plugins {
 		if _, ok := want[item.ID]; ok {
 			want[item.ID] = !item.EnabledByDefault()

@@ -45,7 +45,7 @@ make build-go
 ./bin/wuu --help
 ```
 
-The eight bundled business plugins are TypeScript source under `plugins/<id>/src/`.
+The nine bundled business plugins are TypeScript source under `plugins/<id>/src/`.
 `make build-plugins` emits self-contained JavaScript into the embedded package assets;
 `make build-go`, `make install`, and desktop core builds regenerate those assets before
 compiling Go. The checked-in bundles keep plain Go builds reproducible without an npm
@@ -137,6 +137,25 @@ copied `<code>` text, and keep the card height when the reply settles. It uses
 the same self-started fixture server across both themes, 1000/420px windows and
 15/20px text. Measurements and screenshots go to `desktop/out/stream-code-cursor/`
 (`WUU_CODE_CURSOR_OUTPUT` overrides this).
+
+### Next-message suggestion acceptance
+
+`make test-plugins` includes the shipped next-message JSONL runtime and desktop
+provider lifecycle contracts. For the real plugin → Go model service → HTTP
+transport chain, build the core with `make build-go` and run
+`node scripts/next-message-model-e2e.mjs`. This starts only a loopback synthetic
+provider, checks token/input limits, cancellation and accounting, and writes
+receipts under `.tmp/e2e/next-message-model/` (`WUU_NEXT_MESSAGE_E2E_OUTPUT` overrides it).
+
+After `npm --prefix desktop run build`, run
+`cd desktop && electron scripts/next-message-e2e.cjs`. The fixture mounts the
+production App and plugin with synthetic turns and mocked model replies. It
+checks keyboard behavior, workspace routing, settings and light/dark,
+wide/narrow, default/large text, retaining screenshots and a captured-frame
+recording. Linux needs a graphical display such as Xvfb; use `--no-sandbox` only
+in a disposable test environment that requires it. Set `WUU_NEXT_MESSAGE_E2E_OUTPUT`
+to choose the evidence directory. These checks do not evaluate live-model
+suggestion quality or provider billing.
 
 ### Live activity preview acceptance
 

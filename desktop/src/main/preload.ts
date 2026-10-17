@@ -308,6 +308,7 @@ const api: WuuDesktopApi = {
   getPluginStorage: (params) => ipcRenderer.invoke("wuu:plugin-storage-get", params),
   setPluginStorage: (params) => ipcRenderer.invoke("wuu:plugin-storage-set", params),
   requestPluginRuntime: (params) => ipcRenderer.invoke("wuu:plugin-runtime-request", params),
+  readPluginVisibleHistory: (params) => ipcRenderer.invoke("wuu:plugin-visible-history", params),
   cancelPluginRuntime: (params) => ipcRenderer.invoke("wuu:plugin-runtime-cancel", params),
   listSkills: (params) => ipcRenderer.invoke("wuu:skill-list", params),
   readSkillContent: (params) => ipcRenderer.invoke("wuu:skill-content", params),

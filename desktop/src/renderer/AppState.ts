@@ -296,6 +296,8 @@ const initialState: AppState = {
 
 function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
   switch (event.kind) {
+    case "connection-reset":
+      return state;
     case "notification":
       return reduceNotification(state, event.message);
     case "server-request": {

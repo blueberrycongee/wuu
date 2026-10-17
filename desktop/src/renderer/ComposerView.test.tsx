@@ -158,6 +158,7 @@ function renderComposer(props: {
   onEditGuideMessage?: (id: string) => void;
   permissions?: PermissionSummary;
   activeContext?: RuntimeContext;
+  inlineCompletionWorkspace?: RuntimeContext;
   setPrompt?: (value: string) => void;
   pluginHost?: PluginHost;
   onSelectPermissionMode?: (mode: PermissionMode, approveForMe?: boolean) => void;
@@ -207,6 +208,7 @@ function renderComposer(props: {
           branchPickerDisabled={props.branchPickerDisabled}
           projects={props.projects ?? []}
           activeContext={props.activeContext}
+          inlineCompletionWorkspace={props.inlineCompletionWorkspace}
           activeWorkspace={props.activeWorkspace}
           sideThreadDisabledReason={props.sideThreadDisabledReason}
           codexModels={codexModels}
@@ -1322,6 +1324,86 @@ describe("Composer send control", () => {
 
     expect(onSend).toHaveBeenCalledWith("发送这条消息");
     expect(textarea.value).toBe("");
+  });
+
+  it("provides exact workspace identity and pending-input counts to completion providers", async () => {
+    const host = new PluginHost({ react: React });
+    const observations: Array<{ context: unknown; signal: AbortSignal }> = [];
+    await host.activateGeneration({ pluginId: "workspace-completion", generation: "one", register(api) {
+      api.registerComposerInlineCompletionProvider({ id: "observe", provideCompletion(context, signal) {
+        observations.push({ context, signal }); return new Promise<null>(() => {});
+      } });
+    } });
+    const queued = { id: "queued", text: "Next", files: [], images: [] };
+    renderComposer({ pluginHost: host, activeContext: { kind: "project", project_id: "a", cwd: "/a" },
+      queuedMessages: [queued], guideMessages: [{ ...queued, id: "pending" }] });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => { textarea.focus(); });
+    expect(observations.at(-1)?.context).toMatchObject({ workspaceId: "a", workspaceRoot: "/a",
+      attachmentCount: 0, queuedCount: 1, pendingCount: 1 });
+    const previous = observations.at(-1)!;
+    renderComposer({ pluginHost: host, activeContext: { kind: "project", project_id: "b", cwd: "/b" } });
+    await act(async () => {});
+    expect(previous.signal.aborted).toBe(true);
+    expect(observations.at(-1)?.context).toMatchObject({ workspaceId: "b", workspaceRoot: "/b",
+      attachmentCount: 0, queuedCount: 0, pendingCount: 0 });
+    act(() => host.unload("workspace-completion"));
+  });
+
+  it("uses the conversation workspace for completion when display controls retain another workspace", async () => {
+    const host = new PluginHost({ react: React });
+    const observations: unknown[] = [];
+    await host.activateGeneration({ pluginId: "conversation-workspace", generation: "one", register(api) {
+      api.registerComposerInlineCompletionProvider({ id: "observe", provideCompletion(context) {
+        observations.push(context); return null;
+      } });
+    } });
+    renderComposer({ pluginHost: host, queryHistorySessionID: "same-thread",
+      activeContext: { kind: "project", project_id: "display", cwd: "/display" },
+      inlineCompletionWorkspace: { kind: "project", project_id: "conversation", cwd: "/conversation" } });
+    await act(async () => { container.querySelector<HTMLTextAreaElement>("textarea")!.focus(); });
+    expect(observations.at(-1)).toMatchObject({ workspaceId: "conversation", workspaceRoot: "/conversation" });
+    const previousComposerId = (observations.at(-1) as { composerId: string }).composerId;
+    renderComposer({ pluginHost: host, queryHistorySessionID: "same-thread",
+      activeContext: { kind: "project", project_id: "display", cwd: "/display" },
+      inlineCompletionWorkspace: { kind: "project", project_id: "other-conversation", cwd: "/other-conversation" } });
+    await act(async () => {});
+    expect((observations.at(-1) as { composerId: string }).composerId).not.toBe(previousComposerId);
+    await act(async () => { host.unload("conversation-workspace"); });
+  });
+
+  it("updates split completion queue counts, aborts stale requests and preserves unknown counts", async () => {
+    const observations: Array<{ context: unknown; signal: AbortSignal }> = [];
+    await desktopPluginHost.activateGeneration({ pluginId: "split-counts", generation: "one", register(api) {
+      api.registerComposerInlineCompletionProvider({ id: "observe", provideCompletion(context, signal) {
+        observations.push({ context, signal }); return new Promise(() => {});
+      } });
+    } });
+    function renderCounts(queuedCount?: number, pendingCount?: number): void {
+      act(() => {
+        root ??= createRoot(container);
+        root.render(<ImagePreviewProvider><WorkbenchConnectionContext.Provider value={true}>
+          <SplitPaneComposer prompt="" setPrompt={() => {}} files={[]} images={[]} running={false} readOnly={false}
+            queryHistorySessionID="split-thread" workspaceId="workspace" workspaceRoot="/workspace"
+            queuedCount={queuedCount} pendingCount={pendingCount}
+            onPasteAttachmentFiles={() => {}} onRemoveFile={() => {}} onRemoveImage={() => {}}
+            onSend={() => {}} onInterrupt={() => {}} />
+        </WorkbenchConnectionContext.Provider></ImagePreviewProvider>);
+      });
+    }
+    try {
+      renderCounts(0, 0);
+      await act(async () => { container.querySelector<HTMLTextAreaElement>("textarea")!.focus(); });
+      expect(observations.at(-1)?.context).toMatchObject({ queuedCount: 0, pendingCount: 0 });
+      const previous = observations.at(-1)!;
+      renderCounts(2, 1);
+      await act(async () => {});
+      expect(previous.signal.aborted).toBe(true);
+      expect(observations.at(-1)?.context).toMatchObject({ queuedCount: 2, pendingCount: 1 });
+      renderCounts();
+      await act(async () => {});
+      expect(observations.at(-1)?.context).toMatchObject({ queuedCount: undefined, pendingCount: undefined });
+    } finally { await act(async () => { desktopPluginHost.unload("split-counts"); }); }
   });
 
   it("retains a rejected draft and permits another submission attempt", async () => {

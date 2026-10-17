@@ -177,6 +177,7 @@ export function Composer({
   onCreateGitBranch,
   worktree,
   activeContext,
+  inlineCompletionWorkspace = activeContext,
   activeWorkspace,
   compactDisabledReason,
   sideThreadDisabledReason,
@@ -290,6 +291,8 @@ export function Composer({
   worktree?: ComposerWorktreeControl;
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
+  /** The conversation's runtime can differ from the workspace shown by controls. */
+  inlineCompletionWorkspace?: RuntimeContext;
   activeWorkspace?: DesktopProject;
   compactDisabledReason?: string;
   sideThreadDisabledReason?: string;
@@ -1365,9 +1368,15 @@ export function Composer({
               disabled={readOnly}
               pluginHost={pluginHost}
               inlineCompletionKind={inlineCompletionKind}
+              workspaceId={inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined}
+              workspaceRoot={inlineCompletionWorkspace?.cwd}
+              attachmentCount={files.length + images.length + selections.length}
+              queuedCount={queuedMessages.length}
+              pendingCount={guideMessages.length}
               inlineCompletionEnabled={!hasCollapsedPromptBlocks && !disconnected && !topAccessory
                 && !menuOpen && !accessMenuOpen && !branchMenuOpen && !codexRuntimeMenu && !composerContextMenu}
-              inlineCompletionContextKey={JSON.stringify([queryHistorySessionID, slashSkillContextKey, threadId, sideThreadId])}
+              inlineCompletionContextKey={JSON.stringify([queryHistorySessionID, slashSkillContextKey, threadId, sideThreadId,
+                inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined, inlineCompletionWorkspace?.cwd])}
               inlineCompletionRevisionKey={JSON.stringify([promptRevision, programmaticPromptRevision, submissionClearRevision, telemetryTurnID])}
               inlineCompletionResetKey={JSON.stringify([promptRevision, programmaticPromptRevision])}
               inlineCompletionActionsRef={inlineCompletionActionsRef}
@@ -1702,6 +1711,11 @@ type ComposerTextareaProps = {
   inlineCompletionActionsRef: RefObject<ComposerInlineCompletionActions | null>;
   threadId?: string;
   sideThreadId?: string;
+  workspaceId?: string;
+  workspaceRoot?: string;
+  attachmentCount: number;
+  queuedCount: number;
+  pendingCount: number;
   running: boolean;
   ariaControls?: string;
   ariaActiveDescendant?: string;
@@ -1733,6 +1747,7 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
     inlineCompletionActionsRef,
     threadId,
     sideThreadId,
+    workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount,
     running,
     ariaControls,
     ariaActiveDescendant,
@@ -1801,7 +1816,7 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
       kind: inlineCompletionKind,
       contextKey: inlineCompletionContextKey, revisionKey: inlineCompletionRevisionKey,
       resetKey: JSON.stringify([inlineCompletionResetKey, externalResetRevision]),
-      threadId, sideThreadId, running, compositionActive: compositionActiveRef.current, onInsert: publishValue,
+      threadId, sideThreadId, workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount, running, compositionActive: compositionActiveRef.current, onInsert: publishValue,
     });
 
     useLayoutEffect(() => {

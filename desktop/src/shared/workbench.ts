@@ -702,6 +702,13 @@ export interface ComposerInlineCompletionContext {
   readonly threadId?: string;
   /** Side-conversation identity; threadId remains its owning main conversation. */
   readonly sideThreadId?: string;
+  /** Project ID is absent outside a project; the event-routing root is available for no-project conversations. */
+  readonly workspaceId?: string;
+  readonly workspaceRoot?: string;
+  /** Counts only; providers never receive attachment bytes or queued draft content. */
+  readonly attachmentCount?: number;
+  readonly queuedCount?: number;
+  readonly pendingCount?: number;
   readonly draftText: string;
   /** UTF-16 offsets into draftText. The host requests only at a collapsed end caret. */
   readonly selectionStart: number;

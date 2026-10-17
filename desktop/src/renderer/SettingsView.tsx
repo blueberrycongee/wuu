@@ -299,8 +299,18 @@ export function SettingsView({
     const modelAliases = Object.freeze(Object.fromEntries(
       Object.entries(initialized?.model_aliases ?? {}).map(([name, alias]) => [name, Object.freeze({ ...alias })]),
     ));
+    const availableModels = Object.freeze((initialized?.providers ?? []).flatMap((provider) =>
+      [...new Set([provider.model, ...(provider.models ?? []).map((model) => model.id)].filter(Boolean))].map((model) => {
+        const entry = (provider.models ?? []).find((candidate) => candidate.id === model);
+        return {
+          provider: provider.name, model, label: entry?.display_name || model,
+          variants: (entry?.variants?.length ? entry.variants.map((variant) => variant.id) : entry?.supported_efforts ?? []).filter(Boolean),
+        };
+      }),
+    ));
     return Object.freeze({
       contractVersion: 1 as const,
+      listAvailableModels: () => availableModels,
       getValue: (key: "runtime.modelAliases") => {
         if (key !== "runtime.modelAliases") throw new Error(`Unsupported settings value: ${key}`);
         return modelAliases;
@@ -310,7 +320,7 @@ export function SettingsView({
         await onAdvancedSave({ model_aliases: value });
       },
     });
-  }, [initialized?.model_aliases, onAdvancedSave]);
+  }, [initialized?.model_aliases, initialized?.providers, onAdvancedSave]);
   const [mcpServers, setMCPServers] = useState<MCPServerStatus[]>([]);
   const [mcpLoading, setMCPLoading] = useState(false);
   const [mcpError, setMCPError] = useState("");

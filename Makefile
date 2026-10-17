@@ -106,6 +106,7 @@ build: build-go build-desktop build-clients
 
 test-plugins: build-plugins
 	node scripts/bundled-plugins-e2e.mjs
+	node scripts/next-message-desktop-e2e.mjs
 
 build-plugins:
 	npm --prefix plugins run build

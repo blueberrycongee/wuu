@@ -41,7 +41,7 @@ make build-go
 ./bin/wuu --help
 ```
 
-八个内置业务插件使用 `plugins/<id>/src/` 中的 TypeScript 源码。
+九个内置业务插件使用 `plugins/<id>/src/` 中的 TypeScript 源码。
 `make build-plugins` 把独立 JavaScript 运行包生成到内嵌资源目录；`make build-go`、
 `make install` 和桌面核心构建会先重新生成这些资源，再编译 Go。已提交的运行包
 让普通 Go 构建不依赖 npm 安装；`make check-plugins` 会拒绝过期的生成产物。
@@ -424,6 +424,11 @@ fake Codex 子进程，并使用临时存储，不使用供应商凭据或真实
 `WUU_HISTORY_E2E_OUTPUT` 更改目录。这验证应用服务器协议，不代表桌面渲染
 或真实供应商 CLI 已通过验收。
 
+### 下一句建议验收
+
+`make test-plugins` 包含 next-message 已交付 JSONL 运行时和桌面 provider 生命周期契约。先运行 `make build-go`，再运行 `node scripts/next-message-model-e2e.mjs`，可验证真实插件 → Go 模型服务 → HTTP 传输链路。它仅使用本机回环合成提供商，检查 token、输入、取消和用量记录，证据保存到 `.tmp/e2e/next-message-model/`，可用 `WUU_NEXT_MESSAGE_E2E_OUTPUT` 覆盖。
+
+构建桌面后运行 `cd desktop && electron scripts/next-message-e2e.cjs`，可用生产 App 和插件、合成轮次、模拟模型回复检查按键、工作区路由、设置，以及亮暗主题、宽窄窗口、默认和大字号；保存截图和实际捕获的录制帧。Linux 需要 Xvfb 等图形显示服务；仅在需要的可丢弃测试环境中使用 `--no-sandbox`。`WUU_NEXT_MESSAGE_E2E_OUTPUT` 可指定证据目录。这些检查不评估真实模型建议质量和提供商费用。
 ### 真实会话样本验收
 
 运行 `npm --prefix desktop run test:e2e:conversation-corpus`，构建当前 checkout，

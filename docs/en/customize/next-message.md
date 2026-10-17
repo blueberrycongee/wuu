@@ -1,0 +1,21 @@
+# Next-message suggestions
+
+The optional **Next message** plugin predicts one message you might type after a successful live reply. It is installed but disabled by default. Enable it in **Settings → Extensions**, then open its settings page to choose and save a model.
+
+The suggestion appears as gray text inside an empty composer, even when it is not focused. **Tab** inserts it into the draft when the composer has focus, without sending; you can edit it before sending. **Escape** dismisses it. Switching tabs, conversations or workspaces does not interrupt a prediction already underway; returning shows that conversation's result if the composer is still eligible. Typing, opening a menu or adding an attachment temporarily hides the suggestion. Starting a new turn or disabling the plugin cancels the old prediction and prevents stale results from entering the draft. Slash commands and menus retain keyboard priority. No suggestion leaves ordinary Tab navigation unchanged.
+
+## Model, data and cost
+
+Choose and save a model from a configured provider before predictions start. You can then select one of that model's reasoning levels. New selections default to `low` when available, and you can explicitly choose the model default. Existing model aliases are also available and keep their configured level. Older saved model selections still prefer `low` when supported; saving them again records the level shown in settings. The plugin does not use the workspace default or the conversation's model automatically. An unavailable model, alias or explicitly selected level produces no suggestion and does not fall back silently. Higher levels may exceed the 30-second limit.
+
+Each eligible turn makes at most one attempt. The request allows up to 30 seconds and 8 KiB of UTF-8 input including the prediction prompt and JSON encoding. It asks for at most 128 output tokens where the provider supports that limit. Codex omits this limit, so its output and charges may be higher. The displayed suggestion is at most 100 Unicode characters, preferably one sentence and at most three short sentences. Oversized context is skipped rather than cut mid-message. Provider charges can still apply after cancellation. The plugin may return no suggestion even on success.
+
+The configured provider receives recent completed visible user messages and final assistant answers, newest turn included, within the same 8 KiB request budget. Earlier complete turns are dropped when the budget is full; a too-large newest turn is skipped. For attachment-bearing source turns, only image/file counts are sent as hints, never attachment bytes, names, or paths. Unsent drafts, tool output and reasoning are excluded. The plugin creates no private session, uses no tools, and does not read or write a notebook. Only the model selection is persisted; source text is not saved by the plugin. Ordinary host/provider usage accounting still applies.
+
+## When it runs
+
+The plugin must observe a matching live start and successful completion while enabled. Prediction starts at completion, even if that conversation's composer is not on screen. Restoring an old conversation or enabling/reloading the plugin after completion does not trigger prediction. Failed, interrupted, internal, generated and incomplete source turns are skipped. A source turn containing only attachments is skipped because it has no visible user text for prediction. To display a suggestion, the composer must have exactly empty text and no attachments, queued messages or pending input.
+
+Registered workspaces, no-project conversations, split panes and side chats are supported. Side chats use their own history and identity, never their owner's main-thread history. Workspace root, conversation and source-turn identities must match. The source turn owns the prediction; composer presentation and cancellation signals do not stop the model request. A new turn, server disconnect, settings change or plugin shutdown invalidates the old result. Suggestions and recent identities are kept only in memory for the current plugin generation.
+
+The plugin reads the host's visible conversation projection, not physical audit records. The bounded window can still miss older context, and suggestions can be wrong. Synthetic tests verify behavior and cancellation, not real-model suggestion quality.

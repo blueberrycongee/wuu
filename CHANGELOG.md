@@ -14,6 +14,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   endpoints. Compress large JSON bodies only when smaller, preserve request
   content and token accounting, and restrict compressed redirects to opted-in
   endpoints without adding an automatic resend.
+- Add an opt-in next-message plugin that suggests a short draft from recent visible
+  conversation turns after a successful reply. It supports main and side chats,
+  conversations outside projects, and Codex models. Choose its model and reasoning
+  level independently; Tab inserts the suggestion without sending.
 
 ### Changed
 
@@ -28,6 +32,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Reuse streaming HTTP connection pools across model turns, including Codex,
   Grok Build and SuperGrok credential adapters, instead of rebuilding a pool for
   every request.
+- Show a local edge light on sidebar hover that gathers toward the pointer
+  when pressed, follows the drag, and springs back on release. Extend its soft
+  fade above and below the cursor so the feedback remains visible while held.
+  Keep the full boundary line for keyboard focus, inside the conversation
+  canvas's rounded corners. Inset docked panel dividers to the same height.
 - Keep scroll-edge fades visible in thinking and process panels while a
   response streams.
 - Align native window controls, sidebar toggles, conversation titles, and

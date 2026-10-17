@@ -182,6 +182,9 @@ export class RemoteDesktopBridge {
   // round trip, while explicit refreshes still refetch and failed or
   // disconnected connections clear the flag.
   private workspaceSnapshotFresh = false;
+  // Separate from the one-shot project cache: event consumers must not start
+  // fresh work from replay, including notifications during runtime restoration.
+  private liveNotifications = false;
   private readonly snapshotReads = new Map<string, Promise<unknown>>();
 
   getConnectionSnapshot = (): WebConnectionSnapshot => this.connection;
@@ -204,6 +207,7 @@ export class RemoteDesktopBridge {
   }
 
   private async synchronize(first: boolean, resumed = false): Promise<void> {
+    this.resetConnectionEvents();
     const restoreNeeded = !resumed || this.needsRestore;
     const revision = this.setConnection(first ? "connecting" : "restoring");
     this.workspaceSnapshotFresh = false;
@@ -218,6 +222,7 @@ export class RemoteDesktopBridge {
       if (!first && restoreNeeded) await Promise.all([...this.restoreListeners].map((restore) => restore()));
       if (this.connection.revision !== revision || this.stopped) return;
       this.needsRestore = false;
+      this.liveNotifications = true;
       this.setConnection("connected");
     } catch (error) {
       if (this.connection.revision !== revision || this.stopped) return;
@@ -363,6 +368,7 @@ export class RemoteDesktopBridge {
       },
       onDetach: () => {
         if (this.stopped) return;
+        this.resetConnectionEvents();
         this.workspaceSnapshotFresh = false;
         // Keep a live workbench up through a brief drop so returning from
         // background does not flash the reconnect strip. In-flight RPCs still
@@ -396,6 +402,7 @@ export class RemoteDesktopBridge {
 
   async disconnect(): Promise<void> {
     this.stopped = true;
+    this.resetConnectionEvents();
     this.cancelReconnecting();
     this.workspaceSnapshotFresh = false;
     this.setConnection("disconnected");
@@ -576,7 +583,14 @@ export class RemoteDesktopBridge {
   }
 
   private emitServerEvent(event: ServerEvent): void {
+    if (event.kind === "notification" && !this.liveNotifications) event = { ...event, replayed: true };
     for (const listener of this.serverListeners) listener(event);
+  }
+
+  private resetConnectionEvents(): void {
+    const wasLive = this.liveNotifications;
+    this.liveNotifications = false;
+    if (wasLive) this.emitServerEvent({ kind: "connection-reset", workdir: this.workdir() });
   }
 
   private handleServerRequest(request: ServerRequest): Promise<ServerRequestResult> {

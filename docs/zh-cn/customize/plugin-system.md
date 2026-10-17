@@ -22,8 +22,8 @@ Go 核心继续担任运行时宿主。`internal/sdk` 是 Wuu 入口使用的内
 
 ## 内置 TypeScript 运行时
 
-八个内置业务插件为 `todo`、`ask-user`、`memory`、`subagent`、`peers`、
-`automation`、`goal` 和 `dream`。源码位于 `plugins/<id>/src/`，均导出公开的
+九个内置业务插件为 `todo`、`ask-user`、`memory`、`subagent`、`peers`、
+`automation`、`goal`、`dream` 和 `next-message`。源码位于 `plugins/<id>/src/`，均导出公开的
 TypeScript `RuntimePlugin` 契约。构建会在内置 manifest 旁生成不依赖外部 npm
 包的 `runtime.mjs`。Go 嵌入这些包，继续担任运行时宿主；原来的
 `wuu-<id>-plugin` Go 辅助可执行文件不再需要。
