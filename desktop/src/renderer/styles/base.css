@@ -75,6 +75,7 @@
   --ink-tertiary: color-mix(in srgb, var(--ink-soft) 95%, var(--paper));
   --ink-muted: color-mix(in srgb, var(--ink-soft) 85%, var(--paper));
   --ink-faint: color-mix(in srgb, var(--ink-soft) 45%, var(--paper));
+  --ink-quiet: color-mix(in srgb, var(--ink-soft) 39%, var(--paper));
 
   --paper: var(--wuu-color-canvas, var(--gray-0));
   --surface-1: var(--wuu-color-surface, var(--gray-50));
