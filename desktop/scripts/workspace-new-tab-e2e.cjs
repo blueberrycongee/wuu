@@ -8,7 +8,8 @@ const path = require("node:path");
 const { app, BrowserWindow, protocol } = require("electron");
 
 const desktop = path.resolve(__dirname, "..");
-const output = path.join(desktop, "out/workspace-new-tab-e2e");
+const output = path.resolve(process.env.WUU_WORKSPACE_OUTPUT || path.join(desktop, "out/workspace-new-tab-e2e"));
+const rendererHtml = path.resolve(process.env.WUU_TITLEBAR_RENDERER_HTML || path.join(desktop, "out/renderer/index.html"));
 fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
 const workspaceRoot = "/workspace/tabbar-demo";
@@ -44,24 +45,43 @@ app.whenReady().then(async () => {
     await waitFor((selector) => Boolean(document.querySelector(selector)), selector);
     await evaluate((selector) => document.querySelector(selector).click(), selector);
   };
+  const pointerClick = async (selector) => {
+    await waitFor((selector) => Boolean(document.querySelector(selector)), selector);
+    const point = await evaluate((selector) => {
+      const button = document.querySelector(selector);
+      const rect = button.getBoundingClientRect();
+      const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+      const hit = document.elementFromPoint(x, y);
+      return { x, y, hit: hit === button || button.contains(hit) };
+    }, selector);
+    assert.ok(point.hit, `The real pointer must reach ${selector}: ${JSON.stringify(point)}`);
+    const zoom = win.webContents.getZoomFactor();
+    const position = { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
+    win.webContents.sendInputEvent({ type: "mouseDown", ...position, button: "left", clickCount: 1 });
+    win.webContents.sendInputEvent({ type: "mouseUp", ...position, button: "left", clickCount: 1 });
+  };
   const tabs = () => evaluate(() => [...document.querySelectorAll('.workspace-panel-tabs [role="tab"]')].map((tab) => ({
     selected: tab.getAttribute("aria-selected") === "true", label: tab.getAttribute("aria-label"),
   })));
   const capture = async (name) => {
-    await evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await waitFor(() => !document.querySelector('.sidebar-animating, .right-panel-animating, .sidebar-drawer-docking, .window-resizing'));
+    await evaluate(async () => {
+      await document.fonts.ready;
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
     // Scroll-driven edge fades have no elapsed-time finish.
     await waitFor(() => (document.querySelector(".workspace-right-panel")?.getAnimations({ subtree: true }) ?? [])
       .filter((animation) => animation.timeline instanceof DocumentTimeline && animation.effect?.getComputedTiming().iterations !== Infinity)
       .every((animation) => animation.playState !== "running"));
     fs.writeFileSync(path.join(output, name + ".png"), (await win.webContents.capturePage()).toPNG());
   };
-  await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+  await win.loadFile(rendererHtml);
   // Visible compositor frames keep resize and focus acceptance deterministic.
   win.showInactive();
   win.webContents.debugger.attach("1.3");
   await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
   await waitFor(() => Boolean(document.querySelector(".composer textarea")));
-  await click("[data-wuu-component=right-sidebar-toggle]");
+  await pointerClick("[data-wuu-component=right-sidebar-toggle]");
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="new"] .workspace-tool-menu')));
   assert.equal((await tabs()).length, 1, "Opening an empty panel creates one new-page tab");
   assert.equal((await tabs()).filter((tab) => tab.selected).length, 1);
@@ -76,22 +96,70 @@ app.whenReady().then(async () => {
       const strip = document.querySelector(".workspace-panel-tabs");
       const header = document.querySelector(".workspace-panel-tabbar");
       const active = strip.querySelector(".workspace-tool-tab.active");
+      const panel = document.querySelector('.workspace-right-panel');
+      const panelClip = getComputedStyle(panel).clipPath;
+      const clipInset = panelClip === 'none' ? 0 : parseFloat(panelClip.slice('inset('.length));
       const box = (node) => node?.getBoundingClientRect().toJSON() ?? null;
-      return { strip: box(strip), header: box(header), active: box(active),
+      const peers = [...document.querySelectorAll([
+        '[data-wuu-component="sidebar-toggle"]', '[data-wuu-component="right-sidebar-toggle"]',
+        '.conversation-title-heading h1', '.conversation-title-heading .icon-button',
+        '.workspace-panel-add', '.workspace-panel-globalize',
+      ].join(','))].filter(node => node.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }))
+        .map(node => {
+          const rect = node.getBoundingClientRect();
+          const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          return { target: node.dataset.wuuComponent || node.className, bounds: box(node),
+            centerY: rect.y + rect.height / 2, button: node instanceof HTMLButtonElement,
+            hit: hit === node || node.contains(hit) };
+        });
+      return { strip: box(strip), header: box(header), active: box(active), peers,
+        panelClip, paintedCanvasTop: panel.getBoundingClientRect().top + clipInset,
+        font: getComputedStyle(document.documentElement).getPropertyValue('--font-ui'),
+        viewport: { width: innerWidth, height: innerHeight, zoom: Number(getComputedStyle(document.documentElement).getPropertyValue('--desktop-page-zoom')) || 1 },
         tabs: [...strip.querySelectorAll(".workspace-tool-tab:not(.closing)")].map((tab) => ({
           tab: box(tab), label: box(tab.querySelector(".workspace-tool-tab-main > span")),
+          chip: { top: tab.getBoundingClientRect().top + parseFloat(getComputedStyle(tab, '::before').top),
+            height: parseFloat(getComputedStyle(tab, '::before').height) },
+          main: box(tab.querySelector('.workspace-tool-tab-main')),
+          selected: tab === active,
+          hit: (() => {
+            const button = tab.querySelector('.workspace-tool-tab-main');
+            const rect = button.getBoundingClientRect();
+            const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+            return hit === button || button.contains(hit);
+          })(),
           conversation: tab.classList.contains("workspace-conversation-tab"),
           close: box(tab.querySelector(".workspace-tool-tab-close")),
         })) };
     });
     fs.writeFileSync(path.join(output, scenario + ".json"), JSON.stringify(geometry, null, 2));
+    const axis = geometry.header.top + geometry.header.height / 2;
+    if (geometry.viewport.zoom === 1) {
+      assert.ok(Math.abs(axis - 28) < 0.1, "Workspace and navigation share the expected 28 DIP axis at default zoom");
+      assert.ok(Math.abs(geometry.header.height - 56) < 0.1, "The titlebar reserves a complete row at default zoom");
+    }
+    for (const peer of geometry.peers) {
+      assert.ok(Math.abs(peer.centerY - axis) < 0.6, `${scenario}: ${peer.target} shares the tab axis: ${JSON.stringify(geometry)}`);
+      assert.ok(peer.bounds.top >= geometry.header.top - 0.1 && peer.bounds.bottom <= geometry.header.bottom + 0.1,
+        `${scenario}: ${peer.target} is not clipped by the row`);
+      if (peer.button) assert.ok(peer.hit, `${scenario}: ${peer.target} owns its click target`);
+    }
     assert.ok(geometry.active.width <= geometry.strip.width + 1,
       "One tab fits the available strip even with large text and docked toolbar controls");
     assert.ok(Math.abs(geometry.active.bottom - geometry.header.bottom) <= 1,
       "The active tab meets its content edge");
     assert.ok(geometry.active.left >= geometry.strip.left - 1 && geometry.active.right <= geometry.strip.right + 1,
       "The selected tab remains in view");
-    for (const { tab, label, close, conversation } of geometry.tabs) {
+    for (const { tab, label, close, conversation, chip, main, selected, hit } of geometry.tabs) {
+      assert.ok(chip.height >= 36 - 0.1 && chip.height <= 40 + 0.1,
+        `${scenario}: workspace chips retain their full 36–40px height: ${JSON.stringify(geometry)}`);
+      assert.ok(Math.abs(chip.top + chip.height / 2 - axis) < 0.6,
+        `${scenario}: visible tab chips share the same axis as adjacent actions`);
+      assert.ok(chip.top >= geometry.paintedCanvasTop - 0.1 && chip.top + chip.height <= geometry.header.bottom + 0.1,
+        `${scenario}: the complete chip fits below the canvas clipping edge: ${JSON.stringify(geometry)}`);
+      assert.ok(Math.abs(main.top + main.height / 2 - axis) < 0.6,
+        `${scenario}: tab labels and their hit regions follow the chip axis`);
+      if (selected) assert.ok(hit, `${scenario}: the selected tab remains directly clickable`);
       assert.ok(label.width >= 16, "Overflow keeps tab labels readable rather than hiding them");
       if (!conversation) {
         assert.ok(close, "Every tool tab retains its close action");
@@ -102,6 +170,29 @@ app.whenReady().then(async () => {
     results.push({ scenario, geometry });
   };
   await checkTabGeometry("tabs-docked-light");
+  // Zoom changes the renderer viewport, not the promised usable chip size.
+  // Keep a wide dock while exercising all supported font-size boundaries.
+  for (const theme of ['light', 'dark']) for (const size of [13, 15, 20]) {
+    for (const zoom of [0.75, 1, 1.25]) {
+      win.webContents.setZoomFactor(zoom);
+      win.setContentSize(Math.round(1440 * zoom), 900);
+      await evaluate(({ theme, size, zoom }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty('--font-ui', `${size}px`);
+        document.documentElement.style.setProperty('--desktop-page-zoom', String(zoom));
+      }, { theme, size, zoom });
+      await waitFor(() => Math.abs(innerWidth - 1440) <= 1 && !document.querySelector('.window-resizing, .sidebar-animating'));
+      await checkTabGeometry(`titlebar-docked-${theme}-${size}px-${zoom}`);
+    }
+  }
+  win.webContents.setZoomFactor(1);
+  win.setContentSize(1440, 900);
+  await waitFor(() => innerWidth === 1440);
+  await evaluate(() => {
+    document.documentElement.dataset.theme = 'light';
+    document.documentElement.style.setProperty('--font-ui', '15px');
+    document.documentElement.style.setProperty('--desktop-page-zoom', '1');
+  });
 
   await evaluate(() => {
     window.workspaceConversationPane = document.querySelector('.conversation-pane');
@@ -109,7 +200,7 @@ app.whenReady().then(async () => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Keep this conversation draft');
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await click('.workspace-panel-globalize');
+  await pointerClick('.workspace-panel-globalize');
   await waitFor(() => Boolean(document.querySelector('.workspace-conversation-tab')));
   assert.equal((await tabs()).length, 2, 'The full-width header contains the conversation and tool tabs');
   await checkTabGeometry('conversation-tab-with-new-page');
@@ -119,7 +210,7 @@ app.whenReady().then(async () => {
     win.setContentSize(width, 900);
     await waitFor((width) => innerWidth === width, width);
     for (const theme of ['light', 'dark']) {
-      for (const size of [14, 20]) {
+      for (const size of [13, 15, 20]) {
         await evaluate(({ theme, size }) => {
           document.documentElement.dataset.theme = theme;
           document.documentElement.style.setProperty('--font-ui', size + 'px');
@@ -201,7 +292,7 @@ app.whenReady().then(async () => {
   await click('.workspace-panel-globalize');
   await waitFor(() => !document.querySelector('.workspace-conversation-tab'));
   const reviewTabs = await tabs();
-  await click(".workspace-panel-add");
+  await pointerClick(".workspace-panel-add");
   await click('[data-wuu-tool="review"]');
   await waitFor((count) => document.querySelectorAll('.workspace-panel-tabs [role="tab"]').length === count, reviewTabs.length);
   assert.deepEqual(await tabs(), reviewTabs, "An existing singleton consumes the new page without duplication");
@@ -589,7 +680,7 @@ app.whenReady().then(async () => {
   });
   fs.writeFileSync(path.join(output, "preview-light.png"), (await win.webContents.capturePage(panelBounds)).toPNG());
   results.push({ scenario: "new page with reduced motion", passed: true });
-  await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+  await win.loadFile(rendererHtml);
   await waitFor(() => Boolean(document.querySelector('.workspace-right-panel[data-wuu-view="new"] .workspace-tool-menu')));
   assert.equal((await tabs()).length, 1, "Restoring an open panel creates one new-page tab");
   assert.equal((await tabs()).filter((tab) => tab.selected).length, 1);

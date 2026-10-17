@@ -76,7 +76,7 @@
  * remains reachable when the workspace owns focus and the conversation is inert. */
 .shell-right-sidebar-toggle {
   position: absolute;
-  top: calc((var(--window-titlebar-height) + var(--conversation-pane-inset) - var(--control-size-toolbar)) / 2);
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
   right: calc(var(--conversation-pane-inset) + max(var(--control-toolbar-inset), var(--window-controls-inset-right)));
   z-index: 151;
   -webkit-app-region: no-drag;
@@ -93,10 +93,7 @@
 
 .app-shell.popped-out-shell .conversation-pane {
   grid-column: 1;
-  /* Match the non-popped-out titlebar height (48px when session-tabs-visible)
-   * so the title text vertically centers with the macOS traffic lights at
-   * trafficLightPosition (18, 17). The default 56px row pushes the text 6px
-   * below the lights. */
+  /* Pop-outs use the same window chrome axis as the main window. */
   grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
 }
 
@@ -195,7 +192,7 @@
   position: fixed;
   /* Match the shared toolbar center, including when zoomed controls require
    * a taller row than the native traffic lights. */
-  top: calc(env(safe-area-inset-top, 0px) + (var(--window-titlebar-height) + var(--conversation-pane-inset) - var(--control-size-toolbar)) / 2);
+  top: calc(env(safe-area-inset-top, 0px) + (var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
   /* The OS inset is a hard exclusion zone. Wuu owns an additional fixed
    * gutter so decorated theme controls never visually merge with it. */
   left: var(--window-titlebar-leading-inset);
@@ -215,7 +212,7 @@
 
 /* When the navigation sidebar is collapsed, the right panel starts at x=0;
  * reserve room on the left of its tabbar so the macOS traffic lights
- * (trafficLightPosition 18, 17) don't sit on top of the tabs. Mirrors the
+ * (trafficLightPosition 18, 21) don't sit on top of the tabs. Mirrors the
  * popped-out titlebar reservation. The main titlebar (which normally
  * provides the window drag region) lives inside the now-hidden
  * conversation-pane, so the tabbar itself takes over as the drag handle.
@@ -439,7 +436,7 @@
   .sidebar-toggle-button,
 .sidebar-drawer-docking :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
   position: fixed;
-  top: calc((var(--window-titlebar-height) + var(--conversation-pane-inset, 0px) - var(--control-size-toolbar)) / 2);
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
   left: var(--window-titlebar-leading-inset);
   z-index: 150;
 }

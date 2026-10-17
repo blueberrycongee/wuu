@@ -20,6 +20,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Keep scroll-edge fades visible in thinking and process panels while a
   response streams.
+- Align native window controls, sidebar toggles, conversation titles, and
+  workspace tabs on one shared titlebar row without clipping full-size tabs.
 - Keep Claude provider failures inside the conversation error notice instead of
   duplicating diagnostics as assistant replies; preserve any useful partial reply
   and failure details after reopening the conversation.
