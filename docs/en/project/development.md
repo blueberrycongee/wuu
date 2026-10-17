@@ -491,6 +491,33 @@ older diagnostic harness results. Compare the same exact UI when isolating a
 core-only change, retain all repetitions, and use the final main revision as the
 optimization baseline.
 
+### Desktop diagram rendering
+
+The desktop and shared Web renderer use [Pele](https://github.com/obsidianmd/pele)
+for `mermaid` fences. Native iOS/Android and the documentation site still use
+Mermaid.js. Keep the desktop Mermaid dependency while the native bundle generator
+uses it; changing the desktop lockfile requires refreshing its recorded hash with
+`node clients/native/shared-ui/build-mermaid.mjs`.
+
+Pele has its own layout and uses Wuu's CSS theme tokens. Mermaid `themeVariables`,
+arbitrary HTML labels, and external Mermaid plugins are not equivalent to the
+previous renderer. Links and images in diagram source are disabled. Explicit
+flow directions are preserved; diagrams fit the existing preview surface, with
+click-to-enlarge and standalone SVG export.
+
+After `npm --prefix desktop run build`, run
+`cd desktop && npx electron dev/pele/verify.cjs` for desktop acceptance. It loads
+the actual Markdown component across light/dark, 15/20px and wide/narrow cases,
+checks streaming/error recovery and exported colors, then opens the production
+desktop renderer with a synthetic conversation. JSON results, screenshots and an
+exported SVG are written to `desktop/out/pele-acceptance/`.
+
+The same run compares Pele and Mermaid.js in one Electron document: three warmup
+iterations and ten measured iterations per source, alternating engine order.
+Timings include SVG generation, DOM insertion and forced layout, but exclude
+module loading, paint and model latency. It also compares minified standalone
+engine bundles, including gzip sizes; these are not whole-app package sizes.
+
 ## Native phones and remote services
 
 The active phone implementations are SwiftUI on iOS and Jetpack Compose on Android in [`clients/native`](../../../clients/native/README.md) (Chinese). Their dedicated verification command is:

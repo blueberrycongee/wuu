@@ -32,7 +32,7 @@ import {
   useWorkspaceBrowserOpen,
   workspaceBrowserClickModifiers,
 } from "./WorkspaceBrowserOpen";
-import { currentAppliedTheme, observeAppliedTheme, type AppliedTheme } from "./Theme";
+import { observeAppearance } from "./AppearancePreferences";
 import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { WorkbenchContentRenderer } from "./plugins/Workbench";
 import { rehypeFileSelectionMapping, rehypePreserveMathSourcePositions, type SelectionASTNode } from "./FileSelectionMapping";
@@ -98,7 +98,7 @@ const STREAM_CURSOR_SENTINEL_PATTERN = /\uE000/g;
 // replacement re-runs the layout, which reads as flicker).
 const STREAM_MERMAID_RENDER_DEBOUNCE_MS = 300;
 const STREAM_MERMAID_RENDER_INTERVAL_MS = 500;
-// Rendered SVGs are cached by (theme, code) so a diagram that moves from the
+// Rendered SVGs are cached by (typography, code) so a diagram that moves from the
 // streaming tail into a stable block (fence closed + blank line) remounts
 // with its picture already committed instead of flashing the placeholder.
 // Only streaming renders populate the cache; settled messages always render.
@@ -137,8 +137,16 @@ function mermaidCodeToRender(code: string, streaming: boolean): string {
   return codeToRender;
 }
 
-function mermaidRenderKey(theme: AppliedTheme, codeToRender: string): string {
-  return `${theme}\u0000${codeToRender}`;
+function diagramTypography(): { fontFamily: string; fontSize: number } {
+  const style = getComputedStyle(document.body);
+  return {
+    fontFamily: style.getPropertyValue("--appearance-content-font").trim() || style.fontFamily,
+    fontSize: Number.parseFloat(style.fontSize),
+  };
+}
+
+function mermaidRenderKey(typography: ReturnType<typeof diagramTypography>, codeToRender: string): string {
+  return JSON.stringify([typography.fontFamily, typography.fontSize, codeToRender]);
 }
 
 const IMAGE_FILE_PATTERN = /\.(apng|avif|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i;
@@ -1188,13 +1196,13 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
   const { openPreview } = useImagePreview();
   const reactID = useId();
   const diagramID = useMemo(() => `wuu-mermaid-${reactID.replace(/[^a-zA-Z0-9_-]/g, "")}-${hashString(code)}`, [code, reactID]);
-  const [theme, setTheme] = useState<AppliedTheme>(currentAppliedTheme);
-  // Mount-time snapshot only: if the same (theme, code) diagram was already
+  const [typography, setTypography] = useState(diagramTypography);
+  // Mount-time snapshot only: if the same (typography, code) diagram was already
   // rendered while streaming, start with that picture committed instead of
   // the placeholder. Refs below mirror the snapshot so the first effect run
   // skips the identical render instead of flashing.
   const mountKey = mermaidRenderKey(
-    currentAppliedTheme(),
+    typography,
     mermaidCodeToRender(code, streaming),
   );
   const [state, setState] = useState<MermaidState>(() => {
@@ -1208,14 +1216,26 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
   );
   const lastRenderStartedAtRef = useRef(0);
 
-  useEffect(() => observeAppliedTheme(setTheme), []);
+  useEffect(() => {
+    const update = (): void => {
+      lastRenderedKeyRef.current = "";
+      mermaidSvgCache.clear();
+      setTypography(diagramTypography());
+    };
+    const stopObserving = observeAppearance(update);
+    document.fonts?.addEventListener("loadingdone", update);
+    return () => {
+      stopObserving();
+      document.fonts?.removeEventListener("loadingdone", update);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const codeToRender = mermaidCodeToRender(code, streaming);
-    const renderKey = mermaidRenderKey(theme, codeToRender);
+    const renderKey = mermaidRenderKey(typography, codeToRender);
     if (renderKey === lastRenderedKeyRef.current) {
       // An identical diagram is already committed (e.g. chunks that only
       // changed the partial line, or a settle with the same source).
@@ -1231,16 +1251,18 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
       const attempt = renderAttemptRef.current + 1;
       renderAttemptRef.current = attempt;
       try {
-        const mermaid = (await import("./MermaidRuntime")).default;
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: "strict",
-          theme: "base",
-          themeVariables: mermaidThemeVariables(theme),
+        const { render } = await import("./MermaidRuntime");
+        if (cancelled) return;
+        const result = await render(codeToRender, {
+          ...typography,
+          idPrefix: `${diagramID}-${attempt}`,
+          // Chat diagrams are inert. Source directives cannot enable navigation
+          // or remote images, and explicit graph directions retain their meaning.
+          links: false,
+          images: false,
+          autoDirection: false,
+          maxEdges: 500,
         });
-        // A fresh id per attempt keeps a failed render's internal DOM from
-        // colliding with the next attempt's.
-        const result = await mermaid.render(`${diagramID}-${theme}-${attempt}`, codeToRender);
         if (cancelled || attempt !== renderAttemptRef.current) {
           return;
         }
@@ -1298,7 +1320,7 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
         clearTimeout(timer);
       }
     };
-  }, [code, diagramID, locale, streaming, theme]);
+  }, [code, diagramID, locale, streaming, typography]);
 
   return (
     <div className="rich-mermaid" data-mermaid-state={state.status} aria-busy={state.status === "rendering"}>
@@ -1308,11 +1330,24 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
           className="rich-mermaid-diagram"
           aria-label={t("rich.enlargeDiagram")}
           title={t("rich.enlargeDiagram")}
-          onClick={() => openPreview({
-            svg: state.svg,
-            alt: t("rich.mermaidDiagram"),
-            title: t("rich.mermaidDiagram"),
-          })}
+          onClick={(event) => {
+            const svg = event.currentTarget.querySelector("svg")!;
+            const snapshot = svg.cloneNode(true) as SVGSVGElement;
+            const style = getComputedStyle(svg);
+            // The preview can be saved as a standalone SVG. Resolve inherited
+            // theme variables before taking it out of the conversation surface.
+            for (const property of Array.from(style)) {
+              if (property.startsWith("--pele-")) {
+                snapshot.style.setProperty(property, style.getPropertyValue(property));
+              }
+            }
+            snapshot.style.backgroundColor = style.getPropertyValue("--pele-bg");
+            openPreview({
+              svg: new XMLSerializer().serializeToString(snapshot),
+              alt: t("rich.mermaidDiagram"),
+              title: t("rich.mermaidDiagram"),
+            });
+          }}
           dangerouslySetInnerHTML={{ __html: state.svg }}
         />
       ) : state.status === "error" ? (
@@ -1325,17 +1360,6 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
       )}
     </div>
   );
-}
-
-function mermaidThemeVariables(theme: AppliedTheme): Record<string, string> {
-  return {
-    background: theme === "dark" ? "#1d2024" : "#ffffff",
-    primaryColor: theme === "dark" ? "#24282c" : "#eef2f0",
-    primaryTextColor: theme === "dark" ? "#e4e6e8" : "#202427",
-    primaryBorderColor: theme === "dark" ? "#3a4046" : "#ccd6d0",
-    lineColor: theme === "dark" ? "#a9aeb3" : "#6f7478",
-    fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
-  };
 }
 
 function hashString(value: string): string {
