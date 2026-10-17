@@ -136,15 +136,19 @@ describe("WorkbenchController", () => {
     });
     const requestRegionVisible = vi.fn();
     const controller = new WorkbenchController(host);
-    controller.updateServices({ requestRegionVisible });
+    const requestRegionHidden = vi.fn();
+    controller.updateServices({ requestRegionVisible, requestRegionHidden });
 
-    await controller.openView("views.dashboard", { region: "auxiliary" });
+    const opened = await controller.openView("views.dashboard", { region: "auxiliary", context: { selected: "first" } });
     expect(requestRegionVisible).toHaveBeenCalledWith("auxiliary");
 
     // Revealing an already-open view also asks for the region.
     requestRegionVisible.mockClear();
-    await controller.openView("views.dashboard", { region: "auxiliary" });
+    await controller.openView("views.dashboard", { region: "auxiliary", context: { selected: "second" } });
     expect(requestRegionVisible).toHaveBeenCalledWith("auxiliary");
+    expect(controller.getSnapshot().views.find(view => view.id === opened)?.context).toEqual({ selected: "second" });
+    await controller.closeView(opened);
+    expect(requestRegionHidden).toHaveBeenCalledWith("auxiliary");
     controller.dispose();
   });
 

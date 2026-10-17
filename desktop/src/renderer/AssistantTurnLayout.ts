@@ -15,10 +15,11 @@ export function layoutAssistantTurn(
   turn: Turn,
   display: AssistantTurnDisplay,
   artifacts: readonly TurnArtifact[],
+  presentedTools: ReadonlySet<string> = new Set(),
 ): { processEntries: TurnEntry[]; output: Output[] } {
   const positions = new Map(turn.items.map((item, index) => [item.id, index * 2]));
   const inline = artifacts.filter((artifact) => artifact.placement === "inline" && artifact.type !== "text" && !artifact.foldPreview);
-  if (inline.length === 0) {
+  if (inline.length === 0 && presentedTools.size === 0) {
     return {
       processEntries: display.entries.filter((entry) => entry.position === "process"),
       output: display.entries.filter((entry) => entry.position === "answer").map((entry) => ({ key: entry.key, entry })),
@@ -49,7 +50,8 @@ export function layoutAssistantTurn(
     const items = entry.items ?? [entry.item];
     let start = 0;
     for (let index = 0; index < items.length; index++) {
-      if (index !== items.length - 1 && !boundaries.has(items[index].id)) continue;
+      if (index !== items.length - 1 && !boundaries.has(items[index].id)
+        && !presentedTools.has(items[index].id) && !presentedTools.has(items[index + 1].id)) continue;
       const slice = items.slice(start, index + 1);
       const key = start === 0 ? entry.key : `${entry.key}:${slice[0].id}`;
       const segment = slice.length === items.length ? entry : {
@@ -70,7 +72,7 @@ export function layoutAssistantTurn(
   const output: Output[] = [];
   let published = false;
   for (const item of ordered) {
-    if (item.artifacts) published = true;
+    if (item.artifacts || (item.entry && presentedTools.has(item.entry.item.id))) published = true;
     if (!published && item.entry?.position === "process") {
       processEntries.push(item.entry);
     } else {

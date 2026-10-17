@@ -25,7 +25,9 @@ By default, a child shares the workspace. A fresh context alone does not isolate
 
 ## Wait for results or continue in parallel
 
-The plugin's `spawn_agent` tool defaults to background execution. The parent can work on something else, and a completion notification brings back the child's result. Subtask status appears above the composer when the plugin supplies that UI.
+The plugin's `spawn_agent` tool defaults to background execution. The parent can work on something else, and a completion notification brings back the child's result. Named subagents appear in the conversation. Select a name to open its task, status, and saved work records in the right panel. The back arrow shows all children grouped by active and finished work; larger groups have a count link. Completion notifications open the same panel. Closing it keeps the parent conversation and draft in place.
+
+The current work page refreshes while the child runs. Earlier pages stay still while you read; use the record navigation to continue or return to the latest page. Records reflect saved history and may lag live model output.
 
 When the next step needs the result immediately, the parent can set `run_in_background: false`. The tool then waits and returns the terminal state, output, and error directly. After ten minutes, an unfinished foreground wait becomes background work; it does not cancel the child.
 

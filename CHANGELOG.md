@@ -11,6 +11,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Added
 
 - Offer Next message in first-run plugin selection, with a matching pencil accessory on the onboarding mascot and a reminder to choose a suggestion model.
+- Open named subagents and completion notifications from the conversation in a right-side panel with active/finished tasks and paged saved work records.
 
 ### Changed
 

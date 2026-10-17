@@ -35,6 +35,7 @@ import {
   useLiveNow,
 } from "./TurnProgress";
 import { ProcessSurface, ProcessSurfaceMascot } from "./ProcessSurface";
+import { useToolActivityPresentationIDs } from "./plugins/ToolActivityPresenter";
 import { CONVERSATION_TURN_REVEAL_EVENT, type ConversationTurnRevealDetail, turnEndedInFailure, turnProgressContent } from "./TurnViewHelpers";
 import {
   AUTO_FOLLOW_NESTED_SCROLL_ATTR,
@@ -125,7 +126,8 @@ export function AssistantTurnShell({
     (entry) => entry.position === "answer",
   );
   const artifacts = useMemo(() => collectTurnArtifacts(turn), [turn]);
-  const { processEntries, output } = layoutAssistantTurn(turn, display, artifacts);
+  const presentedTools = useToolActivityPresentationIDs(turn.items);
+  const { processEntries, output } = layoutAssistantTurn(turn, display, artifacts, presentedTools);
   const activeGrayEntryKey = turn.status === "in_progress"
     ? latestActiveGrayProcessEntryKey([
       ...processEntries,

@@ -218,15 +218,16 @@ await scenario("reentrant service bypasses a saturated tool pool",async p => {
 });
 
 await scenario("bundled subagent foreground overlap and stale-result protection",async p => {
-  let stored = null, sequence = 0;
+  const stored = new Map();
+  let sequence = 0;
   const sessions = [], pending = [];
   p.onFrame = frame => {
     if (frame.method !== "host.service.call") return;
     const {service,params} = frame.params;
     switch(service) {
-      case "host.storage.get": p.reply(frame,{value:stored}); break;
+      case "host.storage.get": p.reply(frame,{value:stored.get(params.key) ?? null}); break;
       case "host.storage.keys": p.reply(frame,{keys:[]}); break;
-      case "host.storage.set": stored = params.value; p.reply(frame); break;
+      case "host.storage.set": stored.set(params.key, params.value); p.reply(frame); break;
       case "host.session.create": {
         const session_id = `child-${++sequence}`;
         sessions.push({session_id,parent_session_id:"parent",name:params.name,state:"running"});
@@ -245,10 +246,10 @@ await scenario("bundled subagent foreground overlap and stale-result protection"
   await p.wait(f => f.method && f.params.service === "host.session.inspect" && f.params.params.session_id === "child-2");
   const updated = await p.tool("followup","send_message","followup",{target:"child-1",message:"new task"});
   assert.ok(!updated.error,JSON.stringify(updated));
-  const expected = JSON.parse(stored).records.find(r => r.session_id === "child-1").request_id;
+  const expected = JSON.parse(stored.get("tasks.v2")).records.find(r => r.session_id === "child-1").request_id;
   for (const frame of pending) p.reply(frame,{session:{session_id:frame.params.params.session_id,state:"completed"},turn:{request_id:frame.params.params.request_id,turn_id:"old-turn",state:"completed",final_output:"done"}});
   assert.ok((await Promise.all([first,second])).every(r => !r.error));
-  const actual = JSON.parse(stored).records.find(r => r.session_id === "child-1");
+  const actual = JSON.parse(stored.get("tasks.v2")).records.find(r => r.session_id === "child-1");
   assert.equal(actual.request_id,expected); assert.equal(actual.state,"running"); assert.ok(!actual.suppress_completion);
   assert.ok(!(await p.request("shutdown")).error); p.child.stdin.end(); assert.equal((await p.closed).code,0);
 },"subagent");

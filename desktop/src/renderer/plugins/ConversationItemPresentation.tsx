@@ -1,4 +1,5 @@
 import { useMemo, type ReactNode } from "react";
+import { useI18n } from "../i18n";
 
 import type { ThreadItem } from "../../shared/protocol";
 import {
@@ -34,10 +35,11 @@ export function ConversationItemPresentation({
   host = desktopPluginHost,
   controller = desktopWorkbenchController,
 }: ConversationItemPresentationProps): JSX.Element {
+  const { locale } = useI18n();
   const kind = conversationItemKind(item);
   const snapshot = useMemo(
-    () => kind === undefined ? undefined : toConversationItemSnapshot(item, kind, text),
-    [item, kind, text],
+    () => kind === undefined ? undefined : toConversationItemSnapshot(item, kind, text, locale),
+    [item, kind, text, locale],
   );
 
   if (kind === undefined || snapshot === undefined) return <>{fallback}</>;
@@ -86,6 +88,7 @@ export function toConversationItemSnapshot(
   item: ThreadItem,
   kind: ConversationItemKindV1,
   displayText = item.text,
+  locale?: string,
 ): ConversationItemSnapshotV1 {
   const contentType = kind === "notice" ? "plain-text" as const : "markdown" as const;
   const attachments = attachmentDescriptors(item);
@@ -114,6 +117,11 @@ export function toConversationItemSnapshot(
     // Plugin-generated wake messages can hide the real delivered prompt
     // behind a generic query bubble; expose that raw input to presenters.
     inputText: item.input_text,
+    ...(item.origin === undefined ? {} : { origin: item.origin }),
+    ...(item.name === undefined ? {} : { sourceName: item.name }),
+    ...(item.related_session_id === undefined ? {} : { relatedSessionId: item.related_session_id }),
+    ...(item.presentation_kind === undefined ? {} : { presentationKind: item.presentation_kind }),
+    ...(locale === undefined ? {} : { locale }),
   });
 }
 
