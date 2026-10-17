@@ -130,19 +130,20 @@ app.whenReady().then(async () => {
           const main = document.querySelector('.conversation-pane');
           const input = main.querySelector('.composer textarea');
           const rect = input.getBoundingClientRect();
+          const canvas = main.getBoundingClientRect();
           const header = document.querySelector('.workspace-panel-tabbar').getBoundingClientRect();
           return {
             samePane: main === window.workspaceConversationPane,
             inert: main.inert, draft: input.value,
             inputReceivesPointer: input === document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2),
             inputBelowHeader: rect.top >= header.bottom,
-            fullWidth: Math.abs(main.getBoundingClientRect().right - innerWidth) <= 1,
+            fillsCanvas: Math.abs(canvas.left - header.left) <= 1 && Math.abs(canvas.right - header.right) <= 1,
             bodyHidden: getComputedStyle(document.querySelector('.workspace-panel-body')).visibility === 'hidden',
             selectedTabs: document.querySelectorAll('.workspace-panel-tabs [role="tab"][aria-selected="true"]').length,
           };
         });
         assert.deepEqual(surface, { samePane: true, inert: false, draft: 'Keep this conversation draft',
-          inputReceivesPointer: true, inputBelowHeader: true, fullWidth: true, bodyHidden: true, selectedTabs: 1 });
+          inputReceivesPointer: true, inputBelowHeader: true, fillsCanvas: true, bodyHidden: true, selectedTabs: 1 });
         results.push({ scenario, surface });
       }
     }

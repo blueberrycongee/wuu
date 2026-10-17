@@ -455,14 +455,16 @@ async function run() {
     const bar = document.querySelector('.composer-workspace-bar').getBoundingClientRect();
     const groups = [...document.querySelectorAll('.composer-workspace-group')].map(group => group.getBoundingClientRect());
     const text = [...document.querySelectorAll('.composer-workspace-bar .hero-project-pill-text, .composer-worktree-toggle span')]
-      .map(node => ({ text: node.textContent, clipped: node.scrollWidth > node.clientWidth + 1 }));
-    return { barRight: bar.right, groups: groups.map(rect => ({ left: rect.left, right: rect.right, height: rect.height })), text };
+      .map(node => ({ text: node.textContent, width: node.clientWidth, scrollWidth: node.scrollWidth,
+        clipped: node.scrollWidth > node.clientWidth + 1 }));
+    return { viewport: { width: innerWidth, height: innerHeight }, barRight: bar.right,
+      groups: groups.map(rect => ({ left: rect.left, right: rect.right, height: rect.height })), text };
   });
   assert.equal(narrow.groups.length, 2);
   assert.ok(narrow.groups.every(rect => rect.right <= narrow.barRight + 0.5), 'Both groups stay inside the bar.');
   assert.ok(Math.abs(narrow.groups[0].height - narrow.groups[1].height) < 0.5, 'Both groups share one height.');
   assert.deepEqual(narrow.text.filter(item => item.clipped).map(item => item.text), [longBranch],
-    'Only the long branch name truncates; the project and toggle labels stay whole.');
+    `Only the long branch name truncates; the project and toggle labels stay whole. Layout: ${JSON.stringify(narrow)}`);
   await capture(main, '05-draft-dark-large-narrow.png');
 
   // A folder outside Git keeps only the project group.
