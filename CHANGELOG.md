@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Hand long foreground commands to the background process manager after ten
+  seconds so independent tools can proceed, while preserving output and completion
+  notifications. Record tool queue wait separately from execution time.
 - Keep the macOS Dock icon visible when the desktop pet is enabled.
 - Restore filled open-state indicators for the left and right desktop sidebar
   toggle icons.

@@ -47,6 +47,7 @@ type ToolExecutionRecord struct {
 	ConcurrencySafe            bool                   `json:"concurrency_safe"`
 	StartedAt                  time.Time              `json:"started_at"`
 	DurationMS                 int64                  `json:"duration_ms"`
+	QueueWaitMS                int64                  `json:"queue_wait_ms"`
 	RevisionBefore             string                 `json:"revision_before,omitempty"`
 	RevisionAfter              string                 `json:"revision_after,omitempty"`
 	Success                    bool                   `json:"success"`
@@ -245,6 +246,7 @@ func (t *Toolkit) recordToolExecution(
 		ConcurrencySafe:            info.ConcurrencySafe,
 		StartedAt:                  startedAt,
 		DurationMS:                 time.Since(startedAt).Milliseconds(),
+		QueueWaitMS:                toolctx.QueueWait(ctx).Milliseconds(),
 		RevisionBefore:             revisionBefore,
 		RevisionAfter:              revisionAfter,
 		Success:                    err == nil,

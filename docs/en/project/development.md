@@ -279,6 +279,22 @@ pass its correctness gate before an index is emitted. Higher than 100 means
 faster for that sample. Also inspect successful P50/P90, completion and failures;
 a small sample does not establish tail latency or a general product score.
 
+Use `-list-providers` to list configured names and models without credentials.
+For command scheduling, add `-shell-workload -repeats 3 -timeout 120s` with either
+configured DeepSeek or Codex. Add `-shell-delay 0s` for the short-command control.
+This separate workload ignores the synthetic
+history/tool/prewarm flags. A real model runs an allowlisted PTC program with a
+25-second shell fixture and an independent read, then reads the final result
+in a second turn. The runner verifies one launch, both answers, tool counts,
+completion ownership and output before/after a background handoff. It reports
+`ready_ms` for the first answer separately from `total_ms` for final verification,
+plus per-tool execution and `queue_wait_ms` (unknown on older baselines).
+Completion reaches the runner through the real process manager; the runner then
+starts the second model turn. Desktop notification delivery is outside this probe.
+The transport scorer does not score this workload. Compare its JSONL records by
+provider and revision; an earlier first answer does not mean the build finished
+sooner. Use the same runner on both revisions and retain failures in the report.
+
 Local raw reports belong in ignored output directories. Public performance claims
 require a complete clean-source record under [evals](../../../evals/README.md).
 CI should gate deterministic connection reuse, payload/redirect contracts,

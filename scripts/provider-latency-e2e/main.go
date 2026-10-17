@@ -164,13 +164,16 @@ func main() {
 	repeats := flag.Int("repeats", 2, "independent conversations")
 	turns := flag.Int("turns", 2, "turns per conversation")
 	tool := flag.Bool("tool", false, "execute one synthetic tool on the first turn")
+	shellWorkload := flag.Bool("shell-workload", false, "exercise real run_code, bash, read_file and managed completion")
+	shellDelay := flag.Duration("shell-delay", 25*time.Second, "synthetic shell duration (0-60s); use 0s for the short-command control")
+	listProviders := flag.Bool("list-providers", false, "print configured provider names and models without credentials")
 	forceTool := flag.Bool("force-tool", true, "use forced tool_choice when -tool is set; false tests normal auto choice")
 	prewarm := flag.Bool("prewarm", false, "prewarm the conversation before timing its first turn")
 	gzipEndpoint := flag.String("gzip-endpoint", "", "exact HTTP request URL to opt into experimental gzip")
 	timeout := flag.Duration("timeout", 90*time.Second, "deadline per turn, including recovery")
 	label := flag.String("label", "", "comparison label")
 	flag.Parse()
-	if *provider == "" || *repeats < 1 || *turns < 1 || *records < 0 || *timeout <= 0 {
+	if (*provider == "" && !*listProviders) || *repeats < 1 || *turns < 1 || *records < 0 || *timeout <= 0 || *shellDelay < 0 || *shellDelay > time.Minute {
 		panic("invalid evaluation arguments")
 	}
 	if _, ok := providers.NormalizeStreamTransportMode(*transport); !ok {
@@ -192,6 +195,12 @@ func main() {
 	if err != nil {
 		panic("configuration unavailable")
 	}
+	if *listProviders {
+		for name, pc := range cfg.Providers {
+			emit(map[string]string{"provider": name, "model": pc.Model})
+		}
+		return
+	}
 	pc, ok := cfg.Providers[*provider]
 	if !ok {
 		panic("provider unavailable")
@@ -204,6 +213,12 @@ func main() {
 				build[setting.Key] = setting.Value
 			}
 		}
+	}
+	if *shellWorkload {
+		if !runShellWorkload(pc, *provider, *label, *repeats, *timeout, *shellDelay, build) {
+			os.Exit(1)
+		}
+		return
 	}
 	initial := fixture(*records)
 	fixtureJSON, _ := json.Marshal(initial)
