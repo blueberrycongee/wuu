@@ -5,9 +5,9 @@ const { app, BrowserWindow } = require("electron");
 
 const desktopRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(desktopRoot, "..");
-const rendererHtml = path.join(desktopRoot, "out", "renderer", "index.html");
+const rendererHtml = path.resolve(process.env.WUU_TITLEBAR_RENDERER_HTML || path.join(desktopRoot, "out", "renderer", "index.html"));
 const preload = path.join(__dirname, "resize-e2e-preload.cjs");
-const evidenceDir = path.join(desktopRoot, "out", "e2e");
+const evidenceDir = path.resolve(process.env.WUU_TITLEBAR_OUTPUT || path.join(desktopRoot, "out", "e2e", "settings-titlebar"));
 const userData = path.join(evidenceDir, "settings-sidebar-hit-user-data");
 
 process.env.WUU_RESIZE_E2E_CWD = repoRoot;
@@ -15,6 +15,8 @@ fs.rmSync(userData, { recursive: true, force: true });
 fs.mkdirSync(userData, { recursive: true });
 app.setPath("userData", userData);
 
+let activeWindow;
+const results = [];
 app.whenReady().then(run).catch(fail);
 
 async function run() {
@@ -27,7 +29,7 @@ async function run() {
     show: false,
     ...(process.platform === "darwin" ? {
       titleBarStyle: "hiddenInset",
-      trafficLightPosition: { x: 18, y: 17 },
+      trafficLightPosition: { x: 18, y: 21 },
     } : {}),
     webPreferences: {
       contextIsolation: true,
@@ -38,11 +40,15 @@ async function run() {
     }
   });
 
+  activeWindow = win;
+  win.webContents.debugger.attach("1.3");
   win.webContents.on("render-process-gone", (_event, details) => {
     fail(new Error(`Renderer process exited: ${details.reason}`));
   });
 
   await loadFile(win, rendererHtml);
+  win.showInactive();
+  await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
   await waitFor(win, () => Boolean(document.querySelector(".conversation-pane")), 5000);
   await verifyTitlebarContinuity(win);
   win.setContentSize(1180, 820);
@@ -83,8 +89,9 @@ async function run() {
     () => document.querySelector(".settings-shell")?.classList.contains("sidebar-collapsed") || null,
     3000
   );
-  win.setSize(760, 820);
-  await delay(300);
+  win.setContentSize(760, 820);
+  await waitFor(win, () => innerWidth === 760, 3000);
+  await settleChrome(win);
 
   const before = await toggleHitState(win);
   assert.equal(before.hitOwnedByToggle, true, `Toggle must own its center hit before drawer opens: ${JSON.stringify(before)}`);
@@ -107,9 +114,11 @@ async function run() {
     new Set(transformSamples.map((value) => Math.round(value))).size >= 3,
     `Drawer should animate through multiple transform positions: ${transformSamples.join(", ")}`
   );
-  await delay(180);
+  await settleChrome(win);
 
   const after = await toggleHitState(win);
+  assert.equal(after.centerX, before.centerX, "Hover must not move the sidebar click target horizontally");
+  assert.equal(after.centerY, before.centerY, "Hover must not move the sidebar click target vertically");
   assert.equal(after.hitOwnedByToggle, true, `Toggle must own its center hit after drawer opens: ${JSON.stringify(after)}`);
   assert.equal(after.visible, true, `Toggle must remain visible after drawer opens: ${JSON.stringify(after)}`);
   assert.equal(after.hovered, true, `The real Electron pointer must still hover the toggle: ${JSON.stringify(after)}`);
@@ -129,7 +138,9 @@ async function run() {
     3000
   );
 
-  console.log(JSON.stringify({ before, after, readability, transformSamples }));
+  results.push({ scenario: "real-pointer-hover-and-dock", before, after, readability, transformSamples });
+  saveResults();
+  console.log(`PASS: shared titlebar axis, unclipped controls, and stable page/drawer click targets. Evidence: ${evidenceDir}`);
   win.close();
   app.quit();
 }
@@ -138,10 +149,9 @@ async function run() {
 // Page switching must preserve the control's hit box and rendered glyph;
 // Default zoom preserves the native center; zooming in must not clip chrome.
 async function verifyTitlebarContinuity(win) {
-  const results = [];
   for (const theme of ["light", "dark"]) {
-    for (const font of [14, 20]) {
-      for (const zoom of [1, 1.2 ** -0.5, 1.5, 2]) {
+    for (const font of [13, 15, 20]) {
+      for (const zoom of [1, 0.75, 1.25, 2]) {
         win.webContents.setZoomFactor(zoom);
         await win.webContents.executeJavaScript(`
           document.documentElement.dataset.platform = ${JSON.stringify(process.platform)};
@@ -163,6 +173,11 @@ async function verifyTitlebarContinuity(win) {
           }
           await settleChrome(win);
           const main = await chromeToggleGeometry(win);
+          const scenario = `${theme}-${font}px-${zoom}-${layout}`;
+          results.push({ scenario, page: "conversation", geometry: main });
+          saveResults();
+          assertTopRow(main, { theme, font, zoom, layout, page: "conversation" });
+          if (zoom === 1 && font !== 13) await capture(win, `${scenario}-conversation.png`);
           assert.deepEqual(main.clippedChrome, [], `Main chrome must fit: ${JSON.stringify({ theme, font, zoom, layout, main })}`);
           if (layout !== "docked") {
             await evaluate(win, () => {
@@ -176,6 +191,8 @@ async function verifyTitlebarContinuity(win) {
             await waitFor(win, () => Boolean(document.querySelector(".sidebar-drawer-open")), 3000);
             await settleChrome(win);
             const drawer = await chromeToggleGeometry(win);
+            results.push({ scenario, page: "conversation-drawer", geometry: drawer });
+            assertTopRow(drawer, { theme, font, zoom, layout, page: "conversation-drawer" });
             assert.deepEqual(drawer.clippedChrome, [], `Drawer chrome must fit: ${JSON.stringify({ theme, font, zoom, layout, drawer })}`);
             for (const key of ["x", "y", "width", "height"]) {
               assert.ok(Math.abs(drawer[key] - main[key]) < 0.1, `Opening the drawer moved ${key}: ${JSON.stringify({layout,zoom,main,drawer})}`);
@@ -188,17 +205,20 @@ async function verifyTitlebarContinuity(win) {
           await waitFor(win, () => Boolean(document.querySelector(".settings-shell")), 3000);
           await settleChrome(win);
           const settings = await chromeToggleGeometry(win);
+          results.push({ scenario, page: "settings", geometry: settings });
+          saveResults();
+          assertTopRow(settings, { theme, font, zoom, layout, page: "settings" });
+          if (zoom === 1 && font !== 13) await capture(win, `${scenario}-settings.png`);
           const context = JSON.stringify({ theme, font, zoom, layout, main, settings });
           assert.deepEqual(settings.clippedChrome, [], `Settings chrome must fit: ${context}`);
           for (const key of ["x", "y", "width", "height", "iconWidth", "iconHeight"]) {
             assert.ok(Math.abs(main[key] - settings[key]) < 0.1, `Switching pages moved/resized ${key}: ${context}`);
           }
           assert.equal(settings.icon, main.icon, `Switching pages changed the sidebar glyph: ${context}`);
-          if (zoom <= 1) {
-            assert.ok(Math.abs((main.y + main.height / 2) * zoom - 24) < 0.1, `Native chrome center drifted: ${context}`);
+          if (Math.abs(main.header.height * zoom - 56) < 0.1) {
+            assert.ok(Math.abs((main.y + main.height / 2) * zoom - 28) < 0.1, `Renderer must meet the expected native chrome axis: ${context}`);
           }
           assert.ok(main.hit && settings.hit, `The visible toggle must own its center hit: ${context}`);
-          results.push({ theme, font, zoom, layout, x: main.x, centerY: (main.y + main.height / 2) * zoom });
           await evaluate(win, () => document.querySelector(".settings-back-button").click());
           await waitFor(win, () => Boolean(document.querySelector(".app-shell")), 3000);
           await evaluate(win, () => {
@@ -211,17 +231,17 @@ async function verifyTitlebarContinuity(win) {
       }
     }
   }
-  console.log(JSON.stringify({ titlebarContinuity: results }));
+  saveResults();
 }
 
 async function settleChrome(win) {
-  await waitFor(win, () => !document.querySelector(".sidebar-animating, .sidebar-drawer-docking"), 3000);
+  await waitFor(win, () => !document.querySelector(".sidebar-animating, .sidebar-drawer-docking, .sidebar-drawer-closing, .window-resizing"), 3000);
   await evaluate(win, async () => {
     await document.fonts.ready;
     await new Promise(requestAnimationFrame);
-    const chrome = document.querySelectorAll(".titlebar, .settings-titlebar, .sidebar, .settings-sidebar, .sidebar-content");
-    await Promise.all([...chrome].flatMap(element => element.getAnimations()).filter(animation =>
-      animation.playState === "running" && Number.isFinite(animation.effect.getComputedTiming().endTime)
+    const chrome = document.querySelectorAll(".app-shell, .settings-shell");
+    await Promise.all([...chrome].flatMap(element => element.getAnimations({ subtree: true })).filter(animation =>
+      animation.timeline instanceof DocumentTimeline && animation.playState === "running" && Number.isFinite(animation.effect.getComputedTiming().endTime)
     ).map(animation => animation.finished.catch(() => {})));
     await new Promise(requestAnimationFrame);
   });
@@ -249,7 +269,25 @@ async function chromeToggleGeometry(win) {
         }
       }
     }
+    const header = document.querySelector(".titlebar, .settings-titlebar").getBoundingClientRect();
+    const peers = [...document.querySelectorAll([
+      '[data-wuu-component="sidebar-toggle"]', '.conversation-title-heading h1',
+      '.conversation-title-heading .icon-button', '[data-wuu-component="right-sidebar-toggle"]',
+      '.title-actions .icon-button', '.settings-crumb-root', '.settings-crumb-separator',
+      '.settings-titlebar-slot > .settings-page-title', '.settings-titlebar-slot .settings-page-actions button',
+    ].join(','))].filter(element => element.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }))
+      .map(element => {
+        const box = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+        return { target: element.dataset.wuuComponent || element.className || element.tagName,
+          bounds: box.toJSON(), centerY: box.y + box.height / 2,
+          button: element instanceof HTMLButtonElement, hit: element === hit || element.contains(hit),
+          coveredByDrawer: Boolean(document.querySelector('.sidebar-drawer-open .sidebar')?.contains(hit)) };
+      });
+    const canvas = document.querySelector('.conversation-pane');
     return {
+      header: header.toJSON(), peers,
+      canvasTop: canvas ? canvas.getBoundingClientRect().top + parseFloat(getComputedStyle(canvas, '::before').top) : null,
       x: rect.x, y: rect.y, width: rect.width, height: rect.height,
       iconWidth: glyph.width, iconHeight: glyph.height, icon: icon.innerHTML,
       hit: button === hit || button.contains(hit),
@@ -349,7 +387,46 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function fail(error) {
+function assertTopRow(geometry, context) {
+  const details = JSON.stringify({ ...context, geometry });
+  const axis = geometry.header.y + geometry.header.height / 2;
+  assert.ok(geometry.peers.length >= 3, `The actual page chrome must be present: ${details}`);
+  if (context.zoom === 1) {
+    assert.ok(Math.abs(axis - 28) < 0.1, `Default zoom keeps the shared 28 DIP axis: ${details}`);
+    assert.ok(Math.abs(geometry.header.height - 56) < 0.1, `Default zoom reserves the full titlebar row: ${details}`);
+  }
+  if (geometry.canvasTop !== null) {
+    assert.ok(geometry.canvasTop > 0 && geometry.canvasTop <= 8.1,
+      `The canvas retains responsive top breathing room: ${details}`);
+    if (context.layout !== "narrow") assert.ok(Math.abs(geometry.canvasTop - 8) < 0.1,
+      `Wide windows retain the full canvas inset: ${details}`);
+  }
+  for (const peer of geometry.peers) {
+    assert.ok(Math.abs(peer.centerY - axis) < 0.6, `Peer controls must share the titlebar axis: ${details}`);
+    assert.ok(peer.bounds.top >= geometry.header.top - 0.1 && peer.bounds.bottom <= geometry.header.bottom + 0.1,
+      `Chrome must not be vertically clipped: ${details}`);
+    // A hover drawer overlays the canvas without shifting its header. Its
+    // covered controls cannot receive clicks until the drawer closes.
+    if (peer.button) assert.ok(peer.hit || (context.page === "conversation-drawer"
+      && peer.target !== "sidebar-toggle" && peer.coveredByDrawer),
+    `Visible controls must own their center hit: ${details}`);
+  }
+}
+
+function saveResults(failure) {
+  fs.writeFileSync(path.join(evidenceDir, "results.json"), JSON.stringify({
+    platform: process.platform, electron: process.versions.electron, rendererHtml,
+    nativeTrafficLights: { expectedPositionDIP: { x: 18, y: 21 }, expectedCenterDIP: 28,
+      verification: "Renderer geometry only; native macOS traffic-light pixels require a macOS acceptance run." },
+    account: "Not exercised: account UI is disabled in production bundles.",
+    linuxCaption: "Not mounted by this synthetic bridge; onboarding-workspaces E2E covers the real main/preload caption.",
+    results, ...(failure ? { failure } : {}),
+  }, null, 2));
+}
+
+async function fail(error) {
+  saveResults(error.stack || String(error));
+  if (activeWindow && !activeWindow.isDestroyed()) await capture(activeWindow, "failure.png");
   console.error(error);
   app.exit(1);
 }

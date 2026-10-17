@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
@@ -36,7 +36,13 @@ jobs:
         env:
           CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           CI_HEAD: ${{ github.sha }}
-        run: node .github/scripts/select-ci.mjs
+        run: |
+          # Selection compares two trees, not history. Fetch the exact base even
+          # when a push spans several commits; failures must not skip checks.
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && [ -n "$CI_BASE" ] && ! [[ "$CI_BASE" =~ ^0+$ ]]; then
+            git fetch --no-tags --depth=1 origin "$CI_BASE"
+          fi
+          node .github/scripts/select-ci.mjs
 
   repository-check:
     name: Repository check
@@ -239,16 +245,11 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: |
-            desktop/package-lock.json
-            clients/core/package-lock.json
-            clients/mobile-web/package-lock.json
+          cache-dependency-path: desktop/package-lock.json
 
       - name: Install
         run: |
           npm ci --prefix desktop
-          npm ci --prefix clients/core
-          npm ci --prefix clients/mobile-web
           # Electron downloads lazily on require; parallel Vitest workers must
           # not extract into the same dist directory at the same time.
           node desktop/node_modules/electron/install.js
@@ -277,6 +278,8 @@ jobs:
           retention-days: 14
 
       - name: Build
+        # Source-based unit tests and renderer recovery do not consume a bundle.
+        if: ${{ matrix.suite != 'unit' }}
         id: build-renderer
         shell: bash
         run: |
@@ -363,6 +366,26 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Guard sidebar and streaming scroll-edge fades
+        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_SCROLL_FADE_OUTPUT: ${{ runner.temp }}/wuu-sidebar-scroll-fade-evidence
+        run: |
+          mkdir -p "$WUU_SCROLL_FADE_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/sidebar-scroll-fade-e2e.cjs 2>&1 | tee "$WUU_SCROLL_FADE_OUTPUT/run.log"
+
+      - name: Upload sidebar scroll fade evidence
+        if: ${{ matrix.suite == 'shell' && (always()) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidebar-scroll-fade-evidence
+          path: ${{ runner.temp }}/wuu-sidebar-scroll-fade-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard streamed reply settlement layout
         if: ${{ matrix.suite == 'layout' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 4
@@ -442,6 +465,27 @@ jobs:
             desktop/out/workspace-new-tab-e2e/*.png
             desktop/out/workspace-new-tab-e2e/*.json
             desktop/out/workspace-new-tab-e2e/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard titlebar alignment and sidebar hit targets
+        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          mkdir -p desktop/out/e2e/settings-titlebar
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/settings-sidebar-hit-e2e.cjs 2>&1 | tee desktop/out/e2e/settings-titlebar/run.log
+
+      - name: Upload titlebar alignment evidence
+        if: ${{ matrix.suite == 'shell' && (always()) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: titlebar-alignment-evidence
+          path: |
+            desktop/out/e2e/settings-titlebar/*.png
+            desktop/out/e2e/settings-titlebar/*.json
+            desktop/out/e2e/settings-titlebar/*.log
           if-no-files-found: ignore
           retention-days: 14
 
@@ -531,13 +575,13 @@ jobs:
           retention-days: 14
 
       - uses: actions/setup-go@v5
-        if: ${{ matrix.suite != 'selection' && matrix.suite != 'layout' }}
+        if: ${{ contains(fromJSON('["corpus","session","shell"]'), matrix.suite) }}
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
       - name: Build desktop fixture core
-        if: ${{ contains(fromJSON('["unit","corpus","session"]'), matrix.suite) }}
+        if: ${{ contains(fromJSON('["corpus","session"]'), matrix.suite) }}
         id: build-fixture-core
         run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
 
@@ -603,6 +647,27 @@ jobs:
           mkdir -p "$WUU_DOCUMENT_OUTPUT"
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/document-context-e2e.mjs 2>&1 | tee "$WUU_DOCUMENT_OUTPUT/run.log"
+
+      - name: Guard onboarding chrome and workspace setup
+        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success') }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_ONBOARDING_OUTPUT: ${{ runner.temp }}/wuu-onboarding-workspaces-evidence
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          mkdir -p "$WUU_ONBOARDING_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/onboarding-workspaces-e2e.cjs 2>&1 | tee "$WUU_ONBOARDING_OUTPUT/run.log"
+
+      - name: Upload onboarding chrome evidence
+        if: ${{ matrix.suite == 'session' && (always()) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboarding-workspaces-evidence
+          path: ${{ runner.temp }}/wuu-onboarding-workspaces-evidence
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload PDF context evidence
         if: ${{ matrix.suite == 'session' && (always()) }}

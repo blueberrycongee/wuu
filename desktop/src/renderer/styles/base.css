@@ -362,11 +362,13 @@
   --scrollbar-thumb-active: rgba(38, 70, 98, 0.45);
   --scrollbar-thin-thumb: rgba(32, 36, 39, 0.14);
 
-  /* Native chrome stays in DIP when Chromium zooms the page. Keep its 24-DIP
+  /* Native chrome stays in DIP when Chromium zooms the page. Keep its 28-DIP
    * center while the controls fit; at larger zoom/font sizes, grow the row
    * instead of clipping controls that still scale with the page. The row
-   * follows text controls even when its icon-only buttons are compact. */
-  --window-titlebar-height: max(calc(48px / var(--desktop-page-zoom, 1)), calc(var(--control-field-height) + var(--space-2)));
+   * follows the largest controls even when its icon-only buttons are compact.
+   * Equal safety space above and below keeps full-size workspace tabs inside
+   * the rounded canvas's top inset without moving their shared centerline. */
+  --window-titlebar-height: max(calc(56px / var(--desktop-page-zoom, 1)), calc(var(--control-size-roomy) + var(--space-2) * 2));
   --window-titlebar-padding-inline: var(--pane-inset);
   --window-titlebar-leading-inset: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
 

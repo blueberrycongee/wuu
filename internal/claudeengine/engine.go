@@ -425,6 +425,7 @@ type turnSubscription struct {
 	hasUserResult       bool
 	continuationPending bool
 	segmentStart        int
+	assistantError      string
 	lastRawResult       json.RawMessage
 	finishOnce          sync.Once
 }
@@ -484,7 +485,7 @@ func (sub *turnSubscription) handleTransportClose(reason string) {
 		sub.finish(sub.loopResult(sub.text.String(), ""), err)
 		return
 	}
-	err := errors.New(firstNonEmpty(strings.TrimSpace(reason), "claude exited before completing the turn"))
+	err := errors.New(firstNonEmpty(sub.assistantError, strings.TrimSpace(reason), "claude exited before completing the turn"))
 	sub.emit(providers.StreamEvent{Type: providers.EventError, Error: err})
 	sub.finish(sub.loopResult(sub.text.String(), ""), err)
 }
@@ -497,6 +498,7 @@ type claudeLine struct {
 	Event           json.RawMessage `json:"event"`
 	Delta           json.RawMessage `json:"delta"`
 	ContentBlock    json.RawMessage `json:"content_block"`
+	Error           json.RawMessage `json:"error"`
 	IsError         bool            `json:"is_error"`
 	StopReason      string          `json:"stop_reason"`
 	Usage           json.RawMessage `json:"usage"`
@@ -610,7 +612,22 @@ func (sub *turnSubscription) handleAssistant(envelope claudeLine) {
 	if err := json.Unmarshal(envelope.Message, &msg); err != nil {
 		return
 	}
+	var apiError string
+	if json.Unmarshal(envelope.Error, &apiError) == nil && strings.TrimSpace(apiError) != "" {
+		// Claude emits synthetic API failures as assistant messages with a
+		// top-level error code. Keep their details for the terminal notice;
+		// they are not assistant output, even when ordinary text looks similar.
+		var details []string
+		for _, block := range msg.Content {
+			if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
+				details = append(details, strings.TrimSpace(block.Text))
+			}
+		}
+		sub.assistantError = firstNonEmpty(strings.Join(details, "\n"), "claude API error: "+apiError)
+		return
+	}
 	if len(msg.Content) > 0 {
+		sub.assistantError = ""
 		sub.beginContinuation()
 	}
 	for index, block := range msg.Content {
@@ -696,6 +713,7 @@ func (sub *turnSubscription) handleStreamEvent(envelope claudeLine) {
 	}
 	switch event.Type {
 	case "message_start":
+		sub.assistantError = ""
 		sub.consumeAgentNotifications()
 		clear(sub.streamText)
 		clear(sub.streamThinking)
@@ -1098,6 +1116,7 @@ func (sub *turnSubscription) handleResult(envelope claudeLine) {
 	// Resuming a session can produce results for pending task notifications
 	// before Claude processes the user input. They do not complete this turn.
 	if sub.inputPending || (!sub.hasUserResult && res.Origin != nil && res.Origin.Kind == "task-notification") {
+		sub.assistantError = ""
 		return
 	}
 	failed := res.IsError || strings.HasPrefix(res.Subtype, "error_")
@@ -1141,6 +1160,8 @@ func (sub *turnSubscription) handleResult(envelope claudeLine) {
 			message = res.Error.Message
 		} else if strings.TrimSpace(res.Result) != "" {
 			message = res.Result
+		} else if sub.assistantError != "" {
+			message = sub.assistantError
 		} else if res.Subtype != "" {
 			message = "engine turn failed: " + res.Subtype
 		}
@@ -1149,6 +1170,7 @@ func (sub *turnSubscription) handleResult(envelope claudeLine) {
 		sub.finish(sub.loopResult(sub.text.String(), stopReason), err)
 		return
 	}
+	sub.assistantError = ""
 	content := sub.reconcileResultText(res.Result)
 	for _, task := range sub.agentTasks {
 		if task.state == providers.AgentActivityRunning || task.needsWake {

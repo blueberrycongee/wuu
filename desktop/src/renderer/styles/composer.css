@@ -2385,6 +2385,25 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   max-width: 100%;
 }
 
+@container composer-shell (max-width: 480px) {
+  /* Reserve a readable branch prefix as well as the fixed Git controls.
+     Both names may truncate when large text cannot fit on one row. Document
+     composers have their own stacked layout at this breakpoint. */
+  .composer-stack:not([data-document-composer]) .composer-git-controls {
+    flex: 1 0 auto;
+    max-width: 100%;
+  }
+
+  .composer-stack:not([data-document-composer]) .composer-branch-control {
+    flex-grow: 1;
+  }
+
+  .composer-stack:not([data-document-composer]) .composer-branch-control .hero-project-pill-text {
+    width: 4ch;
+    min-width: 4ch;
+  }
+}
+
 /* A shared prefix such as codex/ steps back so the part people scan for,
  * the branch's own name, carries the row. */
 .composer-branch-prefix {

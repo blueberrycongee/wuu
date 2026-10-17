@@ -365,7 +365,10 @@ app.whenReady().then(async () => {
         });
         await waitFor(() => document.querySelectorAll(".thread-row").length === 48);
         await evaluate(() => document.querySelector(".thread-row-main").click());
-        await waitFor(() => Boolean(document.querySelector(".thread-row.active")));
+        // Active content appears before the reveal finishes. Wait for the
+        // pending row to clear before choosing an independent reading position.
+        await waitFor(() => Boolean(document.querySelector(".thread-row.active"))
+          && !document.querySelector(".thread-row.pending-switch"));
         app.focus({ steal: true });
         win.focus();
         await waitFor(() => document.hasFocus());
@@ -414,7 +417,9 @@ app.whenReady().then(async () => {
         const following = await sample(`${label}-following`);
         await capture(`${label}-following`);
         unchanged(idle, following, "stream following");
-        assert.equal((await sample(`${label}-reasoning-following`, ".turn-reasoning-scroll")).mask, "none", "live inspection retains paint degradation");
+        const reasoningFollowing = await sample(`${label}-reasoning-following`, ".turn-reasoning-scroll");
+        assert.notEqual(reasoningFollowing.mask, "none", "live inspection keeps its scroll fade");
+        assert.ok(reasoningFollowing.top > 0 && reasoningFollowing.bottom < 1, "following the live edge leaves only the top fade");
         emit("item/agentMessage/delta", { thread_id: threadID, turn_id: turn.id, item_id: "fade-answer", delta: `${turn.items[2].text}Fresh streamed content.` });
         await waitFor(() => document.querySelector(".agent-text")?.textContent.includes("Fresh streamed content."));
         unchanged(idle, await sample(`${label}-delta`), "streamed content");
@@ -422,7 +427,14 @@ app.whenReady().then(async () => {
         await evaluate(() => document.querySelector('[data-pip-anchor-host="conversation"]').dispatchEvent(new WheelEvent("wheel", { deltaY: -200, bubbles: true })));
         await waitFor(() => !document.documentElement.hasAttribute("data-stream-following"));
         unchanged(idle, await sample(`${label}-paused`), "paused following");
-        assert.notEqual((await sample(`${label}-reasoning-paused`, ".turn-reasoning-scroll")).mask, "none", "inspection fade returns while reading");
+        await evaluate(() => {
+          const node = document.querySelector(".turn-reasoning-scroll");
+          node.dispatchEvent(new WheelEvent("wheel", { deltaY: -200, bubbles: true }));
+          node.scrollTop = (node.scrollHeight - node.clientHeight) / 2;
+        });
+        const reasoningPaused = await sample(`${label}-reasoning-paused`, ".turn-reasoning-scroll");
+        assert.notEqual(reasoningPaused.mask, "none", "inspection fade remains while reading");
+        assert.ok(reasoningPaused.top > 0 && reasoningPaused.bottom > 0, "reading mid-panel keeps both fades");
 
         await evaluate(() => { document.querySelector('[data-pip-anchor-host="conversation"]').scrollTop = 0; });
         await waitFor(() => Boolean(document.querySelector("button.jump-to-latest-pill")));
@@ -434,17 +446,21 @@ app.whenReady().then(async () => {
         // requests can switch away and back without losing the running turn.
         const snapshot = await evaluate(async () => (await window.wuu.resumeThread("sidebar-fade-0")).thread);
         emit("thread/updated", { thread: { ...snapshot, status: "in_progress", turns: [turn] } });
+        // Selecting an offscreen session intentionally reveals its row. Keep
+        // both switch targets visible so this checks stream-state isolation.
+        await evaluate(() => { document.querySelector(".sidebar-main").scrollTop = 0; });
+        const switchBaseline = await sample(`${label}-before-switch`);
         await evaluate(() => document.querySelectorAll(".sidebar-main .thread-row-main")[1].click());
         await waitFor(() => !document.documentElement.hasAttribute("data-stream-following"));
-        unchanged(idle, await sample(`${label}-switch-idle`), "switch to idle conversation");
+        unchanged(switchBaseline, await sample(`${label}-switch-idle`), "switch to idle conversation");
         await evaluate(() => document.querySelector(".sidebar-main .thread-row-main").click());
         await waitFor(() => document.documentElement.hasAttribute("data-stream-following"));
-        unchanged(idle, await sample(`${label}-switch-running`), "switch to running conversation");
+        unchanged(switchBaseline, await sample(`${label}-switch-running`), "switch to running conversation");
 
         emit("turn/completed", { thread_id: threadID, turn: { ...turn, status: "completed", completed_at: now } });
         await waitFor(() => !document.querySelector(".composer-stop-button"));
         await waitFor(() => !document.documentElement.hasAttribute("data-stream-following"));
-        unchanged(idle, await sample(`${label}-completed`), "turn completion");
+        unchanged(switchBaseline, await sample(`${label}-completed`), "turn completion");
 
         await evaluate(() => { document.querySelector(".sidebar-main").scrollTop = 0; });
         const top = await sample(`${label}-top`);

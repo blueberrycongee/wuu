@@ -21,6 +21,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Show a local edge light on sidebar hover and the full boundary line while
   focused or resizing, both inside the conversation canvas's rounded corners.
   Inset docked panel dividers to the same height.
+- Keep scroll-edge fades visible in thinking and process panels while a
+  response streams.
+- Align native window controls, sidebar toggles, conversation titles, and
+  workspace tabs on one shared titlebar row without clipping full-size tabs.
+- Keep Claude provider failures inside the conversation error notice instead of
+  duplicating diagnostics as assistant replies; preserve any useful partial reply
+  and failure details after reopening the conversation.
+- Keep project and branch names identifiable in compact conversation composers
+  without reducing text or control sizes.
 - Enable Computer Use by default in macOS development launches, with an explicit
   `WUU_ENABLE_CUA_MAC=0` override to disable it.
 - Match settings navigation, account controls, and sidebar drag-and-drop surfaces

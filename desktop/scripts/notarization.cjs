@@ -38,7 +38,7 @@ function validateArtifact(artifact, options) {
 }
 
 async function notarizeArchive(archive, receiptPath, {
-  run = execFileSync, sleep = setTimeout, maxPolls = 60, maxNetworkErrors = 5,
+  run = execFileSync, sleep = setTimeout, maxPolls = 60, maxNetworkErrors = 5, submitOnly = false,
 } = {}) {
   const sha256 = createHash("sha256").update(readFileSync(archive)).digest("hex");
   const auth = ["--key", process.env.APPLE_API_KEY, "--key-id", process.env.APPLE_API_KEY_ID,
@@ -72,7 +72,7 @@ async function notarizeArchive(archive, receiptPath, {
   }
   save();
   console.log(`Notarization submission ${receipt.id}; receipt: ${receiptPath}`);
-  if (receipt.status === "Accepted") return receipt;
+  if (submitOnly || receipt.status === "Accepted") return receipt;
   let networkErrors = 0;
   const deadline = Date.now() + 30 * 60_000;
   for (let poll = 0; poll < maxPolls && Date.now() < deadline; poll++) {
