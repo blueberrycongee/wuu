@@ -2658,6 +2658,49 @@
   margin-inline: 0 calc(var(--process-segment-gap) - var(--process-segment-inner-gap));
 }
 
+.process-surface-summary-line.has-compaction {
+  flex-wrap: wrap;
+  row-gap: var(--space-1);
+}
+
+.process-surface-compactions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+}
+
+.process-surface-summary-text + .process-surface-compactions {
+  margin-inline-start: var(--space-2);
+}
+
+.context-compaction-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  color: var(--ink-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+.context-compaction-indicator .context-usage-ring {
+  color: var(--token-gauge-mid);
+}
+
+.context-compaction-indicator.is-failed {
+  color: var(--danger);
+}
+
+.context-compaction-indicator:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.context-compaction-arrow {
+  color: var(--ink-tertiary);
+}
+
 /* Keep the compacted-state label readable and give the longer detail the
  * remaining width. Without explicit flex ownership, English copy can shrink
  * both segments below their painted text width and make them overlap. */

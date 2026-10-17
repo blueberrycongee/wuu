@@ -15,6 +15,7 @@
 import type { TurnContextUsage } from "./AppState";
 import { useId, useRef, useState } from "react";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
+import { ContextUsageRing } from "./ContextUsageRing";
 import { formatCurrentNumber, translateCurrent as translate, useI18n } from "./i18n";
 
 type ComposerContextMeterProps = {
@@ -24,13 +25,6 @@ type ComposerContextMeterProps = {
   usage: TurnContextUsage | undefined;
 };
 
-const RING_VIEWBOX = 24;
-const RING_CENTER = 12;
-const RING_RADIUS = 9;
-const RING_STROKE_WIDTH = 2;
-// Pre-computed 2πr so the SVG dash math is stable across the codebase.
-// The viewBox is intentionally 24 with enough room for the ring stroke.
-const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 const TOOLTIP_WIDTH = 212;
 
 // Fill-level thresholds mirror the token-speed gauge's idle/mid/high
@@ -53,19 +47,6 @@ function fillColor(level: FillLevel): string {
   return "var(--token-gauge-high)";
 }
 
-function ringDashOffset(ratio: number): number {
-  if (ratio >= 1) return 0;
-
-  // Round caps add one stroke width to the visible arc. Subtract that from
-  // the painted centerline so the visible fill, especially the final gap,
-  // still matches the numeric percentage.
-  const paintedLength = Math.max(
-    0,
-    RING_CIRCUMFERENCE * ratio - RING_STROKE_WIDTH,
-  );
-  return RING_CIRCUMFERENCE - paintedLength;
-}
-
 export function ComposerContextMeter({
   usage,
 }: ComposerContextMeterProps): JSX.Element | null {
@@ -80,7 +61,6 @@ export function ComposerContextMeter({
   const used = Math.max(0, usage.used);
   const ratio = Math.min(1, Math.max(0, used / usage.window));
   const percent = Math.round(ratio * 100);
-  const dashOffset = ringDashOffset(ratio);
   // Color tier mirrors the token-speed gauge so the two meters read as a
   // coordinated pair: gray when empty, amber while filling, warm red as
   // the window approaches its limit. The 0.7 cutoff matches the gauge's
@@ -110,39 +90,12 @@ export function ComposerContextMeter({
       onMouseEnter={() => setTooltipOpen(true)}
       onMouseLeave={() => setTooltipOpen(false)}
     >
-      <svg
-        viewBox={`0 0 ${RING_VIEWBOX} ${RING_VIEWBOX}`}
-        width="20"
-        height="20"
+      <ContextUsageRing
+        ratio={ratio}
         className="composer-context-meter-svg"
         data-fill={level}
-        // Color is set on the SVG (not the container) so the inline label
-        // keeps the parent's --ink-strong text color and the progress
-        // stroke can independently step through the gauge color tiers.
         style={{ color: ringColor }}
-        aria-hidden="true"
-      >
-        <circle
-          cx={RING_CENTER}
-          cy={RING_CENTER}
-          r={RING_RADIUS}
-          className="composer-context-meter-track"
-          fill="none"
-          strokeWidth={RING_STROKE_WIDTH}
-        />
-        <circle
-          cx={RING_CENTER}
-          cy={RING_CENTER}
-          r={RING_RADIUS}
-          className="composer-context-meter-progress"
-          fill="none"
-          strokeWidth={RING_STROKE_WIDTH}
-          strokeLinecap="round"
-          strokeDasharray={RING_CIRCUMFERENCE}
-          strokeDashoffset={dashOffset}
-          transform={`rotate(-90 ${RING_CENTER} ${RING_CENTER})`}
-        />
-      </svg>
+      />
       <span className="composer-context-meter-label">{valueLabel}</span>
       {tooltipOpen ? (
         <FloatingMenuPortal

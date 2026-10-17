@@ -17,6 +17,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Combine desktop context compaction with adjacent tool activity in one expandable
+  row. Paired context rings and an arrow show the retained-history reduction;
+  hovering or focusing the rings reveals the before/after token counts, while
+  expanded details preserve execution order and compaction diagnostics.
 - Frame desktop conversations in a rounded canvas with matching outer
   insets and a lower input box. Keep the sidebar resize
   target aligned with the visible canvas edge. Join the conversation and right

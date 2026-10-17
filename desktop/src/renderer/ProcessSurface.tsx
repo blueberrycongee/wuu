@@ -24,6 +24,7 @@ import {
 } from "./AutoFollowScroll";
 import { AnimatedProcessText, ProcessLabel } from "./ProcessTextMotion";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
+import { ContextCompactionIndicator } from "./ContextCompactionIndicator";
 import { TurnSourcesRow, TurnSourceChips } from "./TurnSourcesRow";
 import { collectTurnArtifacts } from "./ArtifactOutputs";
 import { translateCurrent as translate, useI18n } from "./i18n";
@@ -223,14 +224,11 @@ type ProcessSurfaceProps = {
   model?: string;
   onOpenURL?: (url: string, modifiers?: WorkspaceBrowserOpenModifiers) => void;
   /**
-   * Optional render hook for reasoning items in the expanded body.
-   * The surface is decoupled from the reasoning fold's scroll and
-   * auto-follow machinery — the parent already has the ThreadItemView
-   * that knows how to render a reasoning item with full behavior.
-   * Pass `undefined` to omit reasoning items from the body (the
-   * summary line still mentions "思考过程" / "正在思考").
+   * Render reasoning and compaction notices in the expanded body. The
+   * parent supplies ThreadItemView to preserve their full detail behavior.
+   * Without this hook, only tool details are rendered.
    */
-  renderReasoningItem?: (
+  renderProcessItem?: (
     item: ThreadItem,
     streaming: boolean,
   ) => JSX.Element | null;
@@ -250,7 +248,7 @@ export function ProcessSurface({
   provider,
   model,
   onOpenURL,
-  renderReasoningItem,
+  renderProcessItem,
 }: ProcessSurfaceProps): JSX.Element {
   const { t } = useI18n();
   const openWorkspaceURL = useWorkspaceBrowserOpen(onOpenURL);
@@ -260,18 +258,24 @@ export function ProcessSurface({
   const reasoningItems = processItems.filter(
     (item) => item.type === "reasoning",
   );
-  const toolSegments = buildToolActivityProcessSegments(toolItems);
+  const compactionItems = processItems.filter(item => item.type === "context_compaction");
+  const hasCompaction = compactionItems.length > 0;
+  // The compaction outcome replaces completed context-management labels in
+  // the summary. Running/failed tools and history reads remain visible.
+  const toolSegments = buildToolActivityProcessSegments(toolItems).filter(segment =>
+    !hasCompaction || segment.status !== "completed" || !["context", "context-window"].includes(segment.id),
+  );
   const hasReasoning = reasoningItems.length > 0;
   const hasMultipleTools = toolItems.length > 1;
-  const hasStandaloneDisclosure = toolItems.length === 1 && !hasReasoning
+  const hasStandaloneDisclosure = toolItems.length === 1 && !hasReasoning && !hasCompaction
     && ["set_session_workspace", "run_code", "exec"].includes(toolItems[0].name ?? "");
-  const hasInspection = !hasReasoning && !hasMultipleTools
+  const hasInspection = !hasReasoning && !hasMultipleTools && !hasCompaction
     && collectTurnArtifacts({ items: toolItems }).some(artifact => artifact.foldPreview);
   const hasWebActivity = sources.length > 0 || toolItems.some(item => ["websearch", "webfetch"].includes((item.name ?? "").toLowerCase().replaceAll("_", "")));
-  const hasDetails = hasReasoning || hasMultipleTools || hasInspection || hasWebActivity || hasStandaloneDisclosure;
+  const hasDetails = hasReasoning || hasCompaction || hasMultipleTools || hasInspection || hasWebActivity || hasStandaloneDisclosure;
   const detailRuns: ThreadItem[][] = [];
   for (const item of processItems) {
-    if (!isToolActivityItem(item) && item.type !== "reasoning") continue;
+    if (!isToolActivityItem(item) && item.type !== "reasoning" && item.type !== "context_compaction") continue;
     const previous = detailRuns.at(-1);
     if (previous?.[0].type === item.type) previous.push(item);
     else detailRuns.push([item]);
@@ -284,8 +288,9 @@ export function ProcessSurface({
       .reverse()
       .find((segment) => segment.status === "running") ??
     toolSegments.at(-1);
-  const mascotActivity: WuuMascotActivity =
-    reasoningStreaming || (hasReasoning && toolItems.length === 0)
+  const mascotActivity: WuuMascotActivity = compactionItems.some(item => item.status === "in_progress")
+    ? "compact"
+    : reasoningStreaming || (hasReasoning && toolItems.length === 0)
       ? "thinking"
       : mascotActivityForToolKind(currentToolSegment?.kind);
   const summaryPresentation = useDebouncedProcessSummary(
@@ -358,14 +363,17 @@ export function ProcessSurface({
       }`;
 
   const summaryLine = (
-    <span className="process-surface-summary-line" aria-label={summaryText}>
+    <span
+      className={`process-surface-summary-line${hasCompaction ? " has-compaction" : ""}`}
+      aria-label={hasCompaction ? undefined : summaryText}
+    >
       <ProcessSurfaceMascot
         active={processEntryActive}
         activity={mascotActivity}
         provider={provider}
         model={model}
       />
-      <ProcessLabel
+      {summaryText ? <ProcessLabel
         className="process-surface-summary-text"
         active={processEntryActive}
         text={summaryText}
@@ -401,7 +409,13 @@ export function ProcessSurface({
             />
           </span>
         ) : null}
-      </ProcessLabel>
+      </ProcessLabel> : null}
+      {hasCompaction ? (
+        <span className="process-surface-compactions">
+          {summaryText ? <span className="process-surface-separator" aria-hidden>·</span> : null}
+          {compactionItems.map(item => <ContextCompactionIndicator key={item.id} item={item} />)}
+        </span>
+      ) : null}
     </span>
   );
 
@@ -437,14 +451,14 @@ export function ProcessSurface({
           <div className="process-surface-tool-list" key={items[0].id}>
             <ToolActivityTimeline items={items} cwd={cwd} showInspectionPreviews={expanded} />
           </div>
-        ) : renderReasoningItem ? (
+        ) : renderProcessItem ? (
           <div className="process-surface-reasoning-list" key={items[0].id}>
             {items.map((item) => (
               <div
                 key={item.id}
                 className="process-surface-reasoning-item"
               >
-                {renderReasoningItem(
+                {renderProcessItem(
                   item,
                   streaming && item.status === "in_progress",
                 )}
@@ -461,7 +475,7 @@ export function ProcessSurface({
   // either the tool presenter result or the native unified surface.
   const toolActivityFallback = (
     <ToolActivityPresenter
-      item={toolItems.length === 1 && !hasReasoning ? toolItems[0] : undefined}
+      item={toolItems.length === 1 && !hasReasoning && !hasCompaction ? toolItems[0] : undefined}
       fallback={nativeFallback}
     />
   );

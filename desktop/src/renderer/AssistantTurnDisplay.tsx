@@ -328,7 +328,7 @@ function isProcessGroupCandidate(entry: TurnEntry): boolean {
   if (entry.kind === "activity") {
     return true;
   }
-  return entry.item.type === "reasoning";
+  return entry.item.type === "reasoning" || entry.item.type === "context_compaction";
 }
 
 function latestInProgressProcessPreview(
