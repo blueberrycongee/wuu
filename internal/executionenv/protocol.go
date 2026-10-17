@@ -19,10 +19,11 @@ type Init struct {
 }
 
 type ToolRequest struct {
-	GitAttributionEnabled bool               `json:"git_attribution_enabled,omitempty"`
-	Call                  providers.ToolCall `json:"call"`
-	PermissionMode        string             `json:"permission_mode"`
-	Actor                 string             `json:"actor"`
+	ShellEarlyHandoffDisabled bool               `json:"shell_early_handoff_disabled,omitempty"`
+	GitAttributionEnabled     bool               `json:"git_attribution_enabled,omitempty"`
+	Call                      providers.ToolCall `json:"call"`
+	PermissionMode            string             `json:"permission_mode"`
+	Actor                     string             `json:"actor"`
 }
 
 // Executor routes workspace tools to the selected environment. Host policy is

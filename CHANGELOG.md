@@ -14,6 +14,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   either only when selected, and keep other connection options visible alongside
   existing connections. Locked connection fields no longer imply a valid login;
   authenticated discovered connections remain usable from the composer.
+- Hand long foreground commands to the background process manager after ten
+  seconds so independent tools can proceed, while preserving output and completion
+  notifications. Keep the requested foreground wait in side conversations.
+  Record tool queue wait separately from execution time.
 - Keep the macOS Dock icon visible when the desktop pet is enabled.
 - Restore filled open-state indicators for the left and right desktop sidebar
   toggle icons.

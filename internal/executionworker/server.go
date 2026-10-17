@@ -107,7 +107,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 		if err := json.Unmarshal(data, &request); err != nil {
 			return nil, err
 		}
-		a, err := s.actor(request.Actor, request.PermissionMode, request.GitAttributionEnabled)
+		a, err := s.actor(request.Actor, request.PermissionMode, request.GitAttributionEnabled, false)
 		if err != nil {
 			return nil, err
 		}
@@ -129,7 +129,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 		if !executionenv.WorkspaceTool(request.Call.Name) {
 			return nil, fmt.Errorf("tool %q is not an execution environment tool", request.Call.Name)
 		}
-		a, err := s.actor(request.Actor, request.PermissionMode, request.GitAttributionEnabled)
+		a, err := s.actor(request.Actor, request.PermissionMode, request.GitAttributionEnabled, request.ShellEarlyHandoffDisabled)
 		if err != nil {
 			return nil, err
 		}
@@ -144,7 +144,7 @@ func (s *Server) Handle(ctx context.Context, method string, data json.RawMessage
 	}
 }
 
-func (s *Server) actor(id, mode string, attribution bool) (*actor, error) {
+func (s *Server) actor(id, mode string, attribution, shellEarlyHandoffDisabled bool) (*actor, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.init == nil {
@@ -153,7 +153,7 @@ func (s *Server) actor(id, mode string, attribution bool) (*actor, error) {
 	if id == "" {
 		return nil, errors.New("execution actor is required")
 	}
-	key := id + "\x00" + mode + "\x00" + strconv.FormatBool(attribution)
+	key := id + "\x00" + mode + "\x00" + strconv.FormatBool(attribution) + "\x00" + strconv.FormatBool(shellEarlyHandoffDisabled)
 	if a := s.actors[key]; a != nil {
 		return a, nil
 	}
@@ -179,6 +179,7 @@ func (s *Server) actor(id, mode string, attribution bool) (*actor, error) {
 	}
 	kit.SetAgentIdentity(id, actorPath)
 	kit.SetProcessManager(s.processes)
+	kit.SetShellEarlyHandoffEnabled(!shellEarlyHandoffDisabled)
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
