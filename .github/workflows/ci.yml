@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
@@ -36,7 +36,13 @@ jobs:
         env:
           CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           CI_HEAD: ${{ github.sha }}
-        run: node .github/scripts/select-ci.mjs
+        run: |
+          # Selection compares two trees, not history. Fetch the exact base even
+          # when a push spans several commits; failures must not skip checks.
+          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && [ -n "$CI_BASE" ] && ! [[ "$CI_BASE" =~ ^0+$ ]]; then
+            git fetch --no-tags --depth=1 origin "$CI_BASE"
+          fi
+          node .github/scripts/select-ci.mjs
 
   repository-check:
     name: Repository check
@@ -239,16 +245,11 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: |
-            desktop/package-lock.json
-            clients/core/package-lock.json
-            clients/mobile-web/package-lock.json
+          cache-dependency-path: desktop/package-lock.json
 
       - name: Install
         run: |
           npm ci --prefix desktop
-          npm ci --prefix clients/core
-          npm ci --prefix clients/mobile-web
           # Electron downloads lazily on require; parallel Vitest workers must
           # not extract into the same dist directory at the same time.
           node desktop/node_modules/electron/install.js
@@ -277,6 +278,8 @@ jobs:
           retention-days: 14
 
       - name: Build
+        # Source-based unit tests and renderer recovery do not consume a bundle.
+        if: ${{ matrix.suite != 'unit' }}
         id: build-renderer
         shell: bash
         run: |
@@ -531,13 +534,13 @@ jobs:
           retention-days: 14
 
       - uses: actions/setup-go@v5
-        if: ${{ matrix.suite != 'selection' && matrix.suite != 'layout' }}
+        if: ${{ contains(fromJSON('["corpus","session","shell"]'), matrix.suite) }}
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
       - name: Build desktop fixture core
-        if: ${{ contains(fromJSON('["unit","corpus","session"]'), matrix.suite) }}
+        if: ${{ contains(fromJSON('["corpus","session"]'), matrix.suite) }}
         id: build-fixture-core
         run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
 
