@@ -402,6 +402,28 @@ helper CPU/IO 不可用。不要混合新进程、普通切换、流式、profil
 harness 数据。隔离 core 优化时使用完全相同的 UI，保留全部重复样本，
 并以最终 main 修订作为优化基线。
 
+### 桌面图表渲染
+
+桌面及共享 Web renderer 使用 [Pele](https://github.com/obsidianmd/pele) 渲染
+`mermaid` 代码块。原生 iOS/Android 和文档站仍使用 Mermaid.js。原生图表打包脚本
+仍依赖桌面的 Mermaid 包，因此需保留该依赖；修改桌面锁文件后，运行
+`node clients/native/shared-ui/build-mermaid.mjs` 刷新记录的哈希。
+
+Pele 使用自己的布局和 Wuu 的 CSS 主题变量。Mermaid 的 `themeVariables`、任意
+HTML 标签及外部 Mermaid 插件与原渲染器并不等价。图表源码中的链接和图片已禁用。
+保留源码指定的流程方向，图表适配现有预览区域，支持点击放大和导出独立 SVG。
+
+执行 `npm --prefix desktop run build` 后，运行
+`cd desktop && npx electron dev/pele/verify.cjs` 验证桌面图表。它在深浅主题、
+15/20px 字号及宽窄窗口下加载实际 Markdown 组件，检查流式输出、错误恢复和导出
+颜色，再用合成会话打开生产版桌面 renderer。JSON 报告、截图和导出的 SVG 保存到
+`desktop/out/pele-acceptance/`。
+
+同一次运行会在同一个 Electron 页面内比较 Pele 与 Mermaid.js：每份源码预热三次、
+测量十次，并交替执行引擎。耗时包含生成 SVG、插入 DOM 和强制布局，不包含模块加载、
+屏幕绘制或模型延迟。另以相同构建参数比较独立引擎的压缩包体和 gzip 大小；这些数字
+不代表整个应用安装包的大小。
+
 ## 原生手机与远程服务
 
 当前手机实现位于 [`clients/native`](../../../clients/native/README.md)，iOS 使用 SwiftUI，Android 使用 Jetpack Compose。专用验证命令为：
