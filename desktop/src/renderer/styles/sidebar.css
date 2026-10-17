@@ -607,6 +607,9 @@
 
 .app-shell > .sidebar-resizer {
   left: calc(var(--sidebar-width, 296px) + var(--conversation-pane-inset) - 5px);
+  /* Container height lets the light clamp its transform to this rail without
+   * measuring layout on pointermove or changing its top every frame. */
+  container-type: size;
 }
 
 .sidebar-resizer::before {
@@ -634,21 +637,20 @@
   box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
 }
 
-/* The app shell turns the divider into a soft light on hover and restores the
- * full boundary line while focused or dragging. The light follows the pointer,
- * so the affordance stays where the user is acting without outlining the
- * canvas or reading as a scrollbar. */
+/* Keep pointer feedback local to the grab point. Pressing gathers the hover
+ * light into a soft bead; releasing lets it stretch back along the edge. */
 .app-shell > .sidebar-resizer::before {
-  top: clamp(
+  top: 0;
+  translate: 0 clamp(
     calc(var(--conversation-pane-inset) + var(--conversation-canvas-radius) + 32px),
-    var(--sidebar-resizer-pointer-y, 50%),
-    calc(100% - var(--conversation-pane-inset) - var(--conversation-canvas-radius) - 32px)
+    var(--sidebar-resizer-pointer-y, 50cqh),
+    calc(100cqh - var(--conversation-pane-inset) - var(--conversation-canvas-radius) - 32px)
   );
   right: auto;
   bottom: auto;
   width: 2px;
   height: 56px;
-  border-radius: 1px;
+  border-radius: 50%;
   transform: translate(-50%, -50%);
   background: var(--sidebar-resizer-hover-bg);
   box-shadow: 0 0 12px 3px var(--sidebar-resizer-hover-bg);
@@ -658,14 +660,15 @@
   mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
   transition:
     opacity var(--motion-fast) var(--ease-out),
-    top min(var(--motion-fast), 80ms) var(--ease-out);
+    background var(--motion-fast) var(--ease-out),
+    transform var(--motion-slow) cubic-bezier(0.22, 1.35, 0.36, 1);
 }
 
 .app-shell > .sidebar-resizer:hover::before {
   opacity: 1;
 }
 
-/* The full divider line belongs to focus and active resizing. */
+/* Keyboard focus identifies the entire adjustable boundary. */
 .app-shell > .sidebar-resizer::after {
   position: absolute;
   top: calc(var(--conversation-pane-inset) + var(--conversation-canvas-radius));
@@ -682,14 +685,22 @@
   transition: opacity var(--motion-fast) var(--ease-out);
 }
 
-.app-shell > .sidebar-resizer:focus-visible::before,
-.app-shell.resizing-sidebar > .sidebar-resizer::before {
+.app-shell > .sidebar-resizer:focus-visible::before {
   opacity: 0;
 }
 
-.app-shell > .sidebar-resizer:focus-visible::after,
-.app-shell.resizing-sidebar > .sidebar-resizer::after {
+.app-shell > .sidebar-resizer:focus-visible::after {
   opacity: 1;
+}
+
+.app-shell.resizing-sidebar > .sidebar-resizer::before {
+  opacity: 1;
+  background: color-mix(in srgb, var(--ink) 40%, transparent);
+  transform: translate(calc(-50% + var(--sidebar-resizer-grab-x, 0px)), -50%) scale(2.5, 0.72);
+}
+
+.app-shell.resizing-sidebar > .sidebar-resizer::after {
+  opacity: 0;
 }
 
 .resizing-sidebar,
