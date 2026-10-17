@@ -270,7 +270,7 @@ func executeShellCommandInDir(ctx context.Context, env *Env, command string, tim
 		return shellExecutionResult{}, fmt.Errorf("run command: %w", err)
 	}
 	var yield <-chan time.Time
-	if logf != nil {
+	if logf != nil && !env.ShellEarlyHandoffDisabled {
 		timer := time.NewTimer(maxForegroundShellWait)
 		defer timer.Stop()
 		yield = timer.C
