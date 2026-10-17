@@ -197,7 +197,6 @@ private struct PendingMessageDetail: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Text(status.explanation).font(.footnote).foregroundStyle(.secondary)
-                    if !message.text.isEmpty { Text(message.text).textSelection(.enabled) }
                     if !images.isEmpty {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: MessageImage.width), spacing: 8, alignment: .leading)],
                                   alignment: .leading, spacing: 8) {
@@ -213,6 +212,7 @@ private struct PendingMessageDetail: View {
                             Label(attachment["filename"].string ?? "文件", systemImage: "doc").lineLimit(1).truncationMode(.middle)
                         }.frame(minHeight: 44)
                     }
+                    if !message.text.isEmpty { Text(message.text).textSelection(.enabled) }
                     if let failure {
                         Label(failure, systemImage: "exclamationmark.triangle").font(.footnote)
                             .foregroundStyle(.red).textSelection(.enabled).transition(.opacity)

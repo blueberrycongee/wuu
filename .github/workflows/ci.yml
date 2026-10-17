@@ -1001,7 +1001,9 @@ jobs:
 
       - name: Test macOS release signing fixtures
         if: github.event_name != 'push'
-        run: npm --prefix desktop run test:release-signing
+        run: |
+          npm --prefix desktop run test:release-signing
+          node --test desktop/scripts/test-notarization.cjs desktop/scripts/test-release-checkpoint.cjs desktop/scripts/test-update-metadata.cjs
 
       - name: Build read-only app snapshot helper
         if: github.event_name != 'push'

@@ -16,7 +16,7 @@
   /* The navigation rows' block padding, so the account row lands on the
    * same row height instead of a fractional one. */
   padding: 0.2em var(--sidebar-row-pad-x);
-  border-radius: var(--radius-xs);
+  border-radius: var(--sidebar-row-radius);
   background: transparent;
   color: var(--ink);
   text-align: left;
