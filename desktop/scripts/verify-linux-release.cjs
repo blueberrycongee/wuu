@@ -10,6 +10,8 @@ const yaml = require("js-yaml");
 const root = resolve(__dirname, "../release");
 const version = require("../package.json").version;
 const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+// Match build-core.cjs: Git may choose seven digits in a shallow CI checkout.
+const shortCommit = execFileSync("git", ["rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim();
 const artifacts = ["wuu-linux-x64.AppImage", "wuu-linux-x64.deb"];
 const run = (command, args, options = {}) => execFileSync(command, args, { encoding: "utf8", timeout: 120_000, ...options }).trim();
 const hash = (path, algorithm = "sha256", encoding = "hex") => createHash(algorithm).update(readFileSync(path)).digest(encoding);
@@ -30,7 +32,7 @@ function verifyApp(path) {
   const manifest = JSON.parse(asar.extractFile(join(resources, "app.asar"), "package.json"));
   assert.equal(manifest.version, version);
   const core = run(join(resources, "bin/wuu-core"), ["--version"], { env });
-  assert.ok(core.includes(`v${version}`) && core.includes(commit.slice(0, 8)), `Wrong bundled core: ${core}`);
+  assert.ok(core.includes(`v${version}`) && core.includes(shortCommit), `Wrong bundled core: ${core}`);
   assert.ok(!core.includes("dirty"), "Bundled core must be clean");
   assert.match(run(join(resources, "tools/rg"), ["--version"]), /^ripgrep 15\.2\.0/);
   for (const file of ["COPYING", "LICENSE-MIT", "UNLICENSE"]) accessSync(join(resources, "licenses/ripgrep", file));
