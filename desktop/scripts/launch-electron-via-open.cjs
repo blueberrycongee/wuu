@@ -57,6 +57,12 @@ function launchEnvironment(
     WUU_WEB_TLS_CERT: env.WUU_WEB_TLS_CERT,
     WUU_WEB_TLS_KEY: env.WUU_WEB_TLS_KEY,
   };
+  // LaunchServices does not inherit the invoking terminal's toolchain or
+  // explicit engine overrides. Preserve them for source development launches.
+  for (const name of ["PATH", "SHELL", "NVM_DIR", "NVM_BIN", "MISE_DATA_DIR", "XDG_DATA_HOME",
+    ...Object.keys(env).filter(name => /^WUU_[A-Z0-9_]+_BINARY$/.test(name))]) {
+    if (env[name] !== undefined) values[name] = env[name];
+  }
   // LaunchServices does not inherit the invoking shell's proxy configuration.
   for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
     "http_proxy", "https_proxy", "all_proxy", "no_proxy"]) {

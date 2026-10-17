@@ -33,6 +33,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Refresh external agent discovery after installing a CLI while the desktop is
+  running, including login-shell paths and runtime registration. Detect standard
+  user installs in the onboarding preview, and preserve terminal PATH and explicit
+  engine binary overrides when launching macOS source development builds.
 - Reuse streaming HTTP connection pools across model turns, including Codex,
   Grok Build and SuperGrok credential adapters, instead of rebuilding a pool for
   every request.

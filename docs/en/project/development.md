@@ -24,6 +24,11 @@ The override is also forwarded through the macOS LaunchServices launcher.
 
 On macOS, `make dev` and `npm --prefix desktop run dev` enable Computer Use by default. Set `WUU_ENABLE_CUA_MAC=0` to disable it for a development run. `dev:direct` remains available to explicitly enable it. macOS Accessibility and Screen Recording permissions still apply.
 
+macOS source launches preserve the invoking terminal's `PATH`, shell/toolchain
+locations, and `WUU_<ID>_BINARY` overrides across LaunchServices. Packaged graphical
+launches discover standard user install locations and, when needed, login-shell
+paths. After installing a CLI while Wuu is running, use Settings → Agents → Refresh.
+
 Desktop packages bundle a checksum-pinned ripgrep in `Resources/tools` and append that directory to the core's `PATH`, so search tools and agent shell commands have `rg` even when the system lacks it; an `rg` already on `PATH` takes precedence. `make dev` does not download it. Run `npm --prefix desktop run build:ripgrep` once to use the bundled copy in development; otherwise the core uses `rg` from `PATH` or its built-in search fallback.
 
 Project Agent is experimental and disabled in default and release builds. It
@@ -85,6 +90,28 @@ unconfirmed input in the production UI. It checks read-only recovery, complete
 clipboard content, ordinary held input controls, and wide/default-font and
 narrow/large-font layouts. Results and screenshots are saved to
 `desktop/out/e2e/native-steering/`; set `WUU_STEER_UI_OUTPUT` to override it.
+
+## External engine discovery smoke check
+
+On macOS, build the desktop and core, then exercise the real settings refresh
+flow through LaunchServices with a system-only PATH and disposable user data:
+
+```bash
+go build -o desktop/build/bin/wuu-core ./cmd/wuu
+go build -o desktop/build/bin/fakecodex ./internal/codexengine/testdata/fakecodex
+(cd desktop && npx electron-vite build)
+open -n -W -a "$PWD/desktop/node_modules/electron/dist/Electron.app" \
+  --env PATH=/usr/local/bin:/usr/bin:/bin \
+  --args "$PWD/desktop/scripts/engine-discovery-e2e.cjs" --use-mock-keychain
+```
+
+Read `desktop/out/e2e/engine-discovery/result.json` for the result (`open` does not
+forward the app's exit status). The check covers startup detection, installation
+while running, the real Settings refresh button, a native Codex protocol turn,
+new shell directories, and explicit disable. It uses a synthetic Codex peer and
+requires no system-wide Codex installation; it does not test upstream login or
+inference. Use `open --env WUU_ENGINE_DISCOVERY_OUTPUT=/absolute/output` to keep
+separate evidence folders.
 
 ## Choose the relevant checks
 

@@ -63,6 +63,13 @@ func (s *Server) handleEngineList(req Request) error {
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
+	if params.RefreshModels {
+		enginecatalog.RefreshUserPath()
+		// Discovery alone can find a newly installed binary while the runtime
+		// still has no factory for it. Reapply persisted enable/disable choices
+		// before reporting availability; existing turns retain their leases.
+		s.applyEngineSettingsToRuntime()
+	}
 	result := EngineListResult{
 		Engines:  s.engineInventoryAt(firstNonEmpty(params.CWD, s.rt.RootDir), params.RefreshModels),
 		Settings: s.engineSettingsFromConfig(),

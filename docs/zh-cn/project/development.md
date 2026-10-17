@@ -22,6 +22,10 @@ macOS LaunchServices 启动器也会转发该设置。
 
 在 macOS 上，`make dev` 和 `npm --prefix desktop run dev` 默认启用 Computer Use。可设置 `WUU_ENABLE_CUA_MAC=0` 在本次开发运行中关闭；`dev:direct` 仍可显式启用。使用时仍需 macOS 的辅助功能和屏幕录制权限。
 
+macOS 源码启动器会跨 LaunchServices 保留启动终端的 `PATH`、shell/工具链目录和
+`WUU_<ID>_BINARY` 覆盖值。图形方式打开的安装包会检测常见用户安装位置，并在需要时
+读取登录 shell 路径。在 Wuu 运行期间安装 CLI 后，可点击“设置 → Agent → 刷新”。
+
 桌面安装包在 `Resources/tools` 中内置一份校验过 checksum 的固定版本 ripgrep，并把该目录追加到核心的 `PATH` 末尾，因此即使系统没有安装 `rg`，搜索工具和 agent 的 shell 命令也能使用它；`PATH` 中已有的 `rg` 优先。`make dev` 不会下载它。如需在开发时使用内置版本，先运行一次 `npm --prefix desktop run build:ripgrep`；否则核心使用 `PATH` 中的 `rg`，或回退到内置的搜索实现。
 
 Project Agent 尚属实验功能，默认构建和发布构建均关闭，没有可供用户开启的设置。
@@ -82,6 +86,26 @@ make build-go
 构建 core 后，运行 `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs`，检查真实 Go 执行归属和 Chromium 输入。停止必须中断当前任务；之后的新指令应取得新的操作权限，旧执行 ID 仍须被拒绝。该脚本也覆盖浏览器任务隔离、保留页面、待发送输入期间接管与清理。证据保存在 `desktop/out/browser-task-ownership/`。
 
 这些检查不验证 ScreenCaptureKit、原生应用输入、macOS 权限、系统窗口合成或安装包签名。在启用 Computer Use 的 macOS 构建中，还需检查浏览器 → 原生应用 → 浏览器切换、同一应用的两个窗口、将终端和 Wuu 作为普通目标、隐藏或最小化窗口、目标关闭、屏幕录制权限拒绝或撤销，以及待发送输入期间的接管。隐藏和停止不能退出被观察的应用；停用或替换扩展必须停止它的流。还需检查明暗主题、默认与大字号、减少动态效果，以及输入框附近的拖拽和缩放。`node desktop/scripts/inspect-cua-pip.cjs` 可为运行中的原生预览记录进程/窗口诊断与截图；辅助进程正在运行本身不能证明画面实时有效。
+
+## 外部引擎发现冒烟检查
+
+在 macOS 上构建桌面与核心后，通过 LaunchServices 使用系统 PATH 和临时用户数据
+验证真实设置刷新流程：
+
+```bash
+go build -o desktop/build/bin/wuu-core ./cmd/wuu
+go build -o desktop/build/bin/fakecodex ./internal/codexengine/testdata/fakecodex
+(cd desktop && npx electron-vite build)
+open -n -W -a "$PWD/desktop/node_modules/electron/dist/Electron.app" \
+  --env PATH=/usr/local/bin:/usr/bin:/bin \
+  --args "$PWD/desktop/scripts/engine-discovery-e2e.cjs" --use-mock-keychain
+```
+
+结果写入 `desktop/out/e2e/engine-discovery/result.json`（`open` 不转发应用退出码）。
+检查覆盖启动检测、运行期间安装、真实设置刷新按钮、Codex 原生协议轮次、新增 shell
+目录，以及显式禁用。使用合成 Codex 协议端，要求系统公共目录没有安装 Codex；
+不验证上游登录与推理。可向 `open` 添加 `--env WUU_ENGINE_DISCOVERY_OUTPUT=/absolute/output`
+以保留独立证据目录。
 
 ## 选择相关检查
 
