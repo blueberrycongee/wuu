@@ -640,24 +640,40 @@
 /* Keep pointer feedback local to the grab point. Pressing gathers the hover
  * light into a soft bead; releasing lets it stretch back along the edge. */
 .app-shell > .sidebar-resizer::before {
+  --sidebar-resizer-light-height: 96px;
+  --sidebar-resizer-light-inset: calc(
+    var(--conversation-pane-inset) + var(--conversation-canvas-radius) +
+    var(--sidebar-resizer-light-height) / 2 + 4px
+  );
   top: 0;
   translate: 0 clamp(
-    calc(var(--conversation-pane-inset) + var(--conversation-canvas-radius) + 32px),
+    var(--sidebar-resizer-light-inset),
     var(--sidebar-resizer-pointer-y, 50cqh),
-    calc(100cqh - var(--conversation-pane-inset) - var(--conversation-canvas-radius) - 32px)
+    calc(100cqh - var(--sidebar-resizer-light-inset))
   );
   right: auto;
   bottom: auto;
   width: 2px;
-  height: 56px;
+  height: var(--sidebar-resizer-light-height);
   border-radius: 50%;
   transform: translate(-50%, -50%);
   background: var(--sidebar-resizer-hover-bg);
   box-shadow: 0 0 12px 3px var(--sidebar-resizer-hover-bg);
   opacity: 0;
   pointer-events: none;
-  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
-  mask-image: linear-gradient(to bottom, transparent, #000 18%, #000 82%, transparent);
+  /* Long, soft tails keep the feedback visible above and below the cursor. */
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    rgb(0 0 0 / 0.16) 12.5%,
+    rgb(0 0 0 / 0.5) 25%,
+    rgb(0 0 0 / 0.84) 37.5%,
+    #000 50%,
+    rgb(0 0 0 / 0.84) 62.5%,
+    rgb(0 0 0 / 0.5) 75%,
+    rgb(0 0 0 / 0.16) 87.5%,
+    transparent
+  );
   transition:
     opacity var(--motion-fast) var(--ease-out),
     background var(--motion-fast) var(--ease-out),

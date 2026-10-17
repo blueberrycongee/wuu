@@ -19,9 +19,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Show a local edge light on sidebar hover that gathers toward the pointer
-  when pressed, follows the drag, and springs back on release. Keep the full
-  boundary line for keyboard focus, inside the conversation canvas's rounded
-  corners. Inset docked panel dividers to the same height.
+  when pressed, follows the drag, and springs back on release. Extend its soft
+  fade above and below the cursor so the feedback remains visible while held.
+  Keep the full boundary line for keyboard focus, inside the conversation
+  canvas's rounded corners. Inset docked panel dividers to the same height.
 - Keep scroll-edge fades visible in thinking and process panels while a
   response streams.
 - Align native window controls, sidebar toggles, conversation titles, and
