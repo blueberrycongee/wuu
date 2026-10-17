@@ -11,9 +11,6 @@
   "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
   "desktop": { "entry": "desktop.js" },
   "contributes": {
-    "presenters": [
-      { "id": "subagent-completion", "target": "conversation.item", "mode": "replace", "priority": 20, "title": "Subagent result" }
-    ],
     "settingsPages": [
       { "id": "subagent", "title": "Subagent", "description": "Configure model aliases used by delegated tasks", "view": "subagent.settings", "icon": "bot", "order": 30 }
     ]

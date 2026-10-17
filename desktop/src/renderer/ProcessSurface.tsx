@@ -16,7 +16,7 @@ import {
   type ToolActivityProcessSegment,
 } from "./ToolActivityHelpers";
 import { ToolActivityRow, ToolActivityTimeline } from "./ToolActivity";
-import { ToolActivityPresenter, useToolActivityPresentationIDs } from "./plugins/ToolActivityPresenter";
+import { ToolActivityPresenter } from "./plugins/ToolActivityPresenter";
 import { ConversationProcessPresentation } from "./plugins/ConversationProcessPresentation";
 import {
   AUTO_FOLLOW_NESTED_SCROLL_ATTR,
@@ -240,26 +240,7 @@ function isToolActivityItem(item: ThreadItem): boolean {
   return TOOL_ACTIVITY_ITEM_TYPES.has(item.type);
 }
 
-export function ProcessSurface(props: ProcessSurfaceProps): JSX.Element {
-  // Keep plugin tool entries visible even when neighboring tools/reasoning fold.
-  // The whole process remains the outer presentation boundary.
-  const presented = useToolActivityPresentationIDs(props.processItems);
-  const runs: ThreadItem[][] = [];
-  for (const item of props.processItems) {
-    const previous = runs.at(-1);
-    if (previous && !presented.has(item.id) && !presented.has(previous[0].id)) previous.push(item);
-    else runs.push([item]);
-  }
-  const fallback = <>{runs.map(items => {
-    const native = <NativeProcessSurface {...props} processItems={items} />;
-    return presented.has(items[0].id)
-      ? <ToolActivityPresenter key={items[0].id} item={items[0]} fallback={native} />
-      : <NativeProcessSurface key={items[0].id} {...props} processItems={items} />;
-  })}</>;
-  return <ConversationProcessPresentation processItems={props.processItems} streaming={props.streaming} active={props.active} fallback={fallback} />;
-}
-
-function NativeProcessSurface({
+export function ProcessSurface({
   processItems,
   cwd,
   streaming,
@@ -489,7 +470,24 @@ function NativeProcessSurface({
       </ProcessSurfaceFold>
     </div>
   );
-  return nativeFallback;
+  // Nesting is deterministic: conversation.process is the complete outer
+  // boundary. For a single tool, conversation.tool-activity remains the inner
+  // keyed boundary, so process replacement wins and process wrappers surround
+  // either the tool presenter result or the native unified surface.
+  const toolActivityFallback = (
+    <ToolActivityPresenter
+      item={toolItems.length === 1 && !hasReasoning && !hasCompaction ? toolItems[0] : undefined}
+      fallback={nativeFallback}
+    />
+  );
+  return (
+    <ConversationProcessPresentation
+      processItems={processItems}
+      streaming={streaming}
+      active={active}
+      fallback={toolActivityFallback}
+    />
+  );
 }
 
 function ProcessSurfaceSegmentView({

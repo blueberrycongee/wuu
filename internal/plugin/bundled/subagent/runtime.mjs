@@ -505,8 +505,7 @@ var SubagentPlugin = class {
       "host.storage.get",
       "host.storage.set",
       "host.storage.keys",
-      "host.storage.delete",
-      "host.session.history.read"
+      "host.storage.delete"
     ];
     return {
       protocol_version: 3,
@@ -514,7 +513,6 @@ var SubagentPlugin = class {
         {
           id: "spawn_agent",
           direct_only: true,
-          display: { kind: "task", capability: "subagent.spawn", label: "Delegate task", label_translations: { "zh-CN": "\u59D4\u6D3E\u5B50\u4EFB\u52A1" } },
           description: "Delegate a bounded task when separate context materially improves the result. Set run_in_background=false when the next step depends on the child result; the tool waits in the current turn and returns the result directly. Background tasks return immediately and deliver completion later as a normal read-only query bubble.",
           input_schema: objectSchema({
             description: stringField("Short 3-5 word summary of what the agent will do."),
@@ -532,7 +530,6 @@ var SubagentPlugin = class {
         {
           id: "send_message",
           direct_only: true,
-          display: { kind: "task", capability: "subagent.send", label: "Update child task", label_translations: { "zh-CN": "\u66F4\u65B0\u5B50\u4EFB\u52A1" } },
           description: "Send a follow-up turn to an existing child task by session id or task name.",
           input_schema: objectSchema({ target: stringField("Child session id or task name."), message: stringField("Message to deliver.") }, "target", "message"),
           execution_scopes: ["root"],
@@ -541,7 +538,6 @@ var SubagentPlugin = class {
         {
           id: "close_agent",
           direct_only: true,
-          display: { kind: "task", capability: "subagent.close", label: "Stop child task", label_translations: { "zh-CN": "\u505C\u6B62\u5B50\u4EFB\u52A1" } },
           description: "Cancel an existing child task by session id or task name.",
           input_schema: objectSchema({ target: stringField("Child session id or task name.") }, "target"),
           execution_scopes: ["root"],
@@ -609,11 +605,6 @@ var SubagentPlugin = class {
         request_id: `turn-${requestID}`,
         state: "created"
       });
-      await host.call("host.storage.set", { scope: "workspace", key: `view.${record2.session_id}`, value: JSON.stringify({
-        description: args.description.trim(),
-        parent_turn_id: call.turn_id,
-        call_id: call.call_id
-      }) });
       const sent2 = await host.call("host.session.send", {
         request_id: record2.request_id,
         session_id: record2.session_id,
@@ -627,7 +618,7 @@ var SubagentPlugin = class {
       await this.saveRecord(host, record2);
       return { record: record2, sent: sent2 };
     });
-    const identity = { session_id: record.session_id, parent_session_id: parentSessionID, parent_turn_id: call.turn_id, task_name: name, description: args.description.trim(), run_in_background: background };
+    const identity = { session_id: record.session_id, task_name: name, run_in_background: background };
     if (background) return textResult({ ...identity, state: sent.state, backgrounded: true });
     const inspected = await host.call("host.session.inspect", {
       session_id: record.session_id,
@@ -684,7 +675,7 @@ var SubagentPlugin = class {
     record.turn_id = sent.turn_id;
     record.queue_id = sent.queue_id;
     await this.saveRecord(host, record);
-    return textResult({ session_id: record.session_id, parent_session_id: record.parent_session_id, task_name: record.name, state: sent.state, steered: sent.steered ?? false });
+    return textResult({ session_id: record.session_id, state: sent.state, steered: sent.steered ?? false });
   }
   async closeAgent(host, call) {
     const { target } = call.arguments;
@@ -692,7 +683,7 @@ var SubagentPlugin = class {
     record.suppress_completion = true;
     await this.saveRecord(host, record);
     const result = await host.call("host.session.cancel", { session_id: record.session_id, turn_id: record.turn_id, queue_id: record.queue_id });
-    return textResult({ session_id: result.session_id, parent_session_id: record.parent_session_id, task_name: record.name, cancelled: result.cancelled });
+    return textResult({ session_id: result.session_id, cancelled: result.cancelled });
   }
   async invokeCapability(call, host) {
     switch (call.capability) {
@@ -700,41 +691,8 @@ var SubagentPlugin = class {
         return { output: { text: promptSection } };
       case clientCapability: {
         const request = call.input;
-        const input = request.input ?? {};
-        if (request.method === "status.list") {
-          if (!input.parent_session_id?.trim()) throw new Error("parent_session_id is required");
-          const listed = await host.call("host.session.list", { parent_session_id: input.parent_session_id, scope: "owned" });
-          const sessions = [];
-          for (const session of listed.sessions) {
-            const { value } = await host.call("host.storage.get", { scope: "workspace", key: `view.${session.session_id}` });
-            const metadata = value ? JSON.parse(value) : {};
-            const detail = session.state === "running" || session.state === "queued" ? void 0 : await host.call("host.session.inspect", { session_id: session.session_id, wait: "none" });
-            sessions.push({
-              ...session,
-              ...metadata,
-              state: detail?.turn?.state ?? session.state,
-              preview: (detail?.turn?.error || detail?.turn?.final_output || "").slice(0, 180)
-            });
-          }
-          return { output: { result: { sessions } } };
-        }
-        if (request.method === "session.read" || request.method === "session.info") {
-          if (!input.session_id?.trim()) throw new Error("session_id is required");
-          const detail = await host.call("host.session.inspect", { session_id: input.session_id, wait: "none" });
-          const { value } = await host.call("host.storage.get", { scope: "workspace", key: `view.${input.session_id}` });
-          const metadata = value ? JSON.parse(value) : {};
-          if (request.method === "session.info") return { output: { result: { ...detail, ...metadata } } };
-          const first = await host.call("host.session.history.read", { session_id: input.session_id, start_seq: 1, limit: 1 });
-          const end = input.before_seq === void 0 ? first.head_seq : Math.min(first.head_seq, input.before_seq - 1);
-          const start = Math.max(1, end - 29);
-          const history = end < 1 ? { records: [], has_more: false } : await host.call("host.session.history.read", {
-            session_id: input.session_id,
-            ...input.cursor ? { cursor: input.cursor } : { start_seq: start, end_seq: end, snapshot_seq: first.head_seq },
-            limit: 30
-          });
-          return { output: { result: { ...detail, ...metadata, history, start_seq: history.records?.[0]?.seq ?? start, has_earlier: (history.records?.[0]?.seq ?? start) > 1 } } };
-        }
-        throw new Error(`unknown client method ${JSON.stringify(request.method)}`);
+        if (request.method !== "status.list") throw new Error(`unknown client method ${JSON.stringify(request.method)}`);
+        return { output: { result: await host.call("host.session.list", request.input ?? {}) } };
       }
       case lifecycleCapability:
         await this.onLifecycle(host, call.input);

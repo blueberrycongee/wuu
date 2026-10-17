@@ -364,12 +364,7 @@ export interface ToolActivityStructuredResult {
 
 /** Host-owned immutable view of a tool call. It intentionally excludes thread internals. */
 export interface ToolActivitySnapshot {
-  /** Provider tool-call identity, when different from the rendered item id. */
-  readonly callId?: string;
   readonly contractVersion: 1;
-  /** Owning conversation, including while a tool is still running. */
-  readonly threadId?: string;
-  readonly locale?: string;
   readonly id: string;
   readonly toolName: string;
   readonly displayLabel?: string;
@@ -2032,12 +2027,6 @@ export interface ConversationItemSnapshotV1 {
   readonly summary?: string;
   /** Raw user input when it differs from the displayed bubble text. */
   readonly inputText?: string;
-  /** Source metadata for host/plugin messages linked to another session. */
-  readonly origin?: string;
-  readonly sourceName?: string;
-  readonly relatedSessionId?: string;
-  readonly presentationKind?: string;
-  readonly locale?: string;
 }
 
 export type ConversationProcessKindV1 = "reasoning" | "tool-group" | "mixed";

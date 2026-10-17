@@ -60,14 +60,13 @@ class SubagentPlugin implements RuntimePlugin {
   initialize() {
     const services: KernelHostServiceMethod[] = [
       "host.session.create", "host.session.send", "host.session.list", "host.session.cancel", "host.session.inspect",
-      "host.storage.get", "host.storage.set", "host.storage.keys", "host.storage.delete", "host.session.history.read",
+      "host.storage.get", "host.storage.set", "host.storage.keys", "host.storage.delete",
     ];
     return {
       protocol_version: 3 as const,
       tools: [
         {
           id: "spawn_agent", direct_only: true,
-          display: { kind: "task", capability: "subagent.spawn", label: "Delegate task", label_translations: { "zh-CN": "委派子任务" } },
           description: "Delegate a bounded task when separate context materially improves the result. Set run_in_background=false when the next step depends on the child result; the tool waits in the current turn and returns the result directly. Background tasks return immediately and deliver completion later as a normal read-only query bubble.",
           input_schema: objectSchema({
             description: stringField("Short 3-5 word summary of what the agent will do."),
@@ -83,14 +82,12 @@ class SubagentPlugin implements RuntimePlugin {
         },
         {
           id: "send_message", direct_only: true,
-          display: { kind: "task", capability: "subagent.send", label: "Update child task", label_translations: { "zh-CN": "更新子任务" } },
           description: "Send a follow-up turn to an existing child task by session id or task name.",
           input_schema: objectSchema({ target: stringField("Child session id or task name."), message: stringField("Message to deliver.") }, "target", "message"),
           execution_scopes: ["root" as const], activity: { concurrency_safe: true },
         },
         {
           id: "close_agent", direct_only: true,
-          display: { kind: "task", capability: "subagent.close", label: "Stop child task", label_translations: { "zh-CN": "停止子任务" } },
           description: "Cancel an existing child task by session id or task name.",
           input_schema: objectSchema({ target: stringField("Child session id or task name.") }, "target"),
           execution_scopes: ["root" as const], activity: { concurrency_safe: true },
@@ -140,11 +137,6 @@ class SubagentPlugin implements RuntimePlugin {
         session_id: "", parent_session_id: parentSessionID, parent_turn_id: call.turn_id,
         name, request_id: `turn-${requestID}`, state: "created",
       });
-      // Presentation metadata outlives the pending-delivery index so completed
-      // tasks remain addressable from restored conversation activities.
-      await host.call("host.storage.set", { scope: "workspace", key: `view.${record.session_id}`, value: JSON.stringify({
-        description: args.description.trim(), parent_turn_id: call.turn_id, call_id: call.call_id,
-      }) });
       const sent = await host.call("host.session.send", {
         request_id: record.request_id, session_id: record.session_id, input: { prompt: args.prompt.trim() },
         presentation: { kind: "query_bubble", text: `子任务 ${name} 已开始`, name }, cause: "subagent.task",
@@ -155,7 +147,7 @@ class SubagentPlugin implements RuntimePlugin {
       await this.saveRecord(host, record);
       return { record, sent };
     });
-    const identity = { session_id: record.session_id, parent_session_id: parentSessionID, parent_turn_id: call.turn_id, task_name: name, description: args.description.trim(), run_in_background: background };
+    const identity = { session_id: record.session_id, task_name: name, run_in_background: background };
     if (background) return textResult({ ...identity, state: sent.state, backgrounded: true });
 
     const inspected = await host.call("host.session.inspect", {
@@ -203,7 +195,7 @@ class SubagentPlugin implements RuntimePlugin {
     record.turn_id = sent.turn_id;
     record.queue_id = sent.queue_id;
     await this.saveRecord(host, record);
-    return textResult({ session_id: record.session_id, parent_session_id: record.parent_session_id, task_name: record.name, state: sent.state, steered: sent.steered ?? false });
+    return textResult({ session_id: record.session_id, state: sent.state, steered: sent.steered ?? false });
   }
 
   private async closeAgent(host: RuntimeHost, call: ToolExecuteParams): Promise<ToolExecuteResult> {
@@ -213,47 +205,16 @@ class SubagentPlugin implements RuntimePlugin {
     record.suppress_completion = true;
     await this.saveRecord(host, record);
     const result = await host.call("host.session.cancel", { session_id: record.session_id, turn_id: record.turn_id, queue_id: record.queue_id });
-    return textResult({ session_id: result.session_id, parent_session_id: record.parent_session_id, task_name: record.name, cancelled: result.cancelled });
+    return textResult({ session_id: result.session_id, cancelled: result.cancelled });
   }
 
   async invokeCapability(call: CapabilityInvokeParams, host: RuntimeHost) {
     switch (call.capability) {
       case promptCapability: return { output: { text: promptSection } };
       case clientCapability: {
-        const request = call.input as { method: string; input?: { parent_session_id?: string; session_id?: string; before_seq?: number; cursor?: string } };
-        const input = request.input ?? {};
-        if (request.method === "status.list") {
-          if (!input.parent_session_id?.trim()) throw new Error("parent_session_id is required");
-          const listed = await host.call("host.session.list", { parent_session_id: input.parent_session_id, scope: "owned" });
-          const sessions = [];
-          for (const session of listed.sessions) {
-            const { value } = await host.call("host.storage.get", { scope: "workspace", key: `view.${session.session_id}` });
-            const metadata = value ? JSON.parse(value) : {};
-            // An inactive session is not proof of success. Inspect its durable
-            // terminal turn rather than treating list's idle state as completed.
-            const detail = session.state === "running" || session.state === "queued" ? undefined
-              : await host.call("host.session.inspect", { session_id: session.session_id, wait: "none" });
-            sessions.push({ ...session, ...metadata, state: detail?.turn?.state ?? session.state,
-              preview: (detail?.turn?.error || detail?.turn?.final_output || "").slice(0, 180) });
-          }
-          return { output: { result: { sessions } } };
-        }
-        if (request.method === "session.read" || request.method === "session.info") {
-          if (!input.session_id?.trim()) throw new Error("session_id is required");
-          // Inspection verifies ownership before returning private child history.
-          const detail = await host.call("host.session.inspect", { session_id: input.session_id, wait: "none" });
-          const { value } = await host.call("host.storage.get", { scope: "workspace", key: `view.${input.session_id}` });
-          const metadata = value ? JSON.parse(value) : {};
-          if (request.method === "session.info") return { output: { result: { ...detail, ...metadata } } };
-          const first = await host.call("host.session.history.read", { session_id: input.session_id, start_seq: 1, limit: 1 });
-          const end = input.before_seq === undefined ? first.head_seq : Math.min(first.head_seq, input.before_seq - 1);
-          const start = Math.max(1, end - 29);
-          const history = end < 1 ? { records: [], has_more: false } : await host.call("host.session.history.read", {
-            session_id: input.session_id, ...(input.cursor ? { cursor: input.cursor } : { start_seq: start, end_seq: end, snapshot_seq: first.head_seq }), limit: 30,
-          });
-          return { output: { result: { ...detail, ...metadata, history, start_seq: history.records?.[0]?.seq ?? start, has_earlier: (history.records?.[0]?.seq ?? start) > 1 } } };
-        }
-        throw new Error(`unknown client method ${JSON.stringify(request.method)}`);
+        const request = call.input as { method: string; input?: HostServiceContracts["host.session.list"]["params"] };
+        if (request.method !== "status.list") throw new Error(`unknown client method ${JSON.stringify(request.method)}`);
+        return { output: { result: await host.call("host.session.list", request.input ?? {}) } };
       }
       case lifecycleCapability: await this.onLifecycle(host, call.input as TurnLifecycleInput); break;
       case interruptCapability: await this.onInterrupted(host, call.input as AgentTurnInterruptedInput); break;

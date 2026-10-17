@@ -92,7 +92,6 @@ describe("ConversationItemPresentation", () => {
       contractVersion: 1,
       id: "user-1",
       kind: "user-message",
-      locale: "zh-CN",
       status: "completed",
       phase: undefined,
       text: "hello",

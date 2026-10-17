@@ -1,5 +1,4 @@
-import { useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
-import { ArtifactThreadContext } from "../ArtifactPreviewContext";
+import { type ReactNode } from "react";
 
 import type { ThreadItem } from "../../shared/protocol";
 import { useI18n } from "../i18n";
@@ -24,7 +23,6 @@ export function ToolActivityPresenter({
   controller = desktopWorkbenchController,
 }: ToolActivityPresenterProps): JSX.Element {
   const { locale } = useI18n();
-  const threadId = useContext(ArtifactThreadContext);
   const dispatchKey = item?.display?.capability ?? item?.name;
   return (
     <PluginPresentation
@@ -33,27 +31,16 @@ export function ToolActivityPresenter({
       controller={controller}
       target="conversation.tool-activity"
       presentationKey={dispatchKey}
-      snapshot={item === undefined ? EMPTY_TOOL_ACTIVITY_SNAPSHOT : toToolActivitySnapshot(item, locale, threadId)}
+      snapshot={item === undefined ? EMPTY_TOOL_ACTIVITY_SNAPSHOT : toToolActivitySnapshot(item, locale)}
       fallback={fallback}
     />
   );
 }
 
-/** Registry-aware identities shared by turn layout and process rendering. */
-export function useToolActivityPresentationIDs(items: readonly ThreadItem[]): ReadonlySet<string> {
-  const ids = useSyncExternalStore(
-    listener => desktopPluginHost.subscribe(listener),
-    () => items.filter(item => item.type === "tool_call"
-      && desktopPluginHost.getPresenters("conversation.tool-activity", item.display?.capability ?? item.name).length > 0)
-      .map(item => item.id).join("\0"),
-  );
-  return useMemo(() => new Set(ids ? ids.split("\0") : []), [ids]);
-}
-
 const EMPTY_TOOL_ACTIVITY_SNAPSHOT = Object.freeze({});
 
 /** Convert the private thread record into the complete public presenter DTO. */
-export function toToolActivitySnapshot(item: ThreadItem, locale?: string, threadId?: string): ToolActivitySnapshot {
+export function toToolActivitySnapshot(item: ThreadItem, locale?: string): ToolActivitySnapshot {
   const displayLabel = toolDisplayLabel(item.display, locale);
   const detail = item.result_detail;
   const structuredResult: ToolActivityStructuredResult | undefined = detail === undefined
@@ -93,10 +80,7 @@ export function toToolActivitySnapshot(item: ThreadItem, locale?: string, thread
     });
   return Object.freeze({
     contractVersion: 1,
-    ...(threadId === undefined ? {} : { threadId }),
-    ...(locale === undefined ? {} : { locale }),
     id: item.id,
-    ...(item.source_id === undefined ? {} : { callId: item.source_id }),
     toolName: item.name ?? "",
     ...(displayLabel === undefined ? {} : { displayLabel }),
     ...(item.display?.capability === undefined ? {} : { capability: item.display.capability }),

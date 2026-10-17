@@ -64,13 +64,6 @@
   border-bottom: 1px solid var(--hairline-soft);
 }
 
-/* The shell sidebar toggle occupies the trailing titlebar control. */
-.plugin-workbench-view-auxiliary > .plugin-workbench-view-header {
-  min-height: var(--canvas-titlebar-height);
-  box-sizing: border-box;
-  padding-right: calc(var(--control-size-toolbar) + 2 * var(--control-toolbar-inset));
-}
-
 .plugin-workbench-view-header [role="tablist"] {
   display: flex;
   min-width: 0;
