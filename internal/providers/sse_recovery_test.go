@@ -1,9 +1,12 @@
 package providers_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -198,5 +201,245 @@ func TestOpenAISSEMalformedCompleteEventIsNotRetried(t *testing.T) {
 				t.Fatal("malformed event was silently discarded")
 			}
 		})
+	}
+}
+
+func compressionTestClient(t *testing.T, protocol string, server *httptest.Server) providers.StreamClient {
+	t.Helper()
+	var client providers.StreamClient
+	var err error
+	if protocol == "anthropic" {
+		client, err = anthropic.New(anthropic.ClientConfig{BaseURL: server.URL, APIKey: "synthetic-key", HTTPClient: server.Client()})
+	} else {
+		client, err = openai.New(openai.ClientConfig{BaseURL: server.URL, APIKey: "synthetic-key", HTTPClient: server.Client(), WireAPI: protocol, ResponsesTransport: providers.StreamTransportSSE})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+func TestHTTPClientsRequestCompression(t *testing.T) {
+	for _, protocol := range []string{"chat", "responses", "anthropic"} {
+		for _, stream := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%v", protocol, stream), func(t *testing.T) {
+				bodies := make(chan []byte, 2)
+				var requests atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					raw, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					if r.ContentLength != int64(len(raw)) || r.Header.Get("Content-Type") != "application/json" {
+						t.Error("invalid wire length or content type")
+					}
+					if requests.Add(1) == 1 {
+						if r.Header.Get("Content-Encoding") != "" {
+							t.Error("compression enabled by default")
+						}
+					} else {
+						if r.Header.Get("Content-Encoding") != "gzip" {
+							t.Error("opted-in request was not compressed")
+							return
+						}
+						reader, err := gzip.NewReader(bytes.NewReader(raw))
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						decoded, err := io.ReadAll(reader)
+						_ = reader.Close()
+						if err != nil || len(raw) >= len(decoded) {
+							t.Errorf("compressed bytes=%d JSON bytes=%d error=%v", len(raw), len(decoded), err)
+						}
+						t.Logf("protocol=%s stream=%v JSON_bytes=%d gzip_bytes=%d", protocol, stream, len(decoded), len(raw))
+						raw = decoded
+					}
+					bodies <- raw
+					w.Header().Set("Content-Type", "application/json")
+					if stream {
+						w.Header().Set("Content-Type", "text/event-stream")
+						if protocol == "anthropic" {
+							fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+						} else {
+							fmt.Fprint(w, "data: [DONE]\n\n")
+						}
+					} else {
+						switch protocol {
+						case "chat":
+							fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`)
+						case "responses":
+							fmt.Fprint(w, `{"id":"resp_test","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}`)
+						case "anthropic":
+							fmt.Fprint(w, `{"id":"msg_test","role":"assistant","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}`)
+						}
+					}
+				}))
+				defer server.Close()
+				client := compressionTestClient(t, protocol, server)
+				req := providers.ChatRequest{
+					Model: "test-model",
+					Messages: []providers.ChatMessage{
+						{Role: "user", Content: "Inspect the synthetic records."},
+						{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call_test", Name: "read_file", Arguments: `{"path":"synthetic.txt"}`}}},
+						{Role: "tool", ToolCallID: "call_test", Name: "read_file", Content: strings.Repeat("synthetic record 界🙂\n", 10000)},
+					},
+					Tools: []providers.ToolDefinition{{Name: "read_file", Description: "Read a synthetic file", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}, "required": []string{"path"}}}},
+				}
+				for _, enabled := range []bool{false, true} {
+					optIn := ""
+					if enabled {
+						optIn = server.URL + "/chat/completions," + server.URL + "/responses," + server.URL + "/v1/messages"
+					}
+					t.Setenv("WUU_EXPERIMENTAL_REQUEST_GZIP_ENDPOINTS", optIn)
+					if stream {
+						events, err := client.StreamChat(context.Background(), req)
+						if err != nil {
+							t.Fatal(err)
+						}
+						done := 0
+						for event := range events {
+							if event.Type == providers.EventError {
+								t.Fatal(event.Error)
+							}
+							if event.Type == providers.EventDone {
+								done++
+							}
+						}
+						if done != 1 {
+							t.Fatalf("stream done events=%d", done)
+						}
+					} else {
+						response, err := client.Chat(context.Background(), req)
+						if err != nil || response.Content != "done" {
+							t.Fatalf("response=%+v error=%v", response, err)
+						}
+					}
+				}
+				if len(bodies) != 2 || !bytes.Equal(<-bodies, <-bodies) {
+					t.Fatal("compression changed serialized JSON or submission count")
+				}
+			})
+		}
+	}
+}
+
+func TestHTTPClientsCompressedFailureDoesNotResend(t *testing.T) {
+	for _, protocol := range []string{"chat", "responses", "anthropic"} {
+		for _, failure := range []string{"unsupported", "connection lost", "cancelled"} {
+			t.Run(protocol+"/"+failure, func(t *testing.T) {
+				var attempts atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					attempts.Add(1)
+					if r.Header.Get("Content-Encoding") != "gzip" {
+						t.Error("request was not compressed")
+					}
+					_, _ = io.Copy(io.Discard, r.Body)
+					if failure == "connection lost" {
+						conn, _, err := w.(http.Hijacker).Hijack()
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						_ = conn.Close()
+						return
+					}
+					http.Error(w, "request encoding unsupported", http.StatusUnsupportedMediaType)
+				}))
+				defer server.Close()
+				t.Setenv("WUU_EXPERIMENTAL_REQUEST_GZIP_ENDPOINTS", server.URL+"/chat/completions,"+server.URL+"/responses,"+server.URL+"/v1/messages")
+				client := compressionTestClient(t, protocol, server)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				wantAttempts := int32(1)
+				if failure == "cancelled" {
+					cancel()
+					wantAttempts = 0
+				}
+				_, err := client.StreamChat(ctx, providers.ChatRequest{Model: "test-model", Messages: []providers.ChatMessage{{Role: "user", Content: strings.Repeat("synthetic", 20000)}}})
+				if err == nil || attempts.Load() != wantAttempts {
+					t.Fatalf("error=%v attempts=%d want=%d", err, attempts.Load(), wantAttempts)
+				}
+				if failure == "unsupported" && providers.IsRetryable(err) {
+					t.Fatal("unsupported compression must not trigger recovery")
+				}
+				if failure == "cancelled" && !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancellation was lost: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestHTTPClientsCompressedRedirects(t *testing.T) {
+	for _, protocol := range []string{"chat", "responses", "anthropic"} {
+		for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+			for _, allowDestination := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%d/allow=%v", protocol, status, allowDestination), func(t *testing.T) {
+					var initialHits, destinationHits atomic.Int32
+					bodies := make(chan []byte, 2)
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						wire, err := io.ReadAll(r.Body)
+						if err != nil {
+							t.Error(err)
+						}
+						if r.Header.Get("Content-Encoding") != "gzip" || r.ContentLength != int64(len(wire)) {
+							t.Error("redirect lost gzip metadata")
+						}
+						select {
+						case bodies <- wire:
+						default:
+							t.Error("unexpected request replay")
+						}
+						if r.URL.Path != "/destination" {
+							initialHits.Add(1)
+							http.Redirect(w, r, "/destination", status)
+							return
+						}
+						destinationHits.Add(1)
+						w.Header().Set("Content-Type", "text/event-stream")
+						if protocol == "anthropic" {
+							fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+						} else {
+							fmt.Fprint(w, "data: [DONE]\n\n")
+						}
+					}))
+					defer server.Close()
+					endpoints := server.URL + "/chat/completions," + server.URL + "/responses," + server.URL + "/v1/messages"
+					if allowDestination {
+						endpoints += "," + server.URL + "/destination"
+					}
+					t.Setenv("WUU_EXPERIMENTAL_REQUEST_GZIP_ENDPOINTS", endpoints)
+					client := providers.NewReliableStreamClient(compressionTestClient(t, protocol, server), nil,
+						providers.WithStreamRetryWait(func(context.Context, time.Duration) error { return nil }))
+					events, terminalErr := client.StreamChat(context.Background(), providers.ChatRequest{
+						Model: "test-model", Messages: []providers.ChatMessage{{Role: "user", Content: strings.Repeat("synthetic", 20000)}},
+						Operation: providers.NewInferenceOperation(providers.InferenceOperationAgentRound, providers.InferenceProfileInteractive),
+					})
+					done := 0
+					if events != nil {
+						for event := range events {
+							if event.Type == providers.EventError {
+								terminalErr = event.Error
+							}
+							if event.Type == providers.EventDone {
+								done++
+							}
+						}
+					}
+					if initialHits.Load() != 1 {
+						t.Fatalf("initial compressed POST sent %d times", initialHits.Load())
+					}
+					if allowDestination {
+						if terminalErr != nil || done != 1 || destinationHits.Load() != 1 || len(bodies) != 2 || !bytes.Equal(<-bodies, <-bodies) {
+							t.Fatalf("redirect replay: error=%v done=%d destination hits=%d", terminalErr, done, destinationHits.Load())
+						}
+					} else if terminalErr == nil || providers.IsRetryable(terminalErr) || destinationHits.Load() != 0 || done != 0 {
+						t.Fatalf("blocked redirect: error=%v done=%d destination hits=%d", terminalErr, done, destinationHits.Load())
+					}
+				})
+			}
+		}
 	}
 }

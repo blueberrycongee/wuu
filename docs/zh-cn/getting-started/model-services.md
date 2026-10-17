@@ -79,6 +79,30 @@ wuu exec --provider openai --permission-mode read_only "阅读这个项目，告
 
 `--provider` 选择已配置的服务标识，`--model` 覆盖本次运行的模型。配置优先级和项目级设置的限制见[配置说明](../reference/configuration.md)。
 
+## 实验性 HTTP 请求压缩
+
+HTTP 请求 gzip 默认关闭。只有端点运营方确认支持 `Content-Encoding: gzip` 后，
+才在启动 Wuu 的进程中设置 `WUU_EXPERIMENTAL_REQUEST_GZIP_ENDPOINTS`。
+该变量接受逗号分隔的完整请求 URL，例如：
+
+```bash
+export WUU_EXPERIMENTAL_REQUEST_GZIP_ENDPOINTS="https://gateway.example/v1/responses"
+```
+
+示例域名仅为占位，不表示该服务支持压缩。按实际协议包含完整的 `/responses`、
+`/chat/completions` 或 `/v1/messages` 路径。匹配包含查询字符串；不支持仅填主机名、
+通配符、URL 用户信息或片段。重定向目标也必须显式列入名单。
+兼容 API 格式不意味着支持请求压缩。
+
+此实验仅对至少 64 KiB 的序列化 JSON 使用快速 gzip，并且只有字节数减少时才发送
+压缩结果。这个阈值是实验性选择。请求已有 `Content-Encoding` 头时，不再自动压缩。
+JSON 内容、token 计量、响应流和 WebSocket 行为保持不变。压缩会增加本机 CPU 和
+内存开销；上传字节减少不代表首 token 更快或模型费用更低。
+
+拒绝 gzip 或连接失败时，不会增加额外重试或自动改发未压缩请求；现有恢复规则仍然
+适用。如果端点拒绝该编码，请取消该环境变量并重启 Wuu，再明确决定是否重试。
+此设置作用于 Wuu 的 HTTP 模型客户端，不作用于外部 Agent 引擎。
+
 ## 回合结束与额外请求
 
 Wuu 按所选 API 的结束信号处理回合。正常停止会结束回合，即使响应没有正文；这不代表任务一定完成。仅有空文本或过程说明，不会触发另一次收费请求。

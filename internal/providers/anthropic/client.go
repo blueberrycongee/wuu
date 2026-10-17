@@ -1079,6 +1079,11 @@ func (c *Client) doSingleMessagesRequest(
 		httpReq.Header.Set("anthropic-beta", strings.Join(betas, ","))
 	}
 
+	httpClient, err = providers.PrepareRequestCompression(httpReq, body, httpClient)
+	if err != nil {
+		return nil, nil, fmt.Errorf("prepare request body: %w", err)
+	}
+
 	lease, err := c.coordinator.AcquireForAttempt(ctx, c.providerScope, attempt)
 	if err != nil {
 		return nil, nil, err

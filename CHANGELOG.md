@@ -8,6 +8,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Add default-off experimental HTTP request gzip for explicitly opted-in model
+  endpoints. Compress large JSON bodies only when smaller, preserve request
+  content and token accounting, and restrict compressed redirects to opted-in
+  endpoints without adding an automatic resend.
+
 ### Changed
 
 - Frame desktop conversations in a rounded canvas with matching outer
