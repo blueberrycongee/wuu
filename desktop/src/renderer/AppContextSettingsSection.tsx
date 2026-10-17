@@ -126,14 +126,6 @@ export function AppContextSettingsSection(): JSX.Element | null {
             <span className="settings-switch-thumb" aria-hidden="true" />
           </button>
         </SettingsRow>
-        <SettingsRow title={t("settings.appContext.permissions")}>
-          <div className="settings-row-control-block">
-            <button className="settings-button" type="button" disabled={disabled}
-              onClick={() => void perform(() => window.wuu.requestAppContextPermission!("screen"))}>{t("composer.appContext.screenPermission")}</button>
-            {settings?.include_text ? <button className="settings-button" type="button" disabled={disabled}
-              onClick={() => void perform(() => window.wuu.requestAppContextPermission!("text"))}>{t("composer.appContext.textPermission")}</button> : null}
-          </div>
-        </SettingsRow>
       </SettingsGroup>
       {error || state?.error ? <p className="settings-error" role="alert">{error || state?.error}</p> : null}
       {state && !state.available ? <p className="settings-error" role="alert">{t("composer.appContext.unavailable")}</p> : null}

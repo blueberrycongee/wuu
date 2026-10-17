@@ -176,7 +176,25 @@ func TestSettledResultProviderHTTP(t *testing.T) {
 					}
 					for _, block := range blocks {
 						if block.Type == "tool_result" {
-							checkTool(block.ToolUseID, block.Content)
+							var nested []budgetWireMessage
+							if json.Unmarshal(block.Content, &nested) == nil {
+								// Anthropic keeps tool observations inside the result
+								// to preserve thinking across tool continuations.
+								if len(nested) == 0 || nested[0].Type != "text" {
+									t.Fatal("missing settled text before tool observations")
+								}
+								checkTool(block.ToolUseID, nested[0].Text)
+								for _, observation := range nested[1:] {
+									if observation.Type == "image" || observation.Type == "document" {
+										if len(ids) != 2 {
+											t.Error("observation interleaved with paired results")
+										}
+										media++
+									}
+								}
+							} else {
+								checkTool(block.ToolUseID, block.Content)
+							}
 							continue
 						}
 						switch block.Type {
@@ -200,6 +218,7 @@ func TestSettledResultProviderHTTP(t *testing.T) {
 type budgetWireMessage struct {
 	Role       string          `json:"role"`
 	Type       string          `json:"type"`
+	Text       json.RawMessage `json:"text"`
 	Content    json.RawMessage `json:"content"`
 	Output     json.RawMessage `json:"output"`
 	ToolCallID string          `json:"tool_call_id"`

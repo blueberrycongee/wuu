@@ -149,19 +149,27 @@ app.whenReady().then(async () => {
       // Establish the reading position only after that layout has settled.
       await until(layoutMotionSettled);
       await frames();
+      // Even a single image can start offscreen in a narrow conversation.
+      // Visit every lazy image while responses are gated, then restore the
+      // scenario's reading position before recording the loading baseline.
+      for (let index = 0; index < count; index++) {
+        await evaluate((selector, index) => {
+          document.querySelector(selector).querySelectorAll("img.rich-image, .turn-artifact-inline-image img")[index]
+            .scrollIntoView({ block: "center", inline: "nearest" });
+        }, activeSelector, index);
+        await frames();
+      }
       if (kind === "artifact" && count > 1) {
-        // Offscreen carousel images load lazily. Visit them before establishing
-        // the reading baseline, while every response is still held by the gate.
-        for (let index = 0; index < count; index++) {
-          await evaluate((selector, index) => {
-            document.querySelectorAll(`${selector} .turn-artifact-inline-image img`)[index]
-              .scrollIntoView({ block: "center", inline: "nearest" });
-          }, activeSelector, index);
-          await frames();
-        }
         await evaluate(selector => {
           document.querySelector(`${selector} .turn-artifact-gallery-items`).scrollLeft = 0;
         }, activeSelector);
+        await frames();
+      }
+      if (mode === "bottom") {
+        await evaluate(selector => {
+          const viewport = document.querySelector(selector);
+          viewport.scrollTop = viewport.scrollHeight;
+        }, viewportSelector);
         await frames();
       }
       if (mode === "history") {
@@ -215,9 +223,19 @@ app.whenReady().then(async () => {
         };
         requestAnimationFrame(tick);
       });
-      const timeout = setTimeout(() => { console.error("Image requests did not reach the gate"); app.exit(1); }, 10000);
-      await allRequests;
-      clearTimeout(timeout);
+      let timeout;
+      try {
+        await Promise.race([
+          allRequests,
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => reject(new Error(
+              `${name}: image requests did not reach the gate (${pending.length}/${requestCount})`,
+            )), 10000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
       released = true; pending.splice(0).forEach(reply => reply());
       await until((selector, broken, count) => {
         const pane = document.querySelector(selector);

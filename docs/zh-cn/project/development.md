@@ -75,7 +75,7 @@ make build-go
 
 ### 实时活动预览验收
 
-安装桌面依赖后，运行 `node desktop/scripts/activity-preview-e2e.cjs`。脚本会打包产品中的 Electron 预览窗口与浏览器/原生内容适配器，打开独立的合成网页，并通过真实 JSONL 传输启动合成原生画面子进程。它检查切换提供方时的窗口身份和几何保持、画面确认、旧回调拒绝、捕获错误呈现、手动隐藏与重新打开、自动预览设置、任务控制派发以及关闭清理。结果、传输日志与渲染截图保存在 `desktop/out/activity-preview/`；可用 `WUU_ACTIVITY_PREVIEW_OUTPUT` 修改目录。无图形会话的 Linux 自动使用软件渲染和合成显示器。
+安装桌面依赖后，运行 `node desktop/scripts/activity-preview-e2e.cjs`。脚本会打包产品中的 Electron 预览窗口与浏览器/原生内容适配器，打开独立的合成网页，并通过 JSONL 命令与二进制 AVC 会话输出启动合成原生画面宿主子进程。它检查切换提供方时的窗口身份和几何保持、从停靠角落展开的出现动画、切换会话时仅显示所属预览且后台任务继续运行、画面确认、旧回调拒绝、捕获错误呈现、手动隐藏与重新打开、自动预览设置、外部任务控制状态更新以及关闭清理。结果、传输日志、出现动画帧采样与会话可见性结果以及渲染截图保存在 `desktop/out/activity-preview/`；可用 `WUU_ACTIVITY_PREVIEW_OUTPUT` 修改目录。无图形会话的 Linux 自动使用软件渲染和合成显示器。
 
 构建 core 后，运行 `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs`，检查真实 Go 执行归属和 Chromium 输入。停止必须中断当前任务；之后的新指令应取得新的操作权限，旧执行 ID 仍须被拒绝。该脚本也覆盖浏览器任务隔离、保留页面、待发送输入期间接管与清理。证据保存在 `desktop/out/browser-task-ownership/`。
 
@@ -331,15 +331,23 @@ iOS 构建打包已提交的小球与过程摘要资源快照，不要求快照�
 
 [Native mobile](../../../.github/workflows/native-mobile.yml) 在修改 iOS 客户端、共享原生测试环境、远程协议或 Go 依赖的拉取请求与 `main` 推送上，运行 iOS 核心集成和未签名模拟器／真机目标构建。手动 `workflow_dispatch` 还会运行原有 Android 集成、Release 构建和 lint。这些检查不覆盖真机签名、商店分发或实体手机交互。
 
-[主 CI 工作流](../../../.github/workflows/ci.yml)运行仓库元数据、Go 检查与测试、桌面检查/测试/构建，以及 SDK/客户端检查/测试/构建。只修改 `docs/` 和 `docs-site/` 时跳过该工作流。Go CI 提供 PostgreSQL，以覆盖依赖数据库的测试。
+[主 CI 工作流](../../../.github/workflows/ci.yml)按完整 PR 差异选择任务，包含删除文件和重命名前后的路径。PR 始终执行轻量仓库元数据检查。纯文档或原生手机改动跳过主 CI 的产品测试套件；原生手机仍由独立工作流验证。
 
-桌面 CI 在并行单元测试前先串行安装一次 Electron 二进制。Electron 包会在首次导入时下载，不能让多个测试进程同时向同一安装目录解压。
+Renderer 改动运行 Desktop 和 Clients，因为 Web 客户端直接引用 renderer 源码。其他桌面改动运行 Desktop、Clients 和原生系统检查。共享协议、客户端 core、Go、插件及 SDK、上述限定目录之外的依赖锁文件、构建脚本及未知路径保守地运行全部套件。prompts 或插件中的运行时 Markdown 不属于豁免项。Go CI 提供 PostgreSQL，覆盖数据库相关行为。
 
-`Go check` 汇总要求两个 Go 任务都成功。拉取请求中始终执行汇总，依赖任务失败、跳过或取消都不能通过该门禁。
-只有合并后的 `push` 运行在整个工作流取消时才跳过或取消汇总；如果 Go 依赖已有真实失败，汇总仍然失败。
-GitHub 允许已跳过的必需检查放行合并，因此这项例外不适用于拉取请求，也不修改仓库保护规则。
+Desktop 验证拆为六个独立 Linux 任务并行运行：单元测试、类型检查与 renderer 恢复；文件与回复选择；会话语料回放；图片、流式输出与缩放布局；会话与 core 交互；外壳、引导与设置。每组使用独立构建、Electron 配置、Xvfb 显示器和证据上传。一组失败不会取消其他组。`Desktop check` 保留为稳定汇总门禁，任何已选组失败或取消都会阻止通过。
 
-macOS 拉取请求测试原生辅助程序，推送到 `main` 时还生成桌面目录包。Windows 运行选定的原生进程/沙箱测试和桌面类型检查，在 `main` 上增加未封装打包。完整桌面单元测试在 Ubuntu 运行。这些任务覆盖不同边界，不是在每个系统上重复同一套完整测试。
+仅修改[分组映射](../../../.github/scripts/desktop-ci-suites.json)中独立 E2E 入口时，CI 运行所属组的并集，不触发无关 Clients/native 检查。共享 helper、preload、fixture、产品代码、样式、依赖、CI 配置和未知路径仍保守回退全部组，避免根据组件文件名猜测完整依赖关系。原有测试命令、断言、场景矩阵和证据上传均保留；手动运行执行全部组。扩展映射前应确认入口不是共享 helper。使用 `node --test .github/scripts/select-ci.test.mjs` 通过临时 Git 改动验证范围选择，包括删除文件和混合范围。
+
+PR 仅修改已有 renderer TypeScript/TSX 模块（可同时修改文档）时，单元测试按解析出的 import/export 依赖选择测试，覆盖重导出、静态动态导入、实际 Vite 别名和 setup 文件依赖；测试清单由 Vitest 提供。包含计算式加载、文件读取或进程执行、解析失败、无法解析的本地导入的测试保守保留。找不到受影响消费者时回退完整单元测试。选择证据上传为 `unit-dependency-selection`；测试执行失败不会通过重跑来掩盖。
+
+样式、资源、测试环境、运行时插件模块、新增／删除／重命名、依赖、配置和混合范围保持全量单元覆盖。类型检查、开发启动器检查、串行 Git 服务测试及原有 E2E 组均保留。现有 E2E 加载完整 App，共享其依赖闭包，不能因为某测试没有打开某页面就按静态依赖排除该组。安装桌面依赖后，使用 `node --test desktop/scripts/ci-unit-dependencies.test.mjs` 验证依赖选择契约。
+
+桌面 CI 在并行单元测试前串行安装 Electron 二进制，避免并发解压同一目录。macOS 和 Windows 在相关 PR 上保留平台专属测试；macOS 在原生资源或打包输入变化时还验证打包。
+
+`main` 推送不再重复 Go、Desktop、Clients 或原生测试套件，只在改动路径选中原生检查时运行 macOS／Windows 打包。手动 `workflow_dispatch` 执行全部检查及两平台打包。因此直接推送 main 不具备 PR 测试覆盖；需要完整验证时应使用 PR 或手动运行 CI。
+
+`Go check` 仅在路径选择明确排除 Go 时接受 Go 任务跳过。`CI check` 要求路径选择成功、所有选中任务成功；意外跳过、失败或取消都会导致汇总失败。这些汇总不修改仓库保护规则。
 
 [文档工作流](../../../.github/workflows/docs.yml)在文档、站点、landing 或相关构建文件变化时检查政策并构建站点。拉取请求只构建，不部署；`main` 构建会部署到 GitHub Pages。产品发行标签使用独立工作流，不发布独立 CLI 压缩包。
 
@@ -366,3 +374,38 @@ fake Codex 子进程，并使用临时存储，不使用供应商凭据或真实
 `make test-plugins` 包含 next-message 已交付 JSONL 运行时和桌面 provider 生命周期契约。先运行 `make build-go`，再运行 `node scripts/next-message-model-e2e.mjs`，可验证真实插件 → Go 模型服务 → HTTP 传输链路。它仅使用本机回环合成提供商，检查 token、输入、取消和用量记录，证据保存到 `.tmp/e2e/next-message-model/`，可用 `WUU_NEXT_MESSAGE_E2E_OUTPUT` 覆盖。
 
 构建桌面后运行 `cd desktop && electron scripts/next-message-e2e.cjs`，可用生产 App 和插件、合成轮次、模拟模型回复检查按键、工作区路由、设置，以及亮暗主题、宽窄窗口、默认和大字号；保存截图和实际捕获的录制帧。Linux 需要 Xvfb 等图形显示服务；仅在需要的可丢弃测试环境中使用 `--no-sandbox`。`WUU_NEXT_MESSAGE_E2E_OUTPUT` 可指定证据目录。这些检查不评估真实模型建议质量和提供商费用。
+### 真实会话样本验收
+
+运行 `npm --prefix desktop run test:e2e:conversation-corpus`，构建当前 checkout，
+通过现有 UI tour 回放十二份经过脱敏的本机会话片段。macOS 使用当前 checkout 的
+Wuu Dev host，复用已有签名身份（默认 `Wuu Dev Signing`，也可设置
+`WUU_DEV_SIGN_ID`）。若没有可用身份，可设 `WUU_DEV_SIGN_ID=-` 使用临时签名。
+验收流程不会创建签名密钥、导入证书或修改钥匙串信任。Linux 需要图形会话或 `xvfb-run --auto-servernum`；CI 传入
+`-- --no-sandbox`。`npm --prefix desktop run test:corpus` 检查样本包的共享边界。
+
+样本包位于 `desktop/scripts/fixtures/conversation-corpus/corpus.json`。
+保留原话、Markdown、空白、回复顺序和工具调用数量，只针对身份名称、私有服务、
+凭据片段、路径和历史定位信息做一致替换。包内不含原始会话 ID、服务配置、隐藏推理、
+工具参数与结果、附件。回放中的工具只读取隔离环境内的合成文件。
+模型标签来自原始记录；所有回放使用同一个本地脚本服务，因此不验证厂商协议或当前模型行为。
+
+运行器在目标回复输出到一半、完整输出和最终回答完成前暂停，采集明暗主题、
+15px 宽窗口和 20px 窄窗口，再采集完成态并重新载入应用，验证持久化历史。
+原始数据没有逐字时间记录，分块和节奏明确标记为模拟。
+每个检查点通过协议条目 ID 和完整源文本定位当前回复步骤，再滚动目标文字到可见区域，
+检查裁剪后的实际几何位置。只有包含工具调用的样本才展开过程历史。
+页面横向溢出、内容缺失或不可见、历史缺失、渲染器错误会使运行失败；截图和布局数据用于人工视觉复核，
+不代表自动审美评分。
+
+每次运行把截图和 `corpus-report.json` 写到 `artifacts/conversation-corpus/` 下。
+`WUU_TOUR_OUTPUT` 指定输出目录；`WUU_TOUR_MATRIX` 可覆盖外观组合，例如
+`light:15:1280,dark:20:720`。`WUU_TOUR_ONLY=sample-04` 可单独复现一份样本，
+报告会记录所选 ID。`WUU_CORPUS_TEXT_ONLY=1` 只将所选样本的最终回答作为单步、
+无工具的对话回放，报告明确标记为 `final-answer-only`，不视作原始回复序列。
+CI 额外使用 sample-02 运行此回归，两次运行一起上传为 `conversation-corpus-evidence`。`WUU_CORPUS_SKIP_BUILD=1` 复用已有构建，
+`WUU_TOUR_CORE` 指定核心二进制；仅在确认它们对应待验收 checkout 时使用。
+
+新增样本时，先在本地阅读完整片段，一致替换敏感内容，并比较 Markdown 结构、换行数量和
+长度变化。原始数据和替换映射保存在公开仓库之外。校验器会拒绝额外字段、常见密钥和
+非示例 HTTP 地址，但不能证明任意正文已经脱敏，每份新样本仍须人工复核。
+样本中的技术结论属于历史会话内容，不应作为当前产品文档。运行无需真实账号或模型密钥。

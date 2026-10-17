@@ -75,8 +75,11 @@ type Options struct {
 	// config plus restricted project overlays.
 	ConfigLoadMode ConfigLoadMode
 	Config         config.Config
-	ProviderName   string
-	ModelOverride  string
+	// DesktopExecutionDefaults ignores persisted step and temperature overrides
+	// for desktop conversations without changing CLI or explicit automation config.
+	DesktopExecutionDefaults bool
+	ProviderName             string
+	ModelOverride            string
 	// PermissionModeExplicit marks Config's permission mode as an explicit
 	// process-scoped execution override (a CLI --permission-mode flag). The
 	// override wins over per-thread pinned modes and persisted session
@@ -115,15 +118,17 @@ const (
 // stream runner. UI surfaces should depend on this instead of reassembling the
 // pieces themselves.
 type Session struct {
-	ProviderName      string
-	Model             string
-	RootDir           string
-	Host              Host
-	WorkspaceID       string
-	StateDir          string
-	ConfigPath        string
-	HomeDir           string
-	ConfigLoadMode    ConfigLoadMode
+	ProviderName             string
+	Model                    string
+	RootDir                  string
+	Host                     Host
+	WorkspaceID              string
+	StateDir                 string
+	ConfigPath               string
+	HomeDir                  string
+	ConfigLoadMode           ConfigLoadMode
+	DesktopExecutionDefaults bool
+
 	SessionDir        string
 	StreamRunner      *agent.StreamRunner
 	TitleClient       providers.Client
@@ -233,6 +238,7 @@ func (s *Session) cloneForThreadModel() (*Session, error) {
 		ConfigPath:                  s.ConfigPath,
 		HomeDir:                     s.HomeDir,
 		ConfigLoadMode:              s.ConfigLoadMode,
+		DesktopExecutionDefaults:    s.DesktopExecutionDefaults,
 		SessionDir:                  s.SessionDir,
 		StreamRunner:                s.StreamRunner,
 		TitleClient:                 s.TitleClient,
@@ -376,7 +382,7 @@ func NewSession(opts Options) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := opts.Config
+	cfg := withDesktopExecutionDefaults(opts.Config, opts.DesktopExecutionDefaults)
 
 	wuuHome, err := statepath.Home(opts.HomeDir)
 	if err != nil {
@@ -640,6 +646,7 @@ func NewSession(opts Options) (*Session, error) {
 		}
 
 		c, cerr := agentcontrol.New(agentcontrol.Config{
+			UseCurrentTemperatureOnRestore: opts.DesktopExecutionDefaults,
 			Client:                         workerClient,
 			ProviderName:                   roleSelections.Worker.Provider,
 			DefaultModel:                   roleSelections.Worker.APIModel,
@@ -775,6 +782,7 @@ func NewSession(opts Options) (*Session, error) {
 		executionEnvironmentConfig:  opts.Config.ExecutionEnvironments,
 		HomeDir:                     opts.HomeDir,
 		ConfigLoadMode:              configLoadMode,
+		DesktopExecutionDefaults:    opts.DesktopExecutionDefaults,
 		SessionDir:                  sessionDir,
 		StreamRunner:                streamRunner,
 		TitleClient:                 titleClient,
@@ -958,16 +966,30 @@ func (s *Session) LoadEffectiveConfig() (config.Config, string, error) {
 	if s == nil {
 		return config.Config{}, "", errors.New("runtime session is nil")
 	}
+	var cfg config.Config
+	var path string
+	var err error
 	switch s.ConfigLoadMode {
 	case ConfigLoadNormal:
-		return config.LoadFrom(s.RootDir, s.HomeDir)
+		cfg, path, err = config.LoadFrom(s.RootDir, s.HomeDir)
 	case ConfigLoadFile:
-		return config.LoadPath(s.ConfigPath)
+		cfg, path, err = config.LoadPath(s.ConfigPath)
 	case ConfigLoadProject:
-		return config.LoadProjectConfig(s.RootDir)
+		cfg, path, err = config.LoadProjectConfig(s.RootDir)
 	default:
 		return config.Config{}, "", fmt.Errorf("unknown config load mode %d", s.ConfigLoadMode)
 	}
+	return withDesktopExecutionDefaults(cfg, s.DesktopExecutionDefaults), path, err
+}
+
+func withDesktopExecutionDefaults(cfg config.Config, enabled bool) config.Config {
+	if enabled {
+		// Apply after project overlays on every reload so an old hidden setting
+		// cannot return through a model switch, resume, or another settings save.
+		cfg.Agent.MaxSteps = 0
+		cfg.Agent.Temperature = 0
+	}
+	return cfg
 }
 
 func isUserConfigPath(path, home string) bool {
@@ -1405,6 +1427,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				threadSkills,
 			)
 			control, controlErr := agentcontrol.New(agentcontrol.Config{
+				UseCurrentTemperatureOnRestore: s.DesktopExecutionDefaults,
 				Client:                         workerClient,
 				ProviderName:                   workerClientProvider,
 				DefaultModel:                   workerModel,

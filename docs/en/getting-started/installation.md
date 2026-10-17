@@ -6,7 +6,7 @@ The desktop app includes the Wuu core. You only need a separate CLI installation
 
 The current release workflow builds an Apple silicon app. Check the assets and notes on [GitHub Releases](https://github.com/blueberrycongee/wuu/releases) for the version you are installing.
 
-1. Download `wuu-<version>-mac-arm64.dmg` or `wuu-<version>-mac-arm64.zip`.
+1. Download `wuu-mac-arm64.dmg` or `wuu-mac-arm64.zip`.
 2. Move `wuu.app` to `/Applications` and open it there.
 3. Complete the [first-run setup](index.md) to choose an engine and connect a model service.
 
@@ -20,9 +20,13 @@ xattr -dr com.apple.quarantine /Applications/wuu.app
 
 Ad-hoc signatures do not establish publisher identity or guarantee that macOS permissions persist across updates.
 
+Download filenames omit the version; the app and release notes still identify it, and automatic updates use version metadata and verified archive hashes. Older releases may have a version in their filenames.
+
 ## Update the app
 
-Download the new release, quit Wuu with **Cmd+Q**, and replace `/Applications/wuu.app`. Closing a window alone does not quit the application. Open the replacement from Applications rather than running a second copy from the download or mounted disk image.
+Signed macOS builds with the **Wuu > Check for Updates** menu check GitHub stable releases shortly after launch and every six hours. Confirm the download, then choose **Restart and Install Update** when your work is saved and running tasks can stop. Choosing **Later** leaves the app running; a normal quit does not install the downloaded update automatically. Prereleases and downgrades are not offered.
+
+Older builds without this menu need one manual update: download the new release, quit Wuu with **Cmd+Q**, and replace `/Applications/wuu.app`. Closing a window alone does not quit the application. Open the replacement from Applications rather than running a second copy from the download or mounted disk image. Development and ad-hoc builds do not check for updates.
 
 Settings and conversations are stored outside the app bundle. Keep that data when replacing the app, and read the release notes for any version-specific migration requirements.
 
@@ -30,7 +34,11 @@ Settings and conversations are stored outside the app bundle. Keep that data whe
 
 The macOS release workflow includes Computer Use and Phone access for native iOS pairing. Account login remains development-only. Older downloads may have different features; check their release notes.
 
-Computer Use includes its native helpers; no separate installation or environment variables are needed. Screen capture and desktop control require **Screen Recording** and **Accessibility** permissions. Grant access to the app you actually run when macOS requests it. After an update, macOS may ask again; do not delete Wuu data or reset unrelated privacy permissions.
+Computer Use includes its native helpers; no separate installation or environment variables are needed. Screen capture and desktop control require **Screen Recording** and **Accessibility** permissions.
+
+On macOS, first-run setup offers these permissions. You can skip this step and return to **Settings → General → System permissions** later. Choose **Enable**, then drag the app icon from the floating guide into the list in System Settings and enable access. Clicking the icon reveals the running app in Finder if you prefer to add it manually. Wuu refreshes the permission status automatically.
+
+macOS owns the authorization confirmation and may request a restart. After an update, macOS may ask again; grant access to the app you actually run without deleting Wuu data or resetting unrelated privacy permissions.
 
 ## Install the CLI
 

@@ -186,8 +186,24 @@ private func availableText(_ target: Target) -> (text: String, status: String) {
     @MainActor static func main() async {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let arguments = Array(CommandLine.arguments.dropFirst())
-        if arguments == ["--status"] {
-            output(["ok": true, "permissions": permissionStatus()])
+        if arguments == ["--status"] || arguments == ["--permission-guide-status"] {
+            var result: [String: Any] = ["ok": true, "permissions": permissionStatus()]
+            if arguments == ["--permission-guide-status"],
+               let settings = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences").first {
+                // Window bounds are public metadata; positioning the guide must
+                // not depend on the access it is helping the user grant.
+                let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+                if let window = windows.first(where: {
+                    ($0[kCGWindowOwnerPID as String] as? Int32) == settings.processIdentifier
+                        && ($0[kCGWindowLayer as String] as? Int) == 0
+                }), let bounds = window[kCGWindowBounds as String] as? [String: Any],
+                   let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) {
+                    result["settings_window"] = ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height]
+                }
+                let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                result["settings_visible"] = foreground == settings.processIdentifier || foreground == getppid()
+            }
+            output(result)
             return
         }
         if arguments == ["--request-screen-permission"] {

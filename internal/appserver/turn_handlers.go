@@ -945,8 +945,22 @@ func (s *Server) steerAgentCompletion(threadID, resultID string, msg providers.C
 		return false
 	}
 	th.mu.Lock()
+	answered := agentCompletionMarkerAnswered(th.History, resultID)
+	th.mu.Unlock()
+	if answered {
+		// Admission reconciles a saved answer without another model request.
+		return false
+	}
+	if th.completionDeliveryPaused([]string{resultID}, nil) {
+		return true
+	}
+	th.mu.Lock()
 	defer th.mu.Unlock()
 	if !th.running || th.currentTurn == "" || th.currentTurnKind == TurnKindCompact {
+		return false
+	}
+	// A previous turn may have saved its answer while the pause gate ran.
+	if agentCompletionMarkerAnswered(th.History, resultID) {
 		return false
 	}
 	clientID := agentCompletionClientIDForResult(resultID)
@@ -1638,12 +1652,12 @@ func threadRuntimeHasOutstandingAgentWork(threadRuntime *runtime.ThreadRuntime) 
 	return false
 }
 
-func threadRuntimeAwaitsAutoContinuation(threadID string, threadRuntime *runtime.ThreadRuntime) bool {
+func threadRuntimeAwaitsAutoContinuation(th *threadState, threadRuntime *runtime.ThreadRuntime) bool {
 	if threadRuntime == nil {
 		return false
 	}
 	return threadRuntimeHasOutstandingAgentWork(threadRuntime) ||
-		threadHasOutstandingProcessCompletion(threadID, threadRuntime.AgentControl, threadRuntime.ProcessManager)
+		threadHasOutstandingProcessCompletion(th, threadRuntime.AgentControl, threadRuntime.ProcessManager)
 }
 
 func threadRuntimeHasOutstandingWork(threadID string, threadRuntime *runtime.ThreadRuntime) bool {
@@ -2871,6 +2885,20 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			}
 			th.mu.Lock()
 			s.pruneRevokedSteersLocked(th)
+			// A terminal event can arrive after the durable pending-result scan
+			// has already included that result in this turn.
+			th.pendingSteers = slices.DeleteFunc(th.pendingSteers, func(message providers.ChatMessage) bool {
+				ids := agentCompletionResultIDs(message.ClientID)
+				if len(ids) == 0 {
+					return false
+				}
+				for _, id := range ids {
+					if !slices.Contains(turnRuntime.AgentCompletionResultIDs, id) {
+						return false
+					}
+				}
+				return true
+			})
 			steers, batch := th.takePendingSteersLocked(turnID, time.Now().UTC())
 			th.resetSteerWakeLocked()
 			for _, msg := range steers {
@@ -2887,6 +2915,39 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			if len(steers) > 0 {
 				messages = append(messages, steers...)
 			}
+			var completionBatch []outboundNotification
+			// Reused runtimes have no installation replay to collect retained
+			// agent results after a human message permits recovery. Collect them
+			// with the same pause and answer-receipt gates as process results.
+			if threadRuntime != nil && threadRuntime.AgentControl != nil {
+				control := threadRuntime.AgentControl
+				pending, pendingErr := control.PendingRootAgentCompletions()
+				if pendingErr != nil {
+					providers.DebugLogf("read pending agent completions for thread %q: %v", th.ID, pendingErr)
+				}
+				for _, completion := range pending {
+					if slices.Contains(turnRuntime.AgentCompletionResultIDs, completion.ResultID) {
+						continue
+					}
+					if err := gateAlreadyDeliveredCompletions(history, threadRuntime, []string{completion.ResultID}, nil); err != nil {
+						if !errors.Is(err, errAgentCompletionAlreadyDelivered) {
+							providers.DebugLogf("reconcile agent completion %q for thread %q: %v", completion.ResultID, th.ID, err)
+						}
+						continue
+					}
+					if th.completionDeliveryPaused([]string{completion.ResultID}, nil) {
+						continue
+					}
+					message := control.AgentCompletionChatMessage(completion.Snapshot, agentthread.RootPath)
+					message.ClientID = agentCompletionClientIDForResult(completion.ResultID)
+					message.Steered = true
+					messages = append(messages, message)
+					turnRuntime.AgentCompletionResultIDs = append(turnRuntime.AgentCompletionResultIDs, completion.ResultID)
+					th.mu.Lock()
+					completionBatch = append(completionBatch, th.materializeSteerLocked(turnID, message, time.Now().UTC())...)
+					th.mu.Unlock()
+				}
+			}
 			// Completed processes join the next request while work is active.
 			// Keep the durable obligation until this turn's answer is persisted;
 			// the existing completion queue remains the recovery path on failure.
@@ -2901,6 +2962,9 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 					if slices.Contains(turnRuntime.ProcessCompletionIDs, p.ID) || !processEventBelongsToThread(th.ID, threadRuntime.AgentControl, event) {
 						continue
 					}
+					if th.completionDeliveryPaused(nil, []string{p.ID}) {
+						continue
+					}
 					// An answer can survive a restart before its delivery acknowledgement.
 					// Reconcile that receipt just as synthetic turn admission does.
 					if err := gateAlreadyDeliveredCompletions(history, threadRuntime, nil, []string{p.ID}); err != nil {
@@ -2913,8 +2977,14 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 					message.Steered = true
 					messages = append(messages, message)
 					turnRuntime.ProcessCompletionIDs = append(turnRuntime.ProcessCompletionIDs, p.ID)
+					th.mu.Lock()
+					completionBatch = append(completionBatch, th.materializeSteerLocked(turnID, message, time.Now().UTC())...)
+					th.mu.Unlock()
 				}
 			}
+			// The pause gate reads the turn projection, including a failed
+			// explicit recovery that collected results without a new event.
+			notifyBatch(completionBatch)
 			return messages
 		}
 		turnRequestContext := cloneContextSegments(requestContext)
@@ -3230,9 +3300,11 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			s.prependQueuedUserTurns(th.ID, ready)
 		}
 	}
-	completionClaimFailed := len(turnRuntime.AgentCompletionResultIDs) > 0
+	// Retry only acknowledgement writes after a saved answer. Inference and
+	// persistence failures leave the obligation pending for explicit recovery;
+	// replaying them here would reset the request layer's retry budget.
+	completionClaimFailed := false
 	if err == nil && completionAnswerReady && persistErr == nil && threadRuntime != nil && threadRuntime.AgentControl != nil {
-		completionClaimFailed = false
 		for _, resultID := range turnRuntime.AgentCompletionResultIDs {
 			resultID = strings.TrimSpace(resultID)
 			if resultID == "" {
@@ -3250,9 +3322,8 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			}
 		}
 	}
-	processCompletionClaimFailed := len(turnRuntime.ProcessCompletionIDs) > 0
+	processCompletionClaimFailed := false
 	if err == nil && processCompletionAnswerReady && persistErr == nil && threadRuntime != nil && threadRuntime.ProcessManager != nil {
-		processCompletionClaimFailed = false
 		for _, processID := range turnRuntime.ProcessCompletionIDs {
 			processID = strings.TrimSpace(processID)
 			if processID == "" {
@@ -3275,7 +3346,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// Local queue drains are kicked only after this write, preserving terminal
 	// before successor ordering on this server without making an immediate user
 	// turn spuriously fail as busy.
-	awaitingAutoContinuation := err == nil && threadRuntimeAwaitsAutoContinuation(th.ID, threadRuntime)
+	awaitingAutoContinuation := err == nil && threadRuntimeAwaitsAutoContinuation(th, threadRuntime)
 	executionRetryPrompt := ""
 	executionRunError := err
 	var runUpdate Run
@@ -4266,7 +4337,13 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 				if runtimeErr != nil {
 					return runtimeErr
 				}
-				return gateAlreadyDeliveredCompletions(admitted.History, threadRuntime, snapshot.AgentCompletionResultIDs, snapshot.ProcessCompletionIDs)
+				if err := gateAlreadyDeliveredCompletions(admitted.History, threadRuntime, snapshot.AgentCompletionResultIDs, snapshot.ProcessCompletionIDs); err != nil {
+					return err
+				}
+				if admitted.completionDeliveryPaused(snapshot.AgentCompletionResultIDs, snapshot.ProcessCompletionIDs) {
+					return errCompletionDeliveryPaused
+				}
+				return nil
 			},
 			beforeUserAppendLocked: func(_ *threadState) (func() error, error) {
 				if err := s.commitQueuedTurnClaim(threadID, entry.id); err != nil {
@@ -4276,7 +4353,7 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 			},
 		},
 	)
-	if errors.Is(err, errAgentCompletionAlreadyDelivered) {
+	if errors.Is(err, errAgentCompletionAlreadyDelivered) || errors.Is(err, errCompletionDeliveryPaused) {
 		return true, nil
 	}
 	if err != nil || !ok {
@@ -4701,6 +4778,9 @@ func (s *Server) startSyntheticTurn(ctx context.Context, threadID string, userMs
 				if err := gateAlreadyDeliveredCompletions(admitted.History, threadRuntime, completionResultIDs, processCompletionIDs); err != nil {
 					return err
 				}
+				if admitted.completionDeliveryPaused(completionResultIDs, processCompletionIDs) {
+					return errCompletionDeliveryPaused
+				}
 				// Rechecks belong to live processes, so they must not pass through
 				// the natural-exit completion gate or acquire its delivery marker.
 				for _, entry := range pending {
@@ -4725,7 +4805,7 @@ func (s *Server) startSyntheticTurn(ctx context.Context, threadID string, userMs
 			},
 		},
 	)
-	if errors.Is(err, errAgentCompletionAlreadyDelivered) {
+	if errors.Is(err, errAgentCompletionAlreadyDelivered) || errors.Is(err, errCompletionDeliveryPaused) {
 		return true, nil
 	}
 	if err != nil || !ok {

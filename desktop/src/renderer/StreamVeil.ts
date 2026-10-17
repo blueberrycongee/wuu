@@ -131,7 +131,7 @@ export function useStreamVeil(
           const node = walker.currentNode as Text;
           const parent = node.parentElement!;
           if (!parent.closest("p, li, td, th, code, blockquote") ||
-              parent.closest('button, svg, [aria-hidden="true"], .rich-mermaid')) continue;
+              parent.closest('button, svg, [aria-hidden="true"], .rich-mermaid, .katex')) continue;
           const color = colorFor(parent);
           nodes.push({ node, start: offset + flat.length, end: offset + flat.length + node.length, color });
           flat += node.data;

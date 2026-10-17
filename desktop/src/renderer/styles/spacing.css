@@ -11,6 +11,7 @@
   --space-6: calc(var(--space-1) * 6);
   --space-8: calc(var(--space-1) * 8);
 
+  /* Window resizing keeps the same spacing rhythm across all surfaces. */
   --page-padding: var(--space-8);
   /* Pane edge to the first and last visible glyph (text or icon ink, not a
    * button box) in chrome rows: sidebar rows, titlebars, tab bars. Controls
@@ -38,16 +39,6 @@
   --control-field-height: max(32px, round(up, calc(var(--font-ui) * 1.5 + var(--control-padding-block) * 2 + 2px), 4px));
   --control-row-height: max(32px, round(up, calc(var(--font-ui) * 1.4 + var(--menu-item-padding-block) * 2), 4px));
   --control-search-height: var(--control-field-height);
-}
-
-@media (max-width: 560px) {
-  :root,
-  [data-wuu-density] {
-    --page-padding: var(--space-4);
-    --pane-inset: var(--space-4);
-    --panel-padding: var(--space-4);
-    --card-padding: var(--space-3);
-  }
 }
 
 @media (pointer: coarse) {

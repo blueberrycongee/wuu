@@ -1,10 +1,9 @@
 /* Component color tokens for sidebar.css.
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
-  /* One opaque near-white step below the canvas on every platform. A
-   * translucent system material took its gray from the wallpaper and read
-   * as dirt beside the white canvas. */
-  --sidebar-material-fill: var(--surface-1);
+  /* An opaque neutral rail keeps navigation separate from the reading canvas
+   * without depending on wallpaper or browser backing colors. */
+  --sidebar-material-fill: var(--surface-2);
   /* Rail/content boundary: a crisp dark hairline instead of the old white
    * edge + white inset pair, which were invisible against the white content
    * column and left the boundary to be read from the gray brightness step.
@@ -16,23 +15,24 @@
   --sidebar-brand-wordmark-color: var(--ink-strong);
   --sidebar-resizer-hover-bg: var(--ink-overlay-18);
   --sidebar-resizer-hover-ring: rgba(255, 255, 255, 0.4);
-  --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, rgba(255, 255, 255, 0.42));
+  /* Hover is a tone step; a light inner ring would outline the darker fill
+   * on the opaque rail. */
+  --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, transparent);
   --sidebar-nav-item-focus-shadow: var(--focus-ring);
-  /* Selection is the row's only location signal. In light it is a sheet
-   * of paper lifted off the rail (an edge and a soft shadow) rather than a
-   * darker fill, so the rail stays clean while the row still reads. */
+  /* A quiet tone step identifies the current row without lifting it into a
+   * separate card. Derive it from ink so the same treatment works in both themes. */
   --sidebar-row-selected-bg: var(
     --wuu-nav-item-active-background,
-    var(--wuu-color-surface-elevated, var(--paper))
+    color-mix(in srgb, var(--ink) 8%, transparent)
   );
-  --sidebar-row-selected-shadow: 0 0 0 1px var(--hairline-soft), 0 1px 2px var(--shadow-color-medium);
+  --sidebar-row-selected-shadow: none;
   --sidebar-project-row-pending-bg: var(--ink-overlay-4);
   --sidebar-project-loading-notch: rgba(19, 19, 20, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(184, 79, 53, 0.1);
   --sidebar-thread-list-button-hover-bg: var(--ink-overlay-4);
   --sidebar-thread-spinner-notch: rgba(19, 19, 20, 0.18);
-  --sidebar-settings-button-hover-ring: rgba(255, 255, 255, 0.42);
+  --sidebar-settings-button-hover-ring: transparent;
   /* Collapsed-drawer chrome. */
   --sidebar-drawer-edge: rgba(19, 19, 20, 0.09);
   --sidebar-drawer-inner-edge: transparent;
@@ -314,19 +314,21 @@
 }
 
 .sidebar-content {
-  /* Rows are inset from the rail so their selection surface floats; the row
-   * padding takes up the rest, putting the leading glyph on the pane inset. */
-  --sidebar-content-pad-x: var(--space-2);
+  /* Give row surfaces more breathing room at the rail edges. Compensating
+   * inner padding keeps labels, glyphs, and trailing actions on their axes. */
+  --sidebar-content-pad-x: var(--space-3);
   --sidebar-row-pad-x: calc(var(--pane-inset) - var(--sidebar-content-pad-x));
+  --sidebar-row-radius: calc(var(--radius-xs) + 4px);
   --sidebar-label-weight: 400;
   --sidebar-label-size: var(--font-ui);
   --sidebar-heading-size: max(12px, round(nearest, calc(var(--sidebar-label-size) - 2px), 1px));
   /* Dense rows, clear groups: rows sit two label heights tall, and the
    * separation between functional groups carries the structure. */
   --sidebar-row-height: max(28px, round(nearest, calc(var(--sidebar-label-size) * 2), 4px));
-  /* Labels sit one step below conversation ink so the rail reads as quiet
-   * chrome next to the message flow; icons stay on --ink-soft below them. */
-  --sidebar-label-ink: color-mix(in srgb, var(--ink) 92%, var(--paper));
+  /* Regular labels recede from the current location; selected labels retain
+   * full ink. Keep group headings on their separate tertiary-text role. */
+  --sidebar-label-ink: color-mix(in srgb, var(--ink) 82%, var(--paper));
+  --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, color-mix(in srgb, var(--ink) 6%, transparent));
   /* Group labels and list-footer actions: quieter than labels, still 4.5:1. */
   --sidebar-heading-ink: var(--ink-tertiary);
   /* One icon and text axis for navigation, plugins, projects, and account
@@ -1027,7 +1029,7 @@
     var(--sidebar-tree-icon-col)
     minmax(0, 1fr)
     auto;
-  border-radius: var(--radius-xs);
+  border-radius: var(--sidebar-row-radius, var(--radius-xs));
   background: transparent;
   /* Idle chrome sits on --ink-soft so 16px Lucide outlines stay readable
    * without matching the conversation's --ink-strong. Hover/selected still
@@ -1201,7 +1203,9 @@ html[data-focus-modality="keyboard"] :is(
   flex: 0 1 auto;
   overflow: hidden;
   font-size: var(--sidebar-heading-size, var(--font-sm));
-  font-weight: var(--weight-medium);
+  /* Size and ink already set the label below the rows; weight would make
+   * the structure louder than the conversations it groups. */
+  font-weight: var(--weight-regular);
   line-height: var(--line-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1252,9 +1256,14 @@ html[data-focus-modality="keyboard"] :is(
 
 /* An open group shows its contents; the chevron only returns as the toggle
  * affordance under the pointer or keyboard focus. A collapsed group keeps it
- * as the cue that content is hidden. Touch keeps it visible: no hover. */
+ * as the cue that content is hidden. Section actions keep their footprint
+ * and appear the same way, so at rest the label stands alone; an open menu
+ * keeps its button. Touch keeps both visible: no hover. */
 @media (hover: hover) {
-  .sidebar-functional-heading:not(:hover, :focus-within) .sidebar-functional-heading-chevron[data-expanded="true"] {
+  .sidebar-functional-heading:not(:hover, :focus-within) :is(
+    .sidebar-functional-heading-chevron[data-expanded="true"],
+    .sidebar-functional-action:not([aria-expanded="true"])
+  ) {
     opacity: 0;
   }
 }
@@ -1483,6 +1492,7 @@ html[data-focus-modality="keyboard"] :is(
   transition:
     background-color var(--motion-fast) var(--ease-out),
     color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out),
     transform var(--motion-fast) var(--ease-out);
 }
 
@@ -1936,7 +1946,6 @@ html[data-focus-modality="keyboard"] :is(
   position: relative;
   height: 30px;
   min-width: 0;
-  border-radius: var(--radius-xs);
   column-gap: var(--sidebar-nav-column-gap);
   color: var(--ink-soft);
   font-size: var(--sidebar-label-size, var(--font-ui));
@@ -2164,6 +2173,8 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
 
 .thread-row-main > .thread-row-title {
   min-width: 0;
+  /* Backspacing briefly leaves an empty title; keep its line box in place. */
+  min-height: 1lh;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2193,11 +2204,6 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
 .thread-row:hover:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title,
 .thread-row:focus-within:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
-}
-
-.thread-row-main > .thread-row-title[data-title-swap] {
-  --enter-y: -1px;
-  animation: wuu-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
 /* The fork marker stays between the title and right-edge accessories. */
@@ -2244,10 +2250,6 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   .project-row-icon-state,
   .thread-list-collapse {
     transition: none;
-  }
-
-  .thread-row-main > .thread-row-title[data-title-swap] {
-    animation: none;
   }
 }
 

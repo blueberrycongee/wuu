@@ -72,7 +72,12 @@ func (s *pluginHostServices) invokeFileLock(ctx context.Context, method string, 
 		if err := rootDir.MkdirAll(filepath.Dir(input.Path), 0o755); err != nil {
 			return nil, fmt.Errorf("create file lock directory: %w", err)
 		}
-		file, err := rootDir.OpenFile(input.Path, os.O_CREATE|os.O_RDWR, 0o644)
+		// Concurrent O_CREATE opens can return ENOENT on macOS even when the
+		// parent exists. Create exclusively, then open the winner's persistent file.
+		file, err := rootDir.OpenFile(input.Path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o644)
+		if os.IsExist(err) {
+			file, err = rootDir.OpenFile(input.Path, os.O_RDWR, 0o644)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("open file lock: %w", err)
 		}

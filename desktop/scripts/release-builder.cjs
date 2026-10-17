@@ -7,7 +7,7 @@ if (process.env.WUU_RELEASE !== "1") throw new Error("Use npm run release:deskto
 const { build } = require("../package.json");
 module.exports = {
   ...build,
-  publish: null,
+  publish: { provider: "github", owner: "blueberrycongee", repo: "wuu", releaseType: "release" },
   forceCodeSigning: true,
   mac: { ...build.mac, identity, hardenedRuntime: true, notarize: false },
   afterSign: "scripts/notarize-app.cjs",

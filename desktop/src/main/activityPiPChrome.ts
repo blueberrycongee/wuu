@@ -34,18 +34,19 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 #root{position:relative;width:100%;height:100%;cursor:grab;touch-action:none;
   background:rgba(0,0,0,0.004)}
 #root.dragging{cursor:grabbing}
-#ph{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:safe center;
-  gap:8px;padding:40px 16px 16px;text-align:center;overflow:auto;
+#ph{position:absolute;inset:0;display:grid;place-items:center;
   background:var(--surface);color:var(--muted);transition:opacity .2s ease}
-#ph-icon{display:flex;flex:none}
-#ph-title{color:var(--text);font-size:1em;line-height:1.35}
-#ph-detail{font-size:.87em;line-height:1.4;overflow-wrap:anywhere;min-height:0;overflow:auto}
-@media(max-height:180px){#ph-icon{display:none}#ph{padding:40px 12px 12px}}
-#status{position:absolute;bottom:8px;left:8px;right:8px;z-index:3;pointer-events:none;
-  width:fit-content;max-width:calc(100% - 16px);margin-inline:auto;padding:5px 9px;border-radius:8px;
-  background:rgba(0,0,0,.72);color:white;font-size:.87em;line-height:1.35;text-align:center;overflow-wrap:anywhere}
+#ph-content{display:flex;flex-direction:column;align-items:center;gap:12px;padding:40px 16px 16px;max-width:100%;text-align:center}
+#ph-icon{display:flex}
+@media(max-height:160px){#ph{overflow-y:auto;align-content:start}#ph-content{gap:8px;padding:38px 12px 12px}#ph-icon{display:none}}
+#ph-status{font-size:var(--ui-size);overflow-wrap:anywhere}
+#retry{border:1px solid var(--muted);border-radius:6px;padding:6px 10px;font:inherit;color:var(--text);background:transparent;cursor:pointer}
+#retry:focus-visible{outline:2px solid var(--text);outline-offset:3px}
+#ph.preparing #ph-icon{animation:ph-breathe 1.6s ease-in-out infinite alternate}
+@keyframes ph-breathe{from{opacity:1}to{opacity:.35}}
 #ph.gone{opacity:0;pointer-events:none}
-#completion{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;
+#appear{position:absolute;z-index:1;pointer-events:none;display:block}
+#completion{position:absolute;inset:0;z-index:1;display:grid;place-items:center;pointer-events:none;
   background:rgba(0,0,0,.17);opacity:0;transition:opacity .35s ease}
 #completion[data-completed="true"]{opacity:1}
 #completion-mark{position:relative;width:50px;height:50px}
@@ -74,23 +75,20 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 @keyframes completion-move{from{transform:translate(0,0)}to{transform:translate(18px,18px)}}
 #hover-shade{position:absolute;inset:0;pointer-events:none;opacity:0;
   background:rgba(0,0,0,.06);transition:opacity .12s ease-in-out}
-#actions{position:absolute;inset:6px 6px auto;z-index:6;display:flex;justify-content:space-between;gap:8px;
+#actions{position:absolute;top:6px;left:6px;z-index:6;display:flex;gap:2px;
   opacity:0;pointer-events:none;transition:opacity .12s ease-in-out}
-.action-group{display:flex;gap:2px;position:relative}
-.action-group:not(:has(button:not([hidden]))){display:none}
 #root:is(:focus-within,.hovered,.dragging,.resizing,.attention) :is(#actions,#hover-shade){opacity:1}
 #root:is(:focus-within,.hovered,.dragging,.resizing,.attention) #actions{pointer-events:auto}
 /* A sibling WebContentsView cannot sample the page with backdrop-filter.
-   Local scrims keep each control group legible over browser and native pixels. */
-.action-group::before{content:"";position:absolute;inset:-4px -3px;z-index:-1;
+   A local scrim keeps the controls legible over browser and native pixels. */
+#actions::before{content:"";position:absolute;inset:-4px -3px;z-index:-1;
   border-radius:14px;background:rgba(0,0,0,.58);filter:blur(4px);pointer-events:none}
 #actions button{width:28px;height:28px;flex:none;border:none;border-radius:6px;padding:0;
   display:grid;place-items:center;cursor:pointer;color:#fff;background:transparent;
   transition:background .12s ease-in-out}
-#actions button:is(:hover,.hovered):not(:disabled){background:rgba(255,255,255,.17)}
-#actions button:active:not(:disabled){background:rgba(255,255,255,.26)}
+#actions button:is(:hover,.hovered){background:rgba(255,255,255,.17)}
+#actions button:active{background:rgba(255,255,255,.26)}
 #actions button:focus-visible{outline:2px solid #fff;outline-offset:1px}
-#actions button:disabled{opacity:.45;cursor:default}
 :root.reduce-motion #root *, :root.reduce-motion #root *::before{animation:none!important;transition:none!important}
 :root.reduce-motion #completion[data-completed="true"] #completion-check,
 :root.reduce-motion #completion[data-completed="true"] #completion-check::before{opacity:1}
@@ -112,9 +110,8 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
 </style></head>
 <body>
 <div id="root" role="group">
-  <div id="ph" role="status"><span id="ph-icon" aria-hidden="true">${iconSVG("Globe", 28)}</span>
-    <span id="ph-title"></span><span id="ph-detail" hidden></span></div>
-  <div id="status" role="status" hidden></div>
+  <div id="ph"><div id="ph-content"><span id="ph-icon" aria-hidden="true">${iconSVG("Globe", 28)}</span><span id="ph-status" role="status"></span><button id="retry" type="button" hidden></button></div></div>
+  <img id="appear" alt="" aria-hidden="true" draggable="false" hidden />
   <div id="completion" role="status" aria-hidden="true" data-completed="false">
     <div id="completion-mark">
       <img id="completion-icon" src="${icon}" alt="" draggable="false" />
@@ -123,15 +120,8 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   </div>
   <div id="hover-shade"></div>
   <div id="actions">
-    <div class="action-group">
-      <button id="close" type="button">${iconSVG("X", 16)}</button>
-      <button id="expand" type="button">${iconSVG("ExternalLink", 16)}</button>
-    </div>
-    <div class="action-group">
-      <button id="takeover" type="button" data-control="takeover">${iconSVG("Hand", 16)}</button>
-      <button id="release" type="button" data-control="release" hidden>${iconSVG("Check", 16)}</button>
-      <button id="stop" type="button" data-control="stop">${iconSVG("Square", 14)}</button>
-    </div>
+    <button id="close" type="button">${iconSVG("X", 16)}</button>
+    <button id="expand" type="button">${iconSVG("ExternalLink", 16)}</button>
   </div>
   <div data-resize="nw"></div><div data-resize="n"></div><div data-resize="ne"></div>
   <div data-resize="w"></div><div data-resize="e"></div>
@@ -144,10 +134,8 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   var root=document.getElementById("root");
   var completion=document.getElementById("completion");
   var label=${label},locale=${language},translations=${strings};
-  var activity={kind:"browser",state:"starting",controller:"none",controlPending:false};
+  var activity={kind:"browser",state:"starting",controller:"none"};
   var mounted=false,capture={status:"idle",message:""};
-  var phTitle=document.getElementById("ph-title"),phDetail=document.getElementById("ph-detail");
-  var status=document.getElementById("status");
   function text(key){return translations[locale][key];}
   function buttonLabel(id,key){var button=document.getElementById(id);button.title=text(key);button.setAttribute("aria-label",text(key));}
   function render(){
@@ -155,44 +143,31 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     // Stopping capture leaves the last mounted frame valid, but no longer live.
     var capturePaused=capture.status==="stopped";
     var captureBlocked=["blank","suspended","error"].includes(capture.status);
-    var unavailable=capture.status==="error";
-    var pending=activity.controlPending;
     var placeholder=!mounted||captureBlocked;
+    document.getElementById("ph-status").textContent=text(captureBlocked?"activityPreviewUnavailable":capturePaused||terminal||activity.controller==="none"?"activityPreviewPaused":"activityPreviewLoading");
+    var retry=document.getElementById("retry");
+    retry.textContent=text("activityPreviewRetry");
+    retry.hidden=!captureBlocked||terminal||activity.controller==="none";
     ph.classList.toggle("gone",!placeholder);
-    ph.setAttribute("aria-hidden",String(!placeholder));
-    phTitle.textContent=text(terminal?"activityStopped":activity.state==="waiting_confirmation"?"activityWaiting":unavailable?"activityUnavailable":captureBlocked||capturePaused?"activityPaused":"activityPreparing");
-    var detail=unavailable?text(activity.kind==="cua"?"activityCaptureRecovery":"activityPreviewRecovery"):
-      (capture.status==="blank"?text("activityBlank"):capture.status==="suspended"?text("activitySuspended"):"");
-    if(activity.state==="waiting_confirmation"&&!detail)detail=text("activityConfirmationHint");
-    phDetail.textContent=detail;phDetail.hidden=!detail;
-    var statusText=pending?text("activityChangingControl"):activity.controlFailed?text("activityControlFailed"):
-      (terminal?text("activityStopped"):activity.state==="waiting_confirmation"?text("activityWaiting"):
-      capturePaused?text("activityPaused"):manual?text("activityControlled"):
-      activity.controller==="none"&&activity.state!=="starting"?text("activityIdle"):"");
-    status.textContent=statusText;status.hidden=placeholder||!statusText||completion.dataset.completed==="true";
-    root.classList.toggle("attention",Boolean(placeholder||statusText));
+    ph.classList.toggle("preparing",placeholder&&!captureBlocked&&!capturePaused&&!terminal);
+    // States that ask for a decision keep the controls visible.
+    var notable=terminal||activity.state==="waiting_confirmation"||
+      capturePaused||manual||(activity.controller==="none"&&activity.state!=="starting");
+    root.classList.toggle("attention",Boolean(placeholder||notable));
     root.setAttribute("aria-label",text(activity.kind==="cua"?"activityComputer":"activityBrowser")+(label?": "+label:""));
     document.getElementById("expand").hidden=activity.kind!=="browser";
-    document.getElementById("takeover").hidden=manual||terminal||activity.controller!=="agent";
-    document.getElementById("release").hidden=!manual||terminal;
-    document.getElementById("stop").hidden=terminal||activity.controller==="none";
-    root.querySelectorAll("[data-control]").forEach(function(button){button.disabled=Boolean(pending);});
-    var labels={close:"activityHide",expand:"activityExpand",takeover:"activityTakeover",release:"activityRelease",stop:"activityStop"};
+    var labels={close:"activityHide",expand:"activityExpand"};
     Object.keys(labels).forEach(function(id){buttonLabel(id,labels[id]);});
     completion.setAttribute("aria-label",text("activityCompleted"));
   }
-  root.querySelectorAll("[data-control]").forEach(function(button){
-    button.addEventListener("click",function(e){
-      e.stopPropagation();
-      if(activity.controlPending)return;
-      activity.controlPending=true;render();
-      window.location.href="wuu-pip://control?action="+button.dataset.control+"&execution_id="+encodeURIComponent(activity.execution_id||"");
-    });
-  });
   document.addEventListener("keydown",function(e){
     if(e.key==="Escape"){e.preventDefault();window.location.href="wuu-pip://close";}
   });
   var dragAck=true,dragQueued=null,ackTimer=0,grabbing=false,resizing=false,resizeEdge="",last=null,velocity={x:0,y:0};
+  document.getElementById("retry").addEventListener("click",function(e){
+    e.stopPropagation();
+    window.location.href="wuu-pip://retry";
+  });
   document.getElementById("close").addEventListener("click",function(e){
     e.stopPropagation();
     window.location.href="wuu-pip://close";
@@ -286,7 +261,7 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
   window.wuuPipCapture=function(next){capture=next;render();};
   window.wuuPipHover=function(point){
     root.classList.toggle("hovered",!!point);
-    ["close","expand","takeover","release","stop"].forEach(function(id){
+    ["close","expand"].forEach(function(id){
       var button=document.getElementById(id),r=button.getBoundingClientRect();
       button.classList.toggle("hovered",!!point&&point.x>=r.left&&point.x<r.right&&point.y>=r.top&&point.y<r.bottom);
     });
@@ -311,6 +286,22 @@ html,body{width:100%;height:100%;overflow:hidden;scrollbar-width:none;
     completion.setAttribute("aria-hidden",String(!done));
     if(done)cursor.hide();
     render();
+  };
+  // Appearance stand-in: a content snapshot placed over the live content while
+  // the host scales and fades the window. It carries the focus blur.
+  var appear=document.getElementById("appear");
+  window.wuuPipAppear=function(a){
+    if(!a){appear.hidden=true;appear.removeAttribute("src");appear.style.transition="none";appear.style.filter="none";return;}
+    if(a.src){
+      appear.src=a.src;
+      appear.style.left=a.rect.x*100+"%";appear.style.top=a.rect.y*100+"%";
+      appear.style.width=a.rect.width*100+"%";appear.style.height=a.rect.height*100+"%";
+      appear.style.transition="none";appear.style.filter="blur("+a.blur+"px)";appear.hidden=false;
+      return;
+    }
+    void appear.offsetWidth;
+    appear.style.transition="filter "+a.duration+"ms "+a.easing;
+    appear.style.filter="blur("+a.blur+"px)";
   };
   window.wuuPipInteract=function(it){
     if(it.kind==="clear"){cursor.hide();return;}

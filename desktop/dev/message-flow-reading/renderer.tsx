@@ -89,6 +89,41 @@ applyTheme(theme);
 // `?stream=<name>` replaces the streaming sample to inspect where the cursor
 // sits while a fenced code block is still the last visible block.
 const streamSamples: Record<string, string> = {
+  math: String.raw`行内公式 $E = mc^2$ 与 \(a^2 + b^2 = c^2\) 跟随正文。
+
+$$
+x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
+$$
+
+\[
+\begin{aligned}
+f(x) &= \int_0^x t^2\,dt \\
+
+     &= \frac{x^3}{3}
+\end{aligned}
+\]
+
+矩阵与求和：
+
+$$
+A = \begin{pmatrix}1 & 2 \\ 3 & 4\end{pmatrix}, \qquad \sum_{n=1}^{\infty}\frac{1}{n^2} = \frac{\pi^2}{6}
+$$
+
+长公式在自己的区域内滚动：
+
+$$
+\underbrace{a_1 + a_2 + a_3 + a_4 + a_5 + a_6 + a_7 + a_8 + a_9 + a_{10} + a_{11} + a_{12}}_{\text{twelve terms}} = \sum_{i=1}^{12} a_i
+$$
+
+- 列表公式：$\alpha + \beta = \gamma$
+
+| 项目 | 公式 |
+| --- | --- |
+| 概率 | $P(A \mid B) = \frac{P(A \cap B)}{P(B)}$ |
+
+代码保留原文：${"`$x^2$`"}。价格：\$5 和 \$10。
+
+无法解析的公式保留可读内容：$\notARealCommand{x}$。`,
   "open-code": "先写一个辅助函数：\n\n```ts\nexport function clamp(value: number, min: number, max: number) {\n  return Math.min(max, Math.max(min, value));",
   "open-code-newline": "先写一个辅助函数：\n\n```ts\nexport function clamp(value: number, min: number, max: number) {\n  return Math.min(max, Math.max(min, value));\n",
   "open-code-plain": "运行下面的命令：\n\n```\ncd desktop\nnpm run dev",
@@ -229,7 +264,7 @@ function Fixture(): JSX.Element {
   }, [key, playing, streamSample]);
   const markdown = surface === "stream"
     ? <StreamingMarkdown key={key} streamKey={key} initialText={playing ? "" : streamSample} isLive={live} phase="final_answer" />
-    : <RichContent text={surface === "user" ? userSample : sample} />;
+    : <RichContent text={surface === "user" ? userSample : streamSample} />;
   return <ImagePreviewProvider>
     <header className="fixture-toolbar">
       <strong>Wuu · 消息流排版验收</strong>

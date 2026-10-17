@@ -88,6 +88,32 @@ export type SelectionASTNode = {
   position?: { start: { offset?: number }; end: { offset?: number } };
 };
 
+/** KaTeX replaces its input nodes. Keep the parser's source range on a
+ * surviving boundary so selecting rendered notation quotes the original TeX. */
+export function rehypePreserveMathSourcePositions() {
+  return (tree: SelectionASTNode): void => {
+    const isMath = (node: SelectionASTNode): boolean => {
+      const classes = node.properties?.className;
+      return Array.isArray(classes) && classes.some(value =>
+        value === "language-math" || value === "math-display" || value === "math-inline");
+    };
+    const visit = (node: SelectionASTNode): void => {
+      node.children = node.children?.map(child => {
+        const math = isMath(child) || (child.tagName === "pre" && child.children?.some(isMath));
+        if (math && child.position) {
+          return {
+            type: "element", tagName: "span", properties: {},
+            position: child.position, children: [child],
+          };
+        }
+        visit(child);
+        return child;
+      });
+    };
+    visit(tree);
+  };
+}
+
 /** Mark positions from the parser, never inferred by searching repeated prose. */
 export function rehypeFileSelectionMapping() {
   return (tree: SelectionASTNode): void => {

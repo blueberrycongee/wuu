@@ -40,6 +40,20 @@ public struct CaptureGeometry: Sendable {
     }
 }
 
+// A small raster is enough to notice transitions without PNG encoding or
+// changing the screenshot geometry/ticket used by the next input action.
+func windowVisualFingerprint(processID: pid_t) -> Int? {
+    let windows = windowFrames(processID: processID)
+    guard let window = windows.max(by: { $0.value.width * $0.value.height < $1.value.width * $1.value.height }),
+          let image = CGWindowListCreateImage(.null, .optionIncludingWindow, window.key, [.boundsIgnoreFraming, .nominalResolution]),
+          let context = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 256,
+              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+          let data = context.data else { return nil }
+    context.interpolationQuality = .low
+    context.draw(image, in: CGRect(x: 0, y: 0, width: 64, height: 64))
+    return Data(bytes: data, count: 64 * 256).hashValue
+}
+
 struct WindowCapture {
     let data: Data
     let geometry: CaptureGeometry
@@ -94,11 +108,13 @@ func captureWindowPNG(
             semaphore.signal()
             return
         }
-        let configuration = SCStreamConfiguration()
-        configuration.width = max(1, Int(window.frame.width * 2))
-        configuration.height = max(1, Int(window.frame.height * 2))
-        configuration.showsCursor = false
         let filter = SCContentFilter(desktopIndependentWindow: window)
+        // Size from the hosting display's scale; a fixed 2x leaves a 1x window
+        // in one quarter of the image.
+        let configuration = SCStreamConfiguration()
+        configuration.width = max(1, Int(filter.contentRect.width * CGFloat(filter.pointPixelScale)))
+        configuration.height = max(1, Int(filter.contentRect.height * CGFloat(filter.pointPixelScale)))
+        configuration.showsCursor = false
         let windowFrame = window.frame
         SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration) { image, captureError in
             if let captureError {
@@ -290,9 +306,10 @@ struct WindowScreenshotInfo {
 // app's windows (scope=screen); a concrete pid selects one app (scope=app).
 //
 // .optionOnScreenOnly is deliberate: its array order (front to back) is the only
-// dependable z-order signal, and it excludes off-screen (e.g. concealed) windows,
-// which therefore never appear in a composite. .excludeDesktopElements drops the
-// wallpaper/desktop backing so the union frame is not inflated to the full screen.
+// dependable z-order signal. .excludeDesktopElements drops the wallpaper/desktop
+// backing so the union frame is not inflated to the full screen. Concealed
+// windows sit on the invisible agent display: an app composite includes them,
+// while a screen composite covers only what the user's displays show.
 func appWindowInfos(processID: pid_t?) -> [AppWindowInfo] {
     guard let windowList = CGWindowListCopyWindowInfo(
         [.optionOnScreenOnly, .excludeDesktopElements],
@@ -300,6 +317,7 @@ func appWindowInfos(processID: pid_t?) -> [AppWindowInfo] {
     ) as? [[String: Any]] else {
         return []
     }
+    let agentDisplay = processID == nil ? AgentDisplay.activeDisplayID().map(CGDisplayBounds) : nil
     var infos: [AppWindowInfo] = []
     for info in windowList {
         if let processID,
@@ -310,7 +328,8 @@ func appWindowInfos(processID: pid_t?) -> [AppWindowInfo] {
               let bounds = info[kCGWindowBounds as String] as? [String: Any],
               let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
               frame.width > 1,
-              frame.height > 1 else {
+              frame.height > 1,
+              agentDisplay?.contains(CGPoint(x: frame.midX, y: frame.midY)) != true else {
             continue
         }
         let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0

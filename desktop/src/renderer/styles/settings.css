@@ -2541,6 +2541,11 @@ button.settings-engine-expand:hover {
  * follows text size so compact page insets cannot leave a one-character
  * label column next to a wide selector. */
 @container settings-page (max-width: 32em) {
+  /* Only optional explanations collapse; status, warnings and errors stay visible. */
+  .settings-row[data-hide-description-when-narrow] .settings-row-label-description {
+    display: none;
+  }
+
   .settings-row {
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;

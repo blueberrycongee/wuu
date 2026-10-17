@@ -4,8 +4,9 @@ Remote control connects a paired client to a Wuu host through a Relay. The host
 runs the agent and accesses the workspace; the Relay routes the end-to-end encrypted
 app-server connection. Pairing grants control of the host, not just a read-only view.
 
-The desktop Settings → Phone access page can pair the native iOS app without an
-account. Build the app from [the native client project](../../../clients/native/README.md);
+Phone pairing is a development preview: start the desktop with `npm --prefix desktop run dev:remote`
+to show Settings → Phone access and pair the native iOS app without an account.
+Release builds hide the phone access page until mobile release acceptance is complete. Build the app from [the native client project](../../../clients/native/README.md);
 there is no public App Store distribution yet. Account login on the desktop remains
 development-only. Build the CLI using the [development guide](../project/development.md).
 

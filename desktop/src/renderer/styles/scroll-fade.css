@@ -1,5 +1,4 @@
-/* Only for bounded inspection strips and navigation lists, not primary
- * reading surfaces (message streams, settings pages, or document views).
+/* Shared edge fades for navigation lists, inspection strips and message streams.
  * Opt in on the actual scroll owner, never on an outer wrapper; `inline`
  * fades a horizontal strip's start and end edges instead.
  * No extra DOM, scroll listeners, or React updates. The two self timelines
@@ -98,7 +97,7 @@
 
 /* Only nested reasoning/process scrollports grow with the live turn.
  * Drop their masks until the reader leaves the live edge or the turn settles.
- * Navigation and attachment strips keep following their own scroll bounds. */
+ * Navigation, attachment strips and message streams keep following their own bounds. */
 :root[data-stream-following] [data-scroll-fade][data-wuu-nested-scroll] {
   animation: none;
   mask-image: none;

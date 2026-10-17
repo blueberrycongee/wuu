@@ -1,5 +1,6 @@
 const { execFileSync, spawnSync } = require("node:child_process");
-const { statSync } = require("node:fs");
+const { statSync, readFileSync } = require("node:fs");
+const yaml = require("js-yaml");
 const { join, resolve } = require("node:path");
 const { releaseSigningIdentity } = require("./check-release-signing.cjs");
 
@@ -54,6 +55,10 @@ for (const binary of [...requiredBinaries.map((name) => join(bin, name)), appSna
 const bundleID = execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIdentifier", join(app, "Contents/Info.plist")], { encoding: "utf8" }).trim();
 if (bundleID !== "com.blueberrycongee.wuu") throw new Error("Release bundle identity changed");
 if (release) {
+  const feed = yaml.load(readFileSync(join(app, "Contents", "Resources", "app-update.yml"), "utf8"));
+  if (feed.provider !== "github" || feed.owner !== "blueberrycongee" || feed.repo !== "wuu") {
+    throw new Error("Unexpected release update feed");
+  }
   for (const path of [app, ...requiredBinaries.map((name) => join(bin, name)), rg, appSnapshot, captureBridge]) {
     const result = spawnSync("codesign", ["-d", "--verbose=4", path], { encoding: "utf8" });
     if (result.status !== 0 || !/flags=.*\bruntime\b/.test(result.stderr) || !/^Timestamp=/m.test(result.stderr)) {

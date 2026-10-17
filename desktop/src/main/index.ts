@@ -1,4 +1,5 @@
 import { AppContextCapture } from "./appContextCapture";
+import { SystemPermissions } from "./systemPermissions";
 import { createBrowserView } from "./browserView";
 import { saveArtifactFile } from "./artifactSave";
 import { showArtifactItemMenu } from "./artifactItemMenu";
@@ -15,6 +16,7 @@ import {
   dialog,
   ipcMain,
   type IpcMainInvokeEvent,
+  type IpcMainEvent,
   Menu,
   nativeImage,
   nativeTheme,
@@ -152,7 +154,7 @@ import type {
 import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
 import { visibleMainTurns, visibleSideTurns } from "./pluginVisibleHistory";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
-import { ObservationCoordinator, activityControlMethod, observationActivityFromServerEvent } from "./cuaActivityWindows";
+import { ObservationCoordinator, observationActivityFromServerEvent } from "./cuaActivityWindows";
 import type { ActivityPreviewAppearance } from "../shared/activityPreview";
 import { browserPiPHostClient } from "./browserPiPPlacement";
 import { createObservationPiPFactory } from "./browserPiPWindow";
@@ -197,6 +199,7 @@ import { openExternalURL, wireExternalNavigationGuards } from "./externalNavigat
 import { ProjectManager, wuuHomePath } from "./projects";
 import { discoverRecentWorkspaces } from "./recentWorkspaces";
 import { mainTranslate, resolveMainLocale, setMainLocale } from "./i18n";
+import { installDesktopUpdates } from "./desktopUpdateMenu";
 import { sideThreadEventFromServerEvent } from "./sideThreadEvents";
 import {
   registerRenderableFileProtocol,
@@ -368,12 +371,6 @@ const observationCoordinator = new ObservationCoordinator(
     isPackaged: app.isPackaged,
     parent: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined),
   }),
-  async (activity, action) => {
-    const result = await appServerClientPool.requestForWorkdir<ActivityActionResult>(
-      activity.workdir, activityControlMethod(action), { thread_id: activity.thread_id, activity_id: activity.id, execution_id: activity.execution_id },
-    );
-    return result.activity;
-  },
 );
 observationCoordinator.setAppearance(resolvedThemeIsDark());
 observationCoordinator.setAutoShow(getActivityPreviewAutoShow());
@@ -466,10 +463,15 @@ const appContextCapture = new AppContextCapture((reveal, owner) => {
   if (host.webContents.isLoadingMainFrame()) host.webContents.once("did-finish-load", send);
   else send();
 }, appContextOwner);
+const systemPermissions = new SystemPermissions(appContextCapture);
+
+function isAppContextSender(event: IpcMainInvokeEvent | IpcMainEvent): boolean {
+  const host = windowRegistry.mainWindow();
+  return Boolean(host && !host.isDestroyed() && event.sender === host.webContents && event.senderFrame === event.sender.mainFrame);
+}
 
 function requireAppContextSender(event: IpcMainInvokeEvent): void {
-  const host = windowRegistry.mainWindow();
-  if (!host || host.isDestroyed() || event.sender !== host.webContents || event.senderFrame !== event.sender.mainFrame) {
+  if (!isAppContextSender(event)) {
     throw new Error("App snapshots are available from Wuu's main window only.");
   }
 }
@@ -1064,10 +1066,12 @@ function syncThemedWindowChrome(): void {
 
 function broadcastThemePreference(): void {
   broadcastToAll("wuu:theme-preference-changed", getThemePreference());
+  systemPermissions.refreshAppearance(resolvedThemeIsDark());
 }
 
 function broadcastLanguagePreference(): void {
   broadcastToAll("wuu:language-preference-changed", getLanguagePreference());
+  systemPermissions.refreshAppearance(resolvedThemeIsDark());
 }
 
 function syncThemeAcrossWindows(): void {
@@ -1392,6 +1396,7 @@ async function directorySize(path: string): Promise<number> {
   return total;
 }
 
+let desktopUpdates: ReturnType<typeof installDesktopUpdates>;
 app.whenReady().then(async () => {
   await inheritSystemProxy();
   if (app.isPackaged) configurePackagedCUA(process.env, process.resourcesPath, process.platform);
@@ -1806,6 +1811,19 @@ app.whenReady().then(async () => {
       return { shown: true };
     },
   );
+  ipcMain.handle("wuu:desktop-update-state", () => desktopUpdates?.state ?? { kind: "unsupported" });
+  ipcMain.handle("wuu:desktop-update-download", event => {
+    if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("Updates are available from Wuu windows only.");
+    }
+    return desktopUpdates?.download();
+  });
+  ipcMain.handle("wuu:desktop-update-restart", event => {
+    if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("Updates are available from Wuu windows only.");
+    }
+    return desktopUpdates?.restart();
+  });
   ipcMain.handle("wuu:build-info", (): BuildInfoResult => ({
     core: cachedCoreBuildInfo,
     desktop: DESKTOP_BUILD_INFO,
@@ -2433,6 +2451,7 @@ app.whenReady().then(async () => {
     setLanguagePreference(next);
     setMainLocale(resolveMainLocale(next, app.getLocale()));
     codexPetWindowManager.refreshLocale();
+    desktopUpdates?.refresh();
     broadcastLanguagePreference();
     return { ok: true, language: next };
   });
@@ -2475,6 +2494,7 @@ app.whenReady().then(async () => {
         ? (fontSize as MessageFlowFontSize)
         : MESSAGE_FLOW_FONT_SIZE_RANGE.default;
       setMessageFlowFontSize(next);
+      systemPermissions.refreshAppearance(resolvedThemeIsDark());
       return { ok: true, fontSize: next };
     },
   );
@@ -2842,6 +2862,22 @@ app.whenReady().then(async () => {
       return { ok: true };
     },
   );
+  systemPermissions.start();
+  ipcMain.handle("wuu:system-permissions", event => {
+    requireAppContextSender(event);
+    return systemPermissions.state();
+  });
+  ipcMain.handle("wuu:system-permission-request", (event, permission: unknown, presentation: unknown) => {
+    requireAppContextSender(event);
+    return systemPermissions.open(permission, windowRegistry.mainWindow()!, resolvedThemeIsDark(), presentation);
+  });
+  ipcMain.on("wuu:system-permission-guide-update", (event, presentation: unknown) => {
+    if (isAppContextSender(event)) systemPermissions.update(presentation);
+  });
+  ipcMain.handle("wuu:system-permission-guide-close", (event, requestId: unknown) => {
+    requireAppContextSender(event);
+    systemPermissions.cancel(requestId);
+  });
   ipcMain.handle("wuu:app-context-state", (event) => {
     requireAppContextSender(event);
     return appContextCapture.state();
@@ -2855,9 +2891,11 @@ app.whenReady().then(async () => {
     requireAppContextSender(event);
     return appContextCapture.update(settings);
   });
-  ipcMain.handle("wuu:app-context-permission", (event, kind: unknown) => {
+  ipcMain.handle("wuu:app-context-permission", async (event, kind: unknown) => {
     requireAppContextSender(event);
-    return appContextCapture.requestPermission(kind);
+    if (kind !== "screen" && kind !== "text") throw new Error("Unknown app snapshot permission.");
+    await systemPermissions.open(kind === "text" ? "accessibility" : "screen", windowRegistry.mainWindow()!, resolvedThemeIsDark());
+    return appContextCapture.state();
   });
   ipcMain.handle("wuu:app-context-discard", (event, id: unknown) => {
     requireAppContextSender(event);
@@ -2867,6 +2905,7 @@ app.whenReady().then(async () => {
   appContextCapture.start();
   syncNativeThemeSource();
   createWindow();
+  desktopUpdates = installDesktopUpdates(prepareToQuit, state => broadcastToAll("wuu:desktop-update-changed", state));
   void phoneAccess.run(() => phoneAccess.restore(projectManager.ensureRuntimeContext().cwd));
 
   app.on("activate", () => {
@@ -2884,6 +2923,13 @@ app.on("before-quit", (event) => {
   if (quitCleanupFinished) return;
   event.preventDefault();
   if (quitCleanup) return;
+  void prepareToQuit().finally(() => app.quit());
+});
+
+function prepareToQuit(): Promise<void> {
+  if (quitCleanup) return quitCleanup;
+  desktopUpdates?.stop();
+  systemPermissions.close();
   appContextCapture.dispose();
   terminalSessionManager.cleanup();
   // Destroy every agent view + the hidden host window before the pool shuts
@@ -2897,9 +2943,9 @@ app.on("before-quit", (event) => {
     })
     .finally(() => {
       quitCleanupFinished = true;
-      app.quit();
     });
-});
+  return quitCleanup;
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

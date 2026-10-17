@@ -59,6 +59,8 @@ type ParticipantStore interface {
 
 // AgentControl owns the orchestration runtime for one wuu session.
 type AgentControl struct {
+	useCurrentTemperatureOnRestore bool
+
 	manager       *subagent.Manager
 	workspaceMu   sync.RWMutex
 	worktrees     *worktree.Manager // nil when workspace is not a git repo
@@ -235,15 +237,18 @@ type Config struct {
 	// worker runners so worker-produced native state carries its provider
 	// of origin, and it seeds the worker-provider identity used by
 	// model-pin comparisons.
-	ProviderName                   string
-	DefaultModel                   string
-	DefaultEffort                  string
-	DefaultOptions                 map[string]any
-	DefaultContextWindow           int
-	DefaultMaxInputTokens          int
-	DefaultOutputReserveTokens     int
-	DefaultCompactThresholdTokens  int
-	DefaultTemperature             float64
+	ProviderName                  string
+	DefaultModel                  string
+	DefaultEffort                 string
+	DefaultOptions                map[string]any
+	DefaultContextWindow          int
+	DefaultMaxInputTokens         int
+	DefaultOutputReserveTokens    int
+	DefaultCompactThresholdTokens int
+	DefaultTemperature            float64
+	// UseCurrentTemperatureOnRestore lets a host retire saved sampling overrides
+	// without changing a worker's pinned provider, model, or other runtime options.
+	UseCurrentTemperatureOnRestore bool
 	DefaultCompactThresholdPct     float64
 	DefaultCompactKeepRecentTokens int
 	DefaultDisableAutoCompact      bool
@@ -326,6 +331,8 @@ func New(cfg Config) (*AgentControl, error) {
 		harnessDir = filepath.Join(filepath.Dir(cfg.ThreadDir), "harness")
 	}
 	c := &AgentControl{
+		useCurrentTemperatureOnRestore: cfg.UseCurrentTemperatureOnRestore,
+
 		manager:                  mgr,
 		workerProviderName:       strings.TrimSpace(cfg.ProviderName),
 		worktrees:                wt,
@@ -3976,16 +3983,27 @@ func (c *AgentControl) consumeWorkerNotification(n subagent.Notification) (worke
 				if err := c.threadStore.RecordCommunication(c.rootThreadID, c.newAgentCompletionCommunication(n.Snapshot, agentthread.RootPath)); err != nil {
 					return workerNotificationSettled, fmt.Errorf("persist root completion communication: %w", err)
 				}
-			} else if c.workerEdgeClosed(n.Snapshot.ParentID) {
-				// Stopping the parent deliberately suppresses automatic wakeup.
-				// Keep the result-ready ledger, but settle this child's terminal
-				// rather than retaining its execution lease for a stopped parent.
-			} else if workerID := firstNonEmptyString(strings.TrimSpace(n.AgentID), strings.TrimSpace(n.Snapshot.ID)); workerTerminalFinalizationPath(c.harnessDir, workerID) != "" {
-				// A busy parent (including one blocked in Wait on this very
-				// terminal transition) cannot claim yet. Defer: the durable
-				// terminal record and result-ready entry hand delivery to
-				// terminal recovery instead of this observer spinning on it.
-				return workerNotificationDeferred, nil
+			} else {
+				// Stop may close the parent after delivery failed for another
+				// reason. Settle any reservation before acknowledging this child,
+				// under the same lock that fences an explicit parent resume.
+				unlockParent := c.lockWorkerTransition(n.Snapshot.ParentID)
+				stopped := c.workerEdgeClosed(n.Snapshot.ParentID)
+				var settleErr error
+				if stopped {
+					_, settleErr = c.settleClosedParentResult(n.Snapshot.ParentID, agentResultDeliveryID(n.Snapshot))
+				}
+				unlockParent()
+				if settleErr != nil {
+					return workerNotificationSettled, fmt.Errorf("settle stopped parent result %s: %w", n.AgentID, settleErr)
+				}
+				if workerID := firstNonEmptyString(strings.TrimSpace(n.AgentID), strings.TrimSpace(n.Snapshot.ID)); !stopped && workerTerminalFinalizationPath(c.harnessDir, workerID) != "" {
+					// A busy parent (including one blocked in Wait on this very
+					// terminal transition) cannot claim yet. Defer: the durable
+					// terminal record and result-ready entry hand delivery to
+					// terminal recovery instead of this observer spinning on it.
+					return workerNotificationDeferred, nil
+				}
 			}
 		}
 		go c.maybeStartQueued(context.Background())
@@ -4342,20 +4360,11 @@ func (c *AgentControl) deliverNestedResultToParent(ctx context.Context, snap sub
 	if leaseErr != nil {
 		if errors.Is(leaseErr, errWorkerEdgeClosed) {
 			defer unlockTransition()
-			// A prior run may already have applied the result before Stop.
-			// Preserve that acknowledgement; otherwise release the reservation
-			// so the durable result remains available without waking the parent.
-			applied, err := c.parentPersistedRunContainsResult(parentID, resultID)
-			if err == nil && applied {
-				transitioned, consumer, err := c.transitionAgentResultDeliveryConsumer(resultID, agentResultConsumerNestedPending, agentResultConsumerNestedFollowup)
-				return err == nil && (transitioned || consumer == agentResultConsumerNestedFollowup)
+			applied, err := c.settleClosedParentResult(parentID, resultID)
+			if err != nil {
+				providers.DebugLogf("agentcontrol: settle stopped parent result %s: %v", resultID, err)
 			}
-			if err == nil {
-				if err := c.ReleaseAgentResultDeliveryClaim(resultID, agentResultConsumerNestedPending); err != nil {
-					providers.DebugLogf("agentcontrol: release stopped parent result %s: %v", resultID, err)
-				}
-			}
-			return false
+			return err == nil && applied
 		}
 		providers.DebugLogf("agentcontrol: acquire parent worker %s for nested result: %v", parentID, leaseErr)
 		return false
@@ -4743,8 +4752,9 @@ func (c *AgentControl) rehydrateAgent(id string) (*subagent.SubAgent, error) {
 	var modelOverride string
 	if run.Runtime != nil {
 		// The snapshot was started with an aliased/default runtime. Rebuild
-		// only the client for the persisted provider; the rest of the runtime
-		// must stay exactly as it was at first run. If the persisted provider
+		// only the client for the persisted provider; model and provider options
+		// stay pinned. A host may retire the saved temperature override below.
+		// If the persisted provider
 		// is non-empty, a missing/failing resolver must fail explicitly rather
 		// than routing through the current default client, which would violate
 		// the frozen runtime provenance. An empty persisted provider safely
@@ -4767,6 +4777,9 @@ func (c *AgentControl) rehydrateAgent(id string) (*subagent.SubAgent, error) {
 			providerOverride = provider
 		}
 		cloned := run.Runtime.Clone()
+		if c.useCurrentTemperatureOnRestore {
+			cloned.Temperature = c.manager.DefaultWorkerRuntime().Temperature
+		}
 		runtime = &cloned
 		runtime.Client = clientOverride
 	} else {

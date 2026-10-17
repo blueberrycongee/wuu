@@ -228,15 +228,15 @@ func TestCleanGeneratedThreadTitle_StripsCommonNoise(t *testing.T) {
 	}
 }
 
-func TestCleanGeneratedThreadTitle_TruncatesAtOpenCodeLimit(t *testing.T) {
+func TestCleanGeneratedThreadTitle_TruncatesAtConfiguredLimit(t *testing.T) {
 	t.Parallel()
-	// 120 ASCII chars should be cropped to 100 (titleMaxRuneLength).
+	// Oversized ASCII titles are cropped to the generated-title limit.
 	in := strings.Repeat("a", 120)
 	got := cleanGeneratedThreadTitle(in)
 	if got != strings.Repeat("a", titleMaxRuneLength) {
 		t.Fatalf("got length %d; want %d", len([]rune(got)), titleMaxRuneLength)
 	}
-	// 120 Chinese chars (3 bytes each) should also crop to 100 runes.
+	// Chinese characters use the same rune limit, without splitting UTF-8 bytes.
 	cn := strings.Repeat("一", 120)
 	gotCN := cleanGeneratedThreadTitle(cn)
 	if len([]rune(gotCN)) != titleMaxRuneLength {

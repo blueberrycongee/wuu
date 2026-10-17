@@ -1,132 +1,86 @@
 import ApplicationServices
 import Foundation
 
-private final class AXChangeWaiter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var didChange = false
-
-    func signal() {
-        lock.lock()
-        didChange = true
-        lock.unlock()
-    }
-
-    func changed() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return didChange
-    }
-}
-
-private let axChangeCallback: AXObserverCallback = { _, _, _, refcon in
-    guard let refcon else { return }
-    Unmanaged<AXChangeWaiter>.fromOpaque(refcon).takeUnretainedValue().signal()
-}
-
-private let axSettleNotifications = [
-    kAXFocusedWindowChangedNotification,
-    kAXFocusedUIElementChangedNotification,
-    kAXWindowCreatedNotification,
-    kAXValueChangedNotification,
-    kAXSelectedTextChangedNotification,
-    kAXUIElementDestroyedNotification,
-    kAXRowCountChangedNotification,
-    kAXLayoutChangedNotification,
+private let activityNotifications = [
+    kAXFocusedWindowChangedNotification, kAXFocusedUIElementChangedNotification,
+    kAXWindowCreatedNotification, kAXValueChangedNotification,
+    kAXSelectedTextChangedNotification, kAXUIElementDestroyedNotification,
+    kAXRowCountChangedNotification, kAXLayoutChangedNotification,
+    kAXMenuOpenedNotification, kAXMenuClosedNotification,
 ]
 
-private final class AXSettleWaiter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var lastActivity = Date.distantPast
-    private var sawActivity = false
+// Arm before sending input so synchronous changes and menu transitions are not
+// lost. The observer and its callback context share one lifetime.
+final class AXActivityMonitor {
+    private var observer: AXObserver?
+    private var watched: [AXUIElement] = []
+    private let runLoop = CFRunLoopGetCurrent()
+    private var lastActivity = ProcessInfo.processInfo.systemUptime
+    private(set) var changed = false
 
-    func signal() {
-        lock.lock()
-        lastActivity = Date()
-        sawActivity = true
-        lock.unlock()
+    init(application: AXUIElement, processID: pid_t) {
+        let callback: AXObserverCallback = { _, _, _, refcon in
+            guard let refcon else { return }
+            let monitor = Unmanaged<AXActivityMonitor>.fromOpaque(refcon).takeUnretainedValue()
+            monitor.changed = true
+            monitor.lastActivity = ProcessInfo.processInfo.systemUptime
+        }
+        guard AXObserverCreate(processID, callback, &observer) == .success, let observer else { return }
+        watched = [application] + axElements(application, attribute: kAXWindowsAttribute as String)
+        if let focused = axValue(application, kAXFocusedUIElementAttribute as String),
+           CFGetTypeID(focused) == AXUIElementGetTypeID() {
+            watched.append(focused as! AXUIElement)
+        }
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        for element in watched {
+            for notification in activityNotifications {
+                _ = AXObserverAddNotification(observer, element, notification as CFString, refcon)
+            }
+        }
+        CFRunLoopAddSource(runLoop, AXObserverGetRunLoopSource(observer), .defaultMode)
     }
 
-    // Quiet once no notification has arrived for `interval`. Before the first
-    // notification the reference point is the caller-supplied start time.
-    func quiet(for interval: TimeInterval, since start: Date) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        let reference = sawActivity ? lastActivity : start
-        return Date().timeIntervalSince(reference) >= interval
-    }
-}
-
-private let axSettleCallback: AXObserverCallback = { _, _, _, refcon in
-    guard let refcon else { return }
-    Unmanaged<AXSettleWaiter>.fromOpaque(refcon).takeUnretainedValue().signal()
-}
-
-// Wait for the target app's Accessibility tree to stop changing. Every AX
-// notification resets a debounce window; once the app has been quiet for
-// `debounce`, or the total `timeout` elapses, the UI is treated as settled. This
-// is event-driven rather than fixed-interval polling, so it returns as soon as a
-// fast app is done and still bounds the wait for a slow one.
-func waitForAccessibilitySettle(application: AXUIElement, processID: pid_t, debounce: TimeInterval, timeout: TimeInterval) {
-    let start = Date()
-    var observer: AXObserver?
-    guard AXObserverCreate(processID, axSettleCallback, &observer) == .success, let observer else {
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: debounce))
-        return
-    }
-    let waiter = AXSettleWaiter()
-    let refcon = Unmanaged.passUnretained(waiter).toOpaque()
-    for notification in axSettleNotifications {
-        _ = AXObserverAddNotification(observer, application, notification as CFString, refcon)
-    }
-    let source = AXObserverGetRunLoopSource(observer)
-    let runLoop = CFRunLoopGetCurrent()
-    CFRunLoopAddSource(runLoop, source, .defaultMode)
-    defer {
-        CFRunLoopRemoveSource(runLoop, source, .defaultMode)
-        for notification in axSettleNotifications {
-            _ = AXObserverRemoveNotification(observer, application, notification as CFString)
+    deinit {
+        guard let observer else { return }
+        CFRunLoopRemoveSource(runLoop, AXObserverGetRunLoopSource(observer), .defaultMode)
+        for element in watched {
+            for notification in activityNotifications {
+                _ = AXObserverRemoveNotification(observer, element, notification as CFString)
+            }
         }
     }
-    let deadline = start.addingTimeInterval(timeout)
-    while Date() < deadline {
-        if waiter.quiet(for: debounce, since: start) { return }
-        let slice = min(debounce, max(0.01, deadline.timeIntervalSinceNow))
-        CFRunLoopRunInMode(.defaultMode, slice, true)
+
+    // Sample AX and/or pixels as well as notifications: canvas and some web
+    // applications update without emitting Accessibility events. Quiet means an
+    // observation boundary, not a verified application postcondition.
+    func settle(debounce: TimeInterval = 0.2, timeout: TimeInterval = 1.5,
+                sample: () -> String?) throws -> String {
+        let start = ProcessInfo.processInfo.systemUptime
+        var previous = sample()
+        lastActivity = max(lastActivity, ProcessInfo.processInfo.systemUptime)
+        let deadline = start + timeout
+        repeat {
+            try ComputerExecution.checkpoint()
+            CFRunLoopRunInMode(.defaultMode, 0.05, false)
+            let current = sample()
+            let now = ProcessInfo.processInfo.systemUptime
+            if current != previous { previous = current; lastActivity = now }
+            if now >= deadline { return "timed_out" }
+            if now - lastActivity >= debounce { return current == nil && observer == nil ? "unavailable" : "quiet" }
+        } while true
+    }
+
+    func waitForChange(timeout: TimeInterval) throws -> Bool {
+        guard observer != nil else { throw ComputerError.operationFailed("could not create AXObserver") }
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        while !changed, ProcessInfo.processInfo.systemUptime < deadline {
+            try ComputerExecution.checkpoint()
+            CFRunLoopRunInMode(.defaultMode, 0.05, true)
+        }
+        return changed
     }
 }
 
 func waitForAccessibilityChange(application: AXUIElement, processID: pid_t, timeout: TimeInterval) throws -> Bool {
-    var observer: AXObserver?
-    let createError = AXObserverCreate(processID, axChangeCallback, &observer)
-    guard createError == .success, let observer else {
-        throw ComputerError.operationFailed("create AXObserver failed with error \(createError.rawValue)")
-    }
-    let waiter = AXChangeWaiter()
-    let refcon = Unmanaged.passUnretained(waiter).toOpaque()
-    let notifications = [
-        kAXFocusedWindowChangedNotification,
-        kAXFocusedUIElementChangedNotification,
-        kAXWindowCreatedNotification,
-        kAXValueChangedNotification,
-        kAXSelectedTextChangedNotification,
-        kAXUIElementDestroyedNotification,
-    ]
-    for notification in notifications {
-        _ = AXObserverAddNotification(observer, application, notification as CFString, refcon)
-    }
-    let source = AXObserverGetRunLoopSource(observer)
-    let runLoop = CFRunLoopGetCurrent()
-    CFRunLoopAddSource(runLoop, source, .defaultMode)
-    defer {
-        CFRunLoopRemoveSource(runLoop, source, .defaultMode)
-        for notification in notifications {
-            _ = AXObserverRemoveNotification(observer, application, notification as CFString)
-        }
-    }
-    let deadline = Date(timeIntervalSinceNow: timeout)
-    while !waiter.changed(), Date() < deadline {
-        try ComputerExecution.checkpoint()
-        CFRunLoopRunInMode(.defaultMode, min(0.1, deadline.timeIntervalSinceNow), true)
-    }
-    return waiter.changed()
+    try AXActivityMonitor(application: application, processID: processID).waitForChange(timeout: timeout)
 }

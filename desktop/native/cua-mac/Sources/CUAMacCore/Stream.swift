@@ -1,11 +1,9 @@
 import AppKit
 import ApplicationServices
-@preconcurrency import CoreImage
 @preconcurrency import CoreMedia
 import CoreVideo
 import Darwin
 import Foundation
-import ImageIO
 @preconcurrency import ScreenCaptureKit
 
 public struct NativePreviewConfiguration: Sendable {
@@ -24,17 +22,32 @@ public struct NativePreviewConfiguration: Sendable {
     }
 }
 
-private final class PiPEventWriter: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "com.blueberrycongee.wuu.cua.pip-events")
+// Every preview session writes to the one stdout pipe; a shared queue keeps
+// each binary packet contiguous.
+private let pipEventQueue = DispatchQueue(label: "com.blueberrycongee.wuu.cua.pip-events")
 
-    func send(_ event: String, fields: [String: Any] = [:]) {
-        queue.sync {
-            var payload = fields
-            payload["event"] = event
-            payload["timestamp_ns"] = DispatchTime.now().uptimeNanoseconds
-            guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
-            FileHandle.standardOutput.write(data)
-            FileHandle.standardOutput.write(Data([0x0A]))
+private final class PiPEventWriter: @unchecked Sendable {
+    private let session: String?
+
+    init(session: String?) { self.session = session }
+
+    func send(_ event: String, fields: [String: Any] = [:], payload: Data = Data()) {
+        pipEventQueue.sync {
+            var header = fields
+            header["event"] = event
+            if let session { header["session"] = session }
+            header["timestamp_ns"] = DispatchTime.now().uptimeNanoseconds
+            guard let data = try? JSONSerialization.data(withJSONObject: header, options: [.sortedKeys]),
+                  data.count <= 16_384, payload.count <= 3_000_000 else { return }
+            // WCU1, two big-endian lengths, JSON metadata, then raw AVC bytes.
+            var packet = Data("WCU1".utf8)
+            for length in [data.count, payload.count] {
+                var value = UInt32(length).bigEndian
+                withUnsafeBytes(of: &value) { packet.append(contentsOf: $0) }
+            }
+            packet.append(data)
+            packet.append(payload)
+            FileHandle.standardOutput.write(packet)
         }
     }
 }
@@ -57,22 +70,24 @@ private final class PiPCommandReader: @unchecked Sendable {
     }
 }
 
-/// Only the latest uncoded frame and one acknowledged transport frame are kept.
+/// Keep the latest capture for idle recovery and one frame being encoded or awaiting ACK.
 /// Encoding never runs on the main actor or the ScreenCaptureKit callback queue.
 private final class NativePreviewFrames: @unchecked Sendable {
-    private struct Frame {
+    private struct Frame: @unchecked Sendable {
         let image: CVPixelBuffer
+        let timestamp: CMTime
         let generation: UInt64
     }
 
     private let lock = NSLock()
     private let queue = DispatchQueue(label: "com.blueberrycongee.wuu.cua.preview-encode", qos: .userInitiated)
-    private let context = CIContext(options: [.cacheIntermediates: false])
-    private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+    private let encoder = PreviewEncoder()
     private let writer: PiPEventWriter
     private var generation: UInt64 = 0
     private var sequence: UInt64 = 0
     private var pending: Frame?
+    private var latest: Frame?
+    private var needsKeyframe = true
     private var encoding = false
     private var awaitingAcknowledgement: UInt64?
     private var failure: String?
@@ -83,6 +98,8 @@ private final class NativePreviewFrames: @unchecked Sendable {
         lock.withLock {
             generation += 1
             pending = nil
+            latest = nil
+            needsKeyframe = true
             awaitingAcknowledgement = nil
             return generation
         }
@@ -92,6 +109,8 @@ private final class NativePreviewFrames: @unchecked Sendable {
         lock.withLock {
             generation += 1
             pending = nil
+            latest = nil
+            needsKeyframe = true
             awaitingAcknowledgement = nil
         }
     }
@@ -99,10 +118,20 @@ private final class NativePreviewFrames: @unchecked Sendable {
     func isCurrent(_ generation: UInt64) -> Bool { lock.withLock { generation == self.generation } }
     func failureMessage() -> String? { lock.withLock { failure } }
 
-    func submit(_ image: CVPixelBuffer, generation: UInt64) {
+    func submit(_ image: CVPixelBuffer, timestamp: CMTime, generation: UInt64) {
         lock.withLock {
             guard generation == self.generation else { return }
-            pending = Frame(image: image, generation: generation)
+            let frame = Frame(image: image, timestamp: timestamp, generation: generation)
+            latest = frame
+            pending = frame
+            scheduleIfReady()
+        }
+    }
+
+    func requestKeyframe() {
+        lock.withLock {
+            needsKeyframe = true
+            pending = latest
             scheduleIfReady()
         }
     }
@@ -124,7 +153,7 @@ private final class NativePreviewFrames: @unchecked Sendable {
     }
 
     private func encodeLatest() {
-        let selected: (Frame, UInt64)? = lock.withLock {
+        let selected: (Frame, UInt64, Bool)? = lock.withLock {
             guard let frame = pending, awaitingAcknowledgement == nil else {
                 encoding = false
                 return nil
@@ -132,39 +161,48 @@ private final class NativePreviewFrames: @unchecked Sendable {
             pending = nil
             sequence += 1
             awaitingAcknowledgement = sequence
-            return (frame, sequence)
+            let keyframe = needsKeyframe
+            needsKeyframe = false
+            return (frame, sequence, keyframe)
         }
-        guard let (frame, sequence) = selected else { return }
-        let data = autoreleasepool {
-            context.jpegRepresentation(
-                of: CIImage(cvPixelBuffer: frame.image),
-                colorSpace: colorSpace,
-                options: [CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): 0.82]
-            )
-        }
+        guard let (frame, sequence, keyframe) = selected else { return }
+        do {
+            try encoder.encode(frame.image, generation: frame.generation, timestamp: frame.timestamp, keyframe: keyframe) { [self] result in
+                queue.async { [self] in complete(result, frame: frame, sequence: sequence) }
+            }
+        } catch { complete(.failure(error), frame: frame, sequence: sequence) }
+    }
+
+    private func complete(_ result: Result<PreviewEncoder.Output?, Error>, frame: Frame, sequence: UInt64) {
         lock.withLock {
             encoding = false
             guard frame.generation == generation, awaitingAcknowledgement == sequence else {
                 scheduleIfReady()
                 return
             }
-            // A preview is bounded to 1280 pixels on its longest edge. Reject a
-            // malformed/oversized result instead of allowing unbounded pipe data.
-            guard let data, data.count <= 3_000_000 else {
+            switch result {
+            case .failure(let error):
                 generation += 1
                 awaitingAcknowledgement = nil
                 pending = nil
-                let message = "native preview frame encoding failed"
-                failure = message
-                writer.send("capture_status", fields: ["status": "error", "message": message])
-                return
+                latest = nil
+                failure = error.localizedDescription
+                writer.send("capture_status", fields: ["status": "error", "message": error.localizedDescription])
+            case .success(nil):
+                awaitingAcknowledgement = nil
+                needsKeyframe = true
+                scheduleIfReady()
+            case .success(let output?):
+                var fields: [String: Any] = [
+                    "sequence": sequence, "generation": frame.generation,
+                    "configuration": output.configuration, "codec": output.codec,
+                    "keyframe": output.keyframe, "timestamp": output.timestamp,
+                    "width": CVPixelBufferGetWidth(frame.image),
+                    "height": CVPixelBufferGetHeight(frame.image),
+                ]
+                if output.keyframe { fields["description"] = Array(output.description) }
+                writer.send("frame", fields: fields, payload: output.data)
             }
-            writer.send("frame", fields: [
-                "sequence": sequence,
-                "width": CVPixelBufferGetWidth(frame.image),
-                "height": CVPixelBufferGetHeight(frame.image),
-                "data": data.base64EncodedString(),
-            ])
         }
     }
 }
@@ -175,6 +213,7 @@ private final class NativePreviewControl {
     private var requestedLive = true
     private var lastController = "agent"
     private var lastState = "starting"
+    var closed = false
     var shouldCapture: Bool { requestedVisible && requestedLive }
 
     func setVisible(_ visible: Bool) { requestedVisible = visible }
@@ -344,7 +383,7 @@ private final class NativePiPStreamOutput: NSObject, SCStreamOutput, SCStreamDel
                 writer.send("capture_status", fields: ["status": "suspended"])
             }
             if shouldDisplay, let imageBuffer {
-                frames.submit(imageBuffer, generation: generation)
+                frames.submit(imageBuffer, timestamp: sampleBuffer.presentationTimeStamp, generation: generation)
             }
         }
     }
@@ -413,78 +452,13 @@ private func windowFrameDistance(_ left: CGRect, _ right: CGRect) -> CGFloat {
     abs(left.minX - right.minX) + abs(left.minY - right.minY) + abs(left.width - right.width) + abs(left.height - right.height)
 }
 
-func captureStageOffscreenOrigin(screenFrames: [CGRect]) -> CGPoint {
-    let union = screenFrames.reduce(CGRect.zero) { $0.union($1) }
-    return CGPoint(
-        x: union.maxX + max(union.width * 3, 5800),
-        y: union.maxY + max(union.height * 3, 4000)
-    )
-}
-
-func captureStageVisibleFraction(windowFrame: CGRect, screenFrames: [CGRect]) -> CGFloat {
-    let windowArea = max(1, windowFrame.width * windowFrame.height)
-    let visibleArea = screenFrames.reduce(CGFloat.zero) { total, screen in
-        let intersection = windowFrame.intersection(screen)
-        guard !intersection.isNull, !intersection.isEmpty else { return total }
-        return total + intersection.width * intersection.height
-    }
-    return min(1, visibleArea / windowArea)
-}
-
-func captureStageTargetIndex(
-    windowFrames: [CGRect],
-    requestedFrame: CGRect?,
-    focusedFrame: CGRect?
-) -> Int? {
-    guard !windowFrames.isEmpty else { return nil }
-    if let requestedFrame {
-        return windowFrames.indices.min {
-            windowFrameDistance(windowFrames[$0], requestedFrame) < windowFrameDistance(windowFrames[$1], requestedFrame)
-        }
-    }
-    if let focusedFrame {
-        return windowFrames.indices.min {
-            windowFrameDistance(windowFrames[$0], focusedFrame) < windowFrameDistance(windowFrames[$1], focusedFrame)
-        }
-    }
-    return windowFrames.indices.max {
-        windowFrames[$0].width * windowFrames[$0].height < windowFrames[$1].width * windowFrames[$1].height
-    }
-}
-
-func captureStageWindowAssignments(
-    currentFrames: [CGRect],
-    currentTitles: [String],
-    expectedFrames: [CGRect],
-    expectedTitles: [String]
-) -> [Int?] {
-    guard currentFrames.count == currentTitles.count,
-          expectedFrames.count == expectedTitles.count else {
-        return Array(repeating: nil, count: currentFrames.count)
-    }
-    var remaining = Set(expectedFrames.indices)
-    return currentFrames.indices.map { currentIndex in
-        guard !remaining.isEmpty else { return nil }
-        let matchingTitles = remaining.filter { expectedTitles[$0] == currentTitles[currentIndex] }
-        let pool = matchingTitles.isEmpty ? Array(remaining) : Array(matchingTitles)
-        guard let match = pool.min(by: {
-            windowFrameDistance(currentFrames[currentIndex], expectedFrames[$0])
-                < windowFrameDistance(currentFrames[currentIndex], expectedFrames[$1])
-        }) else { return nil }
-        remaining.remove(match)
-        return match
-    }
-}
-
-private func captureDisplayFrames() -> [CGRect] {
-    var count: UInt32 = 0
-    guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
-    var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
-    let result = displays.withUnsafeMutableBufferPointer {
-        CGGetActiveDisplayList(count, $0.baseAddress, &count)
-    }
-    guard result == .success else { return [] }
-    return displays.prefix(Int(count)).map(CGDisplayBounds)
+// Minimizing or hiding an app is the user's choice. Unminimizing it to capture
+// frames would animate the window out of the Dock across the user's screens, so
+// the preview rests until the user brings a window back.
+private func applicationIsPutAway(_ app: NSRunningApplication) -> Bool {
+    if app.isHidden { return true }
+    let windows = axElements(AXUIElementCreateApplication(app.processIdentifier), attribute: kAXWindowsAttribute as String)
+    return !windows.isEmpty && windows.allSatisfy { axBool($0, kAXMinimizedAttribute as String) == true }
 }
 
 private func requestedWindowFrame(windowID: CGWindowID?, processID: pid_t) -> CGRect? {
@@ -498,230 +472,21 @@ private func requestedWindowFrame(windowID: CGWindowID?, processID: pid_t) -> CG
     return CGRect(dictionaryRepresentation: bounds as CFDictionary)
 }
 
-private struct NativePiPWindowSnapshot {
-    let frame: CGRect
-    let title: String
-    let wasMinimized: Bool
-}
-
-private struct NativePiPResolvedWindow {
-    let element: AXUIElement
-    let snapshotIndex: Int
-}
-
-private func windowSnapshots(_ application: AXUIElement) -> [NativePiPWindowSnapshot] {
-    axElements(application, attribute: kAXWindowsAttribute as String).compactMap { window in
-        guard let frame = axFrame(window) else { return nil }
-        return NativePiPWindowSnapshot(
-            frame: frame,
-            title: axDisplayValue(window, kAXTitleAttribute as String) ?? "",
-            wasMinimized: axBool(window, kAXMinimizedAttribute as String) == true
-        )
-    }
-}
-
-@MainActor
-private final class NativePiPWindowStage {
-    private let axApplication: AXUIElement
-    private let originalWindows: [NativePiPWindowSnapshot]
-    private let targetSnapshotIndex: Int?
-    private let wasHidden: Bool
-    private var stagedWindows: [NativePiPResolvedWindow] = []
-    private var stagedFrames: [Int: CGRect] = [:]
-    private var staged = false
-
-    init(application: NSRunningApplication, requestedFrame: CGRect?, focusedFrame: CGRect?) {
-        axApplication = AXUIElementCreateApplication(application.processIdentifier)
-        originalWindows = windowSnapshots(axApplication)
-        targetSnapshotIndex = captureStageTargetIndex(
-            windowFrames: originalWindows.map(\.frame),
-            requestedFrame: requestedFrame,
-            focusedFrame: focusedFrame
-        )
-        wasHidden = application.isHidden || axBool(axApplication, kAXHiddenAttribute as String) == true
-    }
-
-    func prepareIfNeeded() async {
-        guard let targetSnapshotIndex,
-              originalWindows.indices.contains(targetSnapshotIndex),
-              wasHidden || originalWindows[targetSnapshotIndex].wasMinimized else { return }
-        let displayFrames = captureDisplayFrames()
-        guard !displayFrames.isEmpty else { return }
-        staged = true
-        let parked = captureStageOffscreenOrigin(screenFrames: displayFrames)
-        if wasHidden {
-            _ = AXUIElementSetAttributeValue(axApplication, kAXHiddenAttribute as CFString, kCFBooleanFalse)
-        }
-        // Custom apps apply hidden/minimized changes asynchronously and may
-        // initially clamp a newly revealed window back onto a display. Retry the
-        // public AX writes briefly so the window settles offscreen before SCK
-        // resolves it, without ever activating the target app.
-        var prepared = false
-        var settledFrame: CGRect?
-        for _ in 0..<20 {
-            // Hiding and revealing some custom apps destroys and recreates their
-            // AXWindows. Keep valid resolved elements, but rematch all windows to
-            // their staged frame whenever the target goes stale or the hidden
-            // app's window set has only partially reappeared.
-            let targetIsStale = stagedWindows.first(where: { $0.snapshotIndex == targetSnapshotIndex })
-                .flatMap { axFrame($0.element) } == nil
-            let resolvedSnapshotCount = Set(stagedWindows.map(\.snapshotIndex)).count
-            if targetIsStale || (wasHidden && resolvedSnapshotCount < originalWindows.count) {
-                var merged: [Int: NativePiPResolvedWindow] = [:]
-                for item in stagedWindows where axFrame(item.element) != nil {
-                    merged[item.snapshotIndex] = item
-                }
-                for item in resolveWindows(expectedFrames: stagedFrames) {
-                    merged[item.snapshotIndex] = item
-                }
-                stagedWindows = merged.values.sorted { $0.snapshotIndex < $1.snapshotIndex }
-            }
-            guard let target = stagedWindows.first(where: { $0.snapshotIndex == targetSnapshotIndex }) else {
-                try? await Task.sleep(for: .milliseconds(50))
-                continue
-            }
-            if wasHidden {
-                for (offset, other) in stagedWindows.enumerated() where other.snapshotIndex != targetSnapshotIndex {
-                    _ = AXUIElementSetAttributeValue(other.element, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
-                    if axBool(other.element, kAXMinimizedAttribute as String) != true {
-                        _ = setOrigin(other.element, CGPoint(
-                            x: parked.x + CGFloat(offset + 1) * 32,
-                            y: parked.y + CGFloat(offset + 1) * 32
-                        ))
-                    }
-                }
-            }
-            _ = AXUIElementSetAttributeValue(target.element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-            _ = setOrigin(target.element, parked)
-            let currentFrame = axFrame(target.element)
-            for item in stagedWindows {
-                if let frame = axFrame(item.element) { stagedFrames[item.snapshotIndex] = frame }
-            }
-            let hidden = axBool(axApplication, kAXHiddenAttribute as String)
-            let minimized = axBool(target.element, kAXMinimizedAttribute as String)
-            let allOriginalWindowsResolved = !wasHidden
-                || Set(stagedWindows.map(\.snapshotIndex)).count >= originalWindows.count
-            let otherWindowsAreConcealed = !wasHidden || stagedWindows.allSatisfy { other in
-                guard other.snapshotIndex != targetSnapshotIndex else { return true }
-                if axBool(other.element, kAXMinimizedAttribute as String) == true { return true }
-                guard let frame = axFrame(other.element) else { return false }
-                return captureStageVisibleFraction(windowFrame: frame, screenFrames: displayFrames) <= 0.02
-            }
-            if hidden != true,
-               minimized != true,
-               allOriginalWindowsResolved,
-               otherWindowsAreConcealed,
-               let currentFrame,
-               captureStageVisibleFraction(windowFrame: currentFrame, screenFrames: displayFrames) <= 0.02 {
-                prepared = true
-                settledFrame = currentFrame
-                break
-            }
-            try? await Task.sleep(for: .milliseconds(50))
-        }
-        guard prepared else {
-            restore()
-            return
-        }
-        pipDebugLog("staged hidden or minimized target window from frame=\(originalWindows[targetSnapshotIndex].frame) to frame=\(String(describing: settledFrame)) windows=\(stagedWindows.count)")
-    }
-
-    func restore() {
-        guard staged else { return }
-        staged = false
-        var concealedBeforeRestore = wasHidden
-        if wasHidden {
-            // Hide every ordered-in window before moving anything back to its
-            // on-screen origin, so stopping PiP cannot flash the target app.
-            _ = AXUIElementSetAttributeValue(axApplication, kAXHiddenAttribute as CFString, kCFBooleanTrue)
-            for _ in 0..<10 where axBool(axApplication, kAXHiddenAttribute as String) != true {
-                usleep(20_000)
-            }
-        } else if let targetSnapshotIndex,
-                  let target = stagedWindows.first(where: { $0.snapshotIndex == targetSnapshotIndex }),
-                  originalWindows[targetSnapshotIndex].wasMinimized {
-            _ = AXUIElementSetAttributeValue(target.element, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
-            for _ in 0..<5 where axBool(target.element, kAXMinimizedAttribute as String) != true {
-                usleep(20_000)
-            }
-            if axBool(target.element, kAXMinimizedAttribute as String) != true {
-                // A custom window that refuses minimization must stay invisible
-                // while its original position is restored.
-                _ = AXUIElementSetAttributeValue(axApplication, kAXHiddenAttribute as CFString, kCFBooleanTrue)
-                concealedBeforeRestore = true
-            }
-        }
-
-        if stagedWindows.contains(where: { axFrame($0.element) == nil }) {
-            // AXWindows can reappear incrementally after a hide. Preserve every
-            // still-valid element and merge newly resolved snapshots until the
-            // original set is complete; replacing the array with one partial
-            // read would strand the missing window in its staged state.
-            var recovered: [Int: NativePiPResolvedWindow] = [:]
-            for item in stagedWindows where axFrame(item.element) != nil {
-                recovered[item.snapshotIndex] = item
-            }
-            for attempt in 0..<20 {
-                for item in resolveWindows(expectedFrames: stagedFrames) {
-                    recovered[item.snapshotIndex] = item
-                }
-                if recovered.count >= originalWindows.count { break }
-                if attempt < 19 { usleep(25_000) }
-            }
-            stagedWindows = recovered.values.sorted { $0.snapshotIndex < $1.snapshotIndex }
-        }
-        for item in stagedWindows {
-            guard originalWindows.indices.contains(item.snapshotIndex) else { continue }
-            let original = originalWindows[item.snapshotIndex]
-            _ = setOrigin(item.element, original.frame.origin)
-            _ = AXUIElementSetAttributeValue(
-                item.element,
-                kAXMinimizedAttribute as CFString,
-                original.wasMinimized ? kCFBooleanTrue : kCFBooleanFalse
-            )
-        }
-        if concealedBeforeRestore {
-            _ = AXUIElementSetAttributeValue(axApplication, kAXHiddenAttribute as CFString, kCFBooleanTrue)
-        }
-        let targetFrame = targetSnapshotIndex.flatMap { originalWindows.indices.contains($0) ? originalWindows[$0].frame : nil }
-        pipDebugLog("restored staged target window frame=\(String(describing: targetFrame)) hidden=\(wasHidden)")
-    }
-
-    private func resolveWindows(expectedFrames: [Int: CGRect]) -> [NativePiPResolvedWindow] {
-        let candidates = axElements(axApplication, attribute: kAXWindowsAttribute as String).compactMap { window -> (AXUIElement, CGRect, String)? in
-            guard let frame = axFrame(window) else { return nil }
-            return (window, frame, axDisplayValue(window, kAXTitleAttribute as String) ?? "")
-        }
-        let assignments = captureStageWindowAssignments(
-            currentFrames: candidates.map { $0.1 },
-            currentTitles: candidates.map { $0.2 },
-            expectedFrames: originalWindows.indices.map { expectedFrames[$0] ?? originalWindows[$0].frame },
-            expectedTitles: originalWindows.map(\.title)
-        )
-        return zip(candidates, assignments).compactMap { candidate, match in
-            guard let match else { return nil }
-            return NativePiPResolvedWindow(element: candidate.0, snapshotIndex: match)
-        }
-    }
-
-    private func setOrigin(_ window: AXUIElement, _ origin: CGPoint) -> Bool {
-        var point = origin
-        guard let value = AXValueCreate(.cgPoint, &point) else { return false }
-        return AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value) == .success
-    }
-}
-
+// The filter reports the backing scale of the display that currently hosts the
+// window. A buffer sized from another display leaves the frame partly empty.
 @available(macOS 14.0, *)
-private func streamConfiguration(for window: SCWindow) -> SCStreamConfiguration {
+private func streamConfiguration(for filter: SCContentFilter) -> SCStreamConfiguration {
     let configuration = SCStreamConfiguration()
-    let scale = window.owningApplication == nil ? 1 : NSScreen.main?.backingScaleFactor ?? 2
-    let previewScale = min(scale, 1280 / max(1, max(window.frame.width, window.frame.height)))
-    configuration.width = max(1, Int(window.frame.width * previewScale))
-    configuration.height = max(1, Int(window.frame.height * previewScale))
+    let size = filter.contentRect.size
+    let previewScale = min(CGFloat(filter.pointPixelScale), 1280 / max(1, max(size.width, size.height)))
+    // AVC uses 4:2:0 chroma, so scaled dimensions must remain even.
+    configuration.width = max(2, Int(size.width * previewScale) / 2 * 2)
+    configuration.height = max(2, Int(size.height * previewScale) / 2 * 2)
     configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
     configuration.queueDepth = 3
     configuration.showsCursor = false
     configuration.pixelFormat = kCVPixelFormatType_32BGRA
+    configuration.colorSpaceName = CGColorSpace.sRGB
     configuration.ignoreShadowsSingleWindow = true
     return configuration
 }
@@ -772,11 +537,8 @@ private func shareableContent(timeout: TimeInterval) async -> SCShareableContent
 
 @available(macOS 14.0, *)
 private func startWindowStream(window: SCWindow, output: NativePiPStreamOutput, timeout: TimeInterval) async throws -> SCStream {
-    let stream = SCStream(
-        filter: SCContentFilter(desktopIndependentWindow: window),
-        configuration: streamConfiguration(for: window),
-        delegate: output
-    )
+    let filter = SCContentFilter(desktopIndependentWindow: window)
+    let stream = SCStream(filter: filter, configuration: streamConfiguration(for: filter), delegate: output)
     try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: DispatchQueue(label: "com.blueberrycongee.wuu.cua.native-pip"))
     // ScreenCaptureKit can report a startup failure through the delegate's
     // didStopWithError instead of resuming startCapture's completion handler,
@@ -811,8 +573,130 @@ private func stopWindowStream(_ stream: SCStream, output: NativePiPStreamOutput)
     stream.stopCapture { _ in }
 }
 
+/// Delivers host commands to one preview session, buffering those that arrive
+/// before the session installs its handler.
 @MainActor
-public func runNativePreview(configuration: NativePreviewConfiguration) async throws {
+private final class NativePreviewInbox {
+    private var handler: (([String: Any]) -> Void)?
+    private var pending: [[String: Any]] = []
+
+    func deliver(_ command: [String: Any]) {
+        if let handler { handler(command) } else { pending.append(command) }
+    }
+
+    func setHandler(_ next: @escaping ([String: Any]) -> Void) {
+        handler = next
+        let queued = pending
+        pending = []
+        for command in queued { next(command) }
+    }
+}
+
+/// One helper process streams every live preview. replayd groups capture
+/// clients by executable path, so separate helper processes of one executable
+/// would interrupt each other's streams.
+///
+/// Commands arrive as JSON lines on stdin. In host mode every line names its
+/// session; `open` starts one and `close` ends it. A single-session helper
+/// starts its session at launch, accepts unnamed commands, and exits with it.
+@MainActor
+public final class NativePreviewHost {
+    private let parentProcessID: pid_t?
+    private let singleSession: NativePreviewConfiguration?
+    private var sessions: [String: NativePreviewInbox] = [:]
+    private var signalSources: [DispatchSourceSignal] = []
+
+    public init(parentProcessID: pid_t?, singleSession: NativePreviewConfiguration? = nil) {
+        self.parentProcessID = parentProcessID
+        self.singleSession = singleSession
+    }
+
+    public func run() {
+        signalSources = [SIGTERM, SIGINT].map { code in
+            signal(code, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: code, queue: .main)
+            source.setEventHandler { exit(0) }
+            source.resume()
+            return source
+        }
+        let reader = PiPCommandReader()
+        FileHandle.standardInput.readabilityHandler = { input in
+            let data = input.availableData
+            if data.isEmpty {
+                Task { @MainActor in exit(0) }
+                return
+            }
+            for encoded in reader.append(data) {
+                guard let commandData = encoded.data(using: .utf8),
+                      let command = try? JSONSerialization.jsonObject(with: commandData) as? [String: Any] else { continue }
+                let box = UncheckedBox(command)
+                Task { @MainActor in self.route(box.value) }
+            }
+        }
+        if let singleSession {
+            open(session: nil, configuration: singleSession)
+        } else {
+            Task { @MainActor in
+                while processIsAlive(self.parentProcessID) { try? await Task.sleep(for: .seconds(1)) }
+                exit(0)
+            }
+        }
+    }
+
+    private func route(_ command: [String: Any]) {
+        if singleSession != nil {
+            sessions[""]?.deliver(command)
+            return
+        }
+        guard let session = command["session"] as? String, !session.isEmpty else { return }
+        if command["type"] as? String == "open" {
+            guard sessions[session] == nil, let target = command["target"] as? String else { return }
+            let processID = (command["process_id"] as? NSNumber)?.int32Value ?? 0
+            let windowID = (command["window_id"] as? NSNumber)?.uint32Value ?? 0
+            open(session: session, configuration: NativePreviewConfiguration(
+                activityID: command["activity_id"] as? String ?? session,
+                target: target,
+                processID: processID > 0 ? processID : nil,
+                windowID: windowID > 0 ? windowID : nil,
+                parentProcessID: parentProcessID
+            ))
+            return
+        }
+        sessions[session]?.deliver(command)
+    }
+
+    private func open(session: String?, configuration: NativePreviewConfiguration) {
+        let key = session ?? ""
+        let inbox = NativePreviewInbox()
+        sessions[key] = inbox
+        let writer = PiPEventWriter(session: session)
+        Task { @MainActor in
+            var failure: String?
+            do {
+                try await runNativePreview(configuration: configuration, writer: writer, inbox: inbox)
+            } catch {
+                failure = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+            self.sessions[key] = nil
+            if session == nil {
+                if let failure {
+                    FileHandle.standardError.write(Data("wuu-cua-mac native preview failed: \(failure)\n".utf8))
+                    exit(1)
+                }
+                exit(0)
+            }
+            if let failure { writer.send("failed", fields: ["message": failure]) }
+            writer.send("closed")
+        }
+    }
+}
+
+@MainActor
+private func runNativePreview(
+    configuration: NativePreviewConfiguration,
+    writer: PiPEventWriter,
+    inbox: NativePreviewInbox
+) async throws {
     guard CGPreflightScreenCaptureAccess() else {
         throw ComputerError.permissionDenied("Screen Recording permission is required for live window capture")
     }
@@ -826,7 +710,6 @@ public func runNativePreview(configuration: NativePreviewConfiguration) async th
     }) else { throw ComputerError.appNotFound(configuration.target) }
 
     pipDebugLog("preview activity=\(configuration.activityID) process=\(app.processIdentifier)")
-    let writer = PiPEventWriter()
     let frames = NativePreviewFrames(writer: writer)
     let controller = NativePreviewControl()
     let requestedFrame = requestedWindowFrame(windowID: configuration.windowID, processID: app.processIdentifier)
@@ -834,49 +717,22 @@ public func runNativePreview(configuration: NativePreviewConfiguration) async th
         writer.send("gone")
         return
     }
-    let windowStage = NativePiPWindowStage(
-        application: app,
-        requestedFrame: requestedFrame,
-        focusedFrame: focusedWindowFrame(processID: app.processIdentifier)
-    )
-    defer { windowStage.restore() }
-    let terminationSignals = [SIGTERM, SIGINT].map { code in
-        signal(code, SIG_IGN)
-        let source = DispatchSource.makeSignalSource(signal: code, queue: .main)
-        source.setEventHandler { frames.invalidate(); windowStage.restore(); exit(0) }
-        source.resume()
-        return source
-    }
-    defer { for source in terminationSignals { source.cancel() } }
-
-    // Install the command reader before staging or capture work. Both staging
-    // retries and stream startup suspend instead of blocking the main actor, so
-    // close/stdin EOF can restore the target immediately even during startup.
-    let commandReader = PiPCommandReader()
-    FileHandle.standardInput.readabilityHandler = { input in
-        let data = input.availableData
-        if data.isEmpty {
+    // Install the command handler before capture work. Stream startup suspends
+    // instead of blocking the main actor, so a close ends the session promptly.
+    inbox.setHandler { command in
             Task { @MainActor in
-                frames.invalidate()
-                windowStage.restore()
-                exit(0)
-            }
-            return
-        }
-        for encoded in commandReader.append(data) {
-            Task { @MainActor in
-                guard let commandData = encoded.data(using: .utf8),
-                      let command = try? JSONSerialization.jsonObject(with: commandData) as? [String: Any],
-                      let type = command["type"] as? String else { return }
+                guard let type = command["type"] as? String else { return }
                 switch type {
                 case "visible":
                     controller.setVisible(command["visible"] as? Bool == true)
                     if !controller.shouldCapture { frames.invalidate() }
                 case "live":
                     controller.setLive(command["live"] as? Bool == true)
-                    if !controller.shouldCapture { frames.invalidate(); windowStage.restore() }
+                    if !controller.shouldCapture { frames.invalidate() }
                 case "ack":
                     if let sequence = command["sequence"] as? UInt64 { frames.acknowledge(sequence) }
+                case "keyframe":
+                    if controller.shouldCapture { frames.requestKeyframe() }
                 case "activity":
                     let nextController = command["controller"] as? String ?? "agent"
                     if nextController == "none" || command["state"] as? String == "stopped" {
@@ -884,7 +740,6 @@ public func runNativePreview(configuration: NativePreviewConfiguration) async th
                         frames.invalidate()
                     }
                     if controller.needsRestoration(command) {
-                        windowStage.restore()
                         let pid = app.processIdentifier
                         do {
                             try await Task.detached { try WindowRestorationJournal.restoreForUser(processID: pid) }.value
@@ -894,16 +749,12 @@ public func runNativePreview(configuration: NativePreviewConfiguration) async th
                         }
                     }
                 case "close":
+                    controller.closed = true
                     frames.invalidate()
-                    windowStage.restore()
-                    exit(0)
                 default: break
                 }
             }
-        }
     }
-    defer { FileHandle.standardInput.readabilityHandler = nil }
-    await windowStage.prepareIfNeeded()
 
     let geometryMonitor = WindowGeometryMonitor(processID: app.processIdentifier, windowFrame: .zero)
     let captureStartTimeout: TimeInterval = 3
@@ -924,8 +775,9 @@ public func runNativePreview(configuration: NativePreviewConfiguration) async th
     var establishFailures = 0
     var lastHealthyOutput: ObjectIdentifier?
     var lastSafetyRefresh = Date.distantPast
+    var putAway = false
 
-    while !app.isTerminated && processIsAlive(configuration.parentProcessID) {
+    while !controller.closed && !app.isTerminated && processIsAlive(configuration.parentProcessID) {
         if let failure = frames.failureMessage() { throw ComputerError.operationFailed(failure) }
         if !controller.shouldCapture {
             if let existing = stream, let existingOutput = output {
@@ -936,6 +788,26 @@ public func runNativePreview(configuration: NativePreviewConfiguration) async th
             output = nil
             try await Task.sleep(for: .milliseconds(100))
             continue
+        }
+        if applicationIsPutAway(app) {
+            if let existing = stream, let existingOutput = output {
+                stopWindowStream(existing, output: existingOutput)
+            }
+            stream = nil
+            output = nil
+            if !putAway {
+                putAway = true
+                writer.send("capture_status", fields: ["status": "suspended", "reason": "target_hidden"])
+            }
+            establishFailures = 0
+            try await Task.sleep(for: .milliseconds(250))
+            continue
+        }
+        if putAway {
+            putAway = false
+            // Resume the first-frame deadline even if capture cannot produce a frame.
+            writer.send("capture_status", fields: ["status": "idle"])
+            lastVerifiedCaptureAt = ProcessInfo.processInfo.systemUptime
         }
         if establishFailures >= 4 {
             throw ComputerError.operationFailed("capture recovery exhausted")
@@ -1048,7 +920,7 @@ public func runNativePreview(configuration: NativePreviewConfiguration) async th
         }
         guard windowFrameDistance(nextWindow.frame, trackedFrame) > 1 else { continue }
         do {
-            try await activeStream.updateConfiguration(streamConfiguration(for: nextWindow))
+            try await activeStream.updateConfiguration(streamConfiguration(for: SCContentFilter(desktopIndependentWindow: nextWindow)))
             trackedFrame = nextWindow.frame
         } catch { activeOutput.lockFailure(error) }
     }

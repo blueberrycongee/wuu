@@ -69,6 +69,13 @@ to end the answer in a fenced code block. With `live=1` the cursor should follow
 the last code character inside the card. `npm --prefix desktop run test:e2e:stream-code-cursor`
 measures these cases and saves screenshots in `desktop/out/stream-code-cursor/`.
 
+Use `?surface=stream&stream=math&live=1` to inspect inline and display formulas,
+aligned equations with blank lines, matrices, wide formulas, lists, tables,
+literal code, escaped currency, and unsupported commands. Switch to
+`surface=workspace` to compare file previews. Play the sample through the stream
+store, then compare both themes at 15px/20px and 1000px/420px. Wide display formulas
+should scroll within their own region without widening the message.
+
 The image surface (`?surface=images`) includes a user attachment, a tool image,
 and landscape, portrait, and panoramic Markdown images. Inspect the preview
 sizes, text-to-image gaps, narrow-window fit, and click/keyboard enlargement

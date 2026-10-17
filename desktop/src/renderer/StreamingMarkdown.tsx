@@ -243,24 +243,24 @@ export function StreamingMarkdown({
   const cursorBlock = showCursor && tailIsEmpty ? visibleBlocks[lastStableBlockIndex] : undefined;
   const cursorBlockEndsInCode = cursorBlock !== undefined && !cursorBlock.context.hasMermaid &&
     endsWithFenceCloser(cursorBlock.text);
-  const cursorStableBlockIndex = cursorBlock && !cursorBlock.context.hasMermaid && !cursorBlockEndsInCode
+  const cursorStableBlockIndex = cursorBlock && !cursorBlock.context.hasMermaid && !cursorBlock.context.endsInMath && !cursorBlockEndsInCode
     ? lastStableBlockIndex
     : -1;
   const codeCursorBlockIndex = cursorBlockEndsInCode ? lastStableBlockIndex : -1;
   const tailEndsInCode = showCursor && !tailContext.hasMermaid &&
     (split.inFence || endsWithFenceCloser(split.tail));
   const cursorNeedsBlockTail = showCursor &&
-    (tailContext.hasMermaid || cursorBlock?.context.hasMermaid === true);
+    (tailContext.hasMermaid || tailContext.endsInMath || cursorBlock?.context.hasMermaid === true || cursorBlock?.context.endsInMath === true);
   // A cursor after a trailing newline creates an extra line box even when
   // settled CSS hides it. Anchor it to the last visible text in the tail too.
   const displayTail = useMemo(
     () => {
       if (!tailContext.hasContent) return "";
       // The canonical parser recognizes nested fences that the prose mender
-      // deliberately does not scan. Never repair already identified diagrams.
-      return isLive && !tailContext.hasMermaid ? mendStreamingMarkdown(split.tail) : split.tail;
+      // deliberately does not scan. Keep diagram and display-math source intact.
+      return isLive && !tailContext.hasMermaid && !tailContext.endsInMath ? mendStreamingMarkdown(split.tail) : split.tail;
     },
-    [isLive, split.tail, tailContext.hasContent, tailContext.hasMermaid],
+    [isLive, split.tail, tailContext.hasContent, tailContext.hasMermaid, tailContext.endsInMath],
   );
   const tailText = showCursor && !cursorNeedsBlockTail && !tailEndsInCode && !cursorBlock
     ? insertCursorBeforeTrailingWhitespace(displayTail)
@@ -427,6 +427,7 @@ type StableBlockScanState = StableBlockSplit & {
   blockStart: number;
   inFence: boolean;
   openFence: MarkdownFence | undefined;
+  openMath: string | undefined;
   /** A list stays open across blank lines until a dedented block arrives. */
   listContentIndent: number | undefined;
   pendingListBoundary: number | undefined;
@@ -473,6 +474,7 @@ function scanStableBlocks(
   const previousBlocks = blocks;
   let blocksCopied = false;
   let openFence = previous?.openFence;
+  let openMath = previous?.openMath;
   let blockStart = previous?.blockStart ?? 0;
   let scanOffset = previous?.scanOffset ?? 0;
   let listContentIndent = previous?.listContentIndent;
@@ -497,8 +499,8 @@ function scanStableBlocks(
     const lineStart = scanOffset;
     const line = text.slice(lineStart, lineEnd);
     const blank = line.trim().length === 0;
-    const listMarker = !openFence && line.match(/^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)/);
-    if (!openFence && !blank) {
+    const listMarker = !openFence && !openMath && line.match(/^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|$)/);
+    if (!openFence && !openMath && !blank) {
       if (pendingListBoundary !== undefined) {
         const indentation = markdownColumnWidth(line.match(/^[ \t]*/)?.[0] ?? "");
         if (!listMarker && indentation < (listContentIndent ?? 0)) {
@@ -512,7 +514,22 @@ function scanStableBlocks(
         listContentIndent = Math.min(listContentIndent ?? indent, indent);
       }
     }
-    const fence = parseMarkdownFence(line);
+    // Math fences, like code fences, own their internal blank lines. Keep
+    // the original source intact when promoting completed streaming blocks.
+    if (!openFence) {
+      const mathLine = line.trim();
+      if (openMath) {
+        if (openMath === "\\]" ? mathLine.endsWith(openMath) :
+          /^\$+$/.test(mathLine) && mathLine.length >= openMath.length) {
+          openMath = undefined;
+        }
+      } else if (/^\${2,}[^$]*$/.test(mathLine)) {
+        openMath = mathLine.match(/^\$+/)![0];
+      } else if (mathLine.startsWith("\\[") && !mathLine.endsWith("\\]")) {
+        openMath = "\\]";
+      }
+    }
+    const fence = !openMath ? parseMarkdownFence(line) : undefined;
     if (fence) {
       if (!openFence) {
         openFence = fence;
@@ -522,7 +539,7 @@ function scanStableBlocks(
     }
 
     scanOffset = lineEnd + 1;
-    if (!openFence && blank) {
+    if (!openFence && !openMath && blank) {
       if (listContentIndent !== undefined) {
         // A later indented paragraph or another item can still belong to the
         // same list. Wait for a complete, dedented line before freezing it.
@@ -541,6 +558,7 @@ function scanStableBlocks(
     blockStart,
     inFence: Boolean(openFence),
     openFence,
+    openMath,
     listContentIndent,
     pendingListBoundary,
     openFenceLanguage: openFence?.info,

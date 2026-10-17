@@ -143,6 +143,12 @@ coverage.out
 *.key
 *.p12
 *.pfx
+*.p8
+*.keychain
+*.keychain-db
+# Encrypted certificate exports and handoff archives still contain private keys.
+Wuu-signing-handoff-*.zip
+Wuu-signing-handoff-*/
 
 # ============================================================
 # Personal scratch

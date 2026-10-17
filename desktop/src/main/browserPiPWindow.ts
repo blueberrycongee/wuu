@@ -1,4 +1,5 @@
 import type { Rectangle } from "electron";
+import { fileURLToPath } from "node:url";
 import type { ActivitySession } from "../shared/protocol";
 import { ActivityPiPSurface, type ActivityPiPSurfaceDeps } from "./activityPiPWindow";
 import { pipContainRect, type ActivityPiPContent, type ActivityPiPContentContext } from "./activityPiPContent";
@@ -13,7 +14,7 @@ export type { BrowserPiPWindowHandle, BrowserPiPOverlayHandle } from "./activity
 
 export type BrowserPiPTabHost = Pick<BrowserHostCoordinator,
   | "tabBounds" | "tabSurfaceMeta" | "mountTabOnWindow" | "unmountTabIfOwner"
-  | "relayoutMountedTab" | "addInteractionListener" | "addTabClosedListener"
+  | "relayoutMountedTab" | "captureMountedTab" | "addInteractionListener" | "addTabClosedListener"
   | "addNavigateListener" | "addTabReparentedListener"
 >;
 
@@ -95,6 +96,11 @@ export class BrowserPiPContent implements ActivityPiPContent {
       { x: fit.x, y: fit.y, width: fit.width, height: fit.height }, fit.scale);
   }
 
+  snapshot(): Promise<string | undefined> {
+    if (!this.mounted) return Promise.resolve(undefined);
+    return this.host.captureMountedTab(this.workdir, this.tabID, this.context.window.contentView);
+  }
+
   stop(onStopped: () => void): void {
     this.stopped = true;
     for (const unsub of this.unsubs.splice(0)) unsub();
@@ -172,7 +178,13 @@ export function createObservationPiPFactory(deps: {
     createContent: (next, context) => {
       if (next.kind === "browser") return new BrowserPiPContent(next, deps.browserHost, context);
       const helper = resolveCUAFrameHelper();
-      return helper ? new NativePiPContent(next, context, { helper, isPackaged: deps.isPackaged }) : undefined;
+      return helper ? new NativePiPContent(next, context, {
+        helper, isPackaged: deps.isPackaged,
+        preload: fileURLToPath(new URL("../preload/nativePreview.cjs", import.meta.url)),
+        pageURL: !deps.isPackaged && process.env.ELECTRON_RENDERER_URL
+          ? new URL("native-preview.html", process.env.ELECTRON_RENDERER_URL).href
+          : new URL("../renderer/native-preview.html", import.meta.url).href,
+      }) : undefined;
     },
   });
 }

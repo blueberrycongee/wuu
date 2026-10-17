@@ -42,8 +42,10 @@ async function until(fn, label = phase) {
 const frames = () => evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 async function settle() {
   await frames();
+  // Scroll-driven fades remain running while the reader is paused; only
+  // document-timeline animations can settle by waiting for time to pass.
   await until(() => !document.documentElement.matches(".window-resizing,.layout-motion-active") && !document.getAnimations().some(animation =>
-    animation.playState === "running" && animation.effect?.target instanceof Element &&
+    animation.timeline === document.timeline && animation.playState === "running" && animation.effect?.target instanceof Element &&
     animation.effect.target.matches(".app-shell,.scroll-region,.dock-composer-wrap,.composer-stack,.environment-side-stack,.environment-panel,.workspace-right-panel,.sidebar")), "layout settles");
   await frames();
 }

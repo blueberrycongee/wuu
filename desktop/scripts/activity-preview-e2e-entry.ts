@@ -5,8 +5,8 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, WebContentsView, nativeImage } from "electron";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { app, BrowserWindow, WebContentsView } from "electron";
 import type { ActivitySession, JsonValue } from "../src/shared/protocol";
 import { ActivityPiPSurface } from "../src/main/activityPiPWindow";
 import type { ActivityPiPContentContext } from "../src/main/activityPiPContent";
@@ -37,6 +37,18 @@ async function waitFor(label: string, predicate: () => Promise<unknown> | unknow
     await new Promise(resolve => setTimeout(resolve, 15));
   }
 }
+// Samples a card's frame until its appearance or dismissal motion has ended.
+async function settledMotion(window: BrowserWindow) {
+  const samples: { x: number; y: number; width: number; height: number; opacity: number; visible: boolean }[] = [];
+  await waitFor("card motion settled", () => {
+    samples.push({ ...window.getBounds(), opacity: window.getOpacity(), visible: window.isVisible() });
+    // Long enough to rule out a spring momentarily at its peak.
+    const last = samples.slice(-16);
+    return last.length === 16 && last.every(sample => JSON.stringify(sample) === JSON.stringify(last[0]))
+      && (!last[0].visible || last[0].opacity === 1);
+  });
+  return samples;
+}
 const sources = new Map<string, ServerResponse>();
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -51,13 +63,15 @@ async function emitNative(target: string, event: unknown) {
   await waitFor(`native source ${target} connected`, () => sources.has(target));
   sources.get(target)!.write(`${JSON.stringify(event)}\n`);
 }
+// Recorded AVC samples from a real VideoEncoder (160x100 solid RGB canvases,
+// baseline, avc format). The second color is a delta frame referencing the first.
+// Fixed bytes keep Linux acceptance independent of hardware encoder availability.
+const videoFrames = JSON.parse(readFileSync(join(desktop, "scripts/activity-preview-frames.json"), "utf8"));
 function frame(red: number, green: number, blue: number) {
-  const width = 160, height = 100;
-  const bitmap = Buffer.alloc(width * height * 4);
-  for (let offset = 0; offset < bitmap.length; offset += 4) {
-    bitmap[offset] = blue; bitmap[offset + 1] = green; bitmap[offset + 2] = red; bitmap[offset + 3] = 255;
-  }
-  return { event: "frame", width, height, data: nativeImage.createFromBitmap(bitmap, { width, height }).toJPEG(90).toString("base64") };
+  const sample = videoFrames.find((sample: { rgb: number[] }) => sample.rgb.join() === [red, green, blue].join());
+  assert(sample, "missing AVC color fixture");
+  const { rgb: _rgb, ...encoded } = sample;
+  return encoded;
 }
 const workdir = join(fixture, "project");
 const threadID = "activity-preview-thread";
@@ -73,13 +87,6 @@ let coordinator: ObservationCoordinator | undefined;
 let main: BrowserWindow | undefined;
 const browserViews: WebContentsView[] = [];
 const contexts: { activity: ActivitySession; context: ActivityPiPContentContext }[] = [];
-const controls: string[] = [];
-let nextControl: Promise<void> | undefined;
-function holdControl() {
-  let resolve!: () => void, reject!: (error: Error) => void;
-  nextControl = new Promise<void>((accept, fail) => { resolve = accept; reject = fail; });
-  return { resolve, reject };
-}
 const helper = join(desktop, "scripts", "activity-preview-native-fixture.cjs");
 let surfaceCount = 0;
 let reconciliationCount = 0;
@@ -119,16 +126,12 @@ app.whenReady().then(async () => {
         };
         contexts.push({ activity: next, context: traced });
         if (next.kind === "browser") return new BrowserPiPContent(next, host!, traced);
-        return new NativePiPContent(next, traced, { helper, isPackaged: false });
+        return new NativePiPContent(next, traced, { helper, isPackaged: false,
+          preload: join(desktop, "out-e2e/nativePreview.cjs"),
+          pageURL: pathToFileURL(join(desktop, "out-e2e/native-preview.html")).href,
+        });
       },
     });
-  }, async (next, action) => {
-    controls.push(action);
-    const held = nextControl; nextControl = undefined;
-    if (held) await held;
-    const updated = activity(next.kind as "browser" | "cua", next.target!, { ...next, updated_at: new Date(Date.UTC(2026, 0, 1) + ++revision).toISOString(),
-      controller: action === "takeover" ? "user" : "none", state: action === "stop" ? "stopped" : action === "takeover" ? "user_controlled" : "active" });
-    return updated;
   });
   coordinator.setBrowserInPanel(next => host!.isInPanel(next.workdir, next.target!));
   coordinator.setActiveThread(threadID);
@@ -143,6 +146,16 @@ app.whenReady().then(async () => {
   check("preview does not reveal a hidden main window", !main.isVisible() && !pip.isVisible());
   main.show();
   await waitFor("browser shown", () => pip.isVisible());
+  // Evidence only: the blurred stand-in over the content partway through.
+  const midway = new Promise<void>(resolve => setTimeout(() => void overlay.webContents.capturePage()
+    .then(image => writeFileSync(join(output, "appearance-midway.png"), image.toPNG())).finally(resolve), 90));
+  const appearance = await settledMotion(pip);
+  await midway;
+  const rest = appearance.at(-1)!;
+  check("a card grows from its resting corner while fading in", appearance[0].width < rest.width * 0.85 && appearance[0].opacity < 0.5
+    && appearance.every(sample => sample.x + sample.width === rest.x + rest.width && sample.y + sample.height === rest.y + rest.height),
+    { first: appearance[0], rest, frames: appearance.length });
+  writeFileSync(join(output, "appearance-frames.json"), JSON.stringify(appearance, null, 2));
   check("watch-only preview never focuses its target", !browserViews[0].webContents.isFocused());
   let browserRequest = 0;
   async function browserAction(method: string, params: Record<string, JsonValue>) {
@@ -220,6 +233,21 @@ app.whenReady().then(async () => {
   const bounds = pip.getBounds();
   const browserContext = contexts.at(-1)!.context;
   current = activity("cua", "native-a"); coordinator.update(current);
+  const nativeView = pip.contentView.children.find(view => view !== overlay) as WebContentsView;
+  await waitFor("native video page ready", () => nativeView.webContents.executeJavaScript("isSecureContext && typeof VideoDecoder === 'function' && !!document.querySelector('canvas')"));
+  // Delay delivery of a real decoded VideoFrame, preserving decoder behavior
+  // and the production ACK path while exercising a late output after reset.
+  await nativeView.webContents.executeJavaScript(`(() => {
+    const Decoder = VideoDecoder;
+    window.VideoDecoder = class extends Decoder {
+      constructor(init) { super({ ...init, output(video) {
+        if (window.fixtureHoldDecode) {
+          window.fixtureDecodeEntered = true;
+          window.fixtureReleaseDecode = () => init.output(video);
+        } else init.output(video);
+      } }); }
+    };
+  })()`);
   await emitNative("native-a", frame(20, 100, 210));
   await waitFor("native pixels presented", () => overlay.webContents.executeJavaScript("document.getElementById('ph').classList.contains('gone')"));
   check("browser to native keeps window and chrome identity", !pip.isDestroyed() && pip.id === pipID && overlay.webContents.id === overlayID && surfaceCount === 1);
@@ -228,25 +256,26 @@ app.whenReady().then(async () => {
   browserContext.onGone(); browserContext.onFailure("late old browser failure"); browserContext.setMounted(false);
   check("retired browser callbacks cannot close current native preview", !pip.isDestroyed() && pip.isVisible());
   await waitFor("first native frame acknowledged", () => readFileSync(process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_LOG!, "utf8").includes('"type":"ack"'));
-  const nativeView = pip.contentView.children.find(view => view !== overlay) as WebContentsView;
   writeFileSync(join(output, "native-content.png"), (await nativeView.webContents.capturePage()).toPNG());
   const firstNativePixel = await nativeView.webContents.executeJavaScript("Array.from(document.querySelector('canvas').getContext('2d').getImageData(0,0,1,1).data)");
-  // Hold an actual Chromium JPEG decode after decoding its image, without
-  // replacing the transport or fabricating a frame-consumption result.
-  await nativeView.webContents.executeJavaScript(`(() => {
-    const decode = Image.prototype.decode;
-    Image.prototype.decode = async function() {
-      await decode.call(this); window.fixtureDecodeEntered = true;
-      await new Promise(resolve => { window.fixtureReleaseDecode = resolve; });
-    };
-  })()`);
+  check("AVC keyframe renders the expected pixels", Math.abs(firstNativePixel[0] - 20) < 8 && Math.abs(firstNativePixel[1] - 100) < 8 && Math.abs(firstNativePixel[2] - 210) < 8, firstNativePixel);
+  coordinator.setActiveThread("different-thread");
+  await waitFor("native preview hides on session switch", () => !pip.isVisible());
+  current = activity("cua", "native-a"); coordinator.update(current);
+  coordinator.refreshBrowserPresentation();
+  check("native activity stays hidden and connected in the background", !pip.isVisible() && sources.has("native-a") && current.controller === "agent");
+  coordinator.setActiveThread(threadID);
+  await emitNative("native-a", frame(20, 100, 210));
+  await waitFor("native preview returns to its session", () => pip.isVisible());
+  check("native session switching retains its window and source", pip.id === pipID && surfaceCount === 1 && sources.has("native-a"));
+  await nativeView.webContents.executeJavaScript("window.fixtureHoldDecode = true");
   await emitNative("native-a", frame(220, 30, 40));
-  await waitFor("second native JPEG is decoding", () => nativeView.webContents.executeJavaScript("window.fixtureDecodeEntered === true"));
+  await waitFor("native delta frame is decoded", () => nativeView.webContents.executeJavaScript("window.fixtureDecodeEntered === true"));
   await emitNative("native-a", { event: "capture_status", status: "error", message: "Synthetic permission denied" });
   await waitFor("capture error clears live presentation", () => overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone')"));
-  check("capture failure shows recovery guidance without raw diagnostics", await overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone') && document.getElementById('ph-detail').textContent.length > 0 && !document.body.innerText.includes('Synthetic permission denied')"));
+  check("capture failure keeps its symbol and hide control available without raw diagnostics", await overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone') && document.getElementById('ph-icon').checkVisibility() && !document.getElementById('close').hidden && document.getElementById('expand').hidden && !document.body.innerText.includes('Synthetic permission denied')"));
   await nativeView.webContents.executeJavaScript("window.fixtureReleaseDecode()");
-  await waitFor("invalidated frame is acknowledged after discard", () => readFileSync(process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_LOG!, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)).some(entry => entry.target === "native-a" && entry.command?.type === "ack" && entry.command.sequence === 2));
+  await waitFor("invalidated frame is acknowledged after discard", () => readFileSync(process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_LOG!, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)).some(entry => entry.target === "native-a" && entry.command?.type === "ack" && entry.command.sequence === 3));
   check("a late decoded frame cannot overwrite pixels after capture failure", JSON.stringify(await nativeView.webContents.executeJavaScript("Array.from(document.querySelector('canvas').getContext('2d').getImageData(0,0,1,1).data)")) === JSON.stringify(firstNativePixel));
   check("discarding a late decode cannot restore live presentation", await overlay.webContents.executeJavaScript("!document.getElementById('ph').classList.contains('gone')"));
   coordinator.setAppearance(true, { reducedMotion: true, fontSize: 20, fontFamily: "system-ui", locale: "en-US", surface: "#20242c", text: "#f8f8f8", muted: "#adb5c2" });
@@ -268,19 +297,47 @@ app.whenReady().then(async () => {
   check("a later action cannot undo explicit hide", !pip.isVisible());
   coordinator.setActiveThread("different-thread"); coordinator.setActiveThread(threadID);
   check("conversation switching preserves explicit hide", !pip.isVisible());
+  // A hidden card returns only while its window has focus; another app may
+  // hold focus on a machine in use.
+  app.focus({ steal: true }); main.focus();
+  await waitFor("main window focused for reopen", () => main!.isFocused());
   coordinator.showForThread(threadID);
   await waitFor("explicit reopen", () => pip.isVisible());
-  check("show preview never changes control authority", controls.length === 0);
+  check("show preview preserves the current activity", contexts.at(-1)!.activity.id === current.id && current.controller === "agent");
   check("hide and reopen preserve the same shell", pip.id === pipID && surfaceCount === 1);
   coordinator.setAutoShow(false);
   coordinator.setActiveThread("auto-off-thread");
   coordinator.update(activity("browser", "browser-b", { thread_id: "auto-off-thread" }));
-  check("automatic preview can be disabled without changing task control", !pip.isVisible() && controls.length === 0);
+  check("automatic preview can be disabled without changing task control", surfaceCount === 1);
+  await waitFor("switching hides the previous session", () => !pip.isVisible());
+  const cards = () => BrowserWindow.getAllWindows().filter(window => window.getParentWindow() === main);
   coordinator.showForThread("auto-off-thread");
-  await waitFor("manual show while auto-show is disabled", () => pip.isVisible());
-  check("explicit show works while auto-show is off", controls.length === 0 && surfaceCount === 1);
+  await waitFor("manual show while auto-show is disabled", () => surfaceCount === 2 && cards().length === 2 && cards().some(card => card.id !== pipID && card.isVisible()));
+  check("explicit show works while auto-show is off", surfaceCount === 2 && !pip.isVisible());
+  const second = cards().find(card => card.id !== pipID)!;
+  const secondID = second.id;
   coordinator.setAutoShow(true);
   coordinator.setActiveThread(threadID);
+  await waitFor("returning restores only the owning preview", () => pip.isVisible() && !second.isVisible());
+  check("switching sessions retains both preview windows", pip.id === pipID && second.id === secondID && surfaceCount === 2);
+  const backgroundActivity = activity("browser", "browser-b", { thread_id: "auto-off-thread" });
+  coordinator.update(backgroundActivity);
+  coordinator.refreshBrowserPresentation();
+  check("background updates cannot reveal another session", pip.isVisible() && !second.isVisible());
+  coordinator.setActiveThread(undefined);
+  await waitFor("empty selection hides all previews", () => !pip.isVisible() && !second.isVisible());
+  coordinator.setActiveThread("auto-off-thread");
+  await waitFor("second session restores its own preview", () => second.isVisible() && !pip.isVisible());
+  coordinator.handleServerEvent({ workdir, kind: "notification", message: {
+    method: "turn/completed", params: { thread_id: threadID, turn: { status: "completed" } },
+  } });
+  coordinator.setActiveThread(threadID);
+  await waitFor("offscreen completion stays retired on return", () => !pip.isVisible() && !second.isVisible());
+  coordinator.handleServerEvent({ workdir, kind: "notification", message: {
+    method: "turn/started", params: { thread_id: threadID },
+  } });
+  await waitFor("next turn restores the owning preview", () => pip.isVisible());
+  writeFileSync(join(output, "session-visibility.json"), JSON.stringify({ firstWindow: pipID, secondWindow: secondID, backgroundUpdatesHidden: true, backgroundCompletionRetired: true, windowsRetained: surfaceCount === 2 }, null, 2));
   const otherWindow = new BrowserWindow({ width: 400, height: 300, show: false, frame: false });
   await otherWindow.loadURL("data:text/html,<body>Foreground fixture window</body>");
   // Explicitly blur because the headless platform can mark two windows focused.
@@ -320,9 +377,13 @@ app.whenReady().then(async () => {
   await waitFor("registry snapshot reconciles after target disappearance", () => reconciliationCount > reconciliationBeforeGone);
   check("unchanged registry snapshot cannot resurrect a disappeared target", surfaceCount === surfacesAfterGone && !sources.has("native-b"));
   snapshotActivities = [];
+  // The disappeared target retired its card; the next target gets a new one
+  // while the old card may still be leaving.
+  const retiredCards = new Set(cards().map(card => card.id));
   current = activity("cua", "native-c"); coordinator.update(current);
   await emitNative("native-c", frame(120, 30, 170));
-  const finalPip = BrowserWindow.getAllWindows().find(window => window.getParentWindow() === main)!;
+  await waitFor("card for the next target", () => cards().some(card => !retiredCards.has(card.id)));
+  const finalPip = cards().find(card => !retiredCards.has(card.id))!;
   // Context loss may retire the old shell. Locate its chrome through the real
   // renderer hook instead of relying on child-view ordering.
   let controlOverlay: WebContentsView | undefined;
@@ -347,65 +408,25 @@ app.whenReady().then(async () => {
   coordinator.update({ ...hiddenStop, updated_at: new Date(Date.now() + 10_000).toISOString() });
   check("late old-epoch stop cannot hide the new preview", finalPip.isVisible());
   await emitNative("native-d", { event: "capture_status", status: "stopped" });
-  await waitFor("retained frame is labelled paused", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('status').hidden && document.getElementById('status').textContent === 'Preview paused'"));
-  check("stopped capture retains its frame with an explicit paused label", await controlOverlay.webContents.executeJavaScript("document.getElementById('ph').classList.contains('gone')"));
+  await waitFor("capture stop reaches the preview", () => events.some(entry => {
+    const received = entry as { target: string; event?: { event: string; status?: string } };
+    return received.target === "native-d" && received.event?.event === "capture_status" && received.event.status === "stopped";
+  }));
+  check("stopped capture retains its frame and hide control", await controlOverlay.webContents.executeJavaScript("document.getElementById('ph').classList.contains('gone') && !document.getElementById('close').hidden && document.getElementById('expand').hidden"));
   check("stopped capture never implies task completion", await controlOverlay.webContents.executeJavaScript("document.getElementById('completion').getAttribute('aria-hidden') === 'true'"));
-  await controlOverlay.webContents.executeJavaScript("document.getElementById('takeover').click();document.getElementById('takeover').click()");
-  await waitFor("takeover command handled", () => controls.length === 1);
-  check("repeated takeover click dispatches one control action", controls[0] === "takeover");
-  await waitFor("finish takeover available", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('release').hidden"));
-  await controlOverlay.webContents.executeJavaScript("document.getElementById('release').click()");
-  await waitFor("release command handled", () => controls.length === 2);
-  check("finish takeover is an explicit release action", controls[1] === "release");
-  await waitFor("idle state shown", () => controlOverlay!.webContents.executeJavaScript("document.getElementById('takeover').hidden && document.getElementById('stop').hidden"));
+  current = activity("cua", "native-d", { execution_id: "fixture-run-2", controller: "user", state: "user_controlled" });
+  coordinator.update(current);
+  await waitFor("native takeover reaches capture", () => readFileSync(process.env.WUU_ACTIVITY_PREVIEW_FIXTURE_LOG!, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)).some(entry => entry.target === "native-d" && entry.command?.type === "activity" && entry.command.controller === "user"));
+  check("external takeover preserves the native preview shell", finalPip.isVisible());
   current = activity("browser", "browser-b", { execution_id: "fixture-run-3" });
   coordinator.update(current);
-  await waitFor("live browser control recovery ready", () => controlOverlay!.webContents.executeJavaScript("document.getElementById('ph').classList.contains('gone') && !document.getElementById('takeover').hidden"));
-  const failedLiveTakeover = holdControl();
-  await controlOverlay.webContents.executeJavaScript("document.getElementById('takeover').click()");
-  await waitFor("live takeover is pending", () => controls.length === 3 && controlOverlay!.webContents.executeJavaScript("document.getElementById('takeover').disabled"));
-  current = activity("browser", "browser-b", { execution_id: "fixture-run-3", state: "foreground_controlled" });
-  coordinator.update(current);
-  failedLiveTakeover.reject(new Error("Synthetic task control failure"));
-  await waitFor("failed live takeover settles", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('takeover').disabled"));
-  const liveFailure = await controlOverlay.webContents.executeJavaScript("document.getElementById('status').textContent");
-  check("ordinary live state changes retain localized control failure", liveFailure && !liveFailure.includes("Synthetic task control failure")
-    && await controlOverlay.webContents.executeJavaScript("!document.getElementById('status').hidden"));
+  await waitFor("live browser preview restored", () => controlOverlay!.webContents.executeJavaScript("document.getElementById('ph').classList.contains('gone')"));
   current = activity("browser", "browser-b", { execution_id: "fixture-run-3", state: "stopped", controller: "none" });
   coordinator.update(current);
-  await waitFor("authoritative stop hides task controls", () => controlOverlay!.webContents.executeJavaScript("document.getElementById('takeover').hidden && document.getElementById('stop').hidden"));
-  check("authoritative task stop replaces stale control failure", await controlOverlay.webContents.executeJavaScript("document.getElementById('status').textContent") !== liveFailure);
-  await controlOverlay.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
-  writeFileSync(join(output, "control-failure-then-stopped.png"), (await controlOverlay.webContents.capturePage()).toPNG());
-  current = activity("browser", "browser-b", { execution_id: "fixture-run-4" });
-  coordinator.update(current);
-  await waitFor("new execution enables task control", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('takeover').hidden"));
-  const stoppedTakeover = holdControl();
-  await controlOverlay.webContents.executeJavaScript("document.getElementById('takeover').click()");
-  await waitFor("takeover awaits an authoritative stop", () => controls.length === 4);
-  current = activity("browser", "browser-b", { execution_id: "fixture-run-4", state: "stopped", controller: "none" });
-  coordinator.update(current);
-  stoppedTakeover.reject(new Error("Synthetic stale control failure"));
-  await waitFor("late rejected takeover settles", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('takeover').disabled"));
-  check("late control failure cannot overwrite authoritative task stop", await controlOverlay.webContents.executeJavaScript("document.getElementById('status').textContent") !== liveFailure);
-  current = activity("browser", "browser-b", { execution_id: "fixture-run-5" });
-  coordinator.update(current);
-  await waitFor("old execution control is available", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('takeover').hidden"));
-  const oldExecutionTakeover = holdControl();
-  await controlOverlay.webContents.executeJavaScript("document.getElementById('takeover').click()");
-  await waitFor("old execution takeover is pending", () => controls.length === 5);
-  current = activity("browser", "browser-b", { execution_id: "fixture-run-6" });
-  coordinator.update(current);
-  await waitFor("new execution clears old pending control", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('takeover').disabled"));
-  const newExecutionTakeover = holdControl();
-  await controlOverlay.webContents.executeJavaScript("document.getElementById('takeover').click()");
-  await waitFor("new execution takeover is pending", () => controls.length === 6);
-  oldExecutionTakeover.reject(new Error("Synthetic retired execution failure"));
-  await new Promise<void>(resolve => setImmediate(resolve));
-  check("retired execution rejection cannot clear or fail a newer pending control", await controlOverlay.webContents.executeJavaScript("document.getElementById('takeover').disabled && !document.getElementById('status').hidden")
-    && await controlOverlay.webContents.executeJavaScript("document.getElementById('status').textContent") !== liveFailure);
-  newExecutionTakeover.resolve();
-  await waitFor("new execution takeover succeeds", () => controlOverlay!.webContents.executeJavaScript("!document.getElementById('release').hidden && !document.getElementById('release').disabled"));
+  coordinator.handleServerEvent({ workdir, kind: "notification", message: { method: "turn/completed",
+    params: { thread_id: threadID, turn: { status: "interrupted" } } } });
+  await waitFor("authoritative task stop dismisses the preview", () => !finalPip.isVisible());
+  check("external task stop preserves the browser page", !browserViews[1].webContents.isDestroyed());
   await coordinator.shutdown();
   check("shutdown destroys preview shell", finalPip.isDestroyed());
   host.destroyAll(); main.destroy();

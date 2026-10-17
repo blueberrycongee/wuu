@@ -160,9 +160,9 @@ turns.css .project-empty-actions button:hover background --project-empty-actions
 turns.css .rich-link text-decoration-color --rich-link-underline-color
 turns.css .rich-mermaid[data-mermaid-state="error"] border-color --danger-border
 turns.css .rich-mermaid[data-mermaid-state="error"] background --danger-soft
-turns.css .turn-artifact-gallery-toolbar .icon-button, .turn-artifact-image-toolbar .icon-button color --artifact-gallery-control-fg
-turns.css .turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled), .turn-artifact-image-toolbar .icon-button:is(:hover, :active):not(:disabled) color --artifact-gallery-control-fg-hover
-turns.css .turn-artifact-gallery-toolbar::before, .turn-artifact-image-toolbar::before background --artifact-gallery-control-glow
+turns.css .turn-artifact-gallery-toolbar .icon-button color --artifact-gallery-control-fg
+turns.css .turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled) color --artifact-gallery-control-fg-hover
+turns.css .turn-artifact-gallery-toolbar::before background --artifact-gallery-control-glow
 turns.css .turn-collapsed-marker background --ink-overlay-18
 turns.css .turn-failure background --danger-soft
 turns.css .turn-process-toggle[role="button"]:hover :is(.turn-process-title, .turn-process-meta, .turn-process-chevron) color --activity-toggle-hover-color

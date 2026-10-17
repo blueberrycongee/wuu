@@ -85,6 +85,8 @@ import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot, type SettingsStatusTone } from "./SettingsSection";
 import { ActivityPreviewPreferenceSection } from "./ActivityPreviewPreferenceSection";
 import { AppContextSettingsSection } from "./AppContextSettingsSection";
+import { ENABLE_APP_SNAPSHOTS } from "../shared/featureFlags";
+import { SystemPermissionsSection } from "./SystemPermissions";
 import { toastErrorMessage } from "./Toast";
 import type { ArchiveDeletionState } from "./useArchiveDeletion";
 import { DefaultEngineRow, EngineSettingsSection } from "./EngineSettingsSection";
@@ -328,8 +330,6 @@ export function SettingsView({
   const [compactKeepRecentDraft, setCompactKeepRecentDraft] = useState("");
   const [providerContextWindowDraft, setProviderContextWindowDraft] = useState("");
   const [maxContextTokensDraft, setMaxContextTokensDraft] = useState("");
-  const [maxStepsDraft, setMaxStepsDraft] = useState("");
-  const [temperatureDraft, setTemperatureDraft] = useState("");
   // Runtime errors stay beside the field that failed to validate or save.
   const [advancedError, setAdvancedError] = useState<{ field: AdvancedField; message: string } | null>(null);
   const [copyState, setCopyState] = useState<CopyState>("idle");
@@ -405,16 +405,12 @@ export function SettingsView({
       compactKeepRecent: formatOptionalNumberDraft(advanced?.compact_keep_recent_tokens),
       providerContextWindow: formatOptionalNumberDraft(advanced?.provider_context_window),
       maxContextTokens: formatOptionalNumberDraft(advanced?.max_context_tokens),
-      maxSteps: formatOptionalNumberDraft(advanced?.max_steps),
-      temperature: formatTemperatureDraft(advanced?.temperature)
     };
     setAutoCompactDraft(!(advanced?.disable_auto_compact ?? false));
     setCompactThresholdDraft(synced.compactThreshold);
     setCompactKeepRecentDraft(synced.compactKeepRecent);
     setProviderContextWindowDraft(synced.providerContextWindow);
     setMaxContextTokensDraft(synced.maxContextTokens);
-    setMaxStepsDraft(synced.maxSteps);
-    setTemperatureDraft(synced.temperature);
     advancedCommittedRef.current = synced;
     setAdvancedError(null);
   }, [initialized?.advanced_settings, initialized?.provider, initialized?.model]);
@@ -534,8 +530,6 @@ export function SettingsView({
       compactKeepRecent: compactKeepRecentDraft,
       providerContextWindow: providerContextWindowDraft,
       maxContextTokens: maxContextTokensDraft,
-      maxSteps: maxStepsDraft,
-      temperature: temperatureDraft
     };
     const draft = drafts[field];
     if (advancedCommittedRef.current[field] === draft) {
@@ -571,18 +565,6 @@ export function SettingsView({
         const parsed = parseOptionalInteger(draft, t("settings.unknownModelLimit"), t);
         if (parsed.error) validationError = parsed.error;
         else update = { max_context_tokens: parsed.value };
-        break;
-      }
-      case "maxSteps": {
-        const parsed = parseOptionalInteger(draft, t("settings.maxSteps"), t);
-        if (parsed.error) validationError = parsed.error;
-        else update = { max_steps: parsed.value };
-        break;
-      }
-      case "temperature": {
-        const parsed = parseTemperatureDraft(draft, t);
-        if (parsed.error) validationError = parsed.error;
-        else update = { temperature: parsed.value };
         break;
       }
     }
@@ -844,16 +826,12 @@ export function SettingsView({
                     t,
                   )}
                   maxContextTokens={maxContextTokensDraft}
-                  maxSteps={maxStepsDraft}
-                  temperature={temperatureDraft}
                   error={advancedError}
                   onAutoCompactToggle={toggleAutoCompact}
                   onCompactThresholdChange={setCompactThresholdDraft}
                   onCompactKeepRecentChange={setCompactKeepRecentDraft}
                   onProviderContextWindowChange={setProviderContextWindowDraft}
                   onMaxContextTokensChange={setMaxContextTokensDraft}
-                  onMaxStepsChange={setMaxStepsDraft}
-                  onTemperatureChange={setTemperatureDraft}
                   onCommitField={commitAdvancedField}
                   onGeneralSave={onGeneralSave}
                   onAdvancedSave={onAdvancedSave}
@@ -974,9 +952,7 @@ type AdvancedNumericField =
   | "compactThreshold"
   | "compactKeepRecent"
   | "providerContextWindow"
-  | "maxContextTokens"
-  | "maxSteps"
-  | "temperature";
+  | "maxContextTokens";
 
 type AdvancedField = AdvancedNumericField | "autoCompact";
 
@@ -990,16 +966,12 @@ function SettingsRuntimePage({
   providerContextWindowCurrent,
   providerContextWindowSource,
   maxContextTokens,
-  maxSteps,
-  temperature,
   error,
   onAutoCompactToggle,
   onCompactThresholdChange,
   onCompactKeepRecentChange,
   onProviderContextWindowChange,
   onMaxContextTokensChange,
-  onMaxStepsChange,
-  onTemperatureChange,
   onCommitField,
   onGeneralSave,
   onAdvancedSave
@@ -1013,16 +985,12 @@ function SettingsRuntimePage({
   providerContextWindowCurrent: string;
   providerContextWindowSource: string;
   maxContextTokens: string;
-  maxSteps: string;
-  temperature: string;
   error: { field: AdvancedField; message: string } | null;
   onAutoCompactToggle: () => void;
   onCompactThresholdChange: (value: string) => void;
   onCompactKeepRecentChange: (value: string) => void;
   onProviderContextWindowChange: (value: string) => void;
   onMaxContextTokensChange: (value: string) => void;
-  onMaxStepsChange: (value: string) => void;
-  onTemperatureChange: (value: string) => void;
   onCommitField: (field: AdvancedNumericField) => void;
   onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
   onAdvancedSave: (settings: RuntimeAdvancedSettingsUpdate) => Promise<void>;
@@ -1204,6 +1172,7 @@ function SettingsRuntimePage({
           </SettingsRow>
           <SettingsRow
             title={t("settings.unknownModelLimit")}
+            hideDescriptionWhenNarrow
             hint={t("settings.unknownModelLimitDescription")}
             error={fieldError("maxContextTokens")}
           >
@@ -1215,27 +1184,10 @@ function SettingsRuntimePage({
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
-      <SettingsSection title={t("settings.sectionExecution")}>
-        <SettingsGroup>
-          <SettingsRow
-            title={t("settings.maxSteps")}
-            error={fieldError("maxSteps")}
-          >
-            {numericInput("maxSteps", maxSteps, onMaxStepsChange, { label: t("settings.maxSteps"), placeholder: t("settings.unlimited") })}
-          </SettingsRow>
-          <SettingsRow title={t("settings.temperature")} error={fieldError("temperature")}>
-            {numericInput("temperature", temperature, onTemperatureChange, {
-              label: t("settings.temperature"),
-              placeholder: t("settings.automatic"),
-              inputMode: "decimal",
-            })}
-          </SettingsRow>
-        </SettingsGroup>
-      </SettingsSection>
       <ExecutionEnvironmentSettings value={initialized?.general_settings?.execution_environments ?? {}} disabled={fieldsDisabled} onSave={onGeneralSave} />
       <SettingsSection title={t("settings.ptcTitle")} testID="settings-ptc">
         <SettingsGroup>
-          <SettingsRow title={t("settings.ptcEnabled")} description={t("settings.ptcDescription")}>
+          <SettingsRow title={t("settings.ptcEnabled")} hideDescriptionWhenNarrow description={t("settings.ptcDescription")}>
             <button className="settings-switch" type="button" role="switch"
               aria-label={t("settings.ptcEnabled")} aria-checked={ptc.enabled}
               data-testid="settings-ptc-enabled" disabled={!initialized || running || ptcBusy}
@@ -1250,6 +1202,7 @@ function SettingsRuntimePage({
         <SettingsGroup>
           <SettingsRow
             title={t("settings.gitAttribution")}
+            hideDescriptionWhenNarrow
             hint={t("settings.gitAttributionDescription")}
             error={gitAttributionError}
           >
@@ -1332,7 +1285,8 @@ function SettingsGeneralPage({
       </SettingsSection>
 
       <ActivityPreviewPreferenceSection />
-      <AppContextSettingsSection />
+      {ENABLE_APP_SNAPSHOTS && <AppContextSettingsSection />}
+      <SystemPermissionsSection />
 
       <SettingsSection title={t("settings.about")} testID="settings-about">
         <SettingsGroup>
@@ -2393,18 +2347,6 @@ function parseOptionalNumber(raw: string, label: string, t: Translate): { value:
   return { value: parsed };
 }
 
-function parseTemperatureDraft(raw: string, t: Translate): { value: number; error?: string } {
-  const value = raw.trim();
-  if (value === "" || value.toLowerCase() === "auto") {
-    return { value: 0 };
-  }
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 2) {
-    return { value: 0, error: t("validation.temperature") };
-  }
-  return { value: parsed };
-}
-
 function formatPercentDraft(value: number | undefined): string {
   if (!value || !Number.isFinite(value) || value <= 0) {
     return "";
@@ -2414,13 +2356,6 @@ function formatPercentDraft(value: number | undefined): string {
 
 function formatOptionalNumberDraft(value: number | undefined): string {
   if (!value || !Number.isFinite(value) || value <= 0) {
-    return "";
-  }
-  return String(value);
-}
-
-function formatTemperatureDraft(value: number | undefined): string {
-  if (value === undefined || !Number.isFinite(value) || value <= 0) {
     return "";
   }
   return String(value);
