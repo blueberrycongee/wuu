@@ -44,7 +44,7 @@
   --reasoning-stream-cursor-color: var(--gray-500);
   --turn-process-entry-color: var(--ink-tertiary);
   --process-control-color-fallback: var(--ink-tertiary);
-  --process-active-color: color-mix(in srgb, var(--ink-soft) 39%, var(--paper));
+  --process-active-color: var(--ink-quiet);
   --process-active-highlight: var(--ink-muted);
   --activity-toggle-hover-color: var(--gray-650);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-600));
@@ -2433,17 +2433,12 @@
   border: 0;
   overflow: visible;
   background: transparent;
-  color: var(--ink-tertiary);
+  color: var(--ink-quiet);
   cursor: default;
   font-size: var(--conversation-process-font-size);
   font-weight: var(--conversation-process-font-weight);
   line-height: var(--conversation-process-line-height);
   list-style: none;
-}
-
-/* Transient activity stays quiet while completed summaries remain readable. */
-.process-surface-row.is-live-gray {
-  color: var(--process-active-color);
 }
 
 .process-surface-fold > .process-surface-row {

@@ -1356,7 +1356,6 @@ function WorkspaceToolPicker({
       onKeyDown={handleKeyDown}
     >
       <section className="workspace-tool-menu-section" aria-label={t("workspace.tools")}>
-        <h2>{t("workspace.tools")}</h2>
         <div className="workspace-tool-menu-list">
           {WORKSPACE_TOOL_ITEMS.map((item) => (
             <button

@@ -78,7 +78,7 @@ contextBridge.exposeInMainWorld("wuu", {
   listWorkspaceDirectory: async (path = "") => ({ root: repo, path, entries: [], truncated: false }),
   initialize: async () => ({
     protocol_version: "e2e", provider: "e2e", model: "mock-model", workspace_root: repo,
-    providers: [{ name: "e2e", type: "mock", model: "mock-model", connection_locked: true }],
+    providers: [{ name: "e2e", type: "mock", model: "mock-model", connection_locked: true, api_key_configured: true }],
   }),
   resumeThread: async (id) => ({ thread: threads.find((item) => item.id === id) ?? null }),
   renameThread: async (id, title) => {

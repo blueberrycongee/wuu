@@ -954,6 +954,7 @@ export class AppServerClient {
         return;
       case "thread/started":
       case "thread/resumed":
+      case "thread/updated":
         this.updateRunningFromThread(params?.thread);
         return;
     }

@@ -2,6 +2,11 @@ import type { CodexModelSummary, GitStatusResult, InitializeResult, ProviderMode
 import { translateCurrent as t } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 
+export function hasAuthenticatedProvider(providers: readonly ProviderSummary[] | undefined): boolean {
+  // Composer choices stay local until thread/start persists discovered providers.
+  return providers?.some((provider) => provider.api_key_configured === true) ?? false;
+}
+
 export function effectiveModelSpeed(speed?: string, defaultSpeed?: string): string | undefined {
   return speed || defaultSpeed;
 }

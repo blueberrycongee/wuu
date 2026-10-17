@@ -20,7 +20,6 @@ import { ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_ID
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
 import { SystemPermissionsPanel } from "./SystemPermissions";
 import { PREVIEW_PLUGINS, PREVIEW_WORKSPACES } from "./onboardingPreview";
-import { ProviderMark } from "./ProviderMarks";
 import { PluginIcon } from "./PublicIcon";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { applyThemePreference } from "./Theme";
@@ -60,18 +59,18 @@ export function hasOnboardingProvider(
   return providers?.some((provider) => isConfiguredOnboardingProvider(provider)) ?? false;
 }
 
-export function discoveredCodexCredential(
+export function discoveredLocalProviders(
   providers: readonly ProviderSummary[] | undefined,
-): ProviderSummary | undefined {
-  return providers?.find((provider) => isCodexSubscriptionProvider(provider) && Boolean(provider.codex_credential_source));
+): ProviderSummary[] {
+  return providers?.filter((provider) => !isConfiguredOnboardingProvider(provider) && (
+    (isCodexSubscriptionProvider(provider) && provider.codex_credential_source === "codex-cli") ||
+    (provider.auto_discovered === true && provider.api_key_configured === true)
+  )) ?? [];
 }
 
 function isConfiguredOnboardingProvider(provider: ProviderSummary): boolean {
-  if (provider.api_key_configured === true) return true;
-  if (isCodexSubscriptionProvider(provider)) {
-    return provider.codex_credential_source === "wuu-auth-store" || provider.reuse_codex_credentials === true;
-  }
-  return provider.connection_locked === true;
+  // Discovery makes a login available; only a saved, authenticated connection is ready.
+  return provider.api_key_configured === true && provider.auto_discovered !== true;
 }
 
 function isCodexSubscriptionProvider(provider: ProviderSummary): boolean {
@@ -141,7 +140,7 @@ export function FirstRunOnboarding({
   const [error, setError] = useState<{ title: string; detail?: string } | null>(null);
   const [selectedEngine, setSelectedEngine] = useState(RECOMMENDED_ENGINE);
   const catalog = useCatalogProviders(0);
-  const discoveredCodex = discoveredCodexCredential(providers);
+  const localProviders = discoveredLocalProviders(providers);
   const providerReady = hasOnboardingProvider(providers);
   const preset = selectedPreset(selectedPluginIDs, bundledPlugins);
   const showPermissions = preview || (window.wuu?.platform === "darwin" && Boolean(window.wuu.getSystemPermissions));
@@ -340,15 +339,15 @@ export function FirstRunOnboarding({
     }
   }
 
-  async function reuseCodexLogin(): Promise<void> {
-    if (!discoveredCodex || savingProvider) return;
+  async function reuseLocalLogin(provider: ProviderSummary): Promise<void> {
+    if (savingProvider) return;
     setSavingProvider(true);
     setError(null);
     try {
       if (!preview) {
-        await onSaveProvider(discoveredCodex.name, discoveredCodex.model, {
-          reuse_codex_credentials: true,
-        });
+        await onSaveProvider(provider.name, provider.model, isCodexSubscriptionProvider(provider)
+          ? { reuse_codex_credentials: true }
+          : {});
       }
       setConnected(true);
       setStep(afterProvider);
@@ -388,7 +387,7 @@ export function FirstRunOnboarding({
           run: () => void applyRuntimeChoices(),
         }
           // Without a connection the service tiles are the step's actions.
-          : step === "provider" ? (providerReady ? { label: t("onboarding.continue"), disabled: false, run: () => setStep(afterProvider) } : undefined)
+          : step === "provider" ? (providerReady ? { label: t("onboarding.continue"), disabled: savingProvider, run: () => setStep(afterProvider) } : undefined)
             : step === "permissions" ? { label: t("onboarding.continue"), disabled: false, run: () => setStep("ready") }
             : { label: finishing ? t("onboarding.finishing") : selectedPaths.size > 0 ? t("onboarding.importAndStart", { count: selectedPaths.size }) : t("onboarding.enterWuu"), disabled: busy, run: () => void finish() };
   const back = currentStepIndex > 0 ? steps[currentStepIndex - 1] : undefined;
@@ -400,7 +399,7 @@ export function FirstRunOnboarding({
 
   const connector = (
     <ServiceConnector
-      providers={providers ?? []}
+      providers={providers?.filter((provider) => !provider.auto_discovered) ?? []}
       running={savingProvider}
       catalog={catalog}
       defaultOn
@@ -552,28 +551,36 @@ export function FirstRunOnboarding({
                     );
                   })}
                 </SettingsGroup>
-              ) : discoveredCodex ? (
-                <>
-                  <SettingsGroup>
-                    <button
-                      className="catalog-row"
-                      type="button"
-                      data-testid="onboarding-reuse-codex"
-                      disabled={savingProvider}
-                      onClick={() => void reuseCodexLogin()}
-                    >
-                      <span className="catalog-row-mark" aria-hidden="true">
-                        <ProviderMark id="openai" label="ChatGPT" />
-                      </span>
-                      <span className="catalog-row-title">{t("onboarding.reuseCodexTitle")}</span>
-                      {savingProvider
-                        ? <LoaderCircle className="icon settings-spin catalog-row-meta" aria-hidden="true" />
-                        : <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />}
-                    </button>
-                  </SettingsGroup>
-                  <SettingsSection title={t("onboarding.otherConnection")}>{connector}</SettingsSection>
-                </>
-              ) : connector}
+              ) : null}
+              {localProviders.length > 0 ? (
+                <SettingsGroup>
+                  {localProviders.map((provider) => {
+                    const identity = serviceIdentity(provider, t);
+                    return (
+                      <button
+                        key={provider.name}
+                        className="catalog-row"
+                        type="button"
+                        data-testid="onboarding-reuse-local-login"
+                        data-provider={provider.name}
+                        disabled={savingProvider}
+                        onClick={() => void reuseLocalLogin(provider)}
+                      >
+                        <span className="catalog-row-mark" aria-hidden="true"><ServiceMark identity={identity} /></span>
+                        <span className="catalog-row-title">{t("onboarding.reuseLocalLogin", {
+                          name: isCodexSubscriptionProvider(provider) ? engineLabel("codex") : identity.label,
+                        })}</span>
+                        {savingProvider
+                          ? <LoaderCircle className="icon settings-spin catalog-row-meta" aria-hidden="true" />
+                          : <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />}
+                      </button>
+                    );
+                  })}
+                </SettingsGroup>
+              ) : null}
+              {providerReady || localProviders.length > 0
+                ? <SettingsSection title={t("onboarding.otherConnection")}>{connector}</SettingsSection>
+                : connector}
             </div>
           ) : null}
 

@@ -291,6 +291,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		GitAttributionDisabled:      t.env.GitAttributionDisabled,
 		GitWrapperExecutable:        t.env.GitWrapperExecutable,
 		ProcessMgr:                  t.env.ProcessMgr,
+		ShellEarlyHandoffDisabled:   t.env.ShellEarlyHandoffDisabled,
 		ProcessSandboxProvider:      t.env.ProcessSandboxProvider,
 		AgentControl:                t.env.AgentControl,
 		// Browser dependencies must be copied explicitly: every desktop thread
@@ -530,6 +531,13 @@ func (t *Toolkit) toolSearchCanLoadDeferredTool(string) bool { return true }
 // SetProcessManager attaches the process manager.
 func (t *Toolkit) SetProcessManager(m *proc.Manager) {
 	t.env.ProcessMgr = m
+}
+
+// SetShellEarlyHandoffEnabled controls whether foreground commands may yield
+// before their requested timeout. Disable it when the host cannot deliver a
+// promoted command's completion to this conversation.
+func (t *Toolkit) SetShellEarlyHandoffEnabled(enabled bool) {
+	t.env.ShellEarlyHandoffDisabled = !enabled
 }
 
 // SetStateDir sets the workspace-scoped runtime state directory.

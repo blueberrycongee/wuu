@@ -92,7 +92,7 @@ app.whenReady().then(async () => {
       await win.loadFile(path.join(desktop, "out-dev/onboarding/renderer/dev/onboarding/index.html"), { query: { lang: "en" } });
       await waitFor(() => Boolean(document.querySelector(".onboarding-stage-welcome")));
       await click(".onboarding-actions .settings-button-primary");
-      await waitFor(() => document.querySelectorAll(".onboarding-plugin").length === 9);
+      await waitFor(() => Boolean(document.querySelector(".onboarding-stage-plugins .onboarding-plugin")));
       await evaluate(async () => {
         await document.fonts.ready;
         await Promise.all(document.querySelector(".onboarding-heading").getAnimations().map(animation => animation.finished));

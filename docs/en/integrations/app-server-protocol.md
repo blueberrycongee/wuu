@@ -396,8 +396,11 @@ preference alone.
 
 `engine/list` accepts `{ "cwd": "/absolute/session/directory", "refresh_models": true }`.
 `cwd` defaults to the runtime root; pass the actual conversation/worktree directory
-when it differs. Refresh bypasses each external engine's native discovery cache;
-overlapping probes for the same context share work. Successful catalogs expire
+when it differs. Refresh also rescans desktop installation and login-shell paths,
+reapplies persisted engine enable/disable choices to the live runtime, and bypasses
+each external engine's native discovery cache. Newly installed engines become usable
+without restarting; running turns retain their existing engine leases. Overlapping
+model probes for the same context share work. Successful catalogs expire
 after two minutes, failures retry after five seconds, and probes are bounded
 (Claude: 20-second outer budget; other engines: 30 seconds). Executable, environment
 and known native configuration/authentication metadata form the cache context;

@@ -261,8 +261,50 @@ app.whenReady().then(async () => {
     assert.equal(await value(), ""); assert.equal(geometry.ariaHidden, "true");
     assert.notEqual(geometry.inputStyle.color, geometry.ghostStyle.color);
     const before = report.submissions.length;
+    const focusState = () => evaluate(selector => {
+      const input = document.querySelector(selector);
+      return { focused: document.activeElement === input,
+        modality: document.documentElement.getAttribute("data-focus-modality"),
+        ringOutline: getComputedStyle(input.closest(".composer-frame"), "::after").outline };
+    }, inputSelector);
+    await evaluate(selector => document.querySelector(selector).dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })), inputSelector);
+    const beforeFocus = await focusState();
+    assert.equal(beforeFocus.focused, true);
+    assert.equal(beforeFocus.modality, "pointer");
     await key("Tab"); assert.equal(await value(), suggestion); assert.equal(report.submissions.length, before);
+    assert.deepEqual(await focusState(), beforeFocus, "accepting a completion preserves focus and its visible appearance");
     await noGhost("accepted suggestion is ordinary input"); await screenshot("tab-inserted-not-sent");
+    await key("Tab");
+    assert.equal((await focusState()).focused, false, "Tab without a suggestion still moves focus");
+    assert.equal((await focusState()).modality, "keyboard");
+    await focus();
+  });
+  await check("clearing or undoing acceptance restores the suggestion without another prediction", async () => {
+    const count = predictions().length;
+    const before = report.submissions.length;
+    for (const action of ["delete", "undo"]) {
+      if (action === "delete") {
+        await evaluate(selector => document.querySelector(selector).select(), inputSelector);
+        await key("Backspace");
+      } else {
+        await evaluate(() => document.execCommand("undo"));
+      }
+      await until(selector => document.querySelector(selector)?.value === "", inputSelector);
+      await until(({ selector, suggestion }) => document.querySelector(selector)?.textContent === suggestion,
+        { selector: ghostSelector, suggestion }, `suggestion returns after ${action}`);
+      await screenshot(`suggestion-restored-after-${action}`);
+      await key("Tab");
+      assert.equal(await value(), suggestion);
+      await noGhost("reaccepted suggestion is ordinary input");
+      assert.equal(predictions().length, count);
+      assert.equal(report.submissions.length, before);
+    }
+    await draft("");
+    await until(selector => Boolean(document.querySelector(selector)), ghostSelector);
+    await key("Escape");
+    await draft("temporary draft"); await draft("");
+    await noGhost("explicit dismissal still survives clearing the draft");
+    assert.equal(predictions().length, count);
   });
   await check("direct running-to-completed transition also produces one suggestion", async () => {
     await draft(""); const live = await startTurn(); await completeTurn(live, "completed", false);

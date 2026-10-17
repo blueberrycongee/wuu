@@ -62,10 +62,12 @@ it("preserves a custom schedule and draft after save failure and allows retry", 
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "automation.update", input: expect.objectContaining({ schedule: "*/17 9-18 * * 1,3,5" }) }));
   fail = false; await ui.click("保存修改"); expect(ui.container.querySelector('[role="alert"]')).toBeNull();
 });
-it("opens a suggestion as a draft and creates only on submit", async () => {
+it("opens a new draft and creates only on submit", async () => {
   const ui = await mount({ tasks: [] });
-  await act(async () => ui.container.querySelector<HTMLButtonElement>(".plugin-automation-suggestions button")!.click());
+  await ui.click("新建自动化");
   expect(ui.invoke.mock.calls.every(([request]) => !request.method.includes("create"))).toBe(true);
+  await ui.edit('input[aria-label="名称"]', "Review");
+  await ui.edit("textarea", "Review recent changes");
   await act(async () => ui.container.querySelector<HTMLFormElement>("form")!.requestSubmit());
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "automation.create", input: expect.objectContaining({ durable: true, recurring: true, schedule: "0 9 * * 1-5" }) }));
 });
