@@ -1684,7 +1684,6 @@ export const zhCN = {
   "workspace.chooseTool": "选择工具",
   "workspace.newPage": "新建页面",
   "workspace.moreTools": "更多工具",
-  "workspace.continueViewing": "继续查看",
   "workspace.tooNarrowToDock": "窗口过窄，无法停靠右侧栏",
   "workspace.exitFullPanel": "退出全面板",
   "workspace.expandFullPanel": "展开为全面板",

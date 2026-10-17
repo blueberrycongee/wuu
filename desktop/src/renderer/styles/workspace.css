@@ -1026,17 +1026,6 @@ html.resizing-workspace-file-split * {
   max-width: 32em;
 }
 
-/* The launcher shares the sidebar's rhythm: a quiet group label over dense
- * rows, so the empty panel reads as navigation rather than a list of cards. */
-.workspace-tool-menu-section h2 {
-  margin: 0 0 var(--space-1);
-  padding: 0 var(--workspace-row-pad-x);
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-ui);
-}
-
 .workspace-tool-menu-list {
   display: grid;
   width: 100%;

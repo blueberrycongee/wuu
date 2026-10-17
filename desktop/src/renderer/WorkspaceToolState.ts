@@ -42,7 +42,6 @@ export function useWorkspaceToolState({
   openWorkspaceProjectTab: (projectID: string, title: string) => void;
   syncWorkspaceProjectTab: (project: { id: string; title: string } | undefined) => void;
   showWorkspaceToolPicker: () => void;
-  resumeWorkspaceViewTab: (id: string) => void;
   focusWorkspaceViewTab: (id: string | undefined) => void;
   closeWorkspaceViewTab: (id: string) => void;
   closeWorkspaceViewTabsWhere: (predicate: (tab: WorkspaceViewTab) => boolean) => void;
@@ -124,11 +123,6 @@ export function useWorkspaceToolState({
     setRightPanelOpenWithMotion(true);
   }
 
-  function resumeWorkspaceViewTab(id: string): void {
-    const tab = workspaceViewTabs.find((candidate) => candidate.id === id);
-    if (tab) openTab(tab, { replaceActiveNewTab: true });
-  }
-
   function toggleRightPanel(): void {
     if (rightPanelOpen) {
       setRightPanelOpenWithMotion(false);
@@ -183,7 +177,6 @@ export function useWorkspaceToolState({
     openWorkspaceProjectTab,
     syncWorkspaceProjectTab: syncProjectTab,
     showWorkspaceToolPicker,
-    resumeWorkspaceViewTab,
     focusWorkspaceViewTab: focusTab,
     closeWorkspaceViewTab,
     closeWorkspaceViewTabsWhere,

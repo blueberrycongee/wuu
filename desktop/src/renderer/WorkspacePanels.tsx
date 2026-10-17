@@ -207,7 +207,6 @@ export function WorkspaceRightPanel({
   onOpenTool,
   onOpenPluginTool = () => undefined,
   onShowTools,
-  onResumeTab = onSelectTab,
   onCloseTab,
   onDirtyFileTabsChange,
   onReorderTabs,
@@ -248,7 +247,6 @@ export function WorkspaceRightPanel({
   onOpenTool: (view: WorkspacePanelView) => void;
   onOpenPluginTool?: (entry: RegisteredPluginViewEntry) => void;
   onShowTools: () => void;
-  onResumeTab?: (id: string) => void;
   onCloseTab: (id: string) => void;
   onDirtyFileTabsChange?: (dirty: boolean) => void;
   onReorderTabs: (activeID: string, overID: string) => void;
@@ -1055,8 +1053,6 @@ export function WorkspaceRightPanel({
                 {showingPicker ? (
                   <WorkspaceToolPicker
                     pluginTools={pluginTools}
-                    tabs={tabs}
-                    onResumeTab={onResumeTab}
                     onSelectTool={onOpenTool}
                     onSelectPluginTool={onOpenPluginTool}
                   />
@@ -1317,21 +1313,14 @@ function WorkspaceViewTabPreview({
 
 function WorkspaceToolPicker({
   pluginTools,
-  tabs,
-  onResumeTab,
   onSelectTool,
   onSelectPluginTool,
 }: {
   pluginTools: readonly RegisteredPluginViewEntry[];
-  tabs: readonly WorkspaceViewTab[];
-  onResumeTab: (id: string) => void;
   onSelectTool: (view: WorkspacePanelView) => void;
   onSelectPluginTool: (entry: RegisteredPluginViewEntry) => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const resumableTabs = tabs.filter((tab) =>
-    tab.kind === "file" || tab.kind === "diff" || tab.kind === "artifact",
-  ).slice(-4).reverse();
   // The list moves like a menu: arrows walk the tools, Home and End jump.
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
     const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(".workspace-tool-menu-item, .workspace-tool-menu-more > summary"))
@@ -1408,29 +1397,6 @@ function WorkspaceToolPicker({
           </details>
         ) : null}
       </section>
-      {resumableTabs.length > 0 ? (
-        <section className="workspace-tool-menu-section" aria-label={t("workspace.continueViewing")}>
-          <h2>{t("workspace.continueViewing")}</h2>
-          <div className="workspace-tool-menu-list">
-            {resumableTabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                className="workspace-tool-menu-item workspace-tool-menu-resume"
-                data-wuu-component="workspace-resume-tab"
-                title={workspaceViewTabTooltip(tab)}
-                onClick={() => onResumeTab(tab.id)}
-              >
-                <span className="workspace-tool-menu-icon" aria-hidden="true"><WorkspaceViewTabIcon tab={tab} className="icon" /></span>
-                <span className="workspace-tool-menu-copy">
-                  <strong>{workspaceViewTabLabel(tab)}</strong>
-                  {tab.kind === "file" || tab.kind === "diff" ? <span>{tab.path}</span> : null}
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
     </div>
   );
 }

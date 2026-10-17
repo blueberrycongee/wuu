@@ -60,11 +60,10 @@ added to that retry. Cancel or dismiss the confirmation to keep the conversation
 The right panel's plus button creates a closable **New page** tab. Choosing a tool
 replaces that page in place; if the tool is already open, Wuu closes the new page
 and focuses its existing tab. Installed extensions appear under **More tools**.
-**Continue viewing** links to up to four currently open files, diffs, or delivered
-artifacts; it is absent when none are open. Closing a page restores
-the previously active tab. The page's sections keep a readable width but start
-on the pane inset under the tabs instead of centering in a wide panel, so tool
-icons line up with the tab icons.
+Use the tab strip to return to open files, diffs, or delivered artifacts.
+Closing a page restores the previously active tab. The tool list keeps a readable
+width but starts on the pane inset under the tabs instead of centering in a wide
+panel, so tool icons line up with the tab icons.
 
 Each tab fits its title, up to a cap, instead of stretching to share the strip.
 The selected tab is a quiet fill one step off the paper, and its title takes the

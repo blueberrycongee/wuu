@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Removed
+
+- Remove the workspace new page's Continue viewing section, which duplicated
+  files, diffs, and artifacts already available in the tab strip.
+
 ## [2026.10.18] - 2026-10-18
 
 ### Contributors
