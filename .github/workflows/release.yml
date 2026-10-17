@@ -51,7 +51,6 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 120
     env:
-      WUU_RELEASE: "1"
       WUU_RELEASE_SOURCE_COMMIT: ${{ needs.prepare.outputs.source }}
       WUU_RELEASE_TEAM_ID: ${{ secrets.WUU_RELEASE_TEAM_ID }}
       WUU_RELEASE_SIGN_ID: ${{ secrets.WUU_RELEASE_SIGN_ID }}
@@ -78,6 +77,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: source/go.mod
+          cache-dependency-path: source/go.sum
       - name: Check release version
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
@@ -112,6 +112,7 @@ jobs:
           node --test ../../release-tools/desktop/scripts/test-notarization.cjs ../../release-tools/desktop/scripts/test-release-checkpoint.cjs ../../release-tools/desktop/scripts/test-update-metadata.cjs
       - name: Build and preserve signed app
         env:
+          WUU_RELEASE: "1"
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           VITE_ENABLE_ACCOUNT: "false"
           VITE_ENABLE_REMOTE_CONTROL: "false"
