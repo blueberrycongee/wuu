@@ -10,6 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve the composer's focus appearance when Tab inserts a next-message suggestion.
 - Restore next-message suggestions after clearing or undoing a Tab-accepted draft,
   allowing repeated acceptance without another model request.
 - Use the same quiet gray for completed tool summaries, running tool summaries,

@@ -261,8 +261,23 @@ app.whenReady().then(async () => {
     assert.equal(await value(), ""); assert.equal(geometry.ariaHidden, "true");
     assert.notEqual(geometry.inputStyle.color, geometry.ghostStyle.color);
     const before = report.submissions.length;
+    const focusState = () => evaluate(selector => {
+      const input = document.querySelector(selector);
+      return { focused: document.activeElement === input,
+        modality: document.documentElement.getAttribute("data-focus-modality"),
+        ringOutline: getComputedStyle(input.closest(".composer-frame"), "::after").outline };
+    }, inputSelector);
+    await evaluate(selector => document.querySelector(selector).dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })), inputSelector);
+    const beforeFocus = await focusState();
+    assert.equal(beforeFocus.focused, true);
+    assert.equal(beforeFocus.modality, "pointer");
     await key("Tab"); assert.equal(await value(), suggestion); assert.equal(report.submissions.length, before);
+    assert.deepEqual(await focusState(), beforeFocus, "accepting a completion preserves focus and its visible appearance");
     await noGhost("accepted suggestion is ordinary input"); await screenshot("tab-inserted-not-sent");
+    await key("Tab");
+    assert.equal((await focusState()).focused, false, "Tab without a suggestion still moves focus");
+    assert.equal((await focusState()).modality, "keyboard");
+    await focus();
   });
   await check("clearing or undoing acceptance restores the suggestion without another prediction", async () => {
     const count = predictions().length;
