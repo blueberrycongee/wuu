@@ -8,59 +8,25 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
-### Added
-
-- Add default-off experimental HTTP request gzip for explicitly opted-in model
-  endpoints. Compress large JSON bodies only when smaller, preserve request
-  content and token accounting, and restrict compressed redirects to opted-in
-  endpoints without adding an automatic resend.
-- Add an opt-in next-message plugin that suggests a short draft from recent visible
-  conversation turns after a successful reply. It supports main and side chats,
-  conversations outside projects, and Codex models. Choose its model and reasoning
-  level independently; Tab inserts the suggestion without sending.
-
-### Changed
-
-- Combine desktop context compaction with adjacent tool activity in one expandable
-  row. Paired context rings and an arrow show the retained-history reduction;
-  hovering or focusing the rings reveals the before/after token counts, while
-  expanded details preserve execution order and compaction diagnostics.
-- Frame desktop conversations in a rounded canvas with matching outer
-  insets and a lower input box. Keep the sidebar resize
-  target aligned with the visible canvas edge. Join the conversation and right
-  panel into one canvas with aligned header rules, shared outer corners, and
-  matching insets when the panel opens or expands.
-
 ### Fixed
 
 - Keep the context compaction ring on the process summary line when a long
   activity summary must truncate, instead of wrapping the ring onto its own row.
-- Reuse streaming HTTP connection pools across model turns, including Codex,
-  Grok Build and SuperGrok credential adapters, instead of rebuilding a pool for
-  every request.
-- Refresh DeepSeek Flash 1017 metadata, exact output limits, and peak API prices.
-  Stop advertising retired Flash models while preserving saved compatibility
-  aliases, and avoid unsupported forced tool choice in Chat Completions thinking mode.
-- Show a local edge light on sidebar hover that gathers toward the pointer
-  when pressed, follows the drag, and springs back on release. Extend its soft
-  fade above and below the cursor so the feedback remains visible while held.
-  Keep the full boundary line for keyboard focus, inside the conversation
-  canvas's rounded corners. Inset docked panel dividers to the same height.
-- Keep scroll-edge fades visible in thinking and process panels while a
-  response streams.
-- Align native window controls, sidebar toggles, conversation titles, and
-  workspace tabs on one shared titlebar row without clipping full-size tabs.
-- Keep Claude provider failures inside the conversation error notice instead of
-  duplicating diagnostics as assistant replies; preserve any useful partial reply
-  and failure details after reopening the conversation.
-- Keep project and branch names identifiable in compact conversation composers
-  without reducing text or control sizes.
-- Enable Computer Use by default in macOS development launches, with an explicit
-  `WUU_ENABLE_CUA_MAC=0` override to disable it.
-- Match settings navigation, account controls, and sidebar drag-and-drop surfaces
-  to the shared sidebar row corners, keeping keyboard focus rings visible in
-  scrollable navigation.
-- Show iOS message images and file attachments above the text, including long-press previews and pending message details.
+- Keep the macOS permission guide clear of System Settings authentication dialogs and file pickers, and make it follow window movement continuously instead of jumping between slow permission checks.
+
+## [2026.10.17] - 2026-10-17
+
+### Contributors
+
+@blueberrycongee, @Rosemary1812
+
+### Highlights
+
+- Add optional next-message suggestions for main and side chats, with independent model and reasoning settings and Tab-to-insert drafts.
+- Show context compaction alongside tool activity with paired token rings, before/after counts, and expandable details.
+- Refine the rounded conversation canvas with compact headers, centered workspace tabs, responsive sidebar resizing, readable workspace labels, and streaming scroll fades.
+- Reuse streaming model connections across turns and keep Claude provider errors in the conversation notice without duplicating assistant replies.
+- Refresh DeepSeek Flash 1017 availability, output limits, and pricing while preserving saved model aliases.
 
 ## [2026.10.16] - 2026-10-16
 

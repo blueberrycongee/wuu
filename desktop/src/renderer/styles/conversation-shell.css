@@ -155,6 +155,8 @@
 .app-shell {
   /* Share the canvas edge with the sibling sidebar resize target. */
   --conversation-pane-inset: clamp(0px, calc(2vw - var(--space-2)), var(--space-2));
+  /* Trim the lower chrome gap while preserving the native control axis. */
+  --canvas-titlebar-height: calc(var(--window-titlebar-height) - var(--conversation-pane-inset));
   --conversation-canvas-radius: min(var(--radius-lg), calc(var(--conversation-pane-inset) * 2));
 }
 
@@ -194,7 +196,7 @@
   min-width: 0;
   min-height: 0;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
+  grid-template-rows: var(--canvas-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
   background: transparent;
   margin: 0 0 var(--conversation-pane-inset) var(--conversation-pane-inset);
@@ -265,7 +267,7 @@
 }
 
 .conversation-pane.session-tabs-visible {
-  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
+  grid-template-rows: var(--canvas-titlebar-height) minmax(0, 1fr);
 }
 
 .conversation-pane.environment-panel-reserved {
@@ -280,8 +282,8 @@
 
 .titlebar {
   display: grid;
-  height: var(--window-titlebar-height);
-  min-height: var(--window-titlebar-height);
+  height: var(--canvas-titlebar-height);
+  min-height: var(--canvas-titlebar-height);
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
@@ -291,7 +293,7 @@
    * (the inset is 0 and max() collapses to the neutral padding). The row
    * always starts with an icon button (new conversation or back), so its
    * glyph, not its box, sits on the pane inset. */
-  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0
+  padding: var(--conversation-pane-inset) max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0
     calc(var(--window-titlebar-padding-inline) - var(--control-toolbar-glyph-offset));
   transition: padding-left var(--sidebar-motion-duration) var(--sidebar-motion-ease);
   -webkit-app-region: drag;

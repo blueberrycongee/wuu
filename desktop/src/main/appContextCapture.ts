@@ -44,6 +44,7 @@ export class AppContextCapture {
     ? join(process.resourcesPath, "app-context", "capture-target.node")
     : join(app.getAppPath(), "build", "app-context", "capture-target.node");
   private pinTarget?: () => string;
+  private guideWindow?: () => Rectangle | null;
   private owner?: string;
   private settings = { ...defaults };
   private registered?: string;
@@ -155,12 +156,17 @@ export class AppContextCapture {
     return this.state();
   }
 
-  async permissionStatus(): Promise<{ state: SystemPermissionsState; settingsWindow?: Rectangle; settingsVisible: boolean }> {
-    if (!this.helperAvailable()) return { state: { available: false, screen: false, accessibility: false }, settingsVisible: false };
+  permissionGuideWindow(): Rectangle | null {
+    this.guideWindow ??= (requireFromMain(this.bridge) as { permissionGuideWindow: () => Rectangle | null }).permissionGuideWindow;
+    return this.guideWindow();
+  }
+
+  async permissionStatus(): Promise<SystemPermissionsState> {
+    if (!this.helperAvailable()) return { available: false, screen: false, accessibility: false };
     // Each check and each capture runs in a new process, so granting access
     // does not require discarding the user's desktop window or conversations.
     const output = await new Promise<string>((resolve, reject) => {
-      execFile(this.helper, ["--permission-guide-status"],
+      execFile(this.helper, ["--status"],
         { timeout: 5_000, maxBuffer: 16_384, encoding: "utf8", env: this.helperEnvironment() },
         (error, stdout) => error ? reject(error) : resolve(stdout));
     });
@@ -168,11 +174,7 @@ export class AppContextCapture {
     if (result.ok !== true || typeof result.permissions?.screen_recording !== "boolean" || typeof result.permissions?.accessibility !== "boolean") {
       throw new Error("Could not read macOS permissions.");
     }
-    const bounds = result.settings_window;
-    const settingsWindow = bounds && ["x", "y", "width", "height"].every(key => typeof bounds[key] === "number" && Number.isFinite(bounds[key]))
-      && bounds.width > 0 && bounds.height > 0 ? bounds as Rectangle : undefined;
-    return { state: { available: true, screen: result.permissions.screen_recording, accessibility: result.permissions.accessibility },
-      settingsWindow, settingsVisible: result.settings_visible === true };
+    return { available: true, screen: result.permissions.screen_recording, accessibility: result.permissions.accessibility };
   }
 
   private helperEnvironment(): NodeJS.ProcessEnv {
