@@ -339,7 +339,8 @@ jobs:
     name: Build and verify Linux x64
     needs: prepare
     if: needs.prepare.outputs.linux == 'true'
-    runs-on: ubuntu-24.04
+    # AppImage needs user namespaces; stock Ubuntu 24.04 restricts them.
+    runs-on: ubuntu-22.04
     timeout-minutes: 40
     env:
       WUU_RELEASE_SOURCE_COMMIT: ${{ needs.prepare.outputs.source }}
@@ -364,7 +365,7 @@ jobs:
       - name: Install Linux build and display dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2
           npm ci --prefix desktop
           npm ci --prefix plugins
           npm ci --prefix clients/core

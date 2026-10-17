@@ -80,7 +80,7 @@ to Applications and launching the app. A background-only preview does not valida
 
 ## Linux packaging and release gate
 
-Linux x64 builds run on Ubuntu 24.04 independently of the macOS signing and
+Linux x64 builds run on Ubuntu 22.04 independently of the macOS signing and
 notarization jobs. `npm --prefix desktop run release:linux` builds an AppImage
 and Debian package with their private core, native terminal module, bundled Web
 assets and checksum-pinned ripgrep. It verifies ELF architectures, core and app
@@ -89,8 +89,12 @@ versions, native PTY execution, resource contents and update metadata hashes.
 These Linux packages are not publisher-signed or notarized.
 
 CI requires the existing Linux Landlock boundary tests to execute all five
-cases without skips. It then launches both extracted packages under Xvfb with
-Chromium sandboxing enabled and retains screenshots, logs and build identity.
+cases without skips. It then launches both extracted packages under Xvfb on
+Ubuntu 22.04 with Chromium sandboxing enabled and retains screenshots, logs
+and build identity. Stock Ubuntu 24.04 does not support this extracted-package
+path because of its [user-namespace restrictions](https://documentation.ubuntu.com/release-notes/24.04/#unprivileged-user-namespace-restrictions).
+The `.deb` includes the builder's application-specific AppArmor profile, but
+actual package-manager installation on Ubuntu 24.04 remains unverified.
 This gate does not claim package-manager installation, FUSE mounting, native
 Wayland, arm64, provider inference, or an installed update. Complete affected
 interactive acceptance on a Linux x64 desktop before publication. Launchers use

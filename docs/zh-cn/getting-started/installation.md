@@ -26,8 +26,9 @@ ad-hoc 签名不能证明发布者身份，也不能保证更新后保留 macOS 
 
 选择包含 `wuu-linux-x64.AppImage` 和 `wuu-linux-x64.deb` 的发布版本。
 之前仅提供 macOS 附件的版本（包括 v2026.10.18）没有 Linux 安装包。
-首批 Linux 包面向使用 X11 或 XWayland 的 x86-64 Debian 系图形桌面。
-包内启动器选择 X11；这些安装包不支持原生 Wayland 或 arm64。
+Linux x64 需要 X11 或 XWayland 图形桌面。首批桌面验收使用 Debian 13；
+发布检查在 Ubuntu 22.04 上运行解包后的安装包。包内启动器选择 X11；
+这些安装包不支持原生 Wayland 或 arm64。
 
 请只从官方 Release 下载。`SHA256SUMS-linux` 用于检查下载字节，不能证明
 发布者身份。Linux 包不使用 Apple Developer ID 签名或公证。
@@ -41,6 +42,10 @@ sudo apt install ./wuu-linux-x64.deb
 从桌面应用菜单打开 Wuu；终端启动使用 `wuu --ozone-platform=x11`。
 Debian 包会安装桌面入口、Electron 库和私有 core，无需另装 Node 或 Go。
 
+Ubuntu 24.04 上的安装尚未完成验收。`.deb` 包含针对 `/opt/wuu/wuu` 的
+Wuu 专用 AppArmor 配置，允许 Chromium 所需的用户命名空间，但实际安装
+路径仍需单独验证。默认配置的 Ubuntu 24.04 不支持 AppImage 或解包版启动。
+
 AppImage 应保存在当前用户可写的目录，然后运行：
 
 ```bash
@@ -48,7 +53,7 @@ chmod +x wuu-linux-x64.AppImage
 ./wuu-linux-x64.AppImage
 ```
 
-AppImage 需要宿主的 GTK 3、NSS、ALSA 库及 FUSE 2（依发行版为 `libfuse2`
+AppImage 需要非特权用户命名空间，以及宿主的 GTK 3、NSS、ALSA 库及 FUSE 2（依发行版为 `libfuse2`
 或 `libfuse2t64`）。没有 FUSE 时可解包运行，不必修改沙箱设置：
 
 ```bash

@@ -26,9 +26,10 @@ Download filenames omit the version; the app and release notes still identify it
 
 Choose a release containing `wuu-linux-x64.AppImage` and `wuu-linux-x64.deb`.
 Older macOS-only releases, including v2026.10.18, do not contain Linux packages.
-The initial Linux target is an x86-64 Debian-family graphical desktop using
-X11 or XWayland. The package launchers select X11; native Wayland and arm64
-are not supported by these packages.
+Linux x64 requires an X11 or XWayland graphical desktop. Initial desktop
+validation uses Debian 13; release checks run extracted packages on Ubuntu
+22.04. The launchers select X11; native Wayland and arm64 are not supported
+by these packages.
 
 Download only from the official release. `SHA256SUMS-linux` checks downloaded
 bytes; it is not a publisher signature. Linux packages do not use Apple's
@@ -44,6 +45,11 @@ Open Wuu from the desktop application menu. From a terminal, use
 `wuu --ozone-platform=x11`. The Debian package installs the desktop entry,
 Electron libraries and private core; Node and Go are not required.
 
+Ubuntu 24.04 installation has not yet been validated. The `.deb` includes a
+Wuu-specific AppArmor profile for `/opt/wuu/wuu` to permit the user namespaces
+Chromium needs, but that installed path requires separate acceptance. AppImage
+and extracted-package launches are not supported on stock Ubuntu 24.04.
+
 For AppImage, keep the file in a user-writable directory, then run:
 
 ```bash
@@ -51,7 +57,8 @@ chmod +x wuu-linux-x64.AppImage
 ./wuu-linux-x64.AppImage
 ```
 
-AppImage needs the host's GTK 3, NSS, ALSA libraries and FUSE 2 (`libfuse2` or
+AppImage needs unprivileged user namespaces, the host's GTK 3, NSS, ALSA
+libraries and FUSE 2 (`libfuse2` or
 `libfuse2t64`, depending on the distribution). If FUSE is unavailable, extract
 and launch without changing sandbox settings:
 
