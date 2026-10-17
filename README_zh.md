@@ -129,3 +129,5 @@ wuu 会在当前权限模式允许的范围内读写本地文件、运行命令�
 ## 致谢
 
 项目采用 [MIT 许可证](LICENSE)。Agent 头像使用同为 MIT 许可的 [blobatar](https://github.com/Alain00/blobatar)。
+
+Wuu 的 macOS Computer Use 实现参考了 [Cua Driver](https://github.com/trycua/cua/tree/main/libs/cua-driver) 的设计。该项目由 Cua AI, Inc. 开发，采用 [MIT 许可证](https://github.com/trycua/cua/blob/main/LICENSE.md)。感谢其贡献者在原生计算机操作方面的工作。

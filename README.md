@@ -129,3 +129,5 @@ See [Contributing](CONTRIBUTING.md) to work on wuu, or [open an issue](https://g
 ## Acknowledgements
 
 Licensed under [MIT](LICENSE). Agent avatars use [blobatar](https://github.com/Alain00/blobatar), also MIT-licensed.
+
+Wuu's macOS Computer Use implementation draws on the design of [Cua Driver](https://github.com/trycua/cua/tree/main/libs/cua-driver), an [MIT-licensed](https://github.com/trycua/cua/blob/main/LICENSE.md) project by Cua AI, Inc. Thanks to its contributors for their work on native computer use.
