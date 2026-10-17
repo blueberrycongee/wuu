@@ -52,9 +52,12 @@ async function notarizeArchive(archive, receiptPath, {
   if (existsSync(receiptPath)) {
     receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
     if (receipt.sha256 !== sha256) throw new Error("Notarization receipt hash does not match archive");
+    if (receipt.status === "UploadUnknown") throw new Error("Notarization upload outcome is unknown; reconcile Apple history before resuming");
   } else {
     // Never retry an ambiguous upload: Apple may already have received it.
     let submission;
+    receipt = { sha256, archive: basename(archive), status: "UploadUnknown" };
+    save();
     try {
       submission = JSON.parse(run("xcrun", ["notarytool", "submit", archive, "--no-wait", ...auth], {
         encoding: "utf8", timeout: 10 * 60_000,
@@ -69,6 +72,7 @@ async function notarizeArchive(archive, receiptPath, {
   }
   save();
   console.log(`Notarization submission ${receipt.id}; receipt: ${receiptPath}`);
+  if (receipt.status === "Accepted") return receipt;
   let networkErrors = 0;
   const deadline = Date.now() + 30 * 60_000;
   for (let poll = 0; poll < maxPolls && Date.now() < deadline; poll++) {

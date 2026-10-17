@@ -11,15 +11,13 @@ async function main() {
   releaseCredentials();
   if (process.env.WUU_RELEASE !== "1") throw new Error("Artifact verification requires release mode");
   const root = resolve("release");
-  const version = require("../package.json").version;
+  const version = require(resolve("package.json")).version;
   const dmg = join(root, "wuu-mac-arm64.dmg");
   const zip = join(root, "wuu-mac-arm64.zip");
   const run = (command, args) => execFileSync(command, args, { stdio: "inherit" });
 
-  // Notarize the final disk image as well as the already-stapled application.
-  run("codesign", ["--force", "--sign", releaseSigningIdentity(), ...(process.env.WUU_RELEASE_KEYCHAIN ? ["--keychain", process.env.WUU_RELEASE_KEYCHAIN] : []),
-    "--timestamp", dmg]);
-  const submission = await notarizeArchive(dmg, join(root, "notarization", "dmg.json"));
+  // Resume against the immutable signed DMG from the distribution checkpoint.
+  const submission = await notarizeArchive(join(root, "signed-dmg.dmg"), join(root, "notarization", "dmg.json"));
   await stapleArtifact(dmg);
   await validateArtifact(dmg);
   run("codesign", ["--verify", "--strict", "-R", `=anchor apple generic and certificate leaf = H"${releaseSigningIdentity()}"`, dmg]);
@@ -46,7 +44,7 @@ async function main() {
     const updateManifests = finalizeUpdateMetadata(root, version);
     const evidence = {
       updateManifests,
-      version, commit: process.env.GITHUB_SHA || null, notarization: submission.id,
+      version, commit: process.env.WUU_RELEASE_SOURCE_COMMIT || process.env.GITHUB_SHA || null, notarization: submission.id,
       checks: ["Developer ID", "hardened runtime", "secure timestamp", "DMG ticket", "DMG Gatekeeper", "DMG app ticket and Gatekeeper", "ZIP app ticket and Gatekeeper"],
       sha256: Object.fromEntries([dmg, zip].map((path) => [path.split("/").pop(), createHash("sha256").update(readFileSync(path)).digest("hex")])),
     };

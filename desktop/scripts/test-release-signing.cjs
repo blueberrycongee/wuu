@@ -82,3 +82,25 @@ test("certificate-free preview signs, verifies, and rejects tampered resources",
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Directory-only builds must embed updater configuration before the app is signed.
+test("signed app checkpoint includes the update feed without archive targets", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wuu-update-feed-test-"));
+  try {
+    execFileSync(process.execPath, ["-e", `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      require("node:child_process").execFileSync = () => "A".repeat(40) + " Developer ID Application:";
+      const config = require("./scripts/release-builder.cjs");
+      const resources = process.env.TEST_RESOURCES;
+      Promise.resolve(config.afterPack({ appOutDir: resources, packager: { getResourcesDir: p => p } }))
+        .then(() => {
+          const feed = require("js-yaml").load(fs.readFileSync(path.join(resources, "app-update.yml"), "utf8"));
+          require("node:assert/strict").deepEqual(feed, config.publish);
+        }).catch(error => { console.error(error); process.exitCode = 1; });
+    `], { cwd: dirname(__dirname), env: { ...process.env, WUU_RELEASE: "1",
+      WUU_RELEASE_SIGN_ID: "A".repeat(40), WUU_RELEASE_TEAM_ID: "A".repeat(10),
+      APPLE_API_KEY: "/temporary/key", APPLE_API_KEY_ID: "key", APPLE_API_ISSUER: "issuer",
+      TEST_RESOURCES: dir }, stdio: "pipe" });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

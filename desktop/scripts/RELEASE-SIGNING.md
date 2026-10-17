@@ -19,6 +19,22 @@ staples the app, and packages DMG and ZIP. It also notarizes and staples the DMG
 then verifies the applications extracted from both final artifacts. A successful
 run writes `release/verification.json` with checks and final artifact hashes.
 
+## Resume a failed release
+
+In GitHub Actions, rerun only failed jobs in the same run. The signed app and
+signed distribution checkpoints survive runner cleanup; later jobs verify their
+source/version/hash identity before resuming the saved Apple submission. See the
+[release guide](../../docs/en/project/release.md#signing-configuration) for retention,
+unknown uploads and publishing an existing tag with updated release tooling.
+
+Local runs retain `release/signed-app.zip`, `release/signed-dmg.dmg`, checkpoint
+metadata and notarization receipts. Keep a clean copy of each checkpoint before
+running the next stage. Do not rerun `release:desktop` to resume: it intentionally
+starts a new build. Restore the checkpoint and receipts into a clean `release/`
+directory, then run `WUU_RELEASE=1 node scripts/release-stages.cjs package` for the
+signed-app checkpoint or `verify` for the distribution checkpoint, with the same
+source checkout and release credentials.
+
 ## Acceptance
 
 Run `npm run test:release-signing` to check missing-credential rejection and

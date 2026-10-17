@@ -246,6 +246,8 @@ private struct MessageBubble: View {
                             .multilineTextAlignment(.trailing).foregroundStyle(.secondary)
                     }.buttonStyle(.plain).disabled(!model.connected)
                 }
+                MessageAttachments(model: model, message: message)
+                    .contextMenu { if message.role == "user" { userActions } } preview: { userMenuPreview }
                 if !message.text.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         MessageText(text: collapsible && !expanded ? String(message.text.prefix(240)) + "…" : message.text,
@@ -261,8 +263,6 @@ private struct MessageBubble: View {
                         .background(message.role == "user" ? Color.secondary.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 18))
                         .contextMenu { if message.role == "user" { userActions } } preview: { userMenuPreview }
                 }
-                MessageAttachments(model: model, message: message)
-                    .contextMenu { if message.role == "user" { userActions } } preview: { userMenuPreview }
                 if !message.contentRef.isEmpty {
                     Button(model.loadingContent.contains(message.id) ? "正在读取…" : "加载完整消息") { model.perform { try await model.expand(message) } }
                         .disabled(!model.connected || model.loadingContent.contains(message.id))
@@ -276,11 +276,11 @@ private struct MessageBubble: View {
     @ViewBuilder private var userMenuPreview: some View {
         if message.role == "user" {
             VStack(alignment: .trailing, spacing: 8) {
+                MessageAttachments(model: model, message: message)
                 if !message.text.isEmpty {
                     MessageText(text: message.text, markdown: false, contextMenuEnabled: false)
                         .lineLimit(6)
                 }
-                MessageAttachments(model: model, message: message)
             }
             .padding(14)
             .frame(width: menuPreviewWidth)
