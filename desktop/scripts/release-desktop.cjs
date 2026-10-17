@@ -11,6 +11,9 @@ rmSync("release", { recursive: true, force: true });
 for (const script of ["build:core", "build:ripgrep", "build:cua-mac", "build:app-context-mac", "build"]) {
   execFileSync("npm", ["run", script], { env, stdio: "inherit" });
 }
-execFileSync("node_modules/.bin/electron-builder", ["--config", "scripts/release-builder.cjs", "--mac", "dmg", "zip",
-  "--arm64", "--publish=never", "--config.electronDist=node_modules/electron/dist"], { env, stdio: "inherit" });
-execFileSync(process.execPath, ["scripts/verify-mac-artifacts.cjs"], { env, stdio: "inherit" });
+execFileSync(process.execPath, [require("node:path").join(__dirname, "release-stages.cjs"), "sign-app"], { env, stdio: "inherit" });
+if (!process.argv.includes("--sign-only")) {
+  for (const stage of ["package", "verify"]) {
+    execFileSync(process.execPath, [require("node:path").join(__dirname, "release-stages.cjs"), stage], { env, stdio: "inherit" });
+  }
+}

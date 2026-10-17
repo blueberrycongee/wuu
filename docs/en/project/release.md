@@ -138,10 +138,20 @@ App and DMG uploads return a submission ID before polling begins. The pipeline
 records each ID and archive SHA-256 in `release/notarization/` and retries transient
 query failures against that same ID, never by uploading again. Five consecutive
 network failures, a non-transient query failure, rejection, or a 30-minute polling
-limit stops the build. Receipts are uploaded as `notarization-evidence` even when
-the build fails; they contain no credentials. Resuming the helper with an existing
-receipt requires the exact same archive hash. A fresh CI build creates new signed
-archives and must obtain its own notarization results.
+limit stops the job. The workflow saves the signed app before contacting Apple,
+then saves the signed DMG, ZIP and update metadata before DMG notarization. These
+immutable checkpoints include source commit, version and SHA-256 hashes and are
+retained for 30 days. They contain no signing credentials.
+
+Use **Re-run failed jobs**, or `gh run rerun <run-id> --failed`, to resume the same
+run. Successful build jobs are not repeated. Failed app/DMG jobs download their
+original signed checkpoint and the latest receipt from an earlier attempt of that
+run. Archive hashes must match before receipt reuse. Accepted submissions skip
+submission and polling; stapling, ticket validation and Gatekeeper still run.
+Receipts are retained as `app-receipts-<attempt>` and `dmg-receipts-<attempt>` even
+when the job fails. An upload with an unknown outcome is recorded before the
+request and blocks automatic resubmission until Apple history is reconciled.
+Expired checkpoints require a new build; do not attach an old receipt to new bytes.
 
 After acceptance, App and DMG ticket stapling and validation retry transient
 network failures up to three total attempts per operation, waiting 30 seconds
@@ -150,9 +160,15 @@ final DMG and ZIP. Retries query the ticket for the same artifact without
 resubmitting it for notarization. Other failures and exhausted retries stop the
 build; ticket validation and Gatekeeper assessment must still pass.
 
-Use the Release workflow's manual dispatch for verification without publication.
-Only a `v*` tag push can enter the publication job. No draft or public Release is
-created by validation runs.
+Use the Release workflow's manual dispatch with an empty `release_tag` for
+verification without publication. To finish an existing tag with newer release
+tooling, dispatch from `main` with `release_tag=vYYYY.M.D`. The tag must resolve
+to a commit on main, and its product versions must match. Product sources stay at
+the tag; release tooling is checked out separately, so no source overlay dirties
+the packaged core. Evidence records the product commit, not the tooling commit.
+This explicit dispatch publishes after all gates pass and does not move the tag.
+Tag pushes also publish. Validation runs create no Release. A partially uploaded
+draft can be resumed; an already-public Release is never overwritten.
 See the [signing reference](../../../desktop/scripts/RELEASE-SIGNING.md).
 
 ## Automatic updates
