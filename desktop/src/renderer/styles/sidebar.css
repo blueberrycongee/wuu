@@ -439,7 +439,7 @@
   .sidebar-toggle-button,
 .sidebar-drawer-docking :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
   position: fixed;
-  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  top: calc((var(--window-titlebar-height) + var(--conversation-pane-inset, 0px) - var(--control-size-toolbar)) / 2);
   left: var(--window-titlebar-leading-inset);
   z-index: 150;
 }
