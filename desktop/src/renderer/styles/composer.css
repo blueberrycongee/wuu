@@ -1615,6 +1615,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 .hero-project-pill-text {
   min-width: 0;
   flex: 1 1 auto;
+  text-align: start;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

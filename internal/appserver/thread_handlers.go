@@ -94,8 +94,8 @@ func (s *Server) handleThreadStart(req Request) error {
 	// built-in wuu engine plus any external engines this build hosts.
 	// Empty request means the settings default engine.
 	engineID := agentengine.NormalizeEngineID(params.Engine)
-	if strings.TrimSpace(params.Engine) == "" && s.rt.DefaultEngine != "" {
-		engineID = s.rt.DefaultEngine
+	if strings.TrimSpace(params.Engine) == "" {
+		engineID = agentengine.NormalizeEngineID(string(s.rt.DefaultEngine()))
 	}
 	if !s.rt.EngineAvailable(engineID) {
 		return s.writeResponse(req.ID, nil, agentengine.CheckEngine(engineID))

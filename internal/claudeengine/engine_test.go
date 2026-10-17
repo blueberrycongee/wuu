@@ -45,6 +45,30 @@ func TestEngineEndToEndFakeClaude(t *testing.T) {
 	if !strings.Contains(desc.Version, "2.1.226") {
 		t.Fatalf("descriptor version = %q, want fake 2.1.226", desc.Version)
 	}
+	t.Run("unresponsive version probe", func(t *testing.T) {
+		directory := t.TempDir()
+		gate := filepath.Join(directory, "release")
+		t.Setenv("WUU_TEST_CLAUDE_VERSION_READY", filepath.Join(directory, "ready"))
+		t.Setenv("WUU_TEST_CLAUDE_VERSION_GATE", gate)
+		done := make(chan string, 1)
+		go func() { done <- Version(binary); close(done) }()
+		t.Cleanup(func() {
+			_ = os.WriteFile(gate, nil, 0600)
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("version probe did not exit after releasing the fixture")
+			}
+		})
+		select {
+		case version := <-done:
+			if version != "" {
+				t.Fatalf("timed-out version = %q, want unavailable", version)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("an unresponsive version probe blocked engine discovery")
+		}
+	})
 
 	persisted := ""
 	sess, err := engine.SessionForThread(context.Background(), agentengine.ThreadBinding{

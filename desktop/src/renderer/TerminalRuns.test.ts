@@ -119,6 +119,19 @@ describe("terminal run records", () => {
     expect(live).toMatchObject({ execution: "managed", processID: "proc-456", command: "npm run dev", tty: true });
   });
 
+  it.each([false, true])("keeps a promoted foreground command attached to its managed process (timedOut=%s)", (timedOut) => {
+    const [run] = agentRunsForTurn("thread-1", turn([
+      commandItem({
+        result_detail: {
+          structured_content: { exit_code: -1, timed_out: timedOut, promoted_process_id: "proc-promoted" },
+        },
+      }),
+    ]));
+
+    expect(run).toMatchObject({ execution: "managed", processID: "proc-promoted", status: "incomplete", tty: false });
+    expect(run.exitCode).toBeUndefined();
+  });
+
   it("does not model background process management actions as terminal sessions", () => {
     const runs = agentRunsForTurn("thread-1", turn([
       commandItem({ arguments: JSON.stringify({ action: "read_background", process_id: "proc-123" }) }),

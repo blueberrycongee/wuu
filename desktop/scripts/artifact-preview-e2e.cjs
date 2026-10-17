@@ -14,6 +14,9 @@ fs.mkdirSync(output, { recursive: true });
 const profile = fs.mkdtempSync(path.join(output, "profile-"));
 app.setPath("userData", profile);
 process.env.WUU_STREAM_E2E_CWD = output;
+// First-send admission must accept an authenticated discovered connection;
+// onboarding's requirement to save it first does not apply to composer picks.
+process.env.WUU_STREAM_E2E_DISCOVERED_PROVIDER = "1";
 const protocolModule = path.join(output, "protocol.cjs");
 buildSync({
   entryPoints: [path.join(desktopRoot, "src/main/renderableFileProtocol.ts")],

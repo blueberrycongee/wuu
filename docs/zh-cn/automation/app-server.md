@@ -222,6 +222,15 @@ PDF 选区增加可选的 `source.pdf` 元数据，其中 `start_page` 和 `end_
 无法展示元数据时，回退到完整的消息 `text` 或队列 `prompt`。模型所需的上下文
 不能只保存在元数据中。
 
+## 刷新外部引擎
+
+`engine/list` 接受 `{ "cwd": "/absolute/session/directory", "refresh_models": true }`。
+`cwd` 默认使用运行时根目录；会话位于其他目录或 worktree 时应传入实际路径。
+显式刷新重新扫描桌面安装目录和登录 shell 路径，将保存的启用/禁用选择重新应用到
+运行时，并绕过原生模型发现缓存。应用启动后新安装的引擎无需重启即可使用，
+正在执行的轮次保留原有引擎租约。`enabled` 表示运行时可用性，`binary_ok` 表示
+检测到了可执行文件；保存的 `settings.<id>.enabled` 仅表示用户选择。
+
 ## 查询订阅状态
 
 `engine/list` 可选参数 `{ "include_quota": true }` 使用各模型服务和支持的外部 Agent 自己的凭据查询上游额度，返回已配置服务 `subscription_providers`。服务或引擎可附带 `quota`：

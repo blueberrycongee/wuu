@@ -199,10 +199,7 @@ import {
   resolveDraftEngineMemory,
   writeDraftEngineMemory,
 } from "./DraftEngineMemory";
-import {
-  FirstRunOnboarding,
-  hasOnboardingProvider as hasReadyProvider,
-} from "./FirstRunOnboarding";
+import { FirstRunOnboarding } from "./FirstRunOnboarding";
 import {
   EmptyConversationHome,
   RuntimeLoading,
@@ -211,6 +208,7 @@ import { EmptyHomeOverview } from "./EmptyHomeOverview";
 import { WuuMascotRuntimeProvider } from "./WuuMascot";
 import { deriveActiveSessionHints } from "./activeSessionHint";
 import {
+  hasAuthenticatedProvider as hasReadyProvider,
   providerModelContextWindow,
   pullRequestUnavailableReason,
 } from "./RuntimeHelpers";

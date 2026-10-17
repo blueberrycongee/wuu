@@ -6,10 +6,7 @@ export async function activate(api) {
   api.registerLocale({ id: "automation-en", locale: "en-US", entries: {
     "automation.save": "Save changes", "automation.saved": "Saved", "automation.unsaved": "Unsaved changes",
     "automation.custom": "Custom", "automation.once": "Run once", "automation.day": "Day",
-    "automation.suggestions": "Suggestions", "automation.history": "Recent runs", "automation.more": "More actions",
-    "automation.template.brief": "Morning briefing", "automation.template.brief.prompt": "Summarize recent changes in this project, pending work, and anything that needs my attention today.",
-    "automation.template.review": "Weekly review", "automation.template.review.prompt": "Review this week's project progress. Summarize completed work, outstanding issues, and priorities for next week.",
-    "automation.template.check": "Follow up", "automation.template.check.prompt": "Check the progress of pending work in this project. Report meaningful changes, blockers, and decisions that need my attention.",
+    "automation.history": "Recent runs", "automation.more": "More actions",
 
     "automation.title": "Automations",
     "automation.new": "New automation", "automation.empty": "No automations yet",
@@ -31,10 +28,7 @@ export async function activate(api) {
   api.registerLocale({ id: "automation-zh", locale: "zh-CN", entries: {
     "automation.save": "保存修改", "automation.saved": "已保存", "automation.unsaved": "修改未保存",
     "automation.custom": "自定义", "automation.once": "仅执行一次", "automation.day": "星期",
-    "automation.suggestions": "建议", "automation.history": "最近运行", "automation.more": "更多操作",
-    "automation.template.brief": "每日简报", "automation.template.brief.prompt": "汇总这个项目最近的变更、待办工作，以及今天需要我关注的事项。",
-    "automation.template.review": "每周回顾", "automation.template.review.prompt": "回顾这个项目本周的进展，整理已完成的工作、尚未解决的问题和下周的重点。",
-    "automation.template.check": "跟进监控", "automation.template.check.prompt": "检查这个项目待办工作的进展，报告有意义的变化、阻碍和需要我决定的事项。",
+    "automation.history": "最近运行", "automation.more": "更多操作",
 
     "automation.title": "自动化",
     "automation.new": "新建自动化", "automation.empty": "还没有自动化任务",
@@ -84,8 +78,8 @@ export async function activate(api) {
     .plugin-automation-search input::placeholder { color:var(--ink-tertiary); }
     .plugin-automation-workspace-picker { flex:0 1 auto; min-width:0; max-width:34%; }
     .plugin-automation-workspace-picker .plugin-automation-picker-trigger { width:100%; }
-    .plugin-automation-list, .plugin-automation-suggestion-list { display:flex; flex-direction:column; gap:2px; }
-    .plugin-automation-list + .plugin-automation-group, .plugin-automation-suggestions + .plugin-automation-group { margin-top:var(--section-gap); }
+    .plugin-automation-list { display:flex; flex-direction:column; gap:2px; }
+    .plugin-automation-list + .plugin-automation-group { margin-top:var(--section-gap); }
     /* Rows start their text on the toolbar's edge; the hover and selection
      * surfaces reach past it by the row inset. */
     .plugin-automation-item { display:flex; align-items:center; gap:var(--space-3); min-width:0; margin-inline:calc(var(--compact-padding-inline) * -1); border-radius:var(--radius-xs); transition:background var(--motion-fast) var(--ease-out); }
@@ -102,7 +96,6 @@ export async function activate(api) {
     .plugin-automation-item-icon[data-state="paused"] { color:var(--ink-faint); }
     .plugin-automation-item-title { transition:color var(--motion-fast) var(--ease-out); }
     .plugin-automation-item[data-paused="true"] .plugin-automation-item-title { color:var(--ink-soft); }
-    .plugin-automation-item-schedule { margin-inline-start:var(--space-2); color:var(--ink-tertiary); }
     .plugin-automation .plugin-automation-item-switch { flex:none; gap:0; padding-right:var(--compact-padding-inline); }
     .plugin-automation-item-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); font-size:inherit; line-height:1.4; }
     .plugin-automation-item-meta { display:flex; align-items:center; gap:var(--space-1); min-width:0; color:var(--ink-soft); font-size:var(--font-sm); line-height:1.5; }
@@ -602,8 +595,6 @@ export async function activate(api) {
     };
   }
 
-  const TEMPLATES = { brief: "0 9 * * 1-5", review: "0 16 * * 5", check: "0 9 * * 1-5" };
-
   function Catalog(props) {
     const tr = props.translate;
     const resize = useEditorResize();
@@ -732,7 +723,6 @@ export async function activate(api) {
           h("span", { className: "plugin-automation-item-meta", title: `${task.cron} · ${task.timezone}` }, h("span", null, meta))),
         done ? null : h(Checkbox, { className: "plugin-automation-item-switch", label: h("span", { className: "plugin-automation-sr" }, tr("automation.enableNamed", { name: title })), checked: !task.paused, disabled: busy, onChange: () => act("automation.update", { id: task.id, paused: !task.paused }) }));
     };
-    const create = (template) => choose({ kind: "new", key: String(Date.now()), template, draft: { ...draftFor(), ...(template ? { title: tr(`automation.template.${template}`), prompt: tr(`automation.template.${template}.prompt`), schedule: TEMPLATES[template] } : {}) } });
     return h("main", { className: "plugin-automation" }, h(Page, null,
       h("div", { className: "plugin-automation-body", ref: resize.bodyRef, style: { "--automation-detail-width": `${resize.width}px` }, "data-resizing": resize.resizing ? "true" : "false", "data-panel": panelOpen ? "true" : "false", "data-closing": panelClosing ? "true" : undefined },
         h("section", { className: "plugin-automation-main", "aria-label": tr("automation.title") },
@@ -744,18 +734,13 @@ export async function activate(api) {
               options: workspaces.map((item) => ({ value: item.id, label: item.name || workspaceName(item.root) })),
               onChange: (id) => { epoch.current++; setWorkspaceID(id); setPanelClosing(false); setSelection(null); setTasks([]); setRuns([]); setError(""); },
             })),
-            h(Button, { className: "plugin-automation-create", disabled: busy || !workspace, onClick: () => create() }, h(PlusIcon), tr("automation.new"))),
+            h(Button, { className: "plugin-automation-create", disabled: busy || !workspace, onClick: () => choose({ kind: "new", key: String(Date.now()), draft: draftFor() }) }, h(PlusIcon), tr("automation.new"))),
           error && !panelOpen ? h("p", { className: "plugin-automation-error", role: "alert" }, error) : null,
           !workspace ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.workspaceNone") })
             : query.trim() && !scheduled.length && !finished.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.search.empty"))
+            : loaded && !scheduled.length && !finished.length ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty") })
             : h(React.Fragment, null,
-              scheduled.length ? h("div", { className: "plugin-automation-list" }, scheduled.map((task) => taskRow(task, false)))
-                // Without scheduled work, templates are the way in.
-                : query.trim() ? null : h("section", { className: "plugin-automation-suggestions" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.suggestions")), h("div", { className: "plugin-automation-suggestion-list" }, Object.keys(TEMPLATES).map((key) => h("div", { key, className: "plugin-automation-item", "data-selected": selection?.kind === "new" && selection.template === key },
-                  h("button", { type: "button", className: "plugin-automation-item-main", disabled: busy, onClick: () => create(key) },
-                    h("span", { className: "plugin-automation-item-icon" }, h(PlusIcon)),
-                    h("span", { className: "plugin-automation-item-title" }, tr(`automation.template.${key}`), h("span", { className: "plugin-automation-item-schedule" }, describeSchedule(TEMPLATES[key], null, tr, props.locale))),
-                    h("span", { className: "plugin-automation-item-meta" }, h("span", null, tr(`automation.template.${key}.prompt`)))))))),
+              scheduled.length ? h("div", { className: "plugin-automation-list" }, scheduled.map((task) => taskRow(task, false))) : null,
               finished.length ? h("section", { className: "plugin-automation-group" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.run.completed")), h("div", { className: "plugin-automation-list" }, finished.map((task) => taskRow(task, true)))) : null)),
         panelOpen ? h(Editor, {
           key: `${workspaceID}:${selection.id || selection.key}`, tr, locale: props.locale, task: selectedTask, initial: selection.draft, workspace, threads, busy, error,

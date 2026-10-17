@@ -17,7 +17,8 @@ const (
 
 // pathProbe is the process-wide record of whether this launch arrived without
 // the user's own bin directories, plus the login-shell directories discovered
-// for that case. Tests replace the pointer; production never resets it.
+// for that case. Explicit inventory refreshes replace the shell probe while
+// preserving whether the original launch lacked a user PATH.
 type pathProbe struct {
 	guiOnce   sync.Once
 	guiMiss   bool
@@ -27,6 +28,7 @@ type pathProbe struct {
 
 var (
 	probeGate sync.Mutex
+	pathGate  sync.Mutex
 	probe     = &pathProbe{}
 
 	// loadLoginShellDirs is replaced by tests. Production reads the login shell.
@@ -86,6 +88,22 @@ func InstallUserPath() {
 		return
 	}
 	go func() { _ = shellBinDirs() }()
+}
+
+// RefreshUserPath discovers installations and shell configuration added since
+// startup. Preserve the original GUI decision: our own PATH additions must not
+// prevent a later login-shell probe.
+func RefreshUserPath() {
+	if !guiPathNeedsShell() {
+		return
+	}
+	next := &pathProbe{guiMiss: true}
+	next.guiOnce.Do(func() {})
+	probeGate.Lock()
+	probe = next
+	probeGate.Unlock()
+	prependMissing(existingDirs(staticBinDirs()))
+	_ = shellBinDirs()
 }
 
 func guiPathNeedsShell() bool {
@@ -250,6 +268,8 @@ func existingDirs(dirs []string) []string {
 }
 
 func prependMissing(dirs []string) {
+	pathGate.Lock()
+	defer pathGate.Unlock()
 	merged := mergePathLists(dirs, filepath.SplitList(os.Getenv("PATH")))
 	next := strings.Join(merged, string(os.PathListSeparator))
 	if next == os.Getenv("PATH") {

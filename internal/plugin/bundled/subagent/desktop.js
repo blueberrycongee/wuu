@@ -216,13 +216,12 @@ function registerTaskViews(api) {
         h("button", { type: "button", className: "subagent-name", onClick: event => {
           setError("");
           void open(host, detail.session.parent_session_id, id, event.currentTarget).catch(error => setError(String(error.message || error)));
-        } }, detail.session.name || snapshot.sourceName || text.task), " ",
-        text[detail.turn?.state || detail.session.state] || text.completed,
+        } }, snapshot.text || detail.session.name || snapshot.sourceName || text.task),
         error ? h("span", { className: "subagent-error", role: "alert" }, error) : null));
   }
   api.registerPresenter({ id: "subagent-completion", target: "conversation.item", key: "user-message", mode: "replace", priority: 20, render: Completion });
 
-  function TaskDetail({ id, text }) {
+  function TaskDetail({ id, text, liveState }) {
     const [page, setPage] = React.useState({});
     const [revision, retry] = React.useState(0);
     const [state, setState] = React.useState({ loading: true, data: null, error: "" });
@@ -244,7 +243,7 @@ function registerTaskViews(api) {
       };
       void read();
       return () => { disposed = true; clearTimeout(timer); };
-    }, [id, page, revision]);
+    }, [id, page, revision, !page.before_seq && !page.cursor ? liveState : undefined]);
     const data = state.data;
     const records = data?.history.records || [];
     return h("div", { className: "subagent-detail" },
@@ -292,7 +291,7 @@ function registerTaskViews(api) {
         selected ? h("button", { type: "button", className: "subagent-back", "aria-label": text.back, title: text.back, onClick: () => select(null) }, "←") : null,
         selected ? h(Avatar, { id: selected }) : null,
         h("h2", { ref: heading, tabIndex: -1 }, selected ? current?.name || text.task : text.title)),
-      selected ? h(TaskDetail, { id: selected, text, key: selected }) : h("div", { className: "subagent-overview" },
+      selected ? h(TaskDetail, { id: selected, text, liveState: current?.state, key: selected }) : h("div", { className: "subagent-overview" },
         state.loading ? h("p", { role: "status" }, text.loading) : null,
         state.error ? h("div", { className: "subagent-error", role: "alert" }, state.error, h("button", { type: "button", onClick: () => void refresh(context.parent) }, text.retry)) : null,
         !state.loading && !state.error && !state.tasks.length ? h("p", null, text.empty) : null,

@@ -132,8 +132,8 @@ function agentRunFromToolCall(
   const processID =
     resultAction === "start" || resultAction === "start_background"
       ? nonEmptyString(result, "id")
-      : undefined;
-  const exitCode = numberValue(result, "exit_code");
+      : nonEmptyString(result, "promoted_process_id");
+  const exitCode = processID ? undefined : numberValue(result, "exit_code");
   const durationMs = numberValue(result, "duration_ms");
   const timedOut = booleanValue(result, "timed_out") ?? false;
   const failed =
@@ -141,16 +141,18 @@ function agentRunFromToolCall(
     Boolean(item.error) ||
     item.result_detail?.is_error === true ||
     (exitCode !== undefined && exitCode !== 0) ||
-    timedOut;
+    (!processID && timedOut);
   const status: AgentRunStatus = failed
     ? "failed"
-    : item.status === "completed"
-      ? "completed"
-      : turn.status === "interrupted"
-        ? "interrupted"
-        : turn.status === "failed"
-          ? "failed"
-          : "incomplete";
+    : processID
+      ? "incomplete"
+      : item.status === "completed"
+        ? "completed"
+        : turn.status === "interrupted"
+          ? "interrupted"
+          : turn.status === "failed"
+            ? "failed"
+            : "incomplete";
   const stdout = nonEmptyString(result, "stdout_tail");
   const stderr = nonEmptyString(result, "stderr_tail");
 

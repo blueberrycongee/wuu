@@ -47,6 +47,7 @@ type ToolExecutionRecord struct {
 	ConcurrencySafe            bool                   `json:"concurrency_safe"`
 	StartedAt                  time.Time              `json:"started_at"`
 	DurationMS                 int64                  `json:"duration_ms"`
+	QueueWaitMS                int64                  `json:"queue_wait_ms"`
 	RevisionBefore             string                 `json:"revision_before,omitempty"`
 	RevisionAfter              string                 `json:"revision_after,omitempty"`
 	Success                    bool                   `json:"success"`
@@ -140,7 +141,13 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	var result toolresult.Result
 	var err error
 	if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
-		result, err = t.env.ExecutionEnvironment.Execute(ctx, executionenv.ToolRequest{GitAttributionEnabled: !t.env.GitAttributionDisabled, Call: call, PermissionMode: t.env.PermissionMode, Actor: t.env.AgentID})
+		result, err = t.env.ExecutionEnvironment.Execute(ctx, executionenv.ToolRequest{
+			ShellEarlyHandoffDisabled: t.env.ShellEarlyHandoffDisabled,
+			GitAttributionEnabled:     !t.env.GitAttributionDisabled,
+			Call:                      call,
+			PermissionMode:            t.env.PermissionMode,
+			Actor:                     t.env.AgentID,
+		})
 	} else {
 		result, err = executeToolResult(ctx, tool, call)
 	}
@@ -245,6 +252,7 @@ func (t *Toolkit) recordToolExecution(
 		ConcurrencySafe:            info.ConcurrencySafe,
 		StartedAt:                  startedAt,
 		DurationMS:                 time.Since(startedAt).Milliseconds(),
+		QueueWaitMS:                toolctx.QueueWait(ctx).Milliseconds(),
 		RevisionBefore:             revisionBefore,
 		RevisionAfter:              revisionAfter,
 		Success:                    err == nil,

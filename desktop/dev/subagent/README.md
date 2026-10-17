@@ -30,7 +30,7 @@ Screenshots and geometry/interaction reports are written to ignored `artifacts/s
 
 ## Data boundaries
 
-- The current plugin filters out completed sessions in `internal/plugin/bundled/subagent/desktop.js`; the preview keeps completed tasks available in the message flow and overview.
+- The production plugin and this preview keep completed tasks available in the message flow and overview.
 - `listPluginSessions` currently reports running/queued/completed. Reliable failure or interruption display must use terminal turn data rather than infer success from an inactive session.
-- Production currently persists a name but not the spawn description in the plugin task record. Task descriptions and message-flow activities require integration beyond this preview.
+- Production persists task descriptions separately from pending completion-delivery records, so completed tasks remain addressable from conversation entries.
 - Completed child work does not mean the parent's overall task is complete. This distinction remains visible in the completion scenario.

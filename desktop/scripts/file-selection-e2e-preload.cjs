@@ -28,7 +28,7 @@ const submissions = [];
 const reads = [];
 const clone = value => JSON.parse(JSON.stringify(value));
 const projects = () => ({ projects: [], active_context: { kind: "no_project", cwd } });
-const providers = [{ name: "e2e", type: "mock", model: "mock-selection", connection_locked: true }];
+const providers = [{ name: "e2e", type: "mock", model: "mock-selection", connection_locked: true, api_key_configured: true }];
 function emit(method, params) {
   const event = { kind: "notification", message: { jsonrpc: "2.0", method, params } };
   for (const listener of listeners) listener(clone(event));

@@ -4,7 +4,6 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -43,7 +42,6 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
     },
     ref,
   ) {
-    const titleID = useId();
     const panelRef = useRef<HTMLElement | null>(null);
     const composerHostRef = useRef<HTMLDivElement | null>(null);
     const footerRef = useRef<HTMLDivElement | null>(null);
@@ -108,14 +106,8 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
         data-main-thread-id={mainThreadId}
         data-streaming={entry.streaming ? "true" : "false"}
         data-wuu-component="side-thread"
-        aria-labelledby={titleID}
+        aria-label={title}
       >
-        <header className="side-thread-panel__header">
-          <h2 id={titleID} className="side-thread-panel__title" title={title}>
-            {title}
-          </h2>
-        </header>
-
         <div
           ref={bodyScroll.scrollRef}
           className="side-thread-panel__body"

@@ -2173,7 +2173,7 @@ export const zhCN = {
   "onboarding.back": "返回",
   "onboarding.continue": "继续",
   "onboarding.runtimeTitle": "选择默认 Agent",
-  "onboarding.reuseCodexTitle": "使用本机 Codex 登录",
+  "onboarding.reuseLocalLogin": "使用本机 {name} 登录",
   "onboarding.externalEngineConnection": "{agent} 使用自己的账号。这里连接的模型供 Wuu 自带的 Agent 使用，可以稍后再连接。",
   "onboarding.otherConnection": "或者连接模型服务",
   "onboarding.runtimeFailed": "未能保存默认 Agent，请重试。",
