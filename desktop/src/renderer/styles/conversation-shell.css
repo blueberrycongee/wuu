@@ -844,13 +844,13 @@
 }
 
 /* The rail stays visible when closed; its fill marks the open state. */
-.side-panel-toggle-icon > rect:last-child {
+.side-panel-toggle-icon > .side-panel-toggle-pane {
   fill: none;
-  stroke: currentColor;
+  stroke: none;
   transition: fill var(--motion-base) var(--ease-out);
 }
 
-.side-panel-toggle-icon[data-open="true"] > rect:last-child {
+.side-panel-toggle-icon[data-open="true"] > .side-panel-toggle-pane {
   fill: currentColor;
   stroke: none;
 }

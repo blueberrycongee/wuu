@@ -31,11 +31,12 @@ const (
 	shellExcerptHeadBytes = 4 * 1024
 )
 
-// defaultPromotedRecheckMinutes is the safety-net recheck schedule armed on
-// a run command whose timeout promoted it to a background process. A
-// promoted command is an underestimate by definition, so the schedule
-// replaces the kill safety net the timeout used to be; the model can change
-// or clear it with process action=update.
+// Bound how long one shell command can hold the leaf execution gate. The
+// command keeps running under the process manager after this foreground wait.
+const maxForegroundShellWait = 10 * time.Second
+
+// Promoted commands retain a progress wake-up even if they never exit. The
+// model can change or clear this schedule with process action=update.
 const defaultPromotedRecheckMinutes = 30
 
 type synchronizedBuffer struct {
@@ -268,20 +269,28 @@ func executeShellCommandInDir(ctx context.Context, env *Env, command string, tim
 		discardReservedLog()
 		return shellExecutionResult{}, fmt.Errorf("run command: %w", err)
 	}
+	var yield <-chan time.Time
+	if logf != nil && !env.ShellEarlyHandoffDisabled {
+		timer := time.NewTimer(maxForegroundShellWait)
+		defer timer.Stop()
+		yield = timer.C
+	}
 	interrupted := false
 	promotedID := ""
-	select {
-	case <-handle.Done():
-		err = handle.Wait()
-	case <-runCtx.Done():
-		interrupted = true
-		// A genuine timeout (not a caller cancellation) promotes the command
-		// to a managed background process instead of killing it: the result
-		// gates nothing further this turn, and completion arrives as a
-		// notification later. The default recheck replaces the kill safety
-		// net the timeout used to be — a promoted command is an underestimate
-		// by definition, so something should look at it periodically.
-		if logf != nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+waitForeground:
+	for {
+		select {
+		case <-handle.Done():
+			err = handle.Wait()
+			break waitForeground
+		case <-runCtx.Done():
+		case <-yield:
+			yield = nil
+		}
+		// Only transfer live work when the caller still owns the turn.
+		// Cancellation stops it; a foreground yield or timeout hands off the
+		// same process, log, ownership and completion notification.
+		if logf != nil && ctx.Err() == nil {
 			adopted, adoptErr := mgr.Adopt(reservedID, cmd, handle, logf, proc.AdoptOptions{
 				Command:        command,
 				CWD:            workDir,
@@ -302,13 +311,22 @@ func executeShellCommandInDir(ctx context.Context, env *Env, command string, tim
 				promotedID = adopted.ID
 			}
 		}
-		if promotedID == "" {
-			if stopErr := handle.Stop(proc.DefaultStopGracePeriod); stopErr != nil {
-				discardReservedLog()
-				return shellExecutionResult{}, fmt.Errorf("stop command: %w", stopErr)
-			}
-			err = handle.Wait()
+		if promotedID != "" {
+			interrupted = true
+			break
 		}
+		if runCtx.Err() == nil {
+			// A failed early handoff must not terminate a command before its
+			// requested timeout. Continue the original foreground wait.
+			continue
+		}
+		interrupted = true
+		if stopErr := handle.Stop(proc.DefaultStopGracePeriod); stopErr != nil {
+			discardReservedLog()
+			return shellExecutionResult{}, fmt.Errorf("stop command: %w", stopErr)
+		}
+		err = handle.Wait()
+		break
 	}
 	if promotedID != "" {
 		// The manager owns the log and the wait from here.
@@ -358,7 +376,7 @@ func executeShellCommandInDir(ctx context.Context, env *Env, command string, tim
 	}
 	if promotedID != "" {
 		nextSuggestions = []string{
-			"the command exceeded its timeout and keeps running as background process " + promotedID + " with its output so far attached; do NOT rerun the same command — its completion will start a new turn automatically",
+			"the foreground wait ended; the command keeps running as background process " + promotedID + " with its output so far attached; do NOT rerun the same command — its completion will start a new turn automatically",
 			"progress wake-ups are scheduled every " + strconv.Itoa(defaultPromotedRecheckMinutes) + " minutes as a safety net; use process action=read with process_id for a snapshot, action=stop to cancel it, or action=update with recheck_minutes to change or clear the schedule",
 		}
 	}

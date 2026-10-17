@@ -99,6 +99,8 @@ func bashStatusLines(r shellExecutionResult) []string {
 	switch {
 	case r.TimedOut && r.PromotedProcessID != "":
 		lines = append(lines, fmt.Sprintf("Timed out after %s; still running in the background as process %s. You will be notified when it exits; do not rerun the command.", formatViewDuration(r.DurationMS), r.PromotedProcessID))
+	case r.PromotedProcessID != "":
+		lines = append(lines, fmt.Sprintf("Still running after %s; continuing in the background as process %s. You will be notified when it exits; do not rerun the command or treat it as completed.", formatViewDuration(r.DurationMS), r.PromotedProcessID))
 	case r.TimedOut:
 		lines = append(lines, fmt.Sprintf("Timed out after %s; the command was stopped. Rerun a long-lived command with run_in_background.", formatViewDuration(r.DurationMS)))
 	case r.ExitCode != 0:

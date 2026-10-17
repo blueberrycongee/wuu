@@ -17,7 +17,7 @@ import (
 // GPT / Claude / generic surfaces. A foreground run is bounded and
 // non-interactive; run_in_background hands the command to the process
 // manager, and the process tool then observes or controls it. A foreground
-// run that outlives its timeout is also handed over instead of being killed.
+// run that exceeds the foreground wait budget is also handed over.
 //
 // Keeping every launch in one tool follows the bash-first surface: the model
 // never chooses between competing entry points to start a command.
@@ -74,7 +74,7 @@ func (t *BashTool) Definition() providers.ToolDefinition {
 			"Returns stdout and stderr (head and tail of long output, with the full log path), plus the exit code when it is not 0. " +
 			"For Code Mode, structured_content exposes stdout, stderr (up to 64 KiB per stream), exit_code, timed_out, stdout_truncated, stderr_truncated and full_log_ref for recovery. Select fields in JS before emitting. " +
 			"Each call starts a fresh shell; state does not persist between calls. " +
-			"Commands must not wait for input. A command that exceeds its timeout keeps running in the background and its completion starts a new turn; do not rerun it. " +
+			fmt.Sprintf("Commands must not wait for input. Foreground waits yield after %s (or timeout_seconds if shorter) when background handoff is available. The command keeps running and its completion starts a new turn; do not rerun it or treat a process ID as a completed verification. ", maxForegroundShellWait) +
 			"Set run_in_background for servers, watchers, and other long-lived commands instead of appending '&'; " +
 			"you are notified when the process exits, so do not poll. Use the process tool to read its output, send input, or stop it. " +
 			"Prefer read_file, grep, glob, and the edit tools over shell equivalents for reading, searching, and changing files.",
@@ -87,7 +87,7 @@ func (t *BashTool) Definition() providers.ToolDefinition {
 				},
 				"timeout_seconds": map[string]any{
 					"type":        "integer",
-					"description": "Max runtime in seconds for a foreground run (1-3600, default 300).",
+					"description": fmt.Sprintf("Foreground timeout in seconds (1-3600, default %d). With background handoff, waits yield after at most %s; this does not limit the background process lifetime.", defaultShellTimeoutSeconds, maxForegroundShellWait),
 				},
 				"cwd": map[string]any{
 					"type":        "string",

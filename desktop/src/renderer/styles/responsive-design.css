@@ -141,7 +141,7 @@
   .app-shell,
   .sidebar,
   .sidebar-content,
-  .side-panel-toggle-icon > rect:last-child,
+  .side-panel-toggle-icon > .side-panel-toggle-pane,
   .titlebar,
   .scroll-region,
   .dock-composer-wrap,

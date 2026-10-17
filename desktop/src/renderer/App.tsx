@@ -199,10 +199,7 @@ import {
   resolveDraftEngineMemory,
   writeDraftEngineMemory,
 } from "./DraftEngineMemory";
-import {
-  FirstRunOnboarding,
-  hasOnboardingProvider as hasReadyProvider,
-} from "./FirstRunOnboarding";
+import { FirstRunOnboarding } from "./FirstRunOnboarding";
 import {
   EmptyConversationHome,
   RuntimeLoading,
@@ -211,6 +208,7 @@ import { EmptyHomeOverview } from "./EmptyHomeOverview";
 import { WuuMascotRuntimeProvider } from "./WuuMascot";
 import { deriveActiveSessionHints } from "./activeSessionHint";
 import {
+  hasAuthenticatedProvider as hasReadyProvider,
   providerModelContextWindow,
   pullRequestUnavailableReason,
 } from "./RuntimeHelpers";
@@ -1319,6 +1317,19 @@ export function App(): JSX.Element {
       : undefined;
   const activeThread = activeThreadForState(state);
   const activeThreadID = activeThread?.id;
+  const activeThreadCwd = activeThread?.cwd;
+  const previousThreadWorkspace = useRef({ id: activeThreadID, cwd: activeThreadCwd });
+  useEffect(() => {
+    const previous = previousThreadWorkspace.current;
+    previousThreadWorkspace.current = { id: activeThreadID, cwd: activeThreadCwd };
+    if (activeThreadID && previous.id === activeThreadID && previous.cwd &&
+      activeThreadCwd && previous.cwd !== activeThreadCwd) {
+      showToast({
+        message: translateCurrent("app.workspaceSwitched"),
+        dedupeKey: `workspace-switched:${activeThreadID}:${activeThreadCwd}`,
+      });
+    }
+  }, [activeThreadID, activeThreadCwd]);
   const activeProjectDraft = projectAgentEnabled && !activeThread && currentSessionTab?.kind === "draft" && currentSessionTab.project === true;
   const activeThreadRunning = isThreadRunning(activeThread);
   const activeThreadHasRunningTurn = activeThread?.turns.some(turn => turn.status === "in_progress") ?? false;

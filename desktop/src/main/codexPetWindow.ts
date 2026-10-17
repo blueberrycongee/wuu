@@ -1493,7 +1493,12 @@ export class CodexPetWindowManager {
     this.loaded = false;
     win.setAlwaysOnTop(true, "floating");
     win.setHasShadow(false);
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    // Electron otherwise hides the entire app from the macOS Dock when
+    // enabling full-screen visibility for this panel.
+    win.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    });
     win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     win.webContents.on("will-navigate", (navigationEvent, rawURL) => {
       const parsed = codexPetActionFromURL(rawURL);
