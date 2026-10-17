@@ -11,7 +11,7 @@ import {
   parseContextCompactionNotice,
 } from "./ContextCompaction";
 
-export function ContextCompactionIndicator({ item }: { item: ThreadItem }): JSX.Element {
+export function ContextCompactionIndicator({ item, announce }: { item: ThreadItem; announce: boolean }): JSX.Element {
   const normalized = normalizeContextCompactionText(item.text);
   const failed = item.status === "failed" || isFailedCompactNotice(normalized);
   const running = item.status === "in_progress";
@@ -28,7 +28,8 @@ export function ContextCompactionIndicator({ item }: { item: ThreadItem }): JSX.
       <span
         className={`context-compaction-indicator${failed ? " is-failed" : ""}`}
         tabIndex={0}
-        role={failed ? "alert" : "img"}
+        role={announce && failed ? "alert" : announce && running ? "status" : "img"}
+        aria-live={announce && running ? "polite" : undefined}
         aria-label={description}
       >
         {retainedRatio !== undefined ? (

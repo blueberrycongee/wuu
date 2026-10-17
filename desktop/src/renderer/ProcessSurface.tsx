@@ -413,7 +413,8 @@ export function ProcessSurface({
       {hasCompaction ? (
         <span className="process-surface-compactions">
           {summaryText ? <span className="process-surface-separator" aria-hidden>·</span> : null}
-          {compactionItems.map(item => <ContextCompactionIndicator key={item.id} item={item} />)}
+          {/* The expanded notice owns live announcements while it is visible. */}
+          {compactionItems.map(item => <ContextCompactionIndicator key={item.id} item={item} announce={!expanded} />)}
         </span>
       ) : null}
     </span>

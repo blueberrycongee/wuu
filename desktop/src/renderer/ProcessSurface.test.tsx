@@ -10,6 +10,7 @@ import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ProcessSurface } from "./ProcessSurface";
+import { ContextCompactionNotice } from "./TurnNotice";
 import {
   PROCESS_SUMMARY_COUNT_DEBOUNCE_MS,
   PROCESS_SUMMARY_COUNT_MAX_WAIT_MS,
@@ -96,6 +97,26 @@ it("keeps its disclosure node and source receipt ledger when live search results
   expect(container.querySelector(".process-surface-fold")).toBe(fold);
   expect(container.querySelector(".process-surface-row")).toBe(summary);
   expect(container.querySelector(".web-source-avatar.is-arriving")).not.toBeNull();
+});
+
+it("announces a running compaction from the summary only while details are closed", () => {
+  const compaction: ThreadItem = { id: "compact-live", type: "context_compaction", status: "in_progress" };
+  const { container } = render({
+    processItems: [compaction], streaming: true,
+    renderProcessItem: item => <ContextCompactionNotice status={item.status} />,
+  });
+  const indicator = container.querySelector(".context-compaction-indicator")!;
+  expect(indicator.getAttribute("role")).toBe("status");
+  expect(indicator.getAttribute("aria-live")).toBe("polite");
+
+  const details = container.querySelector<HTMLDetailsElement>(".process-surface-fold")!;
+  act(() => {
+    details.open = true;
+    details.dispatchEvent(new Event("toggle"));
+  });
+  expect(indicator.getAttribute("role")).toBe("img");
+  expect(indicator.hasAttribute("aria-live")).toBe(false);
+  expect(container.querySelector(".context-compaction-notice")?.getAttribute("aria-live")).toBe("polite");
 });
 
 it.each([

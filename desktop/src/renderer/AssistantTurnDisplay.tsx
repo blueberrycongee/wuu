@@ -288,8 +288,11 @@ function groupProcessEntries(entries: TurnEntry[]): TurnEntry[] {
     }
     const items = pending.flatMap((entry) => entry.items ?? [entry.item]);
     const hasActivity = pending.some((entry) => entry.kind === "activity");
+    // Start compaction in its final surface so resumed work does not replace
+    // the notice and discard an open summary or the reader's keyboard focus.
     const shouldGroup =
-      items.length > 1 && (hasActivity || pending.length > 1);
+      items.some((item) => item.type === "context_compaction") ||
+      (items.length > 1 && (hasActivity || pending.length > 1));
     if (!shouldGroup) {
       grouped.push(...pending);
       pending = [];

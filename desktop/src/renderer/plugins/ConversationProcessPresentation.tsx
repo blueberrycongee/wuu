@@ -59,6 +59,9 @@ export function toConversationProcessSnapshot(
   active: boolean,
   locale?: string,
 ): ConversationProcessSnapshotV1 | undefined {
+  // V1 presenters cannot represent compaction outcomes. Keep the native
+  // group rather than allowing a replacement to silently hide those notices.
+  if (processItems.some((item) => item.type === "context_compaction")) return undefined;
   const items = processItems.flatMap((item): ConversationProcessItemV1[] => {
     if (item.type === "reasoning") {
       return [Object.freeze({
