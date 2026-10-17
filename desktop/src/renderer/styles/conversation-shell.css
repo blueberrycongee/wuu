@@ -152,7 +152,8 @@
   --conversation-activity-gap: 8px;
 }
 
-.app-shell {
+.app-shell,
+.settings-shell {
   /* Share the canvas edge with the sibling sidebar resize target. */
   --conversation-pane-inset: clamp(0px, calc(2vw - var(--space-2)), var(--space-2));
   /* Trim the lower chrome gap while preserving the native control axis. */

@@ -284,7 +284,7 @@ async function chromeToggleGeometry(win) {
           button: element instanceof HTMLButtonElement, hit: element === hit || element.contains(hit),
           coveredByDrawer: Boolean(document.querySelector('.sidebar-drawer-open .sidebar')?.contains(hit)) };
       });
-    const canvas = document.querySelector('.conversation-pane');
+    const canvas = document.querySelector('.conversation-pane, .settings-main');
     return {
       header: header.toJSON(), peers,
       canvasTop: canvas ? canvas.getBoundingClientRect().top + parseFloat(getComputedStyle(canvas, '::before').top) : null,

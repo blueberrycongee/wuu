@@ -5382,6 +5382,7 @@ export function App(): JSX.Element {
           onCodexPetsRefresh={refreshCodexPets}
           onCodexPetsUpdate={updateCodexPets}
           onSidebarResizeStart={startSidebarResize}
+          onSidebarResizerPointer={trackSidebarResizerPointer}
           onSidebarSeparatorKey={handleSidebarSeparatorKey}
           archivedThreads={state.threads
             .filter((thread) => thread.archived)

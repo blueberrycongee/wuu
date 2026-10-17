@@ -24,6 +24,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Match the settings sidebar boundary to the main window's rounded canvas,
+  including spacing and resize feedback.
 - Preserve the composer's focus appearance when Tab inserts a next-message suggestion.
 - Keep workspace and branch names aligned with their icons in narrow composers.
 - Refresh external agent discovery after installing a CLI while the desktop is

@@ -274,13 +274,17 @@
     var(--sidebar-edge-shadow);
 }
 
-.sidebar {
+.sidebar,
+.settings-sidebar {
   /* The rounded conversation canvas supplies the docked boundary. Drawers
      retain their own edge and elevation when they overlap the canvas. */
   --sidebar-material-edge: transparent;
   --sidebar-material-inner-edge: transparent;
   --sidebar-edge-shadow: 0 0 0 0 transparent;
   border-right-color: var(--sidebar-material-edge);
+}
+
+.sidebar {
   /* Section expand/collapse motion tokens, shared by the collapse body,
    * the header chevron, and the header icon cross-fade so all three land
    * together. */
@@ -606,7 +610,7 @@
   z-index: 10;
 }
 
-.app-shell > .sidebar-resizer {
+:is(.app-shell, .settings-shell) > .sidebar-resizer {
   left: calc(var(--sidebar-width, 296px) + var(--conversation-pane-inset) - 5px);
   /* Container height lets the light clamp its transform to this rail without
    * measuring layout on pointermove or changing its top every frame. */
@@ -614,8 +618,7 @@
 }
 
 .sidebar-resizer::before {
-  /* The settings rail is a full-height divider. The shell overrides the
-   * vertical ends below to meet the conversation canvas. */
+  /* Shells align the feedback with the rounded reading canvas below. */
   position: absolute;
   inset: 0;
   left: 50%;
@@ -640,7 +643,7 @@
 
 /* Keep pointer feedback local to the grab point. Pressing gathers the hover
  * light into a soft bead; releasing lets it stretch back along the edge. */
-.app-shell > .sidebar-resizer::before {
+:is(.app-shell, .settings-shell) > .sidebar-resizer::before {
   --sidebar-resizer-light-height: 96px;
   --sidebar-resizer-light-inset: calc(
     var(--conversation-pane-inset) + var(--conversation-canvas-radius) +
@@ -681,12 +684,12 @@
     transform var(--motion-slow) cubic-bezier(0.22, 1.35, 0.36, 1);
 }
 
-.app-shell > .sidebar-resizer:hover::before {
+:is(.app-shell, .settings-shell) > .sidebar-resizer:hover::before {
   opacity: 1;
 }
 
 /* Keyboard focus identifies the entire adjustable boundary. */
-.app-shell > .sidebar-resizer::after {
+:is(.app-shell, .settings-shell) > .sidebar-resizer::after {
   position: absolute;
   top: calc(var(--conversation-pane-inset) + var(--conversation-canvas-radius));
   bottom: calc(var(--conversation-pane-inset) + var(--conversation-canvas-radius));
@@ -702,21 +705,21 @@
   transition: opacity var(--motion-fast) var(--ease-out);
 }
 
-.app-shell > .sidebar-resizer:focus-visible::before {
+:is(.app-shell, .settings-shell) > .sidebar-resizer:focus-visible::before {
   opacity: 0;
 }
 
-.app-shell > .sidebar-resizer:focus-visible::after {
+:is(.app-shell, .settings-shell) > .sidebar-resizer:focus-visible::after {
   opacity: 1;
 }
 
-.app-shell.resizing-sidebar > .sidebar-resizer::before {
+:is(.app-shell, .settings-shell).resizing-sidebar > .sidebar-resizer::before {
   opacity: 1;
   background: color-mix(in srgb, var(--ink) 40%, transparent);
   transform: translate(calc(-50% + var(--sidebar-resizer-grab-x, 0px)), -50%) scale(2.5, 0.72);
 }
 
-.app-shell.resizing-sidebar > .sidebar-resizer::after {
+:is(.app-shell, .settings-shell).resizing-sidebar > .sidebar-resizer::after {
   opacity: 0;
 }
 

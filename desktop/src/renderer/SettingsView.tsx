@@ -214,6 +214,7 @@ export function SettingsView({
   onCodexPetsRefresh,
   onCodexPetsUpdate,
   onSidebarResizeStart,
+  onSidebarResizerPointer,
   onSidebarSeparatorKey,
   archivedThreads,
   onUnarchiveThread,
@@ -257,6 +258,7 @@ export function SettingsView({
   onCodexPetsRefresh: () => Promise<CodexPetsSnapshot>;
   onCodexPetsUpdate: (settings: CodexPetSettingsUpdate) => Promise<CodexPetsSnapshot>;
   onSidebarResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onSidebarResizerPointer?: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onSidebarSeparatorKey: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
   // The archive catalog spans all workspaces; filtering only changes the view.
   archivedThreads?: readonly ArchivedSessionView[];
@@ -748,6 +750,8 @@ export function SettingsView({
           aria-valuemax={sidebarMaxWidth}
           aria-valuenow={sidebarWidth}
           tabIndex={0}
+          onPointerEnter={onSidebarResizerPointer}
+          onPointerMove={onSidebarResizerPointer}
           onPointerDown={onSidebarResizeStart}
           onDoubleClick={onToggleSidebar}
           onKeyDown={onSidebarSeparatorKey}

@@ -38,19 +38,19 @@
 
 /* Same column vocabulary as .app-shell: `--sidebar-width` is the live grid
  * column (0 when collapsed), `--sidebar-open-width` remembers the open width
- * for the hover drawer and the fixed-width rail content. The shell background
- * must stay transparent so the sidebar material can paint its own fill.
- * Any opaque layer behind the rail kills that surface. The content column
- * paints its own surface via .settings-main. */
+ * for the hover drawer and the fixed-width rail content. The shell supplies
+ * the outer gutter fill; .settings-main paints the rounded reading canvas. */
 .settings-shell {
   display: grid;
   position: relative;
+  isolation: isolate;
+  padding-right: var(--conversation-pane-inset);
   grid-template-columns: var(--sidebar-width, 326px) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  background: transparent;
+  background: var(--sidebar-material-fill);
 }
 
 /* Collapse/expand animates the same way as the main shell: the JS motion
@@ -191,9 +191,23 @@
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
+  grid-template-rows: var(--canvas-titlebar-height) minmax(0, 1fr);
+  position: relative;
   overflow: hidden;
+  margin: 0 0 var(--conversation-pane-inset) var(--conversation-pane-inset);
+  border-radius: var(--conversation-canvas-radius);
+  background: transparent;
+}
+
+/* Keep native window controls on their existing axis, as in the main canvas. */
+.settings-main::before {
+  position: absolute;
+  inset: var(--conversation-pane-inset) 0 0;
+  z-index: -1;
+  border-radius: inherit;
   background: var(--settings-canvas);
+  content: "";
+  pointer-events: none;
 }
 
 /* Full-width draggable strip mirroring the main conversation titlebar, so
@@ -201,12 +215,12 @@
  * content area — not just the tiny traffic-light spacer in the sidebar. */
 .settings-titlebar {
   display: flex;
-  height: var(--window-titlebar-height);
-  min-height: var(--window-titlebar-height);
+  height: var(--canvas-titlebar-height);
+  min-height: var(--canvas-titlebar-height);
   align-items: center;
   /* Right side clears the Windows controls overlay; a no-op elsewhere
    * (the inset is 0 and max() collapses to the neutral padding). */
-  padding: 0 max(var(--window-titlebar-padding-inline), var(--window-controls-inset-right)) 0 var(--window-titlebar-padding-inline);
+  padding: var(--conversation-pane-inset) max(var(--window-titlebar-padding-inline), var(--window-controls-inset-right)) 0 var(--window-titlebar-padding-inline);
   -webkit-app-region: drag;
 }
 
@@ -239,7 +253,7 @@
  * edge. Keep the toggle clear of the macOS traffic lights, matching the
  * main conversation titlebar reservation. */
 .settings-shell.sidebar-collapsed .settings-titlebar {
-  padding-left: var(--window-titlebar-leading-inset);
+  padding-left: calc(var(--window-titlebar-leading-inset) - var(--conversation-pane-inset));
 }
 
 /* Both toggle slots belong to a drag strip. A shell-level overlay would
