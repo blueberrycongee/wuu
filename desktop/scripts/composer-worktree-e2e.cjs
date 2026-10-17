@@ -421,11 +421,19 @@ async function run() {
     const thread = (await window.wuu.listThreads()).threads.find(candidate => candidate.id === id);
     return thread && !thread.worktree && thread.status !== 'in_progress';
   }, thread.id);
-  await waitFor(main, () => document.querySelector('.cached-conversation-pane[data-active="true"] .turn-process-toggle[aria-expanded="false"]'));
-  await evaluate(main, () => [...document.querySelectorAll('.cached-conversation-pane[data-active="true"] .turn-process-toggle[aria-expanded="false"]')].at(-1)?.click());
-  await waitFor(main, () => document.querySelector('.cached-conversation-pane[data-active="true"] .process-surface'));
-  await evaluate(main, () => document.querySelectorAll('.cached-conversation-pane[data-active="true"] .process-surface-fold.has-details:not([open]) > summary').forEach(node => node.click()));
-  await waitFor(main, () => document.querySelector('.process-surface-fold[open] .workspace-tool-details'));
+  const rebindTurnId = await evaluate(main, () => [...document.querySelectorAll('.cached-conversation-pane[data-active="true"] .user-message-motion')]
+    .find(node => node.textContent.includes('Rebind workspace fixture')).closest('.turn').id);
+  // Wait for this turn's completion handoff, not an older collapsed turn.
+  // Details remain mounted briefly during collapse and are not an open-state signal.
+  await waitFor(main, id => {
+    const turn = document.getElementById(id);
+    return turn?.dataset.turnStatus === 'completed' && turn.querySelector('.turn-process-toggle[aria-expanded="false"]');
+  }, rebindTurnId);
+  await evaluate(main, id => document.getElementById(id).querySelector('.turn-process-toggle').click(), rebindTurnId);
+  await waitFor(main, id => document.getElementById(id).querySelector('.turn-process-toggle[aria-expanded="true"]')
+    && document.getElementById(id).querySelector('.process-surface'), rebindTurnId);
+  await evaluate(main, id => document.getElementById(id).querySelectorAll('.process-surface-fold.has-details:not([open]) > summary').forEach(node => node.click()), rebindTurnId);
+  await waitFor(main, id => document.getElementById(id).querySelector('.process-surface-fold[open] .workspace-tool-details'), rebindTurnId);
   const rebound = await evaluate(main, async id => (await window.wuu.listThreads()).threads.find(candidate => candidate.id === id), thread.id);
   assert.equal(fs.realpathSync(rebound.cwd), fs.realpathSync(project));
   assert.ok(!rebound.worktree);
@@ -439,13 +447,16 @@ async function run() {
   assert(await evaluate(main, root => document.querySelector('.workspace-tool-details')?.textContent.includes(root), fs.realpathSync(project)));
   await capture(main, '10-workspace-tool-light.png');
   main.setSize(760, 820);
-  await evaluate(main, () => {
+  await evaluate(main, id => {
     document.documentElement.dataset.theme = 'dark';
     document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
     document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
-    document.querySelector('.workspace-tool-details').closest('.process-surface-fold').querySelector('summary').focus();
-  });
+    document.getElementById(id).querySelector('.workspace-tool-details').closest('.process-surface-fold').querySelector('summary').focus();
+  }, rebindTurnId);
   await capture(main, '11-workspace-tool-dark-large-narrow.png');
+  assert(await evaluate(main, id => Boolean(document.getElementById(id).querySelector('.turn-process-toggle[aria-expanded="true"]')
+    && document.getElementById(id).querySelector('.workspace-tool-details')), rebindTurnId),
+  'The selected workspace operation stays expanded after appearance settles.');
   main.setSize(1280, 820);
   await evaluate(main, () => {
     document.documentElement.dataset.theme = 'light';
