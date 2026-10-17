@@ -33,7 +33,7 @@ write(path.join(wuuData, 'projects.json'), JSON.stringify({
 write(path.join(wuuData, 'config.json'), JSON.stringify({
   default_provider: 'fixture',
   providers: { fixture: { type: 'openai-compatible', model: 'fixture', base_url: 'http://127.0.0.1:1', api_key: 'synthetic-test-key' } },
-  engines: Object.fromEntries(['claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }])),
+  engines: Object.fromEntries(['claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }])),
 }));
 // The shell probe must only read the disposable user's configuration.
 write(path.join(userHome, '.zshrc'), 'export PATH="$HOME/custom-bin:$PATH"\n');

@@ -43,7 +43,7 @@ if (partial) write(path.join(codex, 'sessions', 'unreadable.jsonl'), 'x'.repeat(
 write(path.join(home, 'desktop-settings.json'), JSON.stringify({ language: empty ? 'zh-CN' : 'en-US', theme: 'dark' }));
 write(path.join(home, 'config.json'), JSON.stringify({
   default_provider: 'fixture', providers: { fixture: { type: 'openai-compatible', model: 'fixture', base_url: 'http://127.0.0.1:1', api_key: 'synthetic-test-key' } },
-  engines: Object.fromEntries(['codex','claude','cursor','devin','grok','hermes','pi','opencode','antigravity'].map(id => [id, { enabled: false }])),
+  engines: Object.fromEntries(['codex','claude','cursor','devin','dsh','grok','hermes','pi','opencode','antigravity'].map(id => [id, { enabled: false }])),
 }));
 app.setPath('userData', path.join(fixture, 'electron'));
 process.env.WUU_HOME = home;

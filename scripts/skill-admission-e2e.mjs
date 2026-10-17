@@ -93,7 +93,7 @@ try {
   result.core_sha256 = createHash("sha256").update(await readFile(binary)).digest("hex");
   result.script_sha256 = createHash("sha256").update(await readFile(fileURLToPath(import.meta.url))).digest("hex");
   const config = join(home, "config.json");
-  const engines = Object.fromEntries(["codex", "claude", "cursor", "devin", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }]));
+  const engines = Object.fromEntries(["codex", "claude", "cursor", "devin", "dsh", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }]));
   await writeFile(config, JSON.stringify({ default_provider: "fixture", engines,
     providers: { fixture: { type: "openai-compatible", base_url: `http://127.0.0.1:${provider.address().port}/v1`,
       api_key: "synthetic-fixture-only", model: "fixture", models: { fixture: {}, "fixture-next": {} } } },

@@ -312,7 +312,7 @@ app.whenReady().then(async () => {
     ptc: { enabled: false },
     agent: { tool_loading: "flat", max_steps: 20 },
     providers: { fixture: { type: "openai-compatible", base_url: `${baseURL}/v1`, api_key: "fixture-only", model: "fixture", models: { fixture: { tool_call: true, modalities: { input: ["text"], output: ["text"] }, limit: { context: 200000, output: 8000 } } } } },
-    engines: Object.fromEntries(["codex", "claude", "cursor", "devin", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }])),
+    engines: Object.fromEntries(["codex", "claude", "cursor", "devin", "dsh", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }])),
   }));
   const nativePresentations: { windowID: number; event: string }[] = [];
   const hostWindows: BrowserWindow[] = [];

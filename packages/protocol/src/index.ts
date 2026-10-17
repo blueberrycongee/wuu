@@ -1293,6 +1293,7 @@ export type EngineSettingsConfig = {
   claude?: EngineBinarySettings;
   cursor?: EngineBinarySettings;
   devin?: EngineBinarySettings;
+  dsh?: EngineBinarySettings;
   grok?: EngineBinarySettings;
   hermes?: EngineBinarySettings;
   pi?: EngineBinarySettings;

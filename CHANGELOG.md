@@ -8,6 +8,18 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Add DeepSeek Harness as an external ACP engine, with native model and
+  reasoning selection, HTTP MCP tools, and persistent conversation recovery.
+
+### Fixed
+
+- Restore ACP sessions through advertised `session/resume` support and close
+  native sessions before terminating their processes, including model probes
+  and cancelled turns. Preserve advertised empty reasoning defaults when
+  clearing a previous override.
+
 ### Removed
 
 - Remove the workspace new page's Continue viewing section, which duplicated

@@ -179,7 +179,7 @@ async function run() {
     HTTP_PROXY: `http://127.0.0.1:${proxy.address().port}`, NO_PROXY: '127.0.0.1,localhost' });
   for (const name of ['http_proxy', 'https_proxy', 'all_proxy', 'ALL_PROXY', 'no_proxy']) delete process.env[name];
   const endpoint = `http://127.0.0.1:${upstream.address().port}/backend-api/codex`;
-  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity']
+  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity']
     .map(id => [id, { enabled: false, binary_path: path.join(fixture, `absent-${id}`) }]));
   const config = { default_provider: 'personal', engines, providers: {
     personal: { type: 'openai-codex', base_url: endpoint, api_key: firstToken, model: 'gpt-fixture' },

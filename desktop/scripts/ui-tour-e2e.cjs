@@ -502,7 +502,7 @@ async function runJourneys(win) {
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
-  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   write(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'tour', engines, providers: { tour: { type: 'openai-compatible', base_url: endpoint, api_key: 'tour-only', model: 'tour' } } }));
   const stamp = '2026-09-20T00:00:00Z';
   write(path.join(home, 'projects.json'), JSON.stringify({

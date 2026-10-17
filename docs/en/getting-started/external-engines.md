@@ -1,6 +1,6 @@
 # External agent engines
 
-An external engine runs an installed agent with its own account, model configuration, tools, and native session storage. It is separate from a [model provider](model-services.md) used by the built-in Wuu engine. Wuu includes Codex and Claude Code integrations and the seven integrations below.
+An external engine runs an installed agent with its own account, model configuration, tools, and native session storage. It is separate from a [model provider](model-services.md) used by the built-in Wuu engine. Wuu includes Codex and Claude Code integrations and the integrations below.
 
 ## Install and select an engine
 
@@ -10,6 +10,7 @@ Install the agent or adapter yourself using its upstream instructions. Wuu does 
 |---|---|---|
 | `cursor` | `cursor-agent acp` | ACP v1; [Cursor CLI](https://cursor.com/docs/cli/acp) |
 | `devin` | `devin acp` | ACP v1; [Devin CLI](https://docs.devin.ai/cli) |
+| `dsh` | `dsh --profile acp` | ACP v1; [DeepSeek Harness ACP](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/acp/acp) |
 | `grok` | `grok --no-auto-update agent --no-leader stdio` | ACP v1; [Grok CLI](https://x.ai/cli) |
 | `hermes` | `hermes acp` | ACP v1; [Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp) |
 | `pi` | `pi-acp` | ACP v1 through the [community adapter](https://github.com/svkozak/pi-acp), not the plain `pi` command |
@@ -18,7 +19,7 @@ Install the agent or adapter yourself using its upstream instructions. Wuu does 
 
 Antigravity detection also accepts `agy_acp_server.par`; Linux launches it with `--uid=`. These commands describe the adapter contract, not a guarantee that every CLI release supports it. ACP must negotiate protocol version 1; OpenCode must report a healthy 1.x server. Incompatible versions fail explicitly.
 
-For these seven engines, executable lookup uses `engines.<id>.binary_path`, then `WUU_<ID>_BINARY` (for example `WUU_DEVIN_BINARY`), then `PATH`. An invalid override fails instead of silently using another executable. Supply a path to a program, not a command with arguments. Detection only resolves the executable: it does not validate credentials or start a conversation.
+For these engines, executable lookup uses `engines.<id>.binary_path`, then `WUU_<ID>_BINARY` (for example `WUU_DEVIN_BINARY`), then `PATH`. An invalid override fails instead of silently using another executable. Supply a path to a program, not a command with arguments. Detection only resolves the executable: it does not validate credentials or start a conversation.
 
 The desktop app does not inherit a terminal PATH when it is opened from Finder or the Dock. If PATH does not contain the executable, lookup continues in the standard install locations (`~/.local/bin`, `~/bin`, Homebrew, `~/.opencode/bin`, and version-manager shims such as nvm and mise). When the process still has no user directories, it also reads the login shell PATH. Codex and Claude Code use this same fallback.
 
@@ -35,6 +36,14 @@ The machine-local configuration accepts `enabled` and `binary_path` for each eng
 ```
 
 A missing or disabled engine cannot run. Existing conversations keep their engine binding rather than silently switching engines. See [configuration](../reference/configuration.md) for configuration locations and scope.
+
+## DeepSeek Harness setup
+
+Install DeepSeek Harness with its official ACP profile and configure its provider and model before selecting it in Wuu. Wuu launches `dsh --profile acp` in the conversation's working directory; the plain TUI profile is not an ACP server. Use **Settings → Agents → DeepSeek Harness** to select a wrapper executable if your installation needs a custom profile or config path. The wrapper must forward Wuu's arguments and keep stdout reserved for JSON-RPC.
+
+The official `@deepseek-ai/dsh-acp` `0.2.1-rc.2` contract advertises persistent `session/resume`, `session/close`, model/reasoning configuration and HTTP MCP. Install matching CLI/profile packages following the upstream instructions; the npm `latest` tag may still point to an older ACP implementation. DSH owns provider credentials and advertises no ACP sign-in methods. After configuring it, refresh detection in Wuu.
+
+DSH publishes committed messages, thoughts and generic tool updates, rather than raw token deltas or its TUI's cards, plans and terminal views. Its ACP profile does not advertise a read-only mode. Wuu retains its own displayed transcript while DSH restores native context without replaying that transcript. DSH may retain unprompted model-discovery sessions in its own history; closing a session does not delete it.
 
 ## Sign in and choose a model
 
@@ -74,7 +83,7 @@ Codex keeps its native conversation while Wuu sends the admitted working directo
 
 These adapters launch trusted local programs with your user permissions. Wuu does not place their native tools inside its OS process sandbox. ACP agents that advertise a read-only or plan mode receive that native setting; otherwise `read_only` is refused because Wuu cannot enforce that boundary itself. OpenCode has no equivalent native mode and is refused. In Standard mode, the host maps onto a prompting native mode when advertised, and permission requests received over the protocol go through Wuu's approval flow; missing approval support declines them. `unconfined` maps onto a no-prompts native mode when advertised, otherwise it accepts supported one-shot requests. ACP approvals never become persistent `allow_always` rules. OpenCode refreshes an `ask` rule on each turn, including resumed turns. An agent that performs work without requesting permission is outside this approval boundary. New external-engine conversations default to `unconfined` when the caller omits a mode; choose deliberately in the composer access menu. See [permissions](../reference/permissions.md).
 
-Wuu saves the native session reference and reloads it on subsequent turns. If an ACP agent cannot load sessions, or a saved session fails to load, the turn fails without silently creating a replacement history. An ACP turn completes on the native prompt response. Grok can also complete on its `x.ai/session/prompt_complete` extension when that notification arrives first, because its prompt RPC can hang after the turn has finished. Quiet output after the agent has acknowledged the prompt is not treated as completion. Total silence after the prompt — no queue bookkeeping, updates, or requests — surfaces an error, because that is a wedged agent rather than extra-high reasoning. Stop requests cancel native work and clean up the child process. OpenCode uses a password-protected loopback server with a fresh password for each process; it is not exposed as a remote service.
+Wuu saves the native session reference and restores it on subsequent turns, using `session/resume` when advertised or `session/load` otherwise. If neither is supported, or restoration fails, Wuu starts a replacement session and displays a notice that the agent no longer has the earlier context. Agents advertising `session/close` receive a bounded close request before process cleanup, including after cancellation and for model-discovery sessions; close failures are reported. Closing preserves the agent's persisted history for later recovery. An ACP turn completes on the native prompt response. Grok can also complete on its `x.ai/session/prompt_complete` extension when that notification arrives first, because its prompt RPC can hang after the turn has finished. Quiet output after the agent has acknowledged the prompt is not treated as completion. Total silence after the prompt — no queue bookkeeping, updates, or requests — surfaces an error, because that is a wedged agent rather than extra-high reasoning. Stop requests cancel native work and clean up the child process. OpenCode uses a password-protected loopback server with a fresh password for each process; it is not exposed as a remote service.
 
 
 ## Forking and editing history

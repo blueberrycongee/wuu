@@ -417,7 +417,7 @@ function capture(desktop, lang, temporary, fixtureExecutable) {
   const run = async () => {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
-    const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+    const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
     write(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'openai', engines, providers: { openai: { type: 'openai-compatible', base_url: endpoint, api_key: 'test', model: 'gpt-6.1-sol' } } }));
     const stamp = '2026-10-17T00:00:00Z';
     write(path.join(home, 'projects.json'), JSON.stringify({

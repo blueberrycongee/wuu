@@ -1050,6 +1050,7 @@ button.settings-engine-expand:hover {
 
 .settings-engine-path-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
   width: 100%;
@@ -1059,6 +1060,10 @@ button.settings-engine-expand:hover {
 .settings-engine-advanced .settings-input {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.settings-engine-path-row > .settings-input {
+  flex-basis: 24ch;
 }
 
 .settings-engine-path-row > .settings-button {

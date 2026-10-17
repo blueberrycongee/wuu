@@ -117,7 +117,7 @@ const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.ex
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
-  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
     default_provider: 'fixture', engines,
     providers: { fixture: { type: 'openai-compatible', base_url: endpoint, api_key: 'fixture-only', model: 'fixture' } },
