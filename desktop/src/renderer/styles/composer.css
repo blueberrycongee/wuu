@@ -2386,12 +2386,12 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 }
 
 @container composer-shell (max-width: 480px) {
-  /* In a compact row, reserve the Git controls' fixed footprint before
-     truncating the project. The branch takes the remaining space instead of
-     using its unabridged name to compete with the project. Document composers
-     have their own stacked layout at this breakpoint. */
+  /* Reserve a readable branch prefix as well as the fixed Git controls.
+     Both names may truncate when large text cannot fit on one row. Document
+     composers have their own stacked layout at this breakpoint. */
   .composer-stack:not([data-document-composer]) .composer-git-controls {
     flex: 1 0 auto;
+    max-width: 100%;
   }
 
   .composer-stack:not([data-document-composer]) .composer-branch-control {
@@ -2399,7 +2399,8 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   }
 
   .composer-stack:not([data-document-composer]) .composer-branch-control .hero-project-pill-text {
-    width: 0;
+    width: 4ch;
+    min-width: 4ch;
   }
 }
 
