@@ -29,6 +29,7 @@ jobs:
     outputs:
       source: ${{ steps.source.outputs.source }}
       tag: ${{ steps.source.outputs.tag }}
+      linux: ${{ steps.source.outputs.linux }}
       checkpoint: ${{ steps.checkpoint.outputs.checkpoint }}
       checkpoint-artifact: ${{ steps.checkpoint.outputs.artifact }}
     steps:
@@ -50,6 +51,11 @@ jobs:
           fi
           echo "source=$source" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git cat-file -e "$source:desktop/scripts/release-linux.cjs" 2>/dev/null; then
+            echo "linux=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "linux=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Import a signed checkpoint from a completed release run
         id: checkpoint
         env:
@@ -328,10 +334,74 @@ jobs:
           fi
           rm -f "$RUNNER_TEMP/wuu-notary.p8" "$RUNNER_TEMP/wuu-release.p12"
 
+
+  linux:
+    name: Build and verify Linux x64
+    needs: prepare
+    if: needs.prepare.outputs.linux == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      WUU_RELEASE_SOURCE_COMMIT: ${{ needs.prepare.outputs.source }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      VITE_ENABLE_ACCOUNT: "false"
+      VITE_ENABLE_REMOTE_CONTROL: "false"
+      NODE_OPTIONS: "--max-old-space-size=4096"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Install Linux build and display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64
+          npm ci --prefix desktop
+          npm ci --prefix plugins
+          npm ci --prefix clients/core
+          npm ci --prefix clients/mobile-web
+          node desktop/node_modules/electron/install.js
+      - name: Require a working Linux filesystem sandbox
+        run: |
+          go test -json ./internal/processsandbox -run '^TestLinuxFilesystemBoundary$' -count=1 > linux-sandbox.json
+          node -e 'const e=require("fs").readFileSync("linux-sandbox.json","utf8").trim().split("\n").map(JSON.parse); const cases=e.filter(x=>x.Test?.startsWith("TestLinuxFilesystemBoundary/") && x.Action==="pass"); if(e.some(x=>x.Action==="skip") || cases.length!==5) throw Error("Linux release requires all five Landlock boundary cases, with no skips")'
+      - name: Build and verify Linux artifacts
+        run: npm --prefix desktop run release:linux
+      - name: Launch both extracted packages with sandboxing
+        run: xvfb-run --auto-servernum npm --prefix desktop run test:e2e:linux-package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-x64
+          path: |
+            desktop/release/wuu-linux-x64.AppImage
+            desktop/release/wuu-linux-x64.deb
+            desktop/release/*-linux.yml
+            desktop/release/SHA256SUMS-linux
+            desktop/release/verification-linux.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve Linux launch evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-package-evidence
+          path: desktop/release/linux-package-evidence/
+          if-no-files-found: ignore
+          retention-days: 30
+
   release:
     name: GitHub Release
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.verification.result == 'success' && needs.prepare.outputs.tag != '' }}
-    needs: [prepare, verification]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.verification.result == 'success' && (needs.linux.result == 'success' || (needs.linux.result == 'skipped' && needs.prepare.outputs.linux == 'false')) && needs.prepare.outputs.tag != '' }}
+    needs: [prepare, verification, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -345,11 +415,17 @@ jobs:
         with:
           name: desktop-macos-arm64
           path: desktop-release
+      - uses: actions/download-artifact@v4
+        if: needs.prepare.outputs.linux == 'true'
+        with:
+          name: desktop-linux-x64
+          path: desktop-release
       - name: Publish verified assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           RELEASE_SOURCE: ${{ needs.prepare.outputs.source }}
+          LINUX_INCLUDED: ${{ needs.prepare.outputs.linux }}
         run: |
           test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RELEASE_SOURCE"
           node -e 'const v=require("./desktop-release/verification.json"); if(v.commit!==process.env.RELEASE_SOURCE || "v"+v.version!==process.env.RELEASE_TAG) throw Error("Published artifact identity mismatch")'
@@ -369,6 +445,14 @@ jobs:
           Computer Use is included. Grant Screen Recording and Accessibility permissions in System Settings when requested to observe and control native macOS apps.
 
           EOF
+
+          if [[ "$LINUX_INCLUDED" == true ]]; then
+            node -e 'const v=require("./desktop-release/verification-linux.json"); if(v.commit!==process.env.RELEASE_SOURCE || "v"+v.version!==process.env.RELEASE_TAG || !v.checks.launch?.appImage.renderer || !v.checks.launch?.deb.renderer) throw Error("Linux artifact identity or launch verification mismatch")'
+            cat >> release-notes.md <<'EOF'
+          Linux x64 packages are also included: `wuu-linux-x64.AppImage` and `wuu-linux-x64.deb`, with `SHA256SUMS-linux`. The launchers use X11 (or XWayland). Native Wayland and arm64 are not supported by this release. Linux packages do not have Apple signing/notarization; download them from this official release. AppImage builds offer in-app updates; Debian packages update by installing the next `.deb`. Native macOS Computer Use and app snapshots are not available on Linux. See the installation guide for host requirements and verification limits.
+
+          EOF
+          fi
 
           release_args=()
           if [[ "$RELEASE_TAG" == *-* ]]; then release_args+=(--prerelease); fi

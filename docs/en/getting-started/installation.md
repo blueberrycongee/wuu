@@ -22,17 +22,74 @@ Ad-hoc signatures do not establish publisher identity or guarantee that macOS pe
 
 Download filenames omit the version; the app and release notes still identify it, and automatic updates use version metadata and verified archive hashes. Older releases may have a version in their filenames.
 
+## Install on Linux
+
+Choose a release containing `wuu-linux-x64.AppImage` and `wuu-linux-x64.deb`.
+Older macOS-only releases, including v2026.10.18, do not contain Linux packages.
+The initial Linux target is an x86-64 Debian-family graphical desktop using
+X11 or XWayland. The package launchers select X11; native Wayland and arm64
+are not supported by these packages.
+
+Download only from the official release. `SHA256SUMS-linux` checks downloaded
+bytes; it is not a publisher signature. Linux packages do not use Apple's
+Developer ID signing or notarization.
+
+For Debian, download the `.deb`, then install or upgrade it:
+
+```bash
+sudo apt install ./wuu-linux-x64.deb
+```
+
+Open Wuu from the desktop application menu. From a terminal, use
+`wuu --ozone-platform=x11`. The Debian package installs the desktop entry,
+Electron libraries and private core; Node and Go are not required.
+
+For AppImage, keep the file in a user-writable directory, then run:
+
+```bash
+chmod +x wuu-linux-x64.AppImage
+./wuu-linux-x64.AppImage
+```
+
+AppImage needs the host's GTK 3, NSS, ALSA libraries and FUSE 2 (`libfuse2` or
+`libfuse2t64`, depending on the distribution). If FUSE is unavailable, extract
+and launch without changing sandbox settings:
+
+```bash
+./wuu-linux-x64.AppImage --appimage-extract
+./squashfs-root/AppRun
+```
+
+The extracted directory has no in-app updater; replace it manually. Chromium's
+sandbox stays enabled. If the host prevents sandboxed startup, use a supported
+desktop configuration rather than adding `--no-sandbox` or disabling system
+security controls.
+
+Read-only and Standard tool execution require a kernel with enabled Landlock
+ABI 3 or later. Wuu refuses confined commands when this capability is missing;
+installing an AppImage does not supply a missing kernel sandbox. MCP OAuth
+additionally needs a running session D-Bus and an unlocked Secret Service
+keyring (for example GNOME Keyring); it has no plaintext credential fallback.
+Native macOS Computer Use and app snapshots are unavailable on Linux.
+
 ## Update the app
 
 Signed macOS builds with the **Wuu > Check for Updates** menu check GitHub stable releases shortly after launch and every six hours. Confirm the download, then choose **Restart and Install Update** when your work is saved and running tasks can stop. Choosing **Later** leaves the app running; a normal quit does not install the downloaded update automatically. Prereleases and downgrades are not offered.
 
 Older builds without this menu need one manual update: download the new release, quit Wuu with **Cmd+Q**, and replace `/Applications/wuu.app`. Closing a window alone does not quit the application. Open the replacement from Applications rather than running a second copy from the download or mounted disk image. Development and ad-hoc builds do not check for updates.
 
+Release AppImages offer **Help > Check for Updates** and the sidebar update
+indicator, with the same download/restart consent as macOS. Keep the AppImage
+in a writable directory. Debian packages and extracted AppImages update
+manually; quit Wuu and install the next `.deb` or replace the extracted app.
+An installed AppImage-to-AppImage upgrade requires separate acceptance with
+two release versions; a package smoke check does not establish that result.
+
 Settings and conversations are stored outside the app bundle. Keep that data when replacing the app, and read the release notes for any version-specific migration requirements.
 
 ## Features that depend on the build
 
-The macOS release workflow includes Computer Use and Phone access for native iOS pairing. Account login remains development-only. Older downloads may have different features; check their release notes.
+The macOS release workflow includes Computer Use. Phone access depends on the release build flag; check its release notes. Account login remains development-only. Older downloads may have different features; check their release notes.
 
 Computer Use includes its native helpers; no separate installation or environment variables are needed. Screen capture and desktop control require **Screen Recording** and **Accessibility** permissions.
 

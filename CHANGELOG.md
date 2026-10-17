@@ -8,6 +8,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Linux x64 AppImage and Debian desktop packages with X11/XWayland launchers, bundled search tools, packaging verification and a separate release gate.
+- AppImage update checks and downloads using Linux-specific release metadata; Debian packages remain manually updated.
+- Linux MCP OAuth credential storage through the session Secret Service keyring, with no plaintext fallback.
+
 ## [2026.10.18] - 2026-10-18
 
 ### Contributors

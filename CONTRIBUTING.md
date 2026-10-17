@@ -43,8 +43,8 @@ Shared project constraints and agent execution instructions are maintained in
 [`AGENTS.md`](AGENTS.md). Read its design and visual acceptance requirements
 when contributing UI changes.
 
-The current supported build targets are macOS and Linux for the CLI and arm64
-macOS for the desktop preview. Mobile and remote control are experimental and
+The supported build targets are macOS and Linux for the CLI, and arm64 macOS
+and x64 Linux (X11/XWayland) for the desktop preview. Mobile and remote control are experimental and
 do not yet have a stable public mobile release.
 
 ### Onboarding UI preview

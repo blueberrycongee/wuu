@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/blueberrycongee/wuu/releases/latest"><b>下载 Mac 版</b></a> ·
+  <a href="https://github.com/blueberrycongee/wuu/releases/latest"><b>下载 Wuu</b></a> ·
   <a href="https://blueberrycongee.github.io/wuu/zh-cn/">文档</a> ·
   <a href="README.md">English</a>
 </p>
@@ -77,7 +77,7 @@ Computer Use 让 Agent 通过辅助功能与原生输入观察并操作 macOS �
 
 ### Agent 能碰到哪里，由你决定
 
-每个对话都可以单独选权限模式：**只读** 用来调查，**标准** 允许在工作区内修改，**无边界** 留给确实需要的时候。在只读和标准模式下，Agent 运行的命令处在 macOS Seatbelt 沙箱里。打开 **替我审批** 后，shell 命令和高风险操作执行前会先交给模型审查。
+每个对话都可以单独选权限模式：**只读** 用来调查，**标准** 允许在工作区内修改，**无边界** 留给确实需要的时候。在只读和标准模式下，Agent 运行的命令处在 macOS Seatbelt 或 Linux Landlock 沙箱里。Linux 需要 Landlock ABI 3 或更高版本；无法建立隔离时会拒绝运行。打开 **替我审批** 后，shell 命令和高风险操作执行前会先交给模型审查。
 
 如果任务应该在别处跑，可以把 Agent 的工具放进 Docker、通过 SSH 连到远程机器、使用 Singularity/Apptainer，或者在 Modal、Daytona、Vercel 的沙箱里运行。
 
@@ -91,7 +91,7 @@ Computer Use 让 Agent 通过辅助功能与原生输入观察并操作 macOS �
 
 ## 开始使用
 
-桌面预览版支持 Apple 芯片的 Mac。从 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 下载，把 `wuu.app` 放进 `/Applications` 后打开。
+桌面预览版面向 Apple 芯片的 Mac，以及使用 X11/XWayland 的 Linux x64 桌面。请在 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 选择对应安装包：macOS 将 `wuu.app` 放进 `/Applications`；Linux 使用 AppImage 或 Debian 包。Linux 支持从包含这些附件的版本开始，之前仅有 macOS 附件的版本不包含 Linux 安装包。Linux 环境要求和更新方式见[安装指南](docs/zh-cn/getting-started/installation.md)。
 
 发布流水线要求 Apple Developer ID 正式签名和公证。早期预览版仅使用 ad-hoc 签名，请按下载版本的发布说明和[安装指南](docs/zh-cn/getting-started/installation.md)确认。
 

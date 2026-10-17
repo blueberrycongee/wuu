@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/blueberrycongee/wuu/releases/latest"><b>Download for Mac</b></a> ·
+  <a href="https://github.com/blueberrycongee/wuu/releases/latest"><b>Download Wuu</b></a> ·
   <a href="https://blueberrycongee.github.io/wuu/en/">Documentation</a> ·
   <a href="README_zh.md">简体中文</a>
 </p>
@@ -77,7 +77,7 @@ Press Enter while a task runs to steer it, or Command + Enter to queue the next 
 
 ### Decide how far the agent can reach
 
-Pick a permission mode for each conversation. **Read-only** is for investigation. **Standard** allows edits inside the workspace. **Unconfined** lifts the boundary when you really need it. In Read-only and Standard, the agent's commands run inside the macOS Seatbelt sandbox. Turn on **Approve for me** to have the model review shell commands and risky actions before they run.
+Pick a permission mode for each conversation. **Read-only** is for investigation. **Standard** allows edits inside the workspace. **Unconfined** lifts the boundary when you really need it. In Read-only and Standard, the agent's commands run inside macOS Seatbelt or Linux Landlock. Linux requires Landlock ABI 3 or later; unavailable confinement fails closed. Turn on **Approve for me** to have the model review shell commands and risky actions before they run.
 
 When the work belongs somewhere else, run the agent's tools in Docker, over SSH, in Singularity/Apptainer, or in a Modal, Daytona or Vercel sandbox.
 
@@ -91,7 +91,7 @@ Plugins add tools and features: scheduled automation, persistent goals, task che
 
 ## Get started
 
-The desktop preview runs on Apple silicon Macs. Download it from [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest), move `wuu.app` to `/Applications`, and open it.
+The desktop preview targets Apple silicon Macs and Linux x64 with X11/XWayland. Choose the matching assets on [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest): move `wuu.app` to `/Applications` on macOS, or use the Linux AppImage / Debian package. Linux support begins with releases containing those assets; older macOS-only releases do not include them. See [installation](docs/en/getting-started/installation.md) for Linux requirements and update instructions.
 
 The release pipeline requires Apple Developer ID signing and notarization. Older previews used ad-hoc signatures; check the release notes and [installation guide](docs/en/getting-started/installation.md) for the downloaded version.
 
