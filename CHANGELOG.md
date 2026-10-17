@@ -32,6 +32,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Reuse streaming HTTP connection pools across model turns, including Codex,
   Grok Build and SuperGrok credential adapters, instead of rebuilding a pool for
   every request.
+- Refresh DeepSeek Flash 1017 metadata, exact output limits, and peak API prices.
+  Stop advertising retired Flash models while preserving saved compatibility
+  aliases, and avoid unsupported forced tool choice in Chat Completions thinking mode.
 - Show a local edge light on sidebar hover that gathers toward the pointer
   when pressed, follows the drag, and springs back on release. Extend its soft
   fade above and below the cursor so the feedback remains visible while held.

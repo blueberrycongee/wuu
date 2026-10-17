@@ -43,6 +43,16 @@ GPT-6 Sol and Luna support reasoning levels from `none` through `max`, defaultin
 
 Claude Opus 5.5 and Fable 5.1 always use adaptive thinking. Wuu maps a saved `none` selection to `low`; their defaults are `medium` and `high`, respectively. Wuu requests readable thinking summaries and lets the API drop thinking blocks invalidated by context changes while retaining valid signed blocks. These models reject forced tool choice, so Wuu expresses a required closing tool call as an instruction with automatic tool selection; this does not guarantee that the model calls it. See the official [Opus 5.5](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide) and [Fable 5.1](https://platform.claude.com/docs/en/models/fable-5-1/migration-guide) migration guides.
 
+## DeepSeek models
+
+Use `deepseek-flash` for DeepSeek V4.1 Flash 1017, or `deepseek-v4-pro` for V4 Pro. The official base URL is `https://api.deepseek.com`; Wuu defaults these models to Responses. Anthropic-compatible connections use `https://api.deepseek.com/anthropic`. Both models have a 1M context window, a maximum output of 393,216 tokens, and reasoning levels `none`, `low`, `high` (default), and `max`. Flash also accepts images.
+
+The catalog no longer advertises the retired `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` models. Saved selections using these accepted aliases retain Flash capabilities and resolve to the latest `deepseek-flash`; explicitly configured model choices remain until you remove them. The discontinued `deepseek-chat` and `deepseek-reasoner` IDs are not offered by the official catalog; replace saved selections with `deepseek-flash`. V4 Pro remains available.
+
+In Chat Completions thinking mode, DeepSeek rejects forced tool choice. Wuu uses automatic tool selection for these reasoning variants; `none` retains forced tool support. Thinking mode ignores temperature. For Flash, `top_p` only takes effect while thinking, with an effective range of 0.95–1.0; outside thinking it is fixed at 1.0.
+
+Catalog prices use **peak USD rates per million tokens**: Flash input $0.30, cached input $0.006, output $1.20; Pro input $1.32, cached input $0.044, output $3.96. Off-peak rates are half. Peak hours are Monday–Friday 01:00–04:00 and 06:00–10:00 UTC, excluding Chinese public holidays. These static catalog rates do not calculate a time-dependent bill. See the official [model update](https://api-docs.deepseek.com/updates), [API parameters](https://api-docs.deepseek.com/api/create-chat-completion), and [pricing](https://api-docs.deepseek.com/quick_start/pricing).
+
 ## Use an existing subscription
 
 | Connection | Setup |

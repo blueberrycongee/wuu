@@ -41,6 +41,16 @@ GPT-6 Sol 和 Luna 支持 `none` 至 `max` 推理档位，默认 `medium`。Fast
 
 Claude Opus 5.5 和 Fable 5.1 始终使用自适应思考。Wuu 将已保存的 `none` 选择映射为 `low`，两者默认档位分别为 `medium` 和 `high`。Wuu 请求可读的思考摘要，并允许 API 丢弃因上下文变更而失效的思考块，同时保留有效的签名块。这两个模型不接受强制工具选择，因此 Wuu 通过指令表达收尾工具调用要求，使用自动工具选择；这不保证模型一定调用工具。详见官方 [Opus 5.5](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide) 和 [Fable 5.1](https://platform.claude.com/docs/en/models/fable-5-1/migration-guide) 迁移指南。
 
+## DeepSeek 模型
+
+使用 `deepseek-flash` 调用 DeepSeek V4.1 Flash 1017，或使用 `deepseek-v4-pro` 调用 V4 Pro。官方基础地址为 `https://api.deepseek.com`，Wuu 默认使用 Responses；Anthropic 兼容连接使用 `https://api.deepseek.com/anthropic`。两者均支持 1M 上下文、最多 393,216 token 输出，以及 `none`、`low`、`high`（默认）、`max` 思考档位。Flash 还支持图片输入。
+
+目录不再推荐已下线的 `deepseek-v4-flash` 和 `deepseek-v4-flash-vision-exp`。已有选择使用这两个仍被官方接受的别名时，保留 Flash 能力并解析到最新 `deepseek-flash`；明确配置过的模型选项会保留，直到手动删除。官方目录不再提供已停用的 `deepseek-chat`、`deepseek-reasoner`，保存过这些选择时请改用 `deepseek-flash`。V4 Pro 仍可使用。
+
+DeepSeek 的 Chat Completions 思考模式不接受强制工具选择。Wuu 对这些思考档位使用自动工具选择，`none` 档仍支持强制工具调用。思考模式忽略 temperature；Flash 的 `top_p` 仅在思考模式生效，有效范围为 0.95–1.0，非思考模式固定为 1.0。
+
+目录按**高峰时段美元价格／百万 token**记录：Flash 输入 $0.30、缓存命中 $0.006、输出 $1.20；Pro 输入 $1.32、缓存命中 $0.044、输出 $3.96。空闲时段半价。高峰为北京时间周一至周五 09:00–12:00、14:00–18:00，中国法定节假日除外。这些静态目录价格不计算随时段变化的实际账单。详见官方[模型更新](https://api-docs.deepseek.com/zh-cn/updates)、[接口参数](https://api-docs.deepseek.com/zh-cn/api/create-chat-completion)和[价格说明](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)。
+
 ## 使用已有订阅
 
 | 连接方式 | 设置方法 |

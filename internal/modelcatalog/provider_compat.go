@@ -249,15 +249,18 @@ func applyOfficialCatalogCorrections(data *catalogData) {
 	}
 }
 
+// https://api-docs.deepseek.com/updates
+// https://api-docs.deepseek.com/api/create-chat-completion
+// https://api-docs.deepseek.com/quick_start/pricing
 func applyDeepSeekOfficialCatalog(provider *Provider) {
 	if provider == nil {
 		return
 	}
 	flash := Model{
 		ID:               "deepseek-flash",
-		Name:             "DeepSeek V4.1 Flash",
+		Name:             "DeepSeek V4.1 Flash 1017",
 		Family:           "deepseek-flash",
-		ReleaseDate:      "2026-09-10",
+		ReleaseDate:      "2026-10-17",
 		Reasoning:        true,
 		ReasoningOptions: officialEffortOptions(true, "low", "high", "max"),
 		Attachment:       officialBool(true),
@@ -266,26 +269,16 @@ func applyDeepSeekOfficialCatalog(provider *Provider) {
 		Temperature:      officialBool(true),
 		Interleaved:      map[string]any{"field": "reasoning_content"},
 		Modalities:       &Modalities{Input: []string{"text", "image"}, Output: []string{"text"}},
-		Limit:            &Limit{Context: 1_000_000, Output: 384_000},
+		Limit:            &Limit{Context: 1_000_000, Output: 393_216},
 		SupportedEfforts: []string{"none", "low", "high", "max"},
 		DefaultVariant:   "high",
 	}
 	upsertOfficialModel(provider, flash)
-	legacyFlash := flash
-	legacyFlash.ID = "deepseek-v4-flash"
-	legacyFlash.Name = "DeepSeek V4 Flash"
-	legacyFlash.APIID = "deepseek-flash"
-	upsertOfficialModel(provider, legacyFlash)
-	legacyVision := flash
-	legacyVision.ID = "deepseek-v4-flash-vision-exp"
-	legacyVision.Name = "DeepSeek V4 Flash Vision Exp"
-	legacyVision.APIID = "deepseek-flash"
-	upsertOfficialModel(provider, legacyVision)
 	pro := Model{
 		ID:               "deepseek-v4-pro",
 		Name:             "DeepSeek V4 Pro",
 		Family:           "deepseek-thinking",
-		ReleaseDate:      "2026-08-12",
+		ReleaseDate:      "2026-08-13",
 		Reasoning:        true,
 		ReasoningOptions: officialEffortOptions(true, "low", "high", "max"),
 		Attachment:       officialBool(false),
@@ -294,11 +287,30 @@ func applyDeepSeekOfficialCatalog(provider *Provider) {
 		Temperature:      officialBool(true),
 		Interleaved:      map[string]any{"field": "reasoning_content"},
 		Modalities:       &Modalities{Input: []string{"text"}, Output: []string{"text"}},
-		Limit:            &Limit{Context: 1_000_000, Output: 384_000},
+		Limit:            &Limit{Context: 1_000_000, Output: 393_216},
 		SupportedEfforts: []string{"none", "low", "high", "max"},
 		DefaultVariant:   "high",
 	}
 	upsertOfficialModel(provider, pro)
+
+	models := provider.Models[:0]
+	for _, model := range provider.Models {
+		switch model.ID {
+		case "deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp":
+			// Retired IDs must not reappear after loading an older cache or
+			// refreshing models.dev. Accepted Flash aliases are resolved only
+			// for existing selections by MergeProvider.
+			continue
+		case "deepseek-flash":
+			// Catalog rates use peak USD prices per million tokens. Off-peak
+			// rates are half; the schedule is documented in model-services.
+			model.Cost = map[string]any{"input": 0.3, "output": 1.2, "cache_read": 0.006, "reasoning": 1.2}
+		case "deepseek-v4-pro":
+			model.Cost = map[string]any{"input": 1.32, "output": 3.96, "cache_read": 0.044, "reasoning": 3.96}
+		}
+		models = append(models, model)
+	}
+	provider.Models = models
 }
 
 func applyKimiCodingOfficialCatalog(provider *Provider) {
