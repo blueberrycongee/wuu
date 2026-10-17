@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Removed
+
+- Remove the built-in suggestions from Automations so the page focuses on existing
+  tasks and completed runs.
+
 ### Fixed
 
 - Keep the macOS Dock icon visible when the desktop pet is enabled.
