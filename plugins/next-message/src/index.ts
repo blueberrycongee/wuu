@@ -76,12 +76,15 @@ function parsePrediction(value: unknown): PredictionInput {
 
 export function createNextMessagePlugin(): RuntimePlugin {
   let settings: Settings = {};
+  let settingsWrites = Promise.resolve();
   // Only identities are retained. The frontend never replays historical turns;
   // bounding recent identities keeps long-running plugin generations small.
   const attempted = new Set<string>();
   return {
+    concurrentCapabilities: ["plugin.client.request"],
     async initialize(_params, host) {
       settings = {};
+      settingsWrites = Promise.resolve();
       attempted.clear();
       const stored = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
       if (stored.value !== null) {
@@ -101,16 +104,30 @@ export function createNextMessagePlugin(): RuntimePlugin {
       if (!isRecord(request) || typeof request.method !== "string") throw new Error("Invalid next-message client request");
       execution.signal.throwIfAborted();
       switch (request.method) {
-        case "next-message.get": return { output: { result: { settings: { ...settings } } } };
+        case "next-message.get": {
+          await settingsWrites;
+          execution.signal.throwIfAborted();
+          return { output: { result: { settings: { ...settings } } } };
+        }
         case "next-message.update": {
           const next = parseSettings(request.input);
           if (!next.model_alias && !next.provider) throw new Error("Select a model for next-message suggestions");
-          await host.call("host.storage.set", { scope: "workspace", key: storageKey, value: JSON.stringify(next) }, { signal: execution.signal });
-          settings = next;
-          return { output: { result: { settings: { ...settings } } } };
+          // Serialize persistence, not inference: overlapping saves must commit
+          // in request order and publish only successfully stored selections.
+          const saved = settingsWrites.then(async () => {
+            execution.signal.throwIfAborted();
+            await host.call("host.storage.set", { scope: "workspace", key: storageKey, value: JSON.stringify(next) }, { signal: execution.signal });
+            settings = next;
+            return { output: { result: { settings: { ...settings } } } };
+          });
+          settingsWrites = saved.then(() => undefined, () => undefined);
+          return saved;
         }
         case "next-message.predict": {
           const input = parsePrediction(request.input);
+          await settingsWrites;
+          execution.signal.throwIfAborted();
+          const modelSettings = settings;
           const selected = [...input.turns];
           const encode = () => JSON.stringify({ turns: selected.map(turn => ({
             user: turn.userText, assistant: turn.assistantText,
@@ -124,7 +141,7 @@ export function createNextMessagePlugin(): RuntimePlugin {
           }
           const key = JSON.stringify([input.threadId, input.turnId]);
           const abstain = { output: { result: { suggestion: null } } };
-          if (!settings.model_alias && !settings.provider) return abstain;
+          if (!modelSettings.model_alias && !modelSettings.provider) return abstain;
           if (attempted.has(key)) return abstain;
           attempted.add(key);
           if (attempted.size > maxRememberedTurns) attempted.delete(attempted.values().next().value!);
@@ -137,8 +154,8 @@ export function createNextMessagePlugin(): RuntimePlugin {
               method: "call",
               params: {
                 messages: [{ role: "system", content: prompt }, { role: "user", content }],
-                ...settings,
-                ...(settings.provider && settings.variant === undefined ? { preferred_effort: "low" } : {}),
+                ...modelSettings,
+                ...(modelSettings.provider && modelSettings.variant === undefined ? { preferred_effort: "low" } : {}),
                 max_output_tokens: 128,
                 allow_unbounded_output: true,
                 timeout_ms: 30000,

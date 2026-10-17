@@ -520,10 +520,13 @@ function parsePrediction(value) {
 }
 function createNextMessagePlugin() {
   let settings = {};
+  let settingsWrites = Promise.resolve();
   const attempted = /* @__PURE__ */ new Set();
   return {
+    concurrentCapabilities: ["plugin.client.request"],
     async initialize(_params, host) {
       settings = {};
+      settingsWrites = Promise.resolve();
       attempted.clear();
       const stored = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
       if (stored.value !== null) {
@@ -546,17 +549,28 @@ function createNextMessagePlugin() {
       if (!isRecord(request) || typeof request.method !== "string") throw new Error("Invalid next-message client request");
       execution.signal.throwIfAborted();
       switch (request.method) {
-        case "next-message.get":
+        case "next-message.get": {
+          await settingsWrites;
+          execution.signal.throwIfAborted();
           return { output: { result: { settings: { ...settings } } } };
+        }
         case "next-message.update": {
           const next = parseSettings(request.input);
           if (!next.model_alias && !next.provider) throw new Error("Select a model for next-message suggestions");
-          await host.call("host.storage.set", { scope: "workspace", key: storageKey, value: JSON.stringify(next) }, { signal: execution.signal });
-          settings = next;
-          return { output: { result: { settings: { ...settings } } } };
+          const saved = settingsWrites.then(async () => {
+            execution.signal.throwIfAborted();
+            await host.call("host.storage.set", { scope: "workspace", key: storageKey, value: JSON.stringify(next) }, { signal: execution.signal });
+            settings = next;
+            return { output: { result: { settings: { ...settings } } } };
+          });
+          settingsWrites = saved.then(() => void 0, () => void 0);
+          return saved;
         }
         case "next-message.predict": {
           const input = parsePrediction(request.input);
+          await settingsWrites;
+          execution.signal.throwIfAborted();
+          const modelSettings = settings;
           const selected = [...input.turns];
           const encode = () => JSON.stringify({ turns: selected.map((turn) => ({
             user: turn.userText,
@@ -571,7 +585,7 @@ function createNextMessagePlugin() {
           }
           const key = JSON.stringify([input.threadId, input.turnId]);
           const abstain = { output: { result: { suggestion: null } } };
-          if (!settings.model_alias && !settings.provider) return abstain;
+          if (!modelSettings.model_alias && !modelSettings.provider) return abstain;
           if (attempted.has(key)) return abstain;
           attempted.add(key);
           if (attempted.size > maxRememberedTurns) attempted.delete(attempted.values().next().value);
@@ -582,8 +596,8 @@ function createNextMessagePlugin() {
               method: "call",
               params: {
                 messages: [{ role: "system", content: prompt }, { role: "user", content }],
-                ...settings,
-                ...settings.provider && settings.variant === void 0 ? { preferred_effort: "low" } : {},
+                ...modelSettings,
+                ...modelSettings.provider && modelSettings.variant === void 0 ? { preferred_effort: "low" } : {},
                 max_output_tokens: 128,
                 allow_unbounded_output: true,
                 timeout_ms: 3e4

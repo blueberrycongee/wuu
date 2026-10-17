@@ -588,6 +588,49 @@ try {
       await runtime.shutdown();
     }
   });
+  await scenario('next-message', 'concurrent settings preserve save order and skip cancelled writes', async () => {
+    const host = new FixtureHost('next-message-concurrent-settings');
+    let release;
+    host.intercept = call => {
+      if (call.service === 'host.storage.set' && JSON.parse(call.params.value).model_alias === 'first') {
+        return new Promise(resolve => { release = resolve; });
+      }
+      if (call.service === 'host.model.request') return {
+        text: '{"suggestion":"Continue"}', provider: 'fixture', model: 'fixture', finish_reason: 'stop', truncated: false,
+      };
+    };
+    let runtime = await launch('next-message', host);
+    const first = runtime.client('next-message.update', { model_alias: 'first' });
+    await host.waitCall('host.storage.set');
+    const last = runtime.client('next-message.update', { model_alias: 'last' });
+    const cancelled = runtime.request('capability.invoke', { capability: 'plugin.client.request', input: {
+      method: 'next-message.update', input: { model_alias: 'cancelled' },
+    }, output: {}, execution_id: 'cancelled-settings-write' });
+    const rejected = assert.rejects(cancelled, /abort|cancel/i);
+    const read = runtime.client('next-message.get');
+    const prediction = runtime.client('next-message.predict', { threadId: 'parent', turnId: 'after-save', turns: [
+      { id: 'after-save', userText: 'Check this', assistantText: 'Checked', imageCount: 0, fileCount: 0 },
+    ] });
+    runtime.send({ id: 'cancel-settings', method: 'execution.cancel', params: { execution_id: 'cancelled-settings-write' } });
+    // This ordinary callback acknowledges dispatch without releasing the
+    // reentrant capability handlers that are waiting for persistence.
+    await runtime.request('service.changed', { services: [] });
+    assert.equal(host.calls.filter(call => call.service === 'host.storage.set').length, 1);
+    assert.equal(host.calls.filter(call => call.service === 'host.model.request').length, 0);
+    release();
+    assert.deepEqual(await first, { settings: { model_alias: 'first' } });
+    assert.deepEqual(await last, { settings: { model_alias: 'last' } });
+    await rejected;
+    assert.deepEqual(await read, { settings: { model_alias: 'last' } });
+    assert.deepEqual(await prediction, { suggestion: 'Continue' });
+    assert.deepEqual(host.calls.filter(call => call.service === 'host.storage.set').map(call => JSON.parse(call.params.value)),
+      [{ model_alias: 'first' }, { model_alias: 'last' }]);
+    assert.equal(host.calls.find(call => call.service === 'host.model.request').params.model_alias, 'last');
+    await runtime.shutdown();
+    runtime = await launch('next-message', host);
+    assert.deepEqual(await runtime.client('next-message.get'), { settings: { model_alias: 'last' } });
+    await runtime.shutdown();
+  });
   await scenario('next-message', 'bounded visible-turn request uses the live execution and optional alias', async () => {
     const host = new FixtureHost('next-message-request');
     const input = { threadId: 'private-thread-id', turnId: 'turn-one', turns: [

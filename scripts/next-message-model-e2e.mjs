@@ -22,6 +22,7 @@ const scratch = await mkdtemp(join(output, "run-"));
 const home = join(scratch, "state");
 await mkdir(home);
 const events = new EventEmitter(), transcript = [], requests = [], providerCalls = [], closed = [];
+const releases = new Map();
 const result = { started_at: new Date().toISOString(), scratch, checks: [], status: "failed" };
 let child, item, stderr = "", sequence = 0;
 
@@ -121,7 +122,8 @@ const provider = createServer(async (request, response) => {
     response.flushHeaders();
     return;
   }
-  if (tag === "slow-success") await new Promise(resolve => setTimeout(resolve, 22_000));
+  if (tag.startsWith("slow-success")) await new Promise(resolve => setTimeout(resolve, 22_000));
+  if (tag.startsWith("gated-")) await new Promise(resolve => { releases.set(tag, resolve); });
   const text = tag === "ambiguous" ? '{"suggestion":null}'
     : tag === "malformed" ? '{"suggestion":"first","suggestion":"second"}'
       : tag === "too-long" ? JSON.stringify({ suggestion: "x".repeat(101) })
@@ -273,27 +275,47 @@ try {
   }
   result.checks.push("100-character boundary accepted; longer, null, malformed, truncated and provider errors abstain without retry");
 
-  assert.deepEqual(await predict("slow-success"), { suggestion: "Run the focused checks" });
-  result.checks.push("a provider response after the former 20-second plugin deadline still reaches the composer");
+  const parallelStarted = Date.now();
+  const parallel = Promise.all(["one", "two"].map(id => call("next-message.predict", {
+    ...turn(`slow-success-${id}`), threadId: `parallel-thread-${id}`,
+  })));
+  assert.deepEqual(await parallel, Array.from({ length: 2 }, () => ({ suggestion: "Run the focused checks" })));
+  result.parallel_transport_ms = Date.now() - parallelStarted;
+  assert(result.parallel_transport_ms >= 21000 && result.parallel_transport_ms < 30000,
+    `independent 22-second predictions were serialized: ${result.parallel_transport_ms}ms`);
+  assert.deepEqual(await call("next-message.get"), { settings: { provider: "fixture", model: "gpt-test" } });
+  result.checks.push("two independent 22-second predictions overlap and leave the plugin healthy");
 
   const timed = predict("hold-timeout");
   const timeoutCall = await waitFor("provider", providerCalls, call => call.tag === "hold-timeout", "timeout request started");
+  // Stagger the independent execution so its own 30-second budget remains
+  // live when the first deadline fires; release it only after that timeout.
+  await new Promise(resolve => setTimeout(resolve, 5000));
+  const timeoutSurvivor = call("next-message.predict", {
+    ...turn("gated-timeout-survivor"), threadId: "timeout-survivor-thread",
+  });
+  await waitFor("provider", providerCalls, call => call.tag === "gated-timeout-survivor", "timeout survivor started");
   assert.deepEqual(await timed, { suggestion: null });
   const timeoutClosed = await waitFor("closed", closed, entry => entry.tag === "hold-timeout", "timeout disconnect");
   result.timeout_transport_ms = timeoutClosed.at - timeoutCall.at;
   assert(result.timeout_transport_ms >= 29000 && result.timeout_transport_ms < 34000, `unexpected 30-second budget: ${result.timeout_transport_ms}ms`);
+  assert(!closed.some(entry => entry.tag === "gated-timeout-survivor"), "one deadline cancelled another thread's prediction");
+  releases.get("gated-timeout-survivor")();
+  assert.deepEqual(await timeoutSurvivor, { suggestion: "Run the focused checks" });
   const afterTimeout = providerCalls.length;
   assert.deepEqual(await predict("hold-timeout"), { suggestion: null });
   assert.equal(providerCalls.length, afterTimeout);
-  result.checks.push("30-second request budget disconnects real HTTP transport and does not retry");
+  result.checks.push("30-second request budget disconnects only its own HTTP transport without retry or plugin retirement");
 
   const cancelledParams = clientParams("next-message.predict", turn("hold-cancel"), "cancel-prediction");
   const cancelled = rpcRaw("plugin/client/request", cancelledParams);
   await waitFor("provider", providerCalls, call => call.tag === "hold-cancel", "cancel request started");
   const duringCancel = providerCalls.length;
-  // Capability invocations are serialized by the SDK. Admit the duplicate,
-  // then cancel the first without waiting behind its queued capability.
   const duplicate = predict("hold-cancel");
+  const cancelSurvivor = call("next-message.predict", {
+    ...turn("gated-cancel-survivor"), threadId: "cancel-survivor-thread",
+  });
+  await waitFor("provider", providerCalls, call => call.tag === "gated-cancel-survivor", "cancel survivor started");
   const identity = { id: item.id, fingerprint: item.fingerprint, request_id: cancelledParams.request_id };
   assert.equal((await rpc("plugin/client/cancel", { ...identity, request_id: "unrelated" })).cancelled, false);
   assert(!closed.some(entry => entry.tag === "hold-cancel"));
@@ -303,12 +325,15 @@ try {
   const cancelClosed = await waitFor("closed", closed, entry => entry.tag === "hold-cancel", "cancel disconnect");
   result.abort_transport_ms = cancelClosed.at - cancelStarted;
   assert(result.abort_transport_ms < 2500, `abort waited for the request deadline: ${result.abort_transport_ms}ms`);
+  assert(!closed.some(entry => entry.tag === "gated-cancel-survivor"), "client cancel aborted another thread's prediction");
+  releases.get("gated-cancel-survivor")();
+  assert.deepEqual(await cancelSurvivor, { suggestion: "Run the focused checks" });
   assert.deepEqual(await duplicate, { suggestion: null });
-  assert.equal(providerCalls.length, duringCancel, "concurrent duplicate started a second inference");
+  assert.equal(providerCalls.length, duringCancel + 1, "concurrent duplicate started a second inference");
   const afterCancel = providerCalls.length;
   assert.deepEqual(await predict("hold-cancel"), { suggestion: null });
   assert.equal(providerCalls.length, afterCancel);
-  result.checks.push("client abort rejects its execution, disconnects provider transport and retains deduplication");
+  result.checks.push("client abort disconnects only its execution, preserves another prediction and retains deduplication");
 
   const disabled = rpcRaw("plugin/client/request", clientParams("next-message.predict", turn("hold-disable")));
   await waitFor("provider", providerCalls, call => call.tag === "hold-disable", "disable request started");
@@ -339,8 +364,8 @@ try {
   assert(accounting.operations.every(operation => operation.owner_id === "plugin:next-message" && operation.kind === "auxiliary" && operation.status !== "active"));
   assert(accounting.workflows.every(workflow => workflow.status !== "active"));
   const reported = accounting.submissions.filter(submission => submission.has_reported_usage);
-  assert.equal(reported.length, 12);
-  assert.equal(reported.reduce((total, usage) => total + usage.reported_input_tokens + usage.reported_output_tokens, 0), 120);
+  assert.equal(reported.length, 15);
+  assert.equal(reported.reduce((total, usage) => total + usage.reported_input_tokens + usage.reported_output_tokens, 0), 150);
   assert.equal(accounting.sessions, 0);
   assert.equal(accounting.messages, 0);
   result.checks.push("durable plugin-owned terminal accounting and reported usage; zero sessions/messages persisted");
