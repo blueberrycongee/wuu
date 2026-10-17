@@ -1778,9 +1778,9 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     "wuu:system-notification",
     (event, params: SystemNotificationParams): SystemNotificationResult => {
-      // macOS first: the notification stack differs per platform (app bundle,
-      // permission model, toast routing). Windows/Linux land separately.
-      if (process.platform !== "darwin") {
+      // Linux uses Electron's libnotify backend; Windows toast registration
+      // still needs its own integration.
+      if ((process.platform !== "darwin" && process.platform !== "linux") || !Notification.isSupported()) {
         return { shown: false };
       }
       const win = BrowserWindow.fromWebContents(event.sender);
@@ -1793,8 +1793,13 @@ app.whenReady().then(async () => {
         title: params.title,
         body: params.body,
       });
+      let failedToShow = false;
       activeSystemNotifications.add(notification);
       notification.on("close", () => {
+        activeSystemNotifications.delete(notification);
+      });
+      notification.on("failed", () => {
+        failedToShow = true;
         activeSystemNotifications.delete(notification);
       });
       notification.on("click", () => {
@@ -1808,7 +1813,7 @@ app.whenReady().then(async () => {
         activeSystemNotifications.delete(notification);
       });
       notification.show();
-      return { shown: true };
+      return { shown: !failedToShow };
     },
   );
   ipcMain.handle("wuu:desktop-update-state", () => desktopUpdates?.state ?? { kind: "unsupported" });
@@ -2928,14 +2933,18 @@ app.on("before-quit", (event) => {
 
 function prepareToQuit(): Promise<void> {
   if (quitCleanup) return quitCleanup;
-  desktopUpdates?.stop();
-  systemPermissions.close();
-  appContextCapture.dispose();
-  terminalSessionManager.cleanup();
-  // Destroy every agent view + the hidden host window before the pool shuts
-  // down so no WebContentsView leaks past quit.
-  browserHostCoordinator.destroyAll();
-  quitCleanup = Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(), phoneAccess.shutdown()])
+  // Publish the shared promise before destroying windows: closing the hidden
+  // host can synchronously re-enter quit through window-all-closed.
+  quitCleanup = Promise.resolve().then(() => {
+    desktopUpdates?.stop();
+    systemPermissions.close();
+    appContextCapture.dispose();
+    terminalSessionManager.cleanup();
+    // Destroy every agent view + the hidden host window before the pool shuts
+    // down so no WebContentsView leaks past quit.
+    browserHostCoordinator.destroyAll();
+    return Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(), phoneAccess.shutdown()]);
+  })
     .then((results) => {
       for (const result of results) {
         if (result.status === "rejected") console.error("Shutdown cleanup failed", result.reason);
@@ -2952,3 +2961,19 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
+if (process.platform === "linux") {
+  app.on("browser-window-created", (_event, window) => {
+    window.once("closed", () => {
+      // The hidden browser host is infrastructure, not a way to reopen Wuu.
+      // Preserve last-window quit behavior after browsing; pet, PiP and other
+      // application windows still keep the app alive as before.
+      setImmediate(() => {
+        const remaining = BrowserWindow.getAllWindows().filter(win => !win.isDestroyed());
+        if (remaining.length === 1 && browserHostCoordinator.isHostWindow(remaining[0])) {
+          app.quit();
+        }
+      });
+    });
+  });
+}

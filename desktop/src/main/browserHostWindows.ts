@@ -373,6 +373,10 @@ export class BrowserHostCoordinator {
     return this.agentWebContentsIds.has(webContentsID);
   }
 
+  isHostWindow(window: object): boolean {
+    return window === this.hostWindow;
+  }
+
   // -------------------------------------------------------------------------
   // Preview-surface accessors (browser PiP). All read-only against the tab;
   // returning undefined signals "tab gone" so the surface can tear down

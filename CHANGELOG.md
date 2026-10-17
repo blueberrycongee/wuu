@@ -19,6 +19,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Remove the workspace new page's Continue viewing section, which duplicated
   files, diffs, and artifacts already available in the tab strip.
 
+### Fixed
+
+- Quit normally after closing the last Linux desktop window, including after using the embedded browser, while preserving open pet and pop-out windows.
+- Allow background task and question notifications on Linux desktops with native notification support.
+
 ## [2026.10.18] - 2026-10-18
 
 ### Contributors
