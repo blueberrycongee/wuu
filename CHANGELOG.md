@@ -8,46 +8,20 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
-### Changed
+## [2026.10.18] - 2026-10-18
 
-- Simplify the next-message prompt to predict a natural continuation in the user's
-  language, tone, and intent.
+### Contributors
 
-### Removed
+@blueberrycongee
 
-- Remove the built-in suggestions from Automations so the page focuses on existing
-  tasks and completed runs.
+### Highlights
 
-### Fixed
-
-- Match the settings sidebar boundary to the main window's rounded canvas,
-  including spacing and resize feedback.
-- Preserve the composer's focus appearance when Tab inserts a next-message suggestion.
-- Keep workspace and branch names aligned with their icons in narrow composers.
-- Refresh external agent discovery after installing a CLI while the desktop is
-  running, including login-shell paths and runtime registration. Preserve newer
-  engine settings and concurrent thread creation during refresh. Detect standard
-  user installs in the onboarding preview, and preserve terminal PATH and explicit
-  engine binary overrides when launching macOS source development builds.
-- Offer detected Codex and Grok logins together during first-run setup, connecting
-  either only when selected, and keep other connection options visible alongside
-  existing connections. Locked connection fields no longer imply a valid login;
-  authenticated discovered connections remain usable from the composer.
-- Hand long foreground commands to the background process manager after ten
-  seconds so independent tools can proceed, while preserving output and completion
-  notifications. Keep the requested foreground wait in side conversations.
-  Record tool queue wait separately from execution time.
-- Keep the macOS Dock icon visible when the desktop pet is enabled.
-- Restore filled open-state indicators for the left and right desktop sidebar
-  toggle icons.
-- Restore next-message suggestions after clearing or undoing a Tab-accepted draft,
-  allowing repeated acceptance without another model request.
-- Use the same quiet gray for completed tool summaries, running tool summaries,
-  and composer placeholder text.
-
-- Keep the context compaction ring on the process summary line when a long
-  activity summary must truncate, instead of wrapping the ring onto its own row.
-- Keep the macOS permission guide clear of System Settings authentication dialogs and file pickers, and make it follow window movement continuously instead of jumping between slow permission checks.
+- Refresh external agent discovery after CLI installation and offer detected Codex and Grok logins together during setup, while preserving current settings and other connection options.
+- Let independent tools proceed while long foreground commands continue in the background, with output and completion notifications preserved.
+- Restore next-message suggestions after clearing or undoing an accepted draft, preserve composer focus on Tab, and improve natural continuations.
+- Refine rounded settings and sidebar layouts, align workspace and branch labels, keep compaction indicators on long summaries, and unify Markdown document previews.
+- Keep the macOS Dock icon visible with the desktop pet, and make the permission guide follow window movement while avoiding system dialogs.
+- Synchronize workspace switches with a clear success notice and simplify Automations around existing tasks and completed runs.
 
 ## [2026.10.17] - 2026-10-17
 
