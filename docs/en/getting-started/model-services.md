@@ -12,7 +12,7 @@ These settings apply to the **Wuu** engine. Selecting an [external engine](exter
 4. Save the provider, return to the composer, and select the provider and model for the conversation.
 5. Send a small request that includes a tool call, such as reading a project file, to check more than text-only replies.
 
-The first-run form offers a simpler connection setup. Use Settings for a custom endpoint and additional model options. A model listed in a configuration is not a guarantee that your account can access it.
+First-run setup lists detected local Codex and Grok logins together. Select a login to connect it and use it as the default model service, or connect another service. Existing connections do not hide these choices. Use Settings for additional model options. A model listed in a configuration is not a guarantee that your account can access it.
 
 The composer's selection belongs to the conversation, or to the draft before its first message. Settings also lets you set workspace defaults; changing a conversation's model does not silently replace those defaults.
 

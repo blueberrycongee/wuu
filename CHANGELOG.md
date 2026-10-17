@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Offer detected Codex and Grok logins together during first-run setup, connecting
+  either only when selected, and keep other connection options visible alongside
+  existing connections. Locked connection fields no longer imply a valid login.
 - Keep the macOS Dock icon visible when the desktop pet is enabled.
 - Restore filled open-state indicators for the left and right desktop sidebar
   toggle icons.
