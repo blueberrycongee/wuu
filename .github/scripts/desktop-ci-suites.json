@@ -15,6 +15,7 @@
     "desktop/scripts/resize-live-layout-e2e.cjs": "layout",
     "desktop/scripts/session-message-e2e.cjs": "session",
     "desktop/scripts/document-context-e2e.mjs": "session",
+    "desktop/scripts/onboarding-workspaces-e2e.cjs": "session",
     "desktop/scripts/fast-mode-e2e.cjs": "session",
     "desktop/scripts/conversation-search-e2e.cjs": "session",
     "desktop/scripts/conversation-scroll-e2e.cjs": "session",
@@ -25,6 +26,7 @@
     "desktop/scripts/composer-inline-e2e.cjs": "shell",
     "desktop/scripts/app-context-e2e.cjs": "shell",
     "desktop/scripts/workspace-new-tab-e2e.cjs": "shell",
+    "desktop/scripts/settings-sidebar-hit-e2e.cjs": "shell",
     "desktop/scripts/titlebar-rename-e2e.cjs": "shell",
     "desktop/scripts/subscription-quota-e2e.cjs": "shell",
     "desktop/scripts/ptc-settings-e2e.cjs": "shell"

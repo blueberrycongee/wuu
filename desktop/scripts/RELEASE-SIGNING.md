@@ -26,6 +26,10 @@ signed distribution checkpoints survive runner cleanup; later jobs verify their
 source/version/hash identity before resuming the saved Apple submission. See the
 [release guide](../../docs/en/project/release.md#signing-configuration) for retention,
 unknown uploads and publishing an existing tag with updated release tooling.
+For a new tooling run, set `checkpoint_run` to the completed run containing the
+signed bytes and `release_tag` to their original tag. Recovery imports the furthest
+checkpoint and its receipt before Apple work; it does not move the tag or rebuild
+the app. Missing receipts after an Apple step started require reconciliation.
 
 Local runs retain `release/signed-app.zip`, `release/signed-dmg.dmg`, checkpoint
 metadata and notarization receipts. Keep a clean copy of each checkpoint before

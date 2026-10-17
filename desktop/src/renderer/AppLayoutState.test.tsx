@@ -50,11 +50,11 @@ const narrowWindowWidth = 820;
 const roomyWindowWidth = 1020;
 
 function makePointerDownEvent(clientX: number): React.PointerEvent<HTMLDivElement> {
-  // The hook only reads `button`, `clientX`, and `preventDefault`, so a plain
-  // object shaped like a PointerEvent is enough for the reducer path.
   return {
     button: 0,
     clientX,
+    clientY: 0,
+    currentTarget: document.createElement("div"),
     preventDefault: vi.fn()
   } as unknown as React.PointerEvent<HTMLDivElement>;
 }

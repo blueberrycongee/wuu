@@ -98,6 +98,113 @@ func TestClaudeBackgroundContinuationPersistsOneCompletedTurn(t *testing.T) {
 	}
 }
 
+// The native CLI sends provider diagnostics in an assistant-shaped envelope.
+// Verify the real subprocess boundary, live deltas, and durable history together.
+func TestClaudeProviderErrorStaysOutOfAssistantHistory(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "fakeclaude")
+	if output, err := exec.Command("go", "build", "-o", binary, "../claudeengine/testdata/fakeclaude").CombinedOutput(); err != nil {
+		t.Fatalf("build fixture: %v\n%s", err, output)
+	}
+	for _, scenario := range []string{"provider_error", "provider_error_partial", "provider_error_close"} {
+		t.Run(scenario, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			registry := agentengine.NewRegistry()
+			if err := registry.Register(claudeengine.NewEngine(binary, rt.RootDir)); err != nil {
+				t.Fatal(err)
+			}
+			rt.SetEnginesForTest(registry)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := srv.handleLine(ctx, []byte(`{"id":"start","method":"thread/start","params":{"engine":"claude"}}`)); err != nil {
+				t.Fatal(err)
+			}
+			response := responseByID(t, parseOutput(t, out.String()), "start")
+			if response["error"] != nil {
+				t.Fatalf("thread/start: %+v", response)
+			}
+			threadID := remarshal[ThreadStartResult](t, response["result"]).Thread.ID
+			if err := srv.handleLine(ctx, []byte(fmt.Sprintf(`{"id":"run","method":"turn/start","params":{"thread_id":%q,"prompt":%q}}`, threadID, scenario))); err != nil {
+				t.Fatal(err)
+			}
+			messages := waitForMethod(t, out, NotificationTurnError)
+			failed := remarshal[TurnErrorNotification](t, notificationByMethod(t, messages, NotificationTurnError)["params"])
+			if failed.Turn.Status != TurnStatusFailed || failed.Turn.Error == nil || !strings.Contains(failed.Turn.Error.Message, "套餐已到期") {
+				t.Fatalf("provider diagnostic lost: %+v", failed)
+			}
+			var liveText strings.Builder
+			failures := 0
+			for _, message := range messages {
+				switch message["method"] {
+				case NotificationAgentMessageDelta:
+					liveText.WriteString(remarshal[AgentMessageDeltaNotification](t, message["params"]).Delta)
+				case NotificationTurnError:
+					failures++
+				case NotificationTurnCompleted:
+					t.Fatal("failed native request emitted successful completion")
+				}
+			}
+			want := ""
+			if scenario == "provider_error_partial" {
+				want = "已检查仓库结构。"
+			}
+			if liveText.String() != want || failures != 1 {
+				t.Fatalf("live assistant text = %q, failures = %d", liveText.String(), failures)
+			}
+			history, err := loadChatMessages(rt.SessionDir, threadID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var storedText strings.Builder
+			for _, message := range history {
+				if message.Role == "assistant" {
+					storedText.WriteString(message.Content)
+				}
+			}
+			if storedText.String() != want {
+				t.Fatalf("durable assistant text = %q, want %q", storedText.String(), want)
+			}
+			srv.Close()
+			reloadedOutput := &lockedBuffer{}
+			reloaded := New(rt, reloadedOutput)
+			t.Cleanup(reloaded.Close)
+			if err := reloaded.handleLine(ctx, []byte(fmt.Sprintf(`{"id":"resume","method":"thread/resume","params":{"session_id":%q}}`, threadID))); err != nil {
+				t.Fatal(err)
+			}
+			resumed := remarshal[ThreadResumeResult](t, responseByID(t, parseOutput(t, reloadedOutput.String()), "resume")["result"]).Thread
+			if len(resumed.Turns) != 1 || resumed.Turns[0].Error == nil || resumed.Turns[0].Error.Message != failed.Turn.Error.Message {
+				t.Fatalf("reloaded diagnostic differs: %+v", resumed.Turns)
+			}
+			for _, turn := range []Turn{failed.Turn, resumed.Turns[0]} {
+				var text strings.Builder
+				for _, item := range turn.Items {
+					if item.Type == "agent_message" {
+						text.WriteString(item.Text)
+					}
+				}
+				if text.String() != want {
+					t.Fatalf("turn assistant content = %q, want %q", text.String(), want)
+				}
+			}
+			if output := os.Getenv("WUU_CLAUDE_ERROR_E2E_OUTPUT"); output != "" {
+				if err := os.MkdirAll(output, 0755); err != nil {
+					t.Fatal(err)
+				}
+				data, err := json.MarshalIndent(map[string]any{"live": failed.Turn, "resumed": resumed.Turns[0], "notifications": messages}, "", "  ")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(output, scenario+".json"), data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Log("provider diagnostic appears only in the turn error; live and resumed assistant text match")
+		})
+	}
+}
+
 func TestCodexEngineModelCatalogCacheUsesFreshMatchingBinary(t *testing.T) {
 	now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
 	entry := &engineModelCatalogCacheEntry{

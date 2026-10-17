@@ -60,6 +60,8 @@ const CONVERSATION_SPLIT_STEP = 4;
 const CONVERSATION_SPLIT_PERCENT_KEY = "wuu.desktop.conversationSplitLeftPercent";
 
 type SidebarResizeSession = {
+  resizer: HTMLDivElement;
+  resizerTop: number;
   startX: number;
   startWidth: number;
   currentWidth: number;
@@ -97,6 +99,13 @@ type WindowPointerResizeController<Session> = {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function positionSidebarResizerLight({ resizer, y }: { resizer: HTMLDivElement; y: number }): void {
+  const position = `${Math.round(y)}px`;
+  if (resizer.style.getPropertyValue("--sidebar-resizer-pointer-y") !== position) {
+    resizer.style.setProperty("--sidebar-resizer-pointer-y", position);
+  }
 }
 
 function sidebarShouldCollapse(width: number): boolean {
@@ -219,17 +228,17 @@ function useWindowPointerResize<Session>({
   }, [onEnd, onMove, resizing, sessionRef]);
 }
 
-type LiveWidthWriter = {
-  schedule: (width: number) => void;
+type FrameWriter<Value> = {
+  schedule: (value: Value) => void;
   cancel: () => void;
   flush: () => void;
 };
 
-// Coalesces per-pointermove width updates into one write per animation frame
-// so drags mutate a CSS variable instead of re-rendering the React tree.
-function useLiveWidthWriter(write: (width: number) => void): LiveWidthWriter {
+// Coalesces pointer updates into one write per animation frame so direct
+// manipulation updates CSS variables instead of re-rendering the React tree.
+function useFrameWriter<Value>(write: (value: Value) => void): FrameWriter<Value> {
   const frameRef = useRef<number | undefined>(undefined);
-  const pendingRef = useRef<number | undefined>(undefined);
+  const pendingRef = useRef<Value | undefined>(undefined);
 
   const cancel = useCallback((): void => {
     if (frameRef.current !== undefined) {
@@ -244,25 +253,25 @@ function useLiveWidthWriter(write: (width: number) => void): LiveWidthWriter {
       window.cancelAnimationFrame(frameRef.current);
       frameRef.current = undefined;
     }
-    const pendingWidth = pendingRef.current;
+    const pending = pendingRef.current;
     pendingRef.current = undefined;
-    if (pendingWidth !== undefined) {
-      write(pendingWidth);
+    if (pending !== undefined) {
+      write(pending);
     }
   }, [write]);
 
   const schedule = useCallback(
-    (nextWidth: number): void => {
-      pendingRef.current = nextWidth;
+    (value: Value): void => {
+      pendingRef.current = value;
       if (frameRef.current !== undefined) {
         return;
       }
       frameRef.current = window.requestAnimationFrame(() => {
         frameRef.current = undefined;
-        const pendingWidth = pendingRef.current;
+        const pending = pendingRef.current;
         pendingRef.current = undefined;
-        if (pendingWidth !== undefined) {
-          write(pendingWidth);
+        if (pending !== undefined) {
+          write(pending);
         }
       });
     },
@@ -305,6 +314,7 @@ export function useAppLayoutState({
   animateRightPanelLayout: () => void;
   animateSidebarLayout: () => void;
   startSidebarResize: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  trackSidebarResizerPointer: (event: ReactPointerEvent<HTMLDivElement>) => void;
   startRightPanelResize: (event: ReactPointerEvent<HTMLDivElement>) => void;
   handleRightPanelSeparatorKey: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
   resetWorkspaceRightPanelWidth: () => void;
@@ -331,6 +341,7 @@ export function useAppLayoutState({
   const [splitLeftPercent, setSplitLeftPercent] = useState(initialConversationSplitPercent);
   const [resizingSplit, setResizingSplit] = useState(false);
   const resizeSessionRef = useRef<SidebarResizeSession | null>(null);
+  const sidebarResizerOriginRef = useRef<{ resizer: HTMLDivElement; top: number } | null>(null);
   const rightPanelResizeSessionRef = useRef<RightPanelResizeSession | null>(null);
   const splitResizeSessionRef = useRef<SplitResizeSession | null>(null);
   const sidebarMotionTimerRef = useRef<number | undefined>(undefined);
@@ -457,9 +468,10 @@ export function useAppLayoutState({
     [layoutRootRef]
   );
 
-  const sidebarLive = useLiveWidthWriter(writeLiveSidebarWidth);
-  const rightPanelLive = useLiveWidthWriter(writeLiveWorkspaceRightPanelWidth);
-  const splitLive = useLiveWidthWriter(writeLiveSplitPercent);
+  const sidebarLive = useFrameWriter(writeLiveSidebarWidth);
+  const rightPanelLive = useFrameWriter(writeLiveWorkspaceRightPanelWidth);
+  const splitLive = useFrameWriter(writeLiveSplitPercent);
+  const sidebarLight = useFrameWriter(positionSidebarResizerLight);
 
   const applySidebarWidth = useCallback(
     (nextWidth: number): void => {
@@ -539,11 +551,15 @@ export function useAppLayoutState({
       sidebarLive.cancel();
       rightPanelLive.cancel();
       splitLive.cancel();
+      sidebarLight.cancel();
     };
-  }, [sidebarLive.cancel, rightPanelLive.cancel, splitLive.cancel]);
+  }, [sidebarLive.cancel, rightPanelLive.cancel, splitLive.cancel, sidebarLight.cancel]);
 
   const handleSidebarResizeMove = useCallback(
     (event: PointerEvent, session: SidebarResizeSession): void => {
+      // The separator's vertical origin stays fixed while its width changes.
+      // Follow window-level moves without forcing layout during a live drag.
+      sidebarLight.schedule({ resizer: session.resizer, y: event.clientY - session.resizerTop });
       const nextWidth = session.startWidth + event.clientX - session.startX;
       session.currentWidth = nextWidth;
       if (sidebarShouldCollapse(nextWidth)) {
@@ -569,11 +585,12 @@ export function useAppLayoutState({
       }
       sidebarLive.schedule(nextWidth);
     },
-    [applySidebarWidth, sidebarLive]
+    [applySidebarWidth, sidebarLive, sidebarLight]
   );
 
   const handleSidebarResizeEnd = useCallback(
     (session: SidebarResizeSession | null): void => {
+      sidebarLight.flush();
       if (session) {
         if (session.currentWidth === session.startWidth) {
           sidebarLive.cancel();
@@ -597,6 +614,7 @@ export function useAppLayoutState({
       applySidebarWidth,
       restoreSidebarOpenWidth,
       sidebarLive,
+      sidebarLight,
       sidebarPreferredWidth,
     ]
   );
@@ -721,13 +739,37 @@ export function useAppLayoutState({
     setRightPanelAnimating(false);
   }
 
+  function trackSidebarResizerPointer(event: ReactPointerEvent<HTMLDivElement>): void {
+    // Active drags use the cached origin in the window-level move handler.
+    if (resizeSessionRef.current) {
+      return;
+    }
+    const resizer = event.currentTarget;
+    // Entering refreshes the origin; moving within this fixed vertical rail
+    // only queues a write, avoiding a read/write layout cycle per event.
+    if (event.type === "pointerenter" || sidebarResizerOriginRef.current?.resizer !== resizer) {
+      sidebarResizerOriginRef.current = { resizer, top: resizer.getBoundingClientRect().top };
+    }
+    sidebarLight.schedule({ resizer, y: event.clientY - sidebarResizerOriginRef.current.top });
+  }
+
   function startSidebarResize(event: ReactPointerEvent<HTMLDivElement>): void {
     if (event.button !== 0) {
       return;
     }
     event.preventDefault();
+    const resizer = event.currentTarget;
+    const bounds = resizer.getBoundingClientRect();
+    sidebarLight.cancel();
+    positionSidebarResizerLight({ resizer, y: event.clientY - bounds.top });
+    resizer.style.setProperty(
+      "--sidebar-resizer-grab-x",
+      `${clamp(event.clientX - bounds.left - bounds.width / 2, -3, 3)}px`
+    );
     finishPanelMotion();
     resizeSessionRef.current = {
+      resizer,
+      resizerTop: bounds.top,
       startX: event.clientX,
       startWidth: sidebarCollapsed ? 0 : sidebarWidth,
       currentWidth: sidebarCollapsed ? 0 : sidebarWidth,
@@ -862,6 +904,7 @@ export function useAppLayoutState({
     animateRightPanelLayout: startRightPanelMotion,
     animateSidebarLayout: startSidebarMotion,
     startSidebarResize,
+    trackSidebarResizerPointer,
     startRightPanelResize,
     handleRightPanelSeparatorKey,
     resetWorkspaceRightPanelWidth,

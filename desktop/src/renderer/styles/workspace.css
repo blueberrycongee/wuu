@@ -76,6 +76,9 @@
   overflow: hidden;
   border-left: 1px solid transparent;
   background: var(--paper);
+  margin-bottom: var(--conversation-pane-inset);
+  /* Clip the painted canvas without moving the shared window-header row. */
+  clip-path: inset(var(--conversation-pane-inset) 0 0 round 0 var(--conversation-canvas-radius) var(--conversation-canvas-radius) 0);
   /* Docked content keeps its final width while the shell clips its column.
      Sheet transitions retain their own transforms in sidebar.css. */
   transition: border-color var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
@@ -93,13 +96,12 @@
   justify-self: start;
 }
 
-/* The panel's chrome sits on the same paper as the conversation titlebar
- * beside it. Tabs are the strip's content, so their chips stand a size above
- * the strip's icon buttons instead of matching them. */
+/* The panel's full-size chips share the window chrome's centerline. The
+ * common row reserves enough space to clear the canvas's painted top edge. */
 .workspace-right-panel {
   --workspace-tab-chip-hover-bg: var(--ink-overlay-4);
   --workspace-tab-chip-height: var(--control-size-roomy);
-  --workspace-tab-chip-inset: calc((var(--window-titlebar-height) - var(--workspace-tab-chip-height)) / 2);
+  --workspace-tab-chip-inset: max(0px, calc((var(--window-titlebar-height) - var(--workspace-tab-chip-height)) / 2));
   /* Tab chips, tool rows, and tree rows float inside the pane like sidebar
    * rows; their own padding takes up the rest, putting the leading glyph on
    * the pane inset. */

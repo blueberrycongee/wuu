@@ -58,9 +58,8 @@ if (env.WUU_ENABLE_BROWSER === "1") {
   env.VITE_ENABLE_BROWSER = "true";
 }
 if (process.platform === "darwin") {
-  // Keep the stable signed host for macOS permissions, but do not bypass
-  // feature gates. CUA is enabled only when the caller explicitly exports
-  // WUU_ENABLE_CUA_MAC=1 (for example through npm run dev:direct).
+  // Match packaged macOS builds while preserving explicit development overrides.
+  env.WUU_ENABLE_CUA_MAC ??= "1";
   env.WUU_DEV_ELECTRON_APP = prepareDevElectronApp(devSigning);
   env.WUU_CUA_MAC_HELPER = helperPathForApp(env.WUU_DEV_ELECTRON_APP);
   env.WUU_CUA_MAC_PIP_HELPER = pipHelperPathForApp(env.WUU_DEV_ELECTRON_APP);

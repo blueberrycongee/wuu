@@ -15,8 +15,32 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   conversations outside projects, and Codex models. Choose its model and reasoning
   level independently; Tab inserts the suggestion without sending.
 
+### Changed
+
+- Frame desktop conversations in a rounded canvas with matching outer
+  insets and a lower input box. Keep the sidebar resize
+  target aligned with the visible canvas edge. Join the conversation and right
+  panel into one canvas with aligned header rules, shared outer corners, and
+  matching insets when the panel opens or expands.
+
 ### Fixed
 
+- Show a local edge light on sidebar hover that gathers toward the pointer
+  when pressed, follows the drag, and springs back on release. Extend its soft
+  fade above and below the cursor so the feedback remains visible while held.
+  Keep the full boundary line for keyboard focus, inside the conversation
+  canvas's rounded corners. Inset docked panel dividers to the same height.
+- Keep scroll-edge fades visible in thinking and process panels while a
+  response streams.
+- Align native window controls, sidebar toggles, conversation titles, and
+  workspace tabs on one shared titlebar row without clipping full-size tabs.
+- Keep Claude provider failures inside the conversation error notice instead of
+  duplicating diagnostics as assistant replies; preserve any useful partial reply
+  and failure details after reopening the conversation.
+- Keep project and branch names identifiable in compact conversation composers
+  without reducing text or control sizes.
+- Enable Computer Use by default in macOS development launches, with an explicit
+  `WUU_ENABLE_CUA_MAC=0` override to disable it.
 - Match settings navigation, account controls, and sidebar drag-and-drop surfaces
   to the shared sidebar row corners, keeping keyboard focus rings visible in
   scrollable navigation.
