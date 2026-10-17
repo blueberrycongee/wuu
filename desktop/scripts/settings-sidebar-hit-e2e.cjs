@@ -281,7 +281,8 @@ async function chromeToggleGeometry(win) {
         const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
         return { target: element.dataset.wuuComponent || element.className || element.tagName,
           bounds: box.toJSON(), centerY: box.y + box.height / 2,
-          button: element instanceof HTMLButtonElement, hit: element === hit || element.contains(hit) };
+          button: element instanceof HTMLButtonElement, hit: element === hit || element.contains(hit),
+          coveredByDrawer: Boolean(document.querySelector('.sidebar-drawer-open .sidebar')?.contains(hit)) };
       });
     const canvas = document.querySelector('.conversation-pane');
     return {
@@ -404,7 +405,11 @@ function assertTopRow(geometry, context) {
     assert.ok(Math.abs(peer.centerY - axis) < 0.6, `Peer controls must share the titlebar axis: ${details}`);
     assert.ok(peer.bounds.top >= geometry.header.top - 0.1 && peer.bounds.bottom <= geometry.header.bottom + 0.1,
       `Chrome must not be vertically clipped: ${details}`);
-    if (peer.button) assert.ok(peer.hit, `Visible controls must own their center hit: ${details}`);
+    // A hover drawer overlays the canvas without shifting its header. Its
+    // covered controls cannot receive clicks until the drawer closes.
+    if (peer.button) assert.ok(peer.hit || (context.page === "conversation-drawer"
+      && peer.target !== "sidebar-toggle" && peer.coveredByDrawer),
+    `Visible controls must own their center hit: ${details}`);
   }
 }
 

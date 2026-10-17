@@ -90,7 +90,7 @@ async function screenshot(name) {
   console.log("CAPTURE", name);
   await evaluate(async () => {
     await document.fonts.ready;
-    await Promise.all((document.querySelector('.first-run-onboarding')?.getAnimations({ subtree: true }) ?? []).filter(animation => animation.playState === 'running' && animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})));
+    await Promise.all((document.querySelector('.first-run-onboarding')?.getAnimations({ subtree: true }) ?? []).filter(animation => animation.timeline instanceof DocumentTimeline && animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => {})));
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
   fs.writeFileSync(path.join(output, `${name}.png`), (await main.webContents.capturePage()).toPNG());
