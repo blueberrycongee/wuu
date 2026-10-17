@@ -2176,7 +2176,7 @@ export const enUS = {
   "onboarding.back": "Back",
   "onboarding.continue": "Continue",
   "onboarding.runtimeTitle": "Choose the default agent",
-  "onboarding.reuseCodexTitle": "Use the local Codex login",
+  "onboarding.reuseLocalLogin": "Use the local {name} login",
   "onboarding.externalEngineConnection": "{agent} uses its own account. The model you connect here is for Wuu's own agent and can wait.",
   "onboarding.otherConnection": "Or connect a model service",
   "onboarding.runtimeFailed": "Could not save the default agent. Try again.",

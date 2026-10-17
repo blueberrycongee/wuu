@@ -148,7 +148,8 @@ contextBridge.exposeInMainWorld("wuu", {
     model: "mock-stream",
     workspace_root: cwd,
     ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { variant: "medium" } : {}),
-    providers: [{ name: "e2e", type: "mock", model: "mock-stream", connection_locked: true,
+    providers: [{ name: "e2e", type: "mock", model: "mock-stream", connection_locked: true, api_key_configured: true,
+      auto_discovered: process.env.WUU_STREAM_E2E_DISCOVERED_PROVIDER === "1",
       ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { models: [{ id: "mock-stream", display_name: "Workspace preview model",
         supported_efforts: ["low", "medium", "high"], capabilities: { context_window: 128000 } }] } : {}),
     }]
@@ -156,7 +157,7 @@ contextBridge.exposeInMainWorld("wuu", {
   updateRuntimeSettings: async (provider, model) => ({
     provider,
     model,
-    providers: [{ name: provider, type: "mock", model, connection_locked: true }]
+    providers: [{ name: provider, type: "mock", model, connection_locked: true, api_key_configured: true }]
   }),
   ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? {
     listGitChanges: async () => ({ is_repo: true, root: cwd,

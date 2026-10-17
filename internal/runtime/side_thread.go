@@ -66,6 +66,9 @@ func (s *Session) newSideThreadRunner(sideThreadID, rootDir string, selected Thr
 		kit.ConfigureSurfaceForProviderModel(runner.ProviderName, model, true)
 		ConfigureToolkitPermissions(kit, config.ResolvedPermissions{Mode: config.PermissionModeReadOnly})
 		kit.SetSessionID(id)
+		// Side conversations do not resume from managed-process completion.
+		// Keep their requested foreground wait instead of yielding early.
+		kit.SetShellEarlyHandoffEnabled(false)
 		if len(parentSession) > 0 {
 			kit.SetCodeModeStateOwner(parentSession[0])
 		}

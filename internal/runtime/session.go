@@ -190,9 +190,10 @@ type Session struct {
 	// built-in wuu engine is registered at construction; external engines
 	// (Claude, Codex) register as they are added.
 	engines *agentengine.Registry
-	// DefaultEngine is the engine id used for new threads when the caller
-	// does not request one explicitly (settings default; empty = wuu).
-	DefaultEngine      agentengine.EngineID
+	// Engine settings updates may run alongside thread creation and model clones.
+	engineSettingsMu   sync.Mutex
+	defaultEngineMu    sync.RWMutex
+	defaultEngine      agentengine.EngineID
 	pluginTransitionMu sync.Mutex
 	pluginGenerationMu sync.Mutex
 	pluginGeneration   *PluginGeneration
@@ -288,7 +289,7 @@ func (s *Session) cloneForThreadModel() (*Session, error) {
 		DeferredToolCatalogPrompt:   s.DeferredToolCatalogPrompt,
 		ReadinessIssues:             s.ReadinessIssues,
 		InferenceJournalRuntime:     s.InferenceJournalRuntime,
-		DefaultEngine:               s.DefaultEngine,
+		defaultEngine:               s.DefaultEngine(),
 		engines:                     s.engines,
 	}
 	// Publication mutates the root toolkit and runner in place. Snapshot both
@@ -845,7 +846,7 @@ func NewSession(opts Options) (*Session, error) {
 	codexEnabled := codexResolveErr == nil
 	if engineCfg := cfg.Engines; engineCfg != nil {
 		if strings.TrimSpace(engineCfg.DefaultEngine) != "" {
-			runtimeSession.DefaultEngine = agentengine.NormalizeEngineID(engineCfg.DefaultEngine)
+			runtimeSession.defaultEngine = agentengine.NormalizeEngineID(engineCfg.DefaultEngine)
 		}
 		if codexCfg := engineCfg.Codex; codexCfg != nil {
 			enabled, explicit := codexCfg.EngineEnabled()
@@ -884,8 +885,8 @@ func NewSession(opts Options) (*Session, error) {
 		runtimeSession.engines.Register(claudeengine.NewEngine(claudeBinary, rootDir))
 	}
 	runtimeSession.RebuildProtocolEngines(cfg.Engines)
-	if runtimeSession.DefaultEngine != "" && !runtimeSession.EngineAvailable(runtimeSession.DefaultEngine) {
-		runtimeSession.DefaultEngine = agentengine.EngineWuu
+	if runtimeSession.defaultEngine != "" && !runtimeSession.EngineAvailable(runtimeSession.defaultEngine) {
+		runtimeSession.defaultEngine = agentengine.EngineWuu
 	}
 	initialHooks := hooks.NewDispatcher(nil)
 	initialHooks.Replace(hookDispatcher)

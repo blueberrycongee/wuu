@@ -245,6 +245,7 @@ func TestCodexPerTurnBindingSubprocessLifecycle(t *testing.T) {
 	t.Run("warm host ownership", func(t *testing.T) { testCodexWarmHostOwnership(t, binary) })
 	t.Run("workspace fidelity", func(t *testing.T) { testCodexWorkspaceFidelity(t, binary) })
 	t.Run("concurrent host replacement", func(t *testing.T) { testCodexConcurrentHostReplacement(t, binary) })
+	t.Run("concurrent discovery refresh", func(t *testing.T) { testCodexConcurrentDiscoveryRefresh(t, binary) })
 	lifecycle := filepath.Join(root, "lifecycle.jsonl")
 	requests := filepath.Join(root, "requests.jsonl")
 	t.Setenv("WUU_TEST_CODEX_LIFECYCLE", lifecycle)
@@ -324,6 +325,157 @@ func TestCodexPerTurnBindingSubprocessLifecycle(t *testing.T) {
 		t.Fatalf("Server.Close left native subprocesses alive: %s", data)
 	}
 	t.Logf("two Wuu threads, three turns (failure + success + native resume), native requests=%v; Server.Close released all subprocesses", counts)
+}
+
+func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.SetEnginesForTest(agentengine.NewRegistry())
+	settings := map[string]any{
+		"default_engine": "codex",
+		"codex":          map[string]any{"binary_path": binary},
+	}
+	for _, id := range []string{"claude", "cursor", "devin", "grok", "hermes", "pi", "opencode", "antigravity"} {
+		settings[id] = map[string]any{"enabled": false}
+	}
+	data, err := json.Marshal(map[string]any{
+		"default_provider": "fake-provider",
+		"providers": map[string]any{"fake-provider": map[string]any{
+			"type": "openai-compatible", "model": "fake-model", "base_url": "https://example.test/v1",
+		}},
+		"engines": settings,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.ConfigPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	if err := rt.RefreshEngineSettings(); err != nil {
+		t.Fatal(err)
+	}
+	srv.retainCodexHost()
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	var threadID string
+	for i := range 16 {
+		// The real dispatcher backgrounds discovery while thread creation stays
+		// on the request loop. Every default-selected thread must remain Codex.
+		if err := srv.handleLine(ctx, []byte(fmt.Sprintf(`{"id":"refresh-%d","method":"engine/list","params":{"refresh_models":true}}`, i))); err != nil {
+			t.Fatal(err)
+		}
+		id := fmt.Sprintf("thread-%d", i)
+		if err := srv.handleLine(ctx, []byte(fmt.Sprintf(`{"id":%q,"method":"thread/start","params":{}}`, id))); err != nil {
+			t.Fatal(err)
+		}
+		response := responseByID(t, parseOutput(t, out.String()), id)
+		if response["error"] != nil {
+			t.Fatalf("thread/start during refresh: %+v", response)
+		}
+		thread := remarshal[ThreadStartResult](t, response["result"]).Thread
+		if thread.EngineID != "codex" {
+			t.Fatalf("refresh changed default-selected engine: %+v", thread)
+		}
+		threadID = thread.ID
+	}
+	for i := range 16 {
+		if response := waitForResponseByID(t, out, fmt.Sprintf("refresh-%d", i)); response["error"] != nil {
+			t.Fatalf("refresh: %+v", response)
+		}
+	}
+	if err := srv.handleLine(ctx, []byte(fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"hello"}}`, threadID))); err != nil {
+		t.Fatal(err)
+	}
+	waitForTurnCompletedForThread(t, out, threadID)
+	// Gate the real Claude version probe after a refresh has loaded its config.
+	// A newer disable must wait to publish, and unrelated thread creation must
+	// keep using the current registry/default while discovery is stalled.
+	claude := filepath.Join(t.TempDir(), "fakeclaude")
+	if output, err := exec.Command("go", "build", "-o", claude, "../claudeengine/testdata/fakeclaude").CombinedOutput(); err != nil {
+		t.Fatalf("build Claude fixture: %v\n%s", err, output)
+	}
+	settings["default_engine"] = "claude"
+	settings["claude"] = map[string]any{"binary_path": claude}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg["engines"] = settings
+	data, err = json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.ConfigPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.RefreshEngineSettings(); err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	ready, gate := filepath.Join(directory, "ready"), filepath.Join(directory, "release")
+	t.Setenv("WUU_TEST_CLAUDE_VERSION_READY", ready)
+	t.Setenv("WUU_TEST_CLAUDE_VERSION_GATE", gate)
+	release := sync.OnceFunc(func() {
+		if err := os.WriteFile(gate, nil, 0600); err != nil {
+			t.Error(err)
+		}
+	})
+	t.Cleanup(func() { release(); srv.Close() })
+	if err := srv.handleLine(ctx, []byte(`{"id":"gated-refresh","method":"engine/list","params":{"refresh_models":true}}`)); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	admission := make(chan error, 1)
+	go func() {
+		admission <- srv.handleLine(ctx, []byte(`{"id":"gated-thread","method":"thread/start","params":{}}`))
+	}()
+	select {
+	case err := <-admission:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("thread creation waited for an unrelated engine version probe")
+	}
+	admitted := responseByID(t, parseOutput(t, out.String()), "gated-thread")
+	update := make(chan error, 1)
+	go func() {
+		update <- srv.handleLine(ctx, []byte(`{"id":"disable","method":"engine/update","params":{"default_engine":"wuu","claude":{"enabled":false}}}`))
+	}()
+	select {
+	case err := <-update:
+		if err != nil {
+			t.Error(err)
+		}
+		t.Error("settings update completed before the older refresh released its config snapshot")
+	case <-time.After(100 * time.Millisecond):
+		// The explicit update is serialized behind the gated refresh.
+	}
+	release()
+	if response := waitForResponseByID(t, out, "gated-refresh"); response["error"] != nil {
+		t.Fatalf("gated refresh: %+v", response)
+	}
+	if response := waitForResponseByID(t, out, "disable"); response["error"] != nil {
+		t.Fatalf("disable: %+v", response)
+	}
+	if admitted["error"] != nil || remarshal[ThreadStartResult](t, admitted["result"]).Thread.EngineID != "claude" {
+		t.Errorf("refresh interrupted admission to an enabled engine: %+v", admitted)
+	}
+	if rt.EngineAvailable("claude") || rt.DefaultEngine() != "wuu" {
+		t.Fatal("an older discovery snapshot undid the explicit disable/default edit")
+	}
+	t.Log("concurrent refresh preserved native turns and thread admission; a gated older snapshot could not undo the newer explicit disable/default edit")
 }
 
 func testCodexWarmHostOwnership(t *testing.T, binary string) {

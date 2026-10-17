@@ -18,6 +18,17 @@ func send(v any) {
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		if ready := os.Getenv("WUU_TEST_CLAUDE_VERSION_READY"); ready != "" {
+			if err := os.WriteFile(ready, nil, 0600); err != nil {
+				panic(err)
+			}
+			for {
+				if _, err := os.Stat(os.Getenv("WUU_TEST_CLAUDE_VERSION_GATE")); err == nil {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
 		fmt.Println("2.1.226 (fake)")
 		return
 	}

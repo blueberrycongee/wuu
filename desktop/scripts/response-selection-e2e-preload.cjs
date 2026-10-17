@@ -28,7 +28,7 @@ function record(method, args) {
   ipcRenderer.send("selection:bridge-call", { method, args });
 }
 contextBridge.exposeInMainWorld("wuu", {
-  initialize: async () => ({ protocol_version: "e2e", general_settings: settings, provider: "e2e", model: "mock-selection", workspace_root: cwd, providers: [{ name: "e2e", type: "mock", model: "mock-selection", connection_locked: true }] }),
+  initialize: async () => ({ protocol_version: "e2e", general_settings: settings, provider: "e2e", model: "mock-selection", workspace_root: cwd, providers: [{ name: "e2e", type: "mock", model: "mock-selection", connection_locked: true, api_key_configured: true }] }),
   listProjects: async () => projectList(), selectNoProject: async () => projectList(),
   updateGeneralSettings: async value => ({ general_settings: settings = { ...settings, ...value } }),
   getBuildInfo: async () => ({ desktop: { version: "selection-e2e", date: now } }),
