@@ -380,13 +380,19 @@ app.whenReady().then(async () => {
   });
 
   await check("Shift and repeated Tab never accept inline text", async () => {
-    await suggestion("Modified", " forbidden acceptance");
+    const original = await suggestion("Modified", " forbidden acceptance");
     await key("Tab", ["shift"]);
     assert.equal(await value(), "Modified");
     await focus();
-    const requestAfterFocus = await request("Modified");
-    await resolve(requestAfterFocus.id, " repeated acceptance");
-    await until((selector) => Boolean(document.querySelector(selector)), ghostSelector);
+    const resumed = await until(({ selector, originalId }) => {
+      if (document.querySelector(selector)?.textContent === " forbidden acceptance") return { ready: true };
+      const fixture = window.__inlineCompletionE2E.active;
+      const pending = fixture.requests.findLast((request) => request.id > originalId
+        && request.context.draftText === "Modified" && !request.aborted && fixture.pending.has(request.id));
+      return pending ? { id: pending.id } : null;
+    }, { selector: ghostSelector, originalId: original.id }, "suggestion after returning focus");
+    if (resumed.id) await resolve(resumed.id, " forbidden acceptance");
+    await until((selector) => document.querySelector(selector)?.textContent === " forbidden acceptance", ghostSelector);
     await key("Tab", [], true);
     assert.equal(await value(), "Modified");
   });
