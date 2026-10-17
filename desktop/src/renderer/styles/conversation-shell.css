@@ -153,6 +153,7 @@
 }
 
 .conversation-pane {
+  --conversation-pane-inset: clamp(0px, calc(2vw - var(--space-2)), var(--space-2));
   /* The info card is UI text, so it widens with the text size: 280px at the
    * 14.5px default (App.tsx's room check uses the same ratio), with a 44px
    * gap between the card and the conversation it reserves room beside. */
@@ -173,7 +174,8 @@
         var(--environment-panel-width) + var(--environment-panel-edge-gap) +
         var(--environment-panel-edge-gap) + var(--environment-panel-flow-gap) +
         var(--environment-panel-flow-gap) - 100vw + var(--sidebar-width, 0px) +
-        var(--workspace-right-panel-reserved-width, 0px)
+        var(--workspace-right-panel-reserved-width, 0px) +
+        var(--conversation-pane-inset)
     ),
     var(--environment-panel-reserved-width)
   );
@@ -189,9 +191,23 @@
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
-  background: var(--paper);
-  margin-right: 0;
+  background: transparent;
+  margin: 0 0 var(--conversation-pane-inset) var(--conversation-pane-inset);
+  border-radius: min(var(--radius-lg), calc(var(--conversation-pane-inset) * 2));
   transition: grid-template-columns var(--environment-panel-motion-duration) var(--environment-panel-motion-easing);
+}
+
+/* Paint the top inset independently of the titlebar so native chrome keeps
+   its window coordinates. The shell's isolated stack holds this surface below
+   content without trapping the fixed drawer toggle inside the pane. */
+.conversation-pane::before {
+  position: absolute;
+  inset: var(--conversation-pane-inset) 0 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--paper);
+  content: "";
+  pointer-events: none;
 }
 
 /* Floating surfaces and conversation content share the reading column. */
@@ -280,6 +296,13 @@
  * right window edge. A docked workspace reserves its own matching slot. */
 .app-shell:not(.popped-out-shell):not(.right-panel-open) .titlebar {
   padding-right: calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap));
+}
+
+.app-shell.sidebar-collapsed .titlebar,
+.app-shell.popped-out-shell .titlebar {
+  /* The native-controls exclusion and the lifted drawer toggle are measured
+     from the window edge, while this titlebar starts inside the canvas inset. */
+  padding-left: calc(var(--window-titlebar-leading-inset) - var(--conversation-pane-inset));
 }
 
 .title-block,

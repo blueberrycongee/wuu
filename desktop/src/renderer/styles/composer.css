@@ -391,7 +391,7 @@
 
 .dock-composer-wrap {
   --composer-dock-bottom-space: max(
-    clamp(var(--space-4), calc(4dvh - var(--space-2)), var(--space-6)),
+    clamp(var(--space-1), calc(2dvh - var(--space-1)), var(--space-2)),
     env(safe-area-inset-bottom, 0px)
   );
   position: relative;
@@ -399,9 +399,9 @@
   grid-column: 1;
   grid-row: 2;
   align-self: end;
-  /* Give tall windows breathing room, conserving message space in short ones.
-     The inset stays stable across composer states; the top space belongs to
-     the latest-turn clearance (conversation-shell.css). */
+  /* The pane supplies the outer inset; keep a compact inner gap so the input
+     rests near the window edge. The top space belongs to the latest-turn
+     clearance (conversation-shell.css). */
   padding-block: var(--conversation-dock-top-space) var(--composer-dock-bottom-space);
   /* Mirror the scroll region's reserved gutter. That region keeps its stable
      gutter on BOTH edges (see .scroll-region) so the message flow is centered
