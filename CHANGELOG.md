@@ -18,6 +18,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep scroll-edge fades visible in thinking and process panels while a
+  response streams.
 - Keep project and branch names identifiable in compact conversation composers
   without reducing text or control sizes.
 - Enable Computer Use by default in macOS development launches, with an explicit

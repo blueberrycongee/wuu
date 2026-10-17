@@ -414,7 +414,9 @@ app.whenReady().then(async () => {
         const following = await sample(`${label}-following`);
         await capture(`${label}-following`);
         unchanged(idle, following, "stream following");
-        assert.equal((await sample(`${label}-reasoning-following`, ".turn-reasoning-scroll")).mask, "none", "live inspection retains paint degradation");
+        const reasoningFollowing = await sample(`${label}-reasoning-following`, ".turn-reasoning-scroll");
+        assert.notEqual(reasoningFollowing.mask, "none", "live inspection keeps its scroll fade");
+        assert.ok(reasoningFollowing.top > 0 && reasoningFollowing.bottom < 1, "following the live edge leaves only the top fade");
         emit("item/agentMessage/delta", { thread_id: threadID, turn_id: turn.id, item_id: "fade-answer", delta: `${turn.items[2].text}Fresh streamed content.` });
         await waitFor(() => document.querySelector(".agent-text")?.textContent.includes("Fresh streamed content."));
         unchanged(idle, await sample(`${label}-delta`), "streamed content");
@@ -422,7 +424,7 @@ app.whenReady().then(async () => {
         await evaluate(() => document.querySelector('[data-pip-anchor-host="conversation"]').dispatchEvent(new WheelEvent("wheel", { deltaY: -200, bubbles: true })));
         await waitFor(() => !document.documentElement.hasAttribute("data-stream-following"));
         unchanged(idle, await sample(`${label}-paused`), "paused following");
-        assert.notEqual((await sample(`${label}-reasoning-paused`, ".turn-reasoning-scroll")).mask, "none", "inspection fade returns while reading");
+        assert.notEqual((await sample(`${label}-reasoning-paused`, ".turn-reasoning-scroll")).mask, "none", "inspection fade remains while reading");
 
         await evaluate(() => { document.querySelector('[data-pip-anchor-host="conversation"]').scrollTop = 0; });
         await waitFor(() => Boolean(document.querySelector("button.jump-to-latest-pill")));

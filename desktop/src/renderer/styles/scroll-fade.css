@@ -95,14 +95,6 @@
   }
 }
 
-/* Only nested reasoning/process scrollports grow with the live turn.
- * Drop their masks until the reader leaves the live edge or the turn settles.
- * Navigation, attachment strips and message streams keep following their own bounds. */
-:root[data-stream-following] [data-scroll-fade][data-wuu-nested-scroll] {
-  animation: none;
-  mask-image: none;
-}
-
 /* Keep high-contrast/print output fully legible. Reduced motion and older
  * engines degrade to ordinary clipping rather than a permanent fade. */
 @media (forced-colors: active), print {
