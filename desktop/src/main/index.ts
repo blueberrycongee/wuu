@@ -535,6 +535,21 @@ function runtimeContextForWorkspaceID(workspaceID: string): RuntimeContext {
   return { kind: "project", project_id: project.id, cwd: project.path };
 }
 
+function runtimeContextForPluginWorkspace(
+  event: IpcMainInvokeEvent,
+  workspaceID?: string,
+  workspaceRoot?: string,
+): RuntimeContext {
+  if (workspaceID?.trim()) return runtimeContextForWorkspaceID(workspaceID);
+  if (!workspaceRoot?.trim()) return runtimeContextForEvent(event);
+  const current = runtimeContextForEvent(event);
+  if (current.kind === "no_project" && resolve(current.cwd) === resolve(workspaceRoot)) return current;
+  if (projectManager.list().projects.some((project) => resolve(project.path) === resolve(workspaceRoot))) {
+    throw new Error("Plugin workspace ID is required for a registered project");
+  }
+  return projectManager.resolveSubmissionContext({ kind: "no_project", cwd: workspaceRoot });
+}
+
 function codexPetDirs(): string[] {
   const primaryPetsDir = defaultCodexPetsDir(wuuHomePath());
   ensureCodexPetsDir(primaryPetsDir);
@@ -2033,8 +2048,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:plugin-storage-set", (event, params: PluginStorageSetParams) =>
     appServerRequest<PluginStorageResult>(event, "plugin/storage/set", params));
   ipcMain.handle("wuu:plugin-runtime-request", (event, params: PluginClientRequestParams) => {
-    const workspaceID = params.workspace_id?.trim();
-    const context = workspaceID ? runtimeContextForWorkspaceID(workspaceID) : runtimeContextForEvent(event);
+    const context = runtimeContextForPluginWorkspace(event, params.workspace_id, params.workspace_root);
     if (params.workspace_root && resolve(params.workspace_root) !== resolve(context.cwd)) {
       throw new Error("Plugin runtime workspace changed");
     }
@@ -2047,9 +2061,7 @@ app.whenReady().then(async () => {
     cancelPluginRuntime(`window:${event.sender.id}`, params));
   ipcMain.handle("wuu:plugin-visible-history", async (event, request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult> => {
     if (!request || !request.threadId?.trim() || !request.workspaceRoot?.trim()) throw new Error("Conversation identity is required");
-    const context = request.workspaceId
-      ? runtimeContextForWorkspaceID(request.workspaceId)
-      : runtimeContextForEvent(event);
+    const context = runtimeContextForPluginWorkspace(event, request.workspaceId, request.workspaceRoot);
     if (resolve(context.cwd) !== resolve(request.workspaceRoot)
       || (!request.workspaceId && context.kind !== "no_project")) throw new Error("Conversation workspace changed");
     if (request.kind === "main") {

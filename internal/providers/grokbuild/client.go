@@ -34,6 +34,11 @@ type Client struct {
 	coordinator  *providers.ProviderCoordinator
 }
 
+// RequiresStreamingChat keeps one-shot requests on the proxy's supported
+// transport. The Grok Build proxy only documents non-streaming for grok-build;
+// other routed models may stall or reject it.
+func (*Client) RequiresStreamingChat() bool { return true }
+
 func New(cfg ClientConfig) (*Client, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	if baseURL == "" {

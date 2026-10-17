@@ -112,6 +112,13 @@ export interface SettingsModelAliasV1 {
   readonly variant?: string;
 }
 
+export interface SettingsAvailableModelV1 {
+  readonly provider: string;
+  readonly model: string;
+  readonly label: string;
+  readonly variants: readonly string[];
+}
+
 export interface SettingsValueMapV1 {
   readonly "runtime.modelAliases": Readonly<Record<string, SettingsModelAliasV1>>;
 }
@@ -123,6 +130,7 @@ export interface SettingsPageHostAPI {
   readonly contractVersion: 1;
   getValue<Key extends SettingsValueKeyV1>(key: Key): SettingsValueMapV1[Key];
   updateValue<Key extends SettingsValueKeyV1>(key: Key, value: SettingsValueMapV1[Key]): Promise<void>;
+  listAvailableModels?(): readonly SettingsAvailableModelV1[];
 }
 
 export interface ViewHostAPI {
@@ -1373,6 +1381,13 @@ export interface ModelRequestParams {
   readonly messages: readonly ModelRequestMessage[];
   /** Existing configured model alias; omitted uses the host's configured model. */
   readonly model_alias?: string;
+  /** Explicit configured provider and model; supply both, without model_alias. */
+  readonly provider?: string;
+  readonly model?: string;
+  /** Strict configured variant for an explicit provider/model. Unsupported values fail. */
+  readonly variant?: string;
+  /** For an explicit provider/model, use this reasoning tier if the model supports it. */
+  readonly preferred_effort?: string;
   /**
    * Requested output-token limit, integer 1–8192; defaults to 1024.
    * An adapter that cannot preserve the limit fails with unsupported_limit

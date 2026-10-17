@@ -41,7 +41,10 @@ process.env.WUU_RENDERER_E2E_EXTENSION = path.join(__dirname, "next-message-e2e-
 protocol.registerSchemesAsPrivileged([{ scheme: "wuu-plugin", privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
 let win, phase = "startup", watchdog, turnCounter = 0, failing = false;
 const pending = new Map();
-const runtimeInstances = new Map(), runtimeControllers = new Map(), storageByWorkspace = new Map();
+const runtimeInstances = new Map(), runtimeControllers = new Map(), storageByWorkspace = new Map([
+  ["workspace-a", '{"provider":"synthetic","model":"mock-next-message"}'],
+  ["workspace-b", '{"provider":"synthetic","model":"mock-next-message"}'],
+]);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const save = () => fs.writeFileSync(path.join(output, "results.json"), JSON.stringify(report, null, 2));
 function thread(id, cwd, extra = {}) {
@@ -247,7 +250,7 @@ app.whenReady().then(async () => {
   await check("successful live turn shows gray host ghost; Tab inserts and never sends", async () => {
     const { request } = await offer();
     assert.equal(request.modelRequest.max_output_tokens, 128); assert.equal(request.modelRequest.allow_unbounded_output, true);
-    assert.equal(request.modelRequest.timeout_ms, 15000);
+    assert.equal(request.modelRequest.timeout_ms, 30000);
     assert.equal(request.modelRequest.messages.length, 2); assert.equal(request.modelRequest.tools, undefined);
     const sent = JSON.parse(request.modelRequest.messages[1].content);
     assert.equal(sent.turns.at(-1).user, request.params.input.turns.at(-1).userText);
@@ -266,6 +269,14 @@ app.whenReady().then(async () => {
     const request = await requestFor(live); await resolve(request);
     await until(({ selector, suggestion }) => document.querySelector(selector)?.textContent === suggestion, { selector: ghostSelector, suggestion });
     assert.equal(predictions().filter(item => item.params.input.turnId === live.turn.id).length, 1); await key("Escape");
+  });
+  await check("a live turn survives a matching thread resume snapshot", async () => {
+    await draft(""); const live = await startTurn();
+    event("thread/resumed", { thread: { ...threads[0], status: "running", turns: [...threads[0].turns, live.turn] } });
+    await frames(); await completeTurn(live);
+    const request = await requestFor(live); await resolve(request);
+    await until(({ selector, suggestion }) => document.querySelector(selector)?.textContent === suggestion, { selector: ghostSelector, suggestion });
+    await key("Escape");
   });
   await check("an unfocused empty composer still predicts and accepts after focus returns", async () => {
     await draft("");
@@ -306,19 +317,23 @@ app.whenReady().then(async () => {
     assert.equal(predictions().length, count); report.ime = await evaluate(() => window.__nextMessageIME);
     await focus(); await draft("");
   });
-  await check("toolbar menu suppresses ghost text without another model attempt", async () => {
+  await check("toolbar menu temporarily hides cached ghost without another model attempt", async () => {
     await offer(); const count = predictions().length;
     await evaluate(() => document.querySelector('[data-main-conversation-composer] .composer-plus-button').click());
     await until(() => Boolean(document.querySelector('[data-floating-menu-owner="composer-plus"]')));
     await noGhost("toolbar menu owns keyboard interaction"); await key("Tab"); assert.equal(await value(), "");
-    await key("Escape"); await focus(); await delay(200); assert.equal(predictions().length, count); await noGhost("menu close cannot retry consumed source");
+    await key("Escape"); await focus(); await delay(200); assert.equal(predictions().length, count);
+    await until(({ selector, text }) => document.querySelector(selector)?.textContent === text,
+      { selector: ghostSelector, text: suggestion });
+    await key("Escape");
   });
-  await check("typing cancels inference and late replies cannot revive it", async () => {
+  await check("typing hides an in-flight suggestion and clearing the draft reveals it", async () => {
     await draft(""); const live = await startTurn(); await completeTurn(live); const request = await requestFor(live);
     await win.webContents.insertText("My own next step");
-    await waitMain(() => request.cancelled, "typing cancels active model request");
-    await resolve(request, "STALE TYPING RESPONSE"); await noGhost("late typing result");
-    await draft(""); await delay(400); assert.equal(predictions().filter(item => item.params.input.turnId === live.turn.id).length, 1);
+    await frames(); assert.equal(request.cancelled, false, "draft changes must not cancel background inference");
+    await resolve(request, "Continue after clearing the draft."); await noGhost("draft owns the composer");
+    await draft(""); await until(selector => document.querySelector(selector)?.textContent === "Continue after clearing the draft.", ghostSelector);
+    assert.equal(predictions().filter(item => item.params.input.turnId === live.turn.id).length, 1); await key("Escape");
   });
   await check("new turn cancels an older pending prediction", async () => {
     await draft(""); const older = await startTurn(); await completeTurn(older); const request = await requestFor(older);
@@ -345,19 +360,25 @@ app.whenReady().then(async () => {
     await delay(400); assert.equal(predictions().filter(item => item.params.input.turnId === live.turn.id).length, 1);
     await key("Escape");
   });
-  await check("attachments and queued messages suppress the empty-text composer", async () => {
+  await check("attachments and queued messages hide but do not cancel predictions", async () => {
     await draft("");
     await attachComposerFiles(win, "[data-main-conversation-composer]", [{ name: "synthetic-fixture.txt", type: "text/plain", contents: "Only synthetic attachment content." }]);
     await until(() => Boolean(document.querySelector(".composer-attachment-tray-item")));
-    await focus(); let before = predictions().length; let live = await startTurn(); await completeTurn(live);
-    await delay(400); assert.equal(predictions().length, before); await noGhost("attachment-bearing draft is not empty");
+    await focus(); let live = await startTurn(); await completeTurn(live);
+    let request = await requestFor(live); await resolve(request, "Continue after removing the attachment.");
+    await noGhost("attachment-bearing draft is not empty");
     await evaluate(() => document.querySelector("[data-main-conversation-composer] .composer-attachment-card-remove").click());
     await until(() => !document.querySelector(".composer-attachment-tray-item"));
+    await until(selector => document.querySelector(selector)?.textContent === "Continue after removing the attachment.", ghostSelector);
+    await focus(); await key("Escape");
     event("turn/held", { thread_id: threadId, messages: [{ id: "held-next-message", thread_id: threadId, origin: "queue", prompt: "An existing queued instruction", state: "held" }] });
     await until(() => document.body.textContent.includes("An existing queued instruction"));
-    await focus(); before = predictions().length; live = await startTurn(); await completeTurn(live);
-    await delay(400); assert.equal(predictions().length, before); await noGhost("queued instructions suppress suggestions");
-    event("turn/held", { thread_id: threadId, messages: [] }); await frames();
+    await focus(); live = await startTurn(); await completeTurn(live);
+    request = await requestFor(live); await resolve(request, "Continue after the queue clears.");
+    await noGhost("queued instructions suppress suggestions");
+    event("turn/held", { thread_id: threadId, messages: [] });
+    await until(selector => document.querySelector(selector)?.textContent === "Continue after the queue clears.", ghostSelector);
+    await focus(); await key("Escape"); await noGhost("queue result dismissed");
   });
   await check("main-turn notifications do not arm the side composer", async () => {
     await draft("/side");
@@ -365,46 +386,60 @@ app.whenReady().then(async () => {
     await evaluate(() => document.querySelector('.slash-command-item[data-command-name="side"]').click());
     await until(() => Boolean(document.querySelector('.side-thread-panel [data-wuu-component="composer-input"]')));
     await evaluate(() => document.querySelector('.side-thread-panel [data-wuu-component="composer-input"]').focus());
-    const before = predictions().length; const live = await startTurn({ target: "next-message-side" }); await completeTurn(live);
-    await delay(400); assert.equal(predictions().length, before); await noGhost("side conversation excluded");
+    const live = await startTurn({ target: "next-message-side" }); await completeTurn(live);
+    const request = await requestFor(live); await resolve(request);
+    await noGhost("unrelated main conversation result stays out of the side composer");
     await screenshot("side-conversation-no-suggestion");
     await evaluate(() => document.querySelector('[data-wuu-tab-kind="side-thread"] .workspace-tool-tab-close').click());
     await until(() => !document.querySelector(".side-thread-panel")); await focus();
   });
-  await check("thread navigation invalidates pending work and returning does not retry", async () => {
+  await check("thread navigation keeps prediction running and shows it on return", async () => {
     await evaluate(() => { const header = document.querySelector('[data-section-id="workspace-a"] .sidebar-section-header-group button'); if (header?.getAttribute("aria-expanded") === "false") header.click(); });
     await until(() => [...document.querySelectorAll(".thread-row-main")].some(node => node.textContent.includes("Other conversation")));
     await draft(""); const live = await startTurn(); await completeTurn(live); const request = await requestFor(live);
     await evaluate(() => [...document.querySelectorAll(".thread-row-main")].find(node => node.textContent.includes("Other conversation")).click());
-    await waitMain(() => request.cancelled, "thread navigation cancels request");
-    await resolve(request, "STALE OTHER THREAD"); await noGhost("reply cannot cross threads");
+    await frames(); assert.equal(request.cancelled, false, "thread navigation must not cancel prediction");
+    await resolve(request, "Return to this conversation."); await noGhost("reply cannot cross threads");
     await evaluate(() => [...document.querySelectorAll(".thread-row-main")].find(node => node.textContent.includes("Next-message acceptance")).click());
-    await focus(); await delay(400); assert.equal(predictions().filter(item => item.params.input.turnId === live.turn.id).length, 1);
-    await noGhost("returning cannot revive a consumed turn");
+    await focus(); await until(selector => document.querySelector(selector)?.textContent === "Return to this conversation.", ghostSelector);
+    assert.equal(predictions().filter(item => item.params.input.turnId === live.turn.id).length, 1);
+    await key("Escape");
   });
-  await check("read-only conversation never starts inference", async () => {
+  await check("reply completed while another conversation is open still predicts", async () => {
+    await draft(""); const live = await startTurn();
+    await evaluate(() => [...document.querySelectorAll(".thread-row-main")].find(node => node.textContent.includes("Other conversation")).click());
+    await completeTurn(live); const request = await requestFor(live);
+    await resolve(request, "Follow up after returning."); await noGhost("background result stays with its conversation");
+    await evaluate(() => [...document.querySelectorAll(".thread-row-main")].find(node => node.textContent.includes("Next-message acceptance")).click());
+    await focus(); await until(selector => document.querySelector(selector)?.textContent === "Follow up after returning.", ghostSelector);
+    await key("Escape");
+  });
+  await check("read-only composer never displays a background prediction", async () => {
     const snapshot = await evaluate(async id => (await window.wuu.resumeThread(id)).thread, threadId);
     event("thread/resumed", { thread_id: threadId, thread: { ...snapshot, read_only: true } });
     await until(selector => document.querySelector(selector)?.disabled, inputSelector);
-    const before = predictions().length; const live = await startTurn(); await completeTurn(live);
-    await delay(400); assert.equal(predictions().length, before); await noGhost("read-only input never offers a suggestion");
+    const live = await startTurn(); await completeTurn(live);
+    const request = await requestFor(live); await resolve(request);
+    await noGhost("read-only input never offers a suggestion");
     await screenshot("read-only-no-suggestion");
     event("thread/resumed", { thread_id: threadId, thread: { ...snapshot, read_only: false } });
     await until(selector => document.querySelector(selector)?.disabled === false, inputSelector); await focus();
   });
   await check("workspace-scoped events isolate identical thread IDs", async () => {
     await draft(""); const live = await startTurn(); await completeTurn(live); const request = await requestFor(live);
-    const count = predictions().length;
     const unrelated = await startTurn({ cwd: otherWorkdir }); await completeTurn(unrelated);
-    await delay(200); assert.equal(predictions().length, count, "foreign same-ID events cannot issue B inference while A is focused");
-    report.sameIdCollision = { activeRequestCancelled: request.cancelled,
-      limit: "The existing App thread store keys by thread ID, so a foreign same-ID event may invalidate the active composer revision. The safe outcome is suppression, never cross-workspace inference or text." };
-    await resolve(request); if (request.cancelled) await noGhost("colliding foreign events cannot resurrect stale A text"); else await key("Escape");
-    await key("Tab"); await focus(); await delay(200); assert.equal(predictions().length, count);
+    const otherRequest = await requestFor(unrelated);
+    assert.equal(otherRequest.params.workspace_id, "workspace-b");
+    assert.equal(request.cancelled, false, "foreign workspace cannot cancel A inference");
+    await resolve(otherRequest, "Workspace B only."); await noGhost("B suggestion stays out of A");
+    await resolve(request, "Workspace A only."); await frames();
+    const shown = await evaluate(selector => document.querySelector(selector)?.textContent || "", ghostSelector);
+    assert.notEqual(shown, "Workspace B only.");
+    if (shown) { await focus(); await key("Escape"); }
     const snapshot = await evaluate(async id => (await window.wuu.resumeThread(id)).thread, threadId);
     event("thread/resumed", { thread_id: threadId, thread: snapshot }); await frames(); await focus();
   });
-  await check("workspace navigation cancels stale source and targets the selected workspace", async () => {
+  await check("workspace navigation preserves each workspace's prediction", async () => {
     await draft(""); const live = await startTurn(); await completeTurn(live); const old = await requestFor(live);
     async function selectWorkspace(id) {
       await evaluate(id => { const group = document.querySelector(`[data-section-id="${id}"]`); const header = group.querySelector('.sidebar-section-header-group button'); if (header.getAttribute("aria-expanded") === "false") header.click(); }, id);
@@ -415,13 +450,15 @@ app.whenReady().then(async () => {
       await until(selector => document.querySelector(selector)?.disabled === false, inputSelector);
       await focus();
     }
-    await selectWorkspace("workspace-b"); await waitMain(() => old.cancelled, "workspace switch cancels prediction");
-    await resolve(old, "STALE WORKSPACE A"); await noGhost("same thread ID in another workspace is isolated");
+    await selectWorkspace("workspace-b"); assert.equal(old.cancelled, false, "workspace switch must not cancel A prediction");
+    await resolve(old, "Return to workspace A."); await noGhost("A result stays out of workspace B");
     const next = await startTurn({ cwd: otherWorkdir, target: "workspace-b-thread" }); await completeTurn(next); const current = await requestFor(next);
     assert.equal(current.params.workspace_id, "workspace-b"); await resolve(current, "Check only workspace B.");
     await until(selector => document.querySelector(selector)?.textContent === "Check only workspace B.", ghostSelector);
     await screenshot("workspace-b-isolated-suggestion");
-    await selectWorkspace("workspace-a"); await noGhost("returning to A cannot revive either old result");
+    await selectWorkspace("workspace-a");
+    await until(selector => document.querySelector(selector)?.textContent === "Return to workspace A.", ghostSelector);
+    await key("Escape");
   });
   await check("cross-workspace split keeps its prediction across focus transfer", async () => {
     await draft("");
@@ -489,7 +526,7 @@ app.whenReady().then(async () => {
       assert.ok(geometry.overlay.bottom <= geometry.toolbar.top + 1, "the ghost viewport must stop before the toolbar");
     }
   });
-  await check("plugin settings save and reload the alias in the selected workspace", async () => {
+  await check("plugin settings save and reload the selected model in the workspace", async () => {
     win.setContentSize(1200, 850); await until(() => innerWidth === 1200);
     await evaluate(() => {
       document.documentElement.dataset.theme = "light";
@@ -504,17 +541,17 @@ app.whenReady().then(async () => {
     const settingsButton = () => [...document.querySelectorAll(".settings-nav-item")].find(node => node.textContent.trim() === "Next message");
     await until(settingsButton); await evaluate(() => [...document.querySelectorAll(".settings-nav-item")].find(node => node.textContent.trim() === "Next message").click());
     await until(() => document.querySelector(".plugin-ui-input")?.disabled === false);
-    await evaluate(() => document.querySelector(".plugin-ui-input").focus());
-    await key("A", [process.platform === "darwin" ? "meta" : "control"]); await win.webContents.insertText("synthetic-fast-model");
+    assert.equal(await evaluate(() => document.querySelectorAll(".plugin-ui-input")[1]?.value), "low", "legacy model selection should display its effective low tier");
+    await evaluate(() => { document.querySelector(".plugin-ui-input").value = JSON.stringify(["synthetic", "mock-next-message"]); document.querySelector(".plugin-ui-input").dispatchEvent(new Event("change", { bubbles: true })); });
     await evaluate(() => [...document.querySelectorAll("button")].find(node => node.textContent.trim() === "Save changes").click());
-    const request = await waitMain(() => report.requests.findLast(item => item.params.method === "next-message.update"), "model alias save");
-    assert.equal(request.params.workspace_id, "workspace-a"); assert.equal(request.params.input.model_alias, "synthetic-fast-model");
+    const request = await waitMain(() => report.requests.findLast(item => item.params.method === "next-message.update"), "model selection save");
+    assert.equal(request.params.workspace_id, "workspace-a"); assert.deepEqual(request.params.input, { provider: "synthetic", model: "mock-next-message", variant: "low" });
     await until(() => [...document.querySelectorAll('[role="status"]')].some(node => node.textContent === "Saved"));
     await screenshot("settings-light-default");
     await evaluate(() => [...document.querySelectorAll(".settings-nav-item")].find(node => node.textContent.trim() === "General").click());
     await until(() => !document.querySelector(".plugin-ui-input"));
     await evaluate(() => [...document.querySelectorAll(".settings-nav-item")].find(node => node.textContent.trim() === "Next message").click());
-    await until(() => document.querySelector(".plugin-ui-input")?.value === "synthetic-fast-model");
+    await until(() => document.querySelector(".plugin-ui-input")?.value === JSON.stringify(["synthetic", "mock-next-message"]));
     win.setContentSize(640, 850); await until(() => innerWidth === 640);
     await evaluate(() => { document.documentElement.dataset.theme = "dark"; document.documentElement.style.setProperty("--conversation-message-font-size", "20px"); document.documentElement.style.setProperty("--wuu-font-size-ui", "20px"); });
     await evaluate(() => document.querySelector('.plugin-ui-input').scrollIntoView({ block: "center" }));

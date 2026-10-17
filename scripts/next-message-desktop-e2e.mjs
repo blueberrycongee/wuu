@@ -160,8 +160,10 @@ await scenario(
     });
     assert.equal(f.calls[0].options.workspaceId, "a");
     f.complete();
-    assert.equal(await f.provide({ revision: 2 }), null);
+    assert.deepEqual(await f.provide({ revision: 2 }), got);
     assert.equal(f.calls.length, 1);
+    f.provider.onDidInteract({ type: "dismissed", suggestionId: got.id });
+    assert.equal(await f.provide({ revision: 3 }), null);
   },
 );
 await scenario(
@@ -273,8 +275,8 @@ await scenario("only exact empty ordinary inputs qualify", async (f) => {
     { workspaceRoot: "/unregistered" },
   ])
     assert.equal(await f.provide(patch), null);
-  assert.equal(f.calls.length, 0);
   assert.ok(await f.provide());
+  assert.equal(f.calls.length, 1);
 });
 await scenario("recent visible turns precede the live source turn", async (f) => {
   const older = { id: "older", userText: "First question", assistantText: "First answer", imageCount: 0, fileCount: 0 };
@@ -299,10 +301,11 @@ await scenario("side conversation uses only its own completed message history", 
   } } });
   emit({ type: "status", summary: { status: "running", revision: 1 } });
   emit({ type: "message", revision: 2, message: { id: "reply", role: "assistant", text: "Side answer", status: "completed" } });
-  assert.ok(await f.provide({ kind: "side", sideThreadId: "side-one" }));
+  const got = await f.provide({ kind: "side", sideThreadId: "side-one" });
+  assert.ok(got);
   assert.equal(f.calls[0].input.threadId, "side-one");
   assert.equal(f.historyRequests[0].kind, "side");
-  assert.equal(await f.provide({ kind: "side", sideThreadId: "side-one", revision: 2 }), null);
+  assert.deepEqual(await f.provide({ kind: "side", sideThreadId: "side-one", revision: 2 }), got);
 });
 await scenario("attachment source sends category counts but never media bytes", async (f) => {
   f.start();
@@ -344,13 +347,13 @@ await scenario("same thread ID is isolated across workspaces", async (f) => {
   f.start("bt", "/b");
   f.complete("bt", {}, "/b");
   assert.ok(await f.provide({ workspaceId: "b", workspaceRoot: "/b" }));
-  assert.equal(f.calls[0].input.turnId, "bt");
-  assert.equal(f.calls[0].options.workspaceId, "b");
+  assert.equal(f.calls[1].input.turnId, "bt");
+  assert.equal(f.calls[1].options.workspaceId, "b");
   assert.ok(await f.provide());
-  assert.equal(f.calls[1].options.workspaceId, "a");
+  assert.equal(f.calls[0].options.workspaceId, "a");
 });
 await scenario(
-  "draft cancellation passes signal and no focus retries",
+  "draft cancellation does not cancel background generation",
   async (f) => {
     let settle;
     f.setResponse(() => new Promise((r) => (settle = r)));
@@ -361,10 +364,10 @@ await scenario(
     await new Promise((r) => setImmediate(r));
     assert.equal(f.calls.length, 1);
     c.abort();
-    assert.equal(f.calls[0].options.signal.aborted, true);
+    assert.equal(f.calls[0].options.signal.aborted, false);
     settle({ suggestion: "STALE" });
     assert.equal(await pending, null);
-    assert.equal(await f.provide({ revision: 2 }), null);
+    assert.equal((await f.provide({ revision: 2 })).text, "STALE");
     assert.equal(f.calls.length, 1);
   },
 );

@@ -9,8 +9,6 @@ export async function activate(api) {
   let workspaces = [];
   let disposed = false;
   const keyFor = (root, thread, side) => JSON.stringify([root, thread, side ?? null]);
-  const registered = (root, id) => workspaces.some((workspace) => workspace.available
-    && workspace.root === root && (id === undefined || workspace.id === id));
   function invalidate(key) {
     const previous = turns.get(key);
     previous?.controller?.abort();
@@ -18,6 +16,55 @@ export async function activate(api) {
   }
   function invalidateRoot(root) {
     for (const [key, value] of turns) if (value.root === root) invalidate(key);
+  }
+  function refreshObserved(key) {
+    const observed = observations.get(key);
+    if (observed) provider.refresh({ composerId: observed.composerId, revision: observed.revision });
+  }
+  function predict(key, current, text) {
+    const controller = new AbortController();
+    current.controller = controller;
+    current.state = "pending";
+    current.promise = (async () => {
+      try {
+        const latest = await api.listWorkspaces();
+        if (disposed || controller.signal.aborted || turns.get(key) !== current) return null;
+        workspaces = latest.workspaces;
+        const candidates = workspaces.filter((workspace) => workspace.available && workspace.root === current.root);
+        if (current.workspaceId) {
+          if (!candidates.some((workspace) => workspace.id === current.workspaceId)) return null;
+        } else if (candidates.length === 1) {
+          current.workspaceId = candidates[0].id;
+        } else if (candidates.length > 1) {
+          return null;
+        }
+        const history = await api.readVisibleHistory({
+          kind: current.sideThreadId ? "side" : "main", threadId: current.threadId,
+          sideThreadId: current.sideThreadId, workspaceRoot: current.root, workspaceId: current.workspaceId,
+          ...(current.sideThreadId ? {} : { beforeTurnId: current.turnId }),
+        });
+        if (disposed || controller.signal.aborted || turns.get(key) !== current) return null;
+        const turnsForModel = current.sideThreadId
+          ? history.turns : [...history.turns, { id: current.turnId, ...text }];
+        if (!turnsForModel.length || turnsForModel.at(-1)?.id !== current.turnId) return null;
+        const result = await api.invokeRuntime("next-message.predict", {
+          threadId: current.sideThreadId ?? current.threadId, turnId: current.turnId, turns: turnsForModel,
+        }, { workspaceId: current.workspaceId, workspaceRoot: current.root, signal: controller.signal });
+        if (disposed || controller.signal.aborted || turns.get(key) !== current) return null;
+        return validSuggestion(result);
+      } catch {
+        // Optional predictions never interrupt composition or expose model text
+        // through diagnostics. The runtime owns bounded inference and usage.
+        return null;
+      }
+    })().then((suggestion) => {
+      if (disposed || controller.signal.aborted || turns.get(key) !== current) return null;
+      current.state = suggestion === null ? "spent" : "ready";
+      current.suggestion = suggestion;
+      delete current.controller;
+      refreshObserved(key);
+      return suggestion;
+    });
   }
   try { workspaces = (await api.listWorkspaces()).workspaces; } catch { /* Missing workspace access means no prediction. */ }
   api.signal.throwIfAborted();
@@ -50,16 +97,35 @@ export async function activate(api) {
         const current = turns.get(key);
         if (!current || current.state !== "running" || typeof params.message.id !== "string"
           || !Number.isSafeInteger(params.revision) || params.revision < current.revision) return;
-        current.state = params.message.status === "completed" && typeof params.message.text === "string"
-          && params.message.text.trim() ? "ready" : "spent";
         current.turnId = params.message.id;
-        const observed = observations.get(key);
-        if (observed) provider.refresh({ composerId: observed.composerId, revision: observed.revision });
+        if (params.message.status === "completed" && typeof params.message.text === "string"
+          && params.message.text.trim()) predict(key, current);
+        else current.state = "spent";
+        refreshObserved(key);
       }
       return;
     }
-    // History restoration and reconnect must never masquerade as live success.
-    if (method === "thread/resumed") { invalidateRoot(root); provider.refresh(); return; }
+    // A new conversation can resume its snapshot after its first live turn
+    // starts. Keep only that exact in-progress turn; restored history cannot
+    // arm a suggestion without a live start event.
+    if (method === "thread/resumed") {
+      const snapshot = params?.thread;
+      if (typeof snapshot?.id !== "string" || !Array.isArray(snapshot.turns)) {
+        invalidateRoot(root); provider.refresh(); return;
+      }
+      let changed = false;
+      for (const [key, current] of turns) {
+        if (current.root !== root || current.threadId !== snapshot.id) continue;
+        if (current.sideThreadId) continue;
+        const source = snapshot.turns.find((turn) => turn?.id === current.turnId);
+        const latest = snapshot.turns.at(-1);
+        const matches = source && latest?.id === current.turnId
+          && (current.state === "running" ? source.status === "in_progress" : source.status === "completed");
+        if (!matches) { invalidate(key); changed = true; }
+      }
+      if (changed) provider.refresh();
+      return;
+    }
     const threadId = params?.thread_id;
     if (typeof threadId !== "string") return;
     const key = keyFor(root, threadId);
@@ -83,16 +149,24 @@ export async function activate(api) {
       if (!current || current.state !== "running" || current.turnId !== turn?.id) return;
       current.state = "spent";
       const text = visibleTurnText(turn);
-      if (text) { current.state = "ready"; current.text = text; }
+      if (text) predict(key, current, text);
       // A completion notification can also change the host's running revision.
       // Refresh only the observation seen before the event: an unscoped delayed
       // refresh would abort the request that the new idle revision just started.
-      const observed = observations.get(key);
-      if (observed) provider.refresh({ composerId: observed.composerId, revision: observed.revision });
+      refreshObserved(key);
     }
   });
   const provider = api.registerComposerInlineCompletionProvider({
     id: "next-message",
+    onDidInteract(event) {
+      if (event.type !== "accepted" && event.type !== "dismissed") return;
+      let identity;
+      try { identity = JSON.parse(event.suggestionId); } catch { return; }
+      if (!Array.isArray(identity) || identity.length !== 4) return;
+      const [root, threadId, sideThreadId, turnId] = identity;
+      const current = turns.get(keyFor(root, threadId, sideThreadId));
+      if (current?.turnId === turnId && current.state === "ready") current.state = "spent";
+    },
     async provideCompletion(context, signal) {
       if (context.workspaceRoot && context.threadId && (context.kind === "main" || context.sideThreadId)) {
         const observationKey = keyFor(context.workspaceRoot, context.threadId, context.sideThreadId);
@@ -108,47 +182,11 @@ export async function activate(api) {
         || context.attachmentCount !== 0 || context.queuedCount !== 0 || context.pendingCount !== 0) return null;
       const key = keyFor(context.workspaceRoot, context.threadId, context.sideThreadId);
       const current = turns.get(key);
-      if (current?.state !== "ready" || (context.kind === "main" && current.workspaceId !== context.workspaceId)) return null;
-      // Consumed before any await: null, errors and abort never purchase
-      // another attempt for this source turn.
-      current.state = "spent";
-      const text = current.text;
-      delete current.text;
-      const controller = new AbortController();
-      current.controller = controller;
-      const abort = () => controller.abort(signal.reason);
-      signal.addEventListener("abort", abort, { once: true });
-      try {
-        if (context.workspaceId) {
-          const latest = await api.listWorkspaces();
-          if (disposed || signal.aborted || controller.signal.aborted || turns.get(key) !== current) return null;
-          workspaces = latest.workspaces;
-          if (!registered(context.workspaceRoot, context.workspaceId)) return null;
-        }
-        const history = await api.readVisibleHistory({
-          kind: context.kind, threadId: context.threadId, sideThreadId: context.sideThreadId,
-          workspaceRoot: context.workspaceRoot, workspaceId: context.workspaceId,
-          ...(context.kind === "main" ? { beforeTurnId: current.turnId } : {}),
-        });
-        if (disposed || signal.aborted || controller.signal.aborted || turns.get(key) !== current) return null;
-        const turnsForModel = context.kind === "main"
-          ? [...history.turns, { id: current.turnId, ...text }]
-          : history.turns;
-        if (!turnsForModel.length || turnsForModel.at(-1)?.id !== current.turnId) return null;
-        const result = await api.invokeRuntime("next-message.predict", {
-          threadId: context.sideThreadId ?? context.threadId, turnId: current.turnId, turns: turnsForModel,
-        }, { workspaceId: context.workspaceId, workspaceRoot: context.workspaceRoot, signal: controller.signal });
-        if (disposed || signal.aborted || controller.signal.aborted || turns.get(key) !== current) return null;
-        const suggestion = validSuggestion(result);
-        return suggestion === null ? null : { id: JSON.stringify([context.workspaceRoot, context.threadId, context.sideThreadId, current.turnId]), text: suggestion };
-      } catch {
-        // Optional predictions never interrupt composition or expose model text
-        // through diagnostics. The runtime owns bounded inference and usage.
-        return null;
-      } finally {
-        signal.removeEventListener("abort", abort);
-        if (current.controller === controller) delete current.controller;
-      }
+      if (!current || (context.kind === "main" && current.workspaceId !== context.workspaceId)) return null;
+      const suggestion = current.state === "pending" ? await current.promise
+        : current.state === "ready" ? current.suggestion : null;
+      if (disposed || signal.aborted || turns.get(key) !== current || !suggestion) return null;
+      return { id: JSON.stringify([context.workspaceRoot, context.threadId, context.sideThreadId, current.turnId]), text: suggestion };
     },
   });
   api.registerCleanup(() => {
@@ -159,8 +197,19 @@ export async function activate(api) {
   api.registerLocale({ id: "next-message-en", locale: "en-US", entries: {
     "nextMessage.title": "Next message",
     "nextMessage.help": "After a reply, suggest a message in the empty composer. Tab inserts it; Escape dismisses it.",
-    "nextMessage.model": "Suggestion model", "nextMessage.inherit": "Follow workspace main model",
-    "nextMessage.modelHelp": "Leave blank to follow the workspace's current main model. A configured alias stays selected when the main model changes.",
+    "nextMessage.model": "Suggestion model", "nextMessage.choose": "Choose a model",
+    "nextMessage.variant": "Reasoning level", "nextMessage.defaultVariant": "Model default",
+    "nextMessage.fixedVariant": "Set by the model alias",
+    "nextMessage.level.none": "None", "nextMessage.level.minimal": "Minimal",
+    "nextMessage.level.low": "Low", "nextMessage.level.medium": "Medium",
+    "nextMessage.level.high": "High", "nextMessage.level.xhigh": "Very high",
+    "nextMessage.level.max": "Max", "nextMessage.level.ultra": "Ultra",
+    "nextMessage.invalidVariant": "This level is no longer available for the selected model. Choose another level.",
+    "nextMessage.slowVariant": "Higher reasoning levels may exceed the 30-second suggestion limit.",
+    "nextMessage.modelHelp": "Choose and save a model to enable suggestions.",
+    "nextMessage.noModels": "Configure a model provider before enabling suggestions.",
+    "nextMessage.removedModel": "The selected model is no longer configured. Choose another model.",
+    "nextMessage.aliases": "Model aliases",
     "nextMessage.dataSummary": "Recent visible conversation text is sent to the selected model provider and may incur charges.",
     "nextMessage.workspaceRequired": "Open a conversation before configuring suggestions.",
     "nextMessage.workspaceChanged": "The workspace changed. Reopen these settings before saving.",
@@ -169,24 +218,48 @@ export async function activate(api) {
   api.registerLocale({ id: "next-message-zh", locale: "zh-CN", entries: {
     "nextMessage.title": "下一句建议",
     "nextMessage.help": "回复完成后，在空输入框显示建议。Tab 填入草稿，Escape 取消。",
-    "nextMessage.model": "建议模型", "nextMessage.inherit": "跟随工作区主模型",
-    "nextMessage.modelHelp": "留空时跟随工作区当前主模型；填写已配置的模型别名后，切换主模型不会改变这里的选择。",
+    "nextMessage.model": "建议模型", "nextMessage.choose": "选择模型",
+    "nextMessage.variant": "推理档位", "nextMessage.defaultVariant": "模型默认",
+    "nextMessage.fixedVariant": "由模型别名决定",
+    "nextMessage.level.none": "无", "nextMessage.level.minimal": "极低",
+    "nextMessage.level.low": "低", "nextMessage.level.medium": "中",
+    "nextMessage.level.high": "高", "nextMessage.level.xhigh": "超高",
+    "nextMessage.level.max": "最高", "nextMessage.level.ultra": "极高",
+    "nextMessage.invalidVariant": "所选档位已不受此模型支持，请重新选择。",
+    "nextMessage.slowVariant": "较高的推理档位可能超过建议的 30 秒时限。",
+    "nextMessage.modelHelp": "请选择并保存一个模型，之后才会生成建议。",
+    "nextMessage.noModels": "请先配置模型提供商，再启用建议。",
+    "nextMessage.removedModel": "所选模型已不在配置中，请重新选择。",
+    "nextMessage.aliases": "模型别名",
     "nextMessage.dataSummary": "预测会把近期可见对话文字发送给所选模型提供商，并可能产生费用。",
     "nextMessage.workspaceRequired": "请先打开一个会话，再配置下一句建议。",
     "nextMessage.workspaceChanged": "工作区已变化，请重新打开此设置页后再保存。",
     "nextMessage.save": "保存更改", "nextMessage.saved": "已保存",
   } });
   api.registerStyle({ id: "next-message-settings", css: `
+    .plugin-next-message .plugin-next-message-model-row { display:grid; width:100%; max-width:48ch; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:var(--space-3); align-items:end; }
     .plugin-next-message .plugin-next-message-model-help,
     .plugin-next-message .plugin-next-message-data-summary { color: var(--ink-soft); font-size: var(--font-ui); line-height: 1.5; }
+    @media (max-width: 760px) { .plugin-next-message .plugin-next-message-model-row { grid-template-columns:minmax(0, 1fr); } }
   ` });
-  function Settings({ translate: tr }) {
-    const [alias, setAlias] = React.useState(null);
+  function Settings({ host, translate: tr }) {
+    const levelLabel = (level) => ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(level)
+      ? tr(`nextMessage.level.${level}`) : level;
+    const models = host.settings?.listAvailableModels?.() ?? [];
+    const aliases = Object.entries(host.settings?.getValue("runtime.modelAliases") ?? {}).sort(([a], [b]) => a.localeCompare(b));
+    const [selection, setSelection] = React.useState(null);
+    const [variant, setVariant] = React.useState(null);
     const [workspaceId, setWorkspaceId] = React.useState(null);
     const [workspaceRoot, setWorkspaceRoot] = React.useState(null);
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState("");
     const [saved, setSaved] = React.useState(false);
+    const selectedModel = models.find((model) => JSON.stringify([model.provider, model.model]) === selection);
+    const selectedAlias = aliases.find(([name]) => `alias:${name}` === selection);
+    const availableVariants = selectedModel?.variants ?? [];
+    const selectedVariant = variant === undefined ? availableVariants.includes("low") ? "low" : "" : variant;
+    const validVariant = selectedVariant === "" || availableVariants.includes(selectedVariant);
+    const aliasVariant = selectedAlias?.[1].variant || selectedAlias?.[1].effort || "";
     React.useEffect(() => {
       const controller = new AbortController();
       void (async () => {
@@ -195,7 +268,13 @@ export async function activate(api) {
         const root = workspace?.root ?? snapshot.activeRoot;
         if (!root) throw new Error(tr("nextMessage.workspaceRequired"));
         const value = await api.invokeRuntime("next-message.get", {}, { workspaceId: workspace?.id, workspaceRoot: root, signal: controller.signal });
-        if (!controller.signal.aborted) { setWorkspaceId(workspace?.id ?? ""); setWorkspaceRoot(root); setAlias(value.settings.model_alias ?? ""); }
+        if (!controller.signal.aborted) {
+          setWorkspaceId(workspace?.id ?? ""); setWorkspaceRoot(root);
+          setSelection(value.settings.model_alias ? `alias:${value.settings.model_alias}`
+            : value.settings.provider && value.settings.model ? JSON.stringify([value.settings.provider, value.settings.model]) : "");
+          setVariant(Object.hasOwn(value.settings, "variant") ? value.settings.variant
+            : undefined);
+        }
       })().catch((reason) => { if (!controller.signal.aborted) setError(String(reason)); });
       return () => controller.abort();
     }, []);
@@ -207,8 +286,14 @@ export async function activate(api) {
           || (workspaceId && !snapshot.workspaces.some((entry) => entry.id === workspaceId && entry.available))) {
           throw new Error(tr("nextMessage.workspaceChanged"));
         }
-        const value = await api.invokeRuntime("next-message.update", { model_alias: alias }, { workspaceId: workspaceId || undefined, workspaceRoot });
-        setAlias(value.settings.model_alias ?? ""); setSaved(true);
+        if (!selectedModel && !selectedAlias) throw new Error(tr("nextMessage.removedModel"));
+        if (selectedModel && !validVariant) throw new Error(tr("nextMessage.invalidVariant"));
+        const input = selectedAlias ? { model_alias: selectedAlias[0] }
+          : { provider: selectedModel.provider, model: selectedModel.model, variant: selectedVariant };
+        const value = await api.invokeRuntime("next-message.update", input, { workspaceId: workspaceId || undefined, workspaceRoot });
+        setSelection(value.settings.model_alias ? `alias:${value.settings.model_alias}`
+          : JSON.stringify([value.settings.provider, value.settings.model]));
+        setVariant(value.settings.variant ?? ""); setSaved(true);
         // A settings change does not retry old turns or preserve old results.
         for (const key of turns.keys()) invalidate(key);
         provider.refresh();
@@ -216,11 +301,34 @@ export async function activate(api) {
     }
     return h(Page, { className: "plugin-next-message" },
       h(Section, { title: tr("nextMessage.title"), description: tr("nextMessage.help") },
-        h("label", { className: "plugin-ui-field" }, h("span", { className: "plugin-ui-field-label" }, tr("nextMessage.model")),
-          h("input", { className: "plugin-ui-input", value: alias ?? "", disabled: busy || alias === null,
-            placeholder: tr("nextMessage.inherit"), onChange: (event) => { setAlias(event.target.value); setSaved(false); } })),
-        h("div", { className: "plugin-next-message-model-help" }, tr("nextMessage.modelHelp")),
-        h(Row, null, h(Button, { variant: "primary", disabled: busy || alias === null, onClick: () => void save() }, tr("nextMessage.save")),
+        h("div", { className: "plugin-next-message-model-row" },
+          h("label", { className: "plugin-ui-field" }, h("span", { className: "plugin-ui-field-label" }, tr("nextMessage.model")),
+            h("select", { className: "plugin-ui-input", value: selection ?? "", disabled: busy || selection === null || (models.length === 0 && aliases.length === 0),
+              onChange: (event) => {
+                setSelection(event.target.value);
+                const model = models.find((entry) => JSON.stringify([entry.provider, entry.model]) === event.target.value);
+                setVariant(model?.variants.includes("low") ? "low" : "");
+                setSaved(false);
+              } },
+              h("option", { value: "", disabled: true }, tr("nextMessage.choose")),
+              ...[...new Set(models.map((model) => model.provider))].map((provider) =>
+                h("optgroup", { key: provider, label: provider }, models.filter((model) => model.provider === provider).map((model) =>
+                  h("option", { key: model.model, value: JSON.stringify([model.provider, model.model]) }, model.label)))),
+              aliases.length ? h("optgroup", { label: tr("nextMessage.aliases") }, aliases.map(([name]) =>
+                h("option", { key: name, value: `alias:${name}` }, name))) : null)),
+          h("label", { className: "plugin-ui-field" }, h("span", { className: "plugin-ui-field-label" }, tr("nextMessage.variant")),
+            h("select", { className: "plugin-ui-input", value: selectedAlias ? "" : selectedVariant ?? "",
+              disabled: busy || variant === null || !selectedModel || availableVariants.length === 0,
+              onChange: (event) => { setVariant(event.target.value); setSaved(false); } },
+              h("option", { value: "" }, selectedAlias
+                ? `${tr("nextMessage.fixedVariant")}${aliasVariant ? ` (${levelLabel(aliasVariant)})` : ""}` : tr("nextMessage.defaultVariant")),
+              ...availableVariants.map((level) => h("option", { key: level, value: level }, levelLabel(level)))))),
+        !selectedModel && !selectedAlias ? h("div", { className: "plugin-next-message-model-help" },
+          tr(models.length || aliases.length ? selection ? "nextMessage.removedModel" : "nextMessage.modelHelp" : "nextMessage.noModels")) : null,
+        selectedModel && !validVariant ? h("div", { role: "alert" }, tr("nextMessage.invalidVariant")) : null,
+        selectedModel && ["high", "xhigh", "max", "ultra"].includes(selectedVariant)
+          ? h("div", { className: "plugin-next-message-model-help" }, tr("nextMessage.slowVariant")) : null,
+        h(Row, null, h(Button, { variant: "primary", disabled: busy || selection === null || (!selectedModel && !selectedAlias) || (selectedModel && !validVariant), onClick: () => void save() }, tr("nextMessage.save")),
           saved ? h("span", { role: "status" }, tr("nextMessage.saved")) : null,
           error ? h("span", { role: "alert" }, error) : null),
         h("div", { className: "plugin-next-message-data-summary" }, tr("nextMessage.dataSummary"))));

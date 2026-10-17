@@ -25,7 +25,7 @@ const events = new EventEmitter(), transcript = [], requests = [], providerCalls
 const result = { started_at: new Date().toISOString(), scratch, checks: [], status: "failed" };
 let child, item, stderr = "", sequence = 0;
 
-function waitFor(event, history, predicate, label, timeout = 20_000) {
+function waitFor(event, history, predicate, label, timeout = 45_000) {
   const previous = history.find(predicate);
   if (previous !== undefined) return Promise.resolve(previous);
   return new Promise((resolve, reject) => {
@@ -109,11 +109,19 @@ const provider = createServer(async (request, response) => {
     response.end(JSON.stringify({ error: { message: "Synthetic permanent fixture error" } }));
     return;
   }
+  if (tag === "grok-stream" || tag === "grok-high" || tag === "grok-default") {
+    assert.equal(value.stream, true, "Grok suggestion request must use the proxy's streaming transport");
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: '{"suggestion":"Run the focused checks"}' }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 } })}\n\ndata: [DONE]\n\n`);
+    return;
+  }
   response.writeHead(200, { "Content-Type": "application/json" });
   if (tag.startsWith("hold-")) {
     response.flushHeaders();
     return;
   }
+  if (tag === "slow-success") await new Promise(resolve => setTimeout(resolve, 22_000));
   const text = tag === "ambiguous" ? '{"suggestion":null}'
     : tag === "malformed" ? '{"suggestion":"first","suggestion":"second"}'
       : tag === "too-long" ? JSON.stringify({ suggestion: "x".repeat(101) })
@@ -138,14 +146,18 @@ try {
   const configPath = join(home, "config.json");
   await writeFile(configPath, JSON.stringify({
     default_provider: "fixture",
-    providers: { fixture: {
-      type: "openai-compatible", base_url: `http://127.0.0.1:${provider.address().port}`,
-      api_key: "synthetic-no-real-key", model: "gpt-test",
-      models: { "gpt-test": { options: {
-        max_tokens: 128000, max_output_tokens: 128000, max_completion_tokens: 128000,
-        tools: [{ type: "web_search_preview" }], stream: true, store: true,
-      } } },
-    } },
+    providers: {
+      fixture: {
+        type: "openai-compatible", base_url: `http://127.0.0.1:${provider.address().port}`,
+        api_key: "synthetic-no-real-key", model: "gpt-test",
+        models: { "gpt-test": { options: {
+          max_tokens: 128000, max_output_tokens: 128000, max_completion_tokens: 128000,
+          tools: [{ type: "web_search_preview" }], stream: true, store: true,
+        } } },
+      },
+      grok: { type: "grok-build", base_url: `http://127.0.0.1:${provider.address().port}`,
+        api_key: "synthetic-no-real-key", model: "grok-4.6" },
+    },
     agent: { permission_mode: "standard", model_aliases: {
       short: { provider: "fixture", model: "gpt-test-short" },
     } },
@@ -172,6 +184,11 @@ try {
 
   await setEnabled(true);
   assert.deepEqual(await call("next-message.get"), { settings: {} });
+  assert.deepEqual(await predict("unconfigured"), { suggestion: null });
+  assert.equal(providerCalls.length, 0, "unconfigured plugin chose a model");
+  assert((await rpcRaw("plugin/client/request", clientParams("next-message.update", {}))).error);
+  assert.deepEqual(await call("next-message.update", { provider: "fixture", model: "gpt-test" }), { settings: { provider: "fixture", model: "gpt-test" } });
+  result.checks.push("unconfigured plugin makes no model request and rejects an empty model selection");
   const beforeThreads = await rpc("thread/list");
   assert.deepEqual(await predict("success"), { suggestion: "Run the focused checks" });
   const first = providerCalls.at(-1);
@@ -192,7 +209,31 @@ try {
   assert.equal(providerCalls.length, 1);
   assert.deepEqual(await predict("success"), { suggestion: null });
   assert.equal(providerCalls.length, 1, "same completed turn submitted twice");
-  result.checks.push("real plugin uses main model, explicit visible text, no identifiers/history/tools, and 128-token wire cap", "one inference per completed turn");
+  result.checks.push("real plugin uses its selected provider and model, explicit visible text, no identifiers/history/tools, and 128-token wire cap", "one inference per completed turn");
+
+  await call("next-message.update", { provider: "grok", model: "grok-4.6" });
+  assert.deepEqual(await predict("grok-stream"), { suggestion: "Run the focused checks" });
+  assert.equal(providerCalls.at(-1).body.stream, true);
+  assert.equal(providerCalls.at(-1).body.model, "grok-4.6");
+  assert.equal(providerCalls.at(-1).body.reasoning_effort, "low");
+  assert.deepEqual(await call("next-message.update", { provider: "grok", model: "grok-4.6", variant: "high" }),
+    { settings: { provider: "grok", model: "grok-4.6", variant: "high" } });
+  await setEnabled(false);
+  await setEnabled(true);
+  assert.deepEqual(await call("next-message.get"), { settings: { provider: "grok", model: "grok-4.6", variant: "high" } });
+  assert.deepEqual(await predict("grok-high"), { suggestion: "Run the focused checks" });
+  assert.equal(providerCalls.at(-1).body.reasoning_effort, "high", "selected tier was not used on the wire");
+  assert.deepEqual(await call("next-message.update", { provider: "grok", model: "grok-4.6", variant: "" }),
+    { settings: { provider: "grok", model: "grok-4.6", variant: "" } });
+  assert.deepEqual(await predict("grok-default"), { suggestion: "Run the focused checks" });
+  assert.equal(providerCalls.at(-1).body.reasoning_effort, "high", "model default silently kept the legacy low preference");
+  const beforeInvalidVariant = providerCalls.length;
+  assert.deepEqual(await call("next-message.update", { provider: "grok", model: "grok-4.6", variant: "unsupported-tier" }),
+    { settings: { provider: "grok", model: "grok-4.6", variant: "unsupported-tier" } });
+  assert.deepEqual(await predict("grok-unsupported"), { suggestion: null });
+  assert.equal(providerCalls.length, beforeInvalidVariant, "unsupported tier silently used the default model tier");
+  await call("next-message.update", { provider: "fixture", model: "gpt-test" });
+  result.checks.push("Grok suggestion streams with legacy low tier, persists explicit high tier, honors model default, and rejects an unavailable tier");
 
   const promptBytes = Buffer.byteLength(first.body.messages[0].content);
   const contextOverhead = Buffer.byteLength(JSON.stringify({ turns: [{ user: "x", assistant: "a" }] }));
@@ -219,7 +260,7 @@ try {
   const beforeMissingAlias = providerCalls.length;
   assert.deepEqual(await predict("missing-alias"), { suggestion: null });
   assert.equal(providerCalls.length, beforeMissingAlias, "unknown alias silently fell back to another model");
-  await call("next-message.update", {});
+  await call("next-message.update", { provider: "fixture", model: "gpt-test" });
   result.checks.push("configured alias reaches provider and persists across plugin restart; unknown alias abstains without fallback");
 
   assert.deepEqual(await predict("length-boundary"), { suggestion: "x".repeat(100) });
@@ -232,16 +273,19 @@ try {
   }
   result.checks.push("100-character boundary accepted; longer, null, malformed, truncated and provider errors abstain without retry");
 
+  assert.deepEqual(await predict("slow-success"), { suggestion: "Run the focused checks" });
+  result.checks.push("a provider response after the former 20-second plugin deadline still reaches the composer");
+
   const timed = predict("hold-timeout");
   const timeoutCall = await waitFor("provider", providerCalls, call => call.tag === "hold-timeout", "timeout request started");
   assert.deepEqual(await timed, { suggestion: null });
   const timeoutClosed = await waitFor("closed", closed, entry => entry.tag === "hold-timeout", "timeout disconnect");
   result.timeout_transport_ms = timeoutClosed.at - timeoutCall.at;
-  assert(result.timeout_transport_ms >= 14000 && result.timeout_transport_ms < 18000, `unexpected 15-second budget: ${result.timeout_transport_ms}ms`);
+  assert(result.timeout_transport_ms >= 29000 && result.timeout_transport_ms < 34000, `unexpected 30-second budget: ${result.timeout_transport_ms}ms`);
   const afterTimeout = providerCalls.length;
   assert.deepEqual(await predict("hold-timeout"), { suggestion: null });
   assert.equal(providerCalls.length, afterTimeout);
-  result.checks.push("15-second request budget disconnects real HTTP transport and does not retry");
+  result.checks.push("30-second request budget disconnects real HTTP transport and does not retry");
 
   const cancelledParams = clientParams("next-message.predict", turn("hold-cancel"), "cancel-prediction");
   const cancelled = rpcRaw("plugin/client/request", cancelledParams);
@@ -295,8 +339,8 @@ try {
   assert(accounting.operations.every(operation => operation.owner_id === "plugin:next-message" && operation.kind === "auxiliary" && operation.status !== "active"));
   assert(accounting.workflows.every(workflow => workflow.status !== "active"));
   const reported = accounting.submissions.filter(submission => submission.has_reported_usage);
-  assert.equal(reported.length, 8);
-  assert.equal(reported.reduce((total, usage) => total + usage.reported_input_tokens + usage.reported_output_tokens, 0), 80);
+  assert.equal(reported.length, 12);
+  assert.equal(reported.reduce((total, usage) => total + usage.reported_input_tokens + usage.reported_output_tokens, 0), 120);
   assert.equal(accounting.sessions, 0);
   assert.equal(accounting.messages, 0);
   result.checks.push("durable plugin-owned terminal accounting and reported usage; zero sessions/messages persisted");

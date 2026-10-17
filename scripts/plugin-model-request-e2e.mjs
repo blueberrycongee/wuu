@@ -96,6 +96,13 @@ const provider = createServer(async (request, response) => {
       + 'data: {"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":7,"output_tokens":3}}}\n\n');
     return;
   }
+  if (tag === "grok") {
+    assert.equal(value.stream, true, "Grok Build proxy needs a streaming request for auxiliary inference");
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "fixture:grok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 } })}\n\ndata: [DONE]\n\n`);
+    return;
+  }
   response.writeHead(200, { "Content-Type": "application/json" });
   if (tag.startsWith("hold-")) {
     response.flushHeaders();
@@ -384,7 +391,7 @@ runJSONLRuntime({
     for (const key of Object.keys(shapeOverrides)) {
       if (!ownedFields.has(key)) assert.equal(body[key], undefined, `${name}: configured ${key} crossed the request boundary`);
     }
-    assert(!body.stream, `${name}: configured streaming was enabled`);
+    assert.equal(Boolean(body.stream), name === "grok", `${name}: unexpected transport mode`);
     assert(!body.store, `${name}: configured server-side storage was enabled`);
     assert.equal(body.temperature, 0.42, `${name}: sampling option was lost`);
     assert.equal(body.top_p, 0.83, `${name}: sampling alias was lost`);
