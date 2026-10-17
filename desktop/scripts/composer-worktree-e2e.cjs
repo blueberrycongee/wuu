@@ -18,6 +18,8 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-composer-worktree-'))
 const home = path.join(fixture, 'home');
 const project = path.join(fixture, 'project');
 const plain = path.join(fixture, 'plain');
+const longProjectName = 'an-unusually-long-project-name-for-the-narrow-composer';
+const longProject = path.join(fixture, longProjectName);
 for (const dir of [home, project, plain]) fs.mkdirSync(dir);
 fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
@@ -54,6 +56,8 @@ const featureHead = git(project, 'rev-parse', 'HEAD');
 const longBranch = 'long-branch/an-unusually-long-branch-name-for-the-narrow-composer';
 git(project, 'branch', longBranch);
 git(project, 'switch', '-q', 'main');
+git(fixture, 'clone', '-q', project, longProject);
+git(longProject, 'branch', longBranch, `origin/${longBranch}`);
 // Uncommitted work in the shared checkout stays out of a new worktree.
 fs.writeFileSync(path.join(project, 'README.md'), 'uncommitted edit\n');
 fs.writeFileSync(path.join(plain, 'notes.txt'), 'not a repository\n');
@@ -161,6 +165,15 @@ const gitControls = win => evaluate(win, () => {
     worktree: toggle?.getAttribute('aria-pressed'),
   } : null;
 });
+const workspaceRow = win => evaluate(win, () => {
+  const bar = document.querySelector('.composer-workspace-bar').getBoundingClientRect();
+  const groups = [...document.querySelectorAll('.composer-workspace-group')].map(group => group.getBoundingClientRect());
+  const text = [...document.querySelectorAll('.composer-workspace-bar .hero-project-pill-text, .composer-worktree-toggle span')]
+    .map(node => ({ text: node.textContent, width: node.clientWidth, scrollWidth: node.scrollWidth,
+      clipped: node.scrollWidth > node.clientWidth + 1 }));
+  return { viewport: { width: innerWidth, height: innerHeight }, barRight: bar.right,
+    groups: groups.map(rect => ({ left: rect.left, right: rect.right, height: rect.height })), text };
+});
 
 let main;
 app.on('browser-window-created', (_event, win) => { main ||= win; });
@@ -177,6 +190,7 @@ async function run() {
   fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({
     projects: [
       { id: 'repo', name: 'worktree-fixture', path: project, created_at: stamp, updated_at: stamp },
+      { id: 'long-repo', name: longProjectName, path: longProject, created_at: stamp, updated_at: stamp },
       { id: 'plain', name: 'plain-folder', path: plain, created_at: stamp, updated_at: stamp },
     ],
     active_context: { kind: 'project', project_id: 'repo', cwd: project },
@@ -451,21 +465,38 @@ async function run() {
   await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`), longBranch);
   await evaluate(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`).click(), longBranch);
   await waitFor(main, branch => !document.querySelector('.composer-branch-menu') && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === branch, longBranch);
-  const narrow = await evaluate(main, () => {
-    const bar = document.querySelector('.composer-workspace-bar').getBoundingClientRect();
-    const groups = [...document.querySelectorAll('.composer-workspace-group')].map(group => group.getBoundingClientRect());
-    const text = [...document.querySelectorAll('.composer-workspace-bar .hero-project-pill-text, .composer-worktree-toggle span')]
-      .map(node => ({ text: node.textContent, width: node.clientWidth, scrollWidth: node.scrollWidth,
-        clipped: node.scrollWidth > node.clientWidth + 1 }));
-    return { viewport: { width: innerWidth, height: innerHeight }, barRight: bar.right,
-      groups: groups.map(rect => ({ left: rect.left, right: rect.right, height: rect.height })), text };
-  });
+  const narrow = await workspaceRow(main);
   assert.equal(narrow.groups.length, 2);
   assert.ok(narrow.groups.every(rect => rect.right <= narrow.barRight + 0.5), 'Both groups stay inside the bar.');
   assert.ok(Math.abs(narrow.groups[0].height - narrow.groups[1].height) < 0.5, 'Both groups share one height.');
   assert.deepEqual(narrow.text.filter(item => item.clipped).map(item => item.text), [longBranch],
     `Only the long branch name truncates; the project and toggle labels stay whole. Layout: ${JSON.stringify(narrow)}`);
   await capture(main, '05-draft-dark-large-narrow.png');
+
+  // Reserving the short project's natural width must not let a genuinely long
+  // project crowd out the branch picker or worktree toggle.
+  await click(main, '.composer-project-control .hero-project-pill');
+  await waitFor(main, name => document.querySelector(`.composer-project-menu button[title="${name}"]`), longProjectName);
+  await evaluate(main, name => document.querySelector(`.composer-project-menu button[title="${name}"]`).click(), longProjectName);
+  await waitFor(main, name => document.querySelector('.composer-project-control .hero-project-pill-text')?.textContent === name
+    && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'main', longProjectName);
+  await click(main, '.composer-worktree-toggle');
+  await waitFor(main, () => document.querySelector('.composer-worktree-toggle')?.getAttribute('aria-pressed') === 'true');
+  await click(main, '.composer-git-controls .hero-project-pill');
+  await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`), longBranch);
+  await evaluate(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`).click(), longBranch);
+  await waitFor(main, branch => !document.querySelector('.composer-branch-menu')
+    && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === branch, longBranch);
+  const longProjectNarrow = await workspaceRow(main);
+  assert.ok(longProjectNarrow.groups.every(rect => rect.right <= longProjectNarrow.barRight + 0.5),
+    `Long project controls stay inside the bar. Layout: ${JSON.stringify(longProjectNarrow)}`);
+  assert.deepEqual(longProjectNarrow.text.filter(item => item.clipped).map(item => item.text), [longProjectName, longBranch],
+    `Long names truncate without clipping the worktree toggle. Layout: ${JSON.stringify(longProjectNarrow)}`);
+  assert(await evaluate(main, () => [...document.querySelectorAll('.composer-workspace-bar button')].every(button => {
+    const rect = button.getBoundingClientRect();
+    return rect.width > 0 && button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+  })), 'Every compact workspace control remains clickable.');
+  await capture(main, '05a-draft-long-project-dark-large-narrow.png');
 
   // A folder outside Git keeps only the project group.
   main.setSize(1280, 820);
@@ -496,6 +527,7 @@ async function run() {
     featureHead,
     thread: { id: thread.id, cwd: thread.cwd, worktree: thread.worktree },
     narrow,
+    longProjectNarrow,
     forkDismissals,
     providerRequests: requests.length,
     workspaceRebind: { cwd: rebound.cwd, chronologyVerified: true },
