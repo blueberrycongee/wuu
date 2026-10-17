@@ -16,6 +16,9 @@ const hash = (path, algorithm = "sha256", encoding = "hex") => createHash(algori
 
 function verifyApp(path) {
   const resources = join(path, "resources");
+  const home = join(scratch, "home");
+  mkdirSync(join(home, ".wuu"), { recursive: true });
+  const env = { ...process.env, HOME: home, WUU_HOME: join(home, ".wuu") };
   for (const file of ["wuu", "resources/bin/wuu-core", "resources/tools/rg"]) {
     const binary = join(path, file);
     accessSync(binary, constants.X_OK);
@@ -26,7 +29,7 @@ function verifyApp(path) {
   }
   const manifest = JSON.parse(asar.extractFile(join(resources, "app.asar"), "package.json"));
   assert.equal(manifest.version, version);
-  const core = run(join(resources, "bin/wuu-core"), ["--version"]);
+  const core = run(join(resources, "bin/wuu-core"), ["--version"], { env });
   assert.ok(core.includes(`v${version}`) && core.includes(commit.slice(0, 8)), `Wrong bundled core: ${core}`);
   assert.ok(!core.includes("dirty"), "Bundled core must be clean");
   assert.match(run(join(resources, "tools/rg"), ["--version"]), /^ripgrep 15\.2\.0/);
@@ -37,6 +40,9 @@ function verifyApp(path) {
   assert.equal(provider.provider, "github");
   assert.equal(provider.owner, "blueberrycongee");
   assert.equal(provider.repo, "wuu");
+  // Catch missing transitive dependencies in the actual ASAR, not the build tree.
+  run(join(path, "wuu"), ["-e", "require(process.argv[1])", join(resources, "app.asar/node_modules/electron-updater")],
+    { env: { ...env, ELECTRON_RUN_AS_NODE: "1" } });
   // Load and exercise the packaged native module using the bundled Electron ABI.
   const ptyPath = join(resources, "app.asar.unpacked/node_modules/node-pty");
   const pty = run(join(path, "wuu"), ["-e", `
@@ -46,9 +52,9 @@ function verifyApp(path) {
     const timer = setTimeout(() => process.exit(2), 10000);
     child.onData(data => output += data);
     child.onExit(({exitCode}) => { clearTimeout(timer); if (exitCode || !output.includes('wuu-packaged-pty')) process.exit(3); console.log('PTY OK'); });
-  `], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
+  `], { env: { ...env, ELECTRON_RUN_AS_NODE: "1" } });
   assert.match(pty, /PTY OK/);
-  return { core, nativePty: true };
+  return { core, nativePty: true, updaterModule: true };
 }
 
 const scratch = mkdtempSync(join(tmpdir(), "wuu-linux-artifacts-"));

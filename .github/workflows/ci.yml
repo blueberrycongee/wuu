@@ -1169,6 +1169,7 @@ jobs:
           path: |
             desktop/release/linux-package-evidence/
             desktop/release/verification-linux.json
+            linux-sandbox.json
           if-no-files-found: ignore
           retention-days: 14
 

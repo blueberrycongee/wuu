@@ -394,7 +394,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-package-evidence
-          path: desktop/release/linux-package-evidence/
+          path: |
+            desktop/release/linux-package-evidence/
+            linux-sandbox.json
           if-no-files-found: ignore
           retention-days: 30
 
