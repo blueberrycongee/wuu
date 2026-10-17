@@ -8,6 +8,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the macOS permission guide clear of System Settings authentication dialogs and file pickers, and make it follow window movement continuously instead of jumping between slow permission checks.
+
 ## [2026.10.17] - 2026-10-17
 
 ### Contributors
