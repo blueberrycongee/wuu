@@ -445,6 +445,27 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Guard titlebar alignment and sidebar hit targets
+        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          mkdir -p desktop/out/e2e/settings-titlebar
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/settings-sidebar-hit-e2e.cjs 2>&1 | tee desktop/out/e2e/settings-titlebar/run.log
+
+      - name: Upload titlebar alignment evidence
+        if: ${{ matrix.suite == 'shell' && (always()) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: titlebar-alignment-evidence
+          path: |
+            desktop/out/e2e/settings-titlebar/*.png
+            desktop/out/e2e/settings-titlebar/*.json
+            desktop/out/e2e/settings-titlebar/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard file selections and side-chat chips
         if: ${{ matrix.suite == 'selection' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 5
@@ -603,6 +624,27 @@ jobs:
           mkdir -p "$WUU_DOCUMENT_OUTPUT"
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/document-context-e2e.mjs 2>&1 | tee "$WUU_DOCUMENT_OUTPUT/run.log"
+
+      - name: Guard onboarding chrome and workspace setup
+        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success') }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_ONBOARDING_OUTPUT: ${{ runner.temp }}/wuu-onboarding-workspaces-evidence
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          mkdir -p "$WUU_ONBOARDING_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/onboarding-workspaces-e2e.cjs 2>&1 | tee "$WUU_ONBOARDING_OUTPUT/run.log"
+
+      - name: Upload onboarding chrome evidence
+        if: ${{ matrix.suite == 'session' && (always()) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboarding-workspaces-evidence
+          path: ${{ runner.temp }}/wuu-onboarding-workspaces-evidence
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload PDF context evidence
         if: ${{ matrix.suite == 'session' && (always()) }}

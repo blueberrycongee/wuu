@@ -247,9 +247,9 @@ const DEFAULT_WINDOW_BACKGROUND = "#f6f6f4";
 // what shows behind the transparent web layer before first paint, so a
 // dark-theme launch must not flash white.
 const DARK_WINDOW_BACKGROUND = "#1c1c1d";
-// Matches the renderer titlebar row (48px in the tabbed/popped-out states)
-// so the overlay buttons center on the same strip the renderer draws.
-const WINDOWS_TITLEBAR_OVERLAY_HEIGHT = 48;
+// Center the overlay buttons on the renderer's 56-DIP titlebar while its
+// controls fit; the renderer can grow for larger text or page zoom.
+const WINDOWS_TITLEBAR_OVERLAY_HEIGHT = 56;
 const ENABLE_EMBEDDED_BROWSER = process.env.WUU_ENABLE_BROWSER !== "0";
 if (process.argv.includes("--safe-mode")) {
   process.env.WUU_SAFE_MODE = "1";
@@ -944,9 +944,9 @@ function usesWindowControlsOverlay(): boolean {
   return process.platform === "win32";
 }
 
-// 14px lights at y=17 sit on the 24px center of the 48px renderer
+// 14px lights at y=21 sit on the 28px center of the 56px renderer
 // titlebar, matching the CSS-centered toolbar controls beside them.
-const MAC_TRAFFIC_LIGHT_POSITION = { x: 18, y: 17 };
+const MAC_TRAFFIC_LIGHT_POSITION = { x: 18, y: 21 };
 
 function applyMacTrafficLightPosition(win: BrowserWindow): void {
   if (process.platform !== "darwin" || win.isDestroyed()) return;

@@ -96,12 +96,12 @@
   justify-self: start;
 }
 
-/* The panel's chrome shares the conversation's paper and header baseline.
- * Center full-size tab chips within the header below the canvas inset. */
+/* The panel's full-size chips share the window chrome's centerline. The
+ * common row reserves enough space to clear the canvas's painted top edge. */
 .workspace-right-panel {
   --workspace-tab-chip-hover-bg: var(--ink-overlay-4);
   --workspace-tab-chip-height: var(--control-size-roomy);
-  --workspace-tab-chip-inset: max(0px, calc((var(--window-titlebar-height) - var(--conversation-pane-inset) - var(--workspace-tab-chip-height)) / 2));
+  --workspace-tab-chip-inset: max(0px, calc((var(--window-titlebar-height) - var(--workspace-tab-chip-height)) / 2));
   /* Tab chips, tool rows, and tree rows float inside the pane like sidebar
    * rows; their own padding takes up the rest, putting the leading glyph on
    * the pane inset. */
@@ -118,7 +118,7 @@
   background: var(--paper);
   /* Clear native window controls and reserve the shell-owned sidebar toggle,
      including while the reading canvas is a full-width sheet. */
-  padding: var(--conversation-pane-inset) calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap)) 0 var(--workspace-row-inset);
+  padding: 0 calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap)) 0 var(--workspace-row-inset);
   -webkit-app-region: drag;
   position: relative;
   z-index: 1;

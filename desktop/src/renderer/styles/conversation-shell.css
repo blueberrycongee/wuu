@@ -291,7 +291,7 @@
    * (the inset is 0 and max() collapses to the neutral padding). The row
    * always starts with an icon button (new conversation or back), so its
    * glyph, not its box, sits on the pane inset. */
-  padding: var(--conversation-pane-inset) max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0
+  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0
     calc(var(--window-titlebar-padding-inline) - var(--control-toolbar-glyph-offset));
   transition: padding-left var(--sidebar-motion-duration) var(--sidebar-motion-ease);
   -webkit-app-region: drag;
