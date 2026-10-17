@@ -7,6 +7,10 @@ on:
         description: Existing release tag to build and publish (empty means validation only)
         type: string
         default: ""
+      checkpoint_run:
+        description: Completed Release run whose signed checkpoint should be resumed (empty builds from source)
+        type: string
+        default: ""
   push:
     tags:
       - "v*"
@@ -25,6 +29,8 @@ jobs:
     outputs:
       source: ${{ steps.source.outputs.source }}
       tag: ${{ steps.source.outputs.tag }}
+      checkpoint: ${{ steps.checkpoint.outputs.checkpoint }}
+      checkpoint-artifact: ${{ steps.checkpoint.outputs.artifact }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,9 +50,26 @@ jobs:
           fi
           echo "source=$source" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Import a signed checkpoint from a completed release run
+        id: checkpoint
+        env:
+          CHECKPOINT_RUN: ${{ inputs.checkpoint_run }}
+          RELEASE_SOURCE: ${{ steps.source.outputs.source }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node desktop/scripts/restore-release-checkpoint.cjs "$CHECKPOINT_RUN" "$RELEASE_SOURCE" "$(git show "$RELEASE_SOURCE:VERSION")"
+      - name: Preserve imported checkpoint and submission receipt
+        if: steps.checkpoint.outputs.checkpoint != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.checkpoint.outputs.artifact }}
+          path: ${{ runner.temp }}/wuu-release-checkpoint/
+          if-no-files-found: error
+          retention-days: 30
 
   signed-app:
     name: Build signed app
+    if: needs.prepare.outputs.checkpoint == ''
     needs: prepare
     runs-on: macos-15
     timeout-minutes: 120
@@ -137,6 +160,7 @@ jobs:
   distribution:
     name: Notarize app and package
     needs: [prepare, signed-app]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.checkpoint != 'distribution' && (needs.signed-app.result == 'success' || (needs.signed-app.result == 'skipped' && needs.prepare.outputs.checkpoint == 'signed-app')) }}
     runs-on: macos-15
     timeout-minutes: 60
     env:
@@ -167,7 +191,7 @@ jobs:
       - run: npm ci
       - uses: actions/download-artifact@v4
         with:
-          name: signed-app
+          name: ${{ needs.prepare.outputs.checkpoint-artifact || 'signed-app' }}
           path: source/desktop/release
       - name: Install release credentials
         env:
@@ -179,7 +203,19 @@ jobs:
           node ../../release-tools/desktop/scripts/import-release-signing.cjs
       - name: Restore previous app submission
         run: node ../../release-tools/desktop/scripts/restore-notarization.cjs app
+      - name: Submit saved app for notarization
+        timeout-minutes: 12
+        run: node ../../release-tools/desktop/scripts/release-stages.cjs submit-app
+      - name: Preserve app submission before waiting for Apple
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-submission-${{ github.run_attempt }}
+          path: source/desktop/release/notarization/app.json
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Notarize the saved app and build distribution archives
+        timeout-minutes: 40
         run: node ../../release-tools/desktop/scripts/release-stages.cjs package
       - uses: actions/upload-artifact@v4
         with:
@@ -212,6 +248,7 @@ jobs:
   verification:
     name: Notarize DMG and verify
     needs: [prepare, distribution]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.distribution.result == 'success' || (needs.distribution.result == 'skipped' && needs.prepare.outputs.checkpoint == 'distribution')) }}
     runs-on: macos-15
     timeout-minutes: 60
     env:
@@ -242,7 +279,7 @@ jobs:
       - run: npm ci
       - uses: actions/download-artifact@v4
         with:
-          name: signed-distribution
+          name: ${{ needs.prepare.outputs.checkpoint == 'distribution' && needs.prepare.outputs.checkpoint-artifact || 'signed-distribution' }}
           path: source/desktop/release
       - name: Install notarization key
         env:
@@ -250,7 +287,19 @@ jobs:
         run: node ../../release-tools/desktop/scripts/install-notary-key.cjs
       - name: Restore previous DMG submission
         run: node ../../release-tools/desktop/scripts/restore-notarization.cjs dmg
+      - name: Submit saved DMG for notarization
+        timeout-minutes: 12
+        run: node ../../release-tools/desktop/scripts/release-stages.cjs submit-dmg
+      - name: Preserve DMG submission before waiting for Apple
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-submission-${{ github.run_attempt }}
+          path: source/desktop/release/notarization/dmg.json
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Notarize and verify the saved distribution
+        timeout-minutes: 40
         run: node ../../release-tools/desktop/scripts/release-stages.cjs verify
       - uses: actions/upload-artifact@v4
         with:
@@ -281,7 +330,7 @@ jobs:
 
   release:
     name: GitHub Release
-    if: needs.prepare.outputs.tag != ''
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.verification.result == 'success' && needs.prepare.outputs.tag != '' }}
     needs: [prepare, verification]
     runs-on: ubuntu-latest
     permissions:

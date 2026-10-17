@@ -163,3 +163,22 @@ test("unknown upload outcome remains blocked across process restarts", async () 
     await assert.rejects(notarizeArchive(archive, receipt, { run: () => assert.fail("must not resubmit an ambiguous upload") }), /unknown/i);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("submission can be durably checkpointed before polling begins", async () => {
+  const { notarizeArchive } = require("./notarization.cjs");
+  const dir = mkdtempSync(join(tmpdir(), "wuu-submit-checkpoint-"));
+  const archive = join(dir, "app.zip"), receipt = join(dir, "app.json");
+  writeFileSync(archive, "signed archive");
+  const calls = [];
+  const run = (_command, args) => {
+    calls.push(args[1]);
+    return JSON.stringify(args[1] === "submit" ? { id } : { id, status: "Accepted" });
+  };
+  try {
+    assert.equal((await notarizeArchive(archive, receipt, { run, submitOnly: true })).status, "Submitted");
+    assert.deepEqual(calls, ["submit"]);
+    assert.equal(JSON.parse(readFileSync(receipt)).id, id);
+    assert.equal((await notarizeArchive(archive, receipt, { run })).status, "Accepted");
+    assert.deepEqual(calls, ["submit", "info"]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
