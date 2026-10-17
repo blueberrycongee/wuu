@@ -363,6 +363,26 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Guard sidebar and streaming scroll-edge fades
+        if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_SCROLL_FADE_OUTPUT: ${{ runner.temp }}/wuu-sidebar-scroll-fade-evidence
+        run: |
+          mkdir -p "$WUU_SCROLL_FADE_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/sidebar-scroll-fade-e2e.cjs 2>&1 | tee "$WUU_SCROLL_FADE_OUTPUT/run.log"
+
+      - name: Upload sidebar scroll fade evidence
+        if: ${{ matrix.suite == 'shell' && (always()) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidebar-scroll-fade-evidence
+          path: ${{ runner.temp }}/wuu-sidebar-scroll-fade-evidence
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard streamed reply settlement layout
         if: ${{ matrix.suite == 'layout' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         timeout-minutes: 4
