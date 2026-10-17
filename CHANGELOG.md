@@ -14,6 +14,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - AppImage update checks and downloads using Linux-specific release metadata; Debian packages remain manually updated.
 - Linux MCP OAuth credential storage through the session Secret Service keyring, with no plaintext fallback.
 
+### Removed
+
+- Remove the workspace new page's Continue viewing section, which duplicated
+  files, diffs, and artifacts already available in the tab strip.
+
 ## [2026.10.18] - 2026-10-18
 
 ### Contributors

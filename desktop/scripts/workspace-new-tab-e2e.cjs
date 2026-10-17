@@ -85,7 +85,6 @@ app.whenReady().then(async () => {
   await waitFor(() => Boolean(document.querySelector('[data-wuu-view="new"] .workspace-tool-menu')));
   assert.equal((await tabs()).length, 1, "Opening an empty panel creates one new-page tab");
   assert.equal((await tabs()).filter((tab) => tab.selected).length, 1);
-  assert.equal(await evaluate(() => document.querySelectorAll('[data-wuu-component="workspace-resume-tab"]').length), 0);
   await capture("empty-light");
 
   // Both the dock and the full-width canvas use the same tab strip. Check
@@ -357,7 +356,7 @@ app.whenReady().then(async () => {
   }
 
 
-  // Open a real conversation file link; resume must retain the editor resource.
+  // Open a real conversation file link and exercise its editor resource.
   await evaluate(() => {
     const input = document.querySelector(".composer textarea");
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(input, "Open workspace notes");
@@ -600,14 +599,6 @@ app.whenReady().then(async () => {
     document.documentElement.dataset.theme = 'light';
   });
   await click(".workspace-panel-globalize");
-  const fileTabs = await tabs();
-  const editorID = await evaluate(() => document.querySelector(".workspace-file-resource.active").dataset.workspaceTabId);
-  await click(".workspace-panel-add");
-  await click('[data-wuu-component="workspace-resume-tab"]');
-  await waitFor((count) => document.querySelectorAll('.workspace-panel-tabs [role="tab"]').length === count, fileTabs.length);
-  assert.deepEqual(await tabs(), fileTabs, "Resuming a file consumes the page without duplicate editor tabs");
-  assert.equal(await evaluate(() => document.querySelector(".workspace-file-resource.active").dataset.workspaceTabId), editorID);
-  results.push({ scenario: "resume actual open file", passed: true });
   await click(".workspace-panel-add");
   await click(".workspace-tool-menu-more > summary");
 
@@ -636,8 +627,8 @@ app.whenReady().then(async () => {
       }
     }
   }
-  win.setContentSize(560, 420);
-  await waitFor(() => window.innerWidth === 560 && window.innerHeight === 420);
+  win.setContentSize(560, 300);
+  await waitFor(() => window.innerWidth === 560 && window.innerHeight === 300);
   const scroll = await evaluate(() => {
     const menu = document.querySelector(".workspace-tool-menu");
     const headerY = document.querySelector(".workspace-panel-tabbar").getBoundingClientRect().y;
@@ -662,7 +653,7 @@ app.whenReady().then(async () => {
   await waitFor(() => document.activeElement === document.querySelector(".workspace-tool-menu-more > summary"));
   win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Down" });
   win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
-  await waitFor(() => document.activeElement?.dataset.wuuComponent === "workspace-resume-tab");
+  await waitFor(() => document.activeElement?.dataset.wuuTool === "files");
   await capture("light-14-keyboard-focus");
   results.push({ scenario: "keyboard skips collapsed extensions", passed: true });
   const hover = await evaluate(() => {

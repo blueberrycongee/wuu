@@ -1687,7 +1687,6 @@ export const enUS = {
   "workspace.chooseTool": "Choose tool",
   "workspace.newPage": "New page",
   "workspace.moreTools": "More tools",
-  "workspace.continueViewing": "Continue viewing",
   "workspace.tooNarrowToDock": "The window is too narrow to dock the right panel",
   "workspace.exitFullPanel": "Exit full panel",
   "workspace.expandFullPanel": "Expand to full panel",
