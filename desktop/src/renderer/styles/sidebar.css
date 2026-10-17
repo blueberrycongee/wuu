@@ -613,9 +613,7 @@
 }
 
 .sidebar-resizer::before {
-  /* Spans the full sidebar height so the hover/drag feedback lights the
-   * entire right edge of the left sidebar, not just a short indicator
-   * segment that leaves the top and bottom 12px dark. */
+  /* Settings retain a straight, full-height rail. */
   position: absolute;
   inset: 0;
   left: 50%;
@@ -636,6 +634,29 @@
 .resizing-sidebar .sidebar-resizer::before {
   background: var(--sidebar-resizer-hover-bg);
   box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
+}
+
+/* Trace the canvas's left half-outline, including its inset rounded corners.
+   Keep the resize hit target narrow; the painted curve must not intercept clicks. */
+.app-shell > .sidebar-resizer::before {
+  top: var(--conversation-pane-inset);
+  bottom: var(--conversation-pane-inset);
+  left: calc(50% - 0.5px);
+  width: max(2px, calc(var(--conversation-canvas-radius) * 2));
+  border: 1px solid transparent;
+  border-radius: var(--conversation-canvas-radius);
+  background: transparent;
+  box-shadow: none;
+  clip-path: inset(-1px 50% -1px -1px);
+  transform: none;
+  pointer-events: none;
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.app-shell > .sidebar-resizer:hover::before,
+.app-shell > .sidebar-resizer:focus-visible::before,
+.app-shell.resizing-sidebar > .sidebar-resizer::before {
+  border-color: var(--sidebar-resizer-hover-bg);
 }
 
 .resizing-sidebar,
@@ -701,10 +722,9 @@
 }
 
 .workspace-right-panel-resizer::before {
-  /* Match the left sidebar resizer: hover and drag feedback follows the
-   * panel's complete left edge instead of stopping 12px from each end. */
+  /* The dock divider is straight, but shares the canvas's vertical insets. */
   position: absolute;
-  inset: 0;
+  inset: var(--conversation-pane-inset) 0;
   left: 50%;
   width: 1px;
   border-radius: var(--radius-pill);

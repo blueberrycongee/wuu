@@ -18,6 +18,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Align sidebar resize feedback with the conversation canvas's rounded corners
+  and keep docked panel dividers within its vertical insets.
 - Enable Computer Use by default in macOS development launches, with an explicit
   `WUU_ENABLE_CUA_MAC=0` override to disable it.
 - Match settings navigation, account controls, and sidebar drag-and-drop surfaces
