@@ -65,6 +65,12 @@ Select text in a file to add it to the conversation, leave a comment, ask about 
   <img src="landing/assets/readme/files-en.jpg" alt="Selection actions in Files">
 </p>
 
+### Work inside Mac apps
+
+Computer Use lets the agent observe and operate native macOS apps through Accessibility and native input. A floating preview follows its pointer and shows each click and keystroke while the target app stays in the background. The agent saves through the app itself, so Review shows the real file change. Screen Recording and Accessibility permissions apply.
+
+![Computer Use in wuu](landing/assets/readme/cua-en.webp)
+
 ### Steer without starting over
 
 Press Enter while a task runs to steer it, or Command + Enter to queue the next message. Fork from any earlier message into the same folder or a new Git worktree. Start a conversation in its own worktree so experiments stay off your branch. Use `/side` for a quick question that stays out of the main thread, and search to find any past conversation.
