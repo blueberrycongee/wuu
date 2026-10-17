@@ -106,6 +106,28 @@ wuu exec --provider openai --permission-mode read_only "Read this project and ex
 
 `--provider` selects a configured identifier, and `--model` overrides the model for this run. See [configuration](../reference/configuration.md) for precedence and the limits on project-level settings.
 
+## Streaming latency
+
+Wuu's built-in HTTP model clients reuse a streaming connection pool across turns.
+The pool survives Codex credential reloads; each request still uses the current
+credentials. Connect, response-header and stream-idle deadlines remain separate,
+so connection reuse does not impose a total timeout on a long answer.
+
+Codex defaults to `stream_transport: "auto"`. In eligible built-in sessions,
+thread creation, resume and model changes can prewarm its WebSocket before the
+next send, without submitting an inference request. A compatible continuation
+on the same connection sends `previous_response_id` plus new input. Reconnection,
+changed request options or incompatible history require full context again.
+Prewarming removes setup from the send path only when that connection survives
+until use; it does not remove provider queueing or model computation.
+
+An unavailable WebSocket can fall back to HTTP before submission. Once a request
+may have been submitted, normal recovery accounting governs any further attempt.
+HTTP gzip is a separate upload optimization and does not compress WebSocket
+messages. Keep the configured transport when testing it: forcing SSE can lose
+existing connection and context reuse. See the [latency evaluation workflow](../project/development.md#provider-latency-evaluation)
+for measurements and correctness checks.
+
 ## Experimental HTTP request compression
 
 HTTP request gzip is disabled by default. To test an endpoint whose operator has

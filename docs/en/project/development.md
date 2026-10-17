@@ -195,6 +195,77 @@ macOS Keychain or the desktop UI. Receipts, connection identities and RPC output
 are saved under `.tmp/e2e/mcp-auth-reload/`; set `WUU_MCP_AUTH_E2E_OUTPUT` to use
 another evidence directory.
 
+### Provider latency evaluation
+
+The built-in provider path minimizes setup and upload work independently: one
+streaming HTTP client per provider owns its pool; Codex credential adapters share
+that pool while rebuilding authentication per request. Custom HTTP transports
+retain their proxy and deadline behavior. Codex `auto` can reuse a prewarmed
+WebSocket and send a history delta on compatible continuations. Gzip remains an
+explicit endpoint experiment for HTTP bodies; API compatibility alone cannot
+establish support. These mechanisms preserve payload meaning, cancellation and
+submission accounting. The [model-service guide](../getting-started/model-services.md#streaming-latency)
+describes their operating boundaries.
+
+Run the reusable real-provider evaluation with a configured provider identifier:
+
+```sh
+mkdir -p .tmp/provider-latency
+go run ./scripts/provider-latency-e2e -provider openai-codex -transport sse \
+  -records 320 -repeats 2 -turns 2 -label candidate \
+  > .tmp/provider-latency/candidate.jsonl
+python3 scripts/provider-latency-e2e/score.py .tmp/provider-latency/*.jsonl
+```
+
+This uses normal local credential resolution and sends only generated repository
+records. It can incur charges. It does not edit saved configuration. `-records 0`
+measures short histories; `-tool` executes a synthetic tool and checks its result.
+It forces the first tool call by default; add `-force-tool=false` to test normal
+auto choice on endpoints that reject forced calls. Keep those policies separate.
+Compare `-transport websocket` (full context) with `-transport auto` (eligible
+deltas), and add `-prewarm` to measure send latency after setup. Prewarm duration
+is reported separately. `-gzip-endpoint` accepts one exact request URL for that
+process only; omission clears any inherited gzip opt-in for the evaluation.
+Failures stop dependent turns in that conversation but preserve other repeats.
+
+JSONL includes the fixture hash, model, workload, deadline, correctness, first
+text, first usable text/tool call, completion, DNS/TLS and HTTP timing, body sizes
+when HTTP exposes Content-Length, connection reuse, WebSocket replay state,
+submission counts and reported token usage. It excludes credentials, raw errors,
+prompts and model reasoning. Missing timing fields are unknown, not zero-cost
+work. This covers the real agent loop, tool execution and provider; desktop IPC
+and painting are outside the measurement. Request-written time includes local
+preparation, connection and upload; first HTTP byte also includes server work.
+The probe does not claim to isolate server queueing from model prefill.
+
+Build baseline and candidate with the same runner, dependencies and machine.
+Keep the source revision, patch, runner and executable hashes with the reports.
+For linked worktrees, prefer `go build -buildvcs=false` with
+`-ldflags='-X main.sourceRevision=<commit> -X main.sourceDiff=<patch-sha256>'`:
+verify the declared source against the checkout, and use `none` only for an
+unmodified provider baseline. Interleave A/B/B/A runs with equal prompts, effort,
+deadlines and tool policy. Separate first and subsequent turns, provider/model,
+short/long histories and tool loops. Do not combine WAN measurements with body
+pacing, injected network delay or profiled runs. Report prompt-cache usage because
+backend caches and load can dominate the result.
+
+The scorer reports correctness as `100 × passed / planned`. A pass requires the
+expected answer, tool result where applicable, no truncation and the expected
+submission count. An extra recovered submission fails this strict contract even
+if the eventual answer is correct. Missing dependent turns remain in the planned
+denominator. The latency index is `100 × baseline / candidate` using mean
+first-text time, charging a full deadline for failed or unrun turns. The baseline
+is uncompressed SSE with label `baseline`, matched by workload and turn; it must
+pass its correctness gate before an index is emitted. Higher than 100 means
+faster for that sample. Also inspect successful P50/P90, completion and failures;
+a small sample does not establish tail latency or a general product score.
+
+Local raw reports belong in ignored output directories. Public performance claims
+require a complete clean-source record under [evals](../../../evals/README.md).
+CI should gate deterministic connection reuse, payload/redirect contracts,
+prewarm/delta behavior, cancellation and recovery, rather than live wall-clock
+thresholds or credentials.
+
 ### Workspace PDF preview
 
 Run `npm --prefix desktop run test:e2e:workspace-preview` in a graphical session

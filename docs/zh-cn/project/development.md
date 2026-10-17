@@ -153,6 +153,59 @@ Connect 和 Refresh 能覆盖尚在排队的启动任务。它不使用真实凭
 结果、连接标识与 RPC 记录默认写入 `.tmp/e2e/mcp-auth-reload/`；可用
 `WUU_MCP_AUTH_E2E_OUTPUT` 指定其他证据目录。
 
+### 服务商延迟评估
+
+内置服务商分别减少连接准备和上传工作：每个服务商持有一个流式 HTTP 客户端与连接池；
+Codex 凭证适配器共享连接池，但逐请求重建认证信息。自定义 HTTP transport 保留代理与
+超时行为。Codex `auto` 可复用预热的 WebSocket，并在兼容续接时只发送历史增量。
+gzip 仍是按端点显式开启的 HTTP 请求体实验；API 格式兼容不代表支持压缩。
+这些机制保留载荷语义、取消与提交计量约束，运行边界见
+[模型服务说明](../getting-started/model-services.md#流式响应延迟)。
+
+用已配置的服务商标识运行可复用的真实服务评估：
+
+```sh
+mkdir -p .tmp/provider-latency
+go run ./scripts/provider-latency-e2e -provider openai-codex -transport sse \
+  -records 320 -repeats 2 -turns 2 -label candidate \
+  > .tmp/provider-latency/candidate.jsonl
+python3 scripts/provider-latency-e2e/score.py .tmp/provider-latency/*.jsonl
+```
+
+它通过正常路径读取本机凭证，只发送生成的仓库记录，可能产生费用，不修改已保存配置。
+`-records 0` 测短历史，`-tool` 执行合成工具并核对结果，默认强制首个工具调用。
+端点拒绝强制调用时，增加 `-force-tool=false` 测普通自动选择；两种策略分开统计。比较
+`-transport websocket`（完整上下文）与 `-transport auto`（符合条件的增量），再用
+`-prewarm` 测量预热后的发送延迟；预热耗时单独记录。`-gzip-endpoint` 为当前进程指定
+一个完整请求 URL；未传入时会清除评估进程继承的 gzip 设置。失败会停止同一会话的后续
+依赖回合，其他重复样本仍继续。
+
+JSONL 包含夹具哈希、模型、负载、期限、正确性、首字、首个可用文本或工具调用、完成、
+DNS/TLS 与 HTTP 时间、HTTP 暴露 Content-Length 时的请求体大小、连接复用、WebSocket
+续接状态、提交次数及服务商报告的 token 用量。不包含凭证、原始错误、提示词或模型思考。
+缺失计时是未知，不表示没有开销。范围覆盖真实 Agent 循环、工具执行和服务商；不包含
+桌面 IPC 与绘制。请求写完时间包含本机准备、连接和上传，HTTP 首字节还包含服务端工作；
+探针不能独立分离服务端排队与模型预填充。
+
+基线与候选使用同一 runner、依赖和机器，随报告保留源码提交、补丁、runner 与可执行文件
+哈希。链接 worktree 建议使用 `go build -buildvcs=false`，配合
+`-ldflags='-X main.sourceRevision=<commit> -X main.sourceDiff=<patch-sha256>'`；核对声明
+与实际源码，仅在服务商基线没有改动时填 `none`。用相同提示词、effort、期限和工具策略
+交错运行 A/B/B/A，分别统计首轮与后续轮、服务商/模型、短长历史和工具循环。
+不要混合真实网络、请求体节流、注入延迟或性能采样结果。记录提示缓存用量，服务端缓存
+与负载可能主导结果。
+
+评分脚本的正确性分为 `100 × 通过数 / 计划数`。通过要求回答符合预期、工具结果正确、
+没有截断且提交次数符合预期。恢复导致的额外提交即使最终回答正确，也不通过这一严格
+约束。未执行的依赖回合仍计入计划分母。延迟指数为 `100 × 基线 / 候选`，比较首字平均
+时间，失败和未执行回合按完整期限计入。基线为标签 `baseline` 的未压缩 SSE，按负载和
+回合匹配，全部通过正确性检查后才输出指数。高于 100 表示该样本更快；同时检查成功样本
+的 P50/P90、完成时间及失败。小样本不能证明尾延迟或整体产品分数。
+
+本机原始报告放在忽略的产物目录。公开性能结论需要在 [evals](../../../evals/README.md)
+提交完整且来源干净的记录。CI 应检查确定性的连接复用、载荷与重定向契约、预热/增量、
+取消和恢复行为，不依赖真实服务耗时阈值或凭证。
+
 ### 工作区 PDF 预览
 
 在图形会话中运行 `npm --prefix desktop run test:e2e:workspace-preview`，

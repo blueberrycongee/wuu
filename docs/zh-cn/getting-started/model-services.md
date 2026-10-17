@@ -79,6 +79,23 @@ wuu exec --provider openai --permission-mode read_only "阅读这个项目，告
 
 `--provider` 选择已配置的服务标识，`--model` 覆盖本次运行的模型。配置优先级和项目级设置的限制见[配置说明](../reference/configuration.md)。
 
+## 流式响应延迟
+
+Wuu 内置的 HTTP 模型客户端跨回合复用流式连接池。Codex 重新读取凭证时仍保留连接池，
+每个请求继续使用当前凭证。连接、响应头和流空闲超时分别管理，连接复用不会给长回答
+增加总时长限制。
+
+Codex 默认使用 `stream_transport: "auto"`。符合条件的内置会话在创建、恢复或切换模型
+时可提前建立 WebSocket，不提交推理请求。同一连接上的兼容续接使用
+`previous_response_id` 加新增输入；重连、请求选项改变或历史不兼容时恢复发送完整上下文。
+预热只有在连接保持到实际使用时才能移走发送路径上的连接开销，不会消除服务端排队
+或模型计算时间。
+
+WebSocket 在提交前不可用时可回退到 HTTP。请求一旦可能已经提交，后续尝试仍由正常
+恢复计量规则管理。HTTP gzip 是独立的上传优化，不压缩 WebSocket 消息。测试时保留
+原有传输配置：强制使用 SSE 可能失去已有的连接与上下文复用。测量与正确性检查见
+[延迟评估流程](../project/development.md#服务商延迟评估)。
+
 ## 实验性 HTTP 请求压缩
 
 HTTP 请求 gzip 默认关闭。只有端点运营方确认支持 `Content-Encoding: gzip` 后，
