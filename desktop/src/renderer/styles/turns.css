@@ -2658,13 +2658,17 @@
   margin-inline: 0 calc(var(--process-segment-gap) - var(--process-segment-inner-gap));
 }
 
+/* Keep the ring on the summary line. A wrapping line places the text at its
+ * full max-content width first, so the indicator drops below before the text
+ * gets a chance to truncate. */
 .process-surface-summary-line.has-compaction {
-  flex-wrap: wrap;
-  row-gap: var(--space-1);
+  flex-wrap: nowrap;
 }
 
 .process-surface-compactions {
   display: inline-flex;
+  /* Reserve the ring's footprint; the summary text yields width first. */
+  flex: 0 0 auto;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);

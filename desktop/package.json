@@ -49,6 +49,7 @@
     "test:e2e:workspace-new-tab": "npm run build && electron scripts/workspace-new-tab-e2e.cjs",
     "test:e2e:process-handoff": "npm run build && electron scripts/process-handoff-e2e.cjs",
     "test:e2e:process-mascot-clip": "npm run build && electron scripts/process-mascot-clip-e2e.cjs",
+    "test:e2e:process-compaction-summary": "npm run build && electron scripts/process-compaction-summary-e2e.cjs",
     "test:e2e:resize-live-layout": "electron scripts/resize-live-layout-e2e.cjs",
     "test:e2e:window-resize": "npm run build && electron scripts/window-resize-perf-e2e.cjs",
     "test:e2e:document-context": "npm run build:core && npm run build && electron scripts/document-context-e2e.mjs",
