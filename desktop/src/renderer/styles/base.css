@@ -411,11 +411,11 @@
   );
 }
 
-/* Linux is frameless: caption buttons are drawn in the renderer, so no
- * overlay reservation is required. */
+/* Linux draws its caption in the renderer, but fixed toolbar controls still
+ * need to reserve the same top-right strip as the caption's hit targets. */
 :root[data-platform="linux"] {
   --window-controls-inset-left: 0px;
-  --window-controls-inset-right: 0px;
+  --window-controls-inset-right: var(--linux-caption-width);
 }
 
 * {

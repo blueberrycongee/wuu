@@ -266,6 +266,41 @@ async function run() {
   assert.equal(listed.active_context.cwd, second);
   observed.push({ scenario: 'atomic retry and landing', workspaceCount: persisted.projects.length, selectedWorkspace: 'api-server' });
   await screenshot('landed');
+  if (process.platform === 'linux') {
+    // A fixed Linux caption once covered the visible workspace toggle, so
+    // clicking that toggle closed the application instead of opening a panel.
+    for (const theme of ['light', 'dark']) for (const size of [14, 20]) for (const width of [920, 1280]) {
+      main.setSize(width, 720);
+      await evaluate(({ theme, size }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty('--appearance-scale', String(size / 14));
+        document.documentElement.style.setProperty('--conversation-message-font-size', `${size}px`);
+      }, { theme, size });
+      for (const open of [true, false]) {
+        const hit = await evaluate(async () => {
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const button = document.querySelector('.shell-right-sidebar-toggle');
+          const box = button.getBoundingClientRect();
+          const point = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+          const target = document.elementFromPoint(point.x, point.y);
+          return { point, reachable: target === button || button.contains(target), target: target?.className };
+        });
+        assert.ok(hit.reachable, `Linux workspace toggle is reachable at ${theme}/${size}/${width}: ${hit.target}`);
+        main.webContents.sendInputEvent({ type: 'mouseDown', ...hit.point, button: 'left', clickCount: 1 });
+        main.webContents.sendInputEvent({ type: 'mouseUp', ...hit.point, button: 'left', clickCount: 1 });
+        await waitFor(open => document.querySelector('.shell-right-sidebar-toggle')?.getAttribute('aria-expanded') === String(open), open);
+        const captionReachable = await evaluate(() => [...document.querySelectorAll('.linux-window-control')].every(button => {
+          const box = button.getBoundingClientRect();
+          const target = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+          return target === button || button.contains(target);
+        }));
+        assert.ok(captionReachable, 'Opening the workspace panel preserves all caption hit targets');
+      }
+      const name = `linux-caption-${theme}-${size}-${width}`;
+      fs.writeFileSync(path.join(output, `${name}.png`), (await main.webContents.capturePage()).toPNG());
+      observed.push({ scenario: 'Linux workspace toggle and caption hit targets', theme, size, width, passed: true });
+    }
+  }
   main.webContents.reload();
   await new Promise(resolve => main.webContents.once('did-finish-load', resolve));
   await waitFor(() => document.querySelector('.app-shell') && !document.querySelector('.first-run-onboarding'));
