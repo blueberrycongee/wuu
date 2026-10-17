@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Use the same quiet gray for completed tool summaries, running tool summaries,
+  and composer placeholder text.
+
 - Keep the context compaction ring on the process summary line when a long
   activity summary must truncate, instead of wrapping the ring onto its own row.
 - Keep the macOS permission guide clear of System Settings authentication dialogs and file pickers, and make it follow window movement continuously instead of jumping between slow permission checks.
