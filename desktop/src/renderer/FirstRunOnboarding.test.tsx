@@ -5,7 +5,7 @@ import type { EngineListResult, ExtensionInventoryRecord, WuuDesktopApi } from "
 import {
   FirstRunOnboarding,
   bundledOnboardingPlugins,
-  discoveredCodexCredential,
+  discoveredLocalProviders,
   hasOnboardingProvider,
 } from "./FirstRunOnboarding";
 import { I18nProvider } from "./i18n";
@@ -90,10 +90,10 @@ describe("FirstRunOnboarding", () => {
     expect(update).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "enable" });
   });
 
-  it("recognizes configured and locked model providers", () => {
+  it("requires authentication and a saved connection for a ready model provider", () => {
     expect(hasOnboardingProvider([{ name: "a", type: "x", model: "m" }])).toBe(false);
     expect(hasOnboardingProvider([{ name: "a", type: "x", model: "m", api_key_configured: true }])).toBe(true);
-    expect(hasOnboardingProvider([{ name: "a", type: "x", model: "m", connection_locked: true }])).toBe(true);
+    expect(hasOnboardingProvider([{ name: "a", type: "x", model: "m", connection_locked: true }])).toBe(false);
     expect(hasOnboardingProvider([{ name: "openai-codex", type: "openai-codex", model: "gpt-6-astra", connection_locked: true }])).toBe(false);
     expect(hasOnboardingProvider([{
       name: "openai-codex",
@@ -102,6 +102,7 @@ describe("FirstRunOnboarding", () => {
       connection_locked: true,
       reuse_codex_credentials: true,
       codex_credential_source: "codex-cli",
+      api_key_configured: true,
     }])).toBe(true);
   });
 
@@ -154,15 +155,22 @@ describe("FirstRunOnboarding", () => {
     expect(mascotStage()?.querySelector("[data-onboarding-engine-mark]")).toBeNull();
   });
 
-  it("discovers a local Codex login without treating it as already configured", () => {
+  it("discovers local logins without treating them as already configured", () => {
     const providers = [{
       name: "openai-codex",
       type: "openai-codex",
       model: "gpt-6-astra",
       connection_locked: true,
       codex_credential_source: "codex-cli",
+    }, {
+      name: "grok-build",
+      type: "grok-build",
+      model: "grok-4.5",
+      connection_locked: true,
+      api_key_configured: true,
+      auto_discovered: true,
     }];
-    expect(discoveredCodexCredential(providers)?.name).toBe("openai-codex");
+    expect(discoveredLocalProviders(providers).map((provider) => provider.name)).toEqual(["openai-codex", "grok-build"]);
     expect(hasOnboardingProvider(providers)).toBe(false);
   });
 
@@ -187,7 +195,7 @@ describe("FirstRunOnboarding", () => {
 
     expect(container.querySelector(".onboarding-stage-provider")).not.toBeNull();
     expect(container.querySelector("input")).toBeNull();
-    expect(container.querySelector(".model-service-tile")).toBeNull();
+    expect(container.querySelector(".model-service-tile")).not.toBeNull();
     expect(container.querySelector(".onboarding-connection")?.textContent).toContain("openai");
     expect(container.querySelector(".onboarding-connection")?.textContent).toContain("gpt-5");
     await clickButton("继续");
@@ -543,7 +551,7 @@ describe("FirstRunOnboarding", () => {
     expect(document.activeElement).toBe(title());
   });
 
-  it("lets the user confirm a discovered Codex login before using it", async () => {
+  it("keeps both local logins available alongside an existing connection", async () => {
     const save = vi.fn(async () => undefined);
     const updateEngines = vi.fn(async () => undefined);
     const engines: EngineListResult = {
@@ -564,6 +572,11 @@ describe("FirstRunOnboarding", () => {
               model: "gpt-6-astra",
               connection_locked: true,
               codex_credential_source: "codex-cli",
+            }, {
+              name: "grok-build", type: "grok-build", model: "grok-4.5",
+              api_key_configured: true, connection_locked: true, auto_discovered: true,
+            }, {
+              name: "openai", type: "openai-compatible", model: "gpt-5", api_key_configured: true,
             }]}
             engines={engines}
             onUpdateExtensionPackage={vi.fn(async () => undefined)}
@@ -576,11 +589,14 @@ describe("FirstRunOnboarding", () => {
     });
     await clickButton("开始设置");
     await clickButton("继续");
-    expect(container.querySelector('[data-testid="onboarding-reuse-codex"]')).toBeNull();
+    expect(container.querySelector('[data-testid="onboarding-reuse-local-login"][data-provider="openai-codex"]')).toBeNull();
     await clickButton("继续");
     expect(updateEngines).toHaveBeenCalledWith({ default_engine: "wuu" });
     expect(save).not.toHaveBeenCalled();
-    const reuse = container.querySelector<HTMLButtonElement>('[data-testid="onboarding-reuse-codex"]');
+    expect(container.querySelectorAll('[data-testid="onboarding-reuse-local-login"]')).toHaveLength(2);
+    expect(container.querySelectorAll('.onboarding-connection')).toHaveLength(1);
+    expect(container.querySelector('.model-service-tile')).not.toBeNull();
+    const reuse = container.querySelector<HTMLButtonElement>('[data-testid="onboarding-reuse-local-login"][data-provider="openai-codex"]');
     expect(reuse).not.toBeNull();
     await act(async () => reuse!.click());
     expect(save).toHaveBeenCalledWith("openai-codex", "gpt-6-astra", {
@@ -612,7 +628,7 @@ describe("FirstRunOnboarding", () => {
     if (mode === "skip") {
       await clickButton("稍后连接");
     } else {
-      const reuse = container.querySelector<HTMLButtonElement>('[data-testid="onboarding-reuse-codex"]')!;
+      const reuse = container.querySelector<HTMLButtonElement>('[data-testid="onboarding-reuse-local-login"][data-provider="local-codex"]')!;
       await act(async () => reuse.click());
       if (mode === "retry") {
         expect(container.querySelector('[role="alert"]')?.textContent).toContain("Connection unavailable");
@@ -675,7 +691,7 @@ describe("FirstRunOnboarding", () => {
     await act(async () => installedChoice.click());
     expect(installedChoice.checked).toBe(true);
     await clickButton("继续");
-    expect(container.querySelector('[data-testid="onboarding-reuse-codex"]')).toBeNull();
+    expect(container.querySelector('[data-testid="onboarding-reuse-local-login"][data-provider="openai-codex"]')).toBeNull();
     if (mode === "skip") {
       await clickButton("稍后连接");
     } else {

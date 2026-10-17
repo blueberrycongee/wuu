@@ -8,6 +8,7 @@ import { useI18n } from "./i18n";
 import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 import { WorkbenchContentRenderer } from "./plugins/Workbench";
 import { RichContent } from "./RichContent";
+import { isMarkdownDocument, MarkdownDocumentReading } from "./MarkdownDocumentReading";
 import { AttachmentImage } from "./AttachmentImage";
 import { fileNameParts, formatByteSize } from "./AttachmentFormat";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
@@ -711,7 +712,7 @@ export function ArtifactPreview({
     body = <audio className="artifact-preview-audio" src={source} controls />;
   } else if (artifact.mimeType.startsWith("video/")) {
     body = <VideoPreview src={source} title={artifact.name} active={active} />;
-  } else if (artifact.mimeType.startsWith("text/") || artifact.text !== undefined) {
+  } else if (artifact.mimeType.startsWith("text/") || artifact.text !== undefined || isMarkdownDocument(artifact.name, artifact.mimeType)) {
     body = <ArtifactTextPreview artifact={artifact} source={source} />;
   } else {
     body = <div className="artifact-preview-empty">{t("artifacts.previewUnavailable")}</div>;
@@ -807,9 +808,12 @@ function ArtifactTextPreview({ artifact, source }: { artifact: TurnArtifact; sou
   }, [source, inlineText]);
   const current = result?.source === source ? result : undefined;
   const text = inlineText ?? current?.text;
-  return text !== undefined
-    ? <pre className="artifact-preview-text">{text}</pre>
-    : <div className="artifact-preview-empty">{t(current?.failed ? "artifacts.previewUnavailable" : "imagePreview.loading")}</div>;
+  if (text === undefined) {
+    return <div className="artifact-preview-empty">{t(current?.failed ? "artifacts.previewUnavailable" : "imagePreview.loading")}</div>;
+  }
+  return isMarkdownDocument(artifact.name, artifact.mimeType) ? (
+    <MarkdownDocumentReading text={text} />
+  ) : <pre className="artifact-preview-text">{text}</pre>;
 }
 
 function artifactFromContentPart(

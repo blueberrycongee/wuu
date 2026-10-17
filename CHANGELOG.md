@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Removed
+
+- Remove the built-in suggestions from Automations so the page focuses on existing
+  tasks and completed runs.
+
 ### Fixed
 
 - Refresh external agent discovery after installing a CLI while the desktop is
@@ -15,6 +20,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   engine settings and concurrent thread creation during refresh. Detect standard
   user installs in the onboarding preview, and preserve terminal PATH and explicit
   engine binary overrides when launching macOS source development builds.
+- Offer detected Codex and Grok logins together during first-run setup, connecting
+  either only when selected, and keep other connection options visible alongside
+  existing connections. Locked connection fields no longer imply a valid login;
+  authenticated discovered connections remain usable from the composer.
+- Hand long foreground commands to the background process manager after ten
+  seconds so independent tools can proceed, while preserving output and completion
+  notifications. Keep the requested foreground wait in side conversations.
+  Record tool queue wait separately from execution time.
 - Keep the macOS Dock icon visible when the desktop pet is enabled.
 - Restore filled open-state indicators for the left and right desktop sidebar
   toggle icons.

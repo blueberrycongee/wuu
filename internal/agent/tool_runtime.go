@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -346,12 +347,14 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 			runCtx = toolctx.WithNestedExecutor(runCtx, &nestedToolScope{runtime: r, parent: run, ctx: runCtx, calls: make(map[string]*toolRun)})
 		} else {
 			runCtx = toolctx.WithNestedExecutor(runCtx, nil)
+			queuedAt := time.Now()
 			release, err := r.gate.acquire(runCtx, concurrencySafe)
 			if err != nil {
 				finish(toolresult.Result{}, err)
 				return
 			}
 			defer release()
+			runCtx = toolctx.WithQueueWait(runCtx, time.Since(queuedAt))
 		}
 		select {
 		case <-runCtx.Done():

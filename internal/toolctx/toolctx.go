@@ -3,9 +3,23 @@ package toolctx
 import (
 	"context"
 	"strings"
+	"time"
 )
 
 type stepIndexKey struct{}
+
+type queueWaitKey struct{}
+
+// WithQueueWait records time spent waiting for the leaf execution gate.
+// It is separate from tool execution time and does not affect scheduling.
+func WithQueueWait(ctx context.Context, wait time.Duration) context.Context {
+	return context.WithValue(ctx, queueWaitKey{}, wait)
+}
+
+func QueueWait(ctx context.Context) time.Duration {
+	wait, _ := ctx.Value(queueWaitKey{}).(time.Duration)
+	return wait
+}
 
 type worktreeBindingKey struct{}
 
