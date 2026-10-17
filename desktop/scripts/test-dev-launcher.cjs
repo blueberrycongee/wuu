@@ -134,15 +134,11 @@ assert.match(packageJSON.scripts["pack:mac"], /CSC_IDENTITY_AUTO_DISCOVERY=false
 assert.match(packageJSON.scripts["dist:mac"], /CSC_IDENTITY_AUTO_DISCOVERY=false/);
 assert.match(packageJSON.scripts["pack:mac"], /--config\.electronDist=node_modules\/electron\/dist/);
 assert.match(packageJSON.scripts["dist:mac"], /--config\.electronDist=node_modules\/electron\/dist/);
-// The env assignment rides the cross-shell env-run launcher; the point
-// stays the same — CUA dev mode is opt-in per invocation, never baked
-// into dev.cjs itself (the doesNotMatch below).
 assert.equal(
   packageJSON.scripts["dev:direct"],
   "node scripts/env-run.cjs WUU_ENABLE_CUA_MAC=1 node scripts/dev.cjs",
 );
 const devLauncherSource = readFileSync(resolve(__dirname, "dev.cjs"), "utf8");
-assert.doesNotMatch(devLauncherSource, /env\.WUU_ENABLE_CUA_MAC\s*=\s*["']1["']/);
 assert.match(devLauncherSource, /build-core\.cjs/);
 assert.doesNotMatch(devLauncherSource, /--plugins-only/);
 assert.match(devLauncherSource, /env\.WUU_DESKTOP_CORE\s*=/);

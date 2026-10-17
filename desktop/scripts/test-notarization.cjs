@@ -141,3 +141,25 @@ test("ticket stapling preserves final command diagnostics", async (t) => {
   assert.equal(stdout.join(""), failure.stdout);
   assert.equal(stderr.join(""), failure.stderr);
 });
+
+test("accepted notarization resumes without uploading or querying Apple again", async () => {
+  const { notarizeArchive } = require("./notarization.cjs");
+  const dir = mkdtempSync(join(tmpdir(), "wuu-accepted-"));
+  const archive = join(dir, "app.zip"), receipt = join(dir, "receipt.json");
+  writeFileSync(archive, "signed archive");
+  try {
+    await notarizeArchive(archive, receipt, { run: (_cmd, args) => JSON.stringify(args[1] === "submit" ? { id } : { id, status: "Accepted" }) });
+    await notarizeArchive(archive, receipt, { run: () => assert.fail("accepted archive must not contact Apple again") });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("unknown upload outcome remains blocked across process restarts", async () => {
+  const { notarizeArchive } = require("./notarization.cjs");
+  const dir = mkdtempSync(join(tmpdir(), "wuu-unknown-"));
+  const archive = join(dir, "app.zip"), receipt = join(dir, "receipt.json");
+  writeFileSync(archive, "signed archive");
+  try {
+    await assert.rejects(notarizeArchive(archive, receipt, { run: () => { throw networkError(); } }), /upload/i);
+    await assert.rejects(notarizeArchive(archive, receipt, { run: () => assert.fail("must not resubmit an ambiguous upload") }), /unknown/i);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

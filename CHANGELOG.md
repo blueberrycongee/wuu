@@ -16,6 +16,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   panel into one canvas with aligned header rules, shared outer corners, and
   matching insets when the panel opens or expands.
 
+### Fixed
+
+- Enable Computer Use by default in macOS development launches, with an explicit
+  `WUU_ENABLE_CUA_MAC=0` override to disable it.
+- Match settings navigation, account controls, and sidebar drag-and-drop surfaces
+  to the shared sidebar row corners, keeping keyboard focus rings visible in
+  scrollable navigation.
+- Show iOS message images and file attachments above the text, including long-press previews and pending message details.
+
 ## [2026.10.16] - 2026-10-16
 
 ### Contributors

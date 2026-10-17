@@ -92,7 +92,7 @@
   min-height: var(--sidebar-row-height);
   align-items: center;
   gap: var(--sidebar-nav-column-gap);
-  border-radius: var(--radius-xs);
+  border-radius: var(--sidebar-row-radius);
   background: transparent;
   color: var(--ink-tertiary);
   font-size: var(--font-ui);
@@ -142,7 +142,7 @@
   height: auto;
   align-items: center;
   gap: var(--sidebar-nav-column-gap);
-  border-radius: var(--radius-xs);
+  border-radius: var(--sidebar-row-radius);
   background: transparent;
   color: var(--ink-soft);
   font-size: var(--font-ui);
