@@ -8,6 +8,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Offer Next message in first-run plugin selection, with a matching pencil accessory on the onboarding mascot and a reminder to choose a suggestion model.
+
 ### Fixed
 
 - Keep the context compaction ring on the process summary line when a long

@@ -336,7 +336,7 @@ describe("FirstRunOnboarding", () => {
     // Removing one capability leaves all the others intact.
     await clickPlugin("memory");
     expect(wornCapabilities()).not.toContain("memory");
-    expect(wornCapabilities()).toHaveLength(7);
+    expect(wornCapabilities()).toHaveLength(ONBOARDING_PLUGIN_ORDER.length - 2);
     await clickButton("极简");
     expect(visibleClones()).toHaveLength(1);
     expect(wornCapabilities()).toEqual([]);

@@ -125,6 +125,14 @@ function CompanionEquipment({
           <path className="equipment-paper" d="M78 23 Q82 21 85 25 L85 30 Q82 33 78 30 Z" />
           <path className="equipment-seam" d="M81 25 L82 29" />
         </>)}
+        {capability("next-message", <g transform="rotate(35 27 22)">
+          {/* A pencil clips to the left temple, clear of the eyes and headset. */}
+          <rect className="equipment-edge" x="23" y="7" width="8" height="23" rx="2" />
+          <path className="equipment-bookmark" d="M24.5 13 H29.5 V27 H24.5 Z" />
+          <path className="equipment-shell" d="M24.5 10 Q24.5 8.5 26 8.5 H28 Q29.5 8.5 29.5 10 V12 H24.5 Z M24.5 28 H29.5 L27 34 Z" />
+          <path className="equipment-edge" d="M25.7 31 L27 34 L28.3 31 Z" />
+          <path className="equipment-seam" d="M27 15 V25" />
+        </g>)}
         {capability("automation", <>
           <circle className="equipment-edge" cx="22" cy="70" r="7.5" />
           <circle className="equipment-shell" cx="22" cy="69" r="6" />
