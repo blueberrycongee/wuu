@@ -18,7 +18,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Add optional next-message suggestions for main and side chats, with independent model and reasoning settings and Tab-to-insert drafts.
 - Show context compaction alongside tool activity with paired token rings, before/after counts, and expandable details.
-- Refine the rounded conversation canvas, sidebar resizing, titlebar alignment, workspace labels, and streaming scroll fades.
+- Refine the rounded conversation canvas with compact headers, centered workspace tabs, responsive sidebar resizing, readable workspace labels, and streaming scroll fades.
 - Reuse streaming model connections across turns and keep Claude provider errors in the conversation notice without duplicating assistant replies.
 - Refresh DeepSeek Flash 1017 availability, output limits, and pricing while preserving saved model aliases.
 

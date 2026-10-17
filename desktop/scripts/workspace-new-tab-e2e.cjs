@@ -133,13 +133,13 @@ app.whenReady().then(async () => {
         })) };
     });
     fs.writeFileSync(path.join(output, scenario + ".json"), JSON.stringify(geometry, null, 2));
-    const axis = geometry.header.top + geometry.header.height / 2;
+    const axis = (geometry.paintedCanvasTop + geometry.header.bottom) / 2;
     if (geometry.viewport.zoom === 1) {
       assert.ok(Math.abs(axis - 28) < 0.1, "Workspace and navigation share the expected 28 DIP axis at default zoom");
-      assert.ok(Math.abs(geometry.header.height - 56) < 0.1, "The titlebar reserves a complete row at default zoom");
+      assert.ok(geometry.header.height <= 48.1, "The canvas header stays compact at default zoom");
     }
     for (const peer of geometry.peers) {
-      assert.ok(Math.abs(peer.centerY - axis) < 0.6, `${scenario}: ${peer.target} shares the tab axis: ${JSON.stringify(geometry)}`);
+      assert.ok(Math.abs(peer.centerY - axis) < 0.6, `${scenario}: ${peer.target} retains the shared window-control axis: ${JSON.stringify(geometry)}`);
       assert.ok(peer.bounds.top >= geometry.header.top - 0.1 && peer.bounds.bottom <= geometry.header.bottom + 0.1,
         `${scenario}: ${peer.target} is not clipped by the row`);
       if (peer.button) assert.ok(peer.hit, `${scenario}: ${peer.target} owns its click target`);
@@ -151,10 +151,10 @@ app.whenReady().then(async () => {
     assert.ok(geometry.active.left >= geometry.strip.left - 1 && geometry.active.right <= geometry.strip.right + 1,
       "The selected tab remains in view");
     for (const { tab, label, close, conversation, chip, main, selected, hit } of geometry.tabs) {
-      assert.ok(chip.height >= 36 - 0.1 && chip.height <= 40 + 0.1,
-        `${scenario}: workspace chips retain their full 36–40px height: ${JSON.stringify(geometry)}`);
-      assert.ok(Math.abs(chip.top + chip.height / 2 - axis) < 0.6,
-        `${scenario}: visible tab chips share the same axis as adjacent actions`);
+      assert.ok(chip.height >= 28 && chip.height >= label.height + 4 && chip.height <= label.height + 14,
+        `${scenario}: compact chips retain readable label padding and usable targets: ${JSON.stringify(geometry)}`);
+      assert.ok(Math.abs((chip.top - geometry.paintedCanvasTop) - (geometry.header.bottom - chip.top - chip.height)) < 1,
+        `${scenario}: tab chips have equal space above and below within the painted canvas header: ${JSON.stringify(geometry)}`);
       assert.ok(chip.top >= geometry.paintedCanvasTop - 0.1 && chip.top + chip.height <= geometry.header.bottom + 0.1,
         `${scenario}: the complete chip fits below the canvas clipping edge: ${JSON.stringify(geometry)}`);
       assert.ok(Math.abs(main.top + main.height / 2 - axis) < 0.6,
@@ -163,6 +163,8 @@ app.whenReady().then(async () => {
       assert.ok(label.width >= 16, "Overflow keeps tab labels readable rather than hiding them");
       if (!conversation) {
         assert.ok(close, "Every tool tab retains its close action");
+        assert.ok(Math.abs(close.top + close.height / 2 - axis) < 0.6,
+          `${scenario}: the close action stays centered inside its chip`);
         assert.ok(close.width >= 24 && close.height >= 24, "Close retains its independent hit target");
         assert.ok(close.left >= label.right - 1 && close.right <= tab.right + 1, "Label and close lanes do not overlap");
       }
