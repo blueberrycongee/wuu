@@ -8,6 +8,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
+- Show iOS message images and file attachments above the text, including long-press previews and pending message details.
+
 ## [2026.10.16] - 2026-10-16
 
 ### Contributors
