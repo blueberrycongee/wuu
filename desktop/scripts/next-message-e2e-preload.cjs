@@ -39,7 +39,7 @@ module.exports = (api) => {
       workspace_root: context.cwd, provider: "synthetic", model: "mock-next-message",
       model_aliases: { "synthetic-fast-model": { provider: "synthetic", model: "mock-next-message" } },
       providers: [{ name: "synthetic", type: "mock", model: "mock-next-message", api_key_configured: true,
-        models: [{ id: "mock-next-message", variants: [{ id: "low" }, { id: "high" }] }] }],
+        models: [{ id: "mock-next-message", capabilities: { context_window: 272000 }, variants: [{ id: "low" }, { id: "high" }] }] }],
       extension_inventory: [...(await api.initialize()).extension_inventory, ...inventory()],
     }),
     listProjects: async () => projects(),

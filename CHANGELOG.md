@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Keep independent activity previews for multiple browser tabs and native windows
+  in one conversation, with up to five visible cards and individual dismissal.
+
 ### Changed
 
 - Group settings navigation by purpose and add search across page names and setting
@@ -25,11 +30,25 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep sidebar fork markers separate from pin and archive actions when a running,
+  unread, or switching conversation has keyboard focus.
+- Keep next-message suggestions visible and accept them with Tab while hovering
+  the composer's read-only usage hints.
+- Allow forks made after context-window switches to send follow-up messages,
+  including previously affected forks, while preserving their conversation history.
+- Hide live activity previews while image viewers or dialogs are open, then
+  restore eligible previews without interrupting background tasks.
+- Keep retained native previews from taking focus or restoring windows now owned
+  by another task when activity control changes.
 - Keep right-to-left paragraphs, headings, and quotes in messages aligned
   and selectable in their natural direction while inline code, code blocks,
   and tool output remain left-to-right.
 - Keep reasoning summaries on the same quiet gray as tool activity summaries
   and composer placeholder text.
+- Keep macOS computer-control snapshots and background focus independent when
+  sessions alternate between different apps, and discard state when control ends.
+- Reject computer-control sequences that switch apps before executing any steps,
+  so every step remains within the sequence's app control lease.
 
 ## [2026.10.18] - 2026-10-18
 

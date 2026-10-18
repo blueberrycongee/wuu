@@ -150,6 +150,7 @@ const PANEL_HEIGHT_ESTIMATE = 320;
 export function FloatingMenuPortal({
   anchorRef,
   owner,
+  layer = "menu",
   placement,
   align,
   offset = 8,
@@ -171,6 +172,8 @@ export function FloatingMenuPortal({
 }: {
   anchorRef: RefObject<HTMLElement | null>;
   owner: FloatingMenuOwner;
+  /** Read-only hover hints do not claim menu keyboard priority. */
+  layer?: "menu" | "tooltip";
   placement: FloatingMenuPlacement;
   align: FloatingMenuAlign;
   offset?: number;
@@ -368,12 +371,12 @@ export function FloatingMenuPortal({
   if (useSheet && mobileSheet) return <ComposerMobileSheet anchorRef={anchorRef} owner={owner} {...mobileSheet}>{children}</ComposerMobileSheet>;
 
   return (
-    <UILayerPortal layer="menu">
+    <UILayerPortal layer={layer}>
       <div
         ref={layerRef}
         className={`floating-menu-layer floating-menu-${resolvedPlacement}`}
-        data-wuu-component="menu"
-        data-wuu-layer="menu"
+        data-wuu-component={layer}
+        data-wuu-layer={layer}
         data-wuu-state="open"
         data-floating-menu-owner={owner}
         style={style}

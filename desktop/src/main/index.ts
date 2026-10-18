@@ -350,10 +350,9 @@ appServerClientPool.setClientTorndownHandler((workdir) => {
   browserHostCoordinator.onClientTorndown(workdir);
   observationCoordinator.dropWorkdir(workdir);
 });
-// The single observation surface for agent live activity (CUA native PiP +
-// browser preview), fed by the same activity notifications the renderer uses.
-// The factory picks the surface per activity kind; the coordinator owns
-// lifecycle, single-instance discipline, and position memory.
+// Shared observation stack for CUA windows and browser tabs, fed by the same
+// activity notifications the renderer uses. The coordinator owns per-target
+// lifecycle, session visibility, stack ordering, and position memory.
 const observationCoordinator = new ObservationCoordinator(
   windowRegistry,
   async (threadID): Promise<ActivitySession[]> => {
