@@ -8,6 +8,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve and queue desktop messages when another turn wins a concurrent send, retaining attachments, send order, and Stop intent.
+
 ## [2026.10.19] - 2026-10-18
 
 ### Contributors
