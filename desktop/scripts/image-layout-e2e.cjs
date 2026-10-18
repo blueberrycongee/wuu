@@ -165,6 +165,21 @@ app.whenReady().then(async () => {
         }, activeSelector);
         await frames();
       }
+      // Keep the lazy previews in view until the server observes their requests;
+      // restoring the reading position first can move them out of the load range.
+      let timeout;
+      try {
+        await Promise.race([
+          allRequests,
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => reject(new Error(
+              `${name}: image requests did not reach the gate (${pending.length}/${requestCount})`,
+            )), 10000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
       if (mode === "bottom") {
         await evaluate(selector => {
           const viewport = document.querySelector(selector);
@@ -223,19 +238,6 @@ app.whenReady().then(async () => {
         };
         requestAnimationFrame(tick);
       });
-      let timeout;
-      try {
-        await Promise.race([
-          allRequests,
-          new Promise((_, reject) => {
-            timeout = setTimeout(() => reject(new Error(
-              `${name}: image requests did not reach the gate (${pending.length}/${requestCount})`,
-            )), 10000);
-          }),
-        ]);
-      } finally {
-        clearTimeout(timeout);
-      }
       released = true; pending.splice(0).forEach(reply => reply());
       await until((selector, broken, count) => {
         const pane = document.querySelector(selector);
@@ -326,13 +328,13 @@ app.whenReady().then(async () => {
               const bounds = list.getBoundingClientRect();
               const root = list.parentElement.getBoundingClientRect();
               const button = pane.querySelector("[data-gallery-toggle]").getBoundingClientRect();
-              return { height: bounds.height, rootHeight: root.height,
+              return { bounds: bounds.toJSON(), button: button.toJSON(), height: bounds.height, rootHeight: root.height,
                 x: Math.round(bounds.left + 12), y: Math.round(bounds.top + bounds.height / 2),
                 buttonX: Math.round(button.left + button.width / 2), buttonY: Math.round(button.top + button.height / 2),
                 overlays: button.top >= bounds.top && button.bottom <= bounds.bottom && button.right <= bounds.right };
             }, activeSelector);
             assert.ok(Math.abs(gallery.height - gallery.rootHeight) <= 1, "View controls must not reserve a toolbar row");
-            assert.ok(gallery.overlays, "The view toggle must overlay the image area");
+            assert.ok(gallery.overlays, `${kind}-${theme}-${font}-${width}: the view toggle must overlay the image area: ${JSON.stringify(gallery)}`);
             await until(selector => getComputedStyle(document.querySelector(`${selector} .turn-artifact-gallery-toolbar`)).opacity === "0", activeSelector);
             win.webContents.sendInputEvent({ type: "mouseMove", x: gallery.x, y: gallery.y });
             await until(selector => getComputedStyle(document.querySelector(`${selector} .turn-artifact-gallery-toolbar`)).opacity === "1", activeSelector);

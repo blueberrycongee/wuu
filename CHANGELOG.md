@@ -42,6 +42,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep Linux window buttons clickable and reserve their space in titlebars and workspace toolbars.
 - Quit normally after closing the last Linux desktop window, including after using the embedded browser, while preserving open pet and pop-out windows.
 - Prevent repeated shutdown cleanup when destroying the hidden browser host triggers another quit event.
+- Keep gallery view controls inside small image previews at large UI font sizes.
 - Keep sidebar fork markers separate from pin and archive actions when a running,
   unread, or switching conversation has keyboard focus.
 - Keep next-message suggestions visible and accept them with Tab while hovering

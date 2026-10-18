@@ -297,6 +297,7 @@ async function run() {
         }));
         assert.ok(captionReachable, 'Opening the workspace panel preserves all caption hit targets');
       }
+      await waitFor(() => !document.querySelector('.window-resizing, .right-panel-animating'));
       const name = `linux-caption-${theme}-${size}-${width}`;
       fs.writeFileSync(path.join(output, `${name}.png`), (await main.webContents.capturePage()).toPNG());
       observed.push({ scenario: 'Linux workspace toggle and caption hit targets', theme, size, width, passed: true });
