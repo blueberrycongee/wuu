@@ -219,11 +219,78 @@ async function scenario(id, name, body) {
 }
 
 try {
-  const ids = ['todo', 'ask-user', 'memory', 'subagent', 'peers', 'automation', 'goal', 'dream', 'next-message'];
+  const ids = ['todo', 'ask-user', 'memory', 'subagent', 'peers', 'automation', 'goal', 'dream', 'next-message', 'monitor'];
   for (const id of ids.filter(id => !only || id === only)) {
     const bytes = await readFile(join(root, 'internal/plugin/bundled', id, 'runtime.mjs'));
     evidence.artifacts[id] = { sha256: createHash('sha256').update(bytes).digest('hex') };
   }
+  await scenario('monitor', 'framed events, retry identity, manual stop and restart recovery', async () => {
+    const host = new FixtureHost('monitor');
+    const processes = new Map();
+    const deliveries = [];
+    let failDelivery = true;
+    host.intercept = call => {
+      if (call.service === 'host.background') return { id: call.params.key, state: 'running' };
+      if (call.service !== 'host.process') return;
+      const input = call.params;
+      if (call.method === 'start') {
+        const process = { id: `process-${input.key}`, session_id: 'parent', state: 'running', exit_code: -1, output: '' };
+        processes.set(process.id, process);
+        return process;
+      }
+      const process = processes.get(input.process_id);
+      assert(process, 'Only captured process handles are used');
+      if (call.method === 'read') {
+        const bytes = Buffer.from(process.output);
+        return { process, output: bytes.subarray(input.offset_bytes).toString(), next_offset: bytes.length, total_bytes: bytes.length, truncated: false };
+      }
+      if (call.method === 'stop') {
+        Object.assign(process, { state: 'stopped', reason: 'requested_stop', exit_code: -1 });
+        return process;
+      }
+      assert.equal(call.method, 'send');
+      deliveries.push(input.message);
+      if (failDelivery) { failDelivery = false; throw new Error('Synthetic lost acknowledgement'); }
+      return { session_id: process.session_id, state: 'running', steered: true };
+    };
+    let runtime = await launch('monitor', host);
+    const started = resultJSON(await runtime.tool('monitor', { command: 'printf fixture', description: 'Fixture watch', persistent: true }));
+    const process = processes.get(started.task_id);
+    const start = host.calls.find(call => call.service === 'host.process' && call.method === 'start');
+    assert.equal(start.params.follow_parent, true);
+    assert.equal(start.params.timeout_ms, 0);
+    assert(start.execution_id, 'Shell start retains the live tool execution');
+    process.output = '\nfirst event\npartial';
+    const watch = runtime.request('service.invoke', { service: 'monitor.watch', method: 'run', params: { task_id: process.id }, execution_id: 'monitor-watch' });
+    await host.waitCall('host.process', params => params.message?.request_id && deliveries.length >= 2);
+    assert.equal(deliveries[0].request_id, deliveries[1].request_id, 'Lost delivery acknowledgement reuses its identity');
+    assert.equal(deliveries[1].if_running, 'steer');
+    assert.equal(deliveries[1].session_id, undefined, 'The host selects the captured recipient');
+    assert.match(deliveries[1].input.prompt, /first event/);
+    assert(!deliveries[1].input.prompt.includes('partial'), 'Incomplete output waits until a line or exit');
+    const listed = resultJSON(await runtime.tool('monitor_tasks', { action: 'list' }));
+    assert.equal(listed.tasks.length, 1);
+    assert.equal(resultJSON(await runtime.tool('monitor_tasks', { action: 'list' }, { session_id: 'peer', thread_id: 'peer' })).tasks.length, 0);
+    await runtime.client('monitor.tasks', { action: 'stop', task_id: process.id, thread_id: 'parent' });
+    await watch;
+    const ended = deliveries.at(-1);
+    assert.match(ended.input.prompt, /partial/);
+    assert.match(ended.input.prompt, /user stopped/);
+    const stopped = (await runtime.client('monitor.tasks', { action: 'list', thread_id: 'parent' })).tasks[0];
+    assert.equal(stopped.status, 'stopped');
+    assert.equal(stopped.lines, 2);
+    assert.equal(stopped.delivery_pending, false);
+    const surviving = resultJSON(await runtime.tool('monitor', { command: 'printf recovery', description: 'Recover history', persistent: true }));
+    await runtime.shutdown();
+    const beforeRestart = host.calls.length;
+    runtime = await launch('monitor', host);
+    const recovered = (await runtime.client('monitor.tasks', { action: 'list', thread_id: 'parent' })).tasks;
+    assert.equal(recovered.find(task => task.id === surviving.task_id).status, 'interrupted');
+    assert.equal(host.calls.slice(beforeRestart).filter(call => call.service === 'host.process' || call.service === 'host.background').length, 0, 'Restart must not rerun scripts or events');
+    const retained = await runtime.client('monitor.tasks', { action: 'read', task_id: stopped.id, thread_id: 'parent', offset_bytes: 0 });
+    assert.equal(retained.output, process.output);
+    await runtime.shutdown();
+  });
   await scenario('todo', 'strict updates and invalid input rejection', async () => {
     const runtime = await launch('todo');
     assert.deepEqual(runtime.definition.tools.map(tool => tool.id), ['update_todo']);

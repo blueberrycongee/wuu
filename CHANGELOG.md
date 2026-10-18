@@ -11,6 +11,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Added
 
 - Add an experimental headless workspace host and `wuu remote ssh` tunnel: use remote agent engines, files, Git, and terminals in the shared browser workbench, with running tasks preserved across SSH disconnects.
+- Monitor plugin for background scripts, event delivery into the active conversation,
+  timeout and persistent watches, output inspection, and per-task stop controls.
+- Public process service for conversation-bound extension commands and event delivery,
+  with process-tree cleanup and optional handoff from completed child sessions.
 
 ### Fixed
 

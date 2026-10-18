@@ -45,7 +45,7 @@ make build-go
 ./bin/wuu --help
 ```
 
-九个内置业务插件使用 `plugins/<id>/src/` 中的 TypeScript 源码。
+十个内置业务插件使用 `plugins/<id>/src/` 中的 TypeScript 源码。
 `make build-plugins` 把独立 JavaScript 运行包生成到内嵌资源目录；`make build-go`、
 `make install` 和桌面核心构建会先重新生成这些资源，再编译 Go。已提交的运行包
 让普通 Go 构建不依赖 npm 安装；`make check-plugins` 会拒绝过期的生成产物。
