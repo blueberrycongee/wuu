@@ -222,7 +222,8 @@ async function acceptance(): Promise<void> {
   await waitFor('host focus', () => main.isFocused());
   const activity: ActivitySession = { id: 'linux-cua', kind: 'cua', thread_id: 'linux-cua-thread', workdir: '/linux-cua-fixture', plugin_id: 'cua-linux', target: canonicalTarget, process_id: identity.processID, window_id: identity.windowID, state: 'foreground_controlled', controller: 'agent', execution_id: 'linux-acceptance', created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
   const factory = createObservationPiPFactory({ browserHost: null as unknown as BrowserHostCoordinator, isPackaged: false, parent: () => main });
-  coordinator = new ObservationCoordinator({ mainWindow: () => main } as unknown as WindowRegistry, undefined, (next, key, sink) => factory(next, key, sink, () => ({ x: 830, y: 370, width: 480, height: 390 })));
+  coordinator = new ObservationCoordinator({ mainWindow: () => main } as unknown as WindowRegistry, undefined, factory);
+  coordinator.setBrowserPiPHostLayout(main.webContents.id, main, { host: { x: 0, y: 0, width: 660, height: 800 }, obstacles: [] });
   coordinator.setActiveThread(activity.thread_id);
   coordinator.update(activity);
   await waitFor('PiP created', () => BrowserWindow.getAllWindows().some(win => win !== main));
@@ -271,9 +272,17 @@ async function acceptance(): Promise<void> {
   cover.destroy();
   coordinator.setAppearance(true, { reducedMotion: false, fontSize: 20, fontFamily: 'system-ui', locale: 'en-US', surface: '#172334', text: '#eff4ff', muted: '#b4c2d4' });
   await fixtureRequest('theme', 'dark');
-  pip.setSize(260, 240);
+  const beforeResize = pip.getBounds();
+  results.resize = { before: beforeResize, minimum: pip.getMinimumSize(), maximum: pip.getMaximumSize() };
+  overlay.sendInputEvent({ type: 'mouseMove', x: beforeResize.width - 9, y: beforeResize.height - 9 });
+  overlay.sendInputEvent({ type: 'mouseDown', x: beforeResize.width - 9, y: beforeResize.height - 9, button: 'left', clickCount: 1 });
+  await waitFor('preview resize gesture started', () => overlay.executeJavaScript("document.getElementById('root').classList.contains('resizing')"));
+  overlay.sendInputEvent({ type: 'mouseMove', x: 251, y: 231, modifiers: ['leftbuttondown'] });
   await waitFor('dark preview chrome', () => overlay.executeJavaScript("document.documentElement.classList.contains('dark')"));
   await waitFor('small preview bounds', () => { const bounds = pip.getBounds(); return bounds.width === 260 && bounds.height === 240; });
+  overlay.sendInputEvent({ type: 'mouseUp', x: 251, y: 231, button: 'left', clickCount: 1 });
+  await waitFor('preview resize gesture ended', () => overlay.executeJavaScript("!document.getElementById('root').classList.contains('resizing')"));
+  results.smallPreviewBounds = pip.getBounds();
   await waitFor('dark target pixels', async () => isColor(await pixel(.02, .30), [23, 35, 52]));
   await settlePreview();
   await capture('03-dark-small-large-text.png'); checks.push('dark appearance, small preview, large UI font');
