@@ -64,14 +64,16 @@ export function pipVisibleForActivity(activity: ActivitySession, inPanel = false
 
 type ActivitySnapshot = (threadID: string) => Promise<ActivitySession[]>;
 
-// The core owns one observation card per thread. Provider adapters only attach
+const VISIBLE_CARD_LIMIT = 5;
+
+// The core owns one observation card per target. Provider adapters only attach
 // content; visibility, theme and interaction feedback stay in this contract.
 export type ObservationPiPHandle = {
   start(): void;
-  setVisible(visible: boolean): void;
+  setVisible(visible: boolean, immediately?: boolean): void;
   animateInteraction(interaction: NonNullable<ActivitySession["interaction"]>): void;
   stop(onStopped?: () => void): void;
-  updateActivity?(activity: ActivitySession): void;
+  updateActivity?(activity: ActivitySession, restoreTarget?: boolean): void;
   setLive?(live: boolean): void;
   setTurnCompleted?(completed: boolean): void;
   setAppearance?(dark: boolean, preferences?: ActivityPreviewAppearance): void;
@@ -102,6 +104,7 @@ export interface BrowserPiPHostWindow {
 // capture target disappeared for good (tab closed, view crashed) and must not
 // be retried.
 export type ObservationPiPEventSink = {
+  canRestoreTarget?(): boolean;
   onEvent(event: CUANativePiPEvent): void;
   onFailure(message: string): void;
   onGone(): void;
@@ -122,20 +125,22 @@ type PiPEntry = {
   // "preparing" = content starting, no live frame yet.
   // "live" = first real frame presented (native `ready`).
   phase: "preparing" | "live" | "failed";
-  retiredExecutions: Set<string>;
 };
 
 /**
  * Owns the observation cards of every thread with a live, observable task
- * (CUA windows, embedded-browser tabs). Each thread has at most one card;
- * activity events retarget it, but an individual action ending never owns its
- * lifetime. Only the active conversation presents its card; other tasks keep
- * their observations and continue running while their cards are hidden.
+ * (CUA windows, embedded-browser tabs). Targets retain independent cards while
+ * task authority remains with their activity. Only the active conversation
+ * presents its stack; other tasks continue while their cards are hidden.
  */
 export class ObservationCoordinator {
   private readonly observations = new Map<string, ActivitySession>();
   private readonly goneObservations = new Map<string, { key: string; executionID?: string }>();
-  private readonly dismissedThreads = new Set<string>();
+  private readonly dismissedCards = new Set<string>();
+  private readonly completedCards = new Set<string>();
+  // An activity can visit many targets. Fence its event stream independently
+  // from the cards so stale snapshots cannot revive earlier executions.
+  private readonly sources = new Map<string, { activity: ActivitySession; retiredExecutions: Set<string> }>();
   // Threads whose turn ended without success; their card returns with the next turn.
   private readonly endedThreads = new Set<string>();
   private readonly lastInteractionRevisions = new Map<string, number>();
@@ -153,7 +158,7 @@ export class ObservationCoordinator {
   private userBounds: Rectangle | undefined;
   private browserHost: {
     id: number;
-    client: { host: PipRect; obstacles: PipRect[] };
+    client: { host: PipRect; obstacles: PipRect[] } | null;
     contentSize: { width: number; height: number };
     window: BrowserPiPHostWindow;
     detach: () => void;
@@ -185,17 +190,21 @@ export class ObservationCoordinator {
       const { method, params } = event.message;
       const turn = params as { thread_id?: string; turn?: { status: string }; awaiting_auto_continuation?: boolean; truncated?: boolean } | undefined;
       const threadID = turn?.thread_id;
-      const entry = threadID ? this.entries.get(threadID) : undefined;
-      if (threadID && (!entry || event.workdir === entry.activity.workdir)) {
+      const entries = [...this.entries.values()].filter((entry) => entry.threadID === threadID && entry.activity.workdir === event.workdir);
+      if (threadID) {
         if (method === "turn/started") {
-          entry?.pip.setTurnCompleted?.(false);
+          for (const entry of entries) entry.pip.setTurnCompleted?.(false);
           if (this.endedThreads.delete(threadID)) this.syncThread(threadID);
         } else if (method === "turn/error") {
-          entry?.pip.setTurnCompleted?.(false);
-        } else if (method === "turn/completed" && entry) {
+          for (const entry of entries) entry.pip.setTurnCompleted?.(false);
+        } else if (method === "turn/completed" && entries.length) {
           // Stopping a browser activity is not evidence that its task succeeded.
           const succeeded = turn?.turn?.status === "completed" && !turn.awaiting_auto_continuation && !turn.truncated;
-          if (!succeeded || this.pipVisibility(entry.activity)) entry.pip.setTurnCompleted?.(succeeded);
+          const visible = this.visibleStack();
+          for (const entry of entries) {
+            if (!succeeded || visible.includes(entry)) entry.pip.setTurnCompleted?.(succeeded);
+            else this.completedCards.add(entry.key);
+          }
           if ((succeeded && this.activeThreadID !== threadID)
             || turn?.turn?.status === "interrupted" || turn?.turn?.status === "failed") {
             // A task that finishes offscreen must not return as a running preview.
@@ -220,13 +229,18 @@ export class ObservationCoordinator {
   }
 
   showForThread(threadID: string): void {
-    this.dismissedThreads.delete(threadID);
     this.endedThreads.delete(threadID);
-    this.goneObservations.delete(threadID);
     this.explicitlyShown.add(threadID);
-    this.resetRetryBudget(threadID);
-    this.entries.get(threadID)?.pip.setTurnCompleted?.(false);
-    this.promote(threadID);
+    for (const [key, activity] of this.observations) {
+      if (activity.thread_id !== threadID) continue;
+      this.dismissedCards.delete(key);
+      this.completedCards.delete(key);
+      // Only retry the current target of each activity; older gone targets
+      // cannot be recovered merely by reopening the conversation previews.
+      if ([...this.sources.values()].some((source) => observationKey(source.activity) === key)) this.goneObservations.delete(key);
+      this.resetRetryBudget(key);
+      this.entries.get(key)?.pip.setTurnCompleted?.(false);
+    }
     this.syncThread(threadID);
   }
 
@@ -239,17 +253,18 @@ export class ObservationCoordinator {
   }
 
   refreshBrowserPresentation(): void {
-    for (const entry of this.entries.values()) entry.pip.setVisible(this.pipVisibility(entry.activity));
     this.restack();
   }
 
   private wantsCard(threadID: string): boolean {
-    return !this.dismissedThreads.has(threadID) && !this.endedThreads.has(threadID)
+    return !this.endedThreads.has(threadID)
       && (this.autoShow || this.explicitlyShown.has(threadID));
   }
 
   private pipVisibility(activity: ActivitySession): boolean {
+    const key = observationKey(activity);
     return activity.thread_id === this.activeThreadID && this.wantsCard(activity.thread_id)
+      && !this.dismissedCards.has(key) && !this.completedCards.has(key) && !this.observationIsGone(activity)
       && pipVisibleForActivity(activity, this.browserInPanel?.(activity) ?? false);
   }
 
@@ -259,7 +274,6 @@ export class ObservationCoordinator {
     this.activeThreadID = threadID?.trim() || undefined;
     this.refreshBrowserPresentation();
     if (this.activeThreadID) {
-      this.promote(this.activeThreadID);
       this.syncThread(this.activeThreadID);
     }
     this.restack();
@@ -268,51 +282,75 @@ export class ObservationCoordinator {
 
   update(activity: ActivitySession): void {
     if (this.closed) return;
-    const retained = this.entries.get(activity.thread_id);
-    if (retained && activity.execution_id && retained.retiredExecutions.has(activity.execution_id)) return;
-    if (retained && retained.activity.id === activity.id && acceptsActivityUpdate(retained.activity, activity)) {
-      // A hidden card still owns capture resources. Deliver task termination
-      // and takeover without showing or retargeting it. An unresolved or new
-      // target cannot resume old pixels.
-      if (retained.activity.execution_id !== activity.execution_id) {
-        if (retained.activity.execution_id) retained.retiredExecutions.add(retained.activity.execution_id);
-        retained.pip.setTurnCompleted?.(false);
+    const sourceKey = JSON.stringify([activity.workdir, activity.thread_id, activity.id]);
+    const source = this.sources.get(sourceKey);
+    if (source && ((activity.execution_id && source.retiredExecutions.has(activity.execution_id))
+      || !acceptsActivityUpdate(source.activity, activity))) return;
+    // Only a new authority transition on the current target may restore it.
+    // A snapshot can win the race with its notification; initial/repeated
+    // snapshots, helper retries and historical cards only sync state.
+    const restoreTarget = source !== undefined
+      && source.activity.execution_id === activity.execution_id
+      && ((source.activity.controller === "agent" && activity.controller !== "agent")
+        || (source.activity.state !== "stopped" && activity.state === "stopped"));
+    const executionChanged = source && source.activity.execution_id !== activity.execution_id;
+    const retiredExecutions = source?.retiredExecutions ?? new Set<string>();
+    if (executionChanged && source.activity.execution_id) retiredExecutions.add(source.activity.execution_id);
+    this.sources.set(sourceKey, { activity, retiredExecutions });
+
+    const key = observationKey(activity);
+    // Authority belongs to the activity, even when its last event names only
+    // one of the targets it visited. Keep each card's capture target intact.
+    for (const [otherKey, previous] of this.observations) {
+      if (otherKey === key || previous.workdir !== activity.workdir
+        || previous.thread_id !== activity.thread_id || previous.id !== activity.id
+        || (!executionChanged && previous.execution_id !== activity.execution_id)) continue;
+      if (executionChanged || activity.controller !== "agent" || !activityPreviewIsLive(activity)) {
+        const stopped: ActivitySession = {
+          ...previous, state: executionChanged ? "stopped" : activity.state,
+          controller: executionChanged ? "none" : activity.controller,
+          interaction: undefined, updated_at: activity.updated_at,
+        };
+        this.observations.set(otherKey, stopped);
+        const entry = this.entries.get(otherKey);
+        if (entry) {
+          entry.activity = stopped;
+          entry.pip.setLive?.(activityPreviewIsLive(stopped));
+          entry.pip.updateActivity?.(stopped);
+        }
       }
-      const sameTarget = retained.key === observationKey(activity);
-      const live = sameTarget && isObservableActivity(activity) && activityPreviewIsLive(activity);
-      if (!live) retained.pip.setLive?.(false);
-      retained.pip.updateActivity?.(activity);
-      if (live) retained.pip.setLive?.(true);
-      retained.activity = activity;
     }
-    if (!isObservableActivity(activity)) return;
-    if (!activity.target?.trim()) return;
-    const current = this.observations.get(activity.thread_id);
+    if (!isObservableActivity(activity) || !activity.target?.trim()) return;
+    const current = this.observations.get(key);
     if (current && !acceptsActivityUpdate(current, activity)) return;
-    const targetChanged = current && observationKey(current) !== observationKey(activity);
-    if (targetChanged) {
-      // Task-wide stop/takeover also updates inactive providers. Those terminal
-      // notifications must not move the preview back to an earlier target.
-      if (current.execution_id === activity.execution_id && activity.controller !== "agent") return;
+    if (current?.execution_id !== activity.execution_id || current?.id !== activity.id) {
+      this.resetRetryBudget(key);
+      this.lastInteractionRevisions.delete(key);
+      this.completedCards.delete(key);
+      this.endedThreads.delete(activity.thread_id);
+      this.entries.get(key)?.pip.setTurnCompleted?.(false);
     }
-    if (targetChanged || (current && activity.execution_id && current.execution_id !== activity.execution_id)) {
-      this.resetRetryBudget(activity.thread_id);
-    }
-    if (current?.execution_id !== activity.execution_id) this.endedThreads.delete(activity.thread_id);
-    this.observations.set(activity.thread_id, activity);
-    if (!this.observationIsGone(activity)) this.goneObservations.delete(activity.thread_id);
-    this.syncThread(activity.thread_id);
+    this.observations.set(key, activity);
+    if (!this.observationIsGone(activity)) this.goneObservations.delete(key);
+    this.syncObservation(key, restoreTarget);
+    this.restack();
   }
 
   // Core teardown for a workdir: drop its observations and tear down cards
   // showing one of its tabs, so no ghost preview can outlive the core that
   // owned the page.
   dropWorkdir(workdir: string): void {
-    for (const [threadID, activity] of [...this.observations]) {
-      if (activity.workdir === workdir) {
-        this.observations.delete(threadID);
-        this.goneObservations.delete(threadID);
-      }
+    for (const [key, activity] of this.observations) {
+      if (activity.workdir !== workdir) continue;
+      this.observations.delete(key);
+      this.goneObservations.delete(key);
+      this.dismissedCards.delete(key);
+      this.completedCards.delete(key);
+      this.lastInteractionRevisions.delete(key);
+      this.resetRetryBudget(key);
+    }
+    for (const [key, source] of this.sources) {
+      if (source.activity.workdir === workdir) this.sources.delete(key);
     }
     for (const entry of [...this.entries.values()]) {
       if (entry.activity.workdir === workdir) this.stopEntry(entry);
@@ -323,6 +361,7 @@ export class ObservationCoordinator {
     this.closed = true;
     this.activeThreadID = undefined;
     this.observations.clear();
+    this.sources.clear();
     this.goneObservations.clear();
     this.browserHost?.detach();
     this.browserHost = undefined;
@@ -334,94 +373,76 @@ export class ObservationCoordinator {
   }
 
   private syncAll(): void {
-    for (const threadID of new Set([...this.observations.keys(), ...this.entries.keys()])) this.syncThread(threadID, false);
+    for (const key of this.observations.keys()) this.syncObservation(key);
     this.restack();
   }
 
-  private syncThread(threadID: string, restack = true): void {
-    if (this.closed) return;
-    const entry = this.entries.get(threadID);
-    const activity = this.observations.get(threadID);
-    if (!this.wantsCard(threadID) || !activity || this.observationIsGone(activity)) {
-      entry?.pip.setVisible(false);
-      if (restack) this.restack();
-      return;
+  private syncThread(threadID: string): void {
+    for (const [key, activity] of this.observations) {
+      if (activity.thread_id === threadID) this.syncObservation(key);
     }
-    const key = observationKey(activity);
-    if (entry?.key === key) {
-      if (entry.phase === "failed") {
-        if (this.retryTimers.has(threadID) || (this.retryAttempts.get(threadID) ?? 0) >= 4) return;
-        entry.phase = "preparing";
-        entry.pip.retarget?.(activity, this.eventSink(entry));
-        if (this.entries.get(threadID) !== entry) return;
-      }
-      if (entry.activity.execution_id !== activity.execution_id) {
-        entry.pip.setTurnCompleted?.(false);
-      }
-      entry.activity = activity;
-      entry.pip.setVisible(this.pipVisibility(activity));
-      entry.pip.setLive?.(activityPreviewIsLive(activity));
-      entry.pip.updateActivity?.(activity);
-      this.animateInteractionIfNew(activity, entry.pip);
-      if (restack) this.restack();
-      return;
-    }
-    if ((activity.state === "stopped" && !this.explicitlyShown.has(threadID)) || this.retryTimers.has(threadID)
-      || (this.retryAttempts.get(threadID) ?? 0) >= 4) return;
-    if (entry?.pip.retarget) {
-      if (entry.activity.execution_id && entry.activity.execution_id !== activity.execution_id) {
-        entry.retiredExecutions.add(entry.activity.execution_id);
-      }
-      entry.key = key;
-      entry.activity = activity;
-      entry.phase = "preparing";
-      entry.pip.retarget(activity, this.eventSink(entry));
-      if (this.entries.get(threadID) !== entry) return;
-      entry.pip.setVisible(this.pipVisibility(activity));
-      entry.pip.setLive?.(activityPreviewIsLive(activity));
-      this.animateInteractionIfNew(activity, entry.pip);
-      if (restack) this.restack();
-      return;
-    }
-    if (entry) this.stopEntry(entry);
-    this.startEntry(activity, key);
-    if (restack) this.restack();
+    this.restack();
   }
 
-  private startEntry(activity: ActivitySession, key: string): void {
+  private syncObservation(key: string, restoreTarget = false): void {
+    if (this.closed) return;
+    const entry = this.entries.get(key);
+    const activity = this.observations.get(key);
+    if (!activity) return;
+    // Hidden cards must still receive authority changes and stop capture.
+    if (entry) {
+      entry.activity = activity;
+      entry.pip.setLive?.(activityPreviewIsLive(activity));
+      entry.pip.updateActivity?.(activity, restoreTarget);
+    }
+    if (!this.wantsCard(activity.thread_id) || this.dismissedCards.has(key)
+      || this.observationIsGone(activity)) return;
+    if (entry) {
+      if (entry.phase === "failed") {
+        if (this.retryTimers.has(key) || (this.retryAttempts.get(key) ?? 0) >= 4) return;
+        entry.phase = "preparing";
+        entry.pip.retarget?.(activity, this.eventSink(entry));
+        if (this.entries.get(key) !== entry) return;
+      }
+      this.animateInteractionIfNew(activity, entry.pip);
+      return;
+    }
+    if ((activity.state === "stopped" && !this.explicitlyShown.has(activity.thread_id))
+      || this.retryTimers.has(key) || (this.retryAttempts.get(key) ?? 0) >= 4) return;
+    this.startEntry(activity, key, restoreTarget);
+  }
+
+  private startEntry(activity: ActivitySession, key: string, restoreTarget: boolean): void {
     if (!this.pipFactory) return;
     // The sink closes over the entry, so it exists before its handle.
-    const entry = { key, threadID: activity.thread_id, activity, phase: "preparing", retiredExecutions: new Set<string>() } as PiPEntry;
+    const entry = { key, threadID: activity.thread_id, activity, phase: "preparing" } as PiPEntry;
     const pip = this.pipFactory(activity, key, this.eventSink(entry), () => this.initialBounds());
     if (!pip) return;
     entry.pip = pip;
-    this.entries.set(activity.thread_id, entry);
-    // A new card leads unless the conversation in view already has one.
-    const order = this.stackOrder.filter((id) => id !== activity.thread_id);
-    const behind = order[0] !== undefined && order[0] === this.activeThreadID && activity.thread_id !== this.activeThreadID;
-    this.stackOrder = behind ? [order[0], activity.thread_id, ...order.slice(1)] : [activity.thread_id, ...order];
+    this.entries.set(key, entry);
+    this.stackOrder = [key, ...this.stackOrder.filter((id) => id !== key)];
     pip.start();
     if (this.darkAppearance !== undefined) pip.setAppearance?.(this.darkAppearance, this.appearance);
     this.pushBrowserHost(pip);
-    pip.setVisible(this.pipVisibility(activity));
     pip.setLive?.(activityPreviewIsLive(activity));
-    pip.updateActivity?.(activity);
+    pip.updateActivity?.(activity, restoreTarget);
     this.animateInteractionIfNew(activity, pip);
   }
 
   private stopEntry(entry: PiPEntry): void {
-    if (this.entries.get(entry.threadID) !== entry) return;
-    this.entries.delete(entry.threadID);
-    this.stackOrder = this.stackOrder.filter((id) => id !== entry.threadID);
+    if (this.entries.get(entry.key) !== entry) return;
+    this.entries.delete(entry.key);
+    this.stackOrder = this.stackOrder.filter((id) => id !== entry.key);
+    entry.pip.setVisible(false, true);
     const stopped = new Promise<void>((resolve) => entry.pip.stop(resolve));
     this.pendingStops.add(stopped);
     void stopped.then(() => this.pendingStops.delete(stopped));
     this.restack();
   }
 
-  private promote(threadID: string): void {
-    if (!this.stackOrder.includes(threadID)) return;
-    this.stackOrder = [threadID, ...this.stackOrder.filter((id) => id !== threadID)];
+  private promote(key: string): void {
+    if (!this.stackOrder.includes(key)) return;
+    this.stackOrder = [key, ...this.stackOrder.filter((id) => id !== key)];
   }
 
   // Lays out the visible cards in stack order. Cards are raised back to front
@@ -430,6 +451,12 @@ export class ObservationCoordinator {
     if (this.closed) return;
     const visible = this.visibleStack();
     this.layoutStack(visible);
+    // Hide overflow before exposing a replacement so the stack never exceeds
+    // its visible limit, even while the ordinary exit animation is running.
+    for (const entry of this.entries.values()) {
+      if (!visible.includes(entry)) entry.pip.setVisible(false, true);
+    }
+    for (const entry of visible) entry.pip.setVisible(true);
     const signature = visible.map((entry) => entry.key).join("\n");
     if (signature === this.stackSignature) return;
     this.stackSignature = signature;
@@ -438,16 +465,24 @@ export class ObservationCoordinator {
 
   private raiseStack(visible = this.visibleStack()): void {
     for (const entry of [...visible].reverse()) entry.pip.raise?.();
+    visible.find((entry) => entry.pip.stackLead?.()?.dragging)?.pip.raise?.();
   }
 
   private layoutStack(visible = this.visibleStack()): void {
     const lead = visible[0];
     if (!lead) return;
+    const draggingIndex = visible.findIndex((entry) => entry.pip.stackLead?.()?.dragging);
+    if (draggingIndex >= 0) {
+      const motionLead = { ...visible[draggingIndex]!.pip.stackLead!()!, index: draggingIndex };
+      visible.forEach((entry, index) => entry.pip.setStackPosition?.(index, motionLead));
+      this.stackLeadEntry = lead;
+      return;
+    }
     // A new lead takes over the resting place of the card it replaces, or of
     // the last stack when none remains.
     const replaced = this.stackLeadEntry;
     const previous = replaced === lead ? undefined
-      : replaced && this.entries.get(replaced.threadID) === replaced ? replaced.pip.stackLead?.() : this.lastStackLead;
+      : replaced && this.entries.get(replaced.key) === replaced ? replaced.pip.stackLead?.() : this.lastStackLead;
     this.stackLeadEntry = lead;
     lead.pip.setStackPosition?.(0, previous);
     const frame = lead.pip.stackLead?.();
@@ -458,13 +493,22 @@ export class ObservationCoordinator {
   private visibleStack(): PiPEntry[] {
     return this.stackOrder
       .map((id) => this.entries.get(id))
-      .filter((entry): entry is PiPEntry => Boolean(entry && this.pipVisibility(entry.activity)));
+      .filter((entry): entry is PiPEntry => Boolean(entry && this.pipVisibility(entry.activity)))
+      .slice(0, VISIBLE_CARD_LIMIT);
   }
 
   private eventSink(entry: PiPEntry): ObservationPiPEventSink {
-    const key = (): string | undefined => this.entries.get(entry.threadID) === entry ? entry.key : undefined;
+    const key = (): string | undefined => this.entries.get(entry.key) === entry ? entry.key : undefined;
     const current = entry.key;
     return {
+      canRestoreTarget: () => {
+        const sourceKey = JSON.stringify([entry.activity.workdir, entry.threadID, entry.activity.id]);
+        const source = this.sources.get(sourceKey)?.activity;
+        return key() === current && source !== undefined && observationKey(source) === current
+          && source.execution_id === entry.activity.execution_id
+          && ![...this.sources].some(([id, other]) => id !== sourceKey && other.activity.kind === "cua"
+            && other.activity.process_id === entry.activity.process_id && activityPreviewIsLive(other.activity));
+      },
       onEvent: (event) => { if (key() === current) this.handlePiPEvent(entry, event); },
       onFailure: (message) => { if (key() === current) this.handlePiPFailure(entry, message); },
       onGone: () => { if (key() === current) this.handlePiPGone(entry); },
@@ -475,23 +519,26 @@ export class ObservationCoordinator {
     switch (event.event) {
       case "ready":
         entry.phase = "live";
-        this.retryAttempts.delete(entry.threadID);
+        this.retryAttempts.delete(entry.key);
         this.restack();
         return;
       case "retry":
         if (!activityPreviewIsLive(entry.activity)) return;
-        this.resetRetryBudget(entry.threadID);
+        this.resetRetryBudget(entry.key);
         entry.phase = "failed";
-        this.syncThread(entry.threadID);
-        return;
-      case "user_close":
-        this.dismissedThreads.add(entry.threadID);
-        this.explicitlyShown.delete(entry.threadID);
-        entry.pip.setVisible(false);
+        this.syncObservation(entry.key);
         this.restack();
         return;
+      case "user_close":
+        this.dismissedCards.add(entry.key);
+        this.restack();
+        return;
+      case "drag_start":
+        this.layoutStack();
+        this.raiseStack();
+        return;
       case "promote":
-        this.promote(entry.threadID);
+        this.promote(entry.key);
         this.restack();
         return;
       case "shown":
@@ -500,8 +547,8 @@ export class ObservationCoordinator {
       case "completion_expired":
         // A completed card that has left returns with the next turn, like an
         // ended one, so it no longer holds a place in the stack.
-        this.endedThreads.add(entry.threadID);
-        this.syncThread(entry.threadID);
+        this.completedCards.add(entry.key);
+        this.restack();
         return;
       case "expand":
         if (entry.activity.kind === "browser") this.onBrowserExpand?.(entry.activity);
@@ -511,13 +558,16 @@ export class ObservationCoordinator {
         return;
       case "user_input":
         return;
-      case "geometry":
-        if (this.visibleStack()[0] !== entry) return;
+      case "geometry": {
+        const visible = this.visibleStack();
+        const moving = visible.find((item) => item.pip.stackLead?.()?.dragging) ?? visible[0];
+        if (moving !== entry) return;
         if ([event.x, event.y, event.width, event.height].every((value) => typeof value === "number")) {
           this.userBounds = { x: event.x!, y: event.y!, width: event.width!, height: event.height! };
         }
         this.layoutStack();
         return;
+      }
       case "capture_status":
         return;
     }
@@ -529,25 +579,26 @@ export class ObservationCoordinator {
       entry.pip.suspendContent(message);
       this.restack();
     } else this.stopEntry(entry);
-    const threadID = entry.threadID;
-    if (this.dismissedThreads.has(threadID)) return;
-    const attempts = (this.retryAttempts.get(threadID) ?? 0) + 1;
-    this.retryAttempts.set(threadID, attempts);
+    const key = entry.key;
+    if (this.dismissedCards.has(key)) return;
+    const attempts = (this.retryAttempts.get(key) ?? 0) + 1;
+    this.retryAttempts.set(key, attempts);
     if (attempts >= 4) return;
     const timer = setTimeout(() => {
-      if (this.retryTimers.get(threadID) !== timer) return;
-      this.retryTimers.delete(threadID);
-      this.syncThread(threadID);
+      if (this.retryTimers.get(key) !== timer) return;
+      this.retryTimers.delete(key);
+      this.syncObservation(key);
+      this.restack();
     }, frameStreamRetryDelay(attempts));
     timer.unref?.();
-    this.retryTimers.set(threadID, timer);
+    this.retryTimers.set(key, timer);
   }
 
-  private resetRetryBudget(threadID: string): void {
-    this.retryAttempts.delete(threadID);
-    const timer = this.retryTimers.get(threadID);
+  private resetRetryBudget(key: string): void {
+    this.retryAttempts.delete(key);
+    const timer = this.retryTimers.get(key);
     if (timer) clearTimeout(timer);
-    this.retryTimers.delete(threadID);
+    this.retryTimers.delete(key);
   }
 
   // The capture target disappeared (tab closed, view crashed, workdir torn
@@ -555,25 +606,26 @@ export class ObservationCoordinator {
   // exact source until a different target/execution or an explicit user retry.
   // A registry snapshot cannot establish that a disappeared target is back.
   private handlePiPGone(entry: PiPEntry): void {
-    const observed = this.observations.get(entry.threadID);
+    const observed = this.observations.get(entry.key);
     if (observed && observationKey(observed) === entry.key) {
-      this.goneObservations.set(entry.threadID, { key: entry.key, executionID: observed.execution_id });
+      this.goneObservations.set(entry.key, { key: entry.key, executionID: observed.execution_id });
     }
-    this.resetRetryBudget(entry.threadID);
+    this.resetRetryBudget(entry.key);
     this.stopEntry(entry);
   }
 
   private observationIsGone(activity: ActivitySession): boolean {
-    const gone = this.goneObservations.get(activity.thread_id);
+    const gone = this.goneObservations.get(observationKey(activity));
     return gone?.key === observationKey(activity) && gone.executionID === activity.execution_id;
   }
 
   private animateInteractionIfNew(activity: ActivitySession, pip: ObservationPiPHandle): void {
     const interaction = activity.interaction;
     if (!interaction) return;
-    const previous = this.lastInteractionRevisions.get(activity.thread_id);
+    const key = observationKey(activity);
+    const previous = this.lastInteractionRevisions.get(key);
     if (previous !== undefined && interaction.revision <= previous) return;
-    this.lastInteractionRevisions.set(activity.thread_id, interaction.revision);
+    this.lastInteractionRevisions.set(key, interaction.revision);
     pip.animateInteraction(interaction);
   }
 
@@ -604,7 +656,6 @@ export class ObservationCoordinator {
     client: { host: PipRect; obstacles: PipRect[] } | null,
   ): void {
     if (
-      client &&
       this.browserHost &&
       this.browserHost.id !== webContentsId &&
       !this.browserHost.window.isDestroyed() &&
@@ -612,14 +663,8 @@ export class ObservationCoordinator {
     ) {
       return;
     }
-    if (!client) {
-      if (this.browserHost?.id !== webContentsId) return;
-      this.browserHost.detach();
-      this.browserHost = undefined;
-      this.browserScreenLayout = null;
-      for (const entry of this.entries.values()) entry.pip.setHostLayout?.(null);
-      return;
-    }
+    // An unavailable column still belongs to its window. Retain that owner so
+    // background layout updates cannot restore previews over its dialog.
     if (!this.browserHost || this.browserHost.id !== webContentsId || this.browserHost.window !== hostWindow) {
       this.browserHost?.detach();
       const reproject = (): void => {
@@ -655,7 +700,7 @@ export class ObservationCoordinator {
 
   private projectBrowserHost(): BrowserPiPScreenLayout | null {
     const source = this.browserHost;
-    if (!source || source.window.isDestroyed()) return null;
+    if (!source?.client || source.window.isDestroyed()) return null;
     const content = source.window.getContentBounds();
     const zoom = source.window.webContents.getZoomFactor();
     let visibleFrame: Rectangle;
@@ -683,8 +728,10 @@ export class ObservationCoordinator {
 
   private pushBrowserHost(pip: ObservationPiPHandle | undefined): void {
     if (!pip?.setHostLayout || this.browserScreenLayout === undefined) return;
+    // Reparenting may reveal a card, so apply dialog suppression first.
+    if (this.browserScreenLayout === null) pip.setHostLayout(null);
     pip.setHostParent?.(this.browserHost && !this.browserHost.window.isDestroyed() ? this.browserHost.window : null);
-    pip.setHostLayout(this.browserScreenLayout);
+    if (this.browserScreenLayout !== null) pip.setHostLayout(this.browserScreenLayout);
   }
 
   private initialBounds(): Rectangle {
@@ -702,10 +749,10 @@ export class ObservationCoordinator {
 }
 
 export function observationKey(activity: ActivitySession): string {
-  // Execution identity fences controls separately; resolved target changes
-  // retarget content without replacing the user's observation window.
-  return [activity.thread_id, activity.id, activity.kind, activity.target?.trim(),
-    ...(activity.kind === "cua" ? [activity.process_id ?? 0, activity.window_id ?? 0] : [])].join(":");
+  // A tab/window keeps its presentation across activity and execution changes.
+  // JSON encoding also keeps delimiters inside targets or workdirs unambiguous.
+  return JSON.stringify([activity.workdir, activity.thread_id, activity.kind, activity.target?.trim(),
+    ...(activity.kind === "cua" ? [activity.process_id ?? 0, activity.window_id ?? 0] : [])]);
 }
 
 export function observationActivityFromServerEvent(event: ServerEvent): ActivitySession | undefined {

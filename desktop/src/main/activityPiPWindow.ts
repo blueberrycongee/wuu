@@ -36,11 +36,9 @@ const LEAD_SPRING = { stiffness: 320, damping: 42 };
 // Trailing cards: softer at rest, stiffer while the lead is being dragged.
 const FOLLOW_SPRING = { stiffness: 150, damping: 30 };
 const FOLLOW_DRAG_SPRING = { stiffness: 260, damping: 32 };
-const STACK_OFFSET = 22;
-// Cards deeper than this share the last offset and sit fully behind.
-const STACK_DEPTH = 2;
+const STACK_OFFSET = { x: 28, y: 22 };
 
-export type PiPStackLead = { frame: Rectangle; alignment: PipAlignment; dragging: boolean };
+export type PiPStackLead = { frame: Rectangle; alignment: PipAlignment; dragging: boolean; index?: number };
 
 type PiPTransition = {
   direction: "in" | "out";
@@ -119,6 +117,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private activity: ActivitySession;
   private lastInteractionRevision = 0;
   private pendingInteraction: Interaction | undefined;
+  private pendingRestore: ActivitySession | undefined;
   private content: ActivityPiPContent | undefined;
   private contentGeneration = 0;
   private contentStopping = false;
@@ -139,6 +138,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private resizing = false;
   private grab: PipPoint = { x: 0, y: 0 };
   private userSize: { width: number; height: number } | undefined;
+  private stackMaxEdge: number | undefined;
   // Choose the default card shape once. A panel visit changes the page
   // viewport, but must not reshape the card when it returns.
   private initialAspect: number | undefined;
@@ -260,13 +260,13 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.setHostParent(this.deps.parent?.() ?? null);
   }
 
-  setVisible(visible: boolean): void {
+  setVisible(visible: boolean, immediately = false): void {
     this.awaitingVisibility = false;
     this.visible = visible;
-    this.applyVisibility();
+    this.applyVisibility(immediately);
   }
 
-  private applyVisibility(): void {
+  private applyVisibility(immediately = false): void {
     const win = this.win;
     if (!win || win.isDestroyed() || this.stopped || this.awaitingVisibility) return;
     // Unknown layout (no report yet) still shows, so a card can appear before
@@ -298,12 +298,16 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         this.hoverTimer.unref?.();
       }
     } else {
+      // Hidden windows may never receive the pointer release for their gesture.
+      this.dragging = false;
+      this.resizing = false;
+      this.resizeGesture = undefined;
       clearTimeout(this.placeholderTimer);
       this.placeholderTimer = undefined;
       this.stopHoverTracking();
-      // A hidden or minimized host takes its children with it immediately, and
-      // a card that never appeared has nothing to animate.
-      if (parentHidden || !win.isVisible() || this.preparing) {
+      // An unavailable column (including a foreground dialog) or hidden host
+      // takes its children away immediately, without fading over the new UI.
+      if (immediately || columnGone || parentHidden || !win.isVisible() || this.preparing) {
         this.endPreparing();
         this.settleTransition();
         this.content?.setVisible(false);
@@ -404,8 +408,14 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.applyVisibility();
   }
 
-  updateActivity(activity: ActivitySession): void {
-    if (activity.execution_id !== this.activity.execution_id) {
+  updateActivity(activity: ActivitySession, restoreTarget = false): void {
+    const pending = this.pendingRestore;
+    if (pending && (pending.id !== activity.id || pending.execution_id !== activity.execution_id
+      || pending.kind !== activity.kind || pending.target !== activity.target
+      || pending.process_id !== activity.process_id || pending.window_id !== activity.window_id
+      || pending.state !== activity.state || pending.controller !== activity.controller)) this.pendingRestore = undefined;
+    if (restoreTarget) this.pendingRestore = activity;
+    if (activity.id !== this.activity.id || activity.execution_id !== this.activity.execution_id) {
       this.lastInteractionRevision = 0;
       this.pendingInteraction = undefined;
       this.forwardInteraction({ kind: "clear" });
@@ -420,7 +430,11 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       this.setTurnCompleted(false);
     }
     this.pushActivityState();
-    this.content?.updateActivity?.(activity);
+    if (this.content) {
+      const restore = this.pendingRestore !== undefined && (this.deps.sink.canRestoreTarget?.() ?? true);
+      this.pendingRestore = undefined;
+      this.content.updateActivity?.(activity, restore);
+    }
   }
 
   retarget(activity: ActivitySession, sink: ObservationPiPEventSink): void {
@@ -433,6 +447,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     // Provider switches preserve the user's exact card size and resting corner.
     if (bounds) this.userSize = { width: bounds.width, height: bounds.height };
     this.deps.sink = sink;
+    if (activity !== this.activity) this.pendingRestore = undefined;
     this.activity = activity;
     this.lastInteractionRevision = 0;
     this.pendingInteraction = undefined;
@@ -483,6 +498,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       return;
     }
     this.stopped = true;
+    this.pendingRestore = undefined;
     clearTimeout(this.placeholderTimer);
     this.placeholderTimer = undefined;
     if (this.completionTimer) clearTimeout(this.completionTimer);
@@ -516,8 +532,13 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       setViewport: (viewport) => {
         if (!current()) return;
         this.layoutViewport = viewport;
+        const firstViewport = this.initialAspect === undefined;
         this.initialAspect ??= viewport.width / viewport.height;
-        if (!this.userSize && this.screenLayout && !this.dragging && !this.resizing) this.placeCommitted();
+        // A new card may inherit the stack size before its first frame arrives.
+        if (firstViewport && this.stackMaxEdge !== undefined) {
+          this.userSize = browserPiPSizeForAspect(this.initialAspect, this.stackMaxEdge);
+        }
+        if ((!this.userSize || firstViewport) && this.screenLayout && !this.dragging && !this.resizing) this.placeCommitted();
         this.refit();
       },
       setMounted: (mounted) => {
@@ -556,6 +577,13 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       return;
     }
     content.start();
+    if (current() && this.content === content && this.pendingRestore) {
+      // A real transition can arrive while capture is being rebuilt. Consume
+      // it once, only if the coordinator still owns this exact target.
+      const restore = this.deps.sink.canRestoreTarget?.() ?? true;
+      this.pendingRestore = undefined;
+      content.updateActivity?.(this.activity, restore);
+    }
     content.setLive?.(activityPreviewIsLive(this.activity));
     this.refit();
     this.raiseOverlay();
@@ -616,13 +644,13 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     if (!win || win.isDestroyed()) return;
     const bounds = win.getBounds();
     if (command.phase === "start") {
-      if (this.stackIndex > 0) this.deps.sink.onEvent({ event: "promote" });
       this.settleTransition();
       this.cancelSnap();
       this.resizing = false;
       this.resizeGesture = undefined;
       this.dragging = true;
       this.grab = { x: command.x - bounds.x, y: command.y - bounds.y };
+      this.deps.sink.onEvent({ event: "drag_start" });
       return;
     }
     if (!this.dragging) return;
@@ -637,7 +665,10 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       this.applyBounds({ x: dragged.x, y: dragged.y, width: bounds.width, height: bounds.height });
       return;
     }
+    // Commit ordering only on release, keeping the grabbed card under the pointer.
+    this.deps.sink.onEvent({ event: "promote" });
     this.dragging = false;
+    this.userSize = { width: bounds.width, height: bounds.height };
     this.applyBounds({ x: dragged.x, y: dragged.y, width: bounds.width, height: bounds.height });
     const layout = this.screenLayout;
     if (!layout) return;
@@ -688,6 +719,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.resizeGesture = undefined;
     const settled = win.getBounds();
     this.userSize = { width: settled.width, height: settled.height };
+    this.stackMaxEdge = undefined;
     const layout = this.screenLayout;
     if (!layout) return;
     const nearest = browserPiPNearestAnchor(
@@ -1002,14 +1034,22 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     const wasLead = this.stackIndex === 0;
     this.stackIndex = index;
     const win = this.win;
-    if (index === 0) {
-      if (wasLead || !win || win.isDestroyed()) return;
-      if (lead) this.alignment = lead.alignment;
+    if (!win || win.isDestroyed() || this.dragging) return;
+    if (lead) this.stackMaxEdge = Math.max(lead.frame.width, lead.frame.height);
+    const sharedSize = lead && browserPiPSizeForAspect(this.initialAspect ?? 4 / 3, this.stackMaxEdge);
+    const card = sharedSize
+      ? this.screenLayout ? browserPiPCardSize(this.screenLayout.host, sharedSize) : sharedSize
+      : win.getBounds();
+    if (index === 0 && !lead?.dragging) {
+      if (wasLead) return;
+      if (lead) {
+        this.alignment = lead.alignment;
+        this.userSize = { width: card.width, height: card.height };
+      }
       if (this.screenLayout || !lead) {
         this.placeCommitted();
         return;
       }
-      const card = this.restingFrame();
       const origin = {
         x: lead.alignment.endsWith("right") ? lead.frame.x + lead.frame.width - card.width : lead.frame.x,
         y: lead.alignment.startsWith("bottom") ? lead.frame.y + lead.frame.height - card.height : lead.frame.y,
@@ -1018,17 +1058,19 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       else this.animateTo(origin, { width: card.width, height: card.height }, { x: 0, y: 0 }, LEAD_SPRING);
       return;
     }
-    if (!lead || !win || win.isDestroyed()) return;
+    if (!lead) return;
     this.alignment = lead.alignment;
-    const resting = this.restingFrame();
-    const card = { width: resting.width, height: resting.height };
-    const offset = STACK_OFFSET * Math.min(index, STACK_DEPTH);
+    const distance = index - (lead.index ?? 0);
     const right = lead.alignment.endsWith("right");
     const bottom = lead.alignment.startsWith("bottom");
-    const origin = {
-      x: right ? lead.frame.x + lead.frame.width - card.width : lead.frame.x,
-      y: bottom ? lead.frame.y + lead.frame.height - card.height - offset : lead.frame.y + offset,
+    const desired = {
+      x: right ? lead.frame.x + lead.frame.width - card.width - STACK_OFFSET.x * distance
+        : lead.frame.x + STACK_OFFSET.x * distance,
+      y: bottom ? lead.frame.y + lead.frame.height - card.height - STACK_OFFSET.y * distance
+        : lead.frame.y + STACK_OFFSET.y * distance,
     };
+    const frame = lead.dragging ? this.screenLayout?.visibleFrame : this.resizeFrame();
+    const origin = frame ? browserPiPClampOrigin(desired, card, frame) : desired;
     if (!win.isVisible() || this.transition) {
       this.applyBounds({ ...origin, ...card });
       return;
@@ -1036,8 +1078,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     // Cards farther back trail on softer springs.
     const base = lead.dragging ? FOLLOW_DRAG_SPRING : FOLLOW_SPRING;
     this.animateTo(origin, card, { x: 0, y: 0 }, {
-      stiffness: base.stiffness / (1 + 0.18 * index),
-      damping: base.damping / (1 + 0.08 * index),
+      stiffness: base.stiffness / (1 + 0.18 * Math.abs(distance)),
+      damping: base.damping / (1 + 0.08 * Math.abs(distance)),
     });
   }
 
@@ -1093,7 +1135,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     win.setBounds(next);
     if (current.width !== next.width || current.height !== next.height) this.refit();
     // Trailing cards follow every frame of their lead.
-    if (this.stackIndex === 0) this.deps.sink.onEvent({ event: "geometry", ...next });
+    if (this.stackIndex === 0 || this.dragging) this.deps.sink.onEvent({ event: "geometry", ...next });
   }
 
   private raiseOverlay(): void {

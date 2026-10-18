@@ -104,6 +104,37 @@
   text-wrap: pretty;
 }
 
+/* Message prose chooses its base direction from its first strong character.
+ * Without this, an RTL paragraph inherits the LTR shell: its quotation marks
+ * drift to the wrong edge and one contiguous selection paints as disconnected
+ * highlight runs. Keep the override on natural-language prose so code blocks,
+ * lists and tables retain their structural left-to-right layout. */
+:is(.agent-block, .user-message) :is(
+  .rich-paragraph,
+  .rich-heading,
+  .rich-blockquote
+) {
+  unicode-bidi: plaintext;
+}
+
+/* A list marker follows the list container's direction, so a paragraph-only
+ * override would separate RTL copy from a left-side marker. Leave list prose
+ * on the structural LTR path until marker placement is handled with it. */
+:is(.agent-block, .user-message) li :is(
+  .rich-paragraph,
+  .rich-heading,
+  .rich-blockquote
+) {
+  unicode-bidi: normal;
+}
+
+/* Inline code is one LTR run even inside RTL prose, so trailing punctuation
+ * stays with the expression instead of moving to its opposite edge. */
+:is(.agent-block, .user-message) .rich-content :not(pre) > code {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
 /* A message uses weight to mark a phrase, not to create a second title
  * system. Emphasis sits one clear step above body text, and headings
  * separate themselves by size. Under grayscale rendering a medium cut is
