@@ -347,6 +347,8 @@ export function ModelServicesPage({
   }, [openService, adding]);
   const [catalogVersion, setCatalogVersion] = useState(0);
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
+  // Fixture hosts that only render settings do not expose engine inventory.
+  const subscriptionsAvailable = typeof window.wuu?.listEngines === "function";
   const catalog = useCatalogProviders(catalogVersion);
   const detailProvider = providers.find((provider) => provider.name === openService);
 
@@ -387,7 +389,7 @@ export function ModelServicesPage({
         result={inventory} loadError={inventoryError} onRefresh={onRefreshEngines} onUpdate={onUpdateEngines}
         selectedEngineID={selectedEngine} onSelectEngine={setSelectedEngine}
         onCloseEngine={() => { focusEngine.current = selectedEngine ?? ""; setSelectedEngine(undefined); }} /> : null}
-      {!adding && !detailProvider && !selectedEngine && ENABLE_SUBSCRIPTIONS ? <SubscriptionDashboard
+      {!adding && !detailProvider && !selectedEngine && ENABLE_SUBSCRIPTIONS && subscriptionsAvailable ? <SubscriptionDashboard
         inventory={inventory} providers={providers}
         onSelectBuiltinModel={(provider, model) => onSave(provider, model)} /> : null}
       {adding ? <div hidden={!!selectedEngine || !!detailProvider}>
