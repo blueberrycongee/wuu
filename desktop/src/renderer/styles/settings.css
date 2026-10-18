@@ -616,6 +616,23 @@
   gap: 2px;
 }
 
+/* Browser rows use a wrapper outside the compact action list above. At
+ * narrow widths the row then stacks the control below the label instead of
+ * squeezing an email or a filesystem path into a one-character column. */
+.browser-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+@container settings-page (max-width: 32em) {
+  .browser-settings-actions {
+    justify-content: flex-start;
+  }
+}
+
 .settings-row-control-block {
   display: flex;
   align-items: center;

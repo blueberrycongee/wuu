@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Add browser settings for importing cookies from local profiles and managing
+  unpacked extensions in the embedded browser.
+
 ### Removed
 
 - Remove the workspace new page's Continue viewing section, which duplicated

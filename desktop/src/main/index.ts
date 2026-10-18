@@ -1,6 +1,8 @@
 import { AppContextCapture } from "./appContextCapture";
 import { SystemPermissions } from "./systemPermissions";
 import { createBrowserView } from "./browserView";
+import { importBrowserCookies, listBrowserProfiles } from "./browserCookieImport";
+import { BrowserExtensionManager } from "./browserExtensions";
 import { saveArtifactFile } from "./artifactSave";
 import { showArtifactItemMenu } from "./artifactItemMenu";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
@@ -254,6 +256,13 @@ const DARK_WINDOW_BACKGROUND = "#1c1c1d";
 // controls fit; the renderer can grow for larger text or page zoom.
 const WINDOWS_TITLEBAR_OVERLAY_HEIGHT = 56;
 const ENABLE_EMBEDDED_BROWSER = process.env.WUU_ENABLE_BROWSER !== "0";
+let browserExtensionManager: BrowserExtensionManager | undefined;
+function embeddedBrowserSession() {
+  if (!ENABLE_EMBEDDED_BROWSER) {
+    throw new Error("The embedded browser is disabled in this build.");
+  }
+  return electronSession.fromPartition(BROWSER_PARTITION);
+}
 if (process.argv.includes("--safe-mode")) {
   process.env.WUU_SAFE_MODE = "1";
 }
@@ -474,6 +483,22 @@ function requireAppContextSender(event: IpcMainInvokeEvent): void {
   if (!isAppContextSender(event)) {
     throw new Error("App snapshots are available from Wuu's main window only.");
   }
+}
+
+function requireBrowserSettingsSender(event: IpcMainInvokeEvent): BrowserWindow {
+  const host = BrowserWindow.fromWebContents(event.sender);
+  const main = windowRegistry.mainWindow();
+  if (!host || host.isDestroyed() || !main || host !== main) {
+    throw new Error("Browser settings are available from Wuu's main window only.");
+  }
+  return host;
+}
+
+function requireBrowserExtensionManager(): BrowserExtensionManager {
+  if (!browserExtensionManager) {
+    throw new Error("Embedded browser extensions are unavailable.");
+  }
+  return browserExtensionManager;
 }
 
 async function showProjectDirectoryDialog(
@@ -1444,6 +1469,18 @@ app.whenReady().then(async () => {
       );
     }
     installBrowserSessionHandlers(browserSession, browserHostCoordinator);
+    if (process.env.WUU_SAFE_MODE === "1") {
+      console.info("[desktop] embedded-browser extensions disabled by safe mode");
+    } else {
+      browserExtensionManager = new BrowserExtensionManager(browserSession);
+      try {
+        await browserExtensionManager.initialize();
+      } catch (error) {
+        console.warn(
+          `[desktop] failed to initialize embedded-browser extensions: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
   }
   // Pick up the user's chosen size before the pet window is created, so the
   // initial BrowserWindow and the inline data: URL are sized right the first
@@ -2862,6 +2899,60 @@ app.whenReady().then(async () => {
       return { ok: true };
     },
   );
+  ipcMain.handle("wuu:browser-profiles", (event) => {
+    requireBrowserSettingsSender(event);
+    if (!ENABLE_EMBEDDED_BROWSER) {
+      throw new Error("The embedded browser is disabled in this build.");
+    }
+    return listBrowserProfiles();
+  });
+  ipcMain.handle(
+    "wuu:browser-import-cookies",
+    async (event, profilePath: unknown) => {
+      requireBrowserSettingsSender(event);
+      if (!ENABLE_EMBEDDED_BROWSER) {
+        throw new Error("The embedded browser is disabled in this build.");
+      }
+      if (typeof profilePath !== "string" || !profilePath.trim()) {
+        throw new Error("A browser profile path is required.");
+      }
+      return importBrowserCookies({
+        profilePath,
+        session: embeddedBrowserSession(),
+      });
+    },
+  );
+  ipcMain.handle("wuu:browser-extensions-list", (event) => {
+    requireBrowserSettingsSender(event);
+    return requireBrowserExtensionManager().list();
+  });
+  ipcMain.handle("wuu:browser-extensions-add", async (event) => {
+    const host = requireBrowserSettingsSender(event);
+    const manager = requireBrowserExtensionManager();
+    const result = await dialog.showOpenDialog(host, {
+      title: mainTranslate("chooseExtensionFolder"),
+      properties: ["openDirectory"],
+    });
+    if (result.canceled || !result.filePaths[0]) return manager.list();
+    return manager.addFromDirectory(result.filePaths[0]);
+  });
+  ipcMain.handle(
+    "wuu:browser-extensions-set-enabled",
+    (event, id: unknown, enabled: unknown) => {
+      requireBrowserSettingsSender(event);
+      if (typeof id !== "string" || !id.trim() || typeof enabled !== "boolean") {
+        throw new Error("Extension id and enabled state are required.");
+      }
+      return requireBrowserExtensionManager().setEnabled(id, enabled);
+    },
+  );
+  ipcMain.handle("wuu:browser-extensions-remove", (event, id: unknown) => {
+    requireBrowserSettingsSender(event);
+    if (typeof id !== "string" || !id.trim()) {
+      throw new Error("Extension id is required.");
+    }
+    return requireBrowserExtensionManager().remove(id);
+  });
   systemPermissions.start();
   ipcMain.handle("wuu:system-permissions", event => {
     requireAppContextSender(event);
