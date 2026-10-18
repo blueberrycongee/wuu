@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Offer optional browser cookie import during macOS onboarding, with recently
+  active local profiles listed first and explicit import actions.
 - Add browser settings for importing cookies from local profiles and managing
   unpacked extensions in the embedded browser.
 - Add DeepSeek Harness as an external ACP engine, with native model and

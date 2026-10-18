@@ -1135,6 +1135,8 @@ export type BrowserProfile = {
   hasCookies: boolean;
   hasPasswords: boolean;
   userName?: string;
+  /** Last profile activity reported by the browser, as Unix milliseconds. */
+  lastUsedAt?: number;
 };
 
 export type BrowserCookieImportResult = {
