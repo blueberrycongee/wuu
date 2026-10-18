@@ -15,6 +15,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Avoid false file-save conflicts in remote workspaces by using the same modification-time calculation for Go file reads and desktop saves.
+- Preserve and queue desktop messages when another turn wins a concurrent send, retaining attachments, send order, and Stop intent.
+- Guide next-message predictions toward concrete follow-ups instead of polite
+  acknowledgments, and allow no suggestion when the next intent is unclear.
 
 ## [2026.10.19] - 2026-10-18
 
