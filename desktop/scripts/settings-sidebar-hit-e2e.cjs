@@ -334,8 +334,9 @@ async function sidebarReadabilityState(win) {
   return evaluate(win, () => {
     const drawer = document.querySelector(".settings-sidebar");
     const backLabel = document.querySelector(".settings-back-button > span");
-    const providerLabel = [...document.querySelectorAll(".settings-nav-item .settings-nav-label")]
-      .find((label) => /^(Model providers|模型服务)$/.test(label.textContent.trim()));
+    const providerLabel = document.querySelector(
+      '.settings-nav-item[data-wuu-page="providers"] .settings-nav-label',
+    );
     if (
       !(drawer instanceof HTMLElement) ||
       !(backLabel instanceof HTMLElement) ||
