@@ -1,6 +1,9 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "app.expandPopOut": "Expand conversation window",
+  "app.compactPopOut": "Compact conversation window",
+  "app.resizePopOutFailed": "Could not resize the conversation window",
   "desktopUpdate.available": "Wuu {version} is available. Click to download",
   "desktopUpdate.downloading": "Downloading update · {percent}%",
   "desktopUpdate.ready": "Wuu {version} is ready. Click to restart and install",
