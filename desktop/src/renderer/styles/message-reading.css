@@ -128,6 +128,13 @@
   unicode-bidi: normal;
 }
 
+/* Inline code is one LTR run even inside RTL prose, so trailing punctuation
+ * stays with the expression instead of moving to its opposite edge. */
+:is(.agent-block, .user-message) .rich-content :not(pre) > code {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
 /* A message uses weight to mark a phrase, not to create a second title
  * system. Emphasis sits one clear step above body text, and headings
  * separate themselves by size. Under grayscale rendering a medium cut is
