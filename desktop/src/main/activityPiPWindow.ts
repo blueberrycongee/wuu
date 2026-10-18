@@ -1207,7 +1207,10 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       x: bounds.x,
       y: bounds.y,
       frame: false,
-      transparent: false,
+      // Electron 44 retains 4px native frame insets on opaque X11 windows,
+      // even without shadows. A translucent host removes those insets; the
+      // configured background still paints an opaque card inside its shape.
+      transparent: shapeLinuxWindow,
       backgroundColor: "#f4f4f5",
       // On X11 Electron's client-side shadow adds a rectangular frame even to
       // frameless windows. The Linux host uses one explicit rounded shape.

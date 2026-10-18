@@ -273,13 +273,15 @@ async function acceptance(): Promise<void> {
   coordinator.setAppearance(true, { reducedMotion: false, fontSize: 20, fontFamily: 'system-ui', locale: 'en-US', surface: '#172334', text: '#eff4ff', muted: '#b4c2d4' });
   await fixtureRequest('theme', 'dark');
   const beforeResize = pip.getBounds();
+  const pipWindowID = pip.getNativeWindowHandle().readUInt32LE(0);
+  results.previewNativeGeometry = {
+    window: execFileSync('xwininfo', ['-id', String(pipWindowID)], { encoding: 'utf8' }),
+    frame: execFileSync('xprop', ['-id', String(pipWindowID), '_GTK_FRAME_EXTENTS', '_NET_FRAME_EXTENTS'], { encoding: 'utf8' }),
+  };
   const resizeCommands: string[] = [];
-  const requestedBounds: unknown[] = [];
   const captureResize = (_event: unknown, url: string) => { if (url.startsWith('wuu-pip://resize')) resizeCommands.push(url); };
   overlay.on('will-navigate', captureResize);
-  const setBounds = pip.setBounds.bind(pip);
-  pip.setBounds = (...args: Parameters<BrowserWindow['setBounds']>) => { if (requestedBounds.length < 64) requestedBounds.push(args[0]); setBounds(...args); };
-  results.resize = { before: beforeResize, minimum: pip.getMinimumSize(), maximum: pip.getMaximumSize(), commands: resizeCommands, requestedBounds };
+  results.resize = { before: beforeResize, minimum: pip.getMinimumSize(), maximum: pip.getMaximumSize(), commands: resizeCommands };
   overlay.sendInputEvent({ type: 'mouseMove', x: beforeResize.width - 9, y: beforeResize.height - 9, globalX: beforeResize.x + beforeResize.width - 9, globalY: beforeResize.y + beforeResize.height - 9 });
   overlay.sendInputEvent({ type: 'mouseDown', x: beforeResize.width - 9, y: beforeResize.height - 9, globalX: beforeResize.x + beforeResize.width - 9, globalY: beforeResize.y + beforeResize.height - 9, button: 'left', clickCount: 1 });
   await waitFor('preview resize gesture started', () => overlay.executeJavaScript("document.getElementById('root').classList.contains('resizing')"));
@@ -289,7 +291,6 @@ async function acceptance(): Promise<void> {
   overlay.sendInputEvent({ type: 'mouseUp', x: 251, y: 231, globalX: beforeResize.x + 251, globalY: beforeResize.y + 231, button: 'left', clickCount: 1 });
   await waitFor('preview resize gesture ended', () => overlay.executeJavaScript("!document.getElementById('root').classList.contains('resizing')"));
   results.smallPreviewBounds = pip.getBounds();
-  pip.setBounds = setBounds;
   overlay.removeListener('will-navigate', captureResize);
   await waitFor('dark target pixels', async () => isColor(await pixel(.02, .30), [23, 35, 52]));
   await settlePreview();
@@ -297,9 +298,15 @@ async function acceptance(): Promise<void> {
 
   await fixtureRequest('minimize');
   await waitFor('minimized target stops capture', () => video.executeJavaScript("document.querySelector('video').srcObject===null"));
-  await fixtureRequest('restore'); main.focus();
+  await fixtureRequest('restore');
   await waitFor('restored target resumes capture', () => video.executeJavaScript("document.querySelector('video').srcObject?.getVideoTracks().some(t=>t.readyState==='live')"));
   await waitFor('restored target pixels', async () => isColor(await pixel(.02, .02), [18, 52, 86]));
+  // The explicit native restore can itself activate the fixture asynchronously.
+  // Establish host focus after restoration, then verify ongoing capture leaves it.
+  main.focus();
+  await waitFor('host focus after explicit target restore', () => main.isFocused());
+  const restoredFrameTime = await video.executeJavaScript("document.querySelector('video').currentTime");
+  await waitFor('restored capture advances without activation', async () => await video.executeJavaScript("document.querySelector('video').currentTime") > restoredFrameTime + .15);
   assert.ok(main.isFocused(), 'Restored observation does not take host focus');
   await fixtureRequest('hide');
   await waitFor('hidden target stops capture', () => video.executeJavaScript("document.querySelector('video').srcObject===null"));
