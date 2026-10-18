@@ -76,7 +76,7 @@ export function SettingsSection({
           {actions ? <div className="settings-section-actions">{actions}</div> : null}
         </header>
       ) : null}
-      {children}
+      <div className="settings-section-body">{children}</div>
     </section>
   );
 }

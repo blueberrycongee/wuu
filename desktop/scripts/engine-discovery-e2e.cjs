@@ -88,8 +88,8 @@ async function run() {
   await waitFor(() => document.querySelector('.sidebar-account-trigger'));
   await click('.sidebar-account-trigger');
   await click('[data-settings-page="providers"]');
-  await waitFor(() => [...document.querySelectorAll('.settings-nav button')].some(button => button.textContent.trim() === 'Agents'));
-  await evaluate(() => [...document.querySelectorAll('.settings-nav button')].find(button => button.textContent.trim() === 'Agents').click());
+  await waitFor(() => [...document.querySelectorAll('.settings-nav button')].some(button => button.textContent.trim() === 'External agents'));
+  await evaluate(() => [...document.querySelectorAll('.settings-nav button')].find(button => button.textContent.trim() === 'External agents').click());
   await waitFor(() => document.querySelector('[data-testid="settings-engine-codex-status"]'));
   const initial = await evaluate(() => window.wuu.listEngines());
   assert.equal(codex(initial).binary_ok, false, 'Host must not have a system-wide Codex installation');

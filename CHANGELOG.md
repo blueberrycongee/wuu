@@ -15,6 +15,16 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Keep independent activity previews for multiple browser tabs and native windows
   in one conversation, with up to five visible cards and individual dismissal.
 
+### Changed
+
+- Group settings navigation by purpose and add search across page names and setting
+  keywords, including plugin pages, while preserving the current page during filtering.
+- Base spacing on a shared font-relative module across navigation, conversations,
+  composers and settings. Distinguish related details, reading blocks and section
+  breaks, keep empty folder actions visible, and align the sidebar's top controls
+  with its trailing action column. Apply the same spacing scale to the fork
+  destination dialog, with aligned option columns and stable text while loading.
+
 ### Fixed
 
 - Restore ACP sessions through advertised `session/resume` support and close

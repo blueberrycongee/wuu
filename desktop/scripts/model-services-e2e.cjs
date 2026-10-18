@@ -260,10 +260,10 @@ async function run() {
   await capture(main, '06-overview-after.png');
 
   // General gathers how new conversations start; it shows the new default.
-  await click(main, '[data-settings-page="general"]');
+  await evaluate(main, () => [...document.querySelectorAll('.settings-nav-item')].find(item => item.textContent.trim() === '常规').click());
   await waitFor(main, () => document.querySelector('[data-testid="settings-default-model-select"]')?.textContent.includes('fixture-b'));
   await capture(main, '06-general-new-conversations.png');
-  await click(main, '[data-settings-page="providers"]');
+  await evaluate(main, () => [...document.querySelectorAll('.settings-nav-item')].find(item => item.textContent.trim() === '模型服务').click());
   await waitFor(main, () => document.querySelector('[data-provider="gateway"]'));
 
   // Every theme, text size, and width keeps controls inside the column.
