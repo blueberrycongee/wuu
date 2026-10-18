@@ -19,6 +19,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Move subscriptions with observed account allowances or balances to the front
+  after loading, including exhausted allowances and cached quota after refresh failures.
 - Group settings navigation by purpose and add search across page names and setting
   keywords, including plugin pages, while preserving the current page during filtering.
 - Base spacing on a shared font-relative module across navigation, conversations,
