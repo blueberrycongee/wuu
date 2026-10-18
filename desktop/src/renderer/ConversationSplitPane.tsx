@@ -197,6 +197,7 @@ export function ConversationSplitPane({
             renderTurn={(turn) => (
                 <TurnView
                   threadID={thread.id}
+                  engineID={thread.engine_id}
                   turn={turn}
                   cwd={thread.cwd ?? activeContextCwd}
                   onOpenFile={onOpenFile}

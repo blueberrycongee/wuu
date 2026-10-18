@@ -17,6 +17,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Continue failed external-agent sessions when their native history cannot be rewound,
+  avoiding an unsupported edit-and-resend request from the recovery button.
 - Preserve and queue desktop messages when another turn wins a concurrent send, retaining attachments, send order, and Stop intent.
 - Guide next-message predictions toward concrete follow-ups instead of polite
   acknowledgments, and allow no suggestion when the next intent is unclear.
