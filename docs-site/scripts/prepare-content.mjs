@@ -169,6 +169,12 @@ await mkdir(landingPublic, { recursive: true })
 for (const directory of ["brand", "logos", "blog"]) {
   await cp(path.join(landingRoot, "assets", directory), path.join(landingPublic, directory), { recursive: true })
 }
+// Documentation uses the app icon as its identity; the landing pages keep the
+// expressive mascot mark. Copy the generated icon so both stay current.
+await cp(
+  path.join(repositoryRoot, "assets/app-icon-256.png"),
+  path.join(landingPublic, "app-icon.png"),
+)
 await mkdir(path.join(landingPublic, "product"), { recursive: true })
 for (const image of [
   "hero-light-en.jpg",

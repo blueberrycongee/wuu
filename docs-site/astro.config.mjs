@@ -75,7 +75,7 @@ export default defineConfig({
       expressiveCode: {
         themes: ["github-light", "github-dark"],
       },
-      favicon: "/site-assets/brand/wuu.svg",
+      favicon: "/favicon.png",
       editLink: {
         baseUrl: "https://github.com/blueberrycongee/wuu/edit/main/docs/",
       },

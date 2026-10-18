@@ -7,12 +7,17 @@ const ogImage = new URL(
   `${base}/og-${chinese ? "zh" : "en"}.png`,
   Astro.site ?? new URL(Astro.url.origin),
 ).href
+const appIcon = new URL(
+  `${base}/site-assets/app-icon.png`,
+  Astro.site ?? new URL(Astro.url.origin),
+).href
 const ogImageAlt = chinese
   ? "Wuu 文档：桌面应用里的对话、命令与 Git 审查"
   : "Wuu documentation: a conversation, command record, and Git review in the desktop app"
 ---
 
 <Default><slot /></Default>
+<link rel="apple-touch-icon" href={appIcon} />
 <meta property="og:image" content={ogImage} />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
