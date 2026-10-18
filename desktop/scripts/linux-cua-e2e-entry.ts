@@ -239,6 +239,10 @@ async function acceptance(): Promise<void> {
   assert.ok(main.isFocused(), 'Starting observation must not activate the target or steal focus');
   const video = (await getView('video'))!;
   const overlay = (await getView('#root'))!;
+  const settlePreview = async () => {
+    await waitFor('preview appearance settled', async () => pip.getOpacity() === 1 && await overlay.executeJavaScript("document.getElementById('appear').hidden"));
+    await overlay.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  };
   const videoSize = await video.executeJavaScript("(()=>{const v=document.querySelector('video');return {width:v.videoWidth,height:v.videoHeight}})()");
   results.videoSize = videoSize;
   assert.deepEqual(videoSize, { width: initialObservation.screenshot.width, height: initialObservation.screenshot.height }, 'Native helper and live PiP capture the same selected window geometry');
@@ -249,6 +253,7 @@ async function acceptance(): Promise<void> {
   await waitFor('real target pixels in PiP', async () => isColor(await pixel(.02, .02), [18, 52, 86]));
   const firstTime = await video.executeJavaScript("document.querySelector('video').currentTime");
   await waitFor('continuous captured frames', async () => await video.executeJavaScript("document.querySelector('video').currentTime") > firstTime + .15);
+  await settlePreview();
   await capture('01-linux-cua-live.png'); checks.push('production PiP factory, target pixels, continuous frames, no focus activation');
 
   const cover = new BrowserWindow({ x: 40, y: 40, width: 620, height: 680, frame: false, show: false, webPreferences: { sandbox: true } });
@@ -268,6 +273,9 @@ async function acceptance(): Promise<void> {
   await fixtureRequest('theme', 'dark');
   pip.setSize(260, 240);
   await waitFor('dark preview chrome', () => overlay.executeJavaScript("document.documentElement.classList.contains('dark')"));
+  await waitFor('small preview bounds', () => { const bounds = pip.getBounds(); return bounds.width === 260 && bounds.height === 240; });
+  await waitFor('dark target pixels', async () => isColor(await pixel(.02, .30), [23, 35, 52]));
+  await settlePreview();
   await capture('03-dark-small-large-text.png'); checks.push('dark appearance, small preview, large UI font');
 
   await fixtureRequest('minimize');
@@ -308,6 +316,7 @@ async function acceptance(): Promise<void> {
   coordinator.showForThread(activity.thread_id);
   await waitFor('explicit reopen', () => BrowserWindow.getAllWindows().some(win => win !== main && win.isVisible()));
   await waitFor('reopened preview delivers new frames', () => video.executeJavaScript("document.querySelector('video').srcObject?.getVideoTracks().some(t=>t.readyState==='live') && document.querySelector('video').readyState>=2"));
+  await settlePreview();
   await capture('05-reopened-preview.png'); checks.push('conversation visibility, capture track teardown, explicit dismiss/reopen; native helper actions continue while preview hidden or dismissed');
 
   const wayland = startHelper({ ...process.env, XDG_SESSION_TYPE: 'wayland', WAYLAND_DISPLAY: 'wayland-acceptance' });
