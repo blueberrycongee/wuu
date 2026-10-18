@@ -73,7 +73,7 @@ export type ObservationPiPHandle = {
   setVisible(visible: boolean, immediately?: boolean): void;
   animateInteraction(interaction: NonNullable<ActivitySession["interaction"]>): void;
   stop(onStopped?: () => void): void;
-  updateActivity?(activity: ActivitySession): void;
+  updateActivity?(activity: ActivitySession, restoreTarget?: boolean): void;
   setLive?(live: boolean): void;
   setTurnCompleted?(completed: boolean): void;
   setAppearance?(dark: boolean, preferences?: ActivityPreviewAppearance): void;
@@ -104,6 +104,7 @@ export interface BrowserPiPHostWindow {
 // capture target disappeared for good (tab closed, view crashed) and must not
 // be retried.
 export type ObservationPiPEventSink = {
+  canRestoreTarget?(): boolean;
   onEvent(event: CUANativePiPEvent): void;
   onFailure(message: string): void;
   onGone(): void;
@@ -285,6 +286,13 @@ export class ObservationCoordinator {
     const source = this.sources.get(sourceKey);
     if (source && ((activity.execution_id && source.retiredExecutions.has(activity.execution_id))
       || !acceptsActivityUpdate(source.activity, activity))) return;
+    // Only a new authority transition on the current target may restore it.
+    // A snapshot can win the race with its notification; initial/repeated
+    // snapshots, helper retries and historical cards only sync state.
+    const restoreTarget = source !== undefined
+      && source.activity.execution_id === activity.execution_id
+      && ((source.activity.controller === "agent" && activity.controller !== "agent")
+        || (source.activity.state !== "stopped" && activity.state === "stopped"));
     const executionChanged = source && source.activity.execution_id !== activity.execution_id;
     const retiredExecutions = source?.retiredExecutions ?? new Set<string>();
     if (executionChanged && source.activity.execution_id) retiredExecutions.add(source.activity.execution_id);
@@ -324,7 +332,7 @@ export class ObservationCoordinator {
     }
     this.observations.set(key, activity);
     if (!this.observationIsGone(activity)) this.goneObservations.delete(key);
-    this.syncObservation(key);
+    this.syncObservation(key, restoreTarget);
     this.restack();
   }
 
@@ -376,7 +384,7 @@ export class ObservationCoordinator {
     this.restack();
   }
 
-  private syncObservation(key: string): void {
+  private syncObservation(key: string, restoreTarget = false): void {
     if (this.closed) return;
     const entry = this.entries.get(key);
     const activity = this.observations.get(key);
@@ -385,7 +393,7 @@ export class ObservationCoordinator {
     if (entry) {
       entry.activity = activity;
       entry.pip.setLive?.(activityPreviewIsLive(activity));
-      entry.pip.updateActivity?.(activity);
+      entry.pip.updateActivity?.(activity, restoreTarget);
     }
     if (!this.wantsCard(activity.thread_id) || this.dismissedCards.has(key)
       || this.observationIsGone(activity)) return;
@@ -401,10 +409,10 @@ export class ObservationCoordinator {
     }
     if ((activity.state === "stopped" && !this.explicitlyShown.has(activity.thread_id))
       || this.retryTimers.has(key) || (this.retryAttempts.get(key) ?? 0) >= 4) return;
-    this.startEntry(activity, key);
+    this.startEntry(activity, key, restoreTarget);
   }
 
-  private startEntry(activity: ActivitySession, key: string): void {
+  private startEntry(activity: ActivitySession, key: string, restoreTarget: boolean): void {
     if (!this.pipFactory) return;
     // The sink closes over the entry, so it exists before its handle.
     const entry = { key, threadID: activity.thread_id, activity, phase: "preparing" } as PiPEntry;
@@ -417,7 +425,7 @@ export class ObservationCoordinator {
     if (this.darkAppearance !== undefined) pip.setAppearance?.(this.darkAppearance, this.appearance);
     this.pushBrowserHost(pip);
     pip.setLive?.(activityPreviewIsLive(activity));
-    pip.updateActivity?.(activity);
+    pip.updateActivity?.(activity, restoreTarget);
     this.animateInteractionIfNew(activity, pip);
   }
 
@@ -493,6 +501,14 @@ export class ObservationCoordinator {
     const key = (): string | undefined => this.entries.get(entry.key) === entry ? entry.key : undefined;
     const current = entry.key;
     return {
+      canRestoreTarget: () => {
+        const sourceKey = JSON.stringify([entry.activity.workdir, entry.threadID, entry.activity.id]);
+        const source = this.sources.get(sourceKey)?.activity;
+        return key() === current && source !== undefined && observationKey(source) === current
+          && source.execution_id === entry.activity.execution_id
+          && ![...this.sources].some(([id, other]) => id !== sourceKey && other.activity.kind === "cua"
+            && other.activity.process_id === entry.activity.process_id && activityPreviewIsLive(other.activity));
+      },
       onEvent: (event) => { if (key() === current) this.handlePiPEvent(entry, event); },
       onFailure: (message) => { if (key() === current) this.handlePiPFailure(entry, message); },
       onGone: () => { if (key() === current) this.handlePiPGone(entry); },

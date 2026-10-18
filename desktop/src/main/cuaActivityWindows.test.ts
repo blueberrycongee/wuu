@@ -417,9 +417,9 @@ describe("browser observation surface", () => {
     coordinator.update(browserActivity());
     const preciseUpdate = browserActivity({ updated_at: "2026-07-10T10:00:01.000000002Z" });
     coordinator.update(preciseUpdate);
-    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(preciseUpdate);
+    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(preciseUpdate, false);
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:01.000000001Z" }));
-    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(preciseUpdate);
+    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(preciseUpdate, false);
     coordinator.update(browserActivity({ state: "stopped", controller: "none", updated_at: "2026-07-10T10:00:02Z" }));
     expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
@@ -427,7 +427,7 @@ describe("browser observation surface", () => {
 
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:03Z" }));
     expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
-    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(expect.objectContaining({ state: "stopped", controller: "none" }));
+    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(expect.objectContaining({ state: "stopped", controller: "none" }), true);
     coordinator.setActiveThread(undefined);
     coordinator.setActiveThread("thread-1");
     expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);

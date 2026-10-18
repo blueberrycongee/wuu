@@ -233,8 +233,8 @@ export class CUANativePreview {
     this.send({ type: "live", live });
   }
 
-  updateActivity(activity: ActivitySession): void {
-    this.send({ type: "activity", state: activity.state, controller: activity.controller, error: activity.error ?? "" });
+  updateActivity(activity: ActivitySession, restoreTarget = false): void {
+    this.send({ type: "activity", state: activity.state, controller: activity.controller, error: activity.error ?? "", restore: restoreTarget });
   }
 
   requestKeyframe(): void { this.send({ type: "keyframe" }); }

@@ -146,7 +146,7 @@ The preview has two display controls for browser pages, and only Hide for native
 - **Hide preview** hides the card and leaves the task running.
 - **Open in side panel** opens a browser page at full size.
 
-Use **Stop** in the conversation to interrupt the task. To take over a browser page, open it in the side panel and click or type in it. Send another instruction in the conversation to continue with fresh control authority.
+Use **Stop** in the conversation to interrupt the task. To take over a browser page, open it in the side panel and click or type in it. This does not bring retained native apps to the foreground. Send another instruction in the conversation to continue with fresh control authority.
 
 Hiding the preview or stopping the task does not quit the application being observed. Disabling or retiring the owning extension stops its preview activity. If a capture target disappears, Wuu closes its preview; unchanged activity updates do not reopen that target. Unavailable capture shows a brief recovery hint, and a retained frame is labelled paused rather than live. Individual tool errors stay in the conversation's tool records and do not cover the preview. The preview does not silently switch to another app window or the whole screen.
 

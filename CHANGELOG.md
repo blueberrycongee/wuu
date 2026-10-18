@@ -20,6 +20,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep retained native previews from taking focus or restoring windows now owned
+  by another task when activity control changes.
 - Hide live activity previews while image viewers or dialogs are open, then
   restore eligible previews without interrupting background tasks.
 - Keep right-to-left paragraphs, headings, and quotes in messages aligned

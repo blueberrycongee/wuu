@@ -385,17 +385,52 @@ app.whenReady().then(async () => {
   await waitFor("second native target renders", () => card("native-b").chrome.webContents.executeJavaScript("document.getElementById('ph').classList.contains('gone')"));
   check("two native targets share an activity without sharing a surface", card("native-a").window !== card("native-b").window && sources.has("native-a") && sources.has("native-b"));
   const takeover = activity("cua", "native-b", { controller: "user", state: "user_controlled" });
-  coordinator.update(takeover);
+  const notifyActivity = (method: string, activity: ActivitySession) => coordinator!.handleServerEvent({ workdir, kind: "notification",
+    message: { method, params: activity as unknown as JsonValue } });
+  coordinator.update(takeover); // A snapshot can arrive before its notification.
+  notifyActivity("activity/control_changed", takeover);
   await waitFor("takeover reaches both native targets", () => ["native-a", "native-b"].every(target => transport().some(entry => entry.target === target && entry.command?.type === "activity" && entry.command.controller === "user")));
+  await waitFor("current target restoration is requested", () => transport().some(entry => entry.target === "native-b" && entry.restoration));
+  check("takeover restores only the current native target", transport().filter(entry => entry.restoration).map(entry => entry.target).join() === "native-b");
+  const nativeBSession = transport().filter(entry => entry.target === "native-b" && entry.command?.type === "open").at(-1)!.session;
+  const beforeReplay = transport().filter(entry => entry.target === "native-b" && entry.command?.type === "activity").length;
+  coordinator.update(takeover);
+  notifyActivity("activity/control_changed", takeover);
+  coordinator.refreshBrowserPresentation();
+  await waitFor("snapshot replay reaches native target", () => transport().filter(entry => entry.target === "native-b" && entry.command?.type === "activity").length > beforeReplay);
+  check("snapshot and duplicate notifications never repeat restoration", transport().filter(entry => entry.restoration).length === 1);
+  card("native-b").context.onFailure("Synthetic recovery while user controlled");
+  await card("native-b").chrome.webContents.executeJavaScript("document.getElementById('retry').click()");
+  await waitFor("user-controlled helper restarts", () => transport().some(entry => entry.target === "native-b" && entry.session !== nativeBSession && entry.command?.type === "activity"));
+  check("helper startup replays authority without restoring again", transport().filter(entry => entry.restoration).length === 1
+    && transport().filter(entry => entry.target === "native-b" && entry.session !== nativeBSession && entry.command?.type === "activity").every(entry => entry.command.restore === false));
+  contexts.filter(item => item.activity.target === "native-b").at(-1)!.context.onFailure("Synthetic failure before stop");
   const stopped = activity("cua", "native-b", { state: "stopped", controller: "none" });
   coordinator.update(stopped);
+  notifyActivity("activity/stopped", stopped);
   await waitFor("stop reaches visible and overflow native targets", () => ["native-a", "native-b"].every(target => transport().some(entry => entry.target === target && entry.command?.type === "activity" && entry.command.state === "stopped")));
+  await waitFor("current target stop restoration is requested", () => transport().filter(entry => entry.target === "native-b" && entry.restoration).length === 2);
+  check("stop does not restore historical targets", transport().filter(entry => entry.restoration).map(entry => entry.target).join() === "native-b,native-b");
+  check("current stop restoration survives capture recovery exactly once", transport().filter(entry => entry.target === "native-b" && entry.command?.type === "open").length === 3);
   current = activity("cua", "native-b", { execution_id: "fixture-run-2" });
   coordinator.update(current);
   await emitNative("native-b", { event: "auto_frame", frame: frame(210, 100, 20) });
   await waitFor("new execution resumes its own target", () => transport().filter(entry => entry.target === "native-b" && entry.command?.type === "activity").at(-1)?.command.controller === "agent");
   coordinator.update({ ...stopped, updated_at: new Date(Date.now() + 10_000).toISOString() });
   check("late retired execution cannot stop the new target", transport().filter(entry => entry.target === "native-b" && entry.command?.type === "activity").at(-1)?.command.controller === "agent");
+
+  const retiringSession = transport().filter(entry => entry.target === "native-b" && entry.command?.type === "open").at(-1)!.session;
+  contexts.filter(item => item.activity.target === "native-b").at(-1)!.context.onFailure("Synthetic failure before superseded restoration");
+  notifyActivity("activity/stopped", activity("cua", "native-b", { execution_id: "fixture-run-2", state: "stopped", controller: "none" }));
+  coordinator.update(activity("cua", "native-a", { execution_id: "fixture-run-3" }));
+  await waitFor("historical helper restarts after the source moved on", () => {
+    const log = transport(), latest = log.filter(entry => entry.target === "native-b" && entry.command?.type === "open").at(-1)?.session;
+    return latest !== retiringSession && log.some(entry => entry.session === latest && entry.command?.type === "activity" && entry.command.state === "stopped");
+  });
+  check("superseding execution cancels a deferred historical restoration", transport().filter(entry => entry.restoration).length === 2);
+  current = activity("cua", "native-b", { execution_id: "fixture-run-3" });
+  coordinator.update(current);
+  await waitFor("current target resumes after the deferred restoration check", () => transport().filter(entry => entry.target === "native-b" && entry.command?.type === "activity").at(-1)?.command.controller === "agent");
 
   const gone = card("native-b");
   await emitNative("native-b", { event: "gone" });

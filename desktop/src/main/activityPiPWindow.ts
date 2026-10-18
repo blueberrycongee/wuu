@@ -117,6 +117,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private activity: ActivitySession;
   private lastInteractionRevision = 0;
   private pendingInteraction: Interaction | undefined;
+  private pendingRestore: ActivitySession | undefined;
   private content: ActivityPiPContent | undefined;
   private contentGeneration = 0;
   private contentStopping = false;
@@ -407,7 +408,13 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.applyVisibility();
   }
 
-  updateActivity(activity: ActivitySession): void {
+  updateActivity(activity: ActivitySession, restoreTarget = false): void {
+    const pending = this.pendingRestore;
+    if (pending && (pending.id !== activity.id || pending.execution_id !== activity.execution_id
+      || pending.kind !== activity.kind || pending.target !== activity.target
+      || pending.process_id !== activity.process_id || pending.window_id !== activity.window_id
+      || pending.state !== activity.state || pending.controller !== activity.controller)) this.pendingRestore = undefined;
+    if (restoreTarget) this.pendingRestore = activity;
     if (activity.id !== this.activity.id || activity.execution_id !== this.activity.execution_id) {
       this.lastInteractionRevision = 0;
       this.pendingInteraction = undefined;
@@ -423,7 +430,11 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       this.setTurnCompleted(false);
     }
     this.pushActivityState();
-    this.content?.updateActivity?.(activity);
+    if (this.content) {
+      const restore = this.pendingRestore !== undefined && (this.deps.sink.canRestoreTarget?.() ?? true);
+      this.pendingRestore = undefined;
+      this.content.updateActivity?.(activity, restore);
+    }
   }
 
   retarget(activity: ActivitySession, sink: ObservationPiPEventSink): void {
@@ -436,6 +447,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     // Provider switches preserve the user's exact card size and resting corner.
     if (bounds) this.userSize = { width: bounds.width, height: bounds.height };
     this.deps.sink = sink;
+    if (activity !== this.activity) this.pendingRestore = undefined;
     this.activity = activity;
     this.lastInteractionRevision = 0;
     this.pendingInteraction = undefined;
@@ -486,6 +498,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       return;
     }
     this.stopped = true;
+    this.pendingRestore = undefined;
     clearTimeout(this.placeholderTimer);
     this.placeholderTimer = undefined;
     if (this.completionTimer) clearTimeout(this.completionTimer);
@@ -564,6 +577,13 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       return;
     }
     content.start();
+    if (current() && this.content === content && this.pendingRestore) {
+      // A real transition can arrive while capture is being rebuilt. Consume
+      // it once, only if the coordinator still owns this exact target.
+      const restore = this.deps.sink.canRestoreTarget?.() ?? true;
+      this.pendingRestore = undefined;
+      content.updateActivity?.(this.activity, restore);
+    }
     content.setLive?.(activityPreviewIsLive(this.activity));
     this.refit();
     this.raiseOverlay();

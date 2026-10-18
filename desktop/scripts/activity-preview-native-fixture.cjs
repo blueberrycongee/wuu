@@ -30,7 +30,8 @@ function close(session) {
   send(session, { event: 'closed' });
 }
 function open(id, target) {
-  const session = { id, target, visible: false, live: true, pending: undefined, inFlight: undefined, sequence: 0 };
+  const session = { id, target, visible: false, live: true, pending: undefined, inFlight: undefined, sequence: 0,
+    controller: 'agent', state: 'starting' };
   sessions.set(id, session);
   const fail = error => {
     // Destroying one target aborts its HTTP body; siblings share this process.
@@ -60,6 +61,14 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   if (session.autoFrame && command.type === 'keyframe') session.pending = session.autoFrame;
   if (command.type === 'visible') session.visible = command.visible === true;
   if (command.type === 'live') session.live = command.live === true;
+  if (command.type === 'activity') {
+    const transitioned = (command.controller !== 'agent' && session.controller === 'agent')
+      || (command.state === 'stopped' && session.state !== 'stopped');
+    session.controller = command.controller;
+    session.state = command.state;
+    // Model the native restoration request, not macOS window movement/focus.
+    if (command.restore ?? transitioned) record(session, { restoration: true });
+  }
   if (command.type === 'ack' && command.sequence === session.inFlight) session.inFlight = undefined;
   flush(session);
 }).on('close', () => {
