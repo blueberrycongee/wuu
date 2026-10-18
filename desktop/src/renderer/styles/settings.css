@@ -438,6 +438,15 @@
   gap: var(--section-heading-gap);
 }
 
+/* The heading attaches to the body by half an em. Related body blocks
+ * need a full em, independently of how many groups a section contains. */
+.settings-section-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
 .settings-section-header {
   display: flex;
   align-items: flex-end;
@@ -485,7 +494,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .settings-form-actions {
@@ -613,7 +622,7 @@
 .settings-row-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .settings-row-control-block {
@@ -776,7 +785,7 @@
   line-height: 1.5;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
   border-radius: var(--radius-sm);
   background: var(--wuu-control-secondary-background, var(--surface-2));
@@ -1044,8 +1053,8 @@ button.settings-engine-expand:hover {
 .settings-engine-advanced {
   display: grid;
   justify-items: start;
-  gap: var(--space-3);
-  padding: 0 0 var(--space-4) calc(var(--icon-size) + var(--space-3));
+  gap: var(--space-2);
+  padding: 0 0 var(--settings-row-pad-block) calc(var(--icon-size) + var(--space-3));
 }
 
 .settings-engine-path-row {
@@ -1080,14 +1089,14 @@ button.settings-engine-expand:hover {
 
 .settings-engine-auth {
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
 .settings-engine-auth-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .settings-engine-auth-actions .settings-button {
@@ -1111,14 +1120,14 @@ button.settings-engine-expand:hover {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 18.5em), 1fr));
   align-items: stretch;
-  gap: var(--space-2);
+  gap: var(--space-4);
 }
 
 .settings-subscription {
   display: grid;
   min-width: 0;
   align-content: start;
-  gap: var(--space-3);
+  gap: var(--space-4);
   padding: var(--card-padding);
   border: 1px solid var(--hairline);
   border-radius: var(--settings-group-radius);
@@ -1135,7 +1144,7 @@ button.settings-engine-expand:hover {
 }
 
 .settings-subscription-source + .settings-subscription-source {
-  padding-top: var(--space-3);
+  padding-top: var(--space-4);
   border-top: 1px solid var(--hairline-soft);
 }
 
@@ -1192,7 +1201,6 @@ button.settings-engine-expand:hover {
   flex-wrap: wrap;
   min-width: 0;
   gap: var(--space-2);
-  margin-top: var(--space-1);
 }
 
 .settings-subscription-controls {
@@ -1259,7 +1267,7 @@ button.settings-engine-expand:hover {
   align-items: baseline;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 2px var(--space-1);
+  gap: var(--space-1);
   color: var(--ink-soft);
   font-size: var(--font-xs);
   font-variant-numeric: tabular-nums;
@@ -1634,7 +1642,7 @@ button.settings-engine-expand:hover {
 .plugin-settings-editor {
   display: grid;
   min-width: 0;
-  gap: var(--space-3);
+  gap: var(--section-heading-gap);
 }
 
 .plugin-settings-editor-title {
@@ -1993,7 +2001,7 @@ button.settings-engine-expand:hover {
   display: grid;
   grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.6fr) 32px;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-4);
   min-height: 20px;
 }
 
@@ -2038,14 +2046,14 @@ button.settings-engine-expand:hover {
 .settings-skill-usage-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .settings-skill-usage-row {
   display: grid;
   grid-template-columns: minmax(130px, 0.7fr) minmax(100px, 1.6fr) 52px;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .settings-skill-usage-label {
@@ -2145,8 +2153,7 @@ button.settings-engine-expand:hover {
 .settings-heatmap-legend {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin-top: var(--space-1);
+  gap: var(--space-1);
   margin-left: auto;
   color: var(--ink-tertiary);
   font-size: var(--font-xs);
@@ -2179,7 +2186,7 @@ button.settings-engine-expand:hover {
 .settings-usage-table th,
 .settings-usage-table td {
   border-bottom: 1px solid var(--hairline-soft);
-  padding: var(--space-3) 0 var(--space-3) var(--space-4);
+  padding: var(--settings-row-pad-block) 0 var(--settings-row-pad-block) var(--space-4);
   text-align: right;
   vertical-align: middle;
   color: var(--ink);
@@ -2222,7 +2229,7 @@ button.settings-engine-expand:hover {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .settings-usage-model strong {
@@ -2240,12 +2247,10 @@ button.settings-engine-expand:hover {
   overflow-wrap: anywhere;
 }
 
-/* Keep the model table part of the page instead of turning it into a nested
- * horizontal scroller. Once four columns stop reading comfortably — model
- * name + three nowrap numbers + gaps ≈ 440px, so fold below 520 — each row
- * folds into a model heading followed by the three values, right-aligned so
- * the last metric still lands on the card's right inset. */
-@container settings-usage (max-width: 520px) {
+/* Model names and four metrics need reading room at the saved text size.
+ * Below 36 UI em, place the model above its labeled values instead of adding
+ * a nested horizontal scroller. The last metric keeps the card's right inset. */
+@container settings-usage (max-width: 36em) {
   .settings-usage-trend,
   .settings-usage-skeleton-trend {
     gap: 2px;
@@ -2273,9 +2278,9 @@ button.settings-engine-expand:hover {
   .settings-usage-table tbody tr {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 10px 16px;
+    gap: var(--space-2) var(--space-4);
     border-bottom: 1px solid var(--hairline-soft);
-    padding: 16px 0;
+    padding: var(--settings-row-pad-block) 0;
   }
 
   .settings-usage-table tbody tr:last-child {
@@ -2290,7 +2295,7 @@ button.settings-engine-expand:hover {
     min-width: 0;
     flex-direction: column;
     align-items: flex-start;
-    gap: 3px;
+    gap: var(--space-1);
     border-bottom: 0;
     padding: 0;
     text-align: left;
@@ -2298,7 +2303,6 @@ button.settings-engine-expand:hover {
 
   .settings-usage-table tbody td:first-child {
     grid-column: 1 / -1;
-    padding-bottom: 2px;
   }
 
   .settings-usage-table tbody td:nth-child(n + 2) {
@@ -2394,7 +2398,7 @@ button.settings-engine-expand:hover {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--section-heading-gap);
 }
 
 .settings-archive-group-header {
@@ -2451,7 +2455,7 @@ button.settings-engine-expand:hover {
   flex: 1 1 auto;
   min-width: 0;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .settings-archive-title {
@@ -2482,8 +2486,8 @@ button.settings-engine-expand:hover {
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 2px;
-  padding-block: var(--space-3);
+  gap: var(--space-1);
+  padding-block: var(--settings-row-pad-block);
 }
 
 .settings-archive-empty-hint {
@@ -2503,8 +2507,8 @@ button.settings-engine-expand:hover {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 24px 0;
+  gap: var(--space-4);
+  padding: var(--space-6) 0;
 }
 
 /* The QR carries its own white quiet zone so phones can scan it in dark
@@ -2531,7 +2535,7 @@ button.settings-engine-expand:hover {
 
 .settings-remote-pair-uri {
   max-width: 100%;
-  padding: 8px 10px;
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--ink);
@@ -2562,7 +2566,7 @@ button.settings-engine-expand:hover {
 
   .settings-row {
     grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
+    gap: var(--space-2);
     align-items: stretch;
   }
 
