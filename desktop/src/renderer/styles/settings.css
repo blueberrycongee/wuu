@@ -124,8 +124,8 @@
   flex-direction: column;
   gap: var(--sidebar-functional-group-gap);
   overflow-y: auto;
-  margin-top: var(--sidebar-functional-group-gap);
-  padding-bottom: 12px;
+  margin-top: var(--space-2);
+  padding-bottom: var(--space-3);
 }
 
 /* The column may not grow past the rail, so a long plugin page name
@@ -133,7 +133,7 @@
 .settings-nav-group {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 2px;
+  gap: var(--sidebar-row-gap);
 }
 
 .settings-nav-item {
