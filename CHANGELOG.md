@@ -12,6 +12,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Add Linux X11 computer control with window-bound observation and foreground input,
   and watch-only activity previews that retain the existing controls and layout.
+- Monitor plugin for background scripts, event delivery into the active conversation,
+  timeout and persistent watches, output inspection, and per-task stop controls.
+- Public process service for conversation-bound extension commands and event delivery,
+  with process-tree cleanup and optional handoff from completed child sessions.
 
 ### Fixed
 
