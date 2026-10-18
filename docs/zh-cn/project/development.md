@@ -506,3 +506,23 @@ Linux 开发启动器会构建 X11 Computer Use 辅助程序，并默认启用�
 `npm --prefix desktop run build:cua-linux`；该命令使用 Go 工具链，并将 XGB
 许可证复制到包内声明目录。运行环境须为支持 XTEST 和 XComposite 的 X11 会话，
 暂不支持原生 Wayland 控制。这不会改变当前正式发布的安装包平台范围。
+
+### Linux Computer Use 验收
+
+先运行 `npm --prefix desktop run build:cua-linux` 构建辅助程序，再用
+`cd desktop && npx electron-vite build` 构建桌面端。回到仓库根目录，在隔离的
+X11 会话中运行 `node desktop/scripts/linux-cua-e2e.cjs`；需要 XComposite、
+XTEST、窗口管理器、合成器和 FFmpeg。Linux 验收工作流提供 Xvfb、Openbox 和
+xcompmgr。用例使用生产辅助程序执行输入、捕获指定窗口，并使用生产 PiP 工厂；
+活动直接传入观察协调器。
+
+同一次运行会采样动态预览 30 秒、2560×1600 大窗口 15 秒、隐藏预览后的空闲状态
+8 秒，以及恢复采集后 10 秒。原生动作包含宿主的精确目标发现调用。
+`desktop/out/e2e/linux-cua/performance.json` 保存主进程事件循环延迟、渲染器响应、
+视频帧间隔、输入响应时间、各进程 CPU 与 RSS 样本、内存趋势，以及重复释放和恢复
+采集轨道的结果。`results.json`、截图和 GIF 保留功能与视觉证据。
+`WUU_LINUX_CUA_OUTPUT` 可指定证据目录。
+
+预算用于发现卡顿和资源持续增长回归；CPU 样本只作为测量结果，不作为跨机器基准。
+CI 会记录虚拟显示、CPU、Electron 版本和软件渲染环境。该隔离用例不验证完整
+app-server 回合、安装包、真实模型推理、物理 Linux 硬件，或与 Mac 的性能等价性。

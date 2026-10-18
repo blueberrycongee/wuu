@@ -27,6 +27,16 @@ func (b *backend) perform(ctx context.Context, cmd command) (result, error) {
 		return result{}, err
 	}
 	if cmd.Action == "list_apps" {
+		target := strings.TrimSpace(cmd.App)
+		if strings.HasPrefix(target, "linux:") && len(strings.Split(target, ":")) == 4 {
+			// The host resolves its lifetime-bound target before every action.
+			// Validate that window directly instead of scanning unrelated apps.
+			w, e := b.resolve(target)
+			if e != nil {
+				return result{}, e
+			}
+			return result{Text: "Resolved the selected X11 window.", Data: map[string]any{"apps": []window{w}, "resolved_app": w}}, nil
+		}
 		apps, e := b.list()
 		if e != nil {
 			return result{}, e

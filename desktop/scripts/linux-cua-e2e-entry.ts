@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { cpus, release, totalmem } from 'node:os';
+import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, WebContentsView, screen, nativeImage } from 'electron';
@@ -112,8 +115,15 @@ async function fixtureMain(): Promise<void> {
       let result: unknown = true;
       if (command === 'state') result = await target.webContents.executeJavaScript('window.state');
       else if (command === 'marker') await target.webContents.executeJavaScript(`document.getElementById('marker').style.background=${JSON.stringify(value)}`);
+      else if (command === 'animate') await target.webContents.executeJavaScript(`(() => {
+        clearInterval(window.animation);
+        if (${Boolean(value)}) { let frame = 0; window.animation = setInterval(() => {
+          document.getElementById('marker').style.background = (++frame % 2) ? '#00ffff' : '#ffff00';
+        }, 50); }
+      })()`);
       else if (command === 'theme') await target.webContents.executeJavaScript(`document.body.classList.toggle('dark',${JSON.stringify(value === 'dark')})`);
       else if (command === 'move') target.setPosition(Number(value), 40);
+      else if (command === 'size') { target.setSize(value.width, value.height); result = target.getSize(); }
       else if (command === 'hide') target.hide();
       else if (command === 'minimize') target.minimize();
       else if (command === 'restore') { target.restore(); target.showInactive(); }
@@ -154,7 +164,7 @@ async function acceptance(): Promise<void> {
   const listed = await rpc.request('tools/list');
   assert.ok(listed.tools.some((tool: any) => tool.name === 'computer'));
   const computer = (args: Record<string, unknown>) => rpc.request('tools/call', { name: 'computer', arguments: { app: appID, control_epoch: 'linux-cua-acceptance', ...args } });
-  async function observe() {
+  async function observe(saveImage = true) {
     const response = await computer({ action: 'observe' });
     assert.ok(!response.isError, JSON.stringify(response));
     const details = response.structuredContent;
@@ -163,7 +173,7 @@ async function acceptance(): Promise<void> {
     assert.ok(details.snapshot_id);
     const image = response.content.find((content: any) => content.type === 'image');
     assert.ok(image?.data, 'Observation returns actual target pixels');
-    writeFileSync(join(output, 'target-observation.png'), Buffer.from(image.data, 'base64'));
+    if (saveImage) writeFileSync(join(output, 'target-observation.png'), Buffer.from(image.data, 'base64'));
     return details;
   }
   async function input(action: string, args: Record<string, unknown>) {
@@ -177,6 +187,14 @@ async function acceptance(): Promise<void> {
   const canonicalTarget = initialObservation.app;
   assert.match(canonicalTarget, /^linux:\d+:\d+:\d+$/, 'Resolved target includes the process lifetime');
   appID = canonicalTarget;
+  const resolved = await computer({ action: 'list_apps' });
+  assert.ok(!resolved.isError, JSON.stringify(resolved));
+  assert.equal(resolved.structuredContent.resolved_app.id, canonicalTarget);
+  assert.deepEqual(resolved.structuredContent.apps.map((item: any) => item.id), [canonicalTarget]);
+  const wrongPID = await computer({ action: 'list_apps', app: canonicalTarget.replace(`linux:${identity.processID}:`, `linux:${process.pid}:`) });
+  assert.equal(wrongPID.isError, true, 'Filtered target resolution rejects a mismatched process');
+  const wrongLifetime = await computer({ action: 'list_apps', app: canonicalTarget.replace(/:\d+$/, ':1') });
+  assert.equal(wrongLifetime.isError, true, 'Filtered target resolution rejects a stale process lifetime');
   checks.push('MCP initialize, tool discovery, target-bound screenshot');
   const refusalSnapshot = await observe();
   const refused = await computer({ action: 'click', snapshot_id: refusalSnapshot.snapshot_id, coordinate_space: 'screenshot', x: 90, y: 180, foreground_policy: 'avoid' });
@@ -343,6 +361,183 @@ async function acceptance(): Promise<void> {
   await settlePreview();
   await capture('05-reopened-preview.png'); checks.push('conversation visibility, capture track teardown, explicit dismiss/reopen; native helper actions continue while preview hidden or dismissed');
 
+  // Measure the shipped capture path under sustained changing pixels and native
+  // input. Screenshots, synchronous encoders and process startup are outside the
+  // timed phases; the independent evidence recorder remains running throughout.
+  const tickRate = Number(execFileSync('getconf', ['CLK_TCK'], { encoding: 'utf8' }).trim());
+  assert.ok(Number.isFinite(tickRate) && tickRate > 0);
+  const directChildren = (await readFile(`/proc/${process.pid}/task/${process.pid}/children`, 'utf8')).trim().split(/\s+/).filter(Boolean).map(Number);
+  const helperPIDs: number[] = [];
+  for (const pid of directChildren) {
+    const command = await readFile(`/proc/${pid}/cmdline`, 'utf8').catch(() => '');
+    if (command.split('\0')[0] === helper) helperPIDs.push(pid);
+  }
+  assert.equal(helperPIDs.length, 2, 'Exactly one input helper and one target watcher are running');
+  const percentile = (values: number[], fraction: number) => {
+    assert.ok(values.length > 0, 'Performance sample must not be empty');
+    const sorted = [...values].sort((a, b) => a - b);
+    return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)]!;
+  };
+  const summarize = (values: number[]) => ({ count: values.length, mean: values.reduce((sum, value) => sum + value, 0) / values.length, p50: percentile(values, .5), p95: percentile(values, .95), max: Math.max(...values) });
+  const resourceSample = async () => {
+    const electron = app.getAppMetrics().map(metric => ({ pid: metric.pid, type: metric.type,
+      rssMiB: metric.memory.workingSetSize / 1024, cpuSeconds: Number(metric.cpu.cumulativeCPUUsage) }));
+    const helpers = await Promise.all(helperPIDs.map(async pid => {
+      const stat = await readFile(`/proc/${pid}/stat`, 'utf8');
+      const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
+      const status = await readFile(`/proc/${pid}/status`, 'utf8');
+      return { pid, rssMiB: Number(/VmRSS:\s+(\d+)/.exec(status)?.[1]) / 1024,
+        cpuSeconds: (Number(fields[11]) + Number(fields[12])) / tickRate };
+    }));
+    for (const value of [...electron, ...helpers]) assert.ok(Number.isFinite(value.rssMiB) && Number.isFinite(value.cpuSeconds), 'Process resource counters must be available');
+    return { atMs: performance.now(), electron, helpers,
+      electronRssMiB: electron.reduce((sum, value) => sum + value.rssMiB, 0),
+      helperRssMiB: helpers.reduce((sum, value) => sum + value.rssMiB, 0) };
+  };
+  const startRendererProbe = `(() => {
+    const video = document.querySelector('video');
+    const state = { frames: [], ui: [], started: performance.now(), lastFrame: performance.now(), lastUI: performance.now(), frameID: 0, uiID: 0 };
+    const frame = now => { state.frames.push(now - state.lastFrame); state.lastFrame = now; state.frameID = video.requestVideoFrameCallback(frame); };
+    const ui = now => { state.ui.push(now - state.lastUI); state.lastUI = now; state.uiID = requestAnimationFrame(ui); };
+    state.frameID = video.requestVideoFrameCallback(frame); state.uiID = requestAnimationFrame(ui);
+    window.linuxCuaPerformance = state;
+  })()`;
+  const stopRendererProbe = `(() => {
+    const video = document.querySelector('video'), state = window.linuxCuaPerformance;
+    video.cancelVideoFrameCallback(state.frameID); cancelAnimationFrame(state.uiID);
+    const tracks = video.srcObject?.getVideoTracks() ?? [];
+    return { elapsedMs: performance.now() - state.started, frames: state.frames, ui: state.ui,
+      finalFrameGapMs: performance.now() - state.lastFrame,
+      liveTracks: tracks.filter(track => track.readyState === 'live').length,
+      settings: tracks.map(track => track.getSettings()) };
+  })()`;
+  const performanceReport: Record<string, any> = {
+    scope: 'Isolated production PiP factory and native helper, not the full Wuu app or a Mac hardware comparison.',
+    environment: { os: release(), arch: process.arch, electron: process.versions.electron, chrome: process.versions.chrome,
+      cpuModel: cpus()[0]?.model, logicalCPUs: cpus().length, totalMemoryMiB: totalmem() / 1024 ** 2,
+      display: desktopSize, sessionType: process.env.XDG_SESSION_TYPE,
+      virtualDisplay: process.env.WUU_LINUX_CUA_VIRTUAL_DISPLAY === '1', hardwareAcceleration: false,
+      gpuFeatures: app.getGPUFeatureStatus(), evidenceRecorder: 'ffmpeg x11grab 10 fps, concurrent',
+      processScope: 'Electron host and its Chromium children; separate native input helper and watcher. Excludes fixture, compositor, X server, and recorder.' },
+    budgets: { mainEventLoopP95Ms: 100, mainEventLoopMaxMs: 1000, previewUIFrameP95Ms: 100,
+      previewUIFrameMaxMs: 1000, minimumVideoFPS: 5, maximumVideoFrameGapMs: 1000,
+      nativeInputP95Ms: 500, nativeInputMaxMs: 1500, observeAndInputP95Ms: 1000,
+      electronRssGrowthMiB: 96, helperRssGrowthMiB: 48 },
+    phases: [], cycles: [],
+  };
+  results.performance = performanceReport;
+  const measure = async (name: string, durationMs: number, visible: boolean) => {
+    await video.executeJavaScript(startRendererProbe);
+    const lag = monitorEventLoopDelay({ resolution: 10 }); lag.enable();
+    const samples = [await resourceSample()];
+    const nativeInputMs: number[] = [], observeAndInputMs: number[] = [], hostRendererReplyMs: number[] = [];
+    performanceReport.inProgress = { name, requestedDurationMs: durationMs, samples, nativeInputMs, observeAndInputMs, hostRendererReplyMs };
+    let expectedClicks = (await fixtureRequest('state')).clicks;
+    const started = performance.now();
+    let nextInput = started, nextSample = started + 1000;
+    try {
+      while (performance.now() - started < durationMs) {
+        if (performance.now() >= nextInput) {
+          const begin = performance.now();
+          const resolved = await computer({ action: 'list_apps' });
+          assert.ok(!resolved.isError && resolved.structuredContent.resolved_app.id === canonicalTarget, 'Host pre-dispatch target resolution');
+          const observation = await observe(false);
+          const inputResolution = await computer({ action: 'list_apps' });
+          assert.ok(!inputResolution.isError && inputResolution.structuredContent.resolved_app.id === canonicalTarget);
+          const inputStarted = performance.now();
+          const response = await computer({ action: 'click', snapshot_id: observation.snapshot_id,
+            coordinate_space: 'screenshot', x: 130 * observation.screenshot.width / observation.screenshot.window_width,
+            y: 180 * observation.screenshot.height / observation.screenshot.window_height, foreground_policy: 'allow' });
+          assert.ok(!response.isError, JSON.stringify(response));
+          expectedClicks++;
+          await waitFor('native click while sampling preview', async () => (await fixtureRequest('state')).clicks === expectedClicks, 1500);
+          nativeInputMs.push(performance.now() - inputStarted);
+          observeAndInputMs.push(performance.now() - begin);
+          nextInput += 3000;
+        }
+        await new Promise(resolve => setTimeout(resolve, Math.max(1, nextSample - performance.now())));
+        const rendererStarted = performance.now();
+        await main.webContents.executeJavaScript('performance.now()');
+        hostRendererReplyMs.push(performance.now() - rendererStarted);
+        samples.push(await resourceSample());
+        nextSample += 1000;
+      }
+    } finally { lag.disable(); }
+    const renderer = await video.executeJavaScript(stopRendererProbe);
+    const cpu = (key: 'electron' | 'helpers') => samples.slice(1).map((sample, index) => {
+      const previous = samples[index]!;
+      return sample[key].reduce((total, entry) => {
+        const before = previous[key].find(value => value.pid === entry.pid);
+        assert.ok(before, `${name}: process population must remain stable during sampling`);
+        return total + 100_000 * (entry.cpuSeconds - before.cpuSeconds) / (sample.atMs - previous.atMs);
+      }, 0);
+    });
+    const rssGrowth = (key: 'electronRssMiB' | 'helperRssMiB') =>
+      percentile(samples.slice(-5).map(value => value[key]), .5) - percentile(samples.slice(1, 6).map(value => value[key]), .5);
+    const phase = { name, requestedDurationMs: durationMs, elapsedMs: performance.now() - started,
+      eventLoopMs: { p95: lag.percentile(95) / 1e6, max: lag.max / 1e6 },
+      video: { fps: renderer.frames.length * 1000 / renderer.elapsedMs,
+        frameGapMs: renderer.frames.length ? summarize([...renderer.frames, renderer.finalFrameGapMs]) : null,
+        liveTracks: renderer.liveTracks, settings: renderer.settings },
+      previewUIFrameMs: renderer.ui.length ? summarize(renderer.ui) : null,
+      nativeInputMs: summarize(nativeInputMs), observeAndInputMs: summarize(observeAndInputMs), hostRendererReplyMs: summarize(hostRendererReplyMs),
+      cpuPercent: { electron: summarize(cpu('electron')), helpers: summarize(cpu('helpers')), unit: '100% = one logical CPU' },
+      rssGrowthMiB: { electron: rssGrowth('electronRssMiB'), helpers: rssGrowth('helperRssMiB') }, samples };
+    performanceReport.phases.push(phase);
+    delete performanceReport.inProgress;
+    writeFileSync(join(output, 'performance.json'), JSON.stringify(performanceReport, null, 2));
+    const budget = performanceReport.budgets;
+    assert.ok(phase.eventLoopMs.p95 < budget.mainEventLoopP95Ms && phase.eventLoopMs.max < budget.mainEventLoopMaxMs, `${name}: Electron main loop stalled`);
+    assert.ok(phase.nativeInputMs.p95 < budget.nativeInputP95Ms && phase.nativeInputMs.max < budget.nativeInputMaxMs, `${name}: native input was unresponsive`);
+    assert.ok(phase.hostRendererReplyMs.p95 < 100 && phase.hostRendererReplyMs.max < 1000, `${name}: host renderer became unresponsive`);
+    assert.ok(phase.observeAndInputMs.p95 < budget.observeAndInputP95Ms, `${name}: observation/input round-trip exceeded budget`);
+    assert.ok(phase.rssGrowthMiB.electron < budget.electronRssGrowthMiB && phase.rssGrowthMiB.helpers < budget.helperRssGrowthMiB, `${name}: retained memory grew beyond budget`);
+    if (visible) {
+      assert.equal(renderer.liveTracks, 1, `${name}: capture pipeline must have exactly one live video track`);
+      assert.ok(renderer.settings[0].width <= 1280 && renderer.settings[0].height <= 1280 && renderer.settings[0].frameRate <= 15.5, `${name}: bounded capture dimensions/rate`);
+      assert.ok(phase.video.fps >= budget.minimumVideoFPS && phase.video.frameGapMs!.max < budget.maximumVideoFrameGapMs, `${name}: live video stalled`);
+      assert.ok(phase.previewUIFrameMs && phase.previewUIFrameMs.p95 < budget.previewUIFrameP95Ms && phase.previewUIFrameMs.max < budget.previewUIFrameMaxMs, `${name}: preview renderer stalled`);
+    } else {
+      assert.equal(renderer.liveTracks, 0, 'Hidden preview must not retain a capture track');
+      assert.equal(renderer.frames.length, 0, 'Hidden preview must not continue delivering frames');
+    }
+  };
+  await fixtureRequest('animate', true);
+  await measure('live-changing-target', 30_000, true);
+  assert.deepEqual(await fixtureRequest('size', { width: 2560, height: 1600 }), [2560, 1600]);
+  await waitFor('large target observation uses new geometry', async () => {
+    const snapshot = await observe(false);
+    return snapshot.screenshot.window_width === 2560 && snapshot.screenshot.window_height === 1600;
+  });
+  await waitFor('large target preview remains bounded', () => video.executeJavaScript("document.querySelector('video').videoWidth===1280 && document.querySelector('video').videoHeight===800"));
+  performanceReport.largeTarget = { width: 2560, height: 1600 };
+  await measure('large-changing-target', 15_000, true);
+  const beforeCycles = await resourceSample();
+  const liveProcessIDs = app.getAppMetrics().map(metric => metric.pid).sort((a, b) => a - b);
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await video.executeJavaScript("window.previousCaptureTracks = document.querySelector('video').srcObject.getTracks()");
+    const hideStarted = performance.now();
+    coordinator.setActiveThread('other-thread');
+    await waitFor('hidden preview has no retained live tracks', () => video.executeJavaScript("document.querySelector('video').srcObject===null && window.previousCaptureTracks.every(track=>track.readyState==='ended')"));
+    const hideMs = performance.now() - hideStarted;
+    if (cycle === 0) await measure('preview-hidden-target-active', 8_000, false);
+    const resumeStarted = performance.now();
+    coordinator.setActiveThread(activity.thread_id);
+    await waitFor('preview capture resumes after repeated hide', () => video.executeJavaScript("document.querySelector('video').srcObject?.getVideoTracks().filter(track=>track.readyState==='live').length===1 && document.querySelector('video').readyState>=2"));
+    const resumeMs = performance.now() - resumeStarted;
+    performanceReport.cycles.push({ hideMs, resumeMs });
+    assert.ok(hideMs < 1500 && resumeMs < 3000, 'Preview track cleanup/recovery must stay responsive');
+    assert.deepEqual(app.getAppMetrics().map(metric => metric.pid).sort((a, b) => a - b), liveProcessIDs, 'Repeated preview visibility changes must not accumulate Electron processes');
+  }
+  await measure('resumed-changing-target', 10_000, true);
+  await fixtureRequest('animate', false);
+  const afterCycles = await resourceSample();
+  performanceReport.retainedGrowthAfterCyclesMiB = { electron: afterCycles.electronRssMiB - beforeCycles.electronRssMiB, helpers: afterCycles.helperRssMiB - beforeCycles.helperRssMiB };
+  assert.ok(performanceReport.retainedGrowthAfterCyclesMiB.electron < performanceReport.budgets.electronRssGrowthMiB
+    && performanceReport.retainedGrowthAfterCyclesMiB.helpers < performanceReport.budgets.helperRssGrowthMiB, 'Repeated visibility changes must not accumulate retained memory');
+  writeFileSync(join(output, 'performance.json'), JSON.stringify(performanceReport, null, 2));
+  checks.push('sustained live/hidden/resumed performance budgets: main/renderer responsiveness, frame cadence, native input latency, CPU/RSS trends, bounded capture and repeated track cleanup');
+
   const wayland = startHelper({ ...process.env, XDG_SESSION_TYPE: 'wayland', WAYLAND_DISPLAY: 'wayland-acceptance' });
   const unsupported = await wayland.request('tools/call', { name: 'computer', arguments: { action: 'permission_status' } });
   assert.equal(unsupported.structuredContent.supported, false, 'Wayland does not silently use XWayland/global input');
@@ -358,6 +553,11 @@ async function acceptance(): Promise<void> {
   await waitFor('target exit cleans up preview', () => BrowserWindow.getAllWindows().filter(win => win !== main).every(win => !win.isVisible()), 15_000);
   checks.push('target closure stops capture and dismisses PiP');
   await coordinator.shutdown(); coordinator = undefined;
+  const watcherPID = helperPIDs.find(pid => pid !== rpc.child.pid)!;
+  await waitFor('preview shutdown reaps the native watcher', async () => {
+    try { await readFile(`/proc/${watcherPID}/stat`, 'utf8'); return false; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true; throw error; }
+  });
   main.destroy();
   results.status = 'passed';
 }
@@ -385,6 +585,7 @@ async function finish(error?: unknown): Promise<void> {
   mkdirSync(output, { recursive: true });
   try { execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', join(output, 'linux-cua-pip.mp4'), '-filter_complex', '[0:v]fps=6,scale=1008:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse', join(output, 'linux-cua-pip.gif')], { timeout: 60_000 }); } catch (captureError) { console.error('GIF conversion:', captureError); if (!error) error = captureError; }
   if (error) { results.status = 'failed'; results.error = String(error); }
+  if (results.performance) writeFileSync(join(output, 'performance.json'), JSON.stringify(results.performance, null, 2));
   writeFileSync(join(output, 'results.json'), JSON.stringify(results, null, 2));
   console.log(`linux-cua-e2e: ${error ? 'FAIL' : 'PASS'} (${checks.length} checks; ${output})`);
   app.exit(error ? 1 : 0);

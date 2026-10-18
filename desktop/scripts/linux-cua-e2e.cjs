@@ -31,7 +31,7 @@ async function main() {
       const resultPath = path.join(evidence, 'results.json');
       const gifPath = path.join(evidence, 'linux-cua-pip.gif');
       const screenshots = ['01-linux-cua-live.png', '02-occluded-target-live.png', '03-dark-small-large-text.png', '04-target-hidden.png', '05-reopened-preview.png', 'target-observation.png'];
-      for (const file of [resultPath, gifPath, ...screenshots.map(name => path.join(evidence, name))]) {
+      for (const file of [resultPath, path.join(evidence, 'performance.json'), gifPath, ...screenshots.map(name => path.join(evidence, name))]) {
         const info = fs.statSync(file);
         if (!info.size || info.mtimeMs < started) throw new Error(`Acceptance did not finalize current evidence: ${file}`);
       }

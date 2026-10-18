@@ -50,16 +50,17 @@ jobs:
           node desktop/scripts/build-cua-linux.cjs
           (cd desktop && node_modules/.bin/electron-vite build)
       - name: Exercise native X11 input and continuous PiP
-        timeout-minutes: 4
+        timeout-minutes: 6
         env:
           WUU_LINUX_CUA_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/linux-cua
           WUU_CUA_LINUX_HELPER: ${{ github.workspace }}/desktop/build/bin/wuu-cua-linux
           XDG_SESSION_TYPE: x11
+          WUU_LINUX_CUA_VIRTUAL_DISPLAY: "1"
         shell: bash
         run: |
           mkdir -p "$WUU_LINUX_CUA_OUTPUT"
           set -o pipefail
-          xvfb-run --auto-servernum --server-args='-screen 0 1440x900x24 +extension Composite +extension DAMAGE +extension XTEST' \
+          xvfb-run --auto-servernum --server-args='-screen 0 2880x1800x24 +extension Composite +extension DAMAGE +extension XTEST' \
             dbus-run-session -- bash -euc '
               openbox > "$WUU_LINUX_CUA_OUTPUT/window-manager.log" 2>&1 &
               wm=$!

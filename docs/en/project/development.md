@@ -199,6 +199,31 @@ Build the core, then run `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/script
 
 These checks do not verify ScreenCaptureKit, native application input, macOS permissions, or packaged signatures. On a Computer Use-enabled macOS build, also check browser → native app → browser switching, two windows of one app, Terminal and Wuu as ordinary targets, hidden/minimized windows, target closure, Screen Recording denial/revocation, and takeover during pending input. Hide and Stop must leave the observed applications running; extension disable or replacement must retire its stream. Check both themes, default and large text, reduced motion, and drag/resize near the composer. `node desktop/scripts/inspect-cua-pip.cjs` records process/window diagnostics and captures for a running native preview; a running helper alone is not proof of live pixels.
 
+### Linux Computer Use acceptance
+
+Build the helper with `npm --prefix desktop run build:cua-linux` and the desktop
+with `cd desktop && npx electron-vite build`, then run
+`node desktop/scripts/linux-cua-e2e.cjs` from the repository root in an isolated
+X11 session with XComposite, XTEST, a window manager, compositor, and FFmpeg.
+The Linux acceptance workflow provides Xvfb, Openbox and xcompmgr. It exercises
+production helper input, exact-window capture and the production PiP factory;
+activity is supplied directly to the observation coordinator.
+
+The same run samples an animated preview for 30 seconds, a 2560×1600 target for
+15 seconds, hidden-preview idle for 8 seconds, and resumed capture for 10 seconds.
+Native actions include the host's canonical-target discovery calls. It records
+main-loop delay, renderer responsiveness, video cadence, input response latency,
+per-process CPU and RSS samples, memory trends, and repeated track teardown and
+recovery in `desktop/out/e2e/linux-cua/performance.json`. `results.json`, screenshots
+and a GIF retain functional and visual evidence. `WUU_LINUX_CUA_OUTPUT` selects
+the evidence directory.
+
+The checked budgets detect stalls and resource-growth regressions; CPU samples
+are reported rather than treated as a portable benchmark. CI records its virtual
+display, CPU, Electron version and software rendering. This isolated fixture does
+not verify the full app-server turn, packaged installation, live inference,
+physical Linux hardware, or performance parity with a Mac.
+
 ### Native history protocol E2E
 
 Build the CLI with `make build-go`, then build the local protocol fixture with
