@@ -378,7 +378,7 @@ export function ModelServicesPage({
             title={t("settings.modelCatalogUpdate")} aria-busy={catalogRefreshing} disabled={catalogRefreshing}
             onClick={() => void refreshCatalog()}><RefreshCw className={`icon${catalogRefreshing ? " settings-spin" : ""}`} aria-hidden="true" /></button>
           <button type="button" className="settings-button" data-testid="settings-connection-add" ref={addButtonRef} disabled={running}
-            onClick={() => setAdding(true)}><Plus className="icon" aria-hidden="true" />{t("provider.addConnection")}</button>
+            onClick={() => setAdding(true)}><Plus className="icon" aria-hidden="true" /><span className="settings-action-label">{t("provider.addConnection")}</span></button>
         </> : undefined}
       />
       {!adding && !detailProvider && !selectedEngine ? <ServicesOverview providers={providers} labels={labels} initialized={initialized}

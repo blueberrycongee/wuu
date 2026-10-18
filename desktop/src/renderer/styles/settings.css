@@ -416,9 +416,24 @@
 }
 
 /* The titlebar lives outside settings-page, so it needs the content pane's
- * own width query. Keep full-size actions on a second row when the rail or
- * larger text leaves too little room beside the breadcrumb. */
-@container settings-content (max-width: 42em) {
+ * own width query. Keep actions on the title row at ordinary widths: their
+ * fixed footprint and the shared axis must survive a narrow desktop window.
+ * Text actions collapse to their icon before the row can wrap. */
+@container settings-content (max-width: 34em) {
+  .settings-titlebar-slot > .settings-page-actions .settings-action-label {
+    display: none;
+  }
+
+  .settings-titlebar-slot > .settings-page-actions .settings-button:has(> .settings-action-label) {
+    width: var(--control-field-height);
+    flex: 0 0 auto;
+    padding: 0;
+  }
+}
+
+/* Below a phone-width canvas even icon actions cannot share the row. Wrapping
+ * there keeps every control reachable instead of letting the row clip. */
+@container settings-content (max-width: 26em) {
   .settings-titlebar {
     flex-wrap: wrap;
   }

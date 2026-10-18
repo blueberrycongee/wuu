@@ -13,6 +13,7 @@ import {
   type ServerRequestResult,
 } from "@wuu/remote-core";
 import type {
+  ChatGPTAccount,
   DesktopPlatform,
   DesktopProject,
   InitializeResult,
@@ -21,6 +22,8 @@ import type {
   PluginConflictPreferences,
   PluginClientCancelResult,
   ProjectListResult,
+  ProviderModelSummary,
+  ProviderSummary,
   RunningThreadSnapshot,
   RuntimeContext,
   Thread,
@@ -128,6 +131,9 @@ const unavailableWebMethods = [
   "showArtifactItemMenu",
   "popOutSession",
   "popOutClosed",
+  "startChatGPTLogin",
+  "pollChatGPTLogin",
+  "cancelChatGPTLogin",
 ] as const satisfies readonly (keyof WuuDesktopApi)[];
 
 // An explicit, type-checked list keeps new protocol members from silently
@@ -830,6 +836,13 @@ export class RemoteDesktopBridge {
         this.call("config/model-catalog/providers", provider ? { provider } : {}),
       listMCPServers: () => this.call("mcp/list"),
       startXAILogin: () => this.call("auth/xai/login/start"),
+      listChatGPTAccounts: () => this.call<{ accounts: ChatGPTAccount[] }>("auth/chatgpt/accounts"),
+      signOutChatGPTAccount: (accountId) => this.call<{ ok: boolean; revocation_confirmed: boolean; providers: ProviderSummary[] }>(
+        "auth/chatgpt/signout", { account_id: accountId },
+      ),
+      listChatGPTModels: (accountId) => this.call<{ models: (ProviderModelSummary & { name: string })[]; providers?: ProviderSummary[] }>(
+        "auth/chatgpt/models", { account_id: accountId },
+      ),
       readSkillContent: (params) => this.call("desktop/skill/content",params),
       listSkills: (params) => this.call("skill/list", params),
       listInstructionFiles: () => this.call("instructions/list"),
