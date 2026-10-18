@@ -81,6 +81,18 @@ function geometry() {
     }),
   };
 }
+function imageVisitGeometry(selector, index) {
+  const viewport = document.querySelector(".conversation-pane > .scroll-region");
+  const image = document.querySelector(selector).querySelectorAll("img.rich-image, .turn-artifact-inline-image img")[index];
+  const rect = element => element.getBoundingClientRect().toJSON();
+  return {
+    time: performance.now(), top: viewport.scrollTop, height: viewport.scrollHeight,
+    viewport: rect(viewport), image: rect(image), turn: rect(image.closest(".turn")),
+    anchor: viewport.style.overflowAnchor, loading: image.loading, src: image.src,
+    pageTop: document.scrollingElement.scrollTop,
+    pageLeft: document.scrollingElement.scrollLeft,
+  };
+}
 function threads(url, kind, count) {
   const now = new Date().toISOString();
   return ["pictures", "plain"].map(id => ({
@@ -153,17 +165,38 @@ app.whenReady().then(async () => {
       await frames();
       // Even a single image can start offscreen in a narrow conversation.
       // Keep each lazy image in view until its request reaches the closed gate.
-      // A few animation frames do not guarantee Chromium has started loading;
-      // restoring the reading position too early can leave it deferred forever.
+      // Revealing content-visibility turns can change their estimated heights
+      // after scrollIntoView. Revisit only if that reflow displaced the image.
       for (let index = 0; index < count; index++) {
+        const visit = [{ phase: "before", ...await evaluate(imageVisitGeometry, activeSelector, index) }];
         const imagePath = await evaluate((selector, index) => {
           const image = document.querySelector(selector).querySelectorAll("img.rich-image, .turn-artifact-inline-image img")[index];
           image.scrollIntoView({ block: "center", inline: "nearest" });
           const source = new URL(image.src);
           return source.pathname + source.search;
         }, activeSelector, index);
+        visit.push({ phase: "scrolled", ...await evaluate(imageVisitGeometry, activeSelector, index) });
+        await frames();
+        visit.push({ phase: "painted", ...await evaluate(imageVisitGeometry, activeSelector, index) });
         const deadline = Date.now() + 10000;
-        while (!requestedImagePaths.has(imagePath) && Date.now() < deadline) await sleep(20);
+        while (!requestedImagePaths.has(imagePath) && Date.now() < deadline) {
+          const current = await evaluate(imageVisitGeometry, activeSelector, index);
+          const { image, viewport } = current;
+          const visible = image.bottom > viewport.top && image.top < viewport.bottom
+            && image.right > viewport.left && image.left < viewport.right;
+          if (!visible) {
+            visit.push({ phase: "displaced", ...current });
+            await evaluate((selector, index) => {
+              document.querySelector(selector).querySelectorAll("img.rich-image, .turn-artifact-inline-image img")[index]
+                .scrollIntoView({ block: "center", inline: "nearest" });
+            }, activeSelector, index);
+            await frames();
+          } else {
+            await sleep(20);
+          }
+        }
+        visit.push({ phase: "gate", requested: requestedImagePaths.has(imagePath), ...await evaluate(imageVisitGeometry, activeSelector, index) });
+        fs.writeFileSync(path.join(output, `${name}-image-${index + 1}-visit.json`), JSON.stringify(visit, null, 2));
         assert.ok(requestedImagePaths.has(imagePath), `${name}: image ${index + 1} request did not reach the gate while in view`);
         await frames();
       }
