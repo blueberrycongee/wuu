@@ -8,6 +8,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Base spacing on a shared font-relative module across navigation, conversations,
+  composers and settings. Distinguish related details, reading blocks and section
+  breaks, keep empty folder actions visible, and align the sidebar's top controls
+  with its trailing action column.
+
 ### Removed
 
 - Remove the workspace new page's Continue viewing section, which duplicated

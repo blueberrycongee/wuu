@@ -9,7 +9,7 @@
   --settings-group-radius: var(--radius-md);
   --settings-group-shadow: var(--shadow-soft);
   /* Row breathing room; empty lines and list rows share it. */
-  --settings-row-pad-block: var(--space-3);
+  --settings-row-pad-block: var(--space-4);
   --subscription-meter: var(--wuu-accent);
   /* Usage charts and the home overview share one ramp: a single blue stepped
    * in lightness, so the four levels and an empty day each read at a glance
@@ -77,7 +77,7 @@
  * main sidebar uses internal group gaps instead — see
  * `--sidebar-functional-group-gap`). */
 .settings-sidebar .sidebar-content {
-  gap: 4px;
+  gap: var(--sidebar-row-gap);
 }
 
 .settings-sidebar .traffic-spacer {
@@ -306,7 +306,7 @@
   flex-direction: column;
   gap: var(--settings-gap);
   margin: 0 auto;
-  padding: var(--space-4) var(--settings-pad) calc(var(--settings-pad) * 2);
+  padding: var(--section-gap) var(--settings-pad) calc(var(--settings-pad) * 2);
   animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
@@ -448,7 +448,7 @@
 .settings-section-heading {
   display: grid;
   min-width: 0;
-  gap: 2px;
+  gap: var(--space-1);
 }
 
 .settings-section-title {
@@ -572,7 +572,7 @@
 .settings-row-label {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   min-width: 0;
 }
 

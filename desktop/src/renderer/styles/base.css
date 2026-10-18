@@ -8,9 +8,9 @@
     "Source Han Sans SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif
   );
   --wuu-grid-cols: 12;
-  --wuu-grid-baseline: calc(var(--wuu-space-unit, 4px) * 2 * var(--wuu-space-density, 1));
+  --wuu-grid-baseline: var(--space-2);
   --wuu-grid-leading: 24px;
-  --wuu-grid-gutter: calc(var(--wuu-space-unit, 4px) * 6 * var(--wuu-space-density, 1));
+  --wuu-grid-gutter: var(--space-6);
   --wuu-grid-margin: clamp(32px, 4vw, 64px);
   --wuu-grid-max-width: var(--wuu-content-max-width, 1088px);
                                                                      

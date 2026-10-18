@@ -2049,7 +2049,9 @@
 }
 
 .turn-process-fold-body {
-  padding: var(--conversation-process-detail-gap) 0 0 0;
+  /* The header and its first detail form one group; prose entries keep the
+   * wider reading gap below. */
+  padding: var(--conversation-activity-gap) 0 0 0;
 }
 
 /* A direct reply begins here until the provider confirms it as an answer.
