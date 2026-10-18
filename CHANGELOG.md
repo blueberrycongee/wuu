@@ -13,6 +13,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Remove the workspace new page's Continue viewing section, which duplicated
   files, diffs, and artifacts already available in the tab strip.
 
+### Fixed
+
+- Keep reasoning summaries on the same quiet gray as tool activity summaries
+  and composer placeholder text.
+
 ## [2026.10.18] - 2026-10-18
 
 ### Contributors

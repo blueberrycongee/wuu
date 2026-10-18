@@ -44,7 +44,9 @@
   --reasoning-stream-cursor-color: var(--gray-500);
   --turn-process-entry-color: var(--ink-tertiary);
   --process-control-color-fallback: var(--ink-tertiary);
-  --process-active-color: var(--ink-quiet);
+  /* Tool activity and standalone reasoning summaries share the quiet ink
+     used by the composer placeholder, in every running/settled state. */
+  --process-summary-color: var(--ink-quiet);
   --process-active-highlight: var(--ink-muted);
   --activity-toggle-hover-color: var(--gray-650);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-600));
@@ -2433,7 +2435,7 @@
   border: 0;
   overflow: visible;
   background: transparent;
-  color: var(--ink-quiet);
+  color: var(--process-summary-color);
   cursor: default;
   font-size: var(--conversation-process-font-size);
   font-weight: var(--conversation-process-font-weight);
@@ -4136,15 +4138,11 @@
   padding: 2px 0;
   cursor: pointer;
   list-style: none;
-  color: var(--conversation-process-control-color, var(--process-control-color-fallback));
+  color: var(--process-summary-color);
   font-size: var(--conversation-process-font-size);
   font-weight: var(--conversation-process-font-weight);
   line-height: var(--conversation-process-line-height);
   user-select: none;
-}
-
-.turn-reasoning-summary:has(> .turn-reasoning-summary-text.is-live-gray) {
-  color: var(--process-active-color);
 }
 
 .turn-reasoning-summary::-webkit-details-marker {
