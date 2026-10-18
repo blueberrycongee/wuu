@@ -152,15 +152,14 @@ app.whenReady().then(async () => {
       // Even a single image can start offscreen in a narrow conversation.
       // Visit every lazy image while responses are gated, then restore the
       // scenario's reading position before recording the loading baseline.
-      // Take user scroll control first so queued bottom-follow frames cannot
-      // undo scrollIntoView before Chromium starts the lazy request.
-      await evaluate(selector => {
-        document.querySelector(selector).dispatchEvent(new WheelEvent("wheel", { deltaY: -150, bubbles: true }));
-      }, viewportSelector);
       for (let index = 0; index < count; index++) {
         await evaluate((selector, index) => {
-          document.querySelector(selector).querySelectorAll("img.rich-image, .turn-artifact-inline-image img")[index]
-            .scrollIntoView({ block: "center", inline: "nearest" });
+          const image = document.querySelector(selector).querySelectorAll("img.rich-image, .turn-artifact-inline-image img")[index];
+          // This suite controls response completion to verify late-image layout.
+          // Start each request explicitly instead of depending on Chromium's
+          // lazy-load distance heuristic in the deliberately narrow viewport.
+          image.loading = "eager";
+          image.scrollIntoView({ block: "center", inline: "nearest" });
         }, activeSelector, index);
         await frames();
       }
@@ -170,8 +169,8 @@ app.whenReady().then(async () => {
         }, activeSelector);
         await frames();
       }
-      // Keep the lazy previews in view until the server observes their requests;
-      // restoring the reading position first can move them out of the load range.
+      // Establish all pending responses before restoring the reading position;
+      // completion stays gated until the conversation has been switched away and back.
       let timeout;
       try {
         await Promise.race([
@@ -188,7 +187,6 @@ app.whenReady().then(async () => {
       if (mode === "bottom") {
         await evaluate(selector => {
           const viewport = document.querySelector(selector);
-          viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: 150, bubbles: true }));
           viewport.scrollTop = viewport.scrollHeight;
         }, viewportSelector);
         await frames();
