@@ -372,10 +372,18 @@ app.whenReady().then(async () => {
         app.focus({ steal: true });
         win.focus();
         await waitFor(() => document.hasFocus());
-        await evaluate(({ theme, size }) => {
+        await evaluate(async ({ theme, size }) => {
           document.documentElement.dataset.theme = theme;
           document.documentElement.style.setProperty("--conversation-message-font-size", `${size}px`);
           window.dispatchEvent(new Event("wuu-content-size-change"));
+          await document.fonts.ready;
+          await new Promise(requestAnimationFrame);
+          await new Promise(requestAnimationFrame);
+          // Font-relative row spacing must settle before focus is the only
+          // change under measurement. Scroll-timeline fades remain active.
+          await Promise.all(document.getAnimations()
+            .filter(animation => animation.timeline instanceof DocumentTimeline && animation.effect?.getComputedTiming().iterations !== Infinity)
+            .map(animation => animation.finished.catch(() => {})));
         }, { theme, size });
         assert.ok(await evaluate(() => document.querySelector(".sidebar").getBoundingClientRect().right > 200), "sidebar remains visible at the tested width");
         await evaluate(() => { const node = document.querySelector(".sidebar-main"); node.scrollTop = node.scrollHeight / 2; });
