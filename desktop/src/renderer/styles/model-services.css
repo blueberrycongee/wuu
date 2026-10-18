@@ -78,7 +78,7 @@
  * tiles; their different information density is expressed by row height. */
 .model-service-card,
 .model-service-tile {
-  column-gap: var(--space-2);
+  column-gap: var(--space-3);
 }
 
 /* --- Connected services ----------------------------------------------------- */
@@ -227,7 +227,7 @@
 }
 
 :is(.model-service-card, .model-service-tile) > .provider-mark {
-  --provider-mark-size: round(up, calc(var(--font-ui) * 1.72), 2px);
+  --provider-mark-size: var(--space-8);
 }
 
 .model-service-skeleton {
@@ -243,8 +243,8 @@
 }
 
 .model-service-skeleton-mark {
-  flex: 0 0 round(up, calc(var(--font-ui) * 1.72), 2px);
-  height: round(up, calc(var(--font-ui) * 1.72), 2px);
+  flex: 0 0 var(--space-8);
+  height: var(--space-8);
 }
 
 .model-service-skeleton-name {
@@ -258,10 +258,11 @@
   }
 }
 
+/* Extra space belongs around the artwork, keeping its visual weight stable. */
 :is(.model-service-card, .model-service-tile) > .provider-mark svg,
 :is(.model-service-card, .model-service-tile) > .provider-mark .provider-mark-engine {
-  width: 78%;
-  height: 78%;
+  width: calc(var(--font-ui) * 1.4);
+  height: calc(var(--font-ui) * 1.4);
 }
 
 .model-service-tile:hover:not(:disabled) {
