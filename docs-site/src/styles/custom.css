@@ -400,3 +400,169 @@ h1#_top { font-size:clamp(2rem,3.4vw,2.75rem);letter-spacing:-.03em;line-height:
 .right-sidebar-panel a { font-size:14px;line-height:1.7; }
 :where(a,button,summary):focus-visible { outline:2px solid var(--sl-color-accent);outline-offset:3px; }
 @media(max-width:50rem) { .docs-start { grid-template-columns:1fr;gap:0; }.docs-start a{gap:5px;padding-block:16px}.docs-brand{gap:12px}.docs-brand-section{padding-inline-start:12px}.docs-brand .site-title{font-size:28px}.docs-brand .site-title img{width:30px;height:30px} }
+
+/* Documentation chrome: keep the product and the docs on the same site. */
+.docs-topnav {
+  display: none;
+  align-items: center;
+  gap: 1rem;
+  margin-inline-start: 0.15rem;
+  border-inline-start: 1px solid var(--sl-color-gray-5);
+  padding-inline-start: 1rem;
+}
+
+.docs-topnav a {
+  color: var(--sl-color-gray-2);
+  font-size: 0.875rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.docs-topnav a:hover {
+  color: var(--sl-color-white);
+}
+
+@media (min-width: 74rem) {
+  .docs-topnav {
+    display: flex;
+  }
+}
+
+/* The docs home carries the product, not just a list of links. */
+.docs-home h1#_top {
+  margin-top: 0.35rem;
+  font-size: clamp(2.35rem, 4vw, 3.05rem);
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+}
+
+.docs-home-lede {
+  max-width: 39rem;
+  margin: 1rem 0 0;
+  color: var(--sl-color-gray-2);
+  font-size: clamp(1.02rem, 1.6vw, 1.18rem);
+  line-height: 1.75;
+}
+
+.docs-home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 1.4rem;
+}
+
+.docs-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 2.65rem;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.4rem;
+  padding: 0.55rem 0.9rem;
+  color: var(--sl-color-white);
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.docs-action:hover {
+  border-color: var(--sl-color-gray-3);
+  background: var(--sl-color-gray-6);
+  color: var(--sl-color-white);
+}
+
+.docs-action-primary {
+  border-color: var(--sl-color-white);
+  background: var(--sl-color-white);
+  color: var(--sl-color-black);
+}
+
+.docs-action-primary:hover {
+  border-color: var(--sl-color-gray-1);
+  background: var(--sl-color-gray-1);
+  color: var(--sl-color-black);
+}
+
+.docs-home-media {
+  margin: 2rem 0 0;
+}
+
+.docs-home-media img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.55rem;
+  box-shadow: 0 1px 2px rgb(25 26 24 / 8%), 0 18px 42px rgb(25 26 24 / 10%);
+}
+
+.docs-home-media .docs-shot-dark {
+  display: none;
+}
+
+:root[data-theme="dark"] .docs-home-media .docs-shot-light {
+  display: none;
+}
+
+:root[data-theme="dark"] .docs-home-media .docs-shot-dark {
+  display: block;
+}
+
+.docs-home-media figcaption {
+  margin-top: 0.65rem;
+  color: var(--sl-color-gray-3);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.docs-home .docs-start {
+  margin-top: 2.5rem;
+}
+
+.pagination-links a {
+  background: var(--sl-color-bg);
+  box-shadow: none;
+}
+
+.pagination-links .link-title {
+  font-size: 1.05rem;
+  font-weight: 550;
+}
+
+@media (max-width: 50rem) {
+  .docs-home h1#_top {
+    margin-top: 0.2rem;
+    font-size: clamp(2.15rem, 9vw, 2.75rem);
+  }
+
+  .docs-home-actions .docs-action {
+    flex: 1 1 12rem;
+  }
+
+  .docs-home-media {
+    margin-top: 1.6rem;
+  }
+
+  .docs-home-media img {
+    border-radius: 0.4rem;
+  }
+}
+
+/* Screenshots inside guides stay in the reading column. */
+.sl-markdown-content p > img:only-child {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 1.8rem 0 0;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.45rem;
+  background: var(--sl-color-gray-6);
+}
+
+.sl-markdown-content .docs-caption {
+  margin: 0.6rem 0 1.8rem;
+  color: var(--sl-color-gray-3);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+}

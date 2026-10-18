@@ -6,6 +6,10 @@ The left sidebar keeps the visibility and width you choose when you resize the w
 
 Expanding the right panel adds the current conversation as the first tab beside the tool tabs. Select it to return to the conversation without leaving the expanded layout; select a tool tab to switch back. The conversation draft is preserved. Exiting the expanded layout restores the conversation and tools side by side.
 
+![The action menu shown after selecting code in the file preview, with options to add it to the conversation, annotate it, or ask in side chat.](../assets/product/files-en.jpg)
+
+<p class="docs-caption">Select text in a file to bring the passage, an annotation, or a question into the conversation while the file stays in its tab.</p>
+
 ## Side chat
 
 The bundled Side plugin supplies `/side` and is selected in the recommended first-run setup. You can turn it off during setup or later in Settings → Plugins. Disabling it removes side-chat entry points and stops active side answers while preserving history; enabling it restores access.

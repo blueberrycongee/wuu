@@ -1,20 +1,98 @@
 ---
 import Default from "@astrojs/starlight/components/PageTitle.astro"
+
 const base = import.meta.env.BASE_URL.replace(/\/$/, "")
 const chinese = Astro.url.pathname.split("/").includes("zh-cn")
 const locale = chinese ? "zh-cn" : "en"
 const home = Astro.url.pathname.replace(/\/$/, "") === `${base}/${locale}`
-const links = chinese ? [
-  ["开始使用", "安装、连接模型，完成第一个任务。", "getting-started/"],
-  ["熟悉工作区", "管理项目，查看文件与改动。", "desktop/workspace-tools/"],
-  ["扩展 Wuu", "用技能、工具和插件补上所需。", "customize/"],
-] : [
-  ["Get started", "Install Wuu and run your first task.", "getting-started/"],
-  ["Your workspace", "Find files, review changes, and run commands.", "desktop/workspace-tools/"],
-  ["Extend Wuu", "Add skills, tools, and plugins.", "customize/"],
-]
+const title = Astro.locals.starlightRoute.entry.data.title
+const productLocale = chinese ? "zh" : "en"
+const copy = chinese
+  ? {
+      lede: "把任务交给 Agent，跟着它读文件、运行命令、修改代码；结果在 Review 里核对。",
+      primary: "快速开始",
+      secondary: "下载 macOS 版",
+      caption: "真实应用截图：对话、命令和 Git diff 并排显示。",
+      explore: "文档快捷入口",
+      screenshot: "Wuu 桌面窗口，左侧是对话和命令记录，右侧是 Review 中的 Git diff。",
+    }
+  : {
+      lede: "Give an agent a task. Follow the files it reads, the commands it runs, and the changes it makes. Check the result in Review.",
+      primary: "Quick start",
+      secondary: "Download for Mac",
+      caption: "Real app screenshot: conversation, commands, and the Git diff side by side.",
+      explore: "Explore the docs",
+      screenshot:
+        "The Wuu desktop window, with the conversation and command record on the left and the Git diff in Review on the right.",
+    }
+const links = chinese
+  ? [
+      ["开始使用", "安装、连接模型，完成第一个任务。", "getting-started/"],
+      ["熟悉工作区", "管理项目，查看文件与改动。", "desktop/workspace-tools/"],
+      ["扩展 Wuu", "用技能、工具和插件补上所需。", "customize/"],
+    ]
+  : [
+      ["Get started", "Install Wuu and run your first task.", "getting-started/"],
+      ["Your workspace", "Find files, review changes, and run commands.", "desktop/workspace-tools/"],
+      ["Extend Wuu", "Add skills, tools, and plugins.", "customize/"],
+    ]
 ---
-<Default />
-{home && <nav class="docs-start" aria-label={chinese ? "文档快捷入口" : "Explore the docs"}>
-  {links.map(([title, description, path]) => <a href={`${base}/${locale}/${path}`}><strong>{title}<span aria-hidden="true">↗</span></strong><span>{description}</span></a>)}
-</nav>}
+
+{
+  home ? (
+    <div class="docs-home">
+      <header class="docs-home-hero">
+        <h1 id="_top">{title}</h1>
+        <p class="docs-home-lede">{copy.lede}</p>
+        <div class="docs-home-actions">
+          <a class="docs-action docs-action-primary" href={`${base}/${locale}/getting-started/`}>
+            {copy.primary}
+          </a>
+          <a
+            class="docs-action"
+            href="https://github.com/blueberrycongee/wuu/releases/latest"
+            rel="noreferrer"
+          >
+            {copy.secondary}
+            <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+        <figure class="docs-home-media">
+          <img
+            class="docs-shot docs-shot-light"
+            src={`${base}/site-assets/product/hero-light-${productLocale}.jpg`}
+            width="1800"
+            height="1207"
+            alt={copy.screenshot}
+            loading="eager"
+            decoding="async"
+          />
+          <img
+            class="docs-shot docs-shot-dark"
+            src={`${base}/site-assets/product/hero-dark-${productLocale}.jpg`}
+            width="1800"
+            height="1207"
+            alt={copy.screenshot}
+            loading="eager"
+            decoding="async"
+          />
+          <figcaption>{copy.caption}</figcaption>
+        </figure>
+      </header>
+
+      <nav class="docs-start" aria-label={copy.explore}>
+        {links.map(([label, description, path]) => (
+          <a href={`${base}/${locale}/${path}`}>
+            <strong>
+              {label}
+              <span aria-hidden="true">↗</span>
+            </strong>
+            <span>{description}</span>
+          </a>
+        ))}
+      </nav>
+    </div>
+  ) : (
+    <Default />
+  )
+}
