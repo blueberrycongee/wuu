@@ -38,6 +38,16 @@ async function main() {
       if (JSON.parse(fs.readFileSync(resultPath, 'utf8')).status !== 'passed') throw new Error('Acceptance results did not pass');
       const frames = Number(execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-count_frames', '-show_entries', 'stream=nb_read_frames', '-of', 'default=noprint_wrappers=1:nokey=1', gifPath], { encoding: 'utf8', timeout: 15_000 }).trim());
       if (!Number.isFinite(frames) || frames < 2) throw new Error('Acceptance GIF does not contain multiple recorded frames');
+      const fullApp = spawnSync(String(require('electron')), [...process.argv.slice(2), path.join(__dirname, 'linux-cua-e2e-app.mjs')], {
+        stdio: 'inherit', env: { ...process.env, WUU_LINUX_CUA_PROFILE: profile }, timeout: 180_000,
+      });
+      if (fullApp.error) throw fullApp.error;
+      if (fullApp.status !== 0) throw new Error(`Full application acceptance exited ${fullApp.status}`);
+      for (const name of ['full-app.json', 'full-app-live.png', 'full-app-desktop.png']) {
+        const info = fs.statSync(path.join(evidence, name));
+        if (!info.size || info.mtimeMs < started) throw new Error(`Missing current full-app evidence: ${name}`);
+      }
+      if (JSON.parse(fs.readFileSync(path.join(evidence, 'full-app.json'), 'utf8')).status !== 'passed') throw new Error('Full application acceptance did not pass');
     }
   } finally {
     fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

@@ -112,13 +112,22 @@ func Run(args []string, input io.Reader, output io.Writer) error {
 						data[k] = v
 					}
 				}
-				write(p.request.ID, map[string]any{"isError": true, "content": []any{map[string]any{"type": "text", "text": err.Error()}}, "structuredContent": data}, false)
-			} else if p.request.Method == "tools/call" {
-				content := []any{map[string]any{"type": "text", "text": r.Text}}
-				if len(r.PNG) > 0 {
-					content = append(content, map[string]any{"type": "image", "mimeType": "image/png", "data": base64.StdEncoding.EncodeToString(r.PNG)})
+				r = result{Text: err.Error(), Data: data}
+			}
+			if err != nil || p.request.Method == "tools/call" {
+				// The host's structured index is intentionally bounded. Keep every
+				// target and snapshot ID in producer-owned text so the model can
+				// discover windows and continue after input without guessing IDs.
+				metadata, encodeErr := json.Marshal(r.Data)
+				if encodeErr != nil {
+					write(p.request.ID, map[string]any{"code": -32603, "message": "encode computer result: " + encodeErr.Error()}, true)
+				} else {
+					content := []any{map[string]any{"type": "text", "text": strings.TrimSpace(r.Text + "\n" + string(metadata))}}
+					if len(r.PNG) > 0 {
+						content = append(content, map[string]any{"type": "image", "mimeType": "image/png", "data": base64.StdEncoding.EncodeToString(r.PNG)})
+					}
+					write(p.request.ID, map[string]any{"content": content, "structuredContent": r.Data, "isError": err != nil}, false)
 				}
-				write(p.request.ID, map[string]any{"content": content, "structuredContent": r.Data, "isError": false}, false)
 			} else {
 				write(p.request.ID, r.Data, false)
 			}

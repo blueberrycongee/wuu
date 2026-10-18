@@ -45,11 +45,13 @@ jobs:
           sudo apt-get install -y xvfb openbox xcompmgr x11-utils ffmpeg
           npm ci --prefix desktop
           node desktop/node_modules/electron/install.js
-      - name: Build production helper and preview
+      - name: Build production core, helper and preview
         run: |
+          mkdir -p desktop/build/bin
+          go build -o desktop/build/bin/wuu-core ./cmd/wuu
           node desktop/scripts/build-cua-linux.cjs
           (cd desktop && node_modules/.bin/electron-vite build)
-      - name: Exercise native X11 input and continuous PiP
+      - name: Exercise native X11 input, continuous PiP and full application
         timeout-minutes: 6
         env:
           WUU_LINUX_CUA_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/linux-cua

@@ -183,6 +183,10 @@ async function acceptance(): Promise<void> {
     assert.ok(!response.isError, JSON.stringify(response));
     return observation;
   }
+  const inventory = await computer({ action: 'list_apps', app: '' });
+  assert.ok(!inventory.isError, JSON.stringify(inventory));
+  const inventoryText = inventory.content.filter((part: any) => part.type === 'text').map((part: any) => part.text).join('\n');
+  for (const window of inventory.structuredContent.apps) assert.ok(inventoryText.includes(window.id), 'Every discovered window ID must reach the model-facing content');
   const initialObservation = await observe();
   results.screenshot = initialObservation.screenshot;
   const canonicalTarget = initialObservation.app;

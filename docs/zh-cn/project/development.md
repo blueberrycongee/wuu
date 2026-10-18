@@ -509,7 +509,8 @@ Linux 开发启动器会构建 X11 Computer Use 辅助程序，并默认启用�
 
 ### Linux Computer Use 验收
 
-先运行 `npm --prefix desktop run build:cua-linux` 构建辅助程序，再用
+先用 `go build -o desktop/build/bin/wuu-core ./cmd/wuu` 构建核心，运行
+`npm --prefix desktop run build:cua-linux` 构建辅助程序，再用
 `cd desktop && npx electron-vite build` 构建桌面端。回到仓库根目录，在隔离的
 X11 会话中运行 `node desktop/scripts/linux-cua-e2e.cjs`；需要 XComposite、
 XTEST、窗口管理器、合成器和 FFmpeg。Linux 验收工作流提供 Xvfb、Openbox 和
@@ -524,5 +525,12 @@ xcompmgr。用例使用生产辅助程序执行输入、捕获指定窗口，并
 `WUU_LINUX_CUA_OUTPUT` 可指定证据目录。
 
 预算用于发现卡顿和资源持续增长回归；CPU 样本只作为测量结果，不作为跨机器基准。
-CI 会记录虚拟显示、CPU、Electron 版本和软件渲染环境。该隔离用例不验证完整
-app-server 回合、安装包、真实模型推理、物理 Linux 硬件，或与 Mac 的性能等价性。
+CI 会记录虚拟显示、CPU、Electron 版本和软件渲染环境。
+
+第二个进程使用隔离配置和本地脚本化模型服务，加载生产桌面主进程、preload 和渲染器。
+真实输入框通过内置 Linux CUA 插件启动 Go app-server 回合。模型请求边界必须收到
+目标 ID、截图图像和新的快照元数据，包括 `after=vision` 的结果。真实 Go 活动通知
+自动创建 PiP；关闭预览必须释放采集，同时允许两次原生点击继续执行，回合随后完成并
+持久化。`full-app.json` 记录这些检查和 10 秒应用响应采样；`full-app-live.png` 与
+`full-app-desktop.png` 展示真实应用。全程不使用凭据或真实模型推理。该源码构建验收
+不验证安装包、物理 Linux 硬件、真实模型行为，或与 Mac 的性能等价性。

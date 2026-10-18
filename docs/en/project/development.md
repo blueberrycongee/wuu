@@ -201,8 +201,9 @@ These checks do not verify ScreenCaptureKit, native application input, macOS per
 
 ### Linux Computer Use acceptance
 
-Build the helper with `npm --prefix desktop run build:cua-linux` and the desktop
-with `cd desktop && npx electron-vite build`, then run
+Build the core with `go build -o desktop/build/bin/wuu-core ./cmd/wuu`, the helper
+with `npm --prefix desktop run build:cua-linux`, and the desktop with
+`cd desktop && npx electron-vite build`, then run
 `node desktop/scripts/linux-cua-e2e.cjs` from the repository root in an isolated
 X11 session with XComposite, XTEST, a window manager, compositor, and FFmpeg.
 The Linux acceptance workflow provides Xvfb, Openbox and xcompmgr. It exercises
@@ -220,9 +221,19 @@ the evidence directory.
 
 The checked budgets detect stalls and resource-growth regressions; CPU samples
 are reported rather than treated as a portable benchmark. CI records its virtual
-display, CPU, Electron version and software rendering. This isolated fixture does
-not verify the full app-server turn, packaged installation, live inference,
-physical Linux hardware, or performance parity with a Mac.
+display, CPU, Electron version and software rendering.
+
+A second process imports the production desktop main, preload and renderer with
+an isolated profile and a scripted loopback provider. The real composer starts a
+Go app-server turn through the bundled Linux CUA plugin. The provider boundary
+must receive target IDs, screenshot images and fresh snapshot metadata, including
+`after=vision`. Actual Go activity notifications automatically create the PiP;
+closing it must release capture while two native clicks continue and the turn
+completes and persists. `full-app.json` records these checks and a 10-second
+application responsiveness sample; `full-app-live.png` and `full-app-desktop.png`
+show the actual application. No credentials or live inference are used. This
+source-built acceptance does not verify an installed package, physical Linux
+hardware, live-model behavior, or performance parity with a Mac.
 
 ### Native history protocol E2E
 
