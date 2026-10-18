@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Fixed
+
+- Guide next-message predictions toward concrete follow-ups instead of polite
+  acknowledgments, and allow no suggestion when the next intent is unclear.
+
 ## [2026.10.19] - 2026-10-18
 
 ### Contributors
