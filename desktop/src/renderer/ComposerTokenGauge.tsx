@@ -163,6 +163,7 @@ export function ComposerTokenGauge({
         <FloatingMenuPortal
           anchorRef={anchorRef}
           owner="composer-token-gauge"
+          layer="tooltip"
           placement="above"
           align="right"
           offset={8}

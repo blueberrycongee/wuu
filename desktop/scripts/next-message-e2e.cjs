@@ -139,6 +139,17 @@ async function offer(text = suggestion) {
   await until(({ selector, text }) => document.querySelector(selector)?.textContent === text, { selector: ghostSelector, text }, "gray ghost appears after successful live turn");
   return { live, request };
 }
+async function hoverContextMeter() {
+  const meter = await until(() => {
+    const node = document.querySelector('[data-main-conversation-composer] .composer-context-meter');
+    if (!node) return null;
+    const rect = node.getBoundingClientRect();
+    return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+  });
+  win.webContents.sendInputEvent({ type: "mouseMove", ...meter });
+  await until(() => Boolean(document.querySelector('.composer-context-meter-tooltip')));
+  await frames();
+}
 async function check(name, fn) {
   phase = name; report.phase = name; save();
   console.log(`START ${name}`);
@@ -359,6 +370,22 @@ app.whenReady().then(async () => {
     assert.equal(predictions().length, count); report.ime = await evaluate(() => window.__nextMessageIME);
     await focus(); await draft("");
   });
+  await check("hovering retained-history usage preserves the ghost and Tab acceptance", async () => {
+    await offer();
+    const count = predictions().length;
+    const submissions = report.submissions.length;
+    await hoverContextMeter();
+    assert.equal(await evaluate(selector => document.querySelector(selector)?.textContent, ghostSelector), suggestion,
+      "a read-only usage tooltip must not hide the suggestion");
+    assert.equal(await evaluate(selector => document.activeElement === document.querySelector(selector), inputSelector), true);
+    await screenshot("context-tooltip-keeps-suggestion");
+    await key("Tab");
+    assert.equal(await value(), suggestion, "Tab accepts while the usage tooltip is open");
+    assert.equal(report.submissions.length, submissions);
+    assert.equal(predictions().length, count, "hover must not start another model request");
+    win.webContents.sendInputEvent({ type: "mouseMove", x: win.getContentSize()[0] - 20, y: 100 });
+    await until(() => !document.querySelector('.composer-context-meter-tooltip'));
+  });
   await check("toolbar menu temporarily hides cached ghost without another model attempt", async () => {
     await offer(); const count = predictions().length;
     await evaluate(() => document.querySelector('[data-main-conversation-composer] .composer-plus-button').click());
@@ -549,7 +576,7 @@ app.whenReady().then(async () => {
     await until(() => !document.querySelector('.archive-tip-dismiss'));
   });
   await check("theme typography and width matrix uses host rendering", async () => {
-    for (const width of [1200, 480]) for (const theme of ["light", "dark"]) for (const font of [15, 20]) {
+    for (const width of [1200, 720, 480]) for (const theme of ["light", "dark"]) for (const font of [15, 20]) {
       win.setContentSize(width, 850);
       await until(width => innerWidth === width, width);
       await evaluate(({ theme, font }) => {
@@ -566,6 +593,16 @@ app.whenReady().then(async () => {
       assert.equal(geometry.inputStyle.fontSize, geometry.ghostStyle.fontSize);
       assert.ok(geometry.mirror.scrollWidth <= geometry.mirror.clientWidth + 1);
       assert.ok(geometry.overlay.bottom <= geometry.toolbar.top + 1, "the ghost viewport must stop before the toolbar");
+      // The existing phone-width layout hides usage controls entirely.
+      if (width > 480) {
+        await hoverContextMeter();
+        assert.equal(await evaluate(selector => document.querySelector(selector)?.textContent, ghostSelector), geometry.ghostText);
+        await screenshot(`context-tooltip-${width}-${theme}-${font}`);
+      }
+      await key("Tab");
+      assert.equal(await value(), geometry.ghostText);
+      win.webContents.sendInputEvent({ type: "mouseMove", x: win.getContentSize()[0] - 20, y: 100 });
+      await until(() => !document.querySelector('.composer-context-meter-tooltip'));
     }
   });
   await check("plugin settings save and reload the selected model in the workspace", async () => {
