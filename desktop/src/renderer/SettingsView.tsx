@@ -149,24 +149,64 @@ const NATIVE_PAGE_ICONS: Record<NativeSettingsPage, IconComponent> = {
   archive: Archive,
 };
 
+// Page-level discovery for the rail search. The terms cover the setting names
+// inside each page, not only the page title, so "font" or "context" still
+// finds the right page.
+const NATIVE_PAGE_SEARCH_KEY: Record<NativeSettingsPage, Parameters<Translate>[0]> = {
+  providers: "settings.searchKeywords.providers",
+  agents: "settings.searchKeywords.agents",
+  subscriptions: "settings.searchKeywords.subscriptions",
+  advanced: "settings.searchKeywords.advanced",
+  general: "settings.searchKeywords.general",
+  appearance: "settings.searchKeywords.appearance",
+  remote: "settings.searchKeywords.remote",
+  mcp: "settings.searchKeywords.mcp",
+  usage: "settings.searchKeywords.usage",
+  archive: "settings.searchKeywords.archive",
+};
+
 function remoteControlAvailable(): boolean {
   return ENABLE_REMOTE_CONTROL && hostSupports("getRemoteControlSnapshot");
 }
 
-// One flat list: with this few pages, group headings cost more reading
-// than they save. Plugin pages follow after a gap.
-function nativeSettingsPages(): NativeSettingsPage[] {
+// App-level preferences stay at the top of the rail; less frequent setup follows
+// under labeled groups. Page IDs stay flat for plugin snapshots and deep links
+// ("advanced" is still the built-in agent page).
+type NativeSettingsGroup = {
+  id: string;
+  labelKey?: Parameters<Translate>[0];
+  pages: NativeSettingsPage[];
+};
+
+function nativeSettingsGroups(): NativeSettingsGroup[] {
   return [
-    "providers",
-    "agents",
-    "advanced",
-    "mcp",
-    "appearance",
-    "general",
-    ...(remoteControlAvailable() ? ["remote" as const] : []),
-    "usage",
-    ...(ENABLE_SUBSCRIPTIONS ? ["subscriptions" as const] : []),
-    "archive",
+    {
+      id: "app",
+      pages: [
+        "general",
+        "appearance",
+        ...(remoteControlAvailable() ? ["remote" as const] : []),
+      ],
+    },
+    {
+      id: "models-agents-tools",
+      labelKey: "settings.navModelsAgentsTools",
+      pages: [
+        "providers",
+        "agents",
+        "advanced",
+        "mcp",
+      ],
+    },
+    {
+      id: "account-data",
+      labelKey: "settings.navAccountData",
+      pages: [
+        ...(ENABLE_SUBSCRIPTIONS ? ["subscriptions" as const] : []),
+        "usage",
+        "archive",
+      ],
+    },
   ];
 }
 
@@ -282,6 +322,7 @@ export function SettingsView({
   const [activePage, setActivePage] = useState<SettingsPage>(() =>
     availableSettingsPage(initialPage),
   );
+  const [navQuery, setNavQuery] = useState("");
   const customPluginSettingsPages = useSyncExternalStore(
     (listener) => pluginHost.subscribe(listener),
     () => pluginHost.getSettingsPages(),
@@ -628,7 +669,34 @@ export function SettingsView({
   }${sidebarAnimating ? " sidebar-animating" : ""}`;
 
   const pluginPageTitle = activePluginSettingsRecord?.name ?? activeCustomPluginPage?.title;
-  const nativePages = nativeSettingsPages();
+  const nativeGroups = nativeSettingsGroups();
+  const nativePages = nativeGroups.flatMap((group) => group.pages);
+  const normalizedNavQuery = navQuery.trim().toLocaleLowerCase();
+  const pluginSearchTerms = `${t("settings.navPlugins")} plugin 插件`.toLocaleLowerCase();
+  const pageMatchesNavQuery = (page: NativeSettingsPage): boolean => {
+    if (!normalizedNavQuery) {
+      return true;
+    }
+    return `${settingsPageTitle(page, t)} ${t(NATIVE_PAGE_SEARCH_KEY[page])}`
+      .toLocaleLowerCase()
+      .includes(normalizedNavQuery);
+  };
+  const visibleNativeGroups = nativeGroups
+    .map((group) => ({ ...group, pages: group.pages.filter(pageMatchesNavQuery) }))
+    .filter((group) => group.pages.length > 0);
+  const visiblePluginSettingsRecords = normalizedNavQuery
+    ? pluginSettingsRecords.filter((plugin) =>
+        `${plugin.name} ${pluginSearchTerms}`.toLocaleLowerCase().includes(normalizedNavQuery),
+      )
+    : pluginSettingsRecords;
+  const visibleCustomPluginSettingsPages = normalizedNavQuery
+    ? customPluginSettingsPages.filter((entry) =>
+        `${entry.title} ${pluginSearchTerms}`.toLocaleLowerCase().includes(normalizedNavQuery),
+      )
+    : customPluginSettingsPages;
+  const hasVisiblePluginPages = visiblePluginSettingsRecords.length > 0
+    || visibleCustomPluginSettingsPages.length > 0;
+  const hasVisiblePages = visibleNativeGroups.length > 0 || hasVisiblePluginPages;
   const availablePages = useMemo<readonly SettingsPageSummaryV1[]>(() => Object.freeze([
     ...nativePages.map((page) => Object.freeze({
       id: page,
@@ -692,24 +760,53 @@ export function SettingsView({
             <ArrowLeft className="icon" />
             <span>{t("settings.backToApp")}</span>
           </button>
+          <div className="settings-search" role="search">
+            <Search className="icon" aria-hidden="true" />
+            <input
+              type="search"
+              value={navQuery}
+              placeholder={t("settings.searchSettings")}
+              aria-label={t("settings.searchSettings")}
+              onChange={(event) => setNavQuery(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape" && navQuery) {
+                  event.preventDefault();
+                  setNavQuery("");
+                }
+              }}
+            />
+          </div>
           <nav
             className="settings-nav"
             data-wuu-component="settings-navigation"
             aria-label={t("settings.navigation")}
           >
-            <div className="settings-nav-group">
-              {nativePages.map((page) => {
-                const Icon = NATIVE_PAGE_ICONS[page];
-                return (
-                  <SettingsNavItem key={page} icon={<Icon className="icon-lg" />} active={activePage === page} onClick={() => setActivePage(page)}>
-                    {settingsPageTitle(page, t)}
-                  </SettingsNavItem>
-                );
-              })}
-            </div>
-            {pluginSettingsRecords.length > 0 || customPluginSettingsPages.length > 0 ? (
-              <div className="settings-nav-group" data-wuu-component="plugin-settings-navigation">
-                {pluginSettingsRecords.map((plugin) => {
+            {visibleNativeGroups.map((group) => (
+              <div
+                key={group.id}
+                className="settings-nav-group"
+                role={group.labelKey ? "group" : undefined}
+                aria-labelledby={group.labelKey ? `settings-nav-${group.id}` : undefined}
+              >
+                {group.labelKey ? (
+                  <h2 className="settings-nav-group-label" id={`settings-nav-${group.id}`}>
+                    {t(group.labelKey)}
+                  </h2>
+                ) : null}
+                {group.pages.map((page) => {
+                  const Icon = NATIVE_PAGE_ICONS[page];
+                  return (
+                    <SettingsNavItem key={page} icon={<Icon className="icon-lg" />} active={activePage === page} onClick={() => setActivePage(page)}>
+                      {settingsPageTitle(page, t)}
+                    </SettingsNavItem>
+                  );
+                })}
+              </div>
+            ))}
+            {hasVisiblePluginPages ? (
+              <div className="settings-nav-group" data-wuu-component="plugin-settings-navigation" role="group" aria-labelledby="settings-nav-plugins">
+                <h2 className="settings-nav-group-label" id="settings-nav-plugins">{t("settings.navPlugins")}</h2>
+                {visiblePluginSettingsRecords.map((plugin) => {
                   const pageId = pluginSettingsPageId(plugin.id);
                   return (
                     <SettingsNavItem
@@ -722,7 +819,7 @@ export function SettingsView({
                     </SettingsNavItem>
                   );
                 })}
-                {customPluginSettingsPages.map((entry) => {
+                {visibleCustomPluginSettingsPages.map((entry) => {
                   const pageId = pluginViewSettingsPageId(entry.pluginId, entry.id);
                   return (
                     <SettingsNavItem
@@ -736,6 +833,9 @@ export function SettingsView({
                   );
                 })}
               </div>
+            ) : null}
+            {normalizedNavQuery && !hasVisiblePages ? (
+              <p className="settings-nav-empty" role="status">{t("settings.searchEmpty")}</p>
             ) : null}
           </nav>
         </div>

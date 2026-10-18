@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Group settings navigation by purpose and add search across page names and setting
+  keywords, including plugin pages, while preserving the current page during filtering.
 - Base spacing on a shared font-relative module across navigation, conversations,
   composers and settings. Distinguish related details, reading blocks and section
   breaks, keep empty folder actions visible, and align the sidebar's top controls

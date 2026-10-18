@@ -115,8 +115,54 @@
   white-space: nowrap;
 }
 
-/* Native pages form one unlabeled group; plugin pages follow after the
- * main sidebar's functional group gap. */
+/* Search is a filled control rather than a page row. Its text starts on the
+ * row-label axis, so scanning the rail keeps one left edge. */
+.settings-search {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin: var(--space-2) 0 var(--space-1);
+}
+
+.settings-search > .icon {
+  position: absolute;
+  left: calc(var(--sidebar-row-pad-x) + (var(--sidebar-nav-icon-col) - var(--icon-size)) / 2);
+  color: var(--ink-tertiary);
+  pointer-events: none;
+}
+
+.settings-search input {
+  width: 100%;
+  min-height: var(--sidebar-row-height);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--font-ui);
+  padding: 0 var(--control-padding-inline) 0 calc(var(--sidebar-row-pad-x) + var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap));
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.settings-search input:hover {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.settings-search input::placeholder {
+  color: var(--ink-tertiary);
+}
+
+.settings-nav-empty {
+  margin: 0;
+  padding: var(--space-2) var(--sidebar-row-pad-x);
+  color: var(--ink-tertiary);
+  font-size: var(--font-ui);
+  line-height: var(--line-ui);
+}
+
+/* App preferences sit at the top without a label; labeled groups follow, and
+ * plugin-contributed pages keep their own group. */
 .settings-nav {
   display: flex;
   min-height: 0;
@@ -134,6 +180,16 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: var(--sidebar-row-gap);
+}
+
+/* A group label names a cluster without competing with its rows. */
+.settings-nav-group-label {
+  margin: 0 0 2px;
+  padding: 0 var(--sidebar-row-pad-x);
+  color: var(--sidebar-heading-ink);
+  font-size: var(--sidebar-heading-size, var(--font-sm));
+  font-weight: var(--weight-regular);
+  line-height: var(--line-ui);
 }
 
 .settings-nav-item {
