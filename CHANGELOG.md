@@ -15,6 +15,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep sidebar fork markers separate from pin and archive actions when a running,
+  unread, or switching conversation has keyboard focus.
 - Keep next-message suggestions visible and accept them with Tab while hovering
   the composer's read-only usage hints.
 - Allow forks made after context-window switches to send follow-up messages,

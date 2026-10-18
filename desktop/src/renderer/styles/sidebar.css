@@ -2344,8 +2344,7 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
-.thread-row:hover:has(.thread-row-fork-icon) .thread-row-fork-icon,
-.thread-row:focus-within .thread-row-fork-icon {
+.thread-row:is(:hover, :focus-within):has(.thread-row-fork-icon) .thread-row-fork-icon {
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-thread-actions-width) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
