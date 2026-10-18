@@ -15,6 +15,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep right-to-left paragraphs, headings, and quotes in messages aligned
+  and selectable in their natural direction while code blocks and tool output
+  remain left-to-right.
 - Keep reasoning summaries on the same quiet gray as tool activity summaries
   and composer placeholder text.
 
