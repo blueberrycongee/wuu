@@ -342,7 +342,7 @@
    * full ink. Keep group headings on their separate tertiary-text role. */
   --sidebar-label-ink: color-mix(in srgb, var(--ink) 82%, var(--paper));
   --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, color-mix(in srgb, var(--ink) 6%, transparent));
-  /* Group labels and list-footer actions: quieter than labels, still 4.5:1. */
+  /* Group labels and heading actions: quieter than labels, still 4.5:1. */
   --sidebar-heading-ink: var(--ink-tertiary);
   /* One icon and text axis for navigation, plugins, projects, and account
    * controls. Avatars occupy this same glyph slot. Icon, column, and row
@@ -2029,6 +2029,16 @@ html[data-focus-modality="keyboard"] :is(
   transition:
     background-color var(--motion-fast) var(--ease-out),
     color var(--motion-fast) var(--ease-out);
+}
+
+/* History controls reveal optional rows rather than labels in the current
+ * view. Match the conversation title size, rest at the composer-placeholder
+ * gray, then return to full ink on hover and keyboard focus so the action
+ * stays easy to pick up. */
+.thread-list-more,
+.thread-list-collapse-btn {
+  color: var(--ink-quiet);
+  font-size: var(--sidebar-label-size, var(--font-ui));
 }
 
 .thread-list-more:hover,
