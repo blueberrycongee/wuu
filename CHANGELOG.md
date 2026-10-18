@@ -14,6 +14,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep SSH workspace discovery available after removal or relocation, and reject account-backed homes before local pairing.
 - Avoid false file-save conflicts in remote workspaces by using the same modification-time calculation for Go file reads and desktop saves.
 - Preserve and queue desktop messages when another turn wins a concurrent send, retaining attachments, send order, and Stop intent.
 - Guide next-message predictions toward concrete follow-ups instead of polite

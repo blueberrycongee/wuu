@@ -29,6 +29,12 @@ npm --prefix desktop run remote:serve -- --workdir /srv/my-project --port 8787 -
 构建产物包含匹配的 Go 核心和网页资源；也可用 `--core` 和 `--web-root`
 指定路径。不要让桌面的远程 Host 与该服务同时使用同一个 Wuu home。
 
+SSH 服务使用本地设备配对；如果其 Wuu home 已登录 Wuu 账号，服务会拒绝启动，
+并保留现有账号凭据。可使用独立目录，例如
+`WUU_HOME="$HOME/.wuu-ssh" npm --prefix desktop run remote:serve -- --workdir /srv/my-project --pair`，
+或自行退出该 Wuu 账号后再启动。独立目录拥有自己的 Wuu 配置和会话历史，
+请在开始任务前完成配置。
+
 在本地从同一版本构建、安装 CLI，然后连接：
 
 ```bash
@@ -51,6 +57,9 @@ SSH 配置别名、密钥、主机密钥校验和 ProxyJump 沿用本机 OpenSSH
 工作台会提示重新打开终端。停止或重启远端服务会停止任务和终端，
 已保存的会话历史仍在磁盘上。重启时不加 `--pair`，即可接受已有设备，
 同时不开启新设备配对。
+
+如果启动时的工作区被移除或迁移，重连仍可通过共享的「对话」工作区发现项目，
+然后重新选择需要的项目。
 
 当前是从源码构建的浏览器工作台预览。无桌面宿主不提供原生桌面窗口、
 内嵌浏览器/电脑控制工具或自动安装远端软件。需要原生浏览器的引擎登录，

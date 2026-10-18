@@ -33,6 +33,13 @@ The build includes the matching Go core and web assets; `--core` and
 `--web-root` can select explicit paths. Do not run the desktop's remote host
 and this service against the same Wuu home simultaneously.
 
+The SSH service uses local device pairing and refuses to start if its Wuu home
+is signed in to a Wuu account. Existing account credentials are left unchanged.
+Use a separate home, for example
+`WUU_HOME="$HOME/.wuu-ssh" npm --prefix desktop run remote:serve -- --workdir /srv/my-project --pair`,
+or intentionally sign out of that Wuu account first. A separate home has its own
+Wuu configuration and conversation history; configure it before starting work.
+
 On your local computer, build/install the CLI from this revision and connect:
 
 ```bash
@@ -53,6 +60,8 @@ advertised browser port changes.
 
 Closing the browser or losing SSH leaves agent tasks running on the remote
 service. Reconnect the tunnel to restore the conversation and buffered output.
+If the startup workspace was removed or relocated, workspace discovery remains
+available through the shared scratch workspace; select the desired project again.
 Terminals also survive a resumed connection; after a fresh attachment the
 workbench asks you to reopen them. Stopping or restarting the remote service
 stops its tasks and terminals; saved conversation history remains on disk.

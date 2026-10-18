@@ -460,7 +460,7 @@ function writeProjectStoreFile(path: string, store: ProjectStore): void {
   writeTextFileAtomicSync(path, `${JSON.stringify(store, null, 2)}\n`);
 }
 
-function createNoProjectContext(): RuntimeContext {
+export function createNoProjectContext(): RuntimeContext {
   return { kind: "no_project", cwd: allocateNoProjectCwd() };
 }
 

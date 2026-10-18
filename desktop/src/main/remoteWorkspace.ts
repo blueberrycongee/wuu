@@ -2,7 +2,7 @@ import { resolve, sep } from "node:path";
 import type { AppServerResponse, GitCommitMessageResult, RuntimeContext, SkillContentParams, SkillListResult } from "../shared/protocol";
 import type { AppServerClientPool } from "./appServerClients";
 import { GitService } from "./gitService";
-import { ProjectManager, wuuHomePath } from "./projects";
+import { createNoProjectContext, ProjectManager, wuuHomePath } from "./projects";
 import { requestRemoteFiles } from "./remoteFiles";
 import { requestRemoteGit } from "./remoteGit";
 import { requestRemoteProjects } from "./remoteProjects";
@@ -32,6 +32,9 @@ export async function requestRemoteWorkspace(
   else if (state.projects.some(project => pool.threadCwdsForWorkdir(project.path).some(path => resolve(path) === cwd))) context = { kind: "no_project", cwd };
   else if (state.active_context?.kind === "no_project" && resolve(state.active_context.cwd) === cwd) context = state.active_context;
   else if (cwd.startsWith(resolve(wuuHomePath(), "scratch") + sep)) context = { kind: "no_project", cwd };
+  // Discovery must survive removing or relocating the host's startup root.
+  // A neutral context leaves saved selection and scoped request checks intact.
+  else if (method === "workspace/list") context = createNoProjectContext();
   else throw new Error("Unknown or unavailable remote workspace");
   if (method.startsWith("desktop/terminal/")) return requestRemoteTerminal(terminals, context, peerID, method, params);
   if (method === "desktop/skill/content") return readCatalogSkill(await pool.requestInContext<SkillListResult>(context, "skill/list"), params as SkillContentParams);

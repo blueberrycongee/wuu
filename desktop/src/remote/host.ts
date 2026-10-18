@@ -39,7 +39,6 @@ async function main(): Promise<void> {
   // provider credentials or agent installation is copied to the remote host.
   process.env.WUU_DESKTOP_CORE = core;
   const projects = new ProjectManager();
-  projects.add(workdir);
   const initialize = () => ({ protocol_version: APP_SERVER_PROTOCOL_VERSION, client: { name: "wuu-ssh-workspace" } });
   const pool = new AppServerClientPool(
     () => projects.ensureRuntimeContext(), () => projects.activeWorkdir(),
@@ -89,6 +88,12 @@ async function main(): Promise<void> {
   process.once("SIGINT", () => { void stop(); });
   process.once("SIGTERM", () => { void stop(); });
   try {
+    const status = await host.status(workdir);
+    if (status.account_server) {
+      throw new Error("SSH workspaces use local pairing, but this WUU_HOME is signed in to a Wuu account. Start this service with a separate WUU_HOME (with its own Wuu configuration and history), or intentionally sign out of that Wuu account first. Existing account credentials have not been changed.");
+    }
+    if (stopping) return;
+    projects.add(workdir);
     await bridge.start(workdir);
     if (stopping) { bridge.stop(); return; }
     relay = spawn(core, ["relay", "--addr", `127.0.0.1:${port}`, "--web-root", webRoot,
