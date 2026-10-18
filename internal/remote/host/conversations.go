@@ -19,12 +19,18 @@ import (
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 )
 
+var errUserHostConversationExport = errors.New("user host is excluded from Coding conversation export")
+
 // Sync has its own connection and lifetime: losing the phone or relay must not
 // stop publishing. No text is read until this host's opt-in has been checked.
 func (h *Host) publishConversations(ctx context.Context) {
 	for ctx.Err() == nil {
 		if c := h.store.Account(); c != nil {
-			if err := h.publishConversationPass(ctx, *c); err != nil && ctx.Err() == nil {
+			if err := h.publishConversationPass(ctx, *c); errors.Is(err, errUserHostConversationExport) {
+				// Scope comes from the immutable host, not an opt-in or client
+				// claim. Personal requires its own future export contract.
+				return
+			} else if err != nil && ctx.Err() == nil {
 				h.logf("conversation sync: %v", err)
 			}
 		}
@@ -50,6 +56,15 @@ func (h *Host) publishConversationPass(parent context.Context, c account.Credent
 	if !settings.Enabled {
 		return nil
 	}
+	rpc, close := h.conversationRPC(ctx)
+	defer close()
+	var initialized appserver.InitializeResult
+	if err := rpc("initialize", "", map[string]any{"protocol_version": appserver.ProtocolVersion, "client": map[string]string{"name": "wuu-history-sync"}}, &initialized); err != nil {
+		return err
+	}
+	if initialized.UserSpaceID != "" || initialized.ProductDomain != "" {
+		return errUserHostConversationExport
+	}
 	entries := map[string]conversations.Entry{}
 	cursor := "0"
 	for {
@@ -67,11 +82,6 @@ func (h *Host) publishConversationPass(parent context.Context, c account.Credent
 			break
 		}
 		cursor = page.Cursor
-	}
-	rpc, close := h.conversationRPC(ctx)
-	defer close()
-	if err := rpc("initialize", "", map[string]any{"protocol_version": appserver.ProtocolVersion, "client": map[string]string{"name": "wuu-history-sync"}}, nil); err != nil {
-		return err
 	}
 	var threads []appserver.Thread
 	for _, method := range []string{"thread/listAll", "thread/listArchived"} {
@@ -129,7 +139,9 @@ func (h *Host) conversationRPC(ctx context.Context) (func(string, string, any, a
 	cleanup := func() { cancel(); _ = inR.Close(); _ = inW.Close(); _ = outR.Close(); _ = outW.Close() }
 	go func() { <-ctx.Done(); _ = inR.Close(); _ = inW.Close(); _ = outR.Close(); _ = outW.Close() }()
 	go func() {
-		if h.appServer != nil {
+		if h.appServerForDevice != nil {
+			_ = h.appServerForDevice(ctx, inR, outW, nil)
+		} else if h.appServer != nil {
 			_ = h.appServer(ctx, inR, outW)
 		} else {
 			_ = appserver.RunStdio(ctx, h.rt, inR, outW)

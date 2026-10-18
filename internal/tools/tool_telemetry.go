@@ -113,7 +113,7 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	remoteWorkspace := t.env.ExecutionEnvironment != nil && (executionenv.WorkspaceTool(call.Name) || call.Name == codeModeExecToolName)
 	revisionBefore := ""
 	if !remoteWorkspace {
-		revisionBefore = workspaceRevision(ctx, t.env.RootDir)
+		revisionBefore = t.env.workspaceRevision(ctx, t.env.RootDir)
 	}
 	// Hand the freshly computed revision to the tool so read-only tools can
 	// reuse it instead of re-running git for the same root.
@@ -141,6 +141,9 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 	var result toolresult.Result
 	var err error
 	if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
+		if len(t.env.ProtectedPaths) > 0 {
+			return toolresult.Result{}, errors.New("remote execution cannot enforce this runtime's protected read/write paths")
+		}
 		result, err = t.env.ExecutionEnvironment.Execute(ctx, executionenv.ToolRequest{
 			ShellEarlyHandoffDisabled: t.env.ShellEarlyHandoffDisabled,
 			GitAttributionEnabled:     !t.env.GitAttributionDisabled,
@@ -183,7 +186,7 @@ func (t *Toolkit) executeKnownToolResult(ctx context.Context, call providers.Too
 		// telemetry record shows the post-execution state. Read-only tools
 		// cannot mutate, so their before/after revisions are identical and
 		// the second git round-trip is pure overhead.
-		revisionAfter = workspaceRevision(ctx, t.env.RootDir)
+		revisionAfter = t.env.workspaceRevision(ctx, t.env.RootDir)
 	}
 	t.recordToolExecution(ctx, call, info, decision, startedAt, revisionBefore, revisionAfter, rawProjection, returnedProjection, resultRef, resultBudgeted, err, projectionDiag)
 	return returned, err
@@ -538,6 +541,12 @@ func filesystemWorkspaceRevision(ctx context.Context, rootDir string) (string, b
 		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if env := protectedPathEnv(ctx); env != nil && env.rejectProtectedPath(path, false) != nil {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if path == root {
 			return nil

@@ -1,3 +1,4 @@
+import { MarkdownContent } from "../RichContent";
 import * as React from "react";
 import { useEffect } from "react";
 
@@ -27,7 +28,8 @@ export interface DesktopPluginFailure {
 
 export const desktopPluginHost = new PluginHost({
   react: React,
-  invokeRuntime: async ({ pluginId, generation, method, input, workspaceId, workspaceRoot, signal }) => {
+  renderConversationContent: ({ content, linkPolicy }) => React.createElement(MarkdownContent, { text: content, linkPolicy }),
+  invokeRuntime: async ({ pluginId, generation, method, input, workspaceId, workspaceRoot, userSpaceId, productDomain, userInput, signal }) => {
     signal?.throwIfAborted();
     const bridge = window.wuu;
     if (!bridge?.requestPluginRuntime || !bridge.cancelPluginRuntime) {
@@ -40,6 +42,9 @@ export const desktopPluginHost = new PluginHost({
       input,
       ...(workspaceId ? { workspace_id: workspaceId } : {}),
       ...(workspaceRoot ? { workspace_root: workspaceRoot } : {}),
+      ...(userSpaceId ? { user_space_id: userSpaceId } : {}),
+      ...(productDomain ? { product_domain: productDomain } : {}),
+      ...(userInput ? { user_input: { request_id: userInput.requestId, prompt: userInput.prompt, ...(userInput.attachments ? { attachments: [...userInput.attachments] } : {}) } } : {}),
     });
     const cancel = () => {
       void bridge.cancelPluginRuntime(identity).catch((error: unknown) => {

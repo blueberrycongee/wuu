@@ -2565,6 +2565,7 @@ export function workspaceNameForContext(context: RuntimeContext, projects: Deskt
   if (context.kind === "no_project") {
     return t("sidebar.conversations");
   }
+  if (context.kind === "user") return context.product_domain;
   const project = projects.find(
     (candidate) => candidate.id === context.project_id,
   );

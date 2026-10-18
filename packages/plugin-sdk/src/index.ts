@@ -90,6 +90,8 @@ export type PluginManifestIcon =
   | Readonly<{ light: string; dark: string }>;
 
 export interface ViewTypeDefinition {
+  /** Presentation-only user-space shell; never grants data or tool authority. */
+  readonly layout?: "user-space";
   id: ViewTypeId;
   title: string;
   icon?: PublicIconName;
@@ -256,7 +258,10 @@ export interface PluginUIComposerDrawerProps extends PluginUIContainerProps {
 }
 
 /** Stable host-owned primitives for plugin views. */
+export interface PluginUIConversationMessageProps { role: "user" | "assistant"; content: string; className?: string; linkPolicy?: "external-only" }
+
 export interface PluginUIKit {
+  readonly ConversationMessage: HostUIComponent<PluginUIConversationMessageProps>;
   readonly ComposerDrawer: HostUIComponent<PluginUIComposerDrawerProps>;
   readonly Page: HostUIComponent<PluginUIPageProps>;
   readonly Panel: HostUIComponent<PluginUIContainerProps>;
@@ -533,7 +538,20 @@ export interface PluginVisibleHistoryResult {
   }[];
 }
 
+/** Exact selected bytes, carried only in the authenticated client envelope. */
+export interface ClientInputAttachment {
+ readonly sha256: string;
+ readonly filename: string;
+ readonly media_type: string;
+ readonly data: string;
+}
+export interface SessionInputAttachment { sha256: string; filename: string; media_type: string }
+export interface SessionHistoryAttachment { kind: "image" | "file" | "artifact"; index: number; name: string; mime_type: string; size: number; sha256: string }
+
 export interface PluginRuntimeInvokeOptions {
+ readonly userInput?: { readonly requestId: string; readonly prompt: string; readonly attachments?: readonly ClientInputAttachment[] };
+  readonly userSpaceId?: string;
+  readonly productDomain?: "personal" | "coding";
   readonly workspaceId?: string;
   readonly workspaceRoot?: string;
   /** Cancel this invocation and the host work owned by its execution. */
@@ -589,6 +607,19 @@ export const SYSTEM_PROMPT_SECTION_CAPABILITY = "agent.system_prompt.section" as
 /** @experimental No distributed first-party consumer has proven this contract. */
 export const COMPACTION_CAPABILITY = "agent.compaction" as const;
 export const PLUGIN_CLIENT_REQUEST_CAPABILITY = "plugin.client.request" as const;
+/** Host-only admission after a persisted main conversation settles. */
+export const SESSION_ATTENTION_CAPABILITY = "session.attention" as const;
+export interface SessionAttentionInput {
+  user_space_id: string;
+  product_domain: string;
+  session_id: string;
+  agent_id: string;
+  message_seq?: number;
+  turn_id: string;
+  outcome: "completed" | "failed";
+}
+export interface SessionAttentionOutput { allowed: boolean; batch_window_seconds?: number }
+
 
 export type CapabilityKind = "observe" | "transform" | "decision";
 export type CapabilityErrorPolicy = "propagate" | "isolate" | "ignore";
@@ -616,7 +647,9 @@ export const HOST_SERVICE_METHODS = [
   "host.session.list",
   "host.session.cancel",
   "host.session.inspect",
+  "host.session.context",
   "host.session.control",
+  "host.session.attachment.read",
   "host.session.history.read",
   "host.session.history.search",
   "host.workspace.status",
@@ -652,7 +685,9 @@ export const KERNEL_SERVICE_NAMES = {
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
   "host.session.inspect": "host.session.inspect",
+  "host.session.context": "host.session.context",
   "host.session.control": "host.session.control",
+  "host.session.attachment.read": "host.session.attachment.read",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
   "host.workspace.status": "host.workspace.status",
@@ -764,6 +799,10 @@ export interface ServiceChangedParams {
 }
 
 export interface RuntimeInitializeParams {
+  /** Immutable scope selected by the host; absent fields mean legacy Coding. */
+  user_space_id?: string;
+  product_domain?: "personal" | "coding";
+  data_root?: string;
   protocol_version: number;
   plugin_id: string;
   plugin_root: string;
@@ -1110,6 +1149,9 @@ export interface HostServiceContracts {
   "host.settings.list": { params: Record<string, never>; result: { entries: Record<string, unknown> } };
   "host.session.create": {
     params: {
+      user_space_id?: string;
+      product_domain?: "personal" | "coding";
+      agent_id?: string;
       request_id: string;
       name?: string;
       visibility: "user" | "plugin";
@@ -1142,10 +1184,12 @@ export interface HostServiceContracts {
   };
   "host.session.send": {
     params: {
+      user_input_request_id?: string;
       request_id: string;
       session_id: string;
       input: {
         prompt: string;
+        attachments?: SessionInputAttachment[];
         context_blocks?: Array<{ kind?: string; title?: string; source?: string; content: string }>;
       };
       presentation?: { kind: "query_bubble" | "session_message"; text: string; name?: string; related_session_id?: string };
@@ -1161,6 +1205,9 @@ export interface HostServiceContracts {
     result: {
       sessions: Array<{
         session_id: string;
+        user_space_id?: string;
+        product_domain?: "personal" | "coding";
+        agent_id?: string;
         name?: string;
         parent_session_id?: string;
         visibility: "user" | "plugin";
@@ -1179,6 +1226,7 @@ export interface HostServiceContracts {
     params: { session_id: string; state?: "active" | "paused" | "released"; revision?: number };
     result: { session_id: string; manager_id?: string; state?: string; revision: number };
   };
+  "host.session.context": { params: { session_id: string }; result: { session_id: string; user_space_id: string; product_domain: "personal" | "coding"; agent_id: string; parent_session_id: string } };
   "host.session.inspect": {
     params: {
       session_id: string;
@@ -1190,6 +1238,9 @@ export interface HostServiceContracts {
     result: {
       session: {
         session_id: string;
+        user_space_id?: string;
+        product_domain?: "personal" | "coding";
+        agent_id?: string;
         name?: string;
         parent_session_id?: string;
         visibility: "user" | "plugin";
@@ -1216,6 +1267,11 @@ export interface HostServiceContracts {
       timed_out?: boolean;
     };
   };
+  "host.session.attachment.read": {
+    params: { session_id: string; seq: number; kind: "image" | "file" | "artifact"; index: number; sha256: string; offset?: number };
+    /** Offset/total count base64 characters, chunks are at most 128 KiB. */
+    result: { data: string; offset: number; total: number; content_type: string; name: string; sha256: string };
+  };
   "host.session.history.read": {
     params: {
       session_id: string;
@@ -1230,7 +1286,9 @@ export interface HostServiceContracts {
       head_seq: number;
       snapshot_seq: number;
       records?: Array<{
+        at?: string;
         seq: number;
+        attachments?: SessionHistoryAttachment[];
         role: string;
         name?: string;
         content?: string;
@@ -1249,6 +1307,9 @@ export interface HostServiceContracts {
   };
   "host.session.history.search": {
     params: {
+      view?: "conversation";
+      time_min?: string;
+      time_max?: string;
       session_id: string;
       query: string;
       start_seq?: number;
@@ -1262,7 +1323,7 @@ export interface HostServiceContracts {
       session_id: string;
       head_seq: number;
       snapshot_seq: number;
-      matches?: Array<{ seq: number; role: string; name?: string; excerpt?: string }>;
+      matches?: Array<{ at?: string; seq: number; role: string; name?: string; excerpt?: string }>;
       has_more?: boolean;
       budget_exhausted?: boolean;
       next_cursor?: string;

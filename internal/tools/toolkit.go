@@ -305,6 +305,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		PluginManager:             t.env.PluginManager,
 		WorkingNotesHome:          t.env.WorkingNotesHome,
 		FileScopeRoots:            append([]string(nil), t.env.FileScopeRoots...),
+		ProtectedPaths:            append([]string(nil), t.env.ProtectedPaths...),
 		Skills:                    t.env.Skills,
 		OnFileChanged:             t.env.OnFileChanged,
 		OnSessionWorkspaceChanged: t.env.OnSessionWorkspaceChanged,
@@ -1874,6 +1875,9 @@ func resetRGForTests() {
 }
 
 func buildRGFilesCommand(ctx context.Context, pattern string) *exec.Cmd {
+	if protectedPathEnv(ctx) != nil {
+		return nil
+	}
 	name := lookupRG()
 	if name == "" {
 		return nil
@@ -1883,6 +1887,9 @@ func buildRGFilesCommand(ctx context.Context, pattern string) *exec.Cmd {
 }
 
 func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string, opts grepOptions) *exec.Cmd {
+	if protectedPathEnv(ctx) != nil {
+		return nil
+	}
 	name := lookupRG()
 	if name == "" {
 		return nil
@@ -1949,5 +1956,5 @@ func (t *Toolkit) RunEnvironmentCode(ctx context.Context, service *codemode.Serv
 	if err != nil {
 		return codemode.RunResult{}, err
 	}
-	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(t.env.RootDir), StateOwner: t.env.CodeModeStateOwner, CWD: t.env.RootDir, Executor: executor, Sandbox: policy})
+	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(t.env.RootDir), StateOwner: t.env.CodeModeStateOwner, CWD: t.env.RootDir, Executor: executor, Sandbox: policy, SandboxProvider: t.env.ProcessSandboxProvider})
 }

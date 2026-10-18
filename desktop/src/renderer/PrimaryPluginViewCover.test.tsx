@@ -1,3 +1,7 @@
+import { webcrypto } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import type { PluginGenerationApi } from "./plugins/PluginHost";
 /**
  * A primary plugin page shares the conversation pane. With an empty-session
  * wallpaper the page is transparent, so the greeting and dock composer must
@@ -195,4 +199,95 @@ describe("primary plugin view covers the conversation", () => {
     expect(pane?.querySelector(".dock-composer-wrap")).not.toBeNull();
     expect(pane?.querySelector(".scroll-region")?.hasAttribute("inert")).toBe(false);
   });
+
+  it("keeps an isolation-gated Personal view local and restores the existing Coding composer", async () => {
+    const request = vi.fn().mockRejectedValue(new Error("user_host_isolation_required: Personal user host requires verified host isolation"));
+    Object.assign(window.wuu, { requestPluginRuntime: request, cancelPluginRuntime: vi.fn().mockResolvedValue({ cancelled: false }) });
+    const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/personal/desktop.js"), "utf8");
+    const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => {
+      await desktopPluginHost.activateGeneration({ pluginId, generation: "gated", register: activate });
+      await desktopWorkbenchController.openPluginView(pluginId, "personal.home");
+    });
+    await flushAsync();
+    const gate = container.querySelector('[data-personal-state="unavailable"]');
+    expect(gate?.getAttribute("data-reason")).toBe("user_host_isolation_required");
+    expect(container.querySelector(".mosaic textarea")).toBeNull();
+    expect(request.mock.calls.every(([params]) => params.user_space_id === "local" && params.product_domain === "personal")).toBe(true);
+    await act(async () => desktopWorkbenchController.deactivateRegion("primary"));
+    expect(container.querySelector(".conversation-pane > .dock-composer-wrap")).not.toBeNull();
+    expect(container.querySelector(".conversation-pane")?.hasAttribute("data-primary-plugin-view")).toBe(false);
+    expect(window.wuu.listProjects).toHaveBeenCalled();
+  });
+
+  it("carries exact user input provenance from the production Personal composer to the main bridge", async () => {
+    const main = { agent_id: "main", user_space_id: "local", name: "Mosaic", kind: "main", status: "active", revision: 1 };
+    const request = vi.fn(async (params) => ({ result: params.method === "agents.list" ? { agents: [main], default_agent_id: "main" }
+      : params.method === "agents.open" ? { agent: main, session: { state: "completed" } }
+      : params.method === "agents.history" ? { records: [] }
+      : params.method === "tasks.list" ? { tasks: [] }
+      : params.method === "agents.proposals" ? { proposals: [] } : { state: "accepted" } }));
+    Object.assign(window.wuu, { requestPluginRuntime: request, cancelPluginRuntime: vi.fn().mockResolvedValue({ cancelled: false }) });
+    const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/personal/desktop.js"), "utf8");
+    const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => {
+      await desktopPluginHost.activateGeneration({ pluginId, generation: "proof", register: activate });
+      await desktopWorkbenchController.openPluginView(pluginId, "personal.home");
+    });
+    await flushAsync();
+    const prompt = "  Remember this exactly\n";
+    Object.defineProperty(crypto, "subtle", { configurable: true, value: webcrypto.subtle });
+    const filePicker = container.querySelector<HTMLInputElement>('.mosaic input[type="file"]'); expect(filePicker).not.toBeNull();
+    await act(async () => {
+      Object.defineProperty(filePicker!, "files", { configurable: true, value: [new File(["hello"], "notes.txt", { type: "text/plain" })] });
+      filePicker!.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await vi.waitFor(async () => { await act(async () => {}); expect(container.querySelector('[data-draft-attachment]')).not.toBeNull(); });
+    const textarea = container.querySelector<HTMLTextAreaElement>(".mosaic textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, prompt);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-action="send"]')!.click());
+    const sent = request.mock.calls.map(([params]) => params).filter(params => params.method === "agents.send");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].input.prompt).toBe(prompt);
+    expect(sent[0].input.attachments).toEqual([{ sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", filename: "notes.txt", media_type: "text/plain" }]);
+    expect(sent[0].user_input).toEqual({ request_id: sent[0].input.request_id, prompt, attachments: [{ ...sent[0].input.attachments[0], data: "aGVsbG8=" }] });
+    expect(sent[0].request_id).not.toBe(sent[0].input.request_id);
+    expect(request.mock.calls.filter(([params]) => params.method !== "agents.send").every(([params]) => params.user_input === undefined)).toBe(true);
+  });
+
+  it("isolates a generic user-space view from Coding navigation and restores the saved workspace panel", async () => {
+    window.localStorage.setItem("wuu.desktop.workspaceRightPanelOpen", "true");
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const panelToggle = container.querySelector<HTMLButtonElement>('[data-wuu-component="right-sidebar-toggle"]');
+    expect(panelToggle?.getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelector(".conversation-search-trigger")).not.toBeNull();
+    await act(async () => {
+      await desktopPluginHost.activateGeneration({ pluginId, generation: "user-layout", register(api) {
+        api.registerViewType({ id: "generic.user", title: "User dashboard", layout: "user-space", render: () => <article>Independent user view</article> });
+      } });
+      await desktopWorkbenchController.openPluginView(pluginId, "generic.user");
+    });
+    expect(container.querySelector('[data-workbench-layout="user-space"]')).not.toBeNull();
+    expect(container.querySelector(".conversation-search-trigger")).toBeNull();
+    expect(container.querySelector('[data-wuu-component="right-sidebar-toggle"]')).toBeNull();
+    expect(container.querySelector(".workspace-right-panel-resizer")).toBeNull();
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", ctrlKey: true, bubbles: true })));
+    expect(container.querySelector(".conversation-search-dialog")).toBeNull();
+    expect(window.localStorage.getItem("wuu.desktop.workspaceRightPanelOpen")).toBe("true");
+    const projects = container.querySelector<HTMLButtonElement>('[data-workbench-action="projects"]');
+    expect(projects).not.toBeNull();
+    await act(async () => projects!.click());
+    expect(container.querySelector('[data-workbench-layout="user-space"]')).toBeNull();
+    expect(container.querySelector(".conversation-search-trigger")).not.toBeNull();
+    expect(container.querySelector('[data-wuu-component="right-sidebar-toggle"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelector(".workspace-right-panel-resizer")).not.toBeNull();
+  });
+
 });

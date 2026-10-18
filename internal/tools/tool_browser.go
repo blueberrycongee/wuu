@@ -244,7 +244,12 @@ type browserNode struct {
 // browser action context (activity id + resolved tab id + preview sink) that
 // executeBrowserToolResult injects for tab-addressed actions; tabs/finalize run
 // without it.
+var errBrowserProtectedPaths = errors.New("browser bridge cannot enforce protected read/write paths")
+
 func (t *BrowserTool) ExecuteResult(ctx context.Context, argsJSON string) (toolresult.Result, error) {
+	if t.env != nil && len(t.env.ProtectedPaths) > 0 {
+		return toolresult.Result{}, errBrowserProtectedPaths
+	}
 	if t.env == nil || t.env.BrowserBridge == nil {
 		return toolresult.Result{}, errBrowserUnavailable
 	}

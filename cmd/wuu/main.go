@@ -2112,6 +2112,8 @@ func runAppServer(args []string) error {
 	modelOverride := fs.String("model", "", "model override")
 	workdir := fs.String("workdir", "", "workspace directory")
 	workspaceID := fs.String("workspace-id", "", "stable workspace identity (survives the workspace moving on disk)")
+	userSpaceID := fs.String("user-space", "", "stable user space identity, independent of projects")
+	productDomain := fs.String("product-domain", "", "user host product domain: personal or coding")
 	configFile := fs.String("config", "", "explicit runtime config file")
 	hostKind := fs.String("host", string(runtime.HostLocal), "runtime host: local or cloud")
 	instanceID := fs.String("instance-id", "", "cloud runtime instance identity")
@@ -2133,6 +2135,7 @@ func runAppServer(args []string) error {
 		enginecatalog.InstallUserPath()
 	}
 	rt, err := wuusdk.New(wuusdk.Options{
+		UserSpaceID: *userSpaceID, ProductDomain: *productDomain,
 		WorkDir:                  *workdir,
 		WorkspaceID:              *workspaceID,
 		HomeDir:                  os.Getenv("HOME"),

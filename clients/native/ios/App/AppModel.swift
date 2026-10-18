@@ -3,6 +3,7 @@ import WuuCore
 import CryptoKit
 
 private struct PairedLocation: Codable {
+    var personal: Bool? = nil
     let host: String
     let workspace: String
     let thread: String?
@@ -44,6 +45,10 @@ struct MessageForkRequest: Identifiable {
     var pairingBusy = false
     var receivedPairingLink: String?
     let push = PushNotifications()
+    let personal = PersonalModel()
+    var isPersonalHost = false
+    private var remoteDomain: String?
+    var personalSelected = false { didSet { personal.active = personalSelected; rememberLocation() } }
     var devices: [AccountDevice] = []
     var host: AccountDevice?
     var entries: [HistoryEntry] = []
@@ -116,10 +121,31 @@ struct MessageForkRequest: Identifiable {
     private var epoch = UUID()
     private var authEpoch = UUID()
     private var opening = UUID()
+    private var personalOpening = UUID()
     private var isForeground = false
     private let vault = KeychainStore()
     private var cacheDirectory: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("WuuHistory")
+    }
+    private var personalCacheDirectory: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("WuuPersonalHistory")
+    }
+    private var personalDraftDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("WuuPersonalDrafts")
+    }
+    private func prunePersonalCache(_ session: AccountSession) throws {
+        let accounts = devices.filter { $0.role == "host" }.map { [session.server, session.username, session.pub, session.token, $0.pub] }
+        let pairs = pairedComputers.map { ["pair", $0.relayURL, $0.hostPub, $0.deviceSeed] }
+        try PersonalHistoryCache.prune(directory: personalCacheDirectory, identities: accounts + pairs)
+        try PersonalHistoryCache.prune(directory: personalDraftDirectory, identities: accounts + pairs)
+    }
+    private func preparePersonalCache() async {
+        guard let host else { return }
+        if let pair = selectedPair {
+            await personal.configureCache(directory: personalCacheDirectory, draftDirectory: personalDraftDirectory, identity: ["pair", pair.relayURL, pair.hostPub, pair.deviceSeed])
+        } else if let account {
+            await personal.configureCache(directory: personalCacheDirectory, draftDirectory: personalDraftDirectory, identity: [account.server, account.username, account.pub, account.token, host.pub])
+        }
     }
     var messages: [ChatMessage] {
         live?.messages ?? saved?.messages.map { ChatMessage(id: $0.stableID, role: $0.role, text: $0.text) } ?? []
@@ -145,6 +171,7 @@ struct MessageForkRequest: Identifiable {
                 selectedPair = pair
                 host = AccountDevice(pub: pair.hostPub, name: pair.hostName, role: "host", online: false)
                 activeID = location.thread; workspace = location.workspace; refreshing = activeID != nil
+                personalSelected = location.personal == true; personal.active = personalSelected
             }
             resetRecovery = try vault.load("recovery", as: String.self)
             if let account, let directory = try vault.load("directory", as: RememberedDirectory.self)?.restore(account: account) {
@@ -152,6 +179,7 @@ struct MessageForkRequest: Identifiable {
                 if selectedPair == nil, let location = try vault.load("location", as: NavigationLocation.self)?.restore(account: account, devices: devices) {
                     host = devices.first { $0.pub == location.host }
                     activeID = location.thread; workspace = location.workspace; refreshing = activeID != nil
+                    personalSelected = location.personal == true; personal.active = personalSelected
                     history = try ConversationHistory(account: account, host: location.host, directory: cacheDirectory)
                 }
             }
@@ -163,9 +191,9 @@ struct MessageForkRequest: Identifiable {
         guard let host else { return }
         do {
             if let selectedPair {
-                try vault.save(PairedLocation(host: selectedPair.id, workspace: workspace, thread: activeID), key: "paired-location")
+                try vault.save(PairedLocation(personal: personalSelected, host: selectedPair.id, workspace: workspace, thread: activeID), key: "paired-location")
             } else if let account {
-                try vault.save(NavigationLocation(account: account, host: host.pub, workspace: workspace, thread: activeID), key: "location")
+                try vault.save(NavigationLocation(account: account, host: host.pub, workspace: workspace, thread: activeID, personal: personalSelected), key: "location")
             }
         } catch { self.error = error.localizedDescription }
     }
@@ -194,7 +222,8 @@ struct MessageForkRequest: Identifiable {
         let computers = pairedComputers.filter { $0.id != pair.id }
         try vault.save(computers, key: "paired-computers")
         pairedComputers = computers
-        if selectedPair?.id == pair.id { await leaveHost(); foreground() }
+        if selectedPair?.id == pair.id { await leaveHost(removeCache: true); foreground() }
+        try PersonalHistoryCache.prune(directory: personalDraftDirectory, identities: (account.map { session in devices.filter { $0.role == "host" }.map { [session.server, session.username, session.pub, session.token, $0.pub] } } ?? []) + pairedComputers.map { ["pair", $0.relayURL, $0.hostPub, $0.deviceSeed] })
     }
     func perform(_ operation: @escaping @MainActor () async throws -> Void) {
         let stamp = epoch
@@ -213,6 +242,10 @@ struct MessageForkRequest: Identifiable {
         return identity
     }
     private func accept(_ session: AccountSession) async throws {
+        await background()
+        personalOpening = UUID(); personalSelected = false; await personal.reset(removeCache: true)
+        if FileManager.default.fileExists(atPath: personalCacheDirectory.path) { try FileManager.default.removeItem(at: personalCacheDirectory) }
+        if FileManager.default.fileExists(atPath: personalDraftDirectory.path) { try FileManager.default.removeItem(at: personalDraftDirectory) }
         try vault.delete("directory")
         try vault.save(session, key: "session")
         try vault.delete("github")
@@ -338,10 +371,11 @@ struct MessageForkRequest: Identifiable {
             foreground()
         }
         try ConversationHistory.prune(account: account, hosts: devices.filter { $0.role == "host" }.map(\.pub), directory: cacheDirectory)
+        try prunePersonalCache(account)
     }
-    func selectHost(_ device: AccountDevice) async throws {
+    func selectHost(_ device: AccountDevice, preservingPersonalRoute: Bool = false) async throws {
         let session = account
-        let selection = await leaveHost()
+        let selection = await leaveHost(preservingPersonalRoute: preservingPersonalRoute)
         let stamp = epoch
         guard opening == selection, let account, account == session,
               devices.contains(where: { $0.pub == device.pub && $0.role == "host" }) else { return }
@@ -412,17 +446,23 @@ struct MessageForkRequest: Identifiable {
         reconnectTask?.cancel(); reconnectTask = nil
         loginTask?.cancel()
         events?.cancel(); events = nil
-        let oldRemote = remote; remote = nil
+        let oldRemote = remote; remote = nil; remoteDomain = nil
+        await personal.disconnect()
         connected = false; connecting = false; pendingApproval = nil; sending = false; historyActionBusy = false; refreshing = activeID != nil
         imagePreviews.clear(); loadingHistory = false; loadingContent = []; attachmentPreview = nil; loadingAttachment = false
         pendingFork = nil
         questions = []; questionRevision += 1
         await oldRemote?.disconnect()
     }
-    @discardableResult func leaveHost(removeCache: Bool = false) async -> UUID {
+    @discardableResult func leaveHost(removeCache: Bool = false, preservingPersonalRoute: Bool = false) async -> UUID {
         try? vault.delete("location")
         try? vault.delete("paired-location")
+        if !preservingPersonalRoute { personalOpening = UUID() }
+        host = nil
+        personalSelected = false
+        await personal.reset(removeCache: removeCache)
         selectedPair = nil
+        isPersonalHost = false
         host = nil
         let oldHistory = history
         history = nil; host = nil; entries = []; threads = []; activeID = nil; live = nil; saved = nil
@@ -447,6 +487,10 @@ struct MessageForkRequest: Identifiable {
     private func clearSession() async throws {
         busy = true; defer { busy = false }
         authEpoch = UUID(); loginTask?.cancel(); account = nil
+        await background()
+        personalSelected = false; await personal.reset(removeCache: true)
+        if FileManager.default.fileExists(atPath: personalCacheDirectory.path) { try FileManager.default.removeItem(at: personalCacheDirectory) }
+        if FileManager.default.fileExists(atPath: personalDraftDirectory.path) { try FileManager.default.removeItem(at: personalDraftDirectory) }
         push.bind(nil)
         try vault.delete("session")
         try vault.delete("github")
@@ -461,6 +505,26 @@ struct MessageForkRequest: Identifiable {
         guard account == session, push.mayOpenNotification(), !directoryCached,
               let device = devices.first(where: { $0.pub == pub && $0.role == "host" }) else { return }
         try await selectHost(device)
+    }
+    func openPersonal(_ location: PersonalLocation) async throws {
+        guard let session = account else { return }
+        personalOpening = UUID(); let ticket = personalOpening
+        let navigation = opening
+        try await loadDevices()
+        guard account == session, personalOpening == ticket, opening == navigation, !directoryCached,
+              let device = devices.first(where: { $0.pub == location.host && $0.role == "host" }) else { return }
+        if host?.pub != location.host || selectedPair != nil { try await selectHost(device, preservingPersonalRoute: true) }
+        guard account == session, personalOpening == ticket, host?.pub == location.host, selectedPair == nil else { return }
+        personalSelected = true
+        await personal.locate(location)
+    }
+    func openNotification(_ payload: [String: String]) async throws {
+        if payload["product_domain"] == "personal" {
+            guard let session = account, push.mayOpenNotification(),
+                  let location = PersonalLocation.notification(payload, recipient: session.pub) else { return }
+            try await openPersonal(location)
+        } else if payload["product_domain"] == nil, payload["agent_id"] == nil, payload["task_id"] == nil, payload["message_seq"] == nil,
+                  let host = payload["host"] { try await openPushHost(host) }
     }
     func syncHistory() async throws {
         guard let history else { return }
@@ -484,18 +548,21 @@ struct MessageForkRequest: Identifiable {
         connecting = true
         let stamp = epoch
         defer { if epoch == stamp { connecting = false } }
+        await preparePersonalCache()
+        guard epoch == stamp else { return }
         do {
             let connection: RemoteConnection
             if let selectedPair { connection = try RemoteConnection(computer: selectedPair) }
             else if let account { connection = try RemoteConnection(account: account, host: host.pub) }
             else { return }
-            remote = connection
+            remote = connection; remoteDomain = nil
             events?.cancel()
             events = Task {
                 for await event in connection.events {
                     guard !Task.isCancelled, epoch == stamp, remote === connection else { return }
                     switch event {
                     case .snapshot(let tag, let result):
+                        guard remoteDomain == "coding" else { continue }
                         if opening.uuidString == tag {
                             let thread = ChatThread(result["thread"], pending: result["pending_user_messages"].array, held: result["held_user_messages"].array)
                             // One update over the retained rows: unchanged rows keep identity and position.
@@ -503,8 +570,11 @@ struct MessageForkRequest: Identifiable {
                             refreshing = false
                         }
                     case .disconnected(let reason):
+                        await personal.disconnect(reason: reason)
                         connected = false; pendingApproval = nil; connectionStatus = reason; refreshing = activeID != nil
                     case .notification(let method, let params):
+                        if method == "plugin/inventory/changed" { await personal.inventoryChanged(params) }
+                        guard remoteDomain == "coding" else { continue }
                         if method == "user-question/requested" {
                             questionRevision += 1
                             let request = params["request"]
@@ -520,24 +590,31 @@ struct MessageForkRequest: Identifiable {
                         if ["thread/started", "thread/updated", "thread/archived", "turn/completed"].contains(method) {
                             perform { try await self.loadThreads() }
                         }
-                    case .request(let request): pendingApproval = request
+                    case .request(let request):
+                        if remoteDomain == "coding" { pendingApproval = request }
                     default: break
                     }
                 }
             }
             try await connection.connect()
-            _ = try await connection.call("initialize")
+            let initialized = try await connection.call("initialize")
             guard epoch == stamp else { await connection.disconnect(); return }
+            remoteDomain = initialized["product_domain"].string == "personal" ? "personal" : "coding"
+            if remoteDomain == "personal", !isPersonalHost { personalSelected = true }
+            isPersonalHost = remoteDomain == "personal"
             connected = true
             connectionStatus = ""
+            await personal.bind(connection, initialized: initialized)
         } catch {
             if epoch == stamp {
                 let old = remote; remote = nil; connected = false; events?.cancel(); events = nil
+                await personal.disconnect(reason: error.localizedDescription)
                 if !(error is CancellationError) { connectionStatus = error.localizedDescription }
                 await old?.disconnect()
             }
             return
         }
+        if isPersonalHost { return }
         // A missing conversation or failed directory read is not a transport failure.
         guard let connection = remote, epoch == stamp else { return }
         if let id = activeID {

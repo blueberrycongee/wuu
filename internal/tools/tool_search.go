@@ -171,6 +171,10 @@ func (t *GrepTool) Execute(ctx context.Context, argsJSON string) (string, error)
 		}
 		searchRoot = resolved
 	}
+	if err := t.env.rejectProtectedPath(searchRoot, true); err != nil {
+		return "", err
+	}
+	ctx = t.env.withProtectedPaths(ctx)
 
 	opts := grepOptions{
 		outputMode: args.OutputMode,
@@ -374,6 +378,10 @@ func (t *GlobTool) Execute(ctx context.Context, argsJSON string) (string, error)
 		}
 		searchRoot = resolved
 	}
+	if err := t.env.rejectProtectedPath(searchRoot, true); err != nil {
+		return "", err
+	}
+	ctx = t.env.withProtectedPaths(ctx)
 
 	revisionKey := searchWorkspaceRevision(ctx, t.env)
 	key := searchCursorKey("glob", execRoot, searchRoot, args.Pattern, revisionKey)
@@ -390,6 +398,15 @@ func (t *GlobTool) Execute(ctx context.Context, argsJSON string) (string, error)
 			if err != nil {
 				return "", err
 			}
+		}
+		if len(t.env.ProtectedPaths) > 0 {
+			visible := matches[:0]
+			for _, match := range matches {
+				if t.env.rejectProtectedPath(filepath.Join(execRoot, filepath.FromSlash(match)), false) == nil {
+					visible = append(visible, match)
+				}
+			}
+			matches = visible
 		}
 		_ = saveSearchCursor(cachePath, matches)
 	}
@@ -566,7 +583,7 @@ func searchWorkspaceRevision(ctx context.Context, env *Env) string {
 	if stashedRoot, revision, ok := toolctx.WorkspaceRevision(ctx); ok && stashedRoot == root {
 		return revision
 	}
-	return workspaceRevision(ctx, root)
+	return env.workspaceRevision(ctx, root)
 }
 
 func searchResultCapacity(limit int) int {
@@ -592,7 +609,11 @@ func searchCursorPath(env *Env, key string) string {
 	if env == nil || strings.TrimSpace(env.SessionDir) == "" {
 		return ""
 	}
-	return filepath.Join(env.SessionDir, "tool-results", "search-cursors", key+".json")
+	path := filepath.Join(env.SessionDir, "tool-results", "search-cursors", key+".json")
+	if env.rejectProtectedPath(path, false) != nil {
+		return ""
+	}
+	return path
 }
 
 func saveSearchCursor(path string, records any) error {
@@ -986,6 +1007,9 @@ func grepFilesWithMatches(ctx context.Context, rootDir, pattern, searchRoot, inc
 }
 
 func grepFilesWithMatchesRG(ctx context.Context, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]string, error) {
+	if protectedPathEnv(ctx) != nil {
+		return nil, errRipgrepUnavailable
+	}
 	name := lookupRG()
 	if name == "" {
 		return nil, errRipgrepUnavailable
@@ -1121,6 +1145,9 @@ func grepCountMatches(ctx context.Context, rootDir, pattern, searchRoot, include
 }
 
 func grepCountMatchesRG(ctx context.Context, rootDir, pattern, searchRoot, include string, opts grepOptions, limit int) ([]grepCountResult, int, error) {
+	if protectedPathEnv(ctx) != nil {
+		return nil, 0, errRipgrepUnavailable
+	}
 	name := lookupRG()
 	if name == "" {
 		return nil, 0, errRipgrepUnavailable

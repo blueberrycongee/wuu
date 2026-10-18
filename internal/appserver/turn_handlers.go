@@ -455,6 +455,12 @@ func (s *Server) startThreadCompactTurn(ctx context.Context, req Request, th *th
 	}
 
 	th.mu.Lock()
+	if err := s.requireUserHostSessionOwnerLocked(th); err != nil {
+		th.releaseThreadExecutionLeaseLocked()
+		th.mu.Unlock()
+		cancel()
+		return s.writeResponse(req.ID, nil, err)
+	}
 	if th.ReadOnly {
 		th.releaseThreadExecutionLeaseLocked()
 		th.mu.Unlock()
@@ -4136,6 +4142,12 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		th.mu.Unlock()
 		cancel()
 		return startedThreadTurn{}, false, errServerClosed
+	}
+	if err := s.requireUserHostSessionOwnerLocked(th); err != nil {
+		th.releaseThreadExecutionLeaseLocked()
+		th.mu.Unlock()
+		cancel()
+		return startedThreadTurn{}, false, err
 	}
 	// running cannot become true while executionLease is our local admission
 	// reservation, but retain the guard so future non-turn writers fail closed.

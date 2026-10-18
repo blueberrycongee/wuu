@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"modernc.org/sqlite"
@@ -134,6 +135,9 @@ type HistoryReadQuery struct {
 
 // HistorySearchQuery is an explicit, snapshot-bounded physical transcript search.
 type HistorySearchQuery struct {
+	View        string
+	TimeMin     time.Time
+	TimeMax     time.Time
 	SessionID   string
 	Query       string
 	StartSeq    int
@@ -208,6 +212,12 @@ func SearchHistoryPage(ctx context.Context, sessDir, id, query string, beforeSeq
 func SearchHistoryQuery(ctx context.Context, sessDir string, query HistorySearchQuery) (HistoryPage, error) {
 	if err := ctx.Err(); err != nil {
 		return HistoryPage{}, err
+	}
+	if !query.TimeMin.IsZero() && !query.TimeMax.IsZero() && !query.TimeMax.After(query.TimeMin) {
+		return HistoryPage{}, errors.New("history time_max must follow time_min")
+	}
+	if query.View != "" && query.View != "conversation" {
+		return HistoryPage{}, errors.New("unsupported history search view")
 	}
 	query.Query = strings.TrimSpace(query.Query)
 	if query.Query == "" {
@@ -314,10 +324,27 @@ func searchHistoryQueryTx(ctx context.Context, tx *sql.Tx, query HistorySearchQu
 		coalesce(reasoning_content, '') || char(10) || coalesce(tool_calls_json, '') || char(10) ||
 		coalesce(tool_result_json, '') || char(10) || coalesce(name, '')
 	)`
+	filter := ""
+	if query.View == "conversation" {
+		// Public conversation navigation must never return an invisible reasoning or
+		// tool row. Apply projection before LIMIT so hidden matches cannot starve it.
+		searchable = `lower((CASE WHEN lower(role) = 'user' AND origin = 'user' AND (coalesce(files_json, '') <> '' OR coalesce(images_json, '') <> '') THEN coalesce(display_content, '') ELSE coalesce(nullif(display_content, ''), content, '') END) || char(10) || coalesce(name, ''))`
+		filter = " AND lower(role) IN ('user', 'assistant') AND (coalesce(nullif(display_content, ''), content, '') <> '' OR coalesce(files_json, '') <> '' OR coalesce(images_json, '') <> '')"
+	}
+	args := []any{id, startSeq, upper, endSeq, query.Query}
+	if !query.TimeMin.IsZero() {
+		filter += " AND julianday(at) >= julianday(?)"
+		args = append(args, query.TimeMin.UTC().Format(time.RFC3339Nano))
+	}
+	if !query.TimeMax.IsZero() {
+		filter += " AND julianday(at) < julianday(?)"
+		args = append(args, query.TimeMax.UTC().Format(time.RFC3339Nano))
+	}
+	args = append(args, query.effectiveLimit()+1)
 	rows, err := tx.QueryContext(ctx, historyRecordsSelect+`
-		WHERE session_id = ? AND lower(role) <> 'meta' AND seq >= ? AND seq < ? AND seq <= ?
-		  AND instr(`+searchable+`, lower(?)) > 0
-		ORDER BY seq DESC LIMIT ?`, id, startSeq, upper, endSeq, query.Query, query.effectiveLimit()+1)
+  WHERE session_id = ? AND lower(role) <> 'meta' AND seq >= ? AND seq < ? AND seq <= ?
+    AND instr(`+searchable+`, lower(?)) > 0`+filter+`
+  ORDER BY seq DESC LIMIT ?`, args...)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return HistoryPage{HeadSeq: snapshotSeq, SnapshotSeq: snapshotSeq, BudgetExhausted: true}, nil

@@ -155,6 +155,8 @@ export type InitializeParams = {
 };
 
 export type InitializeResult = {
+  user_space_id?: string;
+  product_domain?: "personal" | "coding";
   speed?: string;
   status?: "ready" | "needs_setup";
   issues?: RuntimeIssue[];
@@ -770,6 +772,10 @@ export interface PluginStorageResult {
   value: string | null;
 }
 export interface PluginClientRequestParams extends PluginIdentityParams {
+  /** Exact client-authored message, bound to this live plugin invocation by the host. */
+  user_input?: { request_id: string; prompt: string; attachments?: Array<{ sha256: string; filename: string; media_type: string; data: string }> };
+  user_space_id?: string;
+  product_domain?: "personal" | "coding";
   /** Optional opaque ID enabling cancellation of this request. */
   request_id?: string;
   method: string;
@@ -1435,6 +1441,7 @@ export type RecentWorkspacesResult = {
 };
 
 export type RuntimeContext =
+  | { kind: "user"; user_space_id: string; product_domain: "personal" | "coding"; cwd: string }
   | {
       kind: "project";
       project_id: string;
@@ -2390,7 +2397,29 @@ export type TurnErrorCategory =
   | "local"
   | "internal";
 
+/** Content-free navigation supplied by an immutable user host, never a session chooser. */
+export type UserLocation = {
+  version: 1;
+  user_space_id: string;
+  product_domain: string;
+  agent_id: string;
+  message_seq?: number;
+};
+
+/** Owner-admitted, content-free attention; raw terminal events do not authorize push. */
+export type UserAttentionNotification = {
+  item_count?: number;
+  user_space_id: string;
+  product_domain: string;
+  user_location: UserLocation;
+  turn_id: string;
+  outcome: "completed" | "failed";
+};
+
 export type TurnErrorNotification = {
+  user_space_id?: string;
+  product_domain?: string;
+  user_location?: UserLocation;
   thread_id: string;
   turn_id: string;
   // Legacy string payload. The `error` field on `turn` (above) is
@@ -2408,6 +2437,9 @@ export type TurnErrorNotification = {
 };
 
 export type TurnCompletedNotification = {
+  user_space_id?: string;
+  product_domain?: string;
+  user_location?: UserLocation;
   thread_id: string;
   turn: Turn;
   content: string;

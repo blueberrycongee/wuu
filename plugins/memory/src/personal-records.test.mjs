@@ -1,0 +1,210 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { build } from "esbuild";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Public plugin behavior: test persistence, host-bound authority, stale evidence,
+// concurrent corrections, forget recovery, expiration and the unchanged notebook.
+const result = await build({
+  entryPoints: [fileURLToPath(new URL("./index.ts", import.meta.url))],
+  alias: { "@wuu/plugin-sdk": fileURLToPath(new URL("../../../packages/plugin-sdk/src/index.ts", import.meta.url)) },
+  bundle: true, format: "esm", platform: "node", target: "node22.7", write: false,
+});
+const { createMemoryPlugin } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`);
+
+class Host {
+  storage = new Map();
+  contexts = new Map([
+    ["a-main", { session_id: "a-main", agent_id: "agent-a", product_domain: "personal", user_space_id: "local" }],
+    ["b-main", { session_id: "b-main", agent_id: "agent-b", product_domain: "personal", user_space_id: "local" }],
+    ["a-worker", { session_id: "a-worker", agent_id: "agent-a", product_domain: "personal", user_space_id: "local", parent_session_id: "a-main" }],
+    ["foreign", { session_id: "foreign", agent_id: "foreign-agent", product_domain: "personal", user_space_id: "another-user" }],
+    ["coding", { session_id: "coding", product_domain: "coding" }],
+  ]);
+  locks = new Map();
+  releases = new Map();
+  counter = 0;
+  async call(service, params) {
+    switch (service) {
+      case "host.session.context": {
+        const context = this.contexts.get(params.session_id);
+        if (!context) throw new Error("session not found");
+        return structuredClone(context);
+      }
+      case "host.storage.keys": return { keys: [...this.storage.keys()] };
+      case "host.storage.get": return { value: this.storage.get(params.key) ?? null };
+      case "host.storage.compare_exchange": {
+        const current = this.storage.get(params.key) ?? null;
+        if (current !== params.expected) return { swapped: false, value: current };
+        this.storage.set(params.key, params.value);
+        return { swapped: true, value: params.value };
+      }
+      case "host.service.call": {
+        assert.equal(params.service, "host.file-lock");
+        if (params.method === "release") {
+          this.releases.get(params.params.lock_id)?.();
+          this.releases.delete(params.params.lock_id);
+          return { released: true };
+        }
+        assert.equal(params.method, "acquire");
+        const key = `${params.params.root}:${params.params.path}`;
+        const previous = this.locks.get(key);
+        let release;
+        const pending = new Promise(resolve => { release = resolve; });
+        this.locks.set(key, pending);
+        await previous;
+        const lock_id = `lock-${++this.counter}`;
+        this.releases.set(lock_id, () => { if (this.locks.get(key) === pending) this.locks.delete(key); release(); });
+        return { lock_id };
+      }
+      default: throw new Error(`Unexpected service ${service}`);
+    }
+  }
+}
+const execution = { executionId: "fixture", signal: new AbortController().signal };
+const day = (offset = 0) => new Date(Date.now() - 86_400_000 + offset * 1000).toISOString();
+const source = (ref, offset = 0) => [{ kind: "message", ref, occurred_at: day(offset) }];
+function value(result) { return JSON.parse(result.result.content[0].text); }
+async function fixture(t, host = new Host(), domain = "personal") {
+  const dir = await mkdtemp(join(tmpdir(), "wuu-personal-memory-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const plugin = createMemoryPlugin();
+  const params = { protocol_version: 3, plugin_id: "memory", plugin_root: dir, project_root: dir, wuu_home: dir,
+    workspace_state_dir: join(dir, "workspace"), ...(domain === "personal" ? { product_domain: "personal", user_space_id: "local" } : {}) };
+  const definition = await plugin.initialize(params, host, { signal: execution.signal });
+  await plugin.activate(host, { signal: execution.signal });
+  const service = (method, params, session_id = "a-main") => plugin.invokeService({ service: "memory.records", method, caller: "fixture", params: { session_id, ...params } }, host, execution);
+  const tool = (method, args, session_id = "a-main") => plugin.executeTool({ tool_id: `personal_memory_${method}`, arguments: args, session_id, call_id: "fixture", cwd: dir, tool: method }, host, execution).then(value);
+  return { plugin, params, definition, service, tool, host, dir };
+}
+const createArgs = (key, ref = key) => ({ key, expected_revision: 0, content: "Prefers tea", evidence: "explicit", sources: source(ref) });
+
+test("Personal records are shared, host-attributed and survive plugin restart without migrating Coding", async t => {
+  const f = await fixture(t);
+  const a = (await f.tool("create", createArgs("drink"))).record;
+  assert.equal(a.contributor_agent_id, "agent-a");
+  const b = (await f.tool("create", { ...createArgs("food"), content: "Enjoys noodles" }, "b-main")).record;
+  assert.equal(b.contributor_agent_id, "agent-b");
+  const worker = (await f.tool("create", createArgs("travel"), "a-worker")).record;
+  assert.equal(worker.contributor_agent_id, "agent-a");
+  assert.equal(worker.contributions[0].executor_session_id, "a-worker");
+  assert.equal((await f.service("query", {}, "b-main")).records.length, 3);
+  const fresh = createMemoryPlugin();
+  await fresh.initialize(f.params, f.host, { signal: execution.signal });
+  await fresh.activate(f.host, { signal: execution.signal });
+  const loaded = await fresh.invokeService({ service: "memory.records", method: "read", caller: "fixture", params: { session_id: "b-main", id: a.id } }, f.host, execution);
+  assert.equal(loaded.record.content, "Prefers tea");
+  assert.equal(f.host.releases.size, 0);
+});
+
+test("domain, userspace and contributor cannot be supplied to bypass authority", async t => {
+  const f = await fixture(t);
+  for (const injected of [{ product_domain: "coding" }, { user_space_id: "another-user" }, { contributor_agent_id: "agent-b" }, { session_id: "b-main" }]) {
+    await assert.rejects(f.tool("create", { ...createArgs("blocked"), ...injected }), /unexpected|not allowed|context/i);
+  }
+  await assert.rejects(f.service("query", {}, "foreign"), /space|scope|domain/i);
+  await assert.rejects(f.service("query", {}, "coding"), /domain|scope/i);
+  await assert.rejects(f.plugin.invokeService({ service: "memory.notebook", method: "index", caller: "fixture", params: {} }, f.host, execution), /domain|Personal|unavailable/i);
+  await assert.rejects(f.plugin.executeTool({ tool_id: "memory_read", arguments: { file: "MEMORY.md" } }, f.host, execution), /domain|Personal|unavailable/i);
+  const coding = await fixture(t, new Host(), "coding");
+  await assert.rejects(coding.service("query", {}), /domain|Personal|unavailable|provide/i);
+  await coding.plugin.executeTool({ tool_id: "memory_write", arguments: { file: "MEMORY.md", content: "Coding notebook remains" } }, coding.host, execution);
+  assert.equal(await readFile(join(coding.dir, "memory/MEMORY.md"), "utf8"), "Coding notebook remains");
+  assert(!coding.definition.provided_services.some(service => service.name === "memory.records"));
+});
+
+test("simultaneous cross-agent corrections have one winner and expose current revision", async t => {
+  const f = await fixture(t);
+  const first = (await f.service("create", createArgs("address"))).record;
+  const changes = ["a-main", "b-main"].map((actor, i) => f.service("correct", { id: first.id, expected_revision: 1, content: `New address ${i}`, evidence: "explicit", sources: source(`correction-${i}`, i + 10) }, actor));
+  const results = await Promise.allSettled(changes);
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+  const failure = results.find(result => result.status === "rejected");
+  assert.match(failure.reason.message, /revision_conflict.*2/);
+  const current = (await f.service("read", { id: first.id })).record;
+  assert.equal(current.revision, 2);
+  assert.equal(current.contributions.length, 2);
+  assert.equal(f.host.releases.size, 0);
+});
+
+test("correction wins over old extraction and refreshes another agent's next model step", async t => {
+  const f = await fixture(t);
+  const first = (await f.service("create", { ...createArgs("address", "old-chat"), content: "Lives at Old Street" })).record;
+  const input = { session_id: "a-main", step_index: 0, messages: [{ role: "user", content: "What address should I use?" }] };
+  const before = await f.plugin.invokeCapability({ capability: "agent.pre_step", input, output: {} }, f.host, execution);
+  assert.match(JSON.stringify(before), /Old Street/);
+  await f.service("correct", { id: first.id, expected_revision: 1, content: "Lives at New Street", evidence: "explicit", sources: source("new-chat", 10) }, "b-main");
+  const after = await f.plugin.invokeCapability({ capability: "agent.pre_step", input: { ...input, step_index: 1 }, output: {} }, f.host, execution);
+  assert.match(JSON.stringify(after), /New Street/);
+  assert(!JSON.stringify(after).includes("Old Street"));
+  await assert.rejects(f.service("revise", { id: first.id, expected_revision: 2, content: "Lives at Old Street", evidence: "explicit", sources: source("old-chat") }), /stale_source|superseded_source/);
+  await assert.rejects(f.service("create", createArgs("renamed-address", "old-chat")), /superseded_source/);
+  await assert.rejects(f.service("revise", { id: first.id, expected_revision: 2, content: "New guess", evidence: "inferred", sources: source("guess", 30) }, "b-main"), /contributor|author/);
+});
+
+test("forget purges content and traces, blocks old-source recreation across restart, and leaves Coding alone", async t => {
+  const f = await fixture(t);
+  const first = (await f.service("create", { ...createArgs("private-location", "chat-sensitive"), content: "Sensitive address to forget", topic: "Sensitive location", task_id: "private-trip" })).record;
+  const forgotten = await f.service("forget", { id: first.id, expected_revision: 1 }, "b-main");
+  assert.equal(forgotten.record.status, "forgotten");
+  assert.equal((await f.service("query", {})).records.length, 0);
+  assert(!JSON.stringify([...f.host.storage.values()]).includes("Sensitive"));
+  assert(!JSON.stringify([...f.host.storage.values()]).includes("chat-sensitive"));
+  assert(!JSON.stringify([...f.host.storage.values()]).includes("private-trip"));
+  await assert.rejects(f.service("create", createArgs("rephrased-location", "chat-sensitive")), /forgotten_source/);
+  const fresh = await fixture(t, f.host);
+  await assert.rejects(fresh.service("create", createArgs("new-record", "chat-sensitive")), /forgotten_source/);
+  await assert.rejects(fresh.service("correct", { id: first.id, expected_revision: 2, content: "Restore old fact", evidence: "explicit", sources: source("new-chat", 10) }), /forgotten/);
+  assert.match(JSON.stringify(forgotten.retention), /chat|histor/i);
+});
+
+test("expired, future-effective and conflicting facts stay out of ordinary recall", async t => {
+  const f = await fixture(t);
+  const expires_at = new Date(Date.now() - 1000).toISOString();
+  await f.service("create", { ...createArgs("temporary"), expires_at });
+  await f.service("create", { ...createArgs("future"), effective_at: new Date(Date.now() + 86_400_000).toISOString() });
+  const current = (await f.service("create", createArgs("disputed"))).record;
+  const conflict = await f.service("revise", { id: current.id, expected_revision: 1, content: "Maybe coffee", evidence: "inferred", sources: source("uncertain", 20) });
+  assert.equal(conflict.record.status, "conflict");
+  assert.equal((await f.service("query", {})).records.length, 0);
+  assert.equal((await f.service("query", { include_inactive: true })).records.length, 3);
+  const resolved = await f.service("correct", { id: current.id, expected_revision: 2, content: "Prefers tea", evidence: "explicit", sources: source("resolved", 40) }, "b-main");
+  assert.equal(resolved.record.status, "active");
+  assert.equal((await f.service("query", {})).records.length, 1);
+});
+
+test("cancelled writes do not publish data or retain locks", async t => {
+  const f = await fixture(t);
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(f.plugin.invokeService({ service: "memory.records", method: "create", caller: "fixture", params: { ...createArgs("cancelled"), session_id: "a-main" } }, f.host, { executionId: "cancelled", signal: controller.signal }));
+  assert.equal(f.host.storage.size, 0);
+  assert.equal(f.host.releases.size, 0);
+});
+
+test("persisted prompt provenance invalidates stale context after reload and avoids unchanged reinjection", async t => {
+  const f = await fixture(t);
+  const first = (await f.service("create", { ...createArgs("address"), content: "Lives at Original Street" })).record;
+  const initial = { session_id: "a-main", step_index: 0, messages: [{ role: "user", content: "Which address should I use?" }] };
+  const before = await f.plugin.invokeCapability({ capability: "agent.pre_step", input: initial }, f.host, execution);
+  const emitted = before.output.append_messages[0];
+  const messages = [...initial.messages, { role: "user", hidden: true, read_only: true, origin: "plugin", origin_id: `memory:${emitted.id}`, content: emitted.content }];
+  const unchanged = await f.plugin.invokeCapability({ capability: "agent.pre_step", input: { ...initial, messages } }, f.host, execution);
+  assert.equal(unchanged.output.append_messages?.length ?? 0, 0);
+  await f.service("correct", { id: first.id, expected_revision: 1, content: "Lives at Updated Street", evidence: "explicit", sources: source("correction-reload", 10) }, "b-main");
+  const restarted = createMemoryPlugin(); await restarted.initialize(f.params, f.host, { signal: execution.signal });
+  const after = await restarted.invokeCapability({ capability: "agent.pre_step", input: { ...initial, messages: [...messages, { role: "user", content: "Please arrange it" }] } }, f.host, execution);
+  assert.match(JSON.stringify(after), /Updated Street/);
+  assert(!JSON.stringify(after).includes("Original Street"));
+});
+
+test("the same source reference cannot produce duplicate independently forgettable facts", async t => {
+  const f = await fixture(t);
+  const first = (await f.service("create", createArgs("drink-original", "chat-1#drink"))).record;
+  await assert.rejects(f.service("create", createArgs("drink-duplicate", "chat-1#drink")), /source_already_recorded/);
+  assert.equal((await f.service("query", {})).records.length, 1);
+  await f.service("forget", { id: first.id, expected_revision: 1 });
+  assert.equal((await f.service("query", {})).records.length, 0);
+});

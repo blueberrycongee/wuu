@@ -50,15 +50,18 @@ import (
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 	"github.com/blueberrycongee/wuu/internal/version"
-	"github.com/blueberrycongee/wuu/internal/workspaces"
 )
 
 // Options describes the shared agent runtime needed by interactive clients.
 // The shape is intentionally UI-neutral so desktop and protocol clients can
 // attach without rebuilding the agent.
 type Options struct {
-	RootDir string
+	UserHostIsolationVerifier UserHostIsolationVerifier
+	UserSpaceID               string
+	ProductDomain             string
+	RootDir                   string
 	// Host is immutable process metadata supplied by the shell or cloud
 	// control plane. Its zero value resolves to a local host.
 	Host Host
@@ -118,6 +121,9 @@ const (
 // stream runner. UI surfaces should depend on this instead of reassembling the
 // pieces themselves.
 type Session struct {
+	UserSpaceID              string
+	ProductDomain            string
+	DataRoot                 string
 	ProviderName             string
 	Model                    string
 	RootDir                  string
@@ -230,6 +236,7 @@ func (s *Session) cloneForThreadModel() (*Session, error) {
 	s.pluginGenerationMu.Lock()
 	defer s.pluginGenerationMu.Unlock()
 	clone := &Session{
+		UserSpaceID: s.UserSpaceID, ProductDomain: s.ProductDomain, DataRoot: s.DataRoot,
 		ProviderName:                s.ProviderName,
 		Model:                       s.Model,
 		RootDir:                     s.RootDir,
@@ -375,6 +382,13 @@ func browserEnabledFromEnv() bool {
 }
 
 func NewSession(opts Options) (*Session, error) {
+	binding := userspace.Binding{UserSpaceID: strings.TrimSpace(opts.UserSpaceID), ProductDomain: strings.TrimSpace(opts.ProductDomain)}
+	if err := binding.Validate(); err != nil {
+		return nil, err
+	}
+	if binding.IsUser() && opts.WorkspaceID != "" {
+		return nil, errors.New("user host cannot bind a workspace")
+	}
 	rootDir := strings.TrimSpace(opts.RootDir)
 	if rootDir == "" {
 		return nil, fmt.Errorf("root dir is required")
@@ -383,11 +397,25 @@ func NewSession(opts Options) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := withDesktopExecutionDefaults(opts.Config, opts.DesktopExecutionDefaults)
+	cfg := userHostConfig(withDesktopExecutionDefaults(opts.Config, opts.DesktopExecutionDefaults), binding)
 
 	wuuHome, err := statepath.Home(opts.HomeDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve wuu home: %w", err)
+	}
+	if err := VerifyUserHostIsolation(context.Background(), binding, wuuHome, opts.UserHostIsolationVerifier); err != nil {
+		return nil, err
+	}
+	dataRoot := wuuHome
+	if binding.IsUser() {
+		rootDir = binding.Root(wuuHome)
+		dataRoot = binding.State(wuuHome)
+		if err := os.MkdirAll(rootDir, 0700); err != nil {
+			return nil, err
+		}
+		if err := os.MkdirAll(dataRoot, 0700); err != nil {
+			return nil, err
+		}
 	}
 	startupPluginLease, acquired, err := session.TryAcquirePluginGenerationExecutionLease(wuuHome)
 	if err != nil {
@@ -407,7 +435,13 @@ func NewSession(opts Options) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace state directory: %w", err)
 	}
-	sessionDir := statepath.SessionsDir(wuuHome)
+	if binding.IsUser() {
+		workspaceStateDir, err = userHostWorkspaceStateDir(wuuHome, rootDir, binding)
+		if err != nil {
+			return nil, err
+		}
+	}
+	sessionDir := statepath.SessionsDir(dataRoot)
 	journalRuntime, err := session.NewInferenceJournalRuntime(sessionDir, inferenceJournalWorkspaceScope(workspaceID, rootDir))
 	if err != nil {
 		return nil, fmt.Errorf("initialize inference journal: %w", err)
@@ -462,7 +496,7 @@ func NewSession(opts Options) (*Session, error) {
 		titleClient = roleClient
 	}
 
-	providers.InitDebugLog(statepath.LogDir(wuuHome))
+	providers.InitDebugLog(statepath.LogDir(dataRoot))
 	setupCatwalk(cfg)
 
 	catalogLease, catalogAcquired, err := session.TryAcquirePluginCatalogReadLease(wuuHome)
@@ -508,7 +542,7 @@ func NewSession(opts Options) (*Session, error) {
 	if !opts.NonInteractive {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
-	pluginHost, pluginKernel := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions)
+	pluginHost, pluginKernel := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions, binding)
 	activePlugins = availablePluginPackages(activePlugins, pluginHost)
 	systemPrompts, compactions, capabilityErr := buildPluginAgentCapabilities(context.Background(), pluginHost, resolvedName, providerCfg.Model, rootDir)
 	if capabilityErr != nil {
@@ -517,9 +551,16 @@ func NewSession(opts Options) (*Session, error) {
 		cancel()
 		return nil, errors.Join(capabilityErr, closeErr)
 	}
-	hookDispatcher := buildHookDispatcher(cfg, activePlugins, providers.Client(client), toolModeModel, workspaceJournal)
+	hookConfig := cfg
+	if binding.IsUser() {
+		hookConfig.Hooks = nil
+	}
+	hookDispatcher := buildHookDispatcher(hookConfig, activePlugins, providers.Client(client), toolModeModel, workspaceJournal)
 	pluginSkills := discoverPluginSkills(activePlugins)
-	discoveredSkills := discoverSkillsWithPlugins(rootDir, opts.HomeDir, wuuHome, pluginSkills, cfg.Skills)
+	var discoveredSkills []skills.Skill
+	if !binding.IsUser() {
+		discoveredSkills = discoverSkillsWithPlugins(rootDir, opts.HomeDir, wuuHome, pluginSkills, cfg.Skills)
+	}
 
 	processMgr, err := process.NewManager(rootDir, statepath.RuntimeDir(workspaceStateDir))
 	if err != nil {
@@ -545,8 +586,9 @@ func NewSession(opts Options) (*Session, error) {
 			return nil, newErr
 		}
 		kit.SetStateDir(workspaceStateDir)
-		kit.SetWorkingNotesHome(wuuHome)
-		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
+		kit.SetProtectedPaths(memoryProtectedPaths(wuuHome, binding))
+		kit.SetWorkingNotesHome(dataRoot)
+		kit.SetArtifactPublisher(newArtifactPublisher(dataRoot))
 		kit.SetWorkspaceID(workspaceID)
 		kit.SetProcessManager(processMgr)
 		kit.SetSkills(discoveredSkills)
@@ -569,7 +611,7 @@ func NewSession(opts Options) (*Session, error) {
 			})
 			return err
 		})
-		kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome))
+		kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), wuuHome, binding))
 		kit.SetOnFileChanged(func(absPath string) {
 			_, _ = hookDispatcher.Dispatch(context.Background(), hooks.FileChanged, &hooks.Input{
 				CWD:      rootDir,
@@ -578,7 +620,9 @@ func NewSession(opts Options) (*Session, error) {
 		})
 		toolkit = kit
 		toolExecutor = newPluginAwareToolExecutor(kit, pluginHost, hookDispatcher, "", "", rootDir)
-		connectMCPServers(cfg, activePlugins, toolkit, mcpOAuth)
+		if !binding.IsUser() {
+			connectMCPServers(cfg, activePlugins, toolkit, mcpOAuth)
+		}
 	}
 
 	// Interpreter processes start only when called. Thread clones share lifecycle
@@ -589,7 +633,10 @@ func NewSession(opts Options) (*Session, error) {
 		toolkit.ConfigurePTC(codeModeService, cfg.PTC)
 	}
 
-	instructionFiles := discoverInstructions(rootDir, opts.HomeDir, cfg.Instructions)
+	var instructionFiles []instructions.File
+	if !binding.IsUser() {
+		instructionFiles = discoverInstructions(rootDir, opts.HomeDir, cfg.Instructions)
+	}
 	// Freeze the environment date once at session start. Every system-prompt
 	// build in this session (base, worker, per-thread rebuild) reuses this
 	// frozen value so the cached system prefix does not drift when threads
@@ -610,7 +657,7 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, err
 	}
 	mainSurface.DeferredToolCatalog = deferredToolCatalogPrompt
-	baseSystemPromptResult := buildBaseSystemPromptResult(rootDir, sessionDate, config.DefaultSystemPrompt(), "", resolvedName, toolModeModel, mainSurface, instructionFiles, "", "", discoveredSkills)
+	baseSystemPromptResult := buildBaseSystemPromptResult(rootDir, sessionDate, runtimeBasePrompt(binding), "", resolvedName, toolModeModel, mainSurface, instructionFiles, "", "", discoveredSkills)
 	baseSystemPrompt, pluginPromptSections := assemblePluginSystemPrompt(baseSystemPromptResult.Content, systemPrompts)
 	baseSystemPromptSections := append(agentPromptSections(baseSystemPromptResult.Sections), pluginPromptSections...)
 
@@ -681,7 +728,7 @@ func NewSession(opts Options) (*Session, error) {
 				}
 				// Reset the inherited file-scope whitelist to the standard
 				// workspace, registered-project, and temporary roots.
-				wkit.SetFileScopeRoots(workspaces.BoundaryRoots(workerRoot, wuuHome))
+				wkit.SetFileScopeRoots(runtimeFileScopeRoots(workerRoot, wuuHome, binding))
 				workerStateDir := workspaceStateDir
 				if workerRoot != rootDir {
 					if dir, err := statepath.WorkspaceDir(wuuHome, workerRoot); err == nil {
@@ -710,7 +757,7 @@ func NewSession(opts Options) (*Session, error) {
 				_, err := hookDispatcher.Dispatch(ctx, hooks.SubagentStop, &hooks.Input{CWD: rootDir, AgentID: agentID})
 				return err
 			},
-			ParticipantStore: sessionParticipantStore{sessDir: statepath.SessionsDir(wuuHome)},
+			ParticipantStore: sessionParticipantStore{sessDir: sessionDir},
 			MaxParallel:      cfg.Agent.MaxParallelValue(),
 			InferenceJournal: workspaceJournal,
 			ToolLedgerFactory: func(ownerID string) (*toolledger.Ledger, error) {
@@ -772,6 +819,7 @@ func NewSession(opts Options) (*Session, error) {
 	}
 
 	runtimeSession = &Session{
+		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, DataRoot: dataRoot,
 		ProviderName:                resolvedName,
 		Model:                       providerCfg.Model,
 		RootDir:                     rootDir,
@@ -980,7 +1028,7 @@ func (s *Session) LoadEffectiveConfig() (config.Config, string, error) {
 	default:
 		return config.Config{}, "", fmt.Errorf("unknown config load mode %d", s.ConfigLoadMode)
 	}
-	return withDesktopExecutionDefaults(cfg, s.DesktopExecutionDefaults), path, err
+	return userHostConfig(withDesktopExecutionDefaults(cfg, s.DesktopExecutionDefaults), s.UserBinding()), path, err
 }
 
 func withDesktopExecutionDefaults(cfg config.Config, enabled bool) config.Config {
@@ -1254,7 +1302,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	shadow.WorkerClient = workerClient
 
 	promptResult := buildBaseSystemPromptResult(
-		threadRoot, shadow.SessionDate, config.DefaultSystemPrompt(), "",
+		threadRoot, shadow.SessionDate, runtimeBasePrompt(shadow.UserBinding()), "",
 		resolvedName, apiModel, activeSurfaceWithDeferredToolCatalog(shadow.Toolkit, shadow.DeferredToolCatalogPrompt),
 		shadow.InstructionFiles, "", "", shadow.AvailableSkills(),
 	)
@@ -1361,7 +1409,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			return nil, err
 		}
 		kit.SetStateDir(stateDir)
-		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
+		kit.SetArtifactPublisher(newArtifactPublisher(s.ProductDataRoot()))
 		kit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 		kit.SetProcessManager(threadProcessManager)
 		kit.SetSkillsWithAvailability(threadSkills, generation.skillAvailable)
@@ -1371,7 +1419,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetSessionID(id)
 		kit.SetSessionDir(artifactDir)
 		kit.SetSessionsDir(s.SessionDir)
-		kit.SetWorkingNotesHome(wuuHome)
+		kit.SetWorkingNotesHome(s.ProductDataRoot())
 		kit.SetBrowserTabs(browserTabs)
 		kit.SetImageInputSupported(s.ModelRoles.Main.Capabilities.ImageInput)
 		kit.SetAgentIdentity(id, agentthread.RootPath)
@@ -1379,7 +1427,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		// Rebase the file-scope whitelist on the thread root (the clone
 		// inherited the parent session's roots): thread root + registered
 		// workspaces + temp + artifact extras.
-		kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome, fileScopeExtras...))
+		kit.SetFileScopeRoots(runtimeFileScopeRoots(kit.RootDir(), wuuHome, s.UserBinding(), fileScopeExtras...))
 		if err := s.configureExecutionEnvironment(kit, id, artifactDir); err != nil {
 			return nil, err
 		}
@@ -1469,7 +1517,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					}
 					// Reset the inherited file-scope whitelist: a worker gets
 					// the standard workspace boundary roots.
-					workerKit.SetFileScopeRoots(workspaces.BoundaryRoots(workerRoot, wuuHome))
+					workerKit.SetFileScopeRoots(runtimeFileScopeRoots(workerRoot, wuuHome, s.UserBinding()))
 					workerKit.ConfigureSurfaceForProviderModel(workerToolProviderName, workerToolModeModel, false)
 					workerStateDir := stateDir
 					if !sameRuntimeRoot(workerRoot, threadRoot) {
@@ -1510,7 +1558,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					_, err := dispatcher.Dispatch(ctx, hooks.SubagentStop, &hooks.Input{SessionID: id, CWD: threadRoot, AgentID: agentID})
 					return err
 				},
-				ParticipantStore: sessionParticipantStore{sessDir: statepath.SessionsDir(wuuHome)},
+				ParticipantStore: sessionParticipantStore{sessDir: s.SessionDir},
 				MaxParallel:      s.MaxParallel(),
 				InferenceJournal: s.InferenceJournalForOwner(id),
 				ToolLedgerFactory: func(ownerID string) (*toolledger.Ledger, error) {
@@ -1538,7 +1586,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		if model == "" {
 			model = runner.Model
 		}
-		result := buildBaseSystemPromptResult(threadRoot, s.SessionDate, config.DefaultSystemPrompt(), "", s.ProviderName, model, activeSurfaceWithDeferredToolCatalog(kit, s.DeferredToolCatalogPrompt), threadInstructions, "", "", threadSkills)
+		result := buildBaseSystemPromptResult(threadRoot, s.SessionDate, runtimeBasePrompt(s.UserBinding()), "", s.ProviderName, model, activeSurfaceWithDeferredToolCatalog(kit, s.DeferredToolCatalogPrompt), threadInstructions, "", "", threadSkills)
 		assembler := s.systemPrompts
 		if generation != nil {
 			assembler = generation.systemPrompts
@@ -2750,6 +2798,9 @@ func BoundaryForMode(mode string) tools.WorkspaceBoundary {
 // guidanceForRoot preserves the pinned plugin generation and user discovery
 // configuration while replacing project guidance with the actual checkout.
 func (s *Session) guidanceForRoot(root string, generation *PluginGeneration) ([]instructions.File, []skills.Skill) {
+	if s.UserBinding().IsUser() {
+		return nil, nil
+	}
 	files, discovered, _ := s.skillSnapshotForRoot(root, generation)
 	return files, discovered
 }
@@ -2757,6 +2808,9 @@ func (s *Session) guidanceForRoot(root string, generation *PluginGeneration) ([]
 // Return the owner with its content so callers never combine old skill bytes
 // with a replacement generation's admission gate.
 func (s *Session) skillSnapshotForRoot(root string, generation *PluginGeneration) ([]instructions.File, []skills.Skill, *PluginGeneration) {
+	if s.UserBinding().IsUser() {
+		return nil, nil, generation
+	}
 	s.pluginGenerationMu.Lock()
 	snapshot, discovered := s.pluginSkills, s.Skills
 	skillConfig := s.skillsConfig
@@ -2822,7 +2876,7 @@ func (s *Session) refreshSystemPromptWithSkills(providerName, model string, disc
 	baseSystemPromptResult := buildBaseSystemPromptResult(
 		s.RootDir,
 		s.SessionDate,
-		config.DefaultSystemPrompt(),
+		runtimeBasePrompt(s.UserBinding()),
 		"",
 		providerName,
 		model,
@@ -2865,13 +2919,19 @@ func (s *Session) ApplyGeneralConfig(cfg config.Config, homeDir string) string {
 	if strings.TrimSpace(homeDir) == "" {
 		homeDir = os.Getenv("HOME")
 	}
+	cfg = userHostConfig(cfg, s.UserBinding())
 	s.executionEnvironmentConfig = cfg.ExecutionEnvironments
 	s.instructionConfig = cfg.Instructions
-	s.InstructionFiles = discoverInstructions(s.RootDir, homeDir, cfg.Instructions)
+	if s.UserBinding().IsUser() {
+		s.InstructionFiles = nil
+		s.Skills = nil
+	} else {
+		s.InstructionFiles = discoverInstructions(s.RootDir, homeDir, cfg.Instructions)
+	}
 	if s.Toolkit != nil {
 		s.Toolkit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 		s.Toolkit.ConfigurePTC(s.CodeMode, cfg.PTC)
-		s.Toolkit.SetFileScopeRoots(workspaces.BoundaryRoots(s.Toolkit.RootDir(), s.WuuHome))
+		s.Toolkit.SetFileScopeRoots(runtimeFileScopeRoots(s.Toolkit.RootDir(), s.WuuHome, s.UserBinding()))
 	}
 	apiModel := s.Model
 	if s.StreamRunner != nil && strings.TrimSpace(s.StreamRunner.APIModel) != "" {

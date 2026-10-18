@@ -283,6 +283,7 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 }
 
 func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpkg.Plugin, required map[string]bool, ownedRoots []string, start pluginClientStarter) (*PluginGeneration, error) {
+	cfg = userHostConfig(cfg, s.UserBinding())
 	var active []pluginpkg.Plugin
 	if !s.SafeMode {
 		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered)
@@ -313,7 +314,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 			}
 		}
 	}
-	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions)
+	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, s.UserBinding())
 	if err != nil {
 		for _, root := range ownedRoots {
 			_ = os.RemoveAll(root)
@@ -346,6 +347,10 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		return nil, errors.Join(err, closeErr)
 	}
 	pluginSkills := discoverPluginSkills(active)
+	var discoveredSkills []skills.Skill
+	if !s.UserBinding().IsUser() {
+		discoveredSkills = discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, pluginSkills, cfg.Skills)
+	}
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
 		id:                generationID,
@@ -354,7 +359,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		active:            append([]pluginpkg.Plugin(nil), active...),
 		host:              host,
 		hooks:             buildHookDispatcher(cfg, active, s.TitleClient, s.Model, nil),
-		skills:            discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, pluginSkills, cfg.Skills),
+		skills:            discoveredSkills,
 		pluginSkills:      pluginSkills,
 		mcpBinding:        mcpActivityBindingsFromPlugins(active, generationID),
 		requestTransforms: buildPluginRequestTransforms(host, s.ProviderName, "", s.RootDir),
@@ -363,7 +368,9 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		ownedRoots:        append([]string(nil), ownedRoots...),
 		driverGateways:    kernel.driverGateways,
 	}
-	generation.mcp, err = startMCPManager(cfg, active, required, s.mcpOAuth)
+	if !s.UserBinding().IsUser() {
+		generation.mcp, err = startMCPManager(cfg, active, required, s.mcpOAuth)
+	}
 	if err != nil {
 		_ = generation.close()
 		s.persistRevocationReport(generation)
@@ -439,7 +446,11 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		candidate.revokeMissingPlugins(activeIDs, s.TitleClient, s.Model)
 		candidate.active = available
 		candidate.pluginSkills = discoverPluginSkills(available)
-		candidate.skills = discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, candidate.pluginSkills, candidate.settings.Skills)
+		if !s.UserBinding().IsUser() {
+			candidate.skills = discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, candidate.pluginSkills, candidate.settings.Skills)
+		} else {
+			candidate.skills = nil
+		}
 		candidate.mcpBinding = mcpActivityBindingsFromPlugins(available, candidate.id)
 	}
 	// Preparation materializes native contributions before the effectful

@@ -161,7 +161,9 @@ var KERNEL_SERVICE_NAMES = {
   "host.session.list": "host.session.list",
   "host.session.cancel": "host.session.cancel",
   "host.session.inspect": "host.session.inspect",
+  "host.session.context": "host.session.context",
   "host.session.control": "host.session.control",
+  "host.session.attachment.read": "host.session.attachment.read",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
   "host.workspace.status": "host.workspace.status",
@@ -480,6 +482,9 @@ function isRuntimeRequest(value) {
   return ["initialize", "capability.invoke", "service.invoke", "service.changed", "tool.execute"].includes(request.method) && typeof request.params === "object" && request.params !== null;
 }
 
+// plugins/automation/src/user-routines.ts
+import { createHash, randomUUID } from "node:crypto";
+
 // plugins/automation/src/schedule.ts
 var bounds = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
 function integer(value) {
@@ -577,6 +582,203 @@ function parseCronExpression(input) {
   return new CronExpression(fields);
 }
 
+// plugins/automation/src/user-routines.ts
+var digest = (value) => createHash("sha256").update(value).digest("hex").slice(0, 32);
+var object = (input) => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("expected routine parameters");
+  return input;
+};
+function mutation(input) {
+  const value = object(input);
+  if (typeof value.binding_id !== "string" || !value.binding_id || typeof value.request_id !== "string" || !value.request_id || !Number.isSafeInteger(value.expected_revision) || Number(value.expected_revision) < 0) throw new Error("binding_id, request_id, and expected_revision are required");
+  for (const key of ["cron", "run_at", "timezone", "missed_policy"]) if (value[key] !== void 0 && typeof value[key] !== "string") throw new Error(`${key} must be a string`);
+  return { ...value, ...value.payload ? { payload: object(value.payload) } : {} };
+}
+var UserRoutineScheduler = class {
+  constructor(host, space, clock = () => /* @__PURE__ */ new Date()) {
+    this.host = host;
+    this.clock = clock;
+    this.prefix = `routines.v1.${digest(space)}.`;
+  }
+  prefix;
+  instance = randomUUID();
+  stopped = false;
+  stop() {
+    this.stopped = true;
+  }
+  key(id) {
+    return `${this.prefix}${digest(id)}`;
+  }
+  async raw(id) {
+    return this.host.call("host.storage.get", { scope: "user", key: this.key(id) });
+  }
+  async read(id) {
+    const { value } = await this.raw(id);
+    if (!value) throw new Error("routine binding not found");
+    return JSON.parse(value);
+  }
+  async list(owner) {
+    const { keys } = await this.host.call("host.storage.keys", { scope: "user" });
+    const records = [];
+    for (const key of keys.filter((k) => k.startsWith(this.prefix))) {
+      const { value } = await this.host.call("host.storage.get", { scope: "user", key });
+      if (value) {
+        const record = JSON.parse(value);
+        if (!owner || owner === record.owner) records.push(record);
+      }
+    }
+    return records;
+  }
+  async update(id, change) {
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const { value } = await this.raw(id);
+      const current = value ? JSON.parse(value) : void 0;
+      const next = change(current);
+      if (!next || next === current) return next;
+      const saved = await this.host.call("host.storage.compare_exchange", { scope: "user", key: this.key(id), expected: value, value: JSON.stringify(next) });
+      if (saved.swapped) return next;
+    }
+    throw new Error("revision_conflict: routine binding is busy");
+  }
+  async upsert(raw, owner = "fixture") {
+    const input = mutation(raw);
+    const timezone = input.timezone || "UTC";
+    validateTimezone(timezone);
+    if (Boolean(input.cron) === Boolean(input.run_at)) throw new Error("provide exactly one cron or run_at schedule");
+    const cron = input.cron ? parseCronExpression(input.cron) : void 0;
+    if (input.run_at && !Number.isFinite(Date.parse(input.run_at))) throw new Error("invalid run_at timestamp");
+    if (input.missed_policy && !["run_once", "skip"].includes(input.missed_policy)) throw new Error("invalid missed policy");
+    const configuration = { cron: input.cron, run_at: input.run_at, timezone, missed_policy: input.missed_policy || "run_once", payload: input.payload ?? {} };
+    const hash = digest(JSON.stringify(configuration));
+    return await this.update(input.binding_id, (current) => {
+      if (current && current.owner !== owner) throw new Error("routine binding belongs to another consumer");
+      if (current?.request_id === input.request_id) {
+        if (current.request_hash !== hash) throw new Error("request_id_conflict");
+        return current;
+      }
+      if ((current?.revision ?? 0) !== input.expected_revision) throw new Error(`revision_conflict: current revision ${current?.revision ?? 0}`);
+      return {
+        binding_id: input.binding_id,
+        owner,
+        revision: (current?.revision ?? 0) + 1,
+        request_id: input.request_id,
+        request_hash: hash,
+        ...configuration,
+        status: "active",
+        next_run_at: cron ? cron.nextRun(this.clock(), timezone).toISOString() : new Date(input.run_at).toISOString()
+      };
+    });
+  }
+  async pause(raw, owner = "fixture", stop = false) {
+    const input = mutation(raw), hash = digest(stop ? "stop" : "pause");
+    return await this.update(input.binding_id, (current) => {
+      if (!current) throw new Error("routine binding not found");
+      if (current.owner !== owner) throw new Error("routine binding belongs to another consumer");
+      if (current.request_id === input.request_id) {
+        if (current.request_hash !== hash) throw new Error("request_id_conflict");
+        return current;
+      }
+      if (current.revision !== input.expected_revision) throw new Error(`revision_conflict: current revision ${current.revision}`);
+      return { ...current, revision: current.revision + 1, request_id: input.request_id, request_hash: hash, status: stop ? "stopped" : "paused", pending_event: void 0, next_run_at: void 0 };
+    });
+  }
+  async tick() {
+    if (this.stopped) return;
+    for (const snapshot of await this.list()) {
+      if (this.stopped) return;
+      const timestamp = this.clock();
+      if (snapshot.status !== "active" || !snapshot.pending_event && (!snapshot.next_run_at || Date.parse(snapshot.next_run_at) > timestamp.getTime())) continue;
+      const claimed = await this.update(snapshot.binding_id, (current) => {
+        if (!current || current.status !== "active" || current.revision !== snapshot.revision) return void 0;
+        let pending = current.pending_event;
+        if (pending?.retry_at && Date.parse(pending.retry_at) > timestamp.getTime()) return void 0;
+        if (pending?.lease_until && Date.parse(pending.lease_until) > timestamp.getTime()) return void 0;
+        if (!pending) {
+          if (!current.next_run_at || Date.parse(current.next_run_at) > timestamp.getTime()) return void 0;
+          if (current.missed_policy === "skip" && timestamp.getTime() - Date.parse(current.next_run_at) > 6e4) return { ...current, status: current.cron ? "active" : "completed", next_run_at: current.cron ? parseCronExpression(current.cron).nextRun(timestamp, current.timezone).toISOString() : void 0 };
+          pending = { event_id: `routine-event-${digest(`${current.binding_id}\0${current.revision}\0${current.next_run_at}`)}`, binding_revision: current.revision, scheduled_at: current.next_run_at, status: "pending" };
+        }
+        return { ...current, pending_event: { ...pending, lease_owner: this.instance, lease_until: new Date(timestamp.getTime() + 3e4).toISOString() } };
+      });
+      if (!claimed?.pending_event || claimed.pending_event.lease_owner !== this.instance) continue;
+      const event = claimed.pending_event;
+      try {
+        if (this.stopped) return;
+        const response = await this.host.call("host.service.call", { service: "automation.trigger", method: "fire", params: { binding_id: claimed.binding_id, event_id: event.event_id, binding_revision: event.binding_revision, scheduled_at: event.scheduled_at, payload: claimed.payload } });
+        if (this.stopped) return;
+        await this.update(claimed.binding_id, (current) => {
+          if (!current || current.revision !== claimed.revision || current.pending_event?.event_id !== event.event_id || current.pending_event.lease_owner !== this.instance) return current;
+          if (response.defer_until) {
+            if (!Number.isFinite(Date.parse(response.defer_until)) || Date.parse(response.defer_until) <= this.clock().getTime()) throw new Error("invalid trigger deferral");
+            return { ...current, pending_event: { ...event, lease_owner: void 0, lease_until: void 0, retry_at: response.defer_until } };
+          }
+          if (!response.accepted) throw new Error("trigger did not acknowledge the event");
+          return { ...current, pending_event: void 0, last_event_id: event.event_id, last_error: void 0, status: current.cron ? "active" : "completed", next_run_at: current.cron ? parseCronExpression(current.cron).nextRun(this.clock(), current.timezone).toISOString() : void 0 };
+        });
+      } catch (error) {
+        await this.update(claimed.binding_id, (current) => current?.pending_event?.event_id === event.event_id && current.pending_event.lease_owner === this.instance ? { ...current, pending_event: { ...current.pending_event, lease_owner: void 0, lease_until: void 0 }, last_error: String(error) } : current);
+      }
+    }
+  }
+};
+function createUserAutomationPlugin() {
+  let scheduler;
+  let timer;
+  let running = Promise.resolve();
+  const tick = () => {
+    running = running.then(() => scheduler.tick()).catch((error) => {
+      console.error("user routine recovery:", error);
+    });
+  };
+  return {
+    concurrentServices: ["automation.routines"],
+    initialize(params, host) {
+      if (!params.user_space_id) throw new Error("user routines require a trusted user space");
+      scheduler = new UserRoutineScheduler(host, params.user_space_id);
+      return {
+        protocol_version: 3,
+        tools: [],
+        capabilities: [],
+        required_services: [...["host.storage.get", "host.storage.keys", "host.storage.compare_exchange"].map(requireKernelService), { name: "automation.trigger", major_version: 1, required: false }],
+        provided_services: [{ name: "automation.routines", version: "1.0.0", methods: ["upsert", "read", "list", "pause", "stop"].map((name) => ({ name, input_schema: `automation.routines.${name}.input.v1`, output_schema: `automation.routines.${name}.output.v1` })) }]
+      };
+    },
+    activate(_host, lifecycle) {
+      lifecycle.signal.addEventListener("abort", () => {
+        clearInterval(timer);
+        scheduler.stop();
+      }, { once: true });
+      tick();
+      timer = setInterval(tick, 15e3);
+    },
+    async shutdown() {
+      clearInterval(timer);
+      scheduler.stop();
+      await running;
+    },
+    async invokeService(call) {
+      if (call.service !== "automation.routines") throw new Error("unknown routine service");
+      const input = object(call.params ?? {});
+      switch (call.method) {
+        case "upsert":
+          return { binding: await scheduler.upsert(input, call.caller) };
+        case "pause":
+        case "stop":
+          return { binding: await scheduler.pause(input, call.caller, call.method === "stop") };
+        case "list":
+          return { bindings: await scheduler.list(call.caller) };
+        case "read": {
+          const binding = await scheduler.read(String(input.binding_id ?? ""));
+          if (binding.owner !== call.caller) throw new Error("routine belongs to another consumer");
+          return { binding };
+        }
+        default:
+          throw new Error("unknown routine method");
+      }
+    }
+  };
+}
+
 // plugins/automation/src/index.ts
 var storageKey = "automation.state";
 var terminal = /* @__PURE__ */ new Set(["completed", "failed", "interrupted", "discarded"]);
@@ -585,7 +787,7 @@ function cleanPath(value) {
   const path = normalize(value || ".");
   return path.endsWith(sep) && path !== parse(path).root ? path.slice(0, -1) : path;
 }
-function object(value) {
+function object2(value) {
   if (value == null) return {};
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("expected a JSON object");
   return value;
@@ -600,7 +802,7 @@ function strings(value, keys) {
   return out;
 }
 function mutationInput(raw) {
-  const value = object(raw);
+  const value = object2(raw);
   const out = strings(value, ["action", "id", "title", "prompt", "schedule", "cron", "timezone", "mode", "heartbeat_thread_id", "workspace", "workspace_id", "workspace_root"]);
   for (const key of ["recurring", "paused", "durable"]) {
     if (value[key] == null) continue;
@@ -610,7 +812,7 @@ function mutationInput(raw) {
   return out;
 }
 function restoreTask(raw) {
-  const value = object(raw), input = mutationInput(value);
+  const value = object2(raw), input = mutationInput(value);
   const extra = strings(value, ["workspace_mode", "created_at", "next_run_at"]);
   for (const key of ["created_at", "next_run_at"]) if (extra[key] !== void 0 && !Number.isFinite(Date.parse(extra[key]))) throw new Error(`invalid timestamp ${key}`);
   return {
@@ -632,7 +834,7 @@ function restoreTask(raw) {
   };
 }
 function restoreRun(raw) {
-  const value = object(raw);
+  const value = object2(raw);
   const fields = strings(value, ["id", "task_id", "request_id", "status", "triggered_at", "completed_at", "session_id", "turn_id", "queue_id", "workspace_root", "error"]);
   for (const key of ["triggered_at", "completed_at"]) if (fields[key] !== void 0 && !Number.isFinite(Date.parse(fields[key]))) throw new Error(`invalid timestamp ${key}`);
   return { id: "", task_id: "", request_id: "", status: "", triggered_at: zeroTime, ...fields, task: restoreTask(value.task) };
@@ -654,7 +856,7 @@ var cronSchema = {
   },
   required: ["action"]
 };
-function createAutomationPlugin() {
+function createWorkspaceAutomationPlugin() {
   let host;
   let workspaceID = "", workspaceRoot = "";
   let tasks = /* @__PURE__ */ new Map(), runs = [];
@@ -921,7 +1123,7 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
       const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
       if (result.value != null) {
         try {
-          const state = object(JSON.parse(result.value));
+          const state = object2(JSON.parse(result.value));
           if (state.tasks != null && !Array.isArray(state.tasks)) throw new Error("tasks must be an array");
           if (state.runs != null && !Array.isArray(state.runs)) throw new Error("runs must be an array");
           for (const value of state.tasks || []) {
@@ -983,6 +1185,34 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
         return { output: {} };
       }
       throw new Error(`unknown capability ${JSON.stringify(call.capability)}`);
+    }
+  };
+}
+function createAutomationPlugin() {
+  let delegate;
+  return {
+    concurrentServices: ["automation.routines"],
+    initialize(params, host, lifecycle) {
+      delegate = params.user_space_id && params.product_domain === "personal" ? createUserAutomationPlugin() : createWorkspaceAutomationPlugin();
+      return delegate.initialize(params, host, lifecycle);
+    },
+    activate(host, lifecycle) {
+      return delegate.activate?.(host, lifecycle);
+    },
+    shutdown() {
+      return delegate.shutdown?.();
+    },
+    executeTool(call, host, execution) {
+      if (!delegate.executeTool) throw new Error("user routines are managed through the public service");
+      return delegate.executeTool(call, host, execution);
+    },
+    invokeCapability(call, host, execution) {
+      if (!delegate.invokeCapability) throw new Error("unsupported automation capability");
+      return delegate.invokeCapability(call, host, execution);
+    },
+    invokeService(call, host, execution) {
+      if (!delegate.invokeService) throw new Error("routine service requires a user-space host");
+      return delegate.invokeService(call, host, execution);
     }
   };
 }

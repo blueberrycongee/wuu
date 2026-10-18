@@ -32,12 +32,28 @@ func (s *Server) refreshExtensions(cfg config.Config) error {
 	return s.rt.RefreshExtensions(cfg)
 }
 
+// requireUserHostSessionOwnerLocked gates both the initial lease and the final
+// post-hook start boundary. A disabled owner cannot be revived by a generic
+// client turn or by a reservation acquired before generation publication.
+func (s *Server) requireUserHostSessionOwnerLocked(th *threadState) error {
+	if s == nil || s.rt == nil || !s.rt.UserBinding().IsUser() {
+		return nil
+	}
+	if pluginID, owned := strings.CutPrefix(th.Owner, "plugin:"); owned && !s.rt.UserHostPluginAvailable(pluginID) {
+		return fmt.Errorf("session owner plugin %q is unavailable", pluginID)
+	}
+	return nil
+}
+
 func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, error) {
 	if th == nil {
 		return false, errors.New("thread is required")
 	}
 	if projectExecutionDisabled(th.Source) {
 		return false, errProjectAgentDisabled
+	}
+	if err := s.requireUserHostSessionOwnerLocked(th); err != nil {
+		return false, err
 	}
 	if s != nil && s.pluginGenerationMutation.Load() {
 		return false, nil

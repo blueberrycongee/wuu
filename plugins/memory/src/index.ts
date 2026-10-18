@@ -6,10 +6,11 @@ import {
   type CapabilityInvokeParams, type RuntimeExecutionContext, type RuntimeHost,
   type RuntimeInitializeParams, type RuntimeInitializeResult, type RuntimePlugin,
   type ServiceInvokeParams, type ToolExecuteParams, type ToolExecuteResult,
-  type JSONSchemaObject,
+  type JSONSchemaObject, type AgentPreStepInput,
 } from "@wuu/plugin-sdk";
 import { frontmatter, INDEX_FILE, MAX_MEMORY_BYTES, missing, promptSection, readNotebookFile, readNotebookSnapshot, readSafeIndex, writeAtomicFile } from "./notebook.js";
 import { runSessionMemory, sessionMemorySchema } from "./workspace-memory.js";
+import { PersonalRecords, PERSONAL_MEMORY_SERVICE, PERSONAL_MEMORY_METHODS, personalMemoryPrompt, personalMemoryTools } from "./personal-records.js";
 
 const CAPABILITY_PROMPT = "agent.system_prompt.section";
 const CAPABILITY_CLIENT = "plugin.client.request";
@@ -55,6 +56,7 @@ class MemoryPlugin implements RuntimePlugin {
   private lifecycleHost!: RuntimeHost;
   private notebook = "";
   private workspaceStateDir = "";
+  private personal?: PersonalRecords;
   private readonly jobs = new Map<string, Job>();
   private readonly jobSnapshots = new Map<string, Map<string, FileStamp>>();
 
@@ -64,6 +66,22 @@ class MemoryPlugin implements RuntimePlugin {
     if (!home) throw new Error("memory plugin requires wuu_home");
     this.notebook = join(home, "memory");
     this.workspaceStateDir = params.workspace_state_dir?.trim() ?? "";
+    if (params.product_domain === "personal") {
+      this.personal = new PersonalRecords(params.user_space_id ?? "", host, params.plugin_id);
+      return {
+        tools: personalMemoryTools(),
+        capabilities: [
+          { id: CAPABILITY_PROMPT, kind: "transform", version: 1 },
+          { id: "agent.pre_step", kind: "transform", version: 1 },
+        ],
+        required_services: [
+          ...(["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.context"] as const).map(requireKernelService),
+          { name: FILE_LOCK_SERVICE, major_version: 1, required: true },
+        ],
+        provided_services: [{ name: PERSONAL_MEMORY_SERVICE, version: "1.0.0", methods: PERSONAL_MEMORY_METHODS.map(name => ({ name, input_schema: `memory.records.${name}.request.v1`, output_schema: `memory.records.${name}.response.v1` })) }],
+      };
+    }
+    if (params.product_domain && params.product_domain !== "coding") throw new Error("unsupported memory product domain");
     return {
       tools: [
         { id: "memory_list", description: "List the user's durable memory notebook files. Use only when durable cross-project user preferences, feedback, references, or lessons are relevant.", input_schema: objectSchema(), activity: { read_only: true, concurrency_safe: true, risk: "low" } },
@@ -89,11 +107,16 @@ class MemoryPlugin implements RuntimePlugin {
   }
 
   async activate(): Promise<void> {
+    if (this.personal) return;
     if (!this.notebook.trim()) throw new Error("memory: notebook path is required");
     await mkdir(this.notebook, { recursive: true, mode: 0o755 });
   }
 
-  async executeTool(call: ToolExecuteParams, _host: RuntimeHost, execution: RuntimeExecutionContext): Promise<ToolExecuteResult> {
+  async executeTool(call: ToolExecuteParams, host: RuntimeHost, execution: RuntimeExecutionContext): Promise<ToolExecuteResult> {
+    if (this.personal) {
+      if (!call.tool_id.startsWith("personal_memory_")) throw new Error("Coding memory tools are unavailable in the Personal domain");
+      return jsonResult(await this.personal.invoke(call.tool_id.slice("personal_memory_".length), object(call.arguments), call.session_id?.trim() || call.thread_id?.trim() || "", host, execution));
+    }
     if (call.tool_id === "memory_list") return jsonResult({ files: await this.readNotebook() });
     const input = object(call.arguments);
     if (call.tool_id === "session_memory") {
@@ -117,7 +140,12 @@ class MemoryPlugin implements RuntimePlugin {
     }
   }
 
-  async invokeCapability(call: CapabilityInvokeParams, host: RuntimeHost): Promise<{ output: unknown }> {
+  async invokeCapability(call: CapabilityInvokeParams, host: RuntimeHost, execution: RuntimeExecutionContext): Promise<{ output: unknown }> {
+    if (this.personal) {
+      if (call.capability === CAPABILITY_PROMPT) return { output: { text: personalMemoryPrompt() } };
+      if (call.capability === "agent.pre_step") return { output: await this.personal.preStep(call.input as AgentPreStepInput, host, execution) };
+      throw new Error("Coding memory capabilities are unavailable in the Personal domain");
+    }
     switch (call.capability) {
       case CAPABILITY_PROMPT: return { output: { text: promptSection(this.notebook, await readSafeIndex(this.notebook)) } };
       case CAPABILITY_CLIENT: {
@@ -129,7 +157,12 @@ class MemoryPlugin implements RuntimePlugin {
     }
   }
 
-  async invokeService(call: ServiceInvokeParams, _host: RuntimeHost, execution: RuntimeExecutionContext): Promise<unknown> {
+  async invokeService(call: ServiceInvokeParams, host: RuntimeHost, execution: RuntimeExecutionContext): Promise<unknown> {
+    if (this.personal) {
+      if (call.service !== PERSONAL_MEMORY_SERVICE) throw new Error("Coding memory services are unavailable in the Personal domain");
+      const { session_id, ...input } = object(call.params);
+      return this.personal.invoke(call.method, input, string(session_id), host, execution);
+    }
     if (call.service === NOTEBOOK_MEMORY_SERVICE) return readNotebookSnapshot(this.notebook, call.method, object(call.params));
     if (call.service !== SESSION_MEMORY_SERVICE) throw new Error(`memory plugin does not provide service ${JSON.stringify(call.service)}`);
     const params = object(call.params);
@@ -246,4 +279,6 @@ class MemoryPlugin implements RuntimePlugin {
 
 function compareNames(a: string, b: string): number { return Buffer.compare(Buffer.from(a), Buffer.from(b)); }
 
-export default new MemoryPlugin();
+export function createMemoryPlugin(): RuntimePlugin { return new MemoryPlugin(); }
+
+export default createMemoryPlugin();

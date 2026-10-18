@@ -79,7 +79,7 @@ func (s *Server) handleThreadAttachmentRead(req Request) error {
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		data, media, err := runtime.ReadManagedArtifact(s.rt.WuuHome, stateDir, params.ThreadID, artifactURI, 12*1024*1024)
+		data, media, err := runtime.ReadManagedArtifact(s.rt.ProductDataRoot(), stateDir, params.ThreadID, artifactURI, 12*1024*1024)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}

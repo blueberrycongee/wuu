@@ -3,6 +3,7 @@ package pluginhost
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -22,6 +23,9 @@ type SessionHistoryReadParams struct {
 }
 
 type SessionHistorySearchParams struct {
+	View        string `json:"view,omitempty"`
+	TimeMin     string `json:"time_min,omitempty"`
+	TimeMax     string `json:"time_max,omitempty"`
 	SessionID   string `json:"session_id"`
 	Query       string `json:"query"`
 	StartSeq    int    `json:"start_seq,omitempty"`
@@ -32,21 +36,51 @@ type SessionHistorySearchParams struct {
 	Cursor      string `json:"cursor,omitempty"`
 }
 
+type SessionHistoryAttachment struct {
+	Kind     string `json:"kind"`
+	Index    int    `json:"index"`
+	Name     string `json:"name"`
+	MIMEType string `json:"mime_type"`
+	Size     int64  `json:"size"`
+	SHA256   string `json:"sha256"`
+}
+
+type SessionAttachmentReadParams struct {
+	SessionID string `json:"session_id"`
+	Seq       int    `json:"seq"`
+	Kind      string `json:"kind"`
+	Index     int    `json:"index"`
+	SHA256    string `json:"sha256"`
+	Offset    int    `json:"offset,omitempty"`
+}
+
+type SessionAttachmentReadResult struct {
+	Data        string `json:"data"`
+	Offset      int    `json:"offset"`
+	Total       int    `json:"total"`
+	ContentType string `json:"content_type"`
+	Name        string `json:"name"`
+	SHA256      string `json:"sha256"`
+}
+
 type SessionHistoryRecord struct {
-	Seq              int    `json:"seq"`
-	Role             string `json:"role"`
-	Name             string `json:"name,omitempty"`
-	Content          string `json:"content,omitempty"`
-	DisplayContent   string `json:"display_content,omitempty"`
-	ReasoningContent string `json:"reasoning_content,omitempty"`
-	ToolCalls        string `json:"tool_calls,omitempty"`
-	ToolCallID       string `json:"tool_call_id,omitempty"`
-	ToolResult       string `json:"tool_result,omitempty"`
-	FinishReason     string `json:"finish_reason,omitempty"`
-	Truncated        bool   `json:"truncated,omitempty"`
+	At               string                     `json:"at,omitempty"`
+	Attachments      []SessionHistoryAttachment `json:"attachments,omitempty"`
+	Seq              int                        `json:"seq"`
+	Role             string                     `json:"role"`
+	Name             string                     `json:"name,omitempty"`
+	Content          string                     `json:"content,omitempty"`
+	DisplayContent   string                     `json:"display_content,omitempty"`
+	ReasoningContent string                     `json:"reasoning_content,omitempty"`
+	ToolCalls        string                     `json:"tool_calls,omitempty"`
+	ToolCallID       string                     `json:"tool_call_id,omitempty"`
+	ToolResult       string                     `json:"tool_result,omitempty"`
+	FinishReason     string                     `json:"finish_reason,omitempty"`
+	Truncated        bool                       `json:"truncated,omitempty"`
 }
 
 type SessionHistoryMatch struct {
+	At      string `json:"at,omitempty"`
 	Seq     int    `json:"seq"`
 	Role    string `json:"role"`
 	Name    string `json:"name,omitempty"`
@@ -81,6 +115,27 @@ func ValidateSessionHistoryReadParams(params SessionHistoryReadParams) error {
 }
 
 func ValidateSessionHistorySearchParams(params SessionHistorySearchParams) error {
+	if params.View != "" && params.View != "conversation" {
+		return &HostServiceError{Code: "invalid_params", Message: "unsupported history search view"}
+	}
+	var minimum, maximum time.Time
+	var err error
+	if params.TimeMin != "" {
+		minimum, err = time.Parse(time.RFC3339Nano, params.TimeMin)
+		if err != nil {
+			return &HostServiceError{Code: "invalid_params", Message: "time_min must be an RFC3339 timestamp"}
+		}
+	}
+	if params.TimeMax != "" {
+		maximum, err = time.Parse(time.RFC3339Nano, params.TimeMax)
+		if err != nil {
+			return &HostServiceError{Code: "invalid_params", Message: "time_max must be an RFC3339 timestamp"}
+		}
+	}
+	if !minimum.IsZero() && !maximum.IsZero() && !maximum.After(minimum) {
+		return &HostServiceError{Code: "invalid_params", Message: "time_max must follow time_min"}
+	}
+
 	if err := validateDataScopeID("session_id", params.SessionID); err != nil {
 		return err
 	}

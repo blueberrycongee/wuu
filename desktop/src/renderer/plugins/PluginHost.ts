@@ -220,6 +220,9 @@ export interface PluginGenerationApi {
 export interface PluginRuntimeInvokeOptions {
   readonly workspaceId?: string;
   readonly workspaceRoot?: string;
+  readonly userSpaceId?: string;
+  readonly productDomain?: "personal" | "coding";
+  readonly userInput?: { readonly requestId: string; readonly prompt: string; readonly attachments?: readonly { readonly sha256: string; readonly filename: string; readonly media_type: string; readonly data: string }[] };
   /** Cancel this invocation and the host work owned by its execution. */
   readonly signal?: AbortSignal;
 }
@@ -389,6 +392,7 @@ export interface PluginGenerationDiagnostic {
 export interface PluginHostOptions {
   /** Inject the renderer's existing React runtime; the host never supplies another copy. */
   react: typeof React;
+  renderConversationContent?: React.ComponentType<{ content: string; linkPolicy?: "external-only" }>;
   /** Internal startup budget override for deterministic host and renderer checks. */
   activationTimeoutMs?: number;
   styleContainer?: HTMLElement | (() => HTMLElement | null);
@@ -399,6 +403,9 @@ export interface PluginHostOptions {
     input?: unknown;
     workspaceId?: string;
     workspaceRoot?: string;
+    userSpaceId?: string;
+    productDomain?: "personal" | "coding";
+    userInput?: PluginRuntimeInvokeOptions["userInput"];
     signal?: AbortSignal;
   }>) => Promise<unknown>;
   listWorkspaces?: () => Promise<PluginWorkspaceSnapshot>;
@@ -622,7 +629,7 @@ export class PluginHost {
       throw new Error("Plugin activation timeout must be a positive finite duration");
     }
     this.react = options.react;
-    this.ui = createPluginUIKit(options.react);
+    this.ui = createPluginUIKit(options.react, options.renderConversationContent);
     this.styleContainer = options.styleContainer;
     this.runtimeInvoker = options.invokeRuntime;
     this.workspaceLister = options.listWorkspaces;
@@ -1062,6 +1069,9 @@ export class PluginHost {
             signal: controller.signal,
             ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
             ...(options?.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
+            ...(options?.userSpaceId ? { userSpaceId: options.userSpaceId } : {}),
+            ...(options?.productDomain ? { productDomain: options.productDomain } : {}),
+            ...(options?.userInput ? { userInput: options.userInput } : {}),
           });
           this.assertActive(state);
           controller.signal.throwIfAborted();

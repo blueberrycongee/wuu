@@ -15,12 +15,17 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 // pluginHostServices is bound to exactly one installed plugin generation. It
 // never accepts a caller-supplied plugin ID or absolute filesystem path:
 // ownership and roots are captured from the validated inventory at activation.
 type pluginHostServices struct {
+	dataRoot    string
+	sessionDir  string
+	binding     userspace.Binding
 	mu          sync.RWMutex
 	active      bool
 	open        bool
@@ -44,7 +49,7 @@ func newPluginHostServices(item pluginpkg.Plugin, projectRoot, wuuHome string, t
 	lockContext, lockCancel := context.WithCancel(context.Background())
 	services := &pluginHostServices{
 		open: true, pluginID: item.ID, subjectID: strings.TrimSpace(item.SubjectID),
-		fingerprint: item.Fingerprint, projectRoot: projectRoot, wuuHome: wuuHome,
+		fingerprint: item.Fingerprint, projectRoot: projectRoot, wuuHome: wuuHome, dataRoot: wuuHome,
 		settings: settings, turnRouter: turnRouter,
 		fileLocks: make(map[string]func()), lockContext: lockContext, lockCancel: lockCancel,
 	}
@@ -92,6 +97,28 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 	}
 
 	switch method {
+	case pluginhost.HostServiceSessionContext:
+		var params struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := decodeServiceParams(raw, &params); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(params.SessionID) == "" {
+			return nil, serviceError("invalid_params", "session_id is required")
+		}
+		metadata, found, err := session.Find(s.sessionDir, params.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, session.ErrSessionNotFound
+		}
+		binding := userspace.Binding{UserSpaceID: metadata.UserSpaceID, ProductDomain: metadata.ProductDomain}
+		if !s.binding.Matches(binding) {
+			return nil, serviceError("domain_denied", "session belongs to another user space or product domain")
+		}
+		return marshalServiceResult(map[string]string{"session_id": metadata.ID, "user_space_id": metadata.UserSpaceID, "product_domain": binding.Domain(), "agent_id": metadata.AgentID, "parent_session_id": metadata.ParentID})
 	case pluginhost.HostServiceSessionControl:
 		if s.turnRouter == nil {
 			return nil, serviceError("service_unavailable", "session service is unavailable")
@@ -170,12 +197,22 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 			return nil, err
 		}
 		return marshalServiceResult(result)
+	case pluginhost.HostServiceSessionAttachmentRead:
+		var params pluginhost.SessionAttachmentReadParams
+		if err := decodeServiceParams(raw, &params); err != nil {
+			return nil, err
+		}
+		result, err := readPluginSessionAttachment(ctx, s.dataRoot, s.pluginID, params)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(result)
 	case pluginhost.HostServiceSessionHistoryRead:
 		var params pluginhost.SessionHistoryReadParams
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		result, err := readPluginSessionHistory(ctx, s.wuuHome, s.pluginID, params)
+		result, err := readPluginSessionHistory(ctx, s.dataRoot, s.pluginID, params)
 		if err != nil {
 			return nil, err
 		}
@@ -185,7 +222,7 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		result, err := searchPluginSessionHistory(ctx, s.wuuHome, s.pluginID, params)
+		result, err := searchPluginSessionHistory(ctx, s.dataRoot, s.pluginID, params)
 		if err != nil {
 			return nil, err
 		}
@@ -358,8 +395,8 @@ func kernelServiceReadOnly(method pluginhost.HostServiceMethod) bool {
 	switch method {
 	case pluginhost.HostServiceStorageGet, pluginhost.HostServiceStorageKeys,
 		pluginhost.HostServiceSettingsGet, pluginhost.HostServiceSettingsList,
-		pluginhost.HostServiceSessionList, pluginhost.HostServiceSessionInspect,
-		pluginhost.HostServiceSessionHistoryRead, pluginhost.HostServiceSessionHistorySearch,
+		pluginhost.HostServiceSessionList, pluginhost.HostServiceSessionInspect, pluginhost.HostServiceSessionContext,
+		pluginhost.HostServiceSessionHistoryRead, pluginhost.HostServiceSessionHistorySearch, pluginhost.HostServiceSessionAttachmentRead,
 		pluginhost.HostServiceWorkspaceStatus:
 		return true
 	default:
@@ -452,8 +489,8 @@ func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRe
 		pluginhost.HostServiceStorageCompareExchange, pluginhost.HostServiceSettingsGet,
 		pluginhost.HostServiceSettingsList, pluginhost.HostServiceSessionCreate,
 		pluginhost.HostServiceSessionSend, pluginhost.HostServiceSessionList,
-		pluginhost.HostServiceSessionCancel, pluginhost.HostServiceSessionInspect,
-		pluginhost.HostServiceSessionHistoryRead, pluginhost.HostServiceSessionHistorySearch,
+		pluginhost.HostServiceSessionCancel, pluginhost.HostServiceSessionInspect, pluginhost.HostServiceSessionContext,
+		pluginhost.HostServiceSessionHistoryRead, pluginhost.HostServiceSessionHistorySearch, pluginhost.HostServiceSessionAttachmentRead,
 		pluginhost.HostServiceWorkspaceStatus, pluginhost.HostServiceWorkspaceApply,
 		pluginhost.HostServiceWorkspaceDiscard,
 		pluginhost.HostServiceSessionControl,
@@ -716,7 +753,7 @@ func (s *pluginHostServices) storageGet(params pluginhost.StorageGetParams) (jso
 	if err := pluginsettings.ValidateStateKey(params.Key); err != nil {
 		return nil, serviceError("invalid_params", err.Error())
 	}
-	document, err := pluginsettings.ReadState(s.wuuHome, s.projectRoot, s.subjectID, scope)
+	document, err := pluginsettings.ReadState(s.dataRoot, s.projectRoot, s.subjectID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -738,7 +775,7 @@ func (s *pluginHostServices) storageSet(params pluginhost.StorageSetParams) (jso
 	if len([]byte(params.Value)) > pluginsettings.MaxStateValueBytes {
 		return nil, serviceError("limit_exceeded", fmt.Sprintf("plugin storage value exceeds %d bytes", pluginsettings.MaxStateValueBytes))
 	}
-	_, err = pluginsettings.UpdateState(s.wuuHome, s.projectRoot, s.subjectID, scope, func(values map[string]string) error {
+	_, err = pluginsettings.UpdateState(s.dataRoot, s.projectRoot, s.subjectID, scope, func(values map[string]string) error {
 		values[params.Key] = params.Value
 		return nil
 	})
@@ -756,7 +793,7 @@ func (s *pluginHostServices) storageDelete(params pluginhost.StorageDeleteParams
 	if err := pluginsettings.ValidateStateKey(params.Key); err != nil {
 		return nil, serviceError("invalid_params", err.Error())
 	}
-	_, err = pluginsettings.UpdateState(s.wuuHome, s.projectRoot, s.subjectID, scope, func(values map[string]string) error {
+	_, err = pluginsettings.UpdateState(s.dataRoot, s.projectRoot, s.subjectID, scope, func(values map[string]string) error {
 		delete(values, params.Key)
 		return nil
 	})
@@ -771,7 +808,7 @@ func (s *pluginHostServices) storageKeys(params pluginhost.StorageKeysParams) (j
 	if err != nil {
 		return nil, err
 	}
-	document, err := pluginsettings.ReadState(s.wuuHome, s.projectRoot, s.subjectID, scope)
+	document, err := pluginsettings.ReadState(s.dataRoot, s.projectRoot, s.subjectID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -795,7 +832,7 @@ func (s *pluginHostServices) storageCompareExchange(params pluginhost.StorageCom
 		return nil, serviceError("limit_exceeded", fmt.Sprintf("plugin storage value exceeds %d bytes", pluginsettings.MaxStateValueBytes))
 	}
 	result := pluginhost.StorageCompareExchangeResult{}
-	_, err = pluginsettings.UpdateState(s.wuuHome, s.projectRoot, s.subjectID, scope, func(values map[string]string) error {
+	_, err = pluginsettings.UpdateState(s.dataRoot, s.projectRoot, s.subjectID, scope, func(values map[string]string) error {
 		current, exists := values[params.Key]
 		matches := params.Expected != nil && exists && current == *params.Expected
 		if params.Expected == nil {

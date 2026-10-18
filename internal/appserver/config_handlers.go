@@ -63,6 +63,7 @@ func (s *Server) handleInitialize(req Request) error {
 		issues = append(issues, RuntimeIssue{Code: issue.Code, Provider: issue.Provider, Message: issue.Message})
 	}
 	return s.writeResponse(req.ID, InitializeResult{
+		UserSpaceID: s.rt.UserSpaceID, ProductDomain: s.rt.ProductDomain,
 		Status:          status,
 		Issues:          issues,
 		ProtocolVersion: ProtocolVersion,

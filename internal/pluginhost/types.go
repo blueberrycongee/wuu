@@ -25,6 +25,9 @@ var toolLabelLocalePattern = regexp.MustCompile(`^[a-zA-Z]{2,8}(-[a-zA-Z0-9]{1,8
 
 // InitializeParams describes the runtime instance offered to a plugin.
 type InitializeParams struct {
+ UserSpaceID string `json:"user_space_id,omitempty"`
+ ProductDomain string `json:"product_domain,omitempty"`
+ DataRoot string `json:"data_root,omitempty"`
 	ProtocolVersion   int    `json:"protocol_version"`
 	PluginID          string `json:"plugin_id"`
 	PluginRoot        string `json:"plugin_root"`

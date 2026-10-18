@@ -92,6 +92,9 @@ func (e *WuuEngine) SessionForRunner(runner *agent.StreamRunner) agentengine.Ses
 // thread creation validates its engine binding against this; the static
 // agentengine.CheckEngine only knows the built-in wuu engine.
 func (s *Session) EngineAvailable(id agentengine.EngineID) bool {
+	if s != nil && s.UserBinding().IsUser() && id != agentengine.EngineWuu {
+		return false
+	}
 	if s == nil || s.engines == nil {
 		return id == agentengine.EngineWuu
 	}
@@ -298,6 +301,9 @@ func (s *Session) EngineSessionForThread(ctx context.Context, rt *ThreadRuntime,
 			return w.SessionForThread(rt)
 		}
 		return &unavailableEngineSession{id: id}
+	}
+	if s != nil && s.UserBinding().IsUser() {
+		return agentengine.FailedSession(errors.New("external engines do not enforce the user-host product boundary"))
 	}
 	if s == nil || s.engines == nil {
 		return &unavailableEngineSession{id: id}

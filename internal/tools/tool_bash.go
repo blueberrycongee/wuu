@@ -163,6 +163,9 @@ func (args bashArgs) validate() error {
 }
 
 func (t *BashTool) executeStartBackground(ctx context.Context, args bashArgs) (string, error) {
+	if len(t.env.ProtectedPaths) > 0 {
+		return "", errors.New("background commands require durable protected read/write policy tracking, which is unavailable")
+	}
 	commandPrefix := ""
 	if t.env.gitAttributionEnabled() {
 		var err error
@@ -257,7 +260,7 @@ func (t *BashTool) executeRun(ctx context.Context, args bashArgs) (toolresult.Re
 		timeout = maxShellTimeoutSeconds
 	}
 
-	revision := workspaceRevision(ctx, t.env.RevisionRoot(ctx))
+	revision := t.env.workspaceRevision(ctx, t.env.RevisionRoot(ctx))
 	// Identical commands in different directories verify different suites.
 	commandHash := sha256Hex([]byte(runCWD + "\x00" + command))
 	result, err := executeShellCommandInDir(ctx, t.env, command, timeout, runCWD)

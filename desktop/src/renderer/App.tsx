@@ -265,7 +265,7 @@ import {
   useDesktopPluginRuntime,
 } from "./plugins/DesktopPluginRuntime";
 import { DesktopWorkbench } from "./plugins";
-import { usePrimaryPluginViewCover } from "./PrimaryPluginViewCover";
+import { usePrimaryPluginViewDefinition } from "./PrimaryPluginViewCover";
 import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { useComposerDraftState } from "./ComposerDraftState";
 import { useComposerPendingState } from "./ComposerPendingState";
@@ -457,6 +457,9 @@ function projectNameFromGoal(goal: string): string {
 
 export function App(): JSX.Element {
   const { locale, t } = useI18n();
+  const primaryPluginView = usePrimaryPluginViewDefinition();
+  const showingPrimaryPluginView = primaryPluginView !== undefined;
+  const userSpaceViewActive = primaryPluginView?.layout === "user-space";
   const [popOutInit] = useState<PopOutInitResult | null>(() => readPopOutInit());
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
   const [recoveredDrafts] = useState(readComposerDraftRecovery);
@@ -565,8 +568,8 @@ export function App(): JSX.Element {
     sidebarAnimating,
     clampedWorkspaceRightPanelWidth,
     resizingRightPanel,
-    rightPanelOpen,
-    rightPanelAnimating,
+    rightPanelOpen: savedRightPanelOpen,
+    rightPanelAnimating: savedRightPanelAnimating,
     effectiveSidebarWidth,
     workspaceRightPanelAutoGlobalized,
     workspaceRightPanelDockableWithoutSidebar,
@@ -590,6 +593,9 @@ export function App(): JSX.Element {
     settingsLayoutRootRef: settingsShellRef,
     onCloseWorkspaceMenu: closeWorkspaceMenu,
   });
+  // User-oriented pages temporarily cover Coding tools without changing the saved layout.
+  const rightPanelOpen = savedRightPanelOpen && !userSpaceViewActive;
+  const rightPanelAnimating = savedRightPanelAnimating && !userSpaceViewActive;
   const [rightPanelManualGlobalized, setRightPanelManualGlobalized] =
     useState(false);
   const rightPanelAutoGlobalized =
@@ -1711,6 +1717,10 @@ export function App(): JSX.Element {
   // browser's Print dialog. Works from anywhere in the app, including
   // while typing in the chat composer.
   useEffect(() => {
+    if (userSpaceViewActive) closeConversationSearch({ immediate: true });
+  }, [userSpaceViewActive, closeConversationSearch]);
+
+  useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
       if (
         (event.metaKey || event.ctrlKey) &&
@@ -1719,6 +1729,7 @@ export function App(): JSX.Element {
         event.key.toLowerCase() === "p"
       ) {
         event.preventDefault();
+        if (userSpaceViewActive) return;
         toggleConversationSearch();
       }
     }
@@ -1726,7 +1737,7 @@ export function App(): JSX.Element {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [toggleConversationSearch]);
+  }, [toggleConversationSearch, userSpaceViewActive]);
 
   function openEnvironmentDialog(dialog: EnvironmentDialog): void {
     closeConversationSearch({ immediate: true });
@@ -1741,7 +1752,7 @@ export function App(): JSX.Element {
   // ad-hoc modals/portals (e.g. participant panels) are not yet
   // enumerated here; extend this predicate as more full-window overlays land.
   const browserOverlaySuppressed =
-    settingsOpen || accountOpen ||
+    settingsOpen || accountOpen || userSpaceViewActive ||
     environmentDialog !== null ||
     Boolean(pendingFork) ||
     conversationSearch.open;
@@ -2426,7 +2437,7 @@ export function App(): JSX.Element {
     thread: activeThread,
     enabled: Boolean(state.initialized)
       && !poppedOutMode && !isTouchWebShell() && !activeThread?.read_only
-      && !showingManagementCatalog && !emptyConversation && !browserOverlaySuppressed
+      && !showingManagementCatalog && !userSpaceViewActive && !emptyConversation && !browserOverlaySuppressed
       && !workspaceRightPanelAutoGlobalized
       && activeBrowserActivity?.state !== "foreground_controlled"
       && activeBrowserActivity?.state !== "user_controlled",
@@ -2449,7 +2460,6 @@ export function App(): JSX.Element {
     }
     return queries;
   }, [turns]);
-  const showingPrimaryPluginView = usePrimaryPluginViewCover();
   const previewTargetThread = threadForPane(state, state.activePane);
   const previewTargetContext = workspacePanelContext(state.activeContext, previewTargetThread);
   const activePreviewFile = activeWorkspaceViewTab?.kind === "file" &&
@@ -5487,6 +5497,7 @@ export function App(): JSX.Element {
           className={shellClassName}
           style={shellStyle}
           data-wuu-component="app-shell"
+          data-workbench-layout={userSpaceViewActive ? "user-space" : undefined}
           data-wuu-sidebar-mode={sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
         >
           <BrowserPiPHostReporter />
@@ -6140,7 +6151,8 @@ export function App(): JSX.Element {
           reportError: (pluginId, generation, error) => {
             console.error(`Plugin view ${pluginId}@${generation} failed to render`, error);
           },
-          requestRegionVisible: (region) => {
+          requestRegionVisible: (region, layout) => {
+            if (layout === "user-space") return;
             if (region === "primary" && rightPanelGlobalized) setRightPanelOpenWithMotion(false);
             if (region === "auxiliary") setRightPanelOpenWithMotion(true);
           },
@@ -6148,7 +6160,7 @@ export function App(): JSX.Element {
       />
       {/* macOS applies app regions in DOM order, so a later drag titlebar would
         * cover this no-drag control. Keep it as the shell's last child. */}
-      {!poppedOutMode ? (
+      {!poppedOutMode && !userSpaceViewActive ? (
         <button
           className="icon-button side-panel-toggle-button shell-right-sidebar-toggle"
           data-wuu-component="right-sidebar-toggle"

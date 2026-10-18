@@ -192,6 +192,9 @@ func (s *Server) workspaceViewRoot(requested string) (string, error) {
 	if allowed(s.rt.RootDir) {
 		return target, nil
 	}
+	if s.rt.UserBinding().IsUser() {
+		return "", errors.New("user host file access must remain inside its managed files root")
+	}
 	registered, err := workspaces.List(s.rt.WuuHome)
 	if err != nil {
 		return "", err

@@ -102,6 +102,8 @@ export interface ViewTypeDefinition {
   defaultRegion?: ViewPlacementRegion;
   /** Whether this view's state survives a session restart. */
   persistence?: ViewPersistence;
+  /** Presentation only: use user navigation instead of Coding workspace panels. Grants no runtime authority. */
+  layout?: "user-space";
   /** React component that receives host context and renders the view. */
   render: React.ComponentType<ViewRenderProps>;
 }
@@ -234,7 +236,15 @@ export interface PluginUILiveDurationProps extends Omit<React.HTMLAttributes<HTM
  * Small host-owned component set for plugin surfaces. These components own the
  * common visual rhythm while plugins retain freedom inside their contribution.
  */
+export interface PluginUIConversationMessageProps {
+  linkPolicy?: "external-only";
+  role: "user" | "assistant";
+  content: string;
+  className?: string;
+}
+
 export interface PluginUIKit {
+  readonly ConversationMessage: React.ComponentType<PluginUIConversationMessageProps>;
   readonly ComposerDrawer: React.ComponentType<ComposerDrawerProps>;
   readonly Page: React.ComponentType<PluginUIPageProps>;
   readonly Panel: React.ComponentType<PluginUIContainerProps>;
@@ -254,7 +264,14 @@ export interface PluginUIKit {
   readonly LiveDuration: React.ComponentType<PluginUILiveDurationProps>;
 }
 
-export function createPluginUIKit(react: typeof React): PluginUIKit {
+export function createPluginUIKit(react: typeof React, renderConversationContent?: React.ComponentType<{ content: string; linkPolicy?: "external-only" }>): PluginUIKit {
+  function ConversationMessage({ role, content, className, linkPolicy }: PluginUIConversationMessageProps): React.ReactNode {
+    return react.createElement("div", {
+      className: joinPluginUIClass(`plugin-ui-conversation-message ${role === "assistant" ? "rich-content" : "user-text"}`, className),
+      "data-wuu-component": "plugin-ui-conversation-message", "data-role": role,
+    }, role === "assistant" && renderConversationContent ? react.createElement(renderConversationContent, { content, linkPolicy }) : content);
+  }
+
   const container = (
     tag: "section" | "article" | "div",
     name: string,
@@ -473,6 +490,7 @@ export function createPluginUIKit(react: typeof React): PluginUIKit {
   }
 
   return Object.freeze({
+    ConversationMessage,
     ComposerDrawer: createComposerDrawer(react),
     Page,
     Panel,

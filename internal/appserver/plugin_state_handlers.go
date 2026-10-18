@@ -147,7 +147,7 @@ func (s *Server) handlePluginStorageGet(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	document, err := pluginsettings.ReadState(s.rt.WuuHome, s.rt.RootDir, plugin.SubjectID, scope)
+	document, err := pluginsettings.ReadState(s.rt.ProductDataRoot(), s.rt.RootDir, plugin.SubjectID, scope)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -174,7 +174,7 @@ func (s *Server) handlePluginStorageSet(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	document, err := pluginsettings.UpdateState(s.rt.WuuHome, s.rt.RootDir, plugin.SubjectID, scope, func(values map[string]string) error {
+	document, err := pluginsettings.UpdateState(s.rt.ProductDataRoot(), s.rt.RootDir, plugin.SubjectID, scope, func(values map[string]string) error {
 		values[params.Key] = params.Value
 		return nil
 	})

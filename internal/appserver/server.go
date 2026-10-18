@@ -516,10 +516,8 @@ func (s *Server) maintainSessionStoragePass(ctx context.Context) {
 	} else if orphanWorktrees > 0 {
 		providers.DebugLogf("worktree storage maintenance: removed %d orphan owner group(s)", orphanWorktrees)
 	}
-	if stateDir, err := s.workspaceStateDir(); err == nil {
-		if err := maintainInputImageStorage(stateDir, time.Now().UTC()); err != nil {
-			providers.DebugLogf("input image storage maintenance: %v", err)
-		}
+	if err := s.maintainInputAttachments(time.Now().UTC()); err != nil {
+		providers.DebugLogf("input image storage maintenance: %v", err)
 	}
 }
 

@@ -12,7 +12,9 @@ import (
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 	worktreepkg "github.com/blueberrycongee/wuu/internal/worktree"
 )
 
@@ -53,6 +55,37 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 	if s == nil || s.closed.Load() {
 		return pluginhost.SessionCreateResult{}, errServerClosed
 	}
+	binding := s.rt.UserBinding()
+	if params.UserSpaceID != "" || params.ProductDomain != "" {
+		requested := userspace.Binding{UserSpaceID: strings.TrimSpace(params.UserSpaceID), ProductDomain: strings.TrimSpace(params.ProductDomain)}
+		if err := requested.Validate(); err != nil {
+			return pluginhost.SessionCreateResult{}, err
+		}
+		if !binding.Matches(requested) {
+			return pluginhost.SessionCreateResult{}, errors.New("session creation cannot change the trusted user space or product domain")
+		}
+	}
+	if binding.IsUser() && (params.WorkspaceID != "" || params.WorkspaceRoot != "" || params.Workspace == "worktree") {
+		return pluginhost.SessionCreateResult{}, errors.New("user-space sessions cannot bind a project or worktree")
+	}
+	if params.ParentSessionID != "" {
+		parent, found, err := session.Find(s.rt.SessionDir, params.ParentSessionID)
+		if err != nil {
+			return pluginhost.SessionCreateResult{}, err
+		}
+		if !found {
+			return pluginhost.SessionCreateResult{}, session.ErrSessionNotFound
+		}
+		if !binding.Matches(userspace.Binding{UserSpaceID: parent.UserSpaceID, ProductDomain: parent.ProductDomain}) {
+			return pluginhost.SessionCreateResult{}, errors.New("cross-domain parent session is unavailable")
+		}
+		if params.AgentID != "" && params.AgentID != parent.AgentID {
+			return pluginhost.SessionCreateResult{}, errors.New("child session cannot change its responsible agent")
+		}
+		params.AgentID = parent.AgentID
+	}
+	params.UserSpaceID = binding.UserSpaceID
+	params.ProductDomain = binding.ProductDomain
 	pluginID = strings.TrimSpace(pluginID)
 	params.RequestID = strings.TrimSpace(params.RequestID)
 	params.Name = strings.TrimSpace(params.Name)
@@ -202,7 +235,7 @@ func (s *Server) listPluginSessions(_ context.Context, pluginID string, params p
 			state = pluginhost.TurnLifecycleQueued
 		}
 		s.queuedTurnMu.Unlock()
-		result.Sessions = append(result.Sessions, pluginhost.SessionSummary{SessionID: item.ID, Name: item.Title, ParentSessionID: item.ParentID, Visibility: item.Visibility, State: state, WorkspaceID: item.WorkspaceID, CreatedAt: item.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: item.UpdatedAt.Format(time.RFC3339Nano)})
+		result.Sessions = append(result.Sessions, pluginhost.SessionSummary{SessionID: item.ID, UserSpaceID: item.UserSpaceID, ProductDomain: item.ProductDomain, AgentID: item.AgentID, Name: item.Title, ParentSessionID: item.ParentID, Visibility: item.Visibility, State: state, WorkspaceID: item.WorkspaceID, CreatedAt: item.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: item.UpdatedAt.Format(time.RFC3339Nano)})
 	}
 	return result, nil
 }
@@ -323,7 +356,7 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 	}
 	s.queuedTurnMu.Unlock()
 	result := pluginhost.SessionInspectResult{Session: pluginhost.SessionSummary{
-		SessionID: metadata.ID, Name: metadata.Title, ParentSessionID: metadata.ParentID,
+		SessionID: metadata.ID, UserSpaceID: metadata.UserSpaceID, ProductDomain: metadata.ProductDomain, AgentID: metadata.AgentID, Name: metadata.Title, ParentSessionID: metadata.ParentID,
 		Visibility: metadata.Visibility, State: state, WorkspaceID: metadata.WorkspaceID,
 		CreatedAt: metadata.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: metadata.UpdatedAt.Format(time.RFC3339Nano),
 	}}
@@ -607,11 +640,27 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	pluginID = strings.TrimSpace(pluginID)
 	params.RequestID = strings.TrimSpace(params.RequestID)
 	params.SessionID = strings.TrimSpace(params.SessionID)
-	params.Input.Prompt = strings.TrimSpace(params.Input.Prompt)
+	if params.UserInputRequestID == "" {
+		params.Input.Prompt = strings.TrimSpace(params.Input.Prompt)
+	}
 	params.Cause = strings.TrimSpace(params.Cause)
 	params.IfRunning = strings.TrimSpace(params.IfRunning)
-	if pluginID == "" || params.RequestID == "" || params.SessionID == "" || params.Input.Prompt == "" {
+	if pluginID == "" || params.RequestID == "" || params.SessionID == "" || (params.Input.Prompt == "" && len(params.Input.Attachments) == 0) {
 		return pluginhost.SessionSendResult{}, errors.New("plugin owner, request_id, session_id, and input.prompt are required")
+	}
+	if len(params.Input.Attachments) > 0 && params.UserInputRequestID == "" {
+		return pluginhost.SessionSendResult{}, errors.New("attachments require an explicit client user input")
+	}
+	var clientAttachments []runtime.ClientInputAttachment
+	if params.UserInputRequestID != "" {
+		var err error
+		clientAttachments, err = runtime.ClientUserInputAttachments(ctx, pluginID, params.UserInputRequestID, params.Input.Attachments)
+		if err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
+		if err := runtime.AuthorizeClientUserInput(ctx, pluginID, params.UserInputRequestID, params.SessionID, params.Input.Prompt, params.RequestID); err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
 	}
 	if params.IfRunning == "" {
 		params.IfRunning = pluginhost.SessionIfRunningQueue
@@ -671,9 +720,33 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if control != nil && control.State != session.ControlActive {
 		return pluginhost.SessionSendResult{}, session.ErrControlChanged
 	}
-	msg, err := literalUserMessageFromPrompt(params.Input.Prompt, nil, nil)
+	var received []TurnStartImage
+	var selectedFiles []TurnStartFile
+	for _, file := range clientAttachments {
+		switch file.MediaType {
+		case "image/png", "image/jpeg", "image/gif", "image/webp":
+			received = append(received, TurnStartImage{MediaType: file.MediaType, Data: file.Data, Original: true})
+		default:
+			selectedFiles = append(selectedFiles, TurnStartFile{MediaType: file.MediaType, Data: file.Data, Filename: file.Filename})
+		}
+	}
+	images, err := normalizeTurnStartImages(received)
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
+	}
+	files, err := normalizeTurnStartFiles(selectedFiles)
+	if err != nil {
+		return pluginhost.SessionSendResult{}, err
+	}
+	msg, err := literalUserMessageFromPrompt(params.Input.Prompt, images, files)
+	if err != nil {
+		return pluginhost.SessionSendResult{}, err
+	}
+	if len(clientAttachments) > 0 {
+		msg, err = s.persistInputWorkingCopies(ctx, params.SessionID, msg, received, false)
+		if err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
 	}
 	msg.ClientID = clientID
 	msg.Origin = pluginhost.SessionInputPlugin
@@ -717,6 +790,13 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 				return pluginhost.SessionSendResult{}, errors.New("related_session_id must name a session owned by the plugin")
 			}
 		}
+	}
+	if params.UserInputRequestID != "" {
+		msg.Origin = "user"
+		msg.OriginID = ""
+		msg.ReadOnly = false
+		msg.DisplayContent = params.Input.Prompt
+		msg.PresentationKind = ""
 	}
 	permissions, err := s.resolveThreadTurnPermissions(th, nil)
 	if err != nil {
@@ -768,6 +848,7 @@ func (s *Server) createPluginSessionThread(owner string, params pluginhost.Sessi
 // hostSessionCreateParamsFromPlugin converts the extension contract at the host boundary.
 func hostSessionCreateParamsFromPlugin(params pluginhost.SessionCreateParams) hostSessionCreateParams {
 	converted := hostSessionCreateParams{
+		UserSpaceID: params.UserSpaceID, ProductDomain: params.ProductDomain, AgentID: params.AgentID,
 		Speed: params.Speed, RequestID: params.RequestID, Name: params.Name,
 		Visibility: params.Visibility, ParentSessionID: params.ParentSessionID, ContextSource: params.ContextSource,
 		Workspace: params.Workspace, WorkspaceID: params.WorkspaceID, WorkspaceRoot: params.WorkspaceRoot,

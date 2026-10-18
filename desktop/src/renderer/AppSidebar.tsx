@@ -608,6 +608,10 @@ export function AppSidebar({
     () => primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot),
     [declaredPluginNavigationEntries, workbenchSnapshot],
   );
+  const userSpaceViewActive = workbenchSnapshot.viewTypes.some(definition => definition.layout === "user-space"
+    && definition.pluginId === activePluginMainView?.pluginId && definition.id === activePluginMainView?.viewTypeId);
+  const userSpaceEntries = pluginNavigationEntries.filter(entry => workbenchSnapshot.viewTypes.some(definition =>
+    definition.layout === "user-space" && definition.pluginId === entry.pluginId && definition.id === entry.view));
   const activateNative = useCallback((action: () => void): void => {
     workbenchController.deactivateRegion("primary");
     action();
@@ -629,6 +633,17 @@ export function AppSidebar({
       reveal: true,
     }).catch(() => workbenchController.deactivateRegion("primary"));
   }, [workbenchController]);
+  const pluginNavigationButton = (entry: (typeof pluginNavigationEntries)[number]): JSX.Element => {
+    const active = activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId;
+    return <button key={`${entry.pluginId}:${entry.id}`} type="button"
+      className={`nav-item plugin-navigation-item${active ? " active" : ""}`}
+      data-wuu-component="plugin-navigation-item" data-wuu-plugin={entry.pluginId}
+      aria-current={active ? "page" : undefined} title={entry.description || entry.title}
+      onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}>
+      <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />
+      <span>{entry.title}</span>
+    </button>;
+  };
 
   // Drag-and-drop reorder wiring for the reorderable sections. The 6px
   // activation distance lets plain clicks on the header (collapse toggle)
@@ -1753,9 +1768,7 @@ export function AppSidebar({
     state.activeProjectId, state.initialized, state.lastViewedTurnByThreadID, t,
   ]);
 
-  const nativeSidebar = (
-    <>
-      <div className="sidebar-content">
+  const sidebarHeader = <>
         <div className="traffic-spacer">
           {onToggleSidebar ? (
             <button
@@ -1771,12 +1784,18 @@ export function AppSidebar({
           ) : null}
         </div>
         <SidebarBrand
+          readOnly={userSpaceViewActive}
           unreadViewOpen={unreadViewOpen}
           attentionCount={attentionCount}
           hasUnread={unreadThreads.length > 0}
           onToggleUnreadView={onToggleUnreadView}
           onClearUnread={() => onMarkThreadsViewed(unreadThreads)}
         />
+      </>;
+  const nativeSidebar = (
+    <>
+      <div className="sidebar-content">
+        {sidebarHeader}
         {unreadViewOpen ? (
           <section
             className="sidebar-unread-view scrollbar-hidden"
@@ -1851,6 +1870,7 @@ export function AppSidebar({
         ) : (
           <>
         <nav className="primary-nav" aria-label={t("sidebar.mainNavigation")}>
+          {userSpaceEntries.map(pluginNavigationButton)}
           <button
             className="nav-item"
             onClick={() => activateNative(onStartNewThread)}
@@ -1882,24 +1902,7 @@ export function AppSidebar({
           {/* Plugin pages are destinations beside the catalog that lists
               their plugins, so they continue this list instead of opening a
               second group headed with the catalog's own name. */}
-          {pluginNavigationEntries.map((entry) => {
-            const active = activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId;
-            return (
-              <button
-                key={`${entry.pluginId}:${entry.id}`}
-                type="button"
-                className={`nav-item plugin-navigation-item${active ? " active" : ""}`}
-                data-wuu-component="plugin-navigation-item"
-                data-wuu-plugin={entry.pluginId}
-                aria-current={active ? "page" : undefined}
-                title={entry.description || entry.title}
-                onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
-              >
-                <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />
-                <span>{entry.title}</span>
-              </button>
-            );
-          })}
+          {pluginNavigationEntries.filter(entry => !userSpaceEntries.includes(entry)).map(pluginNavigationButton)}
         </nav>
 
         <div className="sidebar-main scrollbar-hidden" data-scroll-fade="">
@@ -2315,14 +2318,40 @@ export function AppSidebar({
       <SidebarHoverFactsContext.Provider value={hoverFacts}>{nativeSidebar}</SidebarHoverFactsContext.Provider>
     </SessionOrganizationProvider>
   );
+  const userSpaceNavigationNodes: readonly NavigationSourceNode[] = [
+    ...userSpaceEntries.map(entry => ({ id: `plugin:${entry.pluginId}:${entry.id}`, kind: "command" as const,
+      label: entry.title, depth: 0, active: activePluginMainView?.id === entry.instanceId,
+      icon: entry.icon && "name" in entry.icon ? entry.icon.name : "plugin-blocks",
+      onActivate: () => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId) })),
+    { id: "command:projects", kind: "command", label: t("sidebar.projects"), depth: 0, icon: "folder",
+      onActivate: () => workbenchController.deactivateRegion("primary") },
+    { id: "command:settings", kind: "command", label: t("sidebar.settings"), depth: 0, icon: "settings",
+      onActivate: () => activateNative(onOpenSettings) },
+  ];
+  const userSpaceSidebar = <div className="sidebar-content">
+    {sidebarHeader}
+    <nav className="primary-nav" aria-label={t("sidebar.mainNavigation")}>
+      {userSpaceEntries.map(pluginNavigationButton)}
+      <button type="button" className="nav-item" data-workbench-action="projects"
+        onClick={() => workbenchController.deactivateRegion("primary")}>
+        <Folder className="icon-lg" /><span>{t("sidebar.projects")}</span>
+      </button>
+    </nav>
+    <div className="sidebar-main" />
+    <div className="sidebar-settings">
+      {sidebarVisible && <SidebarAccountMenu disabled={!state.initialized}
+        onOpenAccount={onOpenAccount ? () => activateNative(onOpenAccount) : undefined}
+        onOpenSettings={page => activateNative(() => onOpenSettings(page))} />}
+    </div>
+  </div>;
   return (
     <NavigationPresentation
-      nodes={[
+      nodes={userSpaceViewActive ? userSpaceNavigationNodes : [
         ...primaryNavigationNodes,
         ...pluginNavigationNodes,
         ...navigationNodes,
       ]}
-      fallback={organizedSidebar}
+      fallback={userSpaceViewActive ? userSpaceSidebar : organizedSidebar}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
     />

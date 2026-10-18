@@ -1,3 +1,4 @@
+import { resolveUserHostContext } from "./userHost";
 import { AppContextCapture } from "./appContextCapture";
 import { SystemPermissions } from "./systemPermissions";
 import { createBrowserView } from "./browserView";
@@ -527,7 +528,9 @@ function appServerRequest<T>(
   targetContext?: RuntimeContext,
 ): Promise<T> {
   const context = targetContext
-    ? projectManager.resolveSubmissionContext(targetContext)
+    ? targetContext.kind === "user"
+      ? resolveUserHostContext(targetContext.user_space_id, targetContext.product_domain)
+      : projectManager.resolveSubmissionContext(targetContext)
     : windowRegistry.runtimeContextForWindow(event.sender.id);
   return context
     ? appServerClientPool.requestInContext<T>(context, method, params)
@@ -782,6 +785,14 @@ const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, 
   // disable browser tools on the shared execution service.
   if (method === "initialize") params = desktopInitializeParams();
   if (method === "shutdown") throw new Error("Remote clients cannot shut down the shared execution service");
+  if (method === "plugin/client/request") {
+    const request = params as PluginClientRequestParams;
+    if (request.user_space_id || request.product_domain) {
+      if (request.workspace_id || request.workspace_root) throw new Error("User host and workspace routes cannot be combined");
+      const context = resolveUserHostContext(request.user_space_id ?? "", request.product_domain ?? "");
+      return requestPluginRuntime(pluginOwner, context, request, reply);
+    }
+  }
   if (method.startsWith("desktop/projects/")) return requestRemoteProjects(projectManager,method,params);
   const cwd = resolve(workdir);
   const state = projectManager.list();
@@ -2102,7 +2113,12 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:plugin-storage-set", (event, params: PluginStorageSetParams) =>
     appServerRequest<PluginStorageResult>(event, "plugin/storage/set", params));
   ipcMain.handle("wuu:plugin-runtime-request", (event, params: PluginClientRequestParams) => {
-    const context = runtimeContextForPluginWorkspace(event, params.workspace_id, params.workspace_root);
+    if ((params.user_space_id || params.product_domain) && (params.workspace_id || params.workspace_root)) {
+      throw new Error("User host and workspace routes cannot be combined");
+    }
+    const context = params.user_space_id || params.product_domain
+      ? resolveUserHostContext(params.user_space_id ?? "", params.product_domain ?? "")
+      : runtimeContextForPluginWorkspace(event, params.workspace_id, params.workspace_root);
     if (params.workspace_root && resolve(params.workspace_root) !== resolve(context.cwd)) {
       throw new Error("Plugin runtime workspace changed");
     }

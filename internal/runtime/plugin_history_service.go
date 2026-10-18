@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -41,8 +42,14 @@ func readPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, par
 		Records: make([]pluginhost.SessionHistoryRecord, 0, len(page.Records)),
 	}
 	for _, record := range page.Records {
+		attachments := historyAttachmentMetadata(record)
+		content := record.Content
+		if record.Origin == "user" && len(attachments) > 0 {
+			content = record.DisplayContent
+		}
 		result.Records = append(result.Records, pluginhost.SessionHistoryRecord{
-			Seq: record.Seq, Role: record.Role, Name: record.Name, Content: record.Content, DisplayContent: record.DisplayContent,
+			Attachments: attachments, At: historyRecordTime(record.At),
+			Seq: record.Seq, Role: record.Role, Name: record.Name, Content: content, DisplayContent: record.DisplayContent,
 			ReasoningContent: record.ReasoningContent, ToolCalls: string(record.ToolCalls), ToolCallID: record.ToolCallID,
 			ToolResult: string(record.ToolResult), FinishReason: record.FinishReason, Truncated: record.Truncated,
 		})
@@ -73,7 +80,9 @@ func searchPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, p
 		}
 		cursor = &decoded
 	}
-	page, err := session.SearchHistoryQuery(ctx, sessDir, session.HistorySearchQuery{
+	minimum, _ := time.Parse(time.RFC3339Nano, params.TimeMin)
+	maximum, _ := time.Parse(time.RFC3339Nano, params.TimeMax)
+	page, err := session.SearchHistoryQuery(ctx, sessDir, session.HistorySearchQuery{TimeMin: minimum, TimeMax: maximum, View: params.View,
 		SessionID: meta.ID, Query: params.Query, StartSeq: params.StartSeq, EndSeq: params.EndSeq,
 		SnapshotSeq: params.SnapshotSeq, BeforeSeq: params.BeforeSeq, Limit: limit, Cursor: cursor,
 	})
@@ -85,9 +94,24 @@ func searchPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, p
 		Matches: make([]pluginhost.SessionHistoryMatch, 0, len(page.Records)),
 	}
 	for _, record := range page.Records {
-		result.Matches = append(result.Matches, pluginhost.SessionHistoryMatch{
-			Seq: record.Seq, Role: record.Role, Name: record.Name, Excerpt: record.Content,
-		})
+		excerpt := record.Content
+		if params.View == "conversation" && record.DisplayContent != "" {
+			excerpt = record.DisplayContent
+		}
+		attachments := historyAttachmentMetadata(record)
+		if record.Origin == "user" && len(attachments) > 0 {
+			excerpt = record.DisplayContent
+			for _, attachment := range attachments {
+				excerpt += "\n" + attachment.Name
+			}
+			excerpt = strings.TrimSpace(excerpt)
+			// SearchHistoryQuery uses a literal substring, not query operators. Do
+			// not expose a hit whose only match was a host-generated working path.
+			if !strings.Contains(strings.ToLower(excerpt), strings.ToLower(strings.TrimSpace(params.Query))) {
+				continue
+			}
+		}
+		result.Matches = append(result.Matches, pluginhost.SessionHistoryMatch{At: historyRecordTime(record.At), Seq: record.Seq, Role: record.Role, Name: record.Name, Excerpt: excerpt})
 	}
 	if page.Next != nil {
 		result.NextCursor = session.EncodeHistoryCursor(*page.Next)
@@ -124,4 +148,11 @@ func historyServiceError(err error) error {
 	default:
 		return err
 	}
+}
+
+func historyRecordTime(at time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	return at.UTC().Format(time.RFC3339Nano)
 }

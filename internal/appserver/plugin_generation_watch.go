@@ -169,7 +169,7 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 			}
 		}
 		s.pluginGenerationRefreshMu.Unlock()
-		if refreshed {
+		if refreshed || (invalidated && s.rt.UserBinding().IsUser()) {
 			s.retireIdlePluginRuntimes()
 		}
 	}()

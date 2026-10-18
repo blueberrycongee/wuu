@@ -110,7 +110,7 @@ function buildInspectorSnapshot(state: AppState, todoUpdate?: TodoUpdate): Inspe
   const activeWorkspace = activeContext?.kind === "project"
     ? state.projects.find((project) => project.id === activeContext.project_id)
     : undefined;
-  const workspace = activeContext === undefined
+  const workspace = activeContext === undefined || activeContext.kind === "user"
     ? undefined
     : Object.freeze({
         kind: activeContext.kind,

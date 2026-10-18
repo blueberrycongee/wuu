@@ -51,7 +51,7 @@ export interface WorkbenchServices {
   disablePlugin?(pluginId: string): void | Promise<void>;
   reportError?(pluginId: string, generation: string, error: unknown): void;
   /** Ask the shell to reveal a placement region (e.g. open a collapsible panel). */
-  requestRegionVisible?(region: ViewPlacementRegion): void;
+  requestRegionVisible?(region: ViewPlacementRegion, layout?: "user-space"): void;
 }
 
 export interface WorkbenchSnapshot extends WorkbenchLayoutState {
@@ -158,7 +158,8 @@ export class WorkbenchController {
       persistence: options.persistence ?? definition.persistence ?? "session",
       context: freezeContext(options.context),
     });
-    this.services.requestRegionVisible?.(region);
+    if (definition.layout) this.services.requestRegionVisible?.(region, definition.layout);
+    else this.services.requestRegionVisible?.(region);
     this.replaceState({
       ...this.state,
       views: [...this.state.views, instance],
@@ -188,7 +189,9 @@ export class WorkbenchController {
   activateView(instanceId: string): void {
     const view = this.state.views.find((candidate) => candidate.id === instanceId);
     if (!view) return;
-    this.services.requestRegionVisible?.(view.region);
+    const definition = this.findViewType(view.viewTypeId, view.pluginId);
+    if (definition?.layout) this.services.requestRegionVisible?.(view.region, definition.layout);
+    else this.services.requestRegionVisible?.(view.region);
     this.replaceState({
       ...this.state,
       activeViewByRegion: { ...this.state.activeViewByRegion, [view.region]: view.id },

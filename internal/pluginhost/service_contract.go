@@ -44,9 +44,11 @@ const (
 	KernelSessionListService            = "host.session.list"
 	KernelSessionCancelService          = "host.session.cancel"
 	KernelSessionInspectService         = "host.session.inspect"
+	KernelSessionContextService         = "host.session.context"
 	KernelSessionControlService         = "host.session.control"
 	KernelSessionHistoryReadService     = "host.session.history.read"
 	KernelSessionHistorySearchService   = "host.session.history.search"
+	KernelSessionAttachmentReadService  = "host.session.attachment.read"
 	KernelWorkspaceStatusService        = "host.workspace.status"
 	KernelWorkspaceApplyService         = "host.workspace.apply"
 	KernelWorkspaceDiscardService       = "host.workspace.discard"
@@ -82,8 +84,8 @@ func KernelServiceDescriptors() []ServiceDescriptor {
 		KernelStorageKeysService, KernelStorageCompareExchangeService,
 		KernelSettingsGetService, KernelSettingsListService,
 		KernelSessionCreateService, KernelSessionSendService, KernelSessionListService,
-		KernelSessionCancelService, KernelSessionInspectService,
-		KernelSessionHistoryReadService, KernelSessionHistorySearchService,
+		KernelSessionCancelService, KernelSessionInspectService, KernelSessionContextService,
+		KernelSessionHistoryReadService, KernelSessionHistorySearchService, KernelSessionAttachmentReadService,
 		KernelWorkspaceStatusService, KernelWorkspaceApplyService, KernelWorkspaceDiscardService,
 		KernelSessionControlService,
 	}
@@ -110,8 +112,8 @@ func KernelPreflightRequirements() []ServiceRequirement {
 	return KernelServiceRequirements(
 		KernelStorageGetService, KernelStorageKeysService,
 		KernelSettingsGetService, KernelSettingsListService,
-		KernelSessionListService, KernelSessionInspectService,
-		KernelSessionHistoryReadService, KernelSessionHistorySearchService, KernelWorkspaceStatusService,
+		KernelSessionListService, KernelSessionInspectService, KernelSessionContextService,
+		KernelSessionHistoryReadService, KernelSessionHistorySearchService, KernelSessionAttachmentReadService, KernelWorkspaceStatusService,
 	)
 }
 

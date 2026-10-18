@@ -12,6 +12,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 type pluginClientStarter func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error)
@@ -20,8 +22,8 @@ func startPluginClient(ctx context.Context, cfg pluginhost.ProcessConfig) (plugi
 	return pluginhost.Start(ctx, cfg)
 }
 
-func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker) (*pluginhost.Host, *kernelHostServices) {
-	host, kernel, err := buildPluginHost(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, turnRouter, userQuestions)
+func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, bindings ...userspace.Binding) (*pluginhost.Host, *kernelHostServices) {
+	host, kernel, err := buildPluginHost(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, turnRouter, userQuestions, bindings...)
 	if err != nil {
 		// A fatal negotiation closes the entire prepared generation. Preserve
 		// each unavailable runtime and the graph so initial-session consumers
@@ -48,7 +50,15 @@ func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
 	return host.Activate(ctx)
 }
 
-func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker) (*pluginhost.Host, *kernelHostServices, error) {
+func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, bindings ...userspace.Binding) (*pluginhost.Host, *kernelHostServices, error) {
+	binding := userspace.Binding{}
+	if len(bindings) > 0 {
+		binding = bindings[0]
+	}
+	dataRoot := wuuHome
+	if binding.IsUser() {
+		dataRoot = binding.State(wuuHome)
+	}
 	host := newPluginHostWithRequirements(plugins)
 	var started []pluginhost.Client
 	kernel := newKernelHostServices(func() uint64 {
@@ -60,7 +70,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	}, host)
 	kernel.bindUserQuestions(userQuestions)
 	kernel.bindWorkspaceStateDir(workspaceStateDir)
-	kernel.bindWuuHome(wuuHome)
+	kernel.bindWuuHome(dataRoot)
 	host.SetToolResultMaterializer(kernel.materializeToolResult)
 	registry, conflicts := pluginhost.BuildServiceRegistry(kernel)
 	kernel.bindRegistry(registry)
@@ -86,9 +96,13 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		}
 		timeout := time.Duration(item.Runtime.Timeout) * time.Second
 		handler := newPluginHostServices(item, projectRoot, wuuHome, turnRouter)
+		handler.dataRoot = dataRoot
+		handler.binding = binding
+		handler.sessionDir = statepath.SessionsDir(dataRoot)
 		kernel.add(item.ID, handler)
 		registry.AllowPreflight(item.ID, pluginhost.KernelPreflightRequirements())
 		client, err := start(context.Background(), pluginhost.ProcessConfig{
+			UserSpaceID: binding.UserSpaceID, ProductDomain: binding.Domain(), DataRoot: dataRoot,
 			ID:                item.ID,
 			Command:           item.Runtime.Command,
 			Args:              item.Runtime.Args,

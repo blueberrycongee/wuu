@@ -191,6 +191,7 @@ function MarkdownContentView({
   sourceMapping = false,
   documentContext,
   codeCursor,
+  linkPolicy,
 }: {
   text: string;
   cwd?: string;
@@ -206,10 +207,12 @@ function MarkdownContentView({
   documentContext?: MarkdownFragmentContext;
   /** Rendered after the last code line when a code block ends the source. */
   codeCursor?: ReactNode;
+  /** External-only plugin messages cannot address Coding workspace files or embed unverified resources. */
+  linkPolicy?: "external-only";
 }): JSX.Element {
   const components = useMemo(
-    () => markdownComponents(cwd, renderText, renderMermaid, onOpenFile, onOpenURL, sourceMapping),
-    [cwd, renderText, renderMermaid, onOpenFile, onOpenURL, sourceMapping]
+    () => markdownComponents(cwd, renderText, linkPolicy === "external-only" ? false : renderMermaid, onOpenFile, onOpenURL, sourceMapping, linkPolicy),
+    [cwd, renderText, renderMermaid, onOpenFile, onOpenURL, sourceMapping, linkPolicy]
   );
   const source = documentContext?.referenceDefinitions ? `${documentContext.referenceDefinitions}\n${text}` : text;
   const sourceEnd = source.trimEnd().length;
@@ -255,6 +258,7 @@ function markdownComponents(
   onOpenFile: ((path: string) => void) | undefined,
   onOpenURL: ((url: string, event?: ReactMouseEvent<HTMLElement>) => void) | undefined,
   sourceMapping: boolean,
+  linkPolicy?: "external-only",
 ): Components {
   const richTextOptions: RichTextRenderOptions = {
     renderText,
@@ -314,6 +318,7 @@ function markdownComponents(
     a({ href, title, children }) {
       const inner = renderMarkdownText(children, richTextOptions, "a");
       if (href === PENDING_STREAM_LINK) return <span>{inner}</span>;
+      if (linkPolicy === "external-only" && !/^(https?:\/\/|mailto:)/i.test(href || "")) return <span>{inner}</span>;
       const target = parseLinkTarget(href);
       if (target.kind === "workspace-file") {
         if (!onOpenFile) {
@@ -330,7 +335,7 @@ function markdownComponents(
         );
       }
       if (target.kind === "external") {
-        return <RichWebLink href={target.url} title={title} onOpenURL={onOpenURL}>{inner}</RichWebLink>;
+        return <RichWebLink href={target.url} title={title} onOpenURL={onOpenURL} externalOnly={linkPolicy === "external-only"}>{inner}</RichWebLink>;
       }
       if (target.kind === "anchor") {
         return <RichAnchorLink id={target.id} title={title}>{inner}</RichAnchorLink>;
@@ -338,6 +343,7 @@ function markdownComponents(
       return <span>{inner}</span>;
     },
     img({ src, alt }) {
+      if (linkPolicy === "external-only") return <span>{alt}</span>;
       if (src === PENDING_STREAM_LINK) return <span>{alt}</span>;
       if (!src) {
         return null;
@@ -709,10 +715,12 @@ function RichWebLink({
   title,
   children,
   onOpenURL,
+  externalOnly = false,
 }: {
   href: string;
   title?: string;
   children: ReactNode;
+  externalOnly?: boolean;
   onOpenURL?: (url: string, event?: ReactMouseEvent<HTMLElement>) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -729,6 +737,7 @@ function RichWebLink({
       return;
     }
     event.preventDefault();
+    if (externalOnly) { openExternalURL(href); return; }
     const modifiers = workspaceBrowserClickModifiers(event);
     if (onOpenURL && !prefersSystemBrowser(modifiers)) {
       onOpenURL(href);
@@ -753,7 +762,7 @@ function RichWebLink({
           }}
         >
           <span className="rich-link-content">
-            <RichWebLinkIcon href={href} />
+            {externalOnly ? <Globe2 className="icon-xs" /> : <RichWebLinkIcon href={href} />}
             <span className="rich-link-label">{children}</span>
           </span>
         </a>
@@ -764,7 +773,7 @@ function RichWebLink({
           y={contextMenu.y}
           onClose={closeContextMenu}
           items={[
-            { label: t("rich.openLinkInWorkspace"), onSelect: () => openWorkspaceURL(href) },
+            ...(!externalOnly ? [{ label: t("rich.openLinkInWorkspace"), onSelect: () => openWorkspaceURL(href) }] : []),
             { label: t("rich.openLinkExternal"), onSelect: () => openExternalURL(href) },
           ]}
         />

@@ -790,3 +790,82 @@ it("does not restart a disposed core while the desktop is waiting for exit", asy
   child.emit("exit", 0, null);
   await stopped;
 });
+
+it("keeps an explicit user host resident across project switches and passes its binding to core", async () => {
+  vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+  const user = { kind: "user" as const, user_space_id: "local", product_domain: "personal" as const, cwd: join(tmpdir(), "user-host-pool") };
+  const argsByCwd = new Map<string, readonly string[]>();
+  const disposed: string[] = [];
+  const pool = new AppServerClientPool(() => user, () => "/another-project", () => {}, (_command, args, options) => {
+    const child = new FakeAppServerChild(); argsByCwd.set(options.cwd, args);
+    child.stdin.on("data", data => {
+      const request = JSON.parse(String(data));
+      queueMicrotask(() => request.method === "shutdown" ? child.emit("exit", 0, null) : child.stdout.write(`${JSON.stringify({ id: request.id, result: request.method === "initialize" ? { user_space_id: "local", product_domain: "personal" } : {} })}\n`));
+    });
+    return child.asChildProcess();
+  });
+  pool.setClientTorndownHandler(cwd => disposed.push(cwd));
+  try {
+    await pool.requestInContext(user, "plugin/list");
+    for (let index = 0; index < 6; index++) await pool.requestInContext({ kind: "project", project_id: `p${index}`, cwd: join(tmpdir(), `pool-project-${index}`) }, "thread/list");
+    expect(disposed).not.toContain(user.cwd);
+    const args = argsByCwd.get(user.cwd)!;
+    expect(args.slice(args.indexOf("--user-space"), args.indexOf("--user-space") + 4)).toEqual(["--user-space", "local", "--product-domain", "personal"]);
+    expect(args).not.toContain("--workspace-id");
+  } finally { await pool.shutdown(); vi.unstubAllEnvs(); }
+});
+
+it("does not follow a session owner across a user-space product boundary", async () => {
+  vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+  const coding = { kind: "project" as const, project_id: "coding", cwd: join(tmpdir(), "owner-coding") };
+  const personal = { kind: "user" as const, user_space_id: "local", product_domain: "personal" as const, cwd: join(tmpdir(), "owner-personal") };
+  const children = new Map<string, FakeAppServerChild>();
+  const pool = new AppServerClientPool(() => coding, () => coding.cwd, () => {}, (_command, _args, options) => {
+    const child = new FakeAppServerChild(); children.set(options.cwd, child);
+    child.stdin.on("data", data => { const request = JSON.parse(String(data)); if (request.method === "shutdown") queueMicrotask(() => child.emit("exit", 0, null)); else child.stdout.write(`${JSON.stringify({ id: request.id, result: request.method === "initialize" ? { user_space_id: "local", product_domain: "personal" } : { cwd: options.cwd } })}\n`); });
+    return child.asChildProcess();
+  });
+  try {
+    pool.prewarmContexts([coding, personal]);
+    children.get(coding.cwd)!.stdout.write(`${JSON.stringify({ method: "turn/started", params: { thread_id: "coding-session" } })}\n`);
+    children.get(personal.cwd)!.stdout.write(`${JSON.stringify({ method: "turn/started", params: { thread_id: "personal-session" } })}\n`);
+    expect(await pool.requestInContext(personal, "thread/resume", { session_id: "coding-session" })).toEqual({ cwd: personal.cwd });
+    expect(await pool.requestInContext(coding, "thread/resume", { session_id: "personal-session" })).toEqual({ cwd: coding.cwd });
+  } finally { await pool.shutdown(); vi.unstubAllEnvs(); }
+});
+
+it.each([{}, { user_space_id: "someone-else", product_domain: "personal" }, { user_space_id: "local", product_domain: "coding" }])("rejects a user connection whose initialize binding is not exact: %j", async result => {
+  const child = new FakeAppServerChild(), requests: any[] = [], events: AppServerClientEvent[] = [];
+  child.stdin.on("data", data => { requests.push(JSON.parse(String(data))); });
+  const client = new AppServerClient(tmpdir(), "", (_source,event) => events.push(event), () => {}, () => child.asChildProcess(), (_env,cwd) => ({ command:"test-wuu-core", args:[], cwd }), undefined, { userSpaceId:"local", productDomain:"personal" });
+  const pending = client.request("plugin/client/request", { method:"agents.list" });
+  const rejected = expect(pending).rejects.toThrow("user_host_binding_mismatch");
+  expect(requests.map(request => request.method)).toEqual(["initialize"]);
+  child.stdout.write(`${JSON.stringify({ method:"turn/started", params:{ thread_id:"foreign" } })}\n`);
+  child.stdout.write(`${JSON.stringify({ id:requests[0].id, result })}\n`);
+  await rejected;
+  expect(requests.some(request => request.method === "plugin/client/request")).toBe(false);
+  expect(events.some(event => event.kind === "notification")).toBe(false);
+  expect(child.killed).toBe(true);
+});
+
+it("waits for exact immutable binding before sending user requests and checks replacement processes again", async () => {
+  const children: FakeAppServerChild[] = [], requests: any[][] = [];
+  const client = new AppServerClient(tmpdir(), "", () => {}, () => {}, () => {
+    const child = new FakeAppServerChild(), list: any[] = []; children.push(child); requests.push(list);
+    child.stdin.on("data", data => { list.push(JSON.parse(String(data))); }); return child.asChildProcess();
+  }, (_env,cwd) => ({ command:"test-wuu-core",args:[],cwd }), undefined, {userSpaceId:"local",productDomain:"personal"});
+  const first = client.request("plugin/client/request");
+  expect(requests[0].map(request => request.method)).toEqual(["initialize"]);
+  children[0].stdout.write(`${JSON.stringify({id:requests[0][0].id,result:{user_space_id:"local",product_domain:"personal"}})}\n`);
+  await Promise.resolve();
+  expect(requests[0][1].method).toBe("plugin/client/request");
+  children[0].stdout.write(`${JSON.stringify({id:requests[0][1].id,result:{accepted:true}})}\n`);
+  expect(await first).toEqual({accepted:true});
+  children[0].emit("exit", 1);
+  const second = client.request("plugin/client/request"), rejected = expect(second).rejects.toThrow("user_host_binding_mismatch");
+  expect(requests[1].map(request => request.method)).toEqual(["initialize"]);
+  children[1].stdout.write(`${JSON.stringify({id:requests[1][0].id,result:{}})}\n`);
+  await rejected;
+  expect(requests[1].some(request => request.method === "plugin/client/request")).toBe(false);
+});

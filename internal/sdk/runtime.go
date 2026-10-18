@@ -11,8 +11,11 @@ import (
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
+	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
 // ProtocolVersion is the app-server contract implemented by Runtime.Serve.
@@ -33,9 +36,13 @@ type Host struct {
 	InstanceID string
 }
 
-// Options configures one workspace runtime. Empty WorkDir and HomeDir values
+// Options configures one workspace or explicitly isolated user runtime. Empty WorkDir and HomeDir values
 // use the process working directory and HOME respectively.
 type Options struct {
+	// UserHostIsolationVerifier is a trusted host integration, never a client or environment assertion.
+	UserHostIsolationVerifier runtime.UserHostIsolationVerifier
+	UserSpaceID               string
+	ProductDomain             string
 	// WorkDir is the workspace root used for tools and project discovery.
 	WorkDir string
 	// WorkspaceID is a stable identity that keeps workspace state attached when
@@ -83,7 +90,7 @@ type Options struct {
 	SafeMode bool
 }
 
-// Runtime is an initialized, UI-neutral Wuu host for one workspace.
+// Runtime is an initialized, UI-neutral Wuu workspace or isolated user host.
 //
 // A Runtime may serve app-server connections sequentially or concurrently.
 // Close must be called after all Serve calls return; it rejects an early close
@@ -91,6 +98,7 @@ type Options struct {
 type Runtime struct {
 	mu       sync.Mutex
 	core     *runtime.Session
+	userHost *appserver.UserHost
 	serving  int
 	closed   bool
 	closeErr error
@@ -116,6 +124,26 @@ func New(opts Options) (*Runtime, error) {
 			}
 		}
 	}
+	binding := userspace.Binding{UserSpaceID: strings.TrimSpace(opts.UserSpaceID), ProductDomain: strings.TrimSpace(opts.ProductDomain)}
+	if err := binding.Validate(); err != nil {
+		return nil, err
+	}
+	if binding.IsUser() {
+		if opts.WorkspaceID != "" || opts.IgnoreUserConfig {
+			return nil, errors.New("user host cannot inherit a project binding")
+		}
+		home, err := statepath.Home(homeDir)
+		if err != nil {
+			return nil, err
+		}
+		if err := runtime.VerifyUserHostIsolation(context.Background(), binding, home, opts.UserHostIsolationVerifier); err != nil {
+			return nil, err
+		}
+		rootDir = binding.Root(home)
+		if err := os.MkdirAll(rootDir, 0700); err != nil {
+			return nil, err
+		}
+	}
 	host, err := runtimeconfig.ResolveHost(
 		string(opts.Host.Kind),
 		opts.Host.InstanceID,
@@ -129,13 +157,25 @@ func New(opts Options) (*Runtime, error) {
 		return nil, errors.New("cloud host cannot create a starter config")
 	}
 
-	cfg, configPath, configLoadMode, err := runtimeconfig.Load(runtimeconfig.LoadOptions{
-		RootDir:               rootDir,
-		HomeDir:               homeDir,
-		ConfigPath:            opts.ConfigPath,
-		IgnoreUserConfig:      opts.IgnoreUserConfig,
-		CreateConfigIfMissing: opts.CreateConfigIfMissing,
-	})
+	var cfg config.Config
+	var configPath string
+	var configLoadMode runtime.ConfigLoadMode
+	if binding.IsUser() {
+		configPath = strings.TrimSpace(opts.ConfigPath)
+		if configPath == "" {
+			configPath, err = statepath.ConfigPath(homeDir)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if !filepath.IsAbs(configPath) {
+			return nil, errors.New("user host requires an absolute config path")
+		}
+		cfg, configPath, err = config.LoadPath(configPath)
+		configLoadMode = runtime.ConfigLoadFile
+	} else {
+		cfg, configPath, configLoadMode, err = runtimeconfig.Load(runtimeconfig.LoadOptions{RootDir: rootDir, HomeDir: homeDir, ConfigPath: opts.ConfigPath, IgnoreUserConfig: opts.IgnoreUserConfig, CreateConfigIfMissing: opts.CreateConfigIfMissing})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +190,7 @@ func New(opts Options) (*Runtime, error) {
 	}
 
 	core, err := runtime.NewSession(runtime.Options{
+		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, UserHostIsolationVerifier: opts.UserHostIsolationVerifier,
 		RootDir:                  rootDir,
 		Host:                     host,
 		WorkspaceID:              strings.TrimSpace(opts.WorkspaceID),
@@ -168,13 +209,29 @@ func New(opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{core: core}, nil
+	result := &Runtime{core: core}
+	if binding.IsUser() {
+		result.userHost, err = appserver.NewUserHost(core)
+		if err != nil {
+			_, _ = core.Cleanup()
+			return nil, err
+		}
+	}
+	return result, nil
 }
 
 // Serve runs one app-server JSONL connection until the client requests
 // shutdown, the input closes, or the protocol returns an error. The caller owns
 // in and out.
 func (r *Runtime) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
+	return r.ServeForDevice(ctx, in, out, nil)
+}
+
+// ServeForDevice attaches an authenticated transport and its device-bound push
+// registrar. User hosts keep executing after this connection closes; Close is
+// the explicit authority shutdown after all connections return. The owner must
+// cancel/close its transports before Close; Coding retains its existing connection life.
+func (r *Runtime) ServeForDevice(ctx context.Context, in io.Reader, out io.Writer, registrar appserver.PushRegistrar) error {
 	if r == nil {
 		return errors.New("runtime is required")
 	}
@@ -202,7 +259,27 @@ func (r *Runtime) Serve(ctx context.Context, in io.Reader, out io.Writer) error 
 		r.mu.Unlock()
 	}()
 
-	return appserver.RunStdio(ctx, core, in, out)
+	if r.userHost != nil {
+		return r.userHost.Serve(ctx, in, out, registrar)
+	}
+	return appserver.RunStdioForDevice(ctx, core, in, out, registrar)
+}
+
+// SubscribeUserAttention observes owner-admitted notifications for the user
+// host without a phone or desktop connection. The receiver must honor ctx for
+// external work. Close ends the subscription; Coding runtimes reject it.
+func (r *Runtime) SubscribeUserAttention(ctx context.Context, receive func(appserver.UserAttentionNotification)) error {
+	if r == nil {
+		return errors.New("runtime is required")
+	}
+	r.mu.Lock()
+	host := r.userHost
+	closed := r.closed
+	r.mu.Unlock()
+	if closed || host == nil {
+		return errors.New("active user host is required")
+	}
+	return host.SubscribeUserAttention(ctx, receive)
 }
 
 // Close releases resources owned by the embedded runtime. It is idempotent.
@@ -219,6 +296,10 @@ func (r *Runtime) Close() error {
 		return fmt.Errorf("close runtime: %d app-server connection(s) still serving", r.serving)
 	}
 	r.closed = true
+	if r.userHost != nil {
+		r.userHost.Close()
+		r.userHost = nil
+	}
 	if r.core != nil {
 		_, r.closeErr = r.core.Cleanup()
 		r.core = nil

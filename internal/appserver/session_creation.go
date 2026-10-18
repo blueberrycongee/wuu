@@ -26,6 +26,9 @@ const (
 // hostSessionCreateParams is the host's creation contract. Callers validate
 // their entry-point requirements before creating an ordinary persisted session.
 type hostSessionCreateParams struct {
+	UserSpaceID              string
+	ProductDomain            string
+	AgentID                  string
 	SharedWorkspaceSessionID string
 	Speed                    string
 	ModelOptions             map[string]string
@@ -197,6 +200,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 		}()
 	}
 	initial := session.Session{
+		UserSpaceID: s.rt.UserSpaceID, ProductDomain: s.rt.ProductDomain, AgentID: params.AgentID,
 		ID: id, Title: params.Name, CWD: threadCWD,
 		WorkspaceID: workspaceID, Source: source,
 		Owner: managed.Owner, Visibility: managed.Visibility, ParentID: managed.ParentID,

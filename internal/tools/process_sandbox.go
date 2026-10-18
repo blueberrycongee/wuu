@@ -20,14 +20,17 @@ func (e *Env) processSandboxPolicy(ctx context.Context) (*processsandbox.Policy,
 }
 
 func (e *Env) processSandboxPolicyWithBuiltIn(ctx context.Context, builtInAvailable bool) (*processsandbox.Policy, string, error) {
-	if e == nil || e.Unconfined {
+	if e == nil || e.Unconfined && len(e.ProtectedPaths) == 0 {
 		return nil, "", nil
 	}
 	if e.ProcessSandboxProvider == nil && !builtInAvailable {
+		if len(e.ProtectedPaths) > 0 {
+			return nil, "", fmt.Errorf("%w: protected read/write paths require a supporting sandbox backend", processsandbox.ErrUnavailable)
+		}
 		return nil, "", fmt.Errorf("%w: no built-in backend is available; configure sandbox.process@1 or explicitly use unconfined mode", processsandbox.ErrUnavailable)
 	}
 	if e.boundaryConfigured && !e.AllowMutations {
-		return &processsandbox.Policy{Mode: processsandbox.ModeReadOnly}, "", nil
+		return &processsandbox.Policy{Mode: processsandbox.ModeReadOnly, ProtectedPaths: append([]string(nil), e.ProtectedPaths...)}, "", nil
 	}
 
 	roots := make([]string, 0, len(e.FileScopeRoots)+2)
@@ -61,9 +64,13 @@ func (e *Env) processSandboxPolicyWithBuiltIn(ctx context.Context, builtInAvaila
 		return nil, "", err
 	}
 	roots = append(roots, tempDir)
+	if e.Unconfined {
+		roots = []string{string(filepath.Separator)}
+	}
 	return &processsandbox.Policy{
-		Mode:          processsandbox.ModeWorkspaceWrite,
-		WritableRoots: roots,
+		Mode:           processsandbox.ModeWorkspaceWrite,
+		WritableRoots:  roots,
+		ProtectedPaths: append([]string(nil), e.ProtectedPaths...),
 	}, tempDir, nil
 }
 
@@ -72,6 +79,11 @@ func (e *Env) ensureProcessSandboxTempDir() (string, error) {
 	if base == "" {
 		base = strings.TrimSpace(e.StateDir)
 	}
+	// Session authority storage may be protected from the subprocess itself.
+	// Give that subprocess separate private scratch instead of a write exception.
+	if base != "" && e.rejectProtectedPath(filepath.Join(base, "process-tmp"), false) != nil {
+		base = ""
+	}
 	var tempDir string
 	if base != "" {
 		tempDir = filepath.Join(base, "process-tmp")
@@ -79,6 +91,9 @@ func (e *Env) ensureProcessSandboxTempDir() (string, error) {
 		identity := strings.TrimSpace(e.RootDir) + "\x00" + strings.TrimSpace(e.SessionID)
 		sum := sha256.Sum256([]byte(identity))
 		tempDir = filepath.Join(os.TempDir(), "wuu-process-sandbox", fmt.Sprintf("%x", sum[:8]))
+	}
+	if err := e.rejectProtectedPath(tempDir, false); err != nil {
+		return "", err
 	}
 	if err := os.MkdirAll(tempDir, 0o700); err != nil {
 		return "", fmt.Errorf("create private process temp directory: %w", err)

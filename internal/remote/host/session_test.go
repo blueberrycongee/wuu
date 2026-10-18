@@ -1,13 +1,14 @@
 package host
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestClassifyPushHintTurnCompleted(t *testing.T) {
 	line := []byte(`{"method":"turn/completed","params":{"thread_id":"thread-1","turn":{"id":"turn-1"}}}`)
-	hint, threadID := classifyPushHint(line)
+	hint, threadID, _ := classifyPushHint(line)
 	if hint != "agent_done" {
 		t.Errorf("hint: want agent_done, got %q", hint)
 	}
@@ -18,7 +19,7 @@ func TestClassifyPushHintTurnCompleted(t *testing.T) {
 
 func TestClassifyPushHintTurnError(t *testing.T) {
 	line := []byte(`{"method":"turn/error","params":{"thread_id":"thread-2","turn_id":"turn-2","error":"boom"}}`)
-	hint, threadID := classifyPushHint(line)
+	hint, threadID, _ := classifyPushHint(line)
 	if hint != "agent_done" {
 		t.Errorf("hint: want agent_done, got %q", hint)
 	}
@@ -32,7 +33,7 @@ func TestClassifyPushHintServerRequest(t *testing.T) {
 	// both id and method; the agent is blocked on input. Thread is empty
 	// because the request is process-wide, not thread-scoped.
 	line := []byte(`{"id":"42","method":"tool/approval","params":{}}`)
-	hint, threadID := classifyPushHint(line)
+	hint, threadID, _ := classifyPushHint(line)
 	if hint != "needs_input" {
 		t.Errorf("hint: want needs_input, got %q", hint)
 	}
@@ -49,7 +50,7 @@ func TestClassifyPushHintIrrelevant(t *testing.T) {
 		``,
 	}
 	for _, raw := range cases {
-		hint, threadID := classifyPushHint([]byte(raw))
+		hint, threadID, _ := classifyPushHint([]byte(raw))
 		if hint != "" || threadID != "" {
 			t.Errorf("classifyPushHint(%q): want empty, got hint=%q thread=%q", raw, hint, threadID)
 		}
@@ -151,4 +152,39 @@ func itoa(i int) string {
 		buf[pos] = '-'
 	}
 	return string(buf[pos:])
+}
+
+// Only an admitted attention notification may route Personal push. Raw scoped
+// terminal events never bypass current plugin policy, even with a valid locator.
+func TestClassifyPersonalPushFailsClosed(t *testing.T) {
+	valid := `{"method":"user/attention","params":{"turn_id":"turn-1","outcome":"completed","user_space_id":"local","product_domain":"personal","user_location":{"version":1,"user_space_id":"local","product_domain":"personal","agent_id":"main","message_seq":17}}}`
+	for _, raw := range []string{
+		`{"method":"turn/completed","params":{"thread_id":"private-session","user_space_id":"local","product_domain":"personal"}}`,
+		`{"id":"request","method":"user/attention","params":{}}`,
+		`{"method":"turn/error","params":{"thread_id":"private-session","product_domain":"personal","error":"secret"}}`,
+		`{"method":"user/attention","params":{"turn_id":"turn-1","outcome":"completed","user_space_id":"local","product_domain":"personal","user_location":null}}`,
+		strings.Replace(valid, `"method":"user/attention"`, `"method":"turn/completed"`, 1),
+		strings.Replace(valid, `"method":"user/attention"`, `"method":"turn/error"`, 1),
+		strings.Replace(valid, `"outcome":"completed"`, `"outcome":"pending"`, 1),
+		strings.Replace(valid, `"outcome":"completed",`, ``, 1),
+		strings.Replace(valid, `"turn_id":"turn-1",`, ``, 1),
+		strings.Replace(valid, `"turn_id":"turn-1"`, `"turn_id":"`+strings.Repeat("a", 257)+`"`, 1),
+		strings.Replace(valid, `"user_space_id":"local"`, `"user_space_id":"other"`, 1),
+		strings.Replace(valid, `"version":1`, `"version":2`, 1),
+		strings.Replace(valid, `"message_seq":17`, `"message_seq":0`, 1),
+		strings.Replace(valid, `"agent_id":"main"`, `"agent_id":"main","host":"spoof"`, 1),
+		strings.Replace(valid, `"method":"user/attention"`, `"id":"request","method":"user/attention"`, 1),
+		strings.Replace(valid, `"user_space_id":"local","product_domain":"personal",`, ``, 1),
+	} {
+		hint, thread, location := classifyPushHint([]byte(raw))
+		if hint != "" || thread != "" || location != nil {
+			t.Fatalf("unadmitted notification produced push: %s => %q %q %+v", raw, hint, thread, location)
+		}
+	}
+	for _, outcome := range []string{"completed", "failed"} {
+		hint, thread, location := classifyPushHint([]byte(strings.Replace(valid, `"outcome":"completed"`, `"outcome":"`+outcome+`"`, 1)))
+		if hint != "agent_done" || thread != "" || location == nil || location.AgentID != "main" || location.MessageSeq == nil || *location.MessageSeq != 17 {
+			t.Fatalf("invalid admitted Personal push: %q %q %+v", hint, thread, location)
+		}
+	}
 }

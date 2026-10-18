@@ -66,7 +66,30 @@ const (
 	// CapabilityPluginClientRequest handles a generation-bound opaque request
 	// from a Wuu client. Method names and payload schemas belong to the plugin.
 	CapabilityPluginClientRequest = "plugin.client.request"
+	// CapabilitySessionAttention lets the persisted owner decide whether a settled
+	// main conversation should request user attention under its current policy.
+	CapabilitySessionAttention = "session.attention"
 )
+
+// SessionAttentionInput is host-authenticated, content-free terminal context.
+// It is never accepted from a client as permission to send a notification.
+type SessionAttentionInput struct {
+	UserSpaceID   string `json:"user_space_id"`
+	ProductDomain string `json:"product_domain"`
+	SessionID     string `json:"session_id"`
+	AgentID       string `json:"agent_id"`
+	MessageSeq    int    `json:"message_seq,omitempty"`
+	TurnID        string `json:"turn_id"`
+	Outcome       string `json:"outcome"`
+}
+
+type SessionAttentionOutput struct {
+	Allowed bool `json:"allowed"`
+	// BatchWindowSeconds optionally coalesces attention for one responsible
+	// agent. Zero or absence preserves immediate delivery; the host bounds the
+	// first-item window to 15 minutes. Conversation results are never batched.
+	BatchWindowSeconds int `json:"batch_window_seconds,omitempty"`
+}
 
 // SeamKind classifies how the host dispatches one plugin capability. The
 // capability RPC is the single production seam model: descriptors declare the
@@ -184,14 +207,16 @@ const (
 
 	// Sessions. Creation and input delivery are separate so ownership,
 	// visibility, provenance, and idempotency remain explicit.
-	HostServiceSessionCreate        HostServiceMethod = "host.session.create"
-	HostServiceSessionControl       HostServiceMethod = "host.session.control"
-	HostServiceSessionSend          HostServiceMethod = "host.session.send"
-	HostServiceSessionList          HostServiceMethod = "host.session.list"
-	HostServiceSessionCancel        HostServiceMethod = "host.session.cancel"
-	HostServiceSessionInspect       HostServiceMethod = "host.session.inspect"
-	HostServiceSessionHistoryRead   HostServiceMethod = "host.session.history.read"
-	HostServiceSessionHistorySearch HostServiceMethod = "host.session.history.search"
+	HostServiceSessionCreate         HostServiceMethod = "host.session.create"
+	HostServiceSessionControl        HostServiceMethod = "host.session.control"
+	HostServiceSessionSend           HostServiceMethod = "host.session.send"
+	HostServiceSessionList           HostServiceMethod = "host.session.list"
+	HostServiceSessionCancel         HostServiceMethod = "host.session.cancel"
+	HostServiceSessionInspect        HostServiceMethod = "host.session.inspect"
+	HostServiceSessionContext        HostServiceMethod = "host.session.context"
+	HostServiceSessionHistoryRead    HostServiceMethod = "host.session.history.read"
+	HostServiceSessionHistorySearch  HostServiceMethod = "host.session.history.search"
+	HostServiceSessionAttachmentRead HostServiceMethod = "host.session.attachment.read"
 
 	// Workspaces. These methods operate only on an isolated workspace owned by
 	// a plugin-created session; callers never supply filesystem paths.
@@ -237,6 +262,9 @@ type SessionToolPolicy struct {
 }
 
 type SessionCreateParams struct {
+	UserSpaceID     string               `json:"user_space_id,omitempty"`
+	ProductDomain   string               `json:"product_domain,omitempty"`
+	AgentID         string               `json:"agent_id,omitempty"`
 	Speed           string               `json:"speed,omitempty"`
 	RequestID       string               `json:"request_id"`
 	Name            string               `json:"name,omitempty"`
@@ -311,9 +339,16 @@ type SessionCreateResult struct {
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
 }
 
+type SessionInputAttachment struct {
+	SHA256    string `json:"sha256"`
+	Filename  string `json:"filename"`
+	MediaType string `json:"media_type"`
+}
+
 type SessionInput struct {
-	Prompt        string                `json:"prompt"`
-	ContextBlocks []SessionContextBlock `json:"context_blocks,omitempty"`
+	Attachments   []SessionInputAttachment `json:"attachments,omitempty"`
+	Prompt        string                   `json:"prompt"`
+	ContextBlocks []SessionContextBlock    `json:"context_blocks,omitempty"`
 }
 
 type SessionInputPresentation struct {
@@ -324,7 +359,9 @@ type SessionInputPresentation struct {
 }
 
 type SessionSendParams struct {
-	ControlRevision int64 `json:"control_revision,omitempty"`
+	// UserInputRequestID requires an exact live client submission proof in the host context.
+	UserInputRequestID string `json:"user_input_request_id,omitempty"`
+	ControlRevision    int64  `json:"control_revision,omitempty"`
 	// ReplyToTurnID preserves the original turn scope when a plugin returns deferred work.
 	ReplyToTurnID string                    `json:"reply_to_turn_id,omitempty"`
 	RequestID     string                    `json:"request_id"`
@@ -351,6 +388,9 @@ type SessionListParams struct {
 }
 
 type SessionSummary struct {
+	UserSpaceID     string `json:"user_space_id,omitempty"`
+	ProductDomain   string `json:"product_domain,omitempty"`
+	AgentID         string `json:"agent_id,omitempty"`
 	SessionID       string `json:"session_id"`
 	Name            string `json:"name,omitempty"`
 	ParentSessionID string `json:"parent_session_id,omitempty"`
@@ -913,7 +953,7 @@ func ValidateCapabilityDescriptor(c CapabilityDescriptor) error {
 		requiredKind = SeamObserve
 	case CapabilityAgentTurnInterrupted:
 		requiredKind = SeamObserve
-	case CapabilityPluginClientRequest, CapabilityModelAdapter, CapabilityModelMiddleware:
+	case CapabilityPluginClientRequest, CapabilitySessionAttention, CapabilityModelAdapter, CapabilityModelMiddleware:
 		requiredKind = SeamDecision
 	}
 	if c.ID == CapabilityModelMiddleware && policy != ErrorPolicyPropagate {
@@ -1010,7 +1050,7 @@ func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported 
 			return err
 		}
 		switch capability.ID {
-		case CapabilityModelRequestTransform, CapabilityModelRequestObserve, CapabilityModelMiddleware, CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest, CapabilityModelAdapter:
+		case CapabilityModelRequestTransform, CapabilityModelRequestObserve, CapabilityModelMiddleware, CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest, CapabilitySessionAttention, CapabilityModelAdapter:
 		default:
 			return fmt.Errorf("capability %s is not supported by this host", capability.ID)
 		}

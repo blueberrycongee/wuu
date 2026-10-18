@@ -205,7 +205,11 @@ export class AppServerClientPool {
     // execution owners still retain control of their own sessions.
     const relocated = owner && context.kind === "project" &&
       owner.workspaceId === context.project_id && owner.workdir !== resolve(context.cwd);
-    const client = (relocated ? undefined : owner) ?? this.clientForContext(context);
+    // Session-owner affinity cannot turn a request into another product's authority.
+    // The caller's bound host must validate a foreign session instead.
+    const crossesUserBoundary = owner && (context.kind === "user" || owner.userBinding !== undefined) &&
+      (context.kind !== "user" || owner.userBinding?.userSpaceId !== context.user_space_id || owner.userBinding?.productDomain !== context.product_domain);
+    const client = (relocated || crossesUserBoundary ? undefined : owner) ?? this.clientForContext(context);
     return client.request<T>(method, params, (response) => onResponse?.(response, client.workdir));
   }
 
@@ -318,7 +322,8 @@ export class AppServerClientPool {
     // workspace stays path-keyed (its scratch dir never moves).
     const workspaceId = context.kind === "project" ? context.project_id : "";
     let client = this.clients.get(workdir);
-    if (client && client.workspaceId !== workspaceId) {
+    const userBinding = context.kind === "user" ? { userSpaceId: context.user_space_id, productDomain: context.product_domain } : undefined;
+    if (client && (client.workspaceId !== workspaceId || client.userBinding?.userSpaceId !== userBinding?.userSpaceId || client.userBinding?.productDomain !== userBinding?.productDomain)) {
       // Re-registering a path creates a new identity. Let old turns finish,
       // but never admit new project requests into their former runtime.
       this.clients.delete(workdir);
@@ -337,6 +342,7 @@ export class AppServerClientPool {
         this.spawnAppServer,
         undefined,
         this.getInitializeParams,
+        userBinding,
       );
       this.clients.set(workdir, client);
     }
@@ -394,7 +400,7 @@ export class AppServerClientPool {
 
   private evictIdleClients(admittingClient?: AppServerClient): void {
     for (const client of this.retiredClients) {
-      if (!client.isBusy() && !this.isWorkdirPinned?.(client.workdir)) {
+      if (!client.userBinding && !client.isBusy() && !this.isWorkdirPinned?.(client.workdir)) {
         this.disposeClient(client);
       }
     }
@@ -407,6 +413,7 @@ export class AppServerClientPool {
         (client) =>
           client !== admittingClient &&
           client.workdir !== activeWorkdir &&
+          !client.userBinding &&
           !client.isBusy() &&
           !this.isWorkdirPinned?.(client.workdir),
       )
@@ -454,6 +461,8 @@ export class AppServerClient {
   private lastUsedAt = Date.now();
   private lastStderr = "";
   private stoppedActivityIDs = new Set<string>();
+  private userHostReady?: Promise<unknown>;
+  private userHostVerified = false;
 
   constructor(
     readonly workdir: string,
@@ -470,6 +479,7 @@ export class AppServerClient {
     private readonly spawnAppServer: AppServerSpawn = defaultSpawnAppServer,
     private readonly resolveCommand: typeof resolveWuuCommand = resolveWuuCommand,
     private readonly getInitializeParams?: () => unknown,
+    readonly userBinding?: Readonly<{ userSpaceId: string; productDomain: string }>,
   ) {}
 
   start(): void {
@@ -490,6 +500,17 @@ export class AppServerClient {
 
   request<T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> {
     this.start();
+    if (this.userBinding) {
+      const child = this.child;
+      return this.userHostReady!.then(() => {
+        if (!child || child !== this.child || child.killed || this.disposing) throw new Error("The owning app-server process is no longer available");
+        return this.sendRequest<T>(method, params, onResponse);
+      });
+    }
+    return this.sendRequest<T>(method, params, onResponse);
+  }
+
+  private sendRequest<T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> {
     const id = `client-${this.nextRequestID++}`;
     const payload: AppServerRequest = { id, method, params };
     return new Promise<T>((resolveRequest, rejectRequest) => {
@@ -653,6 +674,9 @@ export class AppServerClient {
     if (this.workspaceId.trim() !== "") {
       appServerArgs.push("--workspace-id", this.workspaceId);
     }
+    if (this.userBinding) {
+      appServerArgs.push("--user-space", this.userBinding.userSpaceId, "--product-domain", this.userBinding.productDomain);
+    }
     const helperEnv = appServerHelperEnvironment(
       process.env,
       sourceRoot,
@@ -670,6 +694,8 @@ export class AppServerClient {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child = child;
+    this.userHostVerified = false;
+    this.userHostReady = undefined;
     this.stdoutChunks = [];
     this.lastStderr = "";
 
@@ -734,8 +760,10 @@ export class AppServerClient {
     });
     // Prewarmed and restarted cores can host background identities before a
     // renderer opens that project. Negotiate host routing on every spawn.
-    if (this.getInitializeParams) {
-      void this.request("initialize", this.getInitializeParams()).catch(error => {
+    if (this.userBinding || this.getInitializeParams) {
+      const initialization = this.sendRequest("initialize", this.getInitializeParams?.());
+      if (this.userBinding) this.userHostReady = initialization;
+      void initialization.catch(error => {
         if (this.child === child && !this.disposing) {
           this.emit(this, { kind: "server-error", message: String(error) });
         }
@@ -863,6 +891,12 @@ export class AppServerClient {
     }
 
     const maybeRequest = message as Required<AppServerRequest>;
+    // Unverified processes cannot acquire reverse-RPC authority or publish
+    // session ownership. initialize's response validates scope synchronously.
+    if (this.userBinding && !this.userHostVerified && maybeRequest.method) {
+      if (maybeRequest.id !== undefined) this.writeResponse({ id: maybeRequest.id, error: { code: "user_host_binding_unverified", message: "User host binding has not been verified" } });
+      return;
+    }
     if (maybeRequest.method && maybeRequest.id !== undefined) {
       const rejection = activityServerRequestRejection(
         maybeRequest,
@@ -892,6 +926,16 @@ export class AppServerClient {
       return;
     }
     this.pending.delete(key);
+    if (this.userBinding && pending.method === "initialize" && !response.error) {
+      const result = isRecord(response.result) ? response.result : {};
+      if (result.user_space_id !== this.userBinding.userSpaceId || result.product_domain !== this.userBinding.productDomain) {
+        const message = "user_host_binding_mismatch: The initialized host does not match the requested user space and product domain";
+        pending.reject(new Error(message));
+        if (this.child) this.finalizeChild(this.child, null, message, true);
+        return;
+      }
+      this.userHostVerified = true;
+    }
     this.updateRunningFromResponse(
       pending.method,
       pending.params,

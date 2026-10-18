@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "personal",
+  "name": "Personal",
+  "description": "Persistent personal assistants, shared personal context, and traceable delegated matters.",
+  "icon": "sparkles",
+  "version": "0.1.0",
+  "defaultEnabled": true,
+  "author": { "name": "Wuu" },
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
+  "desktop": { "entry": "desktop.js" },
+  "contributes": {
+    "navigation": [{ "id": "personal", "title": "Personal", "view": "personal.home", "icon": "sparkles", "order": 5 }]
+  },
+  "interface": { "displayName": "Personal", "shortDescription": "Your personal assistants and ongoing matters.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Read", "Write"] }
+}
