@@ -50,6 +50,7 @@ app.whenReady().then(async () => {
         bounds: node.getBoundingClientRect().toJSON(),
         animations: node.getAnimations().map(animation => ({
           name: animation.animationName, playState: animation.playState,
+          property: animation.transitionProperty,
           currentTime: String(animation.currentTime), timelineTime: String(animation.timeline?.currentTime),
           progress: animation.effect.getComputedTiming().progress,
         })),
@@ -377,6 +378,17 @@ app.whenReady().then(async () => {
           document.documentElement.style.setProperty("--conversation-message-font-size", `${size}px`);
           window.dispatchEvent(new Event("wuu-content-size-change"));
         }, { theme, size });
+        // Font-relative spacing can animate group margins after the text
+        // changes. Establish the baseline only once that layout is settled;
+        // focus and streaming must still preserve every metric exactly.
+        await evaluate(() => document.fonts.ready.then(() => true));
+        await waitFor(() => {
+          const sidebar = document.querySelector(".sidebar");
+          sidebar.getBoundingClientRect();
+          return !document.querySelector(".window-resizing, .sidebar-animating")
+            && !sidebar.getAnimations({ subtree: true }).some(animation =>
+              animation instanceof CSSTransition && animation.playState === "running");
+        });
         assert.ok(await evaluate(() => document.querySelector(".sidebar").getBoundingClientRect().right > 200), "sidebar remains visible at the tested width");
         await evaluate(() => { const node = document.querySelector(".sidebar-main"); node.scrollTop = node.scrollHeight / 2; });
         const idle = await sample(`${label}-idle`);

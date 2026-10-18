@@ -133,9 +133,11 @@ app.whenReady().then(async () => {
     });
     fs.writeFileSync(path.join(output, scenario + ".json"), JSON.stringify(geometry, null, 2));
     const axis = (geometry.paintedCanvasTop + geometry.header.bottom) / 2;
-    if (geometry.viewport.zoom === 1) {
-      assert.ok(Math.abs(axis - 28) < 0.1, "Workspace and navigation share the expected 28 DIP axis at default zoom");
-      assert.ok(geometry.header.height <= 48.1, "The canvas header stays compact at default zoom");
+    if (geometry.viewport.zoom === 1 && Number.parseFloat(geometry.font) <= 15) {
+      assert.ok(Math.abs(axis - 28) < 0.1, "Default text and zoom preserve the shared 28 DIP axis");
+      // The font-relative canvas inset leaves 50px at 13px text and 48px at
+      // 15px text. Larger text may grow the full row to keep controls visible.
+      assert.ok(geometry.header.height < 56, "The canvas header stays within the full titlebar row");
     }
     for (const peer of geometry.peers) {
       assert.ok(Math.abs(peer.centerY - axis) < 0.6, `${scenario}: ${peer.target} retains the shared window-control axis: ${JSON.stringify(geometry)}`);
