@@ -55,13 +55,15 @@ func (b *backend) capture(ctx context.Context, w window) ([]byte, int, int, erro
 				err = fail("unsupported_capture", "cannot redirect target window: %v", err)
 				return
 			}
-			defer composite.UnredirectWindowChecked(b.conn, w.XID, composite.RedirectAutomatic).Check()
+			// Cookie construction sends the X11 request immediately. Defer the
+			// entire call, not only Check, so redirection survives readback.
+			defer func() { _ = composite.UnredirectWindowChecked(b.conn, w.XID, composite.RedirectAutomatic).Check() }()
 			if err = composite.NameWindowPixmapChecked(b.conn, w.XID, pixmap).Check(); err != nil {
 				err = fail("capture_failed", "cannot name target pixmap: %v", err)
 				return
 			}
 		}
-		defer xproto.FreePixmapChecked(b.conn, pixmap).Check()
+		defer func() { _ = xproto.FreePixmapChecked(b.conn, pixmap).Check() }()
 		geom, e := xproto.GetGeometry(b.conn, xproto.Drawable(pixmap)).Reply()
 		if e != nil {
 			err = e
