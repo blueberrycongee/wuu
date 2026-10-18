@@ -94,10 +94,11 @@ ReactDOM.createRoot(rendererRoot).render(
   <I18nProvider>
     <WuuUIRoot>
       <AppBackground />
-      <LinuxWindowControls />
       {ENABLE_ACCOUNT && window.wuu?.isAccountWindow && window.wuu.remoteAccount
         ? <AccountScreen standalone driver={window.wuu.remoteAccount} onBack={() => { void window.wuu.closeAccountWindow?.(); }} />
         : <><App />{ENABLE_APP_SNAPSHOTS && <AppContextCaptureHost />}</>}
+      {/* Native drag regions follow DOM order; caption exclusions must follow app titlebars. */}
+      <LinuxWindowControls />
       <ToastViewport />
       <ConfirmDialogHost />
     </WuuUIRoot>

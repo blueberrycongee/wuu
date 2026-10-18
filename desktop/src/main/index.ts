@@ -2927,14 +2927,18 @@ app.on("before-quit", (event) => {
 
 function prepareToQuit(): Promise<void> {
   if (quitCleanup) return quitCleanup;
-  desktopUpdates?.stop();
-  systemPermissions.close();
-  appContextCapture.dispose();
-  terminalSessionManager.cleanup();
-  // Destroy every agent view + the hidden host window before the pool shuts
-  // down so no WebContentsView leaks past quit.
-  browserHostCoordinator.destroyAll();
-  quitCleanup = Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(), phoneAccess.shutdown()])
+  // Publish the shared promise before destroying windows: closing the hidden
+  // host can synchronously re-enter quit through window-all-closed.
+  quitCleanup = Promise.resolve().then(() => {
+    desktopUpdates?.stop();
+    systemPermissions.close();
+    appContextCapture.dispose();
+    terminalSessionManager.cleanup();
+    // Destroy every agent view + the hidden host window before the pool shuts
+    // down so no WebContentsView leaks past quit.
+    browserHostCoordinator.destroyAll();
+    return Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(), phoneAccess.shutdown()]);
+  })
     .then((results) => {
       for (const result of results) {
         if (result.status === "rejected") console.error("Shutdown cleanup failed", result.reason);
@@ -2951,3 +2955,19 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
+if (process.platform === "linux") {
+  app.on("browser-window-created", (_event, window) => {
+    window.once("closed", () => {
+      // The hidden browser host is infrastructure, not a way to reopen Wuu.
+      // Preserve last-window quit behavior after browsing; pet, PiP and other
+      // application windows still keep the app alive as before.
+      setImmediate(() => {
+        const remaining = BrowserWindow.getAllWindows().filter(win => !win.isDestroyed());
+        if (remaining.length === 1 && browserHostCoordinator.isHostWindow(remaining[0])) {
+          app.quit();
+        }
+      });
+    });
+  });
+}
