@@ -1045,6 +1045,7 @@ interface AppServerHelper {
 
 const APP_SERVER_HELPERS: readonly AppServerHelper[] = [
   { environment: "WUU_CUA_MAC_HELPER", executable: "wuu-cua-mac", platform: "darwin" },
+  { environment: "WUU_CUA_LINUX_HELPER", executable: "wuu-cua-linux", platform: "linux" },
 ];
 
 export function appServerHelperEnvironment(
@@ -1163,7 +1164,17 @@ export function configurePackagedCUA(
   delete env.WUU_ENABLE_CUA_MAC;
   delete env.WUU_CUA_MAC_HELPER;
   delete env.WUU_CUA_MAC_PIP_HELPER;
-  if (platform !== "darwin" || !resourcesPath) return;
+  delete env.WUU_ENABLE_CUA_LINUX;
+  delete env.WUU_CUA_LINUX_HELPER;
+  if (!resourcesPath) return;
+  if (platform === "linux") {
+    const helper = join(resourcesPath, "bin", "wuu-cua-linux");
+    if (!exists(helper)) return;
+    env.WUU_ENABLE_CUA_LINUX = "1";
+    env.WUU_CUA_LINUX_HELPER = helper;
+    return;
+  }
+  if (platform !== "darwin") return;
   const helper = join(resourcesPath, "bin", "wuu-cua-mac");
   const pip = join(resourcesPath, "bin", "wuu-cua-mac-pip");
   if (!exists(helper) || !exists(pip)) return;

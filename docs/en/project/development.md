@@ -24,6 +24,13 @@ The override is also forwarded through the macOS LaunchServices launcher.
 
 On macOS, `make dev` and `npm --prefix desktop run dev` enable Computer Use by default. Set `WUU_ENABLE_CUA_MAC=0` to disable it for a development run. `dev:direct` remains available to explicitly enable it. macOS Accessibility and Screen Recording permissions still apply.
 
+On Linux, the development launcher builds the X11 Computer Use helper and enables
+its bundled extension by default. Set `WUU_ENABLE_CUA_LINUX=0` to opt out. Build
+only the helper with `npm --prefix desktop run build:cua-linux`; it uses the Go
+toolchain and copies the XGB license into the package notices. Run in an X11
+session with XTEST and XComposite available. Native Wayland control is not
+supported. This does not change which platform installers are published.
+
 macOS source launches preserve the invoking terminal's `PATH`, shell/toolchain
 locations, and `WUU_<ID>_BINARY` overrides across LaunchServices. Packaged graphical
 launches discover standard user install locations and, when needed, login-shell

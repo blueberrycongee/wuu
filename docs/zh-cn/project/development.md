@@ -498,3 +498,11 @@ CI 额外使用 sample-02 运行此回归，两次运行一起上传为 `convers
 长度变化。原始数据和替换映射保存在公开仓库之外。校验器会拒绝额外字段、常见密钥和
 非示例 HTTP 地址，但不能证明任意正文已经脱敏，每份新样本仍须人工复核。
 样本中的技术结论属于历史会话内容，不应作为当前产品文档。运行无需真实账号或模型密钥。
+
+### Linux Computer Use 开发
+
+Linux 开发启动器会构建 X11 Computer Use 辅助程序，并默认启用对应内置扩展。
+设置 `WUU_ENABLE_CUA_LINUX=0` 可退出。只构建辅助程序可运行
+`npm --prefix desktop run build:cua-linux`；该命令使用 Go 工具链，并将 XGB
+许可证复制到包内声明目录。运行环境须为支持 XTEST 和 XComposite 的 X11 会话，
+暂不支持原生 Wayland 控制。这不会改变当前正式发布的安装包平台范围。

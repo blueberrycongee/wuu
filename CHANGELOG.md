@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Add Linux X11 computer control with window-bound observation and foreground input,
+  and watch-only activity previews that retain the existing controls and layout.
+
 ### Fixed
 
 - Preserve and queue desktop messages when another turn wins a concurrent send, retaining attachments, send order, and Stop intent.
