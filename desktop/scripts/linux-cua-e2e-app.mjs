@@ -195,11 +195,16 @@ async function run() {
       if (candidate && await evaluate(candidate, () => { const v = document.querySelector('video'); return v.readyState >= 2 && v.videoWidth > 0 && v.currentTime > 0; })) { pip = win; video = candidate; overlay = await viewWith(win, '#close'); return Boolean(overlay); }
     }
   });
-  assert(await evaluate(video, () => {
-    const v = document.querySelector('video'), c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
-    const ctx = c.getContext('2d'); ctx.drawImage(v, 0, 0); const color = ctx.getImageData(30, 30, 1, 1).data;
-    return [18, 52, 86].every((value, index) => Math.abs(color[index] - value) < 16);
-  }), 'Automatic PiP contains real target pixels');
+  // The fixture's heading starts at (24,24); sample the same text-free
+  // header corner as the isolated capture check, after a real frame arrives.
+  await waitFor('automatic PiP contains real target pixels', async () => {
+    report.previewPixel = await evaluate(video, () => {
+      const v = document.querySelector('video'), c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+      const ctx = c.getContext('2d'); ctx.drawImage(v, 0, 0);
+      return Array.from(ctx.getImageData(Math.round(c.width * .02), Math.round(c.height * .02), 1, 1).data);
+    });
+    return [18, 52, 86].every((value, index) => Math.abs(report.previewPixel[index] - value) < 16);
+  });
   checks.push('Real Go activity notifications automatically create production PiP with target pixels');
   main.focus();
   await draft('Draft remains editable while Linux preview is live.');
