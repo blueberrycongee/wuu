@@ -124,6 +124,7 @@ export class BrowserExtensionManager {
   private preferences: StoredBrowserExtension[] = [];
   private readonly errors = new Map<string, string>();
   private initialized = false;
+  private mutation: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly session: BrowserExtensionSession,
@@ -139,20 +140,22 @@ export class BrowserExtensionManager {
    * choice; startup itself never fails because one extension is broken.
    */
   async initialize(): Promise<void> {
-    if (this.initialized) return;
-    this.initialized = true;
-    this.preferences = readStore(this.storePath);
-    for (const preference of this.preferences) {
-      if (!preference.enabled) continue;
-      try {
-        const loaded = await this.load(preference.path);
-        preference.id = loaded.id;
-        this.errors.delete(pathKey(preference.path));
-      } catch (error) {
-        this.errors.set(pathKey(preference.path), messageOf(error));
+    return this.serializeMutation(async () => {
+      if (this.initialized) return;
+      this.initialized = true;
+      this.preferences = readStore(this.storePath);
+      for (const preference of this.preferences) {
+        if (!preference.enabled) continue;
+        try {
+          const loaded = await this.load(preference.path);
+          preference.id = loaded.id;
+          this.errors.delete(pathKey(preference.path));
+        } catch (error) {
+          this.errors.set(pathKey(preference.path), messageOf(error));
+        }
       }
-    }
-    writeStore(this.storePath, this.preferences);
+      writeStore(this.storePath, this.preferences);
+    });
   }
 
   async list(): Promise<BrowserExtensionRecord[]> {
@@ -199,69 +202,83 @@ export class BrowserExtensionManager {
   }
 
   async addFromDirectory(directory: string): Promise<BrowserExtensionRecord[]> {
-    const summary = validateExtensionDirectory(directory);
-    const path = resolve(directory);
-    const key = pathKey(path);
-    let extension = this.loadedExtensions().find(
-      (candidate) => pathKey(candidate.path) === key,
-    );
-    if (!extension) {
-      try {
-        extension = await this.load(path);
-      } catch (error) {
-        this.errors.set(key, messageOf(error));
-        throw new Error(`Could not load ${summary.name}: ${messageOf(error)}`);
+    return this.serializeMutation(async () => {
+      const summary = validateExtensionDirectory(directory);
+      const path = resolve(directory);
+      const key = pathKey(path);
+      let extension = this.loadedExtensions().find(
+        (candidate) => pathKey(candidate.path) === key,
+      );
+      if (!extension) {
+        try {
+          extension = await this.load(path);
+        } catch (error) {
+          this.errors.set(key, messageOf(error));
+          throw new Error(`Could not load ${summary.name}: ${messageOf(error)}`);
+        }
       }
-    }
-    this.errors.delete(key);
-    const existing = this.preferences.find(
-      (preference) =>
-        pathKey(preference.path) === key || preference.id === extension?.id,
-    );
-    if (existing) {
-      existing.path = path;
-      existing.id = extension.id;
-      existing.enabled = true;
-    } else {
-      this.preferences.push({ path, id: extension.id, enabled: true });
-    }
-    writeStore(this.storePath, this.preferences);
-    return this.list();
+      this.errors.delete(key);
+      const existing = this.preferences.find(
+        (preference) =>
+          pathKey(preference.path) === key || preference.id === extension?.id,
+      );
+      if (existing) {
+        existing.path = path;
+        existing.id = extension.id;
+        existing.enabled = true;
+      } else {
+        this.preferences.push({ path, id: extension.id, enabled: true });
+      }
+      writeStore(this.storePath, this.preferences);
+      return this.list();
+    });
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<BrowserExtensionRecord[]> {
-    const preference = this.findPreference(id);
-    if (!preference) throw new Error("Extension is not managed by wuu.");
-    if (enabled) {
-      const loaded = await this.load(preference.path);
-      preference.id = loaded.id;
-      this.errors.delete(pathKey(preference.path));
-    } else {
-      const loaded = this.findLoaded(id, preference.path);
-      if (loaded) this.session.extensions.removeExtension(loaded.id);
-      this.errors.delete(pathKey(preference.path));
-    }
-    preference.enabled = enabled;
-    writeStore(this.storePath, this.preferences);
-    return this.list();
+    return this.serializeMutation(async () => {
+      const preference = this.findPreference(id);
+      if (!preference) throw new Error("Extension is not managed by wuu.");
+      if (enabled) {
+        const loaded = await this.load(preference.path);
+        preference.id = loaded.id;
+        this.errors.delete(pathKey(preference.path));
+      } else {
+        const loaded = this.findLoaded(id, preference.path);
+        if (loaded) this.session.extensions.removeExtension(loaded.id);
+        this.errors.delete(pathKey(preference.path));
+      }
+      preference.enabled = enabled;
+      writeStore(this.storePath, this.preferences);
+      return this.list();
+    });
   }
 
   async remove(id: string): Promise<BrowserExtensionRecord[]> {
-    const preference = this.findPreference(id);
-    const loaded = this.findLoaded(id, preference?.path);
-    if (loaded) this.session.extensions.removeExtension(loaded.id);
-    if (preference) {
-      this.preferences = this.preferences.filter(
-        (candidate) => candidate !== preference,
-      );
-      this.errors.delete(pathKey(preference.path));
-      writeStore(this.storePath, this.preferences);
-    } else if (loaded) {
-      // A loaded extension that was not in the store can still be removed from
-      // this session. Its source directory is never deleted.
-      this.errors.delete(pathKey(loaded.path));
-    }
-    return this.list();
+    return this.serializeMutation(async () => {
+      const preference = this.findPreference(id);
+      const loaded = this.findLoaded(id, preference?.path);
+      if (loaded) this.session.extensions.removeExtension(loaded.id);
+      if (preference) {
+        this.preferences = this.preferences.filter(
+          (candidate) => candidate !== preference,
+        );
+        this.errors.delete(pathKey(preference.path));
+        writeStore(this.storePath, this.preferences);
+      } else if (loaded) {
+        // A loaded extension that was not in the store can still be removed from
+        // this session. Its source directory is never deleted.
+        this.errors.delete(pathKey(loaded.path));
+      }
+      return this.list();
+    });
+  }
+
+  // A renderer can remount while loadExtension is pending. Serialize in the
+  // host so a later disable/remove always runs after the pending load settles.
+  private serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutation.then(operation);
+    this.mutation = result.catch(() => undefined);
+    return result;
   }
 
   private findPreference(id: string): StoredBrowserExtension | undefined {

@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
-import { createDecipheriv, pbkdf2Sync } from "node:crypto";
+import { createDecipheriv, createHash, pbkdf2Sync } from "node:crypto";
 import {
-  copyFileSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -11,7 +10,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { backup, DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import type { Session } from "electron";
 import type {
@@ -352,6 +351,7 @@ function numeric(value: number | bigint): number {
 export function decryptBrowserCookieValue(
   encryptedValue: Uint8Array,
   safeStorageSecret: string,
+  boundHost?: string,
 ): string {
   const encrypted = Buffer.from(encryptedValue);
   if (encrypted.length === 0) return "";
@@ -361,15 +361,26 @@ export function decryptBrowserCookieValue(
   const key = pbkdf2Sync(safeStorageSecret, "saltysalt", 1003, 16, "sha1");
   const iv = Buffer.alloc(16, " ");
   const decipher = createDecipheriv("aes-128-cbc", key, iv);
-  return Buffer.concat([
+  const plaintext = Buffer.concat([
     decipher.update(encrypted.subarray(3)),
     decipher.final(),
-  ]).toString("utf8");
+  ]);
+  if (boundHost !== undefined) {
+    // Chromium schema 24 binds encrypted values to their host with a SHA-256
+    // prefix. Validate before removing it; legacy schemas contain only values.
+    const hostHash = createHash("sha256").update(boundHost).digest();
+    if (!plaintext.subarray(0, hostHash.length).equals(hostHash)) {
+      throw new Error("The encrypted cookie does not match its host.");
+    }
+    return plaintext.subarray(hostHash.length).toString("utf8");
+  }
+  return plaintext.toString("utf8");
 }
 
 export function browserCookieToSessionCookie(
   row: BrowserCookieRow,
   safeStorageSecret?: () => string,
+  databaseVersion = 0,
 ): CookieSetDetails | null {
   const host = row.host_key.trim();
   const name = row.name.trim();
@@ -390,7 +401,11 @@ export function browserCookieToSessionCookie(
     if (!safeStorageSecret) {
       throw new Error("The browser Safe Storage key is unavailable.");
     }
-    value = decryptBrowserCookieValue(row.encrypted_value, safeStorageSecret());
+    value = decryptBrowserCookieValue(
+      row.encrypted_value,
+      safeStorageSecret(),
+      databaseVersion >= 24 ? row.host_key : undefined,
+    );
   }
 
   const expires = browserTimestampToUnixSeconds(row.expires_utc);
@@ -464,26 +479,28 @@ async function readSafeStorageSecretFromKeychain(
   }
 }
 
-function copyDatabaseSnapshot(profilePath: string): {
+async function copyDatabaseSnapshot(profilePath: string): Promise<{
   directory: string;
   database: string;
-} {
+}> {
   const source = join(profilePath, "Cookies");
   if (!existsSync(source)) {
     throw new Error("This browser profile has no Cookies database.");
   }
   const directory = mkdtempSync(join(tmpdir(), "wuu-browser-cookies-"));
   const database = join(directory, "Cookies");
+  let sourceDatabase: DatabaseSync | undefined;
   try {
-    copyFileSync(source, database);
-    for (const suffix of ["-wal", "-shm"]) {
-      const sidecar = `${source}${suffix}`;
-      if (existsSync(sidecar)) copyFileSync(sidecar, `${database}${suffix}`);
-    }
+    // SQLite coordinates the database and WAL while the browser is writing;
+    // copying their files separately can combine different committed states.
+    sourceDatabase = new DatabaseSync(source, { readOnly: true });
+    await backup(sourceDatabase, database);
     return { directory, database };
   } catch (error) {
     rmSync(directory, { recursive: true, force: true });
     throw filesystemError(error, source);
+  } finally {
+    sourceDatabase?.close();
   }
 }
 
@@ -498,7 +515,7 @@ export async function importBrowserCookies({
     descriptor ? [descriptor] : undefined,
   );
   const { profile } = resolved;
-  const snapshot = copyDatabaseSnapshot(profile.profilePath);
+  const snapshot = await copyDatabaseSnapshot(profile.profilePath);
   let db: DatabaseSync | undefined;
   let secret: string | undefined;
   let discovered = 0;
@@ -512,6 +529,12 @@ export async function importBrowserCookies({
       readOnly: true,
       readBigInts: true,
     });
+    const databaseVersion = Number(
+      db.prepare("SELECT value FROM meta WHERE key = 'version'").get()?.value,
+    );
+    if (!Number.isInteger(databaseVersion) || databaseVersion < 0) {
+      throw new Error("The browser cookie database has no valid schema version.");
+    }
     const rows = db
       .prepare(
         "SELECT host_key, name, value, encrypted_value, path, top_frame_site_key, expires_utc, is_secure, is_httponly, samesite FROM cookies",
@@ -546,6 +569,7 @@ export async function importBrowserCookies({
                 : new Uint8Array(encryptedValue ?? []),
           },
           secret ? () => secret! : undefined,
+          databaseVersion,
         );
       } catch {
         failed += 1;

@@ -1,4 +1,4 @@
-import { createCipheriv, pbkdf2Sync } from "node:crypto";
+import { createCipheriv, createHash, pbkdf2Sync } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,12 +29,15 @@ function browserMicros(unixSeconds: number): bigint {
   return BigInt(unixSeconds + browserEpochOffset) * 1_000_000n;
 }
 
-function encryptCookie(value: string, secret: string): Buffer {
+function encryptCookie(value: string, secret: string, host?: string): Buffer {
   const key = pbkdf2Sync(secret, "saltysalt", 1003, 16, "sha1");
   const cipher = createCipheriv("aes-128-cbc", key, Buffer.alloc(16, " "));
   return Buffer.concat([
     Buffer.from("v10", "ascii"),
-    cipher.update(value, "utf8"),
+    cipher.update(host === undefined ? Buffer.from(value) : Buffer.concat([
+      createHash("sha256").update(host).digest(),
+      Buffer.from(value),
+    ])),
     cipher.final(),
   ]);
 }
@@ -42,6 +45,8 @@ function encryptCookie(value: string, secret: string): Buffer {
 function createCookieDatabase(path: string): void {
   const db = new DatabaseSync(path);
   db.exec(`
+    CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+    INSERT INTO meta VALUES ('version', '24');
     CREATE TABLE cookies (
       host_key TEXT NOT NULL,
       name TEXT NOT NULL,
@@ -62,7 +67,7 @@ function createCookieDatabase(path: string): void {
     ".example.com",
     "session",
     "",
-    encryptCookie("secret-value", "test-secret"),
+    encryptCookie("secret-value", "test-secret", ".example.com"),
     "/",
     "",
     browserMicros(nowSeconds + 3600),
@@ -74,7 +79,7 @@ function createCookieDatabase(path: string): void {
     "expired.example.com",
     "old",
     "",
-    encryptCookie("old-value", "test-secret"),
+    encryptCookie("old-value", "test-secret", "expired.example.com"),
     "/",
     "",
     browserMicros(nowSeconds - 3600),
