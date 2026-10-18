@@ -613,8 +613,8 @@ export class ObservationCoordinator {
       return;
     }
     if (!client) {
-      if (this.browserHost?.id !== webContentsId) return;
-      this.browserHost.detach();
+      if (this.browserHost && this.browserHost.id !== webContentsId) return;
+      this.browserHost?.detach();
       this.browserHost = undefined;
       this.browserScreenLayout = null;
       for (const entry of this.entries.values()) entry.pip.setHostLayout?.(null);

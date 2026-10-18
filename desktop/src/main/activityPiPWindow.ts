@@ -301,9 +301,9 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       clearTimeout(this.placeholderTimer);
       this.placeholderTimer = undefined;
       this.stopHoverTracking();
-      // A hidden or minimized host takes its children with it immediately, and
-      // a card that never appeared has nothing to animate.
-      if (parentHidden || !win.isVisible() || this.preparing) {
+      // An unavailable column (including a foreground dialog) or hidden host
+      // takes its children away immediately, without fading over the new UI.
+      if (columnGone || parentHidden || !win.isVisible() || this.preparing) {
         this.endPreparing();
         this.settleTransition();
         this.content?.setVisible(false);

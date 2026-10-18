@@ -7,6 +7,8 @@ import { useI18n } from "./i18n";
 // in viewport pixels. The card snaps to a corner of that column.
 const HOST_SELECTOR = "[data-pip-anchor-host]";
 const OBSTACLE_SELECTOR = "[data-pip-obstacle]";
+const MODAL_SELECTOR = '[aria-modal="true"], dialog[open]';
+const LAYOUT_SELECTOR = `${HOST_SELECTOR},${OBSTACLE_SELECTOR},${MODAL_SELECTOR}`;
 
 interface HostRect {
   x: number;
@@ -88,7 +90,7 @@ export function BrowserPiPHostReporter(): null {
       const next = new Set<Element>();
       const host = document.querySelector(HOST_SELECTOR);
       if (host) next.add(host);
-      document.querySelectorAll(OBSTACLE_SELECTOR).forEach((element) => next.add(element));
+      document.querySelectorAll(`${OBSTACLE_SELECTOR},${MODAL_SELECTOR}`).forEach((element) => next.add(element));
       for (const element of observed) {
         if (!next.has(element)) resizeObserver.unobserve(element);
       }
@@ -104,9 +106,12 @@ export function BrowserPiPHostReporter(): null {
       schedule();
     };
     const mutationObserver = new MutationObserver(onMutation);
-    // Child-list only. Message text and class updates must not walk the tree;
-    // size changes come from ResizeObserver on the column and its obstacles.
-    mutationObserver.observe(document.body, { childList: true, subtree: true });
+    // Ignore streaming text and class updates. Size changes come from
+    // ResizeObserver; dialog state can also change without mounting a node.
+    mutationObserver.observe(document.body, {
+      childList: true, subtree: true, attributes: true,
+      attributeFilter: ["aria-modal", "open", "hidden"],
+    });
     window.addEventListener("resize", schedule);
     window.addEventListener("focus", schedule);
     watchSizes();
@@ -124,6 +129,12 @@ export function BrowserPiPHostReporter(): null {
 }
 
 export function readBrowserPiPHostLayout(root: ParentNode): HostLayoutReport | null {
+  // Native child windows sit above renderer overlays regardless of CSS z-index.
+  // Suspend their presentation while a dialog owns the foreground; reporting
+  // the column again restores existing cards without changing task control.
+  for (const modal of root.querySelectorAll(MODAL_SELECTOR)) {
+    if (visibleRect(modal)) return null;
+  }
   const hostElement = root.querySelector(HOST_SELECTOR);
   const host = hostElement ? visibleRect(hostElement) : null;
   if (!host) return null;
@@ -138,7 +149,8 @@ export function readBrowserPiPHostLayout(root: ParentNode): HostLayoutReport | n
 export function hostLayoutMutationMatters(records: MutationRecord[]): boolean {
   return records.some((record) => {
     if (record.type === "attributes") {
-      return elementMentionsHost(record.target);
+      return record.attributeName === "aria-modal" || record.attributeName === "open"
+        || elementMentionsHost(record.target);
     }
     return [...record.addedNodes, ...record.removedNodes].some(elementMentionsHost);
   });
@@ -146,8 +158,8 @@ export function hostLayoutMutationMatters(records: MutationRecord[]): boolean {
 
 function elementMentionsHost(node: Node): boolean {
   if (!(node instanceof Element)) return false;
-  return node.matches(`${HOST_SELECTOR},${OBSTACLE_SELECTOR}`)
-    || node.querySelector(`${HOST_SELECTOR},${OBSTACLE_SELECTOR}`) != null;
+  return node.matches(LAYOUT_SELECTOR)
+    || node.querySelector(LAYOUT_SELECTOR) != null;
 }
 
 function visibleRect(element: Element): HostRect | null {
