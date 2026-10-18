@@ -169,7 +169,9 @@ async function acceptance(): Promise<void> {
     assert.ok(!response.isError, JSON.stringify(response));
     return observation;
   }
-  const canonicalTarget = (await observe()).app;
+  const initialObservation = await observe();
+  results.screenshot = initialObservation.screenshot;
+  const canonicalTarget = initialObservation.app;
   assert.match(canonicalTarget, /^linux:\d+:\d+:\d+$/, 'Resolved target includes the process lifetime');
   appID = canonicalTarget;
   checks.push('MCP initialize, tool discovery, target-bound screenshot');
@@ -234,6 +236,9 @@ async function acceptance(): Promise<void> {
   assert.ok(main.isFocused(), 'Starting observation must not activate the target or steal focus');
   const video = (await getView('video'))!;
   const overlay = (await getView('#root'))!;
+  const videoSize = await video.executeJavaScript("(()=>{const v=document.querySelector('video');return {width:v.videoWidth,height:v.videoHeight}})()");
+  results.videoSize = videoSize;
+  assert.deepEqual(videoSize, { width: initialObservation.screenshot.width, height: initialObservation.screenshot.height }, 'Native helper and live PiP capture the same selected window geometry');
   assert.equal(await video.executeJavaScript("document.querySelector('video').srcObject.getVideoTracks().filter(t=>t.readyState==='live').length"), 1);
   assert.equal(await video.executeJavaScript("document.querySelector('video').srcObject.getAudioTracks().length"), 0);
   const pixel = (x: number, y: number) => video.executeJavaScript(`(()=>{const v=document.querySelector('video'),c=document.createElement('canvas');if(v.readyState<2||!v.videoWidth||v.hidden)return [];c.width=v.videoWidth;c.height=v.videoHeight;const ctx=c.getContext('2d');ctx.drawImage(v,0,0);return Array.from(ctx.getImageData(Math.round(${x}*c.width),Math.round(${y}*c.height),1,1).data)})()`);
@@ -248,7 +253,7 @@ async function acceptance(): Promise<void> {
   cover.showInactive();
   main.focus();
   await fixtureRequest('marker', '#00ffff');
-  await waitFor('occluded target continues updating', async () => isColor(await pixel(550 / 620, 45 / 680), [0, 255, 255]));
+  await waitFor('occluded target continues updating', async () => isColor(await pixel(560 / initialObservation.screenshot.width, 59 / initialObservation.screenshot.height), [0, 255, 255]));
   assert.ok(isColor(await pixel(.02, .02), [18, 52, 86]), 'Preview contains target pixels rather than occluder');
   assert.ok(main.isFocused(), 'Capture of an occluded window must not activate it');
   await capture('02-occluded-target-live.png');
@@ -282,7 +287,7 @@ async function acceptance(): Promise<void> {
   coordinator.setActiveThread('other-thread');
   await waitFor('conversation switch hides PiP', () => !pip.isVisible());
   await waitFor('hidden preview releases tracks', () => video.executeJavaScript("document.querySelector('video').srcObject===null"));
-  await input('click', { x: 130 / 620 * 1000, y: 180 / 680 * 1000, coordinate_space: 'normalized' });
+  await input('click', { x: 130 / (initialObservation.screenshot.width - 1) * 1000, y: 180 / (initialObservation.screenshot.height - 1) * 1000, coordinate_space: 'normalized' });
   await waitFor('native control continues while preview hidden', async () => (await fixtureRequest('state')).clicks === 2);
   coordinator.update({ ...activity, updated_at: new Date().toISOString() });
   assert.equal(pip.isVisible(), false, 'Background activity updates cannot show another conversation preview');
