@@ -166,7 +166,7 @@ async function capture(win, name) {
   captures.push({ name, crop, zoom, pixelRatio, pixelSize });
 }
 async function refresh(win) {
-  await click(win, '.settings-main:has([data-testid="settings-subscriptions"]) .settings-titlebar-slot .settings-page-actions button');
+  await click(win, '[data-testid="settings-subscriptions"] .settings-section-actions button');
   await waitFor(win, () => document.querySelector('[data-testid="settings-subscriptions"]')?.getAttribute('aria-busy') === 'false');
 }
 let main;
@@ -204,8 +204,6 @@ async function run() {
   await click(main, '.sidebar-account-trigger');
   await waitFor(main, () => document.querySelector('[data-settings-page="providers"]'));
   await click(main, '[data-settings-page="providers"]');
-  await waitFor(main, () => document.querySelector('.settings-nav-item'));
-  await evaluate(main, () => [...document.querySelectorAll('.settings-nav-item')].find(button => button.textContent.trim() === '订阅').click());
   await waitFor(main, () => document.querySelector('[data-testid="settings-subscriptions"]')?.getAttribute('aria-busy') === 'false');
   const fresh = await snapshot(main);
   const first = findQuota(fresh, 'personal'), second = findQuota(fresh, 'team');

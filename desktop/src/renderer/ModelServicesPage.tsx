@@ -387,6 +387,9 @@ export function ModelServicesPage({
         result={inventory} loadError={inventoryError} onRefresh={onRefreshEngines} onUpdate={onUpdateEngines}
         selectedEngineID={selectedEngine} onSelectEngine={setSelectedEngine}
         onCloseEngine={() => { focusEngine.current = selectedEngine ?? ""; setSelectedEngine(undefined); }} /> : null}
+      {!adding && !detailProvider && !selectedEngine && ENABLE_SUBSCRIPTIONS ? <SubscriptionDashboard
+        inventory={inventory} providers={providers}
+        onSelectBuiltinModel={(provider, model) => onSave(provider, model)} /> : null}
       {adding ? <div hidden={!!selectedEngine || !!detailProvider}>
         <ServiceConnector providers={providers} running={running} catalog={catalog}
           defaultOn={!defaultUsable} onSave={onSave} onProvidersChanged={onProvidersChanged} catalogDialog inline

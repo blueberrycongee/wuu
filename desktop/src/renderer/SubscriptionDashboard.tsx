@@ -157,7 +157,7 @@ export function SubscriptionDashboard({
   }
 
   return (
-    <SettingsSection testID="settings-subscriptions"
+    <SettingsSection testID="settings-subscriptions" ariaBusy={refreshing}
         title={t(scope ? "provider.accountUsage" : "settings.subscriptions")}
         actions={<>
           {onAddService ? <button type="button" className="settings-button" onClick={onAddService}>{t("provider.connectTitle", { name: "ChatGPT" })}</button> : null}
