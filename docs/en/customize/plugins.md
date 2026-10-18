@@ -51,6 +51,37 @@ Agent runtimes can register tools, contribute context, observe supported lifecyc
 
 Bundled features use these mechanisms too. Guides cover [subagents](../desktop/subagents.md), [automations](../automation/scheduled-tasks.md), and [memory](memory.md). The Peers plugin lets an agent contact existing conversations in the same workspace; it is separate from creating a child subagent.
 
+## Monitor background events
+
+The bundled Monitor plugin runs a shell script while the agent continues working.
+Ask it, for example, to watch CI and report a failed check immediately, then finish
+when every check passes. Scripts should print relevant changes; each output batch
+can wake the conversation or steer its current turn. Monitor events are observations,
+so they do not answer a question that is waiting for you.
+
+Open **Monitors** above the composer to see descriptions, line counts, task IDs,
+status, commands, deadlines and output. The running count remains visible while the
+agent is idle. Expand a task to follow its output or stop its process tree. A manual
+stop tells the agent not to restart that monitor unless you ask.
+
+`monitor` accepts `command`, `description`, optional `timeout_ms` (up to 10 hours,
+the default), and `persistent`. A persistent watch has no deadline and lasts until
+stopped, its conversation is archived/deleted, or its plugin runtime ends. Watches
+started in a private child conversation pass to its parent when the child finishes.
+`monitor_tasks` lists, reads or stops watches in the current conversation.
+
+Standard output and standard error are combined. Blank lines are ignored, incomplete
+lines flush on exit, and events are batched every 200 ms. Delivery allows a burst of
+10 batches and replenishes one every two seconds. Excess batches are counted; 30
+seconds of sustained overload stops the script. Event lines are shortened to 500
+bytes and batches to 3,000 bytes, while the output viewer uses the retained process
+log. Use line-buffered pipelines and handle transient network failures in scripts.
+
+Shell execution currently requires a local workspace and follows its shell permission
+and sandbox policy. Disabling the plugin or retiring its runtime stops its processes.
+On restart, running records become interrupted and retain their recent output;
+scripts are never automatically restarted. Up to 64 task records are retained.
+
 ## Develop a plugin
 
 Start with the [agent quickstart](plugin-quickstart.md) or [desktop quickstart](desktop-plugin-quickstart.md). Local development is distinct from installing a distributable package. The [authoring reference](plugin-authoring.md) covers manifests, development commands, version requirements, and package relationships.

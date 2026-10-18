@@ -633,7 +633,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		return pluginhost.SessionSendResult{}, session.ErrSessionNotFound
 	}
 	owner := "plugin:" + pluginID
-	if metadata.Visibility == pluginhost.SessionVisibilityPlugin && metadata.Owner != owner {
+	if metadata.Visibility == pluginhost.SessionVisibilityPlugin && metadata.Owner != owner && !pluginhost.HasProcessSessionDelivery(ctx, params.SessionID) {
 		return pluginhost.SessionSendResult{}, errors.New("plugin does not own the private session")
 	}
 	requestContext, err := pluginTurnRequestContext(params.Input.ContextBlocks)

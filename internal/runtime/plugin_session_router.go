@@ -35,6 +35,8 @@ type PluginSessionRouter struct {
 	workspaceApply   PluginWorkspaceApplyHandler
 	workspaceDiscard PluginWorkspaceDiscardHandler
 	binding          uint64
+	processBinding   uint64
+	processSession   func(context.Context, string, bool) (string, bool, error)
 }
 
 func NewPluginSessionRouter() *PluginSessionRouter { return &PluginSessionRouter{} }

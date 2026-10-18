@@ -50,7 +50,7 @@ make build-go
 ./bin/wuu --help
 ```
 
-The nine bundled business plugins are TypeScript source under `plugins/<id>/src/`.
+The ten bundled business plugins are TypeScript source under `plugins/<id>/src/`.
 `make build-plugins` emits self-contained JavaScript into the embedded package assets;
 `make build-go`, `make install`, and desktop core builds regenerate those assets before
 compiling Go. The checked-in bundles keep plain Go builds reproducible without an npm
