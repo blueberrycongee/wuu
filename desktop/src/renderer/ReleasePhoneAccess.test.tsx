@@ -93,8 +93,8 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     expect(navigation.textContent).not.toContain(t("settings.subscriptions"));
     expect(container.querySelector('[data-testid="settings-providers"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="settings-engine-connections"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="settings-subscriptions"]')).toBeNull();
-    expect(listEngines.mock.calls.some(([options]) => options?.include_quota === true)).toBe(false);
+    expect(container.querySelector('[data-testid="settings-subscriptions"]')).not.toBeNull();
+    expect(listEngines.mock.calls.some(([options]) => options?.include_quota === true)).toBe(true);
     expect(container.querySelector('[data-testid="settings-remote-page"]')).toBeNull();
     expect(container.querySelector(".settings-nav-item.active")?.textContent).toBe(t("settings.providers"));
     expect(getRemoteControlSnapshot).not.toHaveBeenCalled();
