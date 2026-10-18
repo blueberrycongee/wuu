@@ -12,6 +12,11 @@ import type { BrowserHostCoordinator } from '../src/main/browserHostWindows';
 import type { WindowRegistry } from '../src/main/windowRegistry';
 import type { ActivitySession } from '../src/shared/protocol';
 
+// Hosted Xvfb has no GPU. Use real software-rendered X11 windows, as the other
+// Linux desktop fixtures do; capture/input still use production X11 paths.
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('ozone-platform', 'x11');
+
 const fixtureMode = process.argv.includes('--linux-cua-fixture');
 const output = resolve(process.env.WUU_LINUX_CUA_OUTPUT ?? 'out/e2e/linux-cua');
 const profile = process.env.WUU_LINUX_CUA_PROFILE!;
