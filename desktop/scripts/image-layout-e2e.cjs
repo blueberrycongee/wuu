@@ -368,10 +368,12 @@ app.whenReady().then(async () => {
               const root = list.parentElement.getBoundingClientRect();
               const button = pane.querySelector("[data-gallery-toggle]").getBoundingClientRect();
               return { height: bounds.height, rootHeight: root.height,
+                bounds: bounds.toJSON(), root: root.toJSON(), button: button.toJSON(),
                 x: Math.round(bounds.left + 12), y: Math.round(bounds.top + bounds.height / 2),
                 buttonX: Math.round(button.left + button.width / 2), buttonY: Math.round(button.top + button.height / 2),
                 overlays: button.top >= bounds.top && button.bottom <= bounds.bottom && button.right <= bounds.right };
             }, activeSelector);
+            fs.writeFileSync(path.join(output, `gallery-${theme}-${font}-${width}-geometry.json`), JSON.stringify(gallery, null, 2));
             assert.ok(Math.abs(gallery.height - gallery.rootHeight) <= 1, "View controls must not reserve a toolbar row");
             assert.ok(gallery.overlays, "The view toggle must overlay the image area");
             await until(selector => getComputedStyle(document.querySelector(`${selector} .turn-artifact-gallery-toolbar`)).opacity === "0", activeSelector);
