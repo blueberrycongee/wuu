@@ -145,9 +145,9 @@
   --conversation-process-answer-gap: var(--space-6);
   /* Public message-action rhythm. Themes may tune these without depending on
    * the private action-bar DOM or taking over its interaction semantics. */
-  --conversation-answer-hover-action-gap: var(--wuu-message-actions-overlay-gap, 12px);
-  --conversation-message-action-icon-size: calc(var(--conversation-message-font-size) * 15 / 14);
-  --conversation-message-action-size: var(--wuu-message-action-size, max(24px, calc(var(--conversation-message-action-icon-size) + 9px)));
+  --conversation-answer-hover-action-gap: var(--wuu-message-actions-overlay-gap, var(--space-2));
+  --conversation-message-action-icon-size: var(--conversation-message-font-size);
+  --conversation-message-action-size: var(--wuu-message-action-size, max(24px, calc(var(--conversation-message-action-icon-size) + var(--space-4))));
   --conversation-user-action-size: max(20px, calc(var(--conversation-message-action-icon-size) + 5px));
   --conversation-activity-gap: var(--space-2);
 }
