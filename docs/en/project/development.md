@@ -201,7 +201,7 @@ These checks do not verify ScreenCaptureKit, native application input, macOS per
 
 ### Linux Computer Use acceptance
 
-Build the core with `go build -o desktop/build/bin/wuu-core ./cmd/wuu`, the helper
+Build the core with `go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu`, the helper
 with `npm --prefix desktop run build:cua-linux`, and the desktop with
 `cd desktop && npx electron-vite build`, then run
 `node desktop/scripts/linux-cua-e2e.cjs` from the repository root in an isolated

@@ -509,7 +509,7 @@ Linux 开发启动器会构建 X11 Computer Use 辅助程序，并默认启用�
 
 ### Linux Computer Use 验收
 
-先用 `go build -o desktop/build/bin/wuu-core ./cmd/wuu` 构建核心，运行
+先用 `go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu` 构建核心，运行
 `npm --prefix desktop run build:cua-linux` 构建辅助程序，再用
 `cd desktop && npx electron-vite build` 构建桌面端。回到仓库根目录，在隔离的
 X11 会话中运行 `node desktop/scripts/linux-cua-e2e.cjs`；需要 XComposite、

@@ -48,7 +48,7 @@ jobs:
       - name: Build production core, helper and preview
         run: |
           mkdir -p desktop/build/bin
-          go build -o desktop/build/bin/wuu-core ./cmd/wuu
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu
           node desktop/scripts/build-cua-linux.cjs
           (cd desktop && node_modules/.bin/electron-vite build)
       - name: Exercise native X11 input, continuous PiP and full application

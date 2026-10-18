@@ -43,11 +43,12 @@ async function main() {
       });
       if (fullApp.error) throw fullApp.error;
       if (fullApp.status !== 0) throw new Error(`Full application acceptance exited ${fullApp.status}`);
+      const fullAppResult = JSON.parse(fs.readFileSync(path.join(evidence, 'full-app.json'), 'utf8'));
+      if (fullAppResult.status !== 'passed') throw new Error(`Full application acceptance failed: ${fullAppResult.error}`);
       for (const name of ['full-app.json', 'full-app-live.png', 'full-app-desktop.png']) {
         const info = fs.statSync(path.join(evidence, name));
         if (!info.size || info.mtimeMs < started) throw new Error(`Missing current full-app evidence: ${name}`);
       }
-      if (JSON.parse(fs.readFileSync(path.join(evidence, 'full-app.json'), 'utf8')).status !== 'passed') throw new Error('Full application acceptance did not pass');
     }
   } finally {
     fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
