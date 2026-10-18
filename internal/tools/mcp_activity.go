@@ -112,6 +112,7 @@ func (t *Toolkit) executeActivityBoundToolResult(ctx context.Context, call provi
 				if err := activity.ControlErr(ctx); err != nil {
 					return toolresult.Result{}, "", err
 				}
+				sequence.App = canonical
 				if canonical != "" && canonical != session.Target {
 					if _, err := t.activityRegistry.UpdateWithLease(lease, activity.UpdateOptions{Target: canonical, ClearWindowIdentity: true}); err != nil {
 						return toolresult.Result{}, "", err
@@ -291,6 +292,33 @@ func parseCUASequence(arguments string) (cuaSequenceRequest, bool) {
 }
 
 func (t *Toolkit) executeCUASequence(ctx context.Context, tool Tool, threadID, activityID, leaseToken string, request cuaSequenceRequest) (toolresult.Result, string, error) {
+	// Validate every target before executing any step. Steps run under the outer
+	// app's lease and must never dispatch input to a different app.
+	if strings.TrimSpace(request.App) == "" {
+		return toolresult.Result{}, "", errors.New("CUA sequence requires an app")
+	}
+	var apps json.RawMessage
+	for index, step := range request.Steps {
+		if value, present := step["app"]; present {
+			app, ok := value.(string)
+			if !ok || strings.TrimSpace(app) == "" {
+				return toolresult.Result{}, "", fmt.Errorf("CUA sequence step %d requires a non-empty app string", index+1)
+			}
+			if strings.TrimSpace(app) != request.App {
+				// Resolve aliases from running apps without launching an unleased target.
+				if apps == nil {
+					result, err := t.executeKnownToolResult(ctx, providers.ToolCall{Name: tool.Name(), Arguments: `{"action":"list_apps"}`}, tool)
+					if err != nil {
+						return toolresult.Result{}, "", err
+					}
+					apps = result.StructuredContent
+				}
+				if canonicalCUATargetFromApps(app, apps) != request.App {
+					return toolresult.Result{}, "", fmt.Errorf("CUA sequence step %d must target the sequence app %q", index+1, request.App)
+				}
+			}
+		}
+	}
 	// Track the most-disruptive control level any step actually used so the whole
 	// sequence maps to an honest activity state (a background sequence must not look
 	// foreground just because foreground_policy was allowed). The generic risk
@@ -301,9 +329,7 @@ func (t *Toolkit) executeCUASequence(ctx context.Context, tool Tool, threadID, a
 	supportsSnapshots := cuaSchemaProperty(tool, "snapshot_id")
 	hooks := riskSequenceHooks{
 		augment: func(step map[string]any) {
-			if _, ok := step["app"]; !ok && request.App != "" {
-				step["app"] = request.App
-			}
+			step["app"] = request.App
 			if _, ok := step["foreground_policy"]; !ok && request.ForegroundPolicy != "" {
 				step["foreground_policy"] = request.ForegroundPolicy
 			}

@@ -17,6 +17,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Keep reasoning summaries on the same quiet gray as tool activity summaries
   and composer placeholder text.
+- Keep macOS computer-control snapshots and background focus independent when
+  sessions alternate between different apps, and discard state when control ends.
+- Reject computer-control sequences that switch apps before executing any steps,
+  so every step remains within the sequence's app control lease.
 
 ## [2026.10.18] - 2026-10-18
 
