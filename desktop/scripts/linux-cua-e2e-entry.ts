@@ -92,7 +92,11 @@ async function capture(name: string): Promise<void> {
 async function fixtureMain(): Promise<void> {
   const target = new BrowserWindow({ x: 40, y: 40, width: 620, height: 680, frame: false, show: false, webPreferences: { sandbox: true, contextIsolation: true } });
   await target.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fixtureHTML)}`);
+  const shown = once(target, 'show', { signal: AbortSignal.timeout(5000) });
   target.show();
+  await shown;
+  await target.webContents.capturePage();
+  await target.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   const windowID = target.getNativeWindowHandle().readUInt32LE(0);
   process.send?.({ ready: true, processID: process.pid, windowID });
   process.on('message', async ({ id, command, value }: any) => {
