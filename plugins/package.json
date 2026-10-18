@@ -9,6 +9,7 @@
   "scripts": {
     "build": "node ../scripts/build-bundled-plugins.mjs",
     "build:check": "node ../scripts/build-bundled-plugins.mjs --check",
+    "test": "node --test automation/test/schedule.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

@@ -114,7 +114,7 @@ open -n -W -a "$PWD/desktop/node_modules/electron/dist/Electron.app" \
 | `make check-go` | 模块一致性、格式、vet，以及 Windows/macOS 交叉构建 |
 | `make test-go` | CLI、核心、运行时边界和提示词的 Go 测试 |
 | `make check-plugins build-plugins` | TypeScript 插件类型、生成产物一致性及运行包 |
-| `make test-plugins` | 在临时宿主环境中验证已打包插件的 JSONL 生命周期、工具、持久化和后台行为 |
+| `make test-plugins` | 验证插件源码契约，并在临时宿主环境中验证已打包插件的 JSONL 生命周期、工具、持久化和后台行为 |
 | `make check-desktop test-desktop` | 桌面 TypeScript、启动器和单元测试 |
 | `make build-desktop` | 共享 Web 资源和 Electron main/preload/renderer 产物，不生成安装包 |
 | `make check-clients test-clients build-clients` | 协议/SDK/客户端类型、SDK/客户端测试，以及保留的 Web/Expo 产物 |

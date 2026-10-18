@@ -120,7 +120,7 @@ separate evidence folders.
 | `make check-go` | Module consistency, formatting, vet, Windows/macOS cross-builds |
 | `make test-go` | Go tests for the CLI, core, runtime boundaries, and prompts |
 | `make check-plugins build-plugins` | TypeScript plugin types, generated bundle freshness, and runtime packages |
-| `make test-plugins` | Shipped plugin JSONL lifecycle, tools, persistence, and background behavior with disposable host fixtures |
+| `make test-plugins` | Plugin source contracts, plus shipped plugin JSONL lifecycle, tools, persistence, and background behavior with disposable host fixtures |
 | `make check-desktop test-desktop` | Desktop TypeScript and launcher/unit tests |
 | `make build-desktop` | Shared Web assets and Electron main/preload/renderer bundles; not a packaged app |
 | `make check-clients test-clients build-clients` | Protocol/SDK/client types, SDK/client tests, and retained Web/Expo bundles |
