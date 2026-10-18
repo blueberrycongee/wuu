@@ -153,7 +153,7 @@ export class ObservationCoordinator {
   private userBounds: Rectangle | undefined;
   private browserHost: {
     id: number;
-    client: { host: PipRect; obstacles: PipRect[] };
+    client: { host: PipRect; obstacles: PipRect[] } | null;
     contentSize: { width: number; height: number };
     window: BrowserPiPHostWindow;
     detach: () => void;
@@ -604,7 +604,6 @@ export class ObservationCoordinator {
     client: { host: PipRect; obstacles: PipRect[] } | null,
   ): void {
     if (
-      client &&
       this.browserHost &&
       this.browserHost.id !== webContentsId &&
       !this.browserHost.window.isDestroyed() &&
@@ -612,14 +611,8 @@ export class ObservationCoordinator {
     ) {
       return;
     }
-    if (!client) {
-      if (this.browserHost && this.browserHost.id !== webContentsId) return;
-      this.browserHost?.detach();
-      this.browserHost = undefined;
-      this.browserScreenLayout = null;
-      for (const entry of this.entries.values()) entry.pip.setHostLayout?.(null);
-      return;
-    }
+    // An unavailable column still belongs to its window. Retain that owner so
+    // background layout updates cannot restore previews over its dialog.
     if (!this.browserHost || this.browserHost.id !== webContentsId || this.browserHost.window !== hostWindow) {
       this.browserHost?.detach();
       const reproject = (): void => {
@@ -655,7 +648,7 @@ export class ObservationCoordinator {
 
   private projectBrowserHost(): BrowserPiPScreenLayout | null {
     const source = this.browserHost;
-    if (!source || source.window.isDestroyed()) return null;
+    if (!source?.client || source.window.isDestroyed()) return null;
     const content = source.window.getContentBounds();
     const zoom = source.window.webContents.getZoomFactor();
     let visibleFrame: Rectangle;
@@ -683,8 +676,10 @@ export class ObservationCoordinator {
 
   private pushBrowserHost(pip: ObservationPiPHandle | undefined): void {
     if (!pip?.setHostLayout || this.browserScreenLayout === undefined) return;
+    // Reparenting may reveal a card, so apply dialog suppression first.
+    if (this.browserScreenLayout === null) pip.setHostLayout(null);
     pip.setHostParent?.(this.browserHost && !this.browserHost.window.isDestroyed() ? this.browserHost.window : null);
-    pip.setHostLayout(this.browserScreenLayout);
+    if (this.browserScreenLayout !== null) pip.setHostLayout(this.browserScreenLayout);
   }
 
   private initialBounds(): Rectangle {

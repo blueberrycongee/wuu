@@ -77,6 +77,12 @@ export function BrowserPiPHostReporter(): null {
       if (frame) return;
       frame = requestAnimationFrame(send);
     };
+    const onFocus = (): void => {
+      // Focus transfers ownership even when this window's geometry (or its
+      // unavailable layout while a dialog is open) has not changed.
+      last = "";
+      schedule();
+    };
 
     const observed = new Set<Element>();
     let resizeObserver: ResizeObserver | undefined;
@@ -113,7 +119,7 @@ export function BrowserPiPHostReporter(): null {
       attributeFilter: ["aria-modal", "open", "hidden"],
     });
     window.addEventListener("resize", schedule);
-    window.addEventListener("focus", schedule);
+    window.addEventListener("focus", onFocus);
     watchSizes();
     schedule();
     return () => {
@@ -121,7 +127,7 @@ export function BrowserPiPHostReporter(): null {
       resizeObserver?.disconnect();
       mutationObserver.disconnect();
       window.removeEventListener("resize", schedule);
-      window.removeEventListener("focus", schedule);
+      window.removeEventListener("focus", onFocus);
       report(null);
     };
   }, []);
