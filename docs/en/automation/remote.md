@@ -10,6 +10,60 @@ Release builds hide the phone access page until mobile release acceptance is com
 there is no public App Store distribution yet. Account login on the desktop remains
 development-only. Build the CLI using the [development guide](../project/development.md).
 
+## Connect an SSH workspace
+
+The experimental headless host runs Wuu, its installed agent engines, files, Git,
+and terminals on a remote macOS or Linux computer. Your local browser displays
+the shared Wuu workbench through an OpenSSH tunnel. Install and authenticate
+Codex, Claude Code, Pi, OpenCode, or other supported engines on the **remote**
+computer; engine discovery and conversation state belong to that computer.
+
+Build from the same Wuu checkout on the remote computer (Node 22+ and the Go
+version in `go.mod` are required):
+
+```bash
+make setup
+npm --prefix desktop run build:remote
+npm --prefix desktop run remote:serve -- --workdir /srv/my-project --port 8787 --pair
+```
+
+Run the last command in tmux or a service manager so logout does not stop it.
+It binds only to `127.0.0.1` and prints a single-use browser pairing link.
+The build includes the matching Go core and web assets; `--core` and
+`--web-root` can select explicit paths. Do not run the desktop's remote host
+and this service against the same Wuu home simultaneously.
+
+On your local computer, build/install the CLI from this revision and connect:
+
+```bash
+wuu remote ssh --port 8787 user@server
+```
+
+Open the pairing link printed by the remote service. Subsequent visits to
+`http://127.0.0.1:8787/` use the saved pairing. Keep the SSH command running;
+Ctrl-C closes the tunnel. SSH config aliases, keys, host-key verification and
+ProxyJump follow your normal OpenSSH configuration. Use `--ssh-port` or
+`--ssh-config` for explicit overrides.
+
+Use a distinct local port for each host so browser identities and drafts stay
+separate. If remote port 8787 maps to local port 8788, start the remote service
+with `--port 8787 --browser-port 8788 --pair`, then connect with
+`wuu remote ssh --port 8788 --remote-port 8787 user@server`. Pair again if the
+advertised browser port changes.
+
+Closing the browser or losing SSH leaves agent tasks running on the remote
+service. Reconnect the tunnel to restore the conversation and buffered output.
+Terminals also survive a resumed connection; after a fresh attachment the
+workbench asks you to reopen them. Stopping or restarting the remote service
+stops its tasks and terminals; saved conversation history remains on disk.
+Restart without `--pair` to accept existing devices without opening enrollment.
+
+This source-build preview uses the browser workbench. Native desktop windows,
+embedded browser/computer-use tools and automatic remote installation are not
+provided by the headless host. Engine login requiring a native browser must be
+completed on the remote computer before connecting. The local machine's SSH
+credentials and model configuration are not uploaded.
+
 ## Connect the iOS app
 
 1. Keep Wuu open on your computer. In Settings → Phone access, allow access and

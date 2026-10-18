@@ -9,6 +9,53 @@ Relay 转发端到端加密的 app-server 连接。配对授予的是 Host 控�
 [原生客户端项目](../../../clients/native/README.md)构建，尚未提供公开 App Store 分发。
 桌面账号登录仍仅在开发模式开放。CLI 构建方法见[开发指南](../project/development.md)。
 
+## 连接 SSH 工作区
+
+实验性的无桌面宿主在远端 macOS 或 Linux 电脑上运行 Wuu、已安装的 Agent 引擎、
+文件、Git 和终端，本地浏览器通过 OpenSSH 隧道显示共享 Wuu 工作台。
+Codex、Claude Code、Pi、OpenCode 等受支持引擎需在**远端**安装并登录；
+引擎发现与会话状态都属于该电脑。
+
+在远端同一份 Wuu 源码中构建，需要 Node 22+ 和 `go.mod` 指定的 Go 版本：
+
+```bash
+make setup
+npm --prefix desktop run build:remote
+npm --prefix desktop run remote:serve -- --workdir /srv/my-project --port 8787 --pair
+```
+
+用 tmux 或服务管理器运行最后一条命令，避免退出 SSH 时服务随之停止。
+服务只监听 `127.0.0.1`，并打印一次性的浏览器配对链接。
+构建产物包含匹配的 Go 核心和网页资源；也可用 `--core` 和 `--web-root`
+指定路径。不要让桌面的远程 Host 与该服务同时使用同一个 Wuu home。
+
+在本地从同一版本构建、安装 CLI，然后连接：
+
+```bash
+wuu remote ssh --port 8787 user@server
+```
+
+打开远端服务打印的配对链接。以后访问 `http://127.0.0.1:8787/`
+即可使用已保存的配对。使用期间保持 SSH 命令运行，Ctrl-C 关闭隧道。
+SSH 配置别名、密钥、主机密钥校验和 ProxyJump 沿用本机 OpenSSH 配置；
+可用 `--ssh-port` 或 `--ssh-config` 显式指定连接参数。
+
+每台主机使用不同的本地端口，让浏览器身份和草稿保持独立。
+例如将远端 8787 映射到本地 8788：远端启动参数使用
+`--port 8787 --browser-port 8788 --pair`，本地运行
+`wuu remote ssh --port 8788 --remote-port 8787 user@server`。
+更换对外声明的浏览器端口后需要重新配对。
+
+关闭浏览器或断开 SSH 后，Agent 任务仍在远端服务中运行。重新连接隧道后，
+工作台恢复会话与缓存输出。恢复原连接时终端也继续保留；若建立了全新连接，
+工作台会提示重新打开终端。停止或重启远端服务会停止任务和终端，
+已保存的会话历史仍在磁盘上。重启时不加 `--pair`，即可接受已有设备，
+同时不开启新设备配对。
+
+当前是从源码构建的浏览器工作台预览。无桌面宿主不提供原生桌面窗口、
+内嵌浏览器/电脑控制工具或自动安装远端软件。需要原生浏览器的引擎登录，
+应先在远端完成。本机的 SSH 凭据和模型配置不会上传。
+
 ## 连接 iOS App
 
 1. 保持电脑上的 Wuu 运行。在「设置 → 手机访问」中允许访问，显示配对码。

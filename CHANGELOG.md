@@ -8,6 +8,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Add an experimental headless workspace host and `wuu remote ssh` tunnel: use remote agent engines, files, Git, and terminals in the shared browser workbench, with running tasks preserved across SSH disconnects.
+
+### Fixed
+
+- Avoid false file-save conflicts in remote workspaces by using the same modification-time calculation for Go file reads and desktop saves.
+
 ## [2026.10.19] - 2026-10-18
 
 ### Contributors

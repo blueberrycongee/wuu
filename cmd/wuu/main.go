@@ -2278,6 +2278,7 @@ Usage:
   wuu relay [--addr HOST:PORT] [--state FILE] [--push-webhook URL]
   wuu remote init --relay ws://HOST:PORT/v1/connect [--name NAME]
   wuu remote host [--workdir DIR] [--pair] [flags]
+  wuu remote ssh [--port 8787] [--remote-port PORT] user@host
   wuu remote devices
   wuu remote phone pair --uri "wuu://pair?..." [--store FILE]
   wuu remote phone status|send|watch [--store FILE] [flags]

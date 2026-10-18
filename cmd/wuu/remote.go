@@ -49,7 +49,7 @@ func runRelay(args []string) error {
 
 func runRemote(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: wuu remote <init|host|status|devices|phone> ...")
+		return errors.New("usage: wuu remote <init|host|ssh|status|devices|phone> ...")
 	}
 	switch args[0] {
 	case "account":
@@ -58,6 +58,8 @@ func runRemote(args []string) error {
 		return runRemoteInit(args[1:])
 	case "host":
 		return runRemoteHost(args[1:])
+	case "ssh":
+		return runRemoteSSH(args[1:])
 	case "status":
 		return runRemoteStatus(args[1:])
 	case "devices":
