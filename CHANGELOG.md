@@ -13,7 +13,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Base spacing on a shared font-relative module across navigation, conversations,
   composers and settings. Distinguish related details, reading blocks and section
   breaks, keep empty folder actions visible, and align the sidebar's top controls
-  with its trailing action column.
+  with its trailing action column. Apply the same spacing scale to the fork
+  destination dialog, with aligned option columns and stable text while loading.
 
 ### Removed
 

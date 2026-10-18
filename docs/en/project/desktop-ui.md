@@ -206,7 +206,7 @@ A plugin opens as its own page, with a back link to the catalog. The header hold
 
 Preview `/dev/extensions/` with optional `theme=dark`, `size=20`, `lang=en`, `long`, and `empty` parameters. Skills and plugin packages are synthetic and cover every plugin state; switches and detail actions change only the preview's state.
 
-The fork destination dialog offers the current directory and a new worktree. Click outside or press Escape to dismiss it without creating a conversation; focus returns to the message action. Dismissal is temporarily locked while a fork is being created.
+The fork destination dialog offers the current directory and a new worktree. Its width and spacing follow the saved UI text size; both choices share icon and text columns, with space reserved for loading feedback so text does not shift. Click outside or press Escape to dismiss it without creating a conversation; focus returns to the message action. Dismissal is temporarily locked while a fork is being created.
 
 ## Review panel
 
