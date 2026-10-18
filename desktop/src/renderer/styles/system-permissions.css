@@ -1,13 +1,13 @@
 .system-permissions {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-4);
   container: system-permissions / inline-size;
   font-size: var(--font-ui);
 }
 
 .system-permission-list {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .system-permission-slot,

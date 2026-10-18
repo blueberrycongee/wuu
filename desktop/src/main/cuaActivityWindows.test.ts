@@ -115,7 +115,7 @@ describe("CUA native picture-in-picture", () => {
     expect(observationKey(activity({ window_id: 99 }))).not.toBe(observationKey(activity({ window_id: 100 })));
   });
 
-  it("replaces a card that cannot retarget without waiting for the outgoing helper", () => {
+  it("retains independent native targets without stopping earlier helpers", () => {
     const events: string[] = [];
     const helpers: Array<{ target: string; finishStop?: () => void }> = [];
     const coordinator = new ObservationCoordinator(
@@ -140,11 +140,11 @@ describe("CUA native picture-in-picture", () => {
     coordinator.update(activity({ target: "app-b", updated_at: "2026-07-10T10:00:02Z" }));
     coordinator.update(activity({ target: "app-c", updated_at: "2026-07-10T10:00:03Z" }));
 
-    // One helper process streams every preview, so a replacement starts at once.
-    expect(events).toEqual(["start:app-a", "stop:app-a", "start:app-b", "stop:app-b", "start:app-c"]);
+    // Every target retains its stream until it disappears or teardown closes it.
+    expect(events).toEqual(["start:app-a", "start:app-b", "start:app-c"]);
     helpers[0].finishStop?.();
     helpers[1].finishStop?.();
-    expect(events).toEqual(["start:app-a", "stop:app-a", "start:app-b", "stop:app-b", "start:app-c"]);
+    expect(events).toEqual(["start:app-a", "start:app-b", "start:app-c"]);
     expect(helpers.map((helper) => helper.target)).toEqual(["app-a", "app-b", "app-c"]);
   });
 
@@ -178,13 +178,13 @@ describe("CUA native picture-in-picture", () => {
     sinks[0].onEvent({ event: "user_close" });
     coordinator.update(activity({ target: "app-b", updated_at: "2026-07-10T10:00:02Z" }));
 
-    expect(events).toEqual(["start:app-a"]);
-    expect(helpers).toHaveLength(1);
+    expect(events).toEqual(["start:app-a", "start:app-b"]);
+    expect(helpers).toHaveLength(2);
     coordinator.setActiveThread(undefined);
     coordinator.setActiveThread("thread-1");
-    expect(events).toEqual(["start:app-a"]);
+    expect(events).toEqual(["start:app-a", "start:app-b"]);
     coordinator.showForThread("thread-1");
-    expect(events).toEqual(["start:app-a", "stop:app-a", "start:app-b"]);
+    expect(events).toEqual(["start:app-a", "start:app-b"]);
     expect(helpers.map((helper) => helper.target)).toEqual(["app-a", "app-b"]);
   });
 });
@@ -289,7 +289,7 @@ describe("browser observation surface", () => {
     coordinator.handleServerEvent(event);
     expect(completed).not.toHaveBeenCalled();
     coordinator.setActiveThread("thread-1");
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false, true);
     void coordinator.shutdown();
   });
 
@@ -366,7 +366,7 @@ describe("browser observation surface", () => {
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
     coordinator.setBrowserInPanel(() => true);
     coordinator.refreshBrowserPresentation();
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false, true);
     expect(surfaces).toHaveLength(1);
 
     coordinator.setBrowserInPanel(() => false);
@@ -382,7 +382,7 @@ describe("browser observation surface", () => {
     coordinator.setActiveThread("thread-1");
     coordinator.setBrowserInPanel(() => true);
     coordinator.update(browserActivity());
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false, true);
     coordinator.setBrowserInPanel(() => false);
     coordinator.refreshBrowserPresentation();
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
@@ -395,14 +395,14 @@ describe("browser observation surface", () => {
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
 
     coordinator.setActiveThread(threadID);
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false, true);
     coordinator.setBrowserInPanel(() => false);
     coordinator.refreshBrowserPresentation();
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false, true);
 
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:02Z" }));
     coordinator.refreshBrowserPresentation();
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false, true);
     expect(surfaces).toHaveLength(1);
 
     coordinator.setActiveThread("thread-1");
@@ -417,9 +417,9 @@ describe("browser observation surface", () => {
     coordinator.update(browserActivity());
     const preciseUpdate = browserActivity({ updated_at: "2026-07-10T10:00:01.000000002Z" });
     coordinator.update(preciseUpdate);
-    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(preciseUpdate);
+    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(preciseUpdate, false);
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:01.000000001Z" }));
-    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(preciseUpdate);
+    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(preciseUpdate, false);
     coordinator.update(browserActivity({ state: "stopped", controller: "none", updated_at: "2026-07-10T10:00:02Z" }));
     expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
@@ -427,16 +427,17 @@ describe("browser observation surface", () => {
 
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:03Z" }));
     expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
-    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(expect.objectContaining({ state: "stopped", controller: "none" }));
+    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(expect.objectContaining({ state: "stopped", controller: "none" }), true);
     coordinator.setActiveThread(undefined);
     coordinator.setActiveThread("thread-1");
     expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
     coordinator.update(browserActivity({ id: "next-activity", updated_at: "2026-07-10T10:00:04Z" }));
-    expect(surfaces[1].setLive).toHaveBeenLastCalledWith(true);
+    expect(surfaces).toHaveLength(1);
+    expect(surfaces[0].setLive).toHaveBeenLastCalledWith(true);
   });
 
-  it("reuses a retargetable browser surface across tab activity identities", () => {
-    const { coordinator, surfaces, stops } = makeCoordinator();
+  it("retains separate browser surfaces and closes only the selected target", () => {
+    const { coordinator, surfaces, sinks, stops } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity());
     const retarget = vi.fn();
@@ -444,21 +445,21 @@ describe("browser observation surface", () => {
     const next = browserActivity({ id: "activity-2", target: "tab-2", updated_at: "2026-07-10T10:00:02Z" });
     coordinator.update(next);
     expect(stops).toEqual([]);
-    expect(surfaces).toHaveLength(1);
-    expect(retarget).toHaveBeenCalledWith(next, expect.any(Object));
+    expect(surfaces).toHaveLength(2);
+    expect(retarget).not.toHaveBeenCalled();
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
-    // Controls from the reused window must address the new observation key.
-    retarget.mock.calls[0][1].onEvent({ event: "user_close" });
+    sinks[1].onEvent({ event: "user_close" });
     expect(stops).toHaveLength(0);
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+    expect(surfaces[1].setVisible).toHaveBeenLastCalledWith(false, true);
   });
 
-  it("swaps a non-retargetable surface through the serialized replacement", () => {
+  it("starts a second tab without replacing the first surface", () => {
     const { coordinator, surfaces, stops } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity({ target: "tab-1" }));
     coordinator.update(browserActivity({ target: "tab-2", updated_at: "2026-07-10T10:00:02Z" }));
-    expect(stops).toEqual(["tab-1"]);
+    expect(stops).toEqual([]);
     expect(surfaces).toHaveLength(2);
     expect(surfaces[1].start).toHaveBeenCalledTimes(1);
   });

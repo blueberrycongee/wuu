@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 type rpcError struct {
@@ -26,9 +27,10 @@ type rpcMessage struct {
 // rpc runs one request at a time, processing notifications in wire order.
 // In particular the prompt response cannot overtake its final text update.
 type rpc struct {
-	child  *child
-	nextID int
-	handle func(context.Context, string, json.RawMessage, bool) (any, error)
+	child     *child
+	nextID    int
+	handle    func(context.Context, string, json.RawMessage, bool) (any, error)
+	abandoned map[string]struct{}
 }
 
 func (r *rpc) notify(ctx context.Context, method string, params any) error {
@@ -71,7 +73,11 @@ func (r *rpc) dispatch(ctx context.Context, msg rpcMessage) error {
 	} else {
 		reply["result"] = value
 	}
-	return r.child.write(ctx, reply)
+	// An approval can resolve as cancelled as the turn context ends. Deliver
+	// its outcome without killing the process before session/close can run.
+	replyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	return r.child.write(replyCtx, reply)
 }
 
 // wait processes delayed configuration notifications until the requested state
@@ -98,6 +104,18 @@ func (r *rpc) call(ctx context.Context, method string, params, result any) error
 	if err := r.child.write(ctx, map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 		return err
 	}
+	// Cancellation can return before the peer settles this request. A later
+	// cleanup RPC must drain its response without mistaking it for its own.
+	pending := true
+	settledWithoutResponse := false
+	defer func() {
+		if pending && (ctx.Err() != nil || settledWithoutResponse) {
+			if r.abandoned == nil {
+				r.abandoned = make(map[string]struct{})
+			}
+			r.abandoned[id] = struct{}{}
+		}
+	}()
 	for {
 		msg, err := r.receive(ctx)
 		if err != nil {
@@ -107,6 +125,7 @@ func (r *rpc) call(ctx context.Context, method string, params, result any) error
 			err := r.dispatch(ctx, msg)
 			var settled *acpTurnSettled
 			if errors.As(err, &settled) {
+				settledWithoutResponse = true
 				return applyACPTurnSettled(result, settled)
 			}
 			if err != nil {
@@ -115,6 +134,13 @@ func (r *rpc) call(ctx context.Context, method string, params, result any) error
 			continue
 		}
 		if !rpcResponseIDMatches(msg.ID, id) {
+			var responseID string
+			if json.Unmarshal(msg.ID, &responseID) == nil {
+				if _, ok := r.abandoned[responseID]; ok {
+					delete(r.abandoned, responseID)
+					continue
+				}
+			}
 			// A prompt can still be running when a stale or unsolicited
 			// result arrives. Handshake calls must reject a desynced stream.
 			if method == "session/prompt" {
@@ -122,6 +148,7 @@ func (r *rpc) call(ctx context.Context, method string, params, result any) error
 			}
 			return errors.New("engine replied with an unexpected request ID")
 		}
+		pending = false
 		if msg.Error != nil {
 			return msg.Error
 		}

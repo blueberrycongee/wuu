@@ -762,7 +762,7 @@ describe("SettingsView advanced settings", () => {
       ),
     ).toBe(false);
 
-    const inputs = Array.from(container.querySelectorAll("input"));
+    const inputs = Array.from(container.querySelectorAll<HTMLInputElement>(".settings-page input"));
     expect(inputs.length).toBeGreaterThanOrEqual(4);
     const [compactThreshold, compactKeepRecent, providerContextWindow, maxContextTokens] = inputs;
     const commit = async (input: Element) => {

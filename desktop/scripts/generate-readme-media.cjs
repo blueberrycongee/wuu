@@ -704,7 +704,7 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
     // External engines stay off so the model picker shows only the scripted provider.
-    const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+    const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
     write(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'openai', engines, providers: { openai: { type: 'openai-compatible', base_url: endpoint, api_key: 'readme-only', model: 'gpt-6.1-sol' } } }));
     const stamp = '2026-09-20T00:00:00Z';
     write(path.join(home, 'projects.json'), JSON.stringify({

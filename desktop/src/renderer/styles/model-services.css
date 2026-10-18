@@ -1,5 +1,5 @@
-/* The current choice, saved connections, and services to add each sit on the
- * shared settings surface, with vendor marks on one inset. */
+/* Connected rows and catalog cells share a typographic identity rhythm;
+ * each surface distributes those identities within its own available width. */
 
 .model-services {
   display: contents;
@@ -57,7 +57,7 @@
   min-width: 0;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px var(--space-3);
+  gap: var(--space-1) var(--space-3);
 }
 
 .model-default-attention,
@@ -66,12 +66,18 @@
 [data-attention].model-service-status {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 :is(.model-default-attention, .model-service-card-meta[data-attention], [data-attention].model-service-value, [data-attention].model-service-status) .icon-sm {
   flex: 0 0 auto;
   color: var(--warning);
+}
+
+/* The same icon-to-text interval applies inside a full row and an equal cell. */
+.model-service-card,
+.model-service-tile {
+  column-gap: var(--space-3);
 }
 
 /* --- Connected services ----------------------------------------------------- */
@@ -85,7 +91,7 @@
   border-radius: var(--settings-group-radius);
   background: var(--settings-card);
   box-shadow: var(--settings-group-shadow);
-  padding-inline: var(--card-padding);
+  padding-inline: var(--space-8);
 }
 
 .model-service-grid > [role="listitem"] {
@@ -103,7 +109,6 @@
   min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: var(--space-3);
   border: 0;
   background: transparent;
   color: var(--ink);
@@ -118,7 +123,7 @@
 .model-service-card-copy {
   display: grid;
   min-width: 0;
-  gap: 1px;
+  gap: var(--space-1);
 }
 
 .model-service-card-title,
@@ -161,16 +166,15 @@
   container-name: service-catalog;
 }
 
-/* Same border and inline inset as the cards above; the tiles' negative
- * margin keeps their hover fill wider than the mark column. */
+/* The outer inset separates the equal cells from the surface and footer. */
 .model-service-catalog {
   display: grid;
-  gap: var(--space-3);
+  gap: var(--space-4);
   border: 1px solid var(--hairline);
   border-radius: var(--settings-group-radius);
   background: var(--settings-card);
   box-shadow: var(--settings-group-shadow);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--card-padding);
 }
 
 .model-catalog-group {
@@ -203,7 +207,7 @@
 .model-service-tiles {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 2px var(--space-4);
+  gap: var(--space-1) var(--space-4);
 }
 
 .model-service-tile {
@@ -212,17 +216,27 @@
   min-width: 0;
   min-height: calc(var(--control-field-height) + var(--space-2));
   align-items: center;
-  gap: var(--space-2);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
-  padding: 4px var(--space-2);
+  padding: var(--space-1) var(--space-2);
   text-align: left;
   transition: background var(--motion-fast) var(--ease-out);
 }
 
-.model-service-tile .provider-mark {
-  --provider-mark-size: round(up, calc(var(--font-ui) * 1.72), 2px);
+/* Divide first, then apply the same inset inside every cell. Cell padding
+ * owns the horizontal gutter, including incomplete final rows. */
+.model-service-catalog .model-service-tiles {
+  column-gap: 0;
+}
+
+.model-service-catalog .model-service-tile {
+  margin-inline: 0;
+  padding-inline: var(--space-4);
+}
+
+:is(.model-service-card, .model-service-tile) > .provider-mark {
+  --provider-mark-size: var(--space-8);
 }
 
 .model-service-skeleton {
@@ -238,8 +252,8 @@
 }
 
 .model-service-skeleton-mark {
-  flex: 0 0 round(up, calc(var(--font-ui) * 1.72), 2px);
-  height: round(up, calc(var(--font-ui) * 1.72), 2px);
+  flex: 0 0 var(--space-8);
+  height: var(--space-8);
 }
 
 .model-service-skeleton-name {
@@ -253,10 +267,11 @@
   }
 }
 
-.model-service-tile .provider-mark svg,
-.model-service-tile .provider-mark .provider-mark-engine {
-  width: 78%;
-  height: 78%;
+/* Extra space belongs around the artwork, keeping its visual weight stable. */
+:is(.model-service-card, .model-service-tile) > .provider-mark svg,
+:is(.model-service-card, .model-service-tile) > .provider-mark .provider-mark-engine {
+  width: calc(var(--font-ui) * 1.4);
+  height: calc(var(--font-ui) * 1.4);
 }
 
 .model-service-tile:hover:not(:disabled) {
@@ -286,7 +301,7 @@
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   color: var(--ink-tertiary);
   font-size: var(--font-xs);
 }
@@ -309,7 +324,7 @@
   justify-content: space-between;
   gap: var(--space-2);
   border-top: 1px solid var(--hairline-soft);
-  padding-top: var(--space-3);
+  padding-top: var(--space-4);
 }
 
 .model-service-custom-action {
@@ -329,6 +344,20 @@
 
 @container service-catalog (max-width: 22em) {
   .model-service-tiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Each featured cell keeps about thirteen text widths for its insets, mark,
+ * reading gap and name. The browser retains its denser search layout. */
+@container service-catalog (max-width: 39em) {
+  .model-service-catalog .model-service-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container service-catalog (max-width: 26em) {
+  .model-service-catalog .model-service-tiles {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -379,7 +408,7 @@
 .model-service-status {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .model-service-status:not([data-attention]) .icon-sm {
@@ -555,7 +584,7 @@
 .model-connect-field {
   display: grid;
   min-width: 0;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .model-connect-field > span {
@@ -602,7 +631,7 @@
   align-self: stretch;
   align-content: start;
   min-height: 0;
-  gap: var(--space-5);
+  gap: var(--space-6);
   overflow: auto;
   margin-inline: calc(var(--space-2) * -1);
   padding-inline: var(--space-2);
@@ -613,13 +642,14 @@
 .model-browse-dialog > .environment-dialog-footer {
   justify-content: flex-start;
   border-top: 1px solid var(--hairline-soft);
-  padding-top: var(--space-3);
+  padding-top: var(--space-4);
 }
 
 .model-browse-copy {
   display: grid;
   min-width: 0;
   flex: 1 1 auto;
+  gap: var(--space-1);
 }
 
 .model-browse-copy > span,
@@ -651,7 +681,7 @@
 .environment-dialog.model-dialog {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  column-gap: var(--space-3);
+  gap: var(--space-4) var(--space-3);
 }
 
 .model-dialog > .environment-dialog-header {
@@ -688,8 +718,4 @@
 
 .model-dialog > :not(.environment-dialog-header, h2) {
   grid-column: 1 / -1;
-}
-
-.model-dialog > .environment-dialog-footer {
-  margin-top: var(--space-2);
 }

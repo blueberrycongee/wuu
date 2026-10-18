@@ -1595,6 +1595,15 @@
    * can still set their own offset. */
   margin-inline-start: var(--wuu-message-actions-inline-offset, calc((var(--conversation-message-action-icon-size, 15px) - var(--conversation-message-action-size)) / 2));
   padding-top: var(--conversation-answer-hover-action-gap);
+  /* Button padding supplies the visible icon-to-icon gap. Adding a flex
+   * gap here would count that whitespace twice. */
+  gap: var(--wuu-message-actions-control-gap, 0px);
+}
+
+.agent-message-actions > .message-time:not(:first-child) {
+  /* Text has no button padding. Complete the same visible gap after the
+   * last control, including larger touch targets and theme overrides. */
+  margin-inline-start: max(0px, calc((var(--conversation-message-action-size) - var(--conversation-message-action-icon-size)) / 2));
 }
 
 /* Continue the live answer's reading order through its actions and time.
@@ -2049,7 +2058,9 @@
 }
 
 .turn-process-fold-body {
-  padding: var(--conversation-process-detail-gap) 0 0 0;
+  /* The header and its first detail form one group; prose entries keep the
+   * wider reading gap below. */
+  padding: var(--conversation-activity-gap) 0 0 0;
 }
 
 /* A direct reply begins here until the provider confirms it as an answer.

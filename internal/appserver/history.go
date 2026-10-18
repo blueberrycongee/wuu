@@ -209,7 +209,27 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 		}
 		messages = append(messages, msg)
 	}
-	return messages
+	return withoutArchivedContextRecovery(messages)
+}
+
+// Recovery instructions belong to the leading active context, not to earlier
+// windows in a full transcript. Forks created before this normalization can
+// contain those archived records; leave their durable rows and Seq addresses
+// intact while excluding them from executable history.
+func withoutArchivedContextRecovery(history []providers.ChatMessage) []providers.ChatMessage {
+	out := make([]providers.ChatMessage, 0, len(history))
+	conversationStarted := false
+	for _, msg := range history {
+		recovery := msg.Hidden && msg.Origin == "internal" && msg.Cause == "fresh_context"
+		if recovery && conversationStarted {
+			continue
+		}
+		if !recovery && msg.Role != "system" && msg.Role != "meta" {
+			conversationStarted = true
+		}
+		out = append(out, msg)
+	}
+	return out
 }
 
 func loadAgentHistory(path string) (persistedAgentHistory, error) {

@@ -739,11 +739,16 @@ private func runNativePreview(
                         controller.setLive(false)
                         frames.invalidate()
                     }
-                    if controller.needsRestoration(command) {
+                    let transitioned = controller.needsRestoration(command)
+                    // New hosts distinguish a current-target handoff from state
+                    // replay for retained previews. Keep older hosts compatible.
+                    if command["restore"] as? Bool ?? transitioned {
                         let pid = app.processIdentifier
                         do {
+                            // Authority changes can originate from taking over a
+                            // browser in the same task. Preview state must never
+                            // activate a native app or steal that input focus.
                             try await Task.detached { try WindowRestorationJournal.restoreForUser(processID: pid) }.value
-                            if nextController == "user" { app.activate(options: [.activateAllWindows, .activateIgnoringOtherApps]) }
                         } catch {
                             writer.send("capture_status", fields: ["status": "error", "message": error.localizedDescription])
                         }

@@ -778,7 +778,7 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
 
 .hero-composer-wrap .composer {
   --composer-text-start: var(--card-padding);
-  --composer-text-padding-top: 16px;
+  --composer-text-padding-top: var(--card-padding);
   min-height: var(--composer-collapsed-min-height);
 }
 
@@ -1117,7 +1117,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   border: 0;
   outline: 0;
   background: transparent;
-  padding: var(--composer-text-padding-top) 44px 8px var(--composer-text-start);
+  padding: var(--composer-text-padding-top) calc(32px + var(--space-3)) var(--space-2) var(--composer-text-start);
   color: var(--ink);
   font-size: var(--font-body);
   /* Drafts read at the message rhythm: typed text keeps its leading once
@@ -1284,11 +1284,11 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   min-width: 0;
   height: 40px;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   overflow: hidden;
   /* The leading glyph aligns with the text; the trailing send circle, drawn
    * 2px inside its button, aligns with the corner instead. */
-  padding: 0 calc(var(--composer-corner-inset) - 2px) 4px
+  padding: 0 calc(var(--composer-corner-inset) - 2px) var(--space-1)
     calc(var(--composer-text-start) - var(--composer-control-icon-inset));
   container: composer-toolbar / inline-size;
 }
@@ -1298,7 +1298,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   /* Clip a toolbar squeezed past its controls, but leave room for their
    * keyboard rings (2px ring at a 2px offset). */
   overflow: clip;

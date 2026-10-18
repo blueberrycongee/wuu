@@ -334,7 +334,7 @@ func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
 		"default_engine": "codex",
 		"codex":          map[string]any{"binary_path": binary},
 	}
-	for _, id := range []string{"claude", "cursor", "devin", "grok", "hermes", "pi", "opencode", "antigravity"} {
+	for _, id := range []string{"claude", "cursor", "devin", "dsh", "grok", "hermes", "pi", "opencode", "antigravity"} {
 		settings[id] = map[string]any{"enabled": false}
 	}
 	data, err := json.Marshal(map[string]any{

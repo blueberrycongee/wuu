@@ -101,6 +101,7 @@ export function ComposerContextMeter({
         <FloatingMenuPortal
           anchorRef={anchorRef}
           owner="composer-context-meter"
+          layer="tooltip"
           placement="above"
           align="right"
           offset={8}

@@ -33,7 +33,7 @@ write(path.join(wuuData, 'projects.json'), JSON.stringify({
 write(path.join(wuuData, 'config.json'), JSON.stringify({
   default_provider: 'fixture',
   providers: { fixture: { type: 'openai-compatible', model: 'fixture', base_url: 'http://127.0.0.1:1', api_key: 'synthetic-test-key' } },
-  engines: Object.fromEntries(['claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }])),
+  engines: Object.fromEntries(['claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }])),
 }));
 // The shell probe must only read the disposable user's configuration.
 write(path.join(userHome, '.zshrc'), 'export PATH="$HOME/custom-bin:$PATH"\n');
@@ -88,8 +88,8 @@ async function run() {
   await waitFor(() => document.querySelector('.sidebar-account-trigger'));
   await click('.sidebar-account-trigger');
   await click('[data-settings-page="providers"]');
-  await waitFor(() => [...document.querySelectorAll('.settings-nav button')].some(button => button.textContent.trim() === 'Agents'));
-  await evaluate(() => [...document.querySelectorAll('.settings-nav button')].find(button => button.textContent.trim() === 'Agents').click());
+  await waitFor(() => [...document.querySelectorAll('.settings-nav button')].some(button => button.textContent.trim() === 'External agents'));
+  await evaluate(() => [...document.querySelectorAll('.settings-nav button')].find(button => button.textContent.trim() === 'External agents').click());
   await waitFor(() => document.querySelector('[data-testid="settings-engine-codex-status"]'));
   const initial = await evaluate(() => window.wuu.listEngines());
   assert.equal(codex(initial).binary_ok, false, 'Host must not have a system-wide Codex installation');

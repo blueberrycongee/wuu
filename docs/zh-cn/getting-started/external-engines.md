@@ -1,6 +1,6 @@
 # 外部 Agent 引擎
 
-外部引擎运行已安装的 Agent，使用它自己的账号、模型配置、工具和原生会话存储。它与内置 Wuu 引擎使用的[模型服务](model-services.md)不同。除了 Codex 和 Claude Code，Wuu 还提供下列七种接入。
+外部引擎运行已安装的 Agent，使用它自己的账号、模型配置、工具和原生会话存储。它与内置 Wuu 引擎使用的[模型服务](model-services.md)不同。除了 Codex 和 Claude Code，Wuu 还提供下列接入。
 
 ## 安装与选择引擎
 
@@ -10,6 +10,7 @@
 |---|---|---|
 | `cursor` | `cursor-agent acp` | ACP v1；[Cursor CLI](https://cursor.com/docs/cli/acp) |
 | `devin` | `devin acp` | ACP v1；[Devin CLI](https://docs.devin.ai/cli) |
+| `dsh` | `dsh --profile acp` | ACP v1；[DeepSeek Harness ACP（英文）](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/acp/acp) |
 | `grok` | `grok --no-auto-update agent --no-leader stdio` | ACP v1；[Grok CLI](https://x.ai/cli) |
 | `hermes` | `hermes acp` | ACP v1；[Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp) |
 | `pi` | `pi-acp` | 通过[社区适配器](https://github.com/svkozak/pi-acp)使用 ACP v1，不是直接运行 `pi` |
@@ -18,7 +19,7 @@
 
 Antigravity 也会检测 `agy_acp_server.par`；Linux 启动时附加 `--uid=`。这些命令描述适配器要求，不代表每个 CLI 版本都兼容。ACP 必须协商为协议版本 1；OpenCode 必须报告健康的 1.x 服务。不兼容时会明确报错。
 
-这七种引擎依次使用 `engines.<id>.binary_path`、`WUU_<ID>_BINARY`（如 `WUU_DEVIN_BINARY`）、`PATH` 查找可执行文件。指定路径无效时直接报错，不会悄悄换用其他程序。路径应指向程序，不要填写带参数的命令。检测只查找可执行文件，不验证凭据，也不创建对话。
+这些引擎依次使用 `engines.<id>.binary_path`、`WUU_<ID>_BINARY`（如 `WUU_DEVIN_BINARY`）、`PATH` 查找可执行文件。指定路径无效时直接报错，不会悄悄换用其他程序。路径应指向程序，不要填写带参数的命令。检测只查找可执行文件，不验证凭据，也不创建对话。
 
 从访达或 Dock 打开桌面版时，进程拿不到终端里的 PATH。PATH 中找不到可执行文件时，会继续在常规安装位置查找（`~/.local/bin`、`~/bin`、Homebrew、`~/.opencode/bin`，以及 nvm、mise 这类版本管理器的 shim）。如果进程里仍然没有任何用户目录，再读取登录 shell 的 PATH。Codex 和 Claude Code 使用同一套回退。
 
@@ -35,6 +36,14 @@ Antigravity 也会检测 `agy_acp_server.par`；Linux 启动时附加 `--uid=`�
 ```
 
 缺失或禁用的引擎无法运行。已有会话保留原引擎绑定，不会自动切换。配置文件位置与作用范围见[配置参考](../reference/configuration.md)。
+
+## DeepSeek Harness 设置
+
+安装 DeepSeek Harness 及其官方 ACP profile，并配置好它的模型服务和模型，再在 Wuu 中选择该引擎。Wuu 在会话工作目录运行 `dsh --profile acp`；普通 TUI profile 不是 ACP 服务端。如果安装方式需要自定义 profile 或配置路径，可在**设置 → Agent → DeepSeek Harness**中指定包装脚本的可执行文件路径。脚本应转发 Wuu 传入的参数，并将 stdout 专用于 JSON-RPC。
+
+官方 `@deepseek-ai/dsh-acp` `0.2.1-rc.2` 契约提供持久化 `session/resume`、`session/close`、模型/推理配置及 HTTP MCP。请按上游说明安装配套的 CLI 和 profile 包；npm 的 `latest` 标签可能仍指向较旧的 ACP 实现。模型服务凭据由 DSH 管理，它不提供 ACP 登录方式。配置完成后，在 Wuu 中重新检测。
+
+DSH 输出已提交的消息、思考内容和通用工具事件，不输出原始逐 token 增量，也不提供 TUI 的专有卡片、计划和终端视图。其 ACP profile 不声明只读模式。Wuu 保留界面历史，DSH 恢复原生上下文时不会重放这些历史消息。DSH 自己的历史中可能保留未发送提示词的模型探测会话；关闭会话不会删除它。
 
 ## 登录与模型选择
 
@@ -74,7 +83,7 @@ Codex 保留原生会话，Wuu 在每轮请求中传入准入时确定的工作�
 
 这些适配器以你的用户权限启动受信任的本地程序。Wuu 不会把它们的原生工具放入自己的操作系统进程沙箱。ACP Agent 如果广告了只读或 plan 模式，会写入该原生设置；否则拒绝 `read_only`，因为 Wuu 自己无法强制该边界。OpenCode 没有对等的原生模式，同样会被拒绝。标准模式会映射到 Agent 广告的询问模式（如有），协议收到的权限请求进入 Wuu 审批流程；没有审批支持时拒绝请求。`unconfined` 会映射到免询问的原生模式（如有），否则接受受支持的单次请求。ACP 审批不会转换成持久的 `allow_always` 规则。OpenCode 每轮都会刷新 `ask` 规则，恢复会话时也一样。Agent 不发起权限请求就执行的行为不在这一审批边界内。新外部引擎会话在调用方省略权限模式时默认使用 `unconfined`，请在统一输入框的权限菜单里明确选择。详见[权限说明](../reference/permissions.md)。
 
-Wuu 保存原生会话引用，并在后续轮次加载。如果 ACP Agent 不支持加载会话，或原会话加载失败，本轮会报错，不会静默创建新历史。ACP 回合通常由原生提示请求的响应结束。Grok 还可能先发出 `x.ai/session/prompt_complete` 扩展通知；当这条通知先到时，Wuu 用它结束本轮，因为 Grok 的提示 RPC 可能在回合实际结束后仍挂起。Agent 确认提示之后的静默不作为完成依据。提示发出后完全没有队列记账、更新或请求，会报错：那是卡住的 Agent，不是 Extra high 推理。停止操作会取消原生任务并清理子进程。OpenCode 使用带密码的本机回环服务，每个进程生成新密码，不作为远程服务开放。
+Wuu 保存原生会话引用，并在后续轮次恢复；Agent 声明支持时使用 `session/resume`，否则使用 `session/load`。两者都不支持或恢复失败时，Wuu 会创建替代会话，并明确提示 Agent 已失去此前上下文。声明 `session/close` 的 Agent 会在进程清理前收到有时限的关闭请求，包括取消后及模型探测会话；关闭失败会报错。关闭保留 Agent 的持久化历史，供后续恢复。ACP 回合通常由原生提示请求的响应结束。Grok 还可能先发出 `x.ai/session/prompt_complete` 扩展通知；当这条通知先到时，Wuu 用它结束本轮，因为 Grok 的提示 RPC 可能在回合实际结束后仍挂起。Agent 确认提示之后的静默不作为完成依据。提示发出后完全没有队列记账、更新或请求，会报错：那是卡住的 Agent，不是 Extra high 推理。停止操作会取消原生任务并清理子进程。OpenCode 使用带密码的本机回环服务，每个进程生成新密码，不作为远程服务开放。
 
 
 ## 分支与编辑历史
