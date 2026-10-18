@@ -8,7 +8,7 @@ import http from 'node:http';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
-import { app, BrowserWindow, WebContentsView } from 'electron';
+import { app, BrowserWindow, WebContentsView, nativeImage } from 'electron';
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const profile = process.env.WUU_LINUX_CUA_PROFILE;
 assert(profile, 'Run through linux-cua-e2e.cjs with a disposable profile');
@@ -66,13 +66,17 @@ function toolText(input) {
   const message = [...(input.messages || [])].reverse().find(item => item.role === 'tool');
   return typeof message?.content === 'string' ? message.content : (message?.content || []).filter(part => part.type === 'text').map(part => part.text).join('\n');
 }
+function currentObservationImage(input) {
+  const current = input.messages.slice(input.messages.findLastIndex(message => message.role === 'tool'));
+  return current.flatMap(message => Array.isArray(message.content) ? message.content : [])
+    .find(part => part.type === 'image_url' && part.image_url?.url.startsWith('data:image/png;base64,'))?.image_url.url;
+}
 function readSnapshot(input, text) {
   const match = /"snapshot_id"\s*:\s*"([^"]+)"/.exec(text);
   assert(match, `Actual model-facing observation must expose snapshot_id: ${text}`);
   assert(text.includes(canonical), 'Actual model-facing observation identifies the canonical target');
   assert(/"width"\s*:\s*\d+/.test(text) && /"height"\s*:\s*\d+/.test(text), 'Model receives screenshot dimensions');
-  const currentProjection = input.messages.slice(input.messages.findLastIndex(message => message.role === 'tool'));
-  assert(currentProjection.some(message => Array.isArray(message.content) && message.content.some(part => part.type === 'image_url' && part.image_url?.url.startsWith('data:image/png;base64,'))), 'Current tool result supplies its own screenshot image to the actual provider');
+  assert(currentObservationImage(input), 'Current tool result supplies its own screenshot image to the actual provider');
   return match[1];
 }
 const server = http.createServer((req, res) => {
@@ -111,11 +115,20 @@ const server = http.createServer((req, res) => {
           respond(res, { action: 'click', app: canonical, snapshot_id: snapshot, coordinate_space: 'screenshot', x: 130, y: 180, foreground_policy: 'allow', after: 'vision' });
           break;
         }
-        case 5:
+        case 5: {
           assert.notEqual(readSnapshot(input, text), snapshot, 'after=vision exposes its fresh snapshot to the actual provider');
+          assert(/"settling"\s*:\s*"quiet"/.test(text), `Stopped fixture reaches a quiet post-input observation: ${text}`);
           assert(/"delivery"\s*:\s*"delivered"/.test(text), `Second native click was delivered: ${text}`);
+          // Inspect the image delivered to the provider, without asking the
+          // target to redraw or polling it before this capture. The second
+          // click paints green synchronously; the first click paints purple.
+          const observed = nativeImage.createFromDataURL(currentObservationImage(input));
+          report.afterVisionPixelBGRA = Array.from(observed.crop({ x: 60, y: 165, width: 1, height: 1 }).toBitmap());
+          fs.writeFileSync(path.join(output, 'full-app-after-vision.png'), observed.toPNG());
+          assert([102, 204, 34, 255].every((value, index) => Math.abs(report.afterVisionPixelBGRA[index] - value) < 16), `after=vision must contain the just-painted second-click state, not old pixels: ${report.afterVisionPixelBGRA}`);
           held.set('completed-input', res);
           break;
+        }
         default: throw new Error(`Unexpected scripted provider stage ${stage}`);
       }
     } catch (error) { failure = error; if (!res.headersSent) res.writeHead(500); res.end(String(error)); }
@@ -226,6 +239,9 @@ async function run() {
   fs.writeFileSync(path.join(output, 'full-app-live.png'), (await main.webContents.capturePage()).toPNG());
   execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'x11grab', '-video_size', '2200x1100', '-i', process.env.DISPLAY, '-frames:v', '1', path.join(output, 'full-app-desktop.png')], { timeout: 15000 });
   checks.push('Actual application remains responsive with live preview and editable composer during a 10-second sampling window');
+  // The live sample above is animated; make post-input settling observable
+  // without unrelated animation keeping the target intentionally non-quiet.
+  await fixtureRequest('animate', false);
   await evaluate(video, () => { window.__linuxTracks = [...document.querySelector('video').srcObject.getTracks()]; });
   await evaluate(overlay, () => document.getElementById('close').click());
   await waitFor('actual PiP closes', () => pip.isDestroyed() || !pip.isVisible());
@@ -249,7 +265,7 @@ async function run() {
   assert(events.some(event => event.method === 'activity/started' && event.params.id === activity.id), 'PiP was driven by an actual activity notification');
   report.activityEvents = events.filter(event => event.method.startsWith('activity/'));
   report.turnCompletion = events.find(event => event.method === 'turn/completed' && event.params.thread_id === threadID);
-  checks.push('after=vision returns model-visible fresh snapshot metadata; actual activity events and turn completion reach the renderer; final answer persists');
+  checks.push('after=vision returns fresh snapshot metadata and the painted post-click pixels; actual activity events and turn completion reach the renderer; final answer persists');
   report.status = 'passed';
 }
 let ending = false;

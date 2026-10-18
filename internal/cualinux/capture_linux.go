@@ -156,9 +156,57 @@ func (b *backend) observe(ctx context.Context, w window, cmd command) (result, e
 	if cmd.Mode == "ax" || cmd.After == "ax" {
 		return result{}, fail("unsupported_action", "Linux X11 helper provides vision only; accessibility-tree mode is not available")
 	}
+	started := time.Now()
 	data, width, height, err := b.capture(ctx, w)
 	if err != nil {
 		return result{}, err
+	}
+	settling := ""
+	if cmd.Action != "observe" && cmd.After != "" {
+		// XTEST acknowledgement precedes the target handling the input and
+		// painting. Like the macOS backend, wait for a quiet visual boundary,
+		// not an application postcondition. Animation must not wait forever.
+		deadline := started.Add(1500 * time.Millisecond)
+		quietSince := time.Now()
+		for {
+			if !time.Now().Before(deadline) {
+				settling = "timed_out"
+				break
+			}
+			// Never hold the X server grab while waiting for another client to
+			// repaint. Sampling is capped at 10 Hz even for small windows.
+			timer := time.NewTimer(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return result{}, checkpoint(ctx)
+			case <-timer.C:
+			}
+			if err = checkpoint(ctx); err != nil {
+				return result{}, err
+			}
+			latest, e := b.validate(w)
+			if e != nil {
+				return result{}, e
+			}
+			next, nextWidth, nextHeight, e := b.capture(ctx, latest)
+			if e != nil {
+				return result{}, e
+			}
+			now := time.Now()
+			if !bytes.Equal(data, next) || !sameGeometry(w, latest) {
+				quietSince = now
+			}
+			data, width, height, w = next, nextWidth, nextHeight, latest
+			if !now.Before(deadline) {
+				settling = "timed_out"
+				break
+			}
+			if now.Sub(quietSince) >= 200*time.Millisecond {
+				settling = "quiet"
+				break
+			}
+		}
 	}
 	if err = checkpoint(ctx); err != nil {
 		return result{}, err
@@ -169,8 +217,12 @@ func (b *backend) observe(ctx context.Context, w window, cmd command) (result, e
 	}
 	ticket := snapshot{id: hex.EncodeToString(id), epoch: cmd.Epoch, target: w, width: width, height: height, created: time.Now()}
 	b.snapshots[w.ID] = ticket
-	return result{Text: "Observed target X11 window. Coordinates are relative to this image; input requires explicit foreground permission.", PNG: data, Data: map[string]any{
+	r := result{Text: "Observed target X11 window. Coordinates are relative to this image; input requires explicit foreground permission.", PNG: data, Data: map[string]any{
 		"app": w.ID, "resolved_app": w, "process_id": w.PID, "window_id": uint32(w.XID), "snapshot_id": ticket.id, "mode": "vision", "accessibility_supported": false,
 		"screenshot": map[string]any{"width": width, "height": height, "coordinate_space": "screenshot", "capture_source": "xcomposite_window", "window_width": w.Width, "window_height": w.Height},
-	}}, nil
+	}}
+	if settling != "" {
+		r.Data["settling"] = settling
+	}
+	return r, nil
 }

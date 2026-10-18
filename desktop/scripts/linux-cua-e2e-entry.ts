@@ -43,7 +43,7 @@ const fixtureHTML = `<!doctype html><html><style>
 </style><body><header><h1>Linux CUA acceptance</h1><p>Disposable app · native X11 input</p><span id="marker"></span></header><main><button id="click">Click count: 0</button><label>Native text entry<input id="text" type="text"></label><input id="range" type="range" min="0" max="100" value="0"><div id="scroll"><article>Scroll this panel<br><br>Every input is delivered by the production Linux helper.<br><br>No external sites or accounts.</article></div><footer id="status">Ready for native input</footer></main><script>
 window.state={clicks:0,text:'',range:0,scroll:0,keys:[]};
 const button=document.getElementById('click'),field=document.getElementById('text'),slider=document.getElementById('range'),panel=document.getElementById('scroll');
-button.onclick=()=>{state.clicks++;button.textContent='Click count: '+state.clicks;document.getElementById('status').textContent='Click received';};
+button.onclick=()=>{state.clicks++;button.textContent='Click count: '+state.clicks;button.style.background=state.clicks%2?'#cc66ff':'#22cc66';document.getElementById('status').textContent='Click received';};
 field.oninput=()=>{state.text=field.value;};slider.oninput=()=>{state.range=Number(slider.value);};panel.onscroll=()=>{state.scroll=panel.scrollTop;};
 document.onkeydown=e=>{state.keys.push(e.key);};
 </script></body></html>`;
@@ -119,7 +119,8 @@ async function fixtureMain(): Promise<void> {
       else if (command === 'animate') await target.webContents.executeJavaScript(`(() => {
         clearInterval(window.animation);
         if (${Boolean(value)}) { let frame = 0; window.animation = setInterval(() => {
-          document.getElementById('marker').style.background = (++frame % 2) ? '#00ffff' : '#ffff00';
+          // A long color cycle cannot alias the 100 ms settling sampler.
+          document.getElementById('marker').style.background = 'rgb('+((++frame*37)%256)+',255,128)';
         }, 50); }
       })()`);
       else if (command === 'theme') await target.webContents.executeJavaScript(`document.body.classList.toggle('dark',${JSON.stringify(value === 'dark')})`);
@@ -365,6 +366,19 @@ async function acceptance(): Promise<void> {
   await waitFor('reopened preview delivers new frames', () => video.executeJavaScript("document.querySelector('video').srcObject?.getVideoTracks().some(t=>t.readyState==='live') && document.querySelector('video').readyState>=2"));
   await settlePreview();
   await capture('05-reopened-preview.png'); checks.push('conversation visibility, capture track teardown, explicit dismiss/reopen; native helper actions continue while preview hidden or dismissed');
+
+  // A permanently animated target cannot become quiet. Post-input capture must
+  // still finish within its bounded settling window and return explicit status.
+  await fixtureRequest('animate', true);
+  const settlingStarted = performance.now();
+  const animatedAfter = await computer({ action: 'press_key', key: 'Escape', foreground_policy: 'allow', after: 'vision' });
+  const settlingElapsedMs = performance.now() - settlingStarted;
+  assert.ok(!animatedAfter.isError, JSON.stringify(animatedAfter));
+  assert.equal(animatedAfter.structuredContent.settling, 'timed_out');
+  assert.ok(settlingElapsedMs >= 1000 && settlingElapsedMs < 2500, `Animated post-input capture remains bounded: ${settlingElapsedMs} ms`);
+  results.animatedPostInput = { settling: animatedAfter.structuredContent.settling, elapsedMs: settlingElapsedMs };
+  await fixtureRequest('animate', false);
+  checks.push('animated post-input observation reports bounded settling timeout without stalling the application');
 
   // Measure the shipped capture path under sustained changing pixels and native
   // input. Screenshots, synchronous encoders and process startup are outside the

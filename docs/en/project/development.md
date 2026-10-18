@@ -227,7 +227,9 @@ A second process imports the production desktop main, preload and renderer with
 an isolated profile and a scripted loopback provider. The real composer starts a
 Go app-server turn through the bundled Linux CUA plugin. The provider boundary
 must receive target IDs, screenshot images and fresh snapshot metadata, including
-`after=vision`. Actual Go activity notifications automatically create the PiP;
+`after=vision`; its returned pixels must also show the fixture's synchronous
+post-click paint, not the previous state. An animated target separately verifies
+the bounded settling timeout. Actual Go activity notifications create the PiP;
 closing it must release capture while two native clicks continue and the turn
 completes and persists. `full-app.json` records these checks and a 10-second
 application responsiveness sample; `full-app-live.png` and `full-app-desktop.png`
