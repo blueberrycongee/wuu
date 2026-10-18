@@ -3598,7 +3598,11 @@ export function App(): JSX.Element {
         current.initialized
           ? {
               ...current,
-              initialized: { ...current.initialized, providers: result.providers },
+              initialized: {
+                ...current.initialized,
+                providers: result.providers,
+                catalog_providers: result.catalog_providers,
+              },
             }
           : current,
       );
@@ -5410,6 +5414,7 @@ export function App(): JSX.Element {
         <FirstRunOnboarding
           inventory={state.initialized?.extension_inventory}
           providers={state.initialized?.providers}
+          catalogProviders={state.initialized?.catalog_providers}
           engines={engineInventory}
           onUpdateExtensionPackage={updateExtensionPackage}
           onSaveProvider={async (provider, model, connection) => {

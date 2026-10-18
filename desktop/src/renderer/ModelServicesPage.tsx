@@ -244,9 +244,11 @@ function errorMessage(error: unknown, t: Translate): string {
 
 type CatalogState = { providers?: CatalogProviderSummary[]; failed: boolean };
 
-export function useCatalogProviders(version: number): CatalogState {
+export function useCatalogProviders(version: number, snapshot?: CatalogProviderSummary[]): CatalogState {
   const [state, setState] = useState<CatalogState>({ failed: false });
   useEffect(() => {
+    if (snapshot) return;
+    // Older hosts do not include the directory in initialization.
     if (!hostSupports("listCatalogProviders") || typeof window.wuu?.listCatalogProviders !== "function") {
       setState({ failed: true });
       return;
@@ -257,8 +259,8 @@ export function useCatalogProviders(version: number): CatalogState {
       () => { if (active) setState({ failed: true }); },
     );
     return () => { active = false; };
-  }, [version]);
-  return state;
+  }, [version, snapshot]);
+  return snapshot ? { providers: snapshot, failed: false } : state;
 }
 
 export function ModelServicesPage({
@@ -276,7 +278,7 @@ export function ModelServicesPage({
   const [openService, setOpenService] = useState("");
   const [catalogVersion, setCatalogVersion] = useState(0);
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
-  const catalog = useCatalogProviders(catalogVersion);
+  const catalog = useCatalogProviders(catalogVersion, initialized?.catalog_providers);
   const detailProvider = providers.find((provider) => provider.name === openService);
 
   useLayoutEffect(() => {
@@ -375,7 +377,6 @@ export function ServiceConnector({
       <div className="model-service-catalog" data-testid="settings-provider-tiles">
         <CatalogServiceGroups
           catalogProviders={[...featured, ...local.filter((provider) => !featuredIDs.includes(provider.id))]}
-          pendingCatalogTiles={catalog.providers === undefined && !catalog.failed ? featuredIDs.length : 0}
           providers={providers}
           grouped={false}
           disabled={running}
@@ -1340,7 +1341,6 @@ function ModelChoices({
 // featured list reads as one run in the same order.
 function CatalogServiceGroups({
   catalogProviders,
-  pendingCatalogTiles = 0,
   providers,
   query = "",
   grouped,
@@ -1348,7 +1348,6 @@ function CatalogServiceGroups({
   onConnect,
 }: {
   catalogProviders: readonly CatalogProviderSummary[];
-  pendingCatalogTiles?: number;
   providers: readonly ProviderSummary[];
   query?: string;
   grouped: boolean;
@@ -1417,7 +1416,7 @@ function CatalogServiceGroups({
       </span>
     </button>
   ));
-  const empty = entries.length === 0 && subscriptions.length === 0 && !pendingCatalogTiles
+  const empty = entries.length === 0 && subscriptions.length === 0
     ? <p className="settings-group-empty">{t("provider.noServiceMatches")}</p>
     : null;
 
@@ -1426,14 +1425,7 @@ function CatalogServiceGroups({
       <div className="model-service-tiles">
         {subscriptionTiles}
         {groups.flatMap(catalogTiles)}
-        {Array.from({ length: pendingCatalogTiles }, (_, index) => (
-          <div key={`pending-${index}`} className="model-service-tile model-service-skeleton" aria-hidden="true">
-            <span className="model-service-skeleton-mark" />
-            <span className="model-service-skeleton-name" />
-          </div>
-        ))}
       </div>
-      {pendingCatalogTiles ? <span className="sr-only" role="status">{t("settings.loading")}</span> : null}
       {empty}
     </>;
   }

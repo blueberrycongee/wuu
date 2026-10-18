@@ -239,34 +239,6 @@
   --provider-mark-size: var(--space-8);
 }
 
-.model-service-skeleton {
-  --pulse-opacity: 0.55;
-  animation: wuu-pulse 2.4s ease-in-out infinite;
-  pointer-events: none;
-}
-
-.model-service-skeleton-mark,
-.model-service-skeleton-name {
-  background: var(--surface-2);
-  border-radius: var(--radius-xs);
-}
-
-.model-service-skeleton-mark {
-  flex: 0 0 var(--space-8);
-  height: var(--space-8);
-}
-
-.model-service-skeleton-name {
-  width: 60%;
-  height: 1em;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .model-service-skeleton {
-    animation: none;
-  }
-}
-
 /* Extra space belongs around the artwork, keeping its visual weight stable. */
 :is(.model-service-card, .model-service-tile) > .provider-mark svg,
 :is(.model-service-card, .model-service-tile) > .provider-mark .provider-mark-engine {

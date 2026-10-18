@@ -29,6 +29,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Show the local model service directory immediately in settings and onboarding,
+  without skeleton placeholders or a new directory request on each visit.
 - Restore ACP sessions through advertised `session/resume` support and close
   native sessions before terminating their processes, including model probes
   and cancelled turns. Preserve advertised empty reasoning defaults when
