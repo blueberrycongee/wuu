@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawnSync, execFileSync } = require('node:child_process');
 const desktop = path.resolve(__dirname, '..');
 const output = path.join(desktop, 'out', 'main', 'linux-cua-e2e.mjs');
 async function main() {
@@ -20,11 +20,25 @@ async function main() {
   if (process.platform !== 'linux' || !process.env.DISPLAY) throw new Error('Linux CUA acceptance requires a real X11 DISPLAY; headless simulation is not acceptance.');
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-linux-cua-e2e-'));
   try {
+    const started = Date.now();
     const result = spawnSync(String(require('electron')), [...process.argv.slice(2), output], {
       stdio: 'inherit', env: { ...process.env, WUU_LINUX_CUA_PROFILE: profile },
     });
     if (result.error) throw result.error;
     process.exitCode = result.status ?? 1;
+    if (process.exitCode === 0) {
+      const evidence = path.resolve(process.env.WUU_LINUX_CUA_OUTPUT ?? 'out/e2e/linux-cua');
+      const resultPath = path.join(evidence, 'results.json');
+      const gifPath = path.join(evidence, 'linux-cua-pip.gif');
+      const screenshots = ['01-linux-cua-live.png', '02-occluded-target-live.png', '03-dark-small-large-text.png', '04-target-hidden.png', '05-reopened-preview.png', 'target-observation.png'];
+      for (const file of [resultPath, gifPath, ...screenshots.map(name => path.join(evidence, name))]) {
+        const info = fs.statSync(file);
+        if (!info.size || info.mtimeMs < started) throw new Error(`Acceptance did not finalize current evidence: ${file}`);
+      }
+      if (JSON.parse(fs.readFileSync(resultPath, 'utf8')).status !== 'passed') throw new Error('Acceptance results did not pass');
+      const frames = Number(execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-count_frames', '-show_entries', 'stream=nb_read_frames', '-of', 'default=noprint_wrappers=1:nokey=1', gifPath], { encoding: 'utf8', timeout: 15_000 }).trim());
+      if (!Number.isFinite(frames) || frames < 2) throw new Error('Acceptance GIF does not contain multiple recorded frames');
+    }
   } finally {
     fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }

@@ -16,6 +16,9 @@ import type { ActivitySession } from '../src/shared/protocol';
 // Linux desktop fixtures do; capture/input still use production X11 paths.
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('ozone-platform', 'x11');
+// Closing the fixture is an acceptance step, not completion of the runner.
+// Keep Electron alive until finish() has finalized the recording and results.
+app.on('window-all-closed', () => {});
 
 const fixtureMode = process.argv.includes('--linux-cua-fixture');
 const output = resolve(process.env.WUU_LINUX_CUA_OUTPUT ?? 'out/e2e/linux-cua');
@@ -214,7 +217,7 @@ async function acceptance(): Promise<void> {
   results.inputState = await fixtureRequest('state'); checks.push('foreground click, text, keyboard, drag, scroll; background mutation refused');
 
   const main = new BrowserWindow({ x: 720, y: 40, width: 660, height: 800, frame: false, show: false, webPreferences: { sandbox: true } });
-  await main.loadURL(`data:text/html,${encodeURIComponent("<body style='margin:0;padding:34px;background:#eef2f7;color:#18334f;font:18px system-ui'><h1>Wuu · Linux live preview</h1><p>Native app input and continuous window capture</p><p>The preview stays bound to the selected window.<br>Occlusion must not replace it with other screen pixels.</p><input autofocus placeholder='Focus sentinel' style='font:inherit;padding:12px;width:90%'></body>")}`);
+  await main.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent("<body style='margin:0;padding:34px;background:#eef2f7;color:#18334f;font:18px system-ui'><h1>Wuu · Linux live preview</h1><p>Native app input and continuous window capture</p><p>The preview stays bound to the selected window.<br>Occlusion must not replace it with other screen pixels.</p><input autofocus placeholder='Focus sentinel' style='font:inherit;padding:12px;width:90%'></body>")}`);
   main.show(); main.focus();
   await waitFor('host focus', () => main.isFocused());
   const activity: ActivitySession = { id: 'linux-cua', kind: 'cua', thread_id: 'linux-cua-thread', workdir: '/linux-cua-fixture', plugin_id: 'cua-linux', target: canonicalTarget, process_id: identity.processID, window_id: identity.windowID, state: 'foreground_controlled', controller: 'agent', execution_id: 'linux-acceptance', created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
@@ -249,7 +252,7 @@ async function acceptance(): Promise<void> {
   await capture('01-linux-cua-live.png'); checks.push('production PiP factory, target pixels, continuous frames, no focus activation');
 
   const cover = new BrowserWindow({ x: 40, y: 40, width: 620, height: 680, frame: false, show: false, webPreferences: { sandbox: true } });
-  await cover.loadURL(`data:text/html,${encodeURIComponent("<body style='margin:0;background:#ff00ff;font:26px system-ui;padding:30px;color:#220022'><h1>Occluding window</h1><p>The live preview must still show the target app.</p></body>")}`);
+  await cover.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent("<body style='margin:0;background:#ff00ff;font:26px system-ui;padding:30px;color:#220022'><h1>Occluding window</h1><p>The live preview must still show the target app.</p></body>")}`);
   cover.showInactive();
   main.focus();
   await fixtureRequest('marker', '#00ffff');
