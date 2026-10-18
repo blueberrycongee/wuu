@@ -287,7 +287,7 @@ function TurnContent({
     error: turn.error,
     onRetry: retryFailedTurn,
     onContinue: continueFailedTurn,
-    onOpenSettings: isLatestTurn ? openModelServices : undefined,
+    onOpenSettings: isLatestTurn && (!engineID || engineID === "wuu") ? openModelServices : undefined,
   };
   const incomplete = turn.status === "failed" || turn.status === "interrupted";
   const editSummary = ENABLE_TURN_EDIT_SUMMARY ? (
