@@ -37,6 +37,7 @@ let recorder: ChildProcess | undefined;
 let fixture: ChildProcess;
 let nextID = 0;
 const fixtureReplies = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+const fixtureSize = { width: 620, height: 680 };
 const fixtureHTML = `<!doctype html><html><style>
 *{box-sizing:border-box}body{margin:0;font:18px system-ui;background:#f4f7fa;color:#18334f}header{height:120px;background:#123456;color:white;padding:24px}h1{margin:0;font-size:24px}p{margin:8px 0}#marker{position:absolute;right:24px;top:24px;width:80px;height:70px;background:#ffff00}main{padding:30px 40px}button{width:190px;height:60px;font:inherit;background:#dcecff;border:1px solid #5b80aa;border-radius:12px}label{display:block;margin-top:24px}input[type=text]{display:block;width:540px;height:44px;font:inherit;padding:8px;border:1px solid #5b80aa}input[type=range]{position:absolute;left:60px;top:335px;width:480px;height:30px}#scroll{position:absolute;left:40px;top:390px;width:540px;height:180px;overflow:auto;border:1px solid #8195aa;padding:12px}#scroll article{height:650px;background:linear-gradient(#dcecff,#c9f0df)}footer{position:absolute;left:40px;bottom:25px;color:#48705b}body.dark{background:#172334;color:#eff4ff}
 </style><body><header><h1>Linux CUA acceptance</h1><p>Disposable app · native X11 input</p><span id="marker"></span></header><main><button id="click">Click count: 0</button><label>Native text entry<input id="text" type="text"></label><input id="range" type="range" min="0" max="100" value="0"><div id="scroll"><article>Scroll this panel<br><br>Every input is delivered by the production Linux helper.<br><br>No external sites or accounts.</article></div><footer id="status">Ready for native input</footer></main><script>
@@ -101,7 +102,7 @@ async function capture(name: string): Promise<void> {
   execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'x11grab', '-video_size', '1440x900', '-i', process.env.DISPLAY!, '-frames:v', '1', join(output, name)], { timeout: 15_000 });
 }
 async function fixtureMain(): Promise<void> {
-  const target = new BrowserWindow({ x: 40, y: 40, width: 620, height: 680, frame: false, show: false, webPreferences: { sandbox: true, contextIsolation: true } });
+  const target = new BrowserWindow({ x: 40, y: 40, ...fixtureSize, frame: false, show: false, webPreferences: { sandbox: true, contextIsolation: true } });
   await target.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(fixtureHTML)}`);
   const shown = once(target, 'show', { signal: AbortSignal.timeout(5000) });
   target.show();
@@ -504,13 +505,23 @@ async function acceptance(): Promise<void> {
   };
   await fixtureRequest('animate', true);
   await measure('live-changing-target', 30_000, true);
-  assert.deepEqual(await fixtureRequest('size', { width: 2560, height: 1600 }), [2560, 1600]);
+  const largeSize = { width: 2560, height: 1600 };
+  assert.deepEqual(await fixtureRequest('size', largeSize), [largeSize.width, largeSize.height]);
+  // Electron's X11 client-side shadows can extend beyond BrowserWindow's
+  // logical size. Preserve the measured margins instead of assuming no frame.
+  const largeNativeSize = {
+    width: largeSize.width + initialObservation.screenshot.window_width - fixtureSize.width,
+    height: largeSize.height + initialObservation.screenshot.window_height - fixtureSize.height,
+  };
   await waitFor('large target observation uses new geometry', async () => {
     const snapshot = await observe(false);
-    return snapshot.screenshot.window_width === 2560 && snapshot.screenshot.window_height === 1600;
+    performanceReport.largeTarget = { requested: largeSize, expectedNative: largeNativeSize, observed: snapshot.screenshot };
+    return snapshot.screenshot.window_width === largeNativeSize.width && snapshot.screenshot.window_height === largeNativeSize.height;
   });
-  await waitFor('large target preview remains bounded', () => video.executeJavaScript("document.querySelector('video').videoWidth===1280 && document.querySelector('video').videoHeight===800"));
-  performanceReport.largeTarget = { width: 2560, height: 1600 };
+  await waitFor('large target preview remains bounded', () => video.executeJavaScript(`(() => {
+    const video = document.querySelector('video');
+    return video.videoWidth===1280 && Math.abs(video.videoWidth/video.videoHeight-${largeNativeSize.width / largeNativeSize.height})<.01;
+  })()`));
   await measure('large-changing-target', 15_000, true);
   const beforeCycles = await resourceSample();
   const liveProcessIDs = app.getAppMetrics().map(metric => metric.pid).sort((a, b) => a - b);
