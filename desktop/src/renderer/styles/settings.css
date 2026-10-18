@@ -616,9 +616,8 @@
   gap: 2px;
 }
 
-/* Browser rows use a wrapper outside the compact action list above. At
- * narrow widths the row then stacks the control below the label instead of
- * squeezing an email or a filesystem path into a one-character column. */
+/* Browser rows stack controls below long profile or extension names at
+ * narrow widths. */
 .browser-settings-actions {
   display: flex;
   align-items: center;

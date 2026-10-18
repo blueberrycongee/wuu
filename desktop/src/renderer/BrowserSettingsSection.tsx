@@ -135,7 +135,6 @@ export function BrowserSettingsSection(): JSX.Element | null {
     <>
       <SettingsPageHeader
         title={t("settings.browser")}
-        description={t("settings.browserDescription")}
         actions={
           <button
             className="settings-button settings-button-ghost"
@@ -169,7 +168,6 @@ export function BrowserSettingsSection(): JSX.Element | null {
 
       <SettingsSection
         title={t("settings.browserImportTitle")}
-        description={t("settings.browserImportDescription")}
         testID="settings-browser-import"
       >
         <SettingsGroup>
@@ -186,15 +184,8 @@ export function BrowserSettingsSection(): JSX.Element | null {
             profiles.map((profile) => (
               <SettingsRow
                 key={profile.profilePath}
-                title={profile.profileName}
-                description={`${profile.appName}${
-                  profile.userName ? ` · ${profile.userName}` : ""
-                } · ${profile.profileDirectoryName}`}
-                hint={
-                  profile.hasCookies
-                    ? t("settings.browserCookiesAvailable")
-                    : t("settings.browserNoCookies")
-                }
+                title={`${profile.appName} · ${profile.profileName}`}
+                hint={profile.hasCookies ? undefined : t("settings.browserNoCookies")}
               >
                 <div className="browser-settings-actions">
                   <button
@@ -228,12 +219,10 @@ export function BrowserSettingsSection(): JSX.Element | null {
             })}
           </p>
         ) : null}
-        <p className="settings-section-note">{t("settings.browserPasswordsNotImported")}</p>
       </SettingsSection>
 
       <SettingsSection
         title={t("settings.browserExtensionsTitle")}
-        description={t("settings.browserExtensionsDescription")}
         actions={
           <button
             className="settings-button settings-button-ghost"
@@ -258,13 +247,8 @@ export function BrowserSettingsSection(): JSX.Element | null {
               <SettingsRow
                 key={extension.id}
                 title={extension.name}
-                description={
-                  extension.version
-                    ? `${extension.version} · ${extension.path}`
-                    : extension.path
-                }
                 error={extension.error}
-                hint={extension.loaded ? undefined : t("settings.browserExtensionsNotLoaded")}
+                hint={extension.enabled && !extension.loaded ? t("settings.browserExtensionsNotLoaded") : undefined}
               >
                 <div className="browser-settings-actions">
                   <button
@@ -301,8 +285,6 @@ export function BrowserSettingsSection(): JSX.Element | null {
           )}
         </SettingsGroup>
         {extensionError ? <p className="settings-error" role="alert">{extensionError}</p> : null}
-        <p className="settings-section-note">{t("settings.browserExtensionsCompatibility")}</p>
-        <p className="settings-section-note">{t("settings.browserExtensionsTrust")}</p>
       </SettingsSection>
     </>
   );
