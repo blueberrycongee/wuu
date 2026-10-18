@@ -18,6 +18,7 @@ const marker = "IMAGE-LAYOUT-READING-MARKER";
 const results = [];
 let win;
 let pending = [];
+const requestedImagePaths = new Set();
 let requestCount;
 let requestsReady;
 let released = false;
@@ -35,6 +36,7 @@ const server = http.createServer((request, response) => {
   if (released) reply();
   else {
     pending.push(reply);
+    requestedImagePaths.add(request.url);
     if (pending.length === requestCount) requestsReady();
   }
 });
@@ -126,7 +128,7 @@ app.whenReady().then(async () => {
       ["history", kind === "artifact" ? 4 : 3, false, 420], ["bottom", 1, false, 420], ["history", 1, true, 420],
     ]) {
       const name = `${kind}-${mode}-${count}${broken ? "-failed" : ""}-${width}`;
-      pending = []; released = false; fail = broken; requestCount = count;
+      pending = []; requestedImagePaths.clear(); released = false; fail = broken; requestCount = count;
       const allRequests = new Promise(resolve => { requestsReady = resolve; });
       const url = `http://127.0.0.1:${server.address().port}/fixture.png?case=${name}`;
       const fixture = path.join(output, "threads.json");
@@ -150,13 +152,19 @@ app.whenReady().then(async () => {
       await until(layoutMotionSettled);
       await frames();
       // Even a single image can start offscreen in a narrow conversation.
-      // Visit every lazy image while responses are gated, then restore the
-      // scenario's reading position before recording the loading baseline.
+      // Keep each lazy image in view until its request reaches the closed gate.
+      // A few animation frames do not guarantee Chromium has started loading;
+      // restoring the reading position too early can leave it deferred forever.
       for (let index = 0; index < count; index++) {
-        await evaluate((selector, index) => {
-          document.querySelector(selector).querySelectorAll("img.rich-image, .turn-artifact-inline-image img")[index]
-            .scrollIntoView({ block: "center", inline: "nearest" });
+        const imagePath = await evaluate((selector, index) => {
+          const image = document.querySelector(selector).querySelectorAll("img.rich-image, .turn-artifact-inline-image img")[index];
+          image.scrollIntoView({ block: "center", inline: "nearest" });
+          const source = new URL(image.src);
+          return source.pathname + source.search;
         }, activeSelector, index);
+        const deadline = Date.now() + 10000;
+        while (!requestedImagePaths.has(imagePath) && Date.now() < deadline) await sleep(20);
+        assert.ok(requestedImagePaths.has(imagePath), `${name}: image ${index + 1} request did not reach the gate while in view`);
         await frames();
       }
       if (kind === "artifact" && count > 1) {
