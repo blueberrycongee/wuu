@@ -152,6 +152,11 @@ app.whenReady().then(async () => {
       // Even a single image can start offscreen in a narrow conversation.
       // Visit every lazy image while responses are gated, then restore the
       // scenario's reading position before recording the loading baseline.
+      // Take user scroll control first so queued bottom-follow frames cannot
+      // undo scrollIntoView before Chromium starts the lazy request.
+      await evaluate(selector => {
+        document.querySelector(selector).dispatchEvent(new WheelEvent("wheel", { deltaY: -150, bubbles: true }));
+      }, viewportSelector);
       for (let index = 0; index < count; index++) {
         await evaluate((selector, index) => {
           document.querySelector(selector).querySelectorAll("img.rich-image, .turn-artifact-inline-image img")[index]
@@ -183,6 +188,7 @@ app.whenReady().then(async () => {
       if (mode === "bottom") {
         await evaluate(selector => {
           const viewport = document.querySelector(selector);
+          viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: 150, bubbles: true }));
           viewport.scrollTop = viewport.scrollHeight;
         }, viewportSelector);
         await frames();
