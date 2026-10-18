@@ -74,6 +74,13 @@
   color: var(--warning);
 }
 
+/* Service names share one horizontal rhythm in connected rows and catalog
+ * tiles; their different information density is expressed by row height. */
+.model-service-card,
+.model-service-tile {
+  column-gap: var(--space-2);
+}
+
 /* --- Connected services ----------------------------------------------------- */
 
 /* One list in a settings group, rows divided like the catalog's. */
@@ -103,7 +110,6 @@
   min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: var(--space-3);
   border: 0;
   background: transparent;
   color: var(--ink);
@@ -212,7 +218,6 @@
   min-width: 0;
   min-height: calc(var(--control-field-height) + var(--space-2));
   align-items: center;
-  gap: var(--space-2);
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink);
@@ -221,7 +226,7 @@
   transition: background var(--motion-fast) var(--ease-out);
 }
 
-.model-service-tile .provider-mark {
+:is(.model-service-card, .model-service-tile) > .provider-mark {
   --provider-mark-size: round(up, calc(var(--font-ui) * 1.72), 2px);
 }
 
@@ -253,8 +258,8 @@
   }
 }
 
-.model-service-tile .provider-mark svg,
-.model-service-tile .provider-mark .provider-mark-engine {
+:is(.model-service-card, .model-service-tile) > .provider-mark svg,
+:is(.model-service-card, .model-service-tile) > .provider-mark .provider-mark-engine {
   width: 78%;
   height: 78%;
 }
