@@ -179,14 +179,22 @@ async function acceptance(): Promise<void> {
   assert.equal((await fixtureRequest('state')).clicks, 0);
   const mismatchedTarget = await computer({ action: 'observe', app: `linux:${process.pid}:${identity.windowID}` });
   assert.equal(mismatchedTarget.isError, true, 'A valid XID with the wrong process cannot be observed');
+  const nativeOrigin = () => {
+    const info = execFileSync('xwininfo', ['-id', String(identity.windowID)], { encoding: 'utf8' });
+    const match = /Absolute upper-left X:\s+(-?\d+)/.exec(info);
+    assert.ok(match, info);
+    return Number(match[1]);
+  };
+  const originalOrigin = nativeOrigin();
   const beforeMove = await observe();
   await fixtureRequest('move', 60);
-  await waitFor('fixture moved on X11', () => /Absolute upper-left X:\s+60\b/.test(execFileSync('xwininfo', ['-id', String(identity.windowID)], { encoding: 'utf8' })));
+  await waitFor('fixture moved on X11', () => nativeOrigin() !== originalOrigin);
+  results.nativeWindowOrigins = { original: originalOrigin, moved: nativeOrigin() };
   const movedSnapshot = await computer({ action: 'click', snapshot_id: beforeMove.snapshot_id, coordinate_space: 'screenshot', x: 130, y: 180, foreground_policy: 'allow' });
   assert.equal(movedSnapshot.structuredContent.error_code, 'stale_snapshot', 'Moving a target invalidates old coordinates');
   assert.equal((await fixtureRequest('state')).clicks, 0);
   await fixtureRequest('move', 40);
-  await waitFor('fixture position restored on X11', () => /Absolute upper-left X:\s+40\b/.test(execFileSync('xwininfo', ['-id', String(identity.windowID)], { encoding: 'utf8' })));
+  await waitFor('fixture position restored on X11', () => nativeOrigin() === originalOrigin);
   const consumed = await input('click', { x: 130, y: 180 });
   await waitFor('native click', async () => (await fixtureRequest('state')).clicks === 1);
   const replay = await computer({ action: 'click', snapshot_id: consumed.snapshot_id, coordinate_space: 'screenshot', x: 130, y: 180, foreground_policy: 'allow' });
