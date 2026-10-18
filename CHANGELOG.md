@@ -8,6 +8,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Keep independent activity previews for multiple browser tabs and native windows
+  in one conversation, with up to five visible cards and individual dismissal.
+
 ### Removed
 
 - Remove the workspace new page's Continue viewing section, which duplicated
