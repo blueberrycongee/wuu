@@ -72,6 +72,27 @@ func TestFilterMobileChatLineKeepsServerRequests(t *testing.T) {
 	}
 }
 
+func TestMobileActivityKeepsObservationLifecycleWithoutChangingLegacyChat(t *testing.T) {
+	for _, method := range []string{
+		appserver.NotificationActivityStarted,
+		appserver.NotificationActivityUpdated,
+		appserver.NotificationActivityControlChanged,
+		appserver.NotificationActivityStopped,
+	} {
+		line, _ := json.Marshal(map[string]any{"method": method, "params": map[string]any{
+			"id": "activity", "thread_id": "thread", "execution_id": "execution",
+			"workdir": "/workspace", "kind": "browser", "target": "tab", "state": "running",
+		}})
+		out, keep := (mobileChatFilter{tools: true}).line(line)
+		if !keep || string(out) != string(line) {
+			t.Fatalf("activity client lost observation identity: %s", out)
+		}
+		if _, keep := filterMobileChatLine(line); keep {
+			t.Fatalf("legacy chat unexpectedly received %s", method)
+		}
+	}
+}
+
 func TestMobileChatHistoryPageKeepsCursorAndErrorWithoutHeavyItems(t *testing.T) {
 	line := []byte(`{"id":"page","result":{"thread_id":"t","cursor":"before","history_cursor":"next","turns":[{"id":"turn","error":{"message":"failed"},"items":[{"id":"u","type":"user_message","text":"hello"},{"id":"tool","type":"tool_call","result":"heavy"}]}]}}`)
 	got, keep := filterMobileChatLine(line)

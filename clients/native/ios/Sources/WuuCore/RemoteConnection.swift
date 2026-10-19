@@ -33,6 +33,12 @@ public actor RemoteConnection {
     private var pending: [String: CheckedContinuation<JSONValue, Error>] = [:]
     private var snapshotTags: [String: String] = [:]
     private var deadlines: [String: Task<Void, Never>] = [:]
+    public private(set) var supportsPreview = false
+    private var previewActivity: PreviewActivity?
+    private var previewID: String?
+    private var previewSink: AsyncThrowingStream<PreviewEvent, Error>.Continuation?
+    private var previewOpening: UUID?
+    private var previewSequence = 0
     private var attachWaiter: CheckedContinuation<Void, Error>?
 
     public init(account: AccountSession, host: String) throws {
@@ -110,6 +116,8 @@ public actor RemoteConnection {
         heartbeat?.cancel(); heartbeat = nil
         socket?.cancel(with: .goingAway, reason: nil); socket = nil
         channel = nil; handshake = nil; attached = false; received = 0
+        supportsPreview = false
+        finishPreview(NativeError.invalid("电脑连接已断开"))
         challenged = false; authenticated = false
         for task in deadlines.values { task.cancel() }
         deadlines.removeAll()
@@ -164,7 +172,7 @@ public actor RemoteConnection {
                 guard envelope["t"].string == "hs2" else { throw NativeError.invalid("Unexpected handshake reply") }
                 channel = try handshake.finish(JSONDecoder().decode(HandshakeReply.self, from: body))
                 self.handshake = nil
-                try await sealed(["t": "attach", "client_profile": "mobile_activity", "accept_line_compression": "gzip"])
+                try await sealed(["t": "attach", "client_profile": "mobile_activity", "accept_line_compression": "gzip", "preview_v1": true])
             } else if kind == 2, let channel {
                 let message = try JSONDecoder().decode(JSONValue.self, from: channel.open(Data(payload.dropFirst())))
                 try await handleSealed(message, epoch: stamp)
@@ -183,6 +191,7 @@ public actor RemoteConnection {
         case "attached":
             guard !attached else { throw NativeError.invalid("Repeated attachment") }
             attached = true
+            supportsPreview = value["preview_v1"].bool
             received = 0
             deadlines.removeValue(forKey: "attach")?.cancel()
             attachWaiter?.resume(); attachWaiter = nil
@@ -216,11 +225,93 @@ public actor RemoteConnection {
             }
             received = sequence
             try await sealed(["t": "ack", "recv": .number(sequence)])
+        case "preview":
+            handlePreview(value["line"])
         case "state": eventSink.yield(.state(value))
         case "pong": lastPong = Date()
         case "ping": try await sealed(["t": "pong"])
         case "bye": throw NativeError.invalid(value["reason"].string ?? "Computer closed connection")
         default: break
+        }
+    }
+    /// Preview packets are ephemeral and bounded independently of reliable chat events.
+    public func openPreview(_ activity: PreviewActivity) async throws -> PreviewSubscription {
+        guard attached, supportsPreview else { throw NativeError.invalid("电脑尚不支持实时预览") }
+        if let current = previewID { await closePreview(current) }
+        let opening = UUID()
+        let stream = AsyncThrowingStream<PreviewEvent, Error>.makeStream(bufferingPolicy: .bufferingOldest(4))
+        previewOpening = opening; previewActivity = activity; previewSink = stream.continuation
+        previewID = nil; previewSequence = 0
+        do {
+            let result = try await call("desktop/activity/preview/open", params: activity.params, workdir: activity.workdir)
+            guard previewOpening == opening else { throw CancellationError() }
+            guard let id = result["stream_id"].string, !id.isEmpty, previewID == nil || previewID == id else {
+                throw NativeError.invalid("Invalid preview stream")
+            }
+            previewID = id
+            return PreviewSubscription(id: id, events: stream.stream)
+        } catch {
+            if previewOpening == opening { finishPreview(error) }
+            throw error
+        }
+    }
+    public func acknowledgePreview(_ id: String, sequence: Int) async throws {
+        guard previewID == id else { throw CancellationError() }
+        // Sending releases a network credit; waiting for the RPC response would cap decode at one frame per RTT.
+        // Its ordinary response still advances/acknowledges reliable RPC sequencing, without retaining a waiter.
+        try await sendPreviewControl("desktop/activity/preview/ack", params: ["stream_id": .string(id), "sequence": .number(Double(sequence))])
+    }
+    public func renewPreview(_ id: String) async throws {
+        guard previewID == id else { throw CancellationError() }
+        _ = try await call("desktop/activity/preview/renew", params: ["stream_id": .string(id)])
+    }
+    public func closePreview(_ id: String) async {
+        guard previewID == id else { return }
+        finishPreview()
+        await sendPreviewClose(id)
+    }
+    private func sendPreviewControl(_ method: String, params: JSONValue) async throws {
+        try await sealed(["t": "rpc", "line": ["id": .string(UUID().uuidString), "method": .string(method), "params": params]])
+    }
+    private func sendPreviewClose(_ id: String) async {
+        let stamp = epoch
+        // SwiftUI cancels the viewer task on dismissal. Its close packet still gets an uncancelled send.
+        await Task {
+            guard self.epoch == stamp, self.attached else { return }
+            try? await self.sendPreviewControl("desktop/activity/preview/close", params: ["stream_id": .string(id)])
+        }.value
+    }
+    private func finishPreview(_ error: Error? = nil) {
+        previewSink?.finish(throwing: error)
+        previewSink = nil; previewID = nil; previewActivity = nil; previewOpening = nil; previewSequence = 0
+    }
+    private func handlePreview(_ line: JSONValue) {
+        let value = line["params"]
+        guard let activity = previewActivity, activity.accepts(value), let id = value["stream_id"].string,
+              previewID == id, let sink = previewSink else { return }
+        do {
+            let event: PreviewEvent
+            switch line["method"].string {
+            case "desktop/activity/preview/frame":
+                let frame = try PreviewFrame(value)
+                guard frame.sequence > previewSequence else { return }
+                previewSequence = frame.sequence
+                event = .frame(frame)
+            case "desktop/activity/preview/state":
+                let state = value["state"].string ?? "error"
+                // The viewer derives loading/live from opening and decoded pixels; keep all three frame slots available.
+                if state == "loading" || state == "live" { return }
+                event = .state(state, value["message"].string ?? "")
+            default: return
+            }
+            if case .dropped = sink.yield(event) {
+                // Losing an H.264 delta invalidates its descendants. Reopening obtains a fresh IDR.
+                finishPreview(NativeError.invalid("预览连接需要重新同步"))
+                Task { await self.sendPreviewClose(id) }
+            }
+        } catch {
+            finishPreview(error)
+            Task { await self.sendPreviewClose(id) }
         }
     }
     private func decodeRPCLine(_ value: JSONValue) throws -> JSONValue {

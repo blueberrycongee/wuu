@@ -56,6 +56,45 @@ jobs:
           echo "WUU_TEST_PG_BIN=$(brew --prefix postgresql@18)/bin" >> "$GITHUB_ENV"
       - name: Core, real-server integration and simulator build
         run: bash clients/native/verify.sh ios | tee native-ios-core.log
+      - name: Capture native preview fixture layouts
+        run: |
+          set -euo pipefail
+          mkdir -p native-ios-preview
+          device="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(device["udid"] for runtime, devices in data["devices"].items() if "iOS" in runtime for device in devices if device["name"].startswith("iPhone")))')"
+          xcrun simctl boot "$device" || true
+          xcrun simctl bootstatus "$device" -b
+          trap 'xcrun simctl shutdown "$device"' EXIT
+          xcrun simctl install "$device" clients/native/ios/.build-xcode/Build/Products/Debug-iphonesimulator/Wuu.app
+          xcrun simctl ui "$device" appearance light
+          xcrun simctl launch --terminate-running-process "$device" ai.wuu.native \
+            --native-ui-fixture --native-composer-fixture --native-preview-fixture
+          sleep 3
+          xcrun simctl io "$device" screenshot native-ios-preview/tool-row-light.png
+          xcrun simctl launch --terminate-running-process "$device" ai.wuu.native \
+            --native-ui-fixture --native-composer-fixture --native-preview-fixture --native-preview-presented
+          sleep 3
+          xcrun simctl io "$device" screenshot native-ios-preview/viewer-light.png
+          xcrun simctl ui "$device" appearance dark
+          xcrun simctl launch --terminate-running-process "$device" ai.wuu.native \
+            --native-ui-fixture --native-composer-fixture --native-preview-fixture --native-preview-presented \
+            -UIPreferredContentSizeCategoryName UICTContentSizeCategoryAccessibilityXXXL
+          sleep 3
+          xcrun simctl io "$device" screenshot native-ios-preview/viewer-dark-large-text.png
+          container="$(xcrun simctl get_app_container "$device" ai.wuu.native data)"
+          marker="$container/Library/Caches/preview-fixture-result.json"
+          rm -f "$marker"
+          xcrun simctl launch --terminate-running-process "$device" ai.wuu.native \
+            --native-ui-fixture --native-composer-fixture --native-preview-fixture --native-preview-presented \
+            --native-preview-h264-fixture -UIPreferredContentSizeCategoryName UICTContentSizeCategoryL
+          for attempt in $(seq 1 30); do
+            [[ -f "$marker" ]] && break
+            sleep 1
+          done
+          cp "$marker" native-ios-preview/h264-result.json
+          sleep 1
+          xcrun simctl io "$device" screenshot native-ios-preview/viewer-h264.png
+          python3 -c 'import json; result=json.load(open("native-ios-preview/h264-result.json")); assert result.get("codec") == "h264" and result.get("decoded_frames") == 3 and result.get("submitted_frames") == 3 and result.get("error") == "", result'
+          printf '%s\n' 'Local synthetic JPEG and H264 IDR+2 dependent delta frames through the native viewer. H264 decode/submission is asserted; screenshots require visual review. This does not validate remote latency, real macOS capture, or physical-device performance.' > native-ios-preview/scope.txt
       - name: Unsigned iOS device Release build
         run: |
           xcodebuild -project clients/native/ios/Wuu.xcodeproj -scheme Wuu \
@@ -70,6 +109,7 @@ jobs:
           include-hidden-files: true
           path: |
             native-ios-*.log
+            native-ios-preview/
 
   android:
     if: github.event_name == 'workflow_dispatch'

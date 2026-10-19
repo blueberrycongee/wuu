@@ -1,5 +1,5 @@
 import type { Rectangle } from "electron";
-import type { ServerEvent } from "../shared/protocol";
+import type { ActivitySession, ServerEvent } from "../shared/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { WindowRegistry } from "./windowRegistry";
 import {
@@ -68,6 +68,7 @@ class FakeView implements BrowserViewHandle {
   readonly insertedCSS = new Map<string, string>();
   readonly removedCSS: string[] = [];
   readonly listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+  readonly debuggerListeners = new Map<string, Array<(...args: unknown[]) => void>>();
   readonly scripts: string[] = [];
   back = false;
   forward = false;
@@ -85,6 +86,15 @@ class FakeView implements BrowserViewHandle {
     },
     detach: () => {
       this.attached = false;
+      this.emitDebugger("detach", {}, "target_closed");
+    },
+    on: (event, listener) => {
+      const listeners = this.debuggerListeners.get(event) ?? [];
+      listeners.push(listener);
+      this.debuggerListeners.set(event, listeners);
+    },
+    removeListener: (event, listener) => {
+      this.debuggerListeners.set(event, (this.debuggerListeners.get(event) ?? []).filter(value => value !== listener));
     },
     isAttached: () => this.attached,
     sendCommand: async (method, params) => {
@@ -172,6 +182,10 @@ class FakeView implements BrowserViewHandle {
     },
     isDestroyed: () => this.closed,
   };
+
+  emitDebugger(event: string, ...args: unknown[]): void {
+    for (const listener of [...this.debuggerListeners.get(event) ?? []]) listener(...args);
+  }
 
   emitNavigate(url: string): void {
     this.url = url;
@@ -1126,6 +1140,180 @@ function buildSnapshot(roots: SnapshotSpec[]): Record<string, unknown> {
 }
 
 describe("BrowserHostCoordinator preview surface accessors", () => {
+  // Minimal JPEG header: the encoded dimensions differ from CDP viewport metadata.
+  const previewJPEG = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 2, 88, 3, 192, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 0xff, 0xd9]);
+
+  async function previewHarness() {
+    const harness = makeHarness();
+    harness.coordinator.handleServerEvent({
+      kind: "notification", workdir: "/repo", message: {
+        method: "browser/turn_started", params: {
+          workdir: "/repo", thread_id: "thread-1", turn_id: "turn-1", execution_id: "execution-1",
+        },
+      },
+    });
+    await harness.coordinator.handleServerRequest(serverRequest("browser/open_tab", {
+      workdir: "/repo", tab_id: "t1", turn_id: "turn-1", execution_id: "execution-1",
+    }));
+    expect(harness.reply.reject).not.toHaveBeenCalled();
+    const activity: ActivitySession = {
+      id: "activity-1", execution_id: "execution-1", kind: "browser", thread_id: "thread-1",
+      workdir: "/repo", plugin_id: "embedded-browser", target: "t1",
+      state: "background_controlled", controller: "agent",
+      created_at: "2026-10-19T00:00:00Z", updated_at: "2026-10-19T00:00:00Z",
+    };
+    return { ...harness, activity };
+  }
+
+  it("streams a hidden owned browser without reparenting or changing its viewport", async () => {
+    const harness = await previewHarness();
+    const view = harness.views[0];
+    const bounds = view.getBounds();
+    const hostAdds = harness.hostWindows[0].added.length;
+    const onFrame = vi.fn(), onError = vi.fn();
+    const unsubscribe = harness.coordinator.subscribePreview(harness.activity, onFrame, onError);
+    await flushMicrotasks();
+    expect(view.backgroundThrottling).toBe(false);
+    expect(harness.mainWindow.added).toEqual([]);
+    expect(harness.hostWindows[0].added).toHaveLength(hostAdds);
+    expect(harness.hostWindows[0].removed).toEqual([]);
+    expect(view.getBounds()).toEqual(bounds);
+    expect(view.emulation).toBeUndefined();
+    expect(view.sentCommands.filter(command => command.method === "Page.startScreencast")).toEqual([
+      expect.objectContaining({ params: expect.objectContaining({ format: "jpeg", maxWidth: 960, maxHeight: 960 }) }),
+    ]);
+    const data = previewJPEG;
+    view.emitDebugger("message", {}, "Page.screencastFrame", {
+      data: data.toString("base64"), metadata: { deviceWidth: 1280, deviceHeight: 800, timestamp: 1 }, sessionId: 12,
+    });
+    await flushMicrotasks();
+    expect(onFrame).toHaveBeenCalledWith(expect.objectContaining({ codec: "jpeg", keyframe: true, width: 960, height: 600, data }));
+    expect(view.sentCommands).toContainEqual({ method: "Page.screencastFrameAck", params: { sessionId: 12 } });
+    expect(onError).not.toHaveBeenCalled();
+    unsubscribe();
+    await flushMicrotasks();
+    expect(view.backgroundThrottling).toBe(true);
+    expect(view.visibleState).toBe(false);
+    expect(view.sentCommands.filter(command => command.method === "Page.stopScreencast")).toHaveLength(1);
+  });
+
+  it("shares one screencast until its last observer leaves", async () => {
+    const harness = await previewHarness();
+    const view = harness.views[0];
+    const first = vi.fn(), second = vi.fn();
+    const stopFirst = harness.coordinator.subscribePreview(harness.activity, first, vi.fn());
+    const stopSecond = harness.coordinator.subscribePreview(harness.activity, second, vi.fn());
+    await flushMicrotasks();
+    expect(view.sentCommands.filter(command => command.method === "Page.startScreencast")).toHaveLength(1);
+    stopFirst();
+    expect(view.backgroundThrottling).toBe(false);
+    expect(view.sentCommands.filter(command => command.method === "Page.stopScreencast")).toHaveLength(0);
+    view.emitDebugger("message", {}, "Page.screencastFrame", {
+      data: previewJPEG.toString("base64"), metadata: { deviceWidth: 1280, deviceHeight: 800, timestamp: 1 }, sessionId: 13,
+    });
+    await flushMicrotasks();
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
+    stopSecond();
+    stopSecond();
+    await flushMicrotasks();
+    expect(view.backgroundThrottling).toBe(true);
+    expect(view.sentCommands.filter(command => command.method === "Page.stopScreencast")).toHaveLength(1);
+  });
+
+  it("paces browser capture acknowledgements while retaining only the latest pending JPEG", async () => {
+    vi.useFakeTimers();
+    let stop: (() => void) | undefined;
+    try {
+      const harness = await previewHarness();
+      const view = harness.views[0];
+      const onFrame = vi.fn();
+      stop = harness.coordinator.subscribePreview(harness.activity, onFrame, vi.fn());
+      const emit = (sessionId: number) => view.emitDebugger("message", {}, "Page.screencastFrame", {
+        data: previewJPEG.toString("base64"), metadata: { timestamp: sessionId }, sessionId,
+      });
+      const acknowledgements = () => view.sentCommands.filter(command => command.method === "Page.screencastFrameAck").map(command => command.params?.sessionId);
+      emit(10);
+      expect(acknowledgements()).toEqual([10]);
+      emit(11); emit(12);
+      expect(acknowledgements()).toEqual([10]);
+      expect(onFrame).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(167);
+      expect(acknowledgements()).toEqual([10, 11]);
+      expect(onFrame.mock.calls.map(call => call[0].sequence)).toEqual([1, 3]);
+      await vi.advanceTimersByTimeAsync(167);
+      expect(acknowledgements()).toEqual([10, 11, 12]);
+      expect(onFrame).toHaveBeenCalledTimes(2);
+    } finally { stop?.(); vi.useRealTimers(); }
+  });
+
+  it("does not let a late closed screencast startup stop its replacement", async () => {
+    const harness = await previewHarness();
+    const view = harness.views[0];
+    let release!: () => void;
+    const startup = new Promise<void>(resolve => { release = resolve; });
+    const send = view.debuggerHandle.sendCommand;
+    let starts = 0;
+    view.debuggerHandle.sendCommand = async (method, params) => {
+      const result = await send(method, params);
+      if (method === "Page.startScreencast" && ++starts === 1) await startup;
+      return result;
+    };
+    const stopOld = harness.coordinator.subscribePreview(harness.activity, vi.fn(), vi.fn());
+    stopOld();
+    const onFrame = vi.fn();
+    const stopNew = harness.coordinator.subscribePreview(harness.activity, onFrame, vi.fn());
+    try {
+      release();
+      await flushMicrotasks();
+      expect(view.sentCommands.filter(command => command.method === "Page.stopScreencast")).toHaveLength(1);
+      expect(view.backgroundThrottling).toBe(false);
+      view.emitDebugger("message", {}, "Page.screencastFrame", {
+        data: previewJPEG.toString("base64"), metadata: { deviceWidth: 1280, deviceHeight: 800, timestamp: 1 }, sessionId: 15,
+      });
+      await flushMicrotasks();
+      expect(onFrame).toHaveBeenCalledTimes(1);
+    } finally { stopNew(); }
+  });
+
+  it.each([
+    { workdir: "/other" }, { thread_id: "thread-other" }, { target: "missing" }, { execution_id: "old-execution" },
+  ])("refuses a preview outside its browser execution: %j", async (override) => {
+    const harness = await previewHarness();
+    const onError = vi.fn();
+    expect(() => harness.coordinator.subscribePreview({ ...harness.activity, ...override }, vi.fn(), onError)).toThrow();
+    await flushMicrotasks();
+    expect(onError).not.toHaveBeenCalled();
+    expect(harness.views[0].backgroundThrottling).toBe(true);
+    expect(harness.views[0].sentCommands.some(command => command.method === "Page.startScreencast")).toBe(false);
+  });
+
+  it.each(["detach", "close", "replacement execution"])("retires a preview after %s and ignores late frames", async (ending) => {
+    const harness = await previewHarness();
+    const view = harness.views[0];
+    const onFrame = vi.fn(), onError = vi.fn();
+    const unsubscribe = harness.coordinator.subscribePreview(harness.activity, onFrame, onError);
+    await flushMicrotasks();
+    if (ending === "detach") view.debuggerHandle.detach();
+    else if (ending === "close") harness.coordinator.onClientTorndown("/repo");
+    else harness.coordinator.handleServerEvent({
+      kind: "notification", workdir: "/repo", message: {
+        method: "browser/turn_started", params: {
+          workdir: "/repo", thread_id: "thread-1", turn_id: "turn-2", execution_id: "execution-2",
+        },
+      },
+    });
+    view.emitDebugger("message", {}, "Page.screencastFrame", {
+      data: Buffer.from("late").toString("base64"), metadata: { deviceWidth: 960, deviceHeight: 600, timestamp: 2 }, sessionId: 14,
+    });
+    await flushMicrotasks();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onFrame).not.toHaveBeenCalled();
+    expect([...view.debuggerListeners.values()].flat()).toHaveLength(0);
+    unsubscribe();
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
   it("lays out a new hidden page before navigation and preserves an existing tab's geometry", async () => {
     const harness = makeHarness();
     await harness.coordinator.handleServerRequest(serverRequest("browser/open_tab", {

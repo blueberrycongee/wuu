@@ -24,6 +24,18 @@ export class RemoteAppServerBridge {
 
   notifyPeer(peerID:number,method:string,params:unknown):void {const socket=this.peerSockets.get(peerID);if(socket)this.send(socket,{method,params});}
 
+  // Preview frames are never projected into attachments or replay storage.
+  // Bound this lane independently so image traffic cannot build a long socket
+  // backlog ahead of chat and control replies.
+  notifyPreviewPeer(peerID: number, method: string, params: unknown): boolean {
+    const socket = this.peerSockets.get(peerID);
+    if (!socket || socket.destroyed || socket.writableLength > 512 * 1024) return false;
+    const line = JSON.stringify({ method, params }) + "\n";
+    if (Buffer.byteLength(line) > 192 * 1024) return false;
+    socket.write(line);
+    return true;
+  }
+
   currentEndpoint(): RemoteAppServerEndpoint | undefined { return this.endpoint; }
 
   async start(workdir: string): Promise<RemoteAppServerEndpoint> {

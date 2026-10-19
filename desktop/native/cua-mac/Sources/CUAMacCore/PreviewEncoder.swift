@@ -15,6 +15,14 @@ final class PreviewEncoder {
         let timestamp: Int64
     }
 
+    private let frameRate: Int
+    private let bitrate: Int
+
+    init(frameRate: Int = 30, bitrate: Int = 4_000_000) {
+        self.frameRate = frameRate
+        self.bitrate = bitrate
+    }
+
     private var session: VTCompressionSession?
     private var generation: UInt64 = 0
     private var width = 0
@@ -54,9 +62,9 @@ final class PreviewEncoder {
                 // Signal the no-reordering constraint in the bitstream too:
                 // a decoder must output one frame without waiting for the next ACK.
                 kVTCompressionPropertyKey_ProfileLevel: kVTProfileLevel_H264_ConstrainedBaseline_AutoLevel,
-                kVTCompressionPropertyKey_ExpectedFrameRate: 30,
-                kVTCompressionPropertyKey_AverageBitRate: 4_000_000,
-                kVTCompressionPropertyKey_MaxKeyFrameInterval: 60,
+                kVTCompressionPropertyKey_ExpectedFrameRate: frameRate,
+                kVTCompressionPropertyKey_AverageBitRate: bitrate,
+                kVTCompressionPropertyKey_MaxKeyFrameInterval: frameRate * 2,
                 kVTCompressionPropertyKey_MaxFrameDelayCount: 0,
             ]
             try Self.checkStatus(VTSessionSetProperties(created, propertyDictionary: properties as CFDictionary))

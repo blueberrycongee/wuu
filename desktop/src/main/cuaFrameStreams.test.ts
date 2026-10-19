@@ -66,10 +66,12 @@ describe("CUANativePreview", () => {
     }) as unknown as ChildProcessWithoutNullStreams;
     const spawnHelper = vi.fn(() => child);
     const firstFrame = vi.fn(), secondFrame = vi.fn();
-    const first = new CUANativePreview("/tmp/wuu-cua-mac-pip", "first", "Finder", 1, 10, vi.fn(), vi.fn(), firstFrame, spawnHelper as unknown as typeof spawn);
+    const first = new CUANativePreview("/tmp/wuu-cua-mac-pip", "first", "Finder", 1, 10, vi.fn(), vi.fn(), firstFrame, spawnHelper as unknown as typeof spawn, { max_dimension: 960, frame_rate: 12, bitrate: 700_000 });
     const second = new CUANativePreview("/tmp/wuu-cua-mac-pip", "second", "TextEdit", 2, 20, vi.fn(), vi.fn(), secondFrame, spawnHelper as unknown as typeof spawn);
     first.start(); second.start();
     const sessions = commands.filter(command => command.type === "open").map(command => command.session);
+    expect(commands[0]).toMatchObject({ max_dimension: 960, frame_rate: 12, bitrate: 700_000 });
+    expect(commands[1]).not.toHaveProperty("max_dimension");
     expect(spawnHelper).toHaveBeenCalledTimes(1);
     const header = { event: "frame", sequence: 1, generation: 1, configuration: 1,
       codec: "avc1.42E01F", keyframe: false, timestamp: 100, width: 320, height: 240 };

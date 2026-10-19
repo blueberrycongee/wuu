@@ -9,6 +9,8 @@ import {
 } from "./agentCursor";
 import { writeBufferFileAtomicSync, writeTextFileAtomicSync } from "./atomicFile";
 import type { WindowRegistry } from "./windowRegistry";
+import type { NativePreviewFrame } from "../shared/nativePreview";
+import { BrowserPreviewStream } from "./browserPreviewStream";
 
 // One partition for every embedded browser tab. A login performed while the
 // agent drives a tab is still there when the user drives that same tab.
@@ -54,6 +56,8 @@ export const BROWSER_AGENT_DENIED_PERMISSIONS = new Set<string>([
 export interface BrowserDebuggerHandle {
   attach(protocolVersion?: string): void;
   detach(): void;
+  on(event: string, listener: (...args: unknown[]) => void): void;
+  removeListener(event: string, listener: (...args: unknown[]) => void): void;
   isAttached(): boolean;
   sendCommand(method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
@@ -187,6 +191,7 @@ type TabEntry = {
   loading: boolean;
   loadError?: string;
   activeOperations: number;
+  remotePreview?: BrowserPreviewStream;
   // Bumps cancel an in-flight scrollbar stylesheet install. The key is the
   // sheet currently hiding scrollbar paint while this tab is on the preview card.
   spectatorScrollbarEpoch: number;
@@ -318,6 +323,7 @@ export class BrowserHostCoordinator {
       }
       for (const entry of this.tabs.values()) {
         if (entry.workdir !== workdir || entry.threadID !== threadID) continue;
+        entry.remotePreview?.stop("Browser execution changed");
         entry.inputGeneration += 1;
         entry.controlledTurn = undefined;
         entry.agentInputAllowed = this.threadControls.get(key)?.allowed !== false;
@@ -404,6 +410,25 @@ export class BrowserHostCoordinator {
   ): () => void {
     this.tabReparentedListeners.add(listener);
     return () => this.tabReparentedListeners.delete(listener);
+  }
+
+  subscribePreview(activity: ActivitySession, onFrame: (frame: NativePreviewFrame) => void, onError: (message: string) => void): () => void {
+    const entry = this.tabs.get(tabKey(activity.workdir, activity.target ?? ""));
+    const turn = this.threadTurns.get(tabKey(activity.workdir, activity.thread_id));
+    if (activity.kind !== "browser" || activity.state === "stopped" || activity.state === "error"
+      || activity.controller === "none" || !entry || entry.threadID !== activity.thread_id
+      || entry.contents.isDestroyed() || !turn || turn.ended || turn.executionID !== activity.execution_id) {
+      throw new Error("Browser preview target is not owned by the current execution");
+    }
+    if (!entry.contents.debugger.isAttached()) throw new Error("Browser preview debugger is unavailable");
+    if (!entry.remotePreview) {
+      entry.remotePreview = new BrowserPreviewStream(entry.contents.debugger, () => {
+        entry.remotePreview = undefined;
+        this.applyEntryActivity(entry);
+      });
+      this.applyEntryActivity(entry);
+    }
+    return entry.remotePreview.subscribe(onFrame, onError);
   }
 
   // Current native DIP bounds. These match the layout viewport unless an
@@ -1346,7 +1371,7 @@ export class BrowserHostCoordinator {
   // -------------------------------------------------------------------------
   private applyEntryActivity(entry: TabEntry): void {
     if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || entry.contents.isDestroyed()) return;
-    const active = entry.presented || entry.activeOperations > 0;
+    const active = entry.presented || entry.activeOperations > 0 || entry.remotePreview !== undefined;
     if (active) {
       // Settle view visibility before waking the hidden renderer to paint.
       entry.view.setVisible(!entry.suppressed);
@@ -1540,6 +1565,7 @@ export class BrowserHostCoordinator {
   }
 
   private releaseDebugger(entry: TabEntry, contentsDestroyed = false): void {
+    entry.remotePreview?.stop("Browser execution ended");
     entry.inputGeneration += 1;
     entry.agentInputAllowed = false;
     entry.controlledTurn = undefined;

@@ -2,6 +2,9 @@
 // pages, and a real subprocess producing synthetic native frames. This does
 // not establish native macOS capture, input, permissions, or packaged behavior.
 import assert from "node:assert/strict";
+import { connect, type Socket } from "node:net";
+import { RemoteAppServerBridge } from "../src/main/remoteAppServerBridge";
+import { RemoteActivityPreviews } from "../src/main/remoteActivityPreview";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
@@ -92,6 +95,162 @@ const helper = join(desktop, "scripts", "activity-preview-native-fixture.cjs");
 let surfaceCount = 0;
 let reconciliationCount = 0;
 let snapshotActivities: ActivitySession[] = [];
+
+async function checkRemoteBrowserPreview() {
+  const remoteThread = "remote-preview-thread";
+  const remoteExecution = "remote-preview-run";
+  const remoteActivity: ActivitySession = {
+    ...activity("browser", "remote-browser"), id: "remote-browser-activity", thread_id: remoteThread,
+    execution_id: remoteExecution,
+  };
+  let view: WebContentsView | undefined;
+  const captureHost = new BrowserHostCoordinator({ mainWindow: () => main } as unknown as WindowRegistry,
+    { respond() {}, reject(_id, message) { throw new Error(message); } },
+    defaultBrowserHostDeps(
+      () => new BrowserWindow({ show: false, frame: false, webPreferences: { sandbox: true } }) as unknown as BrowserHostWindowHandle,
+      () => {
+        view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+        return view as unknown as BrowserViewHandle;
+      },
+    ), () => undefined,
+  );
+  const wireLog: { direction: string; method?: string; sequence?: number; bytes?: number; stream_id?: string }[] = [];
+  const sockets: Socket[] = [];
+  let sourceStops = 0;
+  const previews = new RemoteActivityPreviews({
+    notify: (owner, method, params) => bridge.notifyPreviewPeer(owner, method, params),
+    createSource: (activity, handlers) => {
+      let stop: (() => void) | undefined;
+      return {
+        start() { stop = captureHost.subscribePreview(activity, handlers.frame, message => handlers.state("error", message)); },
+        stop() { sourceStops++; stop?.(); }, acknowledgeFrame() {}, requestKeyframe() {},
+      };
+    },
+  });
+  const bridge = new RemoteAppServerBridge(async (_cwd, method, params, _reply, owner) => {
+    if (method === "desktop/activity/preview/open") {
+      return previews.openCurrent(owner, workdir, params, async requestedThread => {
+        return requestedThread === remoteActivity.thread_id ? [remoteActivity] : [];
+      });
+    }
+    if (method.startsWith("desktop/activity/preview/")) return previews.request(owner, method, params);
+    return { responsive: true };
+  }, owner => previews.closeOwner(owner));
+  async function connectPhone(endpoint: { address: string; token: string }) {
+    const socket = connect(Number(endpoint.address.split(":")[1]), "127.0.0.1");
+    sockets.push(socket);
+    let buffer = "", ready = false, serial = 0;
+    const frames: Record<string, unknown>[] = [], states: Record<string, unknown>[] = [];
+    const calls = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      buffer += chunk;
+      for (;;) {
+        const end = buffer.indexOf("\n");
+        if (end < 0) break;
+        const line = JSON.parse(buffer.slice(0, end)); buffer = buffer.slice(end + 1);
+        if (line.ready) ready = true;
+        else if (line.id) {
+          const pending = calls.get(line.id); calls.delete(line.id);
+          if (line.error) pending?.reject(new Error(line.error.message)); else pending?.resolve(line.result);
+        } else {
+          wireLog.push({ direction: "receive", method: line.method, sequence: line.params?.sequence,
+            bytes: line.params?.data ? Buffer.from(line.params.data, "base64").byteLength : undefined,
+            stream_id: line.params?.stream_id });
+          if (line.method === "desktop/activity/preview/frame") frames.push(line.params);
+          else if (line.method === "desktop/activity/preview/state") states.push(line.params);
+        }
+      }
+    });
+    socket.on("error", error => { for (const pending of calls.values()) pending.reject(error); calls.clear(); });
+    await new Promise<void>(resolve => socket.once("connect", resolve));
+    socket.write(JSON.stringify({ token: endpoint.token }) + "\n");
+    await waitFor("authenticated preview peer", () => ready);
+    return { socket, frames, states, call(method: string, params: unknown = {}) {
+      wireLog.push({ direction: "send", method });
+      return new Promise<any>((resolve, reject) => {
+        const id = ++serial; calls.set(id, { resolve, reject });
+        socket.write(JSON.stringify({ id, method, params }) + "\n");
+      });
+    } };
+  }
+  let stopObserve: (() => void) | undefined;
+  try {
+    captureHost.handleServerEvent({ workdir, kind: "notification", message: { method: "browser/turn_started",
+      params: { workdir, thread_id: remoteThread, turn_id: "remote-turn", execution_id: remoteExecution } } });
+    await captureHost.handleServerRequest({ workdir, kind: "server-request", message: { id: "remote-open", method: "browser/open_tab",
+      params: { workdir, thread_id: remoteThread, turn_id: "remote-turn", execution_id: remoteExecution, tab_id: remoteActivity.target!,
+        initial_url: "data:text/html," + encodeURIComponent("<html><body style='margin:0;background:rgb(20,80,160);font:60px system-ui;color:white'><h1>Remote preview</h1><div id='marker'>0</div></body></html>") } } });
+    assert(view);
+    const target = view.webContents;
+    const initialBounds = view.getBounds();
+    const endpoint = await bridge.start(workdir);
+    const phone = await connectPhone(endpoint), other = await connectPhone(endpoint);
+    for (const mismatch of [{ thread_id: "other-thread" }, { activity_id: "other-activity" }, { execution_id: "old-execution" }]) {
+      await assert.rejects(phone.call("desktop/activity/preview/open", {
+        thread_id: remoteActivity.thread_id, activity_id: remoteActivity.id, execution_id: remoteActivity.execution_id, ...mismatch,
+      }), /current/);
+    }
+    check("remote open resolves only the requested current activity from its thread", sourceStops === 0);
+    const opened = await phone.call("desktop/activity/preview/open", {
+      thread_id: remoteActivity.thread_id, activity_id: remoteActivity.id, execution_id: remoteActivity.execution_id,
+    });
+    check("open waits for the phone to install its frame consumer", phone.frames.length === 0);
+    await phone.call("desktop/activity/preview/renew", { stream_id: opened.stream_id });
+    let sourceFrames = 0;
+    stopObserve = captureHost.subscribePreview(remoteActivity, () => sourceFrames++, message => { throw new Error(message); });
+    for (let marker = 1; phone.frames.length < 3 && marker <= 8; marker++) {
+      const before = sourceFrames;
+      await target.executeJavaScript(`document.getElementById('marker').textContent=${marker};document.body.style.background='rgb(${20 + marker * 15},80,160)'`);
+      await waitFor(`remote browser mutation ${marker} encoded`, () => sourceFrames > before);
+    }
+    await waitFor("three unacknowledged network frames", () => phone.frames.length === 3);
+    const beforeBlocked = sourceFrames;
+    await target.executeJavaScript("document.getElementById('marker').textContent='LATEST';document.body.style.background='rgb(30,170,80)'");
+    await waitFor("capture continues behind exhausted WAN credits", () => sourceFrames > beforeBlocked);
+    check("slow viewer receives at most three unacknowledged browser frames", phone.frames.length === 3,
+      { delivered: phone.frames.length, captured: sourceFrames });
+    check("preview pixels stay on their owning peer", other.frames.length === 0 && other.states.length === 0);
+    check("mobile preview does not focus or reparent its hidden browser", !target.isFocused()
+      && BrowserWindow.fromWebContents(target) !== main && JSON.stringify(view.getBounds()) === JSON.stringify(initialBounds));
+    check("actual browser JPEGs respect mobile frame and dimension caps", phone.frames.every(frame =>
+      Buffer.from(frame.data as string, "base64").length <= 128 * 1024 && Number(frame.width) <= 960 && Number(frame.height) <= 960));
+    const response = await other.call("desktop/ping");
+    check("a stalled preview cannot block another peer's control RPC", response.responsive === true);
+    await assert.rejects(other.call("desktop/activity/preview/ack", { stream_id: opened.stream_id, sequence: phone.frames[0].sequence }), /owner/);
+    await phone.call("desktop/activity/preview/ack", { stream_id: opened.stream_id, sequence: phone.frames[0].sequence });
+    await waitFor("ACK releases the latest JPEG", () => phone.frames.length === 4);
+    check("slow browser preview skips stale frames when credit returns", Number(phone.frames[3].sequence) > Number(phone.frames[2].sequence));
+    // A real elapsed lease verifies that a static page stays alive by explicit
+    // renewals, and then retires on phone loss without altering the agent tab.
+    const renewed = setInterval(() => void phone.call("desktop/activity/preview/renew", { stream_id: opened.stream_id }), 2_000);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 5_100));
+      await phone.call("desktop/activity/preview/renew", { stream_id: opened.stream_id });
+      check("explicit renewal keeps an idle preview alive past its original lease", sourceStops === 0);
+    } finally { clearInterval(renewed); }
+    const received = phone.frames.length;
+    await phone.call("desktop/activity/preview/close", { stream_id: opened.stream_id });
+    check("closing preview leaves its browser task alive", !target.isDestroyed() && sourceStops === 1);
+    const afterClose = sourceFrames;
+    await target.executeJavaScript("document.getElementById('marker').textContent='CLOSED VIEWER'");
+    await waitFor("capture confirms post-close page change", () => sourceFrames > afterClose);
+    check("late captured frames never revive a closed stream", phone.frames.length === received);
+    const reopened = await phone.call("desktop/activity/preview/open", {
+      thread_id: remoteActivity.thread_id, activity_id: remoteActivity.id, execution_id: remoteActivity.execution_id,
+    });
+    check("reopening uses a fresh opaque stream identity", reopened.stream_id !== opened.stream_id);
+    phone.socket.destroy();
+    await waitFor("peer disconnect closes its capture source", () => sourceStops === 2);
+    check("disconnect preserves the task and other control peers", !target.isDestroyed() && (await other.call("desktop/ping")).responsive);
+  } finally {
+    stopObserve?.();
+    previews.shutdown(); bridge.stop();
+    for (const socket of sockets) socket.destroy();
+    captureHost.destroyAll();
+    writeFileSync(join(output, "mobile-preview-transport.json"), JSON.stringify({ nativePhoneRenderingVerified: false, wireLog }, null, 2));
+  }
+}
 
 app.whenReady().then(async () => {
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -450,6 +609,7 @@ app.whenReady().then(async () => {
   check("task interruption preserves browser pages", browserViews.every(view => !view.webContents.isDestroyed()));
   await coordinator.shutdown();
   check("shutdown destroys every preview shell", cards().length === 0);
+  await checkRemoteBrowserPreview();
   host.destroyAll(); main.destroy();
   for (const source of sources.values()) source.end();
   server.close();

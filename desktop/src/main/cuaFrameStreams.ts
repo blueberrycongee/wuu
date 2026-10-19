@@ -206,6 +206,7 @@ export class CUANativePreview {
     private readonly onError: (message: string) => void,
     private readonly onFrame: (frame: CUANativePreviewFrame) => void,
     spawnHelper: typeof spawn = spawn,
+    private readonly profile?: { max_dimension: number; frame_rate: number; bitrate: number },
   ) {
     this.host = previewHost(helper, spawnHelper);
   }
@@ -219,6 +220,7 @@ export class CUANativePreview {
       target: this.target,
       process_id: this.processID ?? 0,
       window_id: this.windowID ?? 0,
+      ...this.profile,
     }, {
       message: (message) => this.handleMessage(session, message),
       hostExited: (message) => this.handleClosed(session, message),
