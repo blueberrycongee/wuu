@@ -255,6 +255,7 @@ export class BrowserHostCoordinator {
     (workdir: string, tabID: string, hint: BrowserInteractionHint) => Promise<unknown> | void
   >();
   private readonly tabClosedListeners = new Set<(workdir: string, tabID: string) => void>();
+  private readonly tabCreatedListeners = new Set<(workdir: string, tabID: string, threadID?: string) => void>();
   // Navigation and reparent notifications let the observation surface (PiP)
   // keep its chrome label fresh and notice when a visibility takeover adopts
   // the tab it is presenting.
@@ -418,6 +419,11 @@ export class BrowserHostCoordinator {
   addTabClosedListener(listener: (workdir: string, tabID: string) => void): () => void {
     this.tabClosedListeners.add(listener);
     return () => this.tabClosedListeners.delete(listener);
+  }
+
+  addTabCreatedListener(listener: (workdir: string, tabID: string, threadID?: string) => void): () => void {
+    this.tabCreatedListeners.add(listener);
+    return () => this.tabCreatedListeners.delete(listener);
   }
 
   addNavigateListener(listener: (workdir: string, tabID: string, url: string) => void): () => void {
@@ -845,6 +851,7 @@ export class BrowserHostCoordinator {
     this.agentWebContentsIds.add(entry.contentsID);
     this.applyEntryActivity(entry);
     this.wireEntry(entry);
+    for (const listener of this.tabCreatedListeners) listener(workdir, tabID, threadID);
     return entry;
   }
 

@@ -494,7 +494,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   stop(onStopped?: () => void): void {
     if (onStopped) this.stopCallbacks.push(onStopped);
     if (this.stopped) {
-      if (!this.contentStopping) this.finishStop();
+      if (!this.content && !this.contentStopping) this.finishStop();
       return;
     }
     this.stopped = true;

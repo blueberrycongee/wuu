@@ -211,14 +211,19 @@ export class AppServerClientPool {
     return client.request<T>(method, params, (response) => onResponse?.(response, client.workdir));
   }
 
-  requestForWorkdir<T>(workdir: string, method: string, params?: unknown): Promise<T> {
+  requestForWorkdir<T>(
+    workdir: string,
+    method: string,
+    params?: unknown,
+    onResponse?: (response: AppServerResponse, workdir: string) => void,
+  ): Promise<T> {
     const threadID = isRecord(params) ? params.thread_id : undefined;
     const client = (typeof threadID === "string" ? this.sessionOwners.get(threadID) : undefined)
       ?? this.clients.get(resolve(workdir));
     if (!client) {
       return Promise.reject(new Error("activity workspace is no longer connected"));
     }
-    return client.request<T>(method, params);
+    return client.request<T>(method, params, (response) => onResponse?.(response, client.workdir));
   }
 
   runningThreadCwds(): string[] {

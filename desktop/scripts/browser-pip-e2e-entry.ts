@@ -2,20 +2,21 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import { app, BrowserWindow, WebContentsView } from "electron";
-import type { ActivitySession } from "../src/shared/protocol";
+import type { ActivitySession, BrowserSurfaceSnapshot } from "../src/shared/protocol";
+import { ActivityPiPSurface, type BrowserPiPWindowHandle } from "../src/main/activityPiPWindow";
 import { createObservationPiPFactory } from "../src/main/browserPiPWindow";
 import { ObservationCoordinator } from "../src/main/cuaActivityWindows";
 import { BrowserHostCoordinator, defaultBrowserHostDeps, type BrowserHostWindowHandle, type BrowserViewHandle } from "../src/main/browserHostWindows";
 import type { WindowRegistry } from "../src/main/windowRegistry";
 
 const artifacts = process.env.WUU_BROWSER_PIP_E2E_ARTIFACTS ?? "/tmp/wuu-browser-cursor-e2e";
-const profile = mkdtempSync(join(tmpdir(), "wuu-browser-cursor-"));
-app.setPath("userData", profile);
-app.on("quit", () => rmSync(profile, { recursive: true, force: true }));
+const fixture = process.env.WUU_BROWSER_PIP_FIXTURE;
+assert(fixture, "Run through browser-pip-e2e.cjs");
+app.setPath("userData", join(fixture, "profile"));
 const workdir = "/e2e";
 const tabID = "cursor-tab";
 const activity: ActivitySession = {
@@ -55,10 +56,176 @@ async function capture(win: BrowserWindow, name: string): Promise<void> {
   execFileSync("screencapture", ["-x", "-o", "-l", nativeID, join(artifacts, name)]);
 }
 
+async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
+  main.show();
+  main.focus();
+  await waitFor("lifecycle host focused", () => main.isFocused());
+  const root = "/lifecycle-root";
+  const linked = "/lifecycle-worktree";
+  const threadID = "lifecycle-thread";
+  const tabID = "lifecycle-tab";
+  const views: WebContentsView[] = [];
+  const replies = new Map<string, unknown>();
+  const errors = new Map<string, string>();
+  const invalidations: Array<{ workdir: string; threadID?: string }> = [];
+  const surfaces: BrowserSurfaceSnapshot[] = [];
+  const host = new BrowserHostCoordinator(
+    { mainWindow: () => main } as unknown as WindowRegistry,
+    { respond: (id, result) => replies.set(id, result), reject: (id, message) => errors.set(id, message) },
+    defaultBrowserHostDeps(
+      () => new BrowserWindow({ show: false, webPreferences: { sandbox: true } }) as unknown as BrowserHostWindowHandle,
+      () => {
+        const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+        views.push(view);
+        return view as unknown as BrowserViewHandle;
+      },
+    ),
+    (workdir, threadID) => invalidations.push({ workdir, threadID }),
+  );
+  const factory = createObservationPiPFactory({ browserHost: host, isPackaged: false, parent: () => main });
+  const coordinator = new ObservationCoordinator(
+    { mainWindow: () => main } as unknown as WindowRegistry, undefined,
+    (activity, key, sink) => factory(activity, key, sink, () => ({ x: 140, y: 140, width: 384, height: 240 })),
+  );
+  host.addTabCreatedListener((workdir, tabID, threadID) => coordinator.restoreBrowserTab(workdir, tabID, threadID));
+  host.setRendererSink({ surface: (snapshot) => surfaces.push(snapshot), userInput: () => undefined,
+    adopted: () => undefined, presented: () => coordinator.refreshBrowserPresentation() });
+  coordinator.setBrowserInPanel((activity) => host.isInPanel(activity.workdir, activity.target!));
+  let sequence = 0;
+  const rawRequest = (params: Record<string, unknown>, method = "browser/open_tab") => {
+    const id = `lifecycle-${++sequence}`;
+    return { id, done: host.handleServerRequest({ workdir: root, kind: "server-request", message: {
+      id, method, params: { request_id: id, workdir: linked, thread_id: threadID, tab_id: tabID, ...params },
+    } }) };
+  };
+  const open = async (params: Record<string, unknown> = {}) => {
+    const request = rawRequest({ initial_url: `data:text/html,${encodeURIComponent(page)}`, ...params });
+    await request.done;
+    assert.equal(errors.get(request.id), undefined);
+    assert.ok(replies.has(request.id));
+  };
+  const nextActivity: ActivitySession = { ...activity, id: "lifecycle-activity", workdir: linked,
+    thread_id: threadID, target: tabID, execution_id: "lifecycle-execution" };
+  const notify = (method: string, params: Record<string, unknown>) => {
+    const event = { workdir: root, kind: "notification" as const, message: { method, params } };
+    host.handleServerEvent(event);
+    coordinator.handleServerEvent(event);
+  };
+  const previewWindows = () => BrowserWindow.getAllWindows().filter((win) => win.getParentWindow() === main);
+  await open();
+  assert.equal(host.hasAgentTabs(root), true, "Linked-worktree tabs pin their transport owner");
+  assert.equal(host.hasAgentTabs(linked), false, "A linked CWD is not a second transport owner");
+  coordinator.setActiveThread(threadID);
+  notify("activity/started", nextActivity);
+  await waitFor("linked-worktree preview", () => previewWindows().some((win) => win.isVisible()));
+  const crashedPreview = previewWindows()[0];
+  const crashedOverlay = (crashedPreview.contentView.children.find((view) => view !== views[0]) as WebContentsView).webContents;
+  const crashedContents = views[0].webContents;
+  const crashed = once(crashedContents, "render-process-gone", { signal: AbortSignal.timeout(5000) });
+  crashedContents.forcefullyCrashRenderer();
+  await crashed;
+  await waitFor("crashed contents and preview disposed", () => crashedContents.isDestroyed() && crashedPreview.isDestroyed() && crashedOverlay.isDestroyed());
+  assert.equal(host.surface(linked, tabID), undefined);
+  assert.ok(surfaces.some((snapshot) => snapshot.tabID === tabID && snapshot.error));
+  const deniedInput = rawRequest({ method: "click", params: { x: 240, y: 200 } }, "browser/cdp");
+  await deniedInput.done;
+  assert.match(errors.get(deniedInput.id) ?? "", /tab_not_found/);
+  await open();
+  notify("activity/updated", { ...nextActivity, updated_at: new Date().toISOString() });
+  await waitFor("same-execution preview restored after real tab recreation", () => previewWindows().some((win) => win.isVisible()));
+  const recoveredContents = views.at(-1)!.webContents;
+  assert.equal(await recoveredContents.executeJavaScript("window.clicks"), 0, "A failed input is not replayed on the recovered page");
+  const secondCrash = once(recoveredContents, "render-process-gone", { signal: AbortSignal.timeout(5000) });
+  recoveredContents.forcefullyCrashRenderer();
+  await secondCrash;
+  await waitFor("second crashed contents removed", () => host.surface(linked, tabID) === undefined);
+  const snapshot = await host.runCommand(linked, tabID, "reload", `data:text/html,${encodeURIComponent(page)}`, threadID);
+  assert.ok(snapshot && !snapshot.error, "User reload reopens a crashed page");
+  assert.equal(await views.at(-1)!.webContents.executeJavaScript("window.clicks"), 0);
+  await waitFor("reload restores preview", () => previewWindows().some((win) => win.isVisible()));
+
+  await open({ thread_id: "sibling-thread", tab_id: "sibling-tab" });
+  const sibling = views.at(-1)!.webContents;
+  await open({ workdir: "/second-worktree", tab_id: "second-tab" });
+  const secondWorktreeContents = views.at(-1)!.webContents;
+  let navigationStarted!: () => void;
+  const started = new Promise<void>((resolve) => { navigationStarted = resolve; });
+  let releaseNavigation: (() => void) | undefined;
+  const server = createServer((_request, response) => {
+    releaseNavigation = () => response.end("<!doctype html><title>Late deleted page</title>");
+    navigationStarted();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const pending = rawRequest({ tab_id: "pending-tab", initial_url: `http://127.0.0.1:${address.port}/held` });
+  await Promise.race([started, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Navigation never reached the local fixture")), 5000))]);
+  const pendingContents = views.at(-1)!.webContents;
+  notify("thread/deleted", { thread_id: threadID, workdir: linked });
+  releaseNavigation?.();
+  await pending.done;
+  server.closeAllConnections();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  assert.ok(errors.has(pending.id), "An in-flight navigation cannot report success after deletion");
+  assert.equal(pendingContents.isDestroyed(), true);
+  assert.equal(secondWorktreeContents.isDestroyed(), true, "Deletion cleans the same thread in every workdir");
+  assert.equal(sibling.isDestroyed(), false, "Deletion retains unrelated sessions");
+  assert.ok(invalidations.some((entry) => entry.workdir === linked && entry.threadID === threadID));
+  assert.ok(invalidations.some((entry) => entry.workdir === "/second-worktree" && entry.threadID === threadID));
+  await waitFor("deleted previews closed", () => previewWindows().length === 0);
+  coordinator.update({ ...nextActivity, updated_at: new Date().toISOString() });
+  coordinator.setActiveThread(threadID);
+  assert.equal(previewWindows().length, 0, "A late snapshot cannot restore a deleted thread");
+  host.onClientTorndown(root);
+  coordinator.dropWorkdir(root);
+  assert.equal(sibling.isDestroyed(), true);
+  assert.equal(host.hasAgentTabs(root), false, "Transport teardown releases its linked-worktree pin");
+  await coordinator.shutdown();
+  host.destroyAll();
+
+  let nativeWindow!: BrowserWindow;
+  let beginStop!: (finish: () => void) => void;
+  const captureStopping = new Promise<() => void>((resolve) => { beginStop = resolve; });
+  const surface = new ActivityPiPSurface({ activity: nextActivity, bounds: { x: 140, y: 140, width: 384, height: 240 }, isPackaged: false,
+    createWindow: (bounds) => {
+      nativeWindow = new BrowserWindow({ ...bounds, show: false, frame: false, webPreferences: { sandbox: true } });
+      return nativeWindow as unknown as BrowserPiPWindowHandle;
+    },
+    reducedMotion: () => false,
+    sink: { onEvent: () => undefined, onFailure: (message) => { throw new Error(message); }, onGone: () => undefined },
+    createContent: () => ({ start: () => undefined, setVisible: () => undefined, layout: () => undefined,
+      stop: (done) => beginStop(done) }),
+  });
+  surface.start();
+  const orphanOverlay = (nativeWindow.contentView.children[0] as WebContentsView).webContents;
+  nativeWindow.showInactive();
+  let stopCompleted = false;
+  const stopped = new Promise<void>((resolve) => surface.stop(() => { stopCompleted = true; resolve(); }));
+  nativeWindow.destroy();
+  const completeCaptureStop = await captureStopping;
+  const prematureCompletion = stopCompleted;
+  completeCaptureStop();
+  await stopped;
+  assert.equal(prematureCompletion, false, "Window destruction cannot report completion before capture disposal");
+  assert.equal(orphanOverlay.isDestroyed(), true, "Externally destroyed PiP windows release their overlay WebContents");
+  writeFileSync(join(artifacts, "lifecycle-recovery.json"), JSON.stringify({ linkedWorktreeOwner: true,
+    realRendererCrash: true, sameExecutionPreviewRecovery: true, userReload: true, inputReplayCount: 0,
+    deletedAcrossWorkdirs: true, pendingNavigationRejected: true, siblingRetained: true,
+    lateDeletedSnapshotRejected: true, pinReleased: true, externalWindowStopOrdering: true, overlayDisposed: true }, null, 2));
+}
+
 app.whenReady().then(async () => {
   mkdirSync(artifacts, { recursive: true });
   const main = new BrowserWindow({ width: 1000, height: 720, show: false });
   await main.loadURL("data:text/html;charset=utf-8,<body style='margin:0;background:%23edf0f5;font:14px system-ui;padding:12px'>Wuu · Browser panel</body>");
+  if (process.env.WUU_BROWSER_PIP_LIFECYCLE_ONLY === "1") {
+    await verifyLifecycleRecovery(main);
+    console.log(`browser-pip-e2e: PASS (browser lifecycle recovery; ${artifacts})`);
+    main.destroy();
+    app.exit(0);
+    return;
+  }
   const views: WebContentsView[] = [];
   const replies = new Map<string, unknown>();
   const errors = new Map<string, string>();
@@ -272,7 +439,8 @@ app.whenReady().then(async () => {
   await coordinator.shutdown();
   host.destroyAll();
   assert.ok(pip.isDestroyed());
-  console.log(`browser-pip-e2e: PASS (default preview, session visibility, docking, completion auto-dismiss/reopen/cancellation, PiP/panel input, projection, resize, navigation, reduced motion, takeover; ${artifacts})`);
+  await verifyLifecycleRecovery(main);
+  console.log(`browser-pip-e2e: PASS (default preview, session visibility, docking, completion auto-dismiss/reopen/cancellation, PiP/panel input, projection, resize, navigation, reduced motion, takeover, linked ownership, renderer crash/recovery, deletion, external window cleanup; ${artifacts})`);
   main.destroy();
   app.exit(0);
 }).catch((error) => { console.error(error); app.exit(1); });

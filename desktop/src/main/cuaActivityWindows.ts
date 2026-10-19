@@ -62,7 +62,10 @@ export function pipVisibleForActivity(activity: ActivitySession, inPanel = false
   return true;
 }
 
-type ActivitySnapshot = (threadID: string) => Promise<ActivitySession[]>;
+type ActivitySnapshot = (threadID: string) => Promise<{
+  clientWorkdir: string;
+  activities: ActivitySession[];
+} | undefined>;
 
 const VISIBLE_CARD_LIMIT = 5;
 
@@ -167,6 +170,7 @@ export class ObservationCoordinator {
   private browserScreenLayout: BrowserPiPScreenLayout | null | undefined;
   private reconcileTimer: NodeJS.Timeout | undefined;
   private reconcileInFlight = false;
+  private reconcileGeneration = 0;
   private activeThreadID: string | undefined;
   private darkAppearance: boolean | undefined;
   private appearance: ActivityPreviewAppearance | undefined;
@@ -265,6 +269,18 @@ export class ObservationCoordinator {
     this.restack();
   }
 
+  restoreBrowserTab(workdir: string, tabID: string, threadID?: string): void {
+    let restored = false;
+    for (const [key, activity] of this.observations) {
+      if (activity.kind !== "browser" || activity.workdir !== workdir
+        || activity.thread_id !== threadID || activity.target?.trim() !== tabID) continue;
+      if (!this.goneObservations.delete(key)) continue;
+      this.syncObservation(key);
+      restored = true;
+    }
+    if (restored) this.restack();
+  }
+
   private wantsCard(threadID: string): boolean {
     return !this.endedThreads.has(threadID)
       && (this.autoShow || this.explicitlyShown.has(threadID));
@@ -349,6 +365,7 @@ export class ObservationCoordinator {
   // showing one of its tabs, so no ghost preview can outlive the core that
   // owned the page.
   dropWorkdir(workdir: string): void {
+    this.reconcileGeneration += 1;
     this.dropObservations(activity => this.ownerWorkdir(activity) === workdir);
   }
 
@@ -377,6 +394,7 @@ export class ObservationCoordinator {
 
   shutdown(): Promise<void> {
     this.closed = true;
+    this.reconcileGeneration += 1;
     this.activeThreadID = undefined;
     this.observations.clear();
     this.sources.clear();
@@ -655,10 +673,11 @@ export class ObservationCoordinator {
       const threadID = this.activeThreadID;
       if (!threadID) return;
       this.reconcileInFlight = true;
+      const generation = this.reconcileGeneration;
       void this.snapshot?.(threadID)
-        .then((activities) => {
-          if (this.activeThreadID !== threadID) return;
-          for (const activity of activities) this.update(activity);
+        .then((snapshot) => {
+          if (!snapshot || this.activeThreadID !== threadID || this.reconcileGeneration !== generation) return;
+          for (const activity of snapshot.activities) this.update(activity, snapshot.clientWorkdir);
         })
         .catch(() => undefined)
         .finally(() => { this.reconcileInFlight = false; });
