@@ -159,6 +159,8 @@ jobs:
                       result = json.loads(markers[2].read_text())
                       assert result.get("codec") == "h264" and result.get("decoded_frames") == 3 and result.get("submitted_frames") == 3 and result.get("error") == "", result
                       shutil.copy2(markers[2], evidence / "h264-result.json")
+                  # Readiness is already verified; let native sheet chrome finish its entrance animation.
+                  time.sleep(0.75)
                   sim("io", device, "screenshot", str(evidence / f"{name}.png"))
                   print(f"Captured {name} after foreground layout readiness from process {pid}", flush=True)
               (evidence / "scope.txt").write_text("Local synthetic JPEG and H264 IDR+2 dependent delta frames through the native viewer. Foreground layout readiness and H264 decode/submission are asserted; screenshots require visual review. This does not validate remote latency, real macOS capture, or physical-device performance.\n")
@@ -190,18 +192,18 @@ jobs:
               bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { exit(1) }
           context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-          // The bundled SMPTE fixture has six saturated bars after its initial gray bar.
-          // Require all six at their horizontal positions across a visible vertical band.
-          let colors = [[true, true, false], [false, true, true], [false, true, false],
-                        [true, false, true], [true, false, false], [false, false, true]]
+          // The two dependent deltas hue-shift the bars. These RGB centers come from
+          // decoding the bundled fixture's third frame, so the initial IDR cannot pass.
+          let colors = [[64, 244, 61], [104, 112, 255], [0, 165, 177],
+                        [211, 23, 12], [85, 76, 0], [127, 0, 130]]
           var consecutive = 0, longest = 0
           for y in height / 4 ..< height * 3 / 4 {
               let matches = colors.enumerated().allSatisfy { index, color in
                   let center = Int(Double(width) * (Double(index) + 1.5) / 7.0)
                   return [-5, 0, 5].allSatisfy { dx in
                       let offset = (y * width + center + dx) * 4
-                      return color.enumerated().allSatisfy { channel, high in
-                          high ? pixels[offset + channel] > 120 : pixels[offset + channel] < 90
+                      return color.enumerated().allSatisfy { channel, expected in
+                          abs(Int(pixels[offset + channel]) - expected) <= 12
                       }
                   }
               }
@@ -209,10 +211,10 @@ jobs:
               longest = max(longest, consecutive)
           }
           guard longest >= height / 40 else {
-              fputs("H264 screenshot has no visible SMPTE color-bar band (matched rows: \(longest))\n", stderr)
+              fputs("H264 screenshot does not show the third decoded color-bar frame (matched rows: \(longest))\n", stderr)
               exit(1)
           }
-          print("Verified visible H264 SMPTE color bars across \(longest) screenshot rows")
+          print("Verified final H264 delta-frame colors across \(longest) screenshot rows")
           SWIFT
           xcrun swift /tmp/verify-preview-colors.swift native-ios-preview/viewer-h264.png | tee native-ios-preview/h264-pixels.log
       - name: Unsigned iOS device Release build
