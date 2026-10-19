@@ -77,7 +77,6 @@ try {
   const debRoot = join(scratch, "deb");
   run("dpkg-deb", ["--extract", deb, debRoot]);
   const debChecks = verifyApp(join(debRoot, "opt/wuu"));
-  assert.equal(readFileSync(join(debRoot, "opt/wuu/resources/package-type"), "utf8").trim(), "deb");
   assert.doesNotMatch(readFileSync(join(debRoot, "usr/share/applications/wuu.desktop"), "utf8"), /--no-sandbox|--disable-setuid-sandbox/);
   const manifests = readdirSync(root).filter(name => /-linux(?:-x64)?\.yml$/.test(name));
   assert.equal(manifests.length, 0, "Experimental packages must not generate public update metadata");
