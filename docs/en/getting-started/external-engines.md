@@ -61,7 +61,15 @@ Codex uses its app-server model catalog. ACP engines use `session/new` model/con
 
 Existing conversations keep their engine identity, but their model and options remain editable while idle. Choosing **Agent default** clears model, reasoning, speed and additional option overrides; the next turn resolves native defaults rather than retaining an earlier session override. Individual options also offer **Default**. Resuming Claude requires its `get_settings` control to expose the configured model. OpenCode restores the default agent's model or its configured model; when neither is exposed, select a model explicitly before resuming. Its API does not expose the recent-model fallback. Unsupported native defaults produce an error instead of silently retaining an old override.
 
-ACP image attachments are written to local files and included as paths in the prompt so the agent can read them with its own tools. Wuu does not send ACP image content blocks, including when the agent advertises image prompt support. The ACP adapter accepts HTTP MCP server bindings, but the desktop currently starts external engines without Wuu host-tool bindings. Wuu's plugins, embedded browser and CUA tools are therefore unavailable in these conversations; use tools configured in the agent itself.
+ACP image attachments are written to local files and included as paths in the prompt so the agent can read them with its own tools. Wuu does not send ACP image content blocks, including when the agent advertises image prompt support.
+
+## Wuu browser and computer tools
+
+Codex, Claude Code and OpenCode receive Wuu's embedded browser and enabled CUA tools through a local HTTP MCP endpoint. ACP engines, including Pi and DeepSeek Harness, receive these tools only when their installed adapter advertises HTTP MCP support. An adapter without that capability continues the conversation with its native tools and displays a notice that Wuu browser and computer tools are unavailable.
+
+The host creates a separate endpoint for each conversation turn and supplies it through the engine's launch or session configuration. It does not modify the CLI's global configuration. The browser is available only with a connected browser-capable desktop client; CUA requires an enabled, connected computer-control plugin. Other Wuu plugin tools are not exported. Wuu's provider-specific deferred loading and Code Mode settings do not apply to this MCP catalog; the external engine owns its tool-calling loop.
+
+These calls use the same Wuu permissions, plugin hooks, activity previews, Stop and Takeover controls as built-in-engine calls. Screenshots return native MCP images as well as their metadata. Closing a preview window only hides it. Stop, Takeover, interruption, tool retirement and turn completion revoke that execution's control; an old endpoint cannot borrow a later turn's authority. A new explicit user turn can acquire fresh control. If **Approve for me** requires a Wuu model review, that action is blocked because external-engine turns do not run a Wuu reviewer model. Restrictions on the external agent's own native tools still depend on that agent, as described below.
 
 ## Fast mode
 

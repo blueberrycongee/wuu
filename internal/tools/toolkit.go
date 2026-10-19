@@ -280,6 +280,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		PermissionMode:              t.env.PermissionMode,
 		AllowMutations:              t.env.AllowMutations,
 		boundaryConfigured:          t.env.boundaryConfigured,
+		externalCapabilitiesOnly:    t.env.externalCapabilitiesOnly,
 		SessionID:                   t.env.SessionID,
 		CodeModeStateOwner:          t.env.CodeModeStateOwner,
 		SessionDir:                  t.env.SessionDir,
@@ -321,14 +322,15 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 	env.skillCatalog.Store(catalog)
 
 	clone := &Toolkit{
-		env:                 &env,
-		boundary:            t.boundary,
-		authorizer:          t.authorizer,
-		reviewer:            t.reviewer,
-		approveForMe:        t.approveForMe,
-		mcpManager:          t.mcpManager,
-		activityRegistry:    t.activityRegistry,
-		mcpActivityBindings: cloneMCPActivityBindings(t.mcpActivityBindings),
+		env:                   &env,
+		boundary:              t.boundary,
+		permissionRequestHook: t.permissionRequestHook,
+		authorizer:            t.authorizer,
+		reviewer:              t.reviewer,
+		approveForMe:          t.approveForMe,
+		mcpManager:            t.mcpManager,
+		activityRegistry:      t.activityRegistry,
+		mcpActivityBindings:   cloneMCPActivityBindings(t.mcpActivityBindings),
 	}
 	t.exposureMu.RLock()
 	clone.toolSearchEnabled = t.toolSearchEnabled
@@ -821,7 +823,8 @@ func (t *Toolkit) GitAttributionEnabled() bool {
 
 func (t *Toolkit) IsToolDisabled(name string) bool {
 	_, ok := t.disabledTools[name]
-	return ok || t.toolPolicy != nil && !t.toolPolicy(name)
+	return ok || t.toolPolicy != nil && !t.toolPolicy(name) ||
+		t.env != nil && t.env.externalCapabilitiesOnly && !t.externalCapabilityAllowed(name)
 }
 
 // ── ToolExecutor interface ─────────────────────────────────────────
@@ -842,6 +845,9 @@ func (t *Toolkit) IsToolDisabled(name string) bool {
 // callers that have not migrated yet (replay, debugging, internal
 // admin tools) keep working.
 func (t *Toolkit) Definitions() []providers.ToolDefinition {
+	if t.env != nil && t.env.externalCapabilitiesOnly {
+		return t.ExternalCapabilityDefinitions()
+	}
 	if t.CodeModeOnly() {
 		return t.codeModeEntryDefinitions()
 	}

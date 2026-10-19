@@ -293,9 +293,11 @@ func (s *Session) spawn(ctx context.Context, sub *turnSubscription) (*Transport,
 	}
 	if len(s.mcpServers) > 0 {
 		servers := make(map[string]any, len(s.mcpServers))
+		allowed := make([]string, 0, len(s.mcpServers))
 		for _, server := range s.mcpServers {
 			if strings.TrimSpace(server.Name) != "" && strings.TrimSpace(server.URL) != "" {
 				servers[server.Name] = map[string]any{"type": "http", "url": server.URL}
+				allowed = append(allowed, "mcp__"+server.Name+"__*")
 			}
 		}
 		if len(servers) > 0 {
@@ -303,7 +305,10 @@ func (s *Session) spawn(ctx context.Context, sub *turnSubscription) (*Transport,
 			if err != nil {
 				return nil, fmt.Errorf("encode named agent MCP config: %w", err)
 			}
-			args = append(args, "--mcp-config", string(encoded))
+			// dontAsk otherwise denies MCP calls before Wuu can enforce its own
+			// per-call policy. This process-local rule covers only host servers;
+			// Claude's explicit deny and ask rules still take precedence.
+			args = append(args, "--mcp-config", string(encoded), "--allowedTools", strings.Join(allowed, ","))
 		}
 	}
 	model := strings.TrimSpace(s.model)

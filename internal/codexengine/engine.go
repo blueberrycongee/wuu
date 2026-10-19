@@ -602,6 +602,12 @@ func (s *Session) ensureThread(ctx context.Context) error {
 		if s.model == "" {
 			return errors.New("codex did not expose its configured default model; select a model before resuming")
 		}
+		// A subscribed, loaded native thread treats resume as rejoining and
+		// ignores configuration overrides. Detach first so this idle turn can
+		// install fresh host MCP endpoints without restarting the shared host.
+		if err := s.client.Request(ctx, MethodThreadUnsubscribe, ThreadUnsubscribeParams{ThreadID: ref}, nil); err != nil {
+			return fmt.Errorf("codex detach before thread/resume: %w", err)
+		}
 		var resp ThreadResumeResponse
 		if err := s.client.Request(ctx, MethodThreadResume, ThreadResumeParams{
 			ThreadID: ref, Model: s.model, CWD: s.rootDir,
