@@ -33,6 +33,7 @@ type deviceSession struct {
 	channel       *secure.Channel
 	attached      bool
 	compressLines bool
+	previewV1     bool
 	app           *appConn
 	lastPush      time.Time
 	// lastThreadPush throttles turn-bound push hints per thread so one busy
@@ -43,6 +44,11 @@ type deviceSession struct {
 // pushThreadSlotCap bounds lastThreadPush. Once reached, entries older than
 // the push interval are pruned before a new slot is recorded.
 const pushThreadSlotCap = 256
+
+// The desktop caps encoded frames at 128 KiB. This line limit leaves room for
+// base64 and bounded metadata while keeping video writes well below RPC limits.
+// The shared TCP transport cannot preempt a frame already being written.
+const maxPreviewLineBytes = 192 << 10
 
 // tryConsumePushSlot reports whether a push hint may fire now and, if so,
 // consumes its throttle slot. Thread-bound hints throttle per
@@ -167,6 +173,20 @@ func (s *deviceSession) onAppLine(app *appConn, line []byte) {
 		s.mu.Unlock()
 		return
 	}
+	var preview struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+	}
+	if json.Unmarshal(line, &preview) == nil && len(preview.ID) == 0 &&
+		(preview.Method == "desktop/activity/preview/frame" || preview.Method == "desktop/activity/preview/state") {
+		// Pixels and viewer state belong only to the current live attachment.
+		// In particular, never let a detached phone fill the task replay spool.
+		if s.attached && s.channel != nil && s.previewV1 && len(line) <= maxPreviewLineBytes {
+			s.sendSealedLocked(wire.E2EMsg{T: wire.E2EPreview, Line: json.RawMessage(line)})
+		}
+		s.mu.Unlock()
+		return
+	}
 	stateChanged := app.observeLine(line)
 	outLine := line
 	if app.profile == wire.ClientProfileMobileChat || app.profile == wire.ClientProfileMobileActivity {
@@ -272,6 +292,7 @@ func (s *deviceSession) setChannel(ch *secure.Channel) {
 	s.mu.Lock()
 	s.channel = ch
 	s.attached = false
+	s.previewV1 = false
 	s.mu.Unlock()
 }
 
@@ -281,6 +302,7 @@ func (s *deviceSession) detach() {
 	s.mu.Lock()
 	s.channel = nil
 	s.attached = false
+	s.previewV1 = false
 	s.mu.Unlock()
 }
 
@@ -337,6 +359,7 @@ func (s *deviceSession) handleSealed(body []byte) {
 // phone that just handshook. Called with s.mu held.
 func (s *deviceSession) handleAttachLocked(msg wire.E2EMsg) {
 	s.compressLines = msg.AcceptLineCompression == "gzip"
+	s.previewV1 = msg.PreviewV1 && s.h.appServer != nil
 	var replay []spoolEntry
 	resumed := false
 	profile := normalizeClientProfile(msg.ClientProfile)
@@ -359,6 +382,7 @@ func (s *deviceSession) handleAttachLocked(msg wire.E2EMsg) {
 		Session:    s.app.contID,
 		Resumed:    resumed,
 		ReplayFrom: msg.Recv + 1,
+		PreviewV1:  s.previewV1,
 	})
 	s.sendStateLocked()
 	for _, e := range replay {

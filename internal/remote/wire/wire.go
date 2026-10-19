@@ -148,6 +148,7 @@ const (
 	E2EAttach   = "attach"
 	E2EAttached = "attached"
 	E2ERPC      = "rpc"
+	E2EPreview  = "preview"
 	E2EAck      = "ack"
 	E2EState    = "state"
 	E2EPing     = "ping"
@@ -189,6 +190,10 @@ type RunningTurn struct {
 // the phone gets a fresh app-server connection (attached{Resumed:false}) and
 // refetches state over RPC. Phone-to-host rpc lines are deliberately
 // unnumbered: requests are at-most-once, callers see missing responses fail.
+// Preview messages carry live frame/status notifications in Line without a Seq.
+// They are never retained or replayed and require PreviewV1 negotiation on each
+// attachment. Capture lifetime and decoder acknowledgements belong to the
+// desktop preview subscription, not to the persistent agent connection.
 type E2EMsg struct {
 	T string `json:"t"`
 
@@ -202,6 +207,9 @@ type E2EMsg struct {
 	Prev          string `json:"prev,omitempty"` // previous session id the phone wants to resume
 	Recv          uint64 `json:"recv,omitempty"` // highest host seq the phone has applied
 	ClientProfile string `json:"client_profile,omitempty"`
+	// PreviewV1 opts into the ephemeral preview lane on attach; attached echoes
+	// true only when the host forwards to a desktop execution service.
+	PreviewV1 bool `json:"preview_v1,omitempty"`
 	// AcceptLineCompression advertises support for independently compressed
 	// host-to-controller RPC lines. Missing or unknown values keep plain JSON.
 	AcceptLineCompression string `json:"accept_line_compression,omitempty"`
@@ -209,7 +217,7 @@ type E2EMsg struct {
 	Resumed               bool   `json:"resumed,omitempty"`
 	ReplayFrom            uint64 `json:"replay_from,omitempty"`
 
-	// rpc
+	// rpc / preview (only rpc carries Seq)
 	Seq  uint64          `json:"seq,omitempty"`
 	Line json.RawMessage `json:"line,omitempty"`
 	// LineGzip is raw base64url gzip of Line, inside the authenticated encrypted

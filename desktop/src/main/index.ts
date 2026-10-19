@@ -9,6 +9,8 @@ import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
+import { RemoteActivityPreviews } from "./remoteActivityPreview";
+import { createRemotePreviewSource } from "./remotePreviewSources";
 import { PhoneAccess } from "./phoneAccess";
 import {
   app,
@@ -358,6 +360,7 @@ appServerClientPool.setWorkdirPinnedCheck((workdir) =>
 appServerClientPool.setClientTorndownHandler((workdir) => {
   browserHostCoordinator.onClientTorndown(workdir);
   observationCoordinator.dropWorkdir(workdir);
+  remoteActivityPreviews.dropWorkdir(workdir);
 });
 // Shared observation stack for CUA windows and browser tabs, fed by the same
 // activity notifications the renderer uses. The coordinator owns per-target
@@ -671,10 +674,14 @@ function emitServerEvent(event: ServerEvent): void {
   if (event.kind === "server-exit") {
     browserHostCoordinator.onClientTorndown(event.workdir);
     observationCoordinator.dropWorkdir(event.workdir);
+    remoteActivityPreviews.dropWorkdir(event.workdir);
   }
   browserHostCoordinator.handleServerEvent(event);
   const browserActivity = observationActivityFromServerEvent(event);
-  if (browserActivity && event.kind === "notification") browserHostCoordinator.updateActivity(browserActivity, event.message.method);
+  if (browserActivity && event.kind === "notification") {
+    browserHostCoordinator.updateActivity(browserActivity, event.message.method);
+    remoteActivityPreviews.updateActivity(browserActivity);
+  }
   observationCoordinator.handleServerEvent(event);
   const sideThreadEvent = sideThreadEventFromServerEvent(event);
   if (sideThreadEvent) {
@@ -772,12 +779,19 @@ function cancelPluginRuntimeOwner(owner: string): void {
   }
 }
 
+const remoteActivityPreviews = new RemoteActivityPreviews({
+  notify: (owner, method, params) => remoteAppServerBridge.notifyPreviewPeer(owner, method, params),
+  createSource: (activity, handlers) => createRemotePreviewSource(activity, handlers, browserHostCoordinator),
+});
 const remoteTerminals = new TerminalSessionManager((owner,event)=>remoteAppServerBridge.notifyPeer(owner,"desktop/terminal/event",event));
 const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply, peerID) => {
   const pluginOwner = `remote:${peerID}`;
   // Existing ownership is enough to cancel; the original workspace may no
   // longer be listed by the time the paired client disconnects or switches.
   if (method === "plugin/client/cancel") return cancelPluginRuntime(pluginOwner, params as PluginClientCancelParams);
+  if (method.startsWith("desktop/activity/preview/") && method !== "desktop/activity/preview/open") {
+    return remoteActivityPreviews.request(peerID, method, params);
+  }
   // Keep the desktop's reverse-RPC capabilities: a phone attachment must not
   // disable browser tools on the shared execution service.
   if (method === "initialize") params = desktopInitializeParams();
@@ -792,6 +806,12 @@ const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, 
   else if (state.active_context?.kind === "no_project" && resolve(state.active_context.cwd) === cwd) context = state.active_context;
   else if (cwd.startsWith(resolve(wuuHomePath(), "scratch") + sep)) context = { kind: "no_project", cwd };
   else throw new Error("Unknown or unavailable remote workspace");
+  if (method === "desktop/activity/preview/open") {
+    return remoteActivityPreviews.openCurrent(peerID, context.cwd, params, async (threadID) => {
+      const result = await appServerClientPool.requestInContext<ActivityListResult>(context, "activity/list", { thread_id: threadID });
+      return result.activities;
+    });
+  }
   if (method === "plugin/client/request") return requestPluginRuntime(pluginOwner, context, params as PluginClientRequestParams, reply);
   if (method.startsWith("desktop/terminal/")) return requestRemoteTerminal(remoteTerminals,context,peerID,method,params);
   if (method === "desktop/skill/content") return readCatalogSkill(await appServerClientPool.requestInContext<SkillListResult>(context,"skill/list"),params as SkillContentParams);
@@ -799,6 +819,7 @@ const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, 
   if (method.startsWith("desktop/git/")) return requestRemoteGit(gitServiceForContext(() => context), method, params);
   return appServerClientPool.requestInContext(context, method, params, reply);
 }, (peerID) => {
+  remoteActivityPreviews.closeOwner(peerID);
   remoteTerminals.stopForOwner(peerID);
   cancelPluginRuntimeOwner(`remote:${peerID}`);
 });
@@ -3025,6 +3046,7 @@ function prepareToQuit(): Promise<void> {
     systemPermissions.close();
     appContextCapture.dispose();
     terminalSessionManager.cleanup();
+    remoteActivityPreviews.shutdown();
     // Destroy every agent view + the hidden host window before the pool shuts
     // down so no WebContentsView leaks past quit.
     browserHostCoordinator.destroyAll();

@@ -83,6 +83,14 @@ struct MessageForkRequest: Identifiable {
         get { historyEdits[historyEditKey] }
         set { historyEdits[historyEditKey] = newValue }
     }
+    var previewSupported = false
+    private var previewActivities: [String: PreviewActivity] = [:]
+    var previewConnection: RemoteConnection? { connected && previewSupported ? remote : nil }
+    var currentPreviewActivity: PreviewActivity? {
+        guard connected, previewSupported, !refreshing, live?.running == true else { return nil }
+        return previewActivities.values.filter { $0.threadID == activeID && $0.observable }
+            .max { $0.orderingTimestamp < $1.orderingTimestamp }
+    }
     var loadingHistory = false
     var loadingContent: Set<String> = []
     let imagePreviews = ImagePreviewLoader()
@@ -129,6 +137,9 @@ struct MessageForkRequest: Identifiable {
         #if DEBUG
         if NativeUIFixture.enabled {
             live = NativeUIFixture.thread(); activeID = live?.id; connected = true
+            if ProcessInfo.processInfo.arguments.contains("--native-preview-fixture") {
+                previewSupported = true; mergePreviewActivity(NativeUIFixture.previewActivity)
+            }
             if ProcessInfo.processInfo.arguments.contains("--native-refresh-fixture") {
                 refreshing = true
                 if ProcessInfo.processInfo.arguments.contains("--native-empty-fixture") { live = nil }
@@ -407,6 +418,7 @@ struct MessageForkRequest: Identifiable {
     }
     func background() async {
         isForeground = false
+        previewSupported = false; previewActivities = [:]
         epoch = UUID()
         refresh?.cancel(); refresh = nil
         reconnectTask?.cancel(); reconnectTask = nil
@@ -503,8 +515,12 @@ struct MessageForkRequest: Identifiable {
                             refreshing = false
                         }
                     case .disconnected(let reason):
+                        previewSupported = false; previewActivities = [:]
                         connected = false; pendingApproval = nil; connectionStatus = reason; refreshing = activeID != nil
                     case .notification(let method, let params):
+                        if ["activity/started", "activity/updated", "activity/control_changed", "activity/stopped"].contains(method) {
+                            mergePreviewActivity(params)
+                        }
                         if method == "user-question/requested" {
                             questionRevision += 1
                             let request = params["request"]
@@ -527,8 +543,10 @@ struct MessageForkRequest: Identifiable {
             }
             try await connection.connect()
             _ = try await connection.call("initialize")
+            let supportsPreview = await connection.supportsPreview
             guard epoch == stamp else { await connection.disconnect(); return }
             connected = true
+            previewSupported = supportsPreview
             connectionStatus = ""
         } catch {
             if epoch == stamp {
@@ -574,7 +592,7 @@ struct MessageForkRequest: Identifiable {
         threads = (query.isEmpty ? result["threads"].array : result["results"].array.map { $0["thread"] }).map { ChatThread($0) }
     }
     func open(_ id: String, preservingContent: Bool = false) async throws {
-        if activeID != id { showingHistoryEdit = false }
+        if activeID != id { showingHistoryEdit = false; previewActivities = [:] }
         opening = UUID(); let selection = opening
         draftWorkspace = nil
         // Reopening the displayed conversation keeps its rows and in-flight thumbnails.
@@ -584,7 +602,14 @@ struct MessageForkRequest: Identifiable {
         if connected, let remote {
             refreshing = true; connectionStatus = ""
             do {
-                _ = try await remote.call("thread/resume", params: ["session_id": .string(id), "response_only": true, "history_page": true, "conversation_history": true], snapshotTag: selection.uuidString)
+                let snapshot = try await remote.call("thread/resume", params: ["session_id": .string(id), "response_only": true, "history_page": true, "conversation_history": true], snapshotTag: selection.uuidString)
+                if previewSupported {
+                    // Observation discovery must not turn a successful chat resume into a failure.
+                    if let activities = try? await remote.call("activity/list", params: ["thread_id": .string(id)], workdir: snapshot["thread"]["cwd"].string),
+                       epoch == stamp, opening == selection, self.remote === remote {
+                        for activity in activities["activities"].array { mergePreviewActivity(activity) }
+                    }
+                }
             } catch {
                 // Keep rejecting deltas until an authoritative snapshot succeeds.
                 if epoch == stamp, opening == selection, self.remote === remote {
@@ -597,6 +622,15 @@ struct MessageForkRequest: Identifiable {
             guard epoch == stamp, opening == selection else { throw CancellationError() }
             saved = body
         }
+    }
+    private func mergePreviewActivity(_ value: JSONValue) {
+        guard let incoming = PreviewActivity(value), incoming.threadID == activeID else { return }
+        if let current = previewActivities[incoming.id] {
+            guard incoming.orderingTimestamp >= current.orderingTimestamp else { return }
+            if incoming.executionID != current.executionID && incoming.orderingTimestamp <= current.orderingTimestamp { return }
+            if current.state == "stopped", incoming.executionID == current.executionID, incoming.state != "stopped" { return }
+        }
+        previewActivities[incoming.id] = incoming
     }
     func settingsSelection(for thread: ChatThread) -> ThreadSettings {
         pendingSettings[thread.id] ?? thread.settings

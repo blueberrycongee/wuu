@@ -10,6 +10,7 @@ struct ConversationTimeline: View {
     @State private var scrollState = TimelineScrollState()
     @State private var historyRetry = 0
     @State private var historyFailed = false
+    @State private var previewActivity: PreviewActivity?
     @State private var inspectedProcess: ActivityInspection?
     @State private var presentedMessages: Set<String>
     init(model: AppModel) {
@@ -25,9 +26,12 @@ struct ConversationTimeline: View {
                 // Lay out from the newest edge so following never targets a lazy height estimate.
                 LazyVStack(alignment: .leading, spacing: rowSpacing) {
                     if model.live?.running == true && model.messages.last?.tool == nil && model.conversationRows.last?.processActive != true {
-                        ConversationActivityMark(activity: model.messages.last?.role == "assistant" ? "responding" : "thinking", settings: model.live?.settings)
-                            .accessibilityElement().accessibilityLabel("正在处理")
-                            .scaleEffect(x: 1, y: -1)
+                        HStack {
+                            ConversationActivityMark(activity: model.messages.last?.role == "assistant" ? "responding" : "thinking", settings: model.live?.settings)
+                                .accessibilityElement().accessibilityLabel("正在处理")
+                            Spacer(minLength: 8)
+                            previewButton
+                        }.scaleEffect(x: 1, y: -1)
                     }
                     ForEach(rows.reversed()) { row in timelineRow(row, size: geometry.size).scaleEffect(x: 1, y: -1) }
                     if model.live?.historyCursor.isEmpty == false {
@@ -112,6 +116,8 @@ struct ConversationTimeline: View {
                     }
                         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: model.updating)
                 }
+        }.sheet(item: $previewActivity) { activity in
+            ActivityPreviewView(activity: activity, connection: model.previewConnection, fixtureImage: previewFixtureImage)
         }.sheet(item: $model.attachmentPreview) { attachment in AttachmentPreview(attachment: attachment) }
             // Owned here, not by the row, so a turn finishing or regrouping cannot close it.
             .sheet(item: $inspectedProcess) { inspection in
@@ -127,19 +133,38 @@ struct ConversationTimeline: View {
                 if let edit = model.historyEdit { HistoryMessageEditView(model: model, edit: edit) }
             }
             .task(id: model.historyLoadID.map { "\($0):\(historyRetry)" }) { await loadHistory() }
-            .onChange(of: model.activeID) { _, _ in inspectedProcess = nil }
+            .onChange(of: model.activeID) { _, _ in inspectedProcess = nil; previewActivity = nil }
+            .onChange(of: model.connected) { _, connected in if !connected { previewActivity = nil } }
+            .task {
+                #if DEBUG
+                if NativeUIFixture.enabled && ProcessInfo.processInfo.arguments.contains("--native-preview-presented") { previewActivity = model.currentPreviewActivity }
+                #endif
+            }
+            .background {
+                #if DEBUG
+                if NativeUIFixture.enabled && ProcessInfo.processInfo.arguments.contains("--native-preview-fixture") {
+                    NativePreviewFixtureReadyMarker(name: "conversation", ready: true)
+                }
+                #endif
+            }
     }
     private func timelineRow(_ row: ConversationRow, size: CGSize) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             // Process groups also contain tools, so they are checked first.
             if row.isProcessGroup {
-                ProcessGroupView(messages: row.messages, settings: model.live?.settings, active: row.processActive) {
-                    inspectedProcess = ActivityInspection(id: row.messages[0].id, threadID: model.live?.id ?? "", messages: row.messages)
+                HStack(spacing: 8) {
+                    ProcessGroupView(messages: row.messages, settings: model.live?.settings, active: row.processActive) {
+                        inspectedProcess = ActivityInspection(id: row.messages[0].id, threadID: model.live?.id ?? "", messages: row.messages)
+                    }
+                    if row.processActive { previewButton }
                 }
             } else if row.isToolGroup {
-                ToolGroupView(model: model, messages: row.messages, settings: model.live?.settings,
-                    active: model.live?.running == true && row.messages.last?.id == model.messages.last?.id) { summary in
-                    inspectedProcess = ActivityInspection(id: row.id, threadID: model.live?.id ?? "", messages: row.messages, toolsOnly: true, summary: summary)
+                HStack(spacing: 8) {
+                    ToolGroupView(model: model, messages: row.messages, settings: model.live?.settings,
+                        active: model.live?.running == true && row.messages.last?.id == model.messages.last?.id) { summary in
+                        inspectedProcess = ActivityInspection(id: row.id, threadID: model.live?.id ?? "", messages: row.messages, toolsOnly: true, summary: summary)
+                    }
+                    if row.messages.last?.id == model.messages.last?.id { previewButton }
                 }
             } else {
                 MessageBubble(model: model, message: row.messages[0],
@@ -160,6 +185,22 @@ struct ConversationTimeline: View {
             let last = row.messages.last!
             TimelineRowAnchor(id: last.activity["last_item_id"].string.map { last.turnID + ":" + $0 } ?? last.id, state: scrollState)
         }
+    }
+    @ViewBuilder private var previewButton: some View {
+        if let activity = model.currentPreviewActivity {
+            Button { previewActivity = activity } label: {
+                Image(systemName: activity.kind == "browser" ? "globe" : "desktopcomputer")
+                    .font(.system(size: 19)).frame(width: 44, height: 44).contentShape(Rectangle())
+            }.buttonStyle(.plain).foregroundStyle(.secondary)
+                .accessibilityLabel(activity.kind == "browser" ? "查看浏览器实时画面" : "查看电脑实时画面")
+                .accessibilityIdentifier("activity-preview-open")
+        }
+    }
+    private var previewFixtureImage: Data? {
+        #if DEBUG
+        if NativeUIFixture.enabled && ProcessInfo.processInfo.arguments.contains("--native-preview-fixture") { return NativeUIFixture.previewImage }
+        #endif
+        return nil
     }
     private var pausedEdit: HistoryMessageEdit? {
         guard let edit = model.historyEdit, edit.prepared, edit.threadID == model.activeID, !model.showingHistoryEdit else { return nil }

@@ -76,6 +76,28 @@ Generate a new code and pair again after changing the advertised endpoint.
 Removing a computer on the phone forgets its local identity. To revoke that
 phone's access, remove the device in the computer's Phone access settings.
 
+## View browser and computer activity
+
+Open the preview from an active browser or Computer Use activity in the iOS
+conversation. It follows that activity's target, not the entire desktop. Closing
+it stops transmission without stopping the agent or revoking its control.
+
+Frames use the existing paired, end-to-end encrypted Relay connection. Tailscale
+can provide reachability; no separate video server or UDP endpoint is required.
+Frames are ephemeral: they are not saved in conversation history or the reconnect
+spool, and are not replayed after reconnecting.
+
+Capture runs only while the viewer is open. Backgrounding the phone, disconnecting,
+or losing the viewer lease releases capture. Frame size and queued frames are
+bounded. Browser previews use independent JPEG frames; supported native computer
+previews use hardware H.264 with credit-based delivery, preserving decoding order
+rather than dropping dependent compressed frames when the network slows down.
+
+This remains part of development-preview phone access. The desktop needs a
+supported active capture source and OS permissions. External engines without Wuu
+host-tool bindings do not gain browser or computer tools through this viewer.
+Availability does not imply that every operating system and network is validated.
+
 ## Prepare a Relay
 
 The host and client need a reachable WebSocket endpoint ending in `/v1/connect`.

@@ -12,13 +12,19 @@ public struct NativePreviewConfiguration: Sendable {
     public let processID: pid_t?
     public let windowID: CGWindowID?
     public let parentProcessID: pid_t?
+    public let maxDimension: Int
+    public let frameRate: Int
+    public let bitrate: Int
 
-    public init(activityID: String, target: String, processID: pid_t? = nil, windowID: CGWindowID? = nil, parentProcessID: pid_t? = nil) {
+    public init(activityID: String, target: String, processID: pid_t? = nil, windowID: CGWindowID? = nil, parentProcessID: pid_t? = nil, maxDimension: Int = 1280, frameRate: Int = 30, bitrate: Int = 4_000_000) {
         self.activityID = activityID
         self.target = target
         self.processID = processID
         self.windowID = windowID
         self.parentProcessID = parentProcessID
+        self.maxDimension = min(1280, max(320, maxDimension))
+        self.frameRate = min(30, max(1, frameRate))
+        self.bitrate = min(4_000_000, max(100_000, bitrate))
     }
 }
 
@@ -81,7 +87,7 @@ private final class NativePreviewFrames: @unchecked Sendable {
 
     private let lock = NSLock()
     private let queue = DispatchQueue(label: "com.blueberrycongee.wuu.cua.preview-encode", qos: .userInitiated)
-    private let encoder = PreviewEncoder()
+    private let encoder: PreviewEncoder
     private let writer: PiPEventWriter
     private var generation: UInt64 = 0
     private var sequence: UInt64 = 0
@@ -92,7 +98,10 @@ private final class NativePreviewFrames: @unchecked Sendable {
     private var awaitingAcknowledgement: UInt64?
     private var failure: String?
 
-    init(writer: PiPEventWriter) { self.writer = writer }
+    init(writer: PiPEventWriter, configuration: NativePreviewConfiguration) {
+        self.writer = writer
+        self.encoder = PreviewEncoder(frameRate: configuration.frameRate, bitrate: configuration.bitrate)
+    }
 
     func beginStream() -> UInt64 {
         lock.withLock {
@@ -475,14 +484,14 @@ private func requestedWindowFrame(windowID: CGWindowID?, processID: pid_t) -> CG
 // The filter reports the backing scale of the display that currently hosts the
 // window. A buffer sized from another display leaves the frame partly empty.
 @available(macOS 14.0, *)
-private func streamConfiguration(for filter: SCContentFilter) -> SCStreamConfiguration {
+private func streamConfiguration(for filter: SCContentFilter, profile: NativePreviewConfiguration) -> SCStreamConfiguration {
     let configuration = SCStreamConfiguration()
     let size = filter.contentRect.size
-    let previewScale = min(CGFloat(filter.pointPixelScale), 1280 / max(1, max(size.width, size.height)))
+    let previewScale = min(CGFloat(filter.pointPixelScale), CGFloat(profile.maxDimension) / max(1, max(size.width, size.height)))
     // AVC uses 4:2:0 chroma, so scaled dimensions must remain even.
     configuration.width = max(2, Int(size.width * previewScale) / 2 * 2)
     configuration.height = max(2, Int(size.height * previewScale) / 2 * 2)
-    configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+    configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(profile.frameRate))
     configuration.queueDepth = 3
     configuration.showsCursor = false
     configuration.pixelFormat = kCVPixelFormatType_32BGRA
@@ -536,9 +545,9 @@ private func shareableContent(timeout: TimeInterval) async -> SCShareableContent
 }
 
 @available(macOS 14.0, *)
-private func startWindowStream(window: SCWindow, output: NativePiPStreamOutput, timeout: TimeInterval) async throws -> SCStream {
+private func startWindowStream(window: SCWindow, output: NativePiPStreamOutput, timeout: TimeInterval, profile: NativePreviewConfiguration) async throws -> SCStream {
     let filter = SCContentFilter(desktopIndependentWindow: window)
-    let stream = SCStream(filter: filter, configuration: streamConfiguration(for: filter), delegate: output)
+    let stream = SCStream(filter: filter, configuration: streamConfiguration(for: filter, profile: profile), delegate: output)
     try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: DispatchQueue(label: "com.blueberrycongee.wuu.cua.native-pip"))
     // ScreenCaptureKit can report a startup failure through the delegate's
     // didStopWithError instead of resuming startCapture's completion handler,
@@ -658,7 +667,10 @@ public final class NativePreviewHost {
                 target: target,
                 processID: processID > 0 ? processID : nil,
                 windowID: windowID > 0 ? windowID : nil,
-                parentProcessID: parentProcessID
+                parentProcessID: parentProcessID,
+                maxDimension: command["max_dimension"] as? Int ?? 1280,
+                frameRate: command["frame_rate"] as? Int ?? 30,
+                bitrate: command["bitrate"] as? Int ?? 4_000_000
             ))
             return
         }
@@ -710,7 +722,7 @@ private func runNativePreview(
     }) else { throw ComputerError.appNotFound(configuration.target) }
 
     pipDebugLog("preview activity=\(configuration.activityID) process=\(app.processIdentifier)")
-    let frames = NativePreviewFrames(writer: writer)
+    let frames = NativePreviewFrames(writer: writer, configuration: configuration)
     let controller = NativePreviewControl()
     let requestedFrame = requestedWindowFrame(windowID: configuration.windowID, processID: app.processIdentifier)
     guard configuration.windowID == nil || requestedFrame != nil else {
@@ -848,7 +860,7 @@ private func runNativePreview(
             pipDebugLog("resolve window id=\(target.windowID) frame=\(target.frame) title=\(target.title ?? "-")")
             let next = NativePiPStreamOutput(frames: frames, writer: writer)
             do {
-                stream = try await startWindowStream(window: target, output: next, timeout: captureStartTimeout)
+                stream = try await startWindowStream(window: target, output: next, timeout: captureStartTimeout, profile: configuration)
                 output = next
                 trackedWindowID = target.windowID
                 trackedFrame = target.frame
@@ -925,7 +937,7 @@ private func runNativePreview(
         }
         guard windowFrameDistance(nextWindow.frame, trackedFrame) > 1 else { continue }
         do {
-            try await activeStream.updateConfiguration(streamConfiguration(for: SCContentFilter(desktopIndependentWindow: nextWindow)))
+            try await activeStream.updateConfiguration(streamConfiguration(for: SCContentFilter(desktopIndependentWindow: nextWindow), profile: configuration))
             trackedFrame = nextWindow.frame
         } catch { activeOutput.lockFailure(error) }
     }

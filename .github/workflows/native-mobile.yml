@@ -56,6 +56,167 @@ jobs:
           echo "WUU_TEST_PG_BIN=$(brew --prefix postgresql@18)/bin" >> "$GITHUB_ENV"
       - name: Core, real-server integration and simulator build
         run: bash clients/native/verify.sh ios | tee native-ios-core.log
+      - name: Capture native preview fixture layouts
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, pathlib, re, shutil, subprocess, time
+
+          evidence = pathlib.Path("native-ios-preview").resolve()
+          evidence.mkdir(exist_ok=True)
+          bundle = "ai.wuu.native"
+          runtime = "com.apple.CoreSimulator.SimRuntime.iOS-26-2"
+          device = None
+          pid = None
+          cache = None
+          succeeded = False
+
+          def sim(*args, timeout=180):
+              result = subprocess.run(["xcrun", "simctl", *args], text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+              if result.stderr:
+                  print(result.stderr, end="", flush=True)
+              result.check_returncode()
+              return result.stdout.strip()
+
+          def alive(process):
+              try:
+                  os.kill(process, 0)
+                  return True
+              except ProcessLookupError:
+                  return False
+
+          def diagnostics():
+              if cache:
+                  for name in ["preview-conversation-ready.json", "preview-viewer-ready.json", "preview-fixture-result.json"]:
+                      marker = cache / name
+                      if marker.exists():
+                          shutil.copy2(marker, evidence / f"failed-{name}")
+              commands = [("simulator-list.json", ["list", "--json"])]
+              if device:
+                  commands += [("simulator.log", ["spawn", device, "log", "show", "--last", "10m", "--style", "compact",
+                      "--predicate", 'process == "Wuu" OR process == "SpringBoard" OR process == "runningboardd"']),
+                      ("failure-screenshot.log", ["io", device, "screenshot", str(evidence / "failure.png")])]
+              for name, args in commands:
+                  try:
+                      with (evidence / name).open("w") as output:
+                          subprocess.run(["xcrun", "simctl", *args], stdout=output, stderr=subprocess.STDOUT, timeout=45)
+                  except Exception as error:
+                      print(f"Diagnostic {name}: {error}", flush=True)
+              roots = [pathlib.Path.home() / "Library/Logs/DiagnosticReports"]
+              if device:
+                  roots.append(pathlib.Path.home() / f"Library/Developer/CoreSimulator/Devices/{device}/data/Library/Logs/DiagnosticReports")
+              for index, root in enumerate(roots):
+                  for report in root.glob("Wuu*"):
+                      if report.is_file():
+                          shutil.copy2(report, evidence / f"diagnostic-{index}-{report.name}")
+
+          try:
+              devices = json.loads(sim("list", "devices", "available", "--json"))
+              (evidence / "simulator-devices.json").write_text(json.dumps(devices, indent=2))
+              selected = next(item for item in devices["devices"].get(runtime, []) if item["name"] == "iPhone 16 Pro")
+              device = selected["udid"]
+              (evidence / "simulator-selection.json").write_text(json.dumps({"runtime": runtime, **selected}, indent=2))
+              if selected["state"] != "Booted":
+                  sim("boot", device)
+              print(sim("bootstatus", device, "-b", timeout=300), flush=True)
+              sim("install", device, "clients/native/ios/.build-xcode/Build/Products/Debug-iphonesimulator/Wuu.app")
+              cache = pathlib.Path(sim("get_app_container", device, bundle, "data")) / "Library/Caches"
+              markers = [cache / name for name in ["preview-conversation-ready.json", "preview-viewer-ready.json", "preview-fixture-result.json"]]
+              cases = [
+                  ("tool-row-light", "light", "conversation", []),
+                  ("viewer-light", "light", "viewer", ["--native-preview-presented"]),
+                  ("viewer-dark-large-text", "dark", "viewer", ["--native-preview-presented",
+                      "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]),
+                  ("viewer-h264", "light", "viewer", ["--native-preview-presented", "--native-preview-h264-fixture",
+                      "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL"]),
+              ]
+              for name, appearance, view, extra in cases:
+                  if pid is not None:
+                      sim("terminate", device, bundle)
+                      deadline = time.monotonic() + 30
+                      while alive(pid) and time.monotonic() < deadline:
+                          time.sleep(0.2)
+                      if alive(pid):
+                          raise RuntimeError(f"Previous fixture process {pid} did not terminate")
+                  for marker in markers:
+                      marker.unlink(missing_ok=True)
+                  sim("ui", device, "appearance", appearance)
+                  launch = sim("launch", f"--stdout={evidence / (name + '-stdout.log')}",
+                      f"--stderr={evidence / (name + '-stderr.log')}", device, bundle,
+                      "--native-ui-fixture", "--native-composer-fixture", "--native-preview-fixture", *extra)
+                  (evidence / f"{name}-launch.log").write_text(launch)
+                  pid = int(re.search(r"ai\.wuu\.native: (\d+)", launch).group(1))
+                  marker = cache / f"preview-{view}-ready.json"
+                  deadline = time.monotonic() + 60
+                  while not marker.exists() and time.monotonic() < deadline:
+                      if not alive(pid):
+                          raise RuntimeError(f"{name} exited before the fixture became visible")
+                      time.sleep(0.5)
+                  ready = json.loads(marker.read_text())
+                  assert ready["view"] == view and ready["pid"] == pid and ready["width"] > 0 and ready["height"] > 0, ready
+                  shutil.copy2(marker, evidence / f"{name}-ready.json")
+                  if name == "viewer-h264":
+                      result = json.loads(markers[2].read_text())
+                      assert result.get("codec") == "h264" and result.get("decoded_frames") == 3 and result.get("submitted_frames") == 3 and result.get("error") == "", result
+                      shutil.copy2(markers[2], evidence / "h264-result.json")
+                  # Readiness is already verified; let native sheet chrome finish its entrance animation.
+                  time.sleep(0.75)
+                  sim("io", device, "screenshot", str(evidence / f"{name}.png"))
+                  print(f"Captured {name} after foreground layout readiness from process {pid}", flush=True)
+              (evidence / "scope.txt").write_text("Local synthetic JPEG and H264 IDR+2 dependent delta frames through the native viewer. Foreground layout readiness and H264 decode/submission are asserted; screenshots require visual review. This does not validate remote latency, real macOS capture, or physical-device performance.\n")
+              succeeded = True
+          finally:
+              if not succeeded:
+                  diagnostics()
+              if device:
+                  try:
+                      sim("shutdown", device, timeout=60)
+                  except Exception as error:
+                      print(f"Simulator shutdown: {error}", flush=True)
+          PYTHON
+      - name: Verify visible H264 fixture pixels
+        run: |
+          cat > /tmp/verify-preview-colors.swift <<'SWIFT'
+          import Foundation
+          import CoreGraphics
+          import ImageIO
+          import Darwin
+
+          let url = URL(fileURLWithPath: CommandLine.arguments[1])
+          guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { exit(1) }
+          let width = image.width, height = image.height
+          let pixels = UnsafeMutablePointer<UInt8>.allocate(capacity: width * height * 4)
+          defer { pixels.deallocate() }
+          guard let context = CGContext(data: pixels, width: width, height: height, bitsPerComponent: 8,
+              bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { exit(1) }
+          context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+          // The two dependent deltas hue-shift the bars. These RGB centers come from
+          // decoding the bundled fixture's third frame, so the initial IDR cannot pass.
+          let colors = [[64, 244, 61], [104, 112, 255], [0, 165, 177],
+                        [211, 23, 12], [85, 76, 0], [127, 0, 130]]
+          var consecutive = 0, longest = 0
+          for y in height / 4 ..< height * 3 / 4 {
+              let matches = colors.enumerated().allSatisfy { index, color in
+                  let center = Int(Double(width) * (Double(index) + 1.5) / 7.0)
+                  return [-5, 0, 5].allSatisfy { dx in
+                      let offset = (y * width + center + dx) * 4
+                      return color.enumerated().allSatisfy { channel, expected in
+                          abs(Int(pixels[offset + channel]) - expected) <= 12
+                      }
+                  }
+              }
+              consecutive = matches ? consecutive + 1 : 0
+              longest = max(longest, consecutive)
+          }
+          guard longest >= height / 40 else {
+              fputs("H264 screenshot does not show the third decoded color-bar frame (matched rows: \(longest))\n", stderr)
+              exit(1)
+          }
+          print("Verified final H264 delta-frame colors across \(longest) screenshot rows")
+          SWIFT
+          xcrun swift /tmp/verify-preview-colors.swift native-ios-preview/viewer-h264.png | tee native-ios-preview/h264-pixels.log
       - name: Unsigned iOS device Release build
         run: |
           xcodebuild -project clients/native/ios/Wuu.xcodeproj -scheme Wuu \
@@ -70,6 +231,7 @@ jobs:
           include-hidden-files: true
           path: |
             native-ios-*.log
+            native-ios-preview/
 
   android:
     if: github.event_name == 'workflow_dispatch'

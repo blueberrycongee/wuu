@@ -64,6 +64,15 @@ func (f mobileChatFilter) notification(env map[string]json.RawMessage, method st
 		if !f.itemParam(env) {
 			return nil, false
 		}
+	case appserver.NotificationActivityStarted,
+		appserver.NotificationActivityUpdated,
+		appserver.NotificationActivityControlChanged,
+		appserver.NotificationActivityStopped:
+		// Observation descriptors contain no pixels. Only the activity client
+		// needs them to discover and retire a user-opened live preview.
+		if !f.tools {
+			return nil, false
+		}
 	case appserver.NotificationTurnQueued,
 		appserver.NotificationTurnDequeued,
 		appserver.NotificationTurnHeld,

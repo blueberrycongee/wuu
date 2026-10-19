@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- On-demand iOS previews for active browser and computer tasks over the paired encrypted connection, with bounded frame delivery and automatic viewer cleanup.
+
 - Monitor plugin for background scripts, event delivery into the active conversation,
   timeout and persistent watches, output inspection, and per-task stop controls.
 - Public process service for conversation-bound extension commands and event delivery,

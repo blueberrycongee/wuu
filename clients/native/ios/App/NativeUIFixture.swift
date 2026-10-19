@@ -18,7 +18,39 @@ enum NativeUIFixture {
 
     普通 **Markdown** 和 `code` 继续使用原生排版。
     """
+    static var previewActivity: JSONValue {
+        ["id": "fixture-browser", "thread_id": "local-ui-fixture", "execution_id": "fixture-execution", "kind": "browser",
+         "state": "active", "controller": "agent", "target": "fixture-tab", "updated_at": "2026-10-19T00:00:00Z"]
+    }
+    static var previewImage: Data {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: 960, height: 600), format: format).image { context in
+            UIColor(white: 0.96, alpha: 1).setFill(); context.fill(CGRect(x: 0, y: 0, width: 960, height: 600))
+            UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 960, height: 56))
+            ("wuu.ai" as NSString).draw(at: CGPoint(x: 36, y: 17), withAttributes: [.font: UIFont.systemFont(ofSize: 20), .foregroundColor: UIColor.darkGray])
+            ("Wuu" as NSString).draw(at: CGPoint(x: 64, y: 130), withAttributes: [.font: UIFont.systemFont(ofSize: 58, weight: .semibold), .foregroundColor: UIColor.black])
+            ("Your work, in view." as NSString).draw(at: CGPoint(x: 64, y: 220), withAttributes: [.font: UIFont.systemFont(ofSize: 32), .foregroundColor: UIColor.darkGray])
+            UIColor.systemTeal.setFill(); context.fill(CGRect(x: 64, y: 320, width: 832, height: 180))
+            ("Browser preview" as NSString).draw(at: CGPoint(x: 94, y: 375), withAttributes: [.font: UIFont.systemFont(ofSize: 32), .foregroundColor: UIColor.white])
+        }.jpegData(compressionQuality: 0.7)!
+    }
+    static func previewVideoFrames() throws -> [PreviewFrame] {
+        guard let url = Bundle.main.url(forResource: "h264", withExtension: "json", subdirectory: "PreviewFixtures")
+            ?? Bundle.main.url(forResource: "h264", withExtension: "json") else {
+            throw NativeError.invalid("Missing preview video fixture")
+        }
+        let value = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+        return try value["frames"].array.map(PreviewFrame.init)
+    }
     static func thread() -> ChatThread {
+        if ProcessInfo.processInfo.arguments.contains("--native-preview-fixture") {
+            return ChatThread(["id": "local-ui-fixture", "title": "浏览器预览", "status": "in_progress", "turns": [
+                ["id": "preview-turn", "status": "in_progress", "items": [
+                    ["id": "user", "type": "user_message", "text": "打开 Wuu 网站，检查当前页面。"],
+                    ["id": "browser", "type": "tool_call", "name": "browser", "status": "in_progress", "arguments": "{\"action\":\"navigate\",\"url\":\"https://wuu.ai\"}"]
+                ]]
+            ]])
+        }
         if ProcessInfo.processInfo.arguments.contains("--native-mermaid-fixture") {
             if ProcessInfo.processInfo.arguments.contains("--native-stream-fixture") {
                 return ChatThread(["id": "local-ui-fixture", "title": "Mermaid", "turns": []])
@@ -78,6 +110,52 @@ enum NativeUIFixture {
             return ["id": .string(number), "status": "completed", "items": .array(items)]
         }
         return ChatThread(["id": "local-ui-fixture", "title": "长会话与图片验收", "turns": .array(turns)])
+    }
+}
+
+/// CI waits for an active, laid-out view instead of guessing how long Simulator launch takes.
+struct NativePreviewFixtureReadyMarker: UIViewRepresentable {
+    let name: String
+    let ready: Bool
+    func makeUIView(context: Context) -> MarkerView { MarkerView() }
+    func updateUIView(_ view: MarkerView, context: Context) { view.configure(name: name, ready: ready) }
+
+    final class MarkerView: UIView {
+        private var name = ""
+        private var ready = false
+        private var written = false
+        private var ticks = 0
+        private var displayLink: CADisplayLink?
+        func configure(name: String, ready: Bool) {
+            self.name = name; self.ready = ready
+            isUserInteractionEnabled = false
+            updateDisplayLink()
+        }
+        override func didMoveToWindow() { super.didMoveToWindow(); updateDisplayLink() }
+        private func updateDisplayLink() {
+            guard window != nil, ready, !written else {
+                displayLink?.invalidate(); displayLink = nil; ticks = 0
+                return
+            }
+            guard displayLink == nil else { return }
+            let link = CADisplayLink(target: self, selector: #selector(displayed))
+            link.add(to: .main, forMode: .common); displayLink = link
+        }
+        @objc private func displayed() {
+            guard window?.windowScene?.activationState == .foregroundActive,
+                  bounds.width > 0, bounds.height > 0 else { ticks = 0; return }
+            // Two active display ticks give the laid-out hierarchy a presentation opportunity.
+            ticks += 1
+            guard ticks >= 2 else { return }
+            let value: JSONValue = ["view": .string(name), "pid": .number(Double(ProcessInfo.processInfo.processIdentifier)),
+                "width": .number(Double(bounds.width)), "height": .number(Double(bounds.height))]
+            let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("preview-\(name)-ready.json")
+            do {
+                try JSONEncoder().encode(value).write(to: url, options: .atomic)
+                written = true; updateDisplayLink()
+            } catch { print("Preview fixture readiness: \(error)") }
+        }
     }
 }
 
