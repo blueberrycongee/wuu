@@ -33,7 +33,7 @@ const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 const fake = path.join(fixture, 'native-fixture');
 fs.writeFileSync(fake, `#!/bin/sh\nexec ${quote(process.env.WUU_NODE_EXECUTABLE || 'node')} ${quote(path.join(desktop, '../scripts/fixtures/native-user-input.mjs'))} "$@"\n`, { mode: 0o755 });
 process.env.WUU_CODEX_BINARY = fake;
-const engines = Object.fromEntries(['claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+const engines = Object.fromEntries(['claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
 engines.codex = { enabled: true, binary_path: fake };
 fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
   default_provider: 'fixture', engines,

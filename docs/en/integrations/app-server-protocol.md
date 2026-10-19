@@ -368,6 +368,12 @@ service.
 {"id":"21","method":"config/model/update","params":{"provider":"deepseek","base_url":"https://api.deepseek.com","api_key":"sk-...","keep_selection":true}}
 ```
 
+`initialize.catalog_providers` supplies the local connectable directory before
+clients open settings or onboarding. `config/model-catalog/refresh` returns the
+updated `catalog_providers` alongside configured `providers` and counts. Clients
+can keep the current directory visible until refresh succeeds. Older hosts may
+omit `catalog_providers`; request the directory separately in that case.
+
 `config/model-catalog/providers` lists catalog services that can be connected
 with an endpoint and a key, ordered by name, each with its `type`, `base_url`,
 `model_count`, and a suggested `default_model`. Services that need an account
@@ -396,8 +402,11 @@ preference alone.
 
 `engine/list` accepts `{ "cwd": "/absolute/session/directory", "refresh_models": true }`.
 `cwd` defaults to the runtime root; pass the actual conversation/worktree directory
-when it differs. Refresh bypasses each external engine's native discovery cache;
-overlapping probes for the same context share work. Successful catalogs expire
+when it differs. Refresh also rescans desktop installation and login-shell paths,
+reapplies persisted engine enable/disable choices to the live runtime, and bypasses
+each external engine's native discovery cache. Newly installed engines become usable
+without restarting; running turns retain their existing engine leases. Overlapping
+model probes for the same context share work. Successful catalogs expire
 after two minutes, failures retry after five seconds, and probes are bounded
 (Claude: 20-second outer budget; other engines: 30 seconds). Executable, environment
 and known native configuration/authentication metadata form the cache context;

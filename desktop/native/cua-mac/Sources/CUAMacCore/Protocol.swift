@@ -439,7 +439,7 @@ public final class MCPServer {
                         "type": "array",
                         "minItems": 1,
                         "maxItems": 64,
-                        "description": "Ordered actions. Every step must declare risk=safe, external_side_effect, or destructive. Non-safe steps also require confirmed=true.",
+                        "description": "Ordered actions for the top-level app. A step may omit app or name the same app; switching apps within a sequence is rejected before any steps execute. Every step must declare risk=safe, external_side_effect, or destructive. Non-safe steps also require confirmed=true.",
                         "items": [
                             "type": "object",
                             "required": ["action", "risk"],

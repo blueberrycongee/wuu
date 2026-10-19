@@ -22,6 +22,10 @@ macOS LaunchServices 启动器也会转发该设置。
 
 在 macOS 上，`make dev` 和 `npm --prefix desktop run dev` 默认启用 Computer Use。可设置 `WUU_ENABLE_CUA_MAC=0` 在本次开发运行中关闭；`dev:direct` 仍可显式启用。使用时仍需 macOS 的辅助功能和屏幕录制权限。
 
+macOS 源码启动器会跨 LaunchServices 保留启动终端的 `PATH`、shell/工具链目录和
+`WUU_<ID>_BINARY` 覆盖值。图形方式打开的安装包会检测常见用户安装位置，并在需要时
+读取登录 shell 路径。在 Wuu 运行期间安装 CLI 后，可点击“设置 → Agent → 刷新”。
+
 桌面安装包在 `Resources/tools` 中内置一份校验过 checksum 的固定版本 ripgrep，并把该目录追加到核心的 `PATH` 末尾，因此即使系统没有安装 `rg`，搜索工具和 agent 的 shell 命令也能使用它；`PATH` 中已有的 `rg` 优先。`make dev` 不会下载它。如需在开发时使用内置版本，先运行一次 `npm --prefix desktop run build:ripgrep`；否则核心使用 `PATH` 中的 `rg`，或回退到内置的搜索实现。
 
 Project Agent 尚属实验功能，默认构建和发布构建均关闭，没有可供用户开启的设置。
@@ -41,7 +45,7 @@ make build-go
 ./bin/wuu --help
 ```
 
-九个内置业务插件使用 `plugins/<id>/src/` 中的 TypeScript 源码。
+十个内置业务插件使用 `plugins/<id>/src/` 中的 TypeScript 源码。
 `make build-plugins` 把独立 JavaScript 运行包生成到内嵌资源目录；`make build-go`、
 `make install` 和桌面核心构建会先重新生成这些资源，再编译 Go。已提交的运行包
 让普通 Go 构建不依赖 npm 安装；`make check-plugins` 会拒绝过期的生成产物。
@@ -77,11 +81,31 @@ make build-go
 
 ### 实时活动预览验收
 
-安装桌面依赖后，运行 `node desktop/scripts/activity-preview-e2e.cjs`。脚本会打包产品中的 Electron 预览窗口与浏览器/原生内容适配器，打开独立的合成网页，并通过 JSONL 命令与二进制 AVC 会话输出启动合成原生画面宿主子进程。它检查切换提供方时的窗口身份和几何保持、从停靠角落展开的出现动画、切换会话时仅显示所属预览且后台任务继续运行、画面确认、旧回调拒绝、捕获错误呈现、手动隐藏与重新打开、自动预览设置、外部任务控制状态更新以及关闭清理。结果、传输日志、出现动画帧采样与会话可见性结果以及渲染截图保存在 `desktop/out/activity-preview/`；可用 `WUU_ACTIVITY_PREVIEW_OUTPUT` 修改目录。无图形会话的 Linux 自动使用软件渲染和合成显示器。
+安装桌面依赖后，运行 `node desktop/scripts/activity-preview-e2e.cjs`。脚本会打包产品中的 Electron 预览窗口与浏览器/原生内容适配器，打开独立的合成网页，并通过 JSONL 命令与二进制 AVC 会话输出启动合成原生画面宿主子进程。它检查同一会话的独立目标、最多 5 张可见卡片及候补补位、提到最前、会话可见性、对话框遮挡、单张隐藏、自动预览设置、多个保留目标的原生控制状态更新、旧回调拒绝、画面确认、捕获错误恢复和关闭清理。结果、传输日志、出现动画帧采样、堆叠几何信息和截图保存在 `desktop/out/activity-preview/`；可用 `WUU_ACTIVITY_PREVIEW_OUTPUT` 修改目录。macOS 还会保存浅色默认字号和深色大字号布局的堆叠合成截图。无图形会话的 Linux 自动使用软件渲染和合成显示器。
 
 构建 core 后，运行 `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs`，检查真实 Go 执行归属和 Chromium 输入。停止必须中断当前任务；之后的新指令应取得新的操作权限，旧执行 ID 仍须被拒绝。该脚本也覆盖浏览器任务隔离、保留页面、待发送输入期间接管与清理。证据保存在 `desktop/out/browser-task-ownership/`。
 
-这些检查不验证 ScreenCaptureKit、原生应用输入、macOS 权限、系统窗口合成或安装包签名。在启用 Computer Use 的 macOS 构建中，还需检查浏览器 → 原生应用 → 浏览器切换、同一应用的两个窗口、将终端和 Wuu 作为普通目标、隐藏或最小化窗口、目标关闭、屏幕录制权限拒绝或撤销，以及待发送输入期间的接管。隐藏和停止不能退出被观察的应用；停用或替换扩展必须停止它的流。还需检查明暗主题、默认与大字号、减少动态效果，以及输入框附近的拖拽和缩放。`node desktop/scripts/inspect-cua-pip.cjs` 可为运行中的原生预览记录进程/窗口诊断与截图；辅助进程正在运行本身不能证明画面实时有效。
+这些检查不验证 ScreenCaptureKit、原生应用输入、macOS 权限或安装包签名。在启用 Computer Use 的 macOS 构建中，还需检查浏览器 → 原生应用 → 浏览器切换、同一应用的两个窗口、将终端和 Wuu 作为普通目标、隐藏或最小化窗口、目标关闭、屏幕录制权限拒绝或撤销，以及待发送输入期间的接管。隐藏和停止不能退出被观察的应用；停用或替换扩展必须停止它的流。还需检查明暗主题、默认与大字号、减少动态效果，以及输入框附近的拖拽和缩放。`node desktop/scripts/inspect-cua-pip.cjs` 可为运行中的原生预览记录进程/窗口诊断与截图；辅助进程正在运行本身不能证明画面实时有效。
+
+## 外部引擎发现冒烟检查
+
+在 macOS 上构建桌面与核心后，通过 LaunchServices 使用系统 PATH 和临时用户数据
+验证真实设置刷新流程：
+
+```bash
+go build -o desktop/build/bin/wuu-core ./cmd/wuu
+go build -o desktop/build/bin/fakecodex ./internal/codexengine/testdata/fakecodex
+(cd desktop && npx electron-vite build)
+open -n -W -a "$PWD/desktop/node_modules/electron/dist/Electron.app" \
+  --env PATH=/usr/local/bin:/usr/bin:/bin \
+  --args "$PWD/desktop/scripts/engine-discovery-e2e.cjs" --use-mock-keychain
+```
+
+结果写入 `desktop/out/e2e/engine-discovery/result.json`（`open` 不转发应用退出码）。
+检查覆盖启动检测、运行期间安装、真实设置刷新按钮、Codex 原生协议轮次、新增 shell
+目录，以及显式禁用。使用合成 Codex 协议端，要求系统公共目录没有安装 Codex；
+不验证上游登录与推理。可向 `open` 添加 `--env WUU_ENGINE_DISCOVERY_OUTPUT=/absolute/output`
+以保留独立证据目录。
 
 ## 选择相关检查
 
@@ -90,7 +114,7 @@ make build-go
 | `make check-go` | 模块一致性、格式、vet，以及 Windows/macOS 交叉构建 |
 | `make test-go` | CLI、核心、运行时边界和提示词的 Go 测试 |
 | `make check-plugins build-plugins` | TypeScript 插件类型、生成产物一致性及运行包 |
-| `make test-plugins` | 在临时宿主环境中验证已打包插件的 JSONL 生命周期、工具、持久化和后台行为 |
+| `make test-plugins` | 验证插件源码契约，并在临时宿主环境中验证已打包插件的 JSONL 生命周期、工具、持久化和后台行为 |
 | `make check-desktop test-desktop` | 桌面 TypeScript、启动器和单元测试 |
 | `make build-desktop` | 共享 Web 资源和 Electron main/preload/renderer 产物，不生成安装包 |
 | `make check-clients test-clients build-clients` | 协议/SDK/客户端类型、SDK/客户端测试，以及保留的 Web/Expo 产物 |
@@ -201,6 +225,16 @@ DNS/TLS 与 HTTP 时间、HTTP 暴露 Content-Length 时的请求体大小、连
 时间，失败和未执行回合按完整期限计入。基线为标签 `baseline` 的未压缩 SSE，按负载和
 回合匹配，全部通过正确性检查后才输出指数。高于 100 表示该样本更快；同时检查成功样本
 的 P50/P90、完成时间及失败。小样本不能证明尾延迟或整体产品分数。
+
+用 `-list-providers` 列出已配置的名称和模型，不输出凭证。测试命令调度时，
+对已配置的 DeepSeek 或 Codex 增加 `-shell-workload -repeats 3 -timeout 120s`。
+增加 `-shell-delay 0s` 可运行短命令对照。这个独立负载不使用合成历史、合成工具和预热参数。真实模型执行白名单内的 PTC
+程序，并行运行 25 秒 shell 夹具与独立读取，再在第二轮读取最终结果。runner 检查
+只启动一次、两次回答、工具次数、完成所属会话，以及后台转交前后的输出。报告分别
+记录首个回答的 `ready_ms`、最终验证的 `total_ms`，以及各工具执行与
+`queue_wait_ms`（旧基线为未知）。完成事件来自真实进程管理器，由 runner 启动
+第二次模型轮次；不覆盖桌面通知交付。传输评分脚本不为此负载评分，应按服务商和
+版本比较 JSONL。首个回答更早不代表构建更早完成。前后使用同一 runner，并保留失败记录。
 
 本机原始报告放在忽略的产物目录。公开性能结论需要在 [evals](../../../evals/README.md)
 提交完整且来源干净的记录。CI 应检查确定性的连接复用、载荷与重定向契约、预热/增量、
@@ -486,3 +520,41 @@ CI 额外使用 sample-02 运行此回归，两次运行一起上传为 `convers
 长度变化。原始数据和替换映射保存在公开仓库之外。校验器会拒绝额外字段、常见密钥和
 非示例 HTTP 地址，但不能证明任意正文已经脱敏，每份新样本仍须人工复核。
 样本中的技术结论属于历史会话内容，不应作为当前产品文档。运行无需真实账号或模型密钥。
+
+### Linux Computer Use 开发
+
+Linux 开发启动器会构建 X11 Computer Use 辅助程序，并默认启用对应内置扩展。
+设置 `WUU_ENABLE_CUA_LINUX=0` 可退出。只构建辅助程序可运行
+`npm --prefix desktop run build:cua-linux`；该命令使用 Go 工具链，并将 XGB
+许可证复制到包内声明目录。运行环境须为支持 XTEST 和 XComposite 的 X11 会话，
+暂不支持原生 Wayland 控制。这不会改变当前正式发布的安装包平台范围。
+
+### Linux Computer Use 验收
+
+先用 `go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu` 构建核心，运行
+`npm --prefix desktop run build:cua-linux` 构建辅助程序，再用
+`cd desktop && npx electron-vite build` 构建桌面端。回到仓库根目录，在隔离的
+X11 会话中运行 `node desktop/scripts/linux-cua-e2e.cjs`；需要 XComposite、
+XTEST、窗口管理器、合成器和 FFmpeg。Linux 验收工作流提供 Xvfb、Openbox 和
+xcompmgr。用例使用生产辅助程序执行输入、捕获指定窗口，并使用生产 PiP 工厂；
+活动直接传入观察协调器。
+
+同一次运行会采样动态预览 30 秒、2560×1600 大窗口 15 秒、隐藏预览后的空闲状态
+8 秒，以及恢复采集后 10 秒。原生动作包含宿主的精确目标发现调用。
+`desktop/out/e2e/linux-cua/performance.json` 保存主进程事件循环延迟、渲染器响应、
+视频帧间隔、输入响应时间、各进程 CPU 与 RSS 样本、内存趋势，以及重复释放和恢复
+采集轨道的结果。`results.json`、截图和 GIF 保留功能与视觉证据。
+`WUU_LINUX_CUA_OUTPUT` 可指定证据目录。
+
+预算用于发现卡顿和资源持续增长回归；CPU 样本只作为测量结果，不作为跨机器基准。
+CI 会记录虚拟显示、CPU、Electron 版本和软件渲染环境。
+
+第二个进程使用隔离配置和本地脚本化模型服务，加载生产桌面主进程、preload 和渲染器。
+真实输入框通过内置 Linux CUA 插件启动 Go app-server 回合。模型请求边界必须收到
+目标 ID、截图图像和新的快照元数据，包括 `after=vision` 的结果；其返回图像还必须
+显示测试目标在点击后同步绘制的新状态，而非旧画面。持续动画目标还会单独验证等待
+画面稳定的超时上限。真实 Go 活动通知
+自动创建 PiP；关闭预览必须释放采集，同时允许两次原生点击继续执行，回合随后完成并
+持久化。`full-app.json` 记录这些检查和 10 秒应用响应采样；`full-app-live.png` 与
+`full-app-desktop.png` 展示真实应用。全程不使用凭据或真实模型推理。该源码构建验收
+不验证安装包、物理 Linux 硬件、真实模型行为，或与 Mac 的性能等价性。

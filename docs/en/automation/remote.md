@@ -10,6 +10,140 @@ Release builds hide the phone access page until mobile release acceptance is com
 there is no public App Store distribution yet. Account login on the desktop remains
 development-only. Build the CLI using the [development guide](../project/development.md).
 
+## Connect an SSH workspace
+
+The experimental headless host runs Wuu, its installed agent engines, files, Git,
+and terminals on a remote macOS or Linux computer. Your local browser displays
+the shared Wuu workbench through an OpenSSH tunnel. Install and authenticate
+Codex, Claude Code, Pi, OpenCode, or other supported engines on the **remote**
+computer; engine discovery and conversation state belong to that computer.
+
+Build from the same Wuu checkout on the remote computer (Node 22+ and the Go
+version in `go.mod` are required):
+
+```bash
+make setup
+npm --prefix desktop run build:remote
+npm --prefix desktop run remote:serve -- --workdir /srv/my-project --port 8787 --pair
+```
+
+Run the last command in tmux or a service manager so logout does not stop it.
+It binds only to `127.0.0.1` and prints a single-use browser pairing link.
+The build includes the matching Go core and web assets; `--core` and
+`--web-root` can select explicit paths. Do not run the desktop's remote host
+and this service against the same Wuu home simultaneously.
+
+The SSH service uses local device pairing and refuses to start if its Wuu home
+is signed in to a Wuu account. Existing account credentials are left unchanged.
+Use a separate home, for example
+`WUU_HOME="$HOME/.wuu-ssh" npm --prefix desktop run remote:serve -- --workdir /srv/my-project --pair`,
+or intentionally sign out of that Wuu account first. A separate home has its own
+Wuu configuration and conversation history; configure it before starting work.
+
+On your local computer, build/install the CLI from this revision and connect:
+
+```bash
+wuu remote ssh --port 8787 user@server
+```
+
+Open the pairing link printed by the remote service. Subsequent visits to
+`http://127.0.0.1:8787/` use the saved pairing. Keep the SSH command running;
+Ctrl-C closes the tunnel. SSH config aliases, keys, host-key verification and
+ProxyJump follow your normal OpenSSH configuration. Use `--ssh-port` or
+`--ssh-config` for explicit overrides. Wuu keeps this tunnel in the foreground
+and does not reuse or leave behind a control master for the destination
+connection, even if your SSH config normally enables connection sharing or
+backgrounding. Jump hosts still follow their own SSH configuration; existing or
+explicitly backgrounded jump-host masters remain user-managed.
+
+On Linux and macOS, running without a controlling terminal isolates SSH and its
+foreground proxy children in one process group, so cancellation also cleans up a
+jump host still connecting. In an interactive terminal Wuu preserves shell job
+control and OpenSSH prompts, including when stdin is redirected. Use Ctrl-C to
+signal that foreground job. Signalling only the Wuu PID in this interactive case does not
+guarantee cleanup of a proxy that is still authenticating; service automation
+should run without a controlling terminal or stop its whole process group.
+
+The CLI's connection message is not an application health check. Wait for the
+remote service to print `Wuu workspace ready` before opening the workbench; that
+message confirms the listener is running and the host has registered with it.
+Agent engines are discovered on the remote computer when the workspace opens.
+`ExitOnForwardFailure` catches forwarding setup failures, not an unavailable
+remote application. If SSH reports a connection failure, fix the reported cause
+and rerun the same command. There is no automatic SSH retry or repeated password
+prompt; the browser reconnects when its tunnel becomes available again.
+
+Use a distinct local port for each host so browser identities and drafts stay
+separate. If remote port 8787 maps to local port 8788, start the remote service
+with `--port 8787 --browser-port 8788 --pair`, then connect with
+`wuu remote ssh --port 8788 --remote-port 8787 user@server`. Pair again if the
+advertised browser port changes.
+
+Closing the browser or losing SSH leaves agent tasks running on the remote
+service. Reconnect the tunnel to restore the conversation and buffered output.
+If the startup workspace was removed or relocated, workspace discovery remains
+available through the shared scratch workspace; select the desired project again.
+Terminals also survive a resumed connection; after a fresh attachment the
+workbench asks you to reopen them. Stopping or restarting the remote service
+stops its tasks and terminals; saved conversation history remains on disk.
+Restart without `--pair` to accept existing devices without opening enrollment.
+A failed startup or SIGINT/SIGTERM/SIGHUP shuts down children created by that
+service; it never reports readiness after cancellation.
+
+### Run the host as a service
+
+For a Linux machine with systemd, first pair interactively using the command
+above, then stop that host before starting the service. Use an absolute Node path
+from `command -v node` and your actual checkout, workspace and Wuu home paths:
+
+```ini
+# ~/.config/systemd/user/wuu-workspace.service
+[Unit]
+Description=Wuu SSH workspace
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/wuu
+Environment=WUU_HOME=/home/YOUR_USER/.wuu-ssh
+ExecStart=/usr/bin/node /srv/wuu/desktop/out-remote/host.mjs --workdir /srv/my-project --port 8787
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+UMask=0077
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now wuu-workspace
+journalctl --user -u wuu-workspace -f
+# Intentionally stop the service and its tasks:
+systemctl --user stop wuu-workspace
+```
+
+A user service may stop at logout unless your administrator enables user
+lingering (`loginctl enable-linger YOUR_USER`). Follow the machine's policy;
+Wuu does not install or enable services itself. On macOS, use tmux or a launchd
+service with the same direct Node command. Service restart restores saved
+history, not a process checkpoint: running turns and terminals are stopped.
+Do not put `--pair` in an automatically restarting service; open enrollment only
+when you intend to pair a new browser, and keep pairing links out of shared logs.
+
+This lifecycle follows the preinstalled-server and loopback SSH forwarding model
+used by [code-server](https://coder.com/docs/code-server/guide#port-forwarding-via-ssh).
+OpenSSH's [forwarding](https://man.openbsd.org/ssh_config#ExitOnForwardFailure)
+and [connection sharing](https://man.openbsd.org/ssh_config#ControlMaster)
+remain transport concerns; Wuu's existing session continuity handles reconnects.
+
+This source-build preview uses the browser workbench. Native desktop windows,
+embedded browser/computer-use tools and automatic remote installation are not
+provided by the headless host. Engine login requiring a native browser must be
+completed on the remote computer before connecting. The local machine's SSH
+credentials and model configuration are not uploaded.
+
 ## Connect the iOS app
 
 1. Keep Wuu open on your computer. In Settings → Phone access, allow access and

@@ -25,6 +25,12 @@ Responses carry the same `id` and either `result` or `error`. Notifications have
 `method` and `params` without an `id`. Check initialization's `status` and `issues`:
 a successful protocol response can still report `needs_setup`.
 
+Initialization also includes `catalog_providers`, the local connectable service
+directory, so clients can display service choices immediately. A successful
+`config/model-catalog/refresh` returns the updated directory in the same field;
+keep the existing choices visible while refreshing. Older hosts may omit this
+field; use `config/model-catalog/providers` in that case.
+
 ## Run a task
 
 Create a session, then use the returned `result.thread.id`:

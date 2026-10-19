@@ -6,7 +6,7 @@ import { existsSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 export type CUANativePiPEvent = {
-  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry" | "gone" | "expand" | "promote" | "shown" | "completion_expired" | "retry";
+  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry" | "gone" | "expand" | "promote" | "drag_start" | "shown" | "completion_expired" | "retry";
   x?: number;
   y?: number;
   width?: number;
@@ -233,8 +233,8 @@ export class CUANativePreview {
     this.send({ type: "live", live });
   }
 
-  updateActivity(activity: ActivitySession): void {
-    this.send({ type: "activity", state: activity.state, controller: activity.controller, error: activity.error ?? "" });
+  updateActivity(activity: ActivitySession, restoreTarget = false): void {
+    this.send({ type: "activity", state: activity.state, controller: activity.controller, error: activity.error ?? "", restore: restoreTarget });
   }
 
   requestKeyframe(): void { this.send({ type: "keyframe" }); }

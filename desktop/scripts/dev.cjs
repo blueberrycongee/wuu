@@ -10,7 +10,7 @@ const { devHome } = require("./dev-home.cjs");
 const { ensureDevSigningIdentity } = require("./dev-signing.cjs");
 
 const desktopRoot = resolve(__dirname, "..");
-const buildHelper = join(__dirname, "build-cua-mac.cjs");
+const buildHelper = join(__dirname, process.platform === "linux" ? "build-cua-linux.cjs" : "build-cua-mac.cjs");
 const buildCoreAndPluginRuntimes = join(__dirname, "build-core.cjs");
 const electronVitePackage = require.resolve("electron-vite/package.json", { paths: [desktopRoot] });
 const electronViteManifest = JSON.parse(readFileSync(electronVitePackage, "utf8"));
@@ -64,6 +64,10 @@ if (process.platform === "darwin") {
   env.WUU_CUA_MAC_HELPER = helperPathForApp(env.WUU_DEV_ELECTRON_APP);
   env.WUU_CUA_MAC_PIP_HELPER = pipHelperPathForApp(env.WUU_DEV_ELECTRON_APP);
   env.ELECTRON_EXEC_PATH = join(__dirname, "launch-electron-via-open.cjs");
+}
+if (process.platform === "linux") {
+  env.WUU_ENABLE_CUA_LINUX ??= "1";
+  env.WUU_CUA_LINUX_HELPER ??= join(desktopRoot, "build", "bin", "wuu-cua-linux");
 }
 
 const dev = spawn(process.execPath, [electronVite, desktopRoot], {

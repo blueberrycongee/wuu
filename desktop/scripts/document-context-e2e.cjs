@@ -221,7 +221,7 @@ function writeEvidence(passed) {
 const timeout = setTimeout(() => { errors.push('Timed out'); writeEvidence(false); app.exit(1); }, annotationAcceptance ? 420000 : 180000);
 module.exports = (async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'fixture', engines,
     providers: { fixture: { type: 'openai-compatible', base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: 'synthetic-not-a-credential', model: 'fixture' } } }));
   const stamp = '2026-01-01T00:00:00Z';

@@ -16,7 +16,6 @@ export const FOCUS_MODALITY_ATTRIBUTE = "data-focus-modality";
 export type FocusModality = "keyboard" | "pointer";
 
 const KEYBOARD_FOCUS_KEYS = new Set([
-  "Tab",
   "ArrowUp",
   "ArrowDown",
   "ArrowLeft",
@@ -67,11 +66,15 @@ function onPointerDown(): void {
   apply("pointer");
 }
 
-function onKeyDown(event: KeyboardEvent): void {
-  if (event.key === "Tab") {
+function onTabKeyDown(event: KeyboardEvent): void {
+  // Wait for the input's handler: Tab can insert a completion without moving
+  // focus. Preserve the current modality when that handler consumes the key.
+  if (event.key === "Tab" && !event.defaultPrevented) {
     apply("keyboard");
-    return;
   }
+}
+
+function onKeyDown(event: KeyboardEvent): void {
   if (!KEYBOARD_FOCUS_KEYS.has(event.key) || isTextEntry(event.target)) {
     return;
   }
@@ -87,6 +90,7 @@ export function startFocusModality(): () => void {
     apply("pointer");
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("keydown", onTabKeyDown);
   }
   refCount += 1;
   return () => {
@@ -96,6 +100,7 @@ export function startFocusModality(): () => void {
     }
     document.removeEventListener("pointerdown", onPointerDown, true);
     document.removeEventListener("keydown", onKeyDown, true);
+    document.removeEventListener("keydown", onTabKeyDown);
   };
 }
 

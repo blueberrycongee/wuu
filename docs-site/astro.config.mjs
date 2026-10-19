@@ -24,10 +24,11 @@ const titleFromPage = (page) => {
   const markdown = readFileSync(new URL(`../docs/${page}`, import.meta.url), "utf8")
   return markdown.match(/^#\s+(.+)$/m)?.[1] ?? page
 }
-const sidebar = Object.entries(manifest.locales).map(([locale, config]) => ({
+const sidebar = Object.values(manifest.locales).map((config) => ({
   label: `__locale:${config.root}`,
   items: config.navigation.map((group) => ({
     label: group.title,
+    collapsed: true,
     items: group.pages.map((page) => ({
       label: titleFromPage(page),
       link: hrefFromPage(page, config.root),
@@ -44,7 +45,8 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "wuu",
-      description: manifest.site.description,
+      description:
+        manifest.site.descriptions?.[manifest.site.default_locale] ?? manifest.site.description,
       defaultLocale: "zh-cn",
       locales: {
         "zh-cn": { label: "简体中文", lang: "zh-CN" },
@@ -73,8 +75,11 @@ export default defineConfig({
       expressiveCode: {
         themes: ["github-light", "github-dark"],
       },
-      favicon: "/site-assets/brand/wuu.svg",
-      pagination: false,
+      favicon: "/favicon.png",
+      editLink: {
+        baseUrl: "https://github.com/blueberrycongee/wuu/edit/main/docs/",
+      },
+      pagination: true,
       credits: false,
     }),
   ],

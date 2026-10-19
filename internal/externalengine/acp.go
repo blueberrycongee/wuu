@@ -29,6 +29,7 @@ var grokPromptStall = 30 * time.Second
 var (
 	acpInitializeTimeout = 30 * time.Second
 	acpSessionTimeout    = 120 * time.Second
+	acpCloseTimeout      = 10 * time.Second
 )
 
 // ACP v1's prompt response owns completion for standard agents. Grok also
@@ -40,7 +41,11 @@ type acpInitialize struct {
 	Version      int          `json:"protocolVersion"`
 	AuthMethods  []AuthMethod `json:"authMethods"`
 	Capabilities struct {
-		Load   bool `json:"loadSession"`
+		Load    bool `json:"loadSession"`
+		Session struct {
+			Resume *struct{} `json:"resume"`
+			Close  *struct{} `json:"close"`
+		} `json:"sessionCapabilities"`
 		Prompt struct {
 			Image bool `json:"image"`
 		} `json:"promptCapabilities"`
@@ -65,7 +70,8 @@ type acpSession struct {
 }
 
 // DiscoverModels probes a short-lived ACP session for the agent's advertised
-// catalog. It never persists the probe session or sends a prompt.
+// catalog. Wuu never saves the probe reference or sends a prompt; the agent
+// may retain the session in its own persistent history.
 func (e *Engine) DiscoverModels(ctx context.Context) ([]DiscoveredModel, error) {
 	catalog, err := e.DiscoverCatalog(ctx)
 	if err != nil {
@@ -82,8 +88,8 @@ type DiscoveredCatalog struct {
 }
 
 // DiscoverCatalog probes a short-lived ACP session for advertised models and
-// permission modes. It never persists the probe session or sends a prompt.
-func (e *Engine) DiscoverCatalog(ctx context.Context) (DiscoveredCatalog, error) {
+// permission modes, without saving the probe reference or sending a prompt.
+func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog, err error) {
 	if e != nil && e.entry.Protocol == "opencode" {
 		return e.discoverOpenCodeCatalog(ctx)
 	}
@@ -104,7 +110,8 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (DiscoveredCatalog, error)
 		}
 		return nil, nil
 	}}
-	if _, err := initializeACP(ctx, r); err != nil {
+	init, err := initializeACP(ctx, r)
+	if err != nil {
 		return DiscoveredCatalog{}, acpEngineError(e.entry, p, err)
 	}
 	cwd := e.root
@@ -112,6 +119,7 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (DiscoveredCatalog, error)
 		cwd, _ = os.Getwd()
 	}
 	session := acpSession{asyncConfiguration: e.entry.ID == "devin"}
+	defer func() { err = errors.Join(err, r.closeACPSession(init, session.ID)) }()
 	if err := r.session(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}}, &session); err != nil {
 		// Settings surfaces this as the engine's model error, which is where a
 		// user discovers that the agent needs configuration of its own.
@@ -164,7 +172,7 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (DiscoveredCatalog, error)
 	return DiscoveredCatalog{Models: models, Modes: modes}, nil
 }
 
-func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *turn) error {
+func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *turn) (err error) {
 	p, err := startChild(s.engine.binary, s.engine.entry.Args, s.binding.RootDir, nil)
 	if err != nil {
 		return err
@@ -186,7 +194,7 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 		if request {
 			disarmStall()
 			if method == "session/request_permission" {
-				return s.acpPermission(ctx, ref, params)
+				return s.acpPermission(ctx, ref, params, t)
 			}
 			// Never leave an unknown blocking request unanswered. No filesystem
 			// or terminal capabilities are advertised by this client.
@@ -229,13 +237,21 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 	}
 	params := map[string]any{"cwd": s.binding.RootDir, "mcpServers": mcp}
 	session := acpSession{asyncConfiguration: s.engine.entry.ID == "devin"}
+	defer func() {
+		prompting = false
+		err = errors.Join(err, r.closeACPSession(init, session.ID))
+	}()
+	resumeMethod := "session/load"
+	if init.Capabilities.Session.Resume != nil {
+		resumeMethod = "session/resume"
+	}
 	notice := ""
 	switch {
 	case ref == "":
 		if err := r.session(setupCtx, "session/new", params, &session); err != nil {
 			return acpEngineError(s.engine.entry, p, fmt.Errorf("session/new: %w", err))
 		}
-	case !init.Capabilities.Load:
+	case !init.Capabilities.Load && init.Capabilities.Session.Resume == nil:
 		// Refusing the turn would strand the thread: the saved reference can
 		// never be cleared from the UI, so every later turn would fail the same
 		// way. Start fresh and say so instead.
@@ -245,10 +261,10 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 		}
 	default:
 		loadParams := map[string]any{"cwd": s.binding.RootDir, "mcpServers": mcp, "sessionId": ref}
-		if err := r.session(setupCtx, "session/load", loadParams, &session); err != nil {
+		if err := r.session(setupCtx, resumeMethod, loadParams, &session); err != nil {
 			notice = engineResumeNotice(s.engine.entry.Name, acpRecoverableReason(err))
 			if retryErr := r.session(setupCtx, "session/new", params, &session); retryErr != nil {
-				return acpEngineError(s.engine.entry, p, fmt.Errorf("session/load: %w; session/new: %w", err, retryErr))
+				return acpEngineError(s.engine.entry, p, fmt.Errorf("%s: %w; session/new: %w", resumeMethod, err, retryErr))
 			}
 		}
 	}
@@ -265,7 +281,7 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 	if notice != "" {
 		t.content(notice, false)
 	}
-	if err := s.applyACPSelection(setupCtx, r, session, ref, resumed); err != nil {
+	if err := s.applyACPSelection(setupCtx, r, init, session, ref, resumed); err != nil {
 		return err
 	}
 	cancelSetup()
@@ -563,12 +579,13 @@ type acpPermission struct {
 	} `json:"options"`
 }
 
-func (s *Session) applyACPSelection(ctx context.Context, r *rpc, loaded acpSession, ref string, resumed bool) error {
+func (s *Session) applyACPSelection(ctx context.Context, r *rpc, init acpInitialize, loaded acpSession, ref string, resumed bool) (err error) {
 	selected := loaded
 	if resumed {
 		// Loaded sessions retain previous overrides. A fresh, unprompted session
 		// supplies native defaults, including options dependent on the model.
 		selected = acpSession{asyncConfiguration: s.engine.entry.ID == "devin"}
+		defer func() { err = errors.Join(err, r.closeACPSession(init, selected.ID)) }()
 		if err := r.session(ctx, "session/new", map[string]any{"cwd": s.binding.RootDir, "mcpServers": []any{}}, &selected); err != nil {
 			return fmt.Errorf("read configured model defaults: %w", err)
 		}
@@ -606,10 +623,6 @@ func (s *Session) applyACPSelection(ctx context.Context, r *rpc, loaded acpSessi
 		if option := selected.modelConfigOption(); option != nil {
 			model = option.Current
 		}
-		effort := ""
-		if option := selected.thoughtLevelOption(); option != nil {
-			effort = option.Current
-		}
 		if err := loaded.selectModelAndEffort(ctx, r, ref, s.engine.entry.Name, model, ""); err != nil {
 			return err
 		}
@@ -620,8 +633,18 @@ func (s *Session) applyACPSelection(ctx context.Context, r *rpc, loaded acpSessi
 		if err := loaded.selectModelOptions(ctx, r, values); err != nil {
 			return err
 		}
-		if err := loaded.selectModelAndEffort(ctx, r, ref, s.engine.entry.Name, "", effort); err != nil {
-			return err
+		if desired := selected.thoughtLevelOption(); desired != nil {
+			option := loaded.thoughtLevelOption()
+			if option == nil || !option.hasChoice(desired.Current) {
+				return fmt.Errorf("%s does not advertise the configured reasoning default", s.engine.entry.Name)
+			}
+			// An empty advertised value can mean provider default (DSH).
+			// Apply it explicitly when clearing a saved reasoning override.
+			if option.Current != desired.Current {
+				if err := loaded.setConfigOption(ctx, r, ref, option.ID, desired.Current); err != nil {
+					return err
+				}
+			}
 		}
 		if desired, _, _ := selected.speedOption(); desired != nil {
 			if err := loaded.setConfigOption(ctx, r, ref, desired.ID, desired.Current); err != nil {
@@ -786,7 +809,7 @@ func (s acpSession) selectHostPermissionMode(ctx context.Context, r *rpc, ref, e
 	return r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": option.ID, "value": selected.ID}, nil)
 }
 
-func (s *Session) acpPermission(ctx context.Context, ref string, raw json.RawMessage) (any, error) {
+func (s *Session) acpPermission(ctx context.Context, ref string, raw json.RawMessage, t *turn) (any, error) {
 	cancelled := map[string]any{"outcome": map[string]string{"outcome": "cancelled"}}
 	var req acpPermission
 	if err := json.Unmarshal(raw, &req); err != nil {
@@ -794,6 +817,19 @@ func (s *Session) acpPermission(ctx context.Context, ref string, raw json.RawMes
 	}
 	if ref == "" || req.SessionID != ref {
 		return cancelled, nil
+	}
+	// ACP permission requests contain partial tool calls. DSH sends only the
+	// ID after its ordered tool updates, which own the action and input.
+	if call := t.tools[req.Tool.ID]; call != nil {
+		if req.Tool.Title == "" {
+			req.Tool.Title = call.Name
+		}
+		if len(req.Tool.Input) == 0 || string(req.Tool.Input) == "null" {
+			req.Tool.Input = json.RawMessage(call.Arguments)
+		}
+	}
+	if req.Tool.Kind == "" {
+		req.Tool.Kind = t.acpToolKinds[req.Tool.ID]
 	}
 	decision := agentengine.ApprovalDecline
 	if s.binding.PermissionMode == "unconfined" {
@@ -852,6 +888,7 @@ func parseACPUpdate(ref string, raw json.RawMessage, t *turn) error {
 		Type    string               `json:"sessionUpdate"`
 		ID      string               `json:"toolCallId"`
 		Title   string               `json:"title"`
+		Kind    string               `json:"kind"`
 		Status  string               `json:"status"`
 		Input   json.RawMessage      `json:"rawInput"`
 		Output  json.RawMessage      `json:"rawOutput"`
@@ -893,7 +930,16 @@ func parseACPUpdate(ref string, raw json.RawMessage, t *turn) error {
 			}
 		}
 		if t != nil {
+			if update.Kind != "" {
+				if t.acpToolKinds == nil {
+					t.acpToolKinds = make(map[string]string)
+				}
+				t.acpToolKinds[update.ID] = update.Kind
+			}
 			t.tool(update.ID, update.Title, string(update.Input), update.Status, output)
+			if update.Status == "completed" || update.Status == "failed" {
+				delete(t.acpToolKinds, update.ID)
+			}
 		}
 	case "plan":
 		if t != nil {
@@ -934,7 +980,7 @@ func (r *rpc) session(ctx context.Context, method string, params map[string]any,
 	if err := r.call(ctx, method, params, session); err != nil {
 		return err
 	}
-	if method == "session/load" {
+	if method == "session/load" || method == "session/resume" {
 		session.ID, _ = params["sessionId"].(string)
 	}
 	if session.asyncConfiguration {
@@ -947,6 +993,29 @@ func (r *rpc) session(ctx context.Context, method string, params map[string]any,
 	if options, ok := updates[session.ID]; ok {
 		session.ConfigOptions = options
 		session.configurationRevision++
+	}
+	return nil
+}
+
+// closeACPSession lets an agent flush persistent state and dispose descendants
+// before its process is killed. Cleanup also runs after cancellation, with a
+// separate deadline, and must never open a new permission prompt.
+func (r *rpc) closeACPSession(init acpInitialize, ref string) error {
+	if init.Capabilities.Session.Close == nil || ref == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), acpCloseTimeout)
+	defer cancel()
+	previous := r.handle
+	r.handle = func(ctx context.Context, method string, params json.RawMessage, request bool) (any, error) {
+		if request && method == "session/request_permission" {
+			return map[string]any{"outcome": map[string]string{"outcome": "cancelled"}}, nil
+		}
+		return previous(ctx, method, params, request)
+	}
+	defer func() { r.handle = previous }()
+	if err := r.call(ctx, "session/close", map[string]string{"sessionId": ref}, nil); err != nil {
+		return fmt.Errorf("session/close: %w", err)
 	}
 	return nil
 }

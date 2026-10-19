@@ -121,11 +121,11 @@ export class NativePiPContent implements ActivityPiPContent {
     this.watchFirstFrame();
   }
 
-  updateActivity(activity: ActivitySession): void {
+  updateActivity(activity: ActivitySession, restoreTarget = false): void {
     if (activity.execution_id !== this.activity.execution_id || activity.controller !== this.activity.controller
       || (activity.state === "stopped" && this.activity.state !== "stopped")) this.invalidateFrames();
     this.activity = activity;
-    this.preview?.updateActivity(activity);
+    this.preview?.updateActivity(activity, restoreTarget);
     this.preview?.setLive(this.live && activityPreviewIsLive(activity));
     this.watchFirstFrame();
   }

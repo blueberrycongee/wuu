@@ -64,7 +64,7 @@ const sessions = [
 fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
   default_provider: 'fixture',
   providers: { fixture: { type: 'openai-compatible', base_url: 'http://127.0.0.1:1/v1', api_key: 'synthetic-not-a-credential', model: 'fixture' } },
-  engines: Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }])),
+  engines: Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }])),
 }));
 fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects,
   active_context: { kind: 'project', project_id: projects[0].id, cwd: projects[0].path } }));

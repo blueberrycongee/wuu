@@ -44,7 +44,7 @@
 
 用 API Key 接入 DeepSeek、Kimi、智谱、阿里云百炼、火山方舟、MiniMax、OpenAI 或 Anthropic；也可以走硅基流动、OpenRouter 这类中转，或者 LM Studio 这类本地服务，任何兼容 OpenAI 或 Anthropic 接口的自定义端点都能接。已有的订阅也能直接用：Codex 登录、xAI SuperGrok、Grok Build。
 
-已经在用别的编程 Agent？wuu 可以把 Claude Code、Codex、Cursor、Devin、Grok、Hermes、OpenCode、Pi 或 Antigravity 作为对话的引擎，沿用它们自己的登录和工具。**设置 → 订阅** 会把各个账号的额度和余额放在一起显示。
+已经在用别的编程 Agent？wuu 可以把 Claude Code、Codex、Cursor、Devin、DeepSeek Harness、Grok、Hermes、OpenCode、Pi 或 Antigravity 作为对话的引擎，沿用它们自己的登录和工具。**设置 → 订阅** 会把各个账号的额度和余额放在一起显示。
 
 <p align="center">
   <img src="landing/assets/readme/models-zh.jpg" width="640" alt="添加服务">
@@ -69,7 +69,9 @@
 
 Computer Use 让 Agent 通过辅助功能与原生输入观察并操作 macOS 应用。浮动预览会跟随它的指针，显示每次点击和输入，目标应用在后台运行；修改通过应用本身保存，随后可以在审查中看到真实文件的变化。需要授予 macOS 的屏幕录制和辅助功能权限。
 
-![wuu 中的 Computer Use](landing/assets/readme/cua-zh.webp)
+[![wuu 中的 Computer Use](landing/assets/readme/cua-zh.webp)](landing/assets/readme/cua-zh.mp4)
+
+[观看视频](landing/assets/readme/cua-zh.mp4)
 
 ### 随时调整方向
 

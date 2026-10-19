@@ -184,6 +184,8 @@ export type InitializeResult = {
   model_aliases?: Record<string, ModelAliasSummary>;
   project_models?: ProjectModelsConfig;
   providers?: ProviderSummary[];
+  // Local connectable directory, ready before settings or onboarding opens.
+  catalog_providers?: CatalogProviderSummary[];
   advanced_settings?: AdvancedSettingsSummary;
   general_settings?: GeneralSettingsSummary;
   features?: FeatureFlags;
@@ -1122,6 +1124,44 @@ export type BrowserTabAdopted = {
   url: string;
 };
 
+// Browser settings are host-local. The renderer selects one of the profiles
+// returned by the host; it never supplies an arbitrary filesystem path to the
+// cookie reader.
+export type BrowserProfile = {
+  /** Stable host-side browser adapter id. */
+  browserId: string;
+  appName: string;
+  profileDirectoryName: string;
+  profileName: string;
+  profilePath: string;
+  hasCookies: boolean;
+  hasPasswords: boolean;
+  userName?: string;
+};
+
+export type BrowserCookieImportResult = {
+  appName: string;
+  profileName: string;
+  profilePath: string;
+  discovered: number;
+  imported: number;
+  skippedExpired: number;
+  skippedInvalid: number;
+  failed: number;
+};
+
+// An extension loaded into the shared embedded-browser session. The source
+// directory is owned by the user and remains untouched on removal.
+export type BrowserExtensionRecord = {
+  id: string;
+  name: string;
+  version: string;
+  path: string;
+  enabled: boolean;
+  loaded: boolean;
+  error?: string;
+};
+
 export type RuntimeConnectionUpdate = {
   // Remove a model from this provider's choices, including future catalog refreshes.
   remove_model?: string;
@@ -1293,6 +1333,7 @@ export type EngineSettingsConfig = {
   claude?: EngineBinarySettings;
   cursor?: EngineBinarySettings;
   devin?: EngineBinarySettings;
+  dsh?: EngineBinarySettings;
   grok?: EngineBinarySettings;
   hermes?: EngineBinarySettings;
   pi?: EngineBinarySettings;
@@ -1365,6 +1406,7 @@ export type ConfigModelCatalogRefreshResult = {
   provider_count: number;
   model_count: number;
   providers: ProviderSummary[];
+  catalog_providers?: CatalogProviderSummary[];
 };
 
 export type DesktopProject = {
@@ -3392,6 +3434,17 @@ export type WuuDesktopApi = {
   ) => () => void;
   // Main→renderer: the floating browser card asked to dock into the panel.
   onBrowserDock?: (handler: (payload: BrowserDockTarget) => void) => () => void;
+  // Browser settings. Profiles and extensions are host-local; a remote host
+  // may omit these methods.
+  listBrowserProfiles?: () => Promise<BrowserProfile[]>;
+  importBrowserCookies?: (profilePath: string) => Promise<BrowserCookieImportResult>;
+  listBrowserExtensions?: () => Promise<BrowserExtensionRecord[]>;
+  addBrowserExtension?: () => Promise<BrowserExtensionRecord[]>;
+  setBrowserExtensionEnabled?: (
+    id: string,
+    enabled: boolean,
+  ) => Promise<BrowserExtensionRecord[]>;
+  removeBrowserExtension?: (id: string) => Promise<BrowserExtensionRecord[]>;
   // Renderer→main: hide the agent view while a full-window overlay (settings,
   // dialogs, search) is open so it can't occlude the modal; false restores it.
   suppressBrowserOverlay?: (

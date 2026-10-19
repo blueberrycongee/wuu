@@ -15,11 +15,11 @@ app.whenReady().then(async () => {
       base: "./", logLevel: "warn", build: { outDir: path.join(temp, "renderer") } });
     const win = new BrowserWindow({ width: 900, height: 850, show: false });
     for (const theme of ["light", "dark"]) {
-      for (const size of ["14", "20"]) {
+      for (const size of ["15", "20"]) {
         for (const switching of ["thread-1", "thread-5"]) {
           await win.loadFile(path.join(temp, "renderer/index.html"), { query: {
-            mode: "history", count: "6", busy: "false", theme, size,
-            width: size === "14" ? "296" : "240", switching,
+            mode: "history", count: "6", busy: switching === "thread-5" ? "true" : "false", theme, size,
+            width: size === "15" ? "296" : "240", switching,
           } });
           const result = await win.webContents.executeJavaScript(`(async () => {
             while (!document.querySelector('.thread-row.pending-switch')) await new Promise(requestAnimationFrame);
@@ -41,7 +41,9 @@ app.whenReady().then(async () => {
               opacity: dot.opacity, forkLeft: forkBounds?.left, forkRight: forkBounds?.right };
             row.querySelector('.thread-row-main').focus();
             await settle();
+            const focusedFork = row.querySelector('.thread-row-fork-icon')?.getBoundingClientRect();
             const focused = { titleRight: titleRight(), actionsLeft: row.querySelector('.thread-row-actions').getBoundingClientRect().left,
+              forkLeft: focusedFork?.left, forkRight: focusedFork?.right,
               opacity: getComputedStyle(row, '::before').opacity };
             return { passive, focused };
           })()`);
@@ -61,6 +63,12 @@ app.whenReady().then(async () => {
           if (passive.forkRight !== undefined) assert.ok(passive.forkRight + 2 <= passive.dotLeft, "Fork overlaps switching indicator");
           assert.equal(focused.opacity, "0", "Keyboard actions must hide the switching dot");
           assert.ok(focused.titleRight + 2 <= focused.actionsLeft, "Title overlaps keyboard actions");
+          if (switching === "thread-5") {
+            assert.ok(Number.isFinite(focused.forkRight), "Fork scenario must render a fork marker");
+            assert.ok(focused.titleRight + 2 <= focused.forkLeft, "Title overlaps focused fork marker");
+            assert.ok(focused.forkRight + 2 <= focused.actionsLeft,
+              `Fork overlaps keyboard actions: ${JSON.stringify(results.at(-1))}`);
+          }
         }
       }
     }

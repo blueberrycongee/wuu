@@ -34,6 +34,8 @@ type pluginHostServices struct {
 	fileLocks   map[string]func()
 	lockContext context.Context
 	lockCancel  context.CancelFunc
+	processMu   sync.Mutex
+	processes   map[string]*pluginProcess
 }
 
 func newPluginHostServices(item pluginpkg.Plugin, projectRoot, wuuHome string, turnRouter *PluginSessionRouter) *pluginHostServices {
@@ -65,6 +67,7 @@ func (s *pluginHostServices) close() {
 	for _, release := range locks {
 		release()
 	}
+	s.closeProcesses()
 }
 
 func (s *pluginHostServices) activate() {
@@ -472,6 +475,10 @@ func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRe
 		pluginhost.ServiceRegistration{
 			Descriptor: pluginhost.KernelModelEmitDescriptor(),
 			Invoker:    &modelEmitInvoker{parent: k}, Kernel: true,
+		},
+		pluginhost.ServiceRegistration{
+			Descriptor: pluginhost.KernelProcessDescriptor(),
+			Invoker:    &processServiceInvoker{parent: k}, Kernel: true,
 		},
 		pluginhost.ServiceRegistration{
 			Descriptor: pluginhost.KernelBackgroundDescriptor(),

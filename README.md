@@ -44,7 +44,7 @@ All three harnesses used GPT-6 Astra with high reasoning effort: 18 tasks each, 
 
 Connect OpenAI, Anthropic, DeepSeek, xAI, Kimi, Z.AI, MiniMax or Alibaba Cloud Model Studio with an API key. Gateways such as OpenRouter and SiliconFlow and local servers such as LM Studio work too, as does any custom OpenAI- or Anthropic-compatible endpoint. You can also reuse a subscription you already have: a Codex login, xAI SuperGrok or Grok Build.
 
-Already use another coding agent? wuu can run Claude Code, Codex, Cursor, Devin, Grok, Hermes, OpenCode, Pi or Antigravity as the conversation's engine, with that agent's own login and tools. **Settings → Subscriptions** shows plan quotas and balances for every account in one place.
+Already use another coding agent? wuu can run Claude Code, Codex, Cursor, Devin, DeepSeek Harness, Grok, Hermes, OpenCode, Pi or Antigravity as the conversation's engine, with that agent's own login and tools. **Settings → Subscriptions** shows plan quotas and balances for every account in one place.
 
 <p align="center">
   <img src="landing/assets/readme/models-en.jpg" width="640" alt="Add a provider">
@@ -69,7 +69,9 @@ Select text in a file to add it to the conversation, leave a comment, ask about 
 
 Computer Use lets the agent observe and operate native macOS apps through Accessibility and native input. A floating preview follows its pointer and shows each click and keystroke while the target app stays in the background. The agent saves through the app itself, so Review shows the real file change. Screen Recording and Accessibility permissions apply.
 
-![Computer Use in wuu](landing/assets/readme/cua-en.webp)
+[![Computer Use in wuu](landing/assets/readme/cua-en.webp)](landing/assets/readme/cua-en.mp4)
+
+[Watch the video](landing/assets/readme/cua-en.mp4)
 
 ### Steer without starting over
 

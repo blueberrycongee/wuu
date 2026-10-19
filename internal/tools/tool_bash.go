@@ -17,7 +17,7 @@ import (
 // GPT / Claude / generic surfaces. A foreground run is bounded and
 // non-interactive; run_in_background hands the command to the process
 // manager, and the process tool then observes or controls it. A foreground
-// run that outlives its timeout is also handed over instead of being killed.
+// run that exceeds the foreground wait budget is also handed over.
 //
 // Keeping every launch in one tool follows the bash-first surface: the model
 // never chooses between competing entry points to start a command.
@@ -74,7 +74,7 @@ func (t *BashTool) Definition() providers.ToolDefinition {
 			"Returns stdout and stderr (head and tail of long output, with the full log path), plus the exit code when it is not 0. " +
 			"For Code Mode, structured_content exposes stdout, stderr (up to 64 KiB per stream), exit_code, timed_out, stdout_truncated, stderr_truncated and full_log_ref for recovery. Select fields in JS before emitting. " +
 			"Each call starts a fresh shell; state does not persist between calls. " +
-			"Commands must not wait for input. A command that exceeds its timeout keeps running in the background and its completion starts a new turn; do not rerun it. " +
+			fmt.Sprintf("Commands must not wait for input. Foreground waits yield after %s (or timeout_seconds if shorter) when background handoff is available. The command keeps running and its completion starts a new turn; do not rerun it or treat a process ID as a completed verification. ", maxForegroundShellWait) +
 			"Set run_in_background for servers, watchers, and other long-lived commands instead of appending '&'; " +
 			"you are notified when the process exits, so do not poll. Use the process tool to read its output, send input, or stop it. " +
 			"Prefer read_file, grep, glob, and the edit tools over shell equivalents for reading, searching, and changing files.",
@@ -87,7 +87,7 @@ func (t *BashTool) Definition() providers.ToolDefinition {
 				},
 				"timeout_seconds": map[string]any{
 					"type":        "integer",
-					"description": "Max runtime in seconds for a foreground run (1-3600, default 300).",
+					"description": fmt.Sprintf("Foreground timeout in seconds (1-3600, default %d). With background handoff, waits yield after at most %s; this does not limit the background process lifetime.", defaultShellTimeoutSeconds, maxForegroundShellWait),
 				},
 				"cwd": map[string]any{
 					"type":        "string",
@@ -163,33 +163,49 @@ func (args bashArgs) validate() error {
 }
 
 func (t *BashTool) executeStartBackground(ctx context.Context, args bashArgs) (string, error) {
+	p, err := t.startBackground(ctx, args, true, proc.CompletionModeResume)
+	response := proc.Process{}
+	if p != nil {
+		response = redactProcess(t.env, *p)
+		response.Action = bashResultActionStart
+	}
+	out, _ := mustJSON(response)
+	return out, err
+}
+
+func (t *BashTool) startBackground(ctx context.Context, args bashArgs, tty bool, completion proc.CompletionMode) (*proc.Process, error) {
 	commandPrefix := ""
 	if t.env.gitAttributionEnabled() {
 		var err error
 		commandPrefix, err = t.env.gitAttributionShellPrefix()
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 	}
 	rootThreadID := processRootThreadID(t.env)
 	if rootThreadID == "" {
-		return "", errors.New("bash run_in_background requires a bound session ID")
+		return nil, errors.New("bash run_in_background requires a bound session ID")
 	}
 	m, err := t.env.ProcessManager()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	sandboxPolicy, sandboxTempDir, err := t.env.processSandboxPolicy(ctx)
 	if err != nil {
-		return "", fmt.Errorf("prepare filesystem process sandbox: %w", err)
+		return nil, fmt.Errorf("prepare filesystem process sandbox: %w", err)
 	}
 	commandEnv := shellCommandEnv(os.Environ())
 	if sandboxTempDir != "" {
 		commandEnv = replaceCommandEnv(commandEnv, "TMPDIR", sandboxTempDir)
 	}
-	// Background commands run in a pseudo-terminal so the desktop can take
-	// them over interactively; the model view strips terminal control codes.
-	p, startErr := m.Start(context.WithoutCancel(ctx), proc.StartOptions{
+	// Ordinary bash keeps its existing start handoff after policy preparation.
+	// Extension starts remain cancellable until their generation takes ownership.
+	startCtx := ctx
+	if completion == proc.CompletionModeResume {
+		startCtx = context.WithoutCancel(ctx)
+	}
+	// Ordinary background commands use a terminal; streaming consumers use pipes.
+	return m.Start(startCtx, proc.StartOptions{
 		Command:               args.Command,
 		CommandPrefix:         commandPrefix,
 		CWD:                   args.CWD,
@@ -198,22 +214,13 @@ func (t *BashTool) executeStartBackground(ctx context.Context, args bashArgs) (s
 		OwnerID:               defaultProcessOwnerID(t.env),
 		RootThreadID:          rootThreadID,
 		Lifecycle:             proc.LifecycleManaged,
-		TTY:                   true,
+		TTY:                   tty,
+		CompletionMode:        completion,
 		AllowOutsideWorkspace: t.env.BypassToolHardProtections(),
 		SandboxPolicy:         sandboxPolicy,
 		SandboxProvider:       t.env.ProcessSandboxProvider,
 		Env:                   commandEnv,
 	})
-	response := proc.Process{}
-	if p != nil {
-		response = redactProcess(t.env, *p)
-		response.Action = bashResultActionStart
-	}
-	out, _ := mustJSON(response)
-	if startErr != nil {
-		return out, startErr
-	}
-	return out, nil
 }
 
 // bashResultActionStart marks the envelope of a background start. Clients use

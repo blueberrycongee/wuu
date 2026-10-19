@@ -8,19 +8,59 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Add an experimental headless workspace host and `wuu remote ssh` tunnel: use remote agent engines, files, Git, and terminals in the shared browser workbench, with running tasks preserved across SSH disconnects.
+- Add Linux X11 computer control with window-bound observation and foreground input,
+  and watch-only activity previews that retain the existing controls and layout.
+- Monitor plugin for background scripts, event delivery into the active conversation,
+  timeout and persistent watches, output inspection, and per-task stop controls.
+- Public process service for conversation-bound extension commands and event delivery,
+  with process-tree cleanup and optional handoff from completed child sessions.
+
 ### Fixed
 
-- Keep the macOS Dock icon visible when the desktop pet is enabled.
-- Restore filled open-state indicators for the left and right desktop sidebar
-  toggle icons.
-- Restore next-message suggestions after clearing or undoing a Tab-accepted draft,
-  allowing repeated acceptance without another model request.
-- Use the same quiet gray for completed tool summaries, running tool summaries,
-  and composer placeholder text.
+- Show the local model service directory immediately in settings and onboarding,
+  without skeleton placeholders or a new directory request on each visit.
+- Keep SSH workspace tunnels owned by their foreground command, wait for host registration before reporting readiness, and clean up interrupted startup.
+- Keep SSH workspace discovery available after removal or relocation, and reject account-backed homes before local pairing.
+- Avoid false file-save conflicts in remote workspaces by using the same modification-time calculation for Go file reads and desktop saves.
+- Continue failed external-agent sessions when their native history cannot be rewound,
+  avoiding an unsupported edit-and-resend request from the recovery button. Hide
+  the Wuu model-provider settings shortcut for engines that own their credentials.
+- Preserve and queue desktop messages when another turn wins a concurrent send, retaining attachments, send order, and Stop intent.
+- Guide next-message predictions toward concrete follow-ups instead of polite
+  acknowledgments, and allow no suggestion when the next intent is unclear.
 
-- Keep the context compaction ring on the process summary line when a long
-  activity summary must truncate, instead of wrapping the ring onto its own row.
-- Keep the macOS permission guide clear of System Settings authentication dialogs and file pickers, and make it follow window movement continuously instead of jumping between slow permission checks.
+## [2026.10.19] - 2026-10-18
+
+### Contributors
+
+@blueberrycongee
+
+### Highlights
+
+- Import cookies from local browser profiles and manage unpacked extensions in the embedded browser.
+- Add DeepSeek Harness as an external ACP engine with model and reasoning selection, HTTP MCP tools, and conversation recovery; improve ACP session restoration and shutdown.
+- Show independent activity previews for multiple browser tabs and native windows, hide previews behind dialogs, and keep computer-control focus and state isolated between conversations.
+- Search grouped settings pages, use font-relative spacing throughout the desktop, and move subscriptions with observed allowances or balances to the front after loading.
+- Restore follow-up messages in forks created after context-window switches, preserve next-message suggestions over usage hints, and improve right-to-left message selection and alignment.
+- Refine sidebar history and fork controls, keep small image previews usable at large font sizes, and remove duplicate workspace content.
+
+## [2026.10.18] - 2026-10-18
+
+### Contributors
+
+@blueberrycongee
+
+### Highlights
+
+- Refresh external agent discovery after CLI installation and offer detected Codex and Grok logins together during setup, while preserving current settings and other connection options.
+- Let independent tools proceed while long foreground commands continue in the background, with output and completion notifications preserved.
+- Restore next-message suggestions after clearing or undoing an accepted draft, preserve composer focus on Tab, and improve natural continuations.
+- Refine rounded settings and sidebar layouts, align workspace and branch labels, keep compaction indicators on long summaries, and unify Markdown document previews.
+- Keep the macOS Dock icon visible with the desktop pet, and make the permission guide follow window movement while avoiding system dialogs.
+- Synchronize workspace switches with a clear success notice and simplify Automations around existing tasks and completed runs.
 
 ## [2026.10.17] - 2026-10-17
 

@@ -12,7 +12,7 @@ import type {
 } from "../shared/protocol";
 import type { WorkspaceFileSelection } from "./LinkTargets";
 import { WORKSPACE_FILE_DRAG_MIME } from "./ComposerMessages";
-import { RichContent } from "./RichContent";
+import { isMarkdownDocument, MarkdownDocumentReading } from "./MarkdownDocumentReading";
 import { revealScrollbar } from "./ScrollbarReveal";
 import { FileSelectionSurface } from "./FileSelectionSurface";
 import type { WorkspaceMonacoViewState } from "./WorkspaceMonacoEditor";
@@ -753,7 +753,7 @@ export function WorkspaceFilePreview({
     };
   }, [activeContext?.cwd, selectedWorkspaceFilePath, locale, presenterReloadKey, refreshKey]);
 
-  const isMarkdown = Boolean(file && isMarkdownPath(file.path));
+  const isMarkdown = Boolean(file && isMarkdownDocument(file.path));
   const isMarkdownReadingMode = isMarkdown && !selection;
   const dirtyStatePath = file?.path ?? selectedWorkspaceFilePath;
 
@@ -856,15 +856,14 @@ export function WorkspaceFilePreview({
           {(selectionControls) => (
             <div className={`workspace-file-editor-scroll ${isMarkdownReadingMode ? "markdown-reading" : "code"}`}>
               {isMarkdownReadingMode ? (
-                <div className="workspace-markdown-reading" ref={markdownHostRef}>
-                  <RichContent
-                    text={draftText}
-                    cwd={activeContext.cwd}
-                    onOpenFile={onOpenFile}
-                    allowRawHtml
-                    sourceMapping
-                  />
-                </div>
+                <MarkdownDocumentReading
+                  ref={markdownHostRef}
+                  text={draftText}
+                  cwd={activeContext.cwd}
+                  onOpenFile={onOpenFile}
+                  allowRawHtml
+                  sourceMapping
+                />
               ) : active ? (
                 <WorkspacePreviewBoundary resourceKey={file.path}>
                   <Suspense fallback={null}>
@@ -917,8 +916,4 @@ export function WorkspaceFilePreview({
     </div>
     <div className="workspace-file-export-preview">{presentation}</div>
   </div>;
-}
-
-function isMarkdownPath(path: string): boolean {
-  return /\.mdx?$/i.test(path);
 }

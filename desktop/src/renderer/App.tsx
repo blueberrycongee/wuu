@@ -199,10 +199,7 @@ import {
   resolveDraftEngineMemory,
   writeDraftEngineMemory,
 } from "./DraftEngineMemory";
-import {
-  FirstRunOnboarding,
-  hasOnboardingProvider as hasReadyProvider,
-} from "./FirstRunOnboarding";
+import { FirstRunOnboarding } from "./FirstRunOnboarding";
 import {
   EmptyConversationHome,
   RuntimeLoading,
@@ -211,6 +208,7 @@ import { EmptyHomeOverview } from "./EmptyHomeOverview";
 import { WuuMascotRuntimeProvider } from "./WuuMascot";
 import { deriveActiveSessionHints } from "./activeSessionHint";
 import {
+  hasAuthenticatedProvider as hasReadyProvider,
   providerModelContextWindow,
   pullRequestUnavailableReason,
 } from "./RuntimeHelpers";
@@ -748,7 +746,6 @@ export function App(): JSX.Element {
     openWorkspaceProjectTab,
     syncWorkspaceProjectTab,
     showWorkspaceToolPicker,
-    resumeWorkspaceViewTab,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
     closeWorkspaceViewTabsWhere,
@@ -1319,6 +1316,19 @@ export function App(): JSX.Element {
       : undefined;
   const activeThread = activeThreadForState(state);
   const activeThreadID = activeThread?.id;
+  const activeThreadCwd = activeThread?.cwd;
+  const previousThreadWorkspace = useRef({ id: activeThreadID, cwd: activeThreadCwd });
+  useEffect(() => {
+    const previous = previousThreadWorkspace.current;
+    previousThreadWorkspace.current = { id: activeThreadID, cwd: activeThreadCwd };
+    if (activeThreadID && previous.id === activeThreadID && previous.cwd &&
+      activeThreadCwd && previous.cwd !== activeThreadCwd) {
+      showToast({
+        message: translateCurrent("app.workspaceSwitched"),
+        dedupeKey: `workspace-switched:${activeThreadID}:${activeThreadCwd}`,
+      });
+    }
+  }, [activeThreadID, activeThreadCwd]);
   const activeProjectDraft = projectAgentEnabled && !activeThread && currentSessionTab?.kind === "draft" && currentSessionTab.project === true;
   const activeThreadRunning = isThreadRunning(activeThread);
   const activeThreadHasRunningTurn = activeThread?.turns.some(turn => turn.status === "in_progress") ?? false;
@@ -3588,7 +3598,11 @@ export function App(): JSX.Element {
         current.initialized
           ? {
               ...current,
-              initialized: { ...current.initialized, providers: result.providers },
+              initialized: {
+                ...current.initialized,
+                providers: result.providers,
+                catalog_providers: result.catalog_providers,
+              },
             }
           : current,
       );
@@ -4724,7 +4738,25 @@ export function App(): JSX.Element {
         removePendingComposerMessageByID(pendingKey(), message.id, "queue");
         return !stillPending;
       }
-      const targetContext = resolveThreadRuntimeContext(targetThread, currentState.projects);
+      return await submitQueuedComposerMessage(message, targetThread, () =>
+        lane.stopVersion !== stopVersion || Boolean(admission?.stopRequested),
+      );
+    } finally {
+      release();
+      if (lane.tail === tail) {
+        queueLanesRef.current.delete(queueKey);
+        if (admission?.thread) queueLanesRef.current.delete(admission.thread.id);
+      }
+    }
+  }
+
+  async function submitQueuedComposerMessage(
+    message: QueuedComposerMessage,
+    targetThread: Thread,
+    shouldHold: () => boolean,
+  ): Promise<boolean> {
+    const targetContext = resolveThreadRuntimeContext(targetThread, appStateRef.current.projects);
+    try {
       const [encodedImages, encodedFiles] = await Promise.all([
         awaitComposerImages(message.images), awaitComposerFiles(message.files),
       ]);
@@ -4747,7 +4779,7 @@ export function App(): JSX.Element {
       const images = inputImagesFromComposer(encodedImages);
       const result = await window.wuu.queueTurn(
         targetThread.id,
-        text,
+        message.text.trim(),
         images,
         message.id,
         files,
@@ -4755,7 +4787,7 @@ export function App(): JSX.Element {
         message.activeDocument,
         message.contentParts,
         targetContext,
-        lane.stopVersion !== stopVersion || Boolean(admission?.stopRequested),
+        shouldHold(),
       );
       updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
         ...previous,
@@ -4774,22 +4806,16 @@ export function App(): JSX.Element {
       return true;
     } catch (error) {
       const stillPending = Boolean(
-        pendingComposerMessagesByThreadRef.current[pendingKey()]?.queued.some(
+        pendingComposerMessagesByThreadRef.current[targetThread.id]?.queued.some(
           (candidate) => candidate.id === message.id,
         ),
       );
-      removePendingComposerMessageByID(pendingKey(), message.id, "queue");
+      removePendingComposerMessageByID(targetThread.id, message.id, "queue");
       if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
         showActionErrorToast(error, t("app.queueFailed"));
       }
       return !stillPending;
-    } finally {
-      release();
-      if (lane.tail === tail) {
-        queueLanesRef.current.delete(queueKey);
-        if (admission?.thread) queueLanesRef.current.delete(admission.thread.id);
-      }
     }
   }
 
@@ -5145,7 +5171,6 @@ export function App(): JSX.Element {
         await interruptAcceptedThread(thread.id);
       }
     } catch (error) {
-      admission.stopRequested = true;
       const rawMessage = rawErrorMessage(error, t("composer.sendFailed"));
       const errorMessage = statusMessageForError(rawMessage, t("composer.sendFailed"));
       const noModelConfigured = isNoModelConfiguredError(rawMessage);
@@ -5161,6 +5186,28 @@ export function App(): JSX.Element {
         optimisticTurnID,
         previousTurnIDs,
       );
+      // Only a definite admission rejection may become a queued send. Timeouts
+      // can follow acceptance and must not replay the same input. Keep the
+      // admission unresolved until this message is queued so later sends cannot
+      // overtake it through their queue lane.
+      const busyMessage = `thread ${JSON.stringify(optimisticThreadID)} already has a running turn`;
+      const admissionBusy = rawMessage.endsWith(busyMessage)
+        || rawMessage.endsWith(`${busyMessage} in another app-server: thread execution is owned by another app-server`);
+      if (!interrupted && !alreadyAccepted && admission.sent && admission.thread && admissionBusy) {
+        const thread = admission.thread;
+        const deferSend = (current: AppState) => {
+          const next = updateThreadByID(current, thread.id,
+            (value) => dropOptimisticTurn(value, optimisticTurnID));
+          return activeThreadIDForState(next) === thread.id
+            ? { ...next, running: isThreadRunning(threadForTab(next, thread.id)) }
+            : next;
+        };
+        appStateRef.current = deferSend(appStateRef.current);
+        setState(deferSend);
+        enqueueComposerMessage(thread.id, { ...message, operationState: "preparing" });
+        return await submitQueuedComposerMessage(message, thread, () => admission.stopRequested);
+      }
+      admission.stopRequested = true;
       const keepAcceptedTurn = alreadyAccepted && !interrupted;
       if (!interrupted && !keepAcceptedTurn) discardSubmittedMessage(optimisticTurn.items[0].id);
       const settle = (current: AppState): AppState => {
@@ -5371,6 +5418,7 @@ export function App(): JSX.Element {
           onCodexPetsRefresh={refreshCodexPets}
           onCodexPetsUpdate={updateCodexPets}
           onSidebarResizeStart={startSidebarResize}
+          onSidebarResizerPointer={trackSidebarResizerPointer}
           onSidebarSeparatorKey={handleSidebarSeparatorKey}
           archivedThreads={state.threads
             .filter((thread) => thread.archived)
@@ -5399,6 +5447,7 @@ export function App(): JSX.Element {
         <FirstRunOnboarding
           inventory={state.initialized?.extension_inventory}
           providers={state.initialized?.providers}
+          catalogProviders={state.initialized?.catalog_providers}
           engines={engineInventory}
           onUpdateExtensionPackage={updateExtensionPackage}
           onSaveProvider={async (provider, model, connection) => {
@@ -5981,7 +6030,6 @@ export function App(): JSX.Element {
           onOpenTool={openWorkspaceTool}
           onOpenPluginTool={openWorkspacePluginTool}
           onShowTools={showWorkspaceToolPicker}
-          onResumeTab={resumeWorkspaceViewTab}
           onCloseTab={(id) => {
             if (id === "side-thread") sideThread.close();
             closeWorkspaceViewTab(id);

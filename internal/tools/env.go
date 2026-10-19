@@ -185,6 +185,9 @@ type Env struct {
 	ProcessMgr             *proc.Manager
 	ProcessSandboxProvider processsandbox.Provider
 	AgentControl           *agentcontrol.AgentControl
+	// ShellEarlyHandoffDisabled preserves the requested foreground wait for
+	// hosts that cannot deliver background completion to this conversation.
+	ShellEarlyHandoffDisabled bool
 	// ProjectSessions is set only for a project coordinator conversation;
 	// it exposes the session tool and the coordinator's tool surface.
 	ProjectSessions ProjectSessionHandler

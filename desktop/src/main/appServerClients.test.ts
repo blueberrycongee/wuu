@@ -138,6 +138,14 @@ describe("appServerHelperEnvironment", () => {
     const result = appServerHelperEnvironment({}, "C:\\source", undefined, "win32", () => true);
     expect(result.WUU_CUA_MAC_HELPER).toBeUndefined();
   });
+
+  it("discovers the Linux helper only on Linux and preserves development overrides", () => {
+    const helper = join("/source", "desktop", "build", "bin", "wuu-cua-linux");
+    const exists = (path: string) => path === helper;
+    expect(appServerHelperEnvironment({}, "/source", undefined, "linux", exists).WUU_CUA_LINUX_HELPER).toBe(helper);
+    expect(appServerHelperEnvironment({}, "/source", undefined, "darwin", exists).WUU_CUA_LINUX_HELPER).toBeUndefined();
+    expect(appServerHelperEnvironment({ WUU_CUA_LINUX_HELPER: "/custom/cua" }, "/source", undefined, "linux", exists).WUU_CUA_LINUX_HELPER).toBe("/custom/cua");
+  });
 });
 
 describe("AppServerClientPool Activity routing", () => {
@@ -763,6 +771,21 @@ it.each([false, true])("preserves snapshot content and event order across pipe c
 
 
 describe("packaged CUA", () => {
+  it("uses only the packaged Linux helper and removes stale platform overrides", () => {
+    const env: NodeJS.ProcessEnv = { WUU_CUA_LINUX_HELPER: "/old/helper", WUU_ENABLE_CUA_MAC: "1", WUU_CUA_MAC_HELPER: "/old/mac" };
+    const helper = "/opt/wuu/resources/bin/wuu-cua-linux";
+    configurePackagedCUA(env, "/opt/wuu/resources", "linux", (path) => path === helper);
+    expect(env.WUU_ENABLE_CUA_LINUX).toBe("1");
+    expect(env.WUU_CUA_LINUX_HELPER).toBe(helper);
+    expect(env.WUU_ENABLE_CUA_MAC).toBeUndefined();
+    expect(env.WUU_CUA_MAC_HELPER).toBeUndefined();
+  });
+  it("does not enable Linux CUA from an external helper when the bundle is incomplete", () => {
+    const env: NodeJS.ProcessEnv = { WUU_ENABLE_CUA_LINUX: "1", WUU_CUA_LINUX_HELPER: "/old/helper" };
+    configurePackagedCUA(env, "/opt/wuu/resources", "linux", () => false);
+    expect(env.WUU_ENABLE_CUA_LINUX).toBeUndefined();
+    expect(env.WUU_CUA_LINUX_HELPER).toBeUndefined();
+  });
   it("uses the installed bundle instead of stale development overrides", () => {
     const env: NodeJS.ProcessEnv = { WUU_CUA_MAC_HELPER: "/old/helper", WUU_CUA_MAC_PIP_HELPER: "/old/pip" };
     configurePackagedCUA(env, "/Applications/wuu.app/Contents/Resources", "darwin", () => true);

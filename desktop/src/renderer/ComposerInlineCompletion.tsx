@@ -87,7 +87,7 @@ export function useComposerInlineCompletion({
       attributionContext.current = { composerId, resetKey };
     }
     const menuOpen = Boolean(document.querySelector(
-      '[data-floating-menu-owner], .composer-textarea-context-menu, [aria-modal="true"]',
+      '[data-floating-menu-owner]:not([data-wuu-layer="tooltip"]), .composer-textarea-context-menu, [aria-modal="true"]',
     ));
     const eligible = enabled && providers.length > 0 && !input.disabled && !input.readOnly
       && !composing.current && !menuOpen && !input.closest("[hidden], [inert]")

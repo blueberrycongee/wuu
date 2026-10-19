@@ -8,9 +8,9 @@
     "Source Han Sans SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif
   );
   --wuu-grid-cols: 12;
-  --wuu-grid-baseline: calc(var(--wuu-space-unit, 4px) * 2 * var(--wuu-space-density, 1));
+  --wuu-grid-baseline: var(--space-2);
   --wuu-grid-leading: 24px;
-  --wuu-grid-gutter: calc(var(--wuu-space-unit, 4px) * 6 * var(--wuu-space-density, 1));
+  --wuu-grid-gutter: var(--space-6);
   --wuu-grid-margin: clamp(32px, 4vw, 64px);
   --wuu-grid-max-width: var(--wuu-content-max-width, 1088px);
                                                                      
@@ -411,11 +411,15 @@
   );
 }
 
-/* Linux is frameless: caption buttons are drawn in the renderer, so no
- * overlay reservation is required. */
 :root[data-platform="linux"] {
   --window-controls-inset-left: 0px;
   --window-controls-inset-right: 0px;
+}
+
+/* Reserve renderer-owned captions only in hosts that actually render them;
+ * framed Linux hosts keep their native controls outside the content area. */
+:root[data-platform="linux"]:has(.linux-window-controls) {
+  --window-controls-inset-right: var(--linux-caption-width);
 }
 
 * {

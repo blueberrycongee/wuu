@@ -144,6 +144,12 @@ func TestRenderBashModelView(t *testing.T) {
 			absent: []string{"Exit code"},
 		},
 		{
+			name:   "early handoff names the pending process without a timeout or exit verdict",
+			fields: map[string]any{"exit_code": -1, "timed_out": false, "promoted_process_id": "proc-10", "stdout_tail": "running\n", "stderr_tail": "", "duration_ms": 10000},
+			want:   []string{"running\n", "proc-10"},
+			absent: []string{"Exit code", "Timed out"},
+		},
+		{
 			name:   "sandbox denial is reported",
 			fields: map[string]any{"exit_code": 1, "stdout_tail": "", "stderr_tail": "permission denied\n", "sandbox": map[string]any{"mode": "workspace", "enforcement": "full", "denied": true}},
 			want:   []string{"permission denied\nExit code 1\n", "sandbox"},

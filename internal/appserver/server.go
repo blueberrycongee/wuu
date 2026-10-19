@@ -430,11 +430,13 @@ func New(rt *runtime.Session, out io.Writer) *Server {
 		})
 	}
 	if rt != nil && rt.PluginSessionRouter != nil {
-		s.pluginTurnUnbind = rt.PluginSessionRouter.BindExtended(
+		unbindTurns := rt.PluginSessionRouter.BindExtended(
 			s.createPluginSession, s.sendPluginSession, s.listPluginSessions, s.cancelPluginSession,
 			s.inspectPluginSession, s.statusPluginWorkspace, s.applyPluginWorkspace, s.discardPluginWorkspace,
 			s.controlPluginSession,
 		)
+		unbindProcesses := rt.PluginSessionRouter.BindProcessSessions(s.resolvePluginProcessSession)
+		s.pluginTurnUnbind = func() { unbindTurns(); unbindProcesses() }
 		s.startBackground(s.replayPendingPluginTurnLifecycles)
 	}
 	s.startInferenceJournalMaintenance()

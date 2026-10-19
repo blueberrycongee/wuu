@@ -1054,7 +1054,7 @@ export function Composer({
     // the rendered slash menu. Modified Tab always retains native focus travel.
     if (event.key === "Tab") {
       if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return;
-      if (document.querySelector('[data-floating-menu-owner]:not([data-floating-menu-owner="composer-slash"]), .composer-textarea-context-menu, [aria-modal="true"]')) return;
+      if (document.querySelector('[data-floating-menu-owner]:not([data-wuu-layer="tooltip"]):not([data-floating-menu-owner="composer-slash"]), .composer-textarea-context-menu, [aria-modal="true"]')) return;
       const currentDraft = !(textOnly && !slashCommandsOverride)
         ? parseComposerSlashDraft(currentPrompt) : undefined;
       if (currentDraft && currentDraft.query !== "handoff" && slashDismissedValue !== currentPrompt) {

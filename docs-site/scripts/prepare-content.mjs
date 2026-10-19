@@ -19,6 +19,48 @@ const publishedPages = new Set(pages)
 const locales = Object.values(manifest.locales)
 const localeRoots = locales.map((locale) => locale.root)
 
+const localeKey = (root) =>
+  Object.entries(manifest.locales).find(([, config]) => config.root === root)?.[0]
+const fallbackDescription = (root) =>
+  manifest.site.descriptions?.[localeKey(root)] ?? manifest.site.description
+const homeDescription = (root) => manifest.site.home_descriptions?.[localeKey(root)]
+
+function summarize(markdown, fallback) {
+  const body = markdown.replace(/^#\s+.+(?:\r?\n)+/, "")
+  for (const block of body.split(/\r?\n\s*\r?\n/)) {
+    const trimmed = block.trim()
+    if (!trimmed || /^(?:#|>|```|<|\||[-*+]\s|\d+\.\s)/.test(trimmed)) continue
+
+    const text = trimmed
+      .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/<[^>]+>/g, "")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/\*([^*]+)\*/g, "$1")
+      .replace(/\s+/g, " ")
+      .trim()
+
+    if (!text) continue
+    if (text.length <= 170) return text
+
+    const head = text.slice(0, 170)
+    const sentenceEnd = Math.max(
+      head.lastIndexOf("。"),
+      head.lastIndexOf("！"),
+      head.lastIndexOf("？"),
+      head.lastIndexOf(". "),
+      head.lastIndexOf("! "),
+      head.lastIndexOf("? "),
+    )
+    if (sentenceEnd > 90) return head.slice(0, sentenceEnd + 1).trim()
+
+    const wordEnd = Math.max(head.lastIndexOf("，"), head.lastIndexOf(", "), head.lastIndexOf(" "))
+    return `${(wordEnd > 90 ? head.slice(0, wordEnd) : head).trimEnd()}…`
+  }
+  return fallback
+}
+
 const customizePages = locales.map((locale) => ({
   root: locale.root,
   pages: locale.navigation
@@ -92,8 +134,16 @@ for (const page of pages) {
 
   const destination = path.join(outputRoot, page)
   await mkdir(path.dirname(destination), { recursive: true })
+  const sourceLocale = localeRoots.find((root) => page.startsWith(`${root}/`))
+  const description =
+    page === `${sourceLocale}/index.md`
+      ? homeDescription(sourceLocale) ?? summarize(markdown, fallbackDescription(sourceLocale))
+      : summarize(markdown, fallbackDescription(sourceLocale))
   const body = rewriteMarkdownLinks(markdown.replace(/^#\s+.+(?:\r?\n)+/, ""), page)
-  await writeFile(destination, `---\ntitle: ${JSON.stringify(titleMatch[1])}\n---\n\n${body}`)
+  await writeFile(
+    destination,
+    `---\ntitle: ${JSON.stringify(titleMatch[1])}\ndescription: ${JSON.stringify(description)}\n---\n\n${body}`,
+  )
 }
 
 const assetDirectories = ["zh-cn/assets", "en/assets"]
@@ -118,6 +168,24 @@ await rm(landingPublic, { recursive: true, force: true })
 await mkdir(landingPublic, { recursive: true })
 for (const directory of ["brand", "logos", "blog"]) {
   await cp(path.join(landingRoot, "assets", directory), path.join(landingPublic, directory), { recursive: true })
+}
+// Documentation uses the app icon as its identity; the landing pages keep the
+// expressive mascot mark. Copy the generated icon so both stay current.
+await cp(
+  path.join(repositoryRoot, "assets/app-icon-256.png"),
+  path.join(landingPublic, "app-icon.png"),
+)
+await mkdir(path.join(landingPublic, "product"), { recursive: true })
+for (const image of [
+  "hero-light-en.jpg",
+  "hero-dark-en.jpg",
+  "hero-light-zh.jpg",
+  "hero-dark-zh.jpg",
+]) {
+  await cp(
+    path.join(landingRoot, "assets/readme", image),
+    path.join(landingPublic, "product", image),
+  )
 }
 await cp(path.join(landingRoot, "styles.css"), path.join(landingPublic, "styles.css"))
 

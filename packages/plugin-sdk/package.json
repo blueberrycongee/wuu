@@ -23,7 +23,9 @@
     "dist/bundle-contract.js",
     "dist/bundle-contract.d.ts",
     "dist/model.js",
-    "dist/model.d.ts"
+    "dist/model.d.ts",
+    "dist/process.js",
+    "dist/process.d.ts"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

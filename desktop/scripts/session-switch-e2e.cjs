@@ -143,7 +143,7 @@ fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provid
     config.providers['subscription-grok'] = { type: 'grok-build', model: 'grok-4.5' };
     config.providers['subscription-codex'] = { type: 'openai-codex', model: 'gpt-5', reuse_codex_credentials: true };
   }
-  config.engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+  config.engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   fs.writeFileSync(configPath, JSON.stringify(config));
 }
 fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [...projects, ...sidebarProjects], active_context: { kind: 'project', project_id: projects[selectedIndex].id, cwd: projects[selectedIndex].path } }));

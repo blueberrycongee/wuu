@@ -6,7 +6,10 @@ import {
   type MessageFlowFontSize,
   type PopOutInitResult,
   type BrowserCommandParams,
+  type BrowserCookieImportResult,
   type BrowserDockTarget,
+  type BrowserExtensionRecord,
+  type BrowserProfile,
   type BrowserSurfaceSnapshot,
   type BrowserTabAdopted,
   type RemoteControlEvent,
@@ -699,6 +702,18 @@ browserApi.onBrowserDock = (handler) => {
   ipcRenderer.on("wuu:browser-dock", listener);
   return () => ipcRenderer.removeListener("wuu:browser-dock", listener);
 };
+browserApi.listBrowserProfiles = () =>
+  ipcRenderer.invoke("wuu:browser-profiles") as Promise<BrowserProfile[]>;
+browserApi.importBrowserCookies = (profilePath) =>
+  ipcRenderer.invoke("wuu:browser-import-cookies", profilePath) as Promise<BrowserCookieImportResult>;
+browserApi.listBrowserExtensions = () =>
+  ipcRenderer.invoke("wuu:browser-extensions-list") as Promise<BrowserExtensionRecord[]>;
+browserApi.addBrowserExtension = () =>
+  ipcRenderer.invoke("wuu:browser-extensions-add") as Promise<BrowserExtensionRecord[]>;
+browserApi.setBrowserExtensionEnabled = (id, enabled) =>
+  ipcRenderer.invoke("wuu:browser-extensions-set-enabled", id, enabled) as Promise<BrowserExtensionRecord[]>;
+browserApi.removeBrowserExtension = (id) =>
+  ipcRenderer.invoke("wuu:browser-extensions-remove", id) as Promise<BrowserExtensionRecord[]>;
 
 contextBridge.exposeInMainWorld("wuu", api);
 

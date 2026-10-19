@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -135,6 +136,82 @@ func TestBashRunTimeoutPromotesToBackground(t *testing.T) {
 	}
 	if stopped.Status != proc.StatusStopped {
 		t.Fatalf("promoted process should stop cleanly: %+v", stopped)
+	}
+}
+
+// A long foreground wait must yield without restarting or terminating the
+// command, and completion must retain both early and late output.
+func TestBashRunYieldsBeforeExplicitTimeout(t *testing.T) {
+	for _, earlyHandoff := range []bool{true, false} {
+		name := "wait_for_requested_timeout"
+		if earlyHandoff {
+			name = "early_handoff"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			kit := newShellTestToolkit(t, root)
+			kit.SetSessionID("thread-yielded-background")
+			kit.SetShellEarlyHandoffEnabled(earlyHandoff)
+			// Thread clones must preserve the host's foreground wait policy.
+			var err error
+			kit, err = kit.CloneForRoot(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer manager.CleanupSession()
+			kit.SetProcessManager(manager)
+			events := make(chan proc.Event, 16)
+			manager.Subscribe(events)
+			defer manager.Unsubscribe(events)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			resp, err := executeEnvelope(kit, ctx, providers.ToolCall{
+				Name: "bash", Arguments: `{"command":"printf 'early\\n'; sleep 12; printf 'late\\n'; exit 7","timeout_seconds":60}`,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result shellExecutionResult
+			if err := json.Unmarshal([]byte(resp), &result); err != nil {
+				t.Fatal(err)
+			}
+			if !earlyHandoff {
+				if result.PromotedProcessID != "" || result.TimedOut || result.ExitCode != 7 || result.StdoutTail != "early\nlate\n" {
+					t.Fatalf("host without completion delivery must receive the completed command: %+v", result)
+				}
+				return
+			}
+			if result.PromotedProcessID == "" || result.TimedOut || result.ExitCode != -1 {
+				t.Fatalf("expected a pending handoff before the timeout: %+v", result)
+			}
+			// Once handed off, ending the tool's context must not kill its process.
+			cancel()
+			deadline := time.NewTimer(10 * time.Second)
+			defer deadline.Stop()
+			for {
+				select {
+				case event := <-events:
+					if event.Process.ID != result.PromotedProcessID || event.Cause != proc.EventCauseNaturalExit {
+						continue
+					}
+					if event.Process.ExitCode != 7 || event.Process.RootThreadID != "thread-yielded-background" || event.Process.CompletionMode != proc.CompletionModeResume {
+						t.Fatalf("completion lost exit status or ownership: %+v", event.Process)
+					}
+					output, truncated, err := manager.ReadOutput(result.PromotedProcessID, 4096)
+					if err != nil || truncated || output != "early\nlate\n" {
+						t.Fatalf("handoff lost or duplicated output: %q, truncated=%v, err=%v", output, truncated, err)
+					}
+					return
+				case <-deadline.C:
+					t.Fatal("yielded process did not deliver completion")
+				}
+			}
+		})
 	}
 }
 

@@ -63,6 +63,16 @@ func (s *Server) handleEngineList(req Request) error {
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
+	if params.RefreshModels {
+		enginecatalog.RefreshUserPath()
+		// Discovery alone can find a newly installed binary while the runtime
+		// still has no factory for it. Reapply persisted enable/disable choices
+		// before reporting availability; existing turns retain their leases.
+		if err := s.rt.RefreshEngineSettings(); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		s.retainCodexHost()
+	}
 	result := EngineListResult{
 		Engines:  s.engineInventoryAt(firstNonEmpty(params.CWD, s.rt.RootDir), params.RefreshModels),
 		Settings: s.engineSettingsFromConfig(),
@@ -88,10 +98,10 @@ func (s *Server) handleEngineUpdate(req Request) error {
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
-	if err := config.UpdateEnginesSettings(s.rt.ConfigPath, params); err != nil {
+	if err := s.rt.UpdateEngineSettings(params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	s.applyEngineSettingsToRuntime()
+	s.retainCodexHost()
 	return s.writeResponse(req.ID, EngineListResult{
 		Engines:  s.engineInventory(),
 		Settings: s.engineSettingsFromConfig(),
@@ -519,61 +529,6 @@ func (s *Server) engineSettingsFromConfig() *config.EnginesConfig {
 		return nil
 	}
 	return cfg.Engines
-}
-
-// applyEngineSettingsToRuntime pushes persisted settings into the live
-// runtime: rebuilds the codex engine around the configured binary path and
-// updates the default engine for new threads.
-func (s *Server) applyEngineSettingsToRuntime() {
-	if s.rt == nil {
-		return
-	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
-	if err != nil {
-		return
-	}
-	codexBinary, codexResolveErr := codexengine.ResolveBinary()
-	codexEnabled := codexResolveErr == nil
-	claudeBinary, claudeResolveErr := claudeengine.ResolveBinary()
-	claudeEnabled := claudeResolveErr == nil
-	defaultEngine := agentengine.EngineWuu
-	if engineCfg := cfg.Engines; engineCfg != nil {
-		if trimmed := strings.TrimSpace(engineCfg.DefaultEngine); trimmed != "" {
-			defaultEngine = agentengine.NormalizeEngineID(trimmed)
-		}
-		if codexCfg := engineCfg.Codex; codexCfg != nil {
-			enabled, explicit := codexCfg.EngineEnabled()
-			if explicit {
-				codexEnabled = enabled
-			}
-			if path := strings.TrimSpace(codexCfg.BinaryPath); path != "" {
-				codexBinary = path
-				if !explicit {
-					codexEnabled = true
-				}
-			}
-		}
-		if claudeCfg := engineCfg.Claude; claudeCfg != nil {
-			enabled, explicit := claudeCfg.EngineEnabled()
-			if explicit {
-				claudeEnabled = enabled
-			}
-			if path := strings.TrimSpace(claudeCfg.BinaryPath); path != "" {
-				claudeBinary = path
-				if !explicit {
-					claudeEnabled = true
-				}
-			}
-		}
-	}
-	s.rt.RebuildCodexEngine(codexEnabled, codexBinary)
-	s.retainCodexHost()
-	s.rt.RebuildClaudeEngine(claudeEnabled, claudeBinary)
-	s.rt.RebuildProtocolEngines(cfg.Engines)
-	if !s.rt.EngineAvailable(defaultEngine) {
-		defaultEngine = agentengine.EngineWuu
-	}
-	s.rt.DefaultEngine = defaultEngine
 }
 
 // codexBinaryPath resolves the codex binary: a settings override, otherwise
