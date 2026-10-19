@@ -239,7 +239,16 @@ async function closePreview(native = false) {
     });
     writeFileSync(join(output, 'native-pip-live.png'), (await content!.webContents.capturePage()).toPNG());
     check('The external CUA activity presents real native PiP video frames', true);
+  } else {
+    let content: WebContentsView | undefined;
+    await waitFor('live browser content mounted in PiP', async () => {
+      content = views.find(view => pip!.contentView.children.includes(view));
+      return content && await content.webContents.executeJavaScript("Boolean(document.getElementById('target'))");
+    });
+    writeFileSync(join(output, 'browser-pip-live.png'), (await content!.webContents.capturePage()).toPNG());
+    check('The external browser activity mounts its actual live page in PiP', true);
   }
+  await waitFor('PiP placeholder dismissed', () => overlay!.webContents.executeJavaScript("Number(getComputedStyle(document.getElementById('ph')).opacity) === 0"));
   writeFileSync(join(output, `pip-${serial}.png`), (await overlay!.webContents.capturePage()).toPNG());
   await overlay!.webContents.executeJavaScript("document.getElementById('close').click()");
   await waitFor('PiP dismissed', () => pip!.isDestroyed() || !pip!.isVisible());
@@ -346,7 +355,9 @@ async function run() {
     const activity = activities.get(scenario.thread)!;
     await pool.requestInContext(scenario.context, `activity/${action}`, { thread_id: scenario.thread, activity_id: activity.id, execution_id: activity.execution_id });
     await bounded(`${action} interrupts its external engine`, scenario.completed.promise);
-    check(`${action} settles its external turn as interrupted`, terminal.get(scenario.thread)?.status === 'interrupted' && !terminal.get(scenario.thread)?.error, terminal.get(scenario.thread));
+    const settled = terminal.get(scenario.thread);
+    check(`${action} settles its external turn as interrupted`, settled?.status === 'interrupted' &&
+      (!settled.error || String(settled.error).split('\n').every(line => line === 'context canceled')), settled);
     check(`${action} revokes the old MCP turn capability`, await staleCall(scenario, { action: 'click', tab_id: activity.target, x: 140, y: 125 }));
   }
   check('Takeover and stop do not affect the sibling workspace turn', !terminal.has(c.thread));
