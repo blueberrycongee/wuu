@@ -292,6 +292,7 @@ private final class PreviewSurface: UIScrollView, UIScrollViewDelegate {
     }
     #if DEBUG
     func waitForVideoPresentation() async throws {
+        guard #available(iOS 17.4, *) else { throw NativeError.invalid("视频显示验收需要 iOS 17.4 或更新版本") }
         for _ in 0..<100 {
             if video.isReadyForDisplay { return }
             if video.sampleBufferRenderer.status == .failed {
