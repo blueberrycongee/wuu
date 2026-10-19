@@ -1,5 +1,7 @@
 # Native Personal client
 
+The desktop product now uses one persistent twin conversation. The native multi-assistant surfaces described below are legacy implementation details and have not been adapted or validated for that desktop redesign. Mobile work is deferred; do not treat these surfaces as the current desktop contract.
+
 Wuu's iOS and Android clients use native Personal screens over the public,
 versioned extension client service. They do not run desktop plugin JavaScript or
 read plugin storage. See [user-scoped hosts](user-hosts.md) for host authority and
@@ -130,6 +132,10 @@ must be validated separately from protocol tests.
 ## History search and notification grouping
 
 The history entry searches the selected named agent by person names, subject or exact text, optionally within local calendar dates. Date bounds are converted to explicit instants and applied by the host before pagination. Selecting a hit opens the original main-message sequence. Editing filters discards stale cursors and late results; searching tools and hidden reasoning is intentionally outside this conversation view.
+
+`agents.history` uses the same semantic visibility and human-input provenance for both the main agent and specialists. Internal identity instructions stay in the physical audit/provider context without becoming user bubbles. Genuine user text is retained even when it resembles those instructions. Visible tool-produced result attachments remain available as assistant attachments without exposing tool output; `tasks.history` remains an execution audit view. See [session history contracts](../customize/plugin-authoring.md#calling-host-services).
+
+Recent and backward `agents.history` reads recover through at most four physical pages of up to 50 records each, plus one single-record snapshot lookup. Recovery stays within that snapshot. If the scanned pages contain only filtered records, an empty result can still have `has_earlier: true`; continue with `end_seq: first_seq - 1` to read earlier messages. Explicit `start_seq` or cursor reads retain their requested source address and do not automatically walk backward.
 
 Memory details include contributor, updating agent, contribution revisions, executor provenance and source/effective/write times where available. A source reference is shown as evidence, not presented as a resolved link unless a matching message locator exists.
 

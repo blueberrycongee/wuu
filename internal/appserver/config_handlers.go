@@ -62,8 +62,15 @@ func (s *Server) handleInitialize(req Request) error {
 		status = "needs_setup"
 		issues = append(issues, RuntimeIssue{Code: issue.Code, Provider: issue.Provider, Message: issue.Message})
 	}
+	var isolation *UserHostIsolationSummary
+	if s.rt.UserBinding().IsUser() {
+		isolation = &UserHostIsolationSummary{Memory: "logical", Host: "unverified"}
+		if s.rt.UserHostIsolationMode == runtime.UserHostIsolationVerifiedHost {
+			isolation.Host = "verified"
+		}
+	}
 	return s.writeResponse(req.ID, InitializeResult{
-		UserSpaceID: s.rt.UserSpaceID, ProductDomain: s.rt.ProductDomain,
+		UserSpaceID: s.rt.UserSpaceID, ProductDomain: s.rt.ProductDomain, UserHostIsolation: isolation,
 		Status:          status,
 		Issues:          issues,
 		ProtocolVersion: ProtocolVersion,

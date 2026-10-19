@@ -274,6 +274,57 @@
   gap: var(--space-2);
 }
 
+/* A user-space view owns the title row. Keeping the hidden Coding row would
+ * leave an empty titlebar above the view's native conversation header. */
+.conversation-pane[data-workbench-layout="user-space"] {
+  grid-template-rows: minmax(0, 1fr);
+}
+.conversation-pane[data-workbench-layout="user-space"] > .plugin-workbench-view-primary {
+  grid-row: 1;
+}
+.conversation-pane[data-workbench-layout="user-space"] > .titlebar {
+  position: absolute;
+  inset: 0 auto auto 0;
+  z-index: 126;
+  box-shadow: none;
+  pointer-events: none;
+}
+.conversation-pane[data-workbench-layout="user-space"] > .titlebar button { pointer-events: auto; }
+/* The host lifts its drawer toggle over independent conversation headers.
+ * Reserve that occupied slot only while the lifted toggle exists. */
+.conversation-pane[data-workbench-layout="user-space"]:has(> .titlebar [data-wuu-component="sidebar-toggle"]) .plugin-conversation-titlebar {
+  padding-left: calc(var(--window-titlebar-leading-inset) - var(--conversation-pane-inset) + var(--control-size-toolbar) + var(--control-toolbar-gap));
+}
+
+
+.plugin-conversation {
+  display: grid;
+  grid-template-rows: var(--canvas-titlebar-height) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  position: relative;
+}
+.plugin-conversation-titlebar { grid-row: 1; }
+.plugin-conversation-identity { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.plugin-conversation-heading { min-width: 0; display: flex; align-items: baseline; gap: var(--space-3); }
+.plugin-conversation-heading h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-conversation-subtitle { color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-conversation-scroll { margin-bottom: var(--plugin-composer-height, 124px); }
+.plugin-conversation-composer { grid-column: 1; grid-row: 2; align-self: end; min-width: 0; z-index: 5; }
+.plugin-conversation-flow { --conversation-flow-bottom-space: var(--conversation-turn-boundary-gap); }
+.plugin-conversation-message { display: flex; flex-direction: column; min-width: 0; font-family: var(--conversation-message-font-family); font-weight: var(--conversation-message-font-weight); }
+.plugin-conversation-message[data-role="user"] { margin-bottom: calc(var(--conversation-user-rule-gap) - var(--conversation-user-message-trailing-gap)); }
+.plugin-conversation-message[data-role="assistant"] + .plugin-conversation-message[data-role="user"] { margin-top: var(--conversation-turn-boundary-gap); }
+.plugin-conversation-message[data-role="assistant"] + .plugin-conversation-message[data-role="assistant"] { margin-top: var(--conversation-turn-item-gap); }
+.plugin-conversation-attachments { width: 100%; min-width: 0; }
+.agent-block > .plugin-conversation-attachments { margin-top: var(--conversation-image-gap); }
+.plugin-conversation-attachment { min-width: 0; max-width: 100%; }
+.plugin-conversation-attachment img { display: block; max-width: 100%; max-height: 360px; object-fit: contain; margin-top: var(--conversation-image-gap); }
+.plugin-conversation-attachment > [role="alert"] { color: var(--danger); overflow-wrap: anywhere; }
+.plugin-conversation-search { width: min(760px, calc(100vw - var(--space-6))); }
+.plugin-conversation-search .mosaic-history-search { margin: 0; }
+
 /* Buttons join the shared 32px control family: no border, filled with the
  * secondary-control ramp, a scale press, and a halo focus ring. The primary
  * action is the strongest contrast pair in the ramp, not the accent — the

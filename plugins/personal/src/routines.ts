@@ -16,12 +16,13 @@ export interface Routine {
   created_at: string; updated_at: string; last_event_id?: string; last_result_hash?: string; last_error?: string; cancellation_pending?: boolean;
   source?: CalendarSource; source_cursor?: string; source_blocked?: boolean; source_pending?: { cursor: string; changes: CalendarChange[] };
 }
-interface EventRecord { revision: number; event_id: string; routine_id: string; routine_revision?: number; status: "pending" | "accepted"; request_id: string }
+interface EventRecord { revision: number; event_id: string; routine_id: string; routine_revision?: number; status: "pending" | "accepted"; request_id: string; session_id?: string; previous_delivery?: { request_id: string; session_id: string } }
 interface Preferences { quiet_hours: { enabled: boolean; start: string; end: string; timezone: string }; notifications: boolean }
 interface Services {
   active(): void;
   mutation(): () => void;
   agent(id: string, allowInactive?: boolean): Promise<NamedAgent>;
+  main(): Promise<NamedAgent>;
   send(agentID: string, params: HostServiceContracts["host.session.send"]["params"]): Promise<HostServiceContracts["host.session.send"]["result"]>;
   task(routine: Routine, eventID: string, agent: NamedAgent, change?: CalendarChange): Promise<unknown>;
   stopTasks(routineID: string): Promise<string[]>;
@@ -122,12 +123,13 @@ export class PersonalRoutines {
       if (!current) throw new Error("routine not found");
       if (current.status === "stopped" && method !== "resume") throw new Error("routine is stopped");
       if ((current.status === "stopping" || current.cancellation_pending) && ["resume", "update"].includes(method)) throw new Error("routine cancellation is still stopping; reconcile before resuming");
+      if (!["update", "pause", "resume", "stop"].includes(method)) throw new Error("unknown routine action");
       const stopping = method === "pause" || method === "stop";
-      return { ...current, ...(method === "update" ? this.validate(input, current) : {}), status: stopping ? "stopping" : "active", ...(stopping ? { stop_target: method === "pause" ? "paused" as const : "stopped" as const, cancellation_pending: true } : {}), config_revision: current.config_revision + 1,
+      return { ...current, ...(method === "update" ? this.validate(input, current) : {}), status: stopping ? "stopping" : method === "update" && current.status === "paused" ? "paused" : "active", ...(method === "update" ? { cancellation_pending: true } : {}), ...(stopping ? { stop_target: method === "pause" ? "paused" as const : "stopped" as const, cancellation_pending: true } : {}), config_revision: current.config_revision + 1,
         ...(current.source || input.source ? { source_pending: undefined, ...(method === "resume" || input.source !== undefined ? { source_cursor: undefined, source_blocked: false } : {}) } : {}),
         binding: { ...current.binding, status: "pending" }, updated_at: now(), last_error: undefined };
     }, Number(input.expected_revision));
-    if (routine.status === "stopping") await this.cancelWork(routine);
+    if (routine.cancellation_pending || routine.status === "stopping") await this.cancelWork(routine);
     return { routine: await this.sync(routine) };
   }
   private async cancelWork(routine: Routine): Promise<void> {
@@ -139,10 +141,10 @@ export class PersonalRoutines {
       const event = JSON.parse(value) as EventRecord;
       if (event.routine_id !== routine.routine_id || event.status !== "pending" || routine.kind !== "reminder") continue;
       try {
-        const inspection = await this.host.call("host.session.inspect", { session_id: agent.main_session_id, request_id: event.request_id });
+        const inspection = await this.host.call("host.session.inspect", { session_id: event.session_id || agent.main_session_id, request_id: event.request_id });
         if (inspection.turn && ["running", "queued"].includes(inspection.turn.state)) {
-          await this.host.call("host.session.cancel", { session_id: agent.main_session_id, turn_id: inspection.turn.turn_id, queue_id: inspection.turn.queue_id });
-          const remaining = await this.host.call("host.session.inspect", { session_id: agent.main_session_id, request_id: event.request_id });
+          await this.host.call("host.session.cancel", { session_id: event.session_id || agent.main_session_id, turn_id: inspection.turn.turn_id, queue_id: inspection.turn.queue_id });
+          const remaining = await this.host.call("host.session.inspect", { session_id: event.session_id || agent.main_session_id, request_id: event.request_id });
           if (remaining.turn && ["running", "queued"].includes(remaining.turn.state)) { pending = true; error = "Reminder cancellation is still pending"; }
         }
       } catch (cause) { pending = true; error = `Reminder cancellation requires reconciliation: ${String(cause)}`; }
@@ -219,7 +221,7 @@ export class PersonalRoutines {
       const event = JSON.parse(value) as EventRecord;
       if (event.request_id !== requestID) continue;
       const routine = await this.read<Routine>("routine", event.routine_id);
-      return Boolean(routine && routine.agent_id === agentID && routine.kind === "reminder" && event.routine_revision === routine.config_revision && !routine.cancellation_pending &&
+      return Boolean(agentID === (await this.services.main()).agent_id && routine && routine.kind === "reminder" && event.routine_revision === routine.config_revision && !routine.cancellation_pending &&
         (routine.status === "active" || routine.status === "completed" && !routine.cron));
     }
     return false;
@@ -241,7 +243,7 @@ export class PersonalRoutines {
       const expired = await this.update<Routine>("routine", routine.routine_id, current => current?.config_revision === routine.config_revision ? { ...current, status: "completed", config_revision: current.config_revision + 1, source_pending: undefined, binding: { ...current.binding, status: "pending" }, last_error: undefined } : current!);
       await this.sync(expired); return;
     }
-    const query = { session_id: agent.main_session_id, account_id: source.account_id, calendar_id: source.calendar_id, time_min: source.time_min, time_max: source.time_max, timezone: source.timezone };
+    const query = { session_id: (await this.services.main()).main_session_id, account_id: source.account_id, calendar_id: source.calendar_id, time_min: source.time_min, time_max: source.time_max, timezone: source.timezone };
     try {
       const refreshed = await this.host.call("host.service.call", { service: "calendar.personal", method: "refresh", params: query }) as { state?: string; source?: Record<string, unknown>; error_code?: string };
       this.services.active();
@@ -276,6 +278,7 @@ export class PersonalRoutines {
     if (!payload?.routine_id) throw new Error("routine trigger requires a bound payload");
     const routine = await this.read<Routine>("routine", payload.routine_id);
     if (!routine || routine.status !== "active" || routine.config_revision !== payload.routine_revision || routine.binding.binding_id !== input.binding_id) return { accepted: true };
+    if (routine.cancellation_pending) return { defer_until: new Date(Date.now() + 15_000).toISOString() };
     const binding = await this.scheduler("read", { binding_id: routine.binding.binding_id });
     if (!binding.pending_event || binding.pending_event.event_id !== input.event_id || binding.pending_event.binding_revision !== input.binding_revision || binding.revision !== routine.binding.revision) throw new Error("unverified_scheduler_event");
     const agent = await this.services.agent(routine.agent_id);
@@ -284,8 +287,19 @@ export class PersonalRoutines {
     const deferred = quietUntil(preferences.quiet_hours);
     if (deferred) return { defer_until: deferred };
     const eventID = required(input, "event_id");
-    const record = await this.update<EventRecord>("event", hash(eventID), current => current ?? { event_id: eventID, routine_id: routine.routine_id, routine_revision: routine.config_revision, revision: 0, status: "pending", request_id: `personal-reminder-${hash(routine.routine_id, eventID)}` });
+    const main = await this.services.main();
+    let record = await this.update<EventRecord>("event", hash(eventID), current => current ?? { event_id: eventID, routine_id: routine.routine_id, routine_revision: routine.config_revision, revision: 0, status: "pending", request_id: `personal-reminder-${hash(routine.routine_id, eventID)}`, session_id: main.main_session_id });
     if (record.status === "accepted") return { accepted: true };
+    if (routine.kind === "reminder" && (record.session_id || agent.main_session_id) !== main.main_session_id) {
+      const previous = { request_id: record.request_id, session_id: record.session_id || agent.main_session_id };
+      const inspection = await this.host.call("host.session.inspect", previous);
+      if (inspection.turn && ["running", "queued"].includes(inspection.turn.state)) {
+        await this.host.call("host.session.cancel", { session_id: previous.session_id, turn_id: inspection.turn.turn_id, queue_id: inspection.turn.queue_id });
+        const remaining = await this.host.call("host.session.inspect", previous);
+        if (remaining.turn && ["running", "queued"].includes(remaining.turn.state)) return { defer_until: new Date(Date.now() + 15_000).toISOString() };
+      }
+      record = await this.update<EventRecord>("event", hash(eventID), current => ({ ...current!, previous_delivery: previous, request_id: `personal-reminder-${hash(routine.routine_id, eventID, "main")}`, session_id: main.main_session_id }));
+    }
     // Recheck the authoritative pause revision immediately before dispatch.
     const current = await this.read<Routine>("routine", routine.routine_id);
     if (current?.status !== "active" || current.config_revision !== routine.config_revision) return { accepted: true };
@@ -293,12 +307,12 @@ export class PersonalRoutines {
     if (routine.source) await this.calendarChanges(routine, agent);
     else if (routine.kind === "task") await this.services.task(routine, eventID, agent);
     else {
-      const inspected = await this.host.call("host.session.inspect", { session_id: agent.main_session_id, request_id: record.request_id });
+      const inspected = await this.host.call("host.session.inspect", { session_id: (await this.services.main()).main_session_id, request_id: record.request_id });
       let state = inspected.turn?.state;
       if (!inspected.turn || (state === "discarded" && inspected.turn.retryable)) {
-        const sent = await this.services.send(agent.agent_id, { request_id: record.request_id, session_id: agent.main_session_id, cause: "personal.reminder", if_running: "queue",
+        const sent = await this.services.send(main.agent_id, { request_id: record.request_id, session_id: (await this.services.main()).main_session_id, cause: "personal.reminder", if_running: "queue",
           input: { prompt: `The user's explicit reminder is due: ${routine.prompt}\nRoutine ${routine.routine_id}; event ${eventID}. Give the reminder once. Do not infer permission for additional actions.` },
-          presentation: { kind: "query_bubble", text: routine.title, name: agent.name } });
+          presentation: { kind: "query_bubble", text: routine.title, name: main.name } });
         state = sent.state;
       }
       // A queued input can be discarded by host shutdown. Keep the scheduler's
@@ -325,7 +339,7 @@ export class PersonalRoutines {
     if (routine.source) {
       try {
         const agent = await this.services.agent(routine.agent_id);
-        const status = await this.host.call("host.service.call", { service: "calendar.personal", method: "status", params: { session_id: agent.main_session_id, account_id: routine.source.account_id, calendar_id: routine.source.calendar_id, time_min: routine.source.time_min, time_max: routine.source.time_max, timezone: routine.source.timezone } }) as { state?: string; freshness?: string; account_id?: string; source?: Record<string, unknown> };
+        const status = await this.host.call("host.service.call", { service: "calendar.personal", method: "status", params: { session_id: (await this.services.main()).main_session_id, account_id: routine.source.account_id, calendar_id: routine.source.calendar_id, time_min: routine.source.time_min, time_max: routine.source.time_max, timezone: routine.source.timezone } }) as { state?: string; freshness?: string; account_id?: string; source?: Record<string, unknown> };
         const changed = status.account_id !== undefined && status.account_id !== routine.source.account_id || status.source && (status.source.user_space_id !== undefined && status.source.user_space_id !== this.space || ["account_id", "generation", "calendar_id", "time_min", "time_max", "timezone"].some(key => status.source![key] !== undefined && status.source![key] !== routine.source![key as keyof CalendarSource]));
         if (changed) { await this.sourceError(routine, "Calendar source changed before result delivery; review the current account and source", true); return { suppress: true }; }
         if (status.state !== "ready" || status.freshness !== "fresh" || !this.sourceMatches(status.source, routine.source)) { await this.sourceError(routine, `Calendar result waiting for source verification: ${status.state || "unavailable"}`); return { defer: true }; }

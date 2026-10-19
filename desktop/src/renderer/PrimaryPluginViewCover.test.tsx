@@ -200,8 +200,8 @@ describe("primary plugin view covers the conversation", () => {
     expect(pane?.querySelector(".scroll-region")?.hasAttribute("inert")).toBe(false);
   });
 
-  it("keeps an isolation-gated Personal view local and restores the existing Coding composer", async () => {
-    const request = vi.fn().mockRejectedValue(new Error("user_host_isolation_required: Personal user host requires verified host isolation"));
+  it("keeps a failed Personal recovery local and restores the existing Coding composer", async () => {
+    const request = vi.fn().mockRejectedValue(new Error("main_session_recovery_required: bound history unavailable"));
     Object.assign(window.wuu, { requestPluginRuntime: request, cancelPluginRuntime: vi.fn().mockResolvedValue({ cancelled: false }) });
     const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/personal/desktop.js"), "utf8");
     const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
@@ -212,8 +212,7 @@ describe("primary plugin view covers the conversation", () => {
       await desktopWorkbenchController.openPluginView(pluginId, "personal.home");
     });
     await flushAsync();
-    const gate = container.querySelector('[data-personal-state="unavailable"]');
-    expect(gate?.getAttribute("data-reason")).toBe("user_host_isolation_required");
+    expect(container.querySelector('.mosaic [role="alert"]')?.textContent).toContain("main_session_recovery_required");
     expect(container.querySelector(".mosaic textarea")).toBeNull();
     expect(request.mock.calls.every(([params]) => params.user_space_id === "local" && params.product_domain === "personal")).toBe(true);
     await act(async () => desktopWorkbenchController.deactivateRegion("primary"));
@@ -223,8 +222,9 @@ describe("primary plugin view covers the conversation", () => {
   });
 
   it("carries exact user input provenance from the production Personal composer to the main bridge", async () => {
-    const main = { agent_id: "main", user_space_id: "local", name: "Mosaic", kind: "main", status: "active", revision: 1 };
-    const request = vi.fn(async (params) => ({ result: params.method === "agents.list" ? { agents: [main], default_agent_id: "main" }
+    const main = { agent_id: "main", user_space_id: "local", name: "twin", kind: "main", main_session_id: "personal-main", status: "active", revision: 1 };
+    const request = vi.fn(async (params) => ({ result: params.method === "agents.ensure_default" ? { agent: main }
+      : params.method === "agents.list" ? { agents: [main], default_agent_id: "main" }
       : params.method === "agents.open" ? { agent: main, session: { state: "completed" } }
       : params.method === "agents.history" ? { records: [] }
       : params.method === "tasks.list" ? { tasks: [] }
@@ -245,13 +245,13 @@ describe("primary plugin view covers the conversation", () => {
       Object.defineProperty(filePicker!, "files", { configurable: true, value: [new File(["hello"], "notes.txt", { type: "text/plain" })] });
       filePicker!.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    await vi.waitFor(async () => { await act(async () => {}); expect(container.querySelector('[data-draft-attachment]')).not.toBeNull(); });
+    await vi.waitFor(async () => { await act(async () => {}); expect(container.querySelector('.composer-attachment-tray')).not.toBeNull(); });
     const textarea = container.querySelector<HTMLTextAreaElement>(".mosaic textarea")!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, prompt);
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-action="send"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('.mosaic .composer-send-button')!.click());
     const sent = request.mock.calls.map(([params]) => params).filter(params => params.method === "agents.send");
     expect(sent).toHaveLength(1);
     expect(sent[0].input.prompt).toBe(prompt);
@@ -261,7 +261,7 @@ describe("primary plugin view covers the conversation", () => {
     expect(request.mock.calls.filter(([params]) => params.method !== "agents.send").every(([params]) => params.user_input === undefined)).toBe(true);
   });
 
-  it("isolates a generic user-space view from Coding navigation and restores the saved workspace panel", async () => {
+  it("keeps existing Wuu navigation in a user-space view and restores the saved Coding panel", async () => {
     window.localStorage.setItem("wuu.desktop.workspaceRightPanelOpen", "true");
     await act(async () => { root = createRoot(container); root.render(<App />); });
     await flushAsync();
@@ -275,15 +275,15 @@ describe("primary plugin view covers the conversation", () => {
       await desktopWorkbenchController.openPluginView(pluginId, "generic.user");
     });
     expect(container.querySelector('[data-workbench-layout="user-space"]')).not.toBeNull();
-    expect(container.querySelector(".conversation-search-trigger")).toBeNull();
+    expect(container.querySelector(".conversation-search-trigger")).not.toBeNull();
     expect(container.querySelector('[data-wuu-component="right-sidebar-toggle"]')).toBeNull();
     expect(container.querySelector(".workspace-right-panel-resizer")).toBeNull();
     await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", ctrlKey: true, bubbles: true })));
     expect(container.querySelector(".conversation-search-dialog")).toBeNull();
     expect(window.localStorage.getItem("wuu.desktop.workspaceRightPanelOpen")).toBe("true");
-    const projects = container.querySelector<HTMLButtonElement>('[data-workbench-action="projects"]');
-    expect(projects).not.toBeNull();
-    await act(async () => projects!.click());
+    const search = container.querySelector<HTMLButtonElement>(".conversation-search-trigger");
+    expect(search).not.toBeNull();
+    await act(async () => search!.click());
     expect(container.querySelector('[data-workbench-layout="user-space"]')).toBeNull();
     expect(container.querySelector(".conversation-search-trigger")).not.toBeNull();
     expect(container.querySelector('[data-wuu-component="right-sidebar-toggle"]')?.getAttribute("aria-pressed")).toBe("true");

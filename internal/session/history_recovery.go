@@ -326,10 +326,10 @@ func searchHistoryQueryTx(ctx context.Context, tx *sql.Tx, query HistorySearchQu
 	)`
 	filter := ""
 	if query.View == "conversation" {
-		// Public conversation navigation must never return an invisible reasoning or
-		// tool row. Apply projection before LIMIT so hidden matches cannot starve it.
+		// Provider role=user also carries generated context. Public conversation
+		// navigation requires human provenance and visibility before LIMIT.
 		searchable = `lower((CASE WHEN lower(role) = 'user' AND origin = 'user' AND (coalesce(files_json, '') <> '' OR coalesce(images_json, '') <> '') THEN coalesce(display_content, '') ELSE coalesce(nullif(display_content, ''), content, '') END) || char(10) || coalesce(name, ''))`
-		filter = " AND lower(role) IN ('user', 'assistant') AND (coalesce(nullif(display_content, ''), content, '') <> '' OR coalesce(files_json, '') <> '' OR coalesce(images_json, '') <> '')"
+		filter = " AND hidden = 0 AND lower(role) IN ('user', 'assistant') AND (lower(role) <> 'user' OR (read_only = 0 AND origin IN ('', 'user'))) AND (coalesce(nullif(display_content, ''), content, '') <> '' OR coalesce(files_json, '') <> '' OR coalesce(images_json, '') <> '')"
 	}
 	args := []any{id, startSeq, upper, endSeq, query.Query}
 	if !query.TimeMin.IsZero() {

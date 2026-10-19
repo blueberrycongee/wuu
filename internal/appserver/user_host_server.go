@@ -24,7 +24,8 @@ const maxUserHostClientQueuedBytes = 32 * 1024 * 1024
 var ErrUserHostClientOverflow = errors.New("user host client fell behind; reconnect and read current state")
 
 // UserHost owns one execution authority independently of client connections.
-// The initialized runtime must already have passed its isolation verifier.
+// The initialized runtime has an immutable logical memory-domain binding; an
+// embedding host may separately opt into verified host isolation.
 // Closing a connection never closes this host or replaces its session router.
 // Headless hosts do not negotiate client computer/browser reverse-RPC tools.
 type UserHost struct {
@@ -65,6 +66,9 @@ type userHostConnection struct {
 func NewUserHost(rt *runtime.Session) (*UserHost, error) {
 	if rt == nil || !rt.UserBinding().IsUser() {
 		return nil, errors.New("persistent user host requires an explicit user binding")
+	}
+	if err := rt.UserBinding().Validate(); err != nil {
+		return nil, err
 	}
 	h := &UserHost{runtime: rt, connections: map[string]*userHostConnection{}, pending: map[string]userHostResponse{}}
 	h.attentionCtx, h.attentionCancel = context.WithCancel(context.Background())
@@ -453,4 +457,11 @@ type userHostConnectionWriter struct{ connection *userHostConnection }
 func (w userHostConnectionWriter) Write(p []byte) (int, error) {
 	w.connection.enqueue(p)
 	return len(p), nil
+}
+
+// Origin=user is assigned only after live client proof validation. PluginTurn
+// retains its delivery receipt identity without changing the input's author.
+// Do not classify proven client text using legacy synthetic-message envelopes.
+func (s *Server) isUserHostClientInput(entry queuedTurn) bool {
+	return s.rt != nil && s.rt.UserBinding().IsUser() && entry.snapshot.PluginTurn != nil && entry.msg.Origin == "user" && entry.msg.Role == "user" && !entry.msg.Hidden && !entry.msg.ReadOnly
 }

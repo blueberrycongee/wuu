@@ -610,8 +610,6 @@ export function AppSidebar({
   );
   const userSpaceViewActive = workbenchSnapshot.viewTypes.some(definition => definition.layout === "user-space"
     && definition.pluginId === activePluginMainView?.pluginId && definition.id === activePluginMainView?.viewTypeId);
-  const userSpaceEntries = pluginNavigationEntries.filter(entry => workbenchSnapshot.viewTypes.some(definition =>
-    definition.layout === "user-space" && definition.pluginId === entry.pluginId && definition.id === entry.view));
   const activateNative = useCallback((action: () => void): void => {
     workbenchController.deactivateRegion("primary");
     action();
@@ -1870,7 +1868,6 @@ export function AppSidebar({
         ) : (
           <>
         <nav className="primary-nav" aria-label={t("sidebar.mainNavigation")}>
-          {userSpaceEntries.map(pluginNavigationButton)}
           <button
             className="nav-item"
             onClick={() => activateNative(onStartNewThread)}
@@ -1902,7 +1899,7 @@ export function AppSidebar({
           {/* Plugin pages are destinations beside the catalog that lists
               their plugins, so they continue this list instead of opening a
               second group headed with the catalog's own name. */}
-          {pluginNavigationEntries.filter(entry => !userSpaceEntries.includes(entry)).map(pluginNavigationButton)}
+          {pluginNavigationEntries.map(pluginNavigationButton)}
         </nav>
 
         <div className="sidebar-main scrollbar-hidden" data-scroll-fade="">
@@ -2318,40 +2315,14 @@ export function AppSidebar({
       <SidebarHoverFactsContext.Provider value={hoverFacts}>{nativeSidebar}</SidebarHoverFactsContext.Provider>
     </SessionOrganizationProvider>
   );
-  const userSpaceNavigationNodes: readonly NavigationSourceNode[] = [
-    ...userSpaceEntries.map(entry => ({ id: `plugin:${entry.pluginId}:${entry.id}`, kind: "command" as const,
-      label: entry.title, depth: 0, active: activePluginMainView?.id === entry.instanceId,
-      icon: entry.icon && "name" in entry.icon ? entry.icon.name : "plugin-blocks",
-      onActivate: () => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId) })),
-    { id: "command:projects", kind: "command", label: t("sidebar.projects"), depth: 0, icon: "folder",
-      onActivate: () => workbenchController.deactivateRegion("primary") },
-    { id: "command:settings", kind: "command", label: t("sidebar.settings"), depth: 0, icon: "settings",
-      onActivate: () => activateNative(onOpenSettings) },
-  ];
-  const userSpaceSidebar = <div className="sidebar-content">
-    {sidebarHeader}
-    <nav className="primary-nav" aria-label={t("sidebar.mainNavigation")}>
-      {userSpaceEntries.map(pluginNavigationButton)}
-      <button type="button" className="nav-item" data-workbench-action="projects"
-        onClick={() => workbenchController.deactivateRegion("primary")}>
-        <Folder className="icon-lg" /><span>{t("sidebar.projects")}</span>
-      </button>
-    </nav>
-    <div className="sidebar-main" />
-    <div className="sidebar-settings">
-      {sidebarVisible && <SidebarAccountMenu disabled={!state.initialized}
-        onOpenAccount={onOpenAccount ? () => activateNative(onOpenAccount) : undefined}
-        onOpenSettings={page => activateNative(() => onOpenSettings(page))} />}
-    </div>
-  </div>;
   return (
     <NavigationPresentation
-      nodes={userSpaceViewActive ? userSpaceNavigationNodes : [
+      nodes={[
         ...primaryNavigationNodes,
         ...pluginNavigationNodes,
         ...navigationNodes,
       ]}
-      fallback={userSpaceViewActive ? userSpaceSidebar : organizedSidebar}
+      fallback={organizedSidebar}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
     />

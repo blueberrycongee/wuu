@@ -8,9 +8,18 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Changed
+
+- Present twin directly in the existing desktop navigation below Automations, with one persistent main conversation and a continuous right panel for ongoing work, recent activity and outputs. Reuse native message, file, search, composer and confirmation controls; keep Personal preferences in shared settings.
+
+### Fixed
+
+- Keep hidden and generated context out of Personal conversation history and search while preserving audit records and exact user-authored text.
+- Preserve accepted Personal user inputs when stopping a reply. Deliver background questions and failures to the main conversation, resume the same task from its answer, and update routines without duplicating schedules.
+
 ### Added
 
-- Add experimental Personal agents with persistent conversations, attributed shared memory, background tasks, attachment history, reminders, and desktop/native entry points. Personal activation remains blocked until a trusted host integration verifies isolation from Coding.
+- Add experimental Personal agents with persistent conversations, attributed shared memory, background tasks, attachment history, reminders, and desktop/native entry points. Personal now defaults to logical memory-domain isolation with explicit capability reporting. Verified host isolation remains an optional, fail-closed embedding mode; same-OS Shell confidentiality is not promised.
 - Add a persistent user-host SDK and scoped notification routing. Calendar authorization/write-provider wiring, native-device verification, and production push delivery remain integration requirements.
 
 ## [2026.10.19] - 2026-10-18

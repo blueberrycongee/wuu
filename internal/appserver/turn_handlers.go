@@ -2064,8 +2064,19 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 	}
 	pendingSteers := queuedTurnsFromSteers(humanSteers)
 	th.applySteerDocumentOverridesLocked(pendingSteers)
-	for index := range pendingSteers {
-		pendingSteers[index].origin = session.HeldUserWorkOriginSteer
+	var retainedClientTurns []queuedTurn
+	toHold := make([]queuedTurn, 0, len(pendingSteers))
+	for _, entry := range pendingSteers {
+		if s.isUserHostClientInput(entry) {
+			entry.snapshot.PluginTurn.QueueID = entry.id
+			if control, ok := th.pendingSteerControls[entry.msg.ClientID]; ok {
+				entry.snapshot.Control = &control
+			}
+			retainedClientTurns = append(retainedClientTurns, entry)
+			continue
+		}
+		entry.origin = session.HeldUserWorkOriginSteer
+		toHold = append(toHold, entry)
 	}
 	s.queuedTurnMu.Lock()
 	queued := append([]queuedTurn(nil), s.pendingQueuedTurns[threadID]...)
@@ -2074,6 +2085,13 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 	userQueued := make([]queuedTurn, 0, len(queued))
 	var discardedPluginTurns []queuedTurn
 	for _, entry := range queued {
+		// Personal client submissions retain their delivery reference for retry
+		// and lifecycle receipts. That reference is not a generated-input marker:
+		// stopping this reply must not cancel a later authenticated user request.
+		if s.isUserHostClientInput(entry) {
+			retainedClientTurns = append(retainedClientTurns, entry)
+			continue
+		}
 		if entry.snapshot.PluginTurn != nil {
 			discardedPluginTurns = append(discardedPluginTurns, entry)
 			continue
@@ -2081,7 +2099,7 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 		entry.origin = session.HeldUserWorkOriginQueue
 		userQueued = append(userQueued, entry)
 	}
-	toHold := append(pendingSteers, userQueued...)
+	toHold = append(toHold, userQueued...)
 	held, err := s.appendHeldUserTurns(threadID, toHold)
 	if err != nil {
 		s.queuedTurnMu.Lock()
@@ -2090,6 +2108,7 @@ func (s *Server) interruptThreadExecution(threadID, expectedRunID, expectedTurnI
 		th.mu.Unlock()
 		return false, err
 	}
+	s.prependQueuedUserTurns(threadID, retainedClientTurns)
 	th.pendingSteers = nil
 	th.interrupting = true
 	th.workerTreeFrozen = true
@@ -4480,7 +4499,7 @@ func (s *Server) takeNextQueuedUserTurn(threadID string) (queuedTurn, bool) {
 	}
 	index := 0
 	for candidate := range pending {
-		if pending[candidate].snapshot.PluginTurn == nil {
+		if pending[candidate].snapshot.PluginTurn == nil || s.isUserHostClientInput(pending[candidate]) {
 			index = candidate
 			break
 		}

@@ -15,8 +15,8 @@ func (s *Session) UserBinding() userspace.Binding {
 }
 
 // This one-way tool restriction is defense in depth, not proof of two-way host
-// isolation. Legacy Coding tools keep their existing permissions. User hosts
-// require a separate trusted isolation verifier before production activation.
+// isolation. Legacy Coding tools keep their existing permissions. The default
+// user-host contract isolates memory APIs, not same-identity OS/file access.
 func memoryProtectedPaths(home string, binding userspace.Binding) []string {
 	if !binding.IsUser() {
 		return nil
@@ -31,14 +31,44 @@ func runtimeFileScopeRoots(root, home string, binding userspace.Binding, extras 
 	return workspaces.BoundaryRoots(root, home, extras...)
 }
 
+// UserHostIsolationMode selects the assurance required at activation. The zero
+// value uses logical memory-domain isolation for explicitly bound user hosts.
+// No mode changes legacy Coding execution permissions.
+type UserHostIsolationMode string
+
+const (
+	UserHostIsolationLogicalMemory UserHostIsolationMode = "logical_memory"
+	UserHostIsolationVerifiedHost  UserHostIsolationMode = "verified_host"
+)
+
+func resolveUserHostIsolation(ctx context.Context, binding userspace.Binding, home string, mode UserHostIsolationMode, verifier UserHostIsolationVerifier) (UserHostIsolationMode, error) {
+	if !binding.IsUser() {
+		if mode != "" {
+			return "", fmt.Errorf("user host isolation mode requires an explicit user binding")
+		}
+		return "", nil
+	}
+	switch mode {
+	case "", UserHostIsolationLogicalMemory:
+		return UserHostIsolationLogicalMemory, nil
+	case UserHostIsolationVerifiedHost:
+		if err := VerifyUserHostIsolation(ctx, binding, home, verifier); err != nil {
+			return "", err
+		}
+		return UserHostIsolationVerifiedHost, nil
+	default:
+		return "", fmt.Errorf("unsupported user host isolation mode %q", mode)
+	}
+}
+
+const UserHostIsolationRequiredCode = "user_host_isolation_required"
+
 // UserHostIsolationVerifier is supplied only by a trusted embedding host. It
 // must verify that other product hosts cannot read this user's data, including
 // through unrestricted subprocesses, browser bridges, extensions and old
 // sessions. A configuration flag or caller assertion is not sufficient.
-// The desktop/CLI ship without a verifier and therefore cannot activate a
-// production user host yet. Synthetic tests may inject an explicit fake.
-const UserHostIsolationRequiredCode = "user_host_isolation_required"
-
+// Only the explicit verified_host mode requires this stronger boundary. Logical
+// memory isolation does not attest to subprocess or filesystem confidentiality.
 type UserHostIsolationVerifier interface {
 	VerifyUserHostIsolation(context.Context, userspace.Binding, string) error
 }
@@ -48,7 +78,7 @@ func VerifyUserHostIsolation(ctx context.Context, binding userspace.Binding, hom
 		return nil
 	}
 	if verifier == nil {
-		return fmt.Errorf(UserHostIsolationRequiredCode + ": Personal user host requires verified host isolation; unrestricted Coding processes sharing this OS identity can read Personal data. Configure a verified separate host identity before activation")
+		return fmt.Errorf(UserHostIsolationRequiredCode + ": verified_host mode requires verified host isolation; unrestricted Coding processes sharing this OS identity can read Personal data. Configure a verified separate host identity before activation")
 	}
 	if err := verifier.VerifyUserHostIsolation(ctx, binding, home); err != nil {
 		return fmt.Errorf(UserHostIsolationRequiredCode+": verified host isolation unavailable: %w", err)

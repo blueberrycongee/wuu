@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"os"
 	"path/filepath"
@@ -13,8 +14,8 @@ import (
 )
 
 // A user-host boundary must be installed before any state exists, while legacy
-// Coding tool behavior stays unchanged. The separate two-way host-isolation
-// prerequisite cannot be replaced by this one-way toolkit restriction.
+// Coding tool behavior stays unchanged. These one-way toolkit restrictions
+// remain defense in depth and do not prove strong two-way host isolation.
 func TestUserHostProtectedPathsAndFileScope(t *testing.T) {
 	home := t.TempDir()
 	if roots := memoryProtectedPaths(home, userspace.Binding{}); len(roots) != 0 {
@@ -39,11 +40,86 @@ func TestUserHostProtectedPathsAndFileScope(t *testing.T) {
 	}
 }
 
-func TestUserHostActivationRequiresTrustedIsolationVerifier(t *testing.T) {
-	_, err := NewSession(Options{RootDir: t.TempDir(), HomeDir: t.TempDir(), UserSpaceID: "local", ProductDomain: "personal"})
-	if err == nil || !strings.Contains(err.Error(), "verified host isolation") {
-		t.Fatalf("unverified user host was not rejected first: %v", err)
+// Activation must distinguish logical memory boundaries from separately verified
+// host isolation. Invalid modes/bindings and unavailable strong verification fail
+// before creating user data; legacy Coding needs no user-host contract.
+func TestUserHostActivationIsolationModes(t *testing.T) {
+	for _, tc := range []struct {
+		name, space, domain string
+		mode                UserHostIsolationMode
+		verifier            *testUserHostIsolationVerifier
+		want                UserHostIsolationMode
+		wantError           string
+	}{
+		{name: "logical default", space: "local", domain: "personal", want: UserHostIsolationLogicalMemory},
+		{name: "logical explicit", space: "local", domain: "personal", mode: UserHostIsolationLogicalMemory, want: UserHostIsolationLogicalMemory},
+		{name: "logical does not claim verifier", space: "local", domain: "personal", verifier: &testUserHostIsolationVerifier{err: errors.New("not isolated")}, want: UserHostIsolationLogicalMemory},
+		{name: "verified missing verifier", space: "local", domain: "personal", mode: UserHostIsolationVerifiedHost, wantError: UserHostIsolationRequiredCode},
+		{name: "verified denied", space: "local", domain: "personal", mode: UserHostIsolationVerifiedHost, verifier: &testUserHostIsolationVerifier{err: errors.New("identity shared")}, wantError: "identity shared"},
+		{name: "verified success", space: "local", domain: "personal", mode: UserHostIsolationVerifiedHost, verifier: &testUserHostIsolationVerifier{}, want: UserHostIsolationVerifiedHost},
+		{name: "unknown mode", space: "local", domain: "personal", mode: "invented", wantError: "unsupported user host isolation mode"},
+		{name: "missing space", domain: "personal", wantError: "user_space_id"},
+		{name: "missing domain", space: "local", wantError: "product_domain"},
+		{name: "invalid space", space: "../escape", domain: "personal", wantError: "user_space_id"},
+		{name: "mode without binding", mode: UserHostIsolationVerifiedHost, wantError: "requires an explicit user binding"},
+		{name: "legacy Coding"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, root := t.TempDir(), t.TempDir()
+			state := filepath.Join(home, "state")
+			t.Setenv("WUU_HOME", state)
+			t.Setenv("TEST_WUU_KEY", "synthetic")
+			opts := Options{RootDir: root, HomeDir: home, UserSpaceID: tc.space, ProductDomain: tc.domain, UserHostIsolationMode: tc.mode, SafeMode: true, NoTools: true,
+				Config: config.Config{DefaultProvider: "test", Providers: map[string]config.ProviderConfig{"test": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKeyEnv: "TEST_WUU_KEY", Model: "test"}}}}
+			if tc.verifier != nil {
+				opts.UserHostIsolationVerifier = tc.verifier
+			}
+			rt, err := NewSession(opts)
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("activation error = %v, want %q", err, tc.wantError)
+				}
+				if _, err := os.Stat(filepath.Join(state, "user-spaces")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("rejected activation created user data: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _, _ = rt.Cleanup() })
+			if rt.UserHostIsolationMode != tc.want {
+				t.Fatalf("isolation mode = %q, want %q", rt.UserHostIsolationMode, tc.want)
+			}
+			if tc.verifier != nil {
+				wantCalls := 0
+				if tc.mode == UserHostIsolationVerifiedHost {
+					wantCalls = 1
+				}
+				if tc.verifier.calls != wantCalls {
+					t.Fatalf("verifier calls = %d, want %d", tc.verifier.calls, wantCalls)
+				}
+			}
+			if tc.space != "" {
+				binding := userspace.Binding{UserSpaceID: tc.space, ProductDomain: tc.domain}
+				if rt.RootDir != binding.Root(state) || rt.ProductDataRoot() != binding.State(state) || rt.SessionDir != filepath.Join(binding.State(state), "sessions") {
+					t.Fatalf("unscoped user runtime: root=%s state=%s sessions=%s", rt.RootDir, rt.ProductDataRoot(), rt.SessionDir)
+				}
+			} else if rt.RootDir != root || rt.ProductDataRoot() != state {
+				t.Fatal("legacy Coding roots changed")
+			}
+		})
 	}
+}
+
+type testUserHostIsolationVerifier struct {
+	calls int
+	err   error
+}
+
+func (v *testUserHostIsolationVerifier) VerifyUserHostIsolation(context.Context, userspace.Binding, string) error {
+	v.calls++
+	return v.err
 }
 
 func TestUserHostConfigDoesNotInheritExecutableCodingExtensions(t *testing.T) {

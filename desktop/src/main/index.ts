@@ -1802,26 +1802,26 @@ app.whenReady().then(async () => {
     }
     return result;
   });
-  ipcMain.handle("wuu:user-question-list", (event, threadId?: string) =>
+  ipcMain.handle("wuu:user-question-list", (event, threadId?: string, context?: RuntimeContext) =>
     appServerRequest<UserQuestionListResult>(event, "user-question/list", {
       thread_id: threadId,
-    }));
+    }, context));
   ipcMain.handle(
     "wuu:user-question-answer",
-    (event, requestId: string, answer: UserQuestionAnswer) =>
+    (event, requestId: string, answer: UserQuestionAnswer, context?: RuntimeContext) =>
       appServerRequest<UserQuestionResolveResult>(event, "user-question/respond", {
         request_id: requestId,
         answer,
-      }),
+      }, context),
   );
-  ipcMain.handle("wuu:user-question-cancel", (event, requestId: string) =>
+  ipcMain.handle("wuu:user-question-cancel", (event, requestId: string, context?: RuntimeContext) =>
     appServerRequest<UserQuestionResolveResult>(event, "user-question/cancel", {
       request_id: requestId,
-    }));
-  ipcMain.handle("wuu:user-question-hold", (event, requestId: string) =>
+    }, context));
+  ipcMain.handle("wuu:user-question-hold", (event, requestId: string, context?: RuntimeContext) =>
     appServerRequest<UserQuestionResolveResult>(event, "user-question/hold", {
       request_id: requestId,
-    }));
+    }, context));
   ipcMain.handle(
     "wuu:system-notification",
     (event, params: SystemNotificationParams): SystemNotificationResult => {

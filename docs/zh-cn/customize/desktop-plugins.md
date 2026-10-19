@@ -64,6 +64,21 @@ View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、
 
 会话卡片用于临时交互，不是保存的历史或持久页面；卡片句柄可以更新状态或关闭卡片。输入框状态源通过 `getSnapshot(context)` 返回结构化条目，通过 `subscribe` 通知变化，数据未变时应保持快照引用稳定。状态行、溢出和可选的 `open-session` 动作由 Wuu 渲染处理，不接收每个条目的任意 React 内容。
 
+
+### 独立会话
+
+主视图可使用 `layout: "user-space"` 隐藏 Coding 工作区面板，同时保留 Wuu 原有导航。此展示提示不授予运行时权限。激活已打开视图时，宿主发布 `workbench.view.activated` 事件，包含 `pluginId` 和 `viewTypeId`；处理器应同时匹配两个标识。
+
+桌面宿主通过 `api.ui.ConversationMessage` 和 `api.ui.ConversationComposer` 复用 Wuu 原生消息渲染器和输入框，包括原有附件选择、粘贴/拖放、预览与发送/停止控件。调用方提供会话标识、受控草稿、附件与传输回调，并负责请求接纳、错误处理及成功接纳后的草稿清理。发送失败应保留原始文本和附件。未提供原生组件的宿主会明确报告输入框不可用，不会悄悄替换成另一套输入框。
+
+`api.ui.ConversationView` 提供相同的阅读列、原生标题栏和搜索对话框、输入框停靠、滚动跟随及按会话恢复阅读位置。调用方提供标题、可选头像/状态、搜索内容、消息和输入框。`ConversationMessage` 接受稳定的 `id`、可选时间、最新回复标记和附件内容；独立会话提供复制/时间，不显示不受支持的 Coding 动作。`api.ui.ConversationAttachment` 使用原生结果卡，加载和已核验的本地 Blob URL 由调用方负责。这些呈现组件不会加载 Coding 历史、选择工作区或读取附件路径，调用方仍须保留范围限定的传输及授权检查。
+
+`ConversationView` 可接收 `sessionId` 和 `sessionScope`，让问题列表、回答、取消和延长处理时间都走同一条经过验证的用户空间/产品域路由。非工具 offer 的 `onQuestionReply(requestId, prompt)` 必须使用稳定请求标识，先把回答接纳进该会话，再解决 offer，同时保留输入框中无关的草稿和附件。hold 仍保留问题待回答，不等于回答。
+
+流式消息应使用稳定条目标识及终态 turn 快照的最终序号与持久历史对账，不按文本去重。停止回复及其重试必须保留选定的 turn ID，避免迟到停止误取消下一条回复。
+
+独立会话不会把草稿、消息或工作区选区交给 Coding 范围的 Presenter 或补全 Provider。不应解析 Coding 工作区路径的消息应使用 `linkPolicy: "external-only"`。这层 UI 边界不能替代运行时范围检查。Personal 默认提供记忆域逻辑隔离，经过验证的操作系统/宿主隔离是独立可选的嵌入模式。
+
 ## 输入框行内补全
 
 在 `activate(api)` 中调用 `registerComposerInlineCompletionProvider({ id, order, provideCompletion })` 注册 provider。回调接收只读的 `ComposerInlineCompletionContext` 和 `AbortSignal`，同步或通过 promise 返回 `{ text: "字面文本后缀" }` 或 `null`。没有建议时返回 `null`。宿主将已接受的文本追加到草稿；回调不替换整份草稿，也不接管 textarea。

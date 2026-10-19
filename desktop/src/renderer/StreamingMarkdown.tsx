@@ -44,6 +44,7 @@ import {
  * commentary and final-answer text.
  */
 type StreamingMarkdownProps = {
+  linkPolicy?: "external-only";
   streamKey: string;
   initialText?: string;
   cwd?: string;
@@ -72,6 +73,7 @@ const CURSOR_MARKDOWN_BOUNDARY = " ";
 const CODE_CURSOR = <span className={CURSOR_CLASS_NAME} aria-hidden="true" />;
 
 export function StreamingMarkdown({
+  linkPolicy,
   streamKey,
   initialText = "",
   cwd,
@@ -278,7 +280,8 @@ export function StreamingMarkdown({
         // Keep stable blocks keyed separately so settled text does not remount
         // into one large markdown tree when streaming ends.
         <div className="streaming-markdown-block" key={index}>
-          <MemoMarkdownContent
+          <MarkdownContent
+            linkPolicy={linkPolicy}
             text={
               index === cursorStableBlockIndex
                 ? insertCursorBeforeTrailingWhitespace(block)
@@ -298,6 +301,7 @@ export function StreamingMarkdown({
         </div>
       ))}
       <MarkdownContent
+        linkPolicy={linkPolicy}
         text={tailText}
         cwd={cwd}
         onOpenFile={onOpenFile}
@@ -316,14 +320,6 @@ export function StreamingMarkdown({
     </div>
   );
 }
-
-/**
- * Memoized markdown surface. Stable blocks are passed in by value;
- * React.memo's default shallow compare on the `text` string is exactly
- * what we want. Shared definitions and heading IDs only invalidate a
- * block when its message-level semantics change.
- */
-const MemoMarkdownContent = MarkdownContent;
 
 function createCursorTextRenderer(): RichTextRenderer {
   return (text, keyPrefix) => {

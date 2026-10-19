@@ -176,20 +176,30 @@ func TestConversationHistorySearchProjectsBeforePagination(t *testing.T) {
 		{Role: "assistant", Content: "ordinary answer", ReasoningContent: "secret Ada reasoning"},
 		{Role: "tool", Content: "secret Ada tool result"},
 		{Role: "user", Origin: "user", Content: "host Ada path", DisplayContent: "file caption", Files: []byte(`[{"filename":"record.txt"}]`)},
+		{Role: "user", Origin: "user", Content: "  Ada identity context\n  "},
+		{Role: "user", Origin: "user", Content: "  Ada identity context\n  ", Hidden: true},
+		{Role: "user", Content: "Ada read-only input", ReadOnly: true},
+		{Role: "user", Origin: "plugin", Content: "Ada plugin context", DisplayContent: "Ada task title"},
+		{Role: "user", Origin: "internal", Content: "Ada internal context"},
+		{Role: "assistant", Content: "Ada hidden answer", Hidden: true},
 	}
 	if _, _, err := AppendHistoryRecordsReturningRange(dir, "visible", records); err != nil {
 		t.Fatal(err)
 	}
 	page, err := SearchHistoryQuery(context.Background(), dir, HistorySearchQuery{SessionID: "visible", Query: "Ada", View: "conversation", Limit: 1})
-	if err != nil || len(page.Records) != 1 || page.Records[0].Seq != 2 || !page.HasMore {
+	if err != nil || len(page.Records) != 1 || page.Records[0].Seq != 6 || page.Records[0].Content != records[5].Content || !page.HasMore {
 		t.Fatalf("hidden match consumed page: %+v %v", page, err)
 	}
 	next, err := SearchHistoryQuery(context.Background(), dir, HistorySearchQuery{SessionID: "visible", Query: "Ada", View: "conversation", Limit: 1, Cursor: page.Next})
-	if err != nil || len(next.Records) != 1 || next.Records[0].Seq != 1 || next.HasMore {
+	if err != nil || len(next.Records) != 1 || next.Records[0].Seq != 2 || !next.HasMore {
 		t.Fatalf("visible cursor lost source: %+v %v", next, err)
 	}
-	all, err := SearchHistoryQuery(context.Background(), dir, HistorySearchQuery{SessionID: "visible", Query: "Ada", Limit: 10})
-	if err != nil || len(all.Records) != 5 {
+	last, err := SearchHistoryQuery(context.Background(), dir, HistorySearchQuery{SessionID: "visible", Query: "Ada", View: "conversation", Limit: 1, Cursor: next.Next})
+	if err != nil || len(last.Records) != 1 || last.Records[0].Seq != 1 || last.HasMore {
+		t.Fatalf("legacy user source disappeared: %+v %v", last, err)
+	}
+	all, err := SearchHistoryQuery(context.Background(), dir, HistorySearchQuery{SessionID: "visible", Query: "Ada", Limit: 20})
+	if err != nil || len(all.Records) != len(records) {
 		t.Fatalf("default trace search changed: %+v %v", all, err)
 	}
 }

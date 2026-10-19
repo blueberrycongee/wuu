@@ -289,7 +289,15 @@ type ReverseRPCCapabilities struct {
 	Methods []string `json:"methods,omitempty"`
 }
 
+// UserHostIsolationSummary reports the activated boundary, not a filesystem
+// sandbox claim. A logical host must report host=unverified.
+type UserHostIsolationSummary struct {
+	Memory string `json:"memory"`
+	Host   string `json:"host"`
+}
+
 type InitializeResult struct {
+	UserHostIsolation  *UserHostIsolationSummary    `json:"user_host_isolation,omitempty"`
 	UserSpaceID        string                       `json:"user_space_id,omitempty"`
 	ProductDomain      string                       `json:"product_domain,omitempty"`
 	Status             string                       `json:"status"`

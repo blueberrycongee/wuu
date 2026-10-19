@@ -11,6 +11,7 @@ import type {
   ComposerInlineCompletionRefresh,
   InspectorSectionDefinition,
   PluginUIKit,
+  PluginConversationComponents,
   PluginCommandPresentation,
   PluginCommandActionContext,
   PresentationMode,
@@ -395,6 +396,7 @@ export interface PluginHostOptions {
   renderConversationContent?: React.ComponentType<{ content: string; linkPolicy?: "external-only" }>;
   /** Internal startup budget override for deterministic host and renderer checks. */
   activationTimeoutMs?: number;
+  conversationComponents?: PluginConversationComponents;
   styleContainer?: HTMLElement | (() => HTMLElement | null);
   invokeRuntime?: (request: Readonly<{
     pluginId: string;
@@ -629,7 +631,7 @@ export class PluginHost {
       throw new Error("Plugin activation timeout must be a positive finite duration");
     }
     this.react = options.react;
-    this.ui = createPluginUIKit(options.react, options.renderConversationContent);
+    this.ui = createPluginUIKit(options.react, options.renderConversationContent, options.conversationComponents);
     this.styleContainer = options.styleContainer;
     this.runtimeInvoker = options.invokeRuntime;
     this.workspaceLister = options.listWorkspaces;

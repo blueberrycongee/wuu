@@ -258,9 +258,61 @@ export interface PluginUIComposerDrawerProps extends PluginUIContainerProps {
 }
 
 /** Stable host-owned primitives for plugin views. */
-export interface PluginUIConversationMessageProps { role: "user" | "assistant"; content: string; className?: string; linkPolicy?: "external-only" }
+export interface PluginUIConversationMessageProps { role: "user" | "assistant"; content: string; className?: string; linkPolicy?: "external-only"; timestamp?: string; id?: string; latest?: boolean; attachments?: unknown; streaming?: boolean; turnId?: string; turnStatus?: "in_progress" | "completed" | "failed" | "interrupted"; process?: { label: string; content?: string; details?: unknown }; messageActions?: "copy-only" | "none" }
+
+export interface PluginUIConversationViewProps {
+  /** Submit an offer reply to this conversation with stable admission identity. */
+  onQuestionReply?: (requestId: string, prompt: string) => Promise<void>;
+  conversationId: string;
+  sessionId?: string;
+  sessionScope?: { userSpaceId: string; productDomain: "personal" | "coding" };
+  actions?: unknown;
+  title: string;
+  subtitle?: string;
+  avatar?: unknown;
+  status?: unknown;
+  loading?: boolean;
+  searchLabel: string;
+  searchContent: unknown;
+  children: unknown;
+  composer: unknown;
+}
+
+export interface PluginUIConversationAttachmentProps {
+  name: string;
+  mediaType: string;
+  size: number;
+  url?: string;
+  loading?: boolean;
+  error?: string;
+  loadLabel: string;
+  downloadLabel: string;
+  onLoad(): void;
+}
+
+export interface PluginUIConversationComposerProps {
+  conversationId: string;
+  submitting?: boolean;
+  queuedCount?: number;
+  pendingCount?: number;
+  stopState?: "pending" | "retry";
+  prompt: string;
+  placeholder?: string;
+  running: boolean;
+  disabled?: boolean;
+  sendDisabled?: boolean;
+  attachments: readonly { id: string; filename: string; media_type: string; data: string }[];
+  onChangePrompt(value: string): void;
+  onAddAttachments(files: File[]): void;
+  onRemoveAttachment(id: string): void;
+  onSend(prompt: string): void;
+  onStop(): void;
+}
 
 export interface PluginUIKit {
+  readonly ConversationView: HostUIComponent<PluginUIConversationViewProps>;
+  readonly ConversationAttachment: HostUIComponent<PluginUIConversationAttachmentProps>;
+  readonly ConversationComposer: HostUIComponent<PluginUIConversationComposerProps>;
   readonly ConversationMessage: HostUIComponent<PluginUIConversationMessageProps>;
   readonly ComposerDrawer: HostUIComponent<PluginUIComposerDrawerProps>;
   readonly Page: HostUIComponent<PluginUIPageProps>;
@@ -1290,9 +1342,16 @@ export interface HostServiceContracts {
         seq: number;
         attachments?: SessionHistoryAttachment[];
         role: string;
+        /** Physical history includes hidden/generated model context; role alone is not authorship. */
+        hidden?: boolean;
+        read_only?: boolean;
+        origin?: string;
         name?: string;
         content?: string;
         display_content?: string;
+        /** Provider identity, not the host-generated live item or turn ID. */
+        provider_item_id?: string;
+        engine_turn_id?: string;
         reasoning_content?: string;
         tool_calls?: string;
         tool_call_id?: string;

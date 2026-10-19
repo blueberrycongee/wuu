@@ -36,9 +36,13 @@ type Host struct {
 	InstanceID string
 }
 
-// Options configures one workspace or explicitly isolated user runtime. Empty WorkDir and HomeDir values
+// Options configures one workspace or explicitly domain-bound user runtime. Empty WorkDir and HomeDir values
 // use the process working directory and HOME respectively.
 type Options struct {
+	// UserHostIsolationMode defaults to logical_memory for a user binding. It
+	// separates memory APIs and automatic context by domain, but does not promise
+	// OS/file confidentiality. verified_host additionally requires a trusted verifier.
+	UserHostIsolationMode runtime.UserHostIsolationMode
 	// UserHostIsolationVerifier is a trusted host integration, never a client or environment assertion.
 	UserHostIsolationVerifier runtime.UserHostIsolationVerifier
 	UserSpaceID               string
@@ -90,7 +94,7 @@ type Options struct {
 	SafeMode bool
 }
 
-// Runtime is an initialized, UI-neutral Wuu workspace or isolated user host.
+// Runtime is an initialized, UI-neutral Wuu workspace or domain-bound user host.
 //
 // A Runtime may serve app-server connections sequentially or concurrently.
 // Close must be called after all Serve calls return; it rejects an early close
@@ -136,13 +140,7 @@ func New(opts Options) (*Runtime, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := runtime.VerifyUserHostIsolation(context.Background(), binding, home, opts.UserHostIsolationVerifier); err != nil {
-			return nil, err
-		}
 		rootDir = binding.Root(home)
-		if err := os.MkdirAll(rootDir, 0700); err != nil {
-			return nil, err
-		}
 	}
 	host, err := runtimeconfig.ResolveHost(
 		string(opts.Host.Kind),
@@ -190,7 +188,7 @@ func New(opts Options) (*Runtime, error) {
 	}
 
 	core, err := runtime.NewSession(runtime.Options{
-		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, UserHostIsolationVerifier: opts.UserHostIsolationVerifier,
+		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, UserHostIsolationVerifier: opts.UserHostIsolationVerifier, UserHostIsolationMode: opts.UserHostIsolationMode,
 		RootDir:                  rootDir,
 		Host:                     host,
 		WorkspaceID:              strings.TrimSpace(opts.WorkspaceID),

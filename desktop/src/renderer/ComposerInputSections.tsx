@@ -1,6 +1,8 @@
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion } from "./ComposerInlineCompletion";
+import type { PluginHost } from "./plugins/PluginHost";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
+import { useComposerHeight } from "./useComposerHeight";
 import { VideoAttachment } from "./VideoAttachment";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import * as React from "react";
@@ -94,6 +96,9 @@ export function ComposerStopIcon({ state, submitting = false }: { state?: "pendi
 }
 
 export function SplitPaneComposer({
+  pluginHost = desktopPluginHost,
+  placeholder,
+  allowWorkspaceReferences = true,
   prompt,
   setPrompt,
   files,
@@ -120,6 +125,9 @@ export function SplitPaneComposer({
   onSend,
   onInterrupt,
 }: {
+  pluginHost?: PluginHost;
+  placeholder?: string;
+  allowWorkspaceReferences?: boolean;
   prompt: string;
   setPrompt: (value: string) => void;
   files: ComposerFile[];
@@ -227,6 +235,7 @@ export function SplitPaneComposer({
     focusComposerSoon,
     storageKey: queryHistorySessionID
   });
+  useComposerHeight(textareaRef, false, visiblePromptValue);
   const fileSelectionActions = useFileSelectionActions();
   const onAttachmentPickerClick = useComposerAttachmentFocus(
     textareaRef, queryHistorySessionID, fileSelectionActions?.ownerKey, readOnly,
@@ -250,7 +259,7 @@ export function SplitPaneComposer({
     setPrompt(nextPrompt);
   }
   const inline = useComposerInlineCompletion({
-    host: desktopPluginHost, inputRef: textareaRef, value: visiblePromptValue,
+    host: pluginHost, inputRef: textareaRef, value: visiblePromptValue,
     kind: "main",
     enabled: !readOnly && connected && !hasCollapsedPromptBlocks && !cameraOpen,
     contextKey: JSON.stringify([workspaceId, workspaceRoot, queryHistorySessionID]), revisionKey: JSON.stringify([submissionRevision, turnId, requestedHandoffIntent]),
@@ -297,7 +306,7 @@ export function SplitPaneComposer({
       return;
     }
     const workspacePath = event.dataTransfer.getData(WORKSPACE_FILE_DRAG_MIME);
-    if (workspacePath) {
+    if (workspacePath && allowWorkspaceReferences) {
       event.preventDefault();
       resetQueryHistoryNavigation();
       setPrompt(appendWorkspacePathToPrompt(prompt, workspacePath));
@@ -434,7 +443,7 @@ export function SplitPaneComposer({
                   ref={textareaRef}
                   data-wuu-component="composer-input"
                   value={visiblePromptValue}
-                  placeholder={inline.text ? "" : readOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : t("composer.continueBranch")}
+                  placeholder={inline.text ? "" : readOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : (placeholder ?? t("composer.continueBranch"))}
                   disabled={readOnly}
                   aria-readonly={readOnly}
                   aria-describedby={inline.text ? inline.descriptionId : undefined}

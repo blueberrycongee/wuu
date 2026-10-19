@@ -142,11 +142,13 @@ func TestUserHostClientStorageUsesSameScopedAuthorityAsRuntime(t *testing.T) {
 }
 
 func TestInitializeReportsImmutableUserHostScopeAndLegacyAbsence(t *testing.T) {
-	for _, userHost := range []bool{false, true} {
+	for _, mode := range []runtime.UserHostIsolationMode{"", runtime.UserHostIsolationLogicalMemory, runtime.UserHostIsolationVerifiedHost} {
+		userHost := mode != ""
 		rt := newTestRuntime(t, &fakeClient{})
 		if userHost {
 			rt.UserSpaceID = "local"
 			rt.ProductDomain = "personal"
+			rt.UserHostIsolationMode = mode
 		}
 		out := &lockedBuffer{}
 		srv := New(rt, out)
@@ -159,7 +161,15 @@ func TestInitializeReportsImmutableUserHostScopeAndLegacyAbsence(t *testing.T) {
 			if result["user_space_id"] != "local" || result["product_domain"] != "personal" {
 				t.Fatalf("scope missing: %+v", result)
 			}
-		} else if result["user_space_id"] != nil || result["product_domain"] != nil {
+			isolation, _ := result["user_host_isolation"].(map[string]any)
+			wantHost := "unverified"
+			if mode == runtime.UserHostIsolationVerifiedHost {
+				wantHost = "verified"
+			}
+			if isolation["memory"] != "logical" || isolation["host"] != wantHost {
+				t.Fatalf("false isolation claim: %+v", result)
+			}
+		} else if result["user_space_id"] != nil || result["product_domain"] != nil || result["user_host_isolation"] != nil {
 			t.Fatal("legacy Coding gained a false user scope")
 		}
 		srv.Close()

@@ -64,6 +64,21 @@ Conversations and primary plugin views use sidebar navigation, including API-ope
 
 Conversation cards are transient interaction, not saved history or durable pages. A card handle can update its state or dismiss it. For composer status, return structured items from `getSnapshot(context)` and notify through `subscribe`; keep snapshots stable until data changes. Wuu renders the row and handles overflow and the optional `open-session` action, rather than accepting arbitrary React content for each status item.
 
+
+### Independent conversations
+
+A primary view may use `layout: "user-space"` to suppress Coding workspace panels while retaining Wuu's normal navigation. This presentation hint grants no runtime authority. Activating an existing view publishes a `workbench.view.activated` host event with its `pluginId` and `viewTypeId`; scope handlers to both identifiers.
+
+Desktop hosts provide `api.ui.ConversationMessage` and `api.ui.ConversationComposer` using Wuu's native message renderer and composer, including the normal attachment picker, paste/drop handling, previews, and send/stop controls. Supply conversation identity, a controlled prompt, attachments, and transport callbacks. The caller owns admission, error handling and when a successfully admitted draft is cleared. A failed send must retain its original text and attachments. Hosts without native conversation components report the composer as unavailable rather than silently rendering a substitute.
+
+`api.ui.ConversationView` provides the same reading column, native titlebar/search dialog, composer docking, scroll following and per-conversation reading restoration. Supply the title, optional avatar/status, search content, message children and composer. `ConversationMessage` accepts a stable `id`, optional timestamp, latest-answer indication and attachment content; independent conversations expose copy/time without unsupported Coding actions. `api.ui.ConversationAttachment` uses the native result card with caller-owned loading and verified local Blob URLs. These presentation components never load Coding history, choose a workspace or read attachment paths. The caller retains its scoped transport and authorization checks.
+
+`ConversationView` can receive a `sessionId` and `sessionScope` to present host questions through the same validated user-space/domain route for list, answer, cancel and hold. For non-tool offers, `onQuestionReply(requestId, prompt)` must admit the answer to that conversation with a stable request identity before resolving the offer. Keep unrelated composer text and attachments intact. A hold keeps the question unresolved; it is not an answer.
+
+Live messages must reconcile with persisted history using stable item identities and the final sequence in the terminal turn snapshot, never by matching text. Reply cancellation must retain the selected turn ID across retries so a delayed stop cannot cancel the next reply.
+
+Independent conversations do not pass drafts, messages or workspace selections to Coding-scoped presenters or completion providers. Use `linkPolicy: "external-only"` for messages that must not resolve Coding workspace paths. This UI boundary does not replace runtime scope checks. The default Personal contract provides logical memory-domain isolation; verified OS/host isolation is a separate optional embedding mode.
+
 ## Composer inline completions
 
 Register a provider during `activate(api)` with `registerComposerInlineCompletionProvider({ id, order, provideCompletion })`. Its callback receives a read-only `ComposerInlineCompletionContext` and an `AbortSignal`, and returns `{ text: "literal suffix" }` or `null`, directly or through a promise. Return `null` when your provider has no suggestion. The host appends accepted text; the callback does not replace the draft or own the textarea.

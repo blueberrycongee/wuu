@@ -5,7 +5,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
-import { PluginViewContent, WorkbenchController } from "./Workbench";
+import { DesktopWorkbench, PluginViewContent, WorkbenchController } from "./Workbench";
 
 const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/personal-calendar/desktop.js"), "utf8");
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
@@ -21,7 +21,7 @@ const proposal = {
 const cleanups: Array<() => void> = [];
 afterEach(() => cleanups.splice(0).forEach(fn => fn()));
 
-async function mount(readOnly = false, respond?: (method: string, input: any) => unknown) {
+async function mount(readOnly = false, respond?: (method: string, input: any) => unknown, options: { context?: Readonly<Record<string, unknown>>; autoSelect?: boolean } = {}) {
   let operation: any = structuredClone(proposal);
   const invoke = vi.fn<NonNullable<PluginHostOptions["invokeRuntime"]>>(async ({ method, input }) => {
     if (method === "calendar.status") return { state: readOnly ? "unconnected" : "ready", read_only: readOnly, freshness: "empty", account_id: readOnly ? undefined : "account-one" };
@@ -35,11 +35,72 @@ async function mount(readOnly = false, respond?: (method: string, input: any) =>
   const controller = new WorkbenchController(host), container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
   cleanups.push(() => { act(() => root.unmount()); controller.dispose(); host.unload("personal-calendar"); container.remove(); });
-  await act(async () => root.render(<PluginViewContent controller={controller} pluginId="personal-calendar" viewTypeId="personal-calendar.operations" />));
+  const renderContext = async (context?: Readonly<Record<string, unknown>>) => {
+    await act(async () => root.render(<PluginViewContent controller={controller} pluginId="personal-calendar" viewTypeId="personal-calendar.confirmation" context={context} />));
+  };
+  await renderContext(options.context);
   const click = async (selector: string) => { const element = container.querySelector<HTMLElement>(selector); expect(element).not.toBeNull(); await act(async () => element!.click()); };
-  await click('[data-operation-id="calendar-op"]');
-  return { container, invoke, click, replace: (next: any) => { operation = next; } };
+  if (options.autoSelect !== false) await click('[data-operation-id="calendar-op"]');
+  return { container, invoke, click, controller, host, root, renderContext, replace: (next: any) => { operation = next; } };
 }
+
+it("opens the exact proposal from the main conversation without admitting a write on a read-only host", async () => {
+  const ui = await mount(true, undefined, { context: { operationId: proposal.operation_id }, autoSelect: false });
+  expect(ui.container.querySelector('[data-calendar-preview]')?.textContent).toContain(proposal.preview_digest);
+  expect(ui.container.querySelector('[aria-current="true"]')?.getAttribute("data-operation-id")).toBe(proposal.operation_id);
+  await ui.click('[data-action="review-preview"]'); await ui.click('[data-action="confirm"]');
+  expect(ui.invoke.mock.calls.some(([request]) => request.method === "calendar.operations.confirm")).toBe(false);
+});
+
+it.each(["deleted-operation", 12, { operation_id: "calendar-op" }])("never falls back to another proposal for a stale or malformed context %j", async operationId => {
+  const ui = await mount(false, undefined, { context: { operationId: proposal.operation_id }, autoSelect: false });
+  await ui.click('[data-action="review-preview"]');
+  await ui.renderContext({ operationId });
+  expect(ui.container.querySelector('[data-calendar-preview]')).toBeNull();
+  expect(ui.container.querySelector('[data-action="confirm"]')).toBeNull();
+  await ui.renderContext({ operationId: proposal.operation_id });
+  expect(ui.container.querySelector<HTMLInputElement>('[data-action="review-preview"]')?.checked).toBe(false);
+  expect(ui.container.querySelector<HTMLButtonElement>('[data-action="confirm"]')?.disabled).toBe(true);
+  expect(ui.invoke.mock.calls.some(([request]) => request.method === "calendar.operations.confirm")).toBe(false);
+});
+
+it("closes only the proposal overlay and preserves the same main conversation and draft", async () => {
+  const ui = await mount(true, undefined, { autoSelect: false });
+  let mainID = "", overlayID = "";
+  await act(async () => {
+    await ui.host.activateGeneration({ pluginId: "personal", generation: "main", register(api) {
+      api.registerViewType({ id: "personal.main", title: "twin", defaultRegion: "primary", render: () => <input data-main-draft defaultValue="Unsent personal message" /> });
+    } });
+    mainID = await ui.controller.openPluginView("personal", "personal.main");
+    overlayID = await ui.controller.openPluginView("personal-calendar", "personal-calendar.confirmation", { context: { operationId: proposal.operation_id } });
+    ui.root.render(<><div className="conversation-pane" /><DesktopWorkbench host={ui.host} controller={ui.controller} /></>);
+  });
+  const draft = ui.container.querySelector<HTMLInputElement>("[data-main-draft]")!;
+  expect(draft.value).toBe("Unsent personal message");
+  const close = document.querySelector<HTMLButtonElement>('[data-action="close-calendar"]');
+  expect(close).not.toBeNull();
+  await act(async () => close!.click());
+  expect(ui.controller.getSnapshot().views.some(view => view.id === overlayID)).toBe(false);
+  expect(ui.controller.getSnapshot().activeViewByRegion.primary).toBe(mainID);
+  expect(ui.container.querySelector("[data-main-draft]")).toBe(draft);
+  expect(draft.value).toBe("Unsent personal message");
+  expect(ui.invoke.mock.calls.some(([request]) => request.method === "calendar.operations.confirm")).toBe(false);
+});
+
+it("keeps a synthetic verified event ledger separate from unverified invitation delivery", async () => {
+  const { send_updates, ...fields } = proposal.fields;
+  const result = {
+    event: { id: "event-one", etag: "etag-two", status: "confirmed", fields },
+    requested_send_updates: send_updates, notification_delivery: "unverified",
+    source: { provider: "google-calendar", user_space_id: "local", account_id: "account-one", calendar_id: "calendar-one", operation_id: proposal.operation_id, verified_at: "2026-10-19T10:00:00Z", verified_by: "events.get" },
+  };
+  const ui = await mount(false, () => ({ ...proposal, revision: 4, status: "completed", result }), { context: { operationId: proposal.operation_id }, autoSelect: false });
+  await ui.click('[data-action="review-preview"]'); await ui.click('[data-action="confirm"]');
+  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "calendar.operations.confirm", input: { operation_id: proposal.operation_id, expected_revision: 3, preview_digest: proposal.preview_digest } }));
+  expect(ui.container.querySelector('[data-operation-status="completed"]')).not.toBeNull();
+  expect([...ui.container.querySelectorAll("pre")].some(node => node.textContent === JSON.stringify(result, null, 2))).toBe(true);
+  expect(ui.container.querySelector('[data-action="confirm"]')).toBeNull();
+});
 
 it("keeps old proposals inspectable while an unconnected read-only host cannot execute them", async () => {
   const ui = await mount(true);
@@ -77,4 +138,12 @@ it("keeps cancellation after possible dispatch uncertain and reconciles without 
   await ui.click('[data-action="reconcile"]');
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "calendar.operations.reconcile", input: { operation_id: "calendar-op" } }));
   expect(ui.invoke.mock.calls.some(([request]) => request.method === "calendar.operations.confirm")).toBe(false);
+});
+
+it("does not restore the retired primary Calendar page or create a new navigation destination", async () => {
+  const ui = await mount(true);
+  await expect(ui.controller.openPluginView("personal-calendar", "personal-calendar.operations")).rejects.toThrow("not available");
+  await act(async () => { await ui.controller.openPluginView("personal-calendar", "personal-calendar.confirmation"); });
+  expect(ui.controller.getSnapshot().views.some(view => view.region === "primary")).toBe(false);
+  expect(ui.invoke.mock.calls.every(([request]) => !["calendar.operations.cancel", "calendar.operations.confirm"].includes(request.method))).toBe(true);
 });

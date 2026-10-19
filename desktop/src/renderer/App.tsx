@@ -5706,12 +5706,13 @@ export function App(): JSX.Element {
         inert={workspaceToolsCoverConversation}
         data-wuu-component="conversation-pane"
         data-primary-plugin-view={showingPrimaryPluginView ? "" : undefined}
+        data-workbench-layout={userSpaceViewActive ? "user-space" : undefined}
         className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
           environmentPanelReserved ? " environment-panel-reserved" : ""
         }`}
         ref={conversationPaneRef}
       >
-        <header className="titlebar" data-wuu-component="conversation-titlebar">
+        {(!userSpaceViewActive || (sidebarToggleVisible && sidebarDrawerMode && !rightPanelGlobalized)) && <header className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
             {sidebarToggleVisible && sidebarDrawerMode && !rightPanelGlobalized ? (
               <button
@@ -5733,7 +5734,7 @@ export function App(): JSX.Element {
                 <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
               </button>
             ) : null}
-            <ConversationTitleContent
+            {!userSpaceViewActive && <ConversationTitleContent
               state={state}
               runningThreadIDs={visibleRunningThreadIDs}
               pendingSwitchThreadID={visiblePendingThreadID}
@@ -5741,9 +5742,9 @@ export function App(): JSX.Element {
               onStartNewThread={startNewThreadWithComposerFocus}
               onRenameTitle={conversationTitleEditable ? commitConversationTitle : undefined}
               titleEditKey={activeThread?.id ?? currentSessionTab?.id}
-            />
+            />}
           </div>
-          <ConversationTitleActions
+          {!userSpaceViewActive && <ConversationTitleActions
             state={state}
             pluginPageVisible={showingPrimaryPluginView || showingManagementCatalog}
             environmentToggleRef={environmentToggleRef}
@@ -5752,8 +5753,8 @@ export function App(): JSX.Element {
             rightPanelOpen={rightPanelOpen}
             onToggleRightPanel={toggleRightPanel}
             showRightPanelToggle={false}
-          />
-        </header>
+          />}
+        </header>}
         <ConversationSidePanels
           state={state}
           environmentPanelVisible={environmentPanelVisible}

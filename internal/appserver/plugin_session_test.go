@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -943,6 +944,120 @@ func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
 			stored, found, err := session.Find(rt.SessionDir, created.SessionID)
 			if err != nil || !found || stored.WorktreePath != "" {
 				t.Fatalf("workspace not rebound: %+v %v", stored, err)
+			}
+		})
+	}
+}
+
+// A plugin delivery reference does not make an authenticated user submission a
+// generated wakeup. Stopping one reply must preserve later Personal messages,
+// their idempotency identity, and their eventual lifecycle receipt.
+func TestUserHostCancelReplyPreservesQueuedClientInput(t *testing.T) {
+	for _, tc := range []struct{ name, mode, prompt string }{
+		{name: "queue", mode: pluginhost.SessionIfRunningQueue, prompt: "another independent request"},
+		{name: "steer", mode: pluginhost.SessionIfRunningSteer, prompt: "another independent request"},
+		{name: "literal user text", mode: pluginhost.SessionIfRunningQueue, prompt: "<process_recheck>literal user request</process_recheck>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mode := tc.mode
+			firstStarted, releaseFirst, secondStarted := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			var release sync.Once
+			client := &fakeClient{responses: []providers.ChatResponse{providersResponse("interrupted"), providersResponse("next reply")}, onChat: func(call int, _ providers.ChatRequest) {
+				if call == 1 {
+					close(firstStarted)
+					<-releaseFirst
+				}
+				if call == 2 {
+					close(secondStarted)
+				}
+			}}
+			rt := newTestRuntime(t, client)
+			rt.UserSpaceID, rt.ProductDomain = "local", "personal"
+			owner := &pluginTurnLifecycleClient{id: "fixture", calls: make(chan pluginhost.AgentTurnLifecycleInput, 32)}
+			rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: owner.id}}}
+			rt.PluginHost = pluginhost.New(owner)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(func() { release.Do(func() { close(releaseFirst) }); srv.Close() })
+			created, err := srv.createPluginSession(context.Background(), owner.id, pluginhost.SessionCreateParams{RequestID: "persistent-main", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh, AgentID: "assistant"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			first, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{RequestID: "first", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "first reply"}})
+			if err != nil || first.State != pluginhost.TurnLifecycleRunning {
+				t.Fatalf("first send: %+v %v", first, err)
+			}
+			select {
+			case <-firstStarted:
+			case <-time.After(3 * time.Second):
+				t.Fatal("first reply not running")
+			}
+			background, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{RequestID: "background", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "generated continuation"}})
+			if err != nil || background.State != pluginhost.TurnLifecycleQueued {
+				t.Fatalf("background send: %+v %v", background, err)
+			}
+			proof := runtime.ClientUserInput{RequestID: "foreground", Prompt: tc.prompt}
+			ctx := runtime.WithClientUserInput(context.Background(), owner.id, proof)
+			params := pluginhost.SessionSendParams{IfRunning: mode, RequestID: "user-next", UserInputRequestID: proof.RequestID, SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: proof.Prompt}}
+			if _, err := srv.sendPluginSession(context.Background(), owner.id, params); err == nil {
+				t.Fatal("untrusted generated call impersonated a user")
+			}
+			queued, err := srv.sendPluginSession(ctx, owner.id, params)
+			wantState := pluginhost.TurnLifecycleQueued
+			if mode == pluginhost.SessionIfRunningSteer {
+				wantState = pluginhost.TurnLifecycleRunning
+			}
+			if err != nil || queued.State != wantState {
+				t.Fatalf("user send: %+v %v", queued, err)
+			}
+			cancelled, err := srv.cancelPluginSession(context.Background(), owner.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, TurnID: first.TurnID})
+			if err != nil || !cancelled.Cancelled {
+				t.Fatalf("stop reply: %+v %v", cancelled, err)
+			}
+			retry, err := srv.sendPluginSession(ctx, owner.id, params)
+			if err != nil || retry.State != pluginhost.TurnLifecycleQueued || retry.QueueID == "" || (mode == pluginhost.SessionIfRunningQueue && retry.QueueID != queued.QueueID) {
+				t.Fatalf("stop lost queued identity: %+v %+v %v", queued, retry, err)
+			}
+			release.Do(func() { close(releaseFirst) })
+			select {
+			case <-secondStarted:
+			case <-time.After(3 * time.Second):
+				t.Fatal("queued user message did not resume after stopped reply")
+			}
+			deadline := time.After(5 * time.Second)
+			for {
+				select {
+				case receipt := <-owner.calls:
+					if receipt.RequestID == "background" && receipt.State == pluginhost.TurnLifecycleRunning {
+						t.Fatal("generated wakeup survived cancellation")
+					}
+					if receipt.RequestID == params.RequestID {
+						if receipt.State == pluginhost.TurnLifecycleDiscarded {
+							t.Fatalf("user message discarded: %+v", receipt)
+						}
+						if receipt.State == pluginhost.TurnLifecycleCompleted {
+							history, err := loadChatMessages(rt.SessionDir, created.SessionID)
+							if err != nil {
+								t.Fatal(err)
+							}
+							count := 0
+							for _, msg := range history {
+								if msg.ClientID == pluginSessionRequestClientID(owner.id, params.RequestID) {
+									count++
+									if msg.Origin != "user" || msg.Content != proof.Prompt {
+										t.Fatalf("user provenance changed: %+v", msg)
+									}
+								}
+							}
+							if count != 1 {
+								t.Fatalf("user input admitted %d times", count)
+							}
+							return
+						}
+					}
+				case <-deadline:
+					t.Fatal("preserved user input never completed")
+				}
 			}
 		})
 	}

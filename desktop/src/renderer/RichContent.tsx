@@ -46,6 +46,7 @@ import {
 const markdownRemarkPlugins = [remarkGfm, remarkMath, remarkMathDelimiters, remarkCjkAutolinkBoundary, remarkCjkStrongBoundary];
 
 type RichContentProps = {
+  linkPolicy?: "external-only";
   text?: string;
   cwd?: string;
   onOpenFile?: (path: string) => void;
@@ -144,6 +145,7 @@ function mermaidRenderKey(theme: AppliedTheme, codeToRender: string): string {
 const IMAGE_FILE_PATTERN = /\.(apng|avif|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i;
 
 export const RichContent = memo(function RichContent({
+  linkPolicy,
   text = "",
   cwd,
   onOpenFile,
@@ -158,6 +160,7 @@ export const RichContent = memo(function RichContent({
   const fallback = (
     <div className="rich-content">
       <MarkdownContent
+        linkPolicy={linkPolicy}
         text={text}
         cwd={cwd}
         onOpenFile={onOpenFile}
@@ -167,6 +170,7 @@ export const RichContent = memo(function RichContent({
       />
     </div>
   );
+  if (linkPolicy === "external-only") return fallback;
   return (
     <WorkbenchContentRenderer
       controller={desktopWorkbenchController}

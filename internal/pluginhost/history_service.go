@@ -64,10 +64,17 @@ type SessionAttachmentReadResult struct {
 }
 
 type SessionHistoryRecord struct {
+	// ProviderItemID matches a projected thread item's source_id when available;
+	// EngineTurnID identifies a native engine turn. Neither is a host item/turn ID.
+	ProviderItemID   string                     `json:"provider_item_id,omitempty"`
+	EngineTurnID     string                     `json:"engine_turn_id,omitempty"`
 	At               string                     `json:"at,omitempty"`
 	Attachments      []SessionHistoryAttachment `json:"attachments,omitempty"`
 	Seq              int                        `json:"seq"`
 	Role             string                     `json:"role"`
+	Hidden           bool                       `json:"hidden,omitempty"`
+	ReadOnly         bool                       `json:"read_only,omitempty"`
+	Origin           string                     `json:"origin,omitempty"`
 	Name             string                     `json:"name,omitempty"`
 	Content          string                     `json:"content,omitempty"`
 	DisplayContent   string                     `json:"display_content,omitempty"`

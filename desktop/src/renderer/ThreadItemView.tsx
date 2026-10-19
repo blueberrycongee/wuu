@@ -109,6 +109,10 @@ interface ThreadItemViewProps {
   onOpenAgent?: (agentID: string) => void;
   editSummaryCard?: JSX.Element;
   pluginHost?: PluginHost;
+  linkPolicy?: "external-only";
+  /** Independent transports can expose copy/time without Coding fork actions. */
+  messageActions?: "copy-only" | "none";
+  messageAttachments?: React.ReactNode;
 }
 
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps): JSX.Element | null {
@@ -141,6 +145,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
     && ((item.text?.trim().length ?? 0) > 0 || (item.images?.length ?? 0) > 0 || (item.files?.length ?? 0) > 0);
   const fallback = (
     <ConversationMessageSurface
+      host={props.pluginHost}
       context={conversationMessageSurfaceContext(props, editable)}
       fallback={<BuiltInThreadItemView {...props} />}
     />
@@ -148,6 +153,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   return (
     <PluginMessageSlots host={props.pluginHost} context={pluginSlotContext}>
       <ConversationItemPresentation
+        host={props.pluginHost}
         item={item}
         text={text}
         fallback={fallback}
@@ -158,7 +164,7 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
 });
 
 function conversationMessageSurfaceContext(
-  { item, turnID, streaming, onEditMessage, onForkMessage }: ThreadItemViewProps,
+  { item, turnID, streaming, onEditMessage, onForkMessage, pluginHost = desktopPluginHost }: ThreadItemViewProps,
   editable: boolean,
 ): ConversationMessageSurfaceContext {
   const kind = item.type === "user_message"
@@ -169,7 +175,7 @@ function conversationMessageSurfaceContext(
         ? "reasoning"
         : "notice";
   const status = item.status === "in_progress" ? "streaming" : item.status;
-  const threadId = desktopPluginHost.getActiveConversationThreadId();
+  const threadId = pluginHost.getActiveConversationThreadId();
   return Object.freeze({
     version: 1,
     messageId: item.id,
@@ -233,12 +239,15 @@ function BuiltInThreadItemView({
   onOpenAgent,
   editSummaryCard,
   pluginHost = desktopPluginHost,
+  linkPolicy,
+  messageActions,
+  messageAttachments,
 }: ThreadItemViewProps): JSX.Element | null {
   const { t } = useI18n();
   const owningThreadId = useContext(ArtifactThreadContext);
   const threadId = owningThreadId ?? pluginHost.getActiveConversationThreadId();
   const commandContext = useMemo(() => {
-    if (editing || (item.type !== "user_message" && item.type !== "agent_message")) return undefined;
+    if (messageActions === "none" || editing || (item.type !== "user_message" && item.type !== "agent_message")) return undefined;
     return Object.freeze({
       contractVersion: 1 as const,
       target: "conversation.message.actions" as const,
@@ -246,7 +255,7 @@ function BuiltInThreadItemView({
       turnId: turnID,
       item: toConversationItemSnapshot(item, item.type === "user_message" ? "user-message" : "assistant-message"),
     });
-  }, [editing, item, threadId, turnID]);
+  }, [editing, item, messageActions, threadId, turnID]);
   const hasPluginActions = usePluginCommandActions(pluginHost, commandContext).length > 0;
   const pluginActions = commandContext === undefined ? null : (
     <PluginCommandActions host={pluginHost} context={commandContext} buttonClassName="message-action-button" />
@@ -314,9 +323,10 @@ function BuiltInThreadItemView({
           requestOpenThreadInSplit(relatedSessionID);
         }
       };
+      const actionsVisible = messageActions !== "none" && (copyable || editActionVisible || relatedSessionAvailable || hasPluginActions);
       return (
         <div
-          className={`user-message-block${copyable || editActionVisible || relatedSessionAvailable || hasPluginActions ? " user-message-block-with-actions" : ""}`}
+          className={`user-message-block${actionsVisible ? " user-message-block-with-actions" : ""}`}
           data-wuu-component="message"
           data-wuu-variant="user"
           id={userMessageAnchorID(turnID, item.id)}
@@ -324,6 +334,7 @@ function BuiltInThreadItemView({
           data-turn-id={turnID}
         >
           <div className="user-message-motion" data-message-arrival>
+          {messageAttachments ? <div className="user-message-attachments" data-wuu-component="message-attachments">{messageAttachments}</div> : null}
           {sessionMessage ? (
             <button
               type="button"
@@ -352,6 +363,7 @@ function BuiltInThreadItemView({
             <UserMessageContent
               anchorID={userMessageAnchorID(turnID, item.id)}
               text={displayText}
+              linkPolicy={linkPolicy}
               contentParts={item.content_parts}
               images={item.images ?? []}
               files={item.files ?? []}
@@ -360,7 +372,7 @@ function BuiltInThreadItemView({
             />
           )}
           </div>
-          {!editing && (copyable || editActionVisible || relatedSessionAvailable || hasPluginActions) ? (
+          {!editing && actionsVisible ? (
             <div
               className="message-actions user-message-actions"
               data-wuu-component="message-actions"
@@ -421,14 +433,14 @@ function BuiltInThreadItemView({
       // A completed final item is the user-visible completion boundary. The
       // backend can materialize a fork from the live turn snapshot while
       // provider cleanup and durable turn settlement continue independently.
-      const actionsVisible = forkVisible || hasPluginActions;
+      const actionsVisible = messageActions !== "none" && (forkVisible || hasPluginActions || (messageActions === "copy-only" && copyable));
       const actionsPersistent =
         actionsVisible &&
         (item.id === latestAgentMessageID || finalItemCompletedBeforeTurn);
       // Without contributed actions, reserve space only for final answers.
       // Live commentary must not gain an empty answer-action gap.
-      const reserveActionSlot = hasPluginActions || (!isProcessText &&
-        (copyable || item.status === "in_progress"));
+      const reserveActionSlot = messageActions !== "none" && (hasPluginActions || (!isProcessText &&
+        (copyable || item.status === "in_progress")));
       return (
         <AssistantResponseArticle
           id={messageAnchorID(turnID, item.id)}
@@ -444,6 +456,7 @@ function BuiltInThreadItemView({
         >
           <div className="agent-text">
             <AgentMessageContent
+              linkPolicy={linkPolicy}
               turnID={turnID}
               item={item}
               cwd={cwd}
@@ -454,6 +467,7 @@ function BuiltInThreadItemView({
             />
             {(item.images?.length ?? 0) > 0 ? <MessageImageGrid images={item.images ?? []} collapsedLimit={4} /> : null}
           </div>
+          {messageAttachments}
           {editSummaryCard}
           {actionsVisible ? (
             <AgentMessageActions
@@ -463,7 +477,7 @@ function BuiltInThreadItemView({
               trailingAction={ENABLE_CONVERSATION_TRIGGERS && item.id === latestAgentMessageID && owningThreadId
                 ? <ConversationTriggers key={owningThreadId} threadID={owningThreadId} /> : undefined}
               showCopy={copyable}
-              showFork={forkVisible}
+              showFork={forkVisible && messageActions !== "copy-only"}
               onFork={
                 forkVisible && onForkMessage
                   ? () => onForkMessage(turnID, item.id)
@@ -514,6 +528,7 @@ function BuiltInThreadItemView({
 }
 
 function UserMessageContent({
+  linkPolicy,
   anchorID,
   text,
   contentParts,
@@ -522,6 +537,7 @@ function UserMessageContent({
   cwd,
   onOpenFile,
 }: {
+  linkPolicy?: "external-only";
   anchorID: string;
   text: string;
   contentParts?: MessageContentPart[];
@@ -596,7 +612,7 @@ function UserMessageContent({
               {textParts.map((part, index) =>
                 part.text ? (
                   <div className="user-message-text-part" key={`${part.type}-${index}`}>
-                    <RichContent text={part.text} cwd={cwd} onOpenFile={onOpenFile} />
+                    <RichContent linkPolicy={linkPolicy} text={part.text} cwd={cwd} onOpenFile={onOpenFile} />
                   </div>
                 ) : null,
               )}
@@ -604,7 +620,7 @@ function UserMessageContent({
           ) : collapsible ? (
             <div className="user-message-raw-query">{displayedText}</div>
           ) : (
-            <RichContent text={text} cwd={cwd} onOpenFile={onOpenFile} />
+            <RichContent linkPolicy={linkPolicy} text={text} cwd={cwd} onOpenFile={onOpenFile} />
           )}
           {collapsible ? (
             <button
@@ -951,6 +967,7 @@ function UserMessageInlineEditor({
 }
 
 function AgentMessageContent({
+  linkPolicy,
   turnID,
   item,
   cwd,
@@ -959,6 +976,7 @@ function AgentMessageContent({
   pendingCompanionReasoning,
   onStreamFrame,
 }: {
+  linkPolicy?: "external-only";
   turnID: string;
   item: ThreadItem;
   cwd?: string;
@@ -1006,6 +1024,7 @@ function AgentMessageContent({
 
   return (
     <StreamingMarkdown
+      linkPolicy={linkPolicy}
       streamKey={streamKeyValue}
       initialText={
         isLive && hasBufferedStream

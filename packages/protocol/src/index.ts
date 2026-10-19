@@ -157,6 +157,8 @@ export type InitializeParams = {
 export type InitializeResult = {
   user_space_id?: string;
   product_domain?: "personal" | "coding";
+  /** Memory APIs and injected context are domain-scoped; OS confidentiality is separate. */
+  user_host_isolation?: { memory: "logical"; host: "unverified" | "verified" };
   speed?: string;
   status?: "ready" | "needs_setup";
   issues?: RuntimeIssue[];
@@ -3074,13 +3076,14 @@ export type WuuDesktopApi = {
     processId: string,
   ) => Promise<ManagedProcessActionResult>;
   initialize: () => Promise<InitializeResult>;
-  listUserQuestions: (threadId?: string) => Promise<UserQuestionListResult>;
+  listUserQuestions: (threadId?: string, context?: RuntimeContext) => Promise<UserQuestionListResult>;
   answerUserQuestion: (
     requestId: string,
     answer: UserQuestionAnswer,
+    context?: RuntimeContext,
   ) => Promise<UserQuestionResolveResult>;
-  cancelUserQuestion: (requestId: string) => Promise<UserQuestionResolveResult>;
-  holdUserQuestion: (requestId: string) => Promise<UserQuestionResolveResult>;
+  cancelUserQuestion: (requestId: string, context?: RuntimeContext) => Promise<UserQuestionResolveResult>;
+  holdUserQuestion: (requestId: string, context?: RuntimeContext) => Promise<UserQuestionResolveResult>;
   showSystemNotification: (
     params: SystemNotificationParams,
   ) => Promise<SystemNotificationResult>;

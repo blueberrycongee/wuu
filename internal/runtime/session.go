@@ -58,6 +58,7 @@ import (
 // The shape is intentionally UI-neutral so desktop and protocol clients can
 // attach without rebuilding the agent.
 type Options struct {
+	UserHostIsolationMode     UserHostIsolationMode
 	UserHostIsolationVerifier UserHostIsolationVerifier
 	UserSpaceID               string
 	ProductDomain             string
@@ -121,6 +122,7 @@ const (
 // stream runner. UI surfaces should depend on this instead of reassembling the
 // pieces themselves.
 type Session struct {
+	UserHostIsolationMode    UserHostIsolationMode
 	UserSpaceID              string
 	ProductDomain            string
 	DataRoot                 string
@@ -236,7 +238,7 @@ func (s *Session) cloneForThreadModel() (*Session, error) {
 	s.pluginGenerationMu.Lock()
 	defer s.pluginGenerationMu.Unlock()
 	clone := &Session{
-		UserSpaceID: s.UserSpaceID, ProductDomain: s.ProductDomain, DataRoot: s.DataRoot,
+		UserSpaceID: s.UserSpaceID, ProductDomain: s.ProductDomain, DataRoot: s.DataRoot, UserHostIsolationMode: s.UserHostIsolationMode,
 		ProviderName:                s.ProviderName,
 		Model:                       s.Model,
 		RootDir:                     s.RootDir,
@@ -403,7 +405,8 @@ func NewSession(opts Options) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve wuu home: %w", err)
 	}
-	if err := VerifyUserHostIsolation(context.Background(), binding, wuuHome, opts.UserHostIsolationVerifier); err != nil {
+	isolationMode, err := resolveUserHostIsolation(context.Background(), binding, wuuHome, opts.UserHostIsolationMode, opts.UserHostIsolationVerifier)
+	if err != nil {
 		return nil, err
 	}
 	dataRoot := wuuHome
@@ -819,7 +822,7 @@ func NewSession(opts Options) (*Session, error) {
 	}
 
 	runtimeSession = &Session{
-		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, DataRoot: dataRoot,
+		UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, DataRoot: dataRoot, UserHostIsolationMode: isolationMode,
 		ProviderName:                resolvedName,
 		Model:                       providerCfg.Model,
 		RootDir:                     rootDir,

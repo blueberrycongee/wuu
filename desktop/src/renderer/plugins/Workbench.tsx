@@ -196,6 +196,7 @@ export class WorkbenchController {
       ...this.state,
       activeViewByRegion: { ...this.state.activeViewByRegion, [view.region]: view.id },
     });
+    this.host.publishHostEvent({ type: "workbench.view.activated", pluginId: view.pluginId, viewTypeId: view.viewTypeId });
   }
 
   deactivateRegion(region: ViewPlacementRegion): void {

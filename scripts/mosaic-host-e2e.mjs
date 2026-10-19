@@ -5,8 +5,8 @@
 // races, misleading completion, and cancellation/restart recovery. The real Go
 // app-server and shipped plugins run against one synthetic loopback provider.
 // Build the current core and bundles first; WUU_E2E_CORE selects that binary.
-// Default: production rejection and Coding compatibility. --synthetic-host also
-// compiles a separate TEST SDK host whose fake verifier cannot prove isolation.
+// Exercises default logical-memory activation without an isolation verifier.
+// The SDK transport fixture only multiplexes clients; the provider is synthetic.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -19,7 +19,6 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const binary = resolve(root, process.env.WUU_E2E_CORE || "bin/wuu");
-const syntheticHost = process.argv.includes("--synthetic-host");
 const output = resolve(root, process.env.WUU_MOSAIC_E2E_OUTPUT || ".tmp/e2e/mosaic-host");
 await mkdir(output, { recursive: true });
 const scratch = await mkdtemp(join(output, "run-"));
@@ -34,13 +33,16 @@ const projectMemoryMarker = "MOSAIC_SYNTHETIC_PROJECT_MEMORY_25fc1";
 const testBinary = join(scratch, "synthetic-sdk-host");
 const privateMarkers = [codingMarker, projectMarker, globalMarker, projectMemoryMarker];
 const report = { started_at: new Date().toISOString(), binary, scratch, status: "running", cases: [],
-  scope: "Production CLI rejection and Coding compatibility. Optional separate SDK fixture uses an explicitly fake isolation verifier; Personal results do not prove OS/process isolation. Synthetic state/provider only; no live inference, calendar, device or rendered UI claims",
-  synthetic_host: syntheticHost,
+  scope: "Production CLI and ordinary SDK logical-memory activation plus Coding compatibility. Synthetic state/provider and multiplexed SDK transport only; no OS isolation, live inference, calendar, device or rendered UI claims",
+  synthetic_provider: true, host_isolation_override: false,
   failure_matrix: [
     "Stage 1: no registered project; host scope survives invocation-directory changes, restart and duplicate creation; Coding context must not enter Personal",
     "Stage 2: one main binding, idempotent send, durable readable history, stale fingerprint denied and plugin disable isolated",
     "Stage 3: Coding notebook retained; Personal query has no imported Coding facts; caller-supplied domain rejected; generic read cannot reveal Coding memory",
     "Stage 4: background dispatch deduplicates without blocking main chat; no ordinary thread leakage; unknown results are not completed; stop and restart retain task state",
+    "Single assistant: waiting_user question must persist in main exactly once; a main resume_task answer must retain the task ID and advance its requirement revision",
+    "Continuous conversation: stop_reply must interrupt only the current reply and retain every accepted queued user input and independent background task",
+    "Routine changes: conversational manage_routine update must change the existing schedule and binding revision without creating another routine",
     "Stage 6: actual local scheduler admits one reminder, pause cancels its turn and survives restart; no wall-clock recurrence or DST completeness claim",
     "Stage 7: unconnected read-only Calendar reports empty freshness and remains unavailable to Coding; no account authorization or real provider claim",
   ],
@@ -48,7 +50,7 @@ const report = { started_at: new Date().toISOString(), binary, scratch, status: 
 const providerEvents = new EventEmitter(), providerCalls = [], active = new Set(), held = new Map();
 const heldTags = new Set();
 const toolPlans = new Map(), planCalls = new Map();
-let personal, coding, main, specialist, memoryRecord, task, codingThread, duplicateTurnID, attachmentSubmission;
+let personal, coding, main, memoryRecord, task, codingThread, duplicateTurnID, attachmentSubmission, firstReplySeq;
 
 function waitFor(events, event, history, predicate, label, timeout = 30_000) {
   const previous = history.find(predicate);
@@ -90,12 +92,17 @@ async function sourceSnapshot(label) {
   return { files: manifest.length, sha256: createHash("sha256").update(JSON.stringify(manifest)).digest("hex") };
 }
 function messageText(message) {
-  return typeof message?.content === "string" ? message.content : JSON.stringify(message?.content ?? "");
+  if (typeof message?.content === "string") return message.content;
+  if (Array.isArray(message?.content)) return message.content.filter(part => part.type === "text" && typeof part.text === "string").map(part => part.text).join("\n");
+  return JSON.stringify(message?.content ?? "");
 }
 function tagOf(body) {
   const users = body.messages?.filter(message => message.role === "user") ?? [];
   for (const message of users.reverse()) {
-    const tag = messageText(message).match(/MOSAIC_E2E_CASE:([a-z0-9-]+)/)?.[1];
+    // Providers may merge adjacent user records after an interrupted reply.
+    // Choose the newest explicit fixture-input line, not an older merged tag
+    // or a question quoted inside the identity's open-matters JSON.
+    const tag = [...messageText(message).matchAll(/(?:^|\n)\s*(?:Goal:\s*|Question:\s*|The user's explicit reminder is due:\s*)?MOSAIC_E2E_CASE:([a-z0-9-]+)/g)].at(-1)?.[1];
     if (tag) return tag;
     if (messageText(message).includes("selected.txt")) return "attachment-only";
   }
@@ -307,20 +314,18 @@ async function waitPersistedReply(sessionID, content, evidenceName) {
   throw new Error("Work did not commit while every client was disconnected");
 }
 
-async function buildSyntheticHost() {
+async function buildSDKHost() {
   const source = join(scratch, "synthetic-sdk-host.go");
-  await writeFile(source, `// Synthetic acceptance fixture only. This does not establish host isolation.
+  await writeFile(source, `// Acceptance transport fixture only. Uses production logical-memory policy without overrides.
 package main
-import("bufio";"context";"encoding/json";"flag";"fmt";"io";"os";"sync";"github.com/blueberrycongee/wuu/internal/sdk";"github.com/blueberrycongee/wuu/internal/runtime";"github.com/blueberrycongee/wuu/internal/userspace";"github.com/blueberrycongee/wuu/internal/session")
-type fakeIsolationVerifier struct{}
-func(fakeIsolationVerifier) VerifyUserHostIsolation(context.Context,userspace.Binding,string)error{return nil}
+import("bufio";"context";"encoding/json";"flag";"fmt";"io";"os";"sync";"github.com/blueberrycongee/wuu/internal/sdk";"github.com/blueberrycongee/wuu/internal/runtime";"github.com/blueberrycongee/wuu/internal/session")
 type output struct{mu sync.Mutex}
 func(o *output) emit(v any)error{o.mu.Lock();defer o.mu.Unlock();return json.NewEncoder(os.Stdout).Encode(v)}
 type writer struct{o *output;client string}
 func(w writer)Write(p []byte)(int,error){err:=w.o.emit(map[string]any{"client":w.client,"frame":json.RawMessage(p)});return len(p),err}
 type connection struct{in *io.PipeWriter;done chan struct{}}
 // The fixture envelope multiplexes independent, ordinary SDK transports. It
-// adds no host API or authorization override beyond the named fake verifier.
+// adds no host API, authorization override or isolation verifier.
 func multiplex(r *sdk.Runtime)error{
  out:=&output{};clients:=map[string]connection{}
  defer func(){for _,c:=range clients{c.in.Close()};for _,c:=range clients{<-c.done}}()
@@ -341,8 +346,8 @@ func run()error{
  space:=f.String("user-space","","fixture user space");domain:=f.String("product-domain","","fixture domain")
  if len(os.Args)<2||os.Args[1]!="app-server"{return fmt.Errorf("only synthetic app-server is supported")}
  if err:=f.Parse(os.Args[2:]);err!=nil{return err}
- fmt.Fprintln(os.Stderr,"SYNTHETIC TEST HOST: fake verifier; no OS isolation attestation")
- r,err:=sdk.New(sdk.Options{WorkDir:*cwd,HomeDir:os.Getenv("HOME"),ConfigPath:*cfg,UserSpaceID:*space,ProductDomain:*domain,UserHostIsolationVerifier:fakeIsolationVerifier{}})
+ fmt.Fprintln(os.Stderr,"SDK TRANSPORT FIXTURE: production logical-memory policy; no OS isolation attestation")
+ r,err:=sdk.New(sdk.Options{WorkDir:*cwd,HomeDir:os.Getenv("HOME"),ConfigPath:*cfg,UserSpaceID:*space,ProductDomain:*domain})
  if err!=nil{return err};defer r.Close();return multiplex(r)
 }
 func main(){if err:=run();err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(1)}}
@@ -374,21 +379,25 @@ try {
   await writeFile(join(home, "memory", "MEMORY.md"), `# Existing Coding notebook\n- ${codingMarker}\n`);
   await writeFile(join(invocation, ".wuu", "memory", "MEMORY.md"), `${projectMemoryMarker}\n`);
   await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve));
+  // The integrated single-conversation suite keeps every earlier turn. Leave
+  // enough synthetic context for the full chain; compaction is tested elsewhere.
   await writeFile(join(home, "config.json"), JSON.stringify({
-    default_provider: "fixture", providers: { fixture: { type: "openai-compatible", base_url: `http://127.0.0.1:${provider.address().port}`, api_key: "synthetic-unused", model: "mosaic-fixture", models: { "mosaic-fixture": { context_window: 32768 } } } },
+    default_provider: "fixture", providers: { fixture: { type: "openai-compatible", base_url: `http://127.0.0.1:${provider.address().port}`, api_key: "synthetic-unused", model: "mosaic-fixture", models: { "mosaic-fixture": { context_window: 131072 } } } },
     agent: { permission_mode: "standard", tool_loading: "flat", max_steps: 8 }, skills: { enabled: false }, ptc: { enabled: false },
   }));
-  await scenario("Production CLI rejects Personal without verified host isolation", async () => {
-    const rejected = spawnSync(binary, ["app-server", "--workdir", invocation, "--config", join(home, "config.json"), "--user-space", "local", "--product-domain", "personal"],
-      { cwd: invocation, env: { PATH: process.env.PATH, HOME: fixtureHome, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath }, encoding: "utf8", timeout: 10_000, input: "" });
-    assert.notEqual(rejected.status, 0); assert.match(rejected.stderr, /requires verified host isolation/);
-    assert.equal(providerCalls.length, 0);
-    await assert.rejects(readdir(personalRoot), { code: "ENOENT" });
-    return { exit_code: rejected.status, stderr: rejected.stderr, no_personal_root_created: true };
+  await scenario("Production CLI activates logical-memory Personal without an isolation override", async () => {
+    const started = spawnSync(binary, ["app-server", "--workdir", invocation, "--config", join(home, "config.json"), "--user-space", "local", "--product-domain", "personal"],
+      { cwd: invocation, env: { PATH: process.env.PATH, HOME: fixtureHome, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath }, encoding: "utf8", timeout: 30_000,
+        input: JSON.stringify({ id: "activation", method: "initialize", params: { protocol_version: "wuu-app-server/v0.1", client: { name: "logical-activation-e2e" } } }) + "\n" });
+    assert.equal(started.status, 0, started.stderr);
+    const initialized = started.stdout.trim().split("\n").map(line => JSON.parse(line)).find(frame => frame.id === "activation");
+    assert(initialized?.result, started.stdout + started.stderr);
+    assert.deepEqual(initialized.result.user_host_isolation, { memory: "logical", host: "unverified" });
+    assert.equal(initialized.result.user_space_id, "local"); assert.equal(initialized.result.product_domain, "personal");
+    return { exit_code: started.status, capabilities: initialized.result.user_host_isolation };
   });
   await scenario("Coding keeps its notebook and has no Personal client or model tools", codingBaseline);
-  if (syntheticHost) {
-  await buildSyntheticHost();
+  await buildSDKHost();
   await scenario("Personal initializes without registered projects and advertises its plugin", async () => {
     personal = await new Host("personal-first", "personal").start();
     const item = personal.package("personal"); assert(item.enabled); assert.equal(item.runtime_state, "active", item.last_error);
@@ -412,11 +421,37 @@ try {
     const calls = agentCalls("personal-first"); assert(calls.length > 0);
     for (const marker of privateMarkers) assert(!JSON.stringify(calls).includes(marker), `Personal provider received ${marker}`);
     const history = await personal.client("agents.history", { agent_id: main.agent_id });
-    assert(history.records.some(record => record.content?.includes("MOSAIC_REPLY:personal-first")));
+    firstReplySeq = history.records.find(record => record.content?.includes("MOSAIC_REPLY:personal-first"))?.seq;
+    assert(firstReplySeq);
     const turn = personal.transcript.find(frame => frame.method === "turn/completed" && frame.params?.turn?.id === sent.turn_id)?.params.turn;
     const user = turn?.items.find(item => item.type === "user_message" && item.text === "MOSAIC_E2E_CASE:personal-first");
     assert(user, "missing visible user message"); assert.equal(user.origin, "user"); assert.notEqual(user.read_only, true);
     return { provider_calls: calls.length, history_records: history.records.length };
+  });
+  await scenario("Personal history hides durable model context but preserves identical exact user text", async () => {
+    const communication = main.communication, marker = "MOSAIC_IDENTITY_CONTEXT_271fe";
+    main = (await personal.client("agents.update", { agent_id: main.agent_id, expected_revision: main.revision, communication: marker })).agent;
+    await personal.send("history-projection");
+    assert(agentCalls("history-projection").some(call => JSON.stringify(call.body.messages).includes(marker)), "identity context must still reach the provider");
+    const history = await personal.client("agents.history", { agent_id: main.agent_id });
+    assert(!history.records.some(record => record.content?.includes(marker)), "internal identity context leaked into conversation history");
+    const hiddenSearch = await personal.client("agents.search", { agent_id: main.agent_id, query: marker });
+    assert.equal(hiddenSearch.matches?.length ?? 0, 0);
+    const persisted = spawnSync(testBinary, ["read-persisted-history", join(personalState, "sessions"), main.main_session_id], { encoding: "utf8" });
+    assert.equal(persisted.status, 0, persisted.stderr);
+    const audit = JSON.parse(persisted.stdout).Records;
+    assert(audit.some(record => record.content?.includes(marker) && record.hidden === true && record.read_only === true && record.origin === "plugin"), "projection must not remove durable model context");
+    await writeFile(join(scratch, "history-provenance-audit.json"), persisted.stdout);
+
+    const prompt = `  MOSAIC_E2E_CASE:history-user-text\n${marker}\n  `;
+    const sent = await personal.client("agents.send", { agent_id: main.agent_id, request_id: "history-user-text", prompt });
+    await personal.settled(sent);
+    const found = await personal.client("agents.search", { agent_id: main.agent_id, query: marker });
+    assert.equal(found.matches.length, 1); assert.equal(found.matches[0].role, "user"); assert.equal(found.matches[0].excerpt, prompt);
+    const original = await personal.client("agents.history", { agent_id: main.agent_id, start_seq: found.matches[0].seq, end_seq: found.matches[0].seq });
+    assert.equal(original.records.length, 1); assert.equal(original.records[0].content, prompt); assert.equal(original.records[0].seq, found.matches[0].seq);
+    main = (await personal.client("agents.update", { agent_id: main.agent_id, expected_revision: main.revision, communication })).agent;
+    return { durable_context_retained: true, provider_context_retained: true, exact_user_seq: found.matches[0].seq };
   });
   await scenario("Personal chat rejects missing or mismatched live client input proof", async () => {
     const input = { agent_id: main.agent_id, request_id: "unproved-intent", prompt: "MOSAIC_E2E_CASE:unproved-chat" };
@@ -560,7 +595,7 @@ try {
   await scenario("Process restart and project switch preserve main binding and history", async () => {
     await personal.close(); personal = await new Host("personal-restarted", "personal", otherProject).start();
     const restored = (await personal.client("agents.ensure_default")).agent; assert.equal(restored.main_session_id, main.main_session_id);
-    const history = await personal.client("agents.history", { agent_id: restored.agent_id });
+    const history = await personal.client("agents.history", { agent_id: restored.agent_id, start_seq: firstReplySeq, end_seq: firstReplySeq });
     assert(history.records.some(record => record.content?.includes("MOSAIC_REPLY:personal-first")));
     const replay = await personal.client("agents.send", { agent_id: main.agent_id, request_id: "stable-chat-intent", prompt: "MOSAIC_E2E_CASE:duplicate" });
     assert.equal(replay.turn_id, duplicateTurnID); assert.equal(agentCalls("duplicate").length, 1);
@@ -593,21 +628,19 @@ try {
     assert.equal(memoryRecord.product_domain, "personal"); assert.equal(memoryRecord.user_space_id, "local");
     assert(memoryRecord.sources.some(source => source.ref === "mosaic-fixture-user-message-1")); return memoryRecord;
   });
-  await scenario("Main proposal requires confirmation before creating a specialist", async () => {
-    toolPlans.set("specialist-proposal", { plugin: "personal", tool: "propose_specialist", arguments: { name: "Fern", responsibility: "Synthetic trip planning" } });
-    await personal.send("specialist-proposal");
-    assert.equal((await personal.client("agents.list")).agents.length, 1);
-    const proposal = (await personal.client("agents.proposals")).proposals[0]; assert(proposal);
-    await assert.rejects(personal.client("agents.confirm_specialist", { proposal_id: proposal.proposal_id }), /approval|required/i);
-    specialist = (await personal.client("agents.confirm_specialist", { proposal_id: proposal.proposal_id, approved: true })).agent;
-    const duplicate = (await personal.client("agents.confirm_specialist", { proposal_id: proposal.proposal_id, approved: true })).agent;
-    assert.equal(specialist.main_session_id, duplicate.main_session_id); assert.notEqual(specialist.main_session_id, main.main_session_id);
-    return { agent_id: specialist.agent_id, main_session_id: specialist.main_session_id };
+  await scenario("The public product exposes only its durable main conversation", async () => {
+    const listed = await personal.client("agents.list");
+    assert.deepEqual(listed.agents.map(agent => agent.agent_id), [main.agent_id]);
+    assert.equal(listed.agents[0].main_session_id, main.main_session_id);
+    await assert.rejects(personal.client("agents.open", { agent_id: "unknown-assistant" }), /main|agent|conversation|found/i);
+    const names = agentCalls("personal-first").flatMap(call => call.body.tools?.map(item => item.function?.name) ?? []);
+    assert(!names.some(name => name.includes("propose_specialist")));
+    return { agent_id: main.agent_id, main_session_id: main.main_session_id };
   });
   await scenario("Attachment references cannot select another agent, arbitrary session or changed digest", async () => {
     const { record, attachment } = attachmentSubmission;
     const input = { agent_id: main.agent_id, seq: record.seq, kind: attachment.kind, index: attachment.index, sha256: attachment.sha256 };
-    await assert.rejects(personal.client("agents.attachments.read", { ...input, agent_id: specialist.agent_id }), /removed|changed|source/i);
+    await assert.rejects(personal.client("agents.attachments.read", { ...input, agent_id: "unknown-assistant" }), /agent|main|conversation|removed|changed|source/i);
     await assert.rejects(personal.client("agents.attachments.read", { ...input, session_id: main.main_session_id }), /scope|session|path/i);
     await assert.rejects(personal.client("agents.attachments.read", { ...input, sha256: "0".repeat(64) }), /removed|changed/i);
     await assert.rejects(personal.client("agents.attachments.read", { ...input, offset: attachmentSubmission.file.data.length + 1 }), /offset|size/i);
@@ -615,49 +648,42 @@ try {
     return { rejected_cases: 5 };
   });
   await scenario("Shared Personal correction conflicts are explicit and forgetting removes common recall", async () => {
-    const shared = await personal.client("memory.query", { agent_id: specialist.agent_id, query: "mint tea" });
+    const shared = await personal.client("memory.query", { agent_id: main.agent_id, query: "mint tea" });
     assert(shared.records.some(record => record.id === memoryRecord.id));
-    const corrected = await personal.client("memory.correct", { agent_id: specialist.agent_id, id: memoryRecord.id,
+    const corrected = await personal.client("memory.correct", { agent_id: main.agent_id, id: memoryRecord.id,
       expected_revision: memoryRecord.revision, request_id: "explicit-drink-correction", content: "The synthetic user now prefers green tea" });
-    assert.equal(corrected.record.id, memoryRecord.id); assert.equal(corrected.record.updated_by_agent_id, specialist.agent_id);
+    assert.equal(corrected.record.id, memoryRecord.id); assert.equal(corrected.record.updated_by_agent_id, main.agent_id);
     await assert.rejects(personal.client("memory.correct", { agent_id: main.agent_id, id: memoryRecord.id,
       expected_revision: memoryRecord.revision, request_id: "stale-drink-correction", content: "Stale mint tea claim" }), /revision|conflict/i);
     const latest = await personal.client("memory.read", { agent_id: main.agent_id, id: memoryRecord.id });
     assert.equal(latest.record.content, "The synthetic user now prefers green tea");
     const forgotten = await personal.client("memory.forget", { agent_id: main.agent_id, id: memoryRecord.id, expected_revision: latest.record.revision });
     assert.equal(forgotten.record.status, "forgotten"); assert.equal(forgotten.record.content, undefined);
-    const after = await personal.client("memory.query", { agent_id: specialist.agent_id, query: "tea" });
+    const after = await personal.client("memory.query", { agent_id: main.agent_id, query: "tea" });
     assert(!after.records.some(record => record.id === memoryRecord.id));
     return { id: memoryRecord.id, corrected_revision: latest.record.revision, forgotten_revision: forgotten.record.revision };
   });
-  await scenario("Pausing a specialist cancels owned work while main chat continues and resume keeps identity", async () => {
-    let pending = (await personal.client("tasks.create", { agent_id: specialist.agent_id, request_id: "specialist-pause-task", title: "Synthetic specialist work", goal: "MOSAIC_E2E_CASE:background-agent-pause" })).task;
-    await waitFor(providerEvents, "request", providerCalls, call => call.tag === "background-agent-pause" && call.kind === "agent", "specialist work admission");
-    specialist = (await personal.client("agents.list")).agents.find(agent => agent.agent_id === specialist.agent_id);
-    specialist = (await personal.client("agents.pause", { agent_id: specialist.agent_id, expected_revision: specialist.revision })).agent;
-    assert(["stopping", "paused"].includes(specialist.status));
-    if (specialist.status === "stopping") { assert.equal(specialist.stop_target, "paused"); assert.equal(specialist.cancellation_pending, true); }
-    await waitFor(providerEvents, "cancelled", providerCalls, call => call.tag === "background-agent-pause" && call.cancelled, "agent pause cancels owned task");
-    await assert.rejects(personal.client("agents.send", { agent_id: specialist.agent_id, request_id: "paused-agent-chat", prompt: "MOSAIC_E2E_CASE:paused-agent-chat" }), /paused|inactive|stopping/i);
-    assert.equal(agentCalls("paused-agent-chat").length, 0);
-    await personal.send("main-during-specialist-pause");
-    pending = (await personal.client("tasks.reconcile", { task_id: pending.task_id })).task; assert.equal(pending.state, "stopped");
-    await personal.close(); personal = await new Host("personal-agent-pause-restarted", "personal").start();
-    // Plugin activation precedes app-server session routing. Observe its public
-    // recovery state until the bounded recovery timer can confirm cancellation.
-    const deadline = Date.now() + 25_000;
-    do {
-      specialist = (await personal.client("agents.list")).agents.find(agent => agent.agent_id === specialist.agent_id);
-      if (specialist.status !== "stopping") break;
-      await new Promise(resolve => setTimeout(resolve, 250));
-    } while (Date.now() < deadline);
-    assert.equal(specialist.status, "paused"); assert.equal(specialist.cancellation_pending, false);
-    const stableSession = specialist.main_session_id;
-    specialist = (await personal.client("agents.resume", { agent_id: specialist.agent_id, expected_revision: specialist.revision })).agent;
-    assert.equal(specialist.status, "active"); assert.equal(specialist.main_session_id, stableSession);
-    const resumed = await personal.client("agents.send", { agent_id: specialist.agent_id, request_id: "resumed-agent-chat", prompt: "MOSAIC_E2E_CASE:resumed-agent-chat" });
-    await personal.settled(resumed);
-    return { agent_id: specialist.agent_id, main_session_id: stableSession, stopped_task_id: pending.task_id };
+  await scenario("Two independent tasks retain separate revisions and targeted cancellation", async () => {
+    const a = (await personal.client("tasks.create", { agent_id: main.agent_id, request_id: "parallel-a", title: "Review design", goal: "MOSAIC_E2E_CASE:background-parallel-a" })).task;
+    const b = (await personal.client("tasks.create", { agent_id: main.agent_id, request_id: "parallel-b", title: "Find discussion", goal: "MOSAIC_E2E_CASE:background-parallel-b" })).task;
+    assert.notEqual(a.task_id, b.task_id); assert.notEqual(a.execution.session_id, b.execution.session_id);
+    for (const tag of ["background-parallel-a", "background-parallel-b"]) await waitFor(providerEvents, "request", providerCalls, call => call.tag === tag && call.kind === "agent", tag);
+    await personal.send("chat-with-two-background-tasks");
+    const currentA = (await personal.client("tasks.get", { task_id: a.task_id })).task;
+    const revised = (await personal.client("tasks.update", { task_id: a.task_id, expected_revision: currentA.revision, goal: "MOSAIC_E2E_CASE:background-parallel-a-revised" })).task;
+    assert.equal(revised.task_id, a.task_id); assert.equal(revised.requirements_revision, 2);
+    await waitFor(providerEvents, "request", providerCalls, call => call.tag === "background-parallel-a-revised", "revised first task");
+    const currentB = (await personal.client("tasks.get", { task_id: b.task_id })).task;
+    assert.equal(currentB.requirements_revision, 1); assert.equal(currentB.cancel_requested, false);
+    const stopped = (await personal.client("tasks.stop", { task_id: b.task_id, expected_revision: currentB.revision })).task;
+    assert.equal(stopped.task_id, b.task_id); assert.equal(stopped.cancel_requested, true);
+    await waitFor(providerEvents, "cancelled", providerCalls, call => call.tag === "background-parallel-b" && call.cancelled, "targeted cancel");
+    const survivor = (await personal.client("tasks.get", { task_id: a.task_id })).task;
+    assert.equal(survivor.cancel_requested, false); assert.equal(survivor.requirements_revision, 2);
+    assert(!agentCalls("background-parallel-a-revised")[0].cancelled);
+    await personal.send("main-after-targeted-cancel");
+    await personal.client("tasks.stop", { task_id: survivor.task_id, expected_revision: survivor.revision });
+    return { revised_task: revised.task_id, stopped_task: stopped.task_id, sibling_continued: true };
   });
   await scenario("Generic read cannot reveal the Coding notebook to Personal", async () => {
     toolPlans.set("cross-domain-read", { tool: "read_file", arguments: { path: join(home, "memory", "MEMORY.md") } });
@@ -711,6 +737,40 @@ try {
     await personal.send("chat-during-background");
     await assert.rejects(personal.rpc("thread/list"), /user host client method is unavailable/);
     return { task_id: task.task_id, execution: task.execution };
+  });
+  await scenario("Stop reply preserves accepted queued user inputs and independent background work", async () => {
+    heldTags.add("main-stop-current");
+    const first = await personal.client("agents.send", { agent_id: main.agent_id, request_id: "main-stop-current", prompt: "MOSAIC_E2E_CASE:main-stop-current" });
+    await waitFor(providerEvents, "request", providerCalls, call => call.tag === "main-stop-current" && call.kind === "agent", "current reply is held");
+    const pending = [];
+    for (const tag of ["main-stop-queued-one", "main-stop-queued-two"]) {
+      const input = { agent_id: main.agent_id, request_id: tag, prompt: `MOSAIC_E2E_CASE:${tag}` };
+      const sent = await personal.client("agents.send", input);
+      assert.equal(sent.state, "queued"); assert(sent.queue_id); pending.push({ tag, input, queue_id: sent.queue_id });
+    }
+    const cancellation = await personal.client("agents.stop_reply", { agent_id: main.agent_id, turn_id: first.turn_id });
+    assert.equal(cancellation.cancelled, true);
+    await waitFor(providerEvents, "cancelled", providerCalls, call => call.tag === "main-stop-current" && call.cancelled, "current main reply cancellation reaches provider");
+    for (const queued of pending) await waitFor(personal.events, "message", personal.transcript, frame => frame.method === "turn/completed" && frame.params?.thread_id === main.main_session_id && frame.params?.content === `MOSAIC_REPLY:${queued.tag}`, `accepted queued input ${queued.tag} completes after stop`);
+    const history = await personal.client("agents.history", { agent_id: main.agent_id });
+    for (const queued of pending) {
+      assert.equal(history.records.filter(record => record.role === "user" && record.content === queued.input.prompt).length, 1);
+      assert.equal(history.records.filter(record => record.role === "assistant" && record.content === `MOSAIC_REPLY:${queued.tag}`).length, 1);
+      await personal.client("agents.send", queued.input);
+      assert.equal(agentCalls(queued.tag).length, 1, "queued intent retry reran its completed reply");
+    }
+    heldTags.add("main-stop-newer");
+    const newer = await personal.client("agents.send", { agent_id: main.agent_id, request_id: "main-stop-newer", prompt: "MOSAIC_E2E_CASE:main-stop-newer" });
+    await waitFor(providerEvents, "request", providerCalls, call => call.tag === "main-stop-newer" && call.kind === "agent", "newer reply starts before stale stop retry");
+    const stale = await personal.client("agents.stop_reply", { agent_id: main.agent_id, turn_id: first.turn_id });
+    assert.equal(stale.cancelled, false); assert(!agentCalls("main-stop-newer")[0].cancelled);
+    const open = await personal.client("agents.open", { agent_id: main.agent_id });
+    assert.equal(open.turn.turn_id, newer.turn_id); assert.equal(open.turn.state, "running");
+    await personal.client("agents.stop_reply", { agent_id: main.agent_id, turn_id: newer.turn_id });
+    await waitFor(providerEvents, "cancelled", providerCalls, call => call.tag === "main-stop-newer" && call.cancelled, "targeted newer reply cleanup");
+    const background = (await personal.client("tasks.get", { task_id: task.task_id })).task;
+    assert.equal(background.cancel_requested, false); assert.equal(background.state, "running"); assert(!agentCalls("background-one")[0].cancelled);
+    return { stopped_turn_id: first.turn_id, newer_turn_survived_stale_retry: newer.turn_id, preserved_queue_ids: pending.map(item => item.queue_id), background_task_id: background.task_id, main_session_id: main.main_session_id };
   });
   await scenario("Stop survives late provider completion and process restart", async () => {
     task = (await personal.client("tasks.stop", { task_id: task.task_id, expected_revision: task.revision })).task;
@@ -780,6 +840,59 @@ try {
     assert.equal(agentCalls("delivery-success").length, 1);
     return { task_id: completed.task_id, delivery: completed.delivery, result: completed.result };
   }, true);
+  await scenario("Executor question is durably delivered in main and its main answer resumes the same task", async () => {
+    heldTags.add("question-main"); heldTags.add("question-resumed");
+    toolPlans.set("question-execution", { plugin: "personal", tool: "report_task", arguments: body => {
+      const taskID = JSON.stringify(body.messages).match(/Work on Personal task (task-[a-z0-9]+)/)?.[1]; assert(taskID);
+      return { task_id: taskID, requirements_revision: 1, state: "waiting_user", progress: "MOSAIC_E2E_CASE:question-main Which Sunday should I plan for?" };
+    } });
+    let waiting = (await personal.client("tasks.create", { agent_id: main.agent_id, request_id: "question-task-intent", title: "Choose the Sunday", goal: "MOSAIC_E2E_CASE:question-execution Plan the requested Sunday activity after the user chooses the date" })).task;
+    await personal.settled({ session_id: waiting.execution.session_id, turn_id: waiting.execution.turn_id });
+    await waitFor(providerEvents, "request", providerCalls, call => call.tag === "question-main" && call.kind === "agent", "question reaches unique main conversation");
+    waiting = (await personal.client("tasks.reconcile", { task_id: waiting.task_id })).task;
+    assert.equal(waiting.state, "waiting_user"); assert.equal(waiting.delivery.kind, "question"); assert.equal(waiting.delivery.status, "submitted"); assert.equal(waiting.delivery.session_id, main.main_session_id);
+    const original = { task_id: waiting.task_id, execution: waiting.execution, requirements_revision: waiting.requirements_revision, question_request_id: waiting.delivery.request_id };
+    held.get("question-main")();
+    await waitFor(personal.events, "message", personal.transcript, frame => frame.method === "turn/completed" && frame.params?.thread_id === main.main_session_id && frame.params?.content === "MOSAIC_REPLY:question-main", "main asks its task question visibly");
+    waiting = (await personal.client("tasks.reconcile", { task_id: waiting.task_id })).task;
+    assert.equal(waiting.delivery.status, "delivered");
+    const history = await personal.client("agents.history", { agent_id: main.agent_id });
+    assert.equal(history.records.filter(record => record.role === "assistant" && record.content === "MOSAIC_REPLY:question-main").length, 1);
+    await personal.client("tasks.reconcile", { task_id: waiting.task_id }); assert.equal(agentCalls("question-main").length, 1);
+    toolPlans.set("question-answer", { plugin: "personal", tool: "resume_task", arguments: async () => {
+      const current = (await personal.client("tasks.get", { task_id: original.task_id })).task;
+      return { task_id: current.task_id, expected_revision: current.revision, answer: "Sunday October 25", goal: "MOSAIC_E2E_CASE:question-resumed Plan the same requested Sunday activity for October 25, as the user answered" };
+    } });
+    await personal.send("question-answer");
+    await waitFor(providerEvents, "request", providerCalls, call => call.tag === "question-resumed" && call.kind === "agent", "same task resumes after main answer");
+    waiting = (await personal.client("tasks.get", { task_id: original.task_id })).task;
+    assert.equal(waiting.task_id, original.task_id); assert.equal(waiting.requirements_revision, original.requirements_revision + 1); assert.equal(waiting.state, "running"); assert.equal(waiting.question, undefined);
+    assert.notEqual(waiting.execution.session_id, original.execution.session_id); assert(waiting.previous_executions.some(execution => execution.request_id === original.execution.request_id));
+    assert.equal((await personal.client("tasks.list")).tasks.filter(item => item.request_id === "question-task-intent").length, 1);
+    assert.equal((await personal.client("agents.ensure_default")).agent.main_session_id, main.main_session_id);
+    const resumed = waiting.execution;
+    await personal.client("tasks.stop", { task_id: waiting.task_id, expected_revision: waiting.revision });
+    await waitFor(providerEvents, "cancelled", providerCalls, call => call.tag === "question-resumed" && call.cancelled, "resumed task cleanup");
+    return { task_id: waiting.task_id, main_session_id: main.main_session_id, question_delivery: original.question_request_id, original_execution: original.execution, resumed_execution: resumed };
+  });
+  await scenario("Conversational routine update keeps the same responsibility and scheduler binding", async () => {
+    await personal.enable("automation");
+    const originalTime = new Date(Date.now() + 3_600_000).toISOString(), updatedTime = new Date(Date.now() + 7_200_000).toISOString();
+    const before = (await personal.client("routines.create", { agent_id: main.agent_id, request_id: "editable-routine-intent", title: "Future reminder", prompt: "MOSAIC_E2E_CASE:routine-before-edit", kind: "reminder", run_at: originalTime, timezone: "UTC" })).routine;
+    assert.equal(before.binding.status, "active", before.last_error);
+    toolPlans.set("routine-edit-main", { plugin: "personal", tool: "manage_routine", arguments: async () => {
+      const current = (await personal.client("routines.list")).routines.find(item => item.routine_id === before.routine_id); assert(current);
+      return { action: "update", routine_id: current.routine_id, expected_revision: current.revision, run_at: updatedTime, prompt: "MOSAIC_E2E_CASE:routine-after-edit" };
+    } });
+    await personal.send("routine-edit-main");
+    const routines = (await personal.client("routines.list")).routines;
+    const after = routines.find(item => item.routine_id === before.routine_id); assert(after);
+    assert.equal(routines.filter(item => item.request_id === "editable-routine-intent").length, 1);
+    assert.equal(after.binding.binding_id, before.binding.binding_id); assert(after.binding.revision > before.binding.revision); assert.equal(after.config_revision, before.config_revision + 1);
+    assert.equal(after.run_at, updatedTime); assert.equal(after.binding.next_run_at, updatedTime); assert.equal(after.binding.status, "active");
+    await personal.client("routines.pause", { routine_id: after.routine_id, expected_revision: after.revision });
+    return { routine_id: after.routine_id, binding_id: after.binding.binding_id, original_binding_revision: before.binding.revision, updated_binding_revision: after.binding.revision, original_time: originalTime, updated_time: updatedTime };
+  });
   await scenario("Real Routine scheduler deduplicates, pauses an active reminder and retains pause after restart", async () => {
     await personal.enable("automation"); heldTags.add("routine-reminder");
     const input = { agent_id: main.agent_id, request_id: "one-routine-intent", title: "Synthetic reminder", prompt: "MOSAIC_E2E_CASE:routine-reminder", kind: "reminder", run_at: new Date(Date.now() - 1000).toISOString(), timezone: "UTC", missed_policy: "run_once" };
@@ -860,7 +973,6 @@ try {
   for (const call of providerCalls.filter(call => !call.tag.startsWith("coding-"))) {
     for (const marker of privateMarkers) assert(!JSON.stringify(call).includes(marker), `${call.tag} leaked ${marker}`);
   }
-  } else report.cases.push({ name: "Personal behavior acceptance", status: "blocked", reason: "Production host isolation is unverified. --synthetic-host can test logic with an explicitly fake test verifier only." });
   assert(!report.provider_error, report.provider_error);
   report.status = report.cases.some(item => item.status === "failed") ? "failed" : "passed";
   if (report.status === "failed") process.exitCode = 1;

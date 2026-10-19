@@ -2,6 +2,8 @@
 // Failure-first public runtime contracts: interrupted identity creation, concurrent
 // default creation, lost main sessions, stale edits, unapproved specialists,
 // durable dispatch, stale/duplicate completion, cancellation, and unknown outcomes.
+// Calendar proposal visibility must stay main-scoped and never proxy confirmation
+// or cancellation through Personal, including forged client routing parameters.
 // Run against source in an isolated JSONL subprocess; fixture implements only host services.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -72,7 +74,12 @@ class Host {
         const session = this.sessions.get(p.session_id); if (!session) throw new Error('session not found');
         return { session_id: p.session_id, user_space_id: session.user_space_id, product_domain: session.product_domain, agent_id: session.agent_id, parent_session_id: session.parent_session_id };
       }
-      case 'host.session.history.read': assert(p.start_seq >= 1 || p.cursor, 'history read requires start_seq or cursor'); assert((p.limit ?? 0) <= 50, 'history limit exceeds host contract'); return { session_id: p.session_id, head_seq: (this.histories.get(p.session_id) ?? []).length, snapshot_seq: 20, records: (this.histories.get(p.session_id) ?? []).filter(r => (!p.start_seq || r.seq >= p.start_seq) && (!p.end_seq || r.seq <= p.end_seq)) };
+      case 'host.session.history.read': {
+        assert(p.start_seq >= 1 || p.cursor, 'history read requires start_seq or cursor'); assert((p.limit ?? 0) <= 50, 'history limit exceeds host contract');
+        const records = this.histories.get(p.session_id) ?? [], snapshot = p.snapshot_seq ?? records.at(-1)?.seq ?? 0;
+        const matching = records.filter(r => (!p.start_seq || r.seq >= p.start_seq) && (!p.end_seq || r.seq <= p.end_seq) && r.seq <= snapshot);
+        return { session_id: p.session_id, head_seq: snapshot, snapshot_seq: snapshot, records: matching.slice(0, p.limit ?? 20), has_more: matching.length > (p.limit ?? 20) };
+      }
       case 'host.session.history.search': assert(p.limit >= 1 && p.limit <= 25, 'history search limit exceeds public host maximum25'); assert.equal(p.view, 'conversation'); return { matches: [] };
       case 'host.session.attachment.read': {
         const record = (this.histories.get(p.session_id) ?? []).find(record => record.seq === p.seq);
@@ -82,9 +89,9 @@ class Host {
         return { data: encoded.slice(offset, offset + 8), offset, total: encoded.length, content_type: attachment.mime_type, name: attachment.name, sha256: attachment.sha256 };
       }
       case 'host.session.cancel': {
-        const turns = [...this.turns.values()].filter(t => t.session_id === p.session_id && (!p.turn_id || p.turn_id === t.turn_id) && (!p.queue_id || p.queue_id === t.queue_id));
+        const turns = [...this.turns.values()].filter(t => t.session_id === p.session_id && (!p.turn_id || p.turn_id === t.turn_id) && (!p.queue_id || p.queue_id === t.queue_id) && !['completed', 'failed', 'discarded', 'interrupted'].includes(t.state));
         for (const turn of turns) if (!['completed', 'failed', 'discarded', 'interrupted'].includes(turn.state)) turn.state = 'interrupted';
-        return { session_id: p.session_id, cancelled: turns.length > 0 };
+        return { session_id: p.session_id, cancelled: turns.some(turn => turn.state === 'interrupted') };
       }
       default: throw new Error(`unavailable service ${service}.${method}`);
     }
@@ -155,12 +162,93 @@ try {
     const original = host.sessions.get(main.main_session_id); host.sessions.delete(main.main_session_id);
     await assert.rejects(runtime.client('agents.open', { agent_id: main.agent_id }), /recover|missing|unavailable/i); assert.equal(host.sessions.size, 0); host.sessions.set(main.main_session_id, original);
   });
-  await scenario('specialist requires main proposal and explicit confirmation', async () => {
-    const proposal = await runtime.tool('propose_specialist', { name: 'Fern', responsibility: 'Travel planning' }, main.main_session_id);
-    assert.equal((await runtime.client('agents.list')).agents.length, 1);
-    specialist = (await runtime.client('agents.confirm_specialist', { proposal_id: proposal.proposal.proposal_id, approved: true })).agent;
-    const retry = (await runtime.client('agents.confirm_specialist', { proposal_id: proposal.proposal.proposal_id, approved: true })).agent; assert.equal(retry.main_session_id, specialist.main_session_id);
-    await assert.rejects(runtime.tool('propose_specialist', { name: 'No', responsibility: 'No' }, specialist.main_session_id), /main/i);
+  await scenario('single main surface preserves historical identities without reopening or creating specialists', async () => {
+    specialist = { ...main, agent_id: 'historical-specialist', kind: 'specialist', name: 'Fern', main_session_id: 'historical-conversation' };
+    const mainKey = [...host.storage.keys()].find(key => key.endsWith(`agent.${main.agent_id}`));
+    host.storage.set(mainKey.replace(main.agent_id, specialist.agent_id), JSON.stringify(specialist));
+    host.sessions.set(specialist.main_session_id, { session_id: specialist.main_session_id, product_domain: 'personal', user_space_id: 'local', agent_id: specialist.agent_id, state: 'idle' });
+    host.histories.set(specialist.main_session_id, [{ seq: 1, role: 'user', content: 'Historical private conversation' }]);
+    assert.deepEqual((await runtime.client('agents.list')).agents.map(agent => agent.agent_id), [main.agent_id]);
+    await assert.rejects(runtime.tool('propose_specialist', { name: 'New', responsibility: 'Travel' }, main.main_session_id), /unknown/);
+    await assert.rejects(runtime.client('agents.confirm_specialist', { proposal_id: 'old', approved: true }), /unknown/);
+    for (const method of ['agents.open', 'agents.history', 'agents.send']) await assert.rejects(runtime.client(method, { agent_id: specialist.agent_id, request_id: 'old-chat', prompt: 'Hello' }), /main Personal conversation/);
+    assert.equal(host.histories.get(specialist.main_session_id)[0].content, 'Historical private conversation');
+    assert.equal(JSON.parse(host.storage.get(mainKey.replace(main.agent_id, specialist.agent_id))).agent_id, specialist.agent_id);
+  });
+  await scenario('main history retains exact human text and artifacts without generated user bubbles', async () => {
+    const prompt = '  Personal identity revision supplied by the user\n  ', at = '2026-10-18T08:30:00Z';
+    const attachment = { kind: 'artifact', index: 0, name: 'result.txt', mime_type: 'text/plain', size: 1, sha256: 'a'.repeat(64) };
+    for (const agent of [main]) {
+      const previous = host.histories.get(agent.main_session_id);
+      const records = [
+        { seq: 1, role: 'user', origin: 'user', content: prompt, at },
+        { seq: 2, role: 'user', content: 'legacy user input' },
+        { seq: 3, role: 'assistant', content: 'visible answer', provider_item_id: 'provider-visible', engine_turn_id: 'engine-visible' },
+        { seq: 4, role: 'user', content: prompt, hidden: true, read_only: true, origin: 'plugin' },
+        { seq: 5, role: 'user', content: 'generated task result', display_content: 'task title', origin: 'plugin', read_only: true },
+        { seq: 6, role: 'user', content: 'internal context', origin: 'internal' },
+        { seq: 7, role: 'user', content: 'legacy read-only context', read_only: true },
+        { seq: 8, role: 'assistant', content: 'hidden response', hidden: true },
+        { seq: 9, role: 'tool', content: 'private tool data', attachments: [attachment] },
+        { seq: 10, role: 'tool', hidden: true, attachments: [attachment] },
+      ];
+      host.histories.set(agent.main_session_id, records);
+      const history = await runtime.client('agents.history', { agent_id: agent.agent_id });
+      assert.deepEqual(history.records.map(record => record.seq), [1, 2, 3, 9]);
+      assert.equal(history.records[0].content, prompt); assert.equal(history.records[0].at, at); assert.equal(history.records[2].provider_item_id, 'provider-visible'); assert.equal(history.records[2].engine_turn_id, 'engine-visible');
+      assert.equal(history.records[3].role, 'assistant'); assert.equal(history.records[3].content, ''); assert.deepEqual(history.records[3].attachments, [attachment]);
+      const original = await runtime.client('agents.history', { agent_id: agent.agent_id, start_seq: 1, end_seq: 1 });
+      assert.equal(original.records[0].content, prompt);
+      const hidden = await runtime.client('agents.history', { agent_id: agent.agent_id, start_seq: 4, end_seq: 4 });
+      assert.deepEqual(hidden.records, []);
+      assert.deepEqual(host.histories.get(agent.main_session_id), records, 'projection must not rewrite durable/provider history');
+      if (previous) host.histories.set(agent.main_session_id, previous); else host.histories.delete(agent.main_session_id);
+    }
+  });
+  await scenario('hidden-only recent history recovers an older visible page within its original snapshot', async () => {
+    const previous = host.histories.get(main.main_session_id);
+    const records = [{ seq: 1, role: 'user', origin: 'user', content: 'original question' }, { seq: 2, role: 'assistant', content: 'original answer' }, ...Array.from({ length: 120 }, (_, index) => ({ seq: index + 3, role: 'user', origin: 'plugin', hidden: true, content: 'internal context' }))];
+    host.histories.set(main.main_session_id, records);
+    let initialRead = true;
+    host.intercept = (service, p) => {
+      if (service !== 'host.session.history.read') return;
+      if (initialRead) {
+        initialRead = false;
+        records.push({ seq: 123, role: 'assistant', content: 'later append' });
+        return { session_id: p.session_id, head_seq: 122, snapshot_seq: 122, records: [records[0]], has_more: true };
+      }
+      assert.equal(p.snapshot_seq, 122, 'backward recovery must stay on the original snapshot');
+    };
+    const history = await runtime.client('agents.history', { agent_id: main.agent_id });
+    assert.deepEqual(history.records.map(record => record.seq), [1, 2]); assert.equal(history.snapshot_seq, 122); assert.equal(history.first_seq, 1); assert.equal(history.has_earlier, false);
+    host.intercept = undefined;
+    host.histories.set(main.main_session_id, records.slice(2, -1));
+    const empty = await runtime.client('agents.history', { agent_id: main.agent_id });
+    assert.deepEqual(empty.records, []); assert.equal(empty.first_seq, 1); assert.equal(empty.has_earlier, false);
+    if (previous) host.histories.set(main.main_session_id, previous); else host.histories.delete(main.main_session_id);
+  });
+  // A hidden audit tail must not trigger unbounded work on every chat poll.
+  // Budget exhaustion must leave an exact earlier-page boundary for the client.
+  await scenario('hidden history recovery stops at its scan budget and can continue through earlier messages', async () => {
+    const previous = host.histories.get(main.main_session_id);
+    const records = [{ seq: 1, role: 'user', origin: 'user', content: 'earlier question' }, { seq: 2, role: 'assistant', content: 'earlier answer' }, ...Array.from({ length: 250 }, (_, index) => ({ seq: index + 3, role: 'user', origin: 'plugin', hidden: true, content: 'internal context' }))];
+    host.histories.set(main.main_session_id, records);
+    const before = host.calls.length;
+    const history = await runtime.client('agents.history', { agent_id: main.agent_id });
+    const reads = host.calls.slice(before).filter(call => call.service === 'host.session.history.read');
+    assert.equal(reads.length, 5, 'at most four physical pages plus one snapshot lookup');
+    assert.deepEqual(history.records, []); assert.equal(history.first_seq, 53); assert.equal(history.has_earlier, true);
+    assert.equal(history.snapshot_seq, 252);
+    assert(reads.slice(1).every(call => call.params.snapshot_seq === history.snapshot_seq));
+    records.push({ seq: 253, role: 'assistant', content: 'later append' });
+    const earlier = await runtime.client('agents.history', { agent_id: main.agent_id, end_seq: history.first_seq - 1 });
+    assert.deepEqual(earlier.records.map(record => record.seq), [1, 2]);
+    assert.equal(earlier.first_seq, 1); assert.equal(earlier.has_earlier, false);
+    const narrowBefore = host.calls.length;
+    const narrow = await runtime.client('agents.history', { agent_id: main.agent_id, end_seq: 252, limit: 1 });
+    assert.equal(host.calls.slice(narrowBefore).filter(call => call.service === 'host.session.history.read').length, 5);
+    assert.deepEqual(narrow.records, []); assert.equal(narrow.first_seq, 249); assert.equal(narrow.has_earlier, true);
+    if (previous) host.histories.set(main.main_session_id, previous); else host.histories.delete(main.main_session_id);
   });
   await scenario('background dispatch is durable, hidden, and leaves main chat available', async () => {
     task = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'task-one', title: 'Plan supper', goal: 'Research a supper plan' })).task;
@@ -168,6 +256,18 @@ try {
     assert.equal(task.task_id, retry.task_id); assert.equal(host.sessions.get(task.execution.session_id).visibility, 'plugin');
     await runtime.client('agents.send', { agent_id: main.agent_id, request_id: 'chat-one', prompt: 'Hello meanwhile' });
     assert([...host.turns.values()].some(t => t.session_id === main.main_session_id));
+  });
+  await scenario('stop reply requires its frozen turn identity and stale retries leave newer replies running', async () => {
+    const first = await runtime.client('agents.send', { agent_id: main.agent_id, request_id: 'stale-stop-first', prompt: 'First reply' });
+    host.turns.get([...host.turns.keys()].find(key => host.turns.get(key).turn_id === first.turn_id)).state = 'completed';
+    const second = await runtime.client('agents.send', { agent_id: main.agent_id, request_id: 'stale-stop-second', prompt: 'New reply' });
+    await assert.rejects(runtime.client('agents.stop_reply', { agent_id: main.agent_id }), /turn_id/);
+    const stale = await runtime.client('agents.stop_reply', { agent_id: main.agent_id, turn_id: first.turn_id });
+    assert.equal(stale.cancelled, false); assert.equal([...host.turns.values()].find(turn => turn.turn_id === second.turn_id).state, 'running');
+    const stopped = await runtime.client('agents.stop_reply', { agent_id: main.agent_id, turn_id: second.turn_id }); assert.equal(stopped.cancelled, true);
+    const third = await runtime.client('agents.send', { agent_id: main.agent_id, request_id: 'stale-stop-third', prompt: 'Another reply' });
+    const retry = await runtime.client('agents.stop_reply', { agent_id: main.agent_id, turn_id: second.turn_id });
+    assert.equal(retry.cancelled, false); assert.equal([...host.turns.values()].find(turn => turn.turn_id === third.turn_id).state, 'running');
   });
   await scenario('terminal turn without verified result remains pending reconciliation', async () => {
     await runtime.lifecycle(task, 'completed'); task = (await runtime.client('tasks.get', { task_id: task.task_id })).task;
@@ -229,13 +329,104 @@ try {
     isolated.intercept = undefined; r = await new Runtime(isolated).start(); const restored = (await r.client('agents.ensure_default')).agent;
     assert.equal(isolated.sessions.size, 1); assert(isolated.sessions.has(restored.main_session_id)); await r.close();
   });
-  await scenario('waiting for the user survives terminal observation and repeated recovery', async () => {
+  await scenario('question outbox survives lost acknowledgement, main answer resumes same task, targeted stop leaves siblings running', async () => {
     let waiting = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'waiting-one', title: 'Choose a date', goal: 'Wait for the user to choose Sunday' })).task;
-    await runtime.tool('report_task', { task_id: waiting.task_id, requirements_revision: waiting.requirements_revision, state: 'waiting_user', progress: 'Which Sunday works?' }, waiting.execution.session_id);
-    await runtime.lifecycle(waiting, 'completed'); waiting = (await runtime.client('tasks.get', { task_id: waiting.task_id })).task;
-    assert.equal(waiting.state, 'waiting_user'); assert.equal(waiting.reconciliation_required, false);
-    const revision = waiting.revision; await runtime.lifecycle(waiting, 'completed');
-    assert.equal((await runtime.client('tasks.get', { task_id: waiting.task_id })).task.revision, revision);
+    const sibling = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'waiting-independent', title: 'Independent goal', goal: 'Keep this separate' })).task;
+    assert.notEqual(waiting.task_id, sibling.task_id);
+    let lost = false;
+    host.intercept = (service, p) => {
+      if (service === 'host.session.send' && p.cause === 'personal.task.question' && !lost) {
+        lost = true; host.turns.set(p.request_id, { request_id: p.request_id, session_id: p.session_id, turn_id: `t-${p.request_id}`, state: 'running' }); throw new Error('question acknowledgement lost');
+      }
+    };
+    waiting = (await runtime.tool('report_task', { task_id: waiting.task_id, requirements_revision: waiting.requirements_revision, state: 'waiting_user', progress: 'Which Sunday works?' }, waiting.execution.session_id)).task;
+    assert.equal(waiting.state, 'waiting_user'); assert.equal(waiting.question.text, 'Which Sunday works?');
+    const deliveryID = waiting.delivery.request_id;
+    assert.equal(host.turns.get(deliveryID).session_id, main.main_session_id);
+    host.intercept = undefined; await runtime.lifecycle(waiting, 'completed');
+    await runtime.close(); runtime = await new Runtime(host).start();
+    waiting = (await runtime.client('tasks.get', { task_id: waiting.task_id })).task;
+    assert.equal(waiting.delivery.request_id, deliveryID);
+    assert.equal(host.calls.filter(call => call.service === 'host.session.send' && call.params.request_id === deliveryID).length, 1);
+    await assert.rejects(runtime.tool('resume_task', { task_id: waiting.task_id, expected_revision: waiting.revision }, main.main_session_id), /answer/);
+    const old = waiting;
+    waiting = (await runtime.tool('resume_task', { task_id: waiting.task_id, expected_revision: waiting.revision, answer: 'Next Sunday, October 25' }, main.main_session_id)).task;
+    assert.equal(waiting.task_id, old.task_id); assert.equal(waiting.requirements_revision, old.requirements_revision + 1); assert.match(waiting.goal, /October 25/); assert.equal(waiting.question, undefined);
+    assert.equal(host.turns.get(deliveryID).state, 'interrupted');
+    await assert.rejects(runtime.tool('report_task', { task_id: waiting.task_id, requirements_revision: old.requirements_revision, state: 'running', progress: 'stale' }, old.execution.session_id), /stale|current/);
+    await assert.rejects(runtime.tool('stop_task', { expected_revision: waiting.revision }, main.main_session_id), /task_id/);
+    await runtime.tool('stop_task', { task_id: waiting.task_id, expected_revision: waiting.revision }, main.main_session_id);
+    assert.equal((await runtime.client('tasks.get', { task_id: sibling.task_id })).task.state, 'running');
+    assert.equal(host.turns.get(sibling.execution.request_id).state, 'running');
+  });
+  await scenario('failed question delivery retries explicitly without repeating execution and stop cancels only its question', async () => {
+    let task = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'question-retry', title: 'Retry question', goal: 'Ask before proceeding' })).task;
+    task = (await runtime.tool('report_task', { task_id: task.task_id, requirements_revision: 1, state: 'waiting_user', progress: 'Which city?' }, task.execution.session_id)).task;
+    const failedID = task.delivery.request_id;
+    host.turns.get(failedID).state = 'failed';
+    await runtime.call('capability.invoke', { capability: 'agent.turn.lifecycle', input: { thread_id: main.main_session_id, request_id: failedID, state: 'failed', error: 'model unavailable' } });
+    task = (await runtime.client('tasks.get', { task_id: task.task_id })).task;
+    assert.equal(task.delivery.status, 'failed');
+    const executionSends = host.calls.filter(call => call.service === 'host.session.send' && call.params.request_id === task.execution.request_id).length;
+    task = (await runtime.tool('retry_task_delivery', { task_id: task.task_id, expected_revision: task.revision }, main.main_session_id)).task;
+    assert.notEqual(task.delivery.request_id, failedID); assert.equal(task.previous_deliveries.at(-1).request_id, failedID); assert.equal(task.delivery.attempt, 1);
+    assert.equal(host.calls.filter(call => call.service === 'host.session.send' && call.params.request_id === task.execution.request_id).length, executionSends);
+    await runtime.client('agents.send', { agent_id: main.agent_id, request_id: 'unrelated-main-reply', prompt: 'Another topic' });
+    const foreground = [...host.turns.values()].at(-1);
+    task = (await runtime.tool('stop_task', { task_id: task.task_id, expected_revision: task.revision }, main.main_session_id)).task;
+    assert.equal(task.state, 'stopped'); assert.equal(foreground.state, 'running'); assert.equal(host.turns.get(task.previous_deliveries.at(-1).request_id).state, 'interrupted');
+  });
+  await scenario('historical task result and execution failure return to the unique main conversation', async () => {
+    let legacy = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'legacy-task-route', title: 'Historical task', goal: 'Preserve provenance' })).task;
+    const key = [...host.storage.keys()].find(key => key.endsWith(`task.${legacy.task_id}`));
+    legacy.agent_id = specialist.agent_id; host.storage.set(key, JSON.stringify(legacy)); host.sessions.get(legacy.execution.session_id).agent_id = specialist.agent_id;
+    host.histories.set(legacy.execution.session_id, [{ seq: 1, role: 'tool', tool_result: 'verified legacy result' }]);
+    await runtime.tool('complete_task', { task_id: legacy.task_id, requirements_revision: 1, summary: 'Preserved legacy result', evidence: [{ seq: 1, description: 'Legacy evidence' }] }, legacy.execution.session_id);
+    await runtime.lifecycle(legacy, 'completed'); legacy = (await runtime.client('tasks.get', { task_id: legacy.task_id })).task;
+    assert.equal(legacy.agent_id, specialist.agent_id); assert.equal(host.turns.get(legacy.delivery.request_id).session_id, main.main_session_id);
+    assert((await runtime.client('tasks.list', { agent_id: main.agent_id })).tasks.some(task => task.task_id === legacy.task_id));
+    let failed = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'failure-route', title: 'Failed lookup', goal: 'Tell the user if execution fails' })).task;
+    await runtime.lifecycle(failed, 'failed'); failed = (await runtime.client('tasks.get', { task_id: failed.task_id })).task;
+    assert.equal(failed.state, 'failed'); assert.equal(failed.delivery.kind, 'failure'); assert.equal(host.turns.get(failed.delivery.request_id).session_id, main.main_session_id);
+  });
+  await scenario('pending legacy result migrates to main only after its old queued delivery is cancelled', async () => {
+    let legacy = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'legacy-outbox-route', title: 'Existing outbox', goal: 'Preserve its pending delivery' })).task;
+    const key = [...host.storage.keys()].find(key => key.endsWith(`task.${legacy.task_id}`));
+    const oldRequest = 'personal-result-legacy-pending';
+    legacy = { ...legacy, agent_id: specialist.agent_id, state: 'completed', execution: { ...legacy.execution, finished_state: 'completed' }, result: { summary: 'Historical result', evidence: [], requirements_revision: 1, verified_at: new Date().toISOString() }, delivery: { request_id: oldRequest, status: 'submitted' } };
+    host.storage.set(key, JSON.stringify(legacy));
+    host.turns.set(oldRequest, { request_id: oldRequest, session_id: specialist.main_session_id, turn_id: 'legacy-delivery-turn', state: 'queued' });
+    legacy = (await runtime.client('tasks.reconcile', { task_id: legacy.task_id })).task;
+    assert.equal(host.turns.get(oldRequest).state, 'interrupted'); assert.equal(legacy.previous_deliveries[0].session_id, specialist.main_session_id);
+    assert.notEqual(legacy.delivery.request_id, oldRequest); assert.equal(host.turns.get(legacy.delivery.request_id).session_id, main.main_session_id);
+    assert.equal((await runtime.client('agents.ensure_default')).agent.main_session_id, main.main_session_id);
+  });
+  await scenario('Calendar proposal list stays main-scoped and exposes no Personal confirmation or cancellation route', async () => {
+    const methods = runtime.definition.provided_services.find(service => service.name === 'personal.agents').methods.map(method => method.name);
+    assert(methods.includes('calendar.operations.list'));
+    assert(!methods.includes('calendar.operations.confirm')); assert(!methods.includes('calendar.operations.cancel'));
+    const operations = [{ operation_id: 'pending-calendar-proposal', status: 'proposed', revision: 1, preview_digest: 'immutable-preview' }];
+    let forwarded;
+    host.intercept = (service, params) => { if (service === 'calendar.personal') { forwarded = params; return { operations }; } };
+    assert.deepEqual(await runtime.client('calendar.operations.list', { agent_id: main.agent_id, session_id: specialist.main_session_id }), { operations });
+    assert.equal(forwarded.session_id, main.main_session_id); assert(!('agent_id' in forwarded));
+    assert.equal(host.calls.filter(call => call.service === 'calendar.personal').at(-1).method, 'operations.list');
+    await assert.rejects(runtime.client('calendar.operations.list', { agent_id: specialist.agent_id }), /main Personal conversation/);
+    const callsBefore = host.calls.filter(call => call.service === 'calendar.personal').length;
+    for (const method of ['calendar.operations.confirm', 'calendar.operations.cancel']) {
+      await assert.rejects(runtime.client(method, { operation_id: operations[0].operation_id, expected_revision: 1, preview_digest: 'immutable-preview', confirmed: true }), /unknown Personal client method/);
+      await assert.rejects(runtime.call('service.invoke', { service: 'personal.agents', method, caller: 'personal-calendar', params: { session_id: main.main_session_id, confirmed: true } }), /unknown Personal client method/);
+    }
+    assert.equal(host.calls.filter(call => call.service === 'calendar.personal').length, callsBefore);
+    host.intercept = undefined;
+    await assert.rejects(runtime.client('calendar.operations.list'), /calendar service unavailable/);
+    const calendar = await new Runtime(host, calendarRuntimePath, 'personal-calendar').start(); host.calendar = calendar;
+    assert.deepEqual(await runtime.client('calendar.operations.list'), { operations: [] });
+    assert.deepEqual(await runtime.call('service.invoke', { service: 'personal.agents', method: 'calendar.operations.list', caller: 'personal-calendar', params: {} }), { operations: [] });
+    for (const method of ['operations.confirm', 'operations.cancel']) {
+      await assert.rejects(calendar.call('service.invoke', { service: 'calendar.personal', method, caller: 'personal', params: { session_id: main.main_session_id, expected_revision: 1, confirmed: true } }), /trusted user client capability/);
+    }
+    await calendar.close(); host.calendar = undefined;
   });
   await scenario('memory correction forwards trusted session and excludes client routing fields', async () => {
     let forwarded;
@@ -256,16 +447,44 @@ try {
     await runtime.client('tasks.reconcile', { task_id: queued.task_id }); host.intercept = undefined;
     assert.equal(host.turns.get(deliveryID).state, 'running'); assert.equal((await runtime.client('tasks.get', { task_id: queued.task_id })).task.delivery.request_id, deliveryID);
   });
+  await scenario('conversational routine update keeps its binding and cancels obsolete reminder delivery', async () => {
+    let routine = (await runtime.tool('create_routine', { request_id: 'routine-edit', title: 'Lunch reminder', prompt: 'Lunch at noon', run_at: '2026-10-19T12:00:00Z', timezone: 'UTC' }, main.main_session_id)).routine;
+    const bindingID = routine.binding.binding_id;
+    const binding = host.bindings.get(bindingID); binding.pending_event = { event_id: 'edit-event', binding_revision: binding.revision };
+    await runtime.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: bindingID, binding_revision: binding.revision, event_id: 'edit-event', payload: binding.payload } });
+    const reminder = [...host.turns.values()].find(turn => turn.request_id.startsWith('personal-reminder-') && turn.session_id === main.main_session_id);
+    routine = (await runtime.tool('manage_routine', { action: 'update', routine_id: routine.routine_id, expected_revision: routine.revision, run_at: '2026-10-19T13:00:00Z', prompt: 'Lunch at one' }, main.main_session_id)).routine;
+    assert.equal(routine.binding.binding_id, bindingID); assert.equal(routine.config_revision, 2); assert.equal(routine.run_at, '2026-10-19T13:00:00Z'); assert.equal(host.bindings.get(bindingID).run_at, routine.run_at); assert.equal(reminder.state, 'interrupted');
+    await assert.rejects(runtime.tool('manage_routine', { action: 'update', routine_id: routine.routine_id, expected_revision: routine.revision - 1, prompt: 'stale update' }, main.main_session_id), /revision/);
+    routine = (await runtime.tool('manage_routine', { action: 'pause', routine_id: routine.routine_id, expected_revision: routine.revision }, main.main_session_id)).routine;
+    routine = (await runtime.tool('manage_routine', { action: 'update', routine_id: routine.routine_id, expected_revision: routine.revision, prompt: 'Still paused' }, main.main_session_id)).routine;
+    assert.equal(routine.status, 'paused'); assert.equal(host.bindings.get(bindingID).status, 'paused');
+  });
   await scenario('routine creation has one stable scheduler binding and repeated event delivers once', async () => {
     const args = { agent_id: main.agent_id, request_id: 'remind-one', title: 'Drink water', prompt: 'Remind me to drink water', kind: 'reminder', run_at: '2026-10-18T10:00:00Z', timezone: 'UTC' };
     const routine = (await runtime.client('routines.create', args)).routine;
-    const retry = (await runtime.client('routines.create', args)).routine; assert.equal(routine.routine_id, retry.routine_id); assert.equal(host.bindings.size, 1);
+    const retry = (await runtime.client('routines.create', args)).routine; assert.equal(routine.routine_id, retry.routine_id); assert(host.bindings.has(routine.binding.binding_id));
     const binding = host.bindings.get(routine.binding.binding_id); binding.pending_event = { event_id: 'event-one', binding_revision: binding.revision, scheduled_at: '2026-10-18T10:00:00Z' };
     const params = { binding_id: binding.binding_id, ...binding.pending_event, payload: binding.payload };
     const fire = () => runtime.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params });
     const before = host.turns.size; assert((await fire()).defer_until); const reminder = [...host.turns.values()].at(-1); reminder.state = 'completed'; reminder.final_output = 'Time to drink water'; assert.equal((await fire()).accepted, true); await fire(); assert.equal(host.turns.size, before + 1);
     await runtime.client('routines.pause', { routine_id: routine.routine_id, expected_revision: (await runtime.client('routines.list')).routines[0].revision });
     binding.pending_event.event_id = 'late-event'; params.event_id = 'late-event'; await fire(); assert.equal(host.turns.size, before + 1);
+  });
+  await scenario('existing legacy reminder outbox moves to main without creating a new routine', async () => {
+    let routine = (await runtime.client('routines.create', { agent_id: main.agent_id, request_id: 'legacy-reminder', title: 'Legacy reminder', prompt: 'Keep this reminder', kind: 'reminder', run_at: '2026-10-19T12:00:00Z', timezone: 'UTC' })).routine;
+    const binding = host.bindings.get(routine.binding.binding_id), eventID = 'legacy-reminder-event'; binding.pending_event = { event_id: eventID, binding_revision: binding.revision };
+    const fire = () => runtime.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: binding.binding_id, binding_revision: binding.revision, event_id: eventID, payload: binding.payload } });
+    await fire();
+    const routineKey = [...host.storage.keys()].find(key => key.endsWith(`routine.${routine.routine_id}`));
+    routine.agent_id = specialist.agent_id; host.storage.set(routineKey, JSON.stringify(routine));
+    const eventKey = [...host.storage.keys()].find(key => { const record = JSON.parse(host.storage.get(key)); return record.event_id === eventID; });
+    const event = JSON.parse(host.storage.get(eventKey)); delete event.session_id; host.storage.set(eventKey, JSON.stringify(event)); host.turns.get(event.request_id).session_id = specialist.main_session_id;
+    await fire();
+    const migrated = JSON.parse(host.storage.get(eventKey));
+    assert.equal(host.turns.get(event.request_id).state, 'interrupted'); assert.notEqual(migrated.request_id, event.request_id); assert.equal(host.turns.get(migrated.request_id).session_id, main.main_session_id); assert.equal(migrated.previous_delivery.session_id, specialist.main_session_id);
+    const existing = (await runtime.client('routines.list')).routines.find(item => item.routine_id === routine.routine_id);
+    assert.equal(existing.binding.binding_id, binding.binding_id); assert.equal(existing.agent_id, specialist.agent_id);
   });
   await scenario('quiet hours defer routine callbacks without sending or starting work', async () => {
     const settings = (await runtime.client('settings.get')).settings;

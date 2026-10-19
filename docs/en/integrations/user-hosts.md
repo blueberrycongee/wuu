@@ -2,13 +2,15 @@
 
 A user host binds one user space and product domain for its entire lifetime. Personal agents use this host rather than a project workspace. Existing Coding hosts keep their current configuration, tools and connection lifecycle.
 
-## Activation prerequisite
+## Activation and declared isolation
 
-Personal production activation is fail-closed. The internal application embedding must supply a trusted `UserHostIsolationVerifier` before the runtime creates private state or starts providers. The verifier is a host integration, not a client assertion. The current command-line entry points do not supply one and return `user_host_isolation_required`.
+The default `logical_memory` user-host mode separates Personal and Coding memory APIs, injected context, history, indexes and plugin storage by the host-bound product domain. It does not promise operating-system or Shell confidentiality between processes running under the same OS identity. Valid user-space/domain binding remains required; a client cannot select a foreign memory domain.
 
-A separate directory, an environment flag, and a same-user process are insufficient isolation. Unrestricted Coding tools running under the same operating-system identity could otherwise read Personal files. A deployment must enforce the boundary in both directions, for example through separately isolated host identities or an equivalent verified sandbox. Personal's narrower tool policy alone does not prove that boundary. Do not disable normal Coding capabilities to make this prerequisite appear satisfied.
+Internal SDK embeddings can explicitly select `UserHostIsolationMode: "verified_host"`. That stronger mode requires a trusted `UserHostIsolationVerifier`; missing or failed verification returns `user_host_isolation_required` before private state is created. Unknown modes are rejected. A separate directory or caller assertion is not an attestation, and the logical mode never labels the host verified.
 
-The `app-server` and `remote host` commands accept `--user-space` and `--product-domain` to identify the requested host. These flags do not enable isolation. A user host cannot inherit a workspace identity or borrow the Coding desktop execution bridge. Remote-host activation checks isolation before loading or creating its remote identity. Model access, connector grants, remote pairing, notification credentials and deployment remain separate setup responsibilities.
+`initialize` returns `user_host_isolation: { memory: "logical", host: "unverified" }` for ordinary user hosts. A successfully verified embedding reports `host: "verified"`. These additive capabilities are separate from the immutable `user_space_id` and `product_domain`. Ordinary Coding initialization and permissions are unchanged.
+
+The `app-server` and `remote host` commands accept `--user-space` and `--product-domain` with the default logical-memory policy. A user host cannot inherit a workspace identity or borrow the Coding desktop execution bridge. Model access, connector grants, remote pairing, notification credentials and deployment remain separate setup responsibilities.
 
 ## Identity and storage
 
@@ -21,7 +23,7 @@ For a Wuu home, user data is separated as follows:
 
 User hosts load an explicit absolute configuration or the user configuration. They do not inherit project instructions, global Coding skills, MCP servers, hooks or external execution environments. Protected private-state paths are excluded from Personal file and process tools. Installed extensions remain trusted code; this is not an untrusted-extension sandbox.
 
-Each named agent has one persistent main session. Client navigation uses an agent ID, never a background execution session chooser. Tasks retain separate execution sessions and requirements versions. Missing main sessions report recovery errors instead of silently creating replacements.
+twin exposes one persistent main conversation per Personal user space. Its main Session ID is reused across navigation, reconnect and restart; it is not rotated or rebuilt by joining other sessions. Hidden task executions retain separate Session IDs and requirements versions. Missing main sessions report recovery errors instead of silently creating replacements. Historical identities and task data are retained, while current questions and results return to the main conversation.
 
 ## Persistent execution and client lifecycle
 
@@ -49,12 +51,18 @@ The host accepts up to 16 attachments and 20 MiB total decoded bytes per submiss
 
 History exposes attachment metadata, not local paths or inline file bytes. `host.session.attachment.read` resolves an owned persisted record and returns bounded base64 chunks, with offsets measured in base64 characters. Personal exposes agent- and task-scoped adapters. Clients verify returned metadata and the final digest before showing a preview or download. Native and desktop rendering do not automatically load model-supplied remote images or arbitrary local URLs.
 
+## Desktop surface
+
+twin appears directly below Automations in Wuu's existing navigation. Opening it continues the main conversation. Its right panel lists ongoing work, recent activity and recent outputs continuously, without category tabs. Opening details changes that panel, never the conversation. Routine controls use the existing Automation binding; changing a schedule updates that same routine and binding. Personal notification and quiet-hour preferences live in Wuu's shared settings.
+
 ## Business contracts and external services
 
-Personal agents share the Personal Memory service with attribution and versioned corrections. Forgetting redacts the memory record and prevents its future synthesis use; it does not claim to erase source conversations, user files or backups. Coding memory remains separate.
+The main assistant and hidden task executions share the Personal Memory service with attribution and versioned corrections. Memory can be queried, corrected or forgotten in conversation; there is no separate desktop memory-management page. Forgetting redacts the memory record and prevents its future synthesis use; it does not claim to erase source conversations, user files or backups. Coding memory remains separate.
 
-Task completion verifies persisted successful execution evidence. Responsible-agent delivery is tracked separately as pending, submitted, delivered or failed; a completed task does not by itself mean its main-conversation reply has appeared. These checks verify attribution and state transitions, not the substantive correctness of an external result. Pause and stop persist cancellation intent, including descendant work and queued results; recovery may remain pending while the execution host is unavailable.
+Task completion verifies persisted successful execution evidence. Main-conversation delivery is tracked separately as pending, submitted, delivered or failed; a completed task does not by itself mean its main-conversation reply has appeared. These checks verify attribution and state transitions, not the substantive correctness of an external result. Task stop persists targeted cancellation intent, including descendant work and queued results; it does not stop sibling tasks. Stopping the current main reply requires its explicit `turn_id`; delayed requests and retries cannot target a newer reply. Already accepted genuine user inputs remain queued. Recovery may remain pending while the execution host is unavailable. Waiting-user questions have their own durable delivery, and an answer updates the original task rather than opening an execution chat.
 
 The bundled Calendar adapter starts unconnected. The read and write interfaces accept a trusted, user-space/account-bound provider for an already authorized grant; tool input and plugin configuration cannot supply credentials. The shipped default does not wire an authorization provider or writer. An embedding must supply that integration after separate account authorization; source adapter tests do not complete this setup. Its write contract requires a full immutable preview, explicit client confirmation, exact revision and digest, and read-back verification. A lost acknowledgment produces an uncertain outcome that is reconciled without blindly replaying a write. Provider-injected tests do not establish a real OAuth or account outcome.
 
 See the [app-server protocol](app-server-protocol.md), [plugin authoring](../customize/plugin-authoring.md), and [native client setup](../../../clients/native/README.md) for the underlying integration surfaces.
+
+Calendar proposals are reachable from the main conversation without replacing its Session. The review overlay retains the full immutable preview and exact revision/digest confirmation. Personal exposes only a read-only operations-list adapter; confirmation and cancellation remain trusted Calendar client operations. With no authorized provider, the UI reports the disconnected/read-only state and cannot confirm a write.

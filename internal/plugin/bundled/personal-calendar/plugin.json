@@ -9,6 +9,5 @@
   "author": { "name": "Wuu" },
   "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
   "desktop": { "entry": "desktop.js" },
-  "contributes": { "navigation": [{ "id": "personal-calendar", "title": "Calendar", "view": "personal-calendar.operations", "icon": "calendar", "order": 6 }] },
   "interface": { "displayName": "Personal Calendar", "shortDescription": "Read calendar context with clear account and freshness boundaries.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Read"] }
 }

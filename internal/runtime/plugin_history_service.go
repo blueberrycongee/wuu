@@ -49,7 +49,9 @@ func readPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, par
 		}
 		result.Records = append(result.Records, pluginhost.SessionHistoryRecord{
 			Attachments: attachments, At: historyRecordTime(record.At),
+			ProviderItemID: record.ProviderItemID, EngineTurnID: record.EngineTurnID,
 			Seq: record.Seq, Role: record.Role, Name: record.Name, Content: content, DisplayContent: record.DisplayContent,
+			Hidden: record.Hidden, ReadOnly: record.ReadOnly, Origin: record.Origin,
 			ReasoningContent: record.ReasoningContent, ToolCalls: string(record.ToolCalls), ToolCallID: record.ToolCallID,
 			ToolResult: string(record.ToolResult), FinishReason: record.FinishReason, Truncated: record.Truncated,
 		})
