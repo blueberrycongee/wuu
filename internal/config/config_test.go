@@ -1660,3 +1660,31 @@ func TestUseCodexCredentialsPreservesSelectionAndOtherSettings(t *testing.T) {
 		t.Fatal("credential source was not switched")
 	}
 }
+
+// The public SIWC registration reference is configuration; OAuth credentials are not.
+func TestChatGPTConnectionReferencePersistsWithoutChangingDefault(t *testing.T) {
+	home := isolatedHome(t)
+	path := writeBaseConfig(t, home, layerBaseConfigJSON)
+	id := "oaiapp_fixture"
+	endpoint := "https://api.openai.com/v1"
+	if err := UpdateProvider(path, "personal", ProviderChange{Create: true, Type: "chatgpt", Model: "visible-model", BaseURL: &endpoint, ChatGPTAccountID: &id}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadFrom(t.TempDir(), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultProvider != "main" || cfg.Providers["personal"].ChatGPTAccountID != id {
+		t.Fatalf("incorrect persisted connection: %+v", cfg.Providers["personal"])
+	}
+	if err := UpdateProvider(path, "personal", ProviderChange{Model: "another-model"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err = LoadFrom(t.TempDir(), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Providers["personal"].ChatGPTAccountID != id {
+		t.Fatal("model edit lost account registration")
+	}
+}

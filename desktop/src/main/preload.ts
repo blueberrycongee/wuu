@@ -337,6 +337,12 @@ const api: WuuDesktopApi = {
   finishMCPAuth: (name: string, state: string, code: string) =>
     ipcRenderer.invoke("wuu:mcp-auth-finish", name, state, code),
   removeMCPAuth: (name: string) => ipcRenderer.invoke("wuu:mcp-auth-remove", name),
+  startChatGPTLogin: (accountId, enablePlanUsage) => ipcRenderer.invoke("wuu:auth-chatgpt-login-start", accountId, enablePlanUsage),
+  pollChatGPTLogin: (loginId) => ipcRenderer.invoke("wuu:auth-chatgpt-login-poll", loginId),
+  cancelChatGPTLogin: (loginId) => ipcRenderer.invoke("wuu:auth-chatgpt-login-cancel", loginId),
+  listChatGPTAccounts: () => ipcRenderer.invoke("wuu:auth-chatgpt-accounts"),
+  signOutChatGPTAccount: (accountId) => ipcRenderer.invoke("wuu:auth-chatgpt-signout", accountId),
+  listChatGPTModels: (accountId) => ipcRenderer.invoke("wuu:auth-chatgpt-models", accountId),
   startXAILogin: () => ipcRenderer.invoke("wuu:auth-xai-login-start"),
   pollXAILogin: (loginId: string) => ipcRenderer.invoke("wuu:auth-xai-login-poll", loginId),
   cancelXAILogin: (loginId: string) => ipcRenderer.invoke("wuu:auth-xai-login-cancel", loginId),

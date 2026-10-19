@@ -96,7 +96,14 @@ async function runWebsiteAcceptance(h, fixture) {
   const contents = pathname => webContents.getAllWebContents().find(wc => !wc.isDestroyed() && wc.getURL() === origin + pathname);
   const nativeView = pathname => views().find(view => view.getVisible() && view.webContents.getURL() === origin + pathname) || views().find(view => view.webContents.getURL() === origin + pathname);
   const chromeView = kind => win.contentView.children.find(view => view.webContents && !view.webContents.isDestroyed() && view.webContents.getURL() === `wuu-chrome://ui/chrome-overlay.html?surface=${kind}`);
-  const evaluateContents = (wc, fn, value) => wc.executeJavaScript(`(${fn})(${JSON.stringify(value)})`);
+  const evaluateContents = async (wc, fn, value, stage = 'native chrome evaluation') => {
+    const result = await wc.executeJavaScript(`(async () => {
+      try { return { value: await (${fn})(${JSON.stringify(value)}) }; }
+      catch (error) { return { error: String(error.stack || error) }; }
+    })()`);
+    if (result.error) throw new Error(`${stage} (contents ${wc.id}): ${result.error}`);
+    return result.value;
+  };
   const evaluateRibbon = (fn, value) => chromeView('ribbon')?.getVisible() ? evaluateContents(chromeView('ribbon').webContents, fn, value) : evaluate(fn, value);
   // Toolbar popovers reuse React in a clipped native child below a View.
   // Walk the native hierarchy rather than querying its shell placeholder.
@@ -211,9 +218,12 @@ async function runWebsiteAcceptance(h, fixture) {
         const node = [...document.querySelectorAll(selector)].find(node => (text === undefined || (node.getAttribute('aria-label') || node.textContent || '').trim() === text) && node.getBoundingClientRect().width > 0);
         if (!node) return null;
         const r = node.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2;
-        if (!node.contains(document.elementFromPoint(x, y)) || node.disabled) throw new Error('Native popover target is occluded or disabled: ' + selector);
+        const hit = document.elementFromPoint(x, y);
+        if (!node.contains(hit) || node.disabled) throw new Error('Native popover target is occluded or disabled: ' + JSON.stringify({
+          selector, rect: r.toJSON(), x, y, disabled: node.disabled, viewport: { width: innerWidth, height: innerHeight },
+          hit: hit && { tag: hit.tagName, className: hit.getAttribute('class'), component: hit.getAttribute('data-wuu-component') } }));
         return { x, y };
-      }, query);
+      }, query, 'chromePoint native popover');
       if (p) {
         const z = popover.view.webContents.getZoomFactor(), ownerZoom = win.webContents.getZoomFactor();
         const screen = { x: popover.x + p.x * z, y: popover.y + p.y * z }, clip = popover.top.getBounds();
@@ -228,9 +238,12 @@ async function runWebsiteAcceptance(h, fixture) {
         const node = [...document.querySelectorAll(selector)].find(node => (text === undefined || (node.getAttribute('aria-label') || node.textContent || '').trim() === text) && node.getBoundingClientRect().width > 0);
         if (!node) return null;
         const r = node.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2;
-        if (!node.contains(document.elementFromPoint(x, y)) || node.disabled) throw new Error('Native chrome target is occluded or disabled: ' + selector);
+        const hit = document.elementFromPoint(x, y);
+        if (!node.contains(hit) || node.disabled) throw new Error('Native chrome target is occluded or disabled: ' + JSON.stringify({
+          selector, rect: r.toJSON(), x, y, disabled: node.disabled, viewport: { width: innerWidth, height: innerHeight },
+          hit: hit && { tag: hit.tagName, className: hit.getAttribute('class'), component: hit.getAttribute('data-wuu-component') } }));
         return { x, y };
-      }, query);
+      }, query, `chromePoint native ${kind}`);
       if (p) { const b = view.getBounds(), z = view.webContents.getZoomFactor(), ownerZoom = win.webContents.getZoomFactor(); return { x: (b.x + p.x * z) / ownerZoom, y: (b.y + p.y * z) / ownerZoom, nativeChrome: kind }; }
     }
     return point(target);
@@ -281,15 +294,38 @@ async function runWebsiteAcceptance(h, fixture) {
     // Native chrome has a 120ms pointer-exit grace. Shell rAFs alone do not
     // acknowledge its dismissal; never replace this with Escape or forced blur.
     if (waitForCollapse) await until(async () => !chromeView('ribbon')?.getVisible()
-      && await evaluate(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded !== 'true'), 'Native hover rail acknowledges pointer leave', 4000);
+      && await evaluate(() => {
+        const ribbon = document.querySelector('.sidebar-ribbon');
+        if (!ribbon || ribbon.dataset.expanded === 'true') return false;
+        // The marker clears before the closing width transition. A shell-only
+        // hit test cannot see the live native page covering a moving target.
+        ribbon.getBoundingClientRect();
+        return ribbon.getAnimations().every(animation => !animation.pending && animation.playState !== 'running');
+      }), 'Native hover rail acknowledges pointer leave and finishes motion', 4000);
   }
   async function hoverTab(id) {
     const p = await chromePoint(tabButton(id)), outer = win.getContentBounds(), zoom = win.webContents.getZoomFactor();
     xinput(['mousemove', String(Math.round(outer.x + 26 * zoom)), String(Math.round(outer.y + p.y * zoom))]);
     await waitFor(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded === 'true');
     await until(() => chromeView('ribbon')?.getVisible(), 'Native expanded ribbon paints');
-    const width = await evaluate(() => document.querySelector('.sidebar-ribbon').getBoundingClientRect().width);
-    await until(() => Math.abs(chromeView('ribbon').getBounds().width - width * zoom) <= 1, 'Native hover reveal reaches the click targets');
+    await until(async () => {
+      const shell = await evaluate(() => {
+        const ribbon = document.querySelector('.sidebar-ribbon');
+        const width = ribbon.getBoundingClientRect().width;
+        return { width, expanded: ribbon.dataset.expanded === 'true',
+          settled: ribbon.getAnimations().every(animation => !animation.pending && animation.playState !== 'running') };
+      });
+      const view = chromeView('ribbon');
+      if (!shell.expanded || !shell.settled || !view?.getVisible() || Math.abs(view.getBounds().width - shell.width * zoom) > 1) return false;
+      // Native bounds can acknowledge reveal before its renderer processes the
+      // resize. Require the same viewport and target hit ownership before use.
+      return evaluateContents(view.webContents, ({ selector, width }) => {
+        const node = document.querySelector(selector);
+        if (!node || node.disabled || Math.abs(innerWidth - width) > 1) return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && node.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+      }, { selector: tabButton(id), width: view.getBounds().width / view.webContents.getZoomFactor() }, 'hoverTab native reveal readiness');
+    }, 'Native hover reveal reaches the click targets');
   }
   async function finishRailInteraction(wc, label) {
     await leaveRail(false);
@@ -410,6 +446,19 @@ async function runWebsiteAcceptance(h, fixture) {
     const p = await chromePoint(target);
     const inRail = p.nativeChrome === 'ribbon' || await evaluate(p => Boolean(document.elementFromPoint(p.x, p.y)?.closest('.sidebar-ribbon')), p);
     const bounds = win.getContentBounds(), zoom = win.webContents.getZoomFactor();
+    if (inRail && !p.nativeChrome) {
+      const input = { x: Math.round(bounds.x + p.x * zoom) - bounds.x, y: Math.round(bounds.y + p.y * zoom) - bounds.y };
+      const coveringPages = views().filter(view => {
+        const rect = view.getBounds();
+        return view.getVisible() && input.x >= rect.x && input.x < rect.x + rect.width
+          && input.y >= rect.y && input.y < rect.y + rect.height;
+      }).map(view => ({ contentsID: view.webContents.id, bounds: view.getBounds() }));
+      if (coveringPages.length) {
+        report.actions.push({ label: `web-${label}-occluded-shell-target`, point: p, input, coveringPages });
+        save();
+      }
+      assert.equal(coveringPages.length, 0, `Shell ribbon target must not be covered by a live native page: ${JSON.stringify({ point: p, input, coveringPages })}`);
+    }
     xinput(['mousemove', String(Math.round(bounds.x + p.x * zoom)), String(Math.round(bounds.y + p.y * zoom)), 'click', '1']);
     report.actions.push({ label: `web-${label}`, input: 'native-x11', atMs: Date.now() - started, point: p });
     await settle();

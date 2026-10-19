@@ -78,7 +78,6 @@ export type ArchivedSessionView = {
   archive_project_id?: string;
   archive_project_name?: string;
 };
-import { ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
 import { DefaultEnvironmentRow, ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
@@ -91,9 +90,8 @@ import { ENABLE_APP_SNAPSHOTS } from "../shared/featureFlags";
 import { SystemPermissionsSection } from "./SystemPermissions";
 import { toastErrorMessage } from "./Toast";
 import type { ArchiveDeletionState } from "./useArchiveDeletion";
-import { DefaultEngineRow, EngineSettingsSection } from "./EngineSettingsSection";
+import { DefaultEngineRow } from "./EngineSettingsSection";
 import { DefaultModelRows, ModelServicesPage } from "./ModelServicesPage";
-import { SubscriptionDashboard } from "./SubscriptionDashboard";
 import { SettingsRemotePage } from "./SettingsRemotePage";
 import { ThemePreferenceControl } from "./ThemePreferenceSection";
 import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
@@ -195,7 +193,6 @@ function nativeSettingsGroups(browserSettingsAllowed: boolean): NativeSettingsGr
       labelKey: "settings.navModelsAgentsTools",
       pages: [
         "providers",
-        "agents",
         "advanced",
         "mcp",
       ],
@@ -204,7 +201,6 @@ function nativeSettingsGroups(browserSettingsAllowed: boolean): NativeSettingsGr
       id: "account-data",
       labelKey: "settings.navAccountData",
       pages: [
-        ...(ENABLE_SUBSCRIPTIONS ? ["subscriptions" as const] : []),
         "usage",
         "archive",
       ],
@@ -245,6 +241,8 @@ export function SettingsView({
   onSave,
   onRemoveProvider,
   onRefreshModelCatalog,
+  onProvidersChanged,
+  onProviderModelsChanged,
   onRefreshEngineInventory,
   onUpdateEngineInventory,
   onAdvancedSave,
@@ -296,6 +294,8 @@ export function SettingsView({
   onSave: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string) => Promise<void>;
   onRemoveProvider: (provider: string, options?: { fallbackProvider?: string; fallbackModel?: string }) => Promise<void>;
   onRefreshModelCatalog: () => Promise<void>;
+  onProvidersChanged?: (providers: NonNullable<InitializeResult["providers"]>) => void;
+  onProviderModelsChanged?: (name: string, accountId: string, models: NonNullable<NonNullable<InitializeResult["providers"]>[number]["models"]>) => void;
   onRefreshEngineInventory: () => Promise<EngineListResult | undefined>;
   onUpdateEngineInventory: (params: EngineUpdateParams) => Promise<EngineListResult>;
   onAdvancedSave: (settings: RuntimeAdvancedSettingsUpdate) => Promise<void>;
@@ -692,7 +692,9 @@ export function SettingsView({
     if (!normalizedNavQuery) {
       return true;
     }
-    return `${settingsPageTitle(page, t)} ${t(NATIVE_PAGE_SEARCH_KEY[page])}`
+    const connectionTerms = page === "providers"
+      ? `${t(NATIVE_PAGE_SEARCH_KEY.agents)} ${t(NATIVE_PAGE_SEARCH_KEY.subscriptions)}` : "";
+    return `${settingsPageTitle(page, t)} ${t(NATIVE_PAGE_SEARCH_KEY[page])} ${connectionTerms}`
       .toLocaleLowerCase()
       .includes(normalizedNavQuery);
   };
@@ -915,27 +917,20 @@ export function SettingsView({
                     onFailure={() => selectPage("providers")}
                   />
                 </>
-              ) : activePage === "subscriptions" && ENABLE_SUBSCRIPTIONS ? (
-                <SubscriptionDashboard
-                  inventory={engineInventory}
-                  providers={providers}
-                  onSelectBuiltinModel={(provider, model) => onSave(provider, model)}
-                />
               ) : activePage === "providers" ? (
                 <ModelServicesPage
+                  inventory={engineInventory}
+                  inventoryError={engineInventoryError}
+                  onRefreshEngines={onRefreshEngineInventory}
+                  onUpdateEngines={onUpdateEngineInventory}
                   initialized={initialized}
                   running={running}
                   runningProviderNames={runningProviderNameSet}
                   onSave={onSave}
                   onRemoveProvider={onRemoveProvider}
                   onRefreshModelCatalog={onRefreshModelCatalog}
-                />
-              ) : activePage === "agents" ? (
-                <EngineSettingsSection
-                  result={engineInventory}
-                  loadError={engineInventoryError}
-                  onRefresh={onRefreshEngineInventory}
-                  onUpdate={onUpdateEngineInventory}
+                  onProvidersChanged={onProvidersChanged}
+                  onProviderModelsChanged={onProviderModelsChanged}
                 />
               ) : activePage === "advanced" ? (
                 <SettingsRuntimePage
@@ -1399,6 +1394,7 @@ function SettingsGeneralPage({
       >
         <SettingsGroup>
           <DefaultEngineRow result={engineInventory} onUpdate={onUpdateEngineInventory} />
+          <SettingsRow title={t("settings.providers")}><button type="button" className="settings-button settings-button-ghost" onClick={onAddService}>{t("provider.manageConnections")}</button></SettingsRow>
           <DefaultModelRows initialized={initialized} running={running} onSave={onSave} onAddService={onAddService} />
           <DefaultEnvironmentRow
             value={initialized?.general_settings?.execution_environments ?? {}}

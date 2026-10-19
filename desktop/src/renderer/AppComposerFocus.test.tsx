@@ -691,9 +691,7 @@ describe("main composer focus continuity", () => {
       await flushAsync();
       expect(container.querySelector(".settings-nav")).not.toBeNull();
     });
-    const agentsPage = Array.from(container.querySelectorAll<HTMLButtonElement>(".settings-nav button"))
-      .find((button) => button.textContent === translateCurrent("settings.agents"));
-    await act(async () => agentsPage!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-status"]')!.click());
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-enabled"]')!.click());
     expect(window.wuu.updateEngines).toHaveBeenCalledWith({ codex: { enabled: false } });
     await act(async () => container.querySelector<HTMLButtonElement>('[data-ribbon-id="conversations"]')!.click());

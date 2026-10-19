@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/providers/grokbuild"
 	"github.com/blueberrycongee/wuu/internal/version"
 )
 
-// AuthMethod is an agent-advertised sign-in choice. Only agent-driven methods
-// can be invoked here; terminal authentication is left to the installed CLI.
+// AuthMethod is an agent-advertised sign-in choice. Terminal methods are not
+// advertised as invocable choices; local-cli is a separate explicit action.
 type AuthMethod struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -59,9 +62,14 @@ func acpInitializeParams() map[string]any {
 
 // Authenticate launches an explicit, bounded sign-in operation. An empty method
 // only discovers choices; it never calls authenticate or creates a chat session.
-// The agent owns browser interaction and credential persistence.
+// The agent owns browser interaction and credential persistence. The reserved
+// local-cli method runs the fixed Grok login command and must be restricted to
+// a local caller by the host transport.
 func (e *Engine) Authenticate(ctx context.Context, methodID string) (AuthResult, error) {
 	result := AuthResult{Methods: []AuthMethod{}}
+	if methodID == "local-cli" {
+		return e.authenticateLocalCLI(ctx)
+	}
 	if e.entry.Protocol != "acp" {
 		return result, errors.New("sign in using this engine's CLI")
 	}
@@ -107,4 +115,45 @@ func (e *Engine) Authenticate(ctx context.Context, methodID string) (AuthResult,
 		}
 	}
 	return result, fmt.Errorf("authentication method %q is not advertised or requires terminal login", methodID)
+}
+
+func (e *Engine) authenticateLocalCLI(ctx context.Context) (AuthResult, error) {
+	result := AuthResult{Methods: []AuthMethod{}}
+	if e.entry.ID != "grok" {
+		return result, errors.New("local CLI sign-in is not supported for this engine")
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	// Keep the CLI's browser flow and credential storage intact. There is no
+	// shell, input command, installation, or update; output may contain OAuth
+	// codes, so neither stdout nor stderr is captured or forwarded.
+	// Force browser OAuth because configured device-code flows need terminal I/O.
+	cmd := exec.CommandContext(ctx, e.binary, "--no-auto-update", "login", "--oauth")
+	cmd.Dir = e.root
+	configureChild(cmd)
+	cmd.Cancel = func() error { killChild(cmd); return nil }
+	cmd.WaitDelay = 2 * time.Second
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return result, ctx.Err()
+	}
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return result, fmt.Errorf("Grok CLI sign-in failed (exit code %d); try again", exitErr.ExitCode())
+		}
+		return result, errors.New("Grok CLI sign-in could not start; check the configured executable")
+	}
+	home, _ := os.UserHomeDir()
+	if _, err := grokbuild.LocalOAuthStatus(home); err != nil {
+		return result, errors.New("Grok CLI finished without a reusable login; try signing in again")
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	result.Authenticated = true
+	return result, nil
 }

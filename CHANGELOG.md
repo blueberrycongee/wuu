@@ -24,6 +24,13 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Experimental workbench website destinations share the desktop browser profile, retain navigation state, and can be added, edited, removed, and reordered alongside conversations and extension pages.
 - Desktop extensions can render a native website through the existing view API, with page lifecycle tied to the mounted extension view.
 
+- Show external connections as compact two-line rows with account plans, remaining quota bars and local reset times; omit unavailable quota details.
+
+- Offer account sign-in and local authentication as explicit connection methods, keeping official ChatGPT app authorization separate from Codex credentials and native-engine account ownership.
+
+- Sign in to Grok Build from its connection page using the installed Grok CLI, with cancellation and verified completion. Keep connection status and actions together, and group model management beside readable model names.
+
+- Connect ChatGPT directly through official browser sign-in without Codex CLI, with account-scoped model discovery, public Responses inference, protected refresh and sign-out. Unify model connections and account usage in Settings while keeping API keys and local Codex credentials distinct.
 - Let external agent engines use Wuu browser and enabled computer-control tools through turn-scoped MCP, with shared permissions, activity previews, screenshots, and Stop/Takeover controls.
 - Experimental Linux x64 AppImage and Debian packages with sandbox-preserving X11 launchers and CI artifact verification. Public releases remain macOS-only.
 - Linux MCP OAuth credential storage through Secret Service, with no plaintext fallback.
@@ -91,6 +98,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Show local, theme-aware Notion, Feishu, and ChatGPT marks for saved website shortcuts and browser tabs without requiring their optional integrations.
 
+- Fix macOS background pointer events landing outside the intended control. Pace key presses, text input, and repeated clicks, and retain the observed window for background input after AX-only observations.
 - Match the DeepSeek Harness icon's visible size to peer agent icons in settings, runtime menus, and onboarding.
 - Allow background task and question notifications on Linux desktops with native notification support.
 - Show the local model service directory immediately in settings and onboarding,

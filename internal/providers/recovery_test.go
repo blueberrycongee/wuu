@@ -59,3 +59,24 @@ func TestPlanRecoveryStopsLocalBackpressureAndUnsafeReplay(t *testing.T) {
 		t.Fatalf("unsafe replay plan = %+v", unsafe)
 	}
 }
+
+func TestChatGPTPlanRecovery(t *testing.T) {
+	for _, test := range []struct {
+		code     string
+		status   int
+		category FailureCategory
+		action   RecoveryActionKind
+		retry    bool
+	}{
+		{"subscription_sharing_usage_limit_exceeded", 429, FailureQuota, RecoveryStop, false},
+		{"subscription_sharing_usage_unavailable", 503, FailureServer, RecoveryReplaySame, true},
+		{"subscription_sharing_user_unavailable", 503, FailureServer, RecoveryReplaySame, true},
+	} {
+		for _, err := range []error{NewProviderStreamError(test.code, "ChatGPT plan unavailable"), &HTTPError{StatusCode: test.status, ProviderCode: test.code}} {
+			failure := NormalizeFailure(err)
+			if failure.Category != test.category || PlanRecovery(failure).Action != test.action || IsRetryable(err) != test.retry {
+				t.Errorf("failure=%+v plan=%+v retry=%v", failure, PlanRecovery(failure), IsRetryable(err))
+			}
+		}
+	}
+}

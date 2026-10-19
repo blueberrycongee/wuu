@@ -8,6 +8,7 @@ import {
   discoveredLocalProviders,
   hasOnboardingProvider,
 } from "./FirstRunOnboarding";
+import { ServiceConnector } from "./ModelServicesPage";
 import { I18nProvider } from "./i18n";
 import { ONBOARDING_PLUGIN_ORDER } from "./onboardingCatalog";
 
@@ -483,6 +484,67 @@ describe("FirstRunOnboarding", () => {
       api_key: "sk-test",
     });
     expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
+  });
+
+  it.each([false, true])("connects ChatGPT without duplicating an existing provider (%s) and retries failures", async (existing) => {
+    await act(async () => { await import("./ChatGPTConnectionDialog"); });
+    window.wuu.listChatGPTAccounts = vi.fn().mockResolvedValue({ accounts: [] });
+    window.wuu.startChatGPTLogin = vi.fn();
+    const reuse = vi.fn(async () => ({ providers: [] }));
+    window.wuu.useCodexCredentials = reuse;
+    const save = vi.fn().mockRejectedValueOnce(new Error("Codex login is unavailable")).mockResolvedValue(undefined);
+    await act(async () => root.render(
+      <I18nProvider><FirstRunOnboarding
+        inventory={[plugin("ask-user", false)]} providers={existing ? [{ name: "openai-codex", type: "openai-codex", model: "gpt-6-astra" }] : []}
+        onUpdateExtensionPackage={vi.fn(async () => undefined)}
+        onSaveProvider={save} onComplete={vi.fn(async () => undefined)}
+      /></I18nProvider>,
+    ));
+    await clickButton("开始设置");
+    await clickButton("极简");
+    await clickButton("继续");
+    await clickButton("继续");
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.model-service-tile[data-connection="chatgpt"]')!.click();
+    });
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="settings-auth-method-local"]')!.click());
+    expect(save).not.toHaveBeenCalled();
+    expect(reuse).not.toHaveBeenCalled();
+    expect(window.wuu.startChatGPTLogin).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-testid=settings-provider-connect-key]")).toBeNull();
+    const connect = () => document.querySelector<HTMLButtonElement>("[data-testid=settings-provider-connect]")!;
+    await act(async () => connect().click());
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Codex login is unavailable");
+    expect(container.querySelector(".onboarding-stage-ready")).toBeNull();
+    expect(connect().disabled).toBe(false);
+    await act(async () => connect().click());
+    expect(save).toHaveBeenLastCalledWith("openai-codex", "gpt-6-astra", {
+      ...(existing ? {} : { type: "openai-codex", create_provider: true }), keep_selection: false, reuse_codex_credentials: true,
+    });
+    expect(reuse).toHaveBeenCalledTimes(existing ? 2 : 0);
+    expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
+  });
+
+  it("opens an existing ChatGPT connection from settings instead of adding a duplicate", async () => {
+    await act(async () => { await import("./ChatGPTConnectionDialog"); });
+    window.wuu.listChatGPTAccounts = vi.fn().mockResolvedValue({ accounts: [] });
+    window.wuu.startChatGPTLogin = vi.fn();
+    window.wuu.useCodexCredentials = vi.fn();
+    const open = vi.fn();
+    const save = vi.fn(async () => undefined);
+    await act(async () => root.render(<I18nProvider><ServiceConnector
+      providers={[{ name: "work-chatgpt", type: "openai-codex", model: "fixture" }]}
+      running={false} catalog={{ providers: [], failed: false }} defaultOn={false}
+      onSave={save} onConnected={vi.fn()} onOpenExisting={open}
+    /></I18nProvider>));
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-connection="chatgpt"]')!.click());
+    expect(open).not.toHaveBeenCalled();
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="settings-auth-method-local"]')!.click());
+    expect(window.wuu.startChatGPTLogin).not.toHaveBeenCalled();
+    expect(window.wuu.useCodexCredentials).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith("work-chatgpt");
+    expect(save).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-testid="settings-provider-connect"]')).toBeNull();
   });
 
   it("connects Grok Build without asking for an API key", async () => {

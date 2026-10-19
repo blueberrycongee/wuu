@@ -15,7 +15,21 @@ private func directedWindowID(_ pid: pid_t, at point: CGPoint) -> CGWindowID? {
         .min { $0.value.width * $0.value.height < $1.value.width * $1.value.height }?.key
 }
 
-private func postPointerEvent(_ event: CGEvent, to pid: pid_t, windowID: CGWindowID?) {
+private typealias SetWindowLocation = @convention(c) (CGEvent, Double, Double) -> Void
+
+private func directedPointerPoster(_ pid: pid_t, at point: CGPoint?) throws -> (CGEvent) -> Void {
+    // Public CGEvent.location does not populate the separate location used by
+    // AppKit for PID-directed hit testing. Resolve this SPI before any button is
+    // held, so cleanup never needs to load a symbol or throw.
+    guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGEventSetWindowLocation") else {
+        throw ComputerError.requiresForeground("background pointer window-location support is unavailable")
+    }
+    let setWindowLocation = unsafeBitCast(symbol, to: SetWindowLocation.self)
+    let windowID = point.flatMap { directedWindowID(pid, at: $0) }
+    return { postPointerEvent($0, to: pid, windowID: windowID, setWindowLocation: setWindowLocation) }
+}
+
+private func postPointerEvent(_ event: CGEvent, to pid: pid_t, windowID: CGWindowID?, setWindowLocation: SetWindowLocation) {
     // postToPid bypasses WindowServer hit testing. Supply both the AppKit window
     // identity and Quartz hit-test fields; coordinates alone arrive at window 0.
     guard let windowID, let frame = windowFrames(processID: pid)[windowID],
@@ -34,6 +48,9 @@ private func postPointerEvent(_ event: CGEvent, to pid: pid_t, windowID: CGWindo
     let routed = markSynthetic(native?.cgEvent) ?? event
     routed.type = event.type
     routed.location = point
+    // The NSEvent bridge plus public PID transport expects a window-relative,
+    // top-left point here. AppKit flips it to locationInWindow on receipt.
+    setWindowLocation(routed, point.x - frame.minX, point.y - frame.minY)
     routed.flags = event.flags
     routed.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(windowID))
     routed.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(windowID))
@@ -77,58 +94,19 @@ func mouseTypes(for name: String?) -> (button: CGMouseButton, down: CGEventType,
 }
 
 func postKeyChordToPid(_ pid: pid_t, chord: KeyChord, duration: TimeInterval = 0) throws {
-    try withHeldKey(chord, post: { $0.postToPid(pid) }) { try holdInput(for: duration) }
+    try withHeldKey(chord, duration: duration, post: { $0.postToPid(pid) }) {}
 }
 
-func postUnicodeToPid(_ pid: pid_t, text: String) throws {
-    let source = syntheticEventSource()
-    for chunk in unicodeChunks(text) {
-        guard let down = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)),
-              let up = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)) else {
-            throw ComputerError.operationFailed("could not create text input event")
-        }
-        down.flags = []
-        up.flags = []
-        chunk.withUnsafeBufferPointer { buffer in
-            guard let baseAddress = buffer.baseAddress else { return }
-            down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
-            up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
-        }
-        try ComputerExecution.input()
-        down.postToPid(pid)
-        up.postToPid(pid)
-        usleep(4_000)
-    }
-}
-
-func postClickToPid(_ pid: pid_t, point: CGPoint, button name: String?, count: Int, modifiers: KeyModifiers = [], duration: TimeInterval = 0) throws {
-    let source = syntheticEventSource()
-    let windowID = directedWindowID(pid, at: point)
-    let (button, downType, upType) = mouseTypes(for: name)
-    if let move = markSynthetic(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: button)) {
-        try ComputerExecution.input()
-        move.flags = modifiers.eventFlags
-        postPointerEvent(move, to: pid, windowID: windowID)
-    }
-    for click in 1...max(1, min(count, 3)) {
-        guard let down = markSynthetic(CGEvent(mouseEventSource: source, mouseType: downType, mouseCursorPosition: point, mouseButton: button)),
-              let up = markSynthetic(CGEvent(mouseEventSource: source, mouseType: upType, mouseCursorPosition: point, mouseButton: button)) else {
-            throw ComputerError.operationFailed("could not create mouse event")
-        }
-        down.flags = modifiers.eventFlags
-        up.flags = modifiers.eventFlags
-        down.setIntegerValueField(.mouseEventClickState, value: Int64(click))
-        up.setIntegerValueField(.mouseEventClickState, value: Int64(click))
-        try ComputerExecution.input()
-        postPointerEvent(down, to: pid, windowID: windowID)
-        defer { postPointerEvent(up, to: pid, windowID: windowID) }
-        try holdInput(for: duration)
+func postClickToPid(_ pid: pid_t, point: CGPoint, button name: String?, count: Int, modifiers: KeyModifiers = [], duration: TimeInterval = 0, heldKey: KeyChord? = nil) throws {
+    let post = try directedPointerPoster(pid, at: point)
+    try withHeldKey(heldKey, post: { $0.postToPid(pid) }) {
+        try postClicks(point: point, button: name, count: count, modifiers: modifiers, duration: duration, post: post)
     }
 }
 
 func postScrollToPid(_ pid: pid_t, vertical: Int32, horizontal: Int32, steps: Int, at point: CGPoint?) throws {
     let source = syntheticEventSource()
-    let windowID = point.flatMap { directedWindowID(pid, at: $0) }
+    let post = try directedPointerPoster(pid, at: point)
     for _ in 0..<max(1, steps) {
         guard let event = markSynthetic(CGEvent(scrollWheelEvent2Source: source, units: .line, wheelCount: 2, wheel1: vertical, wheel2: horizontal, wheel3: 0)) else {
             throw ComputerError.operationFailed("could not create scroll event")
@@ -137,22 +115,22 @@ func postScrollToPid(_ pid: pid_t, vertical: Int32, horizontal: Int32, steps: In
         // otherwise the app hit-tests it at the global origin.
         if let point { event.location = point }
         try ComputerExecution.input()
-        postPointerEvent(event, to: pid, windowID: windowID)
+        post(event)
         usleep(16_000)
     }
 }
 
 func postDragToPid(_ pid: pid_t, from start: CGPoint, to end: CGPoint) throws {
     let source = syntheticEventSource()
-    let windowID = directedWindowID(pid, at: start)
+    let post = try directedPointerPoster(pid, at: start)
     guard let down = markSynthetic(CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: start, mouseButton: .left)),
           let up = markSynthetic(CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: end, mouseButton: .left)) else {
         throw ComputerError.operationFailed("could not create drag event")
     }
     try ComputerExecution.input()
-    postPointerEvent(down, to: pid, windowID: windowID)
+    post(down)
     var lastPoint = start
-    defer { up.location = lastPoint; postPointerEvent(up, to: pid, windowID: windowID) }
+    defer { up.location = lastPoint; post(up) }
     for step in 1...12 {
         try ComputerExecution.checkpoint()
         let progress = Double(step) / 12
@@ -161,7 +139,7 @@ func postDragToPid(_ pid: pid_t, from start: CGPoint, to end: CGPoint) throws {
             y: start.y + (end.y - start.y) * progress
         )
         if let dragged = markSynthetic(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left)) {
-            postPointerEvent(dragged, to: pid, windowID: windowID)
+            post(dragged)
             lastPoint = point
         }
         usleep(8_000)

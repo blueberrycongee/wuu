@@ -2,9 +2,17 @@ import type { CodexModelSummary, GitStatusResult, InitializeResult, ProviderMode
 import { translateCurrent as t } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 
+export function isChatGPTProvider(provider: ProviderSummary): boolean {
+  return provider.type.trim().toLowerCase().replaceAll("_", "-") === "chatgpt";
+}
+
+export function chatGPTConnectionModels(provider: ProviderSummary): ProviderModelSummary[] {
+  return provider.auth_status === "connected" ? provider.models ?? [] : [];
+}
+
 export function hasAuthenticatedProvider(providers: readonly ProviderSummary[] | undefined): boolean {
   // Composer choices stay local until thread/start persists discovered providers.
-  return providers?.some((provider) => provider.api_key_configured === true) ?? false;
+  return providers?.some((provider) => isChatGPTProvider(provider) ? provider.auth_status === "connected" : provider.api_key_configured === true) ?? false;
 }
 
 export function effectiveModelSpeed(speed?: string, defaultSpeed?: string): string | undefined {

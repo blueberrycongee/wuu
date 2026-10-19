@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe.each([undefined, "true"])("production phone access (build override: %s)", (override) => {
-  it.each(["remote", "subscriptions"] as const)("hides phone access while retaining quota settings from %s", async (initialPage) => {
+  it.each(["remote", "subscriptions"] as const)("hides phone access while retaining external connections from %s", async (initialPage) => {
     vi.stubEnv("DEV", false);
     vi.stubEnv("VITE_ENABLE_ACCOUNT", override);
     vi.stubEnv("VITE_ENABLE_REMOTE_CONTROL", override);
@@ -90,11 +90,13 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     ));
     const navigation = container.querySelector('[data-wuu-component="settings-navigation"]')!;
     expect(navigation.textContent).not.toContain(t("settings.remote"));
-    expect(navigation.textContent).toContain(t("settings.subscriptions"));
-    expect(container.querySelector('[data-testid="settings-subscriptions"]') !== null).toBe(initialPage === "subscriptions");
-    expect(listEngines.mock.calls.some(([options]) => options?.include_quota === true)).toBe(initialPage === "subscriptions");
+    expect(navigation.textContent).not.toContain(t("settings.subscriptions"));
+    expect(container.querySelector('[data-testid="settings-providers"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="settings-engine-connections"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="settings-subscriptions"]')).toBeNull();
+    expect(listEngines).toHaveBeenCalledExactlyOnceWith({ include_quota: true });
     expect(container.querySelector('[data-testid="settings-remote-page"]')).toBeNull();
-    expect(container.querySelector(".settings-nav-item.active")?.textContent).toBe(t(initialPage === "subscriptions" ? "settings.subscriptions" : "settings.providers"));
+    expect(container.querySelector(".settings-nav-item.active")?.textContent).toBe(t("settings.providers"));
     expect(getRemoteControlSnapshot).not.toHaveBeenCalled();
     expect(onRemoteControlEvent).not.toHaveBeenCalled();
   });

@@ -1,6 +1,7 @@
 package providerfactory
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -11,10 +12,12 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/anthropic"
+	"github.com/blueberrycongee/wuu/internal/providers/chatgpt"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/providers/grokbuild"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
 	"github.com/blueberrycongee/wuu/internal/providers/xaisub"
+	"github.com/blueberrycongee/wuu/internal/siwc"
 )
 
 // sharedProviderCoordinator coordinates every inference client built by this
@@ -57,7 +60,8 @@ func IsCredentialError(err error) bool {
 		return false
 	}
 	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "no api key found") ||
+	return strings.Contains(message, "no chatgpt account credentials") ||
+		strings.Contains(message, "no api key found") ||
 		strings.Contains(message, "no codex oauth credentials") ||
 		strings.Contains(message, "no wuu codex oauth credentials") ||
 		strings.Contains(message, "no grok build credential") ||
@@ -71,7 +75,7 @@ func IsCredentialError(err error) bool {
 // enabled by default; compatible endpoints must opt in explicitly.
 func SupportsNativeToolDiscoveryByDefault(provider config.ProviderConfig, model string, providerOptions map[string]any) bool {
 	profile, err := resolveProviderProfile(provider)
-	if err != nil {
+	if err != nil || profile.Auth == authChatGPT {
 		return false
 	}
 	switch profile.Wire {
@@ -104,7 +108,7 @@ func SupportsNativeToolDiscoveryByDefault(provider config.ProviderConfig, model 
 // provider-native deferred tool declarations when the user explicitly opts in.
 func SupportsNativeToolDiscovery(provider config.ProviderConfig, model string, providerOptions map[string]any) bool {
 	profile, err := resolveProviderProfile(provider)
-	if err != nil {
+	if err != nil || profile.Auth == authChatGPT {
 		return false
 	}
 	switch profile.Wire {
@@ -206,6 +210,35 @@ func buildClient(provider config.ProviderConfig, providerName string) (providers
 
 	switch profile.Wire {
 	case wireOpenAIChat, wireOpenAIResponses:
+		if profile.Auth == authChatGPT {
+			if endpoint := strings.TrimRight(strings.TrimSpace(provider.BaseURL), "/"); endpoint != "" && endpoint != chatgpt.DefaultBaseURL {
+				return nil, fmt.Errorf("ChatGPT requires the public %s endpoint", chatgpt.DefaultBaseURL)
+			}
+			if mode := strings.ToLower(strings.TrimSpace(provider.StreamTransport)); mode != "" && mode != "sse" {
+				return nil, fmt.Errorf("ChatGPT supports only sse stream_transport")
+			}
+			if strings.TrimSpace(provider.ChatGPTAccountID) == "" {
+				return nil, fmt.Errorf("no ChatGPT account credentials; sign in with ChatGPT")
+			}
+			manager, err := siwc.DefaultManager()
+			if err != nil {
+				return nil, fmt.Errorf("no ChatGPT account credentials: %w", err)
+			}
+			account, err := manager.Account(context.Background(), provider.ChatGPTAccountID)
+			if err != nil {
+				return nil, fmt.Errorf("no ChatGPT account credentials: %w", err)
+			}
+			if !account.Connected || !account.PlanEnabled {
+				return nil, fmt.Errorf("no ChatGPT account credentials with plan access; sign in with ChatGPT")
+			}
+			return chatgpt.New(chatgpt.ClientConfig{
+				AccountID:    provider.ChatGPTAccountID,
+				AccessToken:  manager.AccessToken,
+				BindRequest:  manager.BindRequest,
+				StreamConfig: providerStreamTransportConfig(provider),
+				Coordinator:  sharedProviderCoordinator,
+			})
+		}
 		if profile.Auth == authGrokBuild {
 			client, newErr := grokbuild.New(grokbuild.ClientConfig{
 				BaseURL:              provider.BaseURL,

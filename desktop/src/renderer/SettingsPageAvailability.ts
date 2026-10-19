@@ -1,6 +1,6 @@
 import type { ExtensionInventoryRecord } from "../shared/protocol";
 import type { SettingsPage } from "./SettingsView";
-import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
+import { ENABLE_REMOTE_CONTROL } from "./FeatureFlags";
 import { hostSupports } from "./HostCapabilities";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import type { PluginHost } from "./plugins/PluginHost";
@@ -22,7 +22,7 @@ export function browserSettingsAvailable(): boolean {
 
 export function availableSettingsPage(page: SettingsPage | undefined, browserSettingsAllowed = true): SettingsPage {
   const next = page ?? "providers";
-  if (next === "subscriptions" && !ENABLE_SUBSCRIPTIONS) {
+  if (next === "subscriptions" || next === "agents") {
     return "providers";
   }
   if (next === "remote" && !remoteControlAvailable()) {

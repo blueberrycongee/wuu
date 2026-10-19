@@ -12,6 +12,7 @@ import { forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { subscribeServerEvents } from "./ServerEvents";
 import { AccountScreen } from "./AccountScreen";
 import { hostSupports } from "./HostCapabilities";
+import { isCodexSubscription, isGrokBuild } from "./SubscriptionSources";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { readThreadReadState, writeThreadReadState } from "./ThreadReadState";
 import { FileSelectionProvider, type FileSelectionPart } from "./FileSelectionContext";
@@ -3613,6 +3614,37 @@ export function App(): JSX.Element {
     openSettingsPage("archive");
   }
 
+  function updateConnectionProviders(providers: NonNullable<InitializeResult["providers"]>): void {
+    setState(current => current.initialized ? {
+      ...current,
+      initialized: {
+        ...current.initialized,
+        providers: current.initialized.providers?.map(provider => {
+          if (isCodexSubscription(provider.type) || isGrokBuild(provider.type)) {
+            const snapshot = providers.find(item => item.name === provider.name
+              && item.type === provider.type && item.base_url === provider.base_url);
+            return snapshot ? {
+              ...provider,
+              auth_status: snapshot.auth_status,
+              api_key_configured: snapshot.api_key_configured,
+              codex_credential_source: snapshot.codex_credential_source,
+              reuse_codex_credentials: snapshot.reuse_codex_credentials,
+              models: snapshot.models ?? provider.models,
+            } : provider;
+          }
+          if (!provider.chatgpt_account_id || provider.type !== "chatgpt") return provider;
+          const snapshot = providers.find(item => item.type === "chatgpt" && item.name === provider.name && item.chatgpt_account_id === provider.chatgpt_account_id);
+          return snapshot ? {
+            ...provider,
+            auth_status: snapshot.auth_status,
+            api_key_configured: snapshot.api_key_configured,
+            models: snapshot.auth_status === "connected" ? snapshot.models ?? [] : [],
+          } : provider;
+        }),
+      },
+    } : current);
+  }
+
   async function refreshModelCatalog(): Promise<void> {
     setModelCatalogTip(null);
     try {
@@ -5666,6 +5698,7 @@ export function App(): JSX.Element {
     return (
       <WuuMascotRuntimeProvider>
         <FirstRunOnboarding
+          onProvidersChanged={updateConnectionProviders}
           inventory={state.initialized?.extension_inventory}
           providers={state.initialized?.providers}
           catalogProviders={state.initialized?.catalog_providers}
@@ -6424,6 +6457,12 @@ export function App(): JSX.Element {
           onSave={updateProviderSettings}
           onRemoveProvider={removeProvider}
           onRefreshModelCatalog={refreshModelCatalog}
+          onProvidersChanged={updateConnectionProviders}
+          onProviderModelsChanged={(name, accountId, models) => setState(current => current.initialized ? {
+            ...current,
+            initialized: { ...current.initialized, providers: current.initialized.providers?.map(provider =>
+              provider.name === name && provider.chatgpt_account_id === accountId && provider.auth_status === "connected" ? { ...provider, models } : provider) },
+          } : current)}
           onRefreshEngineInventory={() => refreshEngineInventory(true)}
           onUpdateEngineInventory={updateEngineInventory}
           onAdvancedSave={updateAdvancedSettings}

@@ -1069,6 +1069,7 @@ type PluginStorageResult struct {
 }
 
 type ConfigModelUpdateParams struct {
+	ChatGPTAccountID *string `json:"chatgpt_account_id,omitempty"`
 	// ResetModel clears all external model overrides before applying supplied fields.
 	ResetModel     bool               `json:"reset_model,omitempty"`
 	ModelOptions   *map[string]string `json:"model_options,omitempty"`
@@ -1102,6 +1103,27 @@ type ConfigModelUpdateParams struct {
 	// the local Codex CLI auth store. An explicit false is persisted so
 	// legacy defaults cannot re-enable reuse after the user declined it.
 	ReuseCodexCredentials *bool `json:"reuse_codex_credentials,omitempty"`
+}
+
+type AuthChatGPTLoginParams struct {
+	ForceConsent bool   `json:"force_consent,omitempty"`
+	LoginID      string `json:"login_id,omitempty"`
+	AccountID    string `json:"account_id,omitempty"`
+}
+type AuthChatGPTLoginResult struct {
+	Providers        []ProviderSummary `json:"providers,omitempty"`
+	LoginID          string            `json:"login_id"`
+	Status           string            `json:"status"`
+	AuthorizationURL string            `json:"authorization_url,omitempty"`
+	AccountID        string            `json:"account_id,omitempty"`
+	IntervalMS       int               `json:"interval_ms"`
+	ExpiresIn        int               `json:"expires_in"`
+	Error            string            `json:"error,omitempty"`
+}
+type ChatGPTAccountSummary struct {
+	ID     string `json:"id"`
+	Email  string `json:"email,omitempty"`
+	Status string `json:"status"`
 }
 
 type AuthXAILoginStartResult struct {
@@ -1388,6 +1410,8 @@ type CodexModelSummary struct {
 }
 
 type ProviderSummary struct {
+	ChatGPTAccountID      string `json:"chatgpt_account_id,omitempty"`
+	AuthStatus            string `json:"auth_status,omitempty"`
 	Name                  string `json:"name"`
 	Type                  string `json:"type"`
 	Model                 string `json:"model"`
@@ -1413,17 +1437,18 @@ type ProviderSummary struct {
 }
 
 type ProviderModelSummary struct {
-	FastMode         bool                          `json:"fast_mode,omitempty"`
-	DefaultSpeed     string                        `json:"default_speed,omitempty"`
-	ID               string                        `json:"id"`
-	DisplayName      string                        `json:"display_name,omitempty"`
-	DefaultEffort    string                        `json:"default_effort,omitempty"`
-	DefaultVariant   string                        `json:"default_variant,omitempty"`
-	SupportedEfforts []string                      `json:"supported_efforts,omitempty"`
-	Variants         []ProviderModelVariantSummary `json:"variants,omitempty"`
-	Capabilities     ModelCapabilitySummary        `json:"capabilities,omitempty"`
-	Behavior         ModelBehaviorSummary          `json:"behavior,omitempty"`
-	Source           string                        `json:"source,omitempty"`
+	AccountDescriptor json.RawMessage               `json:"account_descriptor,omitempty"`
+	FastMode          bool                          `json:"fast_mode,omitempty"`
+	DefaultSpeed      string                        `json:"default_speed,omitempty"`
+	ID                string                        `json:"id"`
+	DisplayName       string                        `json:"display_name,omitempty"`
+	DefaultEffort     string                        `json:"default_effort,omitempty"`
+	DefaultVariant    string                        `json:"default_variant,omitempty"`
+	SupportedEfforts  []string                      `json:"supported_efforts,omitempty"`
+	Variants          []ProviderModelVariantSummary `json:"variants,omitempty"`
+	Capabilities      ModelCapabilitySummary        `json:"capabilities,omitempty"`
+	Behavior          ModelBehaviorSummary          `json:"behavior,omitempty"`
+	Source            string                        `json:"source,omitempty"`
 }
 
 type ModelRoleSummary struct {
@@ -1498,11 +1523,16 @@ type ThreadHandoffParams struct {
 
 // EngineInfo describes one agent engine for the settings surface.
 type EngineInfo struct {
-	ID           string   `json:"id"`
-	DisplayName  string   `json:"display_name,omitempty"`
-	Protocol     string   `json:"protocol,omitempty"`
-	InstallURL   string   `json:"install_url,omitempty"`
-	Version      string   `json:"version,omitempty"`
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name,omitempty"`
+	Protocol    string `json:"protocol,omitempty"`
+	InstallURL  string `json:"install_url,omitempty"`
+	// Version is the legacy engine descriptor version, not necessarily the CLI version.
+	Version string `json:"version,omitempty"`
+	// CLIVersion is observed from the resolved executable; omitted when unknown.
+	CLIVersion string `json:"cli_version,omitempty"`
+	// UpdateURL opens vendor guidance. Wuu does not manage CLI installation.
+	UpdateURL    string   `json:"update_url,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
 	// Enabled reports whether the engine is registered (settings-driven).
 	Enabled bool `json:"enabled"`

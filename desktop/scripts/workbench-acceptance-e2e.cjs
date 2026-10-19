@@ -611,20 +611,24 @@ db.commit()
     await capture('runtime-persisted');
   });
 
-  await test('provider connect validation and modal cancellation', async () => {
-    await goSettings('Model providers'); await dockSidebar();
+  await test('provider connect validation and inline cancellation', async () => {
+    const rpcStart = rpc.length;
+    await goSettings(); await dockSidebar();
+    await click('[data-wuu-component="settings-navigation-item"][data-wuu-page="providers"]', 'settings-connections');
+    await click('[data-testid="settings-connection-add"]', 'provider-add-connection');
     await click('[data-testid="settings-provider-custom"]', 'provider-open-custom');
     await waitFor(() => document.querySelector('.model-connect-dialog'));
     assert.ok(await evaluate(() => document.querySelector('[data-testid="settings-provider-connect"]').disabled), 'Empty provider cannot be saved');
     await fill('[data-testid="settings-provider-connect-base-url"]', 'http://127.0.0.1:1/v1');
     assert.ok(await evaluate(() => document.querySelector('[data-testid="settings-provider-connect"]').disabled), 'Missing key/model cannot be saved');
     await capture('provider-incomplete-form');
-    await click(pick('.model-connect-dialog button', 'Cancel'), 'provider-cancel');
+    await click('.model-connect-dialog [data-testid="settings-connection-back"]', 'provider-cancel');
     await waitFor(() => !document.querySelector('.model-connect-dialog'));
     await click('[data-testid="settings-provider-custom"]', 'provider-reopen');
     await waitFor(() => document.querySelector('.model-connect-dialog'));
-    key('Escape'); await waitFor(() => !document.querySelector('.model-connect-dialog'));
-    assert.ok(!rpc.some(r => /connection.*update|provider.*connect/.test(r.channel)), 'Cancelled provider never contacts a provider');
+    await click('.model-connect-dialog [data-testid="settings-connection-back"]', 'provider-cancel-reopened');
+    await waitFor(() => !document.querySelector('.model-connect-dialog'));
+    assert.ok(!rpc.slice(rpcStart).some(r => r.channel === 'wuu:config-model-update' || /connection.*update|provider.*connect/.test(r.channel)), 'Cancelled provider never saves configuration or contacts a provider');
   });
 
   await test('collapsed contextual sidebars hover, dock, focus and keyboard resize', async () => {

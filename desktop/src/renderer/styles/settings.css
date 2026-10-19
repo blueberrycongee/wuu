@@ -247,6 +247,8 @@
   display: grid;
   min-width: 0;
   min-height: 0;
+  /* Titlebar actions must not impose their min-content width on the page. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: var(--canvas-titlebar-height) minmax(0, 1fr);
   position: relative;
   overflow: hidden;
@@ -271,6 +273,7 @@
  * content area — not just the tiny traffic-light spacer in the sidebar. */
 .settings-titlebar {
   display: flex;
+  min-width: 0;
   height: var(--canvas-titlebar-height);
   min-height: var(--canvas-titlebar-height);
   align-items: center;

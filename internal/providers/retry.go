@@ -52,6 +52,8 @@ func DefaultRetryConfig() RetryConfig {
 type HTTPError struct {
 	ProviderFamily  string
 	ProviderCode    string
+	ProviderParam   string
+	RequestID       string
 	StatusCode      int
 	Body            string
 	RetryAfter      time.Duration // parsed from Retry-After header, if present
@@ -72,6 +74,8 @@ type StreamError struct {
 	ProviderFamily  string
 	Message         string
 	Code            string
+	Param           string
+	RequestID       string
 	Retryable       bool
 	Auth            bool
 	ContextOverflow bool
@@ -424,6 +428,7 @@ func isTerminalUsageLimit(code, message string) bool {
 	}
 	terminal := []string{
 		"usage_limit_reached",
+		"subscription_sharing_usage_limit_exceeded",
 		"usage limit has been reached",
 		"monthly usage limit reached",
 		"gousagelimiterror",
@@ -475,7 +480,8 @@ func isTemporaryProviderFailure(code, message string) bool {
 		// Upstream timeouts can arrive inside an HTTP 200 stream. Recover them
 		// like HTTP timeout responses, without treating them as caller cancellation.
 		return true
-	case "500", "502", "503", "internal_error", "server_error", "api_error", "stream_read_error":
+	case "500", "502", "503", "internal_error", "server_error", "api_error", "stream_read_error",
+		"subscription_sharing_usage_unavailable", "subscription_sharing_user_unavailable":
 		return true
 	}
 	msg := strings.ToLower(strings.TrimSpace(message))

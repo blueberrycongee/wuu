@@ -77,11 +77,21 @@ func syntheticEventSource() -> CGEventSource? {
     return source
 }
 
-func withHeldKey<T>(_ chord: KeyChord?, post: (CGEvent) -> Void, body: () throws -> T) throws -> T {
+private let keyEventInterval: TimeInterval = 0.008
+
+func withHeldKey<T>(_ chord: KeyChord?, duration: TimeInterval = 0, post: (CGEvent) -> Void, body: () throws -> T) throws -> T {
     guard let chord else { return try body() }
     let source = syntheticEventSource()
     var releases: [CGEvent] = []
-    defer { for release in releases.reversed() { post(release) } }
+    defer {
+        for (index, release) in releases.reversed().enumerated() {
+            // Releases must finish even after cancellation. Bound this cleanup to
+            // one short interval per modifier instead of running a cancellable wait.
+            if index > 0 { usleep(useconds_t(keyEventInterval * 1_000_000)) }
+            release.timestamp = DispatchTime.now().uptimeNanoseconds
+            post(release)
+        }
+    }
     var flags: CGEventFlags = []
     let modifierKeys: [(KeyModifiers, CGKeyCode)] = [(.command, 55), (.shift, 56), (.option, 58), (.control, 59), (.function, 63)]
     for (modifier, code) in modifierKeys where chord.modifiers.contains(modifier) {
@@ -97,6 +107,7 @@ func withHeldKey<T>(_ chord: KeyChord?, post: (CGEvent) -> Void, body: () throws
         try ComputerExecution.input()
         post(down)
         releases.append(up)
+        try holdInput(for: keyEventInterval)
     }
     guard let down = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: chord.keyCode, keyDown: true)),
           let up = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: chord.keyCode, keyDown: false)) else {
@@ -107,7 +118,68 @@ func withHeldKey<T>(_ chord: KeyChord?, post: (CGEvent) -> Void, body: () throws
     try ComputerExecution.input()
     post(down)
     releases.append(up)
+    // A zero-duration press still needs distinct down/up delivery. Register the
+    // release before waiting so interruption cannot leave a key held.
+    try holdInput(for: max(keyEventInterval, duration))
     return try body()
+}
+
+func postUnicode(_ text: String, post: (CGEvent) -> Void) throws {
+    let source = syntheticEventSource()
+    for chunk in unicodeChunks(text) {
+        guard let down = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)),
+              let up = markSynthetic(CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)) else {
+            throw ComputerError.operationFailed("could not create text input event")
+        }
+        down.flags = []
+        up.flags = []
+        chunk.withUnsafeBufferPointer { buffer in
+            guard let baseAddress = buffer.baseAddress else { return }
+            down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
+            up.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: baseAddress)
+        }
+        do {
+            try ComputerExecution.input()
+            post(down)
+            defer {
+                up.timestamp = DispatchTime.now().uptimeNanoseconds
+                post(up)
+            }
+            try holdInput(for: keyEventInterval)
+        }
+        try holdInput(for: keyEventInterval)
+    }
+}
+
+func postClicks(point: CGPoint, button name: String?, count: Int, modifiers: KeyModifiers, duration: TimeInterval, post: (CGEvent) -> Void) throws {
+    let source = syntheticEventSource()
+    let (button, downType, upType) = mouseTypes(for: name)
+    if let move = markSynthetic(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: button)) {
+        move.flags = modifiers.eventFlags
+        try ComputerExecution.input()
+        post(move)
+        try holdInput(for: 0.020)
+    }
+    for click in 1...max(1, min(count, 3)) {
+        // The preceding iteration has already released its button. Give AppKit
+        // time to process that click before sending the next down in the group.
+        if click > 1 { try holdInput(for: 0.080) }
+        guard let down = markSynthetic(CGEvent(mouseEventSource: source, mouseType: downType, mouseCursorPosition: point, mouseButton: button)),
+              let up = markSynthetic(CGEvent(mouseEventSource: source, mouseType: upType, mouseCursorPosition: point, mouseButton: button)) else {
+            throw ComputerError.operationFailed("could not create mouse event")
+        }
+        down.flags = modifiers.eventFlags
+        up.flags = modifiers.eventFlags
+        down.setIntegerValueField(.mouseEventClickState, value: Int64(click))
+        up.setIntegerValueField(.mouseEventClickState, value: Int64(click))
+        try ComputerExecution.input()
+        post(down)
+        defer {
+            up.timestamp = DispatchTime.now().uptimeNanoseconds
+            post(up)
+        }
+        try holdInput(for: max(0.035, duration))
+    }
 }
 
 public struct KeyModifiers: OptionSet, Sendable {

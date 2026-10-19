@@ -29,7 +29,8 @@ func main() {
 				time.Sleep(5 * time.Millisecond)
 			}
 		}
-		fmt.Println("2.1.226 (fake)")
+		// Match the real CLI version protocol; the executable remains a test fixture.
+		fmt.Println("2.1.226 (Claude Code)")
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "--close-stdout-and-hang" {

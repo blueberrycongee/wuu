@@ -21,6 +21,35 @@ it("rejects unauthenticated local connections before dispatching requests", asyn
   const bad = await peer(await bridge.start("/workspace"), "wrong-token");
   expect(await bad.next()).toBeUndefined(); expect(request).not.toHaveBeenCalled();
 });
+it("rejects local CLI login before forwarding a remote request", async () => {
+  const { bridge, request } = fixture();
+  const phone = await peer(await bridge.start("/workspace"));
+  await phone.next();
+  phone.send({ id: "login", method: "engine/authenticate", params: { engine_id: "grok", method_id: "local-cli" } });
+  expect(await phone.next()).toMatchObject({ id: "login", error: { message: expect.stringContaining("local desktop") } });
+  expect(request).not.toHaveBeenCalled();
+  phone.send({ id: "acp", method: "engine/authenticate", params: { engine_id: "cursor", method_id: "browser" } });
+  expect(await phone.next()).toMatchObject({ id: "acp", result: {} });
+  expect(request).toHaveBeenCalledTimes(1);
+});
+it.each([false, true])("rejects ChatGPT login over remote transport before desktop or headless dispatch (compact=%s)", async (compact) => {
+  const { bridge, request } = fixture();
+  const phone = await peer(await bridge.start("/workspace"));
+  await phone.next();
+  if (compact) {
+    phone.send({ id: "workspaces", method: "workspace/list", params: { remote_delivery: 1 } });
+    await phone.next();
+    request.mockClear();
+  }
+  for (const action of ["start", "poll", "cancel"]) {
+    phone.send({ id: action, method: `auth/chatgpt/login/${action}`, params: { login_id: "existing-attempt" } });
+    expect(await phone.next()).toMatchObject({ id: action, error: { message: expect.stringContaining("local desktop") } });
+  }
+  expect(request).not.toHaveBeenCalled();
+  phone.send({ id: "accounts", method: "auth/chatgpt/accounts" });
+  expect(await phone.next()).toMatchObject({ id: "accounts", result: {} });
+  expect(request).toHaveBeenCalledTimes(1);
+});
 it("isolates replies with colliding client ids and broadcasts the same live events", async () => {
   const { bridge } = fixture(vi.fn(async (cwd, method) => ({ cwd, method })));
   const endpoint = await bridge.start("/default");

@@ -807,10 +807,15 @@ describe("session tab switch latency", () => {
     window.wuu.listMCPServers = vi.fn().mockResolvedValue({ servers: [] });
     await renderPageHistoryApp();
     await act(async () => { setMainComposerPrompt("draft before settings"); });
+    const retainedComposer = mainComposerTextarea();
+    const retainedRibbon = container.querySelector(".sidebar-ribbon");
     await clickPageHistoryTarget(container.querySelector(".sidebar-account-trigger"));
     await clickPageHistoryTarget(document.querySelector('[data-settings-page="providers"]'));
     await act(async () => { await import("./SettingsView"); });
     await flushAsync();
+    expect(container.querySelector(".settings-workbench-layer")).not.toBeNull();
+    expect(container.querySelector(".sidebar-ribbon")).toBe(retainedRibbon);
+    expect(retainedComposer.isConnected).toBe(true);
     const page = () => container.querySelector('[data-wuu-component="settings-page"]')?.getAttribute("data-wuu-page");
     expect(page()).toBe("providers");
     await clickPageHistoryTarget(container.querySelector('.settings-nav [data-wuu-page="appearance"]'));

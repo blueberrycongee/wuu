@@ -821,7 +821,7 @@ async function sidebarReadabilityState(win) {
     const drawer = document.querySelector('.settings-sidebar');
     if (!(drawer instanceof HTMLElement)) throw new Error('Settings secondary pane missing');
     return { width: drawer.getBoundingClientRect().width,
-      labels: [...drawer.querySelectorAll('[data-wuu-page="general"] .settings-nav-label, [data-wuu-page="providers"] .settings-nav-label')]
+      labels: [...drawer.querySelectorAll('.settings-nav-item[data-wuu-page="general"] .settings-nav-label, .settings-nav-item[data-wuu-page="providers"] .settings-nav-label')]
         .map(label => ({ text: label.textContent, whiteSpace: getComputedStyle(label).whiteSpace,
           fits: label.clientWidth > 0 && label.scrollWidth <= label.clientWidth })) };
   });

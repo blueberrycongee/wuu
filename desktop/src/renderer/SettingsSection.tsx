@@ -52,12 +52,14 @@ export function SettingsSection({
   description,
   actions,
   testID,
+  ariaBusy,
   children,
 }: {
   title?: string;
   description?: string;
   actions?: ReactNode;
   testID?: string;
+  ariaBusy?: boolean;
   children: ReactNode;
 }): JSX.Element {
   const showDescription = Boolean(description) && !isTouchWebShell();
@@ -66,6 +68,7 @@ export function SettingsSection({
       className="settings-section"
       data-wuu-component="settings-section"
       {...(testID ? { "data-testid": testID } : {})}
+      {...(ariaBusy === undefined ? {} : { "aria-busy": ariaBusy })}
     >
       {title || showDescription || actions ? (
         <header className="settings-section-header">

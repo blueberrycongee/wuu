@@ -6,6 +6,8 @@ An external engine runs an installed agent with its own account, model configura
 
 Install the agent or adapter yourself using its upstream instructions. Wuu does not download executables. Open **Settings → Agents** to check detection, set an executable path, or disable an engine. Choose the default for new conversations in **Settings → General**, or pick an available engine in the composer.
 
+Codex and Claude Code details show the installed CLI version when their bounded `--version` check succeeds. Unknown versions remain unavailable. The update guide opens the vendor documentation; use the installation method that owns your executable to update it, then refresh detection. Wuu does not replace or upgrade user-managed binaries.
+
 | Engine ID | Launch command | Integration and setup |
 |---|---|---|
 | `cursor` | `cursor-agent acp` | ACP v1; [Cursor CLI](https://cursor.com/docs/cli/acp) |
