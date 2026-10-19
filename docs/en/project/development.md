@@ -77,7 +77,31 @@ generation takes precedence over its installed package while retaining developme
 provenance. Standalone TypeScript files still use `wuu plugin dev ./extension.ts`
 without a manifest or build. See the [plugin quickstart](../customize/plugin-quickstart.md).
 
-`make install` installs the CLI from the checkout. The current release workflow packages only the macOS arm64 desktop preview; Windows CI and packaging scripts do not imply a published Windows release. See [installation](../getting-started/installation.md) for user-facing availability.
+`make install` installs the CLI from the checkout. The release workflow packages only the macOS arm64 desktop preview. Linux x64 AppImage/Debian packages are experimental source builds. Windows CI and packaging scripts do not imply a published Windows release. See [installation](../getting-started/installation.md) for user-facing availability.
+
+### Linux desktop packages
+
+On Linux x64, run `npm --prefix desktop run pack:linux` for an unpacked app,
+`dist:linux` for local AppImage/Debian packages, or `release:linux` for packages
+with artifact verification. All three are experimental and have no public update feed. Install the
+same locked dependencies used by `make setup`; builds need `dpkg-deb` and the
+standard Electron Linux libraries. Packaging builds the Go core, Linux CUA helper, bundled
+plugins, Web assets, native node-pty module and checksum-pinned Linux ripgrep.
+The command does not publish anything. Before public Linux releases, verify real
+Secret Service integration, installed Debian packages on stock Ubuntu 24.04,
+FUSE-mounted AppImage launch, and an actual AppImage update/relaunch cycle.
+Launchers use X11 or XWayland with Chromium sandboxing enabled; never disable
+system security controls to make them start. Confined tool execution requires
+Landlock ABI 3 or later. MCP OAuth requires session D-Bus and an unlocked
+Secret Service keyring. Native Wayland and Linux arm64 remain unsupported.
+
+`npm --prefix desktop run test:e2e:linux-package` opens both extracted packages
+in an X11/XWayland session, checks their production renderer and preload, and
+saves screenshots/logs under `desktop/release/linux-package-evidence/`. CI uses
+`xvfb-run --auto-servernum` and keeps Chromium sandboxing enabled. This is not
+package-manager installation, a FUSE mount check, a native Wayland test, or a
+complete installed upgrade. Linux packaging CI also requires all five existing
+Landlock filesystem boundary cases to pass without skips.
 
 ### Native steering end-to-end check
 
@@ -132,6 +156,7 @@ separate evidence folders.
 | `make build-desktop` | Shared Web assets and Electron main/preload/renderer bundles; not a packaged app |
 | `make check-clients test-clients build-clients` | Protocol/SDK/client types, SDK/client tests, and retained Web/Expo bundles |
 | `make test-native` | Desktop macOS Computer Use helper tests, not phone app tests |
+| `make build-linux` | Linux x64 core, desktop build and directory package |
 | `make build-macos` | Core/helpers, desktop build, and directory-packaged macOS app |
 | `make docs-policy-check check-docs build-docs` | Documentation policy, site diagnostics, and generated site/link checks |
 
@@ -638,7 +663,7 @@ Styles, assets, test setup, runtime plugin modules, new/deleted/renamed files, d
 
 Desktop CI installs the Electron binary once before parallel unit tests to avoid concurrent extraction into the same directory. macOS and Windows retain their platform-specific tests on affected PRs. macOS also checks packaging when native resources or packaging inputs change.
 
-Main pushes do not repeat Go, Desktop, Clients, or native test suites. They only run macOS/Windows packaging when the changed paths select native checks. Manual `workflow_dispatch` runs all checks and both packages. Direct main pushes therefore do not receive the PR test coverage; use a PR or manually run CI when full validation is needed.
+Main pushes do not repeat Go, Desktop, Clients, or native test suites. When changed paths select native checks, they run macOS/Windows packaging and the Linux packaging, sandbox and launch gates. Manual `workflow_dispatch` runs all checks and all three platform packages. Direct main pushes therefore do not receive the PR test coverage; use a PR or manually run CI when full validation is needed.
 
 `Go check` accepts skipped Go jobs only when path selection explicitly excludes them. `CI check` requires successful selection and every selected job to succeed; unexpected skips, failures, and cancellations fail the summary. These summaries do not change repository protection rules.
 

@@ -1736,9 +1736,9 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     "wuu:system-notification",
     (event, params: SystemNotificationParams): SystemNotificationResult => {
-      // macOS first: the notification stack differs per platform (app bundle,
-      // permission model, toast routing). Windows/Linux land separately.
-      if (process.platform !== "darwin") {
+      // Linux uses Electron's libnotify backend; Windows toast registration
+      // still needs its own integration.
+      if ((process.platform !== "darwin" && process.platform !== "linux") || !Notification.isSupported()) {
         return { shown: false };
       }
       const win = BrowserWindow.fromWebContents(event.sender);
@@ -1751,8 +1751,13 @@ app.whenReady().then(async () => {
         title: params.title,
         body: params.body,
       });
+      let failedToShow = false;
       activeSystemNotifications.add(notification);
       notification.on("close", () => {
+        activeSystemNotifications.delete(notification);
+      });
+      notification.on("failed", () => {
+        failedToShow = true;
         activeSystemNotifications.delete(notification);
       });
       notification.on("click", () => {
@@ -1766,7 +1771,7 @@ app.whenReady().then(async () => {
         activeSystemNotifications.delete(notification);
       });
       notification.show();
-      return { shown: true };
+      return { shown: !failedToShow };
     },
   );
   ipcMain.handle("wuu:desktop-update-state", () => desktopUpdates?.state ?? { kind: "unsupported" });

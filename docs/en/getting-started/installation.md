@@ -22,6 +22,14 @@ Ad-hoc signatures do not establish publisher identity or guarantee that macOS pe
 
 Download filenames omit the version; the app and release notes still identify it, and automatic updates use version metadata and verified archive hashes. Older releases may have a version in their filenames.
 
+## Experimental Linux builds
+
+Public releases currently contain the macOS app only. Linux x64 AppImage and
+Debian packages are available as source-build experiments; see [development](../project/development.md#linux-desktop-packages).
+These packages have no public update feed. Real Secret Service integration,
+installation on stock Ubuntu 24.04, FUSE mounting, and an installed AppImage
+update/relaunch cycle remain required before Linux release support.
+
 ## Update the app
 
 Signed macOS builds with the **Wuu > Check for Updates** menu check GitHub stable releases shortly after launch and every six hours. Confirm the download, then choose **Restart and Install Update** when your work is saved and running tasks can stop. Choosing **Later** leaves the app running; a normal quit does not install the downloaded update automatically. Prereleases and downgrades are not offered.

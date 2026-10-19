@@ -155,7 +155,9 @@ Saved credentials are bound to the resource URL used for login. Reusing a server
 
 Logging out invalidates older login attempts and in-flight credential refreshes across Wuu processes. Their late responses cannot restore the removed credentials. Starting another login supersedes earlier login attempts for that server name; complete the newest authorization flow. Browser or token-exchange failures do not clear an existing credential. Signing in again after logout remains available.
 
-Desktop credentials remain in Keychain. Owner-only lock files and credential-version records coordinate local access independently of project data directories; these files contain no tokens or client secrets. Keep these version records alongside your local Wuu state. Storage failures or a backend command that outlives a crashed Wuu process can make a credential unavailable and require another login; a stale or uncommitted credential is not accepted. All Wuu processes sharing credentials must use this version or newer for these guarantees.
+Desktop MCP OAuth credentials remain in macOS Keychain or Linux Secret Service. Linux requires a running session D-Bus and an available, unlocked Secret Service keyring, such as GNOME Keyring. If the keyring is unavailable or access fails, Wuu reports the error and does not fall back to a credential file.
+
+Owner-only lock files and credential-version records coordinate local access independently of project data directories; these files contain no tokens or client secrets. Keep these version records alongside your local Wuu state. Storage failures or a backend command that outlives a crashed Wuu process can make a credential unavailable and require another login; a stale or uncommitted credential is not accepted. All Wuu processes sharing credentials must use this version or newer for these guarantees.
 
 Requests carrying OAuth credentials or configured headers cannot redirect across origins (scheme, host, or port). Legacy SSE message endpoints must share the stream's origin; same-origin paths and session queries remain supported.
 

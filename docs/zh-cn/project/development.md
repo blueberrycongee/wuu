@@ -62,7 +62,27 @@ make build-go
 同时保留开发来源身份。独立 TypeScript 文件仍可直接运行 `wuu plugin dev ./extension.ts`，
 不要求清单或构建。参见[插件快速开始](../customize/plugin-quickstart.md)。
 
-`make install` 从当前检出安装 CLI。当前发布工作流只打包 macOS arm64 桌面预览版；存在 Windows CI 和打包脚本，不代表已经发布 Windows 版本。用户可用的发行方式见[安装](../getting-started/installation.md)。
+`make install` 从当前检出安装 CLI。发布工作流仅打包 macOS arm64 桌面预览版；Linux x64 AppImage / Debian 包仍为实验性源码构建。存在 Windows CI 和打包脚本，不代表已经发布 Windows 版本。用户可用的发行方式见[安装](../getting-started/installation.md)。
+
+### Linux 桌面包
+
+在 Linux x64 上，`npm --prefix desktop run pack:linux` 生成目录包，
+`dist:linux` 生成本地 AppImage / Debian 包，`release:linux` 生成包并检查产物。
+三者均为实验构建，不连接公开更新源。先安装 `make setup` 所需的锁定依赖；
+还需要 `dpkg-deb` 和 Electron 常用 Linux 运行库。构建包含 Go core、Linux CUA 辅助程序、
+内置插件、Web 资源、node-pty 原生模块及固定校验值的 Linux ripgrep。
+该命令不会上传或发布。正式发布前仍需验证真实 Secret Service 集成、
+默认配置 Ubuntu 24.04 上的 Debian 安装、FUSE 挂载及 AppImage 跨版本更新和重启。
+启动器使用 X11 或 XWayland，保留 Chromium 沙箱；不要为启动应用而关闭系统安全控制。
+受限工具执行需要 Landlock ABI 3 或更高版本，MCP OAuth 需要会话 D-Bus 和
+已解锁的 Secret Service 密钥环。原生 Wayland 和 Linux arm64 暂不支持。
+
+`npm --prefix desktop run test:e2e:linux-package` 在 X11/XWayland 会话中
+打开两种解包产物，检查正式 renderer 和 preload，将截图和日志保存在
+`desktop/release/linux-package-evidence/`。CI 使用 `xvfb-run --auto-servernum`，
+保留 Chromium 沙箱。此检查不等于包管理器安装、FUSE 挂载、原生 Wayland
+或完整跨版本更新验收。Linux 打包 CI 还要求已有的五项 Landlock 文件系统
+边界检查全部通过，不能跳过。
 
 ### 原生引导端到端检查
 
@@ -456,7 +476,7 @@ PR 仅修改已有 renderer TypeScript/TSX 模块（可同时修改文档）时�
 
 桌面 CI 在并行单元测试前串行安装 Electron 二进制，避免并发解压同一目录。macOS 和 Windows 在相关 PR 上保留平台专属测试；macOS 在原生资源或打包输入变化时还验证打包。
 
-`main` 推送不再重复 Go、Desktop、Clients 或原生测试套件，只在改动路径选中原生检查时运行 macOS／Windows 打包。手动 `workflow_dispatch` 执行全部检查及两平台打包。因此直接推送 main 不具备 PR 测试覆盖；需要完整验证时应使用 PR 或手动运行 CI。
+`main` 推送不再重复 Go、Desktop、Clients 或原生测试套件，在改动路径选中原生检查时运行 macOS／Windows 打包，以及 Linux 打包、沙箱和启动门禁。手动 `workflow_dispatch` 执行全部检查和三平台打包。因此直接推送 main 不具备 PR 测试覆盖；需要完整验证时应使用 PR 或手动运行 CI。
 
 `Go check` 仅在路径选择明确排除 Go 时接受 Go 任务跳过。`CI check` 要求路径选择成功、所有选中任务成功；意外跳过、失败或取消都会导致汇总失败。这些汇总不修改仓库保护规则。
 

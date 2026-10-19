@@ -1,6 +1,6 @@
 .PHONY: setup dev docs-dev check repository-check repository-metadata-check version-check eval-check docs-policy-check test-policy-check theme-contract-check generate-theme-contract theme-surface-matrix-check generate-theme-surface-matrix check-go check-desktop check-clients check-docs test test-go \
 	build-plugins check-plugins test-plugins test-go-uncached test-desktop test-clients test-native build build-go build-desktop \
-	build-clients build-docs build-macos ci install vet clean release-check \
+	build-clients build-docs build-macos build-linux ci install vet clean release-check \
 	print-version tag-release version-check version-sync release-prepare
 
 VERSION_FILE := VERSION
@@ -128,6 +128,9 @@ build-clients:
 
 build-docs:
 	npm --prefix docs-site run build
+
+build-linux:
+	npm --prefix desktop run pack:linux
 
 build-macos:
 	npm --prefix desktop run pack:mac

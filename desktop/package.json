@@ -82,7 +82,10 @@
     "build:app-context-mac": "node scripts/build-app-context-mac.cjs",
     "test:e2e:app-context": "electron-vite build && electron scripts/app-context-e2e.cjs",
     "build:cua-linux": "node scripts/build-cua-linux.cjs",
-    "pack:linux": "npm run build:core && npm run build:cua-linux && npm run build && electron-builder --linux dir --publish=never"
+    "pack:linux": "npm run build:core && npm run build:cua-linux && npm run build:ripgrep && npm run build && electron-builder --linux dir --x64 --publish=never --config.electronDist=node_modules/electron/dist",
+    "dist:linux": "npm run build:core && npm run build:cua-linux && npm run build:ripgrep && npm run build && electron-builder --linux AppImage deb --x64 --publish=never --config.electronDist=node_modules/electron/dist",
+    "release:linux": "node scripts/release-linux.cjs",
+    "test:e2e:linux-package": "node scripts/linux-package-e2e.cjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -216,7 +219,28 @@
       "artifactName": "${productName}-${os}-${arch}-setup.${ext}"
     },
     "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
       "category": "Development",
+      "executableName": "wuu",
+      "executableArgs": [
+        "--ozone-platform=x11"
+      ],
+      "artifactName": "${productName}-linux-x64.${ext}",
+      "syncDesktopName": true,
       "extraResources": [
         {
           "from": "build/bin",
@@ -226,7 +250,26 @@
           ]
         }
       ]
-    }
+    },
+    "deb": {
+      "packageName": "wuu",
+      "recommends": [],
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0",
+        "libasound2t64 | libasound2",
+        "libgbm1"
+      ]
+    },
+    "afterPack": "scripts/after-pack-linux.cjs",
+    "publish": null
   },
   "devDependencies": {
     "@babel/parser": "7.29.7",
@@ -246,5 +289,7 @@
     "typescript": "^7.0.2",
     "vite": "^7.3.6",
     "vitest": "^3.2.7"
-  }
+  },
+  "homepage": "https://github.com/blueberrycongee/wuu",
+  "desktopName": "wuu.desktop"
 }

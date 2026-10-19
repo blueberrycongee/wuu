@@ -8,8 +8,12 @@ import { productionApplicationMenuTemplate } from "./appShellGuards";
 
 export function installDesktopUpdates(shutdown: () => Promise<void>, changed: (state: UpdateState) => void) {
   // Development/ad-hoc builds never carry the release update configuration.
-  if (!app.isPackaged || process.platform !== "darwin" || !existsSync(join(process.resourcesPath, "app-update.yml"))) return;
-  const { autoUpdater } = updater;
+  const supportedPackage = process.platform === "darwin" ||
+    (process.platform === "linux" && process.arch === "x64" && Boolean(process.env.APPIMAGE) &&
+      Boolean(process.env.APPDIR) && process.execPath === join(process.env.APPDIR!, "wuu"));
+  if (!app.isPackaged || !supportedPackage || !existsSync(join(process.resourcesPath, "app-update.yml"))) return;
+  // Debian packages update through the package manager, never a privileged updater.
+  const autoUpdater = process.platform === "linux" ? new updater.AppImageUpdater() : updater.autoUpdater;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowPrerelease = false;
