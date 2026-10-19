@@ -44,6 +44,15 @@ async function waitFor(label: string, check: () => Promise<boolean> | boolean, t
   }
 }
 
+async function bounded<T>(label: string, promise: Promise<T>, timeout = 30_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([promise, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Timed out: ${label}`)), timeout);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
 async function capture(win: BrowserWindow, name: string): Promise<void> {
   if (process.platform !== "darwin") return;
   // Flush each Chromium surface before asking the native compositor for pixels.
@@ -238,7 +247,7 @@ app.whenReady().then(async () => {
   const main = new BrowserWindow({ width: 1000, height: 720, show: false });
   await main.loadURL("data:text/html;charset=utf-8,<body style='margin:0;background:%23edf0f5;font:14px system-ui;padding:12px'>Wuu · Browser panel</body>");
   if (process.env.WUU_BROWSER_PIP_LIFECYCLE_ONLY === "1") {
-    await verifyLifecycleRecovery(main);
+    await bounded("browser lifecycle recovery", verifyLifecycleRecovery(main));
     console.log(`browser-pip-e2e: PASS (browser lifecycle recovery; ${artifacts})`);
     main.destroy();
     app.exit(0);
@@ -457,7 +466,7 @@ app.whenReady().then(async () => {
   await coordinator.shutdown();
   host.destroyAll();
   assert.ok(pip.isDestroyed());
-  await verifyLifecycleRecovery(main);
+  await bounded("browser lifecycle recovery", verifyLifecycleRecovery(main));
   console.log(`browser-pip-e2e: PASS (default preview, session visibility, docking, completion auto-dismiss/reopen/cancellation, PiP/panel input, projection, resize, navigation, reduced motion, takeover, linked ownership, renderer crash/recovery, deletion, external window cleanup; ${artifacts})`);
   main.destroy();
   app.exit(0);
