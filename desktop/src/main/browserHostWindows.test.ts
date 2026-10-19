@@ -157,6 +157,7 @@ class FakeView implements BrowserViewHandle {
       this.loadedURLs.push(url);
       this.loadedBounds.push(this.getBounds());
       this.url = url;
+      this.emitReady();
     },
     getURL: () => this.url,
     getTitle: () => this.title,
@@ -172,6 +173,10 @@ class FakeView implements BrowserViewHandle {
     },
     isDestroyed: () => this.closed,
   };
+
+  emitReady(): void {
+    for (const listener of this.listeners.get("did-finish-load") ?? []) listener();
+  }
 
   emitNavigate(url: string): void {
     this.url = url;
@@ -285,6 +290,7 @@ async function openTab(harness: Harness, workdir: string, tabID: string): Promis
   await harness.coordinator.handleServerRequest(
     serverRequest("browser/open_tab", { workdir, tab_id: tabID }, `open-${workdir}-${tabID}`),
   );
+  harness.views.at(-1)?.emitReady();
 }
 
 // A minimal DOMSnapshot.captureSnapshot response with one button (backend 100)
@@ -1126,6 +1132,42 @@ function buildSnapshot(roots: SnapshotSpec[]): Record<string, unknown> {
 }
 
 describe("BrowserHostCoordinator preview surface accessors", () => {
+  it("defers preview emulation until the new renderer is ready and uses its latest geometry", async () => {
+    const harness = makeHarness();
+    const pip = new FakeWindow();
+    harness.coordinator.addTabCreatedListener((workdir, tabID) => {
+      harness.coordinator.mountTabOnWindow(workdir, tabID, pip, { x: 0, y: 0, width: 320, height: 200 }, 0.25);
+    });
+    await harness.coordinator.handleServerRequest(serverRequest("browser/open_tab", { workdir: "/repo", tab_id: "t1" }));
+    const view = harness.views[0];
+    expect(view.emulation).toBeUndefined();
+    harness.coordinator.relayoutMountedTab("/repo", "t1", pip.contentView, { x: 10, y: 20, width: 640, height: 400 }, 0.5);
+    expect(view.emulation).toBeUndefined();
+    view.emitReady();
+    expect(view.emulation).toMatchObject({ viewSize: { width: 1280, height: 800 }, scale: 0.5 });
+    expect(view.getBounds()).toEqual({ x: 10, y: 20, width: 640, height: 400 });
+  });
+
+  it("does not apply deferred emulation after takeover or destruction", async () => {
+    const harness = makeHarness();
+    const pip = new FakeWindow();
+    await harness.coordinator.handleServerRequest(serverRequest("browser/open_tab", { workdir: "/repo", tab_id: "t1" }));
+    const view = harness.views[0];
+    const disable = vi.spyOn(view.webContents, "disableDeviceEmulation");
+    harness.coordinator.mountTabOnWindow("/repo", "t1", pip, { x: 0, y: 0, width: 320, height: 200 }, 0.25);
+    await harness.coordinator.handleServerRequest(serverRequest("browser/set_visibility", { workdir: "/repo", tab_id: "t1", visible: true }));
+    expect(disable).not.toHaveBeenCalled();
+    view.emitReady();
+    expect(view.emulation).toBeUndefined();
+
+    await harness.coordinator.handleServerRequest(serverRequest("browser/open_tab", { workdir: "/repo", tab_id: "t2" }));
+    const removed = harness.views[1];
+    harness.coordinator.mountTabOnWindow("/repo", "t2", pip, { x: 0, y: 0, width: 320, height: 200 }, 0.25);
+    await harness.coordinator.handleServerRequest(serverRequest("browser/close_tab", { workdir: "/repo", tab_id: "t2" }));
+    removed.emitReady();
+    expect(removed.emulation).toBeUndefined();
+  });
+
   it("lays out a new hidden page before navigation and preserves an existing tab's geometry", async () => {
     const harness = makeHarness();
     await harness.coordinator.handleServerRequest(serverRequest("browser/open_tab", {

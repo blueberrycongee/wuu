@@ -3,6 +3,8 @@
 // case holds the result of an actual CDP geometry read to exercise its async
 // boundary without replacing the browser or fabricating a command response.
 import assert from "node:assert/strict";
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { once } from "node:events";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { dirname, join, resolve } from "node:path";
@@ -68,7 +70,7 @@ const activeTurnIDs = new Map<string, string>();
 const activeExecutionIDs = new Map<string, string>();
 const controlledResponses = new Map<string, ServerResponse>();
 const controlledWaiters = new Map<string, ReturnType<typeof deferred>>();
-const controlledMarkers = new Set(["OWNERSHIP_HIDDEN", "OWNERSHIP_CAPTURE_CANCEL", "OWNERSHIP_C", "OWNERSHIP_C_CONTINUE", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP", "OWNERSHIP_DISPOSE", "OWNERSHIP_SIBLING", "OWNERSHIP_FOREIGN", "OWNERSHIP_RETAINED_AGAIN"]);
+const controlledMarkers = new Set(["OWNERSHIP_HIDDEN", "OWNERSHIP_CAPTURE_CANCEL", "OWNERSHIP_C", "OWNERSHIP_C_CONTINUE", "OWNERSHIP_LIFECYCLE", "OWNERSHIP_KEEP", "OWNERSHIP_DISPOSE", "OWNERSHIP_SIBLING", "OWNERSHIP_FOREIGN", "OWNERSHIP_RETAINED_AGAIN", "OWNERSHIP_LINKED"]);
 function controlledWaiter(marker: string) {
   let waiter = controlledWaiters.get(marker);
   if (!waiter) { waiter = deferred(); controlledWaiters.set(marker, waiter); }
@@ -325,7 +327,14 @@ app.whenReady().then(async () => {
     ...(process.platform === "linux" ? { frame: false, autoHideMenuBar: true } : {}),
   }));
   const context: RuntimeContext = { kind: "no_project", cwd: workdir };
-  pool = new AppServerClientPool(() => context, () => workdir, notify, undefined, () => ({
+  let activeWorkdir = workdir;
+  const children = new Map<string, ChildProcessWithoutNullStreams[]>();
+  const tornDownWorkdirs: string[] = [];
+  pool = new AppServerClientPool(() => context, () => activeWorkdir, notify, (command, args, options) => {
+    const child = spawn(command, args, options);
+    children.set(options.cwd, [...(children.get(options.cwd) ?? []), child]);
+    return child;
+  }, () => ({
     protocol_version: APP_SERVER_PROTOCOL_VERSION,
     client: { name: "browser-ownership-e2e", version: "fixture" },
     capabilities: { reverse_rpc: { methods: [...new Set([...BROWSER_REVERSE_RPC_METHODS, "browser/finalize", "browser/turn_ended"])] } },
@@ -373,7 +382,8 @@ app.whenReady().then(async () => {
     surface() {}, userInput() {}, presented() {},
     adopted(payload) { popupAdoptions.push(payload); },
   });
-  pool.setClientTorndownHandler(cwd => host!.onClientTorndown(cwd));
+  pool.setWorkdirPinnedCheck(cwd => host!.hasAgentTabs(cwd));
+  pool.setClientTorndownHandler(cwd => { tornDownWorkdirs.push(cwd); host!.onClientTorndown(cwd); });
   async function start(marker: string, existingThread?: string, clientID?: string) {
     const threadID = existingThread ?? (await pool!.request<{ thread: Thread }>("thread/start", { engine: "wuu", provider: "fixture", model: "fixture", permission_mode: "unconfined" })).thread.id;
     completed.set(threadID, deferred());
@@ -981,7 +991,46 @@ app.whenReady().then(async () => {
   const disposeResult = await disposedInput;
   check("disposal invalidates input before closing views", disposeResult !== "delivered" && host.tabSurfaceMeta(workdir, disposalTab) === undefined, disposeResult);
   await finishControlled("OWNERSHIP_DISPOSE", disposal);
-  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { hidden, captureCancelled, popup, sibling, lifecycle, retained, foreignThread, a, b, c, d, disposal }, tabs: { hiddenTab, cancelledCaptureTab, popupTab, lifecycleTab, freshTab, retainedOpenerTab, handoffTab, retainedAgainTemporary, deliverableTab, persistentTab, finalTemporaryTab, aTab, bTab, cTab, dTab, disposalTab }, calls, replies, providerRequests, popupRequests, popupAdoptions, selfCloseErrors, selfCloseNotifications, clickRequests, nativeInputCommands, events }, null, 2));
+  execFileSync("git", ["init", "-q", workdir]);
+  writeFileSync(join(workdir, "fixture.txt"), "Linked-worktree lifecycle fixture\n");
+  execFileSync("git", ["-C", workdir, "add", "fixture.txt"]);
+  execFileSync("git", ["-C", workdir, "-c", "user.name=Browser fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Initialize synthetic worktree fixture"]);
+  const linked = (await pool.request<{ thread: Thread }>("thread/start", {
+    engine: "wuu", provider: "fixture", model: "fixture", permission_mode: "unconfined", workspace: "worktree",
+  })).thread;
+  check("real Go thread starts in a linked Git worktree", linked.cwd !== workdir && execFileSync("git", ["-C", linked.cwd, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim() === linked.cwd);
+  await start("OWNERSHIP_LINKED", linked.id);
+  await bounded("linked-worktree real browser navigation", controlledWaiter("OWNERSHIP_LINKED").promise);
+  const linkedTab = openedForThread(linked.id)[0];
+  const linkedCall = calls.find(call => call.method === "browser/open_tab" && call.params.thread_id === linked.id);
+  check("real reverse RPC identifies the linked worktree", linkedCall?.params.workdir === linked.cwd, JSON.stringify(linkedCall));
+  await controlledTool("OWNERSHIP_LINKED", { action: "finalize", keep: [{ tab_id: linkedTab, status: "deliverable" }] });
+  await finishControlled("OWNERSHIP_LINKED", linked.id);
+  const linkedContents = views.find(view => view.webContents && !view.webContents.isDestroyed() && view.webContents.getURL() === `${baseURL}/OWNERSHIP_LINKED`)!.webContents;
+  const ownerChild = children.get(workdir)!.at(-1)!;
+  check("linked worktree leaves a retained page on an idle core", !pool.runningThreadsSnapshot().some(item => item.workdir === workdir) && !linkedContents.isDestroyed());
+  for (let index = 0; index < 4; index++) {
+    activeWorkdir = join(fixture, `pressure-${index}`);
+    mkdirSync(activeWorkdir, { recursive: true });
+    await pool.requestInContext({ kind: "no_project", cwd: activeWorkdir }, "thread/list");
+  }
+  check("actual pool pressure evicts an unpinned sibling core", tornDownWorkdirs.some(cwd => cwd.startsWith(join(fixture, "pressure-"))), JSON.stringify(tornDownWorkdirs));
+  check("retained linked page protects its actual owner process from eviction", !tornDownWorkdirs.includes(workdir) && ownerChild.exitCode === null && ownerChild.signalCode === null && !linkedContents.isDestroyed(), JSON.stringify({ pid: ownerChild.pid, tornDownWorkdirs }));
+  check("retained linked page stays usable after pool pressure", await linkedContents.executeJavaScript("document.querySelector('h1').textContent") === "/OWNERSHIP_LINKED");
+  const linkedDestroyed = once(linkedContents, "destroyed");
+  await pool.request("thread/delete", { thread_id: linked.id });
+  check("real thread deletion releases the linked owner's pin", !host.hasAgentTabs(workdir));
+  await bounded("deleted linked page finishes native destruction", linkedDestroyed);
+  check("real thread deletion closes the linked page", linkedContents.isDestroyed());
+  const ownerExited = once(ownerChild, "exit");
+  for (let index = 4; index < 8; index++) {
+    activeWorkdir = join(fixture, `pressure-${index}`);
+    mkdirSync(activeWorkdir, { recursive: true });
+    await pool.requestInContext({ kind: "no_project", cwd: activeWorkdir }, "thread/list");
+  }
+  await bounded("unpinned actual owner process exits after pool eviction", ownerExited);
+  check("deleting the retained thread makes its actual core evictable", tornDownWorkdirs.includes(workdir) && (ownerChild.exitCode !== null || ownerChild.signalCode !== null), JSON.stringify({ pid: ownerChild.pid, exitCode: ownerChild.exitCode, signalCode: ownerChild.signalCode }));
+  writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { hidden, captureCancelled, popup, sibling, lifecycle, retained, foreignThread, a, b, c, d, disposal, linked: linked.id }, linkedWorktree: { cwd: linked.cwd, ownerPID: ownerChild.pid, tornDownWorkdirs }, tabs: { hiddenTab, cancelledCaptureTab, popupTab, lifecycleTab, freshTab, retainedOpenerTab, handoffTab, retainedAgainTemporary, deliverableTab, persistentTab, finalTemporaryTab, aTab, bTab, cTab, dTab, disposalTab }, calls, replies, providerRequests, popupRequests, popupAdoptions, selfCloseErrors, selfCloseNotifications, clickRequests, nativeInputCommands, events }, null, 2));
   console.log(JSON.stringify(checks, null, 2));
   await pool.shutdown();
   host.destroyAll();

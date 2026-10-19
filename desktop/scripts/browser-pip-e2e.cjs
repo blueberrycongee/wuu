@@ -4,10 +4,11 @@
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
+const os = require("node:os");
 
 const desktopRoot = path.resolve(__dirname, "..");
 const outDir = path.join(desktopRoot, "out-e2e");
-const outFile = path.join(outDir, "browser-pip-e2e.main.cjs");
+const outFile = path.join(outDir, "browser-pip-e2e.main.mjs");
 
 fs.mkdirSync(outDir, { recursive: true });
 
@@ -17,8 +18,8 @@ async function main() {
     entryPoints: [path.join(__dirname, "browser-pip-e2e-entry.ts")],
     bundle: true,
     platform: "node",
-    format: "cjs",
-    target: "node20",
+    format: "esm",
+    target: "node22",
     outfile: outFile,
     external: ["electron"],
     plugins: [{
@@ -35,11 +36,18 @@ async function main() {
     logLevel: "warning",
   });
 
-  const electronBinary = require("electron");
-  const result = spawnSync(String(electronBinary), [outFile], {
-    stdio: "inherit",
-    env: { ...process.env },
-  });
-  process.exit(result.status ?? 1);
+  if (process.env.WUU_BROWSER_PIP_BUILD_ONLY === "1") return;
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "wuu-browser-pip-"));
+  try {
+    const result = spawnSync(String(require("electron")), [
+      ...(process.platform === "linux" ? ["--no-sandbox", ...(!process.env.DISPLAY ? ["--ozone-platform=headless", "--ozone-override-screen-size=1440,1000"] : [])] : []), outFile,
+    ], { stdio: "inherit", env: { ...process.env, WUU_BROWSER_PIP_FIXTURE: fixture } });
+    console.log(`browser-pip-e2e: Electron exited ${JSON.stringify({ status: result.status, signal: result.signal })}`);
+    process.exitCode = result.status ?? 1;
+    if (result.error) throw result.error;
+    if (result.status === 0 && !fs.existsSync(path.join(fixture, "completed"))) throw new Error("Electron exited before browser PiP assertions completed");
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
 }
 main().catch((error) => { console.error(error); process.exit(1); });

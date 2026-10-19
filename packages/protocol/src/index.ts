@@ -3454,11 +3454,11 @@ export type WuuDesktopApi = {
     tabID: string,
     suppressed: boolean,
   ) => void;
-  // Main→renderer: the core owning `workdir` was torn down / evicted, so any
-  // browser activity for it is dead. Lets the renderer drop ghost activity UI
-  // even when the Close-time "stopped" events were lost. Returns unsubscribe.
+  // Main→renderer: drop browser activity after deletion or core teardown.
+  // threadID scopes invalidation when multiple cores browse the same workdir.
+  // Returns unsubscribe.
   onBrowserInvalidate?: (
-    handler: (payload: { workdir: string }) => void,
+    handler: (payload: { workdir: string; threadID?: string }) => void,
   ) => () => void;
 };
 

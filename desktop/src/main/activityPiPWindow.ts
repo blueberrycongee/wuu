@@ -86,6 +86,7 @@ export interface BrowserPiPOverlayHandle {
     setWindowOpenHandler(handler: () => { action: "deny" }): void;
     on(event: "will-navigate", listener: (event: unknown, url: string) => void): void;
     isDestroyed(): boolean;
+    close(): void;
   };
   setBounds(bounds: Rectangle): void;
 }
@@ -249,14 +250,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     });
     win.on("closed", () => {
       if (this.win !== win) return;
-      this.stopHoverTracking();
-      this.setTurnCompleted(false);
-      this.detachHostParent?.();
-      this.detachHostParent = undefined;
-      this.win = undefined;
-      this.overlay = undefined;
-      this.mounted = false;
-      this.visible = false;
+      this.stop();
+      this.deps.sink.onGone();
     });
     this.startContent();
     this.setHostParent(this.deps.parent?.() ?? null);
@@ -499,7 +494,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   stop(onStopped?: () => void): void {
     if (onStopped) this.stopCallbacks.push(onStopped);
     if (this.stopped) {
-      if (!this.contentStopping) this.finishStop();
+      if (!this.content && !this.contentStopping) this.finishStop();
       return;
     }
     this.stopped = true;
@@ -520,8 +515,11 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
 
   private finishStop(): void {
     const win = this.win;
+    const overlay = this.overlay;
     this.win = undefined;
     this.overlay = undefined;
+    // Additional WebContentsViews outlive their BrowserWindow unless closed.
+    if (overlay && !overlay.webContents.isDestroyed()) overlay.webContents.close();
     if (win && !win.isDestroyed()) win.destroy();
     for (const callback of this.stopCallbacks.splice(0)) callback();
   }
@@ -1159,6 +1157,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   // Overlay pushes.
   // -------------------------------------------------------------------------
   private syncOverlayMode(): void {
+    if (!this.win || this.win.isDestroyed()) return;
     this.execute(`window.wuuPipViewport?.(${JSON.stringify(this.contentRect())})`);
     this.execute(`window.wuuPipMount?.(${JSON.stringify({ mounted: this.mounted })})`);
   }

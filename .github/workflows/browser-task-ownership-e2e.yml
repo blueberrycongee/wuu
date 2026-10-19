@@ -11,8 +11,13 @@ on:
       - "internal/claudeengine/**"
       - "packages/protocol/**"
       - "desktop/src/main/browserHostWindows.ts"
+      - "desktop/src/main/activityPiPWindow.ts"
+      - "desktop/src/main/browserPiPWindow.ts"
+      - "desktop/src/main/cuaActivityWindows.ts"
+      - "desktop/src/main/index.ts"
       - "desktop/src/main/appServerClients.ts"
       - "desktop/scripts/browser-task-ownership-e2e*"
+      - "desktop/scripts/browser-pip-e2e*"
       - "desktop/scripts/external-capabilities-*"
       - ".github/workflows/browser-task-ownership-e2e.yml"
   workflow_dispatch:
@@ -36,8 +41,12 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/package-lock.json
       - name: Install desktop dependencies
-        run: npm ci --prefix desktop
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openbox x11-utils
+          npm ci --prefix desktop
       - name: Build core
+        id: build_core
         run: |
           mkdir -p desktop/build/bin
           go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu
@@ -48,13 +57,41 @@ jobs:
           mkdir -p "$WUU_BROWSER_OWNERSHIP_OUTPUT"
           set -o pipefail
           xvfb-run --auto-servernum node desktop/scripts/browser-task-ownership-e2e.cjs 2>&1 | tee "$WUU_BROWSER_OWNERSHIP_OUTPUT/run.log"
+      - name: Verify browser crash and deletion recovery
+        if: ${{ !cancelled() && steps.build_core.outcome == 'success' }}
+        env:
+          WUU_BROWSER_PIP_E2E_ARTIFACTS: ${{ github.workspace }}/desktop/out/e2e/browser-lifecycle
+          WUU_BROWSER_PIP_LIFECYCLE_ONLY: "1"
+        run: |
+          mkdir -p "$WUU_BROWSER_PIP_E2E_ARTIFACTS"
+          set -o pipefail
+          xvfb-run --auto-servernum dbus-run-session -- bash -euc '
+            openbox > "$WUU_BROWSER_PIP_E2E_ARTIFACTS/window-manager.log" 2>&1 &
+            wm=$!
+            trap "kill $wm 2>/dev/null || true" EXIT
+            for attempt in $(seq 1 100); do
+              xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id" && break
+              sleep .05
+            done
+            xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id"
+            node desktop/scripts/browser-pip-e2e.cjs
+          ' 2>&1 | tee "$WUU_BROWSER_PIP_E2E_ARTIFACTS/run.log"
       - name: Verify external engine host capabilities
+        if: ${{ !cancelled() && steps.build_core.outcome == 'success' }}
         env:
           WUU_EXTERNAL_CAPABILITIES_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/external-capabilities
         run: |
           mkdir -p "$WUU_EXTERNAL_CAPABILITIES_OUTPUT"
           set -o pipefail
           xvfb-run --auto-servernum node desktop/scripts/external-capabilities-e2e.cjs 2>&1 | tee "$WUU_EXTERNAL_CAPABILITIES_OUTPUT/run.log"
+      - name: Upload browser lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-lifecycle-evidence
+          path: desktop/out/e2e/browser-lifecycle
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload ownership evidence
         if: always()
         uses: actions/upload-artifact@v4

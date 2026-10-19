@@ -63,7 +63,6 @@ import type {
   ActivityActionResult,
   ActivityListResult,
   ActivityReleaseResult,
-  ActivitySession,
   ActiveDocumentContext,
   CoreBuildInfo,
   DesktopBuildInfo,
@@ -340,7 +339,7 @@ const browserHostCoordinator = new BrowserHostCoordinator(
       }) as unknown as BrowserHostWindowHandle,
     (options) => createBrowserView(options) as unknown as BrowserViewHandle,
   ),
-  (workdir) => broadcastToAll("wuu:browser-invalidate", { workdir }),
+  (workdir, threadID) => broadcastToAll("wuu:browser-invalidate", { workdir, threadID }),
 );
 // A workdir with a live agent tab counts as busy so pool idle-eviction cannot
 // yank the page out mid user-takeover (isBusy only sees pending requests +
@@ -359,15 +358,17 @@ appServerClientPool.setClientTorndownHandler((workdir) => {
 // lifecycle, session visibility, stack ordering, and position memory.
 const observationCoordinator = new ObservationCoordinator(
   windowRegistry,
-  async (threadID): Promise<ActivitySession[]> => {
+  async (threadID) => {
     const workdir = projectManager.activeWorkdir();
-    if (!workdir) return [];
+    if (!workdir) return undefined;
+    let clientWorkdir = workdir;
     const result = await appServerClientPool.requestForWorkdir<ActivityListResult>(
       workdir,
       "activity/list",
       { thread_id: threadID },
+      (_response, ownerWorkdir) => { clientWorkdir = ownerWorkdir; },
     );
-    return result.activities ?? [];
+    return { clientWorkdir, activities: result.activities ?? [] };
   },
   createObservationPiPFactory({
     browserHost: browserHostCoordinator,
@@ -377,6 +378,9 @@ const observationCoordinator = new ObservationCoordinator(
 );
 observationCoordinator.setAppearance(resolvedThemeIsDark());
 observationCoordinator.setAutoShow(getActivityPreviewAutoShow());
+browserHostCoordinator.addTabCreatedListener((workdir, tabID, threadID) =>
+  observationCoordinator.restoreBrowserTab(workdir, tabID, threadID),
+);
 browserHostCoordinator.setRendererSink({
   surface: (snapshot) => broadcastToAll("wuu:browser-surface", snapshot),
   userInput: (payload) => broadcastToAll("wuu:browser-user-input", payload),

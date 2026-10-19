@@ -143,6 +143,7 @@ export type BrowserInteractionHint = AgentCursorFeedback
 
 type BrowserTurn = { turnID: string; executionID: string; ended: boolean };
 type BrowserRequest = { cancelled: boolean; workdir: string; threadID: string; turn?: BrowserTurn };
+type BrowserOwner = { workdir: string; threadID: string; clientWorkdir: string };
 
 type TabEntry = {
   view: BrowserViewHandle;
@@ -185,6 +186,7 @@ type TabEntry = {
   agentInputDepth: number;
   ignoreUserInputUntil: number;
   loading: boolean;
+  rendererReady: boolean;
   loadError?: string;
   activeOperations: number;
   // Bumps cancel an in-flight scrollbar stylesheet install. The key is the
@@ -225,8 +227,8 @@ type RawInteractableNode = {
  * Deliberately has NO stop-before-replace lock / retry backoff (unlike the CUA
  * observation coordinator): those exist because replayd groups screen-capture
  * clients by executable and two overlapping helpers fight over one exclusive
- * capture stream. A WebContentsView owns no exclusive OS resource and has no
- * child-process crash surface, so there is nothing to serialize.
+ * capture stream. Browser tabs can run independently; renderer crashes are
+ * handled by discarding the failed contents and rebuilding on the next action.
  */
 export class BrowserHostCoordinator {
   private readonly tabs = new Map<string, TabEntry>();
@@ -244,6 +246,9 @@ export class BrowserHostCoordinator {
   private readonly threadControls = new Map<string, { controller: string; allowed: boolean; updatedAt: string; grantAt?: string; localTakeover?: number }>();
   private readonly pendingRequests = new Map<string, BrowserRequest>();
   private readonly threadTurns = new Map<string, BrowserTurn>();
+  // A conversation can browse from a linked worktree while its core still
+  // belongs to the project root. Keep transport ownership separate from CWD.
+  private readonly owners = new Map<string, BrowserOwner>();
   // Preview-surface listeners. Interaction hints flow main-side only (never
   // through the core protocol): they mirror actions this coordinator already
   // dispatched, so no model-visible data crosses a new channel.
@@ -251,6 +256,7 @@ export class BrowserHostCoordinator {
     (workdir: string, tabID: string, hint: BrowserInteractionHint) => Promise<unknown> | void
   >();
   private readonly tabClosedListeners = new Set<(workdir: string, tabID: string) => void>();
+  private readonly tabCreatedListeners = new Set<(workdir: string, tabID: string, threadID?: string) => void>();
   // Navigation and reparent notifications let the observation surface (PiP)
   // keep its chrome label fresh and notice when a visibility takeover adopts
   // the tab it is presenting.
@@ -270,7 +276,7 @@ export class BrowserHostCoordinator {
     // renderer clears that workdir's activitySessions to drop ghost UI. Kept
     // separate from server-exit because the disposing/eviction path suppresses
     // server-exit entirely (appServerClients.ts finalizeChild).
-    private readonly broadcastInvalidation: (workdir: string) => void,
+    private readonly broadcastInvalidation: (workdir: string, threadID?: string) => void,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -282,8 +288,9 @@ export class BrowserHostCoordinator {
     const params = asRecord(event.message.params);
     const workdir = typeof params.workdir === "string" && params.workdir ? params.workdir : event.workdir;
     // Receiving a request is proof this workdir's core is alive again.
-    this.downWorkdirs.delete(workdir);
+    this.downWorkdirs.delete(event.workdir);
     const threadID = typeof params.thread_id === "string" ? params.thread_id.trim() : "";
+    if (threadID) this.owners.set(tabKey(workdir, threadID), { workdir, threadID, clientWorkdir: event.workdir });
     const requestID = typeof params.request_id === "string" ? params.request_id : "";
     const requestKey = requestID ? JSON.stringify([workdir, threadID, requestID]) : undefined;
     const request: BrowserRequest = { cancelled: false, workdir, threadID, turn: this.threadTurns.get(tabKey(workdir, threadID)) };
@@ -292,9 +299,9 @@ export class BrowserHostCoordinator {
       if (!threadID) throw new Error("browser request requires thread_id");
       const result = await this.dispatch(method, workdir, threadID, params, request);
       if (method !== "browser/turn_ended") this.assertRequestCurrent(request);
-      this.respondSafe(id, workdir, result);
+      this.respondSafe(id, event.workdir, result);
     } catch (error) {
-      this.rejectSafe(id, workdir, error instanceof Error ? error.message : String(error));
+      this.rejectSafe(id, event.workdir, error instanceof Error ? error.message : String(error));
     } finally {
       if (requestKey) this.pendingRequests.delete(requestKey);
     }
@@ -303,6 +310,18 @@ export class BrowserHostCoordinator {
   handleServerEvent(event: ServerEvent): void {
     if (event.kind !== "notification") return;
     const params = asRecord(event.message.params);
+    if (event.message.method === "thread/deleted" && typeof params.thread_id === "string") {
+      this.dropOwners(owner => owner.threadID === params.thread_id);
+      return;
+    }
+    if (["thread/started", "thread/resumed", "thread/updated"].includes(event.message.method)) {
+      const thread = asRecord(params.thread);
+      if (typeof thread.id === "string" && typeof thread.cwd === "string") {
+        const key = tabKey(thread.cwd, thread.id);
+        if (!this.owners.has(key)) this.owners.set(key, { workdir: thread.cwd, threadID: thread.id, clientWorkdir: event.workdir });
+      }
+      return;
+    }
     if (event.message.method === "browser/turn_started") {
       const workdir = typeof params.workdir === "string" ? params.workdir : event.workdir;
       const threadID = typeof params.thread_id === "string" ? params.thread_id : "";
@@ -310,6 +329,7 @@ export class BrowserHostCoordinator {
       const executionID = typeof params.execution_id === "string" ? params.execution_id : "";
       if (!threadID || !turnID || !executionID) return;
       const key = tabKey(workdir, threadID);
+      this.owners.set(key, { workdir, threadID, clientWorkdir: event.workdir });
       const previous = this.threadTurns.get(key);
       if (previous?.turnID === turnID && previous.executionID === executionID) return;
       this.threadTurns.set(key, { turnID, executionID, ended: false });
@@ -336,27 +356,31 @@ export class BrowserHostCoordinator {
     this.downWorkdirs.add(workdir);
   }
 
-  // Pool client-teardown sink. NOT server-exit driven: the disposing flag
-  // suppresses server-exit on the eviction path, so this hook is the authority
-  // for tearing down a workdir's views. Only touches the given workdir's tabs —
-  // the pool mints up to 3 cores, each with its own tab_ids, so a global sweep
-  // would kill a sibling core's live tab.
+  // Eviction suppresses server-exit, so both paths call this transport-owned
+  // cleanup. A core owns its worktree tabs as well as its project-root tabs.
   onClientTorndown(workdir: string): void {
     this.downWorkdirs.add(workdir);
-    for (const [key, entry] of [...this.tabs]) {
-      if (entry.workdir === workdir) {
-        this.destroyEntry(entry);
-        this.tabs.delete(key);
-        this.lastBounds.delete(key);
-      }
+    this.dropOwners(owner => owner.clientWorkdir === workdir);
+  }
+
+  private dropOwners(matches: (owner: BrowserOwner) => boolean): void {
+    for (const request of this.pendingRequests.values()) {
+      const owner = this.owners.get(tabKey(request.workdir, request.threadID));
+      if (owner && matches(owner)) request.cancelled = true;
     }
-    for (const key of this.threadControls.keys()) {
-      if (key.startsWith(tabKey(workdir, ""))) this.threadControls.delete(key);
+    for (const entry of [...this.tabs.values()]) {
+      const owner = this.owners.get(tabKey(entry.workdir, entry.threadID ?? ""));
+      if (owner && matches(owner)) this.destroyEntry(entry);
     }
-    for (const key of this.threadTurns.keys()) {
-      if (key.startsWith(tabKey(workdir, ""))) this.threadTurns.delete(key);
+    for (const [key, owner] of this.owners) {
+      if (!matches(owner)) continue;
+      const turn = this.threadTurns.get(key);
+      if (turn) turn.ended = true;
+      this.threadTurns.delete(key);
+      this.threadControls.delete(key);
+      this.owners.delete(key);
+      this.broadcastInvalidation(owner.workdir, owner.threadID);
     }
-    this.broadcastInvalidation(workdir);
   }
 
   // Pool eviction guard: a workdir with a live agent tab (especially mid user
@@ -364,9 +388,13 @@ export class BrowserHostCoordinator {
   // under the user with no warning.
   hasAgentTabs(workdir: string): boolean {
     for (const entry of this.tabs.values()) {
-      if (entry.workdir === workdir) return true;
+      if (this.ownerWorkdir(entry) === workdir) return true;
     }
     return false;
+  }
+
+  private ownerWorkdir(entry: TabEntry): string {
+    return this.owners.get(tabKey(entry.workdir, entry.threadID ?? ""))!.clientWorkdir;
   }
 
   ownsWebContents(webContentsID: number): boolean {
@@ -392,6 +420,11 @@ export class BrowserHostCoordinator {
   addTabClosedListener(listener: (workdir: string, tabID: string) => void): () => void {
     this.tabClosedListeners.add(listener);
     return () => this.tabClosedListeners.delete(listener);
+  }
+
+  addTabCreatedListener(listener: (workdir: string, tabID: string, threadID?: string) => void): () => void {
+    this.tabCreatedListeners.add(listener);
+    return () => this.tabCreatedListeners.delete(listener);
   }
 
   addNavigateListener(listener: (workdir: string, tabID: string, url: string) => void): () => void {
@@ -458,12 +491,16 @@ export class BrowserHostCoordinator {
     // Chromium clamps UI zoom to at least 25%, even when older Electron
     // versions report a smaller requested value. Emulation scales the surface
     // independently of layout and devicePixelRatio, including compact cards.
-    entry.contents.enableDeviceEmulation({
-      screenPosition: "desktop", screenSize: { width: 0, height: 0 },
-      viewPosition: { x: 0, y: 0 }, deviceScaleFactor: 0,
-      viewSize: { width: Math.round(rect.width / scale), height: Math.round(rect.height / scale) },
-      scale,
-    });
+    // Electron dereferences the native frame view during emulation. A newly
+    // registered tab has no such view until its first document finishes loading.
+    if (entry.rendererReady) {
+      entry.contents.enableDeviceEmulation({
+        screenPosition: "desktop", screenSize: { width: 0, height: 0 },
+        viewPosition: { x: 0, y: 0 }, deviceScaleFactor: 0,
+        viewSize: { width: Math.round(rect.width / scale), height: Math.round(rect.height / scale) },
+        scale,
+      });
+    }
     entry.preview = { scale, restoreBounds: entry.preview?.restoreBounds ?? entry.view.getBounds() };
     entry.view.setBounds(rect);
   }
@@ -666,7 +703,7 @@ export class BrowserHostCoordinator {
     threadID?: string,
   ): Promise<BrowserSurfaceSnapshot | undefined> {
     if (!tabID) return undefined;
-    if (command === "navigate") {
+    if (command === "navigate" || (command === "reload" && !this.tabs.has(tabKey(workdir, tabID)))) {
       const target = url?.trim() ?? "";
       if (!target) return this.surface(workdir, tabID);
       let entry = this.tabs.get(tabKey(workdir, tabID));
@@ -726,6 +763,7 @@ export class BrowserHostCoordinator {
     this.lastBounds.clear();
     this.threadControls.clear();
     this.threadTurns.clear();
+    this.owners.clear();
     for (const request of this.pendingRequests.values()) request.cancelled = true;
     if (this.hostWindow && !this.hostWindow.isDestroyed()) {
       this.hostWindow.destroy();
@@ -807,13 +845,18 @@ export class BrowserHostCoordinator {
       agentInputAllowed: this.threadControls.get(tabKey(workdir, threadID ?? ""))?.allowed !== false,
       debuggerAttached: true, nodeMap: new Map(), currentParent: parent,
       suppressed: false, presented: false, inPanel: false, blockPresent: false,
-      agentInputDepth: 0, ignoreUserInputUntil: 0, loading: false,
+      agentInputDepth: 0, ignoreUserInputUntil: 0, loading: false, rendererReady: false,
       activeOperations: 0, spectatorScrollbarEpoch: 0,
     };
+    const ownerKey = tabKey(workdir, threadID ?? "");
+    if (!this.owners.has(ownerKey)) {
+      this.owners.set(ownerKey, { workdir, threadID: threadID ?? "", clientWorkdir: workdir });
+    }
     this.tabs.set(tabKey(workdir, tabID), entry);
     this.agentWebContentsIds.add(entry.contentsID);
     this.applyEntryActivity(entry);
     this.wireEntry(entry);
+    for (const listener of this.tabCreatedListeners) listener(workdir, tabID, threadID);
     return entry;
   }
 
@@ -1142,6 +1185,13 @@ export class BrowserHostCoordinator {
       entry.loading = false;
       publish();
     });
+    contents.on("did-finish-load", () => {
+      if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || contents.isDestroyed()) return;
+      entry.rendererReady = true;
+      if (entry.preview && entry.currentParent) {
+        this.relayoutMountedTab(entry.workdir, entry.tabID, entry.currentParent, entry.view.getBounds(), entry.preview.scale);
+      }
+    });
     contents.on("page-title-updated", publish);
     contents.on("did-fail-load", (...args: unknown[]) => {
       const errorCode = typeof args[1] === "number" ? args[1] : 0;
@@ -1163,9 +1213,19 @@ export class BrowserHostCoordinator {
       const input = args[1] as { type?: string } | undefined;
       if (input?.type === "keyDown") this.noteUserInput(entry);
     });
+    contents.on("render-process-gone", () => {
+      // A crashed renderer does not destroy its WebContents. Remove the dead
+      // tab so the core's tab_not_found recovery can rebuild it without replaying
+      // side-effecting input. Notify the panel before closing its preview.
+      entry.loading = false;
+      entry.rendererReady = false;
+      entry.loadError = "Browser page stopped. Reload to reopen it.";
+      publish();
+      this.destroyEntry(entry);
+    });
     contents.on("destroyed", () => this.destroyEntry(entry, true));
     contents.setWindowOpenHandler((details) => {
-      if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || contents.isDestroyed() || this.downWorkdirs.has(entry.workdir)) {
+      if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || contents.isDestroyed() || this.downWorkdirs.has(this.ownerWorkdir(entry))) {
         return { action: "deny" };
       }
       const activeTurn = entry.threadID ? this.threadTurns.get(tabKey(entry.workdir, entry.threadID)) : undefined;
@@ -1174,7 +1234,7 @@ export class BrowserHostCoordinator {
       const inputGeneration = entry.inputGeneration;
       if ((popupTurn && popupTurn !== activeTurn) || (!popupTurn && originTurn && entry.status === "temporary")) return { action: "deny" };
       const validOpener = (): boolean => this.tabs.get(tabKey(entry.workdir, entry.tabID)) === entry &&
-        !contents.isDestroyed() && !this.downWorkdirs.has(entry.workdir) &&
+        !contents.isDestroyed() && !this.downWorkdirs.has(this.ownerWorkdir(entry)) &&
         (!popupTurn || (!popupTurn.ended && entry.agentInputAllowed && entry.inputGeneration === inputGeneration &&
           this.threadTurns.get(tabKey(entry.workdir, entry.threadID ?? "")) === popupTurn));
       if (!validOpener()) return { action: "deny" };
@@ -1473,7 +1533,7 @@ export class BrowserHostCoordinator {
 
   private resetPreviewScale(entry: TabEntry): void {
     if (entry.preview) {
-      entry.contents.disableDeviceEmulation();
+      if (entry.rendererReady) entry.contents.disableDeviceEmulation();
       entry.view.setBounds(entry.preview.restoreBounds);
       entry.preview = undefined;
     }

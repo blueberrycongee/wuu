@@ -210,9 +210,9 @@ export function WorkspaceBrowserPanel({
       await onUserInteraction?.();
     }
     if (tabID !== selectedTabIDRef.current) return;
-    const snapshot = await send({ workdir, threadID, tabID, command, url });
+    const snapshot = await send({ workdir, threadID, tabID, command, url: command === "reload" ? currentURL : url });
     if (snapshot && snapshot.tabID === selectedTabIDRef.current) applySurface(snapshot);
-  }, [activity, applySurface, onUserInteraction, threadID, workdir]);
+  }, [activity, applySurface, currentURL, onUserInteraction, threadID, workdir]);
 
   const navigate = useCallback((rawInput: string) => {
     const target = resolveNavigationInput(rawInput);

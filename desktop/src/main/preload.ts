@@ -632,7 +632,7 @@ type BrowserTakeoverApi = {
     force?: boolean,
   ) => void;
   suppressBrowserOverlay: (workdir: string, tabID: string, suppressed: boolean) => void;
-  onBrowserInvalidate: (handler: (payload: { workdir: string }) => void) => () => void;
+  onBrowserInvalidate: (handler: (payload: { workdir: string; threadID?: string }) => void) => () => void;
   browserCommand: (params: BrowserCommandParams) => Promise<BrowserSurfaceSnapshot | null>;
   browserSurface: (workdir: string, tabID: string) => Promise<BrowserSurfaceSnapshot | null>;
   onBrowserSurface: (handler: (snapshot: BrowserSurfaceSnapshot) => void) => () => void;
@@ -666,7 +666,7 @@ browserApi.browserCommand = (params) =>
 browserApi.browserSurface = (workdir, tabID) =>
   ipcRenderer.invoke("wuu:browser-surface", { workdir, tabID }) as Promise<BrowserSurfaceSnapshot | null>;
 browserApi.onBrowserInvalidate = (handler) => {
-  const listener = (_event: Electron.IpcRendererEvent, payload: { workdir: string }) =>
+  const listener = (_event: Electron.IpcRendererEvent, payload: { workdir: string; threadID?: string }) =>
     handler(payload);
   ipcRenderer.on("wuu:browser-invalidate", listener);
   return () => ipcRenderer.removeListener("wuu:browser-invalidate", listener);

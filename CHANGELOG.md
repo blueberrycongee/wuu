@@ -25,6 +25,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Release embedded browser pages when their conversation is deleted or their
+  owning backend exits, including linked worktrees. Close preview overlays on
+  teardown and allow crashed pages to reopen without replaying browser input.
 - Allow background task and question notifications on Linux desktops with native notification support.
 - Show the local model service directory immediately in settings and onboarding,
   without skeleton placeholders or a new directory request on each visit.

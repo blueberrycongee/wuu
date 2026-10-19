@@ -13,6 +13,7 @@ import {
   type BrowserPiPWindowHandle,
 } from "./browserPiPWindow";
 import type { ObservationPiPEventSink } from "./cuaActivityWindows";
+import { ActivityPiPSurface } from "./activityPiPWindow";
 
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 // Cards animate in and out on timers; assertions about resting state run once
@@ -87,6 +88,7 @@ class FakePipWindow {
     return this.visible;
   }
   getBounds(): Rectangle {
+    if (this.destroyed) throw new Error("Object has been destroyed");
     return this.bounds;
   }
   setBounds(bounds: Rectangle): void {
@@ -130,6 +132,7 @@ class FakeOverlay {
       this.navigateListener = listener;
     },
     isDestroyed: () => this.destroyed,
+    close: () => { this.destroyed = true; },
   };
 
   setBounds(bounds: Rectangle): void {
@@ -562,6 +565,33 @@ describe("BrowserPiPSurface", () => {
     host.emitClosed();
     expect(sink.gone).toBe(1);
     surface.stop();
+  });
+
+  it("waits for capture cleanup when the window disappears during dismissal", () => {
+    const win = new FakePipWindow({ x: 0, y: 0, width: 320, height: 240 });
+    const overlay = new FakeOverlay();
+    const sink = makeSink();
+    let finishCapture: (() => void) | undefined;
+    const stopCapture = vi.fn((done: () => void) => { finishCapture = done; });
+    const surface = new ActivityPiPSurface({
+      activity: makeActivity(), bounds: win.bounds, sink, isPackaged: false,
+      createWindow: () => win.asHandle(), createOverlay: () => overlay.asHandle(),
+      cursorPosition: () => ({ x: 0, y: 0 }), reducedMotion: () => false,
+      createContent: () => ({ start() {}, setVisible() {}, layout() {}, stop: stopCapture }),
+    });
+    surface.start();
+    win.visible = true;
+    const stopped = vi.fn();
+    surface.stop(stopped);
+    win.destroy();
+    expect(stopped).not.toHaveBeenCalled();
+    finishMotion();
+    expect(stopCapture).toHaveBeenCalledOnce();
+    expect(stopped).not.toHaveBeenCalled();
+    finishCapture?.();
+    expect(stopped).toHaveBeenCalledOnce();
+    expect(overlay.destroyed).toBe(true);
+    expect(sink.gone).toBe(1);
   });
 
   it("updates the chrome label when the tab navigates", async () => {

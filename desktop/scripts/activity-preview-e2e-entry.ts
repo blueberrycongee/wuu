@@ -116,7 +116,10 @@ app.whenReady().then(async () => {
     assert.equal(errors.get(id), undefined); assert(replies.has(id));
   }
   await open("browser-a", "#dcecff"); await open("browser-b", "#ffe5ca");
-  coordinator = new ObservationCoordinator(registry, async () => { reconciliationCount++; return snapshotActivities; }, (next, key, sink, bounds) => {
+  coordinator = new ObservationCoordinator(registry, async () => {
+    reconciliationCount++;
+    return { clientWorkdir: workdir, activities: snapshotActivities };
+  }, (next, key, sink, bounds) => {
     surfaceCount++;
     return new ActivityPiPSurface({ activity: next, bounds: bounds(),
       sink: { ...sink, onEvent(event) { events.push({ target: next.target, event }); sink.onEvent(event); } },

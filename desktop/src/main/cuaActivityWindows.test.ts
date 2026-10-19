@@ -216,7 +216,7 @@ describe("browser observation surface", () => {
     stop: (onStopped?: () => void) => void;
   };
 
-  function makeCoordinator(snapshot?: (threadID: string) => Promise<ActivitySession[]>): {
+  function makeCoordinator(snapshot?: ConstructorParameters<typeof ObservationCoordinator>[1]): {
     coordinator: ObservationCoordinator;
     surfaces: FakeSurface[];
     sinks: ObservationPiPEventSink[];
@@ -467,7 +467,7 @@ describe("browser observation surface", () => {
   it("does not reconcile a gone target until its source changes or the user retries", async () => {
     vi.useFakeTimers();
     let latest = browserActivity({ execution_id: "turn-1" });
-    const { coordinator, surfaces, sinks, stops } = makeCoordinator(async () => [latest]);
+    const { coordinator, surfaces, sinks, stops } = makeCoordinator(async () => ({ clientWorkdir: "/repo", activities: [latest] }));
     coordinator.setActiveThread("thread-1");
     coordinator.update(latest);
     sinks[0].onGone();
@@ -510,6 +510,67 @@ describe("browser observation surface", () => {
     // (same timestamps as a fresh event) starts a new surface as usual.
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:05Z" }));
     expect(surfaces).toHaveLength(2);
+  });
+
+  it("restores a crashed browser preview only after its own tab is recreated", async () => {
+    const { coordinator, surfaces, sinks, stops } = makeCoordinator();
+    const current = browserActivity({ execution_id: "turn-1" });
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(current);
+    sinks[0].onGone();
+    coordinator.update({ ...current, updated_at: "2026-07-10T10:00:02Z" });
+    expect(surfaces).toHaveLength(1);
+    coordinator.restoreBrowserTab("/other", "tab-1", "thread-1");
+    coordinator.restoreBrowserTab("/repo", "other-tab", "thread-1");
+    coordinator.restoreBrowserTab("/repo", "tab-1", "other-thread");
+    expect(surfaces).toHaveLength(1);
+    coordinator.restoreBrowserTab("/repo", "tab-1", "thread-1");
+    expect(surfaces).toHaveLength(2);
+    expect(stops).toEqual(["tab-1"]);
+    coordinator.restoreBrowserTab("/repo", "tab-1", "thread-1");
+    expect(surfaces).toHaveLength(2);
+    coordinator.handleServerEvent({ workdir: "/repo", kind: "notification", message: {
+      method: "thread/deleted", params: { thread_id: "thread-1" },
+    } });
+    coordinator.restoreBrowserTab("/repo", "tab-1", "thread-1");
+    coordinator.update(current);
+    expect(surfaces).toHaveLength(2);
+    await coordinator.shutdown();
+  });
+
+  it("ignores an activity snapshot that finishes after its transport is torn down", async () => {
+    vi.useFakeTimers();
+    let resolveSnapshot: ((snapshot: { clientWorkdir: string; activities: ActivitySession[] }) => void) | undefined;
+    const snapshot = vi.fn(() => new Promise<{ clientWorkdir: string; activities: ActivitySession[] }>((resolve) => { resolveSnapshot = resolve; }));
+    const { coordinator, surfaces, stops } = makeCoordinator(snapshot);
+    const linkedActivity = browserActivity({ workdir: "/linked-tree" });
+    coordinator.handleServerEvent({ workdir: "/project", kind: "notification", message: {
+      method: "activity/updated", params: linkedActivity,
+    } });
+    coordinator.setActiveThread("thread-1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(snapshot).toHaveBeenCalledOnce();
+    coordinator.dropWorkdir("/project");
+    resolveSnapshot?.({ clientWorkdir: "/project", activities: [linkedActivity] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stops).toEqual(["tab-1"]);
+    expect(surfaces).toHaveLength(1);
+    await coordinator.shutdown();
+  });
+
+  it("cleans up snapshot-only worktree previews using their transport owner", async () => {
+    vi.useFakeTimers();
+    const { coordinator, surfaces, stops } = makeCoordinator(async () => ({
+      clientWorkdir: "/project", activities: [browserActivity({ workdir: "/linked-tree" })],
+    }));
+    coordinator.setActiveThread("thread-1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(surfaces).toHaveLength(1);
+    coordinator.dropWorkdir("/linked-tree");
+    expect(stops).toEqual([]);
+    coordinator.dropWorkdir("/project");
+    expect(stops).toEqual(["tab-1"]);
+    await coordinator.shutdown();
   });
 });
 

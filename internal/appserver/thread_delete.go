@@ -161,7 +161,13 @@ func (s *Server) handleThreadDelete(req Request) error {
 		_ = os.RemoveAll(statepath.SessionArtifactDir(stateDir, id))
 	}
 
-	return s.writeResponse(req.ID, ThreadDeleteResult{ThreadID: id}, nil)
+	// Host-owned browser pages can survive a turn and a session workspace move.
+	// Deletion invalidates all of them by conversation ID, including worktrees.
+	result := ThreadDeleteResult{ThreadID: id}
+	if err := s.writeNotification(NotificationThreadDeleted, result); err != nil {
+		return err
+	}
+	return s.writeResponse(req.ID, result, nil)
 }
 
 func (s *Server) deleteThreadSession(threadID string, onlyIfArchived bool) (session.Session, error) {

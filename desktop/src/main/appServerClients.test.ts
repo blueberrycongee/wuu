@@ -371,8 +371,10 @@ describe("AppServerClientPool session routing", () => {
     const followUp = pool.requestInContext(owner, "turn/start", { thread_id: "cached", prompt: "Next" });
     const read = pool.request("thread/resume", { session_id: "session" });
     const steer = pool.requestInContext(active, "turn/steer", { thread_id: "session", prompt: "Correction" });
+    const onSnapshot = vi.fn();
+    const snapshot = pool.requestForWorkdir(active.cwd, "activity/list", { thread_id: "session" }, onSnapshot);
     const pending = requests.get(owner.cwd)!;
-    expect(pending.map(request => request.method)).toEqual(["turn/start", "thread/resume", "turn/steer"]);
+    expect(pending.map(request => request.method)).toEqual(["turn/start", "thread/resume", "turn/steer", "activity/list"]);
     expect(requests.get(active.cwd)).toEqual([]);
     for (const request of pending) {
       children.get(owner.cwd)!.stdout.write(`${JSON.stringify({ id: request.id, result: { owner: true } })}\n`);
@@ -380,6 +382,8 @@ describe("AppServerClientPool session routing", () => {
     expect(await read).toEqual({ owner: true });
     expect(await followUp).toEqual({ owner: true });
     expect(await steer).toEqual({ owner: true });
+    expect(await snapshot).toEqual({ owner: true });
+    expect(onSnapshot).toHaveBeenCalledWith(expect.objectContaining({ result: { owner: true } }), owner.cwd);
     pool.shutdown();
   });
 

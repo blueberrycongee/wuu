@@ -276,7 +276,7 @@ export function observeBrowserPanelBounds(
 export function useBrowserVisibility({
   onInvalidateWorkdir,
 }: {
-  onInvalidateWorkdir: (workdir: string) => void;
+  onInvalidateWorkdir: (workdir: string, threadID?: string) => void;
 }): void {
   const onInvalidateWorkdirRef = useRef(onInvalidateWorkdir);
 
@@ -294,7 +294,7 @@ export function useBrowserVisibility({
     }
     return subscribe((payload) => {
       if (payload && typeof payload.workdir === "string") {
-        onInvalidateWorkdirRef.current(payload.workdir);
+        onInvalidateWorkdirRef.current(payload.workdir, payload.threadID);
       }
     });
   }, []);
