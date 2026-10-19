@@ -69,6 +69,8 @@ func runRemoteSSH(args []string) error {
 	defer stop()
 	cmd := exec.CommandContext(ctx, "ssh", sshArgs...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cleanup := prepareRemoteSSHProcess(cmd)
+	defer cleanup()
 	fmt.Fprintf(os.Stdout, "Connecting to %s. This command forwards SSH traffic; it does not check workspace readiness.\nOnce the remote service reports ready, open http://127.0.0.1:%d/\nUse the pairing link printed by the remote host for the first connection.\nCtrl-C disconnects the tunnel; remote tasks keep running.\nIf SSH exits, rerun this command to reconnect. The remote host must already be running.\n", destination, *port)
 	if err := cmd.Run(); err != nil && ctx.Err() == nil {
 		return fmt.Errorf("SSH tunnel: %w", err)

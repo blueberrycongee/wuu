@@ -51,8 +51,18 @@ Open the pairing link printed by the remote service. Subsequent visits to
 Ctrl-C closes the tunnel. SSH config aliases, keys, host-key verification and
 ProxyJump follow your normal OpenSSH configuration. Use `--ssh-port` or
 `--ssh-config` for explicit overrides. Wuu keeps this tunnel in the foreground
-and does not reuse or leave behind an SSH control master, even if your SSH config
-normally enables connection sharing or backgrounding.
+and does not reuse or leave behind a control master for the destination
+connection, even if your SSH config normally enables connection sharing or
+backgrounding. Jump hosts still follow their own SSH configuration; existing or
+explicitly backgrounded jump-host masters remain user-managed.
+
+On Linux and macOS, running without a controlling terminal isolates SSH and its
+foreground proxy children in one process group, so cancellation also cleans up a
+jump host still connecting. In an interactive terminal Wuu preserves shell job
+control and OpenSSH prompts, including when stdin is redirected. Use Ctrl-C to
+signal that foreground job. Signalling only the Wuu PID in this interactive case does not
+guarantee cleanup of a proxy that is still authenticating; service automation
+should run without a controlling terminal or stop its whole process group.
 
 The CLI's connection message is not an application health check. Wait for the
 remote service to print `Wuu workspace ready` before opening the workbench; that

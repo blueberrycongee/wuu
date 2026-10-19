@@ -38,6 +38,15 @@ async function until(check, label, timeout = 30_000) {
   while (Date.now() < deadline) { if (await check()) return; await pause(50); }
   throw new Error(`Timed out: ${label}`);
 }
+async function waitForPID(file, label) {
+  let pid;
+  await until(async () => {
+    try { pid = Number((await fs.readFile(file, 'utf8')).trim()); }
+    catch { return false; }
+    return Number.isInteger(pid) && pid > 1;
+  }, label);
+  return pid;
+}
 function pass(label) { checks.push(label); console.log(`PASS: ${label}`); }
 function start(name, command, args, options = {}) {
   const child = spawn(command, args, { cwd: repo, env, ...options, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -180,8 +189,7 @@ try {
   await fs.writeFile(delayedCore, `#!/bin/sh\nif [ "$1" = remote ] && [ "$2" = status ]; then\n printf '%s' $$ > '${delayedPID}'\n exec sleep 120\nfi\nexec '${binary}' "$@"\n`, { mode: 0o700 });
   const statusPort = await freePort();
   const pendingStatus = startHost('cancel-initial-status', statusPort, statusPort, ['--core', delayedCore]);
-  await until(() => fs.access(delayedPID).then(() => true, () => false), 'initial status reaches controlled delay');
-  const statusPID = Number(await fs.readFile(delayedPID, 'utf8'));
+  const statusPID = await waitForPID(delayedPID, 'initial status reaches controlled delay');
   await stop(pendingStatus);
   assert.equal(pendingStatus.code, 0);
   assert(!pendingStatus.output.includes('Wuu workspace ready at'));
@@ -191,8 +199,7 @@ try {
     await fs.rm(delayedPID, { force: true });
     const port = await freePort();
     const run = startHost(`cancel-startup-${pair ? 'pair' : 'resume'}`, port, port, ['--core', delayedCore, ...(pair ? ['--pair'] : [])]);
-    await until(() => fs.access(delayedPID).then(() => true, () => false), 'host startup reaches controlled delay');
-    const pid = Number(await fs.readFile(delayedPID, 'utf8'));
+    const pid = await waitForPID(delayedPID, 'host startup reaches controlled delay');
     await stop(run);
     assert.equal(run.code, 0, 'startup cancellation exits cleanly');
     assert(!run.output.includes('Wuu workspace ready at'), 'cancelled startup never announces readiness');
@@ -219,6 +226,38 @@ try {
   await fs.writeFile(path.join(sshDir, 'known_hosts'), `[127.0.0.1]:${sshPort} ${hostKey}\n`);
   const sshConfig = path.join(sshDir, 'config');
   await fs.writeFile(sshConfig, `Host fixture\n HostName 127.0.0.1\n User ${os.userInfo().username}\n Port ${sshPort}\n IdentityFile ${sshDir}/client\n IdentitiesOnly yes\n UserKnownHostsFile ${sshDir}/known_hosts\n StrictHostKeyChecking yes\n BatchMode yes\n ControlMaster auto\n ControlPath ${sshDir}/master\n ControlPersist yes\n ForkAfterAuthentication yes\n`);
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    const proxyPIDFile = path.join(sshDir, `${signal}.pid`);
+    const proxyScript = path.join(sshDir, `${signal}.sh`);
+    const proxyConfig = path.join(sshDir, `${signal}.conf`);
+    await fs.writeFile(proxyScript, `printf '%s' $$ > '${proxyPIDFile}'\nexec sleep 120\n`);
+    await fs.writeFile(proxyConfig, await fs.readFile(sshConfig, 'utf8') + ` ProxyCommand sh ${proxyScript}\n`);
+    const proxied = start(`ssh-proxy-${signal}`, binary, ['remote', 'ssh', '--port', String(localPort), '--ssh-config', proxyConfig, 'fixture'], { detached: true });
+    const proxyPID = await waitForPID(proxyPIDFile, 'ProxyCommand reaches the pre-authentication wait');
+    const proxyChildren = descendants(proxied.child.pid);
+    try {
+      await stop(proxied, signal);
+      assert.equal(proxied.code, 0, 'cancelling SSH exits cleanly');
+      await until(() => !live(proxyPID) && proxyChildren.every(pid => !live(pid)), 'cancellation removes the pre-authentication ProxyCommand', 5000);
+    } finally {
+      for (const pid of proxyChildren) if (live(pid)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    }
+  }
+  const failedProxyPID = path.join(sshDir, 'failed-proxy.pid');
+  const failedProxyScript = path.join(sshDir, 'failed-proxy.sh');
+  const failedProxyConfig = path.join(sshDir, 'failed-proxy.conf');
+  await fs.writeFile(failedProxyScript, `sleep 120 </dev/null >/dev/null 2>&1 &\nprintf '%s' $! > '${failedProxyPID}'\nexit 1\n`);
+  await fs.writeFile(failedProxyConfig, await fs.readFile(sshConfig, 'utf8') + ` ProxyCommand sh ${failedProxyScript}\n`);
+  const failedProxy = start('ssh-proxy-failure', binary, ['remote', 'ssh', '--port', String(localPort), '--ssh-config', failedProxyConfig, 'fixture'], { detached: true });
+  const failedPID = await waitForPID(failedProxyPID, 'failing ProxyCommand creates its child');
+  try {
+    await until(() => failedProxy.exited, 'SSH reports the ProxyCommand failure');
+    assert.notEqual(failedProxy.code, 0);
+    await until(() => !live(failedPID), 'SSH failure removes ProxyCommand descendants', 5000);
+  } finally {
+    if (live(failedPID)) { try { process.kill(failedPID, 'SIGKILL'); } catch {} }
+  }
+  pass('noninteractive SSH cancellation and failure remove pre-authentication ProxyCommand descendants');
   const daemonConfig = path.join(sshDir, 'sshd_config');
   await fs.writeFile(daemonConfig, `Port ${sshPort}\nListenAddress 127.0.0.1\nHostKey ${sshDir}/host\nAuthorizedKeysFile ${sshDir}/client.pub\nStrictModes no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nPidFile ${sshDir}/pid\nAllowUsers ${os.userInfo().username}\nAllowTcpForwarding local\nPermitOpen 127.0.0.1:${remotePort}\nPermitTTY no\n`);
   const sshd = start('isolated-sshd', process.env.WUU_E2E_SSHD || '/usr/sbin/sshd', ['-D', '-e', '-f', daemonConfig]);
@@ -259,8 +298,7 @@ try {
   assert(threadID, 'active thread is rooted in the SSH workspace');
   const termPIDFile = path.join(temp, 'terminal.pid'), terminalRelease = path.join(temp, 'terminal-release');
   const term = await terminal(termPIDFile);
-  await until(() => fs.access(termPIDFile).then(() => true, () => false), 'terminal PID');
-  const termPID = Number(await fs.readFile(termPIDFile, 'utf8'));
+  const termPID = await waitForPID(termPIDFile, 'terminal PID');
   await page.evaluate(({ id, terminalRelease }) => window.wuu.writeTerminalSession(id,
     `printf 'terminal-%s\\n' before; while [ ! -f '${terminalRelease}' ]; do sleep 0.05; done; printf 'terminal-%s\\n' offline\n`), { id: term.id, terminalRelease });
   await until(() => page.evaluate(() => window.terminalEvents.some(event => event.text?.includes('terminal-before'))), 'terminal output before detach');
@@ -299,8 +337,7 @@ try {
 
   const freshPIDFile = path.join(temp, 'fresh-terminal.pid');
   const freshTerminal = await terminal(freshPIDFile);
-  await until(() => fs.access(freshPIDFile).then(() => true, () => false), 'fresh terminal PID');
-  const freshPID = Number(await fs.readFile(freshPIDFile, 'utf8'));
+  const freshPID = await waitForPID(freshPIDFile, 'fresh terminal PID');
   await page.reload(); await connected();
   await until(() => !live(freshPID), 'fresh attachment releases previous terminal owner');
   assert.equal((await page.evaluate(id => window.wuu.writeTerminalSession(id, 'ignored\n'), freshTerminal.id)).ok, false);
