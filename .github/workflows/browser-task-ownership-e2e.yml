@@ -40,7 +40,7 @@ jobs:
       - name: Build core
         run: |
           mkdir -p desktop/build/bin
-          go build -o desktop/build/bin/wuu-core ./cmd/wuu
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu
       - name: Verify browser task ownership and takeover
         env:
           WUU_BROWSER_OWNERSHIP_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/browser-task-ownership

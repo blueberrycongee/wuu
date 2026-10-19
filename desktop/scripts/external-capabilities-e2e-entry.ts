@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { createServer, type ServerResponse } from 'node:http';
+import { createServer, request, type ServerResponse } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, WebContentsView, nativeImage } from 'electron';
@@ -88,6 +88,14 @@ const control = createServer((request, response) => {
   request.on('end', () => {
     try {
       const value = JSON.parse(body);
+      if (request.url?.startsWith('/v1/')) {
+        const message = { role: 'assistant', content: 'Capability acceptance' };
+        if (value.stream) {
+          response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: message, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
+        } else json(response, { choices: [{ message, finish_reason: 'stop' }] });
+        return;
+      }
       const scenario = scenarios.get(value.marker);
       assert(scenario, `Known scenario ${value.marker}`);
       if (request.url === '/register') {
@@ -250,7 +258,7 @@ async function run() {
   const disabled = Object.fromEntries(readdirSync(join(desktop, '../internal/plugin/bundled'), { withFileTypes: true })
     .filter(entry => entry.isDirectory() && (!cua || entry.name !== 'cua-linux')).map(entry => [`plugin:bundled:${entry.name}`, true]));
   writeFileSync(join(home, 'config.json'), JSON.stringify({ engines, extensions: { disabled }, ptc: { enabled: false },
-    default_provider: 'fixture', providers: { fixture: { type: 'openai-compatible', model: 'fixture', base_url: 'http://127.0.0.1:1', api_key: 'fixture-only' } } }));
+    default_provider: 'fixture', providers: { fixture: { type: 'openai-compatible', model: 'fixture', base_url: `${base}/v1`, api_key: 'fixture-only' } } }));
   await app.whenReady();
   const main = new BrowserWindow({ width: 1000, height: 720, show: false });
   await main.loadURL('data:text/html,<body style="font:18px system-ui;background:%23edf2f8"><h1>External engine capability acceptance</h1><p>Real host browser and PiP. Scripted external protocols.</p>');
@@ -296,9 +304,15 @@ async function run() {
   const rejectedOrigin = await fetch(a.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://untrusted.example' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) });
   check('Browser origins cannot borrow the local turn capability', rejectedOrigin.status === 403);
-  const rejectedHost = await fetch(a.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Host: 'untrusted.example' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }) });
-  check('The capability endpoint rejects a foreign Host header', rejectedHost.status === 403);
+  const rejectedHost = await bounded('foreign Host rejection', new Promise<number | undefined>((resolve, reject) => {
+    const probe = request(a.endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Host: 'untrusted.example' } }, response => {
+      response.resume();
+      response.on('end', () => resolve(response.statusCode));
+    });
+    probe.on('error', reject);
+    probe.end(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }));
+  }));
+  check('The capability endpoint rejects a foreign Host header', rejectedHost === 403, rejectedHost);
   await tool(a, {}, 'shell', true);
   check('The MCP endpoint cannot invoke tools outside its capability catalog', true);
   await tool(a, { action: 'navigate', url: `${base}/codex-a` });
