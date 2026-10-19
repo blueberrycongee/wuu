@@ -991,9 +991,7 @@ public final class MacComputerBackend: ComputerBackend {
         let pid = app.processIdentifier
         return try performDirectedOrForeground(context: context, command, app: app,
             directed: {
-                try withHeldKey(heldKey, post: { $0.postToPid(pid) }) {
-                    try postClickToPid(pid, point: point, button: command.mouseButton, count: command.clickCount ?? 1, modifiers: modifiers, duration: command.duration)
-                }
+                try postClickToPid(pid, point: point, button: command.mouseButton, count: command.clickCount ?? 1, modifiers: modifiers, duration: command.duration, heldKey: heldKey)
             }, foreground: {
                 try withHeldKey(heldKey, post: { $0.post(tap: .cghidEventTap) }) {
                     try postClicks(point: point, button: command.mouseButton, count: command.clickCount ?? 1, modifiers: modifiers, duration: command.duration) {
@@ -1194,19 +1192,22 @@ public final class MacComputerBackend: ComputerBackend {
             let focus = {
                 if let target { try setAXValue(target, attribute: kAXFocusedAttribute as String, value: kCFBooleanTrue) }
             }
-            let mechanism = try performDirectedOrForeground(context: context, command, app: app,
-                directed: {
-                    try focus()
-                    try postKeyChordToPid(app.processIdentifier, chord: KeyChord.parse("command+v"))
-                }, foreground: {
-                    try focus()
-                    try self.postKey("command+v")
-                })
+            let dispatch = Result {
+                try performDirectedOrForeground(context: context, command, app: app,
+                    directed: {
+                        try focus()
+                        try postKeyChordToPid(app.processIdentifier, chord: KeyChord.parse("command+v"))
+                    }, foreground: {
+                        try focus()
+                        try self.postKey("command+v")
+                    })
+            }
             // A cancelled request can still have queued Cmd-V. Keep the paste
             // content available during delivery even when the wait is interrupted;
             // restoring immediately could paste the user's previous clipboard.
             let clipboardReadDeadline = Date().addingTimeInterval(0.25)
             defer { RunLoop.current.run(until: clipboardReadDeadline) }
+            let mechanism = try dispatch.get()
             try holdInput(for: max(0, clipboardReadDeadline.timeIntervalSinceNow))
             _ = try settle(activity, app: app, application: application)
             return mechanism

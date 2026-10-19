@@ -97,9 +97,11 @@ func postKeyChordToPid(_ pid: pid_t, chord: KeyChord, duration: TimeInterval = 0
     try withHeldKey(chord, duration: duration, post: { $0.postToPid(pid) }) {}
 }
 
-func postClickToPid(_ pid: pid_t, point: CGPoint, button name: String?, count: Int, modifiers: KeyModifiers = [], duration: TimeInterval = 0) throws {
+func postClickToPid(_ pid: pid_t, point: CGPoint, button name: String?, count: Int, modifiers: KeyModifiers = [], duration: TimeInterval = 0, heldKey: KeyChord? = nil) throws {
     let post = try directedPointerPoster(pid, at: point)
-    try postClicks(point: point, button: name, count: count, modifiers: modifiers, duration: duration, post: post)
+    try withHeldKey(heldKey, post: { $0.postToPid(pid) }) {
+        try postClicks(point: point, button: name, count: count, modifiers: modifiers, duration: duration, post: post)
+    }
 }
 
 func postScrollToPid(_ pid: pid_t, vertical: Int32, horizontal: Int32, steps: Int, at point: CGPoint?) throws {
