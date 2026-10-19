@@ -77,6 +77,14 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
       () => new BrowserWindow({ show: false, webPreferences: { sandbox: true } }) as unknown as BrowserHostWindowHandle,
       () => {
         const view = createBrowserView();
+        let loaded = false;
+        view.webContents.on("did-finish-load", () => { loaded = true; });
+        const emulate = view.webContents.enableDeviceEmulation.bind(view.webContents);
+        view.webContents.enableDeviceEmulation = (options) => {
+          console.log("browser lifecycle: before native emulation", JSON.stringify({ id: view.webContents.id, url: view.webContents.getURL(), loaded }));
+          emulate(options);
+          console.log("browser lifecycle: after native emulation", view.webContents.id);
+        };
         views.push(view);
         return view as unknown as BrowserViewHandle;
       },
@@ -88,7 +96,11 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
     { mainWindow: () => main } as unknown as WindowRegistry, undefined,
     (activity, key, sink) => factory(activity, key, sink, () => ({ x: 140, y: 140, width: 384, height: 240 })),
   );
-  host.addTabCreatedListener((workdir, tabID, threadID) => coordinator.restoreBrowserTab(workdir, tabID, threadID));
+  host.addTabCreatedListener((workdir, tabID, threadID) => {
+    console.log("browser lifecycle: before created-tab recovery", JSON.stringify({ workdir, tabID, threadID }));
+    coordinator.restoreBrowserTab(workdir, tabID, threadID);
+    console.log("browser lifecycle: after created-tab recovery", tabID);
+  });
   host.setRendererSink({ surface: (snapshot) => surfaces.push(snapshot), userInput: () => undefined,
     adopted: () => undefined, presented: () => coordinator.refreshBrowserPresentation() });
   coordinator.setBrowserInPanel((activity) => host.isInPanel(activity.workdir, activity.target!));
@@ -134,7 +146,9 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
   const deniedInput = rawRequest({ method: "click", params: { x: 240, y: 200 } }, "browser/cdp");
   await deniedInput.done;
   assert.match(errors.get(deniedInput.id) ?? "", /tab_not_found/);
+  console.log("browser lifecycle: recreating same tab after crash");
   await open();
+  console.log("browser lifecycle: recreated tab finished navigation");
   notify("activity/updated", { ...nextActivity, updated_at: new Date().toISOString() });
   await waitFor("same-execution preview restored after real tab recreation", () => previewWindows().some((win) => win.isVisible()));
   const recoveredContents = views.at(-1)!.webContents;
