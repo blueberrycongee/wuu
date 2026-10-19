@@ -17,6 +17,7 @@ import type { WindowRegistry } from "../src/main/windowRegistry";
 const artifacts = process.env.WUU_BROWSER_PIP_E2E_ARTIFACTS ?? "/tmp/wuu-browser-cursor-e2e";
 const fixture = process.env.WUU_BROWSER_PIP_FIXTURE;
 assert(fixture, "Run through browser-pip-e2e.cjs");
+process.on("uncaughtException", (error) => { console.error(error); app.exit(1); });
 app.setPath("userData", join(fixture, "profile"));
 const workdir = "/e2e";
 const tabID = "cursor-tab";

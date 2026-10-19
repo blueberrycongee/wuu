@@ -88,6 +88,7 @@ class FakePipWindow {
     return this.visible;
   }
   getBounds(): Rectangle {
+    if (this.destroyed) throw new Error("Object has been destroyed");
     return this.bounds;
   }
   setBounds(bounds: Rectangle): void {

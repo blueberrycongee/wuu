@@ -1157,6 +1157,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   // Overlay pushes.
   // -------------------------------------------------------------------------
   private syncOverlayMode(): void {
+    if (!this.win || this.win.isDestroyed()) return;
     this.execute(`window.wuuPipViewport?.(${JSON.stringify(this.contentRect())})`);
     this.execute(`window.wuuPipMount?.(${JSON.stringify({ mounted: this.mounted })})`);
   }
