@@ -94,13 +94,47 @@ func TestCanonicalCUATargetKeepsResolvingRepeatedLocalizedAlias(t *testing.T) {
 		"path":"/System/Applications/Calculator.app"
 	},"apps":[]}`)}
 	kit := &Toolkit{
-		env:      &Env{RootDir: root},
-		registry: NewRegistry(tool),
-		boundary: StandardBoundary(),
+		env:                 &Env{RootDir: root, SessionID: "thread", SessionDir: t.TempDir()},
+		registry:            NewRegistry(tool),
+		boundary:            StandardBoundary(),
+		activityRegistry:    activity.NewRegistry(),
+		mcpActivityBindings: map[string]MCPActivityBinding{"driver": {Kind: activity.KindCUA, PluginID: "other-driver"}},
 	}
 	for attempt := 1; attempt <= 4; attempt++ {
 		if got := kit.canonicalCUATarget(context.Background(), tool, "计算器"); got != "com.apple.calculator" {
 			t.Fatalf("canonical target attempt %d = %q", attempt, got)
+		}
+		call := providers.ToolCall{Name: tool.Name(), Arguments: `{"action":"press_key","app":"计算器","key":"Return"}`}
+		if _, err := kit.executeActivityBoundToolResult(context.Background(), call, tool, "driver"); err != nil {
+			t.Fatal(err)
+		}
+		var dispatched struct {
+			App string `json:"app"`
+		}
+		if err := json.Unmarshal([]byte(tool.lastArguments), &dispatched); err != nil {
+			t.Fatal(err)
+		}
+		if dispatched.App != "com.apple.calculator" {
+			t.Fatalf("dispatched mutable alias instead of the leased target: %q", dispatched.App)
+		}
+	}
+	// Linux identities include process start time; the exact fenced value must
+	// reach keyboard input even when the user selected the window by its title.
+	tool.structuredContent = json.RawMessage(`{"resolved_app":{"id":"linux:42:108:500"}}`)
+	for _, argument := range []string{"app", "bundle_id", "target"} {
+		call := providers.ToolCall{Name: tool.Name(), Arguments: `{"action":"press_key","` + argument + `":"Editor","key":"Return"}`}
+		if _, err := kit.executeActivityBoundToolResult(context.Background(), call, tool, "driver"); err != nil {
+			t.Fatal(err)
+		}
+		var dispatched map[string]any
+		if err := json.Unmarshal([]byte(tool.lastArguments), &dispatched); err != nil {
+			t.Fatal(err)
+		}
+		if dispatched[argument] != "linux:42:108:500" {
+			t.Fatalf("%s did not carry the canonical process identity: %+v", argument, dispatched)
+		}
+		if argument != "app" && dispatched["app"] != nil {
+			t.Fatalf("rewriting %s added an unsupported app argument: %+v", argument, dispatched)
 		}
 	}
 }
@@ -166,6 +200,9 @@ type activityTestTool struct {
 	calls             int
 	structuredContent json.RawMessage
 	onExecute         func()
+	isError           bool
+	executeError      error
+	lastArguments     string
 }
 
 func (t *activityTestTool) Name() string { return "mcp_plugin_cua_mac_computer_computer" }
@@ -184,13 +221,14 @@ func (t *activityTestTool) ExecuteResult(_ context.Context, arguments string) (t
 		return toolresult.Result{StructuredContent: t.structuredContent}, nil
 	}
 	t.calls++
+	t.lastArguments = arguments
 	if t.onExecute != nil {
 		t.onExecute()
 	}
 	return toolresult.Result{Content: []toolresult.ContentPart{
 		{Type: toolresult.ContentTypeText, Text: "observed"},
 		{Type: toolresult.ContentTypeImage, Data: "cG5n", MIMEType: "image/png"},
-	}, StructuredContent: t.structuredContent}, nil
+	}, StructuredContent: t.structuredContent, IsError: t.isError}, t.executeError
 }
 
 func TestCUASequenceDoesNotPublishInteractionAfterTakeover(t *testing.T) {
@@ -383,7 +421,7 @@ func TestCUAActivityInteractionValidatesAndAssignsRevision(t *testing.T) {
 
 func TestExecuteActivityBoundCUASequenceChecksRiskPerStep(t *testing.T) {
 	registry := activity.NewRegistry()
-	tool := &activityTestTool{structuredContent: json.RawMessage(`{"interaction":{"kind":"click","x":0.2,"y":0.4}}`)}
+	tool := &activityTestTool{structuredContent: json.RawMessage(`{"process_id":42,"window_id":108,"interaction":{"kind":"click","x":0.2,"y":0.4}}`)}
 	kit := &Toolkit{
 		env:      &Env{RootDir: "/repo", SessionID: "thread-1", SessionDir: t.TempDir()},
 		registry: NewRegistry(tool), boundary: StandardBoundary(), activityRegistry: registry,
@@ -409,6 +447,9 @@ func TestExecuteActivityBoundCUASequenceChecksRiskPerStep(t *testing.T) {
 	sessions := registry.List("thread-1")
 	if len(sessions) != 1 || sessions[0].Interaction == nil || sessions[0].Interaction.X != 0.2 {
 		t.Fatalf("sequence step interaction = %+v", sessions)
+	}
+	if sessions[0].ProcessID != 42 || sessions[0].WindowID != 108 {
+		t.Fatalf("sequence did not make the observed window available to the preview: %+v", sessions[0])
 	}
 	var structured struct {
 		Status   string `json:"status"`
@@ -461,7 +502,7 @@ func (t *snapshotActivityTool) ExecuteResult(_ context.Context, raw string) (too
 		return toolresult.Result{}, nil
 	}
 	t.arguments = append(t.arguments, args)
-	return toolresult.Result{Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "snapshot"}}, StructuredContent: json.RawMessage(`{"snapshot_id":"fresh-state"}`)}, nil
+	return toolresult.Result{Content: []toolresult.ContentPart{{Type: toolresult.ContentTypeText, Text: "snapshot"}}, StructuredContent: json.RawMessage(`{"snapshot_id":"fresh-state","process_id":42,"window_id":108}`)}, nil
 }
 
 func TestCUABYOKCapabilityAndControlEpochReachExtension(t *testing.T) {
@@ -513,11 +554,54 @@ func TestCUASequenceThreadsFreshSnapshotIntoReferencedAction(t *testing.T) {
 	if len(tool.arguments) != 2 || tool.arguments[1]["snapshot_id"] != "fresh-state" {
 		t.Fatalf("step did not use observed state: %+v", tool.arguments)
 	}
+	if pid, window := cuaActivityWindowIdentity(result); pid != 42 || window != 108 {
+		t.Fatalf("sequence dropped observed window identity: %d/%d", pid, window)
+	}
+	if session := registry.List("thread")[0]; session.ProcessID != 42 || session.WindowID != 108 {
+		t.Fatalf("sequence did not bind its preview: %+v", session)
+	}
 	var payload struct {
 		Steps []map[string]any `json:"steps"`
 	}
 	_ = json.Unmarshal(result.StructuredContent, &payload)
 	if !strings.Contains(string(result.StructuredContent), `"snapshot_id":"fresh-state"`) {
 		t.Fatalf("batch dropped evidence: %s", result.StructuredContent)
+	}
+	for _, failure := range []string{"tool", "transport", "other target"} {
+		t.Run(failure, func(t *testing.T) {
+			registry := activity.NewRegistry()
+			tool := &activityTestTool{structuredContent: json.RawMessage(`{"process_id":42,"window_id":108}`)}
+			tool.onExecute = func() {
+				if tool.calls == 2 {
+					tool.structuredContent = json.RawMessage(`{"process_id":99,"window_id":222}`)
+					tool.isError = failure == "tool"
+					if failure == "transport" {
+						tool.executeError = errors.New("connection lost")
+					}
+				}
+			}
+			kit := &Toolkit{env: &Env{RootDir: "/repo", SessionID: "thread", SessionDir: t.TempDir()}, registry: NewRegistry(tool), boundary: StandardBoundary(), activityRegistry: registry,
+				mcpActivityBindings: map[string]MCPActivityBinding{"driver": {Kind: activity.KindCUA, PluginID: "other-driver"}}}
+			secondApp := "test.app"
+			if failure == "other target" {
+				secondApp = "another.app"
+			}
+			call := providers.ToolCall{Name: tool.Name(), Arguments: `{"action":"sequence","app":"test.app","steps":[{"action":"observe","risk":"safe"},{"action":"click","app":"` + secondApp + `","risk":"safe"}]}`}
+			result, err := kit.executeActivityBoundToolResult(context.Background(), call, tool, "driver")
+			if err == nil {
+				t.Fatal("expected the failed or mismatched sequence to fail")
+			}
+			if pid, window := cuaActivityWindowIdentity(result); pid != 0 || window != 0 {
+				t.Fatalf("failed sequence published window identity: %d/%d", pid, window)
+			}
+			for _, session := range registry.List("thread") {
+				if session.ProcessID != 0 || session.WindowID != 0 {
+					t.Fatalf("failed sequence bound a preview: %+v", session)
+				}
+			}
+			if failure == "other target" && tool.calls != 0 {
+				t.Fatalf("mismatched sequence dispatched %d calls", tool.calls)
+			}
+		})
 	}
 }

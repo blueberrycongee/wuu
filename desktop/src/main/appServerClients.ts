@@ -1,5 +1,4 @@
 import { shutdownChild } from "./childShutdown";
-import { app } from "electron";
 import {
   spawn as spawnChild,
   type ChildProcessWithoutNullStreams,
@@ -45,6 +44,8 @@ export type AppServerSpawn = (
 
 const defaultSpawnAppServer: AppServerSpawn = (command, args, options) =>
   spawnChild(command, args, options);
+
+type DesktopPaths = { appPath: string; isPackaged: boolean };
 
 type PendingRequest = {
   onResponse?: (response: AppServerResponse) => void;
@@ -94,6 +95,7 @@ export class AppServerClientPool {
     private readonly emitToRenderer: (event: ServerEvent) => void,
     private readonly spawnAppServer: AppServerSpawn = defaultSpawnAppServer,
     private readonly getInitializeParams?: () => unknown,
+    private readonly desktopPaths?: DesktopPaths,
   ) {}
 
   // A workdir the check pins (e.g. it owns a live agent browser tab) is treated
@@ -343,6 +345,7 @@ export class AppServerClientPool {
         undefined,
         this.getInitializeParams,
         userBinding,
+        this.desktopPaths,
       );
       this.clients.set(workdir, client);
     }
@@ -480,6 +483,7 @@ export class AppServerClient {
     private readonly resolveCommand: typeof resolveWuuCommand = resolveWuuCommand,
     private readonly getInitializeParams?: () => unknown,
     readonly userBinding?: Readonly<{ userSpaceId: string; productDomain: string }>,
+    private readonly desktopPaths?: DesktopPaths,
   ) {}
 
   start(): void {
@@ -655,7 +659,7 @@ export class AppServerClient {
         "wuu core process was terminated before it exited",
       );
     }
-    const sourceRoot = wuuSourceRoot();
+    const sourceRoot = wuuSourceRoot(this.desktopPaths?.appPath);
     const resourcesPath = (process as { resourcesPath?: string }).resourcesPath;
     const command = this.resolveCommand(
       process.env,
@@ -684,7 +688,7 @@ export class AppServerClient {
       process.platform,
     );
     helperEnv.WUU_NODE_EXECUTABLE = process.execPath;
-    if (app.isPackaged) {
+    if (this.desktopPaths?.isPackaged) {
       configurePackagedCUA(helperEnv, resourcesPath, process.platform);
     }
     this.shutdownPromise = undefined;
@@ -1089,6 +1093,7 @@ interface AppServerHelper {
 
 const APP_SERVER_HELPERS: readonly AppServerHelper[] = [
   { environment: "WUU_CUA_MAC_HELPER", executable: "wuu-cua-mac", platform: "darwin" },
+  { environment: "WUU_CUA_LINUX_HELPER", executable: "wuu-cua-linux", platform: "linux" },
 ];
 
 export function appServerHelperEnvironment(
@@ -1180,13 +1185,13 @@ function appServerProcessError(context: string, error: unknown): string {
   return `${context}: ${message}`;
 }
 
-function wuuSourceRoot(): string | undefined {
+function wuuSourceRoot(appPath?: string): string | undefined {
   const candidates = [
     process.env.WUU_SOURCE_ROOT,
     process.cwd(),
     resolve(process.cwd(), ".."),
-    app.getAppPath(),
-    resolve(app.getAppPath(), ".."),
+    appPath,
+    appPath ? resolve(appPath, "..") : undefined,
     resolve(__dirname, "..", "..", ".."),
   ].filter((candidate): candidate is string => Boolean(candidate));
   return candidates.find(
@@ -1207,7 +1212,17 @@ export function configurePackagedCUA(
   delete env.WUU_ENABLE_CUA_MAC;
   delete env.WUU_CUA_MAC_HELPER;
   delete env.WUU_CUA_MAC_PIP_HELPER;
-  if (platform !== "darwin" || !resourcesPath) return;
+  delete env.WUU_ENABLE_CUA_LINUX;
+  delete env.WUU_CUA_LINUX_HELPER;
+  if (!resourcesPath) return;
+  if (platform === "linux") {
+    const helper = join(resourcesPath, "bin", "wuu-cua-linux");
+    if (!exists(helper)) return;
+    env.WUU_ENABLE_CUA_LINUX = "1";
+    env.WUU_CUA_LINUX_HELPER = helper;
+    return;
+  }
+  if (platform !== "darwin") return;
   const helper = join(resourcesPath, "bin", "wuu-cua-mac");
   const pip = join(resourcesPath, "bin", "wuu-cua-mac-pip");
   if (!exists(helper) || !exists(pip)) return;

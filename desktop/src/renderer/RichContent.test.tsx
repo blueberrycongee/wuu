@@ -6,19 +6,13 @@ import { ImagePreviewProvider } from "./ImagePreview";
 import { MarkdownContent, RichContent } from "./RichContent";
 import { StreamingMarkdown } from "./StreamingMarkdown";
 
-const { mermaidInitialize, mermaidRender } = vi.hoisted(() => ({
-  mermaidInitialize: vi.fn(),
-  mermaidRender: vi.fn(async (id: string, _code: string) => ({
-    svg: `<svg data-diagram-id="${id}"></svg>`,
+const { mermaidRender } = vi.hoisted(() => ({
+  mermaidRender: vi.fn(async (_code: string, options: { idPrefix: string }) => ({
+    svg: `<svg data-diagram-id="${options.idPrefix}"></svg>`,
   })),
 }));
 
-vi.mock("mermaid", () => ({
-  default: {
-    initialize: mermaidInitialize,
-    render: mermaidRender,
-  },
-}));
+vi.mock("pele", () => ({ render: mermaidRender }));
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -28,9 +22,8 @@ let openExternalMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   document.documentElement.dataset.theme = "light";
-  mermaidInitialize.mockClear();
   mermaidRender.mockReset();
-  mermaidRender.mockImplementation(async (id: string) => ({ svg: `<svg data-diagram-id="${id}"></svg>` }));
+  mermaidRender.mockImplementation(async (_code, options) => ({ svg: `<svg data-diagram-id="${options.idPrefix}"></svg>` }));
   writeTextMock = vi.fn().mockResolvedValue(undefined);
   // jsdom does not implement the clipboard API; inject a mock for the
   // success-path tests.
@@ -130,7 +123,7 @@ describe("RichContent code block", () => {
       const props = { streamKey: `mermaid-${opener}-${isLive}`, initialText: source, isLive, phase: "final_answer" as const };
       renderWithImagePreview(<StreamingMarkdown {...props} />);
       await act(async () => { await vi.waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(1)); });
-      expect(mermaidRender.mock.calls[0][1]).toBe(code);
+      expect(mermaidRender.mock.calls[0][0]).toBe(code);
       expect(container.querySelector(".rich-mermaid svg")).not.toBeNull();
       expect(container.querySelector(".rich-code-block")).toBeNull();
       const shell = container.querySelector(".rich-mermaid");
@@ -160,41 +153,19 @@ describe("RichContent code block", () => {
     expect(shell?.textContent).toContain("Invalid diagram");
   });
 
-  it("rerenders Mermaid diagrams when the applied theme changes", async () => {
+  it("keeps the rendered diagram mounted when the applied theme changes", async () => {
     renderWithImagePreview(<RichContent text={"```mermaid\ngraph TD\nA --> B\n```"} />);
-
     await act(async () => {
-      await vi.waitFor(() => {
-        expect(mermaidRender).toHaveBeenCalledTimes(1);
-      });
+      await vi.waitFor(() => expect(mermaidRender).toHaveBeenCalledTimes(1));
     });
-    expect(mermaidInitialize).toHaveBeenCalledWith(
-      expect.objectContaining({
-        themeVariables: expect.objectContaining({
-          background: "#ffffff",
-          primaryTextColor: "#202427",
-        }),
-      }),
-    );
-    expect(container.querySelector(".rich-mermaid svg")).not.toBeNull();
-
+    const svg = container.querySelector(".rich-mermaid svg");
+    expect(svg).not.toBeNull();
     await act(async () => {
       document.documentElement.dataset.theme = "dark";
       await Promise.resolve();
     });
-    await act(async () => {
-      await vi.waitFor(() => {
-        expect(mermaidRender).toHaveBeenCalledTimes(2);
-      });
-    });
-    expect(mermaidInitialize).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        themeVariables: expect.objectContaining({
-          background: "#1d2024",
-          primaryTextColor: "#e4e6e8",
-        }),
-      }),
-    );
+    expect(container.querySelector(".rich-mermaid svg")).toBe(svg);
+    expect(mermaidRender).toHaveBeenCalledTimes(1);
   });
 
   it("opens a rendered Mermaid diagram in the shared image preview", async () => {

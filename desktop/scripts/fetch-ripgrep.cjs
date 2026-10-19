@@ -18,6 +18,11 @@ const { resolveBuildTarget } = require("./build-core.cjs");
 // Checksums come from the upstream release's .sha256 assets.
 const VERSION = "15.2.0";
 const ASSETS = {
+  "linux-x64": {
+    triple: "x86_64-unknown-linux-musl",
+    extension: "tar.gz",
+    sha256: "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
+  },
   "darwin-arm64": {
     triple: "aarch64-apple-darwin",
     extension: "tar.gz",

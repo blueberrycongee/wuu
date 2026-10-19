@@ -11,6 +11,7 @@
 
 import type { PluginDependency } from "./bundle-contract.js";
 import type { ModelAdapterDescriptor } from "./model.js";
+export * from "./process.js";
 
 import type {
   PublicIconName,

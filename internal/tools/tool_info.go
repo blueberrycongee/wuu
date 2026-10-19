@@ -103,6 +103,9 @@ func (t *Toolkit) toolExposure(name string) ToolExposure {
 	if t.IsToolDisabled(name) {
 		return ToolExposureHidden
 	}
+	if t.env != nil && t.env.externalCapabilitiesOnly {
+		return ToolExposureDirect
+	}
 	// The bash-first surface collapses every command entry point into a
 	// single "bash" tool. The model never has to choose between bash and
 	// the structured git tool: git stays registered so LookupTool still

@@ -15,6 +15,7 @@ node_modules/
 node_modules
 .vite/
 desktop/out/
+desktop/out-remote/
 # Standalone development previews; kept outside the packaged out/ tree.
 desktop/out-dev/
 # Browser PiP E2E bundles its entry here before launching Electron.

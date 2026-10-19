@@ -702,10 +702,12 @@ browserApi.onBrowserDock = (handler) => {
   ipcRenderer.on("wuu:browser-dock", listener);
   return () => ipcRenderer.removeListener("wuu:browser-dock", listener);
 };
-browserApi.listBrowserProfiles = () =>
-  ipcRenderer.invoke("wuu:browser-profiles") as Promise<BrowserProfile[]>;
-browserApi.importBrowserCookies = (profilePath) =>
-  ipcRenderer.invoke("wuu:browser-import-cookies", profilePath) as Promise<BrowserCookieImportResult>;
+if (!process.argv.includes("--wuu-browser-disabled")) {
+  browserApi.listBrowserProfiles = () =>
+    ipcRenderer.invoke("wuu:browser-profiles") as Promise<BrowserProfile[]>;
+  browserApi.importBrowserCookies = (profilePath) =>
+    ipcRenderer.invoke("wuu:browser-import-cookies", profilePath) as Promise<BrowserCookieImportResult>;
+}
 browserApi.listBrowserExtensions = () =>
   ipcRenderer.invoke("wuu:browser-extensions-list") as Promise<BrowserExtensionRecord[]>;
 browserApi.addBrowserExtension = () =>

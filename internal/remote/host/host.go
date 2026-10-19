@@ -82,6 +82,8 @@ type Options struct {
 	HostName               string // overrides the store's host name
 	Pairing                *PairingConfig
 	Logf                   func(format string, args ...any)
+	// OnConnected runs after the relay authenticates and registers this host.
+	OnConnected func()
 
 	// ReconnectMin/ReconnectMax bound the relay redial backoff. Zero values
 	// mean 1s/30s.
@@ -116,6 +118,7 @@ type Host struct {
 	reconnectMax           time.Duration
 	pushMinInterval        time.Duration
 	pusher                 HostPusher
+	onConnected            func()
 
 	baseCtx context.Context
 
@@ -179,6 +182,7 @@ func New(opts Options) (*Host, error) {
 		pushMinInterval:        opts.PushMinInterval,
 		pusher:                 pusher,
 		sessions:               map[string]*deviceSession{},
+		onConnected:            opts.OnConnected,
 	}
 	if h.reconnectMin <= 0 {
 		h.reconnectMin = time.Second
@@ -313,6 +317,9 @@ func (h *Host) runOnce(ctx context.Context) (bool, error) {
 		h.attentionReady = nil
 	}
 	h.wsMu.Unlock()
+	if h.onConnected != nil {
+		h.onConnected()
+	}
 
 	// Re-open the pairing window on every (re)connection while it lasts.
 	h.pairMu.Lock()

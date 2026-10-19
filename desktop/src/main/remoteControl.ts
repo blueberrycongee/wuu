@@ -31,6 +31,7 @@ export type RemoteStatus = {
 export type RemoteHostEvent =
   | { kind: "pair-uri"; uri: string }
   | { kind: "paired"; detail: string }
+  | { kind: "host-ready" }
   | { kind: "host-log"; message: string }
   | { kind: "host-exit"; code: number | null };
 
@@ -69,6 +70,8 @@ export class RemoteHostManager {
   private child: RemoteChild | null = null;
   private childWorkdir: string | null = null;
   private pairUri: string | null = null;
+  private ready = false;
+  private reportReady = false;
   private relayOverride: string | undefined;
   private localRelayOverride: string | undefined;
   private eventListeners = new Set<(event: RemoteHostEvent) => void>();
@@ -84,8 +87,8 @@ export class RemoteHostManager {
   }
 
   /** Reads the host-side remote configuration (identity, relay, devices). */
-  async status(workdir: string): Promise<RemoteStatus> {
-    const stdout = await this.exec(workdir, ["remote", "status", "--json"]);
+  async status(workdir: string, signal?: AbortSignal): Promise<RemoteStatus> {
+    const stdout = await this.exec(workdir, ["remote", "status", "--json"], undefined, undefined, signal);
     return JSON.parse(stdout) as RemoteStatus;
   }
 
@@ -102,19 +105,22 @@ export class RemoteHostManager {
     if (this.child) {
       const restartWorkdir = this.childWorkdir ?? workdir;
       await this.stopHost();
-      this.startHost(restartWorkdir, { pair: false, relay: this.relayOverride, localRelay: this.localRelayOverride });
+      this.startHost(restartWorkdir, { pair: false, relay: this.relayOverride, localRelay: this.localRelayOverride, reportReady: this.reportReady });
     }
   }
 
   /** Spawns the long-lived `wuu remote host` daemon. With pair=true a
    *  pairing window opens and the pairing URI is surfaced via onEvent (and
    *  currentPairUri) as soon as the daemon prints it. */
-  startHost(workdir: string, options: { pair?: boolean; relay?: string; localRelay?: string } = {}): void {
+  startHost(workdir: string, options: { pair?: boolean; relay?: string; localRelay?: string; reportReady?: boolean } = {}): void {
     if (this.child) {
       return;
     }
     const command = this.commandFor(workdir);
     const args = [...command.args, "remote", "host", "--workdir", workdir];
+    this.ready = false;
+    this.reportReady = options.reportReady ?? false;
+    if (this.reportReady) args.push("--ready");
     this.relayOverride = options.relay;
     this.localRelayOverride = options.localRelay;
     const dialRelay = options.localRelay ?? options.relay;
@@ -236,6 +242,25 @@ export class RemoteHostManager {
     return this.pairUri;
   }
 
+  /** Initial readiness is relay registration, not child creation or port bind. */
+  waitForReady(timeoutMs = 30_000): Promise<void> {
+    if (this.ready) return Promise.resolve();
+    if (!this.child || !this.reportReady) return Promise.reject(new Error("Remote host readiness is unavailable"));
+    return new Promise((resolve, reject) => {
+      const finish = (error?: Error) => {
+        clearTimeout(timer);
+        this.eventListeners.delete(onEvent);
+        error ? reject(error) : resolve();
+      };
+      const onEvent = (event: RemoteHostEvent) => {
+        if (event.kind === "host-ready") finish();
+        if (event.kind === "host-exit") finish(new Error("Remote host exited before becoming ready"));
+      };
+      const timer = setTimeout(() => finish(new Error("Remote host registration timed out")), timeoutMs);
+      this.eventListeners.add(onEvent);
+    });
+  }
+
   /** Resolves only after a usable pairing URI arrives, never just on spawn. */
   waitForPairing(timeoutMs = 30_000): Promise<void> {
     if (this.pairUri) return Promise.resolve();
@@ -266,6 +291,7 @@ export class RemoteHostManager {
 
     const resolveExit = this.resolveHostExit;
     this.child = null;
+    this.ready = false;
     this.childWorkdir = null;
     clearTimeout(this.pairExpiry);
     this.pairUri = null;
@@ -306,6 +332,11 @@ export class RemoteHostManager {
   }
 
   private handleHostLine(line: string): void {
+    if (line === '{"event":"remote/ready"}') {
+      this.ready = true;
+      this.emit({ kind: "host-ready" });
+      return;
+    }
     // The daemon prints the pairing URI on its own line; the exact scheme
     // prefix keeps this parse stable across surrounding human text.
     if (line.startsWith("wuu://pair?")) {
@@ -334,7 +365,8 @@ export class RemoteHostManager {
   }
 
   /** One-shot CLI call; resolves with stdout, rejects with stderr on failure. */
-  private exec(workdir: string, args: string[], timeoutMs = this.opts.execTimeoutMs ?? 15_000, input?: string): Promise<string> {
+  private exec(workdir: string, args: string[], timeoutMs = this.opts.execTimeoutMs ?? 15_000, input?: string, signal?: AbortSignal): Promise<string> {
+    if (signal?.aborted) return Promise.reject(signal.reason);
     const command = this.commandFor(workdir);
     return new Promise((resolve, reject) => {
       const child = this.spawnFn()(command.command, [...command.args, ...args], {
@@ -359,12 +391,20 @@ export class RemoteHostManager {
         child.kill("SIGKILL");
         reject(new Error(`wuu ${args.join(" ")} timed out`));
       }, timeoutMs);
+      const onAbort = () => {
+        child.kill("SIGKILL");
+        clearTimeout(timer);
+        reject(signal!.reason);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
       child.on("error", (err) => {
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         reject(err);
       });
       child.on("exit", (code) => {
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         if (code === 0) {
           resolve(stdout);
         } else {

@@ -45,7 +45,7 @@ make build-go
 ./bin/wuu --help
 ```
 
-九个内置业务插件使用 `plugins/<id>/src/` 中的 TypeScript 源码。
+十个内置业务插件使用 `plugins/<id>/src/` 中的 TypeScript 源码。
 `make build-plugins` 把独立 JavaScript 运行包生成到内嵌资源目录；`make build-go`、
 `make install` 和桌面核心构建会先重新生成这些资源，再编译 Go。已提交的运行包
 让普通 Go 构建不依赖 npm 安装；`make check-plugins` 会拒绝过期的生成产物。
@@ -62,7 +62,27 @@ make build-go
 同时保留开发来源身份。独立 TypeScript 文件仍可直接运行 `wuu plugin dev ./extension.ts`，
 不要求清单或构建。参见[插件快速开始](../customize/plugin-quickstart.md)。
 
-`make install` 从当前检出安装 CLI。当前发布工作流只打包 macOS arm64 桌面预览版；存在 Windows CI 和打包脚本，不代表已经发布 Windows 版本。用户可用的发行方式见[安装](../getting-started/installation.md)。
+`make install` 从当前检出安装 CLI。发布工作流仅打包 macOS arm64 桌面预览版；Linux x64 AppImage / Debian 包仍为实验性源码构建。存在 Windows CI 和打包脚本，不代表已经发布 Windows 版本。用户可用的发行方式见[安装](../getting-started/installation.md)。
+
+### Linux 桌面包
+
+在 Linux x64 上，`npm --prefix desktop run pack:linux` 生成目录包，
+`dist:linux` 生成本地 AppImage / Debian 包，`release:linux` 生成包并检查产物。
+三者均为实验构建，不连接公开更新源。先安装 `make setup` 所需的锁定依赖；
+还需要 `dpkg-deb` 和 Electron 常用 Linux 运行库。构建包含 Go core、Linux CUA 辅助程序、
+内置插件、Web 资源、node-pty 原生模块及固定校验值的 Linux ripgrep。
+该命令不会上传或发布。正式发布前仍需验证真实 Secret Service 集成、
+默认配置 Ubuntu 24.04 上的 Debian 安装、FUSE 挂载及 AppImage 跨版本更新和重启。
+启动器使用 X11 或 XWayland，保留 Chromium 沙箱；不要为启动应用而关闭系统安全控制。
+受限工具执行需要 Landlock ABI 3 或更高版本，MCP OAuth 需要会话 D-Bus 和
+已解锁的 Secret Service 密钥环。原生 Wayland 和 Linux arm64 暂不支持。
+
+`npm --prefix desktop run test:e2e:linux-package` 在 X11/XWayland 会话中
+打开两种解包产物，检查正式 renderer 和 preload，将截图和日志保存在
+`desktop/release/linux-package-evidence/`。CI 使用 `xvfb-run --auto-servernum`，
+保留 Chromium 沙箱。此检查不等于包管理器安装、FUSE 挂载、原生 Wayland
+或完整跨版本更新验收。Linux 打包 CI 还要求已有的五项 Landlock 文件系统
+边界检查全部通过，不能跳过。
 
 ### 原生引导端到端检查
 
@@ -402,6 +422,28 @@ helper CPU/IO 不可用。不要混合新进程、普通切换、流式、profil
 harness 数据。隔离 core 优化时使用完全相同的 UI，保留全部重复样本，
 并以最终 main 修订作为优化基线。
 
+### 桌面图表渲染
+
+桌面及共享 Web renderer 使用 [Pele](https://github.com/obsidianmd/pele) 渲染
+`mermaid` 代码块。原生 iOS/Android 和文档站仍使用 Mermaid.js。原生图表打包脚本
+仍依赖桌面的 Mermaid 包，因此需保留该依赖；修改桌面锁文件后，运行
+`node clients/native/shared-ui/build-mermaid.mjs` 刷新记录的哈希。
+
+Pele 使用自己的布局和 Wuu 的 CSS 主题变量。Mermaid 的 `themeVariables`、任意
+HTML 标签及外部 Mermaid 插件与原渲染器并不等价。图表源码中的链接和图片已禁用。
+保留源码指定的流程方向，图表适配现有预览区域，支持点击放大和导出独立 SVG。
+
+执行 `npm --prefix desktop run build` 后，运行
+`cd desktop && npx electron dev/pele/verify.cjs` 验证桌面图表。它在深浅主题、
+15/20px 字号及宽窄窗口下加载实际 Markdown 组件，检查流式输出、错误恢复和导出
+颜色，再用合成会话打开生产版桌面 renderer。JSON 报告、截图和导出的 SVG 保存到
+`desktop/out/pele-acceptance/`。
+
+同一次运行会在同一个 Electron 页面内比较 Pele 与 Mermaid.js：每份源码预热三次、
+测量十次，并交替执行引擎。耗时包含生成 SVG、插入 DOM 和强制布局，不包含模块加载、
+屏幕绘制或模型延迟。另以相同构建参数比较独立引擎的压缩包体和 gzip 大小；这些数字
+不代表整个应用安装包的大小。
+
 ## 原生手机与远程服务
 
 当前手机实现位于 [`clients/native`](../../../clients/native/README.md)，iOS 使用 SwiftUI，Android 使用 Jetpack Compose。专用验证命令为：
@@ -434,7 +476,7 @@ PR 仅修改已有 renderer TypeScript/TSX 模块（可同时修改文档）时�
 
 桌面 CI 在并行单元测试前串行安装 Electron 二进制，避免并发解压同一目录。macOS 和 Windows 在相关 PR 上保留平台专属测试；macOS 在原生资源或打包输入变化时还验证打包。
 
-`main` 推送不再重复 Go、Desktop、Clients 或原生测试套件，只在改动路径选中原生检查时运行 macOS／Windows 打包。手动 `workflow_dispatch` 执行全部检查及两平台打包。因此直接推送 main 不具备 PR 测试覆盖；需要完整验证时应使用 PR 或手动运行 CI。
+`main` 推送不再重复 Go、Desktop、Clients 或原生测试套件，在改动路径选中原生检查时运行 macOS／Windows 打包，以及 Linux 打包、沙箱和启动门禁。手动 `workflow_dispatch` 执行全部检查和三平台打包。因此直接推送 main 不具备 PR 测试覆盖；需要完整验证时应使用 PR 或手动运行 CI。
 
 `Go check` 仅在路径选择明确排除 Go 时接受 Go 任务跳过。`CI check` 要求路径选择成功、所有选中任务成功；意外跳过、失败或取消都会导致汇总失败。这些汇总不修改仓库保护规则。
 
@@ -498,3 +540,41 @@ CI 额外使用 sample-02 运行此回归，两次运行一起上传为 `convers
 长度变化。原始数据和替换映射保存在公开仓库之外。校验器会拒绝额外字段、常见密钥和
 非示例 HTTP 地址，但不能证明任意正文已经脱敏，每份新样本仍须人工复核。
 样本中的技术结论属于历史会话内容，不应作为当前产品文档。运行无需真实账号或模型密钥。
+
+### Linux Computer Use 开发
+
+Linux 开发启动器会构建 X11 Computer Use 辅助程序，并默认启用对应内置扩展。
+设置 `WUU_ENABLE_CUA_LINUX=0` 可退出。只构建辅助程序可运行
+`npm --prefix desktop run build:cua-linux`；该命令使用 Go 工具链，并将 XGB
+许可证复制到包内声明目录。运行环境须为支持 XTEST 和 XComposite 的 X11 会话，
+暂不支持原生 Wayland 控制。这不会改变当前正式发布的安装包平台范围。
+
+### Linux Computer Use 验收
+
+先用 `go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu` 构建核心，运行
+`npm --prefix desktop run build:cua-linux` 构建辅助程序，再用
+`cd desktop && npx electron-vite build` 构建桌面端。回到仓库根目录，在隔离的
+X11 会话中运行 `node desktop/scripts/linux-cua-e2e.cjs`；需要 XComposite、
+XTEST、窗口管理器、合成器和 FFmpeg。Linux 验收工作流提供 Xvfb、Openbox 和
+xcompmgr。用例使用生产辅助程序执行输入、捕获指定窗口，并使用生产 PiP 工厂；
+活动直接传入观察协调器。
+
+同一次运行会采样动态预览 30 秒、2560×1600 大窗口 15 秒、隐藏预览后的空闲状态
+8 秒，以及恢复采集后 10 秒。原生动作包含宿主的精确目标发现调用。
+`desktop/out/e2e/linux-cua/performance.json` 保存主进程事件循环延迟、渲染器响应、
+视频帧间隔、输入响应时间、各进程 CPU 与 RSS 样本、内存趋势，以及重复释放和恢复
+采集轨道的结果。`results.json`、截图和 GIF 保留功能与视觉证据。
+`WUU_LINUX_CUA_OUTPUT` 可指定证据目录。
+
+预算用于发现卡顿和资源持续增长回归；CPU 样本只作为测量结果，不作为跨机器基准。
+CI 会记录虚拟显示、CPU、Electron 版本和软件渲染环境。
+
+第二个进程使用隔离配置和本地脚本化模型服务，加载生产桌面主进程、preload 和渲染器。
+真实输入框通过内置 Linux CUA 插件启动 Go app-server 回合。模型请求边界必须收到
+目标 ID、截图图像和新的快照元数据，包括 `after=vision` 的结果；其返回图像还必须
+显示测试目标在点击后同步绘制的新状态，而非旧画面。持续动画目标还会单独验证等待
+画面稳定的超时上限。真实 Go 活动通知
+自动创建 PiP；关闭预览必须释放采集，同时允许两次原生点击继续执行，回合随后完成并
+持久化。`full-app.json` 记录这些检查和 10 秒应用响应采样；`full-app-live.png` 与
+`full-app-desktop.png` 展示真实应用。全程不使用凭据或真实模型推理。该源码构建验收
+不验证安装包、物理 Linux 硬件、真实模型行为，或与 Mac 的性能等价性。

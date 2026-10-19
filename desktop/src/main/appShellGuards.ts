@@ -45,6 +45,7 @@ export function productionApplicationMenuTemplate(
     } : { role: platform === "darwin" ? "appMenu" : "fileMenu" },
     { role: "editMenu" },
     { role: "windowMenu" },
+    ...(platform !== "darwin" && updateItem ? [{ role: "help" as const, submenu: [updateItem] }] : []),
   ];
 }
 

@@ -78,6 +78,22 @@ Open the built DMG in Finder to check icon labels, both selection states,
 clipping and scrolling at standard and Retina resolution, then verify copying
 to Applications and launching the app. A background-only preview does not validate the Finder layout.
 
+## Experimental Linux packaging
+
+Linux x64 packaging is limited to CI and manual source builds. The release
+workflow remains macOS-only and neither publishes Linux assets nor waits for
+Linux packaging. `npm --prefix desktop run release:linux` builds and verifies
+experimental AppImage and Debian packages without a public update feed.
+See [development](development.md#linux-desktop-packages) for requirements.
+
+CI launches both extracted packages on Ubuntu 22.04 with Chromium sandboxing
+enabled and requires all five existing Landlock boundary cases without skips.
+Before enabling Linux publication, verify real Secret Service integration,
+an installed Debian package on stock Ubuntu 24.04, FUSE-mounted AppImage launch,
+and an actual AppImage update and relaunch. An extracted-package smoke check
+does not establish those results. Keep public download links and update metadata
+macOS-only until that acceptance and a separate release change are complete.
+
 ## Signing configuration
 
 `npm run release:desktop` requires a pinned Apple Developer ID Application identity,

@@ -10,6 +10,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
+	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
@@ -106,6 +107,47 @@ func TestProtectedPathsKeepProcessPolicyInUnconfinedMode(t *testing.T) {
 	}
 	if _, _, err := env.processSandboxPolicyWithBuiltIn(context.Background(), false); err == nil {
 		t.Fatal("missing sandbox allowed protected process")
+	}
+}
+
+func TestProtectedPathsRejectBackgroundAdmission(t *testing.T) {
+	// Neither shell nor plugin starts may create durable process records while
+	// protected read/write policy cannot be tracked for their full lifetime.
+	for _, caller := range []string{"bash", "plugin"} {
+		t.Run(caller, func(t *testing.T) {
+			root := t.TempDir()
+			kit, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			kit.SetBoundary(UnconfinedBoundary())
+			kit.SetProtectedPaths([]string{t.TempDir()})
+			kit.SetSessionID("protected-background")
+			kit.SetSessionDir(t.TempDir())
+			// A configured provider must not make admission possible. Its empty
+			// argv also prevents execution if this rejection ever regresses.
+			kit.SetProcessSandboxProvider(policyTestSandboxProvider{})
+			manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = manager.CleanupSession() })
+			kit.SetProcessManager(manager)
+			if caller == "plugin" {
+				started, _, startErr := kit.StartPluginProcess(context.Background(), "echo blocked", root)
+				if startErr == nil || started != nil {
+					t.Errorf("protected plugin process admitted: process=%+v error=%v", started, startErr)
+				}
+			} else if _, err := kit.Execute(context.Background(), providers.ToolCall{
+				Name: "bash", Arguments: `{"command":"echo blocked","run_in_background":true}`,
+			}); err == nil {
+				t.Error("protected background shell admitted")
+			}
+			processes, err := manager.List()
+			if err != nil || len(processes) != 0 {
+				t.Fatalf("rejected start left durable processes: %+v error=%v", processes, err)
+			}
+		})
 	}
 }
 

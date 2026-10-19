@@ -143,6 +143,9 @@ type Env struct {
 	// boundary from a lightweight Env literal used by internal callers and
 	// tests. The historical zero-value Env behaves as the standard boundary.
 	boundaryConfigured bool
+	// External engines use a direct browser/CUA surface and receive screenshot
+	// pixels without needing access to the workspace's file tools.
+	externalCapabilitiesOnly bool
 
 	// Optional dependencies — nil means the feature is unavailable.
 	// Tools check for nil and return a clear error rather than panic.

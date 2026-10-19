@@ -8,19 +8,45 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ## [Unreleased]
 
+### Added
+
+- Add experimental Personal agents with persistent conversations, attributed shared memory, background tasks, attachment history, reminders, and desktop/native entry points. Personal now defaults to logical memory-domain isolation with explicit capability reporting. Verified host isolation remains an optional, fail-closed embedding mode; same-OS Shell confidentiality is not promised.
+- Add a persistent user-host SDK and scoped notification routing. Calendar authorization/write-provider wiring, native-device verification, and production push delivery remain integration requirements.
+- Let external agent engines use Wuu browser and enabled computer-control tools through turn-scoped MCP, with shared permissions, activity previews, screenshots, and Stop/Takeover controls.
+- Experimental Linux x64 AppImage and Debian packages with sandbox-preserving X11 launchers and CI artifact verification. Public releases remain macOS-only.
+- Linux MCP OAuth credential storage through Secret Service, with no plaintext fallback.
+- Offer optional browser cookie import during macOS onboarding, with recently
+  active local profiles listed first and explicit import actions.
+- Add an experimental headless workspace host and `wuu remote ssh` tunnel: use remote agent engines, files, Git, and terminals in the shared browser workbench, with running tasks preserved across SSH disconnects.
+- Add Linux X11 computer control with window-bound observation and foreground input,
+  and watch-only activity previews that retain the existing controls and layout.
+- Monitor plugin for background scripts, event delivery into the active conversation,
+  timeout and persistent watches, output inspection, and per-task stop controls.
+- Public process service for conversation-bound extension commands and event delivery,
+  with process-tree cleanup and optional handoff from completed child sessions.
+
 ### Changed
 
 - Present twin directly in the existing desktop navigation below Automations, with one persistent main conversation and a continuous right panel for ongoing work, recent activity and outputs. Reuse native message, file, search, composer and confirmation controls; keep Personal preferences in shared settings.
 
 ### Fixed
 
+- Preserve pending fallback messages until a real server turn acknowledges them, so a rejected concurrent send can restore its draft instead of being mistaken for delivered input.
 - Keep hidden and generated context out of Personal conversation history and search while preserving audit records and exact user-authored text.
 - Preserve accepted Personal user inputs when stopping a reply. Deliver background questions and failures to the main conversation, resume the same task from its answer, and update routines without duplicating schedules.
-
-### Added
-
-- Add experimental Personal agents with persistent conversations, attributed shared memory, background tasks, attachment history, reminders, and desktop/native entry points. Personal now defaults to logical memory-domain isolation with explicit capability reporting. Verified host isolation remains an optional, fail-closed embedding mode; same-OS Shell confidentiality is not promised.
-- Add a persistent user-host SDK and scoped notification routing. Calendar authorization/write-provider wiring, native-device verification, and production push delivery remain integration requirements.
+- Match the DeepSeek Harness icon's visible size to peer agent icons in settings, runtime menus, and onboarding.
+- Allow background task and question notifications on Linux desktops with native notification support.
+- Show the local model service directory immediately in settings and onboarding,
+  without skeleton placeholders or a new directory request on each visit.
+- Keep SSH workspace tunnels owned by their foreground command, wait for host registration before reporting readiness, and clean up interrupted startup.
+- Keep SSH workspace discovery available after removal or relocation, and reject account-backed homes before local pairing.
+- Avoid false file-save conflicts in remote workspaces by using the same modification-time calculation for Go file reads and desktop saves.
+- Continue failed external-agent sessions when their native history cannot be rewound,
+  avoiding an unsupported edit-and-resend request from the recovery button. Hide
+  the Wuu model-provider settings shortcut for engines that own their credentials.
+- Preserve and queue desktop messages when another turn wins a concurrent send, retaining attachments, send order, and Stop intent.
+- Guide next-message predictions toward concrete follow-ups instead of polite
+  acknowledgments, and allow no suggestion when the next intent is unclear.
 
 ## [2026.10.19] - 2026-10-18
 

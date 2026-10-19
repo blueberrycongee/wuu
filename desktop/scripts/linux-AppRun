@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -e
+# electron-updater uses this when installing without an immediate relaunch.
+if [[ "${APPIMAGE_EXIT_AFTER_INSTALL:-}" == "true" ]]; then exit 0; fi
+app_dir="$(dirname "$(readlink -f "$0")")"
+# An extracted copy must not inherit another AppImage's update destination.
+if [[ "${APPDIR:-}" != "$app_dir" ]]; then unset APPIMAGE; fi
+export APPDIR="$app_dir"
+exec "$app_dir/wuu" --ozone-platform=x11 "$@"

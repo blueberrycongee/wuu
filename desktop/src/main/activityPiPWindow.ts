@@ -14,6 +14,7 @@ import type { BrowserInteractionHint, BrowserParentWindowHandle, BrowserViewHand
 import type { BrowserPiPHostWindow, ObservationPiPEventSink, ObservationPiPHandle } from "./cuaActivityWindows";
 import type { ActivityPiPContent, ActivityPiPContentFactory } from "./activityPiPContent";
 import type { CUANativePiPEvent } from "./cuaFrameStreams";
+import { installLinuxPiPWindowShape } from "./linuxPiPWindowShape";
 type Interaction = NonNullable<ActivitySession["interaction"]>;
 
 const COMPLETION_DISMISS_DELAY_MS = 30_000;
@@ -64,6 +65,7 @@ export type BrowserPiPWindowHandle = BrowserParentWindowHandle & {
   getBounds(): Rectangle;
   setBounds(bounds: Rectangle): void;
   setOpacity?(opacity: number): void;
+  setBackgroundColor?(color: string): void;
   setIgnoreMouseEvents?(ignore: boolean): void;
   moveTop?(): void;
   setParentWindow?(parent: unknown): void;
@@ -344,6 +346,9 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   setAppearance(dark: boolean, preferences?: ActivityPreviewAppearance): void {
     this.dark = dark;
     if (preferences) this.appearance = preferences;
+    if (process.platform === "linux") {
+      this.win?.setBackgroundColor?.(this.appearance?.surface ?? (dark ? "#242426" : "#f8f8fa"));
+    }
     this.execute(`window.wuuPipAppearance?.(${JSON.stringify({ dark, ...this.appearance })})`);
   }
 
@@ -1193,6 +1198,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   }
 
   private createElectronWindow(bounds: Rectangle): BrowserPiPWindowHandle {
+    const shapeLinuxWindow = process.platform === "linux" && Boolean(process.env.DISPLAY)
+      && !process.env.WAYLAND_DISPLAY && process.env.XDG_SESSION_TYPE !== "wayland";
     const win = new BrowserWindow({
       title: "Wuu Live Activity",
       width: bounds.width,
@@ -1200,9 +1207,14 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       x: bounds.x,
       y: bounds.y,
       frame: false,
-      transparent: false,
+      // Electron 44 retains 4px native frame insets on opaque X11 windows,
+      // even without shadows. A translucent host removes those insets; the
+      // configured background still paints an opaque card inside its shape.
+      transparent: shapeLinuxWindow,
       backgroundColor: "#f4f4f5",
-      hasShadow: true,
+      // On X11 Electron's client-side shadow adds a rectangular frame even to
+      // frameless windows. The Linux host uses one explicit rounded shape.
+      hasShadow: !shapeLinuxWindow,
       roundedCorners: true,
       skipTaskbar: true,
       resizable: false,
@@ -1220,8 +1232,9 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         sandbox: true,
         ...appShellWebPreferences(this.deps.isPackaged),
       },
-    }) as unknown as BrowserPiPWindowHandle;
-    return win;
+    });
+    if (shapeLinuxWindow) installLinuxPiPWindowShape(win);
+    return win as unknown as BrowserPiPWindowHandle;
   }
 
   private createElectronOverlay(): BrowserPiPOverlayHandle {

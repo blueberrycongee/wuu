@@ -22,6 +22,10 @@ wuu app-server --workdir /path/to/project
 响应使用相同的 `id`，并包含 `result` 或 `error`。通知只有 `method` 和 `params`，没有
 `id`。检查初始化结果的 `status` 和 `issues`：协议响应成功，仍可能返回 `needs_setup`。
 
+初始化同时返回 `catalog_providers`，即本地可连接服务目录，客户端可直接展示服务选项。
+`config/model-catalog/refresh` 成功后在同名字段中返回更新后的目录；刷新期间应保留现有
+选项。旧版宿主可能省略该字段，此时可调用 `config/model-catalog/providers` 获取目录。
+
 ## 运行任务
 
 创建会话，再使用返回的 `result.thread.id`：

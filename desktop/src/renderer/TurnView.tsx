@@ -47,6 +47,7 @@ export { latestAgentMessageItemID };
 export type TurnViewProps = {
   turn: Turn;
   threadID?: string;
+  engineID?: string;
   cwd?: string;
   onOpenFile?: (path: string) => void;
   onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
@@ -126,6 +127,7 @@ function workspaceTurnForPresentation(turn: Turn): Turn {
 function TurnContent({
   turn,
   threadID,
+  engineID,
   cwd,
   onOpenFile,
   onOpenURL,
@@ -265,14 +267,16 @@ function TurnContent({
     ? previousStreamStatus.current
     : undefined;
   const renderedStreamStatus = visibleStreamStatus ?? retainedStreamStatus;
-  // A turn that already wrote part of its reply or ran steps continues from
-  // them; resending its message would rewind the thread and drop that work.
+  // Only Wuu and Codex support the history cutoff used by edit-and-resend.
+  // Other engines may have persisted the prompt even without visible output;
+  // continue their native session, just as we do when a turn left partial work.
   const recoverable = isLatestTurn && turnEndedInFailure(turn) && onEditMessage && onSubmitEditMessage;
-  const leftPartialWork = recoverable ? turnLeftPartialWork(turn) : false;
-  const continueFailedTurn = recoverable && leftPartialWork && threadID
+  const canRewindHistory = !engineID || engineID === "wuu" || engineID === "codex";
+  const shouldContinue = !canRewindHistory || turnLeftPartialWork(turn);
+  const continueFailedTurn = recoverable && shouldContinue && threadID
     ? () => continueTurn(threadID)
     : undefined;
-  const retryFailedTurn = recoverable && !leftPartialWork && retryMessage
+  const retryFailedTurn = recoverable && !shouldContinue && retryMessage
     ? () => onSubmitEditMessage(
         turn.id, retryMessage, retryMessage.input_text ?? retryMessage.text ?? "",
         retryMessage.images ?? [], retryMessage.files ?? [], retryMessage.content_parts,
@@ -283,7 +287,7 @@ function TurnContent({
     error: turn.error,
     onRetry: retryFailedTurn,
     onContinue: continueFailedTurn,
-    onOpenSettings: isLatestTurn ? openModelServices : undefined,
+    onOpenSettings: isLatestTurn && (!engineID || engineID === "wuu") ? openModelServices : undefined,
   };
   const incomplete = turn.status === "failed" || turn.status === "interrupted";
   const editSummary = ENABLE_TURN_EDIT_SUMMARY ? (

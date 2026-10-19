@@ -259,6 +259,12 @@ export function listBrowserProfiles(
         const preferences = readJSON(join(profilePath, "Preferences"));
         const profilePreferences = record(preferences?.profile);
         const cached = info[profileDirectoryName] ?? {};
+        // Chromium stores profile activity as Unix seconds in Local State.
+        // Missing activity remains unknown; file modification is not usage.
+        const activeTime = cached.active_time;
+        const lastUsedAt = typeof activeTime === "number" && Number.isFinite(activeTime)
+          && activeTime > 0 && activeTime * 1000 <= Date.now()
+          ? activeTime * 1000 : undefined;
         const profileName =
           stringValue(cached.name) ??
           stringValue(profilePreferences?.name) ??
@@ -280,6 +286,7 @@ export function listBrowserProfiles(
           hasCookies,
           hasPasswords,
           ...(userName ? { userName } : {}),
+          ...(lastUsedAt ? { lastUsedAt } : {}),
         });
       }
     } catch (error) {
@@ -291,8 +298,12 @@ export function listBrowserProfiles(
     throw filesystemError(firstError, "the browser profile roots");
   }
   return profiles.sort((a, b) => {
-    if (a.profileDirectoryName === "Default") return -1;
-    if (b.profileDirectoryName === "Default") return 1;
+    const importable = Number(b.hasCookies) - Number(a.hasCookies);
+    if (importable) return importable;
+    const recent = (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0);
+    if (recent) return recent;
+    const defaultProfile = Number(b.profileDirectoryName === "Default") - Number(a.profileDirectoryName === "Default");
+    if (defaultProfile) return defaultProfile;
     return `${a.appName}:${a.profileName}`.localeCompare(
       `${b.appName}:${b.profileName}`,
     );

@@ -1,3 +1,1 @@
-import mermaid from "mermaid";
-
-export default mermaid;
+export { render } from "pele";

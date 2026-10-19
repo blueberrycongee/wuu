@@ -1,5 +1,5 @@
 import type { Thread } from "../shared/protocol";
-import type { QueuedComposerMessage } from "./ComposerMessages";
+import { OPTIMISTIC_TURN_ID_PREFIX, type QueuedComposerMessage } from "./ComposerMessages";
 
 export type ThreadPendingComposerMessages = {
   queued: QueuedComposerMessage[];
@@ -190,6 +190,7 @@ export function materializedComposerMessageIDs(
 ): Set<string> {
   const ids = new Set<string>();
   for (const turn of thread?.turns ?? []) {
+    if (turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)) continue;
     for (const item of turn.items ?? []) {
       if (
         item.type === "user_message" &&

@@ -1,0 +1,98 @@
+name: Linux Computer Use acceptance
+on:
+  pull_request:
+    paths:
+      - "cmd/wuu-cua-linux/**"
+      - "internal/cualinux/**"
+      - "internal/plugin/bundled/cua-linux/**"
+      - "internal/activity/**"
+      - "internal/appserver/external_capabilities.go"
+      - "internal/runtime/thread_capabilities.go"
+      - "internal/runtime/session.go"
+      - "internal/tools/external_capabilities.go"
+      - "internal/codexengine/**"
+      - "internal/claudeengine/**"
+      - "internal/externalengine/**"
+      - "desktop/src/main/*PiP*"
+      - "desktop/src/main/cuaActivityWindows.ts"
+      - "desktop/src/main/linux*"
+      - "desktop/src/linuxPreview.ts"
+      - "desktop/src/shared/linuxPreview.ts"
+      - "desktop/linux-cua-preview.html"
+      - "desktop/electron.vite.config.ts"
+      - "desktop/package*.json"
+      - "desktop/scripts/*cua-linux*"
+      - "desktop/scripts/linux-cua-e2e*"
+      - "desktop/scripts/external-capabilities-*"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/linux-cua-e2e.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linux-cua-e2e-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  linux-cua:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install isolated X11 acceptance dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openbox xcompmgr x11-utils ffmpeg
+          npm ci --prefix desktop
+          node desktop/node_modules/electron/install.js
+      - name: Build production core, helper and preview
+        run: |
+          mkdir -p desktop/build/bin
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu
+          node desktop/scripts/build-cua-linux.cjs
+          (cd desktop && node_modules/.bin/electron-vite build)
+      - name: Exercise native X11 input, continuous PiP and full application
+        timeout-minutes: 6
+        env:
+          WUU_LINUX_CUA_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/linux-cua
+          WUU_CUA_LINUX_HELPER: ${{ github.workspace }}/desktop/build/bin/wuu-cua-linux
+          XDG_SESSION_TYPE: x11
+          WUU_LINUX_CUA_VIRTUAL_DISPLAY: "1"
+          WUU_EXTERNAL_CAPABILITIES_CUA: "1"
+          WUU_EXTERNAL_CAPABILITIES_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/linux-cua/external-capabilities
+        shell: bash
+        run: |
+          mkdir -p "$WUU_LINUX_CUA_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 2880x1800x24 +extension Composite +extension DAMAGE +extension XTEST' \
+            dbus-run-session -- bash -euc '
+              openbox > "$WUU_LINUX_CUA_OUTPUT/window-manager.log" 2>&1 &
+              wm=$!
+              xcompmgr -a > "$WUU_LINUX_CUA_OUTPUT/compositor.log" 2>&1 &
+              compositor=$!
+              trap "kill $compositor $wm 2>/dev/null || true" EXIT
+              for attempt in $(seq 1 100); do
+                xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id" && break
+                sleep .05
+              done
+              xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id"
+              kill -0 "$compositor"
+              node desktop/scripts/linux-cua-e2e.cjs --no-sandbox
+              node desktop/scripts/external-capabilities-e2e.cjs
+            ' 2>&1 | tee "$WUU_LINUX_CUA_OUTPUT/run.log"
+      - name: Upload actual Linux acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-cua-evidence
+          path: desktop/out/e2e/linux-cua
+          if-no-files-found: error
+          retention-days: 14

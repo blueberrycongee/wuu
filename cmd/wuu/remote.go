@@ -51,7 +51,7 @@ func runRelay(args []string) error {
 
 func runRemote(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: wuu remote <init|host|status|devices|phone> ...")
+		return errors.New("usage: wuu remote <init|host|ssh|status|devices|phone> ...")
 	}
 	switch args[0] {
 	case "account":
@@ -60,6 +60,8 @@ func runRemote(args []string) error {
 		return runRemoteInit(args[1:])
 	case "host":
 		return runRemoteHost(args[1:])
+	case "ssh":
+		return runRemoteSSH(args[1:])
 	case "status":
 		return runRemoteStatus(args[1:])
 	case "devices":
@@ -130,6 +132,7 @@ func runRemoteHost(args []string) error {
 	configFile := fs.String("config", "", "explicit user-host runtime config")
 	relayURL := fs.String("relay", "", "relay url override")
 	pair := fs.Bool("pair", false, "open a pairing window and print the pairing URI")
+	reportReady := fs.Bool("ready", false, "print a JSON readiness event after the relay registers this host")
 	pairTimeout := fs.Duration("pair-timeout", 10*time.Minute, "pairing window duration")
 	pairOnce := fs.Bool("pair-once", true, "close the pairing window after the first phone pairs")
 	if err := fs.Parse(args); err != nil {
@@ -187,6 +190,9 @@ func runRemoteHost(args []string) error {
 		RelayURL: strings.TrimSpace(*relayURL),
 		Workdir:  rootDir,
 		Logf:     func(format string, a ...any) { fmt.Fprintf(os.Stderr, format+"\n", a...) },
+	}
+	if *reportReady {
+		opts.OnConnected = func() { fmt.Println(`{"event":"remote/ready"}`) }
 	}
 	if embedded != nil {
 		opts.AppServer = embedded.Serve

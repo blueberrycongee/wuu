@@ -444,12 +444,10 @@ describe("SettingsView model services", () => {
     renderSettings({ initialized: servicesInitialized(), initialPage: "providers" });
     await flush();
 
-    expect(container.querySelector('[role="status"]')).not.toBeNull();
     click(container.querySelector('[data-testid="settings-provider-custom"]'));
     expect(document.querySelector('[data-testid="settings-provider-connect-base-url"]')).not.toBeNull();
 
     await act(async () => { rejectCatalog(new Error("catalog unavailable")); });
-    expect(container.querySelector('[role="status"]')).toBeNull();
     expect(container.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
   });
 
