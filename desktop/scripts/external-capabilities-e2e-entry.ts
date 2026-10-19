@@ -210,7 +210,7 @@ function tab(scenario: Scenario) {
   const activity = activities.get(scenario.thread);
   assert(activity?.target && activity.workdir === scenario.context.cwd && activity.controller === 'agent', JSON.stringify(activity));
   const meta = host.tabSurfaceMeta(scenario.context.cwd, activity.target);
-  const view = views.find(view => !view.webContents.isDestroyed() && view.webContents.getURL() === meta?.url);
+  const view = views.find(view => view.webContents && !view.webContents.isDestroyed() && view.webContents.getURL() === meta?.url);
   assert(view, 'The actual activity identifies a real Chromium tab');
   return { id: activity.target, view };
 }
