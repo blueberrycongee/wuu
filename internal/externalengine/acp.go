@@ -229,11 +229,12 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 		return acpEngineError(s.engine.entry, p, err)
 	}
 	mcp := make([]map[string]any, 0, len(s.binding.MCPServers))
-	if len(s.binding.MCPServers) > 0 && !init.Capabilities.MCP.HTTP {
-		return errors.New("this engine does not support the host's HTTP MCP tools")
-	}
-	for _, server := range s.binding.MCPServers {
-		mcp = append(mcp, map[string]any{"type": "http", "name": server.Name, "url": server.URL, "headers": []any{}})
+	if init.Capabilities.MCP.HTTP {
+		for _, server := range s.binding.MCPServers {
+			mcp = append(mcp, map[string]any{"type": "http", "name": server.Name, "url": server.URL, "headers": []any{}})
+		}
+	} else if len(s.binding.MCPServers) > 0 {
+		t.content("Wuu browser and computer tools are unavailable because this agent does not advertise HTTP MCP support. Its native tools remain available.\n\n", false)
 	}
 	params := map[string]any{"cwd": s.binding.RootDir, "mcpServers": mcp}
 	session := acpSession{asyncConfiguration: s.engine.entry.ID == "devin"}

@@ -2039,7 +2039,12 @@ func (s *Server) currentSkillCatalog(ctx context.Context, threadID string, force
 	if err != nil {
 		return nil, "", err
 	}
-	if threadRuntime.Toolkit != nil {
+	th.mu.Lock()
+	engineID := agentengine.NormalizeEngineID(th.EngineID)
+	th.mu.Unlock()
+	// The external host toolkit describes only browser/CUA capabilities, not
+	// the engine's native tools or its ability to use explicitly selected skills.
+	if threadRuntime.Toolkit != nil && engineID == agentengine.EngineWuu {
 		root := threadRuntime.Toolkit.RootDir()
 		th.mu.Lock()
 		baseRepo := th.WorktreeBaseRepo
@@ -2060,7 +2065,7 @@ func (s *Server) currentSkillCatalog(ctx context.Context, threadID string, force
 	if sessionWorkspacePath(root) == sessionWorkspacePath(s.rt.RootDir) {
 		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
 	}
-	// Engines without a native toolkit cannot resolve a different checkout's catalog.
+	// External engines cannot resolve a different checkout's host skill catalog.
 	return nil, root, nil
 }
 
