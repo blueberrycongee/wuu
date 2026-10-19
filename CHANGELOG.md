@@ -11,6 +11,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Added
 
 - Let external agent engines use Wuu browser and enabled computer-control tools through turn-scoped MCP, with shared permissions, activity previews, screenshots, and Stop/Takeover controls.
+- Experimental Linux x64 AppImage and Debian packages with sandbox-preserving X11 launchers and CI artifact verification. Public releases remain macOS-only.
+- Linux MCP OAuth credential storage through Secret Service, with no plaintext fallback.
 - Offer optional browser cookie import during macOS onboarding, with recently
   active local profiles listed first and explicit import actions.
 - Add an experimental headless workspace host and `wuu remote ssh` tunnel: use remote agent engines, files, Git, and terminals in the shared browser workbench, with running tasks preserved across SSH disconnects.
@@ -23,6 +25,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Allow background task and question notifications on Linux desktops with native notification support.
 - Show the local model service directory immediately in settings and onboarding,
   without skeleton placeholders or a new directory request on each visit.
 - Keep SSH workspace tunnels owned by their foreground command, wait for host registration before reporting readiness, and clean up interrupted startup.

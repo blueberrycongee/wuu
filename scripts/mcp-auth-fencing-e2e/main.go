@@ -359,6 +359,35 @@ func main() {
 	root, err := os.MkdirTemp("", "wuu-mcp-auth-e2e-")
 	must(err)
 	defer os.RemoveAll(root)
+	if runtime.GOOS == "linux" {
+		home := os.Getenv("HOME")
+		must(os.Setenv("HOME", filepath.Join(root, "desktop-store")))
+		store, err := credentialstore.NewDesktopStore()
+		must(err)
+		unavailable := errors.New("synthetic Secret Service unavailable")
+		keyring.MockInitWithError(unavailable)
+		_, err = store.Get(ctx, "mcp:fixture", "oauth")
+		check(errors.Is(err, credentialstore.ErrNotFound), "first-use lookup required an available keyring")
+		check(errors.Is(store.Set(ctx, "mcp:fixture", "oauth", []byte("synthetic-only")), unavailable), "unavailable keyring accepted a write")
+		keyring.MockInit()
+		must(store.Set(ctx, "mcp:fixture", "oauth", []byte("synthetic-only")))
+		keyring.MockInitWithError(unavailable)
+		_, err = store.Get(ctx, "mcp:fixture", "oauth")
+		check(errors.Is(err, unavailable), "committed credential read hid a keyring failure")
+		must(filepath.Walk(os.Getenv("HOME"), func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return err
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			check(!strings.Contains(string(data), "synthetic-only") && !strings.Contains(string(data), base64.StdEncoding.EncodeToString([]byte("synthetic-only"))), "desktop store wrote credential data to disk")
+			return nil
+		}))
+		must(os.Setenv("HOME", home))
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"case": "linux-desktop-keyring-availability", "backend": "synthetic-system-keyring", "status": "passed"})
+	}
 	var base string
 	var mu sync.Mutex
 	var observed []string
@@ -607,8 +636,18 @@ func main() {
 			token(b, base+"/a", "recovered-account")
 		}, "keyring")
 	}
-	run("legacy-keyring-envelope-migration", func(a, b *process) {
+	run("keyring-unversioned-credential-policy", func(a, b *process) {
 		success(a.call(message{Op: "seed-legacy", Resource: base + "/a", Code: base + "/token"}))
+		if runtime.GOOS == "linux" {
+			absent(b, base+"/a")
+			denied := b.call(message{Op: "access", Resource: base + "/a"})
+			check(denied.Error != "" && denied.Token == "", "Linux accepted an unversioned keyring credential")
+			login(b, base+"/a", "new-account")
+			token(a, base+"/a", "new-account")
+			success(b.call(message{Op: "remove"}))
+			absent(a, base+"/a")
+			return
+		}
 		token(b, base+"/a", "legacy-account")
 		check(success(b.call(message{Op: "refresh", Resource: base + "/a"})).Token == "refreshed-synthetic-rotation", "legacy Keyring credential could not migrate")
 		token(a, base+"/a", "refreshed-synthetic-rotation")

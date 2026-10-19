@@ -87,7 +87,7 @@ The **Trigger** button beside Copy, Fork, and the timestamp on the latest assist
 
 Wuu resolves Bash through its shell launcher, including Git Bash on Windows. Foreground and background commands use the shared environment preparation: inherited build-time `GOROOT` is removed and non-interactive defaults are applied. PTY startup restores terminal-oriented settings where needed.
 
-Command classification helps with permission checks and scheduling, but is not the filesystem sandbox. In confined modes, foreground and background commands use the configured filesystem process sandbox. A missing enforcement provider causes launch failure rather than silently running unconfined. The built-in provider is currently macOS-only; network isolation is outside this contract. See [permissions](permissions.md) for modes and platform limits.
+Command classification helps with permission checks and scheduling, but is not the filesystem sandbox. In confined modes, foreground and background commands use the configured filesystem process sandbox. A missing enforcement provider causes launch failure rather than silently running unconfined. The built-in backend uses Seatbelt on macOS and Landlock on Linux. Linux requires a kernel with Landlock ABI 3 or later enabled and available to the process; an unavailable backend fails closed. Network isolation is outside this contract. See [permissions](permissions.md) for modes and platform limits.
 
 A denied write is not an invitation to retry through another shell command. Add an authorized workspace root or explicitly change the session mode when the task requires access outside its boundary. Wuu does not offer per-command approval prompts.
 
