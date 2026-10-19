@@ -37,7 +37,7 @@ async function scenario(configuredEffort) {
     WUU_TEST_CODEX_REQUESTS: wirePath, WUU_TEST_CODEX_LIFECYCLE: lifecyclePath };
   await writeFile(join(home, "config.json"), JSON.stringify({ default_provider: "fixture",
     providers: { fixture: { type: "openai-compatible", base_url: `http://127.0.0.1:${provider.address().port}`, api_key: "synthetic", model: "fixture" } },
-    engines: Object.fromEntries(["codex", "claude", "cursor", "devin", "grok", "hermes", "pi", "opencode", "antigravity"]
+    engines: Object.fromEntries(["codex", "claude", "cursor", "devin", "dsh", "grok", "hermes", "pi", "opencode", "antigravity"]
       .map(id => [id, id === "codex" ? { enabled: true, binary_path: fake } : { enabled: false }])),
     skills: { enabled: false }, ptc: { enabled: false }, agent: { permission_mode: "standard" } }));
   const events = new EventEmitter(), transcript = [], requests = [], observations = [];

@@ -143,7 +143,7 @@ app.on('browser-window-created', (_event, win) => { main ||= win; });
 const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, 120000);
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   const codexBinary = path.join(fixture, 'fake-codex');
   const compile = spawnSync('go', ['build', '-o', codexBinary, './internal/codexengine/testdata/fakecodex'], { cwd: path.dirname(desktop), encoding: 'utf8' });
   assert.equal(compile.status, 0, compile.stderr);

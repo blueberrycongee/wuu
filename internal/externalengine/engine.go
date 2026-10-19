@@ -150,6 +150,7 @@ type turn struct {
 	sink           agentengine.EventSink
 	text, thinking strings.Builder
 	tools          map[string]*providers.ToolCall
+	acpToolKinds   map[string]string
 	completed      map[string]bool
 	usage          providers.TokenUsage
 	stopReason     string

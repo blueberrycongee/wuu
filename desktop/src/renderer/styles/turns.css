@@ -44,7 +44,9 @@
   --reasoning-stream-cursor-color: var(--gray-500);
   --turn-process-entry-color: var(--ink-tertiary);
   --process-control-color-fallback: var(--ink-tertiary);
-  --process-active-color: var(--ink-quiet);
+  /* Tool activity and standalone reasoning summaries share the quiet ink
+     used by the composer placeholder, in every running/settled state. */
+  --process-summary-color: var(--ink-quiet);
   --process-active-highlight: var(--ink-muted);
   --activity-toggle-hover-color: var(--gray-650);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-600));
@@ -1593,6 +1595,15 @@
    * can still set their own offset. */
   margin-inline-start: var(--wuu-message-actions-inline-offset, calc((var(--conversation-message-action-icon-size, 15px) - var(--conversation-message-action-size)) / 2));
   padding-top: var(--conversation-answer-hover-action-gap);
+  /* Button padding supplies the visible icon-to-icon gap. Adding a flex
+   * gap here would count that whitespace twice. */
+  gap: var(--wuu-message-actions-control-gap, 0px);
+}
+
+.agent-message-actions > .message-time:not(:first-child) {
+  /* Text has no button padding. Complete the same visible gap after the
+   * last control, including larger touch targets and theme overrides. */
+  margin-inline-start: max(0px, calc((var(--conversation-message-action-size) - var(--conversation-message-action-icon-size)) / 2));
 }
 
 /* Continue the live answer's reading order through its actions and time.
@@ -2047,7 +2058,9 @@
 }
 
 .turn-process-fold-body {
-  padding: var(--conversation-process-detail-gap) 0 0 0;
+  /* The header and its first detail form one group; prose entries keep the
+   * wider reading gap below. */
+  padding: var(--conversation-activity-gap) 0 0 0;
 }
 
 /* A direct reply begins here until the provider confirms it as an answer.
@@ -2433,7 +2446,7 @@
   border: 0;
   overflow: visible;
   background: transparent;
-  color: var(--ink-quiet);
+  color: var(--process-summary-color);
   cursor: default;
   font-size: var(--conversation-process-font-size);
   font-weight: var(--conversation-process-font-weight);
@@ -4136,15 +4149,11 @@
   padding: 2px 0;
   cursor: pointer;
   list-style: none;
-  color: var(--conversation-process-control-color, var(--process-control-color-fallback));
+  color: var(--process-summary-color);
   font-size: var(--conversation-process-font-size);
   font-weight: var(--conversation-process-font-weight);
   line-height: var(--conversation-process-line-height);
   user-select: none;
-}
-
-.turn-reasoning-summary:has(> .turn-reasoning-summary-text.is-live-gray) {
-  color: var(--process-active-color);
 }
 
 .turn-reasoning-summary::-webkit-details-marker {
@@ -5179,6 +5188,7 @@ pre {
  * outputs collect at the turn end, matching the existing file-change summary.
  */
 .turn-artifact-inline-list {
+  --artifact-gallery-control-inset: 8px;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -5188,8 +5198,8 @@ pre {
 
 .turn-artifact-gallery-toolbar {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: var(--artifact-gallery-control-inset);
+  right: var(--artifact-gallery-control-inset);
   z-index: 1;
   display: flex;
   opacity: 0;
@@ -5240,6 +5250,11 @@ pre {
   overflow-x: auto;
   padding: 4px;
   scroll-padding-inline: 32px;
+}
+
+/* Small thumbnails must still contain the full font-scaled view control. */
+.turn-artifact-gallery-toolbar + .turn-artifact-gallery-items {
+  min-height: calc(var(--control-size-roomy) + var(--artifact-gallery-control-inset) * 2);
 }
 
 .turn-artifact-gallery-items:not(.is-tiled) > * {

@@ -147,7 +147,7 @@ async function run() {
 
 // Exercise the real app, not copies of header markup or stylesheet literals.
 // Page switching must preserve the control's hit box and rendered glyph;
-// Default zoom preserves the native center; zooming in must not clip chrome.
+// Default text and zoom preserve the native center; larger text or zoom must not clip chrome.
 async function verifyTitlebarContinuity(win) {
   for (const theme of ["light", "dark"]) {
     for (const font of [13, 15, 20]) {
@@ -334,7 +334,8 @@ async function sidebarReadabilityState(win) {
   return evaluate(win, () => {
     const drawer = document.querySelector(".settings-sidebar");
     const backLabel = document.querySelector(".settings-back-button > span");
-    const providerLabel = document.querySelector(".settings-nav-item .settings-nav-label");
+    const providerLabel = [...document.querySelectorAll(".settings-nav-item .settings-nav-label")]
+      .find((label) => /^(Model providers|模型服务)$/.test(label.textContent.trim()));
     if (
       !(drawer instanceof HTMLElement) ||
       !(backLabel instanceof HTMLElement) ||
@@ -391,16 +392,17 @@ function assertTopRow(geometry, context) {
   const details = JSON.stringify({ ...context, geometry });
   const axis = ((geometry.canvasTop ?? geometry.header.y) + geometry.header.bottom) / 2;
   assert.ok(geometry.peers.length >= 3, `The actual page chrome must be present: ${details}`);
-  if (context.zoom === 1) {
-    assert.ok(Math.abs(axis - 28) < 0.1, `Default zoom keeps the shared 28 DIP axis: ${details}`);
+  if (context.zoom === 1 && context.font <= 15) {
+    assert.ok(Math.abs(axis - 28) < 0.1, `Default text and zoom keep the shared 28 DIP axis: ${details}`);
     if (geometry.canvasTop !== null) assert.ok(geometry.header.height < 56,
       `The canvas header stays compact without moving controls: ${details}`);
   }
   if (geometry.canvasTop !== null) {
-    assert.ok(geometry.canvasTop > 0 && geometry.canvasTop <= 8.1,
+    const fullInset = 2 * Math.round(context.font / 4);
+    assert.ok(geometry.canvasTop > 0 && geometry.canvasTop <= fullInset + 0.1,
       `The canvas retains responsive top breathing room: ${details}`);
-    if (context.layout !== "narrow") assert.ok(Math.abs(geometry.canvasTop - 8) < 0.1,
-      `Wide windows retain the full canvas inset: ${details}`);
+    if (context.layout !== "narrow") assert.ok(Math.abs(geometry.canvasTop - fullInset) < 0.1,
+      `Wide windows retain the font-relative canvas inset: ${details}`);
   }
   for (const peer of geometry.peers) {
     assert.ok(Math.abs(peer.centerY - axis) < 0.6, `Peer controls must share the titlebar axis: ${details}`);

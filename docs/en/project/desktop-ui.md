@@ -182,7 +182,7 @@ themes at default and large text.
 
 ## Settings pages
 
-Settings lists its pages in one unlabeled column: model providers, agents, built-in agent, MCP servers, appearance, general, phone access, usage, subscriptions, and archive. With this few pages, group headings cost more reading than they save. Plugin pages follow after a group gap, because their number and content come from installed plugins. Page IDs are part of the plugin settings snapshot, so they stay stable when a label or position changes; the built-in agent page keeps the `advanced` ID.
+Settings starts with General, Appearance, and Phone access when available. **Models, agents & tools** groups model providers, external agents, the built-in agent, and MCP servers; **Account & data** groups subscriptions when enabled, usage, and archive. Plugin pages follow under **Plugins**. Search filters page names and setting keywords, including plugin page names, and hides empty groups. Filtering preserves the current page; Escape clears the query. Page IDs and the complete page list exposed in plugin settings snapshots remain stable while searching; the built-in agent page keeps the `advanced` ID.
 
 Every page shares one column measured in UI text, so content stays in place while navigating and a label stays within a glance of its control at large sizes. The titlebar reads "Settings / page", set like the conversation title, with page actions at its trailing edge; a refresh action is an icon button whose tooltip names it. The page opens on an optional line that states a non-obvious scope, then its first group. Section titles are quiet labels in soft ink; the setting's name in each row carries the medium weight, over a regular, soft description. Groups, service lists, the provider catalog, and subscription cards share one sheet: the `--hairline` edge, the panel radius, and a soft shadow, with rows spaced by `--settings-row-pad-block`. A section title sits `--section-heading-gap` above its content. Keep a row description only for constraints or consequences the title does not already state. A unit belongs inside its numeric field instead: a numeric placeholder keeps the unit, while a word such as "Auto" appears alone.
 
@@ -206,7 +206,7 @@ A plugin opens as its own page, with a back link to the catalog. The header hold
 
 Preview `/dev/extensions/` with optional `theme=dark`, `size=20`, `lang=en`, `long`, and `empty` parameters. Skills and plugin packages are synthetic and cover every plugin state; switches and detail actions change only the preview's state.
 
-The fork destination dialog offers the current directory and a new worktree. Click outside or press Escape to dismiss it without creating a conversation; focus returns to the message action. Dismissal is temporarily locked while a fork is being created.
+The fork destination dialog offers the current directory and a new worktree. Its width and spacing follow the saved UI text size; both choices share icon and text columns, with space reserved for loading feedback so text does not shift. Click outside or press Escape to dismiss it without creating a conversation; focus returns to the message action. Dismissal is temporarily locked while a fork is being created.
 
 ## Review panel
 

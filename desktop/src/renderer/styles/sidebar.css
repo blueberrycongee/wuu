@@ -330,7 +330,6 @@
    * inner padding keeps labels, glyphs, and trailing actions on their axes. */
   --sidebar-content-pad-x: var(--space-3);
   --sidebar-row-pad-x: calc(var(--pane-inset) - var(--sidebar-content-pad-x));
-  --sidebar-chrome-offset-x: 14px;
   --sidebar-row-radius: calc(var(--radius-xs) + 4px);
   --sidebar-label-weight: 400;
   --sidebar-label-size: var(--font-ui);
@@ -342,30 +341,30 @@
    * full ink. Keep group headings on their separate tertiary-text role. */
   --sidebar-label-ink: color-mix(in srgb, var(--ink) 82%, var(--paper));
   --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, color-mix(in srgb, var(--ink) 6%, transparent));
-  /* Group labels and list-footer actions: quieter than labels, still 4.5:1. */
+  /* Group labels and heading actions: quieter than labels, still 4.5:1. */
   --sidebar-heading-ink: var(--ink-tertiary);
   /* One icon and text axis for navigation, plugins, projects, and account
    * controls. Avatars occupy this same glyph slot. Icon, column, and row
    * action sizes scale with the UI font in appearance.css. */
-  --sidebar-nav-column-gap: 8px;
+  --sidebar-nav-column-gap: var(--space-2);
   --sidebar-tree-toggle-col: 14px;
-  --sidebar-tree-column-gap: 4px;
-  --sidebar-accessory-gap: 8px;
+  --sidebar-tree-column-gap: var(--space-1);
+  --sidebar-accessory-gap: var(--space-2);
   --sidebar-fork-icon-size: var(--sidebar-primary-icon-size);
   --sidebar-fork-slot-inset: calc((var(--sidebar-row-action-size) - var(--sidebar-fork-icon-size)) / 2);
   --sidebar-action-gap: var(--space-1);
   --sidebar-thread-actions-width: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap));
-  --sidebar-row-control-pad-x: 8px;
+  --sidebar-row-control-pad-x: var(--space-2);
   --sidebar-project-unread-size: var(--sidebar-session-status-dot-size);
-  /* Semantic spacing follows the shared spacing scale. Larger text grows the
-   * row itself instead of stretching the space between related items. */
+  /* Rows, heading-to-content and group breaks step through the same module.
+   * Include each row's own leading when judging the visible whitespace. */
   --sidebar-functional-row-gap: var(--sidebar-row-gap);
-  --sidebar-functional-heading-gap: var(--space-1);
-  --sidebar-functional-group-gap: var(--space-4);
+  --sidebar-functional-heading-gap: var(--space-2);
+  --sidebar-functional-group-gap: var(--space-6);
   /* Parent and child rows belong to one tree: use the same separation as
    * sibling rows. The collapse body owns this gap; lists add no outer inset. */
   --sidebar-section-body-gap: var(--sidebar-row-gap);
-  --sidebar-row-gap: 2px;
+  --sidebar-row-gap: var(--space-1);
   --sidebar-session-status-dot-size: 5px;
   --sidebar-session-status-bg: transparent;
   --sidebar-session-status-scale: 0.75;
@@ -841,7 +840,6 @@
 }
 
 .traffic-spacer .sidebar-collapse-toggle {
-  margin-right: calc(-1 * var(--sidebar-chrome-offset-x));
   position: relative;
   z-index: 1;
   -webkit-app-region: no-drag;
@@ -878,8 +876,8 @@
   grid-column: 2;
   justify-self: end;
   place-items: center;
-  /* Keep the bell centered below the sidebar toggle. */
-  margin-right: calc((var(--sidebar-row-action-size) - 32px) / 2 - var(--sidebar-chrome-offset-x));
+  /* Share the trailing-action axis with the toggle and sidebar rows. */
+  margin-right: calc((var(--sidebar-row-action-size) - 32px) / 2);
   border-radius: var(--radius-sm);
   padding: 0;
   background: transparent;
@@ -1363,12 +1361,11 @@ html[data-focus-modality="keyboard"] :is(
  * affordance under the pointer or keyboard focus. A collapsed group keeps it
  * as the cue that content is hidden. Section actions keep their footprint
  * and appear the same way, so at rest the label stands alone; an open menu
- * keeps its button. Touch keeps both visible: no hover. */
+ * keeps its button. Empty groups retain their action as the entry point.
+ * Touch keeps both visible: no hover. */
 @media (hover: hover) {
-  .sidebar-functional-heading:not(:hover, :focus-within) :is(
-    .sidebar-functional-heading-chevron[data-expanded="true"],
-    .sidebar-functional-action:not([aria-expanded="true"])
-  ) {
+  .sidebar-functional-heading:not(:hover, :focus-within) .sidebar-functional-heading-chevron[data-expanded="true"],
+  .sidebar-functional-heading:not(:hover, :focus-within, [data-empty="true"]) .sidebar-functional-action:not([aria-expanded="true"]) {
     opacity: 0;
   }
 }
@@ -2031,6 +2028,16 @@ html[data-focus-modality="keyboard"] :is(
     color var(--motion-fast) var(--ease-out);
 }
 
+/* History controls reveal optional rows rather than labels in the current
+ * view. Match the conversation title size, rest at the composer-placeholder
+ * gray, then return to full ink on hover and keyboard focus so the action
+ * stays easy to pick up. */
+.thread-list-more,
+.thread-list-collapse-btn {
+  color: var(--ink-quiet);
+  font-size: var(--sidebar-label-size, var(--font-ui));
+}
+
 .thread-list-more:hover,
 .thread-list-collapse-btn:hover,
 .sidebar-heading-text-action:hover {
@@ -2334,8 +2341,7 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
-.thread-row:hover:has(.thread-row-fork-icon) .thread-row-fork-icon,
-.thread-row:focus-within .thread-row-fork-icon {
+.thread-row:is(:hover, :focus-within):has(.thread-row-fork-icon) .thread-row-fork-icon {
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-thread-actions-width) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 

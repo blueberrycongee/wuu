@@ -3,6 +3,14 @@
   "site": {
     "title": "wuu",
     "description": "在本地工作区中与你共同完成工作的 AI Agent",
+    "descriptions": {
+      "zh-CN": "在本地工作区中与你共同完成工作的 AI Agent",
+      "en": "An AI agent for local projects, with file changes and commands in view."
+    },
+    "home_descriptions": {
+      "zh-CN": "Wuu 文档：面向本地项目的 AI Agent 工作台。查看 Agent 读取的文件、运行的命令和修改，再在 Review 中核对结果。",
+      "en": "Wuu documentation: an AI agent workspace for local projects. Follow file changes and commands, then check the result in Review."
+    },
     "default_locale": "zh-CN"
   },
   "locales": {
@@ -77,7 +85,7 @@
           ]
         },
         {
-          "title": "开发与 API（部分英文）",
+          "title": "扩展开发",
           "pages": [
             "zh-cn/customize/skill-authoring.md",
             "zh-cn/customize/plugin-quickstart.md",
@@ -88,10 +96,20 @@
             "zh-cn/customize/plugin-authoring.md",
             "zh-cn/reference/desktop-plugins.md",
             "zh-cn/customize/plugin-system.md",
-            "zh-cn/customize/theme-surface-matrix.md",
+            "zh-cn/customize/theme-surface-matrix.md"
+          ]
+        },
+        {
+          "title": "API 与集成（部分英文）",
+          "pages": [
             "zh-cn/automation/app-server.md",
             "en/automation/jsonl-events.md",
-            "en/integrations/app-server-protocol.md",
+            "en/integrations/app-server-protocol.md"
+          ]
+        },
+        {
+          "title": "维护者文档（部分英文）",
+          "pages": [
             "zh-cn/project/development.md",
             "zh-cn/project/desktop-ui.md",
             "zh-cn/project/design-system.md",
@@ -171,7 +189,7 @@
           ]
         },
         {
-          "title": "Development and APIs",
+          "title": "Extension development",
           "pages": [
             "en/customize/skill-authoring.md",
             "en/customize/plugin-quickstart.md",
@@ -182,10 +200,20 @@
             "en/customize/plugin-authoring.md",
             "en/reference/desktop-plugins.md",
             "en/customize/plugin-system.md",
-            "en/customize/theme-surface-matrix.md",
+            "en/customize/theme-surface-matrix.md"
+          ]
+        },
+        {
+          "title": "APIs and integrations",
+          "pages": [
             "en/automation/app-server.md",
             "en/automation/jsonl-events.md",
-            "en/integrations/app-server-protocol.md",
+            "en/integrations/app-server-protocol.md"
+          ]
+        },
+        {
+          "title": "Maintainers",
+          "pages": [
             "en/project/development.md",
             "en/project/desktop-ui.md",
             "en/project/design-system.md",

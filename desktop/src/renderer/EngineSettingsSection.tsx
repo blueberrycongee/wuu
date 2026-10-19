@@ -162,7 +162,7 @@ export function EngineSettingsSection({
     const engineSettings = binarySettings[engine.id];
     return (
       <input
-        key={`${engine.id}-${engineSettings?.binary_path ?? ""}`}
+        key={`path-${engine.id}-${engineSettings?.binary_path ?? ""}`}
         className="settings-input"
         type="text"
         aria-label={`${engineLabel(engine.id, engine)} ${t("settings.engineBinaryPath")}`}

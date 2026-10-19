@@ -6,6 +6,10 @@ The left sidebar keeps the visibility and width you choose when you resize the w
 
 Expanding the right panel adds the current conversation as the first tab beside the tool tabs. Select it to return to the conversation without leaving the expanded layout; select a tool tab to switch back. The conversation draft is preserved. Exiting the expanded layout restores the conversation and tools side by side.
 
+![The action menu shown after selecting code in the file preview, with options to add it to the conversation, annotate it, or ask in side chat.](../assets/product/files-en.jpg)
+
+<p class="docs-caption">Select text in a file to bring the passage, an annotation, or a question into the conversation while the file stays in its tab.</p>
+
 ## Side chat
 
 The bundled Side plugin supplies `/side` and is selected in the recommended first-run setup. You can turn it off during setup or later in Settings → Plugins. Disabling it removes side-chat entry points and stops active side answers while preserving history; enabling it restores access.
@@ -135,24 +139,36 @@ Use the address and port of your own proxy. This setting does not configure mode
 
 ## Live activity preview
 
-Each conversation with live browser or supported local computer-use activity has one watch-only floating preview. Switching browser tabs or app windows changes the content inside that same preview. A preview appears once its first picture is ready, growing from its corner, and leaves the same way. When several tasks run at once, their previews stack in one corner: opening a conversation brings its preview to the front, and grabbing a preview behind the front one does the same. After a successful turn the preview shows completion and leaves after 30 seconds; a stopped or failed turn removes it until the next turn. A minimized or hidden target app stays where you put it, and its preview waits until you show it again. Moving or resizing the preview does not send clicks, scrolling, or keyboard input to the target.
+A conversation can retain separate watch-only previews for each browser tab and supported local app window. Only the selected conversation shows its stack, with up to five cards visible at once. New targets lead the stack; dragging a card behind the front one raises it temporarily and brings it to the front on release. Cards overlap diagonally from a shared corner, with a common size limit that preserves each target’s proportions. Hiding or closing one target leaves the others in place and lets the next retained card appear. Returning to the same target updates its existing preview. After a successful turn, visible previews show completion and leave after 30 seconds; stopped or failed turns dismiss the stack. A minimized or hidden target app stays where you put it, and its preview waits until you show it again. Moving or resizing a preview does not send input to the target.
 
 In **Settings → General → Live activity**, **Show preview automatically** controls whether local activity opens the preview. The setting is saved across restarts. It does not enable an extension or give the Agent control. Hiding a preview leaves the task running; later activity updates do not reopen a preview you hid. There is no title-bar control for manually reopening a hidden preview.
 
-A new or hidden preview waits until you return to its Wuu window before appearing, so background activity does not bring Wuu in front of another app. An already-visible preview stays in place when focus changes. Hiding or minimizing Wuu hides the preview too. Returning to Wuu shows it again only when it was not explicitly hidden. Drag the preview to place it in a corner of the conversation column, clear of the composer, or resize it from an edge or corner. The browser page keeps its layout size and is scaled to fit. The preview follows the app's appearance and text settings and respects reduced motion.
+Previews appear while their Wuu window is visible, without activating it or taking keyboard focus from another app. Hiding or minimizing Wuu hides the stack too. Restoring Wuu shows only eligible cards that were not explicitly hidden. Foreground image viewers and dialogs temporarily hide the whole stack. Drag the front card to place the stack in a corner of the conversation column, clear of the composer, or resize it from an edge or corner. Browser pages keep their layout size and scale to fit. Previews follow the app’s appearance and text settings and respect reduced motion.
 
 The preview has two display controls for browser pages, and only Hide for native apps:
 
 - **Hide preview** hides the card and leaves the task running.
 - **Open in side panel** opens a browser page at full size.
 
-Use **Stop** in the conversation to interrupt the task. To take over a browser page, open it in the side panel and click or type in it. Send another instruction in the conversation to continue with fresh control authority.
+Use **Stop** in the conversation to interrupt the task. To take over a browser page, open it in the side panel and click or type in it. This does not bring retained native apps to the foreground. Send another instruction in the conversation to continue with fresh control authority.
 
 Hiding the preview or stopping the task does not quit the application being observed. Disabling or retiring the owning extension stops its preview activity. If a capture target disappears, Wuu closes its preview; unchanged activity updates do not reopen that target. Unavailable capture shows a brief recovery hint, and a retained frame is labelled paused rather than live. Individual tool errors stay in the conversation's tool records and do not cover the preview. The preview does not silently switch to another app window or the whole screen.
 
-Native app previews use a low-latency H.264 video stream with hardware acceleration where available. Hiding or pausing the preview stops capture; resuming or resizing it refreshes the video, and decoder recovery stays on the same target window.
+On macOS, native app previews use a low-latency H.264 video stream with hardware acceleration where available. Hiding or pausing the preview stops capture; resuming or resizing it refreshes the video, and decoder recovery stays on the same target window.
 
-Native app previews require a macOS build with Computer Use enabled and the relevant macOS permissions. The floating preview does not itself grant Screen Recording or Accessibility access. See [installation](../getting-started/installation.md) for build availability and permissions.
+Native app previews require a build with the platform’s Computer Use helper. macOS requires Screen Recording and Accessibility permissions. Linux previews require an X11 session and remain bound to the observed window and process. The floating preview does not itself grant control or capture permissions. See [installation](../getting-started/installation.md) for build availability and permissions.
+
+## Linux app control
+
+Linux Computer Use operates windows in an X11 desktop session. Enable **Computer Use for Linux** in the extension settings. The desktop package must include `wuu-cua-linux`, and the session must provide XTEST input and XComposite capture. It does not require a root input daemon.
+
+The Agent discovers a window, observes it, and uses its snapshot for mouse and keyboard input. Window identity includes the process and X11 window ID; closing or replacing the target requires a new observation. Input uses the foreground window, so controlling another app can bring that app forward. This is not background app control.
+
+Text input uses characters available in the active primary keyboard layout. Unmapped characters and incompatible keyboard states return an error before typing; this version does not provide arbitrary Unicode clipboard paste or change the system keyboard mapping.
+
+The PiP uses the same watch-only controls and layout as other activity previews. Hiding it stops its capture without stopping the Agent. A missing or unavailable target does not fall back to another window or the full desktop.
+
+Native Wayland sessions are not supported, including sessions where XWayland exposes a `DISPLAY`. Use an X11 login session for this version. No desktop permission settings are changed automatically. Linux does not provide the macOS Accessibility tree, semantic text editing, or background-focus behavior described below.
 
 ## Mac app control
 

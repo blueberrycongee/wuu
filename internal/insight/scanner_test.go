@@ -2,160 +2,68 @@ package insight
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
 	sessionstore "github.com/blueberrycongee/wuu/internal/session"
 )
 
-func TestScanSessionsHandleLargeToolRecords(t *testing.T) {
-	dir := t.TempDir()
-	sessionID := "20260413-101416-cd82"
-	largeToolResult := strings.Repeat("x", 2100*1024)
-	start := time.Date(2026, time.April, 13, 10, 14, 16, 0, time.UTC)
-
-	if _, err := sessionstore.CreateWithMetadata(dir, sessionID, ""); err != nil {
-		t.Fatal(err)
-	}
-	writeInsightSessionRecords(t, dir, sessionID, []memoryRecord{
-		{Role: "user", Content: "restore this session", At: start},
-		{
-			Role:    "assistant",
-			Content: "",
-			At:      start.Add(10 * time.Second),
-			ToolCalls: []toolCallRec{
-				{ID: "call_big", Name: "write_file", Arguments: `{"file_path":"main.go"}`},
-			},
-		},
-		{
-			Role:       "tool",
-			Content:    largeToolResult,
-			ToolCallID: "call_big",
-			Name:       "write_file",
-			At:         start.Add(20 * time.Second),
-		},
-		{Role: "user", Content: "and keep it visible", At: start.Add(2 * time.Minute)},
-		{Role: "assistant", Content: "done", At: start.Add(3 * time.Minute)},
-	})
-
-	metas, err := ScanSessions(dir, 0)
-	if err != nil {
-		t.Fatalf("ScanSessions: %v", err)
-	}
-	if len(metas) != 1 {
-		t.Fatalf("expected 1 session meta, got %d", len(metas))
-	}
-	meta := metas[0]
-	if meta.ID != sessionID {
-		t.Fatalf("unexpected session id: %q", meta.ID)
-	}
-	if meta.UserMessages != 2 {
-		t.Fatalf("expected 2 user messages, got %d", meta.UserMessages)
-	}
-	if meta.AssistantMsgs != 2 {
-		t.Fatalf("expected 2 assistant messages, got %d", meta.AssistantMsgs)
-	}
-	if meta.ToolCounts["write_file"] != 1 {
-		t.Fatalf("expected write_file count 1, got %d", meta.ToolCounts["write_file"])
-	}
-	if meta.FilesModified != 1 {
-		t.Fatalf("expected 1 modified file, got %d", meta.FilesModified)
-	}
-	// The 2MB tool payload only contributes to the token estimate; it must
-	// not break scanning or leak into the extracted first-user-message.
-	if !strings.Contains(meta.FirstUserMsg, "restore this session") {
-		t.Fatalf("unexpected first user message: %q", meta.FirstUserMsg)
-	}
-}
-
-func TestScanSessionsAggregatesModelBreakdowns(t *testing.T) {
+func TestCollectUsageScanReturnsProviderAndModel(t *testing.T) {
 	dir := t.TempDir()
 	start := time.Date(2026, time.April, 17, 9, 0, 0, 0, time.UTC)
 
-	if _, err := sessionstore.CreateWithMetadata(dir, "sess-anthropic", ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := sessionstore.CreateWithMetadata(dir, "sess-openai", ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := sessionstore.CreateWithMetadata(dir, "sess-mixed", ""); err != nil {
-		t.Fatal(err)
-	}
-
-	// Session 1: two token_usage rows on the same provider/model — should
-	// collapse into a single bucket with summed tokens.
 	writeInsightSessionRecords(t, dir, "sess-anthropic", []memoryRecord{
 		{Role: "user", Content: "implement feature a", At: start},
 		{Role: "assistant", Content: "ok", At: start.Add(time.Minute)},
-		{Role: "user", Content: "continue feature a", At: start.Add(2 * time.Minute)},
 		{Role: "meta", Content: "token_usage", Provider: "anthropic", Model: "claude-sonnet-4-6", InputTokens: 100, OutputTokens: 50, CacheCreationTokens: 80, CacheReadTokens: 20, At: start.Add(2 * time.Minute)},
 		{Role: "meta", Content: "token_usage", Provider: "anthropic", Model: "claude-sonnet-4-6", InputTokens: 200, OutputTokens: 80, CacheCreationTokens: 100, CacheReadTokens: 50, At: start.Add(3 * time.Minute)},
 	})
-
-	// Session 2: a different provider/model entirely.
 	writeInsightSessionRecords(t, dir, "sess-openai", []memoryRecord{
 		{Role: "user", Content: "implement feature b", At: start},
 		{Role: "assistant", Content: "ok", At: start.Add(time.Minute)},
-		{Role: "user", Content: "continue feature b", At: start.Add(2 * time.Minute)},
-		{Role: "meta", Content: "token_usage", Provider: "openai", Model: "gpt-4o", InputTokens: 500, OutputTokens: 200, CacheCreationTokens: 0, CacheReadTokens: 100, At: start.Add(2 * time.Minute)},
+		{Role: "meta", Content: "token_usage", Provider: "openai", Model: "gpt-4o", InputTokens: 500, OutputTokens: 200, CacheReadTokens: 100, At: start.Add(2 * time.Minute)},
 	})
-
-	// Session 3: legacy row with no provider/model — should bucket as
-	// "(unknown)".
 	writeInsightSessionRecords(t, dir, "sess-mixed", []memoryRecord{
 		{Role: "user", Content: "legacy session", At: start},
 		{Role: "assistant", Content: "ok", At: start.Add(time.Minute)},
-		{Role: "user", Content: "more", At: start.Add(2 * time.Minute)},
-		{Role: "meta", Content: "token_usage", InputTokens: 50, OutputTokens: 10, CacheCreationTokens: 0, CacheReadTokens: 0, At: start.Add(2 * time.Minute)},
+		{Role: "meta", Content: "token_usage", InputTokens: 50, OutputTokens: 10, At: start.Add(2 * time.Minute)},
 	})
 
-	metas, err := ScanSessions(dir, 0)
+	scan, err := CollectUsageScan(dir)
 	if err != nil {
-		t.Fatalf("ScanSessions: %v", err)
+		t.Fatalf("CollectUsageScan: %v", err)
 	}
-	if len(metas) != 3 {
-		t.Fatalf("expected 3 sessions, got %d", len(metas))
+	if len(scan.TokenRows) != 4 {
+		t.Fatalf("expected 4 token rows, got %d (%+v)", len(scan.TokenRows), scan.TokenRows)
 	}
-
-	byID := make(map[string]SessionMeta, len(metas))
-	for _, m := range metas {
-		byID[m.ID] = m
+	if len(scan.Skills) != 0 {
+		t.Fatalf("expected no skill usage, got %+v", scan.Skills)
 	}
 
-	aMeta := byID["sess-anthropic"]
-	if got := len(aMeta.ModelBreakdowns); got != 1 {
-		t.Fatalf("anthropic session: expected 1 bucket, got %d (%+v)", got, aMeta.ModelBreakdowns)
+	bySession := make(map[string][]TokenUsageRow, 3)
+	for _, row := range scan.TokenRows {
+		bySession[row.SessionID] = append(bySession[row.SessionID], row)
 	}
-	for _, b := range aMeta.ModelBreakdowns {
-		if b.Provider != "anthropic" || b.Model != "claude-sonnet-4-6" {
-			t.Fatalf("anthropic session: unexpected bucket %+v", b)
-		}
-		if b.InputTokens != 300 || b.OutputTokens != 130 || b.CacheCreationTokens != 180 || b.CacheReadTokens != 70 {
-			t.Fatalf("anthropic session: unexpected bucket totals %+v", b)
-		}
+	anthropicRows := bySession["sess-anthropic"]
+	if len(anthropicRows) != 2 {
+		t.Fatalf("anthropic session: expected 2 rows, got %+v", anthropicRows)
 	}
-
-	oMeta := byID["sess-openai"]
-	if got := len(oMeta.ModelBreakdowns); got != 1 {
-		t.Fatalf("openai session: expected 1 bucket, got %d", got)
-	}
-	for _, b := range oMeta.ModelBreakdowns {
-		if b.Provider != "openai" || b.Model != "gpt-4o" {
-			t.Fatalf("openai session: unexpected bucket %+v", b)
+	for _, row := range anthropicRows {
+		if row.Provider != "anthropic" || row.Model != "claude-sonnet-4-6" {
+			t.Fatalf("anthropic session: unexpected row %+v", row)
 		}
 	}
-
-	mMeta := byID["sess-mixed"]
-	if got := len(mMeta.ModelBreakdowns); got != 1 {
-		t.Fatalf("mixed session: expected 1 bucket, got %d", got)
+	if anthropicRows[0].InputTokens != 100 || anthropicRows[1].OutputTokens != 80 || anthropicRows[1].CacheReadTokens != 50 {
+		t.Fatalf("anthropic session: unexpected row values %+v", anthropicRows)
 	}
-	for _, b := range mMeta.ModelBreakdowns {
-		if b.Provider != "" || b.Model != "" {
-			t.Fatalf("legacy session: bucket should have empty provider/model, got %+v", b)
-		}
+	openAIRows := bySession["sess-openai"]
+	if len(openAIRows) != 1 || openAIRows[0].Provider != "openai" || openAIRows[0].Model != "gpt-4o" || openAIRows[0].InputTokens != 500 {
+		t.Fatalf("openai session: unexpected rows %+v", openAIRows)
 	}
-
+	legacyRows := bySession["sess-mixed"]
+	if len(legacyRows) != 1 || legacyRows[0].Provider != "" || legacyRows[0].Model != "" || legacyRows[0].InputTokens != 50 {
+		t.Fatalf("legacy session: unexpected rows %+v", legacyRows)
+	}
 }
 
 func TestCollectUsageScanCountsSkillCallsAcrossPersistedShapes(t *testing.T) {
@@ -204,6 +112,21 @@ func TestCollectUsageScanCountsSkillCallsAcrossPersistedShapes(t *testing.T) {
 		scan.Skills[1] != (SkillUsage{Name: "review", Count: 1}) {
 		t.Fatalf("unexpected skill usage: %+v", scan.Skills)
 	}
+}
+
+type memoryRecord struct {
+	Role                string        `json:"role"`
+	Content             string        `json:"content"`
+	At                  time.Time     `json:"at"`
+	ToolCalls           []toolCallRec `json:"tool_calls,omitempty"`
+	ToolCallID          string        `json:"tool_call_id,omitempty"`
+	Name                string        `json:"name,omitempty"`
+	InputTokens         int           `json:"input_tokens,omitempty"`
+	OutputTokens        int           `json:"output_tokens,omitempty"`
+	CacheCreationTokens int           `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens     int           `json:"cache_read_tokens,omitempty"`
+	Provider            string        `json:"provider,omitempty"`
+	Model               string        `json:"model,omitempty"`
 }
 
 func writeInsightSessionRecords(t *testing.T, sessDir, id string, records []memoryRecord) {

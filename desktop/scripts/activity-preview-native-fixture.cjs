@@ -30,21 +30,25 @@ function close(session) {
   send(session, { event: 'closed' });
 }
 function open(id, target) {
-  const session = { id, target, visible: false, live: true, pending: undefined, inFlight: undefined, sequence: 0 };
+  const session = { id, target, visible: false, live: true, pending: undefined, inFlight: undefined, sequence: 0,
+    controller: 'agent', state: 'starting' };
   sessions.set(id, session);
+  const fail = error => {
+    // Destroying one target aborts its HTTP body; siblings share this process.
+    if (!sessions.has(id)) return;
+    send(session, { event: 'failed', message: error.message });
+    close(session);
+  };
   session.request = http.get(`${endpoint}/source?target=${encodeURIComponent(target)}`, response => {
-    readline.createInterface({ input: response }).on('line', line => {
+    readline.createInterface({ input: response }).on('error', fail).on('line', line => {
       const event = JSON.parse(line);
-      if (event.event === 'frame') { session.pending = event; flush(session); }
+      if (event.event === 'auto_frame') { session.autoFrame = event.frame; session.pending = event.frame; flush(session); }
+      else if (event.event === 'frame') { session.pending = event; flush(session); }
       else if (event.event === 'gone') { send(session, event); close(session); }
       else send(session, event);
     });
   });
-  session.request.on('error', error => {
-    if (!sessions.has(id)) return;
-    send(session, { event: 'failed', message: error.message });
-    close(session);
-  });
+  session.request.on('error', fail);
 }
 readline.createInterface({ input: process.stdin }).on('line', line => {
   const command = JSON.parse(line);
@@ -53,8 +57,18 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
   if (!session) return;
   record(session, { direction: 'in', command });
   if (command.type === 'close') { close(session); return; }
+  // Later stack checks need a fresh keyframe whenever a hidden stream resumes.
+  if (session.autoFrame && command.type === 'keyframe') session.pending = session.autoFrame;
   if (command.type === 'visible') session.visible = command.visible === true;
   if (command.type === 'live') session.live = command.live === true;
+  if (command.type === 'activity') {
+    const transitioned = (command.controller !== 'agent' && session.controller === 'agent')
+      || (command.state === 'stopped' && session.state !== 'stopped');
+    session.controller = command.controller;
+    session.state = command.state;
+    // Model the native restoration request, not macOS window movement/focus.
+    if (command.restore ?? transitioned) record(session, { restoration: true });
+  }
   if (command.type === 'ack' && command.sequence === session.inFlight) session.inFlight = undefined;
   flush(session);
 }).on('close', () => {

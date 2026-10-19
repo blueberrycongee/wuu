@@ -116,7 +116,7 @@ async function run() {
   const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
   await writeFile(fake, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(fileURLToPath(import.meta.url))} --native-fixture "$@"\n`);
   await chmod(fake, 0o755);
-  await writeFile(config, JSON.stringify({ default_provider: "fixture", providers: { fixture: { type: "openai-compatible", base_url: "http://127.0.0.1:1/v1", api_key: "synthetic-only", model: "fixture", models: { fixture: {} } } }, engines: { ...Object.fromEntries(["claude", "cursor", "devin", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }])), codex: { enabled: true, binary_path: fake } }, agent: { permission_mode: "standard" }, ptc: { enabled: false } }));
+  await writeFile(config, JSON.stringify({ default_provider: "fixture", providers: { fixture: { type: "openai-compatible", base_url: "http://127.0.0.1:1/v1", api_key: "synthetic-only", model: "fixture", models: { fixture: {} } } }, engines: { ...Object.fromEntries(["claude", "cursor", "devin", "dsh", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }])), codex: { enabled: true, binary_path: fake } }, agent: { permission_mode: "standard" }, ptc: { enabled: false } }));
   const transcript = [], clients = [], events = new EventEmitter(), checks = [];
   const results = { status: "failed", scratch, checks, binary, binary_sha256: createHash("sha256").update(await readFile(binary)).digest("hex"), limitations: ["Synthetic native protocol subprocess; no official engine binary, external inference, desktop UI, or crash-durability/fsync claim."] };
   let sequence = 0, db;

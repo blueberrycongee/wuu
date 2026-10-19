@@ -1,0 +1,40 @@
+{
+  "id": "cua-linux",
+  "name": "cua-linux",
+  "version": "0.1.0",
+  "description": "Control Linux X11 windows through native capture and input.",
+  "icon": "layout-grid",
+  "author": {
+    "name": "Wuu"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Computer Use for Linux",
+    "shortDescription": "Observe and operate Linux X11 windows with mouse and keyboard control.",
+    "longDescription": "Captures a specific X11 window and sends native XTEST input. Requires an X11 desktop session; native Wayland sessions are unsupported.",
+    "developerName": "Wuu",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ]
+  },
+  "platforms": [
+    "linux"
+  ],
+  "requestedPermissions": [
+    "screen.capture",
+    "app.activate",
+    "input.synthesize"
+  ],
+  "activityKinds": [
+    "cua"
+  ],
+  "officialNativeHelper": {
+    "id": "cua-linux",
+    "environment": "WUU_CUA_LINUX_HELPER",
+    "executable": "wuu-cua-linux"
+  },
+  "minimumWuuVersion": "0.1.0"
+}

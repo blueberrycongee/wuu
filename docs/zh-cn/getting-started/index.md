@@ -1,10 +1,10 @@
 # 快速开始
 
-桌面安装包面向 Apple 芯片 Mac 和 Linux x64，还需要可用的模型连接。先查看[安装指南](installation.md)中的平台要求；第一次尝试时，选一个不含敏感资料的小型本地项目。
+使用桌面预览版需要一台 Apple 芯片 Mac，以及可用的模型连接。第一次尝试时，选一个不含敏感资料的小型本地项目。
 
 ## 完成设置
 
-1. 按平台[安装 Wuu](installation.md)并打开。macOS 请运行 `/Applications` 中的副本；当前发布构建使用 Apple Developer ID 签名并完成公证。Linux 请按对应安装包的说明操作。使用较早的预览版时，核对该版本的发布说明。
+1. [安装 Wuu](installation.md)，打开 `/Applications` 中的应用。正式发布版由 Apple Developer ID 签名并完成公证；如果使用较早的 ad-hoc 预览版，macOS 可能拦截首次打开，按安装指南处理。
 2. 在首次设置中选择需要的插件。推荐组合为 TODO 和 Automation，之后可以在插件设置中调整。
 3. 选择执行引擎。Wuu 无需额外安装；Codex 和 Claude Code 需要本机已有可用的 CLI。
 4. 使用 Wuu 引擎时，[配置模型服务](model-services.md)，或复用支持的本机订阅登录。

@@ -1,6 +1,6 @@
 # Release
 
-The [release workflow](../../../.github/workflows/release.yml) publishes the macOS arm64 Electron desktop preview and Linux x64 packages when a `v*` tag is pushed. It builds from the tagged commit, verifies the package, and then creates a GitHub Release. This page is for maintainers preparing that release; users should follow [installation](../getting-started/installation.md).
+The [release workflow](../../../.github/workflows/release.yml) publishes the macOS arm64 Electron desktop preview when a `v*` tag is pushed. It builds from the tagged commit, verifies the package, and then creates a GitHub Release. This page is for maintainers preparing that release; users should follow [installation](../getting-started/installation.md).
 
 ## Prepare and tag a release
 
@@ -45,7 +45,7 @@ The macOS job checks Go modules, formatting, vet, cross-builds, and uncached Go 
 
 Both `make release-check` and the release workflow run the macOS native Computer Use helper tests. The release command builds and packages `wuu-cua-mac` and `wuu-cua-mac-pip`; the packaged app enables Computer Use from these bundled executables. Release verification requires both helpers, their matching architectures, signatures, hardened runtime, and secure timestamps. Screen Recording and Accessibility authorization remain macOS permission checks on the installed app.
 
-Phone access for native iOS pairing is controlled by `VITE_ENABLE_REMOTE_CONTROL`; the release workflow currently sets it to `false`. Account login remains development-only even if `VITE_ENABLE_ACCOUNT=true`, and the workflow sets it to `false`. The iOS app still requires a separate build and signing for device installation; enabling desktop pairing does not publish a mobile store release. Model connections and the subscription dashboard remain available in production. Project Agent requires the development-only `project_agent` build tag, which release builds omit. Source-development capabilities should not be presented as features shipped by this build.
+Production desktop builds expose Phone access for native iOS pairing. The release workflow enables `VITE_ENABLE_REMOTE_CONTROL`; builders can set it to `false` to hide the entry. Account login remains development-only even if `VITE_ENABLE_ACCOUNT=true`, and the workflow sets it to `false`. The iOS app still requires a separate build and signing for device installation; enabling desktop pairing does not publish a mobile store release. Model connections and the subscription dashboard remain available in production. Project Agent requires the development-only `project_agent` build tag, which release builds omit. Source-development capabilities should not be presented as features shipped by this build.
 
 Before publication, the workflow verifies the app's signature and bundle identity, required executables including both CUA helpers, and clean packaged-core version. It also runs `hdiutil verify` on the DMG and `unzip -t` on the ZIP. These checks establish packaging properties; they do not replace opening the app and testing affected user flows.
 
@@ -78,39 +78,21 @@ Open the built DMG in Finder to check icon labels, both selection states,
 clipping and scrolling at standard and Retina resolution, then verify copying
 to Applications and launching the app. A background-only preview does not validate the Finder layout.
 
-## Linux packaging and release gate
+## Experimental Linux packaging
 
-Linux x64 builds run on Ubuntu 22.04 independently of the macOS signing and
-notarization jobs. `npm --prefix desktop run release:linux` builds an AppImage
-and Debian package with their private core, native terminal module, bundled Web
-assets and checksum-pinned ripgrep. It verifies ELF architectures, core and app
-versions, native PTY execution, resource contents and update metadata hashes.
-`verification-linux.json` and `SHA256SUMS-linux` bind the output to its commit.
-These Linux packages are not publisher-signed or notarized.
+Linux x64 packaging is limited to CI and manual source builds. The release
+workflow remains macOS-only and neither publishes Linux assets nor waits for
+Linux packaging. `npm --prefix desktop run release:linux` builds and verifies
+experimental AppImage and Debian packages without a public update feed.
+See [development](development.md#linux-desktop-packages) for requirements.
 
-CI requires the existing Linux Landlock boundary tests to execute all five
-cases without skips. It then launches both extracted packages under Xvfb on
-Ubuntu 22.04 with Chromium sandboxing enabled and retains screenshots, logs
-and build identity. Stock Ubuntu 24.04 does not support this extracted-package
-path because of its [user-namespace restrictions](https://documentation.ubuntu.com/release-notes/24.04/#unprivileged-user-namespace-restrictions).
-The `.deb` includes the builder's application-specific AppArmor profile, but
-actual package-manager installation on Ubuntu 24.04 remains unverified.
-This gate does not claim package-manager installation, FUSE mounting, native
-Wayland, arm64, provider inference, or an installed update. Complete affected
-interactive acceptance on a Linux x64 desktop before publication. Launchers use
-X11, including XWayland on compatible Wayland desktops.
-
-The package hook supplies a sandbox-preserving AppImage launcher because the
-pinned builder's default launcher disables sandboxing when its probe fails.
-Verification compares the extracted launcher to the committed script so a
-builder change cannot silently restore that behavior. Debian retains the
-builder's standard system installation and Chromium sandbox setup.
-
-The final publish job waits for both Linux and macOS verification. If Linux
-fails, rerun only the failed job; completed Apple signing/notarization jobs and
-their checkpoint artifacts remain intact. An older tagged source without the
-Linux release script follows its existing macOS-only workflow. Never retrofit
-Linux assets onto an already-public release or move an existing tag.
+CI launches both extracted packages on Ubuntu 22.04 with Chromium sandboxing
+enabled and requires all five existing Landlock boundary cases without skips.
+Before enabling Linux publication, verify real Secret Service integration,
+an installed Debian package on stock Ubuntu 24.04, FUSE-mounted AppImage launch,
+and an actual AppImage update and relaunch. An extracted-package smoke check
+does not establish those results. Keep public download links and update metadata
+macOS-only until that acceptance and a separate release change are complete.
 
 ## Signing configuration
 
@@ -248,13 +230,7 @@ do not open dialogs. The native Wuu menu also displays download progress and
 offers manual checks or restart. Restart first drains the same child-process
 cleanup used by ordinary application quit.
 
-AppImage builds use the separate `*-linux.yml` feed and select only the x64
-AppImage asset. **Help > Check for Updates** and the sidebar use the same
-explicit download/restart flow. Debian and extracted AppImage launches do not
-start an updater and require manual replacement. Linux hash verification
-protects artifact integrity; it does not establish a publisher signature.
-
-The macOS release verifier checks the embedded provider in both archives, and refreshes
+The release verifier checks the embedded provider in both archives, and refreshes
 the generated `*-mac.yml` file sizes and SHA-512 hashes after final signing and
 stapling. The workflow uploads that metadata with the ZIP and DMG. A tagged run
 creates a draft Release, uploads all assets, and only then publishes the Release
@@ -267,9 +243,7 @@ controller tests or a successful package build do not prove an installed upgrade
 
 ## Published artifacts
 
-The release contains Linux `wuu-linux-x64.AppImage`, `wuu-linux-x64.deb`,
-`*-linux.yml`, `SHA256SUMS-linux` and `verification-linux.json`, alongside
-`wuu-mac-arm64.dmg`, `wuu-mac-arm64.zip`, and matching ZIP `.blockmap` files produced by electron-builder. DMG blockmaps are excluded because signing and stapling modify the disk image after electron-builder creates its blockmap. The app includes its own private `wuu-core` subprocess. The workflow does not publish standalone CLI archives, Windows installers, native phone apps, or separate CUA downloads; CUA helpers are bundled inside the macOS app.
+The release contains `wuu-mac-arm64.dmg`, `wuu-mac-arm64.zip`, and matching ZIP `.blockmap` files produced by electron-builder. DMG blockmaps are excluded because signing and stapling modify the disk image after electron-builder creates its blockmap. The app includes its own private `wuu-core` subprocess. The workflow does not publish standalone CLI archives, Windows installers, native phone apps, or separate CUA downloads; CUA helpers are bundled inside the macOS app.
 
 Artifact filenames omit the version; the app bundle, release tag, and update metadata retain it. GitHub download URLs include the release tag, so the same filename identifies a different asset in each release. Updates compare metadata versions and verify archive hashes, not filename dates. Older releases keep their original versioned filenames. The first update from a versioned filename may download the full ZIP if the previous blockmap is not cached; archive hash verification still applies.
 

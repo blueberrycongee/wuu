@@ -12,11 +12,11 @@ if (process.env.WUU_RELEASE_SOURCE_COMMIT && process.env.WUU_RELEASE_SOURCE_COMM
   throw new Error("Linux release source commit mismatch");
 }
 run(process.execPath, ["../scripts/release-version.mjs", "check", process.env.RELEASE_TAG || ""]);
-// CI retains the verified Linux distribution independently of Apple's checkpoints.
+// Experimental Linux packages remain separate from the macOS release workflow.
 rmSync("release", { recursive: true, force: true });
-for (const script of ["build:core", "build:ripgrep", "build"]) run("npm", ["run", script]);
+for (const script of ["build:core", "build:cua-linux", "build:ripgrep", "build"]) run("npm", ["run", script]);
 run("node_modules/.bin/electron-builder", [
-  "--config", join(__dirname, "release-linux-builder.cjs"), "--linux", "AppImage", "deb", "--x64",
+  "--linux", "AppImage", "deb", "--x64",
   "--publish=never", "--config.electronDist=node_modules/electron/dist",
 ]);
 run(process.execPath, [join(__dirname, "verify-linux-release.cjs")]);

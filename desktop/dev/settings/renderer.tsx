@@ -74,6 +74,7 @@ const engines: EngineListResult = {
   engines: empty ? [] : [
     { id: "codex", display_name: "Codex", enabled: true, binary_ok: true, binary_path: "/usr/local/bin/codex" },
     { id: "claude", display_name: "Claude Code", enabled: false, binary_ok: true, binary_path: "/usr/local/bin/claude" },
+    { id: "dsh", display_name: "DeepSeek Harness", protocol: "acp", enabled: true, binary_ok: params.get("dsh") !== "missing", binary_path: "/usr/local/bin/dsh", install_url: "https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/acp/acp" },
     { id: "cursor", display_name: "Cursor", protocol: "acp", enabled: true, binary_ok: false, error: "Cursor executable \"cursor-agent\" not found; install it or configure its executable path (https://cursor.com/docs/cli/acp)", install_url: "https://cursor.com/cli" },
     { id: "opencode", display_name: "OpenCode", protocol: "acp", enabled: true, binary_ok: false, install_url: "https://opencode.ai" },
     { id: "hermes", display_name: "Hermes", protocol: "acp", enabled: true, binary_ok: false },

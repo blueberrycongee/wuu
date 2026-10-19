@@ -7,6 +7,7 @@ import type { BrowserHostCoordinator } from "./browserHostWindows";
 import type { BrowserPiPHostWindow, ObservationPiPFactory } from "./cuaActivityWindows";
 import { NativePiPContent } from "./nativePiPContent";
 import { resolveCUAFrameHelper } from "./cuaFrameStreams";
+import { LinuxPiPContent, resolveLinuxCUAHelper } from "./linuxPiPContent";
 
 export { browserPiPOverlayHTML } from "./activityPiPChrome";
 export { pipContainRect } from "./activityPiPContent";
@@ -177,6 +178,13 @@ export function createObservationPiPFactory(deps: {
     activity, bounds: bounds(), sink, isPackaged: deps.isPackaged, parent: deps.parent,
     createContent: (next, context) => {
       if (next.kind === "browser") return new BrowserPiPContent(next, deps.browserHost, context);
+      if (process.platform === "linux") return new LinuxPiPContent(next, context, {
+        helper: resolveLinuxCUAHelper(), isPackaged: deps.isPackaged,
+        preload: fileURLToPath(new URL("../preload/linuxPreview.cjs", import.meta.url)),
+        pageURL: !deps.isPackaged && process.env.ELECTRON_RENDERER_URL
+          ? new URL("linux-cua-preview.html", process.env.ELECTRON_RENDERER_URL).href
+          : new URL("../renderer/linux-cua-preview.html", import.meta.url).href,
+      });
       const helper = resolveCUAFrameHelper();
       return helper ? new NativePiPContent(next, context, {
         helper, isPackaged: deps.isPackaged,

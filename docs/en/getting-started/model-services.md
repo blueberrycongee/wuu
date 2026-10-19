@@ -4,6 +4,10 @@ A provider tells Wuu where to send model requests and which credentials to use. 
 
 These settings apply to the **Wuu** engine. Selecting an [external engine](external-engines.md), such as Codex, Claude Code, or Devin, runs that program with its own authentication and configuration. Reusing a subscription credential in a Wuu provider is a different choice from running the corresponding external engine.
 
+![The Add provider sheet in Settings → Model providers, with fields for service type, model, and credentials.](../assets/product/models-en.jpg)
+
+<p class="docs-caption">Choose the API type, then enter the provider identifier, model, and credentials.</p>
+
 ## Add a provider in the desktop app
 
 1. Open **Settings → Model providers → Add provider**.

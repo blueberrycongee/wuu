@@ -232,7 +232,7 @@ func turnByID(turns []Turn, turnID string) (Turn, bool) {
 }
 
 func cloneForkHistory(history []providers.ChatMessage) []providers.ChatMessage {
-	cloned := cloneHistory(history)
+	cloned := cloneHistory(withoutArchivedContextRecovery(history))
 	for i := range cloned {
 		// Tool invocation ids address the execution ledger owned by the source
 		// thread. The semantic tool call/result history is safe to copy, but the

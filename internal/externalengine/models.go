@@ -382,7 +382,15 @@ func (s acpSession) thoughtLevelOption() *acpConfigOption {
 }
 
 func (o *acpConfigOption) hasChoice(id string) bool {
-	return o.labelFor(id) != ""
+	if o == nil {
+		return false
+	}
+	for _, choice := range o.choices() {
+		if choice.Value == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (o *acpConfigOption) labelFor(id string) string {

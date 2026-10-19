@@ -368,6 +368,12 @@ service.
 {"id":"21","method":"config/model/update","params":{"provider":"deepseek","base_url":"https://api.deepseek.com","api_key":"sk-...","keep_selection":true}}
 ```
 
+`initialize.catalog_providers` supplies the local connectable directory before
+clients open settings or onboarding. `config/model-catalog/refresh` returns the
+updated `catalog_providers` alongside configured `providers` and counts. Clients
+can keep the current directory visible until refresh succeeds. Older hosts may
+omit `catalog_providers`; request the directory separately in that case.
+
 `config/model-catalog/providers` lists catalog services that can be connected
 with an endpoint and a key, ordered by name, each with its `type`, `base_url`,
 `model_count`, and a suggested `default_model`. Services that need an account

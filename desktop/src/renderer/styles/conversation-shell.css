@@ -52,11 +52,11 @@
   --conversation-message-font-weight: 400;
   /* Outer message-flow rhythm. Structural containers must consume these
      landmarks instead of adding their own anonymous gaps on top. */
-  --conversation-flow-top-gap: 36px;
+  --conversation-flow-top-gap: var(--section-gap);
   /* Answer actions already reserve their own row inside the preceding turn. */
-  --conversation-turn-boundary-gap: 16px;
-  --conversation-turn-item-gap: 8px;
-  --conversation-image-gap: max(var(--space-6), calc(var(--conversation-message-font-size) * 1.2));
+  --conversation-turn-boundary-gap: var(--section-gap);
+  --conversation-turn-item-gap: var(--space-2);
+  --conversation-image-gap: var(--space-6);
   /* One leading for everything read or typed in a conversation: answers,
      sent queries and every composer draft, including composers outside
      .conversation-pane. A relaxed body line makes mixed CJK, Latin and inline
@@ -78,7 +78,7 @@
   /* Transparent dock space above the composer frame. It is part of the gap
      between the latest turn and the input, so the clearance subtracts it and
      that gap stays one group gap at every window width. */
-  --conversation-dock-top-space: clamp(12px, calc(0.833333vw + 8.666667px), 16px);
+  --conversation-dock-top-space: var(--space-4);
   --conversation-composer-clearance: calc(var(--section-gap) - var(--conversation-dock-top-space));
 }
 
@@ -103,13 +103,13 @@
   /* Providers may confirm an answer only after streaming finishes. Its
      provisional process placement must use the final reading rhythm. */
   --conversation-commentary-line-height: var(--conversation-reading-line-height);
-  --conversation-prose-block-gap: round(nearest, calc(var(--conversation-message-font-size) * 0.8), 1px);
-  --conversation-prose-heading-before: calc(var(--conversation-message-font-size) * 1.7);
-  --conversation-prose-heading-after: calc(var(--conversation-message-font-size) * 0.55);
-  --conversation-prose-list-gap: calc(var(--conversation-message-font-size) * 0.4);
+  --conversation-prose-block-gap: var(--space-4);
+  --conversation-prose-heading-before: var(--section-gap);
+  --conversation-prose-heading-after: var(--space-2);
+  --conversation-prose-list-gap: var(--space-2);
   --conversation-prose-indent: 1.45em;
   --conversation-prose-max-width: 100%;
-  --conversation-message-element-gap: max(12px, var(--conversation-message-font-size));
+  --conversation-message-element-gap: var(--space-4);
   /* Process rows share the message size and weight; color and spacing,
      not a smaller/heavier type style, make them read as secondary. */
   --conversation-process-font-size: var(--conversation-message-font-size);
@@ -138,18 +138,18 @@
    * gap (there is no longer a hairline rule). The action row plus the turn
    * boundary keep separate Q&A pairs farther apart than query and reply.
    */
-  --conversation-user-rule-gap: max(32px, calc(var(--conversation-user-action-size) + 12px));
-  --conversation-user-message-trailing-gap: 8px;
-  --conversation-process-detail-gap: 16px;
-  /* Reading groups do not inherit the independently configurable action-bar gap. */
-  --conversation-process-answer-gap: max(12px, calc(var(--conversation-message-font-size) * 0.75));
+  --conversation-user-rule-gap: max(var(--section-gap), calc(var(--conversation-user-action-size) + var(--space-3)));
+  --conversation-user-message-trailing-gap: var(--space-2);
+  --conversation-process-detail-gap: var(--space-4);
+  /* The answer is a new reading group after the compact activity cluster. */
+  --conversation-process-answer-gap: var(--space-6);
   /* Public message-action rhythm. Themes may tune these without depending on
    * the private action-bar DOM or taking over its interaction semantics. */
-  --conversation-answer-hover-action-gap: var(--wuu-message-actions-overlay-gap, 12px);
-  --conversation-message-action-icon-size: calc(var(--conversation-message-font-size) * 15 / 14);
-  --conversation-message-action-size: var(--wuu-message-action-size, max(24px, calc(var(--conversation-message-action-icon-size) + 9px)));
+  --conversation-answer-hover-action-gap: var(--wuu-message-actions-overlay-gap, var(--space-2));
+  --conversation-message-action-icon-size: var(--conversation-message-font-size);
+  --conversation-message-action-size: var(--wuu-message-action-size, max(24px, calc(var(--conversation-message-action-icon-size) + var(--space-4))));
   --conversation-user-action-size: max(20px, calc(var(--conversation-message-action-icon-size) + 5px));
-  --conversation-activity-gap: 8px;
+  --conversation-activity-gap: var(--space-2);
 }
 
 .app-shell,

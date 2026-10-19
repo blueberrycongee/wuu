@@ -76,6 +76,8 @@ type Options struct {
 	HostName  string // overrides the store's host name
 	Pairing   *PairingConfig
 	Logf      func(format string, args ...any)
+	// OnConnected runs after the relay authenticates and registers this host.
+	OnConnected func()
 
 	// ReconnectMin/ReconnectMax bound the relay redial backoff. Zero values
 	// mean 1s/30s.
@@ -104,6 +106,7 @@ type Host struct {
 	relayURL        string
 	hostName        string
 	logf            func(format string, args ...any)
+	onConnected     func()
 	reconnectMin    time.Duration
 	reconnectMax    time.Duration
 	pushMinInterval time.Duration
@@ -163,6 +166,7 @@ func New(opts Options) (*Host, error) {
 		relayURL:        relayURL,
 		hostName:        hostName,
 		logf:            logf,
+		onConnected:     opts.OnConnected,
 		reconnectMin:    opts.ReconnectMin,
 		reconnectMax:    opts.ReconnectMax,
 		pushMinInterval: opts.PushMinInterval,
@@ -285,6 +289,9 @@ func (h *Host) runOnce(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	h.logf("remote host: connected to relay %s as %s", h.relayURL, secure.Fingerprint(h.store.Identity().Public()))
+	if h.onConnected != nil {
+		h.onConnected()
+	}
 
 	// Re-open the pairing window on every (re)connection while it lasts.
 	h.pairMu.Lock()

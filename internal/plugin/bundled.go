@@ -28,6 +28,9 @@ const bundledFingerprintFile = ".fingerprint"
 // enable it when both native helpers are available inside their own bundle.
 const EnableCUAMacEnv = "WUU_ENABLE_CUA_MAC"
 
+// EnableCUALinuxEnv gates the bundled X11 Computer Use plugin.
+const EnableCUALinuxEnv = "WUU_ENABLE_CUA_LINUX"
+
 type DiscoverOptions struct {
 	GOOS       string
 	WuuVersion string
@@ -100,6 +103,8 @@ func bundledPluginEnabled(item Plugin, lookupEnv func(string) (string, bool)) bo
 	switch item.ID {
 	case "cua-mac":
 		key = EnableCUAMacEnv
+	case "cua-linux":
+		key = EnableCUALinuxEnv
 	default:
 		return true
 	}

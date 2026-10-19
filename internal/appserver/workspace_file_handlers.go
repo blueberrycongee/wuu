@@ -321,7 +321,9 @@ func readWorkspacePreview(root *os.Root, path string) (workspaceFileResult, erro
 	result.Path = filepath.ToSlash(path)
 	result.AbsolutePath = filepath.Join(root.Name(), path)
 	result.SizeBytes = info.Size()
-	result.MtimeMS = float64(info.ModTime().UnixNano()) / 1e6
+	// Match Node Stats.mtimeMs: converting epoch nanoseconds to float first
+	// loses precision and can make an unchanged file fail the save precondition.
+	result.MtimeMS = float64(info.ModTime().Unix())*1e3 + float64(info.ModTime().Nanosecond())/1e6
 	result.Truncated = len(data) > workspacePreviewBytes
 	preview := data
 	if len(preview) > workspacePreviewBytes {

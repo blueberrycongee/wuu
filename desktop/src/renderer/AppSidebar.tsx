@@ -2071,6 +2071,7 @@ export function AppSidebar({
                     : undefined}
                   headingClassName={`sidebar-folder-heading${folderDragCanRemove ? " remove-drop-available" : ""}${folderDropTargetID === FOLDER_REMOVE_DROP_TARGET ? " drop-active" : ""}`}
                   headingProps={{
+                    "data-empty": visibleFolderSortableIDs.length === 0 || undefined,
                     "data-folder-remove-drop": folderDragCanRemove || undefined,
                     onDragEnter: dragSessionOverFolderRemoval,
                     onDragOver: dragSessionOverFolderRemoval,
@@ -2407,6 +2408,7 @@ function SortableFunctionalGroup({
   itemDropIndicator?: "before" | "after";
   headingClassName?: string;
   headingProps?: HTMLAttributes<HTMLDivElement> & {
+    "data-empty"?: boolean;
     "data-folder-remove-drop"?: boolean;
   };
   headingLabel: ReactNode;

@@ -24,6 +24,13 @@ The override is also forwarded through the macOS LaunchServices launcher.
 
 On macOS, `make dev` and `npm --prefix desktop run dev` enable Computer Use by default. Set `WUU_ENABLE_CUA_MAC=0` to disable it for a development run. `dev:direct` remains available to explicitly enable it. macOS Accessibility and Screen Recording permissions still apply.
 
+On Linux, the development launcher builds the X11 Computer Use helper and enables
+its bundled extension by default. Set `WUU_ENABLE_CUA_LINUX=0` to opt out. Build
+only the helper with `npm --prefix desktop run build:cua-linux`; it uses the Go
+toolchain and copies the XGB license into the package notices. Run in an X11
+session with XTEST and XComposite available. Native Wayland control is not
+supported. This does not change which platform installers are published.
+
 macOS source launches preserve the invoking terminal's `PATH`, shell/toolchain
 locations, and `WUU_<ID>_BINARY` overrides across LaunchServices. Packaged graphical
 launches discover standard user install locations and, when needed, login-shell
@@ -50,7 +57,7 @@ make build-go
 ./bin/wuu --help
 ```
 
-The nine bundled business plugins are TypeScript source under `plugins/<id>/src/`.
+The ten bundled business plugins are TypeScript source under `plugins/<id>/src/`.
 `make build-plugins` emits self-contained JavaScript into the embedded package assets;
 `make build-go`, `make install`, and desktop core builds regenerate those assets before
 compiling Go. The checked-in bundles keep plain Go builds reproducible without an npm
@@ -70,24 +77,30 @@ generation takes precedence over its installed package while retaining developme
 provenance. Standalone TypeScript files still use `wuu plugin dev ./extension.ts`
 without a manifest or build. See the [plugin quickstart](../customize/plugin-quickstart.md).
 
-`make install` installs the CLI from the checkout. The release workflow packages the macOS arm64 desktop preview and Linux x64 AppImage/Debian packages. Windows CI and packaging scripts do not imply a published Windows release. See [installation](../getting-started/installation.md) for user-facing availability.
+`make install` installs the CLI from the checkout. The release workflow packages only the macOS arm64 desktop preview. Linux x64 AppImage/Debian packages are experimental source builds. Windows CI and packaging scripts do not imply a published Windows release. See [installation](../getting-started/installation.md) for user-facing availability.
 
 ### Linux desktop packages
 
 On Linux x64, run `npm --prefix desktop run pack:linux` for an unpacked app,
 `dist:linux` for local AppImage/Debian packages, or `release:linux` for packages
-with the official GitHub update feed and artifact verification. Install the
+with artifact verification. All three are experimental and have no public update feed. Install the
 same locked dependencies used by `make setup`; builds need `dpkg-deb` and the
-standard Electron Linux libraries. Packaging builds the Go core, bundled
+standard Electron Linux libraries. Packaging builds the Go core, Linux CUA helper, bundled
 plugins, Web assets, native node-pty module and checksum-pinned Linux ripgrep.
-The release command does not publish anything.
+The command does not publish anything. Before public Linux releases, verify real
+Secret Service integration, installed Debian packages on stock Ubuntu 24.04,
+FUSE-mounted AppImage launch, and an actual AppImage update/relaunch cycle.
+Launchers use X11 or XWayland with Chromium sandboxing enabled; never disable
+system security controls to make them start. Confined tool execution requires
+Landlock ABI 3 or later. MCP OAuth requires session D-Bus and an unlocked
+Secret Service keyring. Native Wayland and Linux arm64 remain unsupported.
 
 `npm --prefix desktop run test:e2e:linux-package` opens both extracted packages
 in an X11/XWayland session, checks their production renderer and preload, and
 saves screenshots/logs under `desktop/release/linux-package-evidence/`. CI uses
 `xvfb-run --auto-servernum` and keeps Chromium sandboxing enabled. This is not
 package-manager installation, a FUSE mount check, a native Wayland test, or a
-complete installed upgrade. Linux release CI also requires all five existing
+complete installed upgrade. Linux packaging CI also requires all five existing
 Landlock filesystem boundary cases to pass without skips.
 
 ### Native steering end-to-end check
@@ -138,7 +151,7 @@ separate evidence folders.
 | `make check-go` | Module consistency, formatting, vet, Windows/macOS cross-builds |
 | `make test-go` | Go tests for the CLI, core, runtime boundaries, and prompts |
 | `make check-plugins build-plugins` | TypeScript plugin types, generated bundle freshness, and runtime packages |
-| `make test-plugins` | Shipped plugin JSONL lifecycle, tools, persistence, and background behavior with disposable host fixtures |
+| `make test-plugins` | Plugin source contracts, plus shipped plugin JSONL lifecycle, tools, persistence, and background behavior with disposable host fixtures |
 | `make check-desktop test-desktop` | Desktop TypeScript and launcher/unit tests |
 | `make build-desktop` | Shared Web assets and Electron main/preload/renderer bundles; not a packaged app |
 | `make check-clients test-clients build-clients` | Protocol/SDK/client types, SDK/client tests, and retained Web/Expo bundles |
@@ -205,11 +218,49 @@ suggestion quality or provider billing.
 
 ### Live activity preview acceptance
 
-Run `node desktop/scripts/activity-preview-e2e.cjs` after installing desktop dependencies. It bundles the production Electron preview shell and browser/native content adapters, opens isolated browser pages, and starts a synthetic native-frame host subprocess using JSONL commands and binary AVC session output. It verifies stable window identity and geometry across provider changes, appearance motion from the resting corner, session-scoped preview visibility while background tasks remain active, frame acknowledgement, stale callback rejection, capture-error presentation, sticky hide and explicit reopen, automatic-preview preference, external task-control updates, and teardown. Results, transport logs, appearance frame samples and session visibility results, and rendered screenshots are saved under `desktop/out/activity-preview/`; `WUU_ACTIVITY_PREVIEW_OUTPUT` selects another directory. Headless Linux uses software rendering and a synthetic display automatically.
+Run `node desktop/scripts/activity-preview-e2e.cjs` after installing desktop dependencies. It bundles the production Electron preview shell and browser/native content adapters, opens isolated browser pages, and starts a synthetic native-frame host subprocess using JSONL commands and binary AVC session output. It verifies independent targets in one session, the five-card visible limit and overflow replacement, promotion, session visibility, dialog suppression, individual dismissal, automatic-preview preference, native authority updates across retained targets, stale callbacks, frame acknowledgement, capture-error recovery, and teardown. Results, transport logs, appearance frame samples, stack geometry and screenshots are saved under `desktop/out/activity-preview/`; `WUU_ACTIVITY_PREVIEW_OUTPUT` selects another directory. macOS also records composed stack screenshots in light/default-text and dark/large-text layouts. Headless Linux uses software rendering and a synthetic display automatically.
 
 Build the core, then run `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs` to check real Go execution ownership and Chromium input. Stop must interrupt the current run; a later user instruction must work with new authority while old execution IDs remain rejected. The fixture also covers browser task isolation, retained pages, takeover during pending input, and cleanup. Evidence is written under `desktop/out/browser-task-ownership/`.
 
-These checks do not verify ScreenCaptureKit, native application input, macOS permissions, native window composition, or packaged signatures. On a Computer Use-enabled macOS build, also check browser → native app → browser switching, two windows of one app, Terminal and Wuu as ordinary targets, hidden/minimized windows, target closure, Screen Recording denial/revocation, and takeover during pending input. Hide and Stop must leave the observed applications running; extension disable or replacement must retire its stream. Check both themes, default and large text, reduced motion, and drag/resize near the composer. `node desktop/scripts/inspect-cua-pip.cjs` records process/window diagnostics and captures for a running native preview; a running helper alone is not proof of live pixels.
+These checks do not verify ScreenCaptureKit, native application input, macOS permissions, or packaged signatures. On a Computer Use-enabled macOS build, also check browser → native app → browser switching, two windows of one app, Terminal and Wuu as ordinary targets, hidden/minimized windows, target closure, Screen Recording denial/revocation, and takeover during pending input. Hide and Stop must leave the observed applications running; extension disable or replacement must retire its stream. Check both themes, default and large text, reduced motion, and drag/resize near the composer. `node desktop/scripts/inspect-cua-pip.cjs` records process/window diagnostics and captures for a running native preview; a running helper alone is not proof of live pixels.
+
+### Linux Computer Use acceptance
+
+Build the core with `go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu`, the helper
+with `npm --prefix desktop run build:cua-linux`, and the desktop with
+`cd desktop && npx electron-vite build`, then run
+`node desktop/scripts/linux-cua-e2e.cjs` from the repository root in an isolated
+X11 session with XComposite, XTEST, a window manager, compositor, and FFmpeg.
+The Linux acceptance workflow provides Xvfb, Openbox and xcompmgr. It exercises
+production helper input, exact-window capture and the production PiP factory;
+activity is supplied directly to the observation coordinator.
+
+The same run samples an animated preview for 30 seconds, a 2560×1600 target for
+15 seconds, hidden-preview idle for 8 seconds, and resumed capture for 10 seconds.
+Native actions include the host's canonical-target discovery calls. It records
+main-loop delay, renderer responsiveness, video cadence, input response latency,
+per-process CPU and RSS samples, memory trends, and repeated track teardown and
+recovery in `desktop/out/e2e/linux-cua/performance.json`. `results.json`, screenshots
+and a GIF retain functional and visual evidence. `WUU_LINUX_CUA_OUTPUT` selects
+the evidence directory.
+
+The checked budgets detect stalls and resource-growth regressions; CPU samples
+are reported rather than treated as a portable benchmark. CI records its virtual
+display, CPU, Electron version and software rendering.
+
+A second process imports the production desktop main, preload and renderer with
+an isolated profile and a scripted loopback provider. The real composer starts a
+Go app-server turn through the bundled Linux CUA plugin. The provider boundary
+must receive target IDs, screenshot images and fresh snapshot metadata, including
+`after=vision`; its returned pixels must also show the fixture's synchronous
+post-click paint, not the previous state. An animated target separately verifies
+the bounded settling timeout. Actual Go activity notifications create the PiP;
+closing it must release capture while two native clicks continue and the turn
+completes and persists. `full-app.json` records these checks and a 10-second
+application responsiveness sample; `full-app-live.png` and `full-app-desktop.png`
+show the actual application. No credentials or live inference are used. This
+source-built acceptance does not verify an installed package, physical Linux
+hardware, live-model behavior, or performance parity with a Mac.
 
 ### Native history protocol E2E
 

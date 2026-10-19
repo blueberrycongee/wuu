@@ -185,6 +185,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.model.invoke` | 独立的完整逻辑模型调用与流式响应 |
 | `host.model.emit` | 流式适配器或 middleware 发出的事件 |
 | `host.background` | 调用插件自己服务的 generation 所属后台工作 |
+| `host.process` | 绑定会话的 shell 进程、输出读取和事件投递 |
 | `host.settings.get/list` | 声明的设置值 |
 | `host.session.create/send/list/inspect/cancel/control` | 按宿主生命周期规则创建和管理会话 |
 | `host.session.history.read/search` | 使用序列快照和续读游标访问有限历史 |
@@ -315,6 +316,26 @@ TypeScript 运行时适配器中的 `model.adapter` 和 `model.middleware` 处�
 `inspectBackground(host, { job_id })` 返回 `running`、`completed`、`failed` 或 `cancelled`，以及结果或错误；`cancelBackground` 用于取消。活动 key 在每个插件内唯一，最多同时运行 64 个任务并保留 64 个终态结果；参数和结果分别最多 1 MiB。它不是持久调度器：重载、禁用、generation 退役或进程丢失会取消所属工作，旧 generation 不能再启动任务。计时器、调度策略、预算、快照失效和持久业务状态由插件负责，关闭时应清理计时器。
 
 公开 SDK 的[有界重放 fixture](../../../scripts/fixtures/model-pipeline/replay.ts)和[影子比较 fixture](../../../scripts/fixtures/model-pipeline/shadow.ts)使用合成数据验证这些扩展点。它们用于验收，不是默认安装的缓存或比较功能。对源码构建的 core 运行 `node scripts/plugin-model-pipeline-e2e.mjs`，驱动会使用本地模拟提供商并保存可重复检查的结果，不产生付费推理。
+
+### 绑定会话的 shell 进程
+
+声明 `requireProcessService()` 以使用 `host.process` 版本 1。在活动的会话工具回调中调用
+`startProcess(host, { key, command, cwd?, timeout_ms?, follow_parent? })`，沿用调用方的
+本地 shell 权限、沙箱、工作目录和进程管理器，目前不支持远程执行环境。激活阶段或无关
+capability 不能启动进程。同一 key 和相同参数返回已有记录，参数变化会冲突；每代最多
+运行 64 个进程，宿主最多保留 256 条终态句柄记录。
+
+`readProcess` 返回合并输出、字节游标、截断信息和进程状态。单次读取范围为 4 字节到
+1 MiB，默认 64 KiB，最多等待 30 秒。应使用返回的 `next_offset`，因为 UTF-8 分块及日志
+保留策略可能影响实际长度。`stopProcess` 停止整个进程树。超时为零表示无截止时间，
+但会话归档或删除、generation 关闭、宿主退出仍会停止进程。`follow_parent: true` 让已完成
+的私有子会话将接收方交给父会话，快照中的 `session_id` 返回当前接收方。
+
+`sendProcessEvent(host, processID, message)` 沿用 `host.session.send` 的请求身份、显示和
+`if_running` 契约，由宿主选择该进程绑定的接收会话。这样可以向启动它的私有子会话投递
+事件，而不会获得任意私有会话的访问权。输出及进程退出本身不会唤醒会话。插件负责分行、
+过滤、事件策略和持久历史；运行时重启后句柄失效。内置 [Monitor 插件](plugins.md#监控后台事件)
+演示了这个接口。
 
 ## 提供服务
 

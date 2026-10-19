@@ -427,7 +427,7 @@ const stops = [
   { id: 'panel-files', run: async win => { await openTool(win, '文件'); await delay(1400); } },
   { id: 'panel-review', run: async win => { await openTool(win, '审查'); await delay(2000); } },
   { id: 'plugins', run: async win => { await clickLabel(win, '插件'); await delay(1400); } },
-  ...[['settings-models', '模型服务'], ['settings-agents', 'Agent'], ['settings-runtime', '内置 Agent'], ['settings-mcp', 'MCP 服务器'], ['settings-appearance', '外观'], ['settings-general', '常规'], ['settings-usage', '用量'], ['settings-archive', '归档']]
+  ...[['settings-models', '模型服务'], ['settings-agents', '外部 Agent'], ['settings-runtime', '内置 Agent'], ['settings-mcp', 'MCP 服务器'], ['settings-appearance', '外观'], ['settings-general', '常规'], ['settings-usage', '用量'], ['settings-archive', '归档']]
     .map(([id, label]) => ({ id, run: settingsPage(label) })),
 ];
 
@@ -502,7 +502,7 @@ async function runJourneys(win) {
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
-  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   write(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'tour', engines, providers: { tour: { type: 'openai-compatible', base_url: endpoint, api_key: 'tour-only', model: 'tour' } } }));
   const stamp = '2026-09-20T00:00:00Z';
   write(path.join(home, 'projects.json'), JSON.stringify({

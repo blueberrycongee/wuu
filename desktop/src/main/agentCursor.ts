@@ -5,9 +5,10 @@ import { iconSVG } from "../shared/iconArtwork";
 // at a constant display size when the page is scaled down.
 //
 // The trajectory, cursor artwork and effects follow the signature_arc style of
-// Cua Cursor Motion (MIT, Copyright (c) 2025 Cua AI, Inc.; see
-// third_party/licenses/trycua-cursor-motion.txt). Timing differs: browser input
-// waits for arrival, so every move must arrive within CURSOR_ARRIVE_CAP_MS.
+// Cua Cursor Motion (MIT, Copyright (c) 2025 Cua AI, Inc.;
+// https://github.com/trycua/cua/blob/main/libs/typescript/cursor-motion/LICENSE).
+// Timing differs: browser input waits for arrival, so every move must arrive
+// within CURSOR_ARRIVE_CAP_MS.
 
 export type AgentCursorFeedback = {
   kind: "click" | "scroll" | "type";

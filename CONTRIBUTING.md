@@ -44,8 +44,8 @@ Shared project constraints and agent execution instructions are maintained in
 when contributing UI changes.
 
 The supported build targets are macOS and Linux for the CLI, and arm64 macOS
-and x64 Linux (X11/XWayland) for the desktop preview. Mobile and remote control are experimental and
-do not yet have a stable public mobile release.
+for the published desktop preview. Linux x64 desktop packages (X11/XWayland),
+mobile, and remote control are experimental. Mobile has no stable public release.
 
 ### Onboarding UI preview
 

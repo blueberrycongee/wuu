@@ -1,10 +1,10 @@
 # Quick start
 
-The desktop downloads target Apple silicon Macs and Linux x64. You also need a model connection. Check the [installation guide](installation.md) for platform requirements, then choose a small local project without sensitive files for your first task.
+You need an Apple silicon Mac for the desktop preview and a model connection. Choose a small local project without sensitive files for your first task.
 
 ## Set up the app
 
-1. [Install Wuu](installation.md) for your platform and open it. On macOS, run the copy in `/Applications`; current release builds use Apple Developer ID signing and notarization. Linux has its own package installation instructions. Check the release notes when using an older preview.
+1. [Install Wuu](installation.md) and open the copy in `/Applications`. Release builds are signed with an Apple Developer ID and notarized. If you use an older ad-hoc preview, macOS may block the first launch; the installation guide explains how to open it.
 2. Choose your optional plugins in the first-run setup. The recommended selection is TODO and Automation; you can change it later in the plugin settings.
 3. Select an agent engine. Wuu is built in; Codex and Claude Code depend on a working local CLI installation.
 4. For the Wuu engine, [configure a model service](model-services.md) or reuse a supported local subscription login.

@@ -54,6 +54,7 @@ createRoot(document.getElementById("root")!).render(
       <FirstRunOnboarding
         preview
         engines={engines}
+        catalogProviders={catalogProviders}
         onDismissPreview={() => window.close()}
         onUpdateExtensionPackage={rejectPersistence}
         onSaveProvider={rejectPersistence}

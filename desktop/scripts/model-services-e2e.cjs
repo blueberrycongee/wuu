@@ -117,7 +117,7 @@ const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.ex
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
-  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
     default_provider: 'fixture', engines,
     providers: { fixture: { type: 'openai-compatible', base_url: endpoint, api_key: 'fixture-only', model: 'fixture' } },
@@ -260,10 +260,10 @@ async function run() {
   await capture(main, '06-overview-after.png');
 
   // General gathers how new conversations start; it shows the new default.
-  await evaluate(main, () => [...document.querySelectorAll('.settings-nav button')].find(button => button.textContent.trim() === '常规').click());
+  await evaluate(main, () => [...document.querySelectorAll('.settings-nav-item')].find(item => item.textContent.trim() === '常规').click());
   await waitFor(main, () => document.querySelector('[data-testid="settings-default-model-select"]')?.textContent.includes('fixture-b'));
   await capture(main, '06-general-new-conversations.png');
-  await evaluate(main, () => [...document.querySelectorAll('.settings-nav button')].find(button => button.textContent.trim() === '模型服务').click());
+  await evaluate(main, () => [...document.querySelectorAll('.settings-nav-item')].find(item => item.textContent.trim() === '模型服务').click());
   await waitFor(main, () => document.querySelector('[data-provider="gateway"]'));
 
   // Every theme, text size, and width keeps controls inside the column.

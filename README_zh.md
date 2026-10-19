@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/blueberrycongee/wuu/releases/latest"><b>下载 Wuu</b></a> ·
+  <a href="https://github.com/blueberrycongee/wuu/releases/latest"><b>下载 Mac 版</b></a> ·
   <a href="https://blueberrycongee.github.io/wuu/zh-cn/">文档</a> ·
   <a href="README.md">English</a>
 </p>
@@ -44,7 +44,7 @@
 
 用 API Key 接入 DeepSeek、Kimi、智谱、阿里云百炼、火山方舟、MiniMax、OpenAI 或 Anthropic；也可以走硅基流动、OpenRouter 这类中转，或者 LM Studio 这类本地服务，任何兼容 OpenAI 或 Anthropic 接口的自定义端点都能接。已有的订阅也能直接用：Codex 登录、xAI SuperGrok、Grok Build。
 
-已经在用别的编程 Agent？wuu 可以把 Claude Code、Codex、Cursor、Devin、Grok、Hermes、OpenCode、Pi 或 Antigravity 作为对话的引擎，沿用它们自己的登录和工具。**设置 → 订阅** 会把各个账号的额度和余额放在一起显示。
+已经在用别的编程 Agent？wuu 可以把 Claude Code、Codex、Cursor、Devin、DeepSeek Harness、Grok、Hermes、OpenCode、Pi 或 Antigravity 作为对话的引擎，沿用它们自己的登录和工具。**设置 → 订阅** 会把各个账号的额度和余额放在一起显示。
 
 <p align="center">
   <img src="landing/assets/readme/models-zh.jpg" width="640" alt="添加服务">
@@ -69,7 +69,9 @@
 
 Computer Use 让 Agent 通过辅助功能与原生输入观察并操作 macOS 应用。浮动预览会跟随它的指针，显示每次点击和输入，目标应用在后台运行；修改通过应用本身保存，随后可以在审查中看到真实文件的变化。需要授予 macOS 的屏幕录制和辅助功能权限。
 
-![wuu 中的 Computer Use](landing/assets/readme/cua-zh.webp)
+[![wuu 中的 Computer Use](landing/assets/readme/cua-zh.webp)](landing/assets/readme/cua-zh.mp4)
+
+[观看视频](landing/assets/readme/cua-zh.mp4)
 
 ### 随时调整方向
 
@@ -77,7 +79,7 @@ Computer Use 让 Agent 通过辅助功能与原生输入观察并操作 macOS �
 
 ### Agent 能碰到哪里，由你决定
 
-每个对话都可以单独选权限模式：**只读** 用来调查，**标准** 允许在工作区内修改，**无边界** 留给确实需要的时候。在只读和标准模式下，Agent 运行的命令处在 macOS Seatbelt 或 Linux Landlock 沙箱里。Linux 需要 Landlock ABI 3 或更高版本；无法建立隔离时会拒绝运行。打开 **替我审批** 后，shell 命令和高风险操作执行前会先交给模型审查。
+每个对话都可以单独选权限模式：**只读** 用来调查，**标准** 允许在工作区内修改，**无边界** 留给确实需要的时候。在只读和标准模式下，Agent 运行的命令处在 macOS Seatbelt 沙箱里。打开 **替我审批** 后，shell 命令和高风险操作执行前会先交给模型审查。
 
 如果任务应该在别处跑，可以把 Agent 的工具放进 Docker、通过 SSH 连到远程机器、使用 Singularity/Apptainer，或者在 Modal、Daytona、Vercel 的沙箱里运行。
 
@@ -91,7 +93,7 @@ Computer Use 让 Agent 通过辅助功能与原生输入观察并操作 macOS �
 
 ## 开始使用
 
-桌面预览版面向 Apple 芯片的 Mac，以及使用 X11/XWayland 的 Linux x64 桌面。请在 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 选择对应安装包：macOS 将 `wuu.app` 放进 `/Applications`；Linux 使用 AppImage 或 Debian 包。Linux 支持从包含这些附件的版本开始，之前仅有 macOS 附件的版本不包含 Linux 安装包。Linux 环境要求和更新方式见[安装指南](docs/zh-cn/getting-started/installation.md)。
+桌面预览版支持 Apple 芯片的 Mac。从 [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest) 下载，把 `wuu.app` 放进 `/Applications` 后打开。
 
 发布流水线要求 Apple Developer ID 正式签名和公证。早期预览版仅使用 ad-hoc 签名，请按下载版本的发布说明和[安装指南](docs/zh-cn/getting-started/installation.md)确认。
 

@@ -1,6 +1,6 @@
 {
   "name": "@blueberrycongee/wuu-desktop",
-  "version": "2026.10.18",
+  "version": "2026.10.19",
   "description": "Desktop app for the Wuu AI coding agent",
   "author": "Andy wu <lpageo@163.com>",
   "private": true,
@@ -11,6 +11,8 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "node scripts/dev.cjs",
+    "build:remote": "npm run build:core && node scripts/build-web.cjs && vite build --config remote.vite.config.ts",
+    "remote:serve": "node out-remote/host.mjs",
     "dev:onboarding": "electron-vite --config dev/onboarding/electron.vite.config.ts --entry out-dev/onboarding/main/index.js --ignoreConfigWarning",
     "dev:remote": "node scripts/env-run.cjs VITE_ENABLE_REMOTE_CONTROL=true npm run dev",
     "dev:direct": "node scripts/env-run.cjs WUU_ENABLE_CUA_MAC=1 node scripts/dev.cjs",
@@ -38,6 +40,7 @@
     "test:e2e:workspace-preview": "node scripts/workspace-preview-e2e.cjs",
     "test:e2e:fast-mode": "npm run build:core && npm run build && electron scripts/fast-mode-e2e.cjs",
     "test:e2e:composer-worktree": "npm run build:core && npm run build && electron scripts/composer-worktree-e2e.cjs",
+    "test:e2e:concurrent-send": "npm run build:core && npm run build && electron scripts/concurrent-send-e2e.mjs",
     "test:e2e:permission-mode": "npm run build && electron scripts/permission-mode-e2e.cjs",
     "test:e2e:streaming": "npm run build && electron scripts/streaming-e2e.cjs",
     "test:e2e:stream-settlement": "electron scripts/stream-settlement-layout-e2e.cjs",
@@ -78,8 +81,9 @@
     "test:e2e:onboarding-workspaces": "electron scripts/onboarding-workspaces-e2e.cjs",
     "build:app-context-mac": "node scripts/build-app-context-mac.cjs",
     "test:e2e:app-context": "electron-vite build && electron scripts/app-context-e2e.cjs",
-    "pack:linux": "npm run build:core && npm run build:ripgrep && npm run build && electron-builder --linux dir --x64 --publish=never --config.electronDist=node_modules/electron/dist",
-    "dist:linux": "npm run build:core && npm run build:ripgrep && npm run build && electron-builder --linux AppImage deb --x64 --publish=never --config.electronDist=node_modules/electron/dist",
+    "build:cua-linux": "node scripts/build-cua-linux.cjs",
+    "pack:linux": "npm run build:core && npm run build:cua-linux && npm run build:ripgrep && npm run build && electron-builder --linux dir --x64 --publish=never --config.electronDist=node_modules/electron/dist",
+    "dist:linux": "npm run build:core && npm run build:cua-linux && npm run build:ripgrep && npm run build && electron-builder --linux AppImage deb --x64 --publish=never --config.electronDist=node_modules/electron/dist",
     "release:linux": "node scripts/release-linux.cjs",
     "test:e2e:linux-package": "node scripts/linux-package-e2e.cjs"
   },
@@ -235,7 +239,16 @@
         "--ozone-platform=x11"
       ],
       "artifactName": "${productName}-linux-x64.${ext}",
-      "syncDesktopName": true
+      "syncDesktopName": true,
+      "extraResources": [
+        {
+          "from": "build/bin",
+          "to": "bin",
+          "filter": [
+            "wuu-cua-linux"
+          ]
+        }
+      ]
     },
     "deb": {
       "packageName": "wuu",

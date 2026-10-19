@@ -1,6 +1,8 @@
 import { AppContextCapture } from "./appContextCapture";
 import { SystemPermissions } from "./systemPermissions";
 import { createBrowserView } from "./browserView";
+import { importBrowserCookies, listBrowserProfiles } from "./browserCookieImport";
+import { BrowserExtensionManager } from "./browserExtensions";
 import { saveArtifactFile } from "./artifactSave";
 import { showArtifactItemMenu } from "./artifactItemMenu";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
@@ -31,8 +33,7 @@ import {
   type WebContents,
 } from "electron";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   APP_SERVER_PROTOCOL_VERSION,
@@ -43,7 +44,6 @@ import {
 } from "../shared/protocol";
 import type {
   ArtifactItemMenuParams,
-  AppServerResponse,
   ConfigAdvancedUpdateResult,
   ConfigGeneralUpdateResult,
   ConfigCodexModelsResult,
@@ -139,8 +139,6 @@ import type {
   PluginStorageResult,
   PluginClientRequestParams,
   PluginClientCancelParams,
-  PluginClientCancelResult,
-  PluginClientRequestResult,
   PluginVisibleHistoryRequest,
   PluginVisibleHistoryResult,
   WorkspaceFileSaveParams,
@@ -191,10 +189,8 @@ import {
   type LanguagePreference,
 } from "./desktopSettings";
 import { GitService } from "./gitService";
-import { requestRemoteProjects } from "./remoteProjects";
-import { requestRemoteTerminal } from "./remoteTerminal";
-import { requestRemoteFiles } from "./remoteFiles";
-import { requestRemoteGit } from "./remoteGit";
+import { requestRemoteWorkspace } from "./remoteWorkspace";
+import { PluginRuntimeRequests } from "./pluginRuntimeRequests";
 import { openExternalURL, wireExternalNavigationGuards } from "./externalNavigation";
 import { ProjectManager, wuuHomePath } from "./projects";
 import { discoverRecentWorkspaces } from "./recentWorkspaces";
@@ -254,6 +250,13 @@ const DARK_WINDOW_BACKGROUND = "#1c1c1d";
 // controls fit; the renderer can grow for larger text or page zoom.
 const WINDOWS_TITLEBAR_OVERLAY_HEIGHT = 56;
 const ENABLE_EMBEDDED_BROWSER = process.env.WUU_ENABLE_BROWSER !== "0";
+let browserExtensionManager: BrowserExtensionManager | undefined;
+function embeddedBrowserSession() {
+  if (!ENABLE_EMBEDDED_BROWSER) {
+    throw new Error("The embedded browser is disabled in this build.");
+  }
+  return electronSession.fromPartition(BROWSER_PARTITION);
+}
 if (process.argv.includes("--safe-mode")) {
   process.env.WUU_SAFE_MODE = "1";
 }
@@ -266,7 +269,7 @@ let mainWindow: BrowserWindow | null = null;
 // them before the user acts on them (Electron retains only while referenced).
 const activeSystemNotifications = new Set<Notification>();
 const windowRegistry: WindowRegistry = createWindowRegistry();
-const projectManager = new ProjectManager();
+const projectManager = new ProjectManager(join(app.getPath("userData"), "projects.json"));
 
 // Build-time globals injected by electron.vite.config.ts. TypeScript
 // doesn't know about them by default; declare them so we can reference
@@ -302,6 +305,7 @@ const appServerClientPool = new AppServerClientPool(
   (event) => emitServerEvent(event),
   undefined,
   desktopInitializeParams,
+  { appPath: app.getAppPath(), isPackaged: app.isPackaged },
 );
 // Cross-workdir running state (which sessions are actively turning in any
 // workspace) is aggregated in the main process from each client's own turn
@@ -350,10 +354,9 @@ appServerClientPool.setClientTorndownHandler((workdir) => {
   browserHostCoordinator.onClientTorndown(workdir);
   observationCoordinator.dropWorkdir(workdir);
 });
-// The single observation surface for agent live activity (CUA native PiP +
-// browser preview), fed by the same activity notifications the renderer uses.
-// The factory picks the surface per activity kind; the coordinator owns
-// lifecycle, single-instance discipline, and position memory.
+// Shared observation stack for CUA windows and browser tabs, fed by the same
+// activity notifications the renderer uses. The coordinator owns per-target
+// lifecycle, session visibility, stack ordering, and position memory.
 const observationCoordinator = new ObservationCoordinator(
   windowRegistry,
   async (threadID): Promise<ActivitySession[]> => {
@@ -474,6 +477,22 @@ function requireAppContextSender(event: IpcMainInvokeEvent): void {
   if (!isAppContextSender(event)) {
     throw new Error("App snapshots are available from Wuu's main window only.");
   }
+}
+
+function requireBrowserSettingsSender(event: IpcMainInvokeEvent): BrowserWindow {
+  const host = BrowserWindow.fromWebContents(event.sender);
+  const main = windowRegistry.mainWindow();
+  if (!host || host.isDestroyed() || !main || host !== main) {
+    throw new Error("Browser settings are available from Wuu's main window only.");
+  }
+  return host;
+}
+
+function requireBrowserExtensionManager(): BrowserExtensionManager {
+  if (!browserExtensionManager) {
+    throw new Error("Embedded browser extensions are unavailable.");
+  }
+  return browserExtensionManager;
 }
 
 async function showProjectDirectoryDialog(
@@ -685,98 +704,24 @@ function unregisterWindow(windowID: number): void {
 // independent of the per-workdir app-server pool. Events (pairing URI,
 // paired, exit) fan out to every window; the settings panel re-pulls its
 // snapshot on each one.
-// Window and remote-peer requests share one ownership rule. A cancellation
-// targets the exact process admitted for the original request, even if the
-// workspace moves or is re-registered before its response arrives.
-const pluginRuntimeRequests = new Map<string, Map<string, {
-  id: string;
-  fingerprint: string;
-  cancel: () => Promise<PluginClientCancelResult>;
-}>>();
-
-async function requestPluginRuntime(
-  owner: string,
-  context: RuntimeContext,
-  params: PluginClientRequestParams,
-  onResponse?: (response: AppServerResponse) => void,
-  onOwnerCreated?: () => void,
-): Promise<PluginClientRequestResult> {
-  const { workspace_id: _workspaceID, workspace_root: _workspaceRoot, ...request } = params;
-  if (params.request_id === undefined) {
-    return appServerClientPool.requestInContext<PluginClientRequestResult>(context, "plugin/client/request", request, onResponse);
-  }
-  if (typeof params.request_id !== "string" || params.request_id.length > 128 || !params.request_id.trim()) {
-    throw new Error("Plugin request ID must contain 1 to 128 characters");
-  }
-  let requests = pluginRuntimeRequests.get(owner);
-  if (!requests) {
-    requests = new Map();
-    pluginRuntimeRequests.set(owner, requests);
-    onOwnerCreated?.();
-  }
-  if (requests.has(params.request_id)) throw new Error("Plugin request ID is already active");
-  const requestInOwner = appServerClientPool.bindContextRequest(context);
-  const identity = { id: params.id, fingerprint: params.fingerprint, request_id: randomUUID() };
-  let cancellation: Promise<PluginClientCancelResult> | undefined;
-  requests.set(params.request_id, {
-    id: params.id,
-    fingerprint: params.fingerprint,
-    cancel: () => cancellation ??= requestInOwner<PluginClientCancelResult>("plugin/client/cancel", identity),
-  });
-  try {
-    return await requestInOwner<PluginClientRequestResult>(
-      "plugin/client/request", { ...request, request_id: identity.request_id }, onResponse,
-    );
-  } finally {
-    requests.delete(params.request_id);
-  }
-}
-
-function cancelPluginRuntime(owner: string, params: PluginClientCancelParams): Promise<PluginClientCancelResult> {
-  const request = params && pluginRuntimeRequests.get(owner)?.get(params.request_id);
-  if (!request || request.id !== params.id || request.fingerprint !== params.fingerprint) {
-    return Promise.resolve({ cancelled: false });
-  }
-  return request.cancel();
-}
-
-function cancelPluginRuntimeOwner(owner: string): void {
-  const requests = pluginRuntimeRequests.get(owner);
-  pluginRuntimeRequests.delete(owner);
-  for (const request of requests?.values() ?? []) {
-    void request.cancel().catch((error: unknown) => console.error("Plugin runtime cancellation failed", error));
-  }
-}
+const pluginRuntimeRequests = new PluginRuntimeRequests(appServerClientPool);
 
 const remoteTerminals = new TerminalSessionManager((owner,event)=>remoteAppServerBridge.notifyPeer(owner,"desktop/terminal/event",event));
 const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply, peerID) => {
   const pluginOwner = `remote:${peerID}`;
   // Existing ownership is enough to cancel; the original workspace may no
   // longer be listed by the time the paired client disconnects or switches.
-  if (method === "plugin/client/cancel") return cancelPluginRuntime(pluginOwner, params as PluginClientCancelParams);
+  if (method === "plugin/client/cancel") return pluginRuntimeRequests.cancel(pluginOwner, params as PluginClientCancelParams);
   // Keep the desktop's reverse-RPC capabilities: a phone attachment must not
   // disable browser tools on the shared execution service.
   if (method === "initialize") params = desktopInitializeParams();
-  if (method === "shutdown") throw new Error("Remote clients cannot shut down the shared execution service");
-  if (method.startsWith("desktop/projects/")) return requestRemoteProjects(projectManager,method,params);
-  const cwd = resolve(workdir);
-  const state = projectManager.list();
-  const project = state.projects.find(project => resolve(project.path) === cwd && !project.missing);
-  let context: RuntimeContext;
-  if (project) context = { kind: "project", project_id: project.id, cwd: project.path };
-  else if (state.projects.some(project=>appServerClientPool.threadCwdsForWorkdir(project.path).some(path=>resolve(path)===cwd))) context={kind:"no_project",cwd};
-  else if (state.active_context?.kind === "no_project" && resolve(state.active_context.cwd) === cwd) context = state.active_context;
-  else if (cwd.startsWith(resolve(wuuHomePath(), "scratch") + sep)) context = { kind: "no_project", cwd };
-  else throw new Error("Unknown or unavailable remote workspace");
-  if (method === "plugin/client/request") return requestPluginRuntime(pluginOwner, context, params as PluginClientRequestParams, reply);
-  if (method.startsWith("desktop/terminal/")) return requestRemoteTerminal(remoteTerminals,context,peerID,method,params);
-  if (method === "desktop/skill/content") return readCatalogSkill(await appServerClientPool.requestInContext<SkillListResult>(context,"skill/list"),params as SkillContentParams);
-  if (method.startsWith("desktop/file/")) return requestRemoteFiles(context,method,params);
-  if (method.startsWith("desktop/git/")) return requestRemoteGit(gitServiceForContext(() => context), method, params);
-  return appServerClientPool.requestInContext(context, method, params, reply);
+  return requestRemoteWorkspace(projectManager, appServerClientPool, remoteTerminals, workdir, method, params, reply, peerID,
+    (context, method, params) => method === "plugin/client/request"
+      ? pluginRuntimeRequests.request(pluginOwner, context, params as PluginClientRequestParams, reply)
+      : appServerClientPool.requestInContext(context, method, params, reply));
 }, (peerID) => {
   remoteTerminals.stopForOwner(peerID);
-  cancelPluginRuntimeOwner(`remote:${peerID}`);
+  pluginRuntimeRequests.closeOwner(`remote:${peerID}`);
 });
 
 const remoteHostManager = new RemoteHostManager({
@@ -1444,6 +1389,18 @@ app.whenReady().then(async () => {
       );
     }
     installBrowserSessionHandlers(browserSession, browserHostCoordinator);
+    if (process.env.WUU_SAFE_MODE === "1") {
+      console.info("[desktop] embedded-browser extensions disabled by safe mode");
+    } else {
+      browserExtensionManager = new BrowserExtensionManager(browserSession);
+      try {
+        await browserExtensionManager.initialize();
+      } catch (error) {
+        console.warn(
+          `[desktop] failed to initialize embedded-browser extensions: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
   }
   // Pick up the user's chosen size before the pet window is created, so the
   // initial BrowserWindow and the inline data: URL are sized right the first
@@ -2076,12 +2033,12 @@ app.whenReady().then(async () => {
       throw new Error("Plugin runtime workspace changed");
     }
     const owner = `window:${event.sender.id}`;
-    return requestPluginRuntime(owner, context, params, undefined, () => {
-      event.sender.once("destroyed", () => cancelPluginRuntimeOwner(owner));
+    return pluginRuntimeRequests.request(owner, context, params, undefined, () => {
+      event.sender.once("destroyed", () => pluginRuntimeRequests.closeOwner(owner));
     });
   });
   ipcMain.handle("wuu:plugin-runtime-cancel", (event, params: PluginClientCancelParams) =>
-    cancelPluginRuntime(`window:${event.sender.id}`, params));
+    pluginRuntimeRequests.cancel(`window:${event.sender.id}`, params));
   ipcMain.handle("wuu:plugin-visible-history", async (event, request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult> => {
     if (!request || !request.threadId?.trim() || !request.workspaceRoot?.trim()) throw new Error("Conversation identity is required");
     const context = runtimeContextForPluginWorkspace(event, request.workspaceId, request.workspaceRoot);
@@ -2867,6 +2824,60 @@ app.whenReady().then(async () => {
       return { ok: true };
     },
   );
+  ipcMain.handle("wuu:browser-profiles", (event) => {
+    requireBrowserSettingsSender(event);
+    if (!ENABLE_EMBEDDED_BROWSER) {
+      throw new Error("The embedded browser is disabled in this build.");
+    }
+    return listBrowserProfiles();
+  });
+  ipcMain.handle(
+    "wuu:browser-import-cookies",
+    async (event, profilePath: unknown) => {
+      requireBrowserSettingsSender(event);
+      if (!ENABLE_EMBEDDED_BROWSER) {
+        throw new Error("The embedded browser is disabled in this build.");
+      }
+      if (typeof profilePath !== "string" || !profilePath.trim()) {
+        throw new Error("A browser profile path is required.");
+      }
+      return importBrowserCookies({
+        profilePath,
+        session: embeddedBrowserSession(),
+      });
+    },
+  );
+  ipcMain.handle("wuu:browser-extensions-list", (event) => {
+    requireBrowserSettingsSender(event);
+    return requireBrowserExtensionManager().list();
+  });
+  ipcMain.handle("wuu:browser-extensions-add", async (event) => {
+    const host = requireBrowserSettingsSender(event);
+    const manager = requireBrowserExtensionManager();
+    const result = await dialog.showOpenDialog(host, {
+      title: mainTranslate("chooseExtensionFolder"),
+      properties: ["openDirectory"],
+    });
+    if (result.canceled || !result.filePaths[0]) return manager.list();
+    return manager.addFromDirectory(result.filePaths[0]);
+  });
+  ipcMain.handle(
+    "wuu:browser-extensions-set-enabled",
+    (event, id: unknown, enabled: unknown) => {
+      requireBrowserSettingsSender(event);
+      if (typeof id !== "string" || !id.trim() || typeof enabled !== "boolean") {
+        throw new Error("Extension id and enabled state are required.");
+      }
+      return requireBrowserExtensionManager().setEnabled(id, enabled);
+    },
+  );
+  ipcMain.handle("wuu:browser-extensions-remove", (event, id: unknown) => {
+    requireBrowserSettingsSender(event);
+    if (typeof id !== "string" || !id.trim()) {
+      throw new Error("Extension id is required.");
+    }
+    return requireBrowserExtensionManager().remove(id);
+  });
   systemPermissions.start();
   ipcMain.handle("wuu:system-permissions", event => {
     requireAppContextSender(event);

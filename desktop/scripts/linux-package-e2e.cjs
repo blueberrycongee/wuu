@@ -87,7 +87,7 @@ async function launch(name, executable, extraEnv = {}) {
     const version = require("../package.json").version;
     assert.equal(state.build?.desktop.version, version, "Packaged desktop version mismatch");
     assert.ok(state.build?.core.version.includes(version), "Packaged core did not initialize");
-    assert.equal(state.updater.kind, name === "appimage" ? "idle" : "unsupported", "Wrong package updater");
+    assert.equal(state.updater.kind, "unsupported", "Wrong package updater");
     const screenshot = await send("Page.captureScreenshot", { format: "png" }, sessionId);
     writeFileSync(join(output, `${name}.png`), Buffer.from(screenshot.data, "base64"));
     writeFileSync(join(output, `${name}.json`), JSON.stringify(state, null, 2) + "\n");
