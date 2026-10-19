@@ -9,6 +9,7 @@ import { app, BrowserWindow, WebContentsView } from "electron";
 import type { ActivitySession, BrowserSurfaceSnapshot } from "../src/shared/protocol";
 import { ActivityPiPSurface, type BrowserPiPWindowHandle } from "../src/main/activityPiPWindow";
 import { createObservationPiPFactory } from "../src/main/browserPiPWindow";
+import { createBrowserView } from "../src/main/browserView";
 import { ObservationCoordinator } from "../src/main/cuaActivityWindows";
 import { BrowserHostCoordinator, defaultBrowserHostDeps, type BrowserHostWindowHandle, type BrowserViewHandle } from "../src/main/browserHostWindows";
 import type { WindowRegistry } from "../src/main/windowRegistry";
@@ -75,7 +76,7 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
     defaultBrowserHostDeps(
       () => new BrowserWindow({ show: false, webPreferences: { sandbox: true } }) as unknown as BrowserHostWindowHandle,
       () => {
-        const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+        const view = createBrowserView();
         views.push(view);
         return view as unknown as BrowserViewHandle;
       },
@@ -121,10 +122,13 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
   const crashedPreview = previewWindows()[0];
   const crashedOverlay = (crashedPreview.contentView.children.find((view) => view !== views[0]) as WebContentsView).webContents;
   const crashedContents = views[0].webContents;
+  console.log("browser lifecycle: linked-worktree preview mounted");
   const crashed = once(crashedContents, "render-process-gone", { signal: AbortSignal.timeout(5000) });
   crashedContents.forcefullyCrashRenderer();
   await crashed;
+  console.log("browser lifecycle: renderer crash delivered");
   await waitFor("crashed contents and preview disposed", () => crashedContents.isDestroyed() && crashedPreview.isDestroyed() && crashedOverlay.isDestroyed());
+  console.log("browser lifecycle: crashed contents, preview and overlay disposed");
   assert.equal(host.surface(linked, tabID), undefined);
   assert.ok(surfaces.some((snapshot) => snapshot.tabID === tabID && snapshot.error));
   const deniedInput = rawRequest({ method: "click", params: { x: 240, y: 200 } }, "browser/cdp");
@@ -135,6 +139,7 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
   await waitFor("same-execution preview restored after real tab recreation", () => previewWindows().some((win) => win.isVisible()));
   const recoveredContents = views.at(-1)!.webContents;
   assert.equal(await recoveredContents.executeJavaScript("window.clicks"), 0, "A failed input is not replayed on the recovered page");
+  console.log("browser lifecycle: same-execution preview restored without input replay");
   const secondCrash = once(recoveredContents, "render-process-gone", { signal: AbortSignal.timeout(5000) });
   recoveredContents.forcefullyCrashRenderer();
   await secondCrash;
@@ -143,6 +148,7 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
   assert.ok(snapshot && !snapshot.error, "User reload reopens a crashed page");
   assert.equal(await views.at(-1)!.webContents.executeJavaScript("window.clicks"), 0);
   await waitFor("reload restores preview", () => previewWindows().some((win) => win.isVisible()));
+  console.log("browser lifecycle: user reload restored page and preview");
 
   await open({ thread_id: "sibling-thread", tab_id: "sibling-tab" });
   const sibling = views.at(-1)!.webContents;
@@ -180,6 +186,7 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
   coordinator.update({ ...nextActivity, updated_at: new Date().toISOString() });
   coordinator.setActiveThread(threadID);
   assert.equal(previewWindows().length, 0, "A late snapshot cannot restore a deleted thread");
+  console.log("browser lifecycle: deletion closes all workdirs and rejects late navigation and snapshots");
   const siblingDestroyed = once(sibling, "destroyed", { signal: AbortSignal.timeout(5000) });
   host.onClientTorndown(root);
   coordinator.dropWorkdir(root);
@@ -188,6 +195,7 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
   assert.equal(host.hasAgentTabs(root), false, "Transport teardown releases its linked-worktree pin");
   await coordinator.shutdown();
   host.destroyAll();
+  console.log("browser lifecycle: transport teardown disposes sibling and releases pin");
 
   let nativeWindow!: BrowserWindow;
   let beginStop!: (finish: () => void) => void;
@@ -215,6 +223,7 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
   assert.equal(prematureCompletion, false, "Window destruction cannot report completion before capture disposal");
   await waitFor("orphan overlay destroyed", () => orphanOverlay.isDestroyed());
   assert.equal(orphanOverlay.isDestroyed(), true, "Externally destroyed PiP windows release their overlay WebContents");
+  console.log("browser lifecycle: external window destruction awaits capture and disposes overlay");
   writeFileSync(join(artifacts, "lifecycle-recovery.json"), JSON.stringify({ linkedWorktreeOwner: true,
     realRendererCrash: true, sameExecutionPreviewRecovery: true, userReload: true, inputReplayCount: 0,
     deletedAcrossWorkdirs: true, pendingNavigationRejected: true, siblingRetained: true,

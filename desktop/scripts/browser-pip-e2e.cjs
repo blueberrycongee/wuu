@@ -42,6 +42,7 @@ async function main() {
     const result = spawnSync(String(require("electron")), [
       ...(process.platform === "linux" ? ["--no-sandbox", ...(!process.env.DISPLAY ? ["--ozone-platform=headless", "--ozone-override-screen-size=1440,1000"] : [])] : []), outFile,
     ], { stdio: "inherit", env: { ...process.env, WUU_BROWSER_PIP_FIXTURE: fixture } });
+    console.log(`browser-pip-e2e: Electron exited ${JSON.stringify({ status: result.status, signal: result.signal })}`);
     process.exitCode = result.status ?? 1;
     if (result.error) throw result.error;
   } finally {
