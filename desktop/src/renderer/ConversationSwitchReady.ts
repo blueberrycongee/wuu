@@ -5,12 +5,14 @@ const MAX_RESTORATION_FRAMES = 8;
 
 /** Keep restoration covered through real layout and its first stable paint. */
 export function useConversationSwitchReady({
+  visible = true,
   pendingViewSwitch,
   activeThreadID,
   viewportRef,
   settleLayout,
   finishViewSwitch,
 }: {
+  visible?: boolean;
   pendingViewSwitch: PendingViewSwitch | undefined;
   activeThreadID: string | undefined;
   viewportRef: RefObject<HTMLElement | null>;
@@ -23,6 +25,12 @@ export function useConversationSwitchReady({
   const targetID = pendingViewSwitch?.targetID;
   useLayoutEffect(() => {
     if (requestID === undefined || targetID !== activeThreadID) return;
+    // Settings/account replace the conversation DOM. Runtime recovery is
+    // complete without waiting for geometry of a viewport that is unmounted.
+    if (!visible) {
+      finishViewSwitch(requestID);
+      return;
+    }
     let previous = "";
     let stableFrames = 0;
     let measuredFrames = 0;
@@ -48,5 +56,5 @@ export function useConversationSwitchReady({
     };
     frame = window.requestAnimationFrame(check);
     return () => window.cancelAnimationFrame(frame);
-  }, [activeThreadID, finishViewSwitch, requestID, targetID, viewportRef]);
+  }, [activeThreadID, finishViewSwitch, requestID, targetID, viewportRef, visible]);
 }

@@ -6,8 +6,8 @@ import { isTouchWebShell } from "./ComposerFocus";
 // bordered groups of rows. Page components render their own header so page
 // actions (add, refresh) sit beside the title instead of on a row.
 
-/** The settings window's titlebar slot. Inside it a page's title follows the
- * "Settings /" crumb and its actions sit at the strip's trailing edge, so the
+/** The settings window's titlebar slot. It holds the current page title
+ * and its actions at the strip's trailing edge, so the
  * page itself opens on its content. */
 export const SettingsTitlebarSlot = createContext<HTMLElement | null>(null);
 

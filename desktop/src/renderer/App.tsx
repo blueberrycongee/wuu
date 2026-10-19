@@ -1,3 +1,7 @@
+import { isSettingsPageAvailable } from "./SettingsPageAvailability";
+import { usePageHistory } from "./PageHistory";
+import { PageHistoryControls } from "./PageHistoryControls";
+import { visibleWorkbenchView } from "./plugins/Workbench";
 import { useAppContextDraftTarget } from "./AppContextCapture";
 import { readComposerDraftRecovery, sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { validPdfSelectionReference } from "./PdfSelection";
@@ -24,6 +28,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type {
   ActivitySession,
@@ -266,7 +271,6 @@ import {
   useDesktopPluginRuntime,
 } from "./plugins/DesktopPluginRuntime";
 import { DesktopWorkbench } from "./plugins";
-import { usePrimaryPluginViewCover } from "./PrimaryPluginViewCover";
 import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { useComposerDraftState } from "./ComposerDraftState";
 import { useComposerPendingState } from "./ComposerPendingState";
@@ -2450,7 +2454,10 @@ export function App(): JSX.Element {
     }
     return queries;
   }, [turns]);
-  const showingPrimaryPluginView = usePrimaryPluginViewCover();
+  const pageWorkbench = useSyncExternalStore(desktopWorkbenchController.subscribe,
+    desktopWorkbenchController.getSnapshot, desktopWorkbenchController.getSnapshot);
+  const primaryPageView = visibleWorkbenchView(pageWorkbench, "primary");
+  const showingPrimaryPluginView = primaryPageView !== undefined;
   const previewTargetThread = threadForPane(state, state.activePane);
   const previewTargetContext = workspacePanelContext(state.activeContext, previewTargetThread);
   const activePreviewFile = activeWorkspaceViewTab?.kind === "file" &&
@@ -2554,6 +2561,7 @@ export function App(): JSX.Element {
     running: isStateActiveThreadRunning(state),
   });
   useConversationSwitchReady({
+    visible: !settingsOpen && !accountOpen,
     pendingViewSwitch,
     activeThreadID,
     viewportRef: conversationScrollRef,
@@ -5402,8 +5410,110 @@ export function App(): JSX.Element {
     }
   });
 
+  // This is a window history of existing destinations, never a second owner of
+  // session content. Docked panels and split-pane focus are not page visits.
+  const currentPage = !onboardingComplete || !state.initialized ? undefined
+    : settingsOpen ? JSON.stringify(["settings", settingsInitialPage])
+    : accountOpen ? JSON.stringify(["account", ""])
+    : workspaceToolsCoverConversation && rightPanelOpen && workspaceActiveViewTabID
+      ? JSON.stringify(["workspace", workspaceActiveViewTabID])
+    : primaryPageView ? JSON.stringify(["plugin", primaryPageView.view.id])
+    : state.activeSessionTabID ? JSON.stringify(["session", state.activeSessionTabID]) : undefined;
+  const pageLayoutIntent = JSON.stringify([
+    state.activeSessionTabID, settingsOpen, settingsInitialPage, accountOpen,
+    primaryPageView?.view.id, workspaceActiveViewTabID, rightPanelOpen, rightPanelManualGlobalized,
+  ]);
+  const previousPageLayout = useRef({ intent: pageLayoutIntent, autoGlobalized: rightPanelAutoGlobalized });
+  const layoutOnlyPageChange = previousPageLayout.current.intent === pageLayoutIntent
+    && previousPageLayout.current.autoGlobalized !== rightPanelAutoGlobalized;
+  useLayoutEffect(() => {
+    previousPageLayout.current = { intent: pageLayoutIntent, autoGlobalized: rightPanelAutoGlobalized };
+  }, [pageLayoutIntent, rightPanelAutoGlobalized]);
+  const [historySessionRestore, setHistorySessionRestore] = useState<{
+    id: string; origin: string | undefined; isCurrent: () => boolean; done: () => void;
+    finished: boolean; viewRequestID: number;
+  }>();
+  useLayoutEffect(() => {
+    const request = historySessionRestore;
+    if (!request) return;
+    const targetUnavailable = !isHistoryPageAvailable(JSON.stringify(["session", request.id]));
+    if (targetUnavailable || !request.isCurrent() || !isCurrentViewSwitchRequest(request.viewRequestID)
+      || (currentPage !== request.origin
+      && currentPage !== JSON.stringify(["session", request.id]))) {
+      // Settings/tool pages do not switch runtimes themselves. Re-select the
+      // source while the pending context marker still exists: cancellation
+      // alone would leave the main process on the abandoned target runtime.
+      if (isCurrentViewSwitchRequest(request.viewRequestID)
+        && (targetUnavailable || (currentPage && JSON.parse(currentPage)[0] !== "session"))) {
+        if (pendingViewSwitch?.contextSwitching) void selectSessionTab(state.activeSessionTabID);
+        else cancelViewSwitch();
+      }
+      request.done();
+      setHistorySessionRestore(undefined);
+      return;
+    }
+    if (state.activeSessionTabID === request.id) {
+      closePrimaryPluginView();
+      focusWorkspaceConversation();
+      setSettingsOpen(false);
+      setAccountOpen(false);
+      request.done();
+      setHistorySessionRestore(undefined);
+    } else if (request.finished) {
+      request.done();
+      setHistorySessionRestore(undefined);
+    }
+  }, [historySessionRestore, state.activeSessionTabID, state.sessionTabs, state.projects, currentPage, pendingViewSwitch]);
+  function isHistoryPageAvailable(page: string): boolean {
+    const [kind, id] = JSON.parse(page) as [string, string];
+    if (kind === "settings") return isSettingsPageAvailable(id as SettingsPage, state.initialized?.extension_inventory);
+    if (kind === "account") return ENABLE_ACCOUNT && Boolean(window.wuu?.remoteAccount);
+    if (kind === "workspace") {
+      const tab = workspaceViewTabs.find(tab => tab.id === id);
+      return Boolean(tab && (tab.kind !== "plugin" || pageWorkbench.viewTypes.some(view =>
+        view.pluginId === tab.pluginId && view.id === tab.viewTypeId)));
+    }
+    if (kind === "plugin") return pageWorkbench.views.some(view => view.id === id && view.region === "primary");
+    const tab = state.sessionTabs.find(tab => tab.id === id);
+    if (!tab) return false;
+    const context = tab.context;
+    return context.kind !== "project"
+      || state.projects.some(project => project.id === context.project_id && !project.missing);
+  }
+  const pageHistory = usePageHistory(currentPage, isHistoryPageAvailable, async (page, isCurrent) => {
+    const [kind, id] = JSON.parse(page) as [string, string];
+    if (kind === "settings") {
+      setAccountOpen(false);
+      setSettingsInitialPage(id as SettingsPage);
+      setSettingsOpen(true);
+      return;
+    }
+    if (kind === "account") { setSettingsOpen(false); setAccountOpen(true); return; }
+    if (kind === "session") {
+      await new Promise<void>((done) => {
+        const activation = selectSessionTab(id);
+        const request = { id, origin: currentPage, isCurrent, done, finished: false,
+          viewRequestID: getCurrentViewSwitchRequestID() };
+        setHistorySessionRestore(request);
+        void activation.finally(() => {
+          setHistorySessionRestore(current => current === request ? { ...current, finished: true } : current);
+        });
+      });
+      return;
+    } else if (kind === "workspace") {
+      focusWorkspaceViewTab(id);
+      setRightPanelOpenWithMotion(true);
+      setRightPanelManualGlobalized(true);
+    } else if (kind === "plugin") {
+      desktopWorkbenchController.activateView(id);
+      focusWorkspaceConversation();
+    }
+    setSettingsOpen(false);
+    setAccountOpen(false);
+  }, layoutOnlyPageChange);
+
   if (ENABLE_ACCOUNT && accountOpen && window.wuu?.remoteAccount) {
-    return <AccountScreen driver={window.wuu.remoteAccount} onBack={() => setAccountOpen(false)} />;
+    return <AccountScreen pageHistory={pageHistory} driver={window.wuu.remoteAccount} onBack={() => setAccountOpen(false)} />;
   }
 
   if (settingsOpen) {
@@ -5414,7 +5524,9 @@ export function App(): JSX.Element {
         {!archiveTip && !modelCatalogTip && failedDraftNotice}
         <SettingsShellRenderer
           initialized={state.initialized}
-          initialPage={settingsInitialPage}
+          page={settingsInitialPage}
+          onPageChange={setSettingsInitialPage}
+          pageHistory={pageHistory}
           running={viewContextSwitchPending}
           runningProviderNames={runningProviderNames}
           usage={settingsUsage}
@@ -5559,6 +5671,7 @@ export function App(): JSX.Element {
       <ProjectActionsProvider value={projectAgentEnabled ? projectActions : null}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
       <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
+        <div className={`window-frame${poppedOutMode ? " popped-out-frame" : ""}`}>
         <div
           ref={appShellRef}
           className={shellClassName}
@@ -5576,32 +5689,8 @@ export function App(): JSX.Element {
             onPointerEnter={scheduleSidebarDrawerOpen}
             onPointerLeave={cancelSidebarDrawerOpen}
           />
-          {rightPanelGlobalized && sidebarDrawerMode && sidebarToggleVisible ? (
-            <div className="globalized-sidebar-toggle-region">
-              <button
-                className="icon-button side-panel-toggle-button sidebar-toggle-button globalized-sidebar-toggle"
-                data-wuu-component="sidebar-toggle"
-                type="button"
-                aria-label={t(
-                  sidebarDrawerVisible
-                    ? "app.collapseLeftSidebar"
-                    : "app.expandLeftSidebar",
-                )}
-                aria-pressed={sidebarDrawerVisible}
-                onClick={sidebarDrawerVisible ? closeSidebarDrawer : openSidebarDrawerNow}
-                onPointerEnter={scheduleSidebarDrawerOpen}
-                onPointerLeave={(event) =>
-                  scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
-                }
-              >
-                <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
-              </button>
-            </div>
-          ) : null}
           <HoverRevealScopeContext.Provider value={sidebarHoverScope}>
             <AppSidebar
-              onToggleSidebar={sidebarDrawerMode ? undefined : toggleSidebar}
-              sidebarCollapsed={sidebarCollapsed}
               sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
               state={state}
               sidebarWorkspaces={sidebarWorkspaces}
@@ -5779,26 +5868,6 @@ export function App(): JSX.Element {
       >
         <header className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
-            {sidebarToggleVisible && sidebarDrawerMode && !rightPanelGlobalized ? (
-              <button
-                className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle"
-                data-wuu-component="sidebar-toggle"
-                type="button"
-                aria-label={t(
-                  sidebarDrawerVisible
-                    ? "app.collapseLeftSidebar"
-                    : "app.expandLeftSidebar",
-                )}
-                aria-pressed={sidebarDrawerVisible}
-                onClick={toggleSidebar}
-                onPointerEnter={scheduleSidebarDrawerOpen}
-                onPointerLeave={(event) =>
-                  scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
-                }
-              >
-                <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
-              </button>
-            ) : null}
             <ConversationTitleContent
               state={state}
               runningThreadIDs={visibleRunningThreadIDs}
@@ -6223,8 +6292,26 @@ export function App(): JSX.Element {
           },
         }}
       />
-      {/* macOS applies app regions in DOM order, so a later drag titlebar would
-        * cover this no-drag control. Keep it as the shell's last child. */}
+      </div>
+      {/* Native app regions follow DOM order. Chrome is visually first but
+          follows content so its controls remain outside every content drag region. */}
+      <header className="window-chrome" data-wuu-component="window-chrome" hidden={poppedOutMode}>
+      {!poppedOutMode && sidebarToggleVisible ? (
+        <PageHistoryControls {...pageHistory}>
+        <button
+          className={`icon-button side-panel-toggle-button sidebar-toggle-button shell-left-sidebar-toggle${rightPanelGlobalized ? " globalized-sidebar-toggle" : ""}`}
+          data-wuu-component="sidebar-toggle"
+          type="button"
+          aria-label={t(!sidebarCollapsed || sidebarDrawerVisible ? "app.collapseLeftSidebar" : "app.expandLeftSidebar")}
+          aria-pressed={!sidebarCollapsed || sidebarDrawerVisible}
+          onClick={rightPanelGlobalized && sidebarDrawerMode
+            ? sidebarDrawerVisible ? closeSidebarDrawer : openSidebarDrawerNow
+            : toggleSidebar}
+        >
+          <SidePanelToggleIcon side="left" open={!sidebarCollapsed || sidebarDrawerVisible} />
+        </button>
+        </PageHistoryControls>
+      ) : null}
       {!poppedOutMode ? (
         <button
           className="icon-button side-panel-toggle-button shell-right-sidebar-toggle"
@@ -6238,6 +6325,7 @@ export function App(): JSX.Element {
           <SidePanelToggleIcon side="right" open={rightPanelOpen} />
         </button>
       ) : null}
+      </header>
       </div>
     </ArtifactPreviewContext.Provider>
     </WorkspaceBrowserOpenContext.Provider>

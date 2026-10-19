@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Navigate desktop page history with back and forward controls beside the sidebar toggle, preserving existing conversations and drafts across settings and workspace pages.
+
 - Show external connections as compact two-line rows with account plans, remaining quota bars and local reset times; omit unavailable quota details.
 
 - Offer account sign-in and local authentication as explicit connection methods, keeping official ChatGPT app authorization separate from Codex credentials and native-engine account ownership.
@@ -31,6 +33,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   with process-tree cleanup and optional handoff from completed child sessions.
 
 ### Fixed
+
+- Keep the desktop sidebar toggle in stable window chrome so collapsing navigation fully hides the rail and preserves keyboard focus; simplify settings to its current page heading.
 
 - Fix macOS background pointer events landing outside the intended control. Pace key presses, text input, and repeated clicks, and retain the observed window for background input after AX-only observations.
 - Match the DeepSeek Harness icon's visible size to peer agent icons in settings, runtime menus, and onboarding.

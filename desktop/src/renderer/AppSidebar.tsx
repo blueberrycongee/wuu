@@ -104,7 +104,6 @@ import type { PluginHost } from "./plugins/PluginHost";
 import type { WorkbenchController } from "./plugins/Workbench";
 import { primaryViewNavigation } from "./plugins/PrimaryViewNavigation";
 import { PluginSlot } from "./plugins/PluginSlot";
-import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 
 /**
  * Stable section identity keys for the new sidebar tree.
@@ -448,8 +447,6 @@ export function AppSidebar({
   pluginHost = desktopPluginHost,
   workbenchController = desktopWorkbenchController,
   sidebarVisible = true,
-  sidebarCollapsed = false,
-  onToggleSidebar,
 }: {
   state: AppState;
   // The sidebar renders scratch conversations through the same WorkspaceList
@@ -522,8 +519,6 @@ export function AppSidebar({
   pluginHost?: PluginHost;
   workbenchController?: WorkbenchController;
   sidebarVisible?: boolean;
-  sidebarCollapsed?: boolean;
-  onToggleSidebar?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [attentionStickyIDsState, setAttentionStickyIDsState] = useState<Set<string>>(() => new Set());
@@ -1756,20 +1751,6 @@ export function AppSidebar({
   const nativeSidebar = (
     <>
       <div className="sidebar-content">
-        <div className="traffic-spacer">
-          {onToggleSidebar ? (
-            <button
-              className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle"
-              data-wuu-component="sidebar-toggle"
-              type="button"
-              aria-label={t(sidebarCollapsed ? "app.expandLeftSidebar" : "app.collapseLeftSidebar")}
-              aria-pressed={!sidebarCollapsed}
-              onClick={onToggleSidebar}
-            >
-              <SidePanelToggleIcon side="left" open={!sidebarCollapsed} />
-            </button>
-          ) : null}
-        </div>
         <SidebarBrand
           unreadViewOpen={unreadViewOpen}
           attentionCount={attentionCount}

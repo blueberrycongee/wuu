@@ -274,6 +274,74 @@ describe("workspace file tabs", () => {
     vi.useRealTimers();
   });
 
+  it("page history tracks full-page workspace tabs, skips closed tabs, and ignores docked switches", async () => {
+    setInnerWidth(2000);
+    const thread = completedThread();
+    thread.turns[0].items[1].text = "Open [README.md](README.md) or [NOTES.md](NOTES.md).";
+    vi.mocked(window.wuu.listThreads).mockResolvedValue({ threads: [thread] });
+    vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread });
+    vi.mocked(window.wuu.readWorkspaceFile).mockImplementation(async path => ({
+      root: workspace, path, absolute_path: `${workspace}/${path}`,
+      size_bytes: 16, mtime_ms: 1000, sha256: "a".repeat(64), binary: false, truncated: false,
+      text: `# ${path} contents`,
+    }));
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await typeMainPrompt("draft shared with the full-page preview");
+    const history = (direction: "back" | "forward") => {
+      const button = container.querySelector<HTMLButtonElement>(`[data-wuu-component="page-history-${direction}"]`);
+      expect(button).not.toBeNull();
+      return button!;
+    };
+    const click = async (button: HTMLButtonElement | null | undefined) => {
+      expect(button).toBeTruthy();
+      await act(async () => { button!.click(); });
+      await flushAsync();
+    };
+    const fileTab = (name: string) => [...container.querySelectorAll<HTMLButtonElement>('[data-wuu-tab-kind="file"] .workspace-tool-tab-main')]
+      .find(button => button.getAttribute("aria-label") === name);
+    for (const name of ["README.md", "NOTES.md"]) {
+      await click([...container.querySelectorAll<HTMLButtonElement>(".rich-file-link")]
+        .find(button => button.textContent?.includes(name)));
+    }
+    await click(fileTab("README.md"));
+    expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(false);
+    expect(history("back").disabled).toBe(true);
+    expect(history("forward").disabled).toBe(true);
+    for (const width of [600, 2000]) {
+      await act(async () => {
+        setInnerWidth(width);
+        window.dispatchEvent(new Event("resize"));
+      });
+      await flushAsync();
+      expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(width === 600);
+      expect(history("back").disabled).toBe(true);
+      expect(history("forward").disabled).toBe(true);
+    }
+
+    await click(container.querySelector(".workspace-panel-globalize"));
+    expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(true);
+    await click(fileTab("NOTES.md"));
+    await click(history("back"));
+    expect(fileTab("README.md")?.getAttribute("aria-selected")).toBe("true");
+    await click(history("forward"));
+    expect(fileTab("NOTES.md")?.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelectorAll('[data-wuu-tab-kind="file"]')).toHaveLength(2);
+    await click(fileTab("README.md")?.closest('[data-wuu-tab-kind="file"]')?.querySelector(".workspace-tool-tab-close"));
+    expect(fileTab("README.md")).toBeUndefined();
+    await click(history("back"));
+    expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(false);
+    expect(history("back").disabled).toBe(true);
+    expect(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer="dock"] textarea')?.value)
+      .toBe("draft shared with the full-page preview");
+    await click(history("forward"));
+    expect(fileTab("NOTES.md")?.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelectorAll('[data-wuu-tab-kind="file"]')).toHaveLength(1);
+    expect(history("forward").disabled).toBe(true);
+    expect(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer="document"] textarea')?.value)
+      .toBe("draft shared with the full-page preview");
+  }, 30_000);
+
   it("keeps the project overview on the selected coordinator or managed session", async () => {
     vi.mocked(window.wuu.initialize).mockResolvedValue({
       ...initialized(),

@@ -737,9 +737,6 @@ export function WorkspaceRightPanel({
           }}
           fallback={(
             <>
-        {globalized ? (
-          <span className="workspace-panel-sidebar-hit-hole" aria-hidden="true" />
-        ) : null}
         <DndContext
           sensors={tabSensors}
           collisionDetection={closestCenter}

@@ -2,16 +2,17 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AccountScreen } from "./AccountScreen";
+import type { PageHistoryControlsProps } from "./PageHistoryControls";
 import type { AccountDriver } from "./AccountPanel";
 import { translateCurrent as t } from "./i18n";
 
 let root: Root;
 let container: HTMLDivElement;
 afterEach(() => { act(() => root?.unmount()); container?.remove(); localStorage.clear(); });
-async function mount(driver: AccountDriver, standalone = false) {
+async function mount(driver: AccountDriver, standalone = false, pageHistory?: Omit<PageHistoryControlsProps, "children">) {
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   const back = vi.fn();
-  await act(async () => root.render(<AccountScreen driver={driver} onBack={back} standalone={standalone} />));
+  await act(async () => root.render(<AccountScreen driver={driver} onBack={back} standalone={standalone} pageHistory={pageHistory} />));
   return back;
 }
 async function click(key: Parameters<typeof t>[0]) {
@@ -36,6 +37,20 @@ async function credentials() {
 }
 
 describe("AccountScreen", () => {
+  it("routes window history separately from the back-to-app action", async () => {
+    const onBack = vi.fn();
+    const onForward = vi.fn();
+    const backToApp = await mount(async () => ({}), false, { canGoBack: true, canGoForward: true, onBack, onForward });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-wuu-component="page-history-back"]')?.click();
+      container.querySelector<HTMLButtonElement>('[data-wuu-component="page-history-forward"]')?.click();
+    });
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(onForward).toHaveBeenCalledTimes(1);
+    expect(backToApp).not.toHaveBeenCalled();
+    await click("settings.backToApp");
+    expect(backToApp).toHaveBeenCalledTimes(1);
+  });
   it("waits for recovery confirmation before offering to finish the window", async () => {
     let signedIn = false;
     const close = await mount(async action => {

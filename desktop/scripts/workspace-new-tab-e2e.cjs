@@ -100,7 +100,6 @@ app.whenReady().then(async () => {
       const clipInset = panelClip === 'none' ? 0 : parseFloat(panelClip.slice('inset('.length));
       const box = (node) => node?.getBoundingClientRect().toJSON() ?? null;
       const peers = [...document.querySelectorAll([
-        '[data-wuu-component="sidebar-toggle"]', '[data-wuu-component="right-sidebar-toggle"]',
         '.conversation-title-heading h1', '.conversation-title-heading .icon-button',
         '.workspace-panel-add', '.workspace-panel-globalize',
       ].join(','))].filter(node => node.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }))
@@ -112,6 +111,13 @@ app.whenReady().then(async () => {
             hit: hit === node || node.contains(hit) };
         });
       return { strip: box(strip), header: box(header), active: box(active), peers,
+        chrome: box(document.querySelector('[data-wuu-component="window-chrome"]')),
+        panel: box(panel),
+        windowButtons: [...document.querySelectorAll('[data-wuu-component="window-chrome"] button')].map(control => {
+          const rect = control.getBoundingClientRect();
+          const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          return { bounds: box(control), hit: hit === control || control.contains(hit) };
+        }),
         panelClip, paintedCanvasTop: panel.getBoundingClientRect().top + clipInset,
         font: getComputedStyle(document.documentElement).getPropertyValue('--font-ui'),
         viewport: { width: innerWidth, height: innerHeight, zoom: Number(getComputedStyle(document.documentElement).getPropertyValue('--desktop-page-zoom')) || 1 },
@@ -132,6 +138,11 @@ app.whenReady().then(async () => {
         })) };
     });
     fs.writeFileSync(path.join(output, scenario + ".json"), JSON.stringify(geometry, null, 2));
+    assert.ok(geometry.chrome && geometry.panel.top >= geometry.chrome.bottom - 0.1,
+      `${scenario}: the docked or globalized panel starts below window chrome: ${JSON.stringify(geometry)}`);
+    for (const control of geometry.windowButtons) assert.ok(control.hit && control.bounds.top >= geometry.chrome.top - 0.1
+      && control.bounds.bottom <= geometry.chrome.bottom + 0.1,
+      `${scenario}: window controls stay hittable above the panel: ${JSON.stringify(geometry)}`);
     const axis = (geometry.paintedCanvasTop + geometry.header.bottom) / 2;
     // The titlebar grows with the UI font. Verify alignment and usable chip
     // padding against its painted row instead of a fixed default-font height.

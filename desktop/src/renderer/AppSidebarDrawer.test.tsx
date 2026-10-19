@@ -275,22 +275,6 @@ async function openDrawerViaHoverZone(): Promise<void> {
   expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
 }
 
-async function openDrawerViaSidebarToggle(): Promise<void> {
-  const toggle = container.querySelector<HTMLElement>(".sidebar-toggle-button");
-  expect(toggle).not.toBeNull();
-  elementFromPointTarget = toggle;
-  await act(async () => {
-    toggle?.dispatchEvent(
-      new MouseEvent("pointerover", { bubbles: true, relatedTarget: null }),
-    );
-  });
-  expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(false);
-  await act(async () => {
-    vi.advanceTimersByTime(SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS);
-  });
-  expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
-}
-
 async function moveBetweenSidebarTargets(from: Element, to: Element): Promise<void> {
   elementFromPointTarget = to;
   await act(async () => {
@@ -401,70 +385,32 @@ describe("collapsed sidebar hover drawer", () => {
     expect(toggle()).not.toBeNull();
   });
 
-  it("opens the collapsed sidebar when the titlebar toggle is hovered", async () => {
-    await renderCollapsedApp();
-    expect(appShell()?.dataset.wuuSidebarMode).toBe("collapsed");
-    await openDrawerViaSidebarToggle();
-    expect(appShell()?.dataset.wuuSidebarMode).toBe("drawer");
-  });
-
-  it("keeps the drawer open when the titlebar toggle is covered by the sliding rail", async () => {
-    window.innerWidth = 820;
+  it("keeps navigation closed when the independent window toggle is hovered", async () => {
     await renderCollapsedApp();
     const toggle = container.querySelector<HTMLElement>(".sidebar-toggle-button");
-    const sidebar = container.querySelector<HTMLElement>(".sidebar");
     expect(toggle).not.toBeNull();
-    expect(sidebar).not.toBeNull();
-    vi.spyOn(toggle!, "getBoundingClientRect").mockReturnValue(
-      new DOMRect(96, 9, 30, 30),
-    );
-    vi.spyOn(sidebar!, "getBoundingClientRect").mockReturnValue(
-      new DOMRect(0, 0, 296, 820),
-    );
-
     elementFromPointTarget = toggle;
     await act(async () => {
-      toggle?.dispatchEvent(
-        new MouseEvent("pointerover", {
-          bubbles: true,
-          clientX: 110,
-          clientY: 24,
-          relatedTarget: null,
-        }),
-      );
+      toggle?.dispatchEvent(new MouseEvent("pointerover", { bubbles: true, relatedTarget: null }));
+      vi.advanceTimersByTime(SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS * 2);
     });
-    await act(async () => {
-      vi.advanceTimersByTime(SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS);
-    });
-    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
+    expect(appShell()?.dataset.wuuSidebarMode).toBe("collapsed");
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(false);
+  });
 
-    elementFromPointTarget = sidebar;
-    await act(async () => {
-      window.dispatchEvent(
-        new MouseEvent("pointermove", {
-          bubbles: true,
-          clientX: 110,
-          clientY: 24,
-        }),
-      );
-      toggle?.dispatchEvent(
-        new MouseEvent("pointerout", {
-          bubbles: true,
-          clientX: 110,
-          clientY: 24,
-          relatedTarget: sidebar,
-        }),
-      );
-      vi.advanceTimersByTime(1);
-    });
-
-    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
-    expect(appShell()?.classList.contains("sidebar-drawer-closing")).toBe(false);
+  it("closes the lower drawer when the pointer moves into blank window chrome", async () => {
+    await renderCollapsedApp();
+    await openDrawerViaHoverZone();
+    const chrome = container.querySelector<HTMLElement>('[data-wuu-component="window-chrome"]');
+    expect(chrome).not.toBeNull();
+    await movePointerOver(chrome);
+    await act(async () => { vi.advanceTimersByTime(sidebarMotionMs()); });
+    expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(false);
   });
 
   it("pins the collapsed sidebar open when its toggle is clicked after hover preview", async () => {
     await renderCollapsedApp();
-    await openDrawerViaSidebarToggle();
+    await openDrawerViaHoverZone();
 
     const toggle = container.querySelector<HTMLButtonElement>(
       ".sidebar-toggle-button",

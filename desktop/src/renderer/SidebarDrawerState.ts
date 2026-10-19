@@ -121,9 +121,19 @@ export function useSidebarDrawerState({
       return undefined;
     }
     const sidebar = appShellRef.current?.querySelector(SIDEBAR_RAIL_SELECTOR);
-    const hoverTriggers = appShellRef.current?.querySelectorAll(
+    const hoverTriggers = appShellRef.current?.closest(".window-frame")?.querySelectorAll(
       SIDEBAR_DRAWER_HOVER_TRIGGER_SELECTOR,
     );
+    // Keep an already-open drawer reachable from its chrome button across the
+    // gap below it. This retention corridor never schedules a drawer opening.
+    if (sidebarDrawerPhase === "open" && sidebar) {
+      const rail = sidebar.getBoundingClientRect();
+      const chrome = appShellRef.current?.closest(".window-frame")?.querySelector(".window-chrome")?.getBoundingClientRect();
+      const shell = appShellRef.current?.getBoundingClientRect();
+      if (chrome && shell && rail.width > 0 && chrome.height > 0 &&
+          point.x > shell.left && point.x < shell.left + rail.width &&
+          point.y > chrome.top && point.y < shell.top) return true;
+    }
     for (const element of [sidebar, ...(hoverTriggers ?? [])]) {
       if (!element) continue;
       const rect = element.getBoundingClientRect();
@@ -149,7 +159,7 @@ export function useSidebarDrawerState({
       (sidebar && sidebar.contains(target)) ||
         [...(hoverTriggers ?? [])].some((trigger) => trigger.contains(target)),
     );
-  }, [appShellRef, hoverLayerCount]);
+  }, [appShellRef, hoverLayerCount, sidebarDrawerPhase]);
 
   const blurSidebarFocus = useCallback((): void => {
     const sidebar = appShellRef.current?.querySelector(SIDEBAR_RAIL_SELECTOR);
@@ -266,9 +276,8 @@ export function useSidebarDrawerState({
     // us where the pointer is actually going, which avoids the boundary
     // rounding problem where the pointer's reported position is still inside
     // the sidebar rect even though the user has moved outside the floating
-    // layer. When the drawer first covers the titlebar toggle, the browser
-    // can report relatedTarget as the rail even though the pointer is still
-    // over the toggle's rectangle; keep the drawer open in that case too.
+    // layer. A clicked chrome toggle also retains the open drawer while the
+    // pointer travels down into it; hovering that toggle never opens it.
     sidebarDrawerPointerLeaveTimerRef.current = window.setTimeout(() => {
       sidebarDrawerPointerLeaveTimerRef.current = undefined;
 
@@ -279,7 +288,7 @@ export function useSidebarDrawerState({
       const relatedTarget = event instanceof MouseEvent ? event.relatedTarget : null;
       if (relatedTarget && relatedTarget instanceof Element) {
         const sidebar = appShellRef.current?.querySelector(SIDEBAR_RAIL_SELECTOR);
-        const hoverTriggers = appShellRef.current?.querySelectorAll(
+        const hoverTriggers = appShellRef.current?.closest(".window-frame")?.querySelectorAll(
           SIDEBAR_DRAWER_HOVER_TRIGGER_SELECTOR,
         );
         const isMovingToHoverTarget = Boolean(

@@ -57,7 +57,8 @@ async function renderSidebarDrawerState({
     });
     latest = drawer;
     return (
-      <div ref={appShellRef}>
+      <div className="window-frame">
+      <div ref={appShellRef} className="app-shell">
         <aside
           ref={(node) => {
             sidebar = node;
@@ -71,6 +72,8 @@ async function renderSidebarDrawerState({
           }}
           className="sidebar-hover-zone"
         />
+      </div>
+      <header className="window-chrome" data-wuu-component="window-chrome" />
       </div>
     );
   }
@@ -145,7 +148,7 @@ describe("useSidebarDrawerState", () => {
     const hook = await renderSidebarDrawerState();
     const toggle = document.createElement("button");
     toggle.className = "sidebar-toggle-button";
-    hook.hoverZone.parentElement?.appendChild(toggle);
+    container.querySelector('[data-wuu-component="window-chrome"]')?.appendChild(toggle);
     vi.spyOn(toggle, "getBoundingClientRect").mockReturnValue(
       new DOMRect(90, 8, 30, 30),
     );

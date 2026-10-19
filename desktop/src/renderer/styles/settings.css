@@ -279,7 +279,7 @@
   align-items: center;
   /* Right side clears the Windows controls overlay; a no-op elsewhere
    * (the inset is 0 and max() collapses to the neutral padding). */
-  padding: var(--conversation-pane-inset) max(var(--window-titlebar-padding-inline), var(--window-controls-inset-right)) 0 var(--window-titlebar-padding-inline);
+  padding: var(--conversation-pane-inset) var(--window-titlebar-padding-inline) 0;
   -webkit-app-region: drag;
 }
 
@@ -308,18 +308,7 @@
   }
 }
 
-/* Once the settings rail is collapsed, the titlebar starts at the window
- * edge. Keep the toggle clear of the macOS traffic lights, matching the
- * main conversation titlebar reservation. */
-.settings-shell.sidebar-collapsed .settings-titlebar {
-  padding-left: calc(var(--window-titlebar-leading-inset) - var(--conversation-pane-inset));
-}
 
-/* Both toggle slots belong to a drag strip. A shell-level overlay would
- * receive DOM hits but lose native clicks to window dragging. */
-.settings-sidebar-toggle {
-  -webkit-app-region: no-drag;
-}
 
 /* Column direction is load-bearing, not cosmetic: .settings-page carries
  * `flex: 1` (to fill the viewport height) alongside `width: min(…)`
@@ -369,22 +358,9 @@
   animation: content-swap-enter var(--content-swap-duration) var(--content-swap-easing) both;
 }
 
-/* --- Titlebar crumb ------------------------------------------------------
- * "Settings / Page" sits in the window strip, set like the conversation
- * title, with page actions at its trailing edge. The page opens on its
- * scope line or first group instead of repeating its name in large type.
- * ------------------------------------------------------------------------- */
-
+/* The current page title and actions share the content header. */
 .settings-titlebar {
   gap: var(--space-2);
-}
-
-.settings-crumb-root,
-.settings-crumb-separator {
-  flex: 0 0 auto;
-  color: var(--ink-tertiary);
-  font-size: var(--font-body);
-  white-space: nowrap;
 }
 
 .settings-titlebar-slot {
@@ -408,6 +384,7 @@
 }
 
 .settings-titlebar-slot > .settings-page-actions {
+  flex: 0 0 auto;
   min-height: 0;
   margin: 0 0 0 auto;
   -webkit-app-region: no-drag;

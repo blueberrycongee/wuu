@@ -26,7 +26,7 @@ export function startLinuxTitlebarMaximizeGesture(): void {
     }
     if (
       !target.closest(
-        ".titlebar, .settings-titlebar, .account-screen-titlebar, .onboarding-chrome",
+        ".window-chrome, .popped-out-shell .titlebar, .account-screen-titlebar, .onboarding-chrome",
       )
     ) {
       return;

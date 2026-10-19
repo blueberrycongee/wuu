@@ -4,6 +4,7 @@
   /* An opaque neutral rail keeps navigation separate from the reading canvas
    * without depending on wallpaper or browser backing colors. */
   --sidebar-material-fill: var(--surface-2);
+  --page-history-controls-width: calc(var(--control-size-toolbar) * 3 + var(--control-toolbar-gap) * 2);
   /* Rail/content boundary: a crisp dark hairline instead of the old white
    * edge + white inset pair, which were invisible against the white content
    * column and left the boundary to be read from the gray brightness step.
@@ -39,6 +40,40 @@
   /* Must stay a valid <shadow> (not `none`): it is one item in a comma-
    * separated box-shadow list. */
   --sidebar-edge-shadow: 0 0 0 0 transparent;
+}
+
+/* Window chrome owns a real row. Every content surface, hover edge and resize
+ * target belongs to the lower shell, never the native titlebar's hit region. */
+.window-frame {
+  display: grid;
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  isolation: isolate;
+  background: var(--sidebar-material-fill);
+}
+
+.window-frame > :is(.app-shell, .settings-shell) {
+  grid-row: 2;
+  grid-column: 1;
+}
+
+.window-chrome {
+  grid-row: 1;
+  grid-column: 1;
+  position: relative;
+  min-width: 0;
+  z-index: 151;
+  -webkit-app-region: drag;
+}
+
+.window-chrome[hidden] {
+  display: none;
+}
+
+.popped-out-frame {
+  grid-template-rows: 0 minmax(0, 1fr);
 }
 
 .app-shell {
@@ -77,7 +112,7 @@
 .shell-right-sidebar-toggle {
   position: absolute;
   top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
-  right: calc(var(--conversation-pane-inset) + max(var(--control-toolbar-inset), var(--window-controls-inset-right)));
+  right: max(var(--control-toolbar-inset), var(--window-controls-inset-right));
   z-index: 151;
   -webkit-app-region: no-drag;
 }
@@ -117,7 +152,7 @@
 .app-shell .workspace-right-panel[data-sheet="open"],
 .app-shell .workspace-right-panel[data-sheet="parked"] {
   position: fixed;
-  inset: 0 var(--conversation-pane-inset) 0 calc(var(--workspace-sheet-left, 0px) + var(--conversation-pane-inset));
+  inset: var(--window-titlebar-height) var(--conversation-pane-inset) 0 calc(var(--workspace-sheet-left, 0px) + var(--conversation-pane-inset));
   clip-path: inset(var(--conversation-pane-inset) 0 0 round var(--conversation-canvas-radius));
   /* Above the conversation, below an open sidebar drawer. A docked sidebar
    * remains outside the sheet's left edge and stays interactive. */
@@ -188,69 +223,48 @@
   opacity: 0;
 }
 
-.globalized-sidebar-toggle-region {
-  position: fixed;
-  /* Match the shared toolbar center, including when zoomed controls require
-   * a taller row than the native traffic lights. */
-  top: calc(env(safe-area-inset-top, 0px) + (var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
-  /* The OS inset is a hard exclusion zone. Wuu owns an additional fixed
-   * gutter so decorated theme controls never visually merge with it. */
+/* Page history and the sidebar toggle share one stable window-chrome group.
+ * Gaps remain draggable; each button opts out of native window dragging. */
+.shell-page-history-controls {
+  position: absolute;
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
   left: var(--window-titlebar-leading-inset);
-  z-index: 150;
+  z-index: 151;
+  display: flex;
+  align-items: center;
+  gap: var(--control-toolbar-gap);
+  -webkit-app-region: drag;
+}
+
+.shell-page-history-controls .icon-button {
+  flex: 0 0 auto;
   width: var(--control-size-toolbar);
   height: var(--control-size-toolbar);
-  -webkit-app-region: drag;
+  padding: 0;
+  background-clip: border-box;
 }
 
-.globalized-sidebar-toggle-region .globalized-sidebar-toggle {
+.shell-page-history-controls button,
+.shell-page-history-controls button * {
   -webkit-app-region: no-drag;
 }
 
-.globalized-sidebar-toggle * {
+.shell-page-history-controls .shell-left-sidebar-toggle {
+  position: static;
+}
+
+/* A single control stays on the native chrome axis while either rail moves.
+ * It must sit outside the rail so retained keyboard focus cannot reopen it. */
+.shell-left-sidebar-toggle {
+  position: absolute;
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  left: var(--window-titlebar-leading-inset);
+  z-index: 151;
   -webkit-app-region: no-drag;
 }
 
-/* When the navigation sidebar is collapsed, the right panel starts at x=0;
- * reserve room on the left of its tabbar so the macOS traffic lights
- * (trafficLightPosition 18, 21) don't sit on top of the tabs. Mirrors the
- * popped-out titlebar reservation. The main titlebar (which normally
- * provides the window drag region) lives inside the now-hidden
- * conversation-pane, so the tabbar itself takes over as the drag handle.
- * Tabs + the tab strip stay part of the drag region (matching the docked
- * mode behavior) so opening a tab does not shrink the drag strip; only
- * the tabbar's buttons opt out via the `.workspace-panel-tabbar button`
- * rule in workspace.css. */
-.app-shell.right-panel-globalized.sidebar-collapsed .workspace-panel-tabbar {
-  padding-left: calc(var(--window-titlebar-leading-inset) - var(--conversation-pane-inset));
-  -webkit-app-region: drag;
-}
-
-.workspace-panel-sidebar-hit-hole {
-  width: var(--control-size-toolbar);
-  height: 100%;
-  flex: 0 0 var(--control-size-toolbar);
-  pointer-events: none;
+.shell-left-sidebar-toggle * {
   -webkit-app-region: no-drag;
-}
-
-/* The panel already starts after the docked navigation sidebar when that
- * sidebar is visible. The hit-hole is only needed when the globalized panel
- * reaches the window's left edge and has to avoid the traffic lights. */
-.app-shell.right-panel-globalized:not(.sidebar-collapsed)
-  .workspace-panel-sidebar-hit-hole {
-  display: none;
-}
-
-.app-shell.sidebar-collapsed.right-panel-open:not(.right-panel-globalized) .workspace-panel-tabbar {
-  /* Expand only when the right panel's left edge enters the traffic-light zone. */
-  padding-left: clamp(
-    10px,
-    calc(
-      var(--window-controls-inset-left) -
-        (100vw - var(--conversation-pane-inset) - var(--workspace-right-panel-width, 360px))
-    ),
-    max(10px, var(--window-controls-inset-left))
-  );
 }
 
 /* Rail surface — shared between the main sidebar (`<aside class="sidebar">`)
@@ -378,7 +392,7 @@
   min-height: 0;
   height: 100%;
   flex-direction: column;
-  padding: 0 var(--sidebar-content-pad-x) var(--space-2);
+  padding: var(--space-2) var(--sidebar-content-pad-x);
   transform: translate3d(0, 0, 0) scale(1);
   transform-origin: left center;
   opacity: 1;
@@ -414,59 +428,6 @@
 
 .sidebar-collapsed .sidebar-hover-zone {
   display: block;
-}
-
-/* Keep the control that summoned the hover drawer above the drawer itself.
-   The drawer slides underneath this stationary control island instead of
-   replacing its hit target, so the pointer can remain on the toggle and click
-   it to pin the sidebar open after the preview has appeared. This applies to
-   both the conversation and settings titlebars.
-   Titlebars live under conversation/settings overflow and a z-index:2
-   stacking context, so a relative 150 cannot escape those ancestors. While
-   the drawer is showing, pin the toggle to the window like the globalized
-   sidebar control so it stays above the 140 drawer without lifting the
-   whole titlebar over the rail. */
-.sidebar-collapsed :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
-  position: relative;
-  z-index: 150;
-  transition:
-    background-color var(--sidebar-drawer-enter-duration) var(--sidebar-drawer-enter-easing),
-    box-shadow var(--sidebar-drawer-enter-duration) var(--sidebar-drawer-enter-easing),
-    color var(--sidebar-drawer-enter-duration) var(--sidebar-drawer-enter-easing);
-}
-
-.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
-  :is(.titlebar, .settings-titlebar)
-  .sidebar-toggle-button,
-.sidebar-drawer-docking :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
-  position: fixed;
-  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
-  left: var(--window-titlebar-leading-inset);
-  z-index: 150;
-}
-
-/* Reserve the lifted toggle's space only while that slot still contains
- * the control. */
-:is(.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing), .sidebar-drawer-docking)
-  :is(.title-block, .settings-titlebar):has(> .sidebar-toggle-button)::before {
-  content: "";
-  flex: 0 0 var(--control-size-toolbar);
-  width: var(--control-size-toolbar);
-  height: var(--control-size-toolbar);
-}
-
-.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
-  :is(.titlebar, .settings-titlebar)
-  .sidebar-toggle-button {
-  background-color: var(--surface-3);
-  box-shadow: var(--shadow-card);
-  color: var(--ink);
-}
-
-.sidebar-drawer-docking :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
-  background-color: var(--surface-3);
-  box-shadow: var(--shadow-card);
-  color: var(--ink);
 }
 
 /* While a sidebar drag is in flight the pointer can sit exactly where the
@@ -814,35 +775,6 @@
 
 .resizing-right-panel .workspace-right-panel-resizer {
   transition: none;
-}
-
-.sidebar-collapsed .titlebar {
-  /* Keep a product-owned visual gutter after the macOS traffic-light
-   * exclusion zone. Themes may decorate the first control, but they cannot
-   * shrink this window-chrome boundary. */
-  padding-left: var(--window-titlebar-leading-inset);
-}
-
-.traffic-spacer {
-  /* Match the conversation/settings row, including its zoom-aware minimum
-   * height, so sidebar controls never outgrow their reserved chrome. It
-   * keeps that height while empty: a drawer slides under the titlebar's
-   * lifted toggle, which would otherwise cover the wordmark. */
-  position: relative;
-  display: flex;
-  height: var(--window-titlebar-height);
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: flex-end;
-  /* Preserve the sidebar accessory center while using the top-row hit size. */
-  padding-right: calc(var(--sidebar-row-pad-x) + (var(--sidebar-row-action-size) - var(--control-size-toolbar)) / 2);
-  -webkit-app-region: drag;
-}
-
-.traffic-spacer .sidebar-collapse-toggle {
-  position: relative;
-  z-index: 1;
-  -webkit-app-region: no-drag;
 }
 
 .sidebar-brand {

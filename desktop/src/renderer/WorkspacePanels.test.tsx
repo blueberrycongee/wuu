@@ -339,7 +339,6 @@ describe("WorkspaceRightPanel", () => {
     mount(<WorkspaceRightPanel {...props} />);
 
     expect(container?.querySelector(".workspace-panel-sidebar")).toBeNull();
-    expect(container?.querySelector(".workspace-panel-sidebar-hit-hole")).not.toBeNull();
 
     const restore = container?.querySelector<HTMLButtonElement>(
       '[aria-label="窗口过窄，无法停靠右侧栏"]',

@@ -11,7 +11,6 @@ app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
 
 const measure = () => {
   const selectors = {
-    collapse: ".sidebar-collapse-toggle > svg",
     bell: ".sidebar-notifications-button > svg",
     heading: ".sidebar-functional-heading-chevron",
     add: ".sidebar-functional-action > svg",

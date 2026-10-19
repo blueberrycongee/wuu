@@ -50,6 +50,8 @@ import {
   useSyncExternalStore
 } from "react";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
+import { PageHistoryControls, type PageHistoryControlsProps } from "./PageHistoryControls";
+import { availableSettingsPage, browserSettingsAvailable, isConfigurablePlugin, remoteControlAvailable } from "./SettingsPageAvailability";
 import { useSidebarDrawerState } from "./SidebarDrawerState";
 import { sidebarDrawerExitMs, sidebarMotionMs } from "./AppLayoutState";
 import { SelectMenu, type SelectMenuOption } from "./SelectMenu";
@@ -78,7 +80,6 @@ export type ArchivedSessionView = {
   archive_project_id?: string;
   archive_project_name?: string;
 };
-import { ENABLE_REMOTE_CONTROL } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
 import { DefaultEnvironmentRow, ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
@@ -169,21 +170,6 @@ const NATIVE_PAGE_SEARCH_KEY: Record<NativeSettingsPage, Parameters<Translate>[0
   archive: "settings.searchKeywords.archive",
 };
 
-function remoteControlAvailable(): boolean {
-  return ENABLE_REMOTE_CONTROL && hostSupports("getRemoteControlSnapshot");
-}
-
-function browserSettingsAvailable(): boolean {
-  return Boolean(
-    window.wuu?.listBrowserProfiles &&
-      window.wuu.importBrowserCookies &&
-      window.wuu.listBrowserExtensions &&
-      window.wuu.addBrowserExtension &&
-      window.wuu.setBrowserExtensionEnabled &&
-      window.wuu.removeBrowserExtension,
-  );
-}
-
 // App-level preferences stay at the top of the rail; less frequent setup follows
 // under labeled groups. Page IDs stay flat for plugin snapshots and deep links
 // ("advanced" is still the built-in agent page).
@@ -228,23 +214,12 @@ type CopyState = "idle" | "copying" | "copied";
 
 const COPY_RESET_MS = 1500;
 
-function availableSettingsPage(page: SettingsPage | undefined): SettingsPage {
-  const next = page ?? "providers";
-  if (next === "subscriptions" || next === "agents") {
-    return "providers";
-  }
-  if (next === "remote" && !remoteControlAvailable()) {
-    return "providers";
-  }
-  if (next === "browser" && !browserSettingsAvailable()) {
-    return "providers";
-  }
-  return next;
-}
-
 export function SettingsView({
   initialized,
   initialPage,
+  page,
+  onPageChange,
+  pageHistory,
   running,
   usage,
   usageLoading = false,
@@ -291,6 +266,9 @@ export function SettingsView({
 }: {
   initialized?: InitializeResult;
   initialPage?: SettingsPage;
+  page?: SettingsPage;
+  onPageChange?: (page: SettingsPage) => void;
+  pageHistory?: Omit<PageHistoryControlsProps, "children">;
   running: boolean;
   usage?: SettingsUsageResponse;
   usageLoading?: boolean;
@@ -340,9 +318,10 @@ export function SettingsView({
     [runningProviderNames],
   );
   const [desktopBuild, setDesktopBuild] = useState<DesktopBuildInfo | undefined>();
-  const [activePage, setActivePage] = useState<SettingsPage>(() =>
+  const [localPage, setActivePage] = useState<SettingsPage>(() =>
     availableSettingsPage(initialPage),
   );
+  const activePage = page === undefined ? localPage : availableSettingsPage(page);
   const [navQuery, setNavQuery] = useState("");
   const customPluginSettingsPages = useSyncExternalStore(
     (listener) => pluginHost.subscribe(listener),
@@ -409,12 +388,19 @@ export function SettingsView({
   }, [initialPage]);
 
   useLayoutEffect(() => {
+    if (page !== undefined && activePage !== page) onPageChange?.(activePage);
+  }, [activePage, page, onPageChange]);
+
+  useLayoutEffect(() => {
     const missingGeneratedPage = activePage.startsWith("plugin-settings:")
       && activePluginSettingsRecord === undefined;
     const missingCustomPage = activePage.startsWith("plugin-view:")
       && activeCustomPluginPage === undefined;
-    if (missingGeneratedPage || missingCustomPage) setActivePage("providers");
-  }, [activeCustomPluginPage, activePage, activePluginSettingsRecord]);
+    if (missingGeneratedPage || missingCustomPage) {
+      setActivePage("providers");
+      onPageChange?.("providers");
+    }
+  }, [activeCustomPluginPage, activePage, activePluginSettingsRecord, onPageChange]);
 
   useLayoutEffect(() => {
     if (settingsScrollRef.current) {
@@ -738,24 +724,27 @@ export function SettingsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ]), [customPluginSettingsPages, pluginSettingsRecords, t]);
 
+  function selectPage(page: SettingsPage): void {
+    if (page === activePage) return;
+    setActivePage(page);
+    onPageChange?.(page);
+  }
+
   const sidebarToggle = (
     <button
       type="button"
-      className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle settings-sidebar-toggle"
+      className="icon-button side-panel-toggle-button sidebar-toggle-button shell-left-sidebar-toggle settings-sidebar-toggle"
       data-wuu-component="sidebar-toggle"
       aria-label={sidebarCollapsed ? t("settings.expandSidebar") : t("settings.collapseSidebar")}
       aria-pressed={!sidebarCollapsed}
       onClick={onToggleSidebar}
-      onPointerEnter={scheduleSidebarDrawerOpen}
-      onPointerLeave={(event) =>
-        scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
-      }
     >
       <SidePanelToggleIcon side="left" open={!sidebarCollapsed} />
     </button>
   );
 
   const nativeSettings = (
+    <div className="window-frame">
     <div ref={effectiveShellRef} className={shellClassName} style={shellStyle} data-wuu-component="settings-shell">
       <div
         ref={sidebarHoverZoneRef}
@@ -778,7 +767,6 @@ export function SettingsView({
           * 淡出/位移也复用 sidebar.css 里同一组规则。
           */}
         <div className="sidebar-content">
-          <div className="traffic-spacer">{!sidebarCollapsed ? sidebarToggle : null}</div>
           <button className="settings-back-button" type="button" onClick={onBack}>
             <ArrowLeft className="icon" />
             <span>{t("settings.backToApp")}</span>
@@ -819,7 +807,7 @@ export function SettingsView({
                 {group.pages.map((page) => {
                   const Icon = NATIVE_PAGE_ICONS[page];
                   return (
-                    <SettingsNavItem key={page} pageID={page} icon={<Icon className="icon-lg" />} active={activePage === page} onClick={() => setActivePage(page)}>
+                    <SettingsNavItem key={page} pageID={page} icon={<Icon className="icon-lg" />} active={activePage === page} onClick={() => selectPage(page)}>
                       {settingsPageTitle(page, t)}
                     </SettingsNavItem>
                   );
@@ -837,7 +825,7 @@ export function SettingsView({
                       pageID={pageId}
                       icon={<PluginBlocksIcon className="icon-lg" />}
                       active={activePage === pageId}
-                      onClick={() => setActivePage(pageId)}
+                      onClick={() => selectPage(pageId)}
                     >
                       {plugin.name}
                     </SettingsNavItem>
@@ -851,7 +839,7 @@ export function SettingsView({
                       pageID={pageId}
                       icon={<PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />}
                       active={activePage === pageId}
-                      onClick={() => setActivePage(pageId)}
+                      onClick={() => selectPage(pageId)}
                     >
                       {entry.title}
                     </SettingsNavItem>
@@ -886,11 +874,6 @@ export function SettingsView({
         <SettingsTitlebarSlot.Provider value={titlebarSlot}>
           <div className="settings-titlebar">
             {isTouchWebShell() && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
-            {/* Match the main shell's docked/collapsed slots. Keep the collapsed
-             * toggle inside the drag strip so native hit testing honors no-drag. */}
-            {sidebarCollapsed ? sidebarToggle : null}
-            <span className="settings-crumb-root">{t("settings.navigation")}</span>
-            <span className="settings-crumb-separator" aria-hidden="true">/</span>
             <div ref={setTitlebarSlot} className="settings-titlebar-slot" />
           </div>
           <div ref={settingsScrollRef} className="settings-scroll">
@@ -914,7 +897,7 @@ export function SettingsView({
                     viewTypeId={activeCustomPluginPage.view}
                     context={Object.freeze({ surface: "settings" })}
                     settings={settingsPageHost}
-                    onFailure={() => setActivePage("providers")}
+                    onFailure={() => selectPage("providers")}
                   />
                 </>
               ) : activePage === "providers" ? (
@@ -966,7 +949,7 @@ export function SettingsView({
                   onUpdateEngineInventory={onUpdateEngineInventory}
                   onSave={onSave}
                   onGeneralSave={onGeneralSave}
-                  onAddService={() => setActivePage("providers")}
+                  onAddService={() => selectPage("providers")}
                   desktopBuild={desktopBuild}
                   copyState={copyState}
                   onCopyVersion={copyVersionInfo}
@@ -1019,6 +1002,12 @@ export function SettingsView({
           </div>
         </SettingsTitlebarSlot.Provider>
       </main>
+      </div>
+      <header className="window-chrome" data-wuu-component="window-chrome">
+      {pageHistory ? (
+        <PageHistoryControls {...pageHistory}>{sidebarToggle}</PageHistoryControls>
+      ) : sidebarToggle}
+      </header>
     </div>
   );
   return (
@@ -1030,7 +1019,7 @@ export function SettingsView({
       busy={running || usageLoading || mcpLoading || codexPetsLoading || Boolean(mcpBusyServer)}
       hasError={Boolean(advancedError || usageError || mcpError || codexPetsError)}
       fallback={nativeSettings}
-      onOpenPage={(pageId) => setActivePage(pageId as SettingsPage)}
+      onOpenPage={(pageId) => selectPage(pageId as SettingsPage)}
       onAdvancedSave={onAdvancedSave}
       onGeneralSave={onGeneralSave}
       onRefresh={onRefreshModelCatalog}
@@ -2423,17 +2412,6 @@ function settingsPageTitle(page: NativeSettingsPage, t: Translate): string {
     case "archive":
       return t("settings.archive");
   }
-}
-
-function isConfigurablePlugin(
-  extension: ExtensionInventoryRecord,
-): boolean {
-  const approved = extension.approval_state === "official"
-    || extension.approval_state === "granted";
-  return extension.kind === "plugin"
-    && approved
-    && extension.enabled !== false
-    && (extension.contributions?.settings?.length ?? 0) > 0;
 }
 
 function pluginSettingsPageId(pluginId: string): `plugin-settings:${string}` {

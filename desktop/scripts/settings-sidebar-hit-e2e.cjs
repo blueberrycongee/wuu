@@ -77,6 +77,49 @@ async function run() {
   });
   await waitFor(win, () => Boolean(document.querySelector(".settings-shell")), 3000);
 
+  for (const page of ["appearance", "providers"]) {
+    await win.webContents.executeJavaScript(`document.querySelector('.settings-nav-item[data-wuu-page="${page}"]').click()`);
+    await waitFor(win, page === "appearance"
+      ? () => document.querySelector('.settings-page')?.dataset.wuuPage === 'appearance'
+      : () => document.querySelector('.settings-page')?.dataset.wuuPage === 'providers', 3000);
+    await settleChrome(win);
+    const heading = await evaluate(win, () => ({
+      title: document.querySelector('.settings-titlebar h1')?.textContent.trim(),
+      activeLabel: document.querySelector('.settings-nav-item[aria-current="page"] .settings-nav-label')?.textContent.trim(),
+      breadcrumbs: document.querySelectorAll('.settings-crumb-root, .settings-crumb-separator').length,
+    }));
+    assert(heading.title, "Settings navigation must retain the active page heading");
+    assert.equal(heading.title, heading.activeLabel, "Heading must follow settings navigation");
+    assert.equal(heading.breadcrumbs, 0);
+    results.push({ scenario: "settings-page-navigation", page, heading });
+  }
+
+  await settleChrome(win);
+  await evaluate(win, () => {
+    window.settingsToggleUnderTest = document.querySelector('.settings-sidebar-toggle');
+    window.settingsHistoryGroupUnderTest = window.settingsToggleUnderTest.parentElement;
+    window.settingsToggleUnderTest.focus();
+  });
+  const keyboardDocked = await toggleHitState(win);
+  for (const collapsed of [true, false]) {
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Enter" });
+    win.webContents.sendInputEvent({ type: "char", keyCode: "\r" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
+    await waitFor(win, collapsed
+      ? () => document.querySelector('.settings-shell').classList.contains('sidebar-collapsed')
+      : () => !document.querySelector('.settings-shell').classList.contains('sidebar-collapsed'), 3000);
+    await settleChrome(win);
+    const state = await toggleHitState(win);
+    assert.equal(state.buttonCount, 1);
+    assert(state.sameButton && state.sameGroup && state.focused && state.shellOwned && state.outsideHiddenContent, JSON.stringify(state));
+    assert.equal(state.centerX, keyboardDocked.centerX, "Settings collapse must not move toggle horizontally");
+    assert.equal(state.centerY, keyboardDocked.centerY, "Settings collapse must not move toggle vertically");
+    assert(state.hitOwnedByToggle, JSON.stringify(state));
+    if (collapsed) assert(state.sidebarRight <= 0 || !state.sidebarVisible,
+      `Focused settings toggle must not keep navigation exposed: ${JSON.stringify(state)}`);
+    results.push({ scenario: "settings-keyboard-toggle", collapsed, state });
+  }
+
   await evaluate(win, () => {
     const button = document.querySelector(".settings-sidebar-toggle");
     if (!(button instanceof HTMLButtonElement)) {
@@ -99,6 +142,16 @@ async function run() {
   await capture(win, "settings-sidebar-hit-before.png");
 
   win.webContents.sendInputEvent({ type: "mouseMove", x: before.centerX, y: before.centerY });
+  for (let sample = 0; sample < 12; sample++) {
+    await delay(40);
+    assert.equal(await evaluate(win, () => !!document.querySelector('.sidebar-drawer-open')), false,
+      "Hovering settings window chrome must not open navigation");
+  }
+  const edge = await evaluate(win, () => {
+    const box = document.querySelector('.sidebar-hover-zone').getBoundingClientRect();
+    return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + Math.min(20, box.height / 2)) };
+  });
+  win.webContents.sendInputEvent({ type: "mouseMove", ...edge });
   await waitFor(
     win,
     () => document.querySelector(".settings-shell")?.classList.contains("sidebar-drawer-open") || null,
@@ -121,7 +174,8 @@ async function run() {
   assert.equal(after.centerY, before.centerY, "Hover must not move the sidebar click target vertically");
   assert.equal(after.hitOwnedByToggle, true, `Toggle must own its center hit after drawer opens: ${JSON.stringify(after)}`);
   assert.equal(after.visible, true, `Toggle must remain visible after drawer opens: ${JSON.stringify(after)}`);
-  assert.equal(after.hovered, true, `The real Electron pointer must still hover the toggle: ${JSON.stringify(after)}`);
+  const drawerGeometry = await chromeToggleGeometry(win);
+  assertTopRow(drawerGeometry, { font: 14, zoom: 1, layout: "narrow", page: "settings-drawer" });
   const readability = await sidebarReadabilityState(win);
   assert.ok(readability.width >= 240, `Narrow-window drawer must stay readable: ${JSON.stringify(readability)}`);
   assert.equal(readability.backWhiteSpace, "nowrap", `Back label must stay on one line: ${JSON.stringify(readability)}`);
@@ -140,7 +194,7 @@ async function run() {
 
   results.push({ scenario: "real-pointer-hover-and-dock", before, after, readability, transformSamples });
   saveResults();
-  console.log(`PASS: shared titlebar axis, unclipped controls, and stable page/drawer click targets. Evidence: ${evidenceDir}`);
+  console.log(`PASS: independent full-width window chrome, below-chrome navigation, and stable page/drawer click targets. Evidence: ${evidenceDir}`);
   win.close();
   app.quit();
 }
@@ -180,14 +234,11 @@ async function verifyTitlebarContinuity(win) {
           if (zoom === 1 && font !== 13) await capture(win, `${scenario}-conversation.png`);
           assert.deepEqual(main.clippedChrome, [], `Main chrome must fit: ${JSON.stringify({ theme, font, zoom, layout, main })}`);
           if (layout !== "docked") {
-            await evaluate(win, () => {
-              const button = document.querySelector('[data-wuu-component="sidebar-toggle"]');
-              const rect = button.getBoundingClientRect();
-              button.dispatchEvent(new PointerEvent("pointerover", {
-                bubbles: true, pointerType: "mouse",
-                clientX: rect.x + rect.width / 2, clientY: rect.y + rect.height / 2,
-              }));
+            const edge = await evaluate(win, () => {
+              const rect = document.querySelector('.sidebar-hover-zone').getBoundingClientRect();
+              return { x: rect.x + rect.width / 2, y: rect.y + Math.min(20, rect.height / 2) };
             });
+            win.webContents.sendInputEvent({ type: "mouseMove", x: Math.round(edge.x * zoom), y: Math.round(edge.y * zoom) });
             await waitFor(win, () => Boolean(document.querySelector(".sidebar-drawer-open")), 3000);
             await settleChrome(win);
             const drawer = await chromeToggleGeometry(win);
@@ -208,6 +259,19 @@ async function verifyTitlebarContinuity(win) {
           results.push({ scenario, page: "settings", geometry: settings });
           saveResults();
           assertTopRow(settings, { theme, font, zoom, layout, page: "settings" });
+          const settingsHeader = await evaluate(win, () => ({
+            breadcrumbs: document.querySelectorAll('.settings-crumb-root, .settings-crumb-separator').length,
+            headings: [...document.querySelectorAll('.settings-titlebar h1')].map(element => ({
+              text: element.textContent.trim(), visible: element.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }),
+            })),
+            actions: document.querySelectorAll('.settings-titlebar .settings-page-actions button').length,
+            page: document.querySelector('.settings-page')?.dataset.wuuPage,
+          }));
+          assert.equal(settingsHeader.breadcrumbs, 0, "Redundant settings breadcrumbs must be absent");
+          assert.equal(settingsHeader.headings.length, 1, "The active settings page must keep its h1");
+          assert(settingsHeader.headings[0].text && settingsHeader.headings[0].visible, JSON.stringify(settingsHeader));
+          assert.equal(settingsHeader.page, "providers");
+          assert(settingsHeader.actions > 0, "Provider page actions must remain in the titlebar");
           if (zoom === 1 && font !== 13) await capture(win, `${scenario}-settings.png`);
           const context = JSON.stringify({ theme, font, zoom, layout, main, settings });
           assert.deepEqual(settings.clippedChrome, [], `Settings chrome must fit: ${context}`);
@@ -215,17 +279,10 @@ async function verifyTitlebarContinuity(win) {
             assert.ok(Math.abs(main[key] - settings[key]) < 0.1, `Switching pages moved/resized ${key}: ${context}`);
           }
           assert.equal(settings.icon, main.icon, `Switching pages changed the sidebar glyph: ${context}`);
-          if (Math.abs((main.header.height + (main.canvasTop ?? 0)) * zoom - 56) < 0.1) {
-            assert.ok(Math.abs((main.y + main.height / 2) * zoom - 28) < 0.1, `Renderer must meet the expected native chrome axis: ${context}`);
-          }
           assert.ok(main.hit && settings.hit, `The visible toggle must own its center hit: ${context}`);
           await evaluate(win, () => document.querySelector(".settings-back-button").click());
           await waitFor(win, () => Boolean(document.querySelector(".app-shell")), 3000);
-          await evaluate(win, () => {
-            document.querySelector('[data-wuu-component="sidebar-toggle"]').dispatchEvent(new PointerEvent("pointerout", {
-              bubbles: true, pointerType: "mouse", clientX: 550, clientY: 700, relatedTarget: document.body,
-            }));
-          });
+          win.webContents.sendInputEvent({ type: "mouseMove", x: Math.round(550 * zoom), y: Math.round(300 * zoom) });
           await waitFor(win, () => !document.querySelector(".sidebar-drawer-open, .sidebar-drawer-closing"), 3000);
         }
       }
@@ -254,8 +311,17 @@ async function chromeToggleGeometry(win) {
     const icon = button.querySelector("svg");
     const glyph = icon.getBoundingClientRect();
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+    const group = button.parentElement;
+    const historyControls = [...group.querySelectorAll('button')].map(control => {
+      const box = control.getBoundingClientRect();
+      const target = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+      return { id: control.dataset.wuuComponent, bounds: box.toJSON(),
+        hit: control === target || control.contains(target),
+        noDrag: getComputedStyle(control).getPropertyValue('-webkit-app-region') === 'no-drag' };
+    });
     const headers = new Set([
-      button.closest(".traffic-spacer, .titlebar, .settings-titlebar"),
+      button.closest('[data-wuu-component="window-chrome"]'),
+      document.querySelector(".settings-titlebar"),
       document.querySelector(".titlebar"),
     ].filter(Boolean));
     const clippedChrome = [];
@@ -271,9 +337,9 @@ async function chromeToggleGeometry(win) {
     }
     const header = document.querySelector(".titlebar, .settings-titlebar").getBoundingClientRect();
     const peers = [...document.querySelectorAll([
-      '[data-wuu-component="sidebar-toggle"]', '.conversation-title-heading h1',
-      '.conversation-title-heading .icon-button', '[data-wuu-component="right-sidebar-toggle"]',
-      '.title-actions .icon-button', '.settings-crumb-root', '.settings-crumb-separator',
+      '.conversation-title-heading h1',
+      '.conversation-title-heading .icon-button',
+      '.title-actions .icon-button',
       '.settings-titlebar-slot > .settings-page-title', '.settings-titlebar-slot .settings-page-actions button',
     ].join(','))].filter(element => element.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }))
       .map(element => {
@@ -282,11 +348,25 @@ async function chromeToggleGeometry(win) {
         return { target: element.dataset.wuuComponent || element.className || element.tagName,
           bounds: box.toJSON(), centerY: box.y + box.height / 2,
           button: element instanceof HTMLButtonElement, hit: element === hit || element.contains(hit),
-          coveredByDrawer: Boolean(document.querySelector('.sidebar-drawer-open .sidebar')?.contains(hit)) };
+          coveredByDrawer: Boolean(document.querySelector('.sidebar-drawer-open .sidebar, .sidebar-drawer-open .settings-sidebar')?.contains(hit)) };
       });
     const canvas = document.querySelector('.conversation-pane, .settings-main');
+    const chrome = document.querySelector('[data-wuu-component="window-chrome"]');
+    const shell = document.querySelector('.app-shell, .settings-shell');
+    const lowerBoxes = [...document.querySelectorAll('.app-shell, .settings-shell, .sidebar, .settings-sidebar, .sidebar-hover-zone, .sidebar-resizer, .workspace-right-panel, .workspace-right-panel-resizer')]
+      .map(element => ({ target: element.className, bounds: element.getBoundingClientRect().toJSON() }))
+      .filter(element => element.bounds.height > 0);
     return {
-      header: header.toJSON(), peers,
+      header: header.toJSON(), peers, chrome: chrome?.getBoundingClientRect().toJSON(), lowerBoxes,
+      chromeControls: [...(chrome?.querySelectorAll('button') ?? [])].map(control => {
+        const bounds = control.getBoundingClientRect();
+        const target = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+        return { bounds: bounds.toJSON(), hit: target === control || control.contains(target) };
+      }),
+      viewportWidth: window.innerWidth, group: group.getBoundingClientRect().toJSON(), historyControls,
+      groupDraggable: getComputedStyle(group).getPropertyValue('-webkit-app-region') === 'drag',
+      shellOwned: !!chrome && chrome.contains(group) && chrome.parentElement === shell.parentElement && !shell.contains(chrome),
+      outsideHiddenContent: !group.closest('aside, [inert], .app-shell, .settings-shell, .conversation-pane, .settings-main'),
       canvasTop: canvas ? canvas.getBoundingClientRect().top + parseFloat(getComputedStyle(canvas, '::before').top) : null,
       x: rect.x, y: rect.y, width: rect.width, height: rect.height,
       iconWidth: glyph.width, iconHeight: glyph.height, icon: icon.innerHTML,
@@ -299,7 +379,7 @@ async function chromeToggleGeometry(win) {
 
 async function toggleHitState(win) {
   return evaluate(win, () => {
-    const toggle = document.querySelector(".settings-titlebar .settings-sidebar-toggle");
+    const toggle = document.querySelector('[data-wuu-component="window-chrome"] .settings-sidebar-toggle');
     if (!(toggle instanceof HTMLButtonElement)) {
       throw new Error("Settings sidebar toggle not found.");
     }
@@ -311,6 +391,14 @@ async function toggleHitState(win) {
     return {
       centerX,
       centerY,
+      buttonCount: document.querySelectorAll('[data-wuu-component="sidebar-toggle"]').length,
+      sameButton: toggle === window.settingsToggleUnderTest,
+      focused: document.activeElement === toggle,
+      sameGroup: toggle.parentElement === window.settingsHistoryGroupUnderTest,
+      shellOwned: !!toggle.closest('[data-wuu-component="window-chrome"]') && !toggle.closest('.settings-shell'),
+      outsideHiddenContent: !toggle.closest('aside, [inert], .settings-main, .settings-shell'),
+      sidebarRight: document.querySelector('.settings-sidebar').getBoundingClientRect().right,
+      sidebarVisible: document.querySelector('.settings-sidebar').checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }),
       hitOwnedByToggle: hit === toggle || toggle.contains(hit),
       hitTag: hit?.tagName ?? null,
       hovered: toggle.matches(":hover"),
@@ -391,28 +479,40 @@ function delay(ms) {
 
 function assertTopRow(geometry, context) {
   const details = JSON.stringify({ ...context, geometry });
+  assert.deepEqual(geometry.historyControls.map(control => control.id), ['page-history-back', 'page-history-forward', 'sidebar-toggle']);
+  assert.ok(geometry.shellOwned && geometry.outsideHiddenContent && geometry.groupDraggable, `History group must own stable window chrome: ${details}`);
+  for (const [index, control] of geometry.historyControls.entries()) {
+    const box = control.bounds;
+    assert.ok(control.hit && control.noDrag && box.width > 0 && box.height > 0,
+      `Every history control must own its no-drag hit target: ${details}`);
+    assert.ok(box.left >= 0 && box.right <= geometry.viewportWidth && box.top >= 0,
+      `History controls must remain inside the viewport: ${details}`);
+    if (index > 0) assert.ok(geometry.historyControls[index - 1].bounds.right <= box.left,
+      `History controls must remain ordered without overlap: ${details}`);
+  }
+  assert.ok(geometry.chrome && Math.abs(geometry.chrome.top) < 0.1 && Math.abs(geometry.chrome.left) < 0.1
+    && Math.abs(geometry.chrome.right - geometry.viewportWidth) < 0.1 && geometry.chrome.height > 0,
+    `Independent chrome must span the entire window: ${details}`);
+  for (const layer of geometry.lowerBoxes) assert.ok(layer.bounds.top >= geometry.chrome.bottom - 0.1,
+    `Actual sidebar, drawer, hover and resize boxes must start below chrome: ${details}`);
+  assert.ok(geometry.header.top >= geometry.chrome.bottom - 0.1, `Page headings belong below window chrome: ${details}`);
+  for (const control of geometry.chromeControls) {
+    assert.ok(control.hit, `Every window chrome button retains its hit target: ${details}`);
+    assert.ok(control.bounds.top >= geometry.chrome.top - 0.1 && control.bounds.bottom <= geometry.chrome.bottom + 0.1,
+      `History controls must fit inside independent chrome: ${details}`);
+    if (context.zoom === 1 && context.font <= 15) assert.ok(Math.abs(control.bounds.y + control.bounds.height / 2 - 28) < 0.1,
+      `Default window controls retain the native 28 DIP axis: ${details}`);
+  }
+  assert.ok(geometry.peers.length >= 2, `Active page heading and actions must remain: ${details}`);
   const axis = ((geometry.canvasTop ?? geometry.header.y) + geometry.header.bottom) / 2;
-  assert.ok(geometry.peers.length >= 3, `The actual page chrome must be present: ${details}`);
-  if (context.zoom === 1 && context.font <= 15) {
-    assert.ok(Math.abs(axis - 28) < 0.1, `Default text and zoom keep the shared 28 DIP axis: ${details}`);
-    if (geometry.canvasTop !== null) assert.ok(geometry.header.height < 56,
-      `The canvas header stays compact without moving controls: ${details}`);
-  }
-  if (geometry.canvasTop !== null) {
-    const fullInset = 2 * Math.round(context.font / 4);
-    assert.ok(geometry.canvasTop > 0 && geometry.canvasTop <= fullInset + 0.1,
-      `The canvas retains responsive top breathing room: ${details}`);
-    if (context.layout !== "narrow") assert.ok(Math.abs(geometry.canvasTop - fullInset) < 0.1,
-      `Wide windows retain the font-relative canvas inset: ${details}`);
-  }
   for (const peer of geometry.peers) {
     assert.ok(Math.abs(peer.centerY - axis) < 0.6, `Peer controls must share the titlebar axis: ${details}`);
     assert.ok(peer.bounds.top >= geometry.header.top - 0.1 && peer.bounds.bottom <= geometry.header.bottom + 0.1,
       `Chrome must not be vertically clipped: ${details}`);
     // A hover drawer overlays the canvas without shifting its header. Its
     // covered controls cannot receive clicks until the drawer closes.
-    if (peer.button) assert.ok(peer.hit || (context.page === "conversation-drawer"
-      && peer.target !== "sidebar-toggle" && peer.coveredByDrawer),
+    if (peer.button) assert.ok(peer.hit || (["conversation-drawer", "settings-drawer"].includes(context.page)
+      && !["sidebar-toggle", "page-history-back", "page-history-forward"].includes(peer.target) && peer.coveredByDrawer),
     `Visible controls must own their center hit: ${details}`);
   }
 }

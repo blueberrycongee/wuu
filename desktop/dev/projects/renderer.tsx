@@ -219,7 +219,6 @@ function Fixture() {
         onRemoveWorkspace={noop} onRelocateWorkspace={noop} onCreateProject={noop} onAdoptIntoProject={noop}
         onOpenSettings={noop} onMarkThreadsViewed={noop}
         unreadViewOpen={false} onToggleUnreadView={noop}
-        sidebarCollapsed={false} onToggleSidebar={noop}
       />
       <main className="conversation-pane" style={{ "--dock-composer-height": `${dockHeight}px` } as CSSProperties}>
         <header className="titlebar"><div className="title-block"><span>{draft ? "新项目" : current?.title}</span></div>
