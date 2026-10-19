@@ -16,7 +16,7 @@ async function main() {
     } }],
   });
   if (process.env.WUU_EXTERNAL_CAPABILITIES_BUILD_ONLY === '1') return;
-  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-external-capabilities-'));
+  const fixture = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-external-capabilities-')));
   try {
     const result = spawnSync(String(require('electron')), [
       ...(process.platform === 'linux' ? ['--no-sandbox', ...(!process.env.DISPLAY ? ['--ozone-platform=headless', '--ozone-override-screen-size=1440,1000'] : [])] : []), output,
