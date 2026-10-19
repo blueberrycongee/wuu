@@ -311,6 +311,7 @@ type InitializeResult struct {
 	Providers          []ProviderSummary            `json:"providers,omitempty"`
 	AdvancedSettings   AdvancedSettingsSummary      `json:"advanced_settings"`
 	GeneralSettings    GeneralSettingsSummary       `json:"general_settings"`
+	CatalogProviders   []CatalogProviderSummary     `json:"catalog_providers"`
 	Features           FeatureFlags                 `json:"features"`
 }
 
@@ -552,9 +553,10 @@ type ConfigModelCatalogProvidersResult struct {
 }
 
 type ConfigModelCatalogRefreshResult struct {
-	ProviderCount int               `json:"provider_count"`
-	ModelCount    int               `json:"model_count"`
-	Providers     []ProviderSummary `json:"providers"`
+	ProviderCount    int                      `json:"provider_count"`
+	ModelCount       int                      `json:"model_count"`
+	Providers        []ProviderSummary        `json:"providers"`
+	CatalogProviders []CatalogProviderSummary `json:"catalog_providers"`
 }
 
 type PermissionSummary struct {

@@ -184,6 +184,8 @@ export type InitializeResult = {
   model_aliases?: Record<string, ModelAliasSummary>;
   project_models?: ProjectModelsConfig;
   providers?: ProviderSummary[];
+  // Local connectable directory, ready before settings or onboarding opens.
+  catalog_providers?: CatalogProviderSummary[];
   advanced_settings?: AdvancedSettingsSummary;
   general_settings?: GeneralSettingsSummary;
   features?: FeatureFlags;
@@ -1135,6 +1137,8 @@ export type BrowserProfile = {
   hasCookies: boolean;
   hasPasswords: boolean;
   userName?: string;
+  /** Last profile activity reported by the browser, as Unix milliseconds. */
+  lastUsedAt?: number;
 };
 
 export type BrowserCookieImportResult = {
@@ -1404,6 +1408,7 @@ export type ConfigModelCatalogRefreshResult = {
   provider_count: number;
   model_count: number;
   providers: ProviderSummary[];
+  catalog_providers?: CatalogProviderSummary[];
 };
 
 export type DesktopProject = {

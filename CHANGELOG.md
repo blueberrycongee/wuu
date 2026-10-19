@@ -11,7 +11,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Added
 
 - Let external agent engines use Wuu browser and enabled computer-control tools through turn-scoped MCP, with shared permissions, activity previews, screenshots, and Stop/Takeover controls.
-
+- Offer optional browser cookie import during macOS onboarding, with recently
+  active local profiles listed first and explicit import actions.
 - Add an experimental headless workspace host and `wuu remote ssh` tunnel: use remote agent engines, files, Git, and terminals in the shared browser workbench, with running tasks preserved across SSH disconnects.
 - Add Linux X11 computer control with window-bound observation and foreground input,
   and watch-only activity previews that retain the existing controls and layout.
@@ -22,6 +23,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Show the local model service directory immediately in settings and onboarding,
+  without skeleton placeholders or a new directory request on each visit.
 - Keep SSH workspace tunnels owned by their foreground command, wait for host registration before reporting readiness, and clean up interrupted startup.
 - Keep SSH workspace discovery available after removal or relocation, and reject account-backed homes before local pairing.
 - Avoid false file-save conflicts in remote workspaces by using the same modification-time calculation for Go file reads and desktop saves.

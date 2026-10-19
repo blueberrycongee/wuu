@@ -714,6 +714,7 @@ describe("FirstRunOnboarding", () => {
       });
     }
     await clickButton("稍后设置");
+    await clickButton("暂不导入");
     expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
     await clickButton("导入并开始（2）");
 

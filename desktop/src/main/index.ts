@@ -1216,6 +1216,7 @@ function createWindow(options: { inactive?: boolean } = {}): void {
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
+      additionalArguments: ENABLE_EMBEDDED_BROWSER ? [] : ["--wuu-browser-disabled"],
       // AppKit owns trackpad contact, resistance, and release on macOS.
       // Individual conversation scrollers opt in with overscroll-behavior.
       scrollBounce: process.platform === "darwin",

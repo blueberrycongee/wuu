@@ -30,9 +30,10 @@ func (s *Server) handleConfigModelCatalogRefresh(ctx context.Context, req Reques
 		providers = []ProviderSummary{}
 	}
 	return s.writeResponse(req.ID, ConfigModelCatalogRefreshResult{
-		ProviderCount: counts.Providers,
-		ModelCount:    counts.Models,
-		Providers:     providers,
+		ProviderCount:    counts.Providers,
+		ModelCount:       counts.Models,
+		Providers:        providers,
+		CatalogProviders: catalogProviderSummaries(),
 	}, nil)
 }
 
@@ -62,12 +63,16 @@ func (s *Server) handleConfigModelCatalogProviders(req Request) error {
 		}
 		return s.writeResponse(req.ID, ConfigModelCatalogProvidersResult{Providers: []CatalogProviderSummary{summary}}, nil)
 	}
+	return s.writeResponse(req.ID, ConfigModelCatalogProvidersResult{Providers: catalogProviderSummaries()}, nil)
+}
+
+func catalogProviderSummaries() []CatalogProviderSummary {
 	connectable := modelcatalog.ConnectableProviders()
 	out := make([]CatalogProviderSummary, 0, len(connectable))
 	for _, provider := range connectable {
 		out = append(out, catalogProviderSummary(provider))
 	}
-	return s.writeResponse(req.ID, ConfigModelCatalogProvidersResult{Providers: out}, nil)
+	return out
 }
 
 func catalogProviderSummary(provider modelcatalog.Connectable) CatalogProviderSummary {
