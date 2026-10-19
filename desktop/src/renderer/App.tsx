@@ -1746,9 +1746,9 @@ export function App(): JSX.Element {
     Boolean(pendingFork) ||
     conversationSearch.open;
   useBrowserVisibility({
-    onInvalidateWorkdir: (workdir) =>
+    onInvalidateWorkdir: (workdir, threadID) =>
       setActivitySessions((current) =>
-        clearActivitiesForWorkdir(current, workdir),
+        clearActivitiesForWorkdir(current, workdir, threadID),
       ),
   });
   const [browserDockTarget, setBrowserDockTarget] = useState<BrowserDockTarget>();

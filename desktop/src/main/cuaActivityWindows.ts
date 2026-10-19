@@ -140,9 +140,10 @@ export class ObservationCoordinator {
   private readonly completedCards = new Set<string>();
   // An activity can visit many targets. Fence its event stream independently
   // from the cards so stale snapshots cannot revive earlier executions.
-  private readonly sources = new Map<string, { activity: ActivitySession; retiredExecutions: Set<string> }>();
+  private readonly sources = new Map<string, { activity: ActivitySession; retiredExecutions: Set<string>; clientWorkdir: string }>();
   // Threads whose turn ended without success; their card returns with the next turn.
   private readonly endedThreads = new Set<string>();
+  private readonly deletedThreads = new Set<string>();
   private readonly lastInteractionRevisions = new Map<string, number>();
   private readonly retryAttempts = new Map<string, number>();
   private readonly retryTimers = new Map<string, NodeJS.Timeout>();
@@ -183,14 +184,22 @@ export class ObservationCoordinator {
   handleServerEvent(event: ServerEvent): void {
     const activity = observationActivityFromServerEvent(event);
     if (activity) {
-      this.update(activity);
+      this.update(activity, event.workdir);
       return;
     }
     if (event.kind === "notification") {
       const { method, params } = event.message;
       const turn = params as { thread_id?: string; turn?: { status: string }; awaiting_auto_continuation?: boolean; truncated?: boolean } | undefined;
       const threadID = turn?.thread_id;
-      const entries = [...this.entries.values()].filter((entry) => entry.threadID === threadID && entry.activity.workdir === event.workdir);
+      if (method === "thread/deleted" && threadID) {
+        this.deletedThreads.add(threadID);
+        this.dropObservations(activity => activity.thread_id === threadID);
+        this.explicitlyShown.delete(threadID);
+        this.endedThreads.delete(threadID);
+        if (this.activeThreadID === threadID) this.setActiveThread();
+        return;
+      }
+      const entries = [...this.entries.values()].filter((entry) => entry.threadID === threadID && this.ownerWorkdir(entry.activity) === event.workdir);
       if (threadID) {
         if (method === "turn/started") {
           for (const entry of entries) entry.pip.setTurnCompleted?.(false);
@@ -280,8 +289,8 @@ export class ObservationCoordinator {
     this.scheduleReconcile(0);
   }
 
-  update(activity: ActivitySession): void {
-    if (this.closed) return;
+  update(activity: ActivitySession, clientWorkdir?: string): void {
+    if (this.closed || this.deletedThreads.has(activity.thread_id)) return;
     const sourceKey = JSON.stringify([activity.workdir, activity.thread_id, activity.id]);
     const source = this.sources.get(sourceKey);
     if (source && ((activity.execution_id && source.retiredExecutions.has(activity.execution_id))
@@ -296,7 +305,7 @@ export class ObservationCoordinator {
     const executionChanged = source && source.activity.execution_id !== activity.execution_id;
     const retiredExecutions = source?.retiredExecutions ?? new Set<string>();
     if (executionChanged && source.activity.execution_id) retiredExecutions.add(source.activity.execution_id);
-    this.sources.set(sourceKey, { activity, retiredExecutions });
+    this.sources.set(sourceKey, { activity, retiredExecutions, clientWorkdir: clientWorkdir ?? source?.clientWorkdir ?? activity.workdir });
 
     const key = observationKey(activity);
     // Authority belongs to the activity, even when its last event names only
@@ -340,8 +349,19 @@ export class ObservationCoordinator {
   // showing one of its tabs, so no ghost preview can outlive the core that
   // owned the page.
   dropWorkdir(workdir: string): void {
+    this.dropObservations(activity => this.ownerWorkdir(activity) === workdir);
+  }
+
+  private ownerWorkdir(activity: ActivitySession): string {
+    return this.sources.get(JSON.stringify([activity.workdir, activity.thread_id, activity.id]))?.clientWorkdir ?? activity.workdir;
+  }
+
+  private dropObservations(matches: (activity: ActivitySession) => boolean): void {
+    for (const entry of [...this.entries.values()]) {
+      if (matches(entry.activity)) this.stopEntry(entry);
+    }
     for (const [key, activity] of this.observations) {
-      if (activity.workdir !== workdir) continue;
+      if (!matches(activity)) continue;
       this.observations.delete(key);
       this.goneObservations.delete(key);
       this.dismissedCards.delete(key);
@@ -350,11 +370,9 @@ export class ObservationCoordinator {
       this.resetRetryBudget(key);
     }
     for (const [key, source] of this.sources) {
-      if (source.activity.workdir === workdir) this.sources.delete(key);
+      if (matches(source.activity)) this.sources.delete(key);
     }
-    for (const entry of [...this.entries.values()]) {
-      if (entry.activity.workdir === workdir) this.stopEntry(entry);
-    }
+    this.restack();
   }
 
   shutdown(): Promise<void> {
@@ -362,6 +380,7 @@ export class ObservationCoordinator {
     this.activeThreadID = undefined;
     this.observations.clear();
     this.sources.clear();
+    this.deletedThreads.clear();
     this.goneObservations.clear();
     this.browserHost?.detach();
     this.browserHost = undefined;

@@ -22,6 +22,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Release embedded browser pages when their conversation is deleted or their
+  owning backend exits, including linked worktrees. Close preview overlays on
+  teardown and allow crashed pages to reopen without replaying browser input.
 - Show the local model service directory immediately in settings and onboarding,
   without skeleton placeholders or a new directory request on each visit.
 - Keep SSH workspace tunnels owned by their foreground command, wait for host registration before reporting readiness, and clean up interrupted startup.

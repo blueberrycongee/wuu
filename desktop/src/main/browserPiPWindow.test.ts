@@ -130,6 +130,7 @@ class FakeOverlay {
       this.navigateListener = listener;
     },
     isDestroyed: () => this.destroyed,
+    close: () => { this.destroyed = true; },
   };
 
   setBounds(bounds: Rectangle): void {

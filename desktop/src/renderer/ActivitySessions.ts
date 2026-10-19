@@ -81,11 +81,12 @@ export function activitiesForThread(
 export function clearActivitiesForWorkdir(
   state: ActivitySessionsState,
   workdir: string,
+  threadID?: string,
 ): ActivitySessionsState {
   const kept: Record<string, ActivitySession> = {};
   let removed = false;
   for (const [key, activity] of Object.entries(state.byKey)) {
-    if (activity.workdir === workdir) {
+    if (activity.workdir === workdir && (threadID === undefined || activity.thread_id === threadID)) {
       removed = true;
       continue;
     }

@@ -340,7 +340,7 @@ const browserHostCoordinator = new BrowserHostCoordinator(
       }) as unknown as BrowserHostWindowHandle,
     (options) => createBrowserView(options) as unknown as BrowserViewHandle,
   ),
-  (workdir) => broadcastToAll("wuu:browser-invalidate", { workdir }),
+  (workdir, threadID) => broadcastToAll("wuu:browser-invalidate", { workdir, threadID }),
 );
 // A workdir with a live agent tab counts as busy so pool idle-eviction cannot
 // yank the page out mid user-takeover (isBusy only sees pending requests +

@@ -160,6 +160,7 @@ const (
 	NotificationThreadStarted          = "thread/started"
 	NotificationThreadResumed          = "thread/resumed"
 	NotificationThreadUpdated          = "thread/updated"
+	NotificationThreadDeleted          = "thread/deleted"
 	NotificationTurnStarted            = "turn/started"
 	NotificationTurnQueued             = "turn/queued"
 	NotificationTurnDequeued           = "turn/dequeued"

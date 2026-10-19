@@ -575,6 +575,7 @@ bar lands on the day its calendar draws.
 | Family | Client handling |
 | --- | --- |
 | `thread/started`, `thread/resumed`, `thread/updated` | Apply session snapshots by ID |
+| `thread/deleted` | Release retained browser pages and previews for `thread_id` across all session workspaces |
 | `run/started`, `run/updated` | Track the invocation and its terminal state |
 | `turn/started`, `turn/completed`, `turn/error` | Track individual turns, not the whole run |
 | `turn/queued`, `turn/dequeued`, `turn/steered`, `turn/unsteered`, `turn/held` | Update pending input state |
@@ -601,6 +602,8 @@ The basic browser client advertises six methods: `browser/cdp`, `browser/screens
 methods despite appearing beside other method constants in the source.
 
 Every browser request carries a core-assigned `thread_id` and `workdir`. The client must scope tab creation, listing, input, capture, and cleanup to that conversation. Page-opened tabs inherit their opener's ownership. Reject an existing tab owned by another conversation rather than navigating or adopting it.
+
+The session `workdir` may be a linked worktree and differ from the connected core's project root. Track the originating connection separately: its retained tabs prevent idle eviction, and disconnect cleanup releases all tabs it owns across worktrees. After permanent session deletion, `thread/deleted` carries `{thread_id}` before the successful delete response; release that conversation's retained pages and previews regardless of their workspace. A crashed page is discarded so the existing `tab_not_found` recovery can reopen it; clicks and other side-effecting input must not be replayed automatically.
 
 A `request_id` identifies an in-flight browser operation. The `browser/request_cancelled` notification carries that ID with the same `thread_id` and `workdir` when the core stops waiting. Cancel only the matching operation, checking again after asynchronous work and before sending input. Activity takeover and stop revoke input for all tabs of that conversation. A later release grants fresh authority without resuming an old request.
 
