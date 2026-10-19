@@ -140,6 +140,13 @@ struct ConversationTimeline: View {
                 if NativeUIFixture.enabled && ProcessInfo.processInfo.arguments.contains("--native-preview-presented") { previewActivity = model.currentPreviewActivity }
                 #endif
             }
+            .background {
+                #if DEBUG
+                if NativeUIFixture.enabled && ProcessInfo.processInfo.arguments.contains("--native-preview-fixture") {
+                    NativePreviewFixtureReadyMarker(name: "conversation", ready: true)
+                }
+                #endif
+            }
     }
     private func timelineRow(_ row: ConversationRow, size: CGSize) -> some View {
         VStack(alignment: .leading, spacing: 8) {

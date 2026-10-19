@@ -58,43 +58,114 @@ jobs:
         run: bash clients/native/verify.sh ios | tee native-ios-core.log
       - name: Capture native preview fixture layouts
         run: |
-          set -euo pipefail
-          mkdir -p native-ios-preview
-          device="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(device["udid"] for runtime, devices in data["devices"].items() if "iOS" in runtime for device in devices if device["name"].startswith("iPhone")))')"
-          xcrun simctl boot "$device" || true
-          xcrun simctl bootstatus "$device" -b
-          trap 'xcrun simctl shutdown "$device"' EXIT
-          xcrun simctl install "$device" clients/native/ios/.build-xcode/Build/Products/Debug-iphonesimulator/Wuu.app
-          xcrun simctl ui "$device" appearance light
-          xcrun simctl launch --terminate-running-process "$device" ai.wuu.native \
-            --native-ui-fixture --native-composer-fixture --native-preview-fixture
-          sleep 3
-          xcrun simctl io "$device" screenshot native-ios-preview/tool-row-light.png
-          xcrun simctl launch --terminate-running-process "$device" ai.wuu.native \
-            --native-ui-fixture --native-composer-fixture --native-preview-fixture --native-preview-presented
-          sleep 3
-          xcrun simctl io "$device" screenshot native-ios-preview/viewer-light.png
-          xcrun simctl ui "$device" appearance dark
-          xcrun simctl launch --terminate-running-process "$device" ai.wuu.native \
-            --native-ui-fixture --native-composer-fixture --native-preview-fixture --native-preview-presented \
-            -UIPreferredContentSizeCategoryName UICTContentSizeCategoryAccessibilityXXXL
-          sleep 3
-          xcrun simctl io "$device" screenshot native-ios-preview/viewer-dark-large-text.png
-          container="$(xcrun simctl get_app_container "$device" ai.wuu.native data)"
-          marker="$container/Library/Caches/preview-fixture-result.json"
-          rm -f "$marker"
-          xcrun simctl launch --terminate-running-process "$device" ai.wuu.native \
-            --native-ui-fixture --native-composer-fixture --native-preview-fixture --native-preview-presented \
-            --native-preview-h264-fixture -UIPreferredContentSizeCategoryName UICTContentSizeCategoryL
-          for attempt in $(seq 1 30); do
-            [[ -f "$marker" ]] && break
-            sleep 1
-          done
-          cp "$marker" native-ios-preview/h264-result.json
-          sleep 1
-          xcrun simctl io "$device" screenshot native-ios-preview/viewer-h264.png
-          python3 -c 'import json; result=json.load(open("native-ios-preview/h264-result.json")); assert result.get("codec") == "h264" and result.get("decoded_frames") == 3 and result.get("submitted_frames") == 3 and result.get("error") == "", result'
-          printf '%s\n' 'Local synthetic JPEG and H264 IDR+2 dependent delta frames through the native viewer. H264 decode/submission is asserted; screenshots require visual review. This does not validate remote latency, real macOS capture, or physical-device performance.' > native-ios-preview/scope.txt
+          python3 - <<'PYTHON'
+          import json, os, pathlib, re, shutil, subprocess, time
+
+          evidence = pathlib.Path("native-ios-preview").resolve()
+          evidence.mkdir(exist_ok=True)
+          bundle = "ai.wuu.native"
+          runtime = "com.apple.CoreSimulator.SimRuntime.iOS-26-2"
+          device = None
+          pid = None
+          succeeded = False
+
+          def sim(*args, timeout=180):
+              result = subprocess.run(["xcrun", "simctl", *args], text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+              if result.stderr:
+                  print(result.stderr, end="", flush=True)
+              result.check_returncode()
+              return result.stdout.strip()
+
+          def alive(process):
+              try:
+                  os.kill(process, 0)
+                  return True
+              except ProcessLookupError:
+                  return False
+
+          def diagnostics():
+              commands = [("simulator-list.json", ["list", "--json"])]
+              if device:
+                  commands += [("simulator.log", ["spawn", device, "log", "show", "--last", "10m", "--style", "compact",
+                      "--predicate", 'process == "Wuu" OR process == "SpringBoard" OR process == "runningboardd"']),
+                      ("failure-screenshot.log", ["io", device, "screenshot", str(evidence / "failure.png")])]
+              for name, args in commands:
+                  try:
+                      with (evidence / name).open("w") as output:
+                          subprocess.run(["xcrun", "simctl", *args], stdout=output, stderr=subprocess.STDOUT, timeout=45)
+                  except Exception as error:
+                      print(f"Diagnostic {name}: {error}", flush=True)
+              roots = [pathlib.Path.home() / "Library/Logs/DiagnosticReports"]
+              if device:
+                  roots.append(pathlib.Path.home() / f"Library/Developer/CoreSimulator/Devices/{device}/data/Library/Logs/DiagnosticReports")
+              for index, root in enumerate(roots):
+                  for report in root.glob("Wuu*"):
+                      if report.is_file():
+                          shutil.copy2(report, evidence / f"diagnostic-{index}-{report.name}")
+
+          try:
+              devices = json.loads(sim("list", "devices", "available", "--json"))
+              (evidence / "simulator-devices.json").write_text(json.dumps(devices, indent=2))
+              selected = next(item for item in devices["devices"].get(runtime, []) if item["name"] == "iPhone 16 Pro")
+              device = selected["udid"]
+              (evidence / "simulator-selection.json").write_text(json.dumps({"runtime": runtime, **selected}, indent=2))
+              if selected["state"] != "Booted":
+                  sim("boot", device)
+              print(sim("bootstatus", device, "-b", timeout=300), flush=True)
+              sim("install", device, "clients/native/ios/.build-xcode/Build/Products/Debug-iphonesimulator/Wuu.app")
+              cache = pathlib.Path(sim("get_app_container", device, bundle, "data")) / "Library/Caches"
+              markers = [cache / name for name in ["preview-conversation-ready.json", "preview-viewer-ready.json", "preview-fixture-result.json"]]
+              cases = [
+                  ("tool-row-light", "light", "conversation", []),
+                  ("viewer-light", "light", "viewer", ["--native-preview-presented"]),
+                  ("viewer-dark-large-text", "dark", "viewer", ["--native-preview-presented",
+                      "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]),
+                  ("viewer-h264", "light", "viewer", ["--native-preview-presented", "--native-preview-h264-fixture",
+                      "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL"]),
+              ]
+              for name, appearance, view, extra in cases:
+                  if pid is not None:
+                      sim("terminate", device, bundle)
+                      deadline = time.monotonic() + 30
+                      while alive(pid) and time.monotonic() < deadline:
+                          time.sleep(0.2)
+                      if alive(pid):
+                          raise RuntimeError(f"Previous fixture process {pid} did not terminate")
+                  for marker in markers:
+                      marker.unlink(missing_ok=True)
+                  sim("ui", device, "appearance", appearance)
+                  launch = sim("launch", f"--stdout={evidence / (name + '-stdout.log')}",
+                      f"--stderr={evidence / (name + '-stderr.log')}", device, bundle,
+                      "--native-ui-fixture", "--native-composer-fixture", "--native-preview-fixture", *extra)
+                  (evidence / f"{name}-launch.log").write_text(launch)
+                  pid = int(re.search(r"ai\.wuu\.native: (\d+)", launch).group(1))
+                  marker = cache / f"preview-{view}-ready.json"
+                  deadline = time.monotonic() + 60
+                  while not marker.exists() and time.monotonic() < deadline:
+                      if not alive(pid):
+                          raise RuntimeError(f"{name} exited before the fixture became visible")
+                      time.sleep(0.5)
+                  ready = json.loads(marker.read_text())
+                  assert ready["view"] == view and ready["pid"] == pid and ready["width"] > 0 and ready["height"] > 0, ready
+                  shutil.copy2(marker, evidence / f"{name}-ready.json")
+                  if name == "viewer-h264":
+                      result = json.loads(markers[2].read_text())
+                      assert result.get("codec") == "h264" and result.get("decoded_frames") == 3 and result.get("submitted_frames") == 3 and result.get("error") == "", result
+                      shutil.copy2(markers[2], evidence / "h264-result.json")
+                  sim("io", device, "screenshot", str(evidence / f"{name}.png"))
+                  print(f"Captured {name} after foreground layout readiness from process {pid}", flush=True)
+              (evidence / "scope.txt").write_text("Local synthetic JPEG and H264 IDR+2 dependent delta frames through the native viewer. Foreground layout readiness and H264 decode/submission are asserted; screenshots require visual review. This does not validate remote latency, real macOS capture, or physical-device performance.\n")
+              succeeded = True
+          finally:
+              if not succeeded:
+                  diagnostics()
+              if device:
+                  try:
+                      sim("shutdown", device, timeout=60)
+                  except Exception as error:
+                      print(f"Simulator shutdown: {error}", flush=True)
+          PYTHON
       - name: Unsigned iOS device Release build
         run: |
           xcodebuild -project clients/native/ios/Wuu.xcodeproj -scheme Wuu \

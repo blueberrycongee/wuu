@@ -113,6 +113,52 @@ enum NativeUIFixture {
     }
 }
 
+/// CI waits for an active, laid-out view instead of guessing how long Simulator launch takes.
+struct NativePreviewFixtureReadyMarker: UIViewRepresentable {
+    let name: String
+    let ready: Bool
+    func makeUIView(context: Context) -> MarkerView { MarkerView() }
+    func updateUIView(_ view: MarkerView, context: Context) { view.configure(name: name, ready: ready) }
+
+    final class MarkerView: UIView {
+        private var name = ""
+        private var ready = false
+        private var written = false
+        private var ticks = 0
+        private var displayLink: CADisplayLink?
+        func configure(name: String, ready: Bool) {
+            self.name = name; self.ready = ready
+            isUserInteractionEnabled = false
+            updateDisplayLink()
+        }
+        override func didMoveToWindow() { super.didMoveToWindow(); updateDisplayLink() }
+        private func updateDisplayLink() {
+            guard window != nil, ready, !written else {
+                displayLink?.invalidate(); displayLink = nil; ticks = 0
+                return
+            }
+            guard displayLink == nil else { return }
+            let link = CADisplayLink(target: self, selector: #selector(displayed))
+            link.add(to: .main, forMode: .common); displayLink = link
+        }
+        @objc private func displayed() {
+            guard window?.windowScene?.activationState == .foregroundActive,
+                  bounds.width > 0, bounds.height > 0 else { ticks = 0; return }
+            // Two active display ticks give the laid-out hierarchy a presentation opportunity.
+            ticks += 1
+            guard ticks >= 2 else { return }
+            let value: JSONValue = ["view": .string(name), "pid": .number(Double(ProcessInfo.processInfo.processIdentifier)),
+                "width": .number(Double(bounds.width)), "height": .number(Double(bounds.height))]
+            let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("preview-\(name)-ready.json")
+            do {
+                try JSONEncoder().encode(value).write(to: url, options: .atomic)
+                written = true; updateDisplayLink()
+            } catch { print("Preview fixture readiness: \(error)") }
+        }
+    }
+}
+
 struct NativeUIFixtureView: View {
     @Bindable var model: AppModel
     @State private var stream: Task<Void, Never>?

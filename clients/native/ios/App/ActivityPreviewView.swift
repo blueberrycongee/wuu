@@ -44,6 +44,11 @@ import ImageIO
         }
         .task(id: retry) { await observe() }
         .onChange(of: phase) { _, value in if value != .active { dismiss() } }
+        .background {
+            #if DEBUG
+            if fixtureImage != nil { NativePreviewFixtureReadyMarker(name: "viewer", ready: status == "live") }
+            #endif
+        }
     }
     private var fallbackStatus: String {
         switch status { case "paused": "预览已暂停"; case "ended": "预览已结束"; default: "无法连接预览" }
@@ -191,14 +196,15 @@ private actor PreviewDecoder {
             sampleCount: 1, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
             sampleSizeEntryCount: 1, sampleSizeArray: &count, sampleBufferOut: &sample))
         guard let sample else { throw NativeError.invalid("无法读取预览帧") }
-        var decoded: CVPixelBuffer?
+        var output: DecodedPreview?
         var failure: OSStatus = noErr
         // With both async flags clear, VideoToolbox calls this handler before returning.
         let result = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample, flags: [], infoFlagsOut: nil) { code, _, image, _, _ in
-            failure = code; decoded = image
+            failure = code; output = image.map(DecodedPreview.video)
         }
         try check(result); try check(failure)
-        guard let decoded, CVPixelBufferGetWidth(decoded) == frame.width, CVPixelBufferGetHeight(decoded) == frame.height else {
+        guard case .video(let decoded)? = output,
+              CVPixelBufferGetWidth(decoded) == frame.width, CVPixelBufferGetHeight(decoded) == frame.height else {
             throw NativeError.invalid("预览帧没有可显示的图像")
         }
         return .video(decoded)

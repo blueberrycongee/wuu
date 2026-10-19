@@ -15,6 +15,7 @@ on:
       - "desktop/src/main/remoteAppServerBridge*"
       - "desktop/src/main/activityPiP*"
       - "desktop/src/main/browserPiPWindow*"
+      - "desktop/src/nativePreview.ts"
       - "desktop/src/shared/nativePreview.ts"
       - "desktop/scripts/activity-preview-*"
       - "desktop/scripts/browser-task-ownership-e2e*"
