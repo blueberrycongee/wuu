@@ -77,14 +77,6 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
       () => new BrowserWindow({ show: false, webPreferences: { sandbox: true } }) as unknown as BrowserHostWindowHandle,
       () => {
         const view = createBrowserView();
-        let loaded = false;
-        view.webContents.on("did-finish-load", () => { loaded = true; });
-        const emulate = view.webContents.enableDeviceEmulation.bind(view.webContents);
-        view.webContents.enableDeviceEmulation = (options) => {
-          console.log("browser lifecycle: before native emulation", JSON.stringify({ id: view.webContents.id, url: view.webContents.getURL(), loaded }));
-          emulate(options);
-          console.log("browser lifecycle: after native emulation", view.webContents.id);
-        };
         views.push(view);
         return view as unknown as BrowserViewHandle;
       },
@@ -96,11 +88,7 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
     { mainWindow: () => main } as unknown as WindowRegistry, undefined,
     (activity, key, sink) => factory(activity, key, sink, () => ({ x: 140, y: 140, width: 384, height: 240 })),
   );
-  host.addTabCreatedListener((workdir, tabID, threadID) => {
-    console.log("browser lifecycle: before created-tab recovery", JSON.stringify({ workdir, tabID, threadID }));
-    coordinator.restoreBrowserTab(workdir, tabID, threadID);
-    console.log("browser lifecycle: after created-tab recovery", tabID);
-  });
+  host.addTabCreatedListener((workdir, tabID, threadID) => coordinator.restoreBrowserTab(workdir, tabID, threadID));
   host.setRendererSink({ surface: (snapshot) => surfaces.push(snapshot), userInput: () => undefined,
     adopted: () => undefined, presented: () => coordinator.refreshBrowserPresentation() });
   coordinator.setBrowserInPanel((activity) => host.isInPanel(activity.workdir, activity.target!));
@@ -125,12 +113,14 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
     coordinator.handleServerEvent(event);
   };
   const previewWindows = () => BrowserWindow.getAllWindows().filter((win) => win.getParentWindow() === main);
+  coordinator.setActiveThread(threadID);
+  notify("activity/started", nextActivity);
+  await waitFor("activity without a tab has no live preview", () => previewWindows().length === 0);
   await open();
   assert.equal(host.hasAgentTabs(root), true, "Linked-worktree tabs pin their transport owner");
   assert.equal(host.hasAgentTabs(linked), false, "A linked CWD is not a second transport owner");
-  coordinator.setActiveThread(threadID);
-  notify("activity/started", nextActivity);
   await waitFor("linked-worktree preview", () => previewWindows().some((win) => win.isVisible()));
+  console.log("browser lifecycle: early activity restores its preview after first tab navigation");
   const crashedPreview = previewWindows()[0];
   const crashedOverlay = (crashedPreview.contentView.children.find((view) => view !== views[0]) as WebContentsView).webContents;
   const crashedContents = views[0].webContents;
@@ -146,9 +136,7 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
   const deniedInput = rawRequest({ method: "click", params: { x: 240, y: 200 } }, "browser/cdp");
   await deniedInput.done;
   assert.match(errors.get(deniedInput.id) ?? "", /tab_not_found/);
-  console.log("browser lifecycle: recreating same tab after crash");
   await open();
-  console.log("browser lifecycle: recreated tab finished navigation");
   notify("activity/updated", { ...nextActivity, updated_at: new Date().toISOString() });
   await waitFor("same-execution preview restored after real tab recreation", () => previewWindows().some((win) => win.isVisible()));
   const recoveredContents = views.at(-1)!.webContents;
@@ -238,7 +226,7 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
   await waitFor("orphan overlay destroyed", () => orphanOverlay.isDestroyed());
   assert.equal(orphanOverlay.isDestroyed(), true, "Externally destroyed PiP windows release their overlay WebContents");
   console.log("browser lifecycle: external window destruction awaits capture and disposes overlay");
-  writeFileSync(join(artifacts, "lifecycle-recovery.json"), JSON.stringify({ linkedWorktreeOwner: true,
+  writeFileSync(join(artifacts, "lifecycle-recovery.json"), JSON.stringify({ activityBeforeTabReady: true, linkedWorktreeOwner: true,
     realRendererCrash: true, sameExecutionPreviewRecovery: true, userReload: true, inputReplayCount: 0,
     deletedAcrossWorkdirs: true, pendingNavigationRejected: true, siblingRetained: true,
     lateDeletedSnapshotRejected: true, pinReleased: true, externalWindowStopOrdering: true, overlayDisposed: true }, null, 2));

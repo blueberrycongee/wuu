@@ -186,6 +186,7 @@ type TabEntry = {
   agentInputDepth: number;
   ignoreUserInputUntil: number;
   loading: boolean;
+  rendererReady: boolean;
   loadError?: string;
   activeOperations: number;
   // Bumps cancel an in-flight scrollbar stylesheet install. The key is the
@@ -490,12 +491,16 @@ export class BrowserHostCoordinator {
     // Chromium clamps UI zoom to at least 25%, even when older Electron
     // versions report a smaller requested value. Emulation scales the surface
     // independently of layout and devicePixelRatio, including compact cards.
-    entry.contents.enableDeviceEmulation({
-      screenPosition: "desktop", screenSize: { width: 0, height: 0 },
-      viewPosition: { x: 0, y: 0 }, deviceScaleFactor: 0,
-      viewSize: { width: Math.round(rect.width / scale), height: Math.round(rect.height / scale) },
-      scale,
-    });
+    // Electron dereferences the native frame view during emulation. A newly
+    // registered tab has no such view until its first document finishes loading.
+    if (entry.rendererReady) {
+      entry.contents.enableDeviceEmulation({
+        screenPosition: "desktop", screenSize: { width: 0, height: 0 },
+        viewPosition: { x: 0, y: 0 }, deviceScaleFactor: 0,
+        viewSize: { width: Math.round(rect.width / scale), height: Math.round(rect.height / scale) },
+        scale,
+      });
+    }
     entry.preview = { scale, restoreBounds: entry.preview?.restoreBounds ?? entry.view.getBounds() };
     entry.view.setBounds(rect);
   }
@@ -840,7 +845,7 @@ export class BrowserHostCoordinator {
       agentInputAllowed: this.threadControls.get(tabKey(workdir, threadID ?? ""))?.allowed !== false,
       debuggerAttached: true, nodeMap: new Map(), currentParent: parent,
       suppressed: false, presented: false, inPanel: false, blockPresent: false,
-      agentInputDepth: 0, ignoreUserInputUntil: 0, loading: false,
+      agentInputDepth: 0, ignoreUserInputUntil: 0, loading: false, rendererReady: false,
       activeOperations: 0, spectatorScrollbarEpoch: 0,
     };
     const ownerKey = tabKey(workdir, threadID ?? "");
@@ -1180,6 +1185,13 @@ export class BrowserHostCoordinator {
       entry.loading = false;
       publish();
     });
+    contents.on("did-finish-load", () => {
+      if (this.tabs.get(tabKey(entry.workdir, entry.tabID)) !== entry || contents.isDestroyed()) return;
+      entry.rendererReady = true;
+      if (entry.preview && entry.currentParent) {
+        this.relayoutMountedTab(entry.workdir, entry.tabID, entry.currentParent, entry.view.getBounds(), entry.preview.scale);
+      }
+    });
     contents.on("page-title-updated", publish);
     contents.on("did-fail-load", (...args: unknown[]) => {
       const errorCode = typeof args[1] === "number" ? args[1] : 0;
@@ -1206,6 +1218,7 @@ export class BrowserHostCoordinator {
       // tab so the core's tab_not_found recovery can rebuild it without replaying
       // side-effecting input. Notify the panel before closing its preview.
       entry.loading = false;
+      entry.rendererReady = false;
       entry.loadError = "Browser page stopped. Reload to reopen it.";
       publish();
       this.destroyEntry(entry);
@@ -1520,7 +1533,7 @@ export class BrowserHostCoordinator {
 
   private resetPreviewScale(entry: TabEntry): void {
     if (entry.preview) {
-      entry.contents.disableDeviceEmulation();
+      if (entry.rendererReady) entry.contents.disableDeviceEmulation();
       entry.view.setBounds(entry.preview.restoreBounds);
       entry.preview = undefined;
     }
