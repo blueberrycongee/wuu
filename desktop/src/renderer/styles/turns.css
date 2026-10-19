@@ -5188,6 +5188,7 @@ pre {
  * outputs collect at the turn end, matching the existing file-change summary.
  */
 .turn-artifact-inline-list {
+  --artifact-gallery-control-inset: 8px;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -5197,8 +5198,8 @@ pre {
 
 .turn-artifact-gallery-toolbar {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: var(--artifact-gallery-control-inset);
+  right: var(--artifact-gallery-control-inset);
   z-index: 1;
   display: flex;
   opacity: 0;
@@ -5249,6 +5250,11 @@ pre {
   overflow-x: auto;
   padding: 4px;
   scroll-padding-inline: 32px;
+}
+
+/* Small thumbnails must still contain the full font-scaled view control. */
+.turn-artifact-gallery-toolbar + .turn-artifact-gallery-items {
+  min-height: calc(var(--control-size-roomy) + var(--artifact-gallery-control-inset) * 2);
 }
 
 .turn-artifact-gallery-items:not(.is-tiled) > * {

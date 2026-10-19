@@ -163,33 +163,49 @@ func (args bashArgs) validate() error {
 }
 
 func (t *BashTool) executeStartBackground(ctx context.Context, args bashArgs) (string, error) {
+	p, err := t.startBackground(ctx, args, true, proc.CompletionModeResume)
+	response := proc.Process{}
+	if p != nil {
+		response = redactProcess(t.env, *p)
+		response.Action = bashResultActionStart
+	}
+	out, _ := mustJSON(response)
+	return out, err
+}
+
+func (t *BashTool) startBackground(ctx context.Context, args bashArgs, tty bool, completion proc.CompletionMode) (*proc.Process, error) {
 	commandPrefix := ""
 	if t.env.gitAttributionEnabled() {
 		var err error
 		commandPrefix, err = t.env.gitAttributionShellPrefix()
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 	}
 	rootThreadID := processRootThreadID(t.env)
 	if rootThreadID == "" {
-		return "", errors.New("bash run_in_background requires a bound session ID")
+		return nil, errors.New("bash run_in_background requires a bound session ID")
 	}
 	m, err := t.env.ProcessManager()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	sandboxPolicy, sandboxTempDir, err := t.env.processSandboxPolicy(ctx)
 	if err != nil {
-		return "", fmt.Errorf("prepare filesystem process sandbox: %w", err)
+		return nil, fmt.Errorf("prepare filesystem process sandbox: %w", err)
 	}
 	commandEnv := shellCommandEnv(os.Environ())
 	if sandboxTempDir != "" {
 		commandEnv = replaceCommandEnv(commandEnv, "TMPDIR", sandboxTempDir)
 	}
-	// Background commands run in a pseudo-terminal so the desktop can take
-	// them over interactively; the model view strips terminal control codes.
-	p, startErr := m.Start(context.WithoutCancel(ctx), proc.StartOptions{
+	// Ordinary bash keeps its existing start handoff after policy preparation.
+	// Extension starts remain cancellable until their generation takes ownership.
+	startCtx := ctx
+	if completion == proc.CompletionModeResume {
+		startCtx = context.WithoutCancel(ctx)
+	}
+	// Ordinary background commands use a terminal; streaming consumers use pipes.
+	return m.Start(startCtx, proc.StartOptions{
 		Command:               args.Command,
 		CommandPrefix:         commandPrefix,
 		CWD:                   args.CWD,
@@ -198,22 +214,13 @@ func (t *BashTool) executeStartBackground(ctx context.Context, args bashArgs) (s
 		OwnerID:               defaultProcessOwnerID(t.env),
 		RootThreadID:          rootThreadID,
 		Lifecycle:             proc.LifecycleManaged,
-		TTY:                   true,
+		TTY:                   tty,
+		CompletionMode:        completion,
 		AllowOutsideWorkspace: t.env.BypassToolHardProtections(),
 		SandboxPolicy:         sandboxPolicy,
 		SandboxProvider:       t.env.ProcessSandboxProvider,
 		Env:                   commandEnv,
 	})
-	response := proc.Process{}
-	if p != nil {
-		response = redactProcess(t.env, *p)
-		response.Action = bashResultActionStart
-	}
-	out, _ := mustJSON(response)
-	if startErr != nil {
-		return out, startErr
-	}
-	return out, nil
 }
 
 // bashResultActionStart marks the envelope of a background start. Clients use

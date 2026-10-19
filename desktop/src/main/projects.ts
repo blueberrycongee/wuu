@@ -1,4 +1,3 @@
-import { app } from "electron";
 import { randomUUID } from "node:crypto";
 import { mainTranslate } from "./i18n";
 import {
@@ -28,8 +27,10 @@ type ProjectStore = {
 export class ProjectManager {
   private store: ProjectStore = { projects: [] };
 
+  constructor(private readonly legacyStorePath?: string) {}
+
   load(): void {
-    this.store = loadProjectStore();
+    this.store = loadProjectStore(this.legacyStorePath);
   }
 
   list(): ProjectListResult {
@@ -249,10 +250,6 @@ function projectStorePath(): string {
   return join(wuuHomePath(), "projects.json");
 }
 
-function legacyProjectStorePath(): string {
-  return join(app.getPath("userData"), "projects.json");
-}
-
 export function wuuHomePath(): string {
   const override = process.env.WUU_HOME?.trim();
   if (override) {
@@ -261,7 +258,7 @@ export function wuuHomePath(): string {
   return join(homedir(), ".wuu");
 }
 
-function loadProjectStore(): ProjectStore {
+function loadProjectStore(legacyPath?: string): ProjectStore {
   const path = projectStorePath();
   const loaded = readProjectStoreFile(path);
   if (loaded) {
@@ -272,12 +269,11 @@ function loadProjectStore(): ProjectStore {
   // canonical ~/.wuu/projects.json exists, it must be the only source of
   // truth so explicitly removed workspaces cannot be resurrected by an old
   // Electron store file.
-  const legacyPath = legacyProjectStorePath();
-  const store = readProjectStoreFile(legacyPath) ?? {
+  const store = (legacyPath ? readProjectStoreFile(legacyPath) : undefined) ?? {
     projects: [],
   };
   writeProjectStoreFile(path, store);
-  archiveLegacyProjectStoreFile(legacyPath);
+  if (legacyPath) archiveLegacyProjectStoreFile(legacyPath);
   return store;
 }
 
@@ -464,7 +460,7 @@ function writeProjectStoreFile(path: string, store: ProjectStore): void {
   writeTextFileAtomicSync(path, `${JSON.stringify(store, null, 2)}\n`);
 }
 
-function createNoProjectContext(): RuntimeContext {
+export function createNoProjectContext(): RuntimeContext {
   return { kind: "no_project", cwd: allocateNoProjectCwd() };
 }
 

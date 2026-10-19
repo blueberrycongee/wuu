@@ -477,10 +477,6 @@
   padding-right: 24px;
 }
 
-:root[data-platform="linux"] .app-shell.right-panel-open .workspace-panel-tabbar {
-  padding-right: var(--linux-caption-width);
-}
-
 .linux-window-control {
   display: inline-flex;
   align-items: center;

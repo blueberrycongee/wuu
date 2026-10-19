@@ -6,10 +6,11 @@
 //
 // Build the desktop app being described, then run from this checkout on macOS:
 //   (cd <app>/desktop && npm run build:core && npm run build)
-//   node desktop/scripts/generate-cua-readme-media.cjs [<app>/desktop]
+//   node desktop/scripts/generate-cua-readme-media.cjs [<app>/desktop] [en|zh]
 // It needs a display, Swift, ffmpeg, img2webp and webpmux, plus Screen Recording
 // and Accessibility permission for the capture process.
-// Output: landing/assets/readme/cua-<lang>.webp
+// Output: landing/assets/readme/cua-<lang>.webp and cua-<lang>.mp4
+// The compact window stays at a fixed scale throughout the recording.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -21,14 +22,10 @@ const repository = path.resolve(__dirname, '../..');
 const output = path.join(repository, 'landing/assets/readme');
 const brand = path.join(repository, 'landing/assets/brand');
 const fixtureSource = path.join(__dirname, 'fixtures/cua-invoice.swift');
-const captureScale = 2;
-const windowStage = { width: 1640, height: 1100, left: 100, top: 85 };
-const captureWindow = { width: 1440, height: 900 };
-const wideShot = { x: windowStage.width / 2, y: windowStage.height / 2, scale: 1 };
-const cameraMoveSeconds = 0.8;
+let captureScale;
+const windowStage = { width: 1040, height: 990, left: 80, top: 70 };
+const captureWindow = { width: 880, height: 830 };
 const frameRate = 24;
-const renderRate = 96;
-const shutterFrames = 2;
 const recordingSeconds = 28;
 const noteFile = 'invoices/october-delivery.txt';
 
@@ -73,6 +70,8 @@ const messages = {
 
 if (!process.versions.electron) {
   const appDesktop = path.resolve(process.argv[2] || path.join(repository, 'desktop'));
+  const languages = process.argv[3] ? [process.argv[3]] : ['en', 'zh'];
+  assert.ok(languages.every(lang => Object.hasOwn(messages, lang)), 'Language must be en or zh');
   for (const file of ['out/main/index.js', 'build/bin/wuu-core', 'build/bin/wuu-cua-mac', 'build/bin/wuu-cua-mac-pip']) {
     assert.ok(fs.existsSync(path.join(appDesktop, file)), `Build ${file} in ${appDesktop} first`);
   }
@@ -106,17 +105,14 @@ if (!process.versions.electron) {
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   const flags = ['--no-sandbox'];
-  for (const lang of ['en', 'zh']) {
+  for (const lang of languages) {
     const temporary = fs.mkdtempSync(path.join(temporaryRoot, `cua-media-${lang}-`));
-    try {
-      const capture = spawnSync(require(path.join(appDesktop, 'node_modules/electron')), [...flags, __filename, appDesktop, lang, temporary, fixtureExecutable], {
-        env, stdio: 'inherit', timeout: 900_000,
-      });
-      if (capture.error) throw capture.error;
-      assert.equal(capture.status, 0, `Capture failed for ${lang}`);
-    } finally {
-      fs.rmSync(temporary, { recursive: true, force: true });
-    }
+    const capture = spawnSync(require(path.join(appDesktop, 'node_modules/electron')), [...flags, __filename, appDesktop, lang, temporary, fixtureExecutable], {
+      env, stdio: 'inherit', timeout: 900_000,
+    });
+    if (capture.error) throw capture.error;
+    assert.equal(capture.status, 0, `Capture failed for ${lang}; evidence retained at ${temporary}`);
+    fs.rmSync(temporary, { recursive: true, force: true });
   }
   fs.rmSync(fixtureRoot, { recursive: true, force: true });
   process.exit(0);
@@ -131,7 +127,6 @@ function capture(desktop, lang, temporary, fixtureExecutable) {
   assert.ok(L, `Unknown language ${lang}`);
   const zh = lang === 'zh';
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-  app.commandLine.appendSwitch('force-device-scale-factor', String(captureScale));
   app.commandLine.appendSwitch('force-color-profile', 'srgb');
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-cua-readme-'));
   const home = path.join(fixture, 'wuu-home');
@@ -160,7 +155,7 @@ function capture(desktop, lang, temporary, fixtureExecutable) {
   write(path.join(project, 'README.md'), '# Northwind\n\nOctober invoices and delivery notes.\n');
   write(path.join(project, noteFile), `${L.oldNote}\n`);
   write(path.join(project, 'invoices/october-summary.txt'), 'NW-2041  open    due 2026-10-30\nNW-2038  paid    due 2026-10-16\n');
-  sh(project, 'git init -q -b main && git add -A && git commit -q -m "chore: October invoices"');
+  sh(project, 'git init -q -b main && git add README.md invoices/october-delivery.txt invoices/october-summary.txt && git commit -q -m "chore: October invoices"');
   const invoice = path.join(project, noteFile);
 
   const target = spawn(fixtureExecutable, [lang, invoice], { stdio: 'ignore' });
@@ -390,13 +385,6 @@ function capture(desktop, lang, temporary, fixtureExecutable) {
     const bottom = Math.min(innerHeight, Math.max(...rects.map(rect => rect.bottom)) + pad);
     return { x: Math.round(left * zoom), y: Math.round(top * zoom), width: Math.round((right - left) * zoom), height: Math.round((bottom - top) * zoom) };
   }, { selector, pad, width: win.getContentSize()[0] });
-  const framing = (rect, pad = 48, maxZoom = 1.8) => {
-    const { width, height, left, top } = windowStage;
-    const scale = Math.min(1, Math.max(1 / maxZoom, (rect.width + 2 * pad) / width, (rect.height + 2 * pad) / height));
-    const fit = (center, size) => Math.min(Math.max(center, size * scale / 2), size * (1 - scale / 2));
-    const round = value => Number(value.toFixed(3));
-    return { x: round(fit(left + rect.x + rect.width / 2, width)), y: round(fit(top + rect.y + rect.height / 2, height)), scale: round(scale) };
-  };
   // The capture uses the real window, so AppKit has its own traffic lights.
   // Hide those native buttons and draw one product-styled set in the page;
   // drawing over the native set produces two overlapping controls.
@@ -439,7 +427,7 @@ function capture(desktop, lang, temporary, fixtureExecutable) {
     main.show();
     main.setWindowButtonVisibility(false);
     main.focus();
-    await evaluate(main, () => { localStorage.setItem('wuu.desktop.workspaceRightPanelWidth', '600'); location.reload(); });
+    await evaluate(main, () => { localStorage.setItem('wuu.desktop.workspaceRightPanelWidth', '400'); location.reload(); });
     await delay(500);
     await waitFor(main, () => document.querySelector('.composer textarea'));
     await macChrome(main);
@@ -458,6 +446,12 @@ function capture(desktop, lang, temporary, fixtureExecutable) {
     main.focus();
     spawnSync('swift', ['-e', 'import CoreGraphics; CGWarpMouseCursorPosition(CGPoint(x: 2, y: 2))']);
     await delay(250);
+    // Native recording follows the display's backing scale, which can change
+    // when a Retina display is mirrored to a 1x display.
+    const captureSize = (await main.webContents.capturePage()).getSize();
+    captureScale = captureSize.width / captureWindow.width;
+    assert.equal(captureSize.height, captureWindow.height * captureScale, 'Capture aspect ratio');
+    process.stdout.write(`[cua-media] native scale=${captureScale}\n`);
     const source = main.getMediaSourceId();
     const windowID = Number(source.split(':')[1]);
     assert.ok(windowID > 0, 'Native window id');
@@ -477,8 +471,11 @@ function capture(desktop, lang, temporary, fixtureExecutable) {
           const mainBounds = main.getBounds();
           const placed = pip.getBounds();
           const pipRect = { x: placed.x - mainBounds.x, y: placed.y - mainBounds.y, width: placed.width, height: placed.height };
+          assert.ok(pipRect.x >= 0 && pipRect.y >= 0
+            && pipRect.x + pipRect.width <= mainBounds.width
+            && pipRect.y + pipRect.height <= mainBounds.height, 'Computer Use preview fits the recorded window');
           mark('pip');
-          return pipRect;
+          return;
         }
         await delay(100);
       }
@@ -487,7 +484,7 @@ function capture(desktop, lang, temporary, fixtureExecutable) {
 
     await delay(850);
     await send(main, L.prompt, true);
-    const pipRect = await pipWatch;
+    await pipWatch;
     await waitTurn(main);
     mark('done');
     assert.ok(marks.done - marks.submit > 0.8, 'Computer Use activity is long enough to see');
@@ -497,6 +494,8 @@ function capture(desktop, lang, temporary, fixtureExecutable) {
     const pipWindow = BrowserWindow.getAllWindows().find(win => win.getTitle() === 'Wuu Live Activity');
     if (pipWindow) pipWindow.close();
     await delay(650);
+    await clickLabel(main, zh ? '收起左侧栏' : 'Collapse left sidebar');
+    await delay(350);
     await openTool(main, L.review);
     await delay(900);
     mark('review');
@@ -510,7 +509,7 @@ function capture(desktop, lang, temporary, fixtureExecutable) {
     const elapsed = (Date.now() - captureStartedAt) / 1000;
     assert.ok(elapsed >= marks.outro + 0.8, 'Recording covers the final hold');
     server.close();
-    await createMedia({ temporary, lang, marks, pipRect, composerBounds, diffBounds, recorderPath });
+    await createMedia({ temporary, lang, marks, recorderPath });
     stopTarget();
     const cleanup = spawn('sh', ['-c', `sleep 1; rm -rf ${JSON.stringify(fixture)}`], { detached: true, stdio: 'ignore' });
     cleanup.unref();
@@ -533,19 +532,12 @@ function capture(desktop, lang, temporary, fixtureExecutable) {
   });
 }
 
-async function createMedia({ temporary, lang, marks, pipRect, composerBounds, diffBounds, recorderPath }) {
+async function createMedia({ temporary, lang, marks, recorderPath }) {
   const { pathToFileURL } = require('node:url');
-  const { app, BrowserWindow } = require('electron');
+  const { BrowserWindow } = require('electron');
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
   const evaluate = (win, fn, arg) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(arg)})`);
   const url = file => pathToFileURL(file).href;
-  const framing = (rect, pad = 48, maxZoom = 1.8) => {
-    const { width, height, left, top } = windowStage;
-    const scale = Math.min(1, Math.max(1 / maxZoom, (rect.width + 2 * pad) / width, (rect.height + 2 * pad) / height));
-    const fit = (center, size) => Math.min(Math.max(center, size * scale / 2), size * (1 - scale / 2));
-    const round = value => Number(value.toFixed(3));
-    return { x: round(fit(left + rect.x + rect.width / 2, width)), y: round(fit(top + rect.y + rect.height / 2, height)), scale: round(scale) };
-  };
   const render = async (size, body) => {
     const page = path.join(temporary, 'frame.html');
     fs.writeFileSync(page, `<!doctype html><meta charset="utf-8"><style>
@@ -564,7 +556,9 @@ async function createMedia({ temporary, lang, marks, pipRect, composerBounds, di
       await win.loadFile(page);
       await evaluate(win, () => Promise.all([...document.images].map(image => image.decode())));
       await delay(200);
-      return await win.webContents.capturePage();
+      const image = await win.webContents.capturePage();
+      assert.equal(image.getSize().width, size.width * captureScale, 'Display scale stayed stable during export');
+      return image;
     } finally {
       win.destroy();
     }
@@ -573,11 +567,12 @@ async function createMedia({ temporary, lang, marks, pipRect, composerBounds, di
   const { width, height, left, top } = windowStage;
   const right = left + captureWindow.width;
   const bottom = top + captureWindow.height;
-  const radius = 12;
+  // Match the captured macOS window corners so the black capture matte stays hidden.
+  const radius = 20;
   const outside = `M0 0H${width}V${height}H0Z M${left + radius} ${top}H${right - radius}A${radius} ${radius} 0 0 1 ${right} ${top + radius}V${bottom - radius}A${radius} ${radius} 0 0 1 ${right - radius} ${bottom}H${left + radius}A${radius} ${radius} 0 0 1 ${left} ${bottom - radius}V${top + radius}A${radius} ${radius} 0 0 1 ${left + radius} ${top}Z`;
   const maskURL = encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><path fill-rule="evenodd" d="${outside}"/></svg>`);
   const stageImage = await render(windowStage,
-    `<div class="layer" style="-webkit-mask:url('data:image/svg+xml,${maskURL}')">${backdrop('meadow')}<div class="shot" style="left:${left}px;top:${top}px;width:${captureWindow.width}px;height:${captureWindow.height}px;border-radius:${radius}px;box-shadow:0 12px 40px rgba(0,0,0,.59)"></div></div>`);
+    `<div class="layer" style="-webkit-mask:url('data:image/svg+xml,${maskURL}')">${backdrop('shore')}<div class="shot" style="left:${left}px;top:${top}px;width:${captureWindow.width}px;height:${captureWindow.height}px;border-radius:${radius}px;box-shadow:0 12px 40px rgba(0,0,0,.59)"></div></div>`);
   const stagePath = path.join(temporary, 'stage.png');
   fs.writeFileSync(stagePath, stageImage.toPNG());
   const videoMask = await render({ width: captureWindow.width, height: captureWindow.height },
@@ -628,35 +623,6 @@ async function createMedia({ temporary, lang, marks, pipRect, composerBounds, di
   const clipStart = Math.max(0, marks.type - 0.9);
   const clipEnd = Math.min(recordingSeconds - 0.1, marks.outro + 1.1);
   const clipDuration = clipEnd - clipStart;
-  const relative = name => Math.max(0, marks[name] - clipStart);
-  const move = (name, to, offset = -0.2) => ({ at: Math.max(0.12, relative(name) + offset), to });
-  const moves = [
-    move('type', framing(composerBounds), -0.28),
-    { at: relative('submit') - 0.05, to: wideShot },
-    move('pip', framing(pipRect, 20, 2.5), 0.55),
-    { at: relative('done') - 0.05, to: wideShot },
-    move('diff', framing(diffBounds, 34), -0.1),
-    { at: relative('outro') - cameraMoveSeconds - 0.05, to: wideShot },
-  ].map(item => ({ at: Math.max(0, Number(item.at.toFixed(3))), to: item.to }));
-  for (let index = 1; index < moves.length; index++) {
-    if (moves[index].at < moves[index - 1].at + cameraMoveSeconds) {
-      moves[index].at = Number((moves[index - 1].at + cameraMoveSeconds).toFixed(3));
-    }
-  }
-  assert.ok(moves.at(-1).at + cameraMoveSeconds <= clipDuration, 'Camera moves fit the clip');
-  const track = key => moves.reduceRight((rest, item, index) => {
-    const from = (index ? moves[index - 1].to : wideShot)[key];
-    const progress = `((it-${item.at})/${cameraMoveSeconds})`;
-    const eased = `${progress}*${progress}*(3-2*${progress})`;
-    return `if(lt(it,${item.at}),${from},if(lt(it,${item.at + cameraMoveSeconds}),${from}+(${item.to[key] - from})*${eased},${rest}))`;
-  }, String(moves.at(-1).to[key]));
-  const moving = moves.map(item => `between(t,${item.at},${item.at + cameraMoveSeconds})`).join('+');
-  const camera = [
-    `z='1/(${track('scale')})'`,
-    `x='(${track('x')})*${captureScale}-iw/zoom/2'`,
-    `y='(${track('y')})*${captureScale}-ih/zoom/2'`,
-    `d=1:s=1600x${Math.round(1600 * windowStage.height / windowStage.width)}:fps=${renderRate}`,
-  ].join(':');
   const rendered = path.join(temporary, 'rendered');
   fs.rmSync(rendered, { recursive: true, force: true });
   fs.mkdirSync(rendered);
@@ -667,13 +633,11 @@ async function createMedia({ temporary, lang, marks, pipRect, composerBounds, di
       `[0:v]crop=${contentWidth}:${contentHeight}:${offsetX}:${offsetY},format=rgba[window]`,
       `[2:v]format=gray[mask]`,
       `[window][mask]alphamerge[rounded]`,
-      `[1:v][rounded]overlay=${windowStage.left * captureScale}:${windowStage.top * captureScale}:format=rgb,fps=${renderRate},zoompan=${camera},split[sharp][moving]`,
-      `[moving]tmix=frames=${shutterFrames}[blurred]`,
-      `[sharp][blurred]overlay=format=rgb:enable='${moving}',fps=${frameRate}`,
+      `[1:v][rounded]overlay=${windowStage.left * captureScale}:${windowStage.top * captureScale}:format=rgb,fps=${frameRate}`,
     ].join(';'),
     '-t', String(clipDuration), path.join(rendered, '%05d.png'),
   ], { stdio: 'inherit' });
-  assert.equal(ffmpeg.status, 0, 'ffmpeg camera render');
+  assert.equal(ffmpeg.status, 0, 'ffmpeg fixed-frame render');
 
   const run = (command, args) => {
     const result = spawnSync(command, args, { encoding: 'utf8' });
@@ -683,7 +647,11 @@ async function createMedia({ temporary, lang, marks, pipRect, composerBounds, di
   };
   const files = fs.readdirSync(rendered).sort();
   const duration = index => Math.round((index + 1) * 1000 / frameRate) - Math.round(index * 1000 / frameRate);
-  const cuts = [0, ...moves.map(item => Math.floor((item.at + cameraMoveSeconds) * frameRate) + 1), files.length];
+  // Refresh the animated WebP every four seconds to prevent accumulated lossy
+  // patches around the live preview. These are encoding boundaries, not cuts.
+  const cuts = [0];
+  for (let frame = frameRate * 4; frame < files.length; frame += frameRate * 4) cuts.push(frame);
+  cuts.push(files.length);
   const joined = [];
   for (let index = 0; index + 1 < cuts.length; index++) {
     const indices = files.map((_, frame) => frame).slice(cuts[index], cuts[index + 1]);
@@ -699,5 +667,8 @@ async function createMedia({ temporary, lang, marks, pipRect, composerBounds, di
   }
   const target = path.join(output, `cua-${lang}.webp`);
   run('webpmux', [...joined, '-loop', '0', '-o', target]);
-  process.stdout.write(`[cua-media] wrote ${target}\n`);
+  const video = path.join(output, `cua-${lang}.mp4`);
+  run('ffmpeg', ['-v', 'error', '-y', '-framerate', String(frameRate), '-i', path.join(rendered, '%05d.png'),
+    '-c:v', 'libx264', '-preset', 'slow', '-crf', '20', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', video]);
+  process.stdout.write(`[cua-media] wrote ${target} and ${video}\n`);
 }
