@@ -20,6 +20,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Reduce desktop sidebar group gaps and conversation title emphasis, and align
+  the account control's bottom edge with the message composer.
 - Keep SSH workspace tunnels owned by their foreground command, wait for host registration before reporting readiness, and clean up interrupted startup.
 - Keep SSH workspace discovery available after removal or relocation, and reject account-backed homes before local pairing.
 - Avoid false file-save conflicts in remote workspaces by using the same modification-time calculation for Go file reads and desktop saves.
