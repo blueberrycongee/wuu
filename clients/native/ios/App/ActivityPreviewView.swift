@@ -35,13 +35,19 @@ import ImageIO
             }
             .navigationTitle(activity.kind == "browser" ? "浏览器" : "电脑")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarBackground(.black, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button { dismiss() } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark").font(.system(size: 17, weight: .semibold)).frame(width: 44, height: 44)
+                    }
                         .accessibilityLabel("关闭预览")
                 }
             }
         }
+        .tint(.white)
         .task(id: retry) { await observe() }
         .onChange(of: phase) { _, value in if value != .active { dismiss() } }
         .background {
@@ -73,6 +79,7 @@ import ImageIO
                     try surface.present(decoded, size: CGSize(width: frame.width, height: frame.height))
                     decodedCount += 1
                 }
+                if video { try await surface.waitForVideoPresentation() }
                 status = "live"
             } catch { status = "error"; message = error.localizedDescription }
             if video {
@@ -283,6 +290,18 @@ private final class PreviewSurface: UIScrollView, UIScrollViewDelegate {
         image.image = nil; video.flushAndRemoveImage()
         pixels = .zero
     }
+    #if DEBUG
+    func waitForVideoPresentation() async throws {
+        for _ in 0..<100 {
+            if video.isReadyForDisplay { return }
+            if video.sampleBufferRenderer.status == .failed {
+                throw video.sampleBufferRenderer.error ?? NativeError.invalid("预览视频显示失败")
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        throw NativeError.invalid("预览视频没有到达显示层")
+    }
+    #endif
     func present(_ frame: DecodedPreview, size: CGSize) throws {
         if pixels != size {
             minimumZoomScale = 1; maximumZoomScale = 4
@@ -298,17 +317,21 @@ private final class PreviewSurface: UIScrollView, UIScrollViewDelegate {
             guard CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: pixels, formatDescriptionOut: &format) == noErr,
                   let format else { throw NativeError.invalid("无法显示预览帧") }
             var sample: CMSampleBuffer?
-            var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+            var timing = CMSampleTimingInfo(duration: .invalid,
+                presentationTimeStamp: CMClockGetTime(CMClockGetHostTimeClock()), decodeTimeStamp: .invalid)
             guard CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: pixels,
                 formatDescription: format, sampleTiming: &timing, sampleBufferOut: &sample) == noErr, let sample else {
                 throw NativeError.invalid("无法显示预览帧")
             }
-            if let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true) as? [NSMutableDictionary] {
-                attachments.first?[kCMSampleAttachmentKey_DisplayImmediately] = true
-            }
-            // Decoded pixels can be replaced safely; compressed deltas were already consumed in order.
-            if video.status == .failed || !video.isReadyForMoreMediaData { video.flush() }
-            video.enqueue(sample)
+            guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true),
+                  CFArrayGetCount(attachments) > 0 else { throw NativeError.invalid("无法设置预览显示时间") }
+            let attachment = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+            CFDictionarySetValue(attachment, Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
+            let renderer = video.sampleBufferRenderer
+            if renderer.status == .failed { throw renderer.error ?? NativeError.invalid("预览视频显示失败") }
+            // DisplayImmediately replaces queued decoded pixels; flushing here can erase startup frames.
+            renderer.enqueue(sample)
         }
     }
     private func fit() {
