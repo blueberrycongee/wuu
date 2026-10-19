@@ -41,7 +41,8 @@ import ImageIO
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button { dismiss() } label: {
-                        Image(systemName: "xmark").font(.system(size: 17, weight: .semibold)).frame(width: 44, height: 44)
+                        Image(systemName: "xmark").font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(.white).frame(width: 44, height: 44)
                     }
                         .accessibilityLabel("关闭预览")
                 }
@@ -182,8 +183,12 @@ private actor PreviewDecoder {
                 throw NativeError.invalid("预览视频尺寸超出限制")
             }
             var decoder: VTDecompressionSession?
+            // Core Animation consumes IOSurface-backed buffers without a CPU pixel copy.
+            let attributes: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any],
+                kCVPixelBufferMetalCompatibilityKey: true]
             try check(VTDecompressionSessionCreate(allocator: kCFAllocatorDefault, formatDescription: next,
-                decoderSpecification: nil, imageBufferAttributes: nil, outputCallback: nil, decompressionSessionOut: &decoder))
+                decoderSpecification: nil, imageBufferAttributes: attributes as CFDictionary,
+                outputCallback: nil, decompressionSessionOut: &decoder))
             format = next; session = decoder; generation = frame.generation; configuration = frame.configuration
         }
         guard let session, let format else { throw NativeError.invalid("无法启动预览解码器") }
@@ -214,6 +219,11 @@ private actor PreviewDecoder {
               CVPixelBufferGetWidth(decoded) == frame.width, CVPixelBufferGetHeight(decoded) == frame.height else {
             throw NativeError.invalid("预览帧没有可显示的图像")
         }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--native-preview-h264-fixture") {
+            print("Preview H264 frame \(frame.sequence): \(frame.width)x\(frame.height), IOSurface=\(CVPixelBufferGetIOSurface(decoded) != nil)")
+        }
+        #endif
         return .video(decoded)
     }
     private func check(_ status: OSStatus) throws {
