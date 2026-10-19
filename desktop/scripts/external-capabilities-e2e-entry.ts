@@ -25,7 +25,7 @@ for (const directory of [output, home, ...projects]) mkdirSync(directory, { recu
 app.setPath('userData', join(fixture, 'profile'));
 app.disableHardwareAcceleration();
 app.on('window-all-closed', () => {});
-Object.assign(process.env, { HOME: home, WUU_HOME: home, WUU_SAFE_MODE: cua ? '0' : '1', WUU_ENABLE_BROWSER: '1',
+Object.assign(process.env, { HOME: home, WUU_HOME: home, WUU_SAFE_MODE: cua ? '0' : '1', WUU_ENABLE_BROWSER: '1', WUU_ENABLE_CUA_LINUX: cua ? '1' : '0',
   WUU_DESKTOP_CORE: resolve(process.env.WUU_EXTERNAL_CAPABILITIES_CORE ?? join(desktop, 'build/bin/wuu-core')),
   WUU_SOURCE_ROOT: resolve(desktop, '..'), CODEX_HOME: join(home, '.codex'), CLAUDE_CONFIG_DIR: join(home, '.claude') });
 delete process.env.ELECTRON_RENDERER_URL;
@@ -156,6 +156,7 @@ async function start(engine: string, marker: string, project = 0, existingThread
   await bounded(`${engine} native MCP registration`, scenario.registered.promise);
   check(`${marker} receives the browser tool through native MCP configuration`, scenario.tools.includes('wuu_browser'), scenario.tools);
   if (!cua) check(`${marker} does not expose disabled CUA plugins`, scenario.tools.every(name => !/computer|cua/.test(name)), scenario.tools);
+  else check(`${marker} exposes the enabled native CUA helper from its first catalog`, scenario.tools.some(name => /cua_linux.*computer/.test(name)), scenario.tools);
   return scenario;
 }
 async function tool(scenario: Scenario, args: Record<string, unknown>, name = 'wuu_browser', expectedError = false) {
