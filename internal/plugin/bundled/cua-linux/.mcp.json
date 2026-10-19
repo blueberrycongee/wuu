@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "computer": {
+      "command": "@wuu/official-helper:cua-linux",
+      "tool_overrides": {
+        "computer": {
+          "read_only": false,
+          "concurrency_safe": false,
+          "capability": "mcp"
+        }
+      }
+    }
+  }
+}

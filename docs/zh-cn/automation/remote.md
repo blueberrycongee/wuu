@@ -9,6 +9,121 @@ Relay 转发端到端加密的 app-server 连接。配对授予的是 Host 控�
 [原生客户端项目](../../../clients/native/README.md)构建，尚未提供公开 App Store 分发。
 桌面账号登录仍仅在开发模式开放。CLI 构建方法见[开发指南](../project/development.md)。
 
+## 连接 SSH 工作区
+
+实验性的无桌面宿主在远端 macOS 或 Linux 电脑上运行 Wuu、已安装的 Agent 引擎、
+文件、Git 和终端，本地浏览器通过 OpenSSH 隧道显示共享 Wuu 工作台。
+Codex、Claude Code、Pi、OpenCode 等受支持引擎需在**远端**安装并登录；
+引擎发现与会话状态都属于该电脑。
+
+在远端同一份 Wuu 源码中构建，需要 Node 22+ 和 `go.mod` 指定的 Go 版本：
+
+```bash
+make setup
+npm --prefix desktop run build:remote
+npm --prefix desktop run remote:serve -- --workdir /srv/my-project --port 8787 --pair
+```
+
+用 tmux 或服务管理器运行最后一条命令，避免退出 SSH 时服务随之停止。
+服务只监听 `127.0.0.1`，并打印一次性的浏览器配对链接。
+构建产物包含匹配的 Go 核心和网页资源；也可用 `--core` 和 `--web-root`
+指定路径。不要让桌面的远程 Host 与该服务同时使用同一个 Wuu home。
+
+SSH 服务使用本地设备配对；如果其 Wuu home 已登录 Wuu 账号，服务会拒绝启动，
+并保留现有账号凭据。可使用独立目录，例如
+`WUU_HOME="$HOME/.wuu-ssh" npm --prefix desktop run remote:serve -- --workdir /srv/my-project --pair`，
+或自行退出该 Wuu 账号后再启动。独立目录拥有自己的 Wuu 配置和会话历史，
+请在开始任务前完成配置。
+
+在本地从同一版本构建、安装 CLI，然后连接：
+
+```bash
+wuu remote ssh --port 8787 user@server
+```
+
+打开远端服务打印的配对链接。以后访问 `http://127.0.0.1:8787/`
+即可使用已保存的配对。使用期间保持 SSH 命令运行，Ctrl-C 关闭隧道。
+SSH 配置别名、密钥、主机密钥校验和 ProxyJump 沿用本机 OpenSSH 配置；
+可用 `--ssh-port` 或 `--ssh-config` 显式指定连接参数。Wuu 始终在前台独占这条隧道，
+不会为目的地主机连接复用或留下 control master，即使本机配置默认启用了连接共享或
+后台运行。跳板机仍遵循其自身的 SSH 配置；已有或显式后台运行的跳板机 master 由用户管理。
+
+Linux 和 macOS 上，没有控制终端时，Wuu 会将 SSH 及其前台代理子进程放在独立进程组中，
+取消连接也会清理仍在连接的跳板机进程。有交互终端时保留 shell 作业控制和 OpenSSH
+提示，即使标准输入被重定向也可交互认证。请用 Ctrl-C 向整个前台作业发送信号。
+在这种交互场景下，只向 Wuu 的 PID 发信号，不能保证清理仍在认证的代理进程；
+服务自动化应在没有控制终端的环境运行，或停止整个进程组。
+
+CLI 的连接提示不是应用健康检查。请等待远端服务打印 `Wuu workspace ready` 后再
+打开工作台；这表示监听器已运行，Host 已完成注册。打开工作区时才会发现远端的
+Agent 引擎。`ExitOnForwardFailure` 能发现转发配置失败，不能证明远端应用可用。
+如果 SSH 报错退出，请按报错排查后重新运行同一命令。Wuu 不会自动重试 SSH 或
+反复请求密码；隧道恢复后，浏览器会自动重连。
+
+每台主机使用不同的本地端口，让浏览器身份和草稿保持独立。
+例如将远端 8787 映射到本地 8788：远端启动参数使用
+`--port 8787 --browser-port 8788 --pair`，本地运行
+`wuu remote ssh --port 8788 --remote-port 8787 user@server`。
+更换对外声明的浏览器端口后需要重新配对。
+
+关闭浏览器或断开 SSH 后，Agent 任务仍在远端服务中运行。重新连接隧道后，
+工作台恢复会话与缓存输出。恢复原连接时终端也继续保留；若建立了全新连接，
+工作台会提示重新打开终端。停止或重启远端服务会停止任务和终端，
+已保存的会话历史仍在磁盘上。重启时不加 `--pair`，即可接受已有设备，
+同时不开启新设备配对。
+
+如果启动时的工作区被移除或迁移，重连仍可通过共享的「对话」工作区发现项目，
+然后重新选择需要的项目。
+
+### 将 Host 作为服务运行
+
+Linux 使用 systemd 时，先按上面的命令交互配对，然后停止该 Host，再启动服务。
+通过 `command -v node` 确认 Node 的绝对路径，并替换实际源码、工作区和 Wuu home 路径：
+
+```ini
+# ~/.config/systemd/user/wuu-workspace.service
+[Unit]
+Description=Wuu SSH workspace
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/wuu
+Environment=WUU_HOME=/home/YOUR_USER/.wuu-ssh
+ExecStart=/usr/bin/node /srv/wuu/desktop/out-remote/host.mjs --workdir /srv/my-project --port 8787
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+UMask=0077
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now wuu-workspace
+journalctl --user -u wuu-workspace -f
+# 主动停止服务及其任务：
+systemctl --user stop wuu-workspace
+```
+
+如果管理员未启用用户 lingering（`loginctl enable-linger YOUR_USER`），用户服务可能在
+登出时停止。请遵循电脑的管理策略；Wuu 不会自行安装或启用服务。macOS 可用 tmux，
+或使用相同 Node 命令的 launchd 服务。服务重启会恢复已保存的历史，但不是进程检查点：
+运行中的回合与终端会停止。启动失败或收到 SIGINT/SIGTERM/SIGHUP 时，服务会清理其
+启动的子进程；取消后不会再报告就绪。
+不要在自动重启的服务中加入 `--pair`；仅在准备配对新浏览器时开启配对，
+并避免把配对链接写入共享日志。
+
+这一生命周期参考了 [code-server](https://coder.com/docs/code-server/guide#port-forwarding-via-ssh)
+的预安装服务与回环 SSH 转发方式。OpenSSH 负责[端口转发](https://man.openbsd.org/ssh_config#ExitOnForwardFailure)
+和[连接共享](https://man.openbsd.org/ssh_config#ControlMaster)；Wuu 的已有会话连续性机制负责恢复连接。
+
+当前是从源码构建的浏览器工作台预览。无桌面宿主不提供原生桌面窗口、
+内嵌浏览器/电脑控制工具或自动安装远端软件。需要原生浏览器的引擎登录，
+应先在远端完成。本机的 SSH 凭据和模型配置不会上传。
+
 ## 连接 iOS App
 
 1. 保持电脑上的 Wuu 运行。在「设置 → 手机访问」中允许访问，显示配对码。

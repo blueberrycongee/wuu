@@ -202,6 +202,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.model.invoke` | Independent full logical model calls and streams |
 | `host.model.emit` | Events from a streaming adapter or middleware |
 | `host.background` | Generation-owned calls to a plugin’s own service |
+| `host.process` | Conversation-bound shell processes, output and event delivery |
 | `host.settings.get/list` | Declared setting values |
 | `host.session.create/send/list/inspect/cancel/control` | Create and manage sessions through host lifecycle rules |
 | `host.session.history.read/search` | Bounded history access with sequence snapshots and continuation cursors |
@@ -428,6 +429,33 @@ exercise these surfaces with synthetic data. They are acceptance fixtures, not
 installed caching or comparison products. Run
 `node scripts/plugin-model-pipeline-e2e.mjs` against a source-built core; the driver
 uses a local fake provider and records repeatable evidence without paid inference.
+
+### Conversation-bound shell processes
+
+Declare `requireProcessService()` to consume `host.process` version 1. From a live
+conversation tool callback, call `startProcess(host, { key, command, cwd?,
+timeout_ms?, follow_parent? })`. It uses the caller's local shell permissions,
+sandbox, working directory and process manager. Remote execution environments are
+not supported. Starting from activation or an unrelated capability is rejected.
+A repeated key with identical arguments returns its existing receipt; changed
+arguments conflict. There may be at most 64 running processes per generation.
+Terminal handles are retained up to the host's 256-record receipt bound.
+
+`readProcess` returns merged output, byte cursors, truncation and a process snapshot.
+Reads accept 4 bytes to 1 MiB (default 64 KiB), and up to 30 seconds of waiting.
+Use `next_offset`, including when UTF-8 framing or log retention changes a read's
+length. `stopProcess` stops the entire process tree. A zero timeout means no deadline;
+archival/deletion, generation closure and host shutdown still stop the process.
+`follow_parent: true` transfers the recipient of a completed private child to its
+parent; snapshots report the current `session_id`.
+
+`sendProcessEvent(host, processID, message)` uses the same request identity,
+presentation and `if_running` contract as `host.session.send`, but the host selects
+the recipient captured by that process. This also permits events to the originating
+private child without granting arbitrary private-session access. Output and process
+exit alone never wake a conversation. Plugins own framing, filtering, event policy
+and durable history; handles do not survive a runtime restart. The bundled
+[Monitor plugin](plugins.md#monitor-background-events) demonstrates this surface.
 
 ## Providing a service
 

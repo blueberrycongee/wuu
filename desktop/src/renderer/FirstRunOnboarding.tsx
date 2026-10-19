@@ -1,6 +1,7 @@
 import { ArrowRight, Check, ChevronRight, FolderOpen, Info, LoaderCircle, RefreshCw } from "./WuuIcons";
 import { type KeyboardEvent, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
+  CatalogProviderSummary,
   EngineInfo,
   EngineListResult,
   EngineUpdateParams,
@@ -92,6 +93,7 @@ const STEP_TITLES: Readonly<Record<OnboardingStep, TranslationKey>> = {
 export function FirstRunOnboarding({
   inventory: liveInventory,
   providers: liveProviders,
+  catalogProviders,
   engines,
   preview = false,
   onDismissPreview,
@@ -102,6 +104,7 @@ export function FirstRunOnboarding({
 }: {
   inventory?: readonly ExtensionInventoryRecord[];
   providers?: readonly ProviderSummary[];
+  catalogProviders?: CatalogProviderSummary[];
   engines?: EngineListResult;
   preview?: boolean;
   onDismissPreview?: () => void;
@@ -143,7 +146,7 @@ export function FirstRunOnboarding({
   const scannedRevision = useRef(-1);
   const [error, setError] = useState<{ title: string; detail?: string } | null>(null);
   const [selectedEngine, setSelectedEngine] = useState(RECOMMENDED_ENGINE);
-  const catalog = useCatalogProviders(0);
+  const catalog = useCatalogProviders(0, catalogProviders);
   const localProviders = discoveredLocalProviders(providers);
   const providerReady = hasOnboardingProvider(providers);
   const preset = selectedPreset(selectedPluginIDs, bundledPlugins);

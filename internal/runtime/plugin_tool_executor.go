@@ -147,6 +147,9 @@ func (e *pluginToolExecutor) ExecuteResult(ctx context.Context, call providers.T
 				return toolresult.Result{}, err
 			}
 		}
+		if kit, ok := e.inner.(*tools.Toolkit); ok {
+			ctx = context.WithValue(ctx, pluginProcessToolkitKey{}, kit)
+		}
 		result, executeErr = e.host.ExecuteTool(ctx, call.Name, input)
 	} else if rich, ok := e.inner.(agent.RichToolExecutor); ok {
 		result, executeErr = rich.ExecuteResult(ctx, call)

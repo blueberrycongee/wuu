@@ -72,7 +72,15 @@ export function SubscriptionDashboard({
           codex_credential_source: checked.codex_credential_source, api_key_configured: checked.api_key_configured,
           quota: provider.quota } : provider;
       });
-      return subscriptionSources(refreshed, currentProviders);
+      const sources = subscriptionSources(refreshed, currentProviders);
+      if (loadedInventory) {
+        // Wait for the quota snapshot before moving observed subscriptions to
+        // the front. Exhausted and stale allowances still belong to active accounts.
+        const hasObservedQuota = (source: SubscriptionSource) =>
+          source.quota?.status === "available" || source.quota?.status === "stale";
+        sources.sort((left, right) => Number(hasObservedQuota(right)) - Number(hasObservedQuota(left)));
+      }
+      return sources;
     },
     [loadedInventory, inventory, providers, revision, authProviders],
   );

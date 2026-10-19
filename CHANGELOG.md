@@ -12,56 +12,42 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Offer optional browser cookie import during macOS onboarding, with recently
   active local profiles listed first and explicit import actions.
-- Add browser settings for importing cookies from local profiles and managing
-  unpacked extensions in the embedded browser.
-- Add DeepSeek Harness as an external ACP engine, with native model and
-  reasoning selection, HTTP MCP tools, and persistent conversation recovery.
-- Keep independent activity previews for multiple browser tabs and native windows
-  in one conversation, with up to five visible cards and individual dismissal.
-
-### Changed
-
-- Group settings navigation by purpose and add search across page names and setting
-  keywords, including plugin pages, while preserving the current page during filtering.
-- Base spacing on a shared font-relative module across navigation, conversations,
-  composers and settings. Distinguish related details, reading blocks and section
-  breaks, keep empty folder actions visible, and align the sidebar's top controls
-  with its trailing action column. Apply the same spacing scale to the fork
-  destination dialog, with aligned option columns and stable text while loading.
+- Add an experimental headless workspace host and `wuu remote ssh` tunnel: use remote agent engines, files, Git, and terminals in the shared browser workbench, with running tasks preserved across SSH disconnects.
+- Add Linux X11 computer control with window-bound observation and foreground input,
+  and watch-only activity previews that retain the existing controls and layout.
+- Monitor plugin for background scripts, event delivery into the active conversation,
+  timeout and persistent watches, output inspection, and per-task stop controls.
+- Public process service for conversation-bound extension commands and event delivery,
+  with process-tree cleanup and optional handoff from completed child sessions.
 
 ### Fixed
 
-- Restore ACP sessions through advertised `session/resume` support and close
-  native sessions before terminating their processes, including model probes
-  and cancelled turns. Preserve advertised empty reasoning defaults when
-  clearing a previous override.
+- Show the local model service directory immediately in settings and onboarding,
+  without skeleton placeholders or a new directory request on each visit.
+- Keep SSH workspace tunnels owned by their foreground command, wait for host registration before reporting readiness, and clean up interrupted startup.
+- Keep SSH workspace discovery available after removal or relocation, and reject account-backed homes before local pairing.
+- Avoid false file-save conflicts in remote workspaces by using the same modification-time calculation for Go file reads and desktop saves.
+- Continue failed external-agent sessions when their native history cannot be rewound,
+  avoiding an unsupported edit-and-resend request from the recovery button. Hide
+  the Wuu model-provider settings shortcut for engines that own their credentials.
+- Preserve and queue desktop messages when another turn wins a concurrent send, retaining attachments, send order, and Stop intent.
+- Guide next-message predictions toward concrete follow-ups instead of polite
+  acknowledgments, and allow no suggestion when the next intent is unclear.
 
-### Removed
+## [2026.10.19] - 2026-10-18
 
-- Remove the workspace new page's Continue viewing section, which duplicated
-  files, diffs, and artifacts already available in the tab strip.
+### Contributors
 
-### Fixed
+@blueberrycongee
 
-- Keep sidebar fork markers separate from pin and archive actions when a running,
-  unread, or switching conversation has keyboard focus.
-- Keep next-message suggestions visible and accept them with Tab while hovering
-  the composer's read-only usage hints.
-- Allow forks made after context-window switches to send follow-up messages,
-  including previously affected forks, while preserving their conversation history.
-- Hide live activity previews while image viewers or dialogs are open, then
-  restore eligible previews without interrupting background tasks.
-- Keep retained native previews from taking focus or restoring windows now owned
-  by another task when activity control changes.
-- Keep right-to-left paragraphs, headings, and quotes in messages aligned
-  and selectable in their natural direction while inline code, code blocks,
-  and tool output remain left-to-right.
-- Keep reasoning summaries on the same quiet gray as tool activity summaries
-  and composer placeholder text.
-- Keep macOS computer-control snapshots and background focus independent when
-  sessions alternate between different apps, and discard state when control ends.
-- Reject computer-control sequences that switch apps before executing any steps,
-  so every step remains within the sequence's app control lease.
+### Highlights
+
+- Import cookies from local browser profiles and manage unpacked extensions in the embedded browser.
+- Add DeepSeek Harness as an external ACP engine with model and reasoning selection, HTTP MCP tools, and conversation recovery; improve ACP session restoration and shutdown.
+- Show independent activity previews for multiple browser tabs and native windows, hide previews behind dialogs, and keep computer-control focus and state isolated between conversations.
+- Search grouped settings pages, use font-relative spacing throughout the desktop, and move subscriptions with observed allowances or balances to the front after loading.
+- Restore follow-up messages in forks created after context-window switches, preserve next-message suggestions over usage hints, and improve right-to-left message selection and alignment.
+- Refine sidebar history and fork controls, keep small image previews usable at large font sizes, and remove duplicate workspace content.
 
 ## [2026.10.18] - 2026-10-18
 

@@ -10,18 +10,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { DesktopProject, RuntimeContext } from "../shared/protocol";
-
-const electronMock = vi.hoisted(() => ({
-  userDataPath: "",
-}));
-
-vi.mock("electron", () => ({
-  app: {
-    getPath: vi.fn(() => electronMock.userDataPath),
-  },
-}));
 
 import { ProjectManager } from "./projects";
 
@@ -32,7 +22,6 @@ let originalWuuHome: string | undefined;
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "wuu-projects-home-"));
   legacyUserData = await mkdtemp(join(tmpdir(), "wuu-projects-legacy-"));
-  electronMock.userDataPath = legacyUserData;
   originalWuuHome = process.env.WUU_HOME;
   process.env.WUU_HOME = home;
 });
@@ -112,7 +101,7 @@ async function expectRejectedCanonicalStore(
 
   let loadError: unknown;
   try {
-    new ProjectManager().load();
+    new ProjectManager(join(legacyUserData, "projects.json")).load();
   } catch (error) {
     loadError = error;
   }
@@ -131,7 +120,7 @@ describe("ProjectManager project store migration", () => {
     const legacyProject = project("legacy", "legacy", legacyPath);
     await writeStore(legacyStorePath(), [legacyProject]);
 
-    const manager = new ProjectManager();
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
     manager.load();
 
     expect(manager.list().projects.map((item) => item.id)).toEqual(["legacy"]);
@@ -147,12 +136,12 @@ describe("ProjectManager project store migration", () => {
     const legacyProject = project("legacy", "legacy", legacyPath);
     await writeStore(legacyStorePath(), [legacyProject]);
 
-    const manager = new ProjectManager();
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
     manager.load();
     expect(manager.list().projects.map((item) => item.id)).toEqual(["legacy"]);
 
     await rm(canonicalStorePath(), { force: true });
-    const resetManager = new ProjectManager();
+    const resetManager = new ProjectManager(join(legacyUserData, "projects.json"));
     resetManager.load();
 
     expect(resetManager.list().projects.map((item) => item.id)).toEqual([]);
@@ -172,7 +161,7 @@ describe("ProjectManager project store migration", () => {
       project("legacy-only", "legacy-only", legacyOnlyPath),
     ]);
 
-    const manager = new ProjectManager();
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
     const result = manager.remove("removed");
 
     expect(result.projects.map((item) => item.id)).toEqual(["keep"]);
@@ -223,7 +212,7 @@ describe("ProjectManager project store migration", () => {
 
     let loadError: unknown;
     try {
-      new ProjectManager().load();
+      new ProjectManager(join(legacyUserData, "projects.json")).load();
     } catch (error) {
       loadError = error;
     } finally {
@@ -251,7 +240,7 @@ describe("ProjectManager runtime context availability", () => {
       project("active", "active", activePath),
       project("target", "target", targetPath),
     ], active);
-    const manager = new ProjectManager();
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
     expect(manager.resolveSubmissionContext(target)).toEqual(target);
     expect(manager.list().active_context).toEqual(active);
     expect(() => manager.resolveSubmissionContext({ ...target, cwd: activePath })).toThrow();
@@ -274,7 +263,7 @@ describe("ProjectManager runtime context availability", () => {
     };
     await writeStore(canonicalStorePath(), [activeProject], activeContext);
 
-    const listed = new ProjectManager().add(addedPath);
+    const listed = new ProjectManager(join(legacyUserData, "projects.json")).add(addedPath);
 
     expect(listed.projects).toHaveLength(2);
     expect(listed.projects.some((item) => item.path === addedPath)).toBe(true);
@@ -294,7 +283,7 @@ describe("ProjectManager runtime context availability", () => {
     await rm(projectPath, { recursive: true });
     const persistedBefore = await readFile(canonicalStorePath(), "utf8");
 
-    const manager = new ProjectManager();
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
     const listed = manager.list();
 
     expect(listed.active_context).toEqual(activeContext);
@@ -329,7 +318,7 @@ describe("ProjectManager runtime context availability", () => {
     };
     await writeStore(canonicalStorePath(), [activeProject], activeContext);
 
-    const listed = new ProjectManager().remove(activeProject.id);
+    const listed = new ProjectManager(join(legacyUserData, "projects.json")).remove(activeProject.id);
 
     expect(listed.projects).toEqual([]);
     expect(listed.active_context?.kind).toBe("no_project");
@@ -345,11 +334,11 @@ describe("ProjectManager runtime context availability", () => {
   const first = await createProjectDir("first");
   const second = await createProjectDir("second");
   const third = await createProjectDir("third");
-  const manager = new ProjectManager();
+  const manager = new ProjectManager(join(legacyUserData, "projects.json"));
   const id = manager.add(first).projects[0].id;
   manager.relocate(id, second);
-  new ProjectManager().add(second);
-  new ProjectManager().relocate(id, third);
+  new ProjectManager(join(legacyUserData, "projects.json")).add(second);
+  new ProjectManager(join(legacyUserData, "projects.json")).relocate(id, third);
   const saved = JSON.parse(await readFile(canonicalStorePath(), "utf8"));
   expect(saved.projects[0]).toMatchObject({id, path: third, previous_paths: [first, second]});
 });
@@ -358,7 +347,7 @@ describe("workspace batch import", () => {
   it("validates the entire selection before persisting and preserves identities on retries", async () => {
     const first = await createProjectDir("first");
     const second = await createProjectDir("second");
-    const manager = new ProjectManager();
+    const manager = new ProjectManager(join(legacyUserData, "projects.json"));
     const before = manager.add(first);
     const originalID = before.projects[0].id;
     const saved = await readFile(canonicalStorePath(), "utf8");

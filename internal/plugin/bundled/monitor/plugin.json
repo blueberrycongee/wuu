@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "monitor",
+  "name": "Monitor",
+  "description": "Watch scripts and event streams, and wake the conversation when something changes.",
+  "icon": "pulse",
+  "version": "0.1.0",
+  "author": { "name": "Wuu" },
+  "minimumWuuVersion": "2026.10.19",
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
+  "desktop": { "entry": "desktop.js" },
+  "contributes": { "slots": [{ "id": "monitor-tasks", "target": "composer.above", "order": 30, "title": "Monitors" }] },
+  "interface": { "displayName": "Monitor", "shortDescription": "Follow background events without blocking the conversation.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Read", "Write"] }
+}

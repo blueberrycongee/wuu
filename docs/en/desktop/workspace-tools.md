@@ -154,9 +154,21 @@ Use **Stop** in the conversation to interrupt the task. To take over a browser p
 
 Hiding the preview or stopping the task does not quit the application being observed. Disabling or retiring the owning extension stops its preview activity. If a capture target disappears, Wuu closes its preview; unchanged activity updates do not reopen that target. Unavailable capture shows a brief recovery hint, and a retained frame is labelled paused rather than live. Individual tool errors stay in the conversation's tool records and do not cover the preview. The preview does not silently switch to another app window or the whole screen.
 
-Native app previews use a low-latency H.264 video stream with hardware acceleration where available. Hiding or pausing the preview stops capture; resuming or resizing it refreshes the video, and decoder recovery stays on the same target window.
+On macOS, native app previews use a low-latency H.264 video stream with hardware acceleration where available. Hiding or pausing the preview stops capture; resuming or resizing it refreshes the video, and decoder recovery stays on the same target window.
 
-Native app previews require a macOS build with Computer Use enabled and the relevant macOS permissions. The floating preview does not itself grant Screen Recording or Accessibility access. See [installation](../getting-started/installation.md) for build availability and permissions.
+Native app previews require a build with the platform’s Computer Use helper. macOS requires Screen Recording and Accessibility permissions. Linux previews require an X11 session and remain bound to the observed window and process. The floating preview does not itself grant control or capture permissions. See [installation](../getting-started/installation.md) for build availability and permissions.
+
+## Linux app control
+
+Linux Computer Use operates windows in an X11 desktop session. Enable **Computer Use for Linux** in the extension settings. The desktop package must include `wuu-cua-linux`, and the session must provide XTEST input and XComposite capture. It does not require a root input daemon.
+
+The Agent discovers a window, observes it, and uses its snapshot for mouse and keyboard input. Window identity includes the process and X11 window ID; closing or replacing the target requires a new observation. Input uses the foreground window, so controlling another app can bring that app forward. This is not background app control.
+
+Text input uses characters available in the active primary keyboard layout. Unmapped characters and incompatible keyboard states return an error before typing; this version does not provide arbitrary Unicode clipboard paste or change the system keyboard mapping.
+
+The PiP uses the same watch-only controls and layout as other activity previews. Hiding it stops its capture without stopping the Agent. A missing or unavailable target does not fall back to another window or the full desktop.
+
+Native Wayland sessions are not supported, including sessions where XWayland exposes a `DISPLAY`. Use an X11 login session for this version. No desktop permission settings are changed automatically. Linux does not provide the macOS Accessibility tree, semantic text editing, or background-focus behavior described below.
 
 ## Mac app control
 

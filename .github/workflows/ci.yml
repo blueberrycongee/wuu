@@ -966,6 +966,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
@@ -1008,6 +1013,32 @@ jobs:
 
       - name: Build
         run: make build-clients
+
+      - name: Build headless workspace acceptance prerequisites
+        run: |
+          npm --prefix desktop run build:remote
+          clients/mobile-web/node_modules/.bin/playwright install --with-deps chromium
+          sudo apt-get update
+          sudo apt-get install -y openssh-server
+
+      - name: Verify SSH workspace lifecycle
+        timeout-minutes: 6
+        shell: bash
+        env:
+          WUU_HEADLESS_E2E_OUTPUT: ${{ github.workspace }}/.tmp/e2e/headless-workspace
+        run: |
+          mkdir -p "$WUU_HEADLESS_E2E_OUTPUT"
+          set -o pipefail
+          npm --prefix clients/mobile-web run test:headless 2>&1 | tee "$WUU_HEADLESS_E2E_OUTPUT/run.log"
+
+      - name: Upload SSH workspace acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: headless-workspace-evidence
+          path: .tmp/e2e/headless-workspace/
+          if-no-files-found: ignore
+          retention-days: 14
 
   macos-check:
     name: macOS native check

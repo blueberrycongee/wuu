@@ -61,7 +61,7 @@ Codex uses its app-server model catalog. ACP engines use `session/new` model/con
 
 Existing conversations keep their engine identity, but their model and options remain editable while idle. Choosing **Agent default** clears model, reasoning, speed and additional option overrides; the next turn resolves native defaults rather than retaining an earlier session override. Individual options also offer **Default**. Resuming Claude requires its `get_settings` control to expose the configured model. OpenCode restores the default agent's model or its configured model; when neither is exposed, select a model explicitly before resuming. Its API does not expose the recent-model fallback. Unsupported native defaults produce an error instead of silently retaining an old override.
 
-ACP image attachments are written to local files and included as paths in the prompt so the agent can read them with its own tools. Wuu does not send ACP image content blocks, including when the agent advertises image prompt support. Unsupported host HTTP MCP tools still produce an error rather than dropping the tools.
+ACP image attachments are written to local files and included as paths in the prompt so the agent can read them with its own tools. Wuu does not send ACP image content blocks, including when the agent advertises image prompt support. The ACP adapter accepts HTTP MCP server bindings, but the desktop currently starts external engines without Wuu host-tool bindings. Wuu's plugins, embedded browser and CUA tools are therefore unavailable in these conversations; use tools configured in the agent itself.
 
 ## Fast mode
 
@@ -104,7 +104,9 @@ Wuu conversations need a matching native output identity to establish the cut.
 
 Claude Code and the other external adapters do not yet expose a verified native
 history cutoff through Wuu. Their nonempty histories remain readable and
-resumable, but fork/edit requests fail before changing them. Empty, never-run
+resumable, but fork/edit requests fail before changing them. A failed turn offers
+**Continue**, which sends a follow-up in the existing session without rewriting
+its native history. Empty, never-run
 threads can still be forked. Managed context-copy requests likewise reject
 external history instead of treating its display transcript as a native replay.
 

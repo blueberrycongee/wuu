@@ -947,3 +947,130 @@ func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
 		})
 	}
 }
+
+func TestPluginProcessRecipientWaitsForChildExecutionOwnership(t *testing.T) {
+	for _, activity := range []string{"durable_lease", "admission", "claimed_queue"} {
+		t.Run(activity, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			srv := New(rt, &lockedBuffer{})
+			t.Cleanup(srv.Close)
+			parent, err := srv.createPluginSession(context.Background(), "subagent", pluginhost.SessionCreateParams{
+				RequestID: "parent", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			child, err := srv.createPluginSession(context.Background(), "subagent", pluginhost.SessionCreateParams{
+				RequestID: "child", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh, ParentSessionID: parent.SessionID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			th := srv.thread(child.SessionID)
+			var release func()
+			switch activity {
+			case "durable_lease":
+				lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, child.SessionID)
+				if err != nil || !acquired {
+					t.Fatalf("reserve child execution: %v, %v", acquired, err)
+				}
+				release = func() {
+					if err := lease.Release(); err != nil {
+						t.Error(err)
+					}
+				}
+			case "admission":
+				th.mu.Lock()
+				th.admissionReserved = true
+				th.mu.Unlock()
+				release = func() { th.mu.Lock(); th.admissionReserved = false; th.mu.Unlock() }
+			case "claimed_queue":
+				entry := queuedTurn{id: "child-followup", msg: providers.ChatMessage{Role: "user", Content: "continue"}}
+				if !srv.enqueueQueuedUserTurn(child.SessionID, entry) {
+					t.Fatal("queue rejected")
+				}
+				if _, ok := srv.takeNextQueuedUserTurn(child.SessionID); !ok {
+					t.Fatal("queue claim missing")
+				}
+				release = func() { srv.settleQueuedTurnClaim(child.SessionID, entry, false) }
+			}
+			var once sync.Once
+			releaseOnce := func() { once.Do(release) }
+			t.Cleanup(releaseOnce)
+			id, closed, err := srv.resolvePluginProcessSession(context.Background(), child.SessionID, true)
+			if err != nil || closed || id != child.SessionID {
+				t.Fatalf("active child recipient = %q, closed=%v, err=%v", id, closed, err)
+			}
+			releaseOnce()
+			id, closed, err = srv.resolvePluginProcessSession(context.Background(), child.SessionID, true)
+			if err != nil || closed || id != parent.SessionID {
+				t.Fatalf("completed child recipient = %q, closed=%v, err=%v", id, closed, err)
+			}
+		})
+	}
+}
+
+func TestPluginProcessDeliveryHonorsRecipientControl(t *testing.T) {
+	for _, manager := range []string{"project-controller", "plugin:coordinator"} {
+		for _, state := range []string{session.ControlActive, session.ControlPaused, session.ControlTakenOver} {
+			t.Run(manager+"/"+state, func(t *testing.T) {
+				rt := newTestRuntime(t, &fakeClient{})
+				srv := New(rt, &lockedBuffer{})
+				t.Cleanup(srv.Close)
+				visibility := pluginhost.SessionVisibilityUser
+				if strings.HasPrefix(manager, "plugin:") {
+					visibility = pluginhost.SessionVisibilityPlugin
+				}
+				created, err := srv.createPluginSession(context.Background(), "subagent", pluginhost.SessionCreateParams{
+					RequestID: "recipient", Visibility: visibility, ContextSource: pluginhost.SessionContextFresh,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				control, err := session.ChangeControl(rt.SessionDir, created.SessionID, manager, state, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				th := srv.thread(created.SessionID)
+				th.mu.Lock()
+				th.running, th.currentTurn = true, "ongoing-turn"
+				th.mu.Unlock()
+				t.Cleanup(func() { th.mu.Lock(); th.running, th.currentTurn = false, ""; th.mu.Unlock() })
+				params := pluginhost.SessionSendParams{
+					RequestID: "observation", SessionID: created.SessionID, IfRunning: pluginhost.SessionIfRunningSteer,
+					Input: pluginhost.SessionInput{Prompt: "The monitored command completed."},
+				}
+				if _, err := srv.sendPluginSession(context.Background(), "monitor", params); err == nil {
+					t.Fatal("ordinary plugin send bypassed recipient ownership or control")
+				}
+				ctx := pluginhost.WithProcessSessionDelivery(context.Background(), created.SessionID)
+				result, err := srv.sendPluginSession(ctx, "monitor", params)
+				if state != session.ControlActive {
+					if err == nil {
+						t.Fatalf("process event bypassed %s control: %+v", state, result)
+					}
+					return
+				}
+				if err != nil || !result.Steered || result.SessionID != created.SessionID {
+					t.Fatalf("authorized process observation rejected: %+v, %v", result, err)
+				}
+				th.mu.Lock()
+				captured := th.pendingSteerControls[pluginSessionRequestClientID("monitor", params.RequestID)]
+				th.mu.Unlock()
+				if captured != control {
+					t.Fatalf("delivery control = %+v, want %+v", captured, control)
+				}
+				if _, err := session.ChangeControl(rt.SessionDir, created.SessionID, manager, session.ControlPaused, control.Revision); err != nil {
+					t.Fatal(err)
+				}
+				th.mu.Lock()
+				srv.pruneRevokedSteersLocked(th)
+				remaining := len(th.pendingSteers)
+				th.mu.Unlock()
+				if remaining != 0 {
+					t.Fatal("paused control did not revoke accepted process observation")
+				}
+			})
+		}
+	}
+}
