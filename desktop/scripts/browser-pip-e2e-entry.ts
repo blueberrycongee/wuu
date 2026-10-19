@@ -228,6 +228,7 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
     realRendererCrash: true, sameExecutionPreviewRecovery: true, userReload: true, inputReplayCount: 0,
     deletedAcrossWorkdirs: true, pendingNavigationRejected: true, siblingRetained: true,
     lateDeletedSnapshotRejected: true, pinReleased: true, externalWindowStopOrdering: true, overlayDisposed: true }, null, 2));
+  writeFileSync(join(fixture!, "completed"), "browser-pip-e2e");
 }
 
 app.whenReady().then(async () => {

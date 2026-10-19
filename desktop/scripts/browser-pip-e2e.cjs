@@ -45,6 +45,7 @@ async function main() {
     console.log(`browser-pip-e2e: Electron exited ${JSON.stringify({ status: result.status, signal: result.signal })}`);
     process.exitCode = result.status ?? 1;
     if (result.error) throw result.error;
+    if (result.status === 0 && !fs.existsSync(path.join(fixture, "completed"))) throw new Error("Electron exited before browser PiP assertions completed");
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
