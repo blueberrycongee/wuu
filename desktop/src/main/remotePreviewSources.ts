@@ -10,9 +10,16 @@ export function createRemotePreviewSource(
 ): RemotePreviewSource {
   if (activity.kind === "browser") {
     let unsubscribe: (() => void) | undefined;
+    let stopped = false;
     return {
-      start: () => { unsubscribe = browser.subscribePreview(activity, handlers.frame, message => handlers.state("error", message)); },
-      stop: () => { unsubscribe?.(); unsubscribe = undefined; },
+      start: () => {
+        const release = browser.subscribePreview(activity, handlers.frame, message => handlers.state("error", message));
+        // A shared screencast can replay a cached frame synchronously. If its
+        // recipient is backlogged, teardown happens before subscribe returns.
+        if (stopped) release();
+        else unsubscribe = release;
+      },
+      stop: () => { stopped = true; unsubscribe?.(); unsubscribe = undefined; },
       acknowledgeFrame: () => {},
       requestKeyframe: () => {}, // Every JPEG is independently decodable.
     };

@@ -112,6 +112,8 @@ it("routes terminal events only to their attachment and releases its sessions on
 import { RemoteActivityPreviews, type RemotePreviewSource } from "./remoteActivityPreview";
 import type { ActivitySession } from "../shared/protocol";
 import type { NativePreviewFrame } from "../shared/nativePreview";
+import { createRemotePreviewSource } from "./remotePreviewSources";
+import type { BrowserHostCoordinator } from "./browserHostWindows";
 
 const previewActivity: ActivitySession = {
   id: "activity", execution_id: "run", thread_id: "thread", workdir: "/workspace",
@@ -275,4 +277,27 @@ it("does not let a delayed open replace a newer viewer or survive peer disconnec
   resolve([previewActivity]);
   await expect(disconnected).rejects.toThrow("superseded");
   previews.shutdown();
+});
+
+it("releases a browser subscription closed while its cached frame is replayed during start", () => {
+  const unsubscribe = vi.fn();
+  const browser = {
+    subscribePreview: vi.fn((_activity: ActivitySession, frame: (value: NativePreviewFrame) => void) => {
+      // Joining another viewer's screencast synchronously delivers its latest JPEG.
+      frame({ sequence: 1, generation: 1, configuration: 1, codec: "jpeg", keyframe: true,
+        timestamp: 0, width: 960, height: 600, data: Buffer.from([1]) });
+      return unsubscribe;
+    }),
+  } as unknown as BrowserHostCoordinator;
+  const previews = new RemoteActivityPreviews({
+    notify: (_owner, method) => method !== "desktop/activity/preview/frame",
+    createSource: (activity, handlers) => createRemotePreviewSource(activity, handlers, browser),
+  });
+  try {
+    const opened = previews.open(1, { ...previewActivity, kind: "browser" });
+    previews.request(1, "desktop/activity/preview/renew", opened);
+    expect(() => previews.request(1, "desktop/activity/preview/renew", opened)).toThrow("owner");
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  } finally { previews.shutdown(); }
+  expect(unsubscribe).toHaveBeenCalledOnce();
 });
