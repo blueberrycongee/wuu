@@ -4045,6 +4045,17 @@
   padding: 14px;
 }
 
+.rich-mermaid .pele {
+  --pele-bg: var(--paper);
+  --pele-fg: var(--ink);
+  --pele-muted: var(--ink-soft);
+  --pele-line: var(--ink-soft);
+  --pele-surface: var(--surface-1);
+  --pele-surface-alt: var(--surface-2);
+  --pele-border: var(--hairline-strong);
+  --pele-accent: var(--accent);
+}
+
 .rich-mermaid svg {
   display: block;
   max-width: 100%;
