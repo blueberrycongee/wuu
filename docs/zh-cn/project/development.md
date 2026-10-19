@@ -498,3 +498,41 @@ CI 额外使用 sample-02 运行此回归，两次运行一起上传为 `convers
 长度变化。原始数据和替换映射保存在公开仓库之外。校验器会拒绝额外字段、常见密钥和
 非示例 HTTP 地址，但不能证明任意正文已经脱敏，每份新样本仍须人工复核。
 样本中的技术结论属于历史会话内容，不应作为当前产品文档。运行无需真实账号或模型密钥。
+
+### Linux Computer Use 开发
+
+Linux 开发启动器会构建 X11 Computer Use 辅助程序，并默认启用对应内置扩展。
+设置 `WUU_ENABLE_CUA_LINUX=0` 可退出。只构建辅助程序可运行
+`npm --prefix desktop run build:cua-linux`；该命令使用 Go 工具链，并将 XGB
+许可证复制到包内声明目录。运行环境须为支持 XTEST 和 XComposite 的 X11 会话，
+暂不支持原生 Wayland 控制。这不会改变当前正式发布的安装包平台范围。
+
+### Linux Computer Use 验收
+
+先用 `go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu` 构建核心，运行
+`npm --prefix desktop run build:cua-linux` 构建辅助程序，再用
+`cd desktop && npx electron-vite build` 构建桌面端。回到仓库根目录，在隔离的
+X11 会话中运行 `node desktop/scripts/linux-cua-e2e.cjs`；需要 XComposite、
+XTEST、窗口管理器、合成器和 FFmpeg。Linux 验收工作流提供 Xvfb、Openbox 和
+xcompmgr。用例使用生产辅助程序执行输入、捕获指定窗口，并使用生产 PiP 工厂；
+活动直接传入观察协调器。
+
+同一次运行会采样动态预览 30 秒、2560×1600 大窗口 15 秒、隐藏预览后的空闲状态
+8 秒，以及恢复采集后 10 秒。原生动作包含宿主的精确目标发现调用。
+`desktop/out/e2e/linux-cua/performance.json` 保存主进程事件循环延迟、渲染器响应、
+视频帧间隔、输入响应时间、各进程 CPU 与 RSS 样本、内存趋势，以及重复释放和恢复
+采集轨道的结果。`results.json`、截图和 GIF 保留功能与视觉证据。
+`WUU_LINUX_CUA_OUTPUT` 可指定证据目录。
+
+预算用于发现卡顿和资源持续增长回归；CPU 样本只作为测量结果，不作为跨机器基准。
+CI 会记录虚拟显示、CPU、Electron 版本和软件渲染环境。
+
+第二个进程使用隔离配置和本地脚本化模型服务，加载生产桌面主进程、preload 和渲染器。
+真实输入框通过内置 Linux CUA 插件启动 Go app-server 回合。模型请求边界必须收到
+目标 ID、截图图像和新的快照元数据，包括 `after=vision` 的结果；其返回图像还必须
+显示测试目标在点击后同步绘制的新状态，而非旧画面。持续动画目标还会单独验证等待
+画面稳定的超时上限。真实 Go 活动通知
+自动创建 PiP；关闭预览必须释放采集，同时允许两次原生点击继续执行，回合随后完成并
+持久化。`full-app.json` 记录这些检查和 10 秒应用响应采样；`full-app-live.png` 与
+`full-app-desktop.png` 展示真实应用。全程不使用凭据或真实模型推理。该源码构建验收
+不验证安装包、物理 Linux 硬件、真实模型行为，或与 Mac 的性能等价性。

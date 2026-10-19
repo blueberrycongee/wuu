@@ -69,7 +69,9 @@
 
 Computer Use 让 Agent 通过辅助功能与原生输入观察并操作 macOS 应用。浮动预览会跟随它的指针，显示每次点击和输入，目标应用在后台运行；修改通过应用本身保存，随后可以在审查中看到真实文件的变化。需要授予 macOS 的屏幕录制和辅助功能权限。
 
-![wuu 中的 Computer Use](landing/assets/readme/cua-zh.webp)
+[![wuu 中的 Computer Use](landing/assets/readme/cua-zh.webp)](landing/assets/readme/cua-zh.mp4)
+
+[观看视频](landing/assets/readme/cua-zh.mp4)
 
 ### 随时调整方向
 

@@ -127,6 +127,7 @@ func runRemoteHost(args []string) error {
 	workspaceID := fs.String("workspace-id", "", "stable workspace identity")
 	relayURL := fs.String("relay", "", "relay url override")
 	pair := fs.Bool("pair", false, "open a pairing window and print the pairing URI")
+	reportReady := fs.Bool("ready", false, "print a JSON readiness event after the relay registers this host")
 	pairTimeout := fs.Duration("pair-timeout", 10*time.Minute, "pairing window duration")
 	pairOnce := fs.Bool("pair-once", true, "close the pairing window after the first phone pairs")
 	if err := fs.Parse(args); err != nil {
@@ -152,6 +153,9 @@ func runRemoteHost(args []string) error {
 		RelayURL: strings.TrimSpace(*relayURL),
 		Workdir:  rootDir,
 		Logf:     func(format string, a ...any) { fmt.Fprintf(os.Stderr, format+"\n", a...) },
+	}
+	if *reportReady {
+		opts.OnConnected = func() { fmt.Println(`{"event":"remote/ready"}`) }
 	}
 	if address := os.Getenv("WUU_DESKTOP_APP_SERVER_ADDR"); address != "" || os.Getenv("WUU_DESKTOP_APP_SERVER_TOKEN") != "" {
 		opts.AppServer, err = host.DesktopAppServer(address, os.Getenv("WUU_DESKTOP_APP_SERVER_TOKEN"))

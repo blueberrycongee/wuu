@@ -48,7 +48,16 @@ func runRemoteSSH(args []string) error {
 		return errors.New("port must be between 1 and 65535")
 	}
 	forward := "127.0.0.1:" + strconv.Itoa(*port) + ":127.0.0.1:" + strconv.Itoa(*remotePort)
-	sshArgs := []string{"-N", "-T", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-L", forward}
+	// This invocation must own its foreground tunnel even when the user's SSH
+	// configuration normally shares or backgrounds connections. Otherwise Ctrl-C
+	// can leave forwarding attached to another master after this process exits.
+	sshArgs := []string{"-N", "-T",
+		"-o", "ControlMaster=no", "-o", "ControlPath=none",
+		"-o", "ControlPersist=no", "-o", "ForkAfterAuthentication=no",
+		"-o", "ExitOnForwardFailure=yes", "-o", "ConnectTimeout=15",
+		"-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+		"-L", forward,
+	}
 	if *sshPort != 0 {
 		sshArgs = append(sshArgs, "-p", strconv.Itoa(*sshPort))
 	}
@@ -56,11 +65,11 @@ func runRemoteSSH(args []string) error {
 		sshArgs = append(sshArgs, "-F", *sshConfig)
 	}
 	sshArgs = append(sshArgs, "--", destination)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	cmd := exec.CommandContext(ctx, "ssh", sshArgs...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	fmt.Fprintf(os.Stdout, "Connecting to %s. After SSH connects, open http://127.0.0.1:%d/\nUse the pairing link printed by the remote host for the first connection.\nCtrl-C disconnects the tunnel; remote tasks keep running.\n", destination, *port)
+	fmt.Fprintf(os.Stdout, "Connecting to %s. This command forwards SSH traffic; it does not check workspace readiness.\nOnce the remote service reports ready, open http://127.0.0.1:%d/\nUse the pairing link printed by the remote host for the first connection.\nCtrl-C disconnects the tunnel; remote tasks keep running.\nIf SSH exits, rerun this command to reconnect. The remote host must already be running.\n", destination, *port)
 	if err := cmd.Run(); err != nil && ctx.Err() == nil {
 		return fmt.Errorf("SSH tunnel: %w", err)
 	}

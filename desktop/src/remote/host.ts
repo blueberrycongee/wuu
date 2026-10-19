@@ -59,6 +59,7 @@ async function main(): Promise<void> {
         ? plugins.request(owner, context, params as PluginClientRequestParams, reply)
         : pool.requestInContext(context, method, params, reply));
   }, peer => { terminals.stopForOwner(peer); plugins.closeOwner(`remote:${peer}`); });
+  const startup = new AbortController();
   let stopping = false;
   let relay: ChildProcessWithoutNullStreams | undefined;
   let shutdown: Promise<void> | undefined;
@@ -66,13 +67,14 @@ async function main(): Promise<void> {
     resolveCommand: cwd => ({ command: core, args: [], cwd }),
     appServerEndpoint: () => bridge.currentEndpoint(),
     onEvent: event => {
-      if (event.kind === "pair-uri") console.log(`Pair this browser (expires in 10 minutes):\nhttp://127.0.0.1:${browserPort}/#pair=${encodeURIComponent(event.uri)}`);
+      if (event.kind === "pair-uri" && !stopping) console.log(`Pair this browser (expires in 10 minutes):\nhttp://127.0.0.1:${browserPort}/#pair=${encodeURIComponent(event.uri)}`);
       else if (event.kind === "host-exit" && !stopping) { console.error("Remote host exited"); process.exitCode = 1; void stop(); }
       else if (event.kind === "host-log") console.error(event.message);
     },
   });
   const stop = (): Promise<void> => shutdown ??= (async () => {
     stopping = true;
+    startup.abort(new Error("Remote host startup cancelled"));
     const hostStopped = host.stopHost();
     bridge.stop();
     terminals.cleanup();
@@ -87,8 +89,9 @@ async function main(): Promise<void> {
   })();
   process.once("SIGINT", () => { void stop(); });
   process.once("SIGTERM", () => { void stop(); });
+  process.once("SIGHUP", () => { void stop(); });
   try {
-    const status = await host.status(workdir);
+    const status = await host.status(workdir, startup.signal);
     if (status.account_server) {
       throw new Error("SSH workspaces use local pairing, but this WUU_HOME is signed in to a Wuu account. Start this service with a separate WUU_HOME (with its own Wuu configuration and history), or intentionally sign out of that Wuu account first. Existing account credentials have not been changed.");
     }
@@ -118,8 +121,10 @@ async function main(): Promise<void> {
     child.once("exit", () => { if (!stopping) { console.error("Remote listener exited"); process.exitCode = 1; void stop(); } });
     if (stopping) return;
     const relayURL = `ws://127.0.0.1:${port}/v1/connect`;
-    host.startHost(workdir, { pair: values.pair, relay: `ws://127.0.0.1:${browserPort}/v1/connect`, localRelay: relayURL });
+    host.startHost(workdir, { pair: values.pair, relay: `ws://127.0.0.1:${browserPort}/v1/connect`, localRelay: relayURL, reportReady: true });
+    await host.waitForReady();
     if (values.pair) await host.waitForPairing();
+    if (stopping) return;
     console.log(`Wuu workspace ready at http://127.0.0.1:${browserPort}/\nSSH: wuu remote ssh --port ${browserPort} --remote-port ${port} user@host\nStopping this service stops its running tasks. Disconnecting SSH does not.`);
   } catch (error) {
     const interrupted = stopping;

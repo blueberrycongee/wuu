@@ -24,6 +24,13 @@ The override is also forwarded through the macOS LaunchServices launcher.
 
 On macOS, `make dev` and `npm --prefix desktop run dev` enable Computer Use by default. Set `WUU_ENABLE_CUA_MAC=0` to disable it for a development run. `dev:direct` remains available to explicitly enable it. macOS Accessibility and Screen Recording permissions still apply.
 
+On Linux, the development launcher builds the X11 Computer Use helper and enables
+its bundled extension by default. Set `WUU_ENABLE_CUA_LINUX=0` to opt out. Build
+only the helper with `npm --prefix desktop run build:cua-linux`; it uses the Go
+toolchain and copies the XGB license into the package notices. Run in an X11
+session with XTEST and XComposite available. Native Wayland control is not
+supported. This does not change which platform installers are published.
+
 macOS source launches preserve the invoking terminal's `PATH`, shell/toolchain
 locations, and `WUU_<ID>_BINARY` overrides across LaunchServices. Packaged graphical
 launches discover standard user install locations and, when needed, login-shell
@@ -191,6 +198,44 @@ Run `node desktop/scripts/activity-preview-e2e.cjs` after installing desktop dep
 Build the core, then run `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs` to check real Go execution ownership and Chromium input. Stop must interrupt the current run; a later user instruction must work with new authority while old execution IDs remain rejected. The fixture also covers browser task isolation, retained pages, takeover during pending input, and cleanup. Evidence is written under `desktop/out/browser-task-ownership/`.
 
 These checks do not verify ScreenCaptureKit, native application input, macOS permissions, or packaged signatures. On a Computer Use-enabled macOS build, also check browser → native app → browser switching, two windows of one app, Terminal and Wuu as ordinary targets, hidden/minimized windows, target closure, Screen Recording denial/revocation, and takeover during pending input. Hide and Stop must leave the observed applications running; extension disable or replacement must retire its stream. Check both themes, default and large text, reduced motion, and drag/resize near the composer. `node desktop/scripts/inspect-cua-pip.cjs` records process/window diagnostics and captures for a running native preview; a running helper alone is not proof of live pixels.
+
+### Linux Computer Use acceptance
+
+Build the core with `go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu`, the helper
+with `npm --prefix desktop run build:cua-linux`, and the desktop with
+`cd desktop && npx electron-vite build`, then run
+`node desktop/scripts/linux-cua-e2e.cjs` from the repository root in an isolated
+X11 session with XComposite, XTEST, a window manager, compositor, and FFmpeg.
+The Linux acceptance workflow provides Xvfb, Openbox and xcompmgr. It exercises
+production helper input, exact-window capture and the production PiP factory;
+activity is supplied directly to the observation coordinator.
+
+The same run samples an animated preview for 30 seconds, a 2560×1600 target for
+15 seconds, hidden-preview idle for 8 seconds, and resumed capture for 10 seconds.
+Native actions include the host's canonical-target discovery calls. It records
+main-loop delay, renderer responsiveness, video cadence, input response latency,
+per-process CPU and RSS samples, memory trends, and repeated track teardown and
+recovery in `desktop/out/e2e/linux-cua/performance.json`. `results.json`, screenshots
+and a GIF retain functional and visual evidence. `WUU_LINUX_CUA_OUTPUT` selects
+the evidence directory.
+
+The checked budgets detect stalls and resource-growth regressions; CPU samples
+are reported rather than treated as a portable benchmark. CI records its virtual
+display, CPU, Electron version and software rendering.
+
+A second process imports the production desktop main, preload and renderer with
+an isolated profile and a scripted loopback provider. The real composer starts a
+Go app-server turn through the bundled Linux CUA plugin. The provider boundary
+must receive target IDs, screenshot images and fresh snapshot metadata, including
+`after=vision`; its returned pixels must also show the fixture's synchronous
+post-click paint, not the previous state. An animated target separately verifies
+the bounded settling timeout. Actual Go activity notifications create the PiP;
+closing it must release capture while two native clicks continue and the turn
+completes and persists. `full-app.json` records these checks and a 10-second
+application responsiveness sample; `full-app-live.png` and `full-app-desktop.png`
+show the actual application. No credentials or live inference are used. This
+source-built acceptance does not verify an installed package, physical Linux
+hardware, live-model behavior, or performance parity with a Mac.
 
 ### Native history protocol E2E
 

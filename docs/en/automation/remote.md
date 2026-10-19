@@ -50,7 +50,18 @@ Open the pairing link printed by the remote service. Subsequent visits to
 `http://127.0.0.1:8787/` use the saved pairing. Keep the SSH command running;
 Ctrl-C closes the tunnel. SSH config aliases, keys, host-key verification and
 ProxyJump follow your normal OpenSSH configuration. Use `--ssh-port` or
-`--ssh-config` for explicit overrides.
+`--ssh-config` for explicit overrides. Wuu keeps this tunnel in the foreground
+and does not reuse or leave behind an SSH control master, even if your SSH config
+normally enables connection sharing or backgrounding.
+
+The CLI's connection message is not an application health check. Wait for the
+remote service to print `Wuu workspace ready` before opening the workbench; that
+message confirms the listener is running and the host has registered with it.
+Agent engines are discovered on the remote computer when the workspace opens.
+`ExitOnForwardFailure` catches forwarding setup failures, not an unavailable
+remote application. If SSH reports a connection failure, fix the reported cause
+and rerun the same command. There is no automatic SSH retry or repeated password
+prompt; the browser reconnects when its tunnel becomes available again.
 
 Use a distinct local port for each host so browser identities and drafts stay
 separate. If remote port 8787 maps to local port 8788, start the remote service
@@ -66,6 +77,56 @@ Terminals also survive a resumed connection; after a fresh attachment the
 workbench asks you to reopen them. Stopping or restarting the remote service
 stops its tasks and terminals; saved conversation history remains on disk.
 Restart without `--pair` to accept existing devices without opening enrollment.
+A failed startup or SIGINT/SIGTERM/SIGHUP shuts down children created by that
+service; it never reports readiness after cancellation.
+
+### Run the host as a service
+
+For a Linux machine with systemd, first pair interactively using the command
+above, then stop that host before starting the service. Use an absolute Node path
+from `command -v node` and your actual checkout, workspace and Wuu home paths:
+
+```ini
+# ~/.config/systemd/user/wuu-workspace.service
+[Unit]
+Description=Wuu SSH workspace
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/wuu
+Environment=WUU_HOME=/home/YOUR_USER/.wuu-ssh
+ExecStart=/usr/bin/node /srv/wuu/desktop/out-remote/host.mjs --workdir /srv/my-project --port 8787
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+UMask=0077
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now wuu-workspace
+journalctl --user -u wuu-workspace -f
+# Intentionally stop the service and its tasks:
+systemctl --user stop wuu-workspace
+```
+
+A user service may stop at logout unless your administrator enables user
+lingering (`loginctl enable-linger YOUR_USER`). Follow the machine's policy;
+Wuu does not install or enable services itself. On macOS, use tmux or a launchd
+service with the same direct Node command. Service restart restores saved
+history, not a process checkpoint: running turns and terminals are stopped.
+Do not put `--pair` in an automatically restarting service; open enrollment only
+when you intend to pair a new browser, and keep pairing links out of shared logs.
+
+This lifecycle follows the preinstalled-server and loopback SSH forwarding model
+used by [code-server](https://coder.com/docs/code-server/guide#port-forwarding-via-ssh).
+OpenSSH's [forwarding](https://man.openbsd.org/ssh_config#ExitOnForwardFailure)
+and [connection sharing](https://man.openbsd.org/ssh_config#ControlMaster)
+remain transport concerns; Wuu's existing session continuity handles reconnects.
 
 This source-build preview uses the browser workbench. Native desktop windows,
 embedded browser/computer-use tools and automatic remote installation are not

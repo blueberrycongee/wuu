@@ -11,6 +11,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Added
 
 - Add an experimental headless workspace host and `wuu remote ssh` tunnel: use remote agent engines, files, Git, and terminals in the shared browser workbench, with running tasks preserved across SSH disconnects.
+- Add Linux X11 computer control with window-bound observation and foreground input,
+  and watch-only activity previews that retain the existing controls and layout.
 - Monitor plugin for background scripts, event delivery into the active conversation,
   timeout and persistent watches, output inspection, and per-task stop controls.
 - Public process service for conversation-bound extension commands and event delivery,
@@ -18,8 +20,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep SSH workspace tunnels owned by their foreground command, wait for host registration before reporting readiness, and clean up interrupted startup.
 - Keep SSH workspace discovery available after removal or relocation, and reject account-backed homes before local pairing.
 - Avoid false file-save conflicts in remote workspaces by using the same modification-time calculation for Go file reads and desktop saves.
+- Continue failed external-agent sessions when their native history cannot be rewound,
+  avoiding an unsupported edit-and-resend request from the recovery button. Hide
+  the Wuu model-provider settings shortcut for engines that own their credentials.
 - Preserve and queue desktop messages when another turn wins a concurrent send, retaining attachments, send order, and Stop intent.
 - Guide next-message predictions toward concrete follow-ups instead of polite
   acknowledgments, and allow no suggestion when the next intent is unclear.

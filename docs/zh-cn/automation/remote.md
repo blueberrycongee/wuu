@@ -44,7 +44,14 @@ wuu remote ssh --port 8787 user@server
 打开远端服务打印的配对链接。以后访问 `http://127.0.0.1:8787/`
 即可使用已保存的配对。使用期间保持 SSH 命令运行，Ctrl-C 关闭隧道。
 SSH 配置别名、密钥、主机密钥校验和 ProxyJump 沿用本机 OpenSSH 配置；
-可用 `--ssh-port` 或 `--ssh-config` 显式指定连接参数。
+可用 `--ssh-port` 或 `--ssh-config` 显式指定连接参数。Wuu 始终在前台独占这条隧道，
+不会复用或留下 SSH control master，即使本机配置默认启用了连接共享或后台运行。
+
+CLI 的连接提示不是应用健康检查。请等待远端服务打印 `Wuu workspace ready` 后再
+打开工作台；这表示监听器已运行，Host 已完成注册。打开工作区时才会发现远端的
+Agent 引擎。`ExitOnForwardFailure` 能发现转发配置失败，不能证明远端应用可用。
+如果 SSH 报错退出，请按报错排查后重新运行同一命令。Wuu 不会自动重试 SSH 或
+反复请求密码；隧道恢复后，浏览器会自动重连。
 
 每台主机使用不同的本地端口，让浏览器身份和草稿保持独立。
 例如将远端 8787 映射到本地 8788：远端启动参数使用
@@ -60,6 +67,51 @@ SSH 配置别名、密钥、主机密钥校验和 ProxyJump 沿用本机 OpenSSH
 
 如果启动时的工作区被移除或迁移，重连仍可通过共享的「对话」工作区发现项目，
 然后重新选择需要的项目。
+
+### 将 Host 作为服务运行
+
+Linux 使用 systemd 时，先按上面的命令交互配对，然后停止该 Host，再启动服务。
+通过 `command -v node` 确认 Node 的绝对路径，并替换实际源码、工作区和 Wuu home 路径：
+
+```ini
+# ~/.config/systemd/user/wuu-workspace.service
+[Unit]
+Description=Wuu SSH workspace
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/wuu
+Environment=WUU_HOME=/home/YOUR_USER/.wuu-ssh
+ExecStart=/usr/bin/node /srv/wuu/desktop/out-remote/host.mjs --workdir /srv/my-project --port 8787
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+UMask=0077
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now wuu-workspace
+journalctl --user -u wuu-workspace -f
+# 主动停止服务及其任务：
+systemctl --user stop wuu-workspace
+```
+
+如果管理员未启用用户 lingering（`loginctl enable-linger YOUR_USER`），用户服务可能在
+登出时停止。请遵循电脑的管理策略；Wuu 不会自行安装或启用服务。macOS 可用 tmux，
+或使用相同 Node 命令的 launchd 服务。服务重启会恢复已保存的历史，但不是进程检查点：
+运行中的回合与终端会停止。启动失败或收到 SIGINT/SIGTERM/SIGHUP 时，服务会清理其
+启动的子进程；取消后不会再报告就绪。
+不要在自动重启的服务中加入 `--pair`；仅在准备配对新浏览器时开启配对，
+并避免把配对链接写入共享日志。
+
+这一生命周期参考了 [code-server](https://coder.com/docs/code-server/guide#port-forwarding-via-ssh)
+的预安装服务与回环 SSH 转发方式。OpenSSH 负责[端口转发](https://man.openbsd.org/ssh_config#ExitOnForwardFailure)
+和[连接共享](https://man.openbsd.org/ssh_config#ControlMaster)；Wuu 的已有会话连续性机制负责恢复连接。
 
 当前是从源码构建的浏览器工作台预览。无桌面宿主不提供原生桌面窗口、
 内嵌浏览器/电脑控制工具或自动安装远端软件。需要原生浏览器的引擎登录，

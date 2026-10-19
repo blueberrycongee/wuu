@@ -69,7 +69,9 @@ Select text in a file to add it to the conversation, leave a comment, ask about 
 
 Computer Use lets the agent observe and operate native macOS apps through Accessibility and native input. A floating preview follows its pointer and shows each click and keystroke while the target app stays in the background. The agent saves through the app itself, so Review shows the real file change. Screen Recording and Accessibility permissions apply.
 
-![Computer Use in wuu](landing/assets/readme/cua-en.webp)
+[![Computer Use in wuu](landing/assets/readme/cua-en.webp)](landing/assets/readme/cua-en.mp4)
+
+[Watch the video](landing/assets/readme/cua-en.mp4)
 
 ### Steer without starting over
 
