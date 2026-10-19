@@ -64,6 +64,18 @@ make build-go
 
 `make install` 从当前检出安装 CLI。当前发布工作流只打包 macOS arm64 桌面预览版；存在 Windows CI 和打包脚本，不代表已经发布 Windows 版本。用户可用的发行方式见[安装](../getting-started/installation.md)。
 
+### 插件候选端到端检查
+
+构建核心后，使用 Node 22.7 或更新版本运行
+`WUU_E2E_CORE=bin/wuu node scripts/plugin-experiment-e2e.mjs`。
+该脚本通过回环合成提供者使用真实 CLI、agent `plugin_manager`、stdio app-server
+和公开 TypeScript 适配器，检查不可变捕获、并行评测的独立数据目录、选择期间前台轮次
+保持原版、下一轮接入、回滚、来源信任、过期选择、已修改包拒绝、启动失败与超时清理、
+SessionEnd hook 与多个 MCP 的回收、取消和输出上限。二进制哈希、结果、命令回执和协议日志保存在
+`.tmp/e2e/plugin-experiment/`；可用 `WUU_EXPERIMENT_E2E_OUTPUT` 指定其他目录。
+它使用一次性状态，无付费推理，不测量模型质量、桌面渲染或操作系统／网络隔离。
+现有 Go-validation CI 任务运行同一检查，并保留合成证据 14 天。
+
 ### 原生引导端到端检查
 
 构建核心后，使用 Node 22.13 或更新版本运行

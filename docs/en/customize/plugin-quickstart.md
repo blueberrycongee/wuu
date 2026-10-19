@@ -53,6 +53,95 @@ Apply can execute module top-level code and package build scripts on the host. B
 
 `{"action":"disable","id":"<plugin-id>"}` and `{"action":"enable","id":"<plugin-id>"}` change an existing plugin's enabled state; enabling does not supply missing trust. A committed disable revokes the plugin across retained generations without waiting for the next idle turn. Applying an update does not automatically start another turn. Published or installed state, callable tools in this conversation, and rendered desktop UI are separate checks. For desktop contributions, inspect the actual view as well as runtime status.
 
+## Compare candidate versions
+
+Use `plugin experiment` when an agent should try changes before replacing the
+published extension. Capture a file or package inside its workspace:
+
+```bash
+wuu plugin experiment capture --json --workdir "$PWD" ./hello.ts
+wuu plugin experiment list --json --workdir "$PWD"
+```
+
+Capture stores a private, immutable package and records its original workspace,
+source path, prepared-content hash, runtime fingerprint, and current baseline
+fingerprint. The `candidate_id` addresses that captured record; it is distinct
+from the runtime `fingerprint`. Reading or using a candidate verifies its record
+and package bytes. Capture does not publish a development generation or grant
+the source production trust. It can still execute build scripts and module
+top-level code during preparation, just like `plugin dev`.
+
+Edit the source and capture again to obtain another candidate. To compare exact
+candidate IDs, supply your own evaluator command and arguments after `--`:
+
+```bash
+wuu plugin experiment eval --json --concurrency 2 --timeout 30s \
+  "$PLUGIN_ID" "$CANDIDATE_A" "$CANDIDATE_B" -- node "$PWD/check-plugin.mjs"
+```
+
+Here `check-plugin.mjs` is a checker you write for your extension's behavior.
+Each command receives a fresh `WUU_HOME`, a separate scratch working directory,
+and `WUU_EXPERIMENT_PACKAGE` pointing at its exact copied candidate package.
+Use an absolute checker path. `--workdir` explicitly selects a writable command
+directory instead; parallel commands then share that directory. No production
+Wuu configuration, credentials, or plugin storage is copied. These are Wuu-state
+boundaries, not filesystem or network isolation: trusted commands and extension
+code still run with the host account's access.
+
+Evaluation and selection currently require Linux or macOS process-group support;
+Windows can capture and list candidates but cannot evaluate or select them.
+The runner bounds concurrency, timeout and saved stdout/stderr, and stops command
+process groups on cancellation. Cancellation allows up to ten seconds for
+graceful cleanup before forced termination, followed by a two-second pipe-drain
+bound. Reports under `WUU_HOME/experiments/runs/` record
+the command, exact candidate and content hashes, exit status, duration and output.
+Do not put secrets in recorded arguments or output. Exit zero means only that
+the command succeeded; a meaningful quality result needs your checker and its
+evidence. Evaluation does not automatically select a candidate.
+
+Selection requires an existing development authorization for the same original
+source. If it has none, explicitly use the ordinary `wuu plugin dev` workflow
+first; that workflow publishes the current source. Capture and evaluation do not
+supply production trust, and selection does not create it implicitly.
+
+Select an exact version with a compare-and-swap check against the currently
+published plugin fingerprint. When it is still current, use the capture's
+`base_fingerprint`; an explicitly empty value means the plugin must be absent.
+
+```bash
+wuu plugin experiment select --json --workdir "$PWD" \
+  --expect-current "$CURRENT_FINGERPRINT" "$PLUGIN_ID" "$CANDIDATE_B"
+wuu plugin experiment rollback --json --workdir "$PWD" \
+  --expect-current "$B_FINGERPRINT" "$PLUGIN_ID" "$CANDIDATE_A"
+```
+
+A stale expected fingerprint fails without changing the live selection. Selection
+uses existing exact-source development trust and the normal publication path. Rollback
+selects archived code; it does not undo plugin storage, external effects, or turn
+history. Foreground turns retain their generation until the ordinary idle
+boundary, while replacement stops old background jobs and local UI control.
+Check actual runtime status and behavior after adoption. No host restart is
+needed for these extension changes.
+
+Before publication, selection checks startup and cleanup in a separate real Wuu
+runtime with a 30-second execution deadline and the bounded cancellation cleanup
+above, without inference credentials. The receipt links
+its readiness report. A failing initialization or activation keeps the published
+version unchanged. Startup can execute trusted extension code and side effects;
+this check is not a security sandbox or proof of full behavioral correctness.
+Experiments currently capture one package. They do not copy installed third-party
+dependencies or production configuration; a candidate requiring those will fail
+readiness until it can run with the available bundled providers and its own
+package. Ordinary plugin development and installation remain separate workflows.
+
+The same workflow is available through `plugin_manager` actions `capture`,
+`candidates`, `eval`, `select`, and `rollback`. Mutating actions retain the existing
+host-code trust boundary and workspace checks. Candidate operations do not allow
+arbitrary changes to the compiled host: prompts, tools, model middleware and
+other supported extension surfaces can iterate through the public API. A new
+kernel primitive, a changed public hook, or another compiled Go-core change
+still requires a build and host restart.
+
 ## Grow into a package
 
 For multiple source files, desktop contributions, or distribution, use a package. This example adds a `greet` tool to the built-in Wuu engine using a source checkout matching your CLI for the SDK.

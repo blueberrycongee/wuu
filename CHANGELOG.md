@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Capture immutable extension candidates, evaluate versions in separate Wuu state
+  directories with bounded parallel commands, and select or roll back exact code
+  versions with stale-baseline protection through the CLI and `plugin_manager`.
 - Monitor plugin for background scripts, event delivery into the active conversation,
   timeout and persistent watches, output inspection, and per-task stop controls.
 - Public process service for conversation-bound extension commands and event delivery,

@@ -53,9 +53,18 @@ func TestPluginManagerExecutionTrustBoundary(t *testing.T) {
 			if _, err := NewToolSearchTool(kit).Execute(context.Background(), `{"query":"select:plugin_manager"}`); err != nil {
 				t.Fatal(err)
 			}
-			_, err = kit.Execute(context.Background(), providers.ToolCall{Name: "plugin_manager", Arguments: `{"action":"apply","path":"extension.ts"}`})
-			if (err == nil) != tc.allowed || (calls == 1) != tc.allowed {
-				t.Fatalf("err=%v calls=%d allowed=%v", err, calls, tc.allowed)
+			for _, raw := range []string{
+				`{"action":"apply","path":"extension.ts"}`,
+				`{"action":"capture","path":"extension.ts"}`,
+				`{"action":"eval","id":"example","candidate_ids":["candidate"],"command":["echo","result"]}`,
+				`{"action":"select","id":"example","candidate_id":"candidate","expected_current":""}`,
+				`{"action":"rollback","id":"example","candidate_id":"candidate","expected_current":"current"}`,
+			} {
+				calls = 0
+				_, err = kit.Execute(context.Background(), providers.ToolCall{Name: "plugin_manager", Arguments: raw})
+				if (err == nil) != tc.allowed || (calls == 1) != tc.allowed {
+					t.Fatalf("args=%s err=%v calls=%d allowed=%v", raw, err, calls, tc.allowed)
+				}
 			}
 		})
 	}
@@ -85,6 +94,9 @@ func TestPluginManagerStatusCloneAndSourceScope(t *testing.T) {
 	if _, err := clone.Execute(context.Background(), providers.ToolCall{Name: "plugin_manager", Arguments: `{"action":"status"}`}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := clone.Execute(context.Background(), providers.ToolCall{Name: "plugin_manager", Arguments: `{"action":"candidates"}`}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := NewToolSearchTool(kit).Execute(context.Background(), `{"query":"select:plugin_manager"}`); err != nil {
 		t.Fatal(err)
 	}
@@ -99,8 +111,23 @@ func TestPluginManagerStatusCloneAndSourceScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = kit.Execute(context.Background(), providers.ToolCall{Name: "plugin_manager", Arguments: `{"action":"apply","path":"escape.ts"}`})
-	if err == nil || !strings.Contains(err.Error(), "workspace") || calls != 1 {
+	if err == nil || !strings.Contains(err.Error(), "workspace") || calls != 2 {
 		t.Fatalf("err=%v calls=%d", err, calls)
+	}
+	for _, raw := range []string{
+		`{"action":"capture","path":"escape.ts"}`,
+		`{"action":"select","id":"example","candidate_id":"candidate"}`,
+		`{"action":"rollback","id":"example","candidate_id":"candidate","expected_current":null}`,
+		`{"action":"eval","id":"example","candidate_ids":["candidate"],"command":["echo"],"concurrency":9}`,
+		`{"action":"eval","id":"example","candidate_ids":["candidate"],"command":["echo"],"timeout_seconds":1801}`,
+		`{"action":"candidates","command":["echo"]}`,
+	} {
+		if _, err := kit.Execute(context.Background(), providers.ToolCall{Name: "plugin_manager", Arguments: raw}); err == nil {
+			t.Fatalf("accepted invalid or out-of-scope request: %s", raw)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("invalid requests reached host callback: calls=%d", calls)
 	}
 }
 
@@ -167,7 +194,7 @@ func TestPluginManagerUsesBoundWorktreeSourceAndInventory(t *testing.T) {
 		if req.CWD != worktree {
 			t.Fatalf("inventory/command cwd=%q want checkout %q", req.CWD, worktree)
 		}
-		if req.Action == "apply" {
+		if req.Action == "apply" || req.Action == "capture" {
 			if filepath.Dir(req.Path) != worktree {
 				t.Fatalf("source=%q want checkout", req.Path)
 			}
@@ -186,6 +213,9 @@ func TestPluginManagerUsesBoundWorktreeSourceAndInventory(t *testing.T) {
 		if _, err := kit.Execute(ctx, providers.ToolCall{Name: "plugin_manager", Arguments: `{"action":"apply","path":"` + name + `"}`}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := kit.Execute(ctx, providers.ToolCall{Name: "plugin_manager", Arguments: `{"action":"capture","path":"new-extension.ts"}`}); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := kit.Execute(ctx, providers.ToolCall{Name: "plugin_manager", Arguments: `{"action":"status"}`}); err != nil {
 		t.Fatal(err)
@@ -207,7 +237,7 @@ func TestPluginManagerUsesBoundWorktreeSourceAndInventory(t *testing.T) {
 	if _, err := kit.Execute(ctx, providers.ToolCall{Name: "plugin_manager", Arguments: `{"action":"apply","path":"escape.ts"}`}); err == nil {
 		t.Fatal("accepted checkout symlink escaping allowed scope")
 	}
-	if calls != 3 {
-		t.Fatalf("host callback calls=%d want 3", calls)
+	if calls != 4 {
+		t.Fatalf("host callback calls=%d want 4", calls)
 	}
 }

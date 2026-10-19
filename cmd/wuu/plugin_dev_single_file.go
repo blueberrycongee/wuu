@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	proc "github.com/blueberrycongee/wuu/internal/process"
 	pluginsdk "github.com/blueberrycongee/wuu/packages/plugin-sdk"
 )
 
@@ -80,21 +82,60 @@ func prepareSingleFilePlugin(ctx context.Context, source string) (string, func()
 			return fail(err)
 		}
 	}
-	// Validate loading without inventing a host context. initialize() may use
-	// read-phase kernel services, so only the real generation host can prepare it.
+	// Importing executes source code. Keep its Wuu state disposable and own its
+	// process group; this is not filesystem or network containment. initialize()
+	// may use kernel services, so only the real generation host can prepare it.
+	validationHome, err := os.MkdirTemp("", "wuu-plugin-validation-")
+	if err != nil {
+		return fail(err)
+	}
+	defer os.RemoveAll(validationHome)
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	runtime := pluginhost.RuntimeCommand("node", []string{"--experimental-transform-types", "loader.mjs", "--validate"}, nil)
+	runtime := pluginhost.RuntimeCommand("node", []string{"--experimental-transform-types", "loader.mjs", "--validate"}, map[string]string{"WUU_HOME": validationHome})
 	command := exec.CommandContext(ctx, runtime.Path, runtime.Args[1:]...)
 	command.Env = runtime.Env
 	command.Dir = root
-	if output, err := command.CombinedOutput(); err != nil {
-		return fail(fmt.Errorf("load TypeScript plugin (Node.js 22.7+ required): %w: %s", err, strings.TrimSpace(string(output))))
+	proc.PrepareCommand(command)
+	command.Cancel = func() error { return proc.ProcessTreeFromID(command.Process.Pid).Kill() }
+	command.WaitDelay = 2 * time.Second
+	output := &singleFileValidationOutput{}
+	command.Stdout, command.Stderr = output, output
+	if err := command.Start(); err != nil {
+		return fail(fmt.Errorf("load TypeScript plugin (Node.js 22.7+ required): %w", err))
+	}
+	// A successful parent can leave children with redirected stdio behind, so
+	// clean the process group on every exit, not only on context cancellation.
+	if err := errors.Join(command.Wait(), ctx.Err(), proc.ProcessTreeFromID(command.Process.Pid).Kill()); err != nil {
+		return fail(fmt.Errorf("load TypeScript plugin (Node.js 22.7+ required): %w: %s", err, output.String()))
 	}
 	if _, err := pluginpkg.InspectPackage(root); err != nil {
 		return fail(err)
 	}
 	return root, cleanup, nil
+}
+
+type singleFileValidationOutput struct {
+	data      []byte
+	truncated bool
+}
+
+func (b *singleFileValidationOutput) Write(data []byte) (int, error) {
+	n := len(data)
+	if remaining := 32*1024 - len(b.data); len(data) > remaining {
+		data = data[:remaining]
+		b.truncated = true
+	}
+	b.data = append(b.data, data...)
+	return n, nil
+}
+
+func (b *singleFileValidationOutput) String() string {
+	text := strings.TrimSpace(string(b.data))
+	if b.truncated {
+		text += "\n[validation output truncated]"
+	}
+	return text
 }
 
 const singleFileRuntimeLoader = `import { register } from "node:module";

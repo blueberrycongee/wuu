@@ -53,6 +53,79 @@ Apply 可能在宿主上执行模块顶层代码和包构建脚本。在验证�
 
 `{"action":"disable","id":"<plugin-id>"}` 和 `{"action":"enable","id":"<plugin-id>"}` 修改已有插件的启用状态；启用不会补充缺失的信任。禁用提交成功后，无需等待下一次空闲轮次，就会撤销各个仍被引用 generation 中的插件。应用更新不会自动开始下一轮。已发布或已安装、当前会话可调用工具、桌面实际渲染是不同的检查。包含桌面贡献时，还应检查实际界面与运行时状态。
 
+## 比较候选版本
+
+需要让 Agent 先试验、再替换已发布扩展时，可以使用 `plugin experiment`。
+先捕获工作区内的文件或插件包：
+
+```bash
+wuu plugin experiment capture --json --workdir "$PWD" ./hello.ts
+wuu plugin experiment list --json --workdir "$PWD"
+```
+
+Capture 保存私有、不可变的插件包，记录原始工作区、来源路径、准备后内容的哈希、
+运行时指纹，以及当前基线指纹。`candidate_id` 是捕获记录的内容地址，
+与运行时 `fingerprint` 不同。读取或使用候选时会校验记录和插件包字节。
+Capture 不发布开发 generation，也不授予来源生产环境信任。
+准备过程仍可能像 `plugin dev` 一样执行构建脚本和模块顶层代码。
+
+修改源码并再次 capture，即可得到另一个候选。比较准确的候选 ID 时，
+在 `--` 后指定自己编写的检查命令及其参数：
+
+```bash
+wuu plugin experiment eval --json --concurrency 2 --timeout 30s \
+  "$PLUGIN_ID" "$CANDIDATE_A" "$CANDIDATE_B" -- node "$PWD/check-plugin.mjs"
+```
+
+其中 `check-plugin.mjs` 是针对扩展实际行为编写的检查程序。
+每个命令获得新的 `WUU_HOME`、独立临时工作目录，以及指向该候选准确副本的
+`WUU_EXPERIMENT_PACKAGE`。请使用检查程序的绝对路径。
+显式传入 `--workdir` 可改用指定的可写命令目录；此时并行命令共享该目录。
+不会复制生产 Wuu 配置、凭据或插件存储。这些边界隔离 Wuu 状态，
+不隔离文件系统或网络：受信任命令和扩展代码仍拥有宿主账户的访问权限。
+
+评测和选择目前要求 Linux 或 macOS 的进程组支持；Windows 可捕获和列出候选，
+但不能评测或选择。
+运行器限制并发、超时和保存的 stdout/stderr 大小，取消时停止命令进程组。
+取消先允许最多 10 秒进行正常清理，再强制终止；随后最多等待 2 秒排空输出管道。
+`WUU_HOME/experiments/runs/` 下的报告记录命令、准确候选与内容哈希、
+退出状态、耗时和输出。不要在会被记录的参数或输出中放入秘密。
+退出码为零只说明命令成功执行；有效的质量判断需要检查程序及其证据。
+评测不会自动选择候选。
+
+选择要求原始来源已有匹配的开发授权。若尚未授权，先显式使用普通
+`wuu plugin dev` 流程；该流程会发布当时的源码。Capture 和评测不提供生产环境信任，
+选择也不会隐式创建这种信任。
+
+选择准确版本时，必须提供当前已发布插件的指纹，进行 compare-and-swap 检查。
+若仍是当前值，可使用 capture 返回的 `base_fingerprint`；显式空字符串表示该插件必须不存在。
+
+```bash
+wuu plugin experiment select --json --workdir "$PWD" \
+  --expect-current "$CURRENT_FINGERPRINT" "$PLUGIN_ID" "$CANDIDATE_B"
+wuu plugin experiment rollback --json --workdir "$PWD" \
+  --expect-current "$B_FINGERPRINT" "$PLUGIN_ID" "$CANDIDATE_A"
+```
+
+预期指纹过期时会拒绝操作，不改变当前选择。选择复用现有的准确来源开发信任和发布流程。
+Rollback 选择已归档的代码，不撤销插件存储、外部副作用或轮次历史。
+前台轮次继续使用已绑定的 generation，直到普通空闲边界；
+替换会停止旧版后台任务和本地 UI 控制。接入后仍须检查实际运行时状态与行为。
+这些扩展变化不需要重启宿主。
+
+发布前，选择操作会在另一个真实 Wuu 运行时中检查启动和清理，执行期限为 30 秒，
+取消后的清理沿用上述有限等待，不提供推理凭据。回执包含就绪检查报告的路径。初始化或激活失败会保留已发布版本。
+启动仍可能执行受信任扩展代码及其副作用；该检查不是安全沙箱，也不能证明完整行为正确。
+当前实验只捕获一个插件包，不复制已安装的第三方依赖或生产配置。
+需要这些内容的候选会无法通过就绪检查，直到它能仅依靠可用的内置提供者及自身插件包运行。
+普通插件开发和安装仍是独立流程。
+
+`plugin_manager` 的 `capture`、`candidates`、`eval`、`select` 和 `rollback`
+动作也提供相同流程。变更动作继续遵循现有宿主代码信任边界和工作区检查。
+候选操作不允许任意修改已编译宿主：提示词、工具、模型中间件及其他受支持扩展面
+可以通过公开 API 迭代。新增内核机制、修改公开 hook 或其他已编译 Go 核心变化，
+仍需要构建并重启宿主。
+
 ## 扩展为插件包
 
 需要多个源文件、桌面贡献或分发时，使用插件包。以下示例为内置 Wuu 引擎添加 `greet` 工具，使用与 CLI 匹配的 Wuu 源码目录获取 SDK。

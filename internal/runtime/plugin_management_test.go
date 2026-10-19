@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -102,6 +103,30 @@ func TestPluginManagementFixedCommand(t *testing.T) {
 	}
 	if len(got) != 4 || got[0] != "plugin" || got[1] != "dev" || got[2] != "--watch=false" || got[3] != source {
 		t.Fatalf("args=%q", got)
+	}
+	expected := ""
+	for _, tc := range []struct {
+		req  tools.PluginManagementRequest
+		args []string
+	}{
+		{tools.PluginManagementRequest{Action: "capture", Path: source, CWD: root}, []string{"plugin", "experiment", "capture", "--json", "--workdir", root, "--", source}},
+		{tools.PluginManagementRequest{Action: "candidates", ID: "example", CWD: root}, []string{"plugin", "experiment", "list", "--json", "--workdir", root, "--", "example"}},
+		{tools.PluginManagementRequest{Action: "select", ID: "example", CandidateID: "candidate", ExpectedCurrent: &expected, CWD: root}, []string{"plugin", "experiment", "select", "--json", "--workdir", root, "--expect-current=", "--", "example", "candidate"}},
+		{tools.PluginManagementRequest{Action: "rollback", ID: "example", CandidateID: "candidate", ExpectedCurrent: &expected, CWD: root}, []string{"plugin", "experiment", "rollback", "--json", "--workdir", root, "--expect-current=", "--", "example", "candidate"}},
+		{tools.PluginManagementRequest{Action: "eval", ID: "example", CandidateIDs: []string{"first", "second"}, Command: []string{"echo", "literal; not a shell"}, Concurrency: 2, TimeoutSeconds: 60, CWD: root}, []string{"plugin", "experiment", "eval", "--json", "--workspace", root, "--concurrency", "2", "--timeout", "60s", "--", "example", "first", "second", "--", "echo", "literal; not a shell"}},
+	} {
+		t.Run(tc.req.Action, func(t *testing.T) {
+			manager := s.pluginManager(nil, func(_ context.Context, gotHome, gotCWD string, args []string) (string, error) {
+				if gotHome != home || gotCWD != root || !reflect.DeepEqual(args, tc.args) {
+					t.Fatalf("home=%s cwd=%s args=%q", gotHome, gotCWD, args)
+				}
+				return `{"receipt":"saved"}`, nil
+			})
+			value, err := manager(context.Background(), tc.req)
+			if err != nil || string(value.(pluginManagementResult).Experiment) != `{"receipt":"saved"}` {
+				t.Fatalf("value=%+v err=%v", value, err)
+			}
+		})
 	}
 }
 

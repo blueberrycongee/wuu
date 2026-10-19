@@ -59,6 +59,10 @@ import (
 // attach without rebuilding the agent.
 type Options struct {
 	RootDir string
+	// StartupContext bounds construction and initial extension readiness only.
+	// A nil context preserves ordinary startup behavior. Cancellation after
+	// NewSession returns does not revoke the session or retained generations.
+	StartupContext context.Context
 	// Host is immutable process metadata supplied by the shell or cloud
 	// control plane. Its zero value resolves to a local host.
 	Host Host
@@ -374,7 +378,14 @@ func browserEnabledFromEnv() bool {
 	return strings.TrimSpace(os.Getenv("WUU_ENABLE_BROWSER")) != "0"
 }
 
-func NewSession(opts Options) (*Session, error) {
+func NewSession(opts Options) (_ *Session, retErr error) {
+	startup := opts.StartupContext
+	if startup == nil {
+		startup = context.Background()
+	}
+	if err := startup.Err(); err != nil {
+		return nil, err
+	}
 	rootDir := strings.TrimSpace(opts.RootDir)
 	if rootDir == "" {
 		return nil, fmt.Errorf("root dir is required")
@@ -508,14 +519,32 @@ func NewSession(opts Options) (*Session, error) {
 	if !opts.NonInteractive {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
-	pluginHost, pluginKernel := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions)
+	pluginHost, pluginKernel := startPluginHostWithContext(startup, activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions)
+	var toolkit *tools.Toolkit
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		// Construction owns these processes until the Session is returned. In
+		// particular, a cancelled readiness check must reap their separate groups
+		// before its supervising process reaches its outer hard deadline.
+		cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		retErr = errors.Join(retErr, pluginHost.Close(cleanup))
+		if toolkit != nil && toolkit.MCPManager() != nil {
+			retErr = errors.Join(retErr, toolkit.MCPManager().Close())
+		}
+	}()
+	if err := startup.Err(); err != nil {
+		return nil, err
+	}
 	activePlugins = availablePluginPackages(activePlugins, pluginHost)
-	systemPrompts, compactions, capabilityErr := buildPluginAgentCapabilities(context.Background(), pluginHost, resolvedName, providerCfg.Model, rootDir)
+	systemPrompts, compactions, capabilityErr := buildPluginAgentCapabilities(startup, pluginHost, resolvedName, providerCfg.Model, rootDir)
 	if capabilityErr != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		closeErr := pluginHost.Close(ctx)
-		cancel()
-		return nil, errors.Join(capabilityErr, closeErr)
+		return nil, capabilityErr
+	}
+	if err := startup.Err(); err != nil {
+		return nil, err
 	}
 	hookDispatcher := buildHookDispatcher(cfg, activePlugins, providers.Client(client), toolModeModel, workspaceJournal)
 	pluginSkills := discoverPluginSkills(activePlugins)
@@ -536,7 +565,6 @@ func NewSession(opts Options) (*Session, error) {
 	}
 	activityRegistry := activity.NewRegistry()
 	var toolExecutor agent.ToolExecutor
-	var toolkit *tools.Toolkit
 	toolLoadingPreference := cfg.Agent.ToolLoadingPreference()
 	toolLoadingMode, toolSearchEnabled, nativeDeferredDiscovery := resolveToolLoadingModeForProvider(toolLoadingPreference, ruleProviderCfg, toolModeModel, mainRole.ProviderOptions)
 	if !opts.NoTools {
@@ -925,6 +953,9 @@ func NewSession(opts Options) (*Session, error) {
 		toolkit.SetPluginManager(runtimeSession.pluginManager(runtimeSession.pluginGeneration, runPluginManagementCommand))
 		toolkit.SetSkillsWithAvailability(discoveredSkills, runtimeSession.pluginGeneration.skillAvailable)
 		runtimeSession.bindLocalSkillRefresh(toolkit, rootDir, runtimeSession.pluginGeneration)
+	}
+	if err := startup.Err(); err != nil {
+		return nil, err
 	}
 	snapshotsOwned = false
 	// The legacy/root control remains dormant until SetSessionID binds its real
@@ -2059,6 +2090,12 @@ func shutdownAndCleanupAgentControl(control *agentcontrol.AgentControl) error {
 
 // Cleanup stops session-scoped background work owned by the runtime.
 func (s *Session) Cleanup() (process.CleanupResult, error) {
+	return s.CleanupWithContext(context.Background())
+}
+
+// CleanupWithContext bounds shutdown hooks while always retiring owned resources.
+// Cancellation cannot skip process and generation cleanup.
+func (s *Session) CleanupWithContext(ctx context.Context) (process.CleanupResult, error) {
 	if s == nil {
 		return process.CleanupResult{}, nil
 	}
@@ -2070,7 +2107,7 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 		if s.Toolkit != nil {
 			sessionID = s.Toolkit.SessionID()
 		}
-		_, hookErr := s.HookDispatcher.Dispatch(context.Background(), hooks.SessionEnd, &hooks.Input{SessionID: sessionID, CWD: s.RootDir})
+		_, hookErr := s.HookDispatcher.Dispatch(ctx, hooks.SessionEnd, &hooks.Input{SessionID: sessionID, CWD: s.RootDir})
 		cleanupErr = errors.Join(cleanupErr, hookErr)
 	}
 	if s.AgentControl != nil {

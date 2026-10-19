@@ -242,6 +242,10 @@ type pluginProjectPackage struct {
 }
 
 func executePluginBuild(ctx context.Context, source, packageManagerOverride string) error {
+	return executePluginBuildOutput(ctx, source, packageManagerOverride, os.Stdout)
+}
+
+func executePluginBuildOutput(ctx context.Context, source, packageManagerOverride string, output io.Writer) error {
 	abs, err := filepath.Abs(source)
 	if err != nil {
 		return fmt.Errorf("resolve project path: %w", err)
@@ -263,7 +267,7 @@ func executePluginBuild(ctx context.Context, source, packageManagerOverride stri
 	}
 	cmd := exec.CommandContext(ctx, manager, "run", "build")
 	cmd.Dir = abs
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = output
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("run %s build script: %w", manager, err)
