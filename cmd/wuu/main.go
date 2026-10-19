@@ -2269,6 +2269,7 @@ Usage:
   wuu plugin inspect|install|update|list|approve|reject|enable|disable|remove [flags]
   wuu plugin create|validate|build|test|pack [flags]
   wuu plugin dev [--watch=false] [--poll DURATION] FILE.ts|DIRECTORY
+  wuu plugin experiment capture|list|eval|select|rollback [flags]
   wuu debug app-server initialize [flags]
   wuu debug app-server send [flags] METHOD [JSON]
   wuu debug protocol events [flags] THREAD_ID

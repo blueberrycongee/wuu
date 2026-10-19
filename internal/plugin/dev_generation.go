@@ -76,6 +76,12 @@ func ReadDevAuthorization(wuuHome, pluginID string) (DevAuthorization, error) {
 // Callers must hold the plugin-catalog mutation lease and advance its epoch
 // after successful publication.
 func PublishDevGeneration(wuuHome, developerDirectory, source string, authorization DevAuthorization) (Plugin, error) {
+	return publishDevGeneration(wuuHome, developerDirectory, source, authorization, "")
+}
+
+// Candidate publication checks the private copied package before any live
+// rename. Detecting changed archive bytes after publication would be too late.
+func publishDevGeneration(wuuHome, developerDirectory, source string, authorization DevAuthorization, expectedFingerprint string) (Plugin, error) {
 	if strings.TrimSpace(authorization.Token) == "" {
 		return Plugin{}, errors.New("dev authorization token is required")
 	}
@@ -129,6 +135,9 @@ func PublishDevGeneration(wuuHome, developerDirectory, source string, authorizat
 	stagedDev, err := LoadManifest(filepath.Join(packageRoot, manifestRelative), "dev")
 	if err != nil {
 		return Plugin{}, fmt.Errorf("validate staged dev provenance: %w", err)
+	}
+	if expectedFingerprint != "" && stagedDev.Fingerprint != expectedFingerprint {
+		return Plugin{}, errors.New("experiment candidate package changed during publication; previous generation preserved")
 	}
 	receipt := devGenerationReceipt{
 		PluginID:    authorization.PluginID,

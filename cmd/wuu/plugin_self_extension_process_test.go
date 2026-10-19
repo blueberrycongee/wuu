@@ -9,16 +9,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
+
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 )
 
 // Exercise the public protocol and CLI from inside a real agent execution. In
@@ -181,7 +186,7 @@ check();`) + " " + shellQuote(lifecyclePath)
 			if stage == "disable-manager" && call > 1 && prefix == "GENERATION_INTERCEPTOR_" {
 				wantVersion = ""
 			}
-			for _, candidate := range []string{"v1", "v2"} {
+			for _, candidate := range []string{"v1", "v2", "v3"} {
 				if strings.Contains(surface, prefix+candidate) != (candidate == wantVersion) {
 					fail("%s step %d has incorrect %s%s generation; expected %q", stage, call, prefix, candidate, wantVersion)
 				}
@@ -205,6 +210,13 @@ check();`) + " " + shellQuote(lifecyclePath)
 				code = "text(await tools." + name + "({}));"
 			case "update":
 				code = writeAndPublish(fixture("v2")) + " text(await tools." + name + "({}));"
+			case "capture-eval":
+				code = "await tools.write_file(" + encode(map[string]string{"path": source, "content": fixture("v3")}) + "); " +
+					"const before = JSON.parse((await tools.plugin_manager(" + encode(map[string]string{"action": "status", "id": singleFilePluginID(source)}) + ")).model_text); " +
+					"const captured = JSON.parse((await tools.plugin_manager(" + encode(map[string]string{"action": "capture", "path": source}) + ")).model_text).experiment; " +
+					"const evaluated = JSON.parse((await tools.plugin_manager({action:'eval',id:captured.id,candidate_ids:[captured.candidate_id],command:" + encode([]string{"node", "-e", `const fs = require("node:fs"); const source = fs.readFileSync(process.env.WUU_EXPERIMENT_PACKAGE + "/extension.ts", "utf8"); if (!source.includes('const version = "v3"')) throw new Error("wrong candidate bytes"); console.log("candidate v3 evaluated");`}) + "})).model_text).experiment; " +
+					"const after = JSON.parse((await tools.plugin_manager(" + encode(map[string]string{"action": "status", "id": singleFilePluginID(source)}) + ")).model_text); " +
+					"text('EXPERIMENT_RECEIPT:' + JSON.stringify({captured:{id:captured.id,candidate_id:captured.candidate_id},evaluated:{runs:evaluated.runs.map(run=>({status:run.status}))},before,after})); text(await tools." + name + "({}));"
 			case "invalid":
 				code = writeAndPublish("export default {") + " text(await tools." + name + "({}));"
 			case "disabled":
@@ -253,6 +265,37 @@ check();`) + " " + shellQuote(lifecyclePath)
 					}
 				}
 			}
+			if stage == "capture-eval" {
+				var receipt struct {
+					Captured  pluginpkg.ExperimentCandidate        `json:"captured"`
+					Evaluated pluginpkg.ExperimentEvaluationReport `json:"evaluated"`
+					Before    struct {
+						Plugins []struct {
+							Published string `json:"published_fingerprint"`
+							Current   string `json:"current_conversation_fingerprint"`
+						} `json:"plugins"`
+					} `json:"before"`
+					After struct {
+						Plugins []struct {
+							Published string `json:"published_fingerprint"`
+							Current   string `json:"current_conversation_fingerprint"`
+						} `json:"plugins"`
+					} `json:"after"`
+				}
+				for _, line := range strings.Split(result, "\n") {
+					if strings.HasPrefix(line, "EXPERIMENT_RECEIPT:") {
+						if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "EXPERIMENT_RECEIPT:")), &receipt); err != nil {
+							fail("invalid experiment receipt: %v", err)
+						}
+					}
+				}
+				if receipt.Captured.CandidateID == "" || receipt.Captured.ID != singleFilePluginID(source) || len(receipt.Evaluated.Runs) != 1 || receipt.Evaluated.Runs[0].Status != "succeeded" {
+					fail("manager capture/eval failed: %s", result)
+				}
+				if len(receipt.Before.Plugins) != 1 || len(receipt.After.Plugins) != 1 || receipt.Before.Plugins[0] != receipt.After.Plugins[0] || !strings.Contains(result, "memory:v2;disk:v2") {
+					fail("candidate capture/eval changed the published or pinned generation: %s", result)
+				}
+			}
 			if stage == "discover-manager" && !strings.Contains(result, "plugin_manager") && !strings.Contains(result, `"action":"status"`) {
 				fail("manager discovery failed: %s", result)
 			}
@@ -283,7 +326,7 @@ check();`) + " " + shellQuote(lifecyclePath)
 			delta = map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"index": 0, "id": stage + "-call", "type": "function", "function": map[string]any{"name": directTool, "arguments": encode(map[string]string{"query": "select:plugin_manager"})}}}}
 			finish = "tool_calls"
 		} else if code != "" {
-			delta = map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"index": 0, "id": stage + "-call", "type": "function", "function": map[string]any{"name": "run_code", "arguments": encode(map[string]string{"code": code})}}}}
+			delta = map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"index": 0, "id": stage + "-call", "type": "function", "function": map[string]any{"name": "run_code", "arguments": encode(map[string]string{"input": code})}}}}
 			finish = "tool_calls"
 		}
 		payload := encode(map[string]any{"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}}})
@@ -451,6 +494,9 @@ check();`) + " " + shellQuote(lifecyclePath)
 	}
 	for _, stage := range []string{"install", "read-v1", "update", "read-v2", "invalid", "after-invalid"} {
 		runTurn(stage)
+		if useManager && stage == "read-v2" {
+			runTurn("capture-eval")
+		}
 	}
 	if useManager {
 		runTurn("disable-manager")
@@ -500,5 +546,268 @@ check();`) + " " + shellQuote(lifecyclePath)
 	_ = stdin.Close()
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("app-server shutdown: %v", err)
+	}
+}
+
+// Exercise candidate capture and evaluation through real CLI processes. Local
+// sockets provide a deterministic concurrency/cancellation barrier; no model
+// service or external network access is involved.
+func TestPluginExperimentEvaluationProcess(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required")
+	}
+	root := t.TempDir()
+	if evidence := os.Getenv("WUU_SELF_EXTENSION_EVIDENCE"); evidence != "" {
+		if err := os.MkdirAll(evidence, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		root, err = os.MkdirTemp(evidence, "experiment-evaluation-")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	home := filepath.Join(root, "production-state")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	productionConfig := []byte(`{"synthetic_marker":"must remain unchanged"}`)
+	if err := os.WriteFile(filepath.Join(home, "config.json"), productionConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binary := strings.TrimSpace(os.Getenv("WUU_SELF_EXTENSION_BINARY"))
+	useBinary := binary != ""
+	if !useBinary {
+		binary, err = os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	command := func(args ...string) *exec.Cmd {
+		if !useBinary {
+			args = append([]string{"-test.run=^TestExecProcessHelper$", "--"}, args...)
+		}
+		cmd := exec.CommandContext(ctx, binary, args...)
+		cmd.Dir = root
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"), "HOME=" + root, "WUU_HOME=" + home,
+			"OPENAI_API_KEY=synthetic-must-not-inherit", "WUU_EXEC_PROCESS_TEST=1",
+		}
+		if runtime := os.Getenv("WUU_NODE_EXECUTABLE"); runtime != "" {
+			cmd.Env = append(cmd.Env, "WUU_NODE_EXECUTABLE="+runtime)
+		}
+		return cmd
+	}
+	source := filepath.Join(root, "candidate.ts")
+	candidates := make([]pluginpkg.ExperimentCandidate, 2)
+	for i := range candidates {
+		content := fmt.Sprintf(`export default { initialize() { return { protocol_version: 2, tools: [] }; }, shutdown() {} }; // candidate %d`, i)
+		if err := os.WriteFile(source, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := command("plugin", "experiment", "capture", "--json", "--workdir", root, source)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		output, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("capture: %v\n%s\n%s", err, output, &stderr)
+		}
+		if err := json.Unmarshal(output, &candidates[i]); err != nil {
+			t.Fatalf("decode candidate: %v\n%s", err, output)
+		}
+	}
+	// Evaluation must use the archived package after its original source changes.
+	if err := os.WriteFile(source, []byte("export default { broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("symlinked-run-root", func(t *testing.T) {
+		external := filepath.Join(root, "external-reports")
+		if err := os.Mkdir(external, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(home, "experiments", "runs")
+		if err := os.Symlink(external, link); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(link)
+		output, err := command("plugin", "experiment", "eval", "--json", candidates[0].ID, candidates[0].CandidateID, "--", node, "-e", "process.exit(0)").CombinedOutput()
+		if err == nil {
+			t.Fatalf("evaluation followed a symlinked report root: %s", output)
+		}
+		entries, err := os.ReadDir(external)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("evaluation wrote outside its report store: entries=%v err=%v", entries, err)
+		}
+	})
+	fixture := filepath.Join(root, "evaluate.cjs")
+	fixtureCode := `const fs = require("node:fs"), net = require("node:net"), cp = require("node:child_process"), path = require("node:path");
+const [mode, port, binary, useBinary, production] = process.argv.slice(2);
+if (process.env.OPENAI_API_KEY || process.env.WUU_HOME === production || process.env.HOME === path.dirname(production)) throw new Error("inherited production state");
+if (!process.env.WUU_EXPERIMENT_PACKAGE.startsWith(process.env.WUU_HOME + path.sep)) throw new Error("candidate is not isolated");
+if (fs.existsSync(path.join(process.env.WUU_HOME, "config.json"))) throw new Error("copied production configuration");
+fs.writeFileSync(path.join(process.cwd(), "run-marker"), process.env.WUU_HOME);
+function ready() {
+ const socket = net.connect(Number(port), "127.0.0.1", () => socket.write(JSON.stringify({role:"leader", home:process.env.WUU_HOME, cwd:process.cwd(), candidate:process.env.WUU_EXPERIMENT_CANDIDATE}) + "\n"));
+ socket.once("data", () => {
+  socket.end();
+  if (mode === "failed") process.exit(7);
+  if (mode === "orphan") process.exit(0);
+  const args = ["plugin", "test", "--json", process.env.WUU_EXPERIMENT_PACKAGE];
+  if (useBinary !== "true") args.unshift("-test.run=^TestExecProcessHelper$", "--");
+  const tested = cp.spawnSync(binary, args, {env:{...process.env, WUU_EXEC_PROCESS_TEST:"1"}, encoding:"utf8", timeout:10000});
+  if (tested.status !== 0 || !JSON.parse(tested.stdout).ok) throw new Error("isolated runtime contract failed: " + tested.stdout + tested.stderr);
+  process.stdout.write(JSON.stringify({candidate:process.env.WUU_EXPERIMENT_CANDIDATE, runtime:JSON.parse(tested.stdout)}) + "\n" + "o".repeat(8192));
+  process.stderr.write("e".repeat(8192));
+ });
+}
+if (["timeout","cancel","orphan","force-kill"].includes(mode)) {
+ if (mode === "force-kill") process.on("SIGTERM", () => {});
+ const child = cp.spawn(process.execPath, ["-e", 'const net=require("node:net");if(process.argv[2]==="force-kill")process.on("SIGTERM",()=>{});const s=net.connect(Number(process.argv[1]),"127.0.0.1",()=>{s.write(JSON.stringify({role:"child"})+"\\n");process.send("ready");});setInterval(()=>{},1000);', port, mode], {detached:mode === "cancel", stdio:["ignore","ignore","ignore","ipc"]});
+ child.once("message", () => {
+  if (mode === "cancel") process.on("SIGTERM", () => {
+   child.once("exit", () => process.stdout.write("graceful nested cleanup\n", () => process.exit(0)));
+   child.kill("SIGTERM");
+  });
+  ready();
+ });
+} else ready();
+`
+	if err := os.WriteFile(fixture, []byte(fixtureCode), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"parallel", "failed", "timeout", "cancel", "orphan", "force-kill"} {
+		t.Run(mode, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			_ = listener.(*net.TCPListener).SetDeadline(time.Now().Add(15 * time.Second))
+			port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+			timeout := "15s"
+			if mode == "timeout" || mode == "force-kill" {
+				timeout = "2s"
+			}
+			args := []string{"plugin", "experiment", "eval", "--json", "--workspace", root, "--concurrency", "2", "--timeout", timeout, "--output-limit", "1024", candidates[0].ID, candidates[0].CandidateID}
+			if mode == "parallel" {
+				args = append(args, candidates[1].CandidateID)
+			}
+			args = append(args, "--", node, fixture, mode, port, binary, strconv.FormatBool(useBinary), home)
+			cmd := command(args...)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if cmd.ProcessState == nil {
+					_ = cmd.Process.Kill()
+					_ = cmd.Wait()
+				}
+			}()
+			expectedConnections := 1
+			if mode != "failed" {
+				expectedConnections = 2
+			}
+			var leaders []net.Conn
+			var children []net.Conn
+			var homes, workdirs []string
+			for range expectedConnections {
+				conn, err := listener.Accept()
+				if err != nil {
+					t.Fatalf("evaluation readiness: %v\nstdout=%s\nstderr=%s", err, &stdout, &stderr)
+				}
+				defer conn.Close()
+				_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+				var ready struct{ Role, Home, Cwd, Candidate string }
+				if err := json.NewDecoder(conn).Decode(&ready); err != nil {
+					t.Fatal(err)
+				}
+				if ready.Role == "child" {
+					children = append(children, conn)
+				} else {
+					leaders = append(leaders, conn)
+					homes, workdirs = append(homes, ready.Home), append(workdirs, ready.Cwd)
+				}
+			}
+			if mode == "parallel" && (len(leaders) != 2 || homes[0] == homes[1] || workdirs[0] == workdirs[1]) {
+				t.Fatalf("parallel runs shared state: homes=%v workdirs=%v", homes, workdirs)
+			}
+			if mode == "cancel" {
+				if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+					t.Fatal(err)
+				}
+			} else if mode != "timeout" && mode != "force-kill" {
+				for _, conn := range leaders {
+					if _, err := conn.Write([]byte("go\n")); err != nil {
+						t.Fatal(err)
+					}
+					_ = conn.Close()
+				}
+			}
+			if err := cmd.Wait(); err != nil {
+				t.Fatalf("evaluation CLI: %v\n%s\n%s", err, &stdout, &stderr)
+			}
+			for _, child := range children {
+				_ = child.SetReadDeadline(time.Now().Add(3 * time.Second))
+				var b [1]byte
+				if n, err := child.Read(b[:]); n != 0 || err != io.EOF {
+					t.Fatalf("evaluation left a child alive: n=%d err=%v", n, err)
+				}
+			}
+			var report pluginpkg.ExperimentEvaluationReport
+			if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+				t.Fatalf("decode report: %v\n%s", err, &stdout)
+			}
+			stored, err := os.ReadFile(report.ReportPath)
+			if err != nil || !bytes.Equal(bytes.TrimSpace(stored), bytes.TrimSpace(stdout.Bytes())) {
+				t.Fatalf("persisted report differs: %v\n%s", err, stored)
+			}
+			wantStatus := map[string]string{"parallel": "succeeded", "failed": "failed", "timeout": "timed_out", "cancel": "cancelled", "orphan": "succeeded", "force-kill": "timed_out"}[mode]
+			if len(report.Runs) != len(leaders) || report.CancellationGraceMS != 10000 {
+				t.Fatalf("incomplete evaluation report: %+v", report)
+			}
+			for index, run := range report.Runs {
+				if mode == "cancel" {
+					output, err := os.ReadFile(run.Stdout.Path)
+					if err != nil || !bytes.Contains(output, []byte("graceful nested cleanup")) {
+						t.Fatalf("nested runtime cleanup did not finish before cancellation: %q err=%v", output, err)
+					}
+				}
+				if mode == "force-kill" && run.DurationMS < report.TimeoutMS+report.CancellationGraceMS {
+					t.Fatalf("force kill skipped the bounded graceful shutdown: %+v", run)
+				}
+				if run.Status != wantStatus || run.CandidateID != candidates[index].CandidateID || run.SourceSHA256 != candidates[index].SourceSHA256 || run.Fingerprint != candidates[index].Fingerprint || run.StartedAt.IsZero() || run.FinishedAt.Before(run.StartedAt) {
+					t.Fatalf("invalid evaluation evidence: %+v", run)
+				}
+				if (mode == "parallel" || mode == "orphan") && (run.ExitCode == nil || *run.ExitCode != 0) {
+					t.Fatalf("successful command exit: %+v", run)
+				}
+				if mode == "failed" && (run.ExitCode == nil || *run.ExitCode != 7) {
+					t.Fatalf("failed command exit: %+v", run)
+				}
+				for _, artifact := range []pluginpkg.ExperimentArtifact{run.Stdout, run.Stderr} {
+					info, err := os.Stat(artifact.Path)
+					if err != nil || info.Size() != artifact.Bytes || artifact.Bytes > 1024 {
+						t.Fatalf("invalid bounded artifact: %+v err=%v", artifact, err)
+					}
+					if mode == "parallel" && (!artifact.Truncated || artifact.Bytes != 1024) {
+						t.Fatalf("missing truncation evidence: %+v", artifact)
+					}
+				}
+			}
+			t.Logf("PASS mode=%s report=%s", mode, report.ReportPath)
+		})
+	}
+	actual, err := os.ReadFile(filepath.Join(home, "config.json"))
+	if err != nil || !bytes.Equal(actual, productionConfig) {
+		t.Fatalf("evaluation changed production settings: %s err=%v", actual, err)
+	}
+	for _, path := range []string{filepath.Join(home, "dev"), filepath.Join(root, "run-marker")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("evaluation changed production state/workspace %s: %v", path, err)
+		}
 	}
 }

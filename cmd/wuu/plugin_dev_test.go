@@ -316,6 +316,17 @@ export default {
 			t.Fatalf("failed reload changed last-good code: %s, %v", after, err)
 		}
 	}
+	t.Run("noisy import preserves bounded diagnostics and last good", func(t *testing.T) {
+		writePluginDevTestFile(t, source, `import { writeSync } from "node:fs"; writeSync(2, "x".repeat(128 * 1024)); throw new Error("noisy import"); export default { initialize() { return {}; } };`)
+		_, err := refreshDevGeneration(context.Background(), home, source, "")
+		if err == nil || len(err.Error()) > 34*1024 || !strings.Contains(err.Error(), "output truncated") {
+			t.Fatalf("expected bounded failure diagnostics, got %v", err)
+		}
+		after, err := os.ReadFile(filepath.Join(packageRoot, "extension.ts"))
+		if err != nil || string(after) != string(before) {
+			t.Fatalf("noisy failed import changed last-good code: %v", err)
+		}
+	})
 	// Initialization belongs to the real host: it may read kernel services that
 	// are unavailable to this source loader. Publication only validates loading.
 	writePluginDevTestFile(t, source, `export default { initialize() { throw new Error("actual host must validate initialization"); } };`)

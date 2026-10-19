@@ -162,6 +162,33 @@ jobs:
           WUU_SELF_EXTENSION_EVIDENCE: ${{ runner.temp }}/wuu-plugin-generation-evidence
         run: WUU_SELF_EXTENSION_BINARY="$PWD/bin/wuu" go test -count=1 -run '^TestAgentSelfExtensionProcess$' ./cmd/wuu
 
+      - name: Verify plugin candidate experiments
+        timeout-minutes: 4
+        shell: bash
+        env:
+          WUU_E2E_CORE: ${{ github.workspace }}/bin/wuu
+          WUU_EXPERIMENT_E2E_OUTPUT: ${{ runner.temp }}/wuu-plugin-experiment-evidence
+        run: |
+          mkdir -p "$WUU_EXPERIMENT_E2E_OUTPUT"
+          set -o pipefail
+          node scripts/plugin-experiment-e2e.mjs 2>&1 | tee "$WUU_EXPERIMENT_E2E_OUTPUT/run.log"
+
+      - name: Upload plugin experiment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-experiment-evidence
+          path: |
+            ${{ runner.temp }}/wuu-plugin-experiment-evidence/result.json
+            ${{ runner.temp }}/wuu-plugin-experiment-evidence/run.log
+            ${{ runner.temp }}/wuu-plugin-experiment-evidence/run-*/*.json
+            ${{ runner.temp }}/wuu-plugin-experiment-evidence/run-*/*.jsonl
+            ${{ runner.temp }}/wuu-plugin-experiment-evidence/run-*/*.log
+            ${{ runner.temp }}/wuu-plugin-experiment-evidence/run-*/state/experiments/runs/*/report.json
+            ${{ runner.temp }}/wuu-plugin-experiment-evidence/run-*/state/experiments/runs/*/run-*/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Upload plugin acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

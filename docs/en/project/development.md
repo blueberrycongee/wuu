@@ -72,6 +72,20 @@ without a manifest or build. See the [plugin quickstart](../customize/plugin-qui
 
 `make install` installs the CLI from the checkout. The current release workflow packages only the macOS arm64 desktop preview; Windows CI and packaging scripts do not imply a published Windows release. See [installation](../getting-started/installation.md) for user-facing availability.
 
+### Plugin candidate end-to-end check
+
+Build the core, then run `WUU_E2E_CORE=bin/wuu node scripts/plugin-experiment-e2e.mjs`
+with Node 22.7 or newer. The fixture uses the real CLI, agent `plugin_manager`,
+stdio app-server and public TypeScript adapter with a loopback synthetic provider.
+It checks immutable capture, separate parallel evaluation homes, unchanged active
+turns during selection, next-turn adoption, rollback, source trust, stale selection,
+changed package rejection, startup failure and timeout cleanup, SessionEnd-hook
+and multi-MCP retirement, cancellation and bounded output. It saves the binary hash, result, command receipts and protocol
+transcripts under `.tmp/e2e/plugin-experiment/`; `WUU_EXPERIMENT_E2E_OUTPUT` selects
+another directory. It uses disposable state and no paid inference. It does not
+measure model quality, desktop rendering, or OS/network isolation. The existing
+Go-validation CI job runs this check and retains its synthetic evidence for 14 days.
+
 ### Native steering end-to-end check
 
 Build the core, then run `WUU_E2E_CORE=bin/wuu node scripts/native-steering-e2e.mjs`

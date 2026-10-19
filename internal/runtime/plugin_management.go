@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,7 @@ type pluginManagementResult struct {
 	Plugins    []pluginManagementStatus `json:"plugins"`
 	Diagnostic string                   `json:"diagnostic,omitempty"`
 	Adoption   string                   `json:"adoption"`
+	Experiment json.RawMessage          `json:"experiment,omitempty"`
 }
 type pluginManagementCommand func(context.Context, string, string, []string) (string, error)
 
@@ -43,6 +45,10 @@ type pluginManagementCommand func(context.Context, string, string, []string) (st
 // latest published generation. The tool authorizes execution before calling it.
 func (s *Session) pluginManager(generation *PluginGeneration, run pluginManagementCommand) tools.PluginManager {
 	return func(ctx context.Context, req tools.PluginManagementRequest) (any, error) {
+		switch req.Action {
+		case "capture", "candidates", "eval", "select", "rollback":
+			return s.pluginExperimentManager(ctx, generation, run, req)
+		}
 		result := pluginManagementResult{Action: req.Action, Plugins: []pluginManagementStatus{}, Adoption: "published changes are adopted at the next idle turn boundary; this turn keeps its existing tools"}
 		configPath := filepath.Join(s.WuuHome, "config.json")
 		settings, published, err := s.pluginManagementInventory(req.CWD)
@@ -145,6 +151,62 @@ func (s *Session) pluginManager(generation *PluginGeneration, run pluginManageme
 	}
 }
 
+// Experiments use the same fixed CLI and host-code authorization as ordinary
+// development. Capturing and evaluating never change the conversation's tools.
+func (s *Session) pluginExperimentManager(ctx context.Context, generation *PluginGeneration, run pluginManagementCommand, req tools.PluginManagementRequest) (any, error) {
+	if s.SafeMode && req.Action != "candidates" {
+		return nil, fmt.Errorf("plugin mutation is unavailable in safe mode")
+	}
+	if req.ID != "" {
+		if err := pluginpkg.ValidateInstallID(req.ID); err != nil {
+			return nil, err
+		}
+	}
+	args := []string{"plugin", "experiment"}
+	switch req.Action {
+	case "capture":
+		args = append(args, "capture", "--json", "--workdir", req.CWD, "--", req.Path)
+	case "candidates":
+		args = append(args, "list", "--json", "--workdir", req.CWD)
+		if req.ID != "" {
+			args = append(args, "--", req.ID)
+		}
+	case "select", "rollback":
+		if req.ExpectedCurrent == nil {
+			return nil, fmt.Errorf("%s requires expected_current", req.Action)
+		}
+		args = append(args, req.Action, "--json", "--workdir", req.CWD, "--expect-current="+*req.ExpectedCurrent, "--", req.ID, req.CandidateID)
+	case "eval":
+		if req.Concurrency < 1 || req.Concurrency > 8 || req.TimeoutSeconds < 1 || req.TimeoutSeconds > 1800 {
+			return nil, fmt.Errorf("invalid evaluation concurrency or timeout")
+		}
+		args = append(args, "eval", "--json", "--workspace", req.CWD, "--concurrency", strconv.Itoa(req.Concurrency), "--timeout", strconv.Itoa(req.TimeoutSeconds)+"s", "--", req.ID)
+		args = append(args, req.CandidateIDs...)
+		args = append(args, "--")
+		args = append(args, req.Command...)
+	default:
+		return nil, fmt.Errorf("unsupported plugin experiment action %q", req.Action)
+	}
+	output, err := run(ctx, s.WuuHome, req.CWD, args)
+	if err != nil {
+		return nil, fmt.Errorf("plugin %s failed: %w: %s", req.Action, err, output)
+	}
+	if !json.Valid([]byte(output)) {
+		return nil, fmt.Errorf("plugin %s completed but its JSON receipt was invalid; inspect candidates/status before retrying", req.Action)
+	}
+	result := pluginManagementResult{Action: req.Action, Plugins: []pluginManagementStatus{}, Experiment: json.RawMessage(output), Adoption: "published and current-conversation generations are unchanged"}
+	if req.Action == "select" || req.Action == "rollback" {
+		value, err := s.pluginManager(generation, run)(ctx, tools.PluginManagementRequest{Action: "status", ID: req.ID, CWD: req.CWD})
+		if err != nil {
+			return nil, fmt.Errorf("plugin %s completed but status could not be read: %w", req.Action, err)
+		}
+		status := value.(pluginManagementResult)
+		result.Plugins = status.Plugins
+		result.Adoption = status.Adoption + "; business state and external effects are unchanged"
+	}
+	return result, nil
+}
+
 func pluginManagementTrusted(settings extensions.Settings, item pluginpkg.Plugin) bool {
 	if item.Official || item.AuthorizedDev {
 		return true
@@ -166,7 +228,12 @@ func runPluginManagementCommand(ctx context.Context, home, cwd string, args []st
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	commandTimeout := 2 * time.Minute
+	experiment := len(args) > 2 && args[0] == "plugin" && args[1] == "experiment"
+	if experiment && args[2] == "eval" {
+		commandTimeout = 16*time.Hour + time.Minute // 32 runs at the maximum 30-minute per-run deadline.
+	}
+	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
 	command := exec.Command(executable, args...)
 	command.Dir = cwd
@@ -177,8 +244,14 @@ func runPluginManagementCommand(ctx context.Context, home, cwd string, args []st
 	}
 	command.Env = append(command.Env, "WUU_HOME="+home)
 	output := &pluginManagementOutput{}
+	stderr := output
+	if experiment {
+		output.limit = 512 * 1024
+		stderr = &pluginManagementOutput{}
+	}
 	command.Stdout = output
-	command.Stderr = output
+	command.Stderr = stderr
+	command.WaitDelay = 2 * time.Second
 	handle, err := proc.StartCommand(command)
 	if err != nil {
 		return "", err
@@ -187,22 +260,37 @@ func runPluginManagementCommand(ctx context.Context, home, cwd string, args []st
 	case <-handle.Done():
 		err = handle.Wait()
 	case <-ctx.Done():
-		err = errors.Join(ctx.Err(), handle.Stop(proc.DefaultStopGracePeriod))
-		err = fmt.Errorf("plugin command interrupted; publication may have completed, inspect status before retrying: %w", err)
+		grace := proc.DefaultStopGracePeriod
+		if experiment {
+			// The evaluator first cancels its child host so owned plugin process
+			// groups can retire before the supervisor itself is force-killed.
+			grace = 12 * time.Second
+		}
+		err = errors.Join(ctx.Err(), handle.Stop(grace))
+		err = fmt.Errorf("plugin command interrupted; inspect persisted status or experiment evidence before retrying: %w", err)
 	}
-	return strings.TrimSpace(output.String()), err
+	result := strings.TrimSpace(output.String())
+	if experiment && err != nil && stderr.String() != "" {
+		result += "\n" + strings.TrimSpace(stderr.String())
+	}
+	return result, err
 }
 
 type pluginManagementOutput struct {
-	mu   sync.Mutex
-	data []byte
+	mu    sync.Mutex
+	data  []byte
+	limit int
 }
 
 func (b *pluginManagementOutput) Write(data []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	n := len(data)
-	remaining := 32*1024 - len(b.data)
+	limit := b.limit
+	if limit == 0 {
+		limit = 32 * 1024
+	}
+	remaining := limit - len(b.data)
 	if len(data) > remaining {
 		data = data[:remaining]
 	}

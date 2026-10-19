@@ -813,9 +813,17 @@ func (m *Manager) Close() error {
 		m.notifyConnectionRetired(client)
 	}
 	cancel()
+	// Connections are independent owners. Retire them together so several
+	// unresponsive stdio servers share one shutdown grace window, not N windows.
+	closeErrors := make([]error, len(clients))
+	var closing sync.WaitGroup
+	for index, client := range clients {
+		closing.Go(func() { closeErrors[index] = client.Close() })
+	}
+	closing.Wait()
 	var firstErr error
-	for _, c := range clients {
-		if err := c.Close(); err != nil && firstErr == nil {
+	for _, err := range closeErrors {
+		if err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
