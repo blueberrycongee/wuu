@@ -162,11 +162,14 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
   const pending = rawRequest({ tab_id: "pending-tab", initial_url: `http://127.0.0.1:${address.port}/held` });
   await Promise.race([started, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Navigation never reached the local fixture")), 5000))]);
   const pendingContents = views.at(-1)!.webContents;
+  const deletedContentsDestroyed = Promise.all([pendingContents, secondWorktreeContents].map((contents) =>
+    once(contents, "destroyed", { signal: AbortSignal.timeout(5000) })));
   notify("thread/deleted", { thread_id: threadID, workdir: linked });
   releaseNavigation?.();
   await pending.done;
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  await deletedContentsDestroyed;
   assert.ok(errors.has(pending.id), "An in-flight navigation cannot report success after deletion");
   assert.equal(pendingContents.isDestroyed(), true);
   assert.equal(secondWorktreeContents.isDestroyed(), true, "Deletion cleans the same thread in every workdir");
@@ -177,8 +180,10 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
   coordinator.update({ ...nextActivity, updated_at: new Date().toISOString() });
   coordinator.setActiveThread(threadID);
   assert.equal(previewWindows().length, 0, "A late snapshot cannot restore a deleted thread");
+  const siblingDestroyed = once(sibling, "destroyed", { signal: AbortSignal.timeout(5000) });
   host.onClientTorndown(root);
   coordinator.dropWorkdir(root);
+  await siblingDestroyed;
   assert.equal(sibling.isDestroyed(), true);
   assert.equal(host.hasAgentTabs(root), false, "Transport teardown releases its linked-worktree pin");
   await coordinator.shutdown();
@@ -208,6 +213,7 @@ async function verifyLifecycleRecovery(main: BrowserWindow): Promise<void> {
   completeCaptureStop();
   await stopped;
   assert.equal(prematureCompletion, false, "Window destruction cannot report completion before capture disposal");
+  await waitFor("orphan overlay destroyed", () => orphanOverlay.isDestroyed());
   assert.equal(orphanOverlay.isDestroyed(), true, "Externally destroyed PiP windows release their overlay WebContents");
   writeFileSync(join(artifacts, "lifecycle-recovery.json"), JSON.stringify({ linkedWorktreeOwner: true,
     realRendererCrash: true, sameExecutionPreviewRecovery: true, userReload: true, inputReplayCount: 0,

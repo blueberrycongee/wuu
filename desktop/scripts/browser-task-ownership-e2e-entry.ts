@@ -1017,8 +1017,11 @@ app.whenReady().then(async () => {
   check("actual pool pressure evicts an unpinned sibling core", tornDownWorkdirs.some(cwd => cwd.startsWith(join(fixture, "pressure-"))), JSON.stringify(tornDownWorkdirs));
   check("retained linked page protects its actual owner process from eviction", !tornDownWorkdirs.includes(workdir) && ownerChild.exitCode === null && ownerChild.signalCode === null && !linkedContents.isDestroyed(), JSON.stringify({ pid: ownerChild.pid, tornDownWorkdirs }));
   check("retained linked page stays usable after pool pressure", await linkedContents.executeJavaScript("document.querySelector('h1').textContent") === "/OWNERSHIP_LINKED");
+  const linkedDestroyed = once(linkedContents, "destroyed");
   await pool.request("thread/delete", { thread_id: linked.id });
-  check("real thread deletion closes the linked page and releases its pin", linkedContents.isDestroyed() && !host.hasAgentTabs(workdir));
+  check("real thread deletion releases the linked owner's pin", !host.hasAgentTabs(workdir));
+  await bounded("deleted linked page finishes native destruction", linkedDestroyed);
+  check("real thread deletion closes the linked page", linkedContents.isDestroyed());
   const ownerExited = once(ownerChild, "exit");
   for (let index = 4; index < 8; index++) {
     activeWorkdir = join(fixture, `pressure-${index}`);
