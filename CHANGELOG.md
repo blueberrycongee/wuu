@@ -10,6 +10,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add a default-disabled experimental Generative UI plugin with composable layouts,
+  reactive local calculations, charts and forms, bounded data programs, per-result
+  state restoration, and readable fallback. Preview validated nodes while tool
+  arguments arrive and let explicit user actions continue the source conversation
+  without consuming composer drafts or attachments.
+
 - Monitor plugin for background scripts, event delivery into the active conversation,
   timeout and persistent watches, output inspection, and per-task stop controls.
 - Public process service for conversation-bound extension commands and event delivery,

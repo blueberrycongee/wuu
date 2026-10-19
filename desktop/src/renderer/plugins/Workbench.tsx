@@ -208,6 +208,12 @@ export class WorkbenchController {
       .find((renderer) => rendererMatches(renderer, contentType));
   }
 
+  getToolInputRenderer(capability: string): RegisteredRenderer | undefined {
+    return [...this.host.getRenderers("tool-result")].reverse()
+      .find((renderer) => renderer.toolInput?.capability === capability
+        && typeof renderer.match === "string" && this.getRenderer("tool-result", renderer.match) === renderer);
+  }
+
   createViewHostAPI(view: WorkbenchViewState): ViewHostAPI {
     const activation = this.host.getGenerationActivation(view.pluginId, view.generation);
     const requireActive = (): void => {
@@ -769,6 +775,9 @@ export interface WorkbenchContentRendererProps {
   contentType: string;
   content: unknown;
   metadata?: Readonly<Record<string, unknown>>;
+  /** Only host callers may advertise actions for this exact source. */
+  actions?: readonly string[];
+  dispatchAction?: (action: string, input: unknown, isCurrent: () => boolean) => unknown | Promise<unknown>;
   fallback: React.ReactNode;
 }
 
@@ -780,22 +789,116 @@ export function WorkbenchContentRenderer(props: WorkbenchContentRendererProps): 
   );
   const renderer = props.controller.getRenderer(props.category, props.contentType);
   if (!renderer) return <>{props.fallback}</>;
+  return <MountedContentRenderer key={`${renderer.pluginId}:${renderer.generation}:${renderer.id}`}
+    {...props} renderer={renderer} />;
+}
+
+const consumedContentInteractions = new WeakSet<Event>();
+
+function MountedContentRenderer(props: WorkbenchContentRendererProps & { renderer: RegisteredRenderer }): JSX.Element {
+  const { renderer, controller } = props;
+  const mounted = React.useRef(false);
+  const sourceKey = JSON.stringify([props.category, props.contentType,
+    props.metadata?.threadId, props.metadata?.partId, props.metadata?.artifactId,
+    props.metadata?.sourceRevision]);
+  const latestSource = React.useRef(sourceKey);
+  latestSource.current = sourceKey;
+  const latest = React.useRef(props);
+  latest.current = props;
+  const activation = controller.host.getGenerationActivation(renderer.pluginId, renderer.generation);
+  const interaction = React.useRef<{ event: Event; gesture: Event } | undefined>(undefined);
+  const pendingSubmit = React.useRef<{
+    gesture: Event; form: HTMLFormElement; submitter: HTMLButtonElement | HTMLInputElement;
+    sourceKey: string; activation: object | undefined;
+  } | undefined>(undefined);
+  const submitCleanup = React.useRef<number | undefined>(undefined);
+  function clearPendingSubmit(): void {
+    pendingSubmit.current = undefined;
+    if (submitCleanup.current !== undefined) window.clearTimeout(submitCleanup.current);
+    submitCleanup.current = undefined;
+  }
+  React.useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      interaction.current = undefined;
+      clearPendingSubmit();
+    };
+  }, [sourceKey, activation]);
+  const isCurrent = (): boolean => mounted.current && latestSource.current === sourceKey
+    && activation !== undefined
+    && controller.host.getGenerationActivation(renderer.pluginId, renderer.generation) === activation;
+  const captureInteraction = (event: React.SyntheticEvent): void => {
+    if (!event.nativeEvent.isTrusted || navigator.userActivation?.isActive !== true) return;
+    clearPendingSubmit();
+    const gesture = event.nativeEvent;
+    interaction.current = { event: gesture, gesture };
+    const submitter = event.target instanceof Element ? event.target.closest("button,input") : null;
+    if (!(submitter instanceof HTMLButtonElement || submitter instanceof HTMLInputElement)
+      || !["submit", "image"].includes(submitter.type) || submitter.matches(":disabled")) return;
+    const form = submitter.form;
+    if (!form) return;
+    if (!event.currentTarget.contains(form) || !form.checkValidity()) {
+      interaction.current = undefined;
+      return;
+    }
+    pendingSubmit.current = { gesture, form, submitter, sourceKey, activation };
+    // Native form submission follows the click's default action. This task
+    // cleanup cannot grant a new gesture: only this exact form/submitter may
+    // consume the already captured click, before the next task begins.
+    submitCleanup.current = window.setTimeout(clearPendingSubmit, 0);
+  };
+  const captureSubmit = (event: React.SyntheticEvent): void => {
+    const pending = pendingSubmit.current;
+    clearPendingSubmit();
+    interaction.current = undefined;
+    const submitted = event.nativeEvent as SubmitEvent;
+    // requestSubmit() can emit a trusted SubmitEvent; trust alone is not an
+    // authorization. Keyboard implicit submission uses the native button click.
+    if (!pending || !submitted.isTrusted || navigator.userActivation?.isActive !== true
+      || pending.sourceKey !== sourceKey || pending.activation !== activation
+      || submitted.target !== pending.form || submitted.submitter !== pending.submitter
+      || pending.submitter.form !== pending.form || pending.submitter.matches(":disabled")
+      || !pending.form.isConnected || !pending.form.checkValidity()
+      || pending.gesture.defaultPrevented || consumedContentInteractions.has(pending.gesture)) return;
+    interaction.current = { event: submitted, gesture: pending.gesture };
+  };
+  const releaseInteraction = (): void => { interaction.current = undefined; };
+  const host = controller.createPresentationHostAPI(renderer.pluginId, renderer.generation, props.actions ?? [],
+    (action, input) => {
+      if (!isCurrent()) throw new Error("Content action source is no longer active");
+      const captured = interaction.current;
+      interaction.current = undefined;
+      clearPendingSubmit();
+      const event = captured?.event;
+      // Real input can checkpoint microtasks between React's native capture
+      // and bubble listeners. Bind to the dispatch itself rather than expiring
+      // in a capture microtask or granting a time-based activation window.
+      if (!event || !event.isTrusted || event.eventPhase !== Event.BUBBLING_PHASE
+        || consumedContentInteractions.has(captured!.gesture) || navigator.userActivation?.isActive !== true) {
+        throw new Error("Content actions require a new user interaction");
+      }
+      consumedContentInteractions.add(captured!.gesture);
+      const current = latest.current;
+      if (!current.actions?.includes(action)) throw new Error("Content action is no longer available");
+      if (!current.dispatchAction) throw new Error("Content action dispatcher is unavailable");
+      return current.dispatchAction(action, input, isCurrent);
+    });
   const Renderer = renderer.render;
   return (
     <PluginErrorBoundary
-      key={`${renderer.pluginId}:${renderer.generation}:${renderer.id}`}
       pluginId={renderer.pluginId}
       generation={renderer.generation}
-      activation={props.controller.host.getGenerationActivation(renderer.pluginId, renderer.generation)}
-      services={props.controller.services}
+      activation={activation}
+      services={controller.services}
       onUseDefault={() => undefined}
       fallback={props.fallback}
     >
-      <Renderer
-        content={props.content}
-        metadata={props.metadata ?? {}}
-        host={props.controller.createRendererHostAPI(renderer.pluginId, renderer.generation)}
-      />
+      <div style={{ display: "contents" }} data-wuu-component="content-renderer"
+        onClickCapture={captureInteraction} onClick={releaseInteraction}
+        onSubmitCapture={captureSubmit} onSubmit={releaseInteraction}>
+        <Renderer content={props.content} metadata={props.metadata ?? {}} host={host} />
+      </div>
     </PluginErrorBoundary>
   );
 }

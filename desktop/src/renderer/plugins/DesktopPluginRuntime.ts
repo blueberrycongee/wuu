@@ -94,6 +94,7 @@ void desktopCompositionRoot.plugin(WorkbenchService, desktopWorkbenchController)
 
 export class DesktopPluginRuntime {
   private readonly activeGenerations = new Map<string, string>();
+  private readonly activePlugins = new Map<string, ExtensionInventoryRecord>();
   private desiredPlugins = new Map<string, ExtensionInventoryRecord>();
   private readonly activeDependencies = new Map<string, string>();
   private readonly pendingDependencies = new Map<string, { signature: string }>();
@@ -104,6 +105,32 @@ export class DesktopPluginRuntime {
     readonly host: PluginHost,
     private readonly loadModule: ModuleLoader = importDesktopPluginModule,
   ) {}
+
+  // State belongs to the approved package, while runtime callbacks belong to
+  // one activation. A failed desktop replacement may retain its previous UI;
+  // only that still-live UI may persist against the current same-source package.
+  storageFingerprint(
+    pluginId: string,
+    generation: string,
+    inventory: readonly ExtensionInventoryRecord[],
+  ): string {
+    const current = inventory.find(plugin => plugin.id === pluginId);
+    if (!this.host.isGenerationActive(pluginId, generation) || !current || !isAvailablePlugin(current)) {
+      throw new Error("Plugin storage context is no longer active");
+    }
+    if (current.fingerprint === generation) return generation;
+    const active = this.activePlugins.get(pluginId);
+    if (!active || active.fingerprint !== generation || active.package_source !== current.package_source
+      || active.provenance.kind !== current.provenance.kind
+      || active.provenance.source !== current.provenance.source
+      || active.provenance.scope !== current.provenance.scope
+      || active.provenance.path !== current.provenance.path
+      || active.provenance.plugin_id !== current.provenance.plugin_id
+      || active.provenance.official !== current.provenance.official) {
+      throw new Error("Plugin storage source is no longer active");
+    }
+    return current.fingerprint!;
+  }
 
   async sync(
     inventory: readonly ExtensionInventoryRecord[],
@@ -165,6 +192,7 @@ export class DesktopPluginRuntime {
     const unload = (id: string): void => {
       this.host.unload(id);
       this.activeGenerations.delete(id);
+      this.activePlugins.delete(id);
       this.activeDependencies.delete(id);
       this.pendingDependencies.delete(id);
     };
@@ -236,6 +264,7 @@ export class DesktopPluginRuntime {
           });
           if (epoch === this.syncEpoch) {
             this.activeGenerations.set(plugin.id, fingerprint);
+            this.activePlugins.set(plugin.id, plugin);
             this.activeDependencies.set(plugin.id, dependencySignature(plugin.id, true));
             // Recovery changes availability without changing inventory. Fence
             // every affected consumer in reverse order before any can restart.
