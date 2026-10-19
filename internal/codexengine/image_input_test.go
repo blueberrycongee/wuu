@@ -27,13 +27,13 @@ func TestEngineTransmitsImages(t *testing.T) {
 			t.Setenv("WUU_TEST_CODEX_INPUT", capture)
 			host := NewHost(binary, t.TempDir())
 			engine := NewEngine(host)
-			defer host.Release()
 			sess, err := engine.SessionForThread(context.Background(), agentengine.ThreadBinding{
 				ThreadID: t.Name(), RootDir: t.TempDir(), Model: "gpt-6-astra",
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer sess.Close(context.Background())
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			_, err = sess.RunTurn(ctx, agentengine.TurnInput{History: []providers.ChatMessage{

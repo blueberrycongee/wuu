@@ -67,20 +67,26 @@ type serviceExecution struct {
 	cancel       context.CancelFunc
 	refs         int
 	participants map[string]struct{}
+	autonomous   bool
 }
 
 // ServiceRegistry resolves and routes service calls for one generation.
 type ServiceRegistry struct {
-	mu               sync.RWMutex
-	active           bool
-	open             bool
-	providers        map[serviceKey]serviceProvider
-	consumers        map[string]map[serviceKey]struct{}
-	notifiers        map[string]ServiceChangedNotifier
-	kernelLifecycles []kernelServiceLifecycle
-	executions       map[string]*serviceExecution
-	executionChanged chan struct{}
-	nextExecution    uint64
+	mu                   sync.RWMutex
+	active               bool
+	open                 bool
+	providers            map[serviceKey]serviceProvider
+	consumers            map[string]map[serviceKey]struct{}
+	notifiers            map[string]ServiceChangedNotifier
+	kernelLifecycles     []kernelServiceLifecycle
+	executions           map[string]*serviceExecution
+	executionChanged     chan struct{}
+	nextExecution        uint64
+	scopeTracker         *ExecutionTracker
+	backgroundStopped    bool
+	cleanupOwners        map[string]int
+	retiringProviders    map[string]bool
+	rootExecutionContext func(string, string) (context.Context, bool, *HostServiceError)
 }
 
 // ServiceRegistration is the common provider entry consumed by the registry.
@@ -108,6 +114,15 @@ func NewServiceRegistry() *ServiceRegistry {
 		notifiers:  make(map[string]ServiceChangedNotifier),
 		executions: make(map[string]*serviceExecution), executionChanged: make(chan struct{}),
 	}
+}
+
+// bindRootExecutionContext connects a new plugin-initiated service chain to
+// its originating host dispatch. Nested providers reuse the admitted chain
+// after participant validation rather than pretending to own the root tool.
+func (r *ServiceRegistry) bindRootExecutionContext(resolve func(string, string) (context.Context, bool, *HostServiceError)) {
+	r.mu.Lock()
+	r.rootExecutionContext = resolve
+	r.mu.Unlock()
 }
 
 // BuildServiceRegistry collects provide/consume declarations from one
@@ -272,6 +287,26 @@ func (r *ServiceRegistry) RevokePlugin(ctx context.Context, pluginID string) {
 	}
 }
 
+// stopProviderAdmission seals incoming work before the host takes its
+// cancellation snapshot. Declared shutdown cleanup remains routable until
+// RevokePlugin removes the consumer and provider bindings after Close returns.
+func (r *ServiceRegistry) stopProviderAdmission(pluginID string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.retiringProviders == nil {
+		r.retiringProviders = make(map[string]bool)
+	}
+	r.retiringProviders[pluginID] = true
+	for _, execution := range r.executions {
+		if _, involved := execution.participants[pluginID]; involved {
+			execution.cancel()
+		}
+	}
+}
+
 func (r *ServiceRegistry) executionContinuation(executionID, caller string) bool {
 	executionID = strings.TrimSpace(executionID)
 	if executionID == "" {
@@ -287,12 +322,58 @@ func (r *ServiceRegistry) executionContinuation(executionID, caller string) bool
 	return caller == "kernel" || allowed
 }
 
-func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, caller string, key serviceKey, provider string, canStart bool) (context.Context, string, func(), *HostServiceError) {
+// A shutdown callback may persist through its declared services while normal
+// autonomous admission is closed. These calls never mint model/tool authority.
+type serviceCleanupKey struct{}
+
+// InShutdownCleanup marks inherited persistence/cancellation work, not a new
+// autonomous entry point. Kernel services retain their normal owner checks.
+func InShutdownCleanup(ctx context.Context) bool {
+	cleanup, _ := ctx.Value(serviceCleanupKey{}).(bool)
+	return cleanup
+}
+
+func (r *ServiceRegistry) allowShutdownCleanup(pluginID string) func() {
+	if r == nil {
+		return func() {}
+	}
 	r.mu.Lock()
+	if r.cleanupOwners == nil {
+		r.cleanupOwners = make(map[string]int)
+	}
+	r.cleanupOwners[pluginID]++
+	r.mu.Unlock()
+	return sync.OnceFunc(func() {
+		r.mu.Lock()
+		r.cleanupOwners[pluginID]--
+		if r.cleanupOwners[pluginID] == 0 {
+			delete(r.cleanupOwners, pluginID)
+		}
+		r.mu.Unlock()
+	})
+}
+
+func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, caller string, key serviceKey, provider string, canStart bool) (context.Context, string, func(), *HostServiceError) {
+	callerContext := ctx
+	if err := callerContext.Err(); err != nil {
+		return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "calling transport was cancelled"}
+	}
+	r.mu.Lock()
+	// Call reads declarations before checking provider readiness. Revalidate
+	// identity at admission so revocation cannot leave a stale caller window.
+	if _, registered := r.consumers[caller]; caller != "kernel" && !registered {
+		r.mu.Unlock()
+		return nil, "", nil, &HostServiceError{Code: "service_not_authorized", Message: "service caller was revoked"}
+	}
 	current, registered := r.providers[key]
 	if !registered || current.pluginID != provider {
 		r.mu.Unlock()
 		return nil, "", nil, &HostServiceError{Code: "service_unavailable", Message: "service provider was revoked"}
+	}
+	cleanup := InShutdownCleanup(ctx) || r.cleanupOwners[caller] > 0
+	if r.retiringProviders[provider] && !cleanup {
+		r.mu.Unlock()
+		return nil, "", nil, &HostServiceError{Code: "generation_closed", Message: "service provider is retiring"}
 	}
 	id := strings.TrimSpace(requestedID)
 	if execution := r.executions[id]; id != "" && execution != nil {
@@ -300,10 +381,39 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 			r.mu.Unlock()
 			return nil, "", nil, &HostServiceError{Code: "service_unavailable", Message: "service execution is unavailable"}
 		}
+		if execution.ctx.Err() != nil {
+			r.mu.Unlock()
+			return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "owning execution was cancelled"}
+		}
 		execution.refs++
 		execution.participants[provider] = struct{}{}
 		r.mu.Unlock()
-		return execution.ctx, id, r.releaseExecution(id), nil
+		// A callback's transport can disappear while its shared root remains live.
+		// Cancel this invocation without revoking the other chain participants.
+		callContext, cancel := context.WithCancel(execution.ctx)
+		stopCaller := context.AfterFunc(callerContext, cancel)
+		release := r.releaseExecution(id)
+		return callContext, id, func() { stopCaller(); cancel(); release() }, nil
+	}
+	scoped := false
+	if r.scopeTracker != nil && id != "" && caller != "kernel" {
+		scope, scopeErr := r.scopeTracker.Resolve(caller, id)
+		if scopeErr != nil {
+			r.mu.Unlock()
+			return nil, "", nil, scopeErr
+		}
+		ctx, scoped = scope.Context, true
+	}
+	if err := ctx.Err(); err != nil {
+		r.mu.Unlock()
+		return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "owning execution was cancelled"}
+	}
+	if cleanup {
+		ctx = context.WithValue(ctx, serviceCleanupKey{}, true)
+	}
+	if r.backgroundStopped && !scoped && !cleanup && caller != "kernel" {
+		r.mu.Unlock()
+		return nil, "", nil, &HostServiceError{Code: "generation_closed", Message: "generation is not accepting autonomous service calls"}
 	}
 	if !r.open || !canStart {
 		r.mu.Unlock()
@@ -313,10 +423,24 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		r.nextExecution++
 		id = fmt.Sprintf("service-%d", r.nextExecution)
 	}
-	execCtx, cancel := context.WithCancel(ctx)
+	parentContext := ctx
+	if requestedID != "" && caller != "kernel" && r.rootExecutionContext != nil {
+		rootContext, handled, err := r.rootExecutionContext(caller, id)
+		if err != nil {
+			r.mu.Unlock()
+			return nil, "", nil, err
+		}
+		if handled {
+			parentContext = rootContext
+		}
+	}
+	execCtx, cancelRoot := context.WithCancel(parentContext)
+	stopCaller := context.AfterFunc(callerContext, cancelRoot)
+	cancel := func() { stopCaller(); cancelRoot() }
 	r.executions[id] = &serviceExecution{
 		ctx: execCtx, cancel: cancel, refs: 1,
 		participants: map[string]struct{}{caller: {}, provider: {}},
+		autonomous:   !scoped && !cleanup && caller != "kernel",
 	}
 	r.mu.Unlock()
 	return execCtx, id, r.releaseExecution(id), nil
@@ -340,6 +464,47 @@ func (r *ServiceRegistry) releaseExecution(id string) func() {
 			r.mu.Unlock()
 		})
 	}
+}
+
+// invokeProvider gives each plugin callback its own generic execution scope.
+// The caller's scope supplies cancellation and attribution, never tool authority
+// or an execution ID owned by a different plugin. Kernel calls keep the incoming
+// scope because their scoped services validate the original plugin caller.
+func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider serviceProvider, params ServiceInvokeParams) (json.RawMessage, error) {
+	r.mu.RLock()
+	tracker := r.scopeTracker
+	r.mu.RUnlock()
+	cleanup := InShutdownCleanup(ctx)
+	if provider.kernel || tracker == nil || cleanup {
+		return provider.invoker.InvokeService(ctx, params)
+	}
+	callbackParent, cancel := context.WithCancel(ctx)
+	var executionID string
+	var callbackCtx context.Context
+	for {
+		executionID, callbackCtx = tracker.begin(provider.pluginID, callbackParent, ToolExecuteInput{}, false)
+		r.mu.Lock()
+		// Kernel-originated service IDs can share the tracker prefix. Never
+		// replace an already-live routing record with a callback's new scope.
+		if r.executions[executionID] == nil {
+			r.executions[executionID] = &serviceExecution{
+				ctx: callbackCtx, cancel: cancel, refs: 1,
+				participants: map[string]struct{}{provider.pluginID: {}},
+			}
+			r.mu.Unlock()
+			break
+		}
+		r.mu.Unlock()
+		tracker.End(executionID)
+	}
+	release := r.releaseExecution(executionID)
+	defer func() {
+		tracker.End(executionID)
+		cancel()
+		release()
+	}()
+	params.ExecutionID = executionID
+	return provider.invoker.InvokeService(callbackCtx, params)
 }
 
 // HasProvider reports whether a provider exists for (name, major).
@@ -465,12 +630,18 @@ func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, par
 		go r.notifyConsumers(context.Background(), key, "provider_unavailable")
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s provider %q is %s", service, provider.pluginID, state)}
 	}
+	// A cancelled foreground or background callback must still be able to
+	// release its generation-owned lock through its unscoped lifecycle host.
+	// This grants cleanup only, never another acquisition or execution scope.
+	if provider.kernel && service == KernelFileLockService && method == "release" {
+		ctx = context.WithValue(ctx, serviceCleanupKey{}, true)
+	}
 	execCtx, executionID, release, executionErr := r.acquireExecution(ctx, params.ExecutionID, consumerPluginID, key, provider.pluginID, active || provider.kernel)
 	if executionErr != nil {
 		return nil, executionErr
 	}
 	defer release()
-	result, err := provider.invoker.InvokeService(execCtx, ServiceInvokeParams{
+	result, err := r.invokeProvider(execCtx, provider, ServiceInvokeParams{
 		Service:     service,
 		Method:      method,
 		Caller:      consumerPluginID,
@@ -539,7 +710,7 @@ func (r *ServiceRegistry) CallProvider(ctx context.Context, service string, majo
 		return nil, executionErr
 	}
 	defer release()
-	result, err := provider.invoker.InvokeService(execCtx, ServiceInvokeParams{
+	result, err := r.invokeProvider(execCtx, provider, ServiceInvokeParams{
 		Service:     service,
 		Method:      method,
 		Caller:      "kernel",

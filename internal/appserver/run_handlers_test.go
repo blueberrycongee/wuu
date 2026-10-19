@@ -63,8 +63,8 @@ func TestRunStartSettlesManifest(t *testing.T) {
 	}
 	startResult := remarshal[RunStartResult](t, responseByID(t, parseOutput(t, out.String()), "start")["result"])
 	run := startResult.Run
-	if _, _, err := rt.ActivityRegistry.Acquire(options); err != nil {
-		t.Fatalf("run/start did not resume browser: %v", err)
+	if current := rt.ActivityRegistry.List(thread.ID)[0]; current.Controller != activity.ControllerNone || current.State != activity.StateActive {
+		t.Fatalf("text-only run should leave browser ready but idle: %+v", current)
 	}
 
 	deadline := time.Now().Add(3 * time.Second)

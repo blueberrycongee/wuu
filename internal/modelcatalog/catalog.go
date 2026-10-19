@@ -269,6 +269,22 @@ func mergeProviderModelMetadata(provider config.ProviderConfig, catalogProvider 
 }
 
 func MergeProvider(provider config.ProviderConfig, catalogProvider Provider, modelIDs ...string) config.ProviderConfig {
+	if catalogProvider.ID == "deepseek" {
+		// Resolve accepted aliases only for saved/requested selections. Remove
+		// this compatibility path when DeepSeek stops accepting the old IDs.
+		if flash, ok := modelByID(catalogProvider, "deepseek-flash"); ok {
+			for _, id := range []string{"deepseek-v4-flash", "deepseek-v4-flash-vision-exp"} {
+				_, configured := provider.Models[id]
+				if !configured && provider.Model != id && !providerUsesModel(provider, id, modelIDs...) {
+					continue
+				}
+				alias := flash
+				alias.ID = id
+				alias.APIID = flash.ID
+				catalogProvider.Models = append(append([]Model(nil), catalogProvider.Models...), alias)
+			}
+		}
+	}
 	out := provider
 	if strings.TrimSpace(out.API) == "" {
 		out.API = catalogProvider.API

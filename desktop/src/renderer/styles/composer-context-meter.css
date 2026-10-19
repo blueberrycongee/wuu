@@ -5,7 +5,6 @@
      between the token-speed gauge's idle / mid / high tiers as the fill
      crosses 0 and the 0.7 high-water mark. The track stays a single
      neutral gray so the unfilled portion reads as a quiet baseline. */
-  --context-meter-track: rgba(138, 142, 145, 0.24);
   --context-meter-text: var(--ink-strong);
   --context-meter-tooltip-bg: var(--paper);
   --context-meter-tooltip-border: var(--wuu-border-subtle, rgba(15, 17, 21, 0.08));
@@ -36,26 +35,6 @@
   height: 20px;
   overflow: visible;
   transform: translateY(1px);
-}
-
-.composer-context-meter-track {
-  stroke: var(--context-meter-track);
-  fill: none;
-  stroke-width: 2;
-}
-
-.composer-context-meter-progress {
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 2;
-  stroke-linecap: round;
-  /* Dash math: strokeDasharray is the full circumference, strokeDashoffset
-     shrinks toward 0 as the fill grows. The fold rung matches the
-     token-speed gauge's color settle, so the two meters share a cadence. */
-  transition:
-    stroke-dashoffset var(--motion-slower) var(--ease-out),
-    stroke var(--motion-slower) var(--ease-out);
-  will-change: stroke-dashoffset;
 }
 
 .composer-context-meter-label {
@@ -125,10 +104,4 @@
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-@container style(--motion-reduced: 1) {
-  .composer-context-meter-progress {
-    transition: none;
-  }
 }

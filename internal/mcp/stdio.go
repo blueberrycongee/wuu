@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/activity"
 )
 
 // StdioTransport runs an MCP server as a subprocess and communicates over
@@ -151,6 +153,9 @@ func mergeProcessEnv(base []string, overlay map[string]string) []string {
 }
 
 func (t *StdioTransport) Send(ctx context.Context, req Request) error {
+	if err := activity.BoundControlErr(ctx); err != nil {
+		return err
+	}
 	frame, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
@@ -163,7 +168,12 @@ func (t *StdioTransport) Send(ctx context.Context, req Request) error {
 	}
 	written := make(chan error, 1)
 	go func() {
-		_, err := t.stdin.Write(frame)
+		// A queued write may outlive the lease's asynchronous cancellation.
+		// Check the original authority at the native dispatch boundary.
+		err := activity.BoundControlErr(ctx)
+		if err == nil {
+			_, err = t.stdin.Write(frame)
+		}
 		<-t.sendSlot
 		written <- err
 	}()

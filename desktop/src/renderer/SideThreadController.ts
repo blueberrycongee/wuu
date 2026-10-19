@@ -22,6 +22,8 @@ import {
   type SideThreadStoreState
 } from "./SideThreadState";
 import { useI18n } from "./i18n";
+import { statusMessageForError } from "./UserFacingErrors";
+import { showActionErrorToast } from "./Toast";
 
 const SIDE_THREAD_RECOVERY_POLL_MS = 2_000;
 
@@ -32,17 +34,17 @@ export type SideThreadController = {
   toggle: () => void;
   setDraft: (draft: string) => void;
   setDraftSelection: (selection: SideThreadSelection | undefined) => void;
-  sendMessage: (prompt: string) => void;
+  sendMessage: (prompt: string, commandID?: string) => void;
   interrupt: () => void;
   reset: () => void;
   sendDisabledReason?: string;
-  requestError?: string;
 };
 
 export type SideThreadControllerOptions = {
   activeThreadId: string | undefined;
   activeContext?: RuntimeContext;
   ipc?: SideThreadIPC;
+  commandID?: string;
   disabled?: boolean;
   disabledReason?: string;
 };
@@ -88,7 +90,7 @@ export function useSideThreadController(
   options: SideThreadControllerOptions
 ): SideThreadController {
   const { t } = useI18n();
-  const { activeThreadId, activeContext, ipc, disabled, disabledReason } = options;
+  const { activeThreadId, activeContext, ipc, disabled, disabledReason, commandID } = options;
   const ipcImpl = ipc ?? defaultIPC();
   const effectiveDisabled = Boolean(disabled || !ipcImpl);
   const effectiveReason = !ipcImpl
@@ -97,10 +99,14 @@ export function useSideThreadController(
       ? disabledReason ?? t("sideThread.unavailable")
       : undefined;
 
+  const disabledRef = useRef(effectiveDisabled);
+  disabledRef.current = effectiveDisabled;
+
   const [store, setStore] = useState<SideThreadStoreState>(() =>
     createInitialSideThreadStore()
   );
   const storeRef = useRef(store);
+  const announcedErrorsRef = useRef(new Map<string, string>());
   const openGenerationRef = useRef(new Map<string, number>());
   const pendingSendTasksRef = useRef(new Map<string, Promise<void>>());
   const lastActiveRuntimeKeyRef = useRef<string | undefined>(undefined);
@@ -115,6 +121,16 @@ export function useSideThreadController(
   const dispatch = useCallback((action: SideThreadAction) => {
     setStore((previous) => reduceSideThreadStore(previous, action));
   }, []);
+
+  // Notification ownership outlives the keyed panel/composer. Revisiting a
+  // thread must not replay its last failure, but an explicit retry can fail again.
+  useEffect(() => {
+    if (!activeThreadId || !entry) return;
+    const error = sideThreadRequestError(entry);
+    if (!error || announcedErrorsRef.current.get(activeThreadId) === error) return;
+    announcedErrorsRef.current.set(activeThreadId, error);
+    showActionErrorToast(statusMessageForError(error, t("sideThread.unavailable")));
+  }, [activeThreadId, entry, t]);
 
   useEffect(() => {
     if (!ipcImpl) {
@@ -143,7 +159,7 @@ export function useSideThreadController(
   }, [activeThreadId]);
 
   useEffect(() => {
-    if (!activeThreadId || !activeRuntimeKey || !ipcImpl) {
+    if (!activeThreadId || !activeRuntimeKey || !ipcImpl || effectiveDisabled) {
       lastActiveRuntimeKeyRef.current = activeRuntimeKey;
       return;
     }
@@ -159,6 +175,7 @@ export function useSideThreadController(
     const generation = (openGenerationRef.current.get(activeRuntimeKey) ?? 0) + 1;
     openGenerationRef.current.set(activeRuntimeKey, generation);
     const isCurrentRequest = () =>
+      !disabledRef.current &&
       !cancelled &&
       activeRuntimeKeyRef.current === activeRuntimeKey &&
       openGenerationRef.current.get(activeRuntimeKey) === generation;
@@ -202,13 +219,14 @@ export function useSideThreadController(
     return () => {
       cancelled = true;
     };
-  }, [activeRuntimeKey, activeThreadId, ipcImpl]);
+  }, [activeRuntimeKey, activeThreadId, ipcImpl, effectiveDisabled]);
 
   useEffect(() => {
     if (
       !activeThreadId ||
       !activeRuntimeKey ||
       !ipcImpl ||
+      effectiveDisabled ||
       !entry?.open ||
       entry.summary?.status !== "running"
     ) {
@@ -253,12 +271,13 @@ export function useSideThreadController(
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [activeRuntimeKey, activeThreadId, entry?.open, entry?.summary?.status, ipcImpl]);
+  }, [activeRuntimeKey, activeThreadId, entry?.open, entry?.summary?.status, ipcImpl, effectiveDisabled]);
 
   const open = useCallback(() => {
-    if (!activeThreadId) {
+    if (!activeThreadId || disabled) {
       return;
     }
+    announcedErrorsRef.current.delete(activeThreadId);
     dispatch({ type: "open", mainThreadId: activeThreadId });
     dispatch({ type: "setError", mainThreadId: activeThreadId, error: undefined });
     if (!ipcImpl || disabled || !activeContext || !activeRuntimeKey) {
@@ -268,6 +287,7 @@ export function useSideThreadController(
     const generation = (openGenerationRef.current.get(activeRuntimeKey) ?? 0) + 1;
     openGenerationRef.current.set(activeRuntimeKey, generation);
     const isCurrentRequest = () =>
+      !disabledRef.current &&
       activeRuntimeKeyRef.current === activeRuntimeKey &&
       openGenerationRef.current.get(activeRuntimeKey) === generation;
 
@@ -345,7 +365,7 @@ export function useSideThreadController(
   }, [activeThreadId, dispatch]);
 
   const sendMessage = useCallback(
-    (prompt: string) => {
+    (prompt: string, selectedCommandID = commandID) => {
       if (!activeThreadId || !activeContext || !ipcImpl || effectiveDisabled) {
         return;
       }
@@ -360,6 +380,7 @@ export function useSideThreadController(
         return;
       }
 
+      announcedErrorsRef.current.delete(activeThreadId);
       const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const optimisticMessage = {
         id: optimisticId,
@@ -402,6 +423,7 @@ export function useSideThreadController(
           const result = await ipcImpl.sendSideThreadMessage({
             main_thread_id: activeThreadId,
             prompt: trimmed,
+            ...(selectedCommandID ? { command_id: selectedCommandID } : {}),
             ...(selection ? { selection } : {})
           });
           setStore((previous) => {
@@ -464,13 +486,15 @@ export function useSideThreadController(
         }
       });
     },
-    [activeContext, activeThreadId, effectiveDisabled, ipcImpl]
+    [activeContext, activeThreadId, effectiveDisabled, ipcImpl, commandID]
   );
 
   const interrupt = useCallback(() => {
     if (!activeThreadId || !ipcImpl) {
       return;
     }
+    announcedErrorsRef.current.delete(activeThreadId);
+    dispatch({ type: "setError", mainThreadId: activeThreadId, error: undefined });
     void ipcImpl.interruptSideThread(activeThreadId).catch((error: unknown) => {
       dispatch({
         type: "setError",
@@ -484,6 +508,8 @@ export function useSideThreadController(
     if (!activeThreadId || !ipcImpl || effectiveDisabled) {
       return;
     }
+    announcedErrorsRef.current.delete(activeThreadId);
+    dispatch({ type: "setError", mainThreadId: activeThreadId, error: undefined });
     // The server's reset broadcast also clears this entry; dispatching
     // locally just avoids a visible round-trip delay.
     void ipcImpl
@@ -513,7 +539,6 @@ export function useSideThreadController(
     sendDisabledReason:
       effectiveDisabled || !activeContext
         ? effectiveReason ?? t("sideThread.selectWorkspace")
-        : undefined,
-    requestError: entry ? sideThreadRequestError(entry) : undefined
+        : undefined
   };
 }

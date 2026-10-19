@@ -199,7 +199,7 @@ app.whenReady().then(async () => {
       assertPlacement(`${label} running`, runningCard);
       assert.equal(runningCard.status, "running", `${label}: running row explains its spinner`);
       assert.match(runningCard.statusText, /\d/, `${label}: running status carries its elapsed time`);
-      assert.ok(runningCard.time, `${label}: last activity time is shown`);
+      assert.equal(runningCard.time, null, `${label}: running elapsed time replaces last activity time`);
       assert.ok(runningCard.facts.some((fact) => fact.text === "Codex · gpt-5.1-codex"),
         `${label}: the session's engine and model are listed`);
       assert.ok(runningCard.facts.some((fact) => fact.text === "wuu"), `${label}: the owning workspace is listed`);

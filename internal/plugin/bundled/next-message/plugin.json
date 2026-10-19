@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "next-message",
+  "name": "Next message",
+  "description": "Predict one optional next message after a successful live reply. Sends recent visible conversation text to the configured model; may incur provider charges.",
+  "icon": "message-square",
+  "version": "0.1.0",
+  "defaultEnabled": false,
+  "author": { "name": "Wuu" },
+  "minimumWuuVersion": "2026.10.12",
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 40 },
+  "desktop": { "entry": "desktop.js" },
+  "contributes": { "settingsPages": [
+    { "id": "next-message", "title": "Next message", "description": "Choose the suggestion model and review data use", "view": "next-message.settings", "icon": "message-square", "order": 32 }
+  ] },
+  "interface": { "displayName": "Next message", "shortDescription": "An optional next message in the empty composer. Tab inserts; never sends.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Read"] }
+}

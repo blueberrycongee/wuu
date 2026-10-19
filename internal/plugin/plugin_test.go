@@ -156,20 +156,10 @@ func TestDiscoverWithOptionsHidesBundledCUAMacByDefault(t *testing.T) {
 }
 
 func TestDiscoverWithOptionsIncludesBundledPeers(t *testing.T) {
-	helper := filepath.Join(t.TempDir(), "wuu-peers-plugin")
-	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
 	plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
-		GOOS: "darwin",
-		LookupEnv: func(key string) (string, bool) {
-			switch key {
-			case "WUU_PEERS_PLUGIN_HELPER":
-				return helper, true
-			}
-			return "", false
-		},
+		GOOS:      "darwin",
+		LookPath:  func(command string) (string, error) { return command, nil },
+		LookupEnv: func(string) (string, bool) { return "", false },
 	})
 
 	var peers *Plugin
@@ -189,11 +179,12 @@ func TestDiscoverWithOptionsIncludesBundledPeers(t *testing.T) {
 
 func TestBundledOptionalPluginsAreInstalledButDisabledByDefault(t *testing.T) {
 	plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
-		GOOS:      runtime.GOOS,
-		LookPath:  func(command string) (string, error) { return command, nil },
-		LookupEnv: func(string) (string, bool) { return "", false },
+		WuuVersion: "2026.10.12",
+		GOOS:       runtime.GOOS,
+		LookPath:   func(command string) (string, error) { return command, nil },
+		LookupEnv:  func(string) (string, bool) { return "", false },
 	})
-	want := map[string]bool{"ask-user": false, "subagent": false, "dream": false, "memory": false, "generative-ui": false}
+	want := map[string]bool{"ask-user": false, "subagent": false, "dream": false, "memory": false, "next-message": false, "generative-ui": false}
 	for _, item := range plugins {
 		if _, ok := want[item.ID]; ok {
 			want[item.ID] = !item.EnabledByDefault()
@@ -204,6 +195,17 @@ func TestBundledOptionalPluginsAreInstalledButDisabledByDefault(t *testing.T) {
 			t.Errorf("bundled plugin %q was missing or enabled by default", id)
 		}
 	}
+	var side *Plugin
+	for i := range plugins {
+		if plugins[i].ID == "side" {
+			side = &plugins[i]
+			break
+		}
+	}
+	if side == nil || !side.EnabledByDefault() || !side.Official || len(side.Commands) != 1 || side.Commands[0].Kind != CommandKindSideConversation || side.Commands[0].ResolvedPrompt == nil {
+		t.Fatalf("bundled side command missing or not enabled by default: %+v", side)
+	}
+
 }
 
 func writePlugin(t *testing.T, dir, manifest string) {

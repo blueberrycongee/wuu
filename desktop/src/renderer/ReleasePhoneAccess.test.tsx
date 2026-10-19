@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe.each([undefined, "true"])("production phone access (build override: %s)", (override) => {
-  it.each(["remote", "subscriptions"] as const)("keeps remote controls hidden and quota settings available in production from %s", async (initialPage) => {
+  it.each(["remote", "subscriptions"] as const)("hides phone access while retaining quota settings from %s", async (initialPage) => {
     vi.stubEnv("DEV", false);
     vi.stubEnv("VITE_ENABLE_ACCOUNT", override);
     vi.stubEnv("VITE_ENABLE_REMOTE_CONTROL", override);

@@ -26,13 +26,19 @@ type ClientConfig struct {
 // Grok Build documents its inference surface as OpenAI Chat Completions plus
 // two routing headers.
 type Client struct {
-	baseURL      string
-	auth         credentialSource
-	headers      map[string]string
-	httpClient   *http.Client
-	streamConfig *providers.StreamTransportConfig
-	coordinator  *providers.ProviderCoordinator
+	baseURL          string
+	auth             credentialSource
+	headers          map[string]string
+	httpClient       *http.Client
+	streamHTTPClient *http.Client
+	streamConfig     providers.StreamTransportConfig
+	coordinator      *providers.ProviderCoordinator
 }
+
+// RequiresStreamingChat keeps one-shot requests on the proxy's supported
+// transport. The Grok Build proxy only documents non-streaming for grok-build;
+// other routed models may stall or reject it.
+func (*Client) RequiresStreamingChat() bool { return true }
 
 func New(cfg ClientConfig) (*Client, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
@@ -43,6 +49,7 @@ func New(cfg ClientConfig) (*Client, error) {
 	if home == "" {
 		home = os.Getenv("HOME")
 	}
+	streamConfig := providers.ResolveStreamTransportConfig(cfg.StreamConfig)
 	return &Client{
 		baseURL: baseURL,
 		auth: credentialSource{
@@ -50,10 +57,11 @@ func New(cfg ClientConfig) (*Client, error) {
 			home:          home,
 			reuseCLI:      cfg.ReuseGrokCredentials,
 		},
-		headers:      cloneHeaders(cfg.Headers),
-		httpClient:   cfg.HTTPClient,
-		streamConfig: cfg.StreamConfig,
-		coordinator:  cfg.Coordinator,
+		headers:          cloneHeaders(cfg.Headers),
+		httpClient:       cfg.HTTPClient,
+		streamConfig:     streamConfig,
+		streamHTTPClient: providers.BuildStreamingHTTPClient(cfg.HTTPClient, streamConfig),
+		coordinator:      cfg.Coordinator,
 	}, nil
 }
 
@@ -119,15 +127,16 @@ func (c *Client) openAIClient(model string) (*openai.Client, error) {
 	headers["x-grok-client-mode"] = grokbuildspec.ClientMode
 	headers["x-authenticateresponse"] = grokbuildspec.AuthenticateResponseValue
 	return openai.New(openai.ClientConfig{
-		DisableVideoInput: true,
-		BaseURL:           c.baseURL,
-		WireAPI:           "chat",
-		APIKey:            token,
-		Headers:           headers,
-		HTTPClient:        c.httpClient,
-		StreamConfig:      c.streamConfig,
-		Coordinator:       c.coordinator,
-		ProviderScope:     providers.NewProviderScope(c.baseURL, token, ""),
+		DisableVideoInput:   true,
+		BaseURL:             c.baseURL,
+		WireAPI:             "chat",
+		APIKey:              token,
+		Headers:             headers,
+		HTTPClient:          c.httpClient,
+		StreamConfig:        &c.streamConfig,
+		StreamingHTTPClient: c.streamHTTPClient,
+		Coordinator:         c.coordinator,
+		ProviderScope:       providers.NewProviderScope(c.baseURL, token, ""),
 	})
 }
 

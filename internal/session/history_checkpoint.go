@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/storagecodec"
 )
 
 const HistoryCheckpointKindProviderRewrite = "provider_rewrite"
@@ -47,7 +49,7 @@ func RewriteHistoryRecordsForEdit(sessDir, id string, records []HistoryRecord, f
 	if fromSeq <= 0 || fromSeq > baselineSeq {
 		return fmt.Errorf("invalid history edit range %d..%d", fromSeq, baselineSeq)
 	}
-	_, err := storeHistoryCheckpointAtBaseline(sessDir, id, HistoryCheckpointKindProviderRewrite, records, baselineSeq, nil, fromSeq)
+	_, err := storeHistoryCheckpointAtBaseline(sessDir, id, HistoryCheckpointKindProviderRewrite, records, baselineSeq, nil, fromSeq, nil)
 	return err
 }
 
@@ -55,7 +57,7 @@ func RewriteHistoryRecordsForEdit(sessDir, id string, records []HistoryRecord, f
 // read through baselineSeq. Messages already committed after the baseline are
 // appended to the exact replacement inside the same write transaction.
 func StoreHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []HistoryRecord, baselineSeq int) (HistoryCheckpoint, error) {
-	return storeHistoryCheckpointAtBaseline(sessDir, id, kind, replacement, baselineSeq, nil, 0)
+	return storeHistoryCheckpointAtBaseline(sessDir, id, kind, replacement, baselineSeq, nil, 0, nil)
 }
 
 // StoreContextWindow commits the provider checkpoint and its note anchor in one
@@ -64,10 +66,21 @@ func StoreContextWindow(sessDir, id string, replacement []HistoryRecord, baselin
 	if strings.TrimSpace(note.ProviderKey) == "" {
 		return HistoryCheckpoint{}, errors.New("context window requires a note provider key")
 	}
-	return storeHistoryCheckpointAtBaseline(sessDir, id, "context_window", replacement, baselineSeq, &note, 0)
+	return storeHistoryCheckpointAtBaseline(sessDir, id, "context_window", replacement, baselineSeq, &note, 0, nil)
 }
 
-func storeHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []HistoryRecord, baselineSeq int, note *CompactionNote, retractFromSeq int) (HistoryCheckpoint, error) {
+// RewriteHistoryRecordsForEngineEdit commits a copy-on-write native session
+// reference and the matching visible/provider prefix in one transaction. The
+// original native session is never rolled back; failed commits leave it usable.
+func RewriteHistoryRecordsForEngineEdit(sessDir, id string, records []HistoryRecord, fromSeq, baselineSeq int, oldRef, newRef string) error {
+	if fromSeq <= 0 || fromSeq > baselineSeq || oldRef == "" || newRef == "" || oldRef == newRef {
+		return errors.New("invalid native history edit")
+	}
+	_, err := storeHistoryCheckpointAtBaseline(sessDir, id, HistoryCheckpointKindProviderRewrite, records, baselineSeq, nil, fromSeq, &[2]string{oldRef, newRef})
+	return err
+}
+
+func storeHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []HistoryRecord, baselineSeq int, note *CompactionNote, retractFromSeq int, engineRefs *[2]string) (HistoryCheckpoint, error) {
 	id = strings.TrimSpace(id)
 	kind = strings.TrimSpace(kind)
 	if baselineSeq < 0 {
@@ -106,6 +119,23 @@ func storeHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []Hi
 	}
 	if baselineSeq > headSeq {
 		return HistoryCheckpoint{}, fmt.Errorf("history checkpoint baseline %d exceeds head %d", baselineSeq, headSeq)
+	}
+
+	if engineRefs != nil {
+		if headSeq != baselineSeq {
+			return HistoryCheckpoint{}, errors.New("native history changed during edit; refresh and try again")
+		}
+		result, err := tx.Exec(`UPDATE sessions SET engine_ref = ? WHERE id = ? AND engine_ref = ?`, engineRefs[1], id, engineRefs[0])
+		if err != nil {
+			return HistoryCheckpoint{}, fmt.Errorf("replace native history reference: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return HistoryCheckpoint{}, err
+		}
+		if count != 1 {
+			return HistoryCheckpoint{}, errors.New("native session changed during edit; refresh and try again")
+		}
 	}
 
 	records := make([]HistoryRecord, len(replacement))
@@ -157,6 +187,10 @@ func storeHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []Hi
 	if err != nil {
 		return HistoryCheckpoint{}, fmt.Errorf("encode history checkpoint replacement: %w", err)
 	}
+	stored, err := storagecodec.Encode(payload)
+	if err != nil {
+		return HistoryCheckpoint{}, fmt.Errorf("compress history checkpoint replacement: %w", err)
+	}
 	var version int
 	if err := tx.QueryRow(`
 		SELECT COALESCE(MAX(version), 0) + 1
@@ -169,7 +203,7 @@ func storeHistoryCheckpointAtBaseline(sessDir, id, kind string, replacement []Hi
 		INSERT INTO session_history_checkpoints (
 			session_id, version, kind, through_seq, replacement_json, created_at
 		) VALUES (?, ?, ?, ?, ?, ?)`,
-		id, version, kind, headSeq, string(payload), timeText(createdAt),
+		id, version, kind, headSeq, stored, timeText(createdAt),
 	); err != nil {
 		return HistoryCheckpoint{}, fmt.Errorf("store history checkpoint: %w", err)
 	}
@@ -315,13 +349,18 @@ func latestHistoryCheckpointTx(tx *sql.Tx, id string) (HistoryCheckpoint, bool, 
 
 func scanHistoryCheckpoint(row historyCheckpointScanner, id string) (HistoryCheckpoint, bool, error) {
 	var checkpoint HistoryCheckpoint
-	var payload, createdAt string
+	var payload []byte
+	var createdAt string
 	if err := row.Scan(&checkpoint.Version, &checkpoint.Kind, &checkpoint.ThroughSeq, &payload, &createdAt); errors.Is(err, sql.ErrNoRows) {
 		return HistoryCheckpoint{}, false, nil
 	} else if err != nil {
 		return HistoryCheckpoint{}, false, fmt.Errorf("load latest history checkpoint: %w", err)
 	}
-	if err := json.Unmarshal([]byte(payload), &checkpoint.Replacement); err != nil {
+	decoded, err := storagecodec.Decode(payload)
+	if err != nil {
+		return HistoryCheckpoint{}, false, fmt.Errorf("decompress history checkpoint %s@%d: %w", id, checkpoint.Version, err)
+	}
+	if err := json.Unmarshal(decoded, &checkpoint.Replacement); err != nil {
 		return HistoryCheckpoint{}, false, fmt.Errorf("decode history checkpoint %s@%d: %w", id, checkpoint.Version, err)
 	}
 	for i := range checkpoint.Replacement {

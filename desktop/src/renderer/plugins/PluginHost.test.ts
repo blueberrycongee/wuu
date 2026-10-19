@@ -1,7 +1,7 @@
 import * as React from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { PRESENTATION_TARGETS, type PluginCommandActionContext } from "../../shared/workbench";
+import { PRESENTATION_TARGETS, type PluginCommandActionContext, type ComposerInlineCompletionProviderHandle, type ComposerInlineCompletionInteraction } from "../../shared/workbench";
 
 import {
   PLUGIN_SLOT_IDS,
@@ -11,6 +11,7 @@ import {
 } from "./PluginHost";
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const style of document.head.querySelectorAll("style[data-wuu-plugin-id]")) {
     style.remove();
   }
@@ -180,14 +181,29 @@ describe("PluginHost", () => {
   it("replaces a generation and makes stale generation handles harmless", async () => {
     const host = new PluginHost({ react: React });
     const cleanup: string[] = [];
+    let completion!: ComposerInlineCompletionProviderHandle;
+    const interactions: ComposerInlineCompletionInteraction[] = [];
+    const interaction: ComposerInlineCompletionInteraction = { type: "shown", interactionId: "presentation-1",
+      suggestionId: "snippet-1", source: { composerId: "input-1", revision: 1, kind: "main" } };
     const oldHandle = await host.activateGeneration({
       pluginId: "notes",
       generation: "old",
       register(api) {
         registerCompleteGeneration(api, "old");
         api.registerCleanup(() => cleanup.push("old"));
+        completion = api.registerComposerInlineCompletionProvider({ id: "snippets",
+          provideCompletion: () => ({ id: "snippet-1", text: " suffix" }),
+          onDidInteract: (event) => { interactions.push(event); },
+        });
       },
     });
+
+    const retained = host.getComposerInlineCompletionProviders()[0];
+    retained.onDidInteract?.(interaction);
+    expect(interactions).toHaveLength(1);
+    let refreshes = 0;
+    retained.subscribeRefresh(() => { refreshes += 1; });
+    completion.refresh();
 
     const newHandle = await host.activateGeneration({
       pluginId: "notes",
@@ -205,6 +221,11 @@ describe("PluginHost", () => {
     expect(document.head.querySelector("style[data-wuu-plugin-generation=old]")).toBeNull();
     expect(document.head.querySelector("style[data-wuu-plugin-generation=new]")).not.toBeNull();
 
+    retained.onDidInteract?.(interaction);
+    completion.refresh();
+    expect(interactions).toHaveLength(1);
+    expect(refreshes).toBe(0);
+    expect(host.getComposerInlineCompletionProviders()).toEqual([]);
     oldHandle.dispose();
     expect(host.getCommands()).toHaveLength(1);
 
@@ -216,28 +237,33 @@ describe("PluginHost", () => {
     expect(document.head.querySelector("style[data-wuu-plugin-id=notes]")).toBeNull();
   });
 
-  it.each(["unload", "replace"])("immediately cleans up a pending generation on %s", async (action) => {
+  it.each(["unload", "replace", "abort"])("settles and cleans up a pending generation on %s", async (action) => {
     const host = new PluginHost({ react: React });
     const cleanup: string[] = [];
     let api!: PluginGenerationApi;
     let finish!: () => void;
     const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const controller = new AbortController();
     const pending = host.activateGeneration({
-      pluginId: "pending", generation: "one",
+      pluginId: "pending", generation: "one", signal: controller.signal,
       async register(value) {
         api = value;
         api.registerCleanup(() => { cleanup.push("one"); });
         await gate;
       },
     });
+    const rejected = expect(pending).rejects.toThrow("superseded");
     if (action === "unload") host.unload("pending");
+    else if (action === "abort") controller.abort();
     else await host.activateGeneration({ pluginId: "pending", generation: "two", register() {} });
 
+    await rejected;
+    expect(api.signal.aborted).toBe(true);
     expect(cleanup).toEqual(["one"]);
     expect(() => api.registerCommand(command("late"))).toThrow("no longer registering");
     expect(() => api.onHostEvent(() => {})).toThrow("no longer active");
     finish();
-    await expect(pending).rejects.toThrow("superseded");
+    await Promise.resolve();
     expect(cleanup).toEqual(["one"]);
     expect(host.getGenerationDiagnostics("pending", "one")).toEqual([]);
     host.unload("pending");
@@ -385,7 +411,8 @@ describe("PluginHost", () => {
     expect(host.getCommands().map((item) => item.id)).toEqual(["new"]);
   });
 
-  it("rolls back partial registration in reverse order and preserves the active generation", async () => {
+  it.each(["throw", "timeout"])("rolls back partial registration on %s and preserves the active generation", async (failure) => {
+    vi.useFakeTimers();
     const host = new PluginHost({ react: React });
     const cleanup: string[] = [];
     await host.activateGeneration({
@@ -397,19 +424,29 @@ describe("PluginHost", () => {
       },
     });
 
+    let candidate!: PluginGenerationApi;
+    let finish!: () => void;
     const activation = host.activateGeneration({
       pluginId: "review",
       generation: "broken",
-      register(api) {
+      async register(api) {
+        candidate = api;
         api.registerCleanup(() => cleanup.push("first"));
         api.registerSlot("sidebar.footer", contribution("partial"));
         api.registerCleanup(() => cleanup.push("second"));
         api.registerStyle({ id: "partial", css: ".partial {}" });
-        throw new Error("registration stopped");
+        if (failure === "throw") throw new Error("registration stopped");
+        await new Promise<void>((resolve) => { finish = resolve; });
+        api.registerCommand(command("too-late"));
       },
     });
 
-    await expect(activation).rejects.toThrow("registration stopped");
+    const rejected = expect(activation).rejects.toThrow(failure === "throw" ? "registration stopped" : "timed out");
+    await vi.advanceTimersByTimeAsync(30_000);
+    await rejected;
+    expect(candidate.signal.aborted).toBe(true);
+    finish?.();
+    await Promise.resolve();
     expect(cleanup).toEqual(["second", "first"]);
     expect(host.getCommands().map((item) => item.id)).toEqual(["stable"]);
     expect(host.getSlotSnapshot("sidebar.footer")).toEqual([]);
@@ -446,18 +483,28 @@ describe("PluginHost", () => {
   });
 
   it("disables a plugin by removing every host-owned registration", async () => {
+    vi.useFakeTimers();
+    let lifetime!: AbortSignal;
+    const controller = new AbortController();
     const host = new PluginHost({ react: React });
     const cleanup: string[] = [];
     await host.activateGeneration({
       pluginId: "disable-me",
       generation: "one",
+      signal: controller.signal,
       register(api) {
+        lifetime = api.signal;
         registerCompleteGeneration(api, "one");
         api.registerCleanup(() => cleanup.push("disabled"));
       },
     });
 
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(lifetime.aborted).toBe(false);
+    expect(host.isGenerationActive("disable-me", "one")).toBe(true);
     host.disable("disable-me");
+    expect(lifetime.aborted).toBe(true);
 
     expect(host.getSlotSnapshot("workspace.header")).toEqual([]);
     expect(host.getCommands()).toEqual([]);
@@ -826,6 +873,7 @@ describe("PluginHost", () => {
       generation: "one",
       method: "summary.get",
       input: { threadId: "thread-1" },
+      signal: expect.any(AbortSignal),
     }]);
 
     await host.activateGeneration({

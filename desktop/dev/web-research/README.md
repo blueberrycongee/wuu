@@ -7,9 +7,10 @@ start the app-server, or load user data.
 
 ## Interaction
 
-Search activity and source controls share one header. The tool summary and the
-source-count control open the same process disclosure beneath the row, aligned
-to its left edge. Direct favicon links remain separate hit targets.
+Search activity and overlapping source icons share one header. The tool summary
+opens the process disclosure beneath the row, aligned to its left edge. Each
+favicon opens its source directly; hover and keyboard focus raise that icon
+above its neighbors. The group exposes its total count to screen readers.
 
 The disclosure includes ALL sources, including the icons shown in the header,
 and the existing tool timeline with the original query, status and call details.
@@ -56,7 +57,7 @@ Open `http://127.0.0.1:5218/dev/web-research/` for manual review. Query paramete
 
 The capture script covers light/dark, 14/20 px, 390/900 px windows, source arrival,
 hover tooltips, same-line header geometry and non-overlapping targets, left-aligned complete
-source disclosure with bounded height, unified tool/source controls,
+source disclosure with bounded height, summary disclosure controls,
 group reopening and rapid reversal, keyboard activation, Escape/focus return, answer handoff,
 reopening history, long source lists, no sources after failure/interruption/empty
 results, inactive panes and both reduced-motion sources. Arrival-start events

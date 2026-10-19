@@ -143,7 +143,7 @@ app.on('browser-window-created', (_event, win) => { main ||= win; });
 const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, 120000);
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   const codexBinary = path.join(fixture, 'fake-codex');
   const compile = spawnSync('go', ['build', '-o', codexBinary, './internal/codexengine/testdata/fakecodex'], { cwd: path.dirname(desktop), encoding: 'utf8' });
   assert.equal(compile.status, 0, compile.stderr);
@@ -294,6 +294,8 @@ async function run() {
       await evaluate(main, () => document.querySelector('.runtime-panel-model').click());
       await waitFor(main, () => [...document.querySelectorAll('.codex-model-item')].some(item => item.textContent.includes('Basic fixture model')));
       await evaluate(main, () => [...document.querySelectorAll('.codex-model-item')].find(item => item.textContent.includes('Basic fixture model')).click());
+      // The label updates optimistically; reopening the panel needs the committed model.
+      await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.model === 'fixture-basic', threadID);
       await waitFor(main, () => document.querySelector('.runtime-panel-model-name')?.textContent === 'Basic fixture model'
         && !document.querySelector('.runtime-panel-fast'));
     }
@@ -336,8 +338,13 @@ async function run() {
   assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'true');
   await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
   await capturePanel(main, 'codex-inherited-fast');
-  for (const [speed, tier, slash] of [['standard', 'default'], ['fast', 'fast'], ['standard', 'default', true], ['fast', 'fast']]) {
+  for (const [speed, tier, slash, effort] of [['standard', 'default', false, 'high'], ['fast', 'fast', false, 'low'], ['standard', 'default', true, 'low'], ['fast', 'fast', false, 'high']]) {
     await openPanel();
+    await evaluate(main, () => document.querySelector('.codex-effort-slider input').focus());
+    await key(main, 'End');
+    await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.model_effort === 'high', native);
+    if (effort === 'low') await key(main, 'Left');
+    await waitFor(main, async ({ id, effort }) => (await window.wuu.resumeThread(id)).thread.model_effort === effort, { id: native, effort });
     if (slash) {
       await evaluate(main, () => {
         document.querySelector('.codex-runtime-trigger').click();
@@ -362,7 +369,8 @@ async function run() {
     const log = fs.readFileSync(process.env.WUU_TEST_CODEX_REQUESTS, 'utf8').trim().split('\n').map(line => JSON.parse(line));
     const last = log.filter(request => request.method === 'turn/start').at(-1);
     assert.equal(last.params.serviceTier, tier);
-    assert.equal(last.params.reasoningEffort, 'high');
+    assert.equal(last.params.effort, effort);
+    assert.equal(Object.hasOwn(last.params, 'reasoningEffort'), false);
     if (speed === 'fast') {
       await openPanel();
       await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));

@@ -67,6 +67,28 @@ const tool: ThreadItem = {
 };
 
 describe("ConversationProcessPresentation", () => {
+  it("retains native notices that the v1 replacement snapshot cannot represent", async () => {
+    const runtime = await setup((api) => {
+      api.registerPresenter({
+        id: "tools", target: "conversation.process", key: "tool-group",
+        render: () => <span data-plugin-root>tools only</span>,
+      });
+    });
+    const compaction: ThreadItem = {
+      id: "compact-1",
+      type: "context_compaction",
+      status: "failed",
+      text: "Context compaction failed; continuing without compacting history.",
+    };
+
+    renderProcess(runtime, [tool]);
+    expect(container.querySelector("[data-plugin-root]")).not.toBeNull();
+
+    renderProcess(runtime, [tool, compaction]);
+    expect(container.querySelector("[data-native-root]")).not.toBeNull();
+    expect(container.querySelector("[data-plugin-root]")).toBeNull();
+  });
+
   it("matches the exact stable shape key", async () => {
     const runtime = await setup((api) => {
       api.registerPresenter({ id: "reasoning", target: "conversation.process", key: "reasoning", render: () => <span>reasoning</span> });

@@ -17,11 +17,11 @@ import (
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/claudeengine"
+	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/execution"
-	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/process"
@@ -124,7 +124,10 @@ type threadState struct {
 	runtimePluginEpoch             uint64
 	runtimePluginRevision          uint64
 	admissionReserved              bool
+	nativeHistoryMutation          bool
 	pendingSteers                  []providers.ChatMessage
+	nativeSteerInFlight            string
+	nativeSteerUnsupported         bool
 	pendingSteerControls           map[string]session.Control
 	SessionControl                 *ThreadSessionControl
 	steerWake                      chan struct{}
@@ -238,6 +241,9 @@ type Server struct {
 	drainingQueuedTurns         map[string]bool
 	heldUserWorkMu              sync.Mutex
 
+	pluginClientMu       sync.Mutex
+	pluginClientRequests map[pluginClientRequestKey]*pluginClientRequest
+
 	pluginTurnUnbind   func()
 	pluginTurnWaiters  pluginTurnWaitHub
 	userQuestionUnbind func()
@@ -279,14 +285,20 @@ type Server struct {
 	activityUnsubscribe          func()
 	backgroundMu                 sync.Mutex
 	backgroundWG                 sync.WaitGroup
+	engineHostMu                 sync.Mutex
+	codexHost                    *codexengine.Host
+	codexHostRelease             func()
 	engineAuthMu                 sync.Mutex
 	engineAuthCancels            map[string]context.CancelFunc
+	nativeHistoryCtx             context.Context
+	nativeHistoryCancel          context.CancelFunc
 	closeOnce                    sync.Once
 	closed                       atomic.Bool
 	pluginGenerationMutation     atomic.Bool
 	pluginGenerationEpoch        atomic.Uint64
 	pluginRuntimeRevision        atomic.Uint64
 	pluginGenerationRefreshMu    sync.Mutex
+	pluginRefreshFailure         pluginGenerationRefreshFailure
 	configRefreshMu              sync.Mutex
 	configFingerprint            string
 	configRejectedSources        string
@@ -318,15 +330,9 @@ type Server struct {
 }
 
 func New(rt *runtime.Session, out io.Writer) *Server {
-	store, err := credentialstore.NewDesktopStore()
-	if err != nil {
-		providers.DebugLogf("desktop credential store: %v", err)
-	}
-	return NewWithCredentialStore(rt, out, store, http.DefaultClient)
-}
-
-func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credentialstore.Store, httpClient *http.Client) *Server {
+	nativeHistoryCtx, nativeHistoryCancel := context.WithCancel(context.Background())
 	s := &Server{
+		nativeHistoryCtx: nativeHistoryCtx, nativeHistoryCancel: nativeHistoryCancel,
 		rt:      rt,
 		out:     out,
 		threads: make(map[string]*threadState),
@@ -344,8 +350,9 @@ func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credential
 		clientMethods:                make(map[string]struct{}),
 		runs:                         make(map[string]*runTracker),
 		activeRunByThread:            make(map[string]string),
-		modelCatalogHTTPClient:       httpClient,
+		modelCatalogHTTPClient:       http.DefaultClient,
 	}
+	s.retainCodexHost()
 	s.bindUserQuestions()
 	if rt != nil {
 		catalogHome := strings.TrimSpace(rt.WuuHome)
@@ -417,22 +424,19 @@ func NewWithCredentialStore(rt *runtime.Session, out io.Writer, store credential
 			return s
 		}
 	}
-	if store != nil && rt != nil && rt.Toolkit != nil {
-		if manager := rt.Toolkit.MCPManager(); manager != nil {
-			manager.SetOAuthManager(mcp.NewOAuthManager(store, httpClient))
-		}
-	}
 	if rt != nil && rt.ActivityRegistry != nil {
 		s.activityUnsubscribe = rt.ActivityRegistry.Subscribe(func(event activity.Event) {
 			s.notifyActivityEvent(event)
 		})
 	}
 	if rt != nil && rt.PluginSessionRouter != nil {
-		s.pluginTurnUnbind = rt.PluginSessionRouter.BindExtended(
+		unbindTurns := rt.PluginSessionRouter.BindExtended(
 			s.createPluginSession, s.sendPluginSession, s.listPluginSessions, s.cancelPluginSession,
 			s.inspectPluginSession, s.statusPluginWorkspace, s.applyPluginWorkspace, s.discardPluginWorkspace,
 			s.controlPluginSession,
 		)
+		unbindProcesses := rt.PluginSessionRouter.BindProcessSessions(s.resolvePluginProcessSession)
+		s.pluginTurnUnbind = func() { unbindTurns(); unbindProcesses() }
 		s.startBackground(s.replayPendingPluginTurnLifecycles)
 	}
 	s.startInferenceJournalMaintenance()
@@ -469,12 +473,15 @@ func (s *Server) maintainSessionStoragePass(ctx context.Context) {
 			return
 		}
 		providers.DebugLogf("redundant session storage maintenance: %v", err)
-	} else if redundant.ProjectedToolResultsCleared > 0 || redundant.SupersededCheckpointsDeleted > 0 || redundant.ToolMessageContentsCompacted > 0 {
+	} else if redundant.ProjectedToolResultsCleared > 0 || redundant.SupersededCheckpointsDeleted > 0 || redundant.ToolMessageContentsCompacted > 0 || redundant.CheckpointsEncoded > 0 {
 		providers.DebugLogf(
-			"redundant session storage maintenance: projected_results=%d superseded_checkpoints=%d tool_message_projections=%d",
+			"redundant session storage maintenance: projected_results=%d superseded_checkpoints=%d tool_message_projections=%d checkpoints_encoded=%d checkpoint_bytes_before=%d checkpoint_bytes_after=%d",
 			redundant.ProjectedToolResultsCleared,
 			redundant.SupersededCheckpointsDeleted,
 			redundant.ToolMessageContentsCompacted,
+			redundant.CheckpointsEncoded,
+			redundant.CheckpointBytesBefore,
+			redundant.CheckpointBytesAfter,
 		)
 	}
 	result, err := session.MaintainModelInputReceipts(ctx, s.rt.SessionDir, time.Now().UTC())
@@ -702,6 +709,10 @@ func (s *Server) Close() {
 	}
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		if s.nativeHistoryCancel != nil {
+			s.nativeHistoryCancel()
+		}
+		s.cancelPluginClientRequests()
 		s.closeProjectInboxDrains()
 		s.cancelEngineAuth("")
 		if s.storageMaintenanceCancel != nil {
@@ -809,6 +820,13 @@ func (s *Server) Close() {
 		s.interruptAttachedRunsOnClose()
 		for _, th := range threads {
 			s.releaseThreadRuntime(th)
+		}
+		s.engineHostMu.Lock()
+		releaseHost := s.codexHostRelease
+		s.codexHost, s.codexHostRelease = nil, nil
+		s.engineHostMu.Unlock()
+		if releaseHost != nil {
+			releaseHost()
 		}
 		s.releasePresence()
 	})
@@ -1039,6 +1057,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handlePluginStorageSet(req)
 	case MethodPluginClientRequest:
 		return s.handlePluginClientRequest(ctx, req)
+	case MethodPluginClientCancel:
+		return s.handlePluginClientCancel(req)
 	case MethodUserQuestionList:
 		return s.handleUserQuestionList(req)
 	case MethodUserQuestionRespond:
@@ -1082,21 +1102,48 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 	case MethodConfigProviderRemove:
 		return s.handleConfigProviderRemove(req)
 	case MethodSkillList:
-		return s.handleSkillList(req)
+		return s.handleSkillList(ctx, req)
 	case MethodThreadStart:
 		return s.handleThreadStart(req)
 	case MethodThreadResume:
 		return s.handleThreadResume(req)
+	case "thread/activity/read":
+		return s.handleThreadActivityRead(req)
 	case "thread/history/read":
 		return s.handleThreadHistoryRead(req)
 	case "message/image/read":
 		return s.handleMarkdownImageRead(ctx, req)
 	case "thread/attachment/read", "thread/content/read":
 		return s.handleThreadAttachmentRead(req)
-	case MethodThreadFork:
-		return s.handleThreadFork(req)
-	case MethodThreadEditMessage:
-		return s.handleThreadEditMessage(req)
+	case MethodThreadFork, MethodThreadEditMessage:
+		handle := s.handleThreadFork
+		if req.Method == MethodThreadEditMessage {
+			handle = s.handleThreadEditMessage
+		}
+		var params struct {
+			ThreadID string `json:"thread_id"`
+		}
+		if json.Unmarshal(req.Params, &params) == nil && s.rt != nil {
+			metadata, found, err := session.Find(s.rt.SessionDir, strings.TrimSpace(params.ThreadID))
+			if err == nil && found && metadata.EngineRef != "" && agentengine.NormalizeEngineID(metadata.EngineID) != agentengine.EngineWuu {
+				// A native history RPC can wait on another process. Keep unrelated
+				// conversation reads and Stop requests off that wait; the handler's
+				// per-thread mutation lease still serializes its own conversation.
+				if !s.startBackground(func() {
+					operationCtx, cancel := context.WithCancel(ctx)
+					stop := context.AfterFunc(s.nativeHistoryCtx, cancel)
+					defer stop()
+					defer cancel()
+					if err := handle(operationCtx, req); err != nil {
+						log.Printf("wuu: %s: %v", req.Method, err)
+					}
+				}) {
+					return s.writeResponse(req.ID, nil, errServerClosed)
+				}
+				return nil
+			}
+		}
+		return handle(ctx, req)
 	case MethodThreadContextComposition:
 		return s.handleThreadContextComposition(req)
 	case MethodInstructionsList:
@@ -1205,13 +1252,13 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 	case MethodTurnStart:
 		return s.handleTurnStart(ctx, req)
 	case MethodTurnQueue:
-		return s.handleTurnQueue(req)
+		return s.handleTurnQueue(ctx, req)
 	case MethodTurnUpdateQueued:
-		return s.handleTurnUpdateQueued(req)
+		return s.handleTurnUpdateQueued(ctx, req)
 	case MethodTurnDequeue:
 		return s.handleTurnDequeue(req)
 	case MethodTurnSteer:
-		return s.handleTurnSteer(req)
+		return s.handleTurnSteer(ctx, req)
 	case MethodTurnUnsteer:
 		return s.handleTurnUnsteer(req)
 	case MethodTurnRequeue:
@@ -1232,6 +1279,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleProcessResize(req)
 	case MethodProcessStop:
 		return s.handleProcessStop(req)
+	case MethodProcessCancelNotifications:
+		return s.handleProcessCancelNotifications(req)
 	case MethodMCPList:
 		return s.handleMCPList(req)
 	case MethodMCPConnect:

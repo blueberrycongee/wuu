@@ -108,6 +108,111 @@ function deferred<T>() {
 }
 
 describe("connection recovery", () => {
+  it("invalidates event consumers immediately before the disconnect grace phase changes", async () => {
+    const bridge = await connectBridge();
+    const before = bridge.getConnectionSnapshot();
+    const observed: unknown[] = [];
+    bridge.api.onServerEvent(event => observed.push({ event, connection: bridge.getConnectionSnapshot() }));
+    remote.attached = false;
+    remote.options.onDetach?.();
+    expect(observed).toEqual([{
+      event: { kind: "connection-reset", workdir: "/paired/workspace" },
+      connection: before,
+    }]);
+    expect(bridge.getConnectionSnapshot().phase).toBe("connected");
+    expect(bridge.getConnectionSnapshot().revision).toBeGreaterThan(before.revision);
+    remote.attached = true;
+    remote.options.onAttach?.({ session: "resumed", resumed: true });
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
+    expect(observed).toHaveLength(1);
+    await bridge.disconnect();
+    expect(observed).toHaveLength(2);
+  });
+
+  it.each([false, true])("marks reconnect replay until the ordered workspace and restore barriers finish (resumed=%s)", async resumed => {
+    const bridge = await connectBridge();
+    const sent: ProtocolEnvelope[] = [];
+    const protocol = new ProtocolClient(envelope => sent.push(envelope), {
+      onNotification: (method, params, workdir) => remote.options.onNotification?.(method, params, workdir),
+    });
+    remote.call.mockImplementation((...args) => protocol.call(...args as Parameters<ProtocolClient["call"]>));
+    const listener = vi.fn();
+    bridge.api.onServerEvent(listener);
+    const restore = deferred<void>();
+    const restored = vi.fn(() => restore.promise);
+    bridge.api.onRuntimeRestore!(restored);
+    try {
+      // Snapshot reuse is a cache optimization, not permission to classify
+      // later notifications as historical replay.
+      await bridge.api.listProjects();
+      protocol.feed({ method: "turn/started", params: { turn: { id: "before-drop" } } });
+      expect(listener.mock.calls.at(-1)?.[0]).not.toHaveProperty("replayed");
+      remote.attached = false;
+      remote.options.onDetach?.();
+      remote.attached = true;
+      remote.options.onAttach?.({ session: "replacement", resumed });
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ method: "workspace/list", params: { remote_delivery: 1 } });
+      protocol.feed({ method: "turn/started", params: { turn: { id: "replayed" } } });
+      protocol.feed({ method: "turn/completed", params: { turn: { id: "replayed" } } });
+      expect(listener.mock.calls.slice(-2).map(([event]) => event.replayed)).toEqual([true, true]);
+      protocol.feed({ id: sent[0].id, result: { current: "/paired/workspace" } });
+      if (!resumed) {
+        await vi.waitFor(() => expect(restored).toHaveBeenCalledOnce());
+        protocol.feed({ method: "turn/completed", params: { turn: { id: "during-restore" } } });
+        expect(listener.mock.calls.at(-1)?.[0]).toMatchObject({ kind: "notification", replayed: true });
+      }
+      restore.resolve();
+      await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
+      await bridge.api.listProjects();
+      protocol.feed({ method: "turn/started", params: { turn: { id: "new-live" } } });
+      expect(listener.mock.calls.at(-1)?.[0]).toMatchObject({ kind: "notification", message: { method: "turn/started" } });
+      expect(listener.mock.calls.at(-1)?.[0]).not.toHaveProperty("replayed");
+      expect(listener.mock.calls.filter(([event]) => event.kind === "connection-reset")).toHaveLength(1);
+    } finally {
+      restore.resolve();
+      protocol.close();
+      await bridge.disconnect();
+    }
+  });
+
+  it("marks initial replay and resets a replacement attachment even without a detach callback", async () => {
+    const barrier = deferred<{ current: string }>();
+    remote.call.mockReturnValueOnce(barrier.promise);
+    const bridge = new RemoteDesktopBridge({ host_pub: "paired-host" } as Credentials);
+    const listener = vi.fn();
+    bridge.api.onServerEvent(listener);
+    const connected = bridge.connect();
+    await vi.waitFor(() => expect(remote.call).toHaveBeenCalled());
+    remote.options.onNotification?.("turn/completed", { turn: { id: "initial-replay" } });
+    expect(listener.mock.calls.at(-1)?.[0]).toMatchObject({ kind: "notification", replayed: true });
+    barrier.resolve({ current: "/paired/workspace" });
+    await connected;
+    listener.mockClear();
+    remote.options.onAttach?.({ session: "replacement", resumed: false });
+    expect(listener).toHaveBeenCalledExactlyOnceWith({ kind: "connection-reset", workdir: "/paired/workspace" });
+    remote.options.onNotification?.("turn/completed", { turn: { id: "replacement-replay" } });
+    expect(listener.mock.calls.at(-1)?.[0]).toMatchObject({ kind: "notification", replayed: true });
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
+    await bridge.disconnect();
+  });
+
+  it("keeps notifications marked as replay after restore failure until a successful retry", async () => {
+    const bridge = await connectBridge();
+    const listener = vi.fn();
+    bridge.api.onServerEvent(listener);
+    bridge.api.onRuntimeRestore!(vi.fn().mockRejectedValueOnce(new Error("snapshot failed")).mockResolvedValue(undefined));
+    remote.options.onAttach?.({ session: "replacement", resumed: false });
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("error"));
+    remote.options.onNotification?.("turn/completed", { turn: { id: "failed-restore" } });
+    expect(listener.mock.calls.at(-1)?.[0]).toMatchObject({ kind: "notification", replayed: true });
+    await bridge.retryRestore();
+    remote.options.onNotification?.("turn/started", { turn: { id: "after-retry" } });
+    expect(listener.mock.calls.at(-1)?.[0]).not.toHaveProperty("replayed");
+    expect(listener.mock.calls.filter(([event]) => event.kind === "connection-reset")).toHaveLength(1);
+    await bridge.disconnect();
+  });
+
   it("shares concurrent catalog reads only until they settle", async () => {
     const bridge = await connectBridge();
     const pending = deferred<{ threads: Thread[] }>();
@@ -516,7 +621,8 @@ it.each([false, true])("installs one shared resume before following notification
   if (stale) {
     await expect(first).rejects.toThrow("connection changed");
     await expect(second).rejects.toThrow("connection changed");
-    expect(listener.mock.calls.map(([event]) => event.message.method)).toEqual(["item/agentMessage/delta"]);
+    expect(listener.mock.calls.map(([event]) => event.kind)).toEqual(["connection-reset", "notification"]);
+    expect(listener.mock.calls.at(-1)?.[0]).toMatchObject({ replayed: true, message: { method: "item/agentMessage/delta" } });
   } else {
     await expect(first).resolves.toEqual(result);
     await expect(second).resolves.toEqual(result);

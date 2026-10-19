@@ -31,6 +31,7 @@ func Entries() []Entry {
 		{ID: "claude", Name: "Claude Code", Binary: "claude", Protocol: "claude"},
 		{ID: "cursor", Name: "Cursor", Binary: "cursor-agent", Args: []string{"acp"}, Protocol: "acp", InstallURL: "https://cursor.com/docs/cli/acp"},
 		{ID: "devin", Name: "Devin", Binary: "devin", Args: []string{"acp"}, Protocol: "acp", InstallURL: "https://docs.devin.ai/cli"},
+		{ID: "dsh", Name: "DeepSeek Harness", Binary: "dsh", Args: []string{"--profile", "acp"}, Protocol: "acp", InstallURL: "https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/acp/acp"},
 		// --no-auto-update is top-level and skips the launch-time update
 		// check. --no-leader is on `agent` so stdio does not attach to a
 		// shared ~/.grok/leader.sock from the user's TUI.

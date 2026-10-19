@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/activity"
 )
 
 func TestStdioTransportCloseReapsProcessAndIsIdempotent(t *testing.T) {
@@ -39,6 +41,28 @@ func TestStdioSendHonorsContextWhenServerStopsReading(t *testing.T) {
 		_ = killProcessTree(transport.cmd, transport.processGroup)
 		_ = transport.Close()
 	}()
+	registry := activity.NewRegistry()
+	owned, lease, err := registry.Start(activity.StartOptions{ThreadID: "native", Workdir: "/workspace", PluginID: "fixture", Kind: activity.KindCUA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, release, err := registry.BindControl(context.Background(), lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if _, err := registry.Takeover(owned.ThreadID, owned.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Detaching ordinary cancellation must not detach the native input lease.
+	if err := transport.Send(context.WithoutCancel(bound), Request{JSONRPC: "2.0", ID: 2, Method: "tools/call"}); !errors.Is(err, activity.ErrControlRevoked) {
+		t.Fatalf("retired native lease reached the writer: %v", err)
+	}
+	unbound := registry.BeginExecution(context.Background(), "ordinary-mcp", "run")
+	registry.PauseThread("ordinary-mcp")
+	if err := transport.Send(unbound, Request{JSONRPC: "2.0", ID: 3, Method: "tools/call"}); err != nil {
+		t.Fatalf("UI retirement blocked unrelated unbound MCP work: %v", err)
+	}
 	frame := Request{JSONRPC: "2.0", ID: 1, Method: "tools/call", Params: json.RawMessage(strconv.Quote(strings.Repeat("x", 4<<20)))}
 	send := func(ctx context.Context) <-chan error {
 		done := make(chan error, 1)

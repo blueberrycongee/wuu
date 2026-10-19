@@ -7,7 +7,7 @@ struct LicensesView: View {
             .navigationTitle("开源许可").navigationBarTitleDisplayMode(.inline)
             .task {
                 do {
-                    text = try ["Notices", "Apache-2.0"].map { name in
+                    text = try ["Notices", "Apache-2.0", "Mermaid-Notices"].map { name in
                         guard let url = Bundle.main.url(forResource: name, withExtension: "txt", subdirectory: "licenses") else {
                             throw CocoaError(.fileNoSuchFile)
                         }

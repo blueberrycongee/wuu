@@ -51,6 +51,7 @@ const (
 	MethodPluginStorageGet                = "plugin/storage/get"
 	MethodPluginStorageSet                = "plugin/storage/set"
 	MethodPluginClientRequest             = "plugin/client/request"
+	MethodPluginClientCancel              = "plugin/client/cancel"
 	MethodUserQuestionList                = "user-question/list"
 	MethodUserQuestionRespond             = "user-question/respond"
 	MethodUserQuestionCancel              = "user-question/cancel"
@@ -112,6 +113,7 @@ const (
 	MethodProcessWrite                    = "process/write"
 	MethodProcessResize                   = "process/resize"
 	MethodProcessStop                     = "process/stop"
+	MethodProcessCancelNotifications      = "process/cancel-notifications"
 	MethodMCPList                         = "mcp/list"
 	MethodMCPConnect                      = "mcp/connect"
 	MethodMCPDisconnect                   = "mcp/disconnect"
@@ -611,6 +613,8 @@ type MCPAuthRemoveResult struct {
 }
 
 type ActivitySession struct {
+	// ExecutionID is absent for standalone/legacy activities without an admitted turn.
+	ExecutionID string                `json:"execution_id,omitempty"`
 	ID          string                `json:"id"`
 	Kind        string                `json:"kind"`
 	ThreadID    string                `json:"thread_id"`
@@ -637,8 +641,9 @@ type ActivityListResult struct {
 }
 
 type ActivityActionParams struct {
-	ThreadID   string `json:"thread_id"`
-	ActivityID string `json:"activity_id"`
+	ExecutionID string `json:"execution_id,omitempty"`
+	ThreadID    string `json:"thread_id"`
+	ActivityID  string `json:"activity_id"`
 }
 
 type ActivityActionResult struct {
@@ -707,8 +712,9 @@ const (
 type ExtensionCommandKind string
 
 const (
-	ExtensionCommandPromptTemplate ExtensionCommandKind = "prompt_template"
-	ExtensionCommandRuntimeAction  ExtensionCommandKind = "runtime_action"
+	ExtensionCommandPromptTemplate   ExtensionCommandKind = "prompt_template"
+	ExtensionCommandRuntimeAction    ExtensionCommandKind = "runtime_action"
+	ExtensionCommandSideConversation ExtensionCommandKind = "side_conversation"
 )
 
 type ExtensionCommandDescriptor struct {
@@ -863,6 +869,7 @@ type ExtensionInventoryRecord struct {
 	Conflicts            []string                         `json:"conflicts,omitempty"`
 	ActivationIssues     []ExtensionPluginActivationIssue `json:"activation_issues,omitempty"`
 	Enabled              *bool                            `json:"enabled,omitempty"`
+	EnabledOverride      *bool                            `json:"enabled_override,omitempty"`
 	Desktop              *ExtensionDesktopDescriptor      `json:"desktop,omitempty"`
 	Contributions        *ExtensionContributions          `json:"contributions,omitempty"`
 	PendingUpdate        *ExtensionPendingUpdate          `json:"pending_update,omitempty"`
@@ -1112,24 +1119,26 @@ type AuthXAILoginCancelParams struct {
 }
 
 type ConfigModelUpdateResult struct {
-	Provider         string                  `json:"provider"`
-	Model            string                  `json:"model"`
-	Effort           string                  `json:"effort,omitempty"`
-	Variant          string                  `json:"variant,omitempty"`
-	MaxParallel      int                     `json:"max_parallel"`
-	Permissions      PermissionSummary       `json:"permissions"`
-	ExtensionTrust   ExtensionTrustSummary   `json:"extension_trust"`
-	ModelProfile     *ModelProfileSummary    `json:"model_profile,omitempty"`
-	ToolSurface      *ToolSurfaceSummary     `json:"tool_surface,omitempty"`
-	ModelRoles       []ModelRoleSummary      `json:"model_roles,omitempty"`
-	Providers        []ProviderSummary       `json:"providers,omitempty"`
-	AdvancedSettings AdvancedSettingsSummary `json:"advanced_settings"`
+	ProjectModels    config.ProjectModelsConfig   `json:"project_models"`
+	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases"`
+	Provider         string                       `json:"provider"`
+	Model            string                       `json:"model"`
+	Effort           string                       `json:"effort,omitempty"`
+	Variant          string                       `json:"variant,omitempty"`
+	MaxParallel      int                          `json:"max_parallel"`
+	Permissions      PermissionSummary            `json:"permissions"`
+	ExtensionTrust   ExtensionTrustSummary        `json:"extension_trust"`
+	ModelProfile     *ModelProfileSummary         `json:"model_profile,omitempty"`
+	ToolSurface      *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
+	ModelRoles       []ModelRoleSummary           `json:"model_roles,omitempty"`
+	Providers        []ProviderSummary            `json:"providers,omitempty"`
+	AdvancedSettings AdvancedSettingsSummary      `json:"advanced_settings"`
 }
 
 // ConfigProviderRemoveParams requests the deletion of a configured
 // provider. The handler enforces the same safety guards as the
 // existing config handlers (no removal of the last provider, no
-// removal of OAuth/connection-locked providers, and no removal of a
+// removal of OpenAI OAuth-managed providers, and no removal of a
 // provider currently used by a running turn) and atomically swaps the
 // default provider to FallbackProvider when the removed provider was
 // active.
@@ -1143,12 +1152,11 @@ type ConfigProviderRemoveParams struct {
 	Provider string `json:"provider"`
 	// FallbackProvider becomes the new default_provider if the removed
 	// provider was the active one. Optional; server picks another
-	// existing provider when empty. Required when removing the last
-	// remaining provider so the runtime still has a model to use.
+	// existing provider when empty. Removing the last provider is rejected.
 	FallbackProvider string `json:"fallback_provider,omitempty"`
 	// FallbackModel is applied to the new default provider after the
-	// swap so the runtime has a model to use. Optional; server reuses
-	// the removed provider's model when empty.
+	// swap so the runtime has a model to use. Optional; server uses
+	// the replacement provider's selected model when empty.
 	FallbackModel string `json:"fallback_model,omitempty"`
 }
 
@@ -1157,16 +1165,18 @@ type ConfigProviderRemoveParams struct {
 // merge provider/model/permissions into the initialized state, so the shape
 // intentionally matches that result.
 type ConfigProviderRemoveResult struct {
-	Provider         string                  `json:"provider"`
-	Model            string                  `json:"model"`
-	Variant          string                  `json:"variant,omitempty"`
-	Permissions      PermissionSummary       `json:"permissions"`
-	ExtensionTrust   ExtensionTrustSummary   `json:"extension_trust"`
-	ModelProfile     *ModelProfileSummary    `json:"model_profile,omitempty"`
-	ToolSurface      *ToolSurfaceSummary     `json:"tool_surface,omitempty"`
-	ModelRoles       []ModelRoleSummary      `json:"model_roles,omitempty"`
-	Providers        []ProviderSummary       `json:"providers,omitempty"`
-	AdvancedSettings AdvancedSettingsSummary `json:"advanced_settings"`
+	ProjectModels    config.ProjectModelsConfig   `json:"project_models"`
+	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases"`
+	Provider         string                       `json:"provider"`
+	Model            string                       `json:"model"`
+	Variant          string                       `json:"variant,omitempty"`
+	Permissions      PermissionSummary            `json:"permissions"`
+	ExtensionTrust   ExtensionTrustSummary        `json:"extension_trust"`
+	ModelProfile     *ModelProfileSummary         `json:"model_profile,omitempty"`
+	ToolSurface      *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
+	ModelRoles       []ModelRoleSummary           `json:"model_roles,omitempty"`
+	Providers        []ProviderSummary            `json:"providers,omitempty"`
+	AdvancedSettings AdvancedSettingsSummary      `json:"advanced_settings"`
 }
 
 type ConfigAdvancedUpdateParams struct {
@@ -1275,22 +1285,31 @@ type SkillListResult struct {
 	Skills []SkillSummary `json:"skills"`
 }
 
+// ProcessTrigger describes the host-owned wakeups associated with a process.
+type ProcessTrigger struct {
+	Status         string     `json:"status"`
+	OnExit         bool       `json:"on_exit"`
+	RecheckMinutes int        `json:"recheck_minutes,omitempty"`
+	NextRecheckAt  *time.Time `json:"next_recheck_at,omitempty"`
+}
+
 type ManagedProcessSummary struct {
-	ID             string    `json:"id"`
-	OwnerKind      string    `json:"owner_kind"`
-	OwnerID        string    `json:"owner_id"`
-	Lifecycle      string    `json:"lifecycle"`
-	Status         string    `json:"status"`
-	PID            int       `json:"pid"`
-	TTY            bool      `json:"tty,omitempty"`
-	Command        string    `json:"command"`
-	CWD            string    `json:"cwd"`
-	StartedAt      time.Time `json:"started_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	StoppedAt      time.Time `json:"stopped_at,omitempty"`
-	ExitCode       int       `json:"exit_code,omitempty"`
-	LastError      string    `json:"last_error,omitempty"`
-	InputAvailable bool      `json:"input_available,omitempty"`
+	ID             string          `json:"id"`
+	OwnerKind      string          `json:"owner_kind"`
+	OwnerID        string          `json:"owner_id"`
+	Lifecycle      string          `json:"lifecycle"`
+	Status         string          `json:"status"`
+	PID            int             `json:"pid"`
+	TTY            bool            `json:"tty,omitempty"`
+	Command        string          `json:"command"`
+	CWD            string          `json:"cwd"`
+	StartedAt      time.Time       `json:"started_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+	StoppedAt      time.Time       `json:"stopped_at,omitempty"`
+	ExitCode       int             `json:"exit_code,omitempty"`
+	LastError      string          `json:"last_error,omitempty"`
+	InputAvailable bool            `json:"input_available,omitempty"`
+	Trigger        *ProcessTrigger `json:"trigger,omitempty"`
 }
 
 type ProcessListParams struct {
@@ -1580,6 +1599,8 @@ type ThreadResumeParams struct {
 	ResponseOnly bool `json:"response_only,omitempty"`
 	// HistoryPage returns a bounded recent page; older turns use thread/history/read.
 	HistoryPage bool `json:"history_page,omitempty"`
+	// ConversationHistory returns folded activity with separately paged details.
+	ConversationHistory bool `json:"conversation_history,omitempty"`
 }
 
 type ThreadResumeResult struct {
@@ -1594,6 +1615,8 @@ type ThreadForkParams struct {
 	ItemID   string            `json:"item_id,omitempty"`
 	Target   *ThreadForkTarget `json:"target,omitempty"`
 	Mode     string            `json:"mode,omitempty"`
+	// HistoryPage bounds the returned history; older items use thread/history/read.
+	HistoryPage bool `json:"history_page,omitempty"`
 }
 
 type ThreadForkTarget struct {
@@ -1717,6 +1740,7 @@ type SideThreadMainTaskSummary struct {
 }
 
 type SideThreadSendParams struct {
+	CommandID    string                         `json:"command_id,omitempty"`
 	MainThreadID string                         `json:"main_thread_id"`
 	Prompt       string                         `json:"prompt"`
 	Selection    *sidethread.SelectionReference `json:"selection,omitempty"`
@@ -2104,18 +2128,20 @@ type TurnSteerParams struct {
 }
 
 type TurnSteerResult struct {
-	TurnID string `json:"turn_id"`
+	TurnID   string `json:"turn_id"`
+	Delivery string `json:"delivery,omitempty"`
 }
 
 type HeldUserMessage struct {
-	ID             string                         `json:"id"`
-	ThreadID       string                         `json:"thread_id"`
-	Origin         string                         `json:"origin"`
-	Prompt         string                         `json:"prompt,omitempty"`
-	Images         []TurnStartImage               `json:"images,omitempty"`
-	Files          []TurnStartFile                `json:"files,omitempty"`
-	ContentParts   []providers.MessageContentPart `json:"content_parts,omitempty"`
-	ActiveDocument *ActiveDocument                `json:"active_document,omitempty"`
+	DeliveryUnconfirmed bool                           `json:"delivery_unconfirmed,omitempty"`
+	ID                  string                         `json:"id"`
+	ThreadID            string                         `json:"thread_id"`
+	Origin              string                         `json:"origin"`
+	Prompt              string                         `json:"prompt,omitempty"`
+	Images              []TurnStartImage               `json:"images,omitempty"`
+	Files               []TurnStartFile                `json:"files,omitempty"`
+	ContentParts        []providers.MessageContentPart `json:"content_parts,omitempty"`
+	ActiveDocument      *ActiveDocument                `json:"active_document,omitempty"`
 }
 
 type TurnUnsteerParams struct {
@@ -2343,7 +2369,8 @@ const (
 type TurnItemsView string
 
 const (
-	TurnItemsViewFull TurnItemsView = "full"
+	TurnItemsViewFull         TurnItemsView = "full"
+	TurnItemsViewConversation TurnItemsView = "conversation"
 )
 
 type WorkspaceKind string
@@ -2431,12 +2458,14 @@ type Turn struct {
 	Model         string        `json:"model,omitempty"`
 	Items         []ThreadItem  `json:"items"`
 	ItemsView     TurnItemsView `json:"items_view"`
-	Status        TurnStatus    `json:"status"`
-	Error         *TurnError    `json:"error,omitempty"`
-	FinishReason  string        `json:"finish_reason,omitempty"`
-	StopReason    string        `json:"stop_reason,omitempty"`
-	Truncated     bool          `json:"truncated,omitempty"`
-	StartedAt     *time.Time    `json:"started_at,omitempty"`
+	// HasFinalAnswer preserves folding context when conversation history splits a turn.
+	HasFinalAnswer bool       `json:"has_final_answer,omitempty"`
+	Status         TurnStatus `json:"status"`
+	Error          *TurnError `json:"error,omitempty"`
+	FinishReason   string     `json:"finish_reason,omitempty"`
+	StopReason     string     `json:"stop_reason,omitempty"`
+	Truncated      bool       `json:"truncated,omitempty"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
 	// AnswerReadyAt is the user-visible completion boundary. Provider cleanup,
 	// durable turn settlement, and execution-lease release may finish later.
 	AnswerReadyAt       *time.Time `json:"answer_ready_at,omitempty"`
@@ -2485,6 +2514,7 @@ const (
 	ThreadItemAgentMessage      ThreadItemType = "agent_message"
 	ThreadItemReasoning         ThreadItemType = "reasoning"
 	ThreadItemToolCall          ThreadItemType = "tool_call"
+	ThreadItemProcessSummary    ThreadItemType = "process_summary"
 	ThreadItemContextCompaction ThreadItemType = "context_compaction"
 	ThreadItemStreamReconnect   ThreadItemType = "stream_reconnect"
 	ThreadItemError             ThreadItemType = "error"
@@ -2499,6 +2529,7 @@ const (
 )
 
 type ThreadItem struct {
+	Activity *ConversationActivity `json:"activity,omitempty"`
 	// steered preserves input identity from live messages and the durable display
 	// transcript, independently of compactable provider history. It is host-only.
 	steered          bool

@@ -633,7 +633,8 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		return pluginhost.SessionSendResult{}, session.ErrSessionNotFound
 	}
 	owner := "plugin:" + pluginID
-	if metadata.Visibility == pluginhost.SessionVisibilityPlugin && metadata.Owner != owner {
+	processDelivery := pluginhost.HasProcessSessionDelivery(ctx, params.SessionID)
+	if metadata.Visibility == pluginhost.SessionVisibilityPlugin && metadata.Owner != owner && !processDelivery {
 		return pluginhost.SessionSendResult{}, errors.New("plugin does not own the private session")
 	}
 	requestContext, err := pluginTurnRequestContext(params.Input.ContextBlocks)
@@ -664,9 +665,23 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 			return pluginhost.SessionSendResult{State: lifecycle.State, SessionID: params.SessionID, TurnID: lifecycle.TurnID, QueueID: lifecycle.QueueID}, nil
 		}
 	}
-	control, err := s.pluginSessionControl(pluginID, params.SessionID, params.ControlRevision)
-	if err != nil {
-		return pluginhost.SessionSendResult{}, err
+	var control *session.Control
+	if processDelivery {
+		// A captured process reports observations to its own conversation,
+		// including one managed by a different plugin or Project Agent. Keep
+		// the current control fence so pause/takeover still revokes delivery.
+		current, managed, err := session.ReadControl(s.rt.SessionDir, params.SessionID)
+		if err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
+		if managed && current.State != session.ControlReleased {
+			control = &current
+		}
+	} else {
+		control, err = s.pluginSessionControl(pluginID, params.SessionID, params.ControlRevision)
+		if err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
 	}
 	if control != nil && control.State != session.ControlActive {
 		return pluginhost.SessionSendResult{}, session.ErrControlChanged

@@ -108,6 +108,7 @@ type Process struct {
 	TerminalCause                  EventCause          `json:"terminal_cause,omitempty"`
 	CompletionDeliveredAt          time.Time           `json:"completion_delivered_at,omitempty"`
 	CompletionConsumedBy           string              `json:"completion_consumed_by,omitempty"`
+	NotificationsCancelledAt       time.Time           `json:"notifications_cancelled_at,omitempty"`
 	// RecheckMinutes is the model-declared progress recheck interval. Zero
 	// disables scheduled rechecks. NextRecheckAt is the persisted deadline of
 	// the next scheduled wake; PendingRecheckAt marks a fired recheck that has
@@ -1494,6 +1495,9 @@ func (m *Manager) SetRecheck(id string, minutes int) (*Process, error) {
 		return p, fmt.Errorf("process %q is not running", id)
 	}
 	p.RecheckMinutes = minutes
+	if minutes > 0 {
+		p.NotificationsCancelledAt = time.Time{}
+	}
 	if minutes <= 0 {
 		p.NextRecheckAt = time.Time{}
 		p.PendingRecheckAt = time.Time{}
@@ -1532,10 +1536,42 @@ func (m *Manager) SetCompletionMode(id string, mode CompletionMode) (*Process, e
 		return p, fmt.Errorf("process %q is not running", id)
 	}
 	p.CompletionMode = mode
+	if mode == CompletionModeResume {
+		p.NotificationsCancelledAt = time.Time{}
+	}
 	p.UpdatedAt = time.Now()
 	if err := m.save(p); err != nil {
 		return p, err
 	}
+	return p, nil
+}
+
+// CancelNotifications revokes future completion and recheck wakeups without
+// stopping the process. An already admitted turn is allowed to finish.
+func (m *Manager) CancelNotifications(id string) (*Process, error) {
+	if m.remote != nil {
+		var result Process
+		err := m.remoteRequest("cancel_notifications", map[string]any{"id": id}, &result)
+		return &result, err
+	}
+	m.mu.Lock()
+	p, err := m.load(id)
+	if err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	p.CompletionMode = CompletionModeDetached
+	p.RecheckMinutes = 0
+	p.NextRecheckAt = time.Time{}
+	p.PendingRecheckAt = time.Time{}
+	p.NotificationsCancelledAt = time.Now().UTC()
+	p.UpdatedAt = p.NotificationsCancelledAt
+	err = m.save(p)
+	m.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	m.signalRecheckScheduler()
 	return p, nil
 }
 

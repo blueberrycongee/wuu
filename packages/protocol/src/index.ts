@@ -1,3 +1,7 @@
+import type { AppContextSettings, AppContextState } from "./appContext";
+import type { SystemPermission, SystemPermissionsState, SystemPermissionPresentation, SystemPermissionGuideState } from "./systemPermissions";
+export type { SystemPermission, SystemPermissionsState, SystemPermissionPresentation, SystemPermissionGuideState } from "./systemPermissions";
+export type { AppContextSettings, AppContextSnapshot, AppContextState } from "./appContext";
 export type JsonValue =
   | null
   | boolean
@@ -53,6 +57,8 @@ export type UserQuestionRequest = {
   actor_id?: string;
   call_id?: string;
   mode?: "ask" | "offer";
+  /** Return the answer to the waiting tool, without sending another message. */
+  reply_to_tool?: boolean;
   questions: UserQuestion[];
   created_at: string;
   expires_at?: string;
@@ -451,7 +457,7 @@ export type ExtensionCommandDescriptor = {
   id: string;
   title: string;
   description?: string;
-  kind: "prompt_template" | "runtime_action";
+  kind: "prompt_template" | "runtime_action" | "side_conversation";
   template?: string;
   contexts?: string[];
   aliases?: string[];
@@ -587,6 +593,8 @@ export type ExtensionInventoryRecord = {
   conflicts?: string[];
   activation_issues?: ExtensionPluginActivationIssue[];
   enabled?: boolean;
+  // Explicit user policy; absent means the package default applies.
+  enabled_override?: boolean;
   desktop?: ExtensionDesktopDescriptor;
   contributions?: ExtensionContributions;
   pending_update?: ExtensionPendingUpdate;
@@ -728,6 +736,28 @@ export interface PluginDiagnosticsResult {
   id: string;
   diagnostics: PluginContributionDiagnostic[];
 }
+/** A live current/retained-generation execution from plugin/executions/list. */
+export interface PluginExecutionSnapshot {
+  /** Host-local ID. Use [generation_id, id] as the diagnostic identity. */
+  id: string;
+  generation_id: string;
+  retained: boolean;
+  plugin_id: string;
+  session_id?: string;
+  thread_id?: string;
+  turn_id?: string;
+  actor_id?: string;
+  call_id?: string;
+  tool?: string;
+  cwd?: string;
+  message?: string;
+  detail?: unknown;
+  updated_at?: string;
+}
+export interface PluginExecutionsResult {
+  /** Ordered by generation_id, then id; an empty result is [], never null. */
+  executions: PluginExecutionSnapshot[];
+}
 export interface PluginStorageGetParams extends PluginIdentityParams {
   scope: PluginValueScope;
   key: string;
@@ -740,13 +770,19 @@ export interface PluginStorageResult {
   value: string | null;
 }
 export interface PluginClientRequestParams extends PluginIdentityParams {
+  /** Optional opaque ID enabling cancellation of this request. */
+  request_id?: string;
   method: string;
   input?: unknown;
   /** Desktop routing hint. The main process resolves this stable project id
    * to a registered workspace and does not forward it to the app-server. */
   workspace_id?: string;
+  /** Desktop routing fence; checked against the selected runtime context and not forwarded. */
+  workspace_root?: string;
 }
 export interface PluginClientRequestResult { result?: unknown; }
+export interface PluginClientCancelParams extends PluginIdentityParams { request_id: string; }
+export interface PluginClientCancelResult { cancelled: boolean; }
 
 export type ConfigModelUpdateResult = {
   provider: string;
@@ -764,6 +800,7 @@ export type ConfigModelUpdateResult = {
   model_profile?: ModelProfileSummary;
   tool_surface?: ToolSurfaceSummary;
   extension_trust?: ExtensionTrustSummary;
+  project_models?: ProjectModelsConfig;
   model_roles?: ModelRoleSummary[];
   model_aliases?: Record<string, ModelAliasSummary>;
   providers?: ProviderSummary[];
@@ -998,6 +1035,8 @@ export type MCPAuthRemoveResult = {
 
 export type ActivitySession = {
   id: string;
+  // Identifies the admitted run; callbacks from earlier runs cannot regain control.
+  execution_id?: string;
   kind: "browser" | "cua";
   thread_id: string;
   workdir: string;
@@ -1081,6 +1120,44 @@ export type BrowserTabAdopted = {
   openerTabID: string;
   tabID: string;
   url: string;
+};
+
+// Browser settings are host-local. The renderer selects one of the profiles
+// returned by the host; it never supplies an arbitrary filesystem path to the
+// cookie reader.
+export type BrowserProfile = {
+  /** Stable host-side browser adapter id. */
+  browserId: string;
+  appName: string;
+  profileDirectoryName: string;
+  profileName: string;
+  profilePath: string;
+  hasCookies: boolean;
+  hasPasswords: boolean;
+  userName?: string;
+};
+
+export type BrowserCookieImportResult = {
+  appName: string;
+  profileName: string;
+  profilePath: string;
+  discovered: number;
+  imported: number;
+  skippedExpired: number;
+  skippedInvalid: number;
+  failed: number;
+};
+
+// An extension loaded into the shared embedded-browser session. The source
+// directory is owned by the user and remains untouched on removal.
+export type BrowserExtensionRecord = {
+  id: string;
+  name: string;
+  version: string;
+  path: string;
+  enabled: boolean;
+  loaded: boolean;
+  error?: string;
 };
 
 export type RuntimeConnectionUpdate = {
@@ -1254,6 +1331,7 @@ export type EngineSettingsConfig = {
   claude?: EngineBinarySettings;
   cursor?: EngineBinarySettings;
   devin?: EngineBinarySettings;
+  dsh?: EngineBinarySettings;
   grok?: EngineBinarySettings;
   hermes?: EngineBinarySettings;
   pi?: EngineBinarySettings;
@@ -1594,6 +1672,12 @@ export type ManagedProcessSummary = {
   exit_code?: number;
   last_error?: string;
   input_available?: boolean;
+  trigger?: {
+    status: "waiting" | "received" | "handled" | "cancelled" | "stopped";
+    on_exit: boolean;
+    recheck_minutes?: number;
+    next_recheck_at?: string;
+  };
 };
 
 export type ManagedProcessListResult = {
@@ -1629,12 +1713,13 @@ export type ManagedProcessWriteResult = ManagedProcessActionResult & {
 export type ThreadStatus = "idle" | "in_progress";
 export type TurnStatus = "in_progress" | "completed" | "failed" | "interrupted";
 export type TurnKind = "user" | "internal" | "compact";
-export type TurnItemsView = "full";
+export type TurnItemsView = "full" | "conversation";
 export type ThreadItemType =
   | "user_message"
   | "agent_message"
   | "reasoning"
   | "tool_call"
+  | "process_summary"
   | "context_compaction"
   | "stream_reconnect"
   | "error";
@@ -2045,7 +2130,32 @@ export type SideThreadHistoryResult = {
   messages: SideThreadMessage[];
 };
 
+/** Bounded, display-only history for trusted desktop extensions. */
+type PluginVisibleHistoryScope = {
+  threadId: string;
+  workspaceRoot: string;
+  workspaceId?: string;
+};
+export type PluginVisibleHistoryRequest = PluginVisibleHistoryScope & (
+  | { kind: "main"; beforeTurnId: string; sideThreadId?: never }
+  | { kind: "side"; sideThreadId: string; beforeTurnId?: never }
+);
+
+export type PluginVisibleTurn = {
+  id: string;
+  userText: string;
+  assistantText: string;
+  imageCount: number;
+  fileCount: number;
+};
+
+export type PluginVisibleHistoryResult = {
+  turns: PluginVisibleTurn[];
+};
+
 export type SideThreadSendParams = {
+  // Public plugin command ID (plugin.command); omitted selects the first active side command.
+  command_id?: string;
   main_thread_id: string;
   // The user's prompt. Empty prompts are rejected by the IPC layer.
   prompt: string;
@@ -2212,7 +2322,12 @@ export type Turn = {
   model?: string;
   items: ThreadItem[];
   items_view: TurnItemsView;
+  /** Folding context retained across conversation-history page boundaries. */
+  has_final_answer?: boolean;
   status: TurnStatus;
+  finish_reason?: string;
+  stop_reason?: string;
+  truncated?: boolean;
   // Structured turn-end error populated by the Go core's BuildTurnError.
   // Older clients that only read `message` still work because every new
   // field is optional; shells use these diagnostic facts to derive a
@@ -2388,6 +2503,8 @@ export type TurnEventNotification = {
 };
 
 export type ThreadItem = {
+  /** Settled activity folded by opt-in conversation history. Details use thread/activity/read. */
+  activity?: { last_item_id: string; item_count: number; tool_count: number; failed_count: number };
   /** Local Markdown images, readable through message/image/read. */
   markdown_images?: InputImage[];
   /** Complete content is fetched separately when a history item exceeds the page budget. */
@@ -2432,6 +2549,9 @@ export type ThreadItem = {
   result_detail?: ToolResult;
   error?: string;
   reason?: string;
+  finish_reason?: string;
+  stop_reason?: string;
+  truncated?: boolean;
   // Replacement-context body of a completed context_compaction item — the
   // compacted history the model now runs on. Empty for failed/no-op passes
   // and for other item types.
@@ -2484,6 +2604,7 @@ export type QueuedTurn = {
 };
 
 export type HeldUserMessage = {
+  delivery_unconfirmed?: boolean;
   id: string;
   thread_id: string;
   origin: "queue" | "steer";
@@ -2503,7 +2624,15 @@ export type ThreadResumeResult = {
 export type ServerEvent = {
   workdir: string;
 } & (
-  | { kind: "notification"; message: AppServerNotification }
+  | {
+      kind: "notification";
+      message: AppServerNotification;
+      /** Received before connection restoration completed; must not trigger new live work. */
+      replayed?: boolean;
+    }
+  // Invalidates connection-bound ephemeral work without treating a brief
+  // transport replacement as an app-server failure.
+  | { kind: "connection-reset" }
   | { kind: "server-request"; message: Required<AppServerRequest> }
   | { kind: "server-error"; message: string }
   | { kind: "server-exit"; code: number | null; message: string }
@@ -2624,7 +2753,7 @@ export const MESSAGE_FLOW_FONT_SIZE_RANGE = {
   min: 13,
   max: 20,
   step: 0.5,
-  default: 14.5,
+  default: 15,
 } as const;
 
 export type ThemePreference = "system" | "light" | "dark";
@@ -2818,7 +2947,29 @@ export type ActiveDocumentContext = {
   path: string;
 };
 
+export type DesktopUpdateState =
+  | { kind: "unsupported" | "idle" | "checking" | "prompting" | "installing" }
+  | { kind: "available" | "ready" | "error"; version: string }
+  | { kind: "downloading"; version: string; percent: number };
+
 export type WuuDesktopApi = {
+  readPluginVisibleHistory?: (request: PluginVisibleHistoryRequest) => Promise<PluginVisibleHistoryResult>;
+  /** Desktop release updates; absent on remote and mobile hosts. */
+  getDesktopUpdateState?: () => Promise<DesktopUpdateState>;
+  onDesktopUpdateChanged?: (handler: (state: DesktopUpdateState) => void) => () => void;
+  downloadDesktopUpdate?: () => Promise<void>;
+  restartDesktopUpdate?: () => Promise<void>;
+  getSystemPermissions?: () => Promise<SystemPermissionsState>;
+  requestSystemPermission?: (permission: SystemPermission, presentation?: SystemPermissionPresentation) => Promise<void>;
+  updateSystemPermissionGuide?: (presentation: SystemPermissionPresentation) => void;
+  onSystemPermissionGuideChanged?: (handler: (state: SystemPermissionGuideState) => void) => () => void;
+  closeSystemPermissionGuide?: (requestId?: string) => Promise<void>;
+  getAppContextState?: () => Promise<AppContextState>;
+  setAppContextShortcutRecording?: (recording: boolean) => Promise<AppContextState>;
+  updateAppContextSettings?: (settings: AppContextSettings) => Promise<AppContextState>;
+  requestAppContextPermission?: (kind: "screen" | "text") => Promise<AppContextState>;
+  discardAppContextSnapshot?: (id?: string) => Promise<AppContextState>;
+  onAppContextChanged?: (handler: () => void) => () => void;
   /** Host operations that this adapter cannot perform. Omitted means the
    * desktop contract; renderers must hide or disable unavailable actions. */
   unsupportedMethods?: readonly (keyof WuuDesktopApi)[];
@@ -2873,6 +3024,7 @@ export type WuuDesktopApi = {
   resizeTerminalSession: (id: string, cols: number, rows: number) => Promise<TerminalSessionActionResult>;
   stopTerminalSession: (id: string) => Promise<TerminalSessionActionResult>;
   listManagedProcesses: (threadId: string) => Promise<ManagedProcessListResult>;
+  cancelProcessNotifications: (threadId: string, processId: string) => Promise<ManagedProcessActionResult>;
   readManagedProcess: (params: ManagedProcessReadParams) => Promise<ManagedProcessReadResult>;
   writeManagedProcess: (
     threadId: string,
@@ -2952,6 +3104,7 @@ export type WuuDesktopApi = {
   getPluginStorage: (params: PluginStorageGetParams) => Promise<PluginStorageResult>;
   setPluginStorage: (params: PluginStorageSetParams) => Promise<PluginStorageResult>;
   requestPluginRuntime: (params: PluginClientRequestParams) => Promise<PluginClientRequestResult>;
+  cancelPluginRuntime: (params: PluginClientCancelParams) => Promise<PluginClientCancelResult>;
   listMCPServers: () => Promise<MCPListResult>;
   connectMCPServer: (name: string) => Promise<MCPServerActionResult>;
   disconnectMCPServer: (name: string) => Promise<MCPServerActionResult>;
@@ -2964,9 +3117,9 @@ export type WuuDesktopApi = {
   pollXAILogin: (loginId: string) => Promise<AuthXAILoginPollResult>;
   cancelXAILogin: (loginId: string) => Promise<{ ok: boolean }>;
   listActivities: (threadId: string) => Promise<ActivityListResult>;
-  takeoverActivity: (threadId: string, activityId: string, inputGeneration?: number) => Promise<ActivityActionResult>;
-  releaseActivity: (threadId: string, activityId: string) => Promise<ActivityReleaseResult>;
-  stopActivity: (threadId: string, activityId: string) => Promise<ActivityActionResult>;
+  takeoverActivity: (threadId: string, activityId: string, inputGeneration?: number, executionId?: string) => Promise<ActivityActionResult>;
+  releaseActivity: (threadId: string, activityId: string, executionId?: string) => Promise<ActivityReleaseResult>;
+  stopActivity: (threadId: string, activityId: string, executionId?: string) => Promise<ActivityActionResult>;
   listSkills: (params?: SkillListParams) => Promise<SkillListResult>;
   readSkillContent: (params: SkillContentParams) => Promise<SkillContentResult>;
   returnManagedSession: (params: { thread_id: string; revision: number }) => Promise<{ control: NonNullable<Thread["session_control"]> }>;
@@ -3020,6 +3173,10 @@ export type WuuDesktopApi = {
   windowClose?: () => Promise<void>;
   windowIsMaximized?: () => Promise<boolean>;
   onWindowMaximizedChange?: (handler: (maximized: boolean) => void) => () => void;
+  // Desktop-only presentation preference. Does not enable or disable extensions.
+  getActivityPreviewAutoShow?: () => Promise<boolean>;
+  setActivityPreviewAutoShow?: (enabled: boolean) => Promise<void>;
+  onActivityPreviewAutoShowChange?: (handler: (enabled: boolean) => void) => () => void;
   // Appearance. The preference persists in desktop-settings.json; the
   // renderer resolves "system" against prefers-color-scheme and stamps
   // data-theme on <html>. `initialThemePreference` is read synchronously
@@ -3148,7 +3305,7 @@ export type WuuDesktopApi = {
     activeDocument?: ActiveDocumentContext,
     contentParts?: MessageContentPart[],
     targetContext?: RuntimeContext,
-  ) => Promise<{ turn_id: string }>;
+  ) => Promise<{ turn_id: string; delivery?: "active_turn" | "queued" }>;
   unsteerTurn: (threadId: string, steerId: string) => Promise<{ ok: boolean }>;
   requeueTurn: (
     threadId: string,
@@ -3274,6 +3431,17 @@ export type WuuDesktopApi = {
   ) => () => void;
   // Main→renderer: the floating browser card asked to dock into the panel.
   onBrowserDock?: (handler: (payload: BrowserDockTarget) => void) => () => void;
+  // Browser settings. Profiles and extensions are host-local; a remote host
+  // may omit these methods.
+  listBrowserProfiles?: () => Promise<BrowserProfile[]>;
+  importBrowserCookies?: (profilePath: string) => Promise<BrowserCookieImportResult>;
+  listBrowserExtensions?: () => Promise<BrowserExtensionRecord[]>;
+  addBrowserExtension?: () => Promise<BrowserExtensionRecord[]>;
+  setBrowserExtensionEnabled?: (
+    id: string,
+    enabled: boolean,
+  ) => Promise<BrowserExtensionRecord[]>;
+  removeBrowserExtension?: (id: string) => Promise<BrowserExtensionRecord[]>;
   // Renderer→main: hide the agent view while a full-window overlay (settings,
   // dialogs, search) is open so it can't occlude the modal; false restores it.
   suppressBrowserOverlay?: (

@@ -8,9 +8,9 @@
     "Source Han Sans SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif
   );
   --wuu-grid-cols: 12;
-  --wuu-grid-baseline: calc(var(--wuu-space-unit, 4px) * 2 * var(--wuu-space-density, 1));
+  --wuu-grid-baseline: var(--space-2);
   --wuu-grid-leading: 24px;
-  --wuu-grid-gutter: calc(var(--wuu-space-unit, 4px) * 6 * var(--wuu-space-density, 1));
+  --wuu-grid-gutter: var(--space-6);
   --wuu-grid-margin: clamp(32px, 4vw, 64px);
   --wuu-grid-max-width: var(--wuu-content-max-width, 1088px);
                                                                      
@@ -61,7 +61,7 @@
   --gray-600: #737375;
   --gray-650: #5f5f61;
   --gray-700: #3c3c3e;
-  --gray-800: #232324;
+  --gray-800: #1b1b1d;
   --gray-900: #131314;
 
   --ink-strong: var(--wuu-color-text, var(--gray-900));
@@ -72,9 +72,10 @@
      roles from that endpoint and the themed canvas instead of mapping every
      role directly to --wuu-color-text-muted, which would collapse the whole
      hierarchy as soon as a plugin theme supplies the public token. */
-  --ink-tertiary: color-mix(in srgb, var(--ink-soft) 90%, var(--paper));
-  --ink-muted: color-mix(in srgb, var(--ink-soft) 70%, var(--paper));
+  --ink-tertiary: color-mix(in srgb, var(--ink-soft) 95%, var(--paper));
+  --ink-muted: color-mix(in srgb, var(--ink-soft) 85%, var(--paper));
   --ink-faint: color-mix(in srgb, var(--ink-soft) 45%, var(--paper));
+  --ink-quiet: color-mix(in srgb, var(--ink-soft) 39%, var(--paper));
 
   --paper: var(--wuu-color-canvas, var(--gray-0));
   --surface-1: var(--wuu-color-surface, var(--gray-50));
@@ -120,10 +121,10 @@
   --shadow-color-heavy: rgba(0, 0, 0, 0.14);
   --shadow-soft: var(--wuu-elevation-panel, 0 1px 2px var(--shadow-color-subtle));
   --shadow-card: var(--wuu-elevation-panel, 0 2px 8px -2px var(--shadow-color-medium));
-  /* Center the ambient shadow so the top edge stays as legible as the sides. */
+  /* Keep the ambient falloff close and light; the fine border defines the edge. */
   --shadow-composer: var(
     --wuu-elevation-panel,
-    0 1px 2px var(--shadow-color-subtle), 0 0 16px -2px var(--shadow-color-medium)
+    0 1px 2px var(--shadow-color-subtle), 0 0 12px -2px var(--shadow-color-subtle)
   );
   --shadow-pop: var(
     --wuu-elevation-overlay,
@@ -362,10 +363,13 @@
   --scrollbar-thumb-active: rgba(38, 70, 98, 0.45);
   --scrollbar-thin-thumb: rgba(32, 36, 39, 0.14);
 
-  /* Native chrome stays in DIP when Chromium zooms the page. Keep its 24-DIP
+  /* Native chrome stays in DIP when Chromium zooms the page. Keep its 28-DIP
    * center while the controls fit; at larger zoom/font sizes, grow the row
-   * instead of clipping controls that still scale with the page. */
-  --window-titlebar-height: max(calc(48px / var(--desktop-page-zoom, 1)), calc(var(--control-size-toolbar) + var(--space-2)));
+   * instead of clipping controls that still scale with the page. The row
+   * follows the largest controls even when its icon-only buttons are compact.
+   * Equal safety space above and below keeps full-size workspace tabs inside
+   * the rounded canvas's top inset without moving their shared centerline. */
+  --window-titlebar-height: max(calc(56px / var(--desktop-page-zoom, 1)), calc(var(--control-size-roomy) + var(--space-2) * 2));
   --window-titlebar-padding-inline: var(--pane-inset);
   --window-titlebar-leading-inset: max(var(--window-titlebar-padding-inline), calc(var(--window-controls-inset-left) + 10px));
 
@@ -384,6 +388,14 @@
   letter-spacing: 0;
   line-height: var(--line-ui);
   text-rendering: optimizeLegibility;
+  /* Native smoothing preserves the stroke weight of regular text on macOS. */
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+}
+
+:root[data-font-smoothing="grayscale"] {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* data-platform is stamped by the preload before first paint (same
@@ -399,11 +411,15 @@
   );
 }
 
-/* Linux is frameless: caption buttons are drawn in the renderer, so no
- * overlay reservation is required. */
 :root[data-platform="linux"] {
   --window-controls-inset-left: 0px;
   --window-controls-inset-right: 0px;
+}
+
+/* Reserve renderer-owned captions only in hosts that actually render them;
+ * framed Linux hosts keep their native controls outside the content area. */
+:root[data-platform="linux"]:has(.linux-window-controls) {
+  --window-controls-inset-right: var(--linux-caption-width);
 }
 
 * {

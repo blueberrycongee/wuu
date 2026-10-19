@@ -18,17 +18,17 @@ import { EngineIcon } from "./EngineIcons";
 import { ServiceConnector, ServiceMark, serviceIdentity, useCatalogProviders } from "./ModelServicesPage";
 import { ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
+import { SystemPermissionsPanel } from "./SystemPermissions";
 import { PREVIEW_PLUGINS, PREVIEW_WORKSPACES } from "./onboardingPreview";
-import { ProviderMark } from "./ProviderMarks";
 import { PluginIcon } from "./PublicIcon";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { applyThemePreference } from "./Theme";
 import { toastErrorMessage } from "./Toast";
 
-type OnboardingStep = "welcome" | "plugins" | "runtime" | "provider" | "ready";
+type OnboardingStep = "welcome" | "plugins" | "runtime" | "provider" | "permissions" | "ready";
 type PluginPreset = "minimal" | "recommended" | "all" | "custom";
 
-const STEP_ORDER: readonly OnboardingStep[] = ["welcome", "plugins", "runtime", "provider", "ready"];
+const STEP_ORDER: readonly OnboardingStep[] = ["welcome", "plugins", "runtime", "provider", "permissions", "ready"];
 const RECOMMENDED_ENGINE = "wuu";
 
 export function bundledOnboardingPlugins(
@@ -59,18 +59,18 @@ export function hasOnboardingProvider(
   return providers?.some((provider) => isConfiguredOnboardingProvider(provider)) ?? false;
 }
 
-export function discoveredCodexCredential(
+export function discoveredLocalProviders(
   providers: readonly ProviderSummary[] | undefined,
-): ProviderSummary | undefined {
-  return providers?.find((provider) => isCodexSubscriptionProvider(provider) && Boolean(provider.codex_credential_source));
+): ProviderSummary[] {
+  return providers?.filter((provider) => !isConfiguredOnboardingProvider(provider) && (
+    (isCodexSubscriptionProvider(provider) && provider.codex_credential_source === "codex-cli") ||
+    (provider.auto_discovered === true && provider.api_key_configured === true)
+  )) ?? [];
 }
 
 function isConfiguredOnboardingProvider(provider: ProviderSummary): boolean {
-  if (provider.api_key_configured === true) return true;
-  if (isCodexSubscriptionProvider(provider)) {
-    return provider.codex_credential_source === "wuu-auth-store" || provider.reuse_codex_credentials === true;
-  }
-  return provider.connection_locked === true;
+  // Discovery makes a login available; only a saved, authenticated connection is ready.
+  return provider.api_key_configured === true && provider.auto_discovered !== true;
 }
 
 function isCodexSubscriptionProvider(provider: ProviderSummary): boolean {
@@ -83,6 +83,7 @@ const STEP_TITLES: Readonly<Record<OnboardingStep, TranslationKey>> = {
   plugins: "onboarding.pluginsTitle",
   runtime: "onboarding.runtimeTitle",
   provider: "onboarding.providerTitle",
+  permissions: "permissions.title",
   ready: "onboarding.readyTitle",
 };
 
@@ -114,13 +115,14 @@ export function FirstRunOnboarding({
   const { t, locale } = useI18n();
   const titleID = useId();
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const pluginBodyRef = useRef<HTMLDivElement>(null);
   // Preview keeps connections isolated but uses real CLI discovery.
   const inventory = preview ? PREVIEW_PLUGINS : liveInventory;
   const providers = preview ? undefined : liveProviders;
   const bundledPlugins = useMemo(() => bundledOnboardingPlugins(inventory), [inventory]);
   const [step, setStep] = useState<OnboardingStep>("welcome");
   const [selectedPluginIDs, setSelectedPluginIDs] = useState<Set<string>>(
-    () => recommendedPluginSubjectIDs(bundledPlugins),
+    () => initialPluginSubjectIDs(bundledPlugins),
   );
   const initializedPluginSelection = useRef(bundledPlugins.length > 0);
   const [applyingPlugins, setApplyingPlugins] = useState(false);
@@ -138,10 +140,13 @@ export function FirstRunOnboarding({
   const [error, setError] = useState<{ title: string; detail?: string } | null>(null);
   const [selectedEngine, setSelectedEngine] = useState(RECOMMENDED_ENGINE);
   const catalog = useCatalogProviders(0);
-  const discoveredCodex = discoveredCodexCredential(providers);
+  const localProviders = discoveredLocalProviders(providers);
   const providerReady = hasOnboardingProvider(providers);
   const preset = selectedPreset(selectedPluginIDs, bundledPlugins);
-  const currentStepIndex = STEP_ORDER.indexOf(step);
+  const showPermissions = preview || (window.wuu?.platform === "darwin" && Boolean(window.wuu.getSystemPermissions));
+  const steps = STEP_ORDER.filter(item => item !== "permissions" || showPermissions);
+  const afterProvider: OnboardingStep = showPermissions ? "permissions" : "ready";
+  const currentStepIndex = steps.indexOf(step);
   const busy = applyingPlugins || savingRuntime || savingProvider || finishing || choosingWorkspace;
   const wornPluginIDs = useMemo(() => bundledPlugins
     .filter((plugin) => selectedPluginIDs.has(plugin.id))
@@ -173,8 +178,23 @@ export function FirstRunOnboarding({
   useEffect(() => {
     if (initializedPluginSelection.current || bundledPlugins.length === 0) return;
     initializedPluginSelection.current = true;
-    setSelectedPluginIDs(recommendedPluginSubjectIDs(bundledPlugins));
+    setSelectedPluginIDs(initialPluginSubjectIDs(bundledPlugins));
   }, [bundledPlugins]);
+
+  useLayoutEffect(() => {
+    if (step !== "plugins") return;
+    const body = pluginBodyRef.current!;
+    // Chromium can retain a filled animation after its scroll timeline becomes
+    // inactive. Remove this guard when overflow-to-fitting resets both fades.
+    const syncFitting = () => {
+      body.toggleAttribute("data-scroll-fade-fitting", body.scrollHeight <= body.clientHeight);
+    };
+    const observer = new ResizeObserver(syncFitting);
+    observer.observe(body);
+    for (const child of body.children) observer.observe(child);
+    syncFitting();
+    return () => observer.disconnect();
+  }, [step, bundledPlugins]);
 
   useEffect(() => {
     setSelectedEngine((current) => {
@@ -282,8 +302,9 @@ export function FirstRunOnboarding({
     try {
       for (const plugin of bundledPlugins) {
         const shouldEnable = selectedPluginIDs.has(plugin.id);
-        const enabled = plugin.enabled !== false;
-        if (shouldEnable !== enabled) {
+        // Persist the choice even when it matches a package default, so an
+        // interrupted setup cannot replace it with a recommended preset.
+        if (plugin.enabled_override !== shouldEnable) {
           await onUpdateExtensionPackage({
             id: plugin.id,
             action: shouldEnable ? "enable" : "disable",
@@ -318,18 +339,18 @@ export function FirstRunOnboarding({
     }
   }
 
-  async function reuseCodexLogin(): Promise<void> {
-    if (!discoveredCodex || savingProvider) return;
+  async function reuseLocalLogin(provider: ProviderSummary): Promise<void> {
+    if (savingProvider) return;
     setSavingProvider(true);
     setError(null);
     try {
       if (!preview) {
-        await onSaveProvider(discoveredCodex.name, discoveredCodex.model, {
-          reuse_codex_credentials: true,
-        });
+        await onSaveProvider(provider.name, provider.model, isCodexSubscriptionProvider(provider)
+          ? { reuse_codex_credentials: true }
+          : {});
       }
       setConnected(true);
-      setStep("ready");
+      setStep(afterProvider);
     } catch (reason) {
       failure(reason, "provider.saveFailed");
     } finally {
@@ -366,17 +387,19 @@ export function FirstRunOnboarding({
           run: () => void applyRuntimeChoices(),
         }
           // Without a connection the service tiles are the step's actions.
-          : step === "provider" ? (providerReady ? { label: t("onboarding.continue"), disabled: false, run: () => setStep("ready") } : undefined)
+          : step === "provider" ? (providerReady ? { label: t("onboarding.continue"), disabled: savingProvider, run: () => setStep(afterProvider) } : undefined)
+            : step === "permissions" ? { label: t("onboarding.continue"), disabled: false, run: () => setStep("ready") }
             : { label: finishing ? t("onboarding.finishing") : selectedPaths.size > 0 ? t("onboarding.importAndStart", { count: selectedPaths.size }) : t("onboarding.enterWuu"), disabled: busy, run: () => void finish() };
-  const back = step === "plugins" ? "welcome" : step === "runtime" ? "plugins" : step === "provider" ? "runtime" : step === "ready" ? "provider" : undefined;
+  const back = currentStepIndex > 0 ? steps[currentStepIndex - 1] : undefined;
   // Only a consequence the choices do not show earns a line under the title.
-  const lead = step === "provider" && externalEngine ? t("onboarding.externalEngineConnection", { agent: externalEngine })
+  const lead = step === "permissions" ? t("permissions.description")
+    : step === "provider" && externalEngine ? t("onboarding.externalEngineConnection", { agent: externalEngine })
     : step === "ready" && selectedEngine === RECOMMENDED_ENGINE && !providerReady && !connected ? t("onboarding.readyNoModel")
       : undefined;
 
   const connector = (
     <ServiceConnector
-      providers={providers ?? []}
+      providers={providers?.filter((provider) => !provider.auto_discovered) ?? []}
       running={savingProvider}
       catalog={catalog}
       defaultOn
@@ -386,7 +409,7 @@ export function FirstRunOnboarding({
       }}
       onConnected={() => {
         setConnected(true);
-        setStep("ready");
+        setStep(afterProvider);
       }}
     />
   );
@@ -405,11 +428,11 @@ export function FirstRunOnboarding({
           role="progressbar"
           aria-label={t("onboarding.progress")}
           aria-valuemin={1}
-          aria-valuemax={STEP_ORDER.length}
+          aria-valuemax={steps.length}
           aria-valuenow={currentStepIndex + 1}
-          aria-valuetext={t("onboarding.stepProgress", { current: currentStepIndex + 1, total: STEP_ORDER.length })}
+          aria-valuetext={t("onboarding.stepProgress", { current: currentStepIndex + 1, total: steps.length })}
         >
-          {STEP_ORDER.map((item, index) => (
+          {steps.map((item, index) => (
             <span
               key={item}
               className="onboarding-progress-dot"
@@ -448,7 +471,7 @@ export function FirstRunOnboarding({
           </div>
 
           {step === "plugins" ? (
-            <div className="onboarding-body" data-scroll-fade="">
+            <div className="onboarding-body" ref={pluginBodyRef} data-scroll-fade="">
               <div className="theme-segmented onboarding-presets" role="group" aria-label={t("onboarding.presets")}>
                 {(["minimal", "recommended", "all"] as const).map((item) => (
                   <button
@@ -528,29 +551,41 @@ export function FirstRunOnboarding({
                     );
                   })}
                 </SettingsGroup>
-              ) : discoveredCodex ? (
-                <>
-                  <SettingsGroup>
-                    <button
-                      className="catalog-row"
-                      type="button"
-                      data-testid="onboarding-reuse-codex"
-                      disabled={savingProvider}
-                      onClick={() => void reuseCodexLogin()}
-                    >
-                      <span className="catalog-row-mark" aria-hidden="true">
-                        <ProviderMark id="openai" label="ChatGPT" />
-                      </span>
-                      <span className="catalog-row-title">{t("onboarding.reuseCodexTitle")}</span>
-                      {savingProvider
-                        ? <LoaderCircle className="icon settings-spin catalog-row-meta" aria-hidden="true" />
-                        : <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />}
-                    </button>
-                  </SettingsGroup>
-                  <SettingsSection title={t("onboarding.otherConnection")}>{connector}</SettingsSection>
-                </>
-              ) : connector}
+              ) : null}
+              {localProviders.length > 0 ? (
+                <SettingsGroup>
+                  {localProviders.map((provider) => {
+                    const identity = serviceIdentity(provider, t);
+                    return (
+                      <button
+                        key={provider.name}
+                        className="catalog-row"
+                        type="button"
+                        data-testid="onboarding-reuse-local-login"
+                        data-provider={provider.name}
+                        disabled={savingProvider}
+                        onClick={() => void reuseLocalLogin(provider)}
+                      >
+                        <span className="catalog-row-mark" aria-hidden="true"><ServiceMark identity={identity} /></span>
+                        <span className="catalog-row-title">{t("onboarding.reuseLocalLogin", {
+                          name: isCodexSubscriptionProvider(provider) ? engineLabel("codex") : identity.label,
+                        })}</span>
+                        {savingProvider
+                          ? <LoaderCircle className="icon settings-spin catalog-row-meta" aria-hidden="true" />
+                          : <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />}
+                      </button>
+                    );
+                  })}
+                </SettingsGroup>
+              ) : null}
+              {providerReady || localProviders.length > 0
+                ? <SettingsSection title={t("onboarding.otherConnection")}>{connector}</SettingsSection>
+                : connector}
             </div>
+          ) : null}
+
+          {step === "permissions" ? (
+            <div className="onboarding-body" data-scroll-fade=""><SystemPermissionsPanel preview={preview} /></div>
           ) : null}
 
           {step === "ready" ? (
@@ -610,9 +645,12 @@ export function FirstRunOnboarding({
             </button>
           ) : null}
           {step === "provider" && !providerReady ? (
-            <button className="settings-button" type="button" disabled={busy} onClick={() => setStep("ready")}>
+            <button className="settings-button" type="button" disabled={busy} onClick={() => setStep(afterProvider)}>
               {t("onboarding.configureLater")}
             </button>
+          ) : null}
+          {step === "permissions" ? (
+            <button className="settings-button settings-button-ghost" type="button" onClick={() => setStep("ready")}>{t("permissions.skip")}</button>
           ) : null}
           {step === "ready" && selectedPaths.size > 0 ? (
             <button className="settings-button settings-button-ghost" type="button" disabled={busy} onClick={() => void finish([])}>{t("onboarding.skipWorkspaces")}</button>
@@ -683,6 +721,12 @@ function selectedPreset(
     return "recommended";
   }
   return "custom";
+}
+
+function initialPluginSubjectIDs(plugins: readonly ExtensionInventoryRecord[]): Set<string> {
+  return new Set(plugins.filter((plugin) =>
+    plugin.enabled_override ?? RECOMMENDED_PLUGIN_IDS.has(plugin.provenance.plugin_id ?? ""),
+  ).map((plugin) => plugin.id));
 }
 
 function recommendedPluginSubjectIDs(

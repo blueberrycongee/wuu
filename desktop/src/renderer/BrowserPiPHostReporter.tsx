@@ -1,9 +1,14 @@
 import { useEffect } from "react";
+import type { ActivityPreviewAppearance } from "../shared/activityPreview";
+import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
+import { useI18n } from "./i18n";
 
 // Tells the main process where the conversation column and its obstacles are,
 // in viewport pixels. The card snaps to a corner of that column.
 const HOST_SELECTOR = "[data-pip-anchor-host]";
 const OBSTACLE_SELECTOR = "[data-pip-obstacle]";
+const MODAL_SELECTOR = '[aria-modal="true"], dialog[open]';
+const LAYOUT_SELECTOR = `${HOST_SELECTOR},${OBSTACLE_SELECTOR},${MODAL_SELECTOR}`;
 
 interface HostRect {
   x: number;
@@ -20,6 +25,36 @@ interface HostLayoutReport {
 type HostLayoutReporter = (payload: HostLayoutReport | null) => void;
 
 export function BrowserPiPHostReporter(): null {
+  const { locale } = useI18n();
+  useEffect(() => {
+    const report = (window.wuu as { reportActivityPreviewAppearance?: (appearance: ActivityPreviewAppearance) => void } | undefined)
+      ?.reportActivityPreviewAppearance;
+    if (!report) return;
+    const root = document.documentElement;
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let previous = "";
+    const update = (): void => {
+      const style = getComputedStyle(root);
+      const appearance: ActivityPreviewAppearance = {
+        reducedMotion: root.dataset.appearanceMotion === "reduce" || motion.matches,
+        fontSize: Number.parseFloat(style.getPropertyValue("--conversation-message-font-size")) || MESSAGE_FLOW_FONT_SIZE_RANGE.default,
+        fontFamily: style.getPropertyValue("--appearance-ui-font").trim() || style.fontFamily,
+        locale,
+        surface: style.getPropertyValue("--surface-1").trim(),
+        text: style.getPropertyValue("--ink-strong").trim(),
+        muted: style.getPropertyValue("--ink-soft").trim(),
+      };
+      const next = JSON.stringify(appearance);
+      if (next === previous) return;
+      previous = next;
+      report(appearance);
+    };
+    const observer = new MutationObserver(update);
+    observer.observe(root, { attributes: true, attributeFilter: ["style", "data-theme", "data-appearance-motion"] });
+    motion.addEventListener("change", update);
+    update();
+    return () => { observer.disconnect(); motion.removeEventListener("change", update); };
+  }, [locale]);
   useEffect(() => {
     const report = (window.wuu as { reportBrowserPiPHostLayout?: HostLayoutReporter } | undefined)
       ?.reportBrowserPiPHostLayout;
@@ -42,6 +77,12 @@ export function BrowserPiPHostReporter(): null {
       if (frame) return;
       frame = requestAnimationFrame(send);
     };
+    const onFocus = (): void => {
+      // Focus transfers ownership even when this window's geometry (or its
+      // unavailable layout while a dialog is open) has not changed.
+      last = "";
+      schedule();
+    };
 
     const observed = new Set<Element>();
     let resizeObserver: ResizeObserver | undefined;
@@ -55,7 +96,7 @@ export function BrowserPiPHostReporter(): null {
       const next = new Set<Element>();
       const host = document.querySelector(HOST_SELECTOR);
       if (host) next.add(host);
-      document.querySelectorAll(OBSTACLE_SELECTOR).forEach((element) => next.add(element));
+      document.querySelectorAll(`${OBSTACLE_SELECTOR},${MODAL_SELECTOR}`).forEach((element) => next.add(element));
       for (const element of observed) {
         if (!next.has(element)) resizeObserver.unobserve(element);
       }
@@ -71,11 +112,14 @@ export function BrowserPiPHostReporter(): null {
       schedule();
     };
     const mutationObserver = new MutationObserver(onMutation);
-    // Child-list only. Message text and class updates must not walk the tree;
-    // size changes come from ResizeObserver on the column and its obstacles.
-    mutationObserver.observe(document.body, { childList: true, subtree: true });
+    // Ignore streaming text and class updates. Size changes come from
+    // ResizeObserver; dialog state can also change without mounting a node.
+    mutationObserver.observe(document.body, {
+      childList: true, subtree: true, attributes: true,
+      attributeFilter: ["aria-modal", "open", "hidden"],
+    });
     window.addEventListener("resize", schedule);
-    window.addEventListener("focus", schedule);
+    window.addEventListener("focus", onFocus);
     watchSizes();
     schedule();
     return () => {
@@ -83,7 +127,7 @@ export function BrowserPiPHostReporter(): null {
       resizeObserver?.disconnect();
       mutationObserver.disconnect();
       window.removeEventListener("resize", schedule);
-      window.removeEventListener("focus", schedule);
+      window.removeEventListener("focus", onFocus);
       report(null);
     };
   }, []);
@@ -91,6 +135,12 @@ export function BrowserPiPHostReporter(): null {
 }
 
 export function readBrowserPiPHostLayout(root: ParentNode): HostLayoutReport | null {
+  // Native child windows sit above renderer overlays regardless of CSS z-index.
+  // Suspend their presentation while a dialog owns the foreground; reporting
+  // the column again restores existing cards without changing task control.
+  for (const modal of root.querySelectorAll(MODAL_SELECTOR)) {
+    if (visibleRect(modal)) return null;
+  }
   const hostElement = root.querySelector(HOST_SELECTOR);
   const host = hostElement ? visibleRect(hostElement) : null;
   if (!host) return null;
@@ -105,7 +155,8 @@ export function readBrowserPiPHostLayout(root: ParentNode): HostLayoutReport | n
 export function hostLayoutMutationMatters(records: MutationRecord[]): boolean {
   return records.some((record) => {
     if (record.type === "attributes") {
-      return elementMentionsHost(record.target);
+      return record.attributeName === "aria-modal" || record.attributeName === "open"
+        || elementMentionsHost(record.target);
     }
     return [...record.addedNodes, ...record.removedNodes].some(elementMentionsHost);
   });
@@ -113,8 +164,8 @@ export function hostLayoutMutationMatters(records: MutationRecord[]): boolean {
 
 function elementMentionsHost(node: Node): boolean {
   if (!(node instanceof Element)) return false;
-  return node.matches(`${HOST_SELECTOR},${OBSTACLE_SELECTOR}`)
-    || node.querySelector(`${HOST_SELECTOR},${OBSTACLE_SELECTOR}`) != null;
+  return node.matches(LAYOUT_SELECTOR)
+    || node.querySelector(LAYOUT_SELECTOR) != null;
 }
 
 function visibleRect(element: Element): HostRect | null {

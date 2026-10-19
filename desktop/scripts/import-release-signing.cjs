@@ -13,7 +13,6 @@ if (!env.RUNNER_TEMP || !env.GITHUB_ENV || !env.WUU_RELEASE_CERTIFICATE_P12 || !
 }
 const keychain = join(env.RUNNER_TEMP, "wuu-release.keychain-db");
 const archive = join(env.RUNNER_TEMP, "wuu-release.p12");
-const certificate = join(env.RUNNER_TEMP, "wuu-release-signing.pem");
 const password = randomBytes(32).toString("hex");
 function security(args) {
   try { execFileSync("security", args, { stdio: "pipe", timeout: 15_000 }); }
@@ -27,21 +26,22 @@ try {
   security(["import", archive, "-k", keychain, "-f", "pkcs12", "-P", env.WUU_RELEASE_CERTIFICATE_PASSWORD,
     "-T", "/usr/bin/codesign", "-T", "/usr/bin/security"]);
   security(["set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", password, keychain]);
-  // codesign needs the self-signed identity trusted on the signing runner.
-  // This trust is never installed on recipient Macs and is removed at cleanup.
   const publicCertificate = execFileSync("security", ["find-certificate", "-p", keychain], { encoding: "utf8" });
-  if (new X509Certificate(publicCertificate).fingerprint.replaceAll(":", "") !== releaseSigningIdentity(env)) {
+  const imported = new X509Certificate(publicCertificate);
+  if (imported.fingerprint.replaceAll(":", "") !== releaseSigningIdentity(env)) {
     throw new Error("Imported certificate does not match the pinned release identity");
   }
-  writeFileSync(certificate, publicCertificate, { mode: 0o600 });
-  execFileSync("sudo", ["-n", "security", "add-trusted-cert", "-d", "-r", "trustRoot", "-p", "codeSign", "-k", keychain, certificate], { stdio: "pipe", timeout: 15_000 });
+  if (!imported.subject.includes("CN=Developer ID Application:") || !imported.subject.split("\n").includes(`OU=${env.WUU_RELEASE_TEAM_ID}`)) {
+    throw new Error("Certificate is not a Developer ID Application certificate for the configured team");
+  }
+  const searchList = execFileSync("security", ["list-keychains", "-d", "user"], { encoding: "utf8" })
+    .split("\n").map((line) => line.trim().replace(/^"|"$/g, "")).filter(Boolean);
+  security(["list-keychains", "-d", "user", "-s", keychain, ...searchList]);
   checkReleaseSigning({ ...env, WUU_RELEASE_KEYCHAIN: keychain });
   appendFileSync(env.GITHUB_ENV, `WUU_RELEASE_KEYCHAIN=${keychain}\nWUU_RELEASE_SIGN_ID=${releaseSigningIdentity(env)}\n`);
 } catch (error) {
-  try { execFileSync("sudo", ["-n", "security", "remove-trusted-cert", "-d", certificate], { stdio: "pipe", timeout: 15_000 }); } catch {}
   try { security(["delete-keychain", keychain]); } catch {}
-  rmSync(certificate, { force: true });
-  throw error;
+  throw new Error("Release identity import failed; check certificate, password, fingerprint, and team.");
 } finally {
   rmSync(archive, { force: true });
 }

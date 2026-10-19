@@ -1,3 +1,5 @@
+import { AppContextCaptureHost } from "./AppContextCapture";
+import { ENABLE_APP_SNAPSHOTS } from "../shared/featureFlags";
 import ReactDOM from "react-dom/client";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
 import { AccountScreen } from "./AccountScreen";
@@ -92,10 +94,11 @@ ReactDOM.createRoot(rendererRoot).render(
   <I18nProvider>
     <WuuUIRoot>
       <AppBackground />
-      <LinuxWindowControls />
       {ENABLE_ACCOUNT && window.wuu?.isAccountWindow && window.wuu.remoteAccount
         ? <AccountScreen standalone driver={window.wuu.remoteAccount} onBack={() => { void window.wuu.closeAccountWindow?.(); }} />
-        : <App />}
+        : <><App />{ENABLE_APP_SNAPSHOTS && <AppContextCaptureHost />}</>}
+      {/* Native drag regions follow DOM order; caption exclusions must follow app titlebars. */}
+      <LinuxWindowControls />
       <ToastViewport />
       <ConfirmDialogHost />
     </WuuUIRoot>

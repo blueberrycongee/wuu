@@ -54,14 +54,16 @@ struct QuestionView: View {
                             let id = question["id"].string ?? ""
                             return ["id": .string(id), "selected": .array((selected[id] ?? []).sorted().map(JSONValue.string)), "custom": .string(custom[id] ?? "")]
                         })
-                    }.buttonStyle(.borderedProminent).disabled(!valid)
+                    }.mobilePrimaryAction().disabled(!valid)
                 }
             }.padding()
         }.frame(maxHeight: 320).background(.secondary.opacity(0.08))
             .disabled(submitting || !model.connected)
+            .sensoryFeedback(.selection, trigger: selected)
     }
     private func submit(_ answers: [JSONValue]?) {
         submitting = true
+        Haptics.tap()
         model.perform {
             defer { submitting = false }
             try await model.answerQuestion(request, answers: answers)

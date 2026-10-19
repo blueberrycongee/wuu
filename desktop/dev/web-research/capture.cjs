@@ -71,7 +71,8 @@ app.whenReady().then(async () => {
       sourceDetails:sourceDetails && bounds(sourceDetails), detailCount:sourceDetails?.querySelectorAll(".web-source-link").length ?? 0, body:body && bounds(body), summary:summary && bounds(summary),
       toolOwned:region ? !!region.closest('.process-surface') : null,
       expanded:document.querySelector('.turn-process-toggle')?.getAttribute('aria-expanded'),
-      more:document.querySelector('.web-research-more')?.getAttribute('aria-expanded'),
+      more:document.querySelector('.process-surface-fold')?.open,
+      summaryFocused:document.activeElement === summary,
       loaded:circles.filter(node => node.querySelector('img[data-loaded=true]')).length };
   })()`);
   const results = [];
@@ -125,7 +126,7 @@ app.whenReady().then(async () => {
       "tool aggregation and sources share the same line");
     assert.ok(header.summary.x + header.summary.width <= header.region.x + 1, "tool and source hit targets do not overlap");
     const flowHeight = (await measure()).region.height;
-    await click(".web-research-more");
+    await click(".process-surface-row");
     await settle();
     const overflow = await measure();
     assert.equal(overflow.detailCount, 8, "the group reveals ALL eight sources, including the visible header icons");
@@ -134,23 +135,23 @@ app.whenReady().then(async () => {
     assert.ok(Math.abs(overflow.sourceDetails.x - overflow.summary.x) <= 1, "expanded sources align with the search row left edge");
     assert.ok(overflow.sourceDetails.x + overflow.sourceDetails.width <= width);
     assert.ok(overflow.body.height <= 330, "search inspection stays bounded");
-    assert.ok(await run("document.querySelector('.process-surface-fold').open && !!document.querySelector('.process-surface-tool-list')"), "source control opens the actual tool details too");
+    assert.ok(await run("document.querySelector('.process-surface-fold').open && !!document.querySelector('.process-surface-tool-list')"), "the summary opens the actual tool details too");
     assert.ok(await run(`(() => {
       const owner = document.querySelector('.process-surface-inline-controls').getBoundingClientRect();
-      const control = document.querySelector('.web-research-more').getBoundingClientRect();
+      const control = document.querySelector('.turn-web-research').getBoundingClientRect();
       return control.left >= owner.left && control.right <= owner.right + 1;
-    })()`), "the complete source-count control stays inside its header");
+    })()`), "the source icons stay inside their header");
     await shot(`${name}-expanded`);
     // The disclosure may be revisited while the search is still running.
     // Already received sources must not masquerade as new results again.
-    await click(".web-research-more");
+    await click(".process-surface-row");
     await settle();
     await resetArrivals();
-    await click(".web-research-more");
+    await click(".process-surface-row");
     await noArrivalReplay("reopening does not replay source arrivals");
     const stableHeader = await run("[...document.querySelectorAll('.web-research-sources > button, .web-research-sources .web-source-circle')].map(el => ({x:el.getBoundingClientRect().x,y:el.getBoundingClientRect().y}))");
-    await click(".web-research-more");
-    await click(".web-research-more");
+    await click(".process-surface-row");
+    await click(".process-surface-row");
     await noArrivalReplay("rapid reversal does not replay arrivals");
     assert.equal((await measure()).detailCount, 8);
     assert.deepEqual(await run("[...document.querySelectorAll('.web-research-sources > button, .web-research-sources .web-source-circle')].map(el => ({x:el.getBoundingClientRect().x,y:el.getBoundingClientRect().y}))"), stableHeader);
@@ -161,9 +162,9 @@ app.whenReady().then(async () => {
     await key("Escape", 27);
     await settle();
     const collapsed = await measure();
-    assert.equal(collapsed.more, "false");
+    assert.equal(collapsed.more, false);
     assert.equal(collapsed.count, visibleSources);
-    assert.equal(collapsed.focus, "web-research-more");
+    assert.equal(collapsed.summaryFocused, true);
     await click(".process-surface-row");
     await settle();
     assert.equal((await measure()).detailCount, 8, "the tool label opens the same complete source disclosure");
@@ -185,7 +186,7 @@ app.whenReady().then(async () => {
     await frames();
     await shot(`${name}-done`);
     await click("#many");
-    await click(".web-research-more");
+    await click(".process-surface-row");
     await settle();
     assert.equal((await measure()).detailCount, 8, "long groups initially show the first eight source chips");
     await run("document.querySelector('.web-research-reveal').focus()");
@@ -244,8 +245,8 @@ app.whenReady().then(async () => {
   await ready();
   await run("document.querySelector('.research-preview-controls').style.visibility='hidden'");
   const actions = [
-    [1000, "#results"], [2200, "#more-results"], [3100, ".web-research-more"],
-    [4200, ".web-research-more"], [5300, "#finish"], [6800, ".turn-process-toggle"],
+    [1000, "#results"], [2200, "#more-results"], [3100, ".process-surface-row"],
+    [4200, ".process-surface-row"], [5300, "#finish"], [6800, ".turn-process-toggle"],
   ];
   const captured = [];
   const start = performance.now();

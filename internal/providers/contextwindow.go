@@ -264,8 +264,8 @@ var maxOutputTokensRegistry = []contextWindowEntry{
 	{"o3", 100_000},
 	{"o1", 32_768},
 	// DeepSeek
-	{"deepseek-v4", 384_000},
-	{"deepseek-flash", 384_000},
+	{"deepseek-v4", 393_216},
+	{"deepseek-flash", 393_216},
 	{"deepseek", 8_192},
 	// GLM
 	{"glm-5.2", 128_000},

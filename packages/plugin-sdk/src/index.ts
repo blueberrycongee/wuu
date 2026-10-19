@@ -10,6 +10,8 @@
  */
 
 import type { PluginDependency } from "./bundle-contract.js";
+import type { ModelAdapterDescriptor } from "./model.js";
+export * from "./process.js";
 
 import type {
   PublicIconName,
@@ -111,6 +113,13 @@ export interface SettingsModelAliasV1 {
   readonly variant?: string;
 }
 
+export interface SettingsAvailableModelV1 {
+  readonly provider: string;
+  readonly model: string;
+  readonly label: string;
+  readonly variants: readonly string[];
+}
+
 export interface SettingsValueMapV1 {
   readonly "runtime.modelAliases": Readonly<Record<string, SettingsModelAliasV1>>;
 }
@@ -122,6 +131,7 @@ export interface SettingsPageHostAPI {
   readonly contractVersion: 1;
   getValue<Key extends SettingsValueKeyV1>(key: Key): SettingsValueMapV1[Key];
   updateValue<Key extends SettingsValueKeyV1>(key: Key, value: SettingsValueMapV1[Key]): Promise<void>;
+  listAvailableModels?(): readonly SettingsAvailableModelV1[];
 }
 
 export interface ViewHostAPI {
@@ -505,8 +515,12 @@ export interface PluginGenerationApi {
   readonly ui: PluginUIKit;
   readonly pluginId: string;
   readonly generation: string;
+  /** Aborted when staging fails, is superseded, or this generation is disposed. */
+  readonly signal: AbortSignal;
   /** Invoke one method owned by this plugin's active runtime generation. */
   invokeRuntime(method: string, input?: unknown, options?: PluginRuntimeInvokeOptions): Promise<unknown>;
+  /** Read bounded, display-only completed turns from the addressed conversation. */
+  readVisibleHistory(request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult>;
   /** List registered project workspaces that a trusted extension may target. */
   listWorkspaces(): Promise<PluginWorkspaceSnapshot>;
   /** Observe host lifecycle events; disposal is bound to this generation. */
@@ -519,6 +533,8 @@ export interface PluginGenerationApi {
   registerStyle(style: StyleRegistration): Disposable;
   registerLocale(locale: LocaleRegistration): Disposable;
   registerComposerStatusSource(source: ComposerStatusSourceRegistration): Disposable;
+  /** Supply append-only text for the host-owned composer ghost and Tab action. */
+  registerComposerInlineCompletionProvider(provider: ComposerInlineCompletionProviderRegistration): ComposerInlineCompletionProviderHandle;
   registerCleanup(cleanup: () => void): Disposable;
   registerViewType(definition: ViewTypeDefinition): Disposable;
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
@@ -531,8 +547,31 @@ export interface PluginGenerationApi {
   registerToolActivityPresenter(definition: ToolActivityPresenterDefinition): Disposable;
 }
 
+interface PluginVisibleHistoryScope {
+  readonly threadId: string;
+  readonly workspaceRoot: string;
+  readonly workspaceId?: string;
+}
+export type PluginVisibleHistoryRequest = PluginVisibleHistoryScope & (
+  | { readonly kind: "main"; readonly beforeTurnId: string; readonly sideThreadId?: never }
+  | { readonly kind: "side"; readonly sideThreadId: string; readonly beforeTurnId?: never }
+);
+
+export interface PluginVisibleHistoryResult {
+  readonly turns: readonly {
+    readonly id: string;
+    readonly userText: string;
+    readonly assistantText: string;
+    readonly imageCount: number;
+    readonly fileCount: number;
+  }[];
+}
+
 export interface PluginRuntimeInvokeOptions {
   readonly workspaceId?: string;
+  readonly workspaceRoot?: string;
+  /** Cancel this invocation and the host work owned by its execution. */
+  readonly signal?: AbortSignal;
 }
 
 export interface PluginWorkspace {
@@ -545,6 +584,7 @@ export interface PluginWorkspace {
 export interface PluginWorkspaceSnapshot {
   readonly workspaces: readonly PluginWorkspace[];
   readonly activeWorkspaceId?: string;
+  readonly activeRoot?: string;
 }
 
 /** Minimal type for the host-owned React instance; plugins never bundle React. */
@@ -576,6 +616,9 @@ export const CAPABILITY_PROTOCOL_V2 = 2 as const;
 export const CAPABILITY_PROTOCOL_V3 = 3 as const;
 export const REQUEST_TRANSFORM_CAPABILITY = "agent.request.transform" as const;
 export const AGENT_PRE_STEP_CAPABILITY = "agent.pre_step" as const;
+export const AGENT_TURN_COMPLETED_CAPABILITY = "agent.turn.completed" as const;
+export const AGENT_TURN_LIFECYCLE_CAPABILITY = "agent.turn.lifecycle" as const;
+export const AGENT_TURN_INTERRUPTED_CAPABILITY = "agent.turn.interrupted" as const;
 export const SYSTEM_PROMPT_SECTION_CAPABILITY = "agent.system_prompt.section" as const;
 /** @experimental No distributed first-party consumer has proven this contract. */
 export const COMPACTION_CAPABILITY = "agent.compaction" as const;
@@ -622,7 +665,10 @@ export const KERNEL_SERVICE_METHOD = "call" as const;
 export const EXECUTION_UPDATE_SERVICE = "execution.update" as const;
 export const INVOKE_TOOL_SERVICE = "execution.invoke-tool" as const;
 export const USER_QUESTION_ASK_SERVICE = "host.user-question.ask" as const;
+export const USER_QUESTION_OFFER_SERVICE = "host.user-question.offer" as const;
 export const ARTIFACT_IMPORT_SERVICE = "host.artifact.import" as const;
+export const FILE_LOCK_SERVICE = "host.file-lock" as const;
+export const MODEL_REQUEST_SERVICE = "host.model.request" as const;
 export const SECURITY_AUTHORIZE_SERVICE = "security.authorize" as const;
 export const PROCESS_SANDBOX_SERVICE = "sandbox.process" as const;
 export const SECURITY_AUTHORIZE_METHOD = "authorize" as const;
@@ -650,7 +696,7 @@ export const KERNEL_SERVICE_NAMES = {
 
 export type KernelHostServiceMethod = keyof typeof KERNEL_SERVICE_NAMES;
 
-/** Preserve the former host-call input while emitting the Service Registry gateway frame. */
+/** Build a typed kernel service call through the Service Registry gateway. */
 export function kernelServiceCall<M extends KernelHostServiceMethod>(
   id: string,
   method: M,
@@ -671,9 +717,8 @@ export function requireArtifactImportService(): ServiceRequirement {
   return { name: ARTIFACT_IMPORT_SERVICE, major_version: 1, required: true };
 }
 
-export interface HostServiceDescriptor {
-  id: HostServiceMethod | (string & {});
-  required?: boolean;
+export function requireModelRequestService(): ServiceRequirement {
+  return { name: MODEL_REQUEST_SERVICE, major_version: 1, required: true };
 }
 
 /** One typed method of a provided service. */
@@ -688,6 +733,34 @@ export interface ServiceDescriptor {
   name: string;
   version: string;
   methods: ServiceMethodDescriptor[];
+}
+
+/** Optional plugin-owned durable user notebook; declare major 1 with required: false. */
+export const MEMORY_NOTEBOOK_SERVICE = "memory.notebook";
+
+/** Reads the sanitized MEMORY.md index, at most 200 lines and 25,000 UTF-8 bytes. */
+export interface MemoryNotebookIndexRequest {
+  /** Positive UTF-8 byte budget, at most 25,000; absent or 0 uses that maximum. */
+  max_bytes?: number;
+}
+
+/** Reads one topic, without scanning or loading the rest of the notebook. */
+export interface MemoryNotebookReadRequest {
+  /** Plain, non-hidden .md filename; use the index method for MEMORY.md. */
+  file: string;
+  /** Positive UTF-8 byte budget, at most 65,536; absent or 0 uses 16,384. */
+  max_bytes?: number;
+}
+
+/** Fresh file evidence, not a model summary or an instruction authority. */
+export interface MemoryNotebookSnapshotV1 {
+  version: 1;
+  source: { scope: "user_notebook"; file: string };
+  found: boolean;
+  /** Opaque full-source revision. Present for empty files, absent for missing files. */
+  revision?: string;
+  content: string;
+  truncated: boolean;
 }
 
 export const AUTHORIZATION_SERVICE_DESCRIPTOR: ServiceDescriptor = {
@@ -729,17 +802,19 @@ export interface RuntimeInitializeParams {
   plugin_id: string;
   plugin_root: string;
   project_root: string;
+  workspace_id?: string;
   wuu_home: string;
+  workspace_state_dir?: string;
   capability_protocol_version?: number;
   supported_host_services?: HostServiceMethod[];
   lifecycle_version?: 1;
 }
 
 export interface RuntimeInitializeResult {
+  model_adapters?: readonly ModelAdapterDescriptor[];
   tools?: ToolRegistration[];
   protocol_version?: 1 | 2 | 3;
   capabilities?: CapabilityDescriptor[];
-  required_host_services?: HostServiceDescriptor[];
   provided_services?: ServiceDescriptor[];
   required_services?: ServiceRequirement[];
   lifecycle_version?: 1;
@@ -757,6 +832,7 @@ export interface ToolActivityMetadata {
   /** Delegate effects through execution.invoke-tool without holding a leaf scheduling slot. */
   orchestrator?: boolean;
   read_only?: boolean;
+  /** Overlap with other explicitly safe tools; ordinary callbacks and unsafe tools stay exclusive. */
   concurrency_safe?: boolean;
   destructive?: boolean;
   risk?: string;
@@ -912,6 +988,39 @@ export interface AgentPreStepOutput {
   append_messages?: readonly AgentPreStepMessage[];
 }
 
+export interface AgentTurnInterruptedInput {
+  thread_id: string;
+  turn_id: string;
+  cause?: string;
+}
+
+/** Settled-turn observation, emitted after the host persists conversation history. */
+export interface AgentTurnCompletedInput {
+  thread_id: string;
+  turn_id: string;
+  started_at: string;
+  completed_at: string;
+  succeeded: boolean;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface TurnLifecycleInput {
+  request_id: string;
+  state: string;
+  /** A queued input discarded by host shutdown may be resubmitted with the same request ID. */
+  retryable?: boolean;
+  thread_id: string;
+  turn_id?: string;
+  queue_id?: string;
+  error?: string;
+  started_at?: string;
+  completed_at?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  final_output?: string;
+}
+
 export interface SystemPromptSectionInput {
   cwd: string;
   provider: string;
@@ -975,6 +1084,11 @@ export interface UserQuestionAnswer {
   answers: readonly UserQuestionAnswerItem[];
 }
 
+export interface UserQuestionOfferResult {
+  request_id: string;
+  expires_at: string;
+}
+
 export type ToolContentType = "text" | "image" | "audio" | "file" | "resource" | "resource_link";
 
 export interface ArtifactPresentation {
@@ -987,6 +1101,8 @@ export interface ArtifactPresentation {
 }
 
 export interface ToolContentPart {
+  /** Output-only deferred-media reference preserved in model snapshots. */
+  remote_ref?: string;
   type: ToolContentType;
   text?: string;
   data?: string;
@@ -1119,6 +1235,8 @@ export interface HostServiceContracts {
       turn?: {
         request_id?: string;
         state: string;
+        /** Only queued inputs discarded by host shutdown are retryable. */
+        retryable?: boolean;
         turn_id?: string;
         queue_id?: string;
         error?: string;
@@ -1237,16 +1355,29 @@ export class RuntimeHostServiceError extends Error {
   }
 }
 
+export interface RuntimeHostCallOptions {
+  /** Stop waiting for this call. This does not undo effects already accepted by the host. */
+  signal?: AbortSignal;
+}
+
 export interface RuntimeHost {
   supports(method: HostServiceMethod): boolean;
   call<M extends HostServiceMethod>(
     method: M,
     params: HostServiceContracts[M]["params"],
+    options?: RuntimeHostCallOptions,
   ): Promise<HostServiceContracts[M]["result"]>;
+}
+
+/** Lifetime of background work started by initialize or activate. */
+export interface RuntimeLifecycleContext {
+  /** Aborts on shutdown or transport loss. Background tasks must stop when it aborts. */
+  readonly signal: AbortSignal;
 }
 
 export interface RuntimeExecutionContext {
   readonly executionId: string;
+  /** Aborts when this execution ends, is cancelled, or its runtime transport closes. */
   readonly signal: AbortSignal;
 }
 
@@ -1271,6 +1402,68 @@ export async function invokeTool(host: RuntimeHost, params: InvokeToolParams): P
     method: KERNEL_SERVICE_METHOD,
     params,
   }) as ToolResult;
+}
+
+/** Text-only input: no tools, attachments, credentials, or implicit conversation history. */
+export interface ModelRequestMessage {
+  readonly role: "system" | "user" | "assistant";
+  readonly content: string;
+}
+
+export interface ModelRequestParams {
+  /** One to 32 nonempty messages, at most 256 KiB of UTF-8 content in total. */
+  readonly messages: readonly ModelRequestMessage[];
+  /** Existing configured model alias; omitted uses the host's configured model. */
+  readonly model_alias?: string;
+  /** Explicit configured provider and model; supply both, without model_alias. */
+  readonly provider?: string;
+  readonly model?: string;
+  /** Strict configured variant for an explicit provider/model. Unsupported values fail. */
+  readonly variant?: string;
+  /** For an explicit provider/model, use this reasoning tier if the model supports it. */
+  readonly preferred_effort?: string;
+  /**
+   * Requested output-token limit, integer 1–8192; defaults to 1024.
+   * An adapter that cannot preserve the limit fails with unsupported_limit
+   * before inference unless allow_unbounded_output is true. Remote-server
+   * enforcement and billing are not guaranteed.
+   */
+  readonly max_output_tokens?: number;
+  /** Permit an adapter to omit the output cap; defaults to false. */
+  readonly allow_unbounded_output?: boolean;
+  /** Integer 1–45000 milliseconds; defaults to 45000. */
+  readonly timeout_ms?: number;
+}
+
+export interface ModelRequestUsage {
+  readonly input_tokens: number;
+  readonly output_tokens: number;
+  readonly cache_creation_tokens: number;
+  readonly cache_read_tokens: number;
+  readonly cache_creation_unknown: boolean;
+}
+
+export interface ModelRequestResult {
+  readonly text: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly finish_reason: string;
+  readonly truncated: boolean;
+  readonly usage?: ModelRequestUsage;
+}
+
+/**
+ * Run one bounded, tools-free model request through Wuu's configured provider.
+ * Requires host.model.request v1 and a host scoped to a live tool, capability,
+ * or service callback, including a generation-owned background job's callback.
+ * The request is cancelled when that execution ends or is cancelled.
+ */
+export async function requestModel(host: RuntimeHost, input: ModelRequestParams): Promise<ModelRequestResult> {
+  return await host.call("host.service.call", {
+    service: MODEL_REQUEST_SERVICE,
+    method: KERNEL_SERVICE_METHOD,
+    params: input,
+  }) as ModelRequestResult;
 }
 
 export interface ArtifactImportParams {
@@ -1310,6 +1503,18 @@ export async function askUserQuestions(
   }) as UserQuestionAnswer;
 }
 
+/** Offer a non-blocking question; any answer arrives through the conversation later. */
+export async function offerUserQuestions(
+  host: RuntimeHost,
+  questions: readonly UserQuestion[],
+): Promise<UserQuestionOfferResult> {
+  return await host.call("host.service.call", {
+    service: USER_QUESTION_OFFER_SERVICE,
+    method: KERNEL_SERVICE_METHOD,
+    params: { questions },
+  }) as UserQuestionOfferResult;
+}
+
 /** Copy a generated file into storage owned by the current tool execution's thread. */
 export async function importArtifact(
   host: RuntimeHost,
@@ -1322,16 +1527,68 @@ export async function importArtifact(
   }) as ImportedArtifact;
 }
 
+export interface FileLockAcquireParams {
+  root: "workspace_state" | "wuu_home" | "project";
+  /** Relative lock-file path, separate from the data file it protects. */
+  path: string;
+}
+
+export interface FileLockAcquireResult {
+  lock_id: string;
+}
+
+export interface FileLockReleaseResult {
+  released: boolean;
+}
+
+/**
+ * Acquire a cross-process OS lock through the host retained from initialize/activate.
+ * An execution ID lets the kernel cancel a blocked acquisition. Wait for its
+ * reply even after cancellation so a successfully acquired lock can be released.
+ * The host releases outstanding locks when the runtime closes.
+ */
+export async function acquireFileLock(
+  host: RuntimeHost,
+  params: FileLockAcquireParams,
+  executionId?: string,
+): Promise<FileLockAcquireResult> {
+  return await host.call("host.service.call", {
+    service: FILE_LOCK_SERVICE,
+    method: "acquire",
+    execution_id: executionId,
+    params,
+  }) as FileLockAcquireResult;
+}
+
+/**
+ * Release a lock idempotently. Use the host retained from initialize/activate
+ * for cleanup after execution cancellation; an execution-scoped host is aborted.
+ */
+export async function releaseFileLock(
+  host: RuntimeHost,
+  lockId: string,
+  options?: RuntimeHostCallOptions,
+): Promise<FileLockReleaseResult> {
+  return await host.call("host.service.call", {
+    service: FILE_LOCK_SERVICE,
+    method: "release",
+    params: { lock_id: lockId },
+  }, options) as FileLockReleaseResult;
+}
+
 export interface RuntimePlugin {
+  /** Additional reentrant handlers. model.adapter and model.middleware are always reentrant. */
+  concurrentCapabilities?: readonly string[];
   /**
    * Service names whose handlers may overlap tools, capabilities, and services.
    * Opt in only when handlers are safe for concurrent access. This permits a
    * service callback into a plugin already awaiting another plugin. Other
-   * requests remain ordered; lifecycle requests are barriers for all handlers.
+   * callbacks and tools without concurrency-safe metadata remain ordered;
+   * lifecycle requests are barriers for all handlers.
    */
   concurrentServices?: readonly string[];
-  initialize(params: RuntimeInitializeParams, host: RuntimeHost): RuntimeInitializeResult | Promise<RuntimeInitializeResult>;
-  activate?(host: RuntimeHost): void | Promise<void>;
+  initialize(params: RuntimeInitializeParams, host: RuntimeHost, lifecycle: RuntimeLifecycleContext): RuntimeInitializeResult | Promise<RuntimeInitializeResult>;
+  activate?(host: RuntimeHost, lifecycle: RuntimeLifecycleContext): void | Promise<void>;
   invokeCapability?(params: CapabilityInvokeParams, host: RuntimeHost, execution: RuntimeExecutionContext): CapabilityInvokeResult | Promise<CapabilityInvokeResult>;
   invokeService?(params: ServiceInvokeParams, host: RuntimeHost, execution: RuntimeExecutionContext): unknown | Promise<unknown>;
   serviceChanged?(params: ServiceChangedParams, host: RuntimeHost): void | Promise<void>;
@@ -1405,26 +1662,38 @@ export async function handleRuntimeRequest(
   request: RuntimeRequest,
   host: RuntimeHost = unavailableRuntimeHost,
   execution: RuntimeExecutionContext = idleRuntimeExecution,
+  lifecycle: RuntimeLifecycleContext = idleRuntimeExecution,
 ): Promise<RuntimeResponse> {
-  const executionHost = scopedRuntimeHost(host, execution.executionId);
+  const executionHost = scopedRuntimeHost(host, execution);
   try {
     switch (request.method) {
-      case "initialize":
-        return { id: request.id, result: { ...await plugin.initialize(request.params, host), lifecycle_version: 1 } };
+      case "initialize": {
+        const result = await plugin.initialize(request.params, host, lifecycle);
+        return { id: request.id, result: {
+          ...result,
+          protocol_version: result.required_services?.length || result.provided_services?.length
+            ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
+          lifecycle_version: 1,
+        } };
+      }
       case "activate":
-        await plugin.activate?.(host);
+        await plugin.activate?.(host, lifecycle);
         return { id: request.id, result: null };
       case "capability.invoke":
         if (!plugin.invokeCapability) throw new Error("capability.invoke is not implemented");
+        // Read the live signal after queue/lifecycle waiting, before user code.
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.invokeCapability(request.params, executionHost, execution) };
       case "service.invoke":
         if (!plugin.invokeService) throw new Error("service.invoke is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.invokeService(request.params, executionHost, execution) };
       case "service.changed":
         await plugin.serviceChanged?.(request.params, host);
         return { id: request.id, result: null };
       case "tool.execute":
         if (!plugin.executeTool) throw new Error("tool.execute is not implemented");
+        execution.signal.throwIfAborted();
         return { id: request.id, result: await plugin.executeTool(request.params, executionHost, execution) };
       case "shutdown":
         await plugin.shutdown?.();
@@ -1435,13 +1704,21 @@ export async function handleRuntimeRequest(
   }
 }
 
-function scopedRuntimeHost(host: RuntimeHost, executionId: string): RuntimeHost {
-  if (executionId === "") return host;
+function scopedRuntimeHost(host: RuntimeHost, execution: RuntimeExecutionContext): RuntimeHost {
   return {
     supports: (method) => host.supports(method),
-    call: (method, params) => host.call(method, method === "host.service.call"
-      ? { ...params, execution_id: executionId }
-      : params),
+    call: (method, params, options) => {
+      const signal = options?.signal
+        ? AbortSignal.any([execution.signal, options.signal])
+        : execution.signal;
+      const serviceParams = method === "host.service.call"
+        ? params as HostServiceContracts["host.service.call"]["params"]
+        : { service: KERNEL_SERVICE_NAMES[method as KernelHostServiceMethod], method: KERNEL_SERVICE_METHOD, params };
+      return host.call("host.service.call", {
+        ...serviceParams,
+        ...(execution.executionId ? { execution_id: execution.executionId } : {}),
+      }, { signal });
+    },
   } as RuntimeHost;
 }
 
@@ -1460,7 +1737,7 @@ const idleRuntimeExecution: RuntimeExecutionContext = {
 
 type PendingHostCall = {
   resolve(value: unknown): void;
-  reject(error: Error): void;
+  reject(error: unknown): void;
 };
 
 class JSONLRuntimeHost implements RuntimeHost {
@@ -1476,33 +1753,54 @@ class JSONLRuntimeHost implements RuntimeHost {
   }
 
   supports(method: HostServiceMethod): boolean {
-    return this.supported.has(method);
+    return this.supported.has("host.service.call") || this.supported.has(method);
   }
 
   call<M extends HostServiceMethod>(
     method: M,
     params: HostServiceContracts[M]["params"],
+    options?: RuntimeHostCallOptions,
   ): Promise<HostServiceContracts[M]["result"]> {
+    const signal = options?.signal;
+    if (signal?.aborted) return Promise.reject(signal.reason);
     if (this.closed) return Promise.reject(new Error("runtime transport closed"));
     if (!this.supports(method)) {
       return Promise.reject(new Error(`host service ${method} is not supported`));
     }
     const id = `plugin-${++this.sequence}`;
     return new Promise<HostServiceContracts[M]["result"]>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      void this.send({ id, method, params }).catch((error: unknown) => {
+      const cleanup = (): void => {
         this.pending.delete(id);
-        reject(error instanceof Error ? error : new Error(String(error)));
+        signal?.removeEventListener("abort", abort);
+      };
+      const abort = (): void => {
+        cleanup();
+        reject(signal!.reason);
+      };
+      const fail = (error: unknown): void => {
+        cleanup();
+        reject(error);
+      };
+      this.pending.set(id, {
+        resolve(value) { cleanup(); resolve(value as HostServiceContracts[M]["result"]); },
+        reject: fail,
       });
+      signal?.addEventListener("abort", abort, { once: true });
+      const frame = method === "host.service.call"
+        ? { id, method, params }
+        : kernelServiceCall(id, method, params as HostServiceContracts[KernelHostServiceMethod]["params"]);
+      void this.send(frame).catch(fail);
     });
   }
 
   route(value: unknown): boolean {
     if (typeof value !== "object" || value === null) return false;
     const response = value as { id?: unknown; method?: unknown; result?: unknown; error?: unknown };
-    if (typeof response.id !== "string" || response.method !== undefined) return false;
+    if (typeof response.id !== "string" || response.method !== undefined
+      || (!("result" in response) && !("error" in response))) return false;
     const pending = this.pending.get(response.id);
-    if (!pending) return false;
+    // Cancelled calls may still receive a late response; never dispatch it as a request.
+    if (!pending) return true;
     this.pending.delete(response.id);
     if (response.error !== undefined) {
       const error = response.error as { code?: unknown; message?: unknown };
@@ -1525,6 +1823,9 @@ class JSONLRuntimeHost implements RuntimeHost {
   }
 }
 
+// Bound tool bodies without consuming the separate reentrant callback lane.
+const MAX_CONCURRENT_TOOLS = 8;
+
 /** Runs a plugin over Wuu's full-duplex JSON-lines transport. */
 export async function runJSONLRuntime(
   plugin: RuntimePlugin,
@@ -1537,20 +1838,48 @@ export async function runJSONLRuntime(
     return next;
   };
   const host = new JSONLRuntimeHost(send);
+  const lifetime = new AbortController();
   const executions = new Map<string, Set<AbortController>>();
   const active = new Set<Promise<void>>();
   const concurrentServices = new Set(plugin.concurrentServices ?? []);
-  let requests = Promise.resolve();
-  let lifecycle = requests;
+  const concurrentCapabilities = new Set(["model.adapter", "model.middleware", ...plugin.concurrentCapabilities ?? []]);
+  const concurrentTools = new Set<string>();
+  const queued: { run(): Promise<void>; canOverlap(): boolean }[] = [];
+  let running = 0;
+  let exclusive = false;
+  // Only adjacent explicitly safe tools share slots. Classification happens
+  // after preceding work, including initialize, publishes its registrations.
+  const pump = (): void => {
+    while (queued.length > 0 && !exclusive && running < MAX_CONCURRENT_TOOLS) {
+      const next = queued[0];
+      const safe = next.canOverlap();
+      if (!safe && running > 0) return;
+      queued.shift();
+      running++;
+      exclusive = !safe;
+      const finished = (): void => {
+        running--;
+        if (!safe) exclusive = false;
+        pump();
+      };
+      void next.run().then(finished, finished);
+    }
+  };
+  const schedule = (run: () => Promise<void>, canOverlap = () => false): Promise<void> => {
+    const task = new Promise<void>((resolve, reject) => {
+      queued.push({ run: () => Promise.resolve().then(run).then(resolve, reject), canOverlap });
+    });
+    pump();
+    return task;
+  };
+  let lifecycle = Promise.resolve();
   let shuttingDown = false;
   const track = (task: Promise<void>): void => {
     active.add(task);
     void task.then(() => active.delete(task), () => active.delete(task));
   };
   const enqueueResponse = (value: unknown): void => {
-    const task = requests.then(() => send(value));
-    requests = task.catch(() => undefined);
-    track(task);
+    track(schedule(() => send(value)));
   };
   const processLine = (line: string): void => {
     if (line.trim() === "") return;
@@ -1575,8 +1904,13 @@ export async function runJSONLRuntime(
       return;
     }
     const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
-    if (parsed.method === "shutdown") shuttingDown = true;
-    const concurrent = parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service);
+    if (parsed.method === "shutdown") {
+      shuttingDown = true;
+      // Background work may hold an active handler; stop it before waiting for the barrier.
+      lifetime.abort();
+    }
+    const concurrent = (parsed.method === "service.invoke" && concurrentServices.has(parsed.params.service))
+      || (parsed.method === "capability.invoke" && concurrentCapabilities.has(parsed.params.capability));
     const executionId = runtimeRequestExecutionId(parsed);
     const controller = new AbortController();
     // Even legacy requests without an execution id must stop on transport loss.
@@ -1585,22 +1919,33 @@ export async function runJSONLRuntime(
     controllers.add(controller);
     const execution = { executionId, signal: controller.signal } satisfies RuntimeExecutionContext;
     // A lifecycle frame waits for everything already admitted. Opted-in
-    // service calls may bypass ordinary work, but never an earlier lifecycle
+    // handlers may bypass ordinary work, but never an earlier lifecycle
     // frame. Capture the barrier now so later frames cannot create a cycle.
-    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : requests;
-    const task = ready
-      .then(() => {
-        if (parsed.method === "initialize") host.configure(parsed.params.supported_host_services);
-        return handleRuntimeRequest(plugin, parsed, host, execution);
-      })
-      .then(send)
+    const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
+    const run = async (): Promise<void> => {
+      await ready;
+      if (parsed.method === "initialize") {
+        host.configure(parsed.params.supported_host_services);
+        concurrentTools.clear();
+      }
+      const response = await handleRuntimeRequest(plugin, parsed, host, execution, { signal: lifetime.signal });
+      if (parsed.method === "initialize" && "result" in response) {
+        const definition = response.result as RuntimeInitializeResult;
+        for (const tool of definition.tools ?? []) {
+          if (tool.activity?.concurrency_safe === true) concurrentTools.add(tool.id);
+        }
+      }
+      await send(response);
+    };
+    const task = (concurrent ? run() : schedule(run,
+      () => parsed.method === "tool.execute" && concurrentTools.has(parsed.params.tool_id)))
       .finally(() => {
         const controllers = executions.get(executionId);
         controllers?.delete(controller);
         if (controllers?.size === 0) executions.delete(executionId);
+        controller.abort();
       });
-    if (!concurrent) requests = task.catch(() => undefined);
-    if (isLifecycle) lifecycle = requests;
+    if (isLifecycle) lifecycle = task.catch(() => undefined);
     track(task);
   };
   const decoder = new TextDecoder();
@@ -1615,6 +1960,7 @@ export async function runJSONLRuntime(
     buffered += decoder.decode();
     if (buffered.trim() !== "") processLine(buffered);
   } finally {
+    lifetime.abort();
     host.close();
     for (const controllers of executions.values()) {
       for (const controller of controllers) controller.abort();
@@ -1778,6 +2124,94 @@ export interface ContextUsageSummaryV1 {
 }
 
 export type ComposerSubmissionModeV1 = "send" | "queue" | "steer";
+
+/** One immutable request for an append-only suggestion in the host-owned composer. */
+export interface ComposerInlineCompletionContext {
+  readonly contractVersion: 1;
+  /** Conversation kind, including before a side conversation has an ID. Split panes use main. */
+  readonly kind: "main" | "side";
+  /** Opaque identity for this mounted input and conversation/workspace context. */
+  readonly composerId: string;
+  /** Changes whenever input, selection, composition, focus, or conversation state changes. */
+  readonly revision: number;
+  readonly threadId?: string;
+  /** Side-conversation identity; threadId remains its owning main conversation. */
+  readonly sideThreadId?: string;
+  /** Project ID is absent outside a project; the event-routing root is available for no-project conversations. */
+  readonly workspaceId?: string;
+  readonly workspaceRoot?: string;
+  /** Counts only; providers never receive attachment bytes or queued draft content. */
+  readonly attachmentCount?: number;
+  readonly queuedCount?: number;
+  readonly pendingCount?: number;
+  readonly draftText: string;
+  /** UTF-16 offsets into draftText. The host requests only at a collapsed end caret. */
+  readonly selectionStart: number;
+  readonly selectionEnd: number;
+  /** Composer presentation activity; false does not prove the latest turn succeeded or settled. */
+  readonly running: boolean;
+}
+
+export interface ComposerInlineCompletion {
+  /** Optional provider-owned identity, preserved in interaction callbacks. */
+  readonly id?: string;
+  /** Literal text to append, never markup or a replacement of the current draft. */
+  readonly text: string;
+}
+
+/** Refresh only the exact input observation that produced a cached result. */
+export interface ComposerInlineCompletionRefresh {
+  readonly composerId: string;
+  readonly revision: number;
+}
+
+export interface ComposerInlineCompletionProviderHandle {
+  dispose(): void;
+  /**
+   * Recheck eligible inputs after external data changes; omit scope to recheck all.
+   * Coalesced at most once per 100 ms. A stale scope or disposed handle is ignored.
+   * Refresh never revives an explicitly dismissed observation.
+   */
+  refresh(scope?: ComposerInlineCompletionRefresh): void;
+}
+
+/** Attribution only: interaction callbacks never receive a later draft's text. */
+export type ComposerInlineCompletionSource = Pick<ComposerInlineCompletionContext,
+  "kind" | "composerId" | "revision" | "threadId" | "sideThreadId">;
+
+export type ComposerInlineCompletionInteraction = {
+  /** Host identity for this presentation, shared by its subsequent interactions. */
+  readonly interactionId: string;
+  /** The provider's result id, when supplied. */
+  readonly suggestionId?: string;
+  readonly source: ComposerInlineCompletionSource;
+} & (
+  | { readonly type: "shown" | "accepted" | "dismissed" }
+  | {
+    /** The composer callback accepted dispatch, not confirmation of backend delivery. */
+    readonly type: "dispatched";
+    readonly mode: ComposerSubmissionModeV1;
+    /** Draft text differs from the draft immediately after this acceptance. */
+    readonly edited: boolean;
+  }
+);
+
+export interface ComposerInlineCompletionProviderRegistration {
+  readonly id: string;
+  /** Lower orders run first; ties use plugin ID, then registration ID. */
+  readonly order?: number;
+  /**
+   * Return null to let the next provider try. The host owns rendering and Tab
+   * acceptance; providers own prompts, debouncing, and any context retrieval.
+   * Stop work when signal aborts. Late results never change the current input.
+   */
+  provideCompletion(
+    context: ComposerInlineCompletionContext,
+    signal: AbortSignal,
+  ): ComposerInlineCompletion | null | Promise<ComposerInlineCompletion | null>;
+  /** Receives only this registration's interactions while its generation is active. */
+  onDidInteract?(event: ComposerInlineCompletionInteraction): void | Promise<void>;
+}
 
 export interface ComposerSnapshotV1 {
   readonly contractVersion: 1;
@@ -2133,3 +2567,5 @@ export function createManifest(options: {
 }
 
 export * from "./bundle-contract.js";
+
+export * from "./model.js";

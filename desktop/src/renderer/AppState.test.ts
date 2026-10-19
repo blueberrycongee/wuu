@@ -3693,6 +3693,11 @@ describe("thread session tab title sync", () => {
   });
 });
 
+it("keeps conversation state intact across a transport-only connection reset", () => {
+  const state = { ...initialState, running: true, prompt: "unsent text" };
+  expect(reduceServerEvent(state, { kind: "connection-reset", workdir: "" })).toBe(state);
+});
+
 describe("AppState English localization", () => {
   it("localizes generated labels while preserving project data", () => {
     setActiveLocale("en-US");

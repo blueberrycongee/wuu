@@ -1,4 +1,4 @@
-// Real App/main/preload/app-server/native-helper acceptance. Only the HTTP
+// Real App/main/preload/app-server/TypeScript-runtime acceptance. Only the HTTP
 // model is synthetic; plugin discovery, tool execution, history and storage
 // use production paths in an isolated home. No user key or model is used.
 const assert = require('node:assert/strict');
@@ -27,7 +27,7 @@ process.env.XDG_DATA_HOME = path.join(fixture, 'data');
 for (const name of Object.keys(process.env)) if (/(?:API_KEY|ACCESS_TOKEN|AUTH_TOKEN|SECRET|PASSWORD)$/.test(name)) delete process.env[name];
 process.env.WUU_HOME = home;
 process.env.WUU_DESKTOP_CORE = path.resolve(process.env.WUU_DESKTOP_CORE || path.join(desktop, 'build/bin/wuu-core'));
-process.env.WUU_GENERATIVE_UI_PLUGIN_HELPER = path.resolve(process.env.WUU_GENERATIVE_UI_PLUGIN_HELPER || path.join(desktop, 'build/bin/wuu-generative-ui-plugin'));
+const runtime = path.join(root, 'internal/plugin/bundled/generative-ui/runtime.mjs');
 process.env.WUU_ENABLE_BROWSER = '0';
 process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
@@ -68,7 +68,7 @@ childProcess.spawn = (...args) => {
   const child = spawn(...args);
   if (args[0] === process.env.WUU_DESKTOP_CORE) {
     const env = args[2]?.env || {};
-    const entry = { command: args[0], args: args[1], helper: env.WUU_GENERATIVE_UI_PLUGIN_HELPER, home: env.WUU_HOME, safeMode: env.WUU_SAFE_MODE, stderr: '' };
+    const entry = { command: args[0], args: args[1], nodeExecutable: env.WUU_NODE_EXECUTABLE, home: env.WUU_HOME, safeMode: env.WUU_SAFE_MODE, stderr: '' };
     processes.push(entry);
     child.stderr?.on('data', chunk => { entry.stderr = (entry.stderr + chunk).slice(-16000); });
   }
@@ -357,6 +357,7 @@ async function run() {
   await wait(() => document.querySelector('.composer textarea'));
   const initialization = await until(() => rpc.find(entry => entry.channel === 'wuu:initialize' && entry.completed), 'native initialization');
   assert.ok(initialization.result.extension_inventory.some(record => record.kind === 'plugin' && record.provenance?.plugin_id === 'generative-ui'), 'Real initialization must expose the disabled bundled plugin');
+  assert.ok(processes.length > 0 && processes.every(entry => entry.nodeExecutable === process.execPath), 'Desktop supplies its Electron Node runtime through the public plugin host contract');
   await submit('GENUI_DEFAULT_OFF', 'Default-off discovery verified.');
   await catalog();
   assert.equal(await evaluate(selector => document.querySelector(selector).getAttribute('aria-checked'), pluginSwitch), 'false');
@@ -404,7 +405,7 @@ async function run() {
         return Math.abs((label.left + label.right - bar.left - bar.right) / 2) < 1;
       });
   }), 'Production category labels align with their bar centers');
-  pass('real model tool call reaches Go helper, persisted message flow, MIME registry and production renderer');
+  pass('real model tool call reaches bundled TypeScript runtime, persisted message flow, MIME registry and production renderer');
   pass('two interleaved model argument streams render atomic prefixes before tool completion', { streamEvidence });
   await capture('03-app-interactive.png', '.plugin-genui-header');
   stopStreamRecording();
@@ -558,8 +559,73 @@ async function run() {
   }
   await capture('10-app-native-form.png', form);
   pass('native form click and Enter send once while invalid, canceled and programmatic submissions remain inert');
-  const evidence = { recordedAt: new Date().toISOString(), scope: 'Real App, main, preload, app-server, Go helper, native history and plugin storage; loopback synthetic HTTP provider only.',
-    hashes: { harness: hash(__filename), core: hash(process.env.WUU_DESKTOP_CORE), helper: hash(process.env.WUU_GENERATIVE_UI_PLUGIN_HELPER), main: hash(path.join(desktop, 'out/main/index.js')), preload: hash(path.join(desktop, 'out/preload/index.cjs')) },
+  const devDir = path.join(fixture, 'dev-generative-ui');
+  fs.cpSync(path.join(root, 'internal/plugin/bundled/generative-ui'), devDir, { recursive: true });
+  const devManifest = JSON.parse(fs.readFileSync(path.join(devDir, 'plugin.json'), 'utf8'));
+  devManifest.defaultEnabled = true;
+  fs.writeFileSync(path.join(devDir, 'plugin.json'), JSON.stringify(devManifest));
+  fs.writeFileSync(path.join(devDir, 'package.json'), JSON.stringify({ name: 'generative-ui-reload-fixture', private: true, type: 'module', scripts: { build: 'node -e "process.exit(0)"' } }));
+  const desktopSource = fs.readFileSync(path.join(devDir, 'desktop.js'), 'utf8');
+  const observedSource = desktopSource.replace('export async function activate(api) {', `export async function activate(api) {
+    const base = api;
+    api = { ...api, registerRenderer(definition) { return base.registerRenderer({ ...definition, render(props) {
+      window.__genuiReproHost = props.host;
+      window.__genuiReproGeneration = 'initial';
+      return base.react.createElement(definition.render, props);
+    } }); } };
+  `);
+  fs.writeFileSync(path.join(devDir, 'desktop.js'), observedSource);
+  const publish = () => childProcess.execFileSync(process.env.WUU_DESKTOP_CORE, ['plugin', 'dev', '--watch=false', devDir], {
+    env: { ...process.env, WUU_NODE_EXECUTABLE: process.execPath }, encoding: 'utf8', timeout: 30000,
+  });
+  console.log(publish());
+  await wait(() => Boolean(window.__genuiReproHost));
+  await wait(selector => document.querySelector(selector)?.getAttribute('aria-busy') === 'false', '.plugin-genui-program');
+  await trustedType('input[data-genui-node="ownerInput"]', 'Persisted before failed replacement');
+  await until(() => rpc.some(entry => entry.channel === 'wuu:plugin-storage-set' && entry.completed && entry.args[0]?.id?.startsWith('plugin:dev:') && entry.args[0].value.includes('Persisted before failed replacement')), 'development renderer storage written');
+  const prior = rpc.findLast(entry => entry.channel === 'wuu:plugin-storage-set' && entry.completed && entry.args[0]?.id?.startsWith('plugin:dev:'));
+  await evaluate(() => { window.__genuiRetiredHost = window.__genuiReproHost; });
+  fs.writeFileSync(path.join(devDir, 'desktop.js'), observedSource.replace('export async function activate(api) {', "export async function activate(api) { throw new Error('Synthetic desktop activation failure');"));
+  console.log(publish());
+  await until(() => errors.some(error => String(error).includes('Synthetic desktop activation failure')), 'failed desktop replacement observed');
+  const beforeFailedEdit = rpc.length;
+  await trustedType('input[data-genui-node="ownerInput"]', 'Edited retained renderer');
+  const retainedWrite = await until(() => rpc.slice(beforeFailedEdit).find(entry => entry.channel === 'wuu:plugin-storage-set' && entry.completed && entry.args[0].value.includes('Edited retained renderer')), 'retained renderer storage written');
+  assert.notEqual(retainedWrite.args[0].fingerprint, prior.args[0].fingerprint, 'State uses the currently approved same-source package');
+  await catalog(); await conversation();
+  await wait(() => document.querySelector('input[data-genui-node="ownerInput"]')?.value === 'Edited retained renderer');
+  await evaluate(() => { window.__genuiRetiredHost = window.__genuiReproHost; });
+  fs.writeFileSync(path.join(devDir, 'desktop.js'), observedSource.replace("window.__genuiReproGeneration = 'initial'", "window.__genuiReproGeneration = 'recovered'"));
+  console.log(publish());
+  await wait(() => window.__genuiReproGeneration === 'recovered');
+  await wait(() => document.querySelector('input[data-genui-node="ownerInput"]')?.value === 'Edited retained renderer');
+  const beforeRetired = rpc.length;
+  const oldStorageError = await evaluate(async () => {
+    try { await window.__genuiRetiredHost.setStorage('stale-write', 'forbidden', 'user'); return null; }
+    catch (error) { return error.message; }
+  });
+  assert.match(oldStorageError, /no longer active/);
+  const oldActionError = await evaluate(async () => {
+    try { await window.__genuiRetiredHost.invoke('conversation.composer.submit', { text: 'Stale response' }); return null; }
+    catch (error) { return error.message; }
+  });
+  assert.match(oldActionError, /no longer active/);
+  assert.ok(!rpc.slice(beforeRetired).some(entry => ['wuu:plugin-storage-set', 'wuu:turn-start'].includes(entry.channel)), 'Retired storage and action handles never reach IPC');
+  await evaluate(() => { window.__genuiRetiredHost = window.__genuiReproHost; });
+  await catalog(); await click(pluginSwitch);
+  await wait(selector => document.querySelector(selector)?.getAttribute('aria-checked') === 'false' && !document.querySelector(selector).disabled, pluginSwitch);
+  const beforeDisabled = rpc.length;
+  assert.match(await evaluate(async () => {
+    try { await window.__genuiRetiredHost.setStorage('disabled-write', 'forbidden', 'user'); return null; }
+    catch (error) { return error.message; }
+  }), /no longer active/);
+  assert.ok(!rpc.slice(beforeDisabled).some(entry => entry.channel === 'wuu:plugin-storage-set'), 'Disabled renderer cannot persist');
+  await conversation();
+  await wait(() => !document.querySelector('[data-wuu-component="generated-ui"]'));
+  pass('failed desktop replacement retains editable durable state; successful recovery and disable fence previous storage and continuation handles', { previousFingerprint: prior.args[0].fingerprint, retainedWriteFingerprint: retainedWrite.args[0].fingerprint });
+
+  const evidence = { recordedAt: new Date().toISOString(), scope: 'Real App, main, preload, app-server, bundled TypeScript runtime, native history and plugin storage; loopback synthetic HTTP provider only.',
+    hashes: { harness: hash(__filename), core: hash(process.env.WUU_DESKTOP_CORE), runtime: hash(runtime), main: hash(path.join(desktop, 'out/main/index.js')), preload: hash(path.join(desktop, 'out/preload/index.cjs')) },
     checks, screenshots, recordings, processes, storage: stateDocuments(), requests, rpc, errors };
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(evidence, null, 2));
   console.log(`Full App generative UI E2E passed: ${output}`);
@@ -579,7 +645,7 @@ async function fail(error) {
       try { return { path: filename, hash: hash(filename), mode: fs.statSync(filename).mode }; }
       catch (inspectionError) { return { path: filename, error: String(inspectionError) }; }
     };
-    fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: String(error.stack || error), failedOperation, fixture, checks, requests, rpc, errors, processes, recordings, binaries: { core: binary(process.env.WUU_DESKTOP_CORE), helper: binary(process.env.WUU_GENERATIVE_UI_PLUGIN_HELPER) } }, null, 2));
+    fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify({ error: String(error.stack || error), failedOperation, fixture, checks, requests, rpc, errors, processes, recordings, binaries: { core: binary(process.env.WUU_DESKTOP_CORE), runtime: binary(runtime) } }, null, 2));
     if (main && !main.isDestroyed()) {
       try { fs.writeFileSync(path.join(output, 'failure.png'), (await capturePage()).toPNG()); }
       catch (captureError) { fs.writeFileSync(path.join(output, 'failure-capture.txt'), String(captureError.stack || captureError)); }

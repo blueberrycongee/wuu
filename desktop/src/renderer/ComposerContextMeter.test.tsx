@@ -64,10 +64,10 @@ describe("ComposerContextMeter", () => {
   it("renders the ring track and progress stroke", () => {
     renderMeter(usageWith());
     expect(
-      container.querySelector(".composer-context-meter-track"),
+      container.querySelector(".context-usage-ring-track"),
     ).not.toBeNull();
     expect(
-      container.querySelector(".composer-context-meter-progress"),
+      container.querySelector(".context-usage-ring-progress"),
     ).not.toBeNull();
   });
 
@@ -126,7 +126,7 @@ describe("ComposerContextMeter", () => {
       }),
     );
     const progress = container.querySelector(
-      ".composer-context-meter-progress",
+      ".context-usage-ring-progress",
     );
     expect(progress).not.toBeNull();
     const offset = Number(progress?.getAttribute("stroke-dashoffset") ?? "0");
@@ -237,7 +237,7 @@ describe("ComposerContextMeter", () => {
     });
     const offsetSmall = Number(
       a
-        .querySelector(".composer-context-meter-progress")
+        .querySelector(".context-usage-ring-progress")
         ?.getAttribute("stroke-dashoffset") ?? "0",
     );
     act(() => {
@@ -249,7 +249,7 @@ describe("ComposerContextMeter", () => {
     });
     const offsetLarge = Number(
       a
-        .querySelector(".composer-context-meter-progress")
+        .querySelector(".context-usage-ring-progress")
         ?.getAttribute("stroke-dashoffset") ?? "0",
     );
     act(() => {
@@ -263,7 +263,7 @@ describe("ComposerContextMeter", () => {
   it("keeps the visible round-cap gap proportional near a full ring", () => {
     renderMeter(usageWith({ used: 96_000, window: 100_000 }));
     const progress = container.querySelector(
-      ".composer-context-meter-progress",
+      ".context-usage-ring-progress",
     );
     const circumference = Number(
       progress?.getAttribute("stroke-dasharray") ?? "0",

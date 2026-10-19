@@ -18,9 +18,18 @@ To intentionally use existing data, set an absolute `WUU_HOME`, for example
 build to change installed-app data; older builds may reject newer settings.
 The override is also forwarded through the macOS LaunchServices launcher.
 
-`make setup` installs locked dependencies for the desktop, shared client core, retained Web/Expo clients, plugin SDK, protocol package, and docs site. It does not install the native phone toolchains or provision remote services.
+`make setup` installs locked dependencies for the desktop, shared client core, retained Web/Expo clients, plugin SDK, TypeScript plugins, protocol package, and docs site. It does not install the native phone toolchains or provision remote services.
 
-`make dev` runs the desktop launcher. It builds the shared Web assets, native helper where applicable, and current Go core and plugin helpers before starting Electron. The app uses that checkout's private `wuu-core`, not a separately installed `wuu` on `PATH`. Renderer changes use Vite updates; restart the launcher after changing Go, native helpers, or process-startup code so the running processes use the new build.
+`make dev` runs the desktop launcher. It builds the shared Web assets, native helper where applicable, and TypeScript plugin runtime bundles and the current Go core before starting Electron. The app uses that checkout's private `wuu-core`, not a separately installed `wuu` on `PATH`. Renderer changes use Vite updates; restart the launcher after changing Go, native helpers, or process-startup code so the running processes use the new build.
+
+On macOS, `make dev` and `npm --prefix desktop run dev` enable Computer Use by default. Set `WUU_ENABLE_CUA_MAC=0` to disable it for a development run. `dev:direct` remains available to explicitly enable it. macOS Accessibility and Screen Recording permissions still apply.
+
+macOS source launches preserve the invoking terminal's `PATH`, shell/toolchain
+locations, and `WUU_<ID>_BINARY` overrides across LaunchServices. Packaged graphical
+launches discover standard user install locations and, when needed, login-shell
+paths. After installing a CLI while Wuu is running, use Settings → Agents → Refresh.
+
+Desktop packages bundle a checksum-pinned ripgrep in `Resources/tools` and append that directory to the core's `PATH`, so search tools and agent shell commands have `rg` even when the system lacks it; an `rg` already on `PATH` takes precedence. `make dev` does not download it. Run `npm --prefix desktop run build:ripgrep` once to use the bundled copy in development; otherwise the core uses `rg` from `PATH` or its built-in search fallback.
 
 Project Agent is experimental and disabled in default and release builds. It
 has no user setting to enable it. Existing project conversations remain readable,
@@ -41,14 +50,77 @@ make build-go
 ./bin/wuu --help
 ```
 
+Bundled business plugins use TypeScript source under `plugins/<id>/src/`.
+`make build-plugins` emits self-contained JavaScript into the embedded package assets;
+`make build-go`, `make install`, and desktop core builds regenerate those assets before
+compiling Go. The checked-in bundles keep plain Go builds reproducible without an npm
+install. `make check-plugins` rejects stale generated bundles.
+
+The desktop supplies its own Electron Node runtime to all Node-based plugins, so an
+installed desktop needs no system Node or separate business-plugin helper binaries.
+The CLI uses Node from `PATH` unless `WUU_NODE_EXECUTABLE` explicitly selects a runtime.
+Local TypeScript-file development requires Node 22.7 or newer (or the desktop runtime).
+
+After `make build-plugins`, run `./bin/wuu plugin dev plugins/todo` to watch a bundled
+plugin's source through the public directory-development workflow. Its generated
+`plugin.json` and `dist/` copy are ignored locally; edit the canonical manifest and
+presentation assets under `internal/plugin/bundled/<id>/`, then rebuild to refresh
+those copies. Runtime source saves rebuild automatically. A verified development
+generation takes precedence over its installed package while retaining development
+provenance. Standalone TypeScript files still use `wuu plugin dev ./extension.ts`
+without a manifest or build. See the [plugin quickstart](../customize/plugin-quickstart.md).
+
 `make install` installs the CLI from the checkout. The current release workflow packages only the macOS arm64 desktop preview; Windows CI and packaging scripts do not imply a published Windows release. See [installation](../getting-started/installation.md) for user-facing availability.
+
+### Native steering end-to-end check
+
+Build the core, then run `WUU_E2E_CORE=bin/wuu node scripts/native-steering-e2e.mjs`
+with Node 22.13 or newer. The fixture starts the real stdio app-server, a controlled
+native subprocess, and a disposable SQLite store. It checks same-turn steering,
+turn-ID fencing, delayed acknowledgement, rejection, cancellation, persistence
+faults, restart recovery, and unsupported-protocol fallback. It saves results,
+protocol transcripts and the tested binary hash under `.tmp/e2e/native-steering/`;
+set `WUU_STEER_E2E_OUTPUT` to choose another output directory. It uses synthetic
+data and no external inference, and does not validate desktop rendering or an
+installed native engine.
+
+After building the desktop renderer, run
+`cd desktop && electron scripts/native-steering-e2e.cjs` to inspect restored
+unconfirmed input in the production UI. It checks read-only recovery, complete
+clipboard content, ordinary held input controls, and wide/default-font and
+narrow/large-font layouts. Results and screenshots are saved to
+`desktop/out/e2e/native-steering/`; set `WUU_STEER_UI_OUTPUT` to override it.
+
+## External engine discovery smoke check
+
+On macOS, build the desktop and core, then exercise the real settings refresh
+flow through LaunchServices with a system-only PATH and disposable user data:
+
+```bash
+go build -o desktop/build/bin/wuu-core ./cmd/wuu
+go build -o desktop/build/bin/fakecodex ./internal/codexengine/testdata/fakecodex
+(cd desktop && npx electron-vite build)
+open -n -W -a "$PWD/desktop/node_modules/electron/dist/Electron.app" \
+  --env PATH=/usr/local/bin:/usr/bin:/bin \
+  --args "$PWD/desktop/scripts/engine-discovery-e2e.cjs" --use-mock-keychain
+```
+
+Read `desktop/out/e2e/engine-discovery/result.json` for the result (`open` does not
+forward the app's exit status). The check covers startup detection, installation
+while running, the real Settings refresh button, a native Codex protocol turn,
+new shell directories, and explicit disable. It uses a synthetic Codex peer and
+requires no system-wide Codex installation; it does not test upstream login or
+inference. Use `open --env WUU_ENGINE_DISCOVERY_OUTPUT=/absolute/output` to keep
+separate evidence folders.
 
 ## Choose the relevant checks
 
 | Command | What it checks or builds |
 | --- | --- |
 | `make check-go` | Module consistency, formatting, vet, Windows/macOS cross-builds |
-| `make test-go` | Go tests for the CLI, core, Go plugin SDK, bundled plugins, and prompts |
+| `make test-go` | Go tests for the CLI, core, runtime boundaries, and prompts |
+| `make check-plugins build-plugins` | TypeScript plugin types, generated bundle freshness, and runtime packages |
+| `make test-plugins` | Plugin source contracts, plus shipped plugin JSONL lifecycle, tools, persistence, and background behavior with disposable host fixtures |
 | `make check-desktop test-desktop` | Desktop TypeScript and launcher/unit tests |
 | `make build-desktop` | Shared Web assets and Electron main/preload/renderer bundles; not a packaged app |
 | `make check-clients test-clients build-clients` | Protocol/SDK/client types, SDK/client tests, and retained Web/Expo bundles |
@@ -60,11 +132,216 @@ make build-go
 
 Type checks, unit tests, and successful bundles are different evidence from a working app. For UI changes, inspect the affected rendering and interactions using the [desktop UI guide](desktop-ui.md). For plugin changes, also exercise actual tool calls or rendered contributions; package validation alone does not do that.
 
+For SDK tool scheduling, build the TypeScript SDK with
+`npm --prefix packages/plugin-sdk run build`, then run
+`node scripts/plugin-tool-scheduling-e2e.mjs`. It exercises the official
+TypeScript SDK and bundled subagent and peer tools over real JSONL subprocess
+pipes with synthetic host services. It requires no Go build or model credentials.
+Results and wire traces are retained in `.tmp/plugin-tool-scheduling/results.json`;
+`WUU_E2E_OUTPUT` selects another artifact directory. This verifies the SDK process
+boundary, not the full Go host, inference provider, or desktop UI.
+
 `npm --prefix desktop run test:renderer-recovery` intentionally crashes hidden
 Chromium renderers to check recovery, retry limits, window isolation, and IPC.
 It uses a temporary profile and synthetic content, not your Wuu data. Run it in
 a graphical desktop session; it does not validate native dialog appearance or
 packaged-app behavior.
+
+`npm --prefix desktop run test:e2e:stream-settlement` checks that finishing a
+reply preserves its rendered paragraph, heading, list, quote and code geometry.
+It covers early and late final-answer classification in both themes, wide/narrow
+windows and 14/15/20px text. It starts its own fixture server and temporary
+Electron profile; no running desktop or model service is needed. Linux CI runs
+it with `xvfb-run --auto-servernum` and `-- --no-sandbox`. Measurements and
+screenshots go to `desktop/out/stream-settlement/` (`WUU_SETTLEMENT_OUTPUT`
+overrides this). Desktop CI runs the same gate and uploads its evidence.
+
+`npm --prefix desktop run test:e2e:stream-code-cursor` checks where the
+streaming cursor paints when a fenced code block ends a live reply: open and
+closed fences, with and without a language, empty and nested in a list. The bar
+must follow the last code character inside the code card, stay outside the
+copied `<code>` text, and keep the card height when the reply settles. It uses
+the same self-started fixture server across both themes, 1000/420px windows and
+15/20px text. Measurements and screenshots go to `desktop/out/stream-code-cursor/`
+(`WUU_CODE_CURSOR_OUTPUT` overrides this).
+
+### Next-message suggestion acceptance
+
+`make test-plugins` includes the shipped next-message JSONL runtime and desktop
+provider lifecycle contracts. For the real plugin → Go model service → HTTP
+transport chain, build the core with `make build-go` and run
+`node scripts/next-message-model-e2e.mjs`. This starts only a loopback synthetic
+provider, checks token/input limits, cancellation and accounting, and writes
+receipts under `.tmp/e2e/next-message-model/` (`WUU_NEXT_MESSAGE_E2E_OUTPUT` overrides it).
+
+After `npm --prefix desktop run build`, run
+`cd desktop && electron scripts/next-message-e2e.cjs`. The fixture mounts the
+production App and plugin with synthetic turns and mocked model replies. It
+checks keyboard behavior, workspace routing, settings and light/dark,
+wide/narrow, default/large text, retaining screenshots and a captured-frame
+recording. Linux needs a graphical display such as Xvfb; use `--no-sandbox` only
+in a disposable test environment that requires it. Set `WUU_NEXT_MESSAGE_E2E_OUTPUT`
+to choose the evidence directory. These checks do not evaluate live-model
+suggestion quality or provider billing.
+
+### Live activity preview acceptance
+
+Run `node desktop/scripts/activity-preview-e2e.cjs` after installing desktop dependencies. It bundles the production Electron preview shell and browser/native content adapters, opens isolated browser pages, and starts a synthetic native-frame host subprocess using JSONL commands and binary AVC session output. It verifies independent targets in one session, the five-card visible limit and overflow replacement, promotion, session visibility, dialog suppression, individual dismissal, automatic-preview preference, native authority updates across retained targets, stale callbacks, frame acknowledgement, capture-error recovery, and teardown. Results, transport logs, appearance frame samples, stack geometry and screenshots are saved under `desktop/out/activity-preview/`; `WUU_ACTIVITY_PREVIEW_OUTPUT` selects another directory. macOS also records composed stack screenshots in light/default-text and dark/large-text layouts. Headless Linux uses software rendering and a synthetic display automatically.
+
+Build the core, then run `WUU_BROWSER_OWNERSHIP_CORE=bin/wuu node desktop/scripts/browser-task-ownership-e2e.cjs` to check real Go execution ownership and Chromium input. Stop must interrupt the current run; a later user instruction must work with new authority while old execution IDs remain rejected. The fixture also covers browser task isolation, retained pages, takeover during pending input, and cleanup. Evidence is written under `desktop/out/browser-task-ownership/`.
+
+These checks do not verify ScreenCaptureKit, native application input, macOS permissions, or packaged signatures. On a Computer Use-enabled macOS build, also check browser → native app → browser switching, two windows of one app, Terminal and Wuu as ordinary targets, hidden/minimized windows, target closure, Screen Recording denial/revocation, and takeover during pending input. Hide and Stop must leave the observed applications running; extension disable or replacement must retire its stream. Check both themes, default and large text, reduced motion, and drag/resize near the composer. `node desktop/scripts/inspect-cua-pip.cjs` records process/window diagnostics and captures for a running native preview; a running helper alone is not proof of live pixels.
+
+### Native history protocol E2E
+
+Build the CLI with `make build-go`, then build the local protocol fixture with
+`go build -o bin/fakecodex ./internal/codexengine/testdata/fakecodex` and run
+`node scripts/native-history-e2e.mjs`. The driver starts real Wuu and fake Codex
+processes with disposable stores; it uses no vendor credentials or inference.
+It covers native forks, edit cutoffs, transaction failures, unsupported replies,
+legacy identities, child/parent isolation, and restart recovery. Results and raw
+protocol logs are written under `.tmp/e2e/native-history/`; set
+`WUU_HISTORY_E2E_OUTPUT` to select another artifact directory. This checks the
+app-server protocol, not desktop rendering or a live vendor CLI.
+
+### MCP connection lifecycle
+
+After building the core, run the loopback lifecycle fixture:
+
+```sh
+go build -o bin/wuu ./cmd/wuu
+node scripts/mcp-connection-generations-e2e.mjs
+```
+
+It starts real app-server processes with disposable state and synthetic MCP
+servers. Deterministic response barriers cover Disconnect, Connect, Refresh and
+shutdown during background initialization and tool discovery, including later
+explicit reconnects and unaffected servers. It also fills the four-connection
+startup limit, then verifies that newer Disconnect, Connect and Refresh actions
+supersede startup work still waiting in the queue. It does not use real credentials
+or validate the desktop UI. `WUU_E2E_CORE` selects another core binary;
+`WUU_MCP_E2E_OUTPUT` selects the evidence directory. The default is
+`.tmp/e2e/mcp-connection-generations/`, containing JSON RPC transcripts, server
+requests, binary hashes and pass/fail receipts. Existing manager tests additionally
+cover concurrent operations that the serial app-server RPC dispatcher cannot
+issue together, plus permanent revocation and retired-client callbacks.
+
+### MCP authentication across reloads
+
+Run `go run ./scripts/mcp-auth-reload-e2e` to exercise the shared runtime and
+app-server protocol against a loopback OAuth/MCP service. It saves synthetic
+credentials in a disposable file store, then covers authenticated startup,
+manager replacement, a login started before replacement, a retained foreground
+tool call, disable/re-enable, and adding the first MCP server after empty startup.
+It checks that managers and transport sessions remain generation-owned and that
+RPC responses do not expose credentials. No model or external engine is invoked.
+
+The fixture uses the runtime's explicit OAuth-service injection; it does not test
+macOS Keychain or the desktop UI. Receipts, connection identities and RPC output
+are saved under `.tmp/e2e/mcp-auth-reload/`; set `WUU_MCP_AUTH_E2E_OUTPUT` to use
+another evidence directory.
+
+### Provider latency evaluation
+
+The built-in provider path minimizes setup and upload work independently: one
+streaming HTTP client per provider owns its pool; Codex, Grok Build and SuperGrok
+credential adapters share that pool while rebuilding authentication per request. Custom HTTP transports
+retain their proxy and deadline behavior. Codex `auto` can reuse a prewarmed
+WebSocket and send a history delta on compatible continuations. Gzip remains an
+explicit endpoint experiment for HTTP bodies; API compatibility alone cannot
+establish support. These mechanisms preserve payload meaning, cancellation and
+submission accounting. The [model-service guide](../getting-started/model-services.md#streaming-latency)
+describes their operating boundaries.
+
+Run the reusable real-provider evaluation with a configured provider identifier:
+
+```sh
+mkdir -p .tmp/provider-latency
+go run ./scripts/provider-latency-e2e -provider openai-codex -transport sse \
+  -records 320 -repeats 2 -turns 2 -label candidate \
+  > .tmp/provider-latency/candidate.jsonl
+python3 scripts/provider-latency-e2e/score.py .tmp/provider-latency/*.jsonl
+```
+
+This uses normal local credential resolution and sends only generated repository
+records. It can incur charges. It does not edit saved configuration. `-records 0`
+measures short histories; `-tool` executes a synthetic tool and checks its result.
+It forces the first tool call by default; add `-force-tool=false` to test normal
+auto choice on endpoints that reject forced calls. Keep those policies separate.
+Compare `-transport websocket` (full context) with `-transport auto` (eligible
+deltas), and add `-prewarm` to measure send latency after setup. Prewarm duration
+is reported separately. `-gzip-endpoint` accepts one exact request URL for that
+process only; omission clears any inherited gzip opt-in for the evaluation.
+Failures stop dependent turns in that conversation but preserve other repeats.
+
+JSONL includes the fixture hash, model, workload, deadline, correctness, first
+text, first usable text/tool call, completion, DNS/TLS and HTTP timing, body sizes
+when HTTP exposes Content-Length, connection reuse, WebSocket replay state,
+submission counts and reported token usage. It excludes credentials, raw errors,
+prompts and model reasoning. Missing timing fields are unknown, not zero-cost
+work. This covers the real agent loop, tool execution and provider; desktop IPC
+and painting are outside the measurement. Request-written time includes local
+preparation, connection and upload; first HTTP byte also includes server work.
+The probe does not claim to isolate server queueing from model prefill.
+
+Build baseline and candidate with the same runner, dependencies and machine.
+Keep the source revision, patch, runner and executable hashes with the reports.
+For linked worktrees, prefer `go build -buildvcs=false` with
+`-ldflags='-X main.sourceRevision=<commit> -X main.sourceDiff=<patch-sha256>'`:
+verify the declared source against the checkout, and use `none` only for an
+unmodified provider baseline. Interleave A/B/B/A runs with equal prompts, effort,
+deadlines and tool policy. Separate first and subsequent turns, provider/model,
+short/long histories and tool loops. Do not combine WAN measurements with body
+pacing, injected network delay or profiled runs. Report prompt-cache usage because
+backend caches and load can dominate the result.
+
+The scorer reports correctness as `100 × passed / planned`. A pass requires the
+expected answer, tool result where applicable, no truncation and the expected
+submission count. An extra recovered submission fails this strict contract even
+if the eventual answer is correct. Missing dependent turns remain in the planned
+denominator. The latency index is `100 × baseline / candidate` using mean
+first-text time, charging a full deadline for failed or unrun turns. The baseline
+is uncompressed SSE with label `baseline`, matched by workload and turn; it must
+pass its correctness gate before an index is emitted. Higher than 100 means
+faster for that sample. Also inspect successful P50/P90, completion and failures;
+a small sample does not establish tail latency or a general product score.
+
+Use `-list-providers` to list configured names and models without credentials.
+For command scheduling, add `-shell-workload -repeats 3 -timeout 120s` with either
+configured DeepSeek or Codex. Add `-shell-delay 0s` for the short-command control.
+This separate workload ignores the synthetic
+history/tool/prewarm flags. A real model runs an allowlisted PTC program with a
+25-second shell fixture and an independent read, then reads the final result
+in a second turn. The runner verifies one launch, both answers, tool counts,
+completion ownership and output before/after a background handoff. It reports
+`ready_ms` for the first answer separately from `total_ms` for final verification,
+plus per-tool execution and `queue_wait_ms` (unknown on older baselines).
+Completion reaches the runner through the real process manager; the runner then
+starts the second model turn. Desktop notification delivery is outside this probe.
+The transport scorer does not score this workload. Compare its JSONL records by
+provider and revision; an earlier first answer does not mean the build finished
+sooner. Use the same runner on both revisions and retain failures in the report.
+
+Local raw reports belong in ignored output directories. Public performance claims
+require a complete clean-source record under [evals](../../../evals/README.md).
+CI should gate deterministic connection reuse, payload/redirect contracts,
+prewarm/delta behavior, cancellation and recovery, rather than live wall-clock
+thresholds or credentials.
+
+### Workspace PDF preview
+
+Run `npm --prefix desktop run test:e2e:workspace-preview` in a graphical session
+to exercise the real renderer and PDF.js with generated PDFs. It checks retries,
+named and explicit destinations, keyboard/middle-click navigation, page bounds,
+source replacement, retained hidden panels, and close/retry races. External-link IPC is recorded rather
+than opening the system browser; selected real destination responses are delayed
+to check stale results. JSON, synthetic PDFs, and screenshots are written under
+`desktop/out/e2e/workspace-preview/`. No installed profile or Go core is used.
+
+Without a graphical session, run
+`node desktop/scripts/workspace-preview-e2e.cjs --pdf-fixtures-only` to verify the
+same PDF bytes with real Node PDF.js. This checks parsing, named/page-reference
+resolution, and unsafe action data, but does not verify rendering or clicks.
 
 ### Live resize layout guard
 
@@ -179,6 +456,10 @@ as coverage. Keep this workload separate from full-journey results.
 UI/core comparisons. Both executable/bundle hashes remain recorded. Retained
 builds outside a Git checkout need the explicit UI commit; their source-change
 state is null, so retain their verified build manifest alongside the results.
+An isolated runner that exports source without `.git` also supplies
+`WUU_SWITCH_SOURCE_COMMIT` and `WUU_SWITCH_SOURCE_CHANGES` for the harness source.
+Retain the exported source and its hash manifest alongside the results; omitted
+source-change information is recorded as null, not as a clean checkout.
 
 Typing stays at the fixed one-third provider-write point. Results record its
 zero-based chunk index, emitted/received character progress, rendered text size,
@@ -269,27 +550,79 @@ The older `clients/mobile`, `clients/mobile-web`, and `clients/mobile-app` phone
 
 ## CI coverage
 
-[Native mobile](../../../.github/workflows/native-mobile.yml) runs only through manual `workflow_dispatch`, not on pull requests or pushes. It retains core integration checks, unsigned iOS/Android Release builds, and Android lint. Native phones are outside the current release scope; restore automatic coverage before bringing them into that scope. Desktop delivery does not require mobile validation.
+[Native mobile](../../../.github/workflows/native-mobile.yml) runs iOS core integration and unsigned simulator/device builds on pull requests and `main` pushes that change the iOS client, shared native fixtures, remote protocol, or Go dependencies. Manual `workflow_dispatch` also runs the existing Android integration, Release builds and lint. These checks do not cover device signing, store distribution, or physical phone interaction.
 
-[The main CI workflow](../../../.github/workflows/ci.yml) runs repository metadata checks, Go checks/tests, desktop checks/tests/builds, and SDK/client checks/tests/builds. It skips changes confined to `docs/` and `docs-site/`. Go CI supplies PostgreSQL for database-backed coverage.
+[The main CI workflow](../../../.github/workflows/ci.yml) selects jobs from the complete PR diff, including deleted files and both sides of renames. Repository metadata checks remain lightweight and always run on PRs. Documentation-only and native-phone-only changes skip the main product suites; native phones keep their dedicated workflow.
 
-Desktop CI installs the Electron binary once before parallel unit tests. The
-Electron package downloads on first import, so concurrent workers must not race
-to extract into the same installation directory.
+Renderer changes run Desktop and Clients because the Web client imports renderer sources. Other desktop changes run Desktop, Clients, and native OS checks. Shared protocol, client core, Go, plugins/SDK, dependency locks outside these scoped directories, build scripts, and unknown paths conservatively run all suites. Runtime Markdown under prompts or plugins is not exempt. Go CI supplies PostgreSQL for database-backed coverage.
 
-The `Go check` summary requires both Go jobs to succeed. It always runs for pull
-requests, so a failed, skipped, or cancelled dependency cannot pass that gate.
-For post-merge `push` runs only, cancelling the whole workflow skips or cancels
-the summary unless a Go dependency actually failed; a real failure still fails it.
-This exception does not apply to pull requests because GitHub accepts a skipped
-required check for merging. It does not change repository protection rules.
+Desktop validation runs six independent Linux jobs in parallel: unit/type checks and renderer recovery; file/response selection; conversation corpus replay; image/stream/resize layout; session/core interactions; and shell/onboarding/settings. Each job has its own build, Electron profile, Xvfb display, and evidence uploads. A failed group does not cancel the other groups. `Desktop check` remains the stable summary and rejects any failed or cancelled selected group.
 
-macOS pull requests test the native helper; pushes to `main` also package a desktop directory. Windows runs selected native process/sandbox tests and desktop type checking, with unpacked packaging on `main`. The full desktop unit suite runs on Ubuntu. These jobs cover different boundaries rather than repeating the same full suite on every OS.
+For changes only to standalone E2E entrypoints listed in [the suite map](../../../.github/scripts/desktop-ci-suites.json), CI selects the union of their groups without unrelated Clients/native checks. Shared helpers, preloads, fixtures, production code, styles, dependencies, CI configuration, and unknown paths keep the conservative full-group fallback. This avoids assuming that component filenames describe their complete dependency graph. No test commands, assertions, scenario matrices, or evidence uploads are removed; manual runs execute every group. Extend the map only after verifying that an entrypoint is not a shared helper. Run `node --test .github/scripts/select-ci.test.mjs` to verify selection against temporary Git changes, including deletions and mixed scopes.
+
+For PRs modifying only existing renderer TypeScript/TSX modules (plus optional documentation), the unit job selects tests through parsed import/export dependencies, including re-exports, static dynamic imports, configured Vite aliases, and setup-file dependencies. Vitest supplies the actual test inventory. Tests with computed loading, filesystem/process execution, parse failures, or unresolved local imports are retained conservatively. No affected consumer means the full unit gate runs. Selection evidence is uploaded as `unit-dependency-selection`; test execution failures are never retried as a way to pass.
+
+Styles, assets, test setup, runtime plugin modules, new/deleted/renamed files, dependencies, configuration and mixed scopes retain full unit coverage. Type checks, development-launcher checks, serialized Git-service tests and the existing E2E groups remain in place. The E2Es load the complete App and share its dependency closure; static imports do not justify skipping a group simply because a test does not open a particular page. Run `node --test desktop/scripts/ci-unit-dependencies.test.mjs` after installing Desktop dependencies to check the dependency-selection contract.
+
+Desktop CI installs the Electron binary once before parallel unit tests to avoid concurrent extraction into the same directory. macOS and Windows retain their platform-specific tests on affected PRs. macOS also checks packaging when native resources or packaging inputs change.
+
+Main pushes do not repeat Go, Desktop, Clients, or native test suites. They only run macOS/Windows packaging when the changed paths select native checks. Manual `workflow_dispatch` runs all checks and both packages. Direct main pushes therefore do not receive the PR test coverage; use a PR or manually run CI when full validation is needed.
+
+`Go check` accepts skipped Go jobs only when path selection explicitly excludes them. `CI check` requires successful selection and every selected job to succeed; unexpected skips, failures, and cancellations fail the summary. These summaries do not change repository protection rules.
 
 [The documentation workflow](../../../.github/workflows/docs.yml) checks policy and builds the site when documentation, site, landing, or relevant build files change. Pull requests build without deployment; `main` builds deploy to GitHub Pages. Tagged product releases use a separate workflow and do not publish standalone CLI archives.
 
 ## Code boundaries
 
-`cmd/wuu` and `internal` contain the CLI and Go core. `desktop` owns Electron main/preload, renderer UI, IPC, and packaging. `packages/protocol` holds shared client protocol types; `clients/core` implements UI-free remote behavior. The plugin SDKs and bundled implementations live in `packages/plugin-sdk`, `packages/plugin-go`, and `plugins`.
+`cmd/wuu` and `internal` contain the CLI and Go core. `desktop` owns Electron main/preload, renderer UI, IPC, and packaging. `packages/protocol` holds shared client protocol types; `clients/core` implements UI-free remote behavior. The official TypeScript plugin SDK lives in `packages/plugin-sdk`; bundled implementations live in `plugins`. `internal/sdk` is the internal application-embedding facade for the Go host, not a plugin authoring API. Other language runtimes can implement the same language-independent JSONL process contract.
 
 Keep Electron APIs in the desktop shell. A new shell should communicate with `wuu app-server` through its [protocol](../integrations/app-server-protocol.md), rather than importing desktop internals or creating a separate core. Update both language versions of affected public docs with behavior changes; [documentation maintenance](../../../docs/README.md) describes placement and checks.
+
+### Conversation corpus acceptance
+
+Run `npm --prefix desktop run test:e2e:conversation-corpus` to build the current
+checkout and replay twelve sanitized local conversation excerpts through the
+existing UI tour. macOS uses the checkout's Wuu Dev host with an existing signing
+identity (`Wuu Dev Signing` by default, or `WUU_DEV_SIGN_ID`). If none is available,
+set `WUU_DEV_SIGN_ID=-` for ad-hoc signing. Acceptance never creates a signing key,
+imports a certificate or changes keychain trust. Linux needs a graphical
+session or `xvfb-run --auto-servernum`; CI supplies `-- --no-sandbox`.
+`npm --prefix desktop run test:corpus` checks the package's sharing boundary.
+
+The package lives in `desktop/scripts/fixtures/conversation-corpus/corpus.json`.
+It preserves original wording, Markdown, whitespace, response order and tool-call
+counts, with targeted replacements for identifying names, private services,
+credential fragments, paths and historical references. Original session IDs,
+provider configuration, hidden reasoning, tool arguments/results and attachments
+are not included. Tool calls execute only reads of a disposable synthetic file.
+Model labels describe the recorded source; replay uses one scripted local
+provider, so this does not verify vendor protocols or current model behavior.
+
+The runner pauses at partial and complete target responses and before final
+completion, captures light/dark, 15px/wide and 20px/narrow appearances, then
+captures the completed answer and reloads the shell to verify persisted history.
+Streaming chunks and timing are simulated; original token timing was unavailable.
+Each checkpoint binds the expected response step to its protocol item and exact
+source text, then scrolls its rendered marker into view and checks its clipped
+geometry. Process history is expanded only when the sample includes tool calls.
+Page overflow, missing/offscreen content, missing history and renderer errors fail the run. Screenshots
+and geometry remain evidence for visual review, not an automatic aesthetic score.
+
+Each run writes screenshots and `corpus-report.json` below
+`artifacts/conversation-corpus/`. `WUU_TOUR_OUTPUT` sets an explicit destination;
+`WUU_TOUR_MATRIX` overrides appearances, for example `light:15:1280,dark:20:720`.
+Use `WUU_TOUR_ONLY=sample-04` to reproduce one sample; the report records the
+selected IDs. `WUU_CORPUS_TEXT_ONLY=1` replays just each selected sample's final
+answer as a single no-tool turn; reports label this `final-answer-only`, rather
+than the original response sequence. CI also runs this regression with sample-02
+and uploads both runs in `conversation-corpus-evidence`.
+`WUU_CORPUS_SKIP_BUILD=1` reuses a prepared build; `WUU_TOUR_CORE` selects its core.
+Only use these overrides when the binaries match the checkout under review.
+
+To add a sample, review the complete local excerpt first, apply targeted
+replacements consistently, and compare Markdown structure, newline counts and
+length changes locally. Keep raw sources and replacement maps outside the public
+checkout. The validator rejects unexpected fields, common secrets and non-example
+HTTP URLs; it cannot establish that arbitrary prose is safe to share. Review each
+new sample manually. Keep source claims in sample text as historical fixture
+content, not current product documentation. No real account or model key is needed.

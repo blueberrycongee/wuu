@@ -12,7 +12,7 @@ import type {
 } from "../shared/protocol";
 import type { WorkspaceFileSelection } from "./LinkTargets";
 import { WORKSPACE_FILE_DRAG_MIME } from "./ComposerMessages";
-import { RichContent } from "./RichContent";
+import { isMarkdownDocument, MarkdownDocumentReading } from "./MarkdownDocumentReading";
 import { revealScrollbar } from "./ScrollbarReveal";
 import { FileSelectionSurface } from "./FileSelectionSurface";
 import type { WorkspaceMonacoViewState } from "./WorkspaceMonacoEditor";
@@ -705,6 +705,10 @@ export function WorkspaceFilePreview({
     [activeContext?.cwd, selectedFilePath]
   );
 
+  const selectedFileKey = `${activeContext?.cwd ?? ""}\n${selectedWorkspaceFilePath ?? ""}`;
+  const selectedFileKeyRef = useRef(selectedFileKey);
+  useLayoutEffect(() => { selectedFileKeyRef.current = selectedFileKey; }, [selectedFileKey]);
+
   useEffect(() => {
     if (!selectedWorkspaceFilePath) {
       setFile(undefined);
@@ -749,7 +753,7 @@ export function WorkspaceFilePreview({
     };
   }, [activeContext?.cwd, selectedWorkspaceFilePath, locale, presenterReloadKey, refreshKey]);
 
-  const isMarkdown = Boolean(file && isMarkdownPath(file.path));
+  const isMarkdown = Boolean(file && isMarkdownDocument(file.path));
   const isMarkdownReadingMode = isMarkdown && !selection;
   const dirtyStatePath = file?.path ?? selectedWorkspaceFilePath;
 
@@ -812,7 +816,15 @@ export function WorkspaceFilePreview({
               <WorkspacePdfPreview url={file.renderable_url} title={file.path} active={active}
                 source={{ workspace: activeContext.cwd, path: file.path, revision: workspacePdfRevision(file) }}
                 initialPage={anchor?.startsWith("pdf-page=") ? Number(new URLSearchParams(anchor).get("pdf-page")) : undefined}
-                pageRequest={anchor} />
+                pageRequest={anchor}
+                onRefresh={async (signal) => {
+                  const refreshed = await window.wuu.readWorkspaceFile(file.path, activeContext.cwd);
+                  if (signal.aborted || selectedFileKeyRef.current !== selectedFileKey) return false;
+                  setFile(refreshed);
+                  return refreshed.renderable_kind === "pdf"
+                    && refreshed.renderable_url === file.renderable_url
+                    && workspacePdfRevision(refreshed) === workspacePdfRevision(file);
+                }} />
             </Suspense>
           </WorkspacePreviewBoundary>
         </article>
@@ -844,15 +856,14 @@ export function WorkspaceFilePreview({
           {(selectionControls) => (
             <div className={`workspace-file-editor-scroll ${isMarkdownReadingMode ? "markdown-reading" : "code"}`}>
               {isMarkdownReadingMode ? (
-                <div className="workspace-markdown-reading" ref={markdownHostRef}>
-                  <RichContent
-                    text={draftText}
-                    cwd={activeContext.cwd}
-                    onOpenFile={onOpenFile}
-                    allowRawHtml
-                    sourceMapping
-                  />
-                </div>
+                <MarkdownDocumentReading
+                  ref={markdownHostRef}
+                  text={draftText}
+                  cwd={activeContext.cwd}
+                  onOpenFile={onOpenFile}
+                  allowRawHtml
+                  sourceMapping
+                />
               ) : active ? (
                 <WorkspacePreviewBoundary resourceKey={file.path}>
                   <Suspense fallback={null}>
@@ -905,8 +916,4 @@ export function WorkspaceFilePreview({
     </div>
     <div className="workspace-file-export-preview">{presentation}</div>
   </div>;
-}
-
-function isMarkdownPath(path: string): boolean {
-  return /\.mdx?$/i.test(path);
 }

@@ -4,8 +4,9 @@ on:
   pull_request:
     paths:
       - ".github/workflows/generative-ui.yml"
-      - "cmd/wuu-generative-ui-plugin/**"
       - "plugins/generative-ui/**"
+      - "plugins/package*.json"
+      - "scripts/build-bundled-plugins.mjs"
       - "internal/plugin/**"
       - "internal/runtime/**"
       - "desktop/src/renderer/ArtifactOutputs*"
@@ -42,7 +43,6 @@ jobs:
       WUU_GENUI_RECORD: "1"
       WUU_GENUI_APP_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/generative-ui-app
       WUU_GENUI_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/generative-ui
-      WUU_GENERATIVE_UI_PLUGIN_HELPER: ${{ github.workspace }}/desktop/build/bin/wuu-generative-ui-plugin
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -53,7 +53,9 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: |
+            desktop/package-lock.json
+            plugins/package-lock.json
       - name: Install desktop dependencies
         run: |
           npm ci --prefix desktop
@@ -62,20 +64,23 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji
-      - name: Build native UI tool
-        id: native-tool
+      - name: Build TypeScript UI tool
+        id: plugin-runtime
         run: |
-          mkdir -p desktop/build/bin
-          go build -o "$WUU_GENERATIVE_UI_PLUGIN_HELPER" ./cmd/wuu-generative-ui-plugin
+          npm ci --prefix plugins
+          npm --prefix plugins run typecheck
+          npm --prefix plugins run build -- --plugin=generative-ui
+          npm --prefix plugins run build:check
       - name: Build production core and desktop
         id: application-build
         run: |
+          mkdir -p desktop/build/bin
           # Match build:core's product version; an unstamped Go pseudo-version
           # may be v0.0.0 and correctly fail plugin minimum-version checks.
           go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu
           cd desktop && npx electron-vite build
-      - name: Verify native discovery and disable lifecycle
-        run: go run scripts/generative-ui-lifecycle-e2e.go
+      - name: Verify runtime discovery and disable lifecycle
+        run: go run -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" scripts/generative-ui-lifecycle-e2e.go
       - name: Verify tool output and interactive renderer
         shell: bash
         run: |
@@ -83,7 +88,7 @@ jobs:
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/generative-ui-e2e.cjs 2>&1 | tee "$WUU_GENUI_OUTPUT/run.log"
       - name: Verify complete App and production storage
-        if: ${{ !cancelled() && steps.native-tool.outcome == 'success' && steps.application-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.plugin-runtime.outcome == 'success' && steps.application-build.outcome == 'success' }}
         shell: bash
         run: |
           mkdir -p "$WUU_GENUI_APP_OUTPUT"

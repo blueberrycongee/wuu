@@ -32,7 +32,7 @@
   --shell-jump-progress-step-in-progress-bg: color-mix(in srgb, var(--wuu-color-text, #131314) 20%, transparent);
   /* Message-flow body typography. Owned at :root (not on .conversation-pane)
      so a user setting written to <html style="..."> cascades globally
-     without being shadowed by a more specific selector. Default 13px
+     without being shadowed by a more specific selector. Default 15px
      matches MESSAGE_FLOW_FONT_SIZE_RANGE; see renderer/main.tsx for the
      apply path. font-family and
      font-weight moved here too so the settings preview (which is NOT
@@ -43,7 +43,7 @@
     "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
     "Microsoft YaHei UI", "Source Han Sans SC", "Noto Sans CJK SC",
     "Noto Sans SC", sans-serif;
-  --conversation-message-font-size: 13px;
+  --conversation-message-font-size: 15px;
   /* Normal (400) body weight: the stream previously held 450 to add
      presence to 14px type, but in practice it read as denser, heavier
      gray walls across long answers. Default weight lets the font's own
@@ -52,16 +52,16 @@
   --conversation-message-font-weight: 400;
   /* Outer message-flow rhythm. Structural containers must consume these
      landmarks instead of adding their own anonymous gaps on top. */
-  --conversation-flow-top-gap: 36px;
+  --conversation-flow-top-gap: var(--section-gap);
   /* Answer actions already reserve their own row inside the preceding turn. */
-  --conversation-turn-boundary-gap: 16px;
-  --conversation-turn-item-gap: 8px;
-  --conversation-image-gap: max(var(--space-6), calc(var(--conversation-message-font-size) * 1.2));
+  --conversation-turn-boundary-gap: var(--section-gap);
+  --conversation-turn-item-gap: var(--space-2);
+  --conversation-image-gap: var(--space-6);
   /* One leading for everything read or typed in a conversation: answers,
      sent queries and every composer draft, including composers outside
      .conversation-pane. A relaxed body line makes mixed CJK, Latin and inline
      code read as one continuous answer instead of a stack of dense rows. */
-  --conversation-reading-line-height: round(nearest, calc(var(--conversation-message-font-size) * 1.8), 2px);
+  --conversation-reading-line-height: round(nearest, calc(var(--conversation-message-font-size) * 1.6), 2px);
   /* Framed text (the query bubble and the composer draft) keeps its glyphs
      --card-padding from the frame on every side: the block padding gives back
      the line's half-leading, so the inset holds at every text size. The floor
@@ -78,7 +78,7 @@
   /* Transparent dock space above the composer frame. It is part of the gap
      between the latest turn and the input, so the clearance subtracts it and
      that gap stays one group gap at every window width. */
-  --conversation-dock-top-space: clamp(12px, calc(0.833333vw + 8.666667px), 16px);
+  --conversation-dock-top-space: var(--space-4);
   --conversation-composer-clearance: calc(var(--section-gap) - var(--conversation-dock-top-space));
 }
 
@@ -103,13 +103,13 @@
   /* Providers may confirm an answer only after streaming finishes. Its
      provisional process placement must use the final reading rhythm. */
   --conversation-commentary-line-height: var(--conversation-reading-line-height);
-  --conversation-prose-block-gap: calc(var(--conversation-message-font-size) * 1.1);
-  --conversation-prose-heading-before: calc(var(--conversation-message-font-size) * 1.7);
-  --conversation-prose-heading-after: calc(var(--conversation-message-font-size) * 0.55);
-  --conversation-prose-list-gap: calc(var(--conversation-message-font-size) * 0.4);
+  --conversation-prose-block-gap: var(--space-4);
+  --conversation-prose-heading-before: var(--section-gap);
+  --conversation-prose-heading-after: var(--space-2);
+  --conversation-prose-list-gap: var(--space-2);
   --conversation-prose-indent: 1.45em;
   --conversation-prose-max-width: 100%;
-  --conversation-message-element-gap: max(12px, var(--conversation-message-font-size));
+  --conversation-message-element-gap: var(--space-4);
   /* Process rows share the message size and weight; color and spacing,
      not a smaller/heavier type style, make them read as secondary. */
   --conversation-process-font-size: var(--conversation-message-font-size);
@@ -138,18 +138,27 @@
    * gap (there is no longer a hairline rule). The action row plus the turn
    * boundary keep separate Q&A pairs farther apart than query and reply.
    */
-  --conversation-user-rule-gap: max(32px, calc(var(--conversation-user-action-size) + 12px));
-  --conversation-user-message-trailing-gap: 8px;
-  --conversation-process-detail-gap: 16px;
-  /* Reading groups do not inherit the independently configurable action-bar gap. */
-  --conversation-process-answer-gap: max(12px, calc(var(--conversation-message-font-size) * 0.75));
+  --conversation-user-rule-gap: max(var(--section-gap), calc(var(--conversation-user-action-size) + var(--space-3)));
+  --conversation-user-message-trailing-gap: var(--space-2);
+  --conversation-process-detail-gap: var(--space-4);
+  /* The answer is a new reading group after the compact activity cluster. */
+  --conversation-process-answer-gap: var(--space-6);
   /* Public message-action rhythm. Themes may tune these without depending on
    * the private action-bar DOM or taking over its interaction semantics. */
-  --conversation-answer-hover-action-gap: var(--wuu-message-actions-overlay-gap, 12px);
-  --conversation-message-action-icon-size: calc(var(--conversation-message-font-size) * 15 / 14);
-  --conversation-message-action-size: var(--wuu-message-action-size, max(24px, calc(var(--conversation-message-action-icon-size) + 9px)));
+  --conversation-answer-hover-action-gap: var(--wuu-message-actions-overlay-gap, var(--space-2));
+  --conversation-message-action-icon-size: var(--conversation-message-font-size);
+  --conversation-message-action-size: var(--wuu-message-action-size, max(24px, calc(var(--conversation-message-action-icon-size) + var(--space-4))));
   --conversation-user-action-size: max(20px, calc(var(--conversation-message-action-icon-size) + 5px));
-  --conversation-activity-gap: 8px;
+  --conversation-activity-gap: var(--space-2);
+}
+
+.app-shell,
+.settings-shell {
+  /* Share the canvas edge with the sibling sidebar resize target. */
+  --conversation-pane-inset: clamp(0px, calc(2vw - var(--space-2)), var(--space-2));
+  /* Trim the lower chrome gap while preserving the native control axis. */
+  --canvas-titlebar-height: calc(var(--window-titlebar-height) - var(--conversation-pane-inset));
+  --conversation-canvas-radius: min(var(--radius-lg), calc(var(--conversation-pane-inset) * 2));
 }
 
 .conversation-pane {
@@ -173,7 +182,8 @@
         var(--environment-panel-width) + var(--environment-panel-edge-gap) +
         var(--environment-panel-edge-gap) + var(--environment-panel-flow-gap) +
         var(--environment-panel-flow-gap) - 100vw + var(--sidebar-width, 0px) +
-        var(--workspace-right-panel-reserved-width, 0px)
+        var(--workspace-right-panel-reserved-width, 0px) +
+        var(--conversation-pane-inset) * 2
     ),
     var(--environment-panel-reserved-width)
   );
@@ -187,11 +197,32 @@
   min-width: 0;
   min-height: 0;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
+  grid-template-rows: var(--canvas-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
+  background: transparent;
+  margin: 0 0 var(--conversation-pane-inset) var(--conversation-pane-inset);
+  border-radius: var(--conversation-canvas-radius);
+  transition:
+    grid-template-columns var(--environment-panel-motion-duration) var(--environment-panel-motion-easing),
+    border-radius var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
+}
+
+.app-shell.right-panel-open:not(.workspace-conversation-active) .conversation-pane {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* Paint the top inset independently of the titlebar so native chrome keeps
+   its window coordinates. The shell's isolated stack holds this surface below
+   content without trapping the fixed drawer toggle inside the pane. */
+.conversation-pane::before {
+  position: absolute;
+  inset: var(--conversation-pane-inset) 0 0;
+  z-index: -1;
+  border-radius: inherit;
   background: var(--paper);
-  margin-right: 0;
-  transition: grid-template-columns var(--environment-panel-motion-duration) var(--environment-panel-motion-easing);
+  content: "";
+  pointer-events: none;
 }
 
 /* Floating surfaces and conversation content share the reading column. */
@@ -237,13 +268,14 @@
 }
 
 .conversation-pane.session-tabs-visible {
-  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
+  grid-template-rows: var(--canvas-titlebar-height) minmax(0, 1fr);
 }
 
 .conversation-pane.environment-panel-reserved {
   --conversation-visible-inset-right: var(--environment-panel-content-inset);
 }
 
+/* Both headers share the same row height and continuous baseline. */
 .titlebar,
 .workspace-panel-tabbar {
   box-shadow: inset 0 -1px 0 var(--hairline-soft);
@@ -251,8 +283,8 @@
 
 .titlebar {
   display: grid;
-  height: var(--window-titlebar-height);
-  min-height: var(--window-titlebar-height);
+  height: var(--canvas-titlebar-height);
+  min-height: var(--canvas-titlebar-height);
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
@@ -262,7 +294,7 @@
    * (the inset is 0 and max() collapses to the neutral padding). The row
    * always starts with an icon button (new conversation or back), so its
    * glyph, not its box, sits on the pane inset. */
-  padding: 0 max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0
+  padding: var(--conversation-pane-inset) max(var(--control-toolbar-inset), var(--window-controls-inset-right)) 0
     calc(var(--window-titlebar-padding-inline) - var(--control-toolbar-glyph-offset));
   transition: padding-left var(--sidebar-motion-duration) var(--sidebar-motion-ease);
   -webkit-app-region: drag;
@@ -278,6 +310,13 @@
  * right window edge. A docked workspace reserves its own matching slot. */
 .app-shell:not(.popped-out-shell):not(.right-panel-open) .titlebar {
   padding-right: calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap));
+}
+
+.app-shell.sidebar-collapsed .titlebar,
+.app-shell.popped-out-shell .titlebar {
+  /* The native-controls exclusion and the lifted drawer toggle are measured
+     from the window edge, while this titlebar starts inside the canvas inset. */
+  padding-left: calc(var(--window-titlebar-leading-inset) - var(--conversation-pane-inset));
 }
 
 .title-block,
@@ -436,10 +475,6 @@
  * neutral and clear the caption on the panel tabbar instead. */
 :root[data-platform="linux"] .app-shell.right-panel-open .titlebar {
   padding-right: 24px;
-}
-
-:root[data-platform="linux"] .app-shell.right-panel-open .workspace-panel-tabbar {
-  padding-right: var(--linux-caption-width);
 }
 
 .linux-window-control {
@@ -752,11 +787,8 @@
 
 .session-tab-close {
   display: grid;
-  width: 24px;
-  height: 24px;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--ink-muted);
   cursor: pointer;
@@ -772,11 +804,6 @@
 .session-tab:focus-within .session-tab-close,
 .session-tab.active .session-tab-close {
   opacity: 1;
-}
-
-.session-tab-close:hover {
-  background: var(--ink-overlay-8);
-  color: var(--ink);
 }
 
 .icon-button {
@@ -814,13 +841,13 @@
 }
 
 /* The rail stays visible when closed; its fill marks the open state. */
-.side-panel-toggle-icon > rect:last-child {
+.side-panel-toggle-icon > .side-panel-toggle-pane {
   fill: none;
-  stroke: currentColor;
+  stroke: none;
   transition: fill var(--motion-base) var(--ease-out);
 }
 
-.side-panel-toggle-icon[data-open="true"] > rect:last-child {
+.side-panel-toggle-icon[data-open="true"] > .side-panel-toggle-pane {
   fill: currentColor;
   stroke: none;
 }

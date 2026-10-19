@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -98,8 +99,7 @@ func (c *Client) responsesStreamChatSSE(ctx context.Context, payload responsesRe
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	streamClient := newStreamingHTTPClient(c.httpClient, c.streamConfig)
-	resp, lease, err := c.doSingleResponsesRequest(ctx, streamClient, body, true, payload.ExtraHeaders, payload.Attempt, payload.SubmissionReason)
+	resp, lease, err := c.doSingleResponsesRequest(ctx, c.streamHTTPClient, body, true, payload.ExtraHeaders, payload.Attempt, payload.SubmissionReason)
 	if err != nil {
 		return nil, err
 	}
@@ -209,6 +209,27 @@ func (c *Client) buildResponsesRequest(req providers.ChatRequest, stream bool) (
 	prepared, err := providers.PrepareMessagesForProviderRequestWithPolicy(req.Provider, req.Model, resolved, req.MediaInput)
 	if err != nil {
 		return responsesRequest{}, err
+	}
+
+	if !modelprofile.SupportsFreeformTools(req.Model, req.ProviderOptions) {
+		// Freeform describes the logical tool, not every endpoint's wire
+		// support. Keep its JSON schema and lower history only on this request.
+		req.Tools = append([]providers.ToolDefinition(nil), req.Tools...)
+		for i := range req.Tools {
+			req.Tools[i].Freeform = false
+		}
+		for i := range prepared {
+			for j := range prepared[i].ToolCalls {
+				call := &prepared[i].ToolCalls[j]
+				if call.Kind == providers.ToolCallKindCustom {
+					call.Kind = providers.ToolCallKindFunction
+					call.ProviderItemID = ""
+				}
+			}
+			if prepared[i].ToolResultKind == providers.ToolCallKindCustom {
+				prepared[i].ToolResultKind = providers.ToolCallKindFunction
+			}
+		}
 	}
 
 	instructions, messages := splitResponsesInstructions(prepared)
@@ -365,7 +386,7 @@ func responsesProviderOptionUnsupported(key string) bool {
 	switch key {
 	case "toolStreaming", "toolChoiceAutoOnly", "omitStore", "omitPromptCacheKey", "thinkingConfig", "reasoningConfig", "modelParams", "gateway",
 		"usage", "chat_template_args", "enable_thinking", "thinking",
-		"temperatureSupported", "temperature_supported", "promptCacheKeySupported", "video_input":
+		"temperatureSupported", "temperature_supported", "promptCacheKeySupported", "video_input", "freeform_tool":
 		return true
 	default:
 		return false
@@ -842,6 +863,11 @@ func (c *Client) doSingleResponsesRequest(
 	if strings.TrimSpace(submissionReason) != "" {
 		mode = "fallback"
 	}
+	httpClient, err = providers.PrepareRequestCompression(httpReq, body, httpClient)
+	if err != nil {
+		return nil, nil, fmt.Errorf("prepare request body: %w", err)
+	}
+
 	lease, err := c.coordinator.AcquireForAttempt(ctx, c.providerScope, attempt)
 	if err != nil {
 		return nil, nil, err

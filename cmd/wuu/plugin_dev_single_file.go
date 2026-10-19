@@ -13,6 +13,7 @@ import (
 	"time"
 
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	pluginsdk "github.com/blueberrycongee/wuu/packages/plugin-sdk"
 )
 
@@ -63,7 +64,7 @@ func prepareSingleFilePlugin(ctx context.Context, source string) (string, func()
 		"loader.mjs":   []byte(singleFileRuntimeLoader),
 		"resolve.mjs":  []byte(singleFileSDKResolver),
 	}
-	for _, name := range []string{"index.ts", "theme-contract.generated.ts", "bundle-contract.ts"} {
+	for _, name := range []string{"index.ts", "theme-contract.generated.ts", "bundle-contract.ts", "model.ts", "process.ts"} {
 		data, err := pluginsdk.Sources.ReadFile("src/" + name)
 		if err != nil {
 			return fail(err)
@@ -83,7 +84,9 @@ func prepareSingleFilePlugin(ctx context.Context, source string) (string, func()
 	// read-phase kernel services, so only the real generation host can prepare it.
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, "node", "--experimental-transform-types", "loader.mjs", "--validate")
+	runtime := pluginhost.RuntimeCommand("node", []string{"--experimental-transform-types", "loader.mjs", "--validate"}, nil)
+	command := exec.CommandContext(ctx, runtime.Path, runtime.Args[1:]...)
+	command.Env = runtime.Env
 	command.Dir = root
 	if output, err := command.CombinedOutput(); err != nil {
 		return fail(fmt.Errorf("load TypeScript plugin (Node.js 22.7+ required): %w: %s", err, strings.TrimSpace(string(output))))
@@ -113,7 +116,7 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "@wuu/plugin-sdk") {
     return { url: new URL("./sdk/index.ts", import.meta.url).href, shortCircuit: true };
   }
-  if (["./theme-contract.generated.js", "./bundle-contract.js"].includes(specifier) && context.parentURL === new URL("./sdk/index.ts", import.meta.url).href) {
+  if (["./theme-contract.generated.js", "./bundle-contract.js", "./model.js", "./process.js"].includes(specifier) && context.parentURL === new URL("./sdk/index.ts", import.meta.url).href) {
     return { url: new URL("./sdk/" + specifier.slice(2, -3) + ".ts", import.meta.url).href, shortCircuit: true };
   }
   if (context.parentURL === new URL("./extension.ts", import.meta.url).href && !isBuiltin(specifier)) {

@@ -241,14 +241,14 @@ describe("SettingsView shell", () => {
     expect(container.querySelector('[data-testid="settings-pet"]')).toBeNull();
   });
 
-  it("exposes phone access on a native host", async () => {
+  it("hides phone access without development opt-in", async () => {
     installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "today" } });
     window.wuu.getRemoteControlSnapshot = vi.fn().mockResolvedValue({ status: null, host_running: false, pair_uri: null });
     window.wuu.onRemoteControlEvent = vi.fn(() => () => {});
     renderSettings({ initialized: baseInitialized(), initialPage: "remote" });
     await act(async () => { await Promise.resolve(); });
-    expect(container.querySelector('[data-testid="settings-remote-page"]')).not.toBeNull();
-    expect(window.wuu.getRemoteControlSnapshot).toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="settings-remote-page"]')).toBeNull();
+    expect(window.wuu.getRemoteControlSnapshot).not.toHaveBeenCalled();
   });
 
   it.each([false, true])("exposes the sidebar state and invokes the toggle action (collapsed=%s)", (sidebarCollapsed) => {
@@ -453,7 +453,7 @@ describe("SettingsView model services", () => {
     expect(container.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
   });
 
-  it("gathers how new conversations start on General", async () => {
+  it("gathers conversation defaults on General", async () => {
     installServicesStub();
     const onSave = vi.fn(async () => {});
     renderSettings({ initialized: servicesInitialized(), initialPage: "general", locale: "en-US", onSave });
@@ -552,24 +552,57 @@ describe("SettingsView model services", () => {
     expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, undefined, "");
   });
 
-  it("hides and restores model choices", async () => {
+  it("removes and restores model choices with an explicit replacement for selected models", async () => {
     installServicesStub();
     const onSave = vi.fn(async () => {});
-    renderSettings({ initialized: servicesInitialized(), initialPage: "providers", onSave });
+    const initialized = servicesInitialized();
+    renderSettings({ initialized, initialPage: "providers", onSave });
     await flush();
     click(container.querySelector('[data-provider="deepseek"]'));
 
-    // The service's own model cannot be hidden; its row keeps the slot empty.
-    expect(container.querySelector('[aria-label="隐藏 DeepSeek V4 Pro"]')).toBeNull();
+    click(container.querySelector('[aria-label="删除 DeepSeek V4 Flash"]'));
+    expect(onSave).not.toHaveBeenCalled();
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('[aria-label="隐藏 DeepSeek V4 Flash"]')!.click();
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.click();
     });
-    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, { remove_model: "deepseek-v4-flash", keep_selection: true });
+    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, { remove_model: "deepseek-v4-flash", keep_selection: true }, undefined);
+
+    click(container.querySelector('[aria-label="删除 DeepSeek V4 Pro"]'));
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.disabled).toBe(true);
+    click(document.querySelector('[data-testid="settings-provider-replacement-model"]'));
+    click(document.querySelector('[data-value="deepseek-v4-flash"]'));
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.click();
+    });
+    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-flash", undefined, { remove_model: "deepseek-v4-pro", keep_selection: true }, undefined);
+
+    // Removing the workspace default model atomically saves the chosen replacement.
+    renderSettings({ initialized: { ...initialized, provider: "deepseek", model: "deepseek-v4-pro" }, initialPage: "providers", onSave });
+    click(container.querySelector('[aria-label="删除 DeepSeek V4 Pro"]'));
+    click(document.querySelector('[data-testid="settings-provider-replacement-model"]'));
+    click(document.querySelector('[data-value="deepseek-v4-flash"]'));
+    onSave.mockRejectedValueOnce(new Error("Unable to save model choices"));
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.click();
+    });
+    expect(document.querySelector('.model-remove-dialog [role="alert"]')?.textContent).toBe("Unable to save model choices");
+    expect(document.querySelector('[data-testid="settings-provider-replacement-model"]')?.textContent).toContain("DeepSeek V4 Flash");
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.click();
+    });
+    expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-flash", undefined, { remove_model: "deepseek-v4-pro", keep_selection: false }, "");
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[aria-label="恢复 deepseek-old"]')!.click();
     });
     expect(onSave).toHaveBeenLastCalledWith("deepseek", "deepseek-v4-pro", undefined, { add_model: "deepseek-old", keep_selection: true });
+
+    // The last model cannot disappear while the provider still needs a selection.
+    const sole = initialized.providers!.find((provider) => provider.name === "deepseek")!;
+    renderSettings({ initialized: { ...initialized, provider: "deepseek", model: sole.model, providers: [{ ...sole, models: [{ id: sole.model }] }] }, initialPage: "providers", onSave });
+    click(container.querySelector('[data-testid="settings-provider-remove-model"]'));
+    expect(document.querySelector('[data-testid="settings-provider-replacement-model"]')).toBeNull();
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-model-confirm"]')!.disabled).toBe(true);
   });
 
   it("connects a catalog provider with its endpoint and suggested model", async () => {
@@ -644,7 +677,31 @@ describe("SettingsView model services", () => {
     await act(async () => {
       document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.click();
     });
-    expect(onRemoveProvider).toHaveBeenCalledWith("deepseek");
+    expect(onRemoveProvider).toHaveBeenCalledWith("deepseek", undefined);
+
+    const initialized = { ...servicesInitialized(), provider: "deepseek", model: "deepseek-v4-pro" };
+    renderSettings({ initialized, initialPage: "providers", onRemoveProvider });
+    click(container.querySelector('[data-provider="deepseek"]'));
+    click(container.querySelector('[aria-label="DeepSeek 的更多操作"]'));
+    click([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.includes("删除服务")));
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.disabled).toBe(true);
+    click(document.querySelector('[data-testid="settings-provider-removal-fallback"]'));
+    click(document.querySelector('[data-value="openai-codex"]'));
+    onRemoveProvider.mockRejectedValueOnce(new Error("Could not remove provider"));
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.click();
+    });
+    expect(document.querySelector('.model-service-remove-dialog [role="alert"]')?.textContent).toBe("Could not remove provider");
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.click();
+    });
+    expect(onRemoveProvider).toHaveBeenLastCalledWith("deepseek", { fallbackProvider: "openai-codex", fallbackModel: "gpt-6-astra" });
+
+    renderSettings({ initialized: { ...initialized, providers: initialized.providers!.filter((provider) => provider.name === "deepseek") }, initialPage: "providers", onRemoveProvider });
+    click(container.querySelector('[data-provider="deepseek"]'));
+    click(container.querySelector('[aria-label="DeepSeek 的更多操作"]'));
+    click([...document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.includes("删除服务")));
+    expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.disabled).toBe(true);
   });
 
   it("refreshes the model catalog with a button-only loading state", async () => {
@@ -705,13 +762,9 @@ describe("SettingsView advanced settings", () => {
       ),
     ).toBe(false);
 
-    const inputs = Array.from(container.querySelectorAll("input"));
-    expect(inputs.length).toBeGreaterThanOrEqual(6);
-    const [compactThreshold, compactKeepRecent, providerContextWindow, maxContextTokens, maxSteps, temperature] = inputs;
-    expect((temperature as HTMLInputElement).value).toBe("");
-    // The placeholder carries the automatic-value meaning instead of the row description.
-    expect((temperature as HTMLInputElement).placeholder).toBe("自动");
-
+    const inputs = Array.from(container.querySelectorAll<HTMLInputElement>(".settings-page input"));
+    expect(inputs.length).toBeGreaterThanOrEqual(4);
+    const [compactThreshold, compactKeepRecent, providerContextWindow, maxContextTokens] = inputs;
     const commit = async (input: Element) => {
       await act(async () => {
         input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
@@ -744,21 +797,9 @@ describe("SettingsView advanced settings", () => {
     await commit(maxContextTokens);
     expect(onAdvancedSave).toHaveBeenLastCalledWith({ max_context_tokens: 256000 });
 
-    await act(async () => {
-      setInputValue(maxSteps, "12");
-    });
-    await commit(maxSteps);
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ max_steps: 12 });
-
-    await act(async () => {
-      setInputValue(temperature, "0.4");
-    });
-    await commit(temperature);
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ temperature: 0.4 });
-
     // Blurring an untouched field does not round-trip the same value.
     const callsBefore = onAdvancedSave.mock.calls.length;
-    await commit(temperature);
+    await commit(maxContextTokens);
     expect(onAdvancedSave.mock.calls.length).toBe(callsBefore);
 
     const switchButton = container.querySelector(".settings-switch") as HTMLButtonElement;
@@ -767,46 +808,6 @@ describe("SettingsView advanced settings", () => {
       await Promise.resolve();
     });
     expect(onAdvancedSave).toHaveBeenLastCalledWith({ disable_auto_compact: true });
-  });
-
-  it("saves cleared temperature as Auto on commit", async () => {
-    installBuildInfoStub({
-      core: undefined,
-      desktop: { version: "0.0.0-test", date: "1970-01-01T00:00:00Z" },
-    });
-    const onAdvancedSave = vi.fn().mockResolvedValue(undefined);
-    renderSettings({
-      initialPage: "advanced",
-      initialized: baseInitialized({
-        provider: "openrouter",
-        model: "openai/gpt-5.5",
-        advanced_settings: {
-          max_steps: 0,
-          max_context_tokens: 0,
-          temperature: 0,
-          disable_auto_compact: false,
-        },
-      }),
-      onAdvancedSave,
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    const temperature = Array.from(container.querySelectorAll("input")).at(-1) as HTMLInputElement;
-    await act(async () => {
-      setInputValue(temperature, "0.4");
-      temperature.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
-      await Promise.resolve();
-    });
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ temperature: 0.4 });
-
-    await act(async () => {
-      setInputValue(temperature, "");
-      temperature.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
-      await Promise.resolve();
-    });
-    expect(onAdvancedSave).toHaveBeenLastCalledWith({ temperature: 0 });
   });
 });
 

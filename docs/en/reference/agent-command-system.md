@@ -42,7 +42,7 @@ The model receives the command's output as a terminal would show it: stdout, the
 
 Clients and durable records keep the full JSON envelope: exit code, duration, both excerpts, byte counts, classification, workspace revision, the full-log reference and hash, and verification details. The desktop terminal panel renders from that envelope.
 
-Commands must be non-interactive: do not depend on an editor, pager, or terminal prompt. The default wait is 300 seconds, with a range of 1–3600. On timeout, Wuu normally transfers the running process to its background manager and reports the process ID; the result says the command is still running and its completion is delivered to the owning conversation. This is **not** a successful verification or proof that the command stopped. If transfer is unavailable, Wuu stops the process. Cancelling the calling turn also stops a foreground command rather than promoting it.
+Commands must be non-interactive: do not depend on an editor, pager, or terminal prompt. `timeout_seconds` defaults to 300, with a range of 1–3600. When background handoff is available and early handoff is enabled, Wuu ends the foreground wait after 10 seconds or the requested timeout, whichever comes first. The same process keeps running, with its output and ownership preserved; the result includes its process ID and completion is delivered to the owning conversation. Independent tools can proceed after the handoff. Work that depends on the command must await its completion. A process ID is **not** a successful verification or proof that the command stopped. Early handoff leaves `timed_out` false and `exit_code` at -1; `promoted_process_id` identifies pending work. If early transfer fails, the original foreground wait continues until the requested timeout; if transfer is still unavailable then, Wuu stops the process. Cancelling the calling turn stops a foreground command rather than promoting it. Side conversations keep the requested foreground wait because they do not resume from background completion. These wait limits do not impose a background process lifetime.
 
 ## Background and interactive work
 
@@ -56,6 +56,8 @@ Start a server, watcher, or interactive command with `run_in_background` rather 
 ```
 
 The call returns the process ID immediately. Background commands run in a pseudo-terminal so the desktop can take them over; macOS and Linux support PTYs, while Windows falls back to pipes. A natural exit is delivered at the next model step when the owning conversation is active; otherwise it starts a continuation, which `wuu exec` waits for. Results already read by the model do not trigger another delivery. Successful consumption is persisted with the answer so restart recovery does not repeat an acknowledged result. For a long-lived service whose exit should not resume or hold open the task, set `completion_mode=detached` with `process action=update`.
+
+If a completion continuation fails or is interrupted, its notification stays pending. Provider retries use the existing bounded backoff policy; reaching a terminal failure does not start another automatic turn. Reopening the conversation or receiving another process event does not retry the failed notification. A later human message permits recovery. Paused notifications do not keep unrelated successful work waiting for an automatic continuation.
 
 `process` works on running processes:
 
@@ -72,6 +74,12 @@ Reads return up to 32 KiB by default. Without `wait_ms`, a read is a snapshot. W
 Use `recheck_minutes` from 1 to 1440 for progress wake-ups on long or quiet tasks. Completion cancels the schedule. Do not chain waits just to keep a turn open: use a foreground `bash` run for an immediate dependency, or let completion and scheduled wake-ups resume the conversation. Completion and recheck notifications are also plain text: the outcome, the output tail, and how to read earlier output.
 
 Sessions recorded before this change show background actions under `bash` (`start_background`, `read_background`, and so on). The desktop still renders those items; a model that repeats them gets an error naming the replacement.
+
+### Inspect triggers in the desktop
+
+The **Trigger** button beside Copy, Fork, and the timestamp on the latest assistant reply opens this conversation's background process triggers. It shows whether each trigger is waiting, has received a notification, has been handled, or was cancelled or stopped. Scheduled checks show their interval and next time. Expand **Source and recent output** to inspect the command and its output tail; viewing output here does not consume the model's notification.
+
+**Cancel automatic continuation** cancels future exit and scheduled wakeups without stopping the background task. A turn that has already started continues. These controls cover Wuu-managed processes; plugin schedules and external engines' own watchers are not listed.
 
 ## Directory, environment, and permissions
 

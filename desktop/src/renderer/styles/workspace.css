@@ -72,10 +72,13 @@
   width: auto;
   contain: strict;
   container-type: inline-size;
-  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
+  grid-template-rows: var(--canvas-titlebar-height) minmax(0, 1fr);
   overflow: hidden;
   border-left: 1px solid transparent;
   background: var(--paper);
+  margin-bottom: var(--conversation-pane-inset);
+  /* Clip the painted canvas without moving the shared window-header row. */
+  clip-path: inset(var(--conversation-pane-inset) 0 0 round 0 var(--conversation-canvas-radius) var(--conversation-canvas-radius) 0);
   /* Docked content keeps its final width while the shell clips its column.
      Sheet transitions retain their own transforms in sidebar.css. */
   transition: border-color var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
@@ -93,13 +96,12 @@
   justify-self: start;
 }
 
-/* The panel's chrome sits on the same paper as the conversation titlebar
- * beside it. Tabs are the strip's content, so their chips stand a size above
- * the strip's icon buttons instead of matching them. */
+/* Center compact chips in the painted header. Its compact lower edge
+ * preserves the shared native-control axis without an oversized bottom gap. */
 .workspace-right-panel {
   --workspace-tab-chip-hover-bg: var(--ink-overlay-4);
-  --workspace-tab-chip-height: var(--control-size-roomy);
-  --workspace-tab-chip-inset: calc((var(--window-titlebar-height) - var(--workspace-tab-chip-height)) / 2);
+  --workspace-tab-chip-height: var(--control-size-inline);
+  --workspace-tab-chip-inset: max(0px, calc((var(--canvas-titlebar-height) - var(--conversation-pane-inset) - var(--workspace-tab-chip-height)) / 2));
   /* Tab chips, tool rows, and tree rows float inside the pane like sidebar
    * rows; their own padding takes up the rest, putting the leading glyph on
    * the pane inset. */
@@ -110,13 +112,13 @@
 .workspace-panel-tabbar {
   display: flex;
   min-width: 0;
-  height: var(--window-titlebar-height);
+  height: var(--canvas-titlebar-height);
   align-items: center;
   gap: 4px;
   background: var(--paper);
   /* Clear native window controls and reserve the shell-owned sidebar toggle,
      including while the reading canvas is a full-width sheet. */
-  padding: 0 calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap)) 0 var(--workspace-row-inset);
+  padding: var(--conversation-pane-inset) calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap)) 0 var(--workspace-row-inset);
   -webkit-app-region: drag;
   position: relative;
   z-index: 1;
@@ -394,7 +396,7 @@
    * fits its title, so a short one does not stretch into a long bar. The
    * floor keeps two characters: the title's padding, icon gap and close
    * margin come to the leading pad plus 14px. */
-  min-width: min(100cqw, calc(2em + var(--icon-size) + var(--control-size-inline) + var(--workspace-row-pad-x) + 14px));
+  min-width: min(100cqw, calc(2em + var(--icon-size) + var(--control-size-dismiss) + var(--workspace-row-pad-x) + 14px));
   max-width: 220px;
   height: 100%;
   flex: 0 1 auto;
@@ -483,7 +485,7 @@
   /* Portaled outside the panel: restate the tokens it reads. */
   --workspace-tab-chip-inset: 0px;
   --workspace-row-pad-x: calc(var(--pane-inset) - var(--space-2));
-  height: var(--control-size-roomy);
+  height: var(--control-size-inline);
   border-radius: var(--radius-sm);
   background: var(--paper);
   color: var(--ink-strong);
@@ -551,7 +553,7 @@
   color: inherit;
   font-size: var(--font-ui);
   font-weight: var(--weight-regular);
-  line-height: 1;
+  line-height: var(--line-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -568,7 +570,6 @@
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-tertiary);
   cursor: pointer;
@@ -604,11 +605,6 @@ html[data-focus-modality="keyboard"] .workspace-tool-tab-close:focus-visible {
 .workspace-tool-tab:focus-within .workspace-tool-tab-close,
 .workspace-tool-tab.active .workspace-tool-tab-close {
   opacity: 1;
-}
-
-.workspace-tool-tab-close:hover {
-  background: var(--ink-overlay-8);
-  color: var(--ink);
 }
 
 .workspace-panel-add.active,
@@ -1028,17 +1024,6 @@ html.resizing-workspace-file-split * {
   width: 100%;
   min-width: 0;
   max-width: 32em;
-}
-
-/* The launcher shares the sidebar's rhythm: a quiet group label over dense
- * rows, so the empty panel reads as navigation rather than a list of cards. */
-.workspace-tool-menu-section h2 {
-  margin: 0 0 var(--space-1);
-  padding: 0 var(--workspace-row-pad-x);
-  color: var(--ink-tertiary);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-ui);
 }
 
 .workspace-tool-menu-list {
@@ -1771,6 +1756,8 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
 
 /* The side inset follows the panel, not the window. */
 .workspace-markdown-reading {
+  box-sizing: border-box;
+  min-width: 0;
   width: min(100%, calc(var(--session-composer-width) + 2 * var(--workspace-reading-gutter, 44px)));
   min-height: 100%;
   color: var(--ink);
@@ -1826,7 +1813,6 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   background: var(--wuu-inline-code-background, var(--surface-chip));
   color: var(--wuu-color-text, var(--ink));
   font-family: var(--wuu-font-family-mono, var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace));
-  font-size: 0.88em;
   padding: 0.1em 0.36em;
 }
 

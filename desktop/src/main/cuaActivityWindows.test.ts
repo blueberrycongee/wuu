@@ -3,13 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ActivitySession, ServerEvent } from "../shared/protocol";
 import type { CUANativePiPEvent } from "./cuaFrameStreams";
 import type { WindowRegistry } from "./windowRegistry";
+import type { ObservationPiPEventSink } from "./cuaActivityWindows";
 import {
   ObservationCoordinator,
-  activityControlMethod,
   pipVisibleForActivity,
-  activityVisibleForThread,
   frameStreamRetryDelay,
-  nativePiPInitialBounds,
   browserPiPInitialBounds,
   observationActivityFromServerEvent,
   observationKey,
@@ -38,19 +36,7 @@ afterEach(() => {
 });
 
 describe("CUA native picture-in-picture", () => {
-  it("scopes the native PiP to the active session", () => {
-    expect(activityVisibleForThread("thread-1", "thread-1")).toBe(true);
-    expect(activityVisibleForThread("thread-1", "thread-2")).toBe(false);
-    expect(activityVisibleForThread("thread-1", undefined)).toBe(false);
-  });
-
   it("places the PiP inside the Wuu window corner and active work area", () => {
-    expect(nativePiPInitialBounds(
-      { x: 100, y: 80, width: 1200, height: 800 },
-      { x: 0, y: 0, width: 1440, height: 900 },
-    )).toEqual({ x: 1028, y: 92, width: 260, height: 170 });
-    expect(nativePiPInitialBounds(undefined, { x: 1440, y: 0, width: 1200, height: 900 }))
-      .toEqual({ x: 2356, y: 24, width: 260, height: 170 });
     expect(browserPiPInitialBounds(
       { x: 100, y: 80, width: 1200, height: 800 },
       { x: 0, y: 0, width: 1440, height: 900 },
@@ -62,6 +48,55 @@ describe("CUA native picture-in-picture", () => {
     expect(frameStreamRetryDelay(2)).toBe(4000);
     expect(frameStreamRetryDelay(3)).toBe(8000);
     expect(frameStreamRetryDelay(6)).toBe(16000);
+
+    vi.useFakeTimers();
+    let fail: (message: string) => void = () => undefined;
+    const retarget = vi.fn();
+    const coordinator = new ObservationCoordinator(
+      { mainWindow: () => undefined } as unknown as WindowRegistry, undefined,
+      (_activity, _key, sink) => {
+        fail = sink.onFailure;
+        return {
+          start: vi.fn(), setVisible: vi.fn(), setLive: vi.fn(), updateActivity: vi.fn(),
+          animateInteraction: vi.fn(), suspendContent: vi.fn(), retarget,
+          stop: (onStopped?: () => void) => onStopped?.(),
+        };
+      },
+    );
+    coordinator.setActiveThread("thread-1");
+    coordinator.update(activity({ execution_id: "turn-1" }));
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      fail("Screen Recording permission required");
+      vi.advanceTimersByTime(frameStreamRetryDelay(attempt));
+    }
+    expect(retarget).toHaveBeenCalledTimes(3);
+    coordinator.update(activity({ execution_id: "turn-1", updated_at: "2026-07-10T10:00:02Z" }));
+    vi.advanceTimersByTime(60_000);
+    expect(retarget).toHaveBeenCalledTimes(3);
+
+    coordinator.showForThread("thread-1");
+    expect(retarget).toHaveBeenCalledTimes(4);
+    fail("Permission still required");
+    coordinator.update(activity({ execution_id: "turn-2", updated_at: "2026-07-10T10:00:03Z" }));
+    expect(retarget).toHaveBeenCalledTimes(5);
+    vi.advanceTimersByTime(60_000);
+    expect(retarget).toHaveBeenCalledTimes(5);
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      fail("Permission still required");
+      vi.advanceTimersByTime(frameStreamRetryDelay(attempt));
+    }
+    expect(retarget).toHaveBeenCalledTimes(8);
+
+    coordinator.showForThread("thread-1");
+    const failFirst = fail;
+    failFirst("Retry while another conversation is in view");
+    // Another thread's task gets a card of its own instead of the retrying one.
+    coordinator.setActiveThread("thread-2");
+    coordinator.update(activity({ thread_id: "thread-2", execution_id: "other-turn", target: "other-app" }));
+    expect(retarget).toHaveBeenCalledTimes(9);
+    vi.advanceTimersByTime(frameStreamRetryDelay(1));
+    expect(retarget).toHaveBeenCalledTimes(10);
+    void coordinator.shutdown();
   });
 
   it("accepts CUA and browser lifecycle notifications", () => {
@@ -75,38 +110,12 @@ describe("CUA native picture-in-picture", () => {
       .toBe("activity-1");
   });
 
-  it("maps Activity controls onto RPC methods", () => {
-    expect(activityControlMethod("takeover")).toBe("activity/takeover");
-    expect(activityControlMethod("release")).toBe("activity/release");
-    expect(activityControlMethod("stop")).toBe("activity/stop");
-  });
-
   it("rebinds native preview when resolved process or window changes", () => {
     expect(observationKey(activity({ process_id: 42 }))).not.toBe(observationKey(activity({ process_id: 43 })));
     expect(observationKey(activity({ window_id: 99 }))).not.toBe(observationKey(activity({ window_id: 100 })));
   });
 
-  it("routes native control to the owning workdir and waits for authoritative state", async () => {
-    let emit: ((event: CUANativePiPEvent) => void) | undefined;
-    const updateActivity = vi.fn();
-    const control = vi.fn(async (current: ActivitySession) => ({ ...current, controller: "user" as const, state: "user_controlled" as const, updated_at: "2026-07-10T10:00:02Z" }));
-    const coordinator = new ObservationCoordinator(
-      { mainWindow: () => undefined } as unknown as WindowRegistry, undefined,
-      (_activity, _key, sink) => {
-        emit = sink.onEvent;
-        return { start: vi.fn(), setVisible: vi.fn(), setLive: vi.fn(), updateActivity, animateInteraction: vi.fn(), stop: vi.fn() };
-      }, control,
-    );
-    coordinator.setActiveThread("thread-1");
-    coordinator.update(activity({ plugin_id: "community-driver", process_id: 0 }));
-    expect(emit).toBeUndefined();
-    coordinator.update(activity({ plugin_id: "community-driver" }));
-    emit?.({ event: "control", action: "takeover" });
-    await vi.waitFor(() => expect(updateActivity).toHaveBeenLastCalledWith(expect.objectContaining({ controller: "user" })));
-    expect(control).toHaveBeenCalledWith(expect.objectContaining({ workdir: "/repo", id: "activity-1" }), "takeover");
-  });
-
-  it("waits for the outgoing helper to close and coalesces replacements", () => {
+  it("retains independent native targets without stopping earlier helpers", () => {
     const events: string[] = [];
     const helpers: Array<{ target: string; finishStop?: () => void }> = [];
     const coordinator = new ObservationCoordinator(
@@ -131,23 +140,25 @@ describe("CUA native picture-in-picture", () => {
     coordinator.update(activity({ target: "app-b", updated_at: "2026-07-10T10:00:02Z" }));
     coordinator.update(activity({ target: "app-c", updated_at: "2026-07-10T10:00:03Z" }));
 
-    expect(events).toEqual(["start:app-a", "stop:app-a"]);
-    expect(helpers).toHaveLength(1);
-
+    // Every target retains its stream until it disappears or teardown closes it.
+    expect(events).toEqual(["start:app-a", "start:app-b", "start:app-c"]);
     helpers[0].finishStop?.();
-    expect(events).toEqual(["start:app-a", "stop:app-a", "start:app-c"]);
-    expect(helpers.map((helper) => helper.target)).toEqual(["app-a", "app-c"]);
+    helpers[1].finishStop?.();
+    expect(events).toEqual(["start:app-a", "start:app-b", "start:app-c"]);
+    expect(helpers.map((helper) => helper.target)).toEqual(["app-a", "app-b", "app-c"]);
   });
 
-  it("does not start an update while a user-closed helper is still stopping", () => {
+  it("keeps a user-closed preview hidden across activity updates until explicitly reopened", () => {
     vi.useFakeTimers();
     vi.setSystemTime("2026-07-10T10:00:01.500Z");
     const events: string[] = [];
     const helpers: Array<{ target: string; finishStop?: () => void }> = [];
+    const sinks: ObservationPiPEventSink[] = [];
     const coordinator = new ObservationCoordinator(
       { mainWindow: () => undefined } as unknown as WindowRegistry,
       undefined,
-      (next) => {
+      (next, _key, sink) => {
+        sinks.push(sink);
         const helper: { target: string; finishStop?: () => void } = { target: next.target ?? "" };
         helpers.push(helper);
         return {
@@ -164,17 +175,16 @@ describe("CUA native picture-in-picture", () => {
     const initial = activity({ target: "app-a" });
     coordinator.setActiveThread("thread-1");
     coordinator.update(initial);
-    const testCoordinator = coordinator as unknown as {
-      handlePiPEvent: (key: string, event: CUANativePiPEvent) => void;
-    };
-    testCoordinator.handlePiPEvent(observationKey(initial), { event: "user_close" });
+    sinks[0].onEvent({ event: "user_close" });
     coordinator.update(activity({ target: "app-b", updated_at: "2026-07-10T10:00:02Z" }));
 
-    expect(events).toEqual(["start:app-a", "stop:app-a"]);
-    expect(helpers).toHaveLength(1);
-
-    helpers[0].finishStop?.();
-    expect(events).toEqual(["start:app-a", "stop:app-a", "start:app-b"]);
+    expect(events).toEqual(["start:app-a", "start:app-b"]);
+    expect(helpers).toHaveLength(2);
+    coordinator.setActiveThread(undefined);
+    coordinator.setActiveThread("thread-1");
+    expect(events).toEqual(["start:app-a", "start:app-b"]);
+    coordinator.showForThread("thread-1");
+    expect(events).toEqual(["start:app-a", "start:app-b"]);
     expect(helpers.map((helper) => helper.target)).toEqual(["app-a", "app-b"]);
   });
 });
@@ -206,17 +216,20 @@ describe("browser observation surface", () => {
     stop: (onStopped?: () => void) => void;
   };
 
-  function makeCoordinator(): {
+  function makeCoordinator(snapshot?: (threadID: string) => Promise<ActivitySession[]>): {
     coordinator: ObservationCoordinator;
     surfaces: FakeSurface[];
+    sinks: ObservationPiPEventSink[];
     stops: string[];
   } {
     const surfaces: FakeSurface[] = [];
+    const sinks: ObservationPiPEventSink[] = [];
     const stops: string[] = [];
     const coordinator = new ObservationCoordinator(
       { mainWindow: () => undefined } as unknown as WindowRegistry,
-      undefined,
-      (next) => {
+      snapshot,
+      (next, _key, sink) => {
+        sinks.push(sink);
         const surface: FakeSurface = {
           start: vi.fn(),
           setVisible: vi.fn(),
@@ -233,7 +246,7 @@ describe("browser observation surface", () => {
         return surface;
       },
     );
-    return { coordinator, surfaces, stops };
+    return { coordinator, surfaces, sinks, stops };
   }
 
   it("shows completion only for a successful final turn on the visible owning browser", () => {
@@ -271,18 +284,22 @@ describe("browser observation surface", () => {
     coordinator.handleServerEvent(event);
     expect(completed).not.toHaveBeenCalled();
     coordinator.setBrowserInPanel(() => false);
+    // Offscreen completion retires the card without presenting it in another session.
     coordinator.setActiveThread("other");
     coordinator.handleServerEvent(event);
     expect(completed).not.toHaveBeenCalled();
+    coordinator.setActiveThread("thread-1");
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false, true);
     void coordinator.shutdown();
   });
 
   it("passes the owning browser activity when docking its preview", () => {
     const onExpand = vi.fn();
+    let sink: ObservationPiPEventSink | undefined;
     const coordinator = new ObservationCoordinator(
       { mainWindow: () => undefined } as unknown as WindowRegistry,
       undefined,
-      () => ({
+      (_next, _key, next) => (sink = next, {
         start: vi.fn(),
         setVisible: vi.fn(),
         animateInteraction: vi.fn(),
@@ -294,10 +311,7 @@ describe("browser observation surface", () => {
     coordinator.setActiveThread("thread-2");
     coordinator.update(current);
 
-    const internal = coordinator as unknown as {
-      handlePiPEvent: (key: string, event: CUANativePiPEvent) => void;
-    };
-    internal.handlePiPEvent(observationKey(current), { event: "expand" });
+    sink?.onEvent({ event: "expand" });
 
     expect(onExpand).toHaveBeenCalledWith(current);
   });
@@ -313,6 +327,7 @@ describe("browser observation surface", () => {
       isDestroyed: () => false,
       isVisible: () => true,
       isMinimized: () => false,
+      isFocused: () => true,
       getContentBounds: () => content,
       webContents: { getZoomFactor: () => 1 },
     });
@@ -351,7 +366,7 @@ describe("browser observation surface", () => {
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
     coordinator.setBrowserInPanel(() => true);
     coordinator.refreshBrowserPresentation();
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false, true);
     expect(surfaces).toHaveLength(1);
 
     coordinator.setBrowserInPanel(() => false);
@@ -367,27 +382,27 @@ describe("browser observation surface", () => {
     coordinator.setActiveThread("thread-1");
     coordinator.setBrowserInPanel(() => true);
     coordinator.update(browserActivity());
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false, true);
     coordinator.setBrowserInPanel(() => false);
     coordinator.refreshBrowserPresentation();
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
   });
 
-  it.each(["thread-2", undefined])("keeps an inactive preview hidden during presentation refresh (%s)", async (threadID) => {
+  it.each(["thread-2", undefined])("hides a card while another conversation is in view (%s)", async (threadID) => {
     const { coordinator, surfaces } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity());
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
 
     coordinator.setActiveThread(threadID);
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false, true);
     coordinator.setBrowserInPanel(() => false);
     coordinator.refreshBrowserPresentation();
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false, true);
 
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:02Z" }));
     coordinator.refreshBrowserPresentation();
-    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(false, true);
     expect(surfaces).toHaveLength(1);
 
     coordinator.setActiveThread("thread-1");
@@ -400,21 +415,29 @@ describe("browser observation surface", () => {
     const { coordinator, surfaces } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity());
+    const preciseUpdate = browserActivity({ updated_at: "2026-07-10T10:00:01.000000002Z" });
+    coordinator.update(preciseUpdate);
+    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(preciseUpdate, false);
+    coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:01.000000001Z" }));
+    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(preciseUpdate, false);
     coordinator.update(browserActivity({ state: "stopped", controller: "none", updated_at: "2026-07-10T10:00:02Z" }));
     expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
     expect(surfaces).toHaveLength(1); // kept, CUA observation semantics
 
     coordinator.update(browserActivity({ updated_at: "2026-07-10T10:00:03Z" }));
+    expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
+    expect(surfaces[0].updateActivity).toHaveBeenLastCalledWith(expect.objectContaining({ state: "stopped", controller: "none" }), true);
     coordinator.setActiveThread(undefined);
     coordinator.setActiveThread("thread-1");
     expect(surfaces[0].setLive).toHaveBeenLastCalledWith(false);
     coordinator.update(browserActivity({ id: "next-activity", updated_at: "2026-07-10T10:00:04Z" }));
-    expect(surfaces[1].setLive).toHaveBeenLastCalledWith(true);
+    expect(surfaces).toHaveLength(1);
+    expect(surfaces[0].setLive).toHaveBeenLastCalledWith(true);
   });
 
-  it("reuses a retargetable browser surface across tab activity identities", () => {
-    const { coordinator, surfaces, stops } = makeCoordinator();
+  it("retains separate browser surfaces and closes only the selected target", () => {
+    const { coordinator, surfaces, sinks, stops } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity());
     const retarget = vi.fn();
@@ -422,36 +445,58 @@ describe("browser observation surface", () => {
     const next = browserActivity({ id: "activity-2", target: "tab-2", updated_at: "2026-07-10T10:00:02Z" });
     coordinator.update(next);
     expect(stops).toEqual([]);
-    expect(surfaces).toHaveLength(1);
-    expect(retarget).toHaveBeenCalledWith(next, expect.any(Object));
+    expect(surfaces).toHaveLength(2);
+    expect(retarget).not.toHaveBeenCalled();
     expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
-    // Controls from the reused window must address the new observation key.
-    retarget.mock.calls[0][1].onEvent({ event: "user_close" });
-    expect(stops).toHaveLength(1);
+    sinks[1].onEvent({ event: "user_close" });
+    expect(stops).toHaveLength(0);
+    expect(surfaces[0].setVisible).toHaveBeenLastCalledWith(true);
+    expect(surfaces[1].setVisible).toHaveBeenLastCalledWith(false, true);
   });
 
-  it("swaps a non-retargetable surface through the serialized replacement", () => {
+  it("starts a second tab without replacing the first surface", () => {
     const { coordinator, surfaces, stops } = makeCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(browserActivity({ target: "tab-1" }));
     coordinator.update(browserActivity({ target: "tab-2", updated_at: "2026-07-10T10:00:02Z" }));
-    expect(stops).toEqual(["tab-1"]);
+    expect(stops).toEqual([]);
     expect(surfaces).toHaveLength(2);
     expect(surfaces[1].start).toHaveBeenCalledTimes(1);
   });
 
-  it("tears the surface down when the tab is gone and does not retry", () => {
+  it("does not reconcile a gone target until its source changes or the user retries", async () => {
     vi.useFakeTimers();
-    const { coordinator, surfaces, stops } = makeCoordinator();
+    let latest = browserActivity({ execution_id: "turn-1" });
+    const { coordinator, surfaces, sinks, stops } = makeCoordinator(async () => [latest]);
     coordinator.setActiveThread("thread-1");
-    coordinator.update(browserActivity());
-    const testCoordinator = coordinator as unknown as {
-      handlePiPGone: (key: string) => void;
-    };
-    testCoordinator.handlePiPGone(observationKey(browserActivity()));
+    coordinator.update(latest);
+    sinks[0].onGone();
     expect(stops).toEqual(["tab-1"]);
-    vi.advanceTimersByTime(60_000);
-    expect(surfaces).toHaveLength(1); // no retry respawn
+    const unrelated: ServerEvent = { workdir: "/repo", kind: "notification", message: {
+      method: "turn/started", params: { thread_id: "thread-1" },
+    } };
+    coordinator.handleServerEvent(unrelated);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(surfaces).toHaveLength(1);
+    coordinator.setActiveThread(undefined);
+    coordinator.setActiveThread("thread-1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(surfaces).toHaveLength(1);
+
+    latest = browserActivity({ execution_id: "turn-1", target: "tab-2", updated_at: "2026-07-10T10:00:02Z" });
+    coordinator.update(latest);
+    expect(surfaces).toHaveLength(2);
+    sinks[1].onGone();
+    coordinator.update(browserActivity({ execution_id: "turn-1" }));
+    coordinator.update({ ...latest, updated_at: "2026-07-10T10:00:02.5Z" });
+    expect(surfaces).toHaveLength(2);
+    latest = { ...latest, execution_id: "turn-2", updated_at: "2026-07-10T10:00:03Z" };
+    coordinator.update(latest);
+    expect(surfaces).toHaveLength(3);
+    sinks[2].onGone();
+    coordinator.showForThread("thread-1");
+    expect(surfaces).toHaveLength(4);
+    await coordinator.shutdown();
   });
 
   it("drops the surface and observation on workdir teardown", () => {
@@ -469,26 +514,93 @@ describe("browser observation surface", () => {
 });
 
 
-it("shutdown waits for preview exit and prevents a queued replacement from starting", async () => {
-  let stopped: (() => void) | undefined;
+describe("observation card stack", () => {
+  function makeStack() {
+    const cards: Array<{
+      thread: string;
+      sink: ObservationPiPEventSink;
+      position: ReturnType<typeof vi.fn>;
+      raise: ReturnType<typeof vi.fn>;
+    }> = [];
+    const raised: string[] = [];
+    const coordinator = new ObservationCoordinator(
+      { mainWindow: () => undefined } as unknown as WindowRegistry,
+      undefined,
+      (next, _key, sink) => {
+        const card = { thread: next.thread_id, sink, position: vi.fn(), raise: vi.fn(() => raised.push(next.thread_id)) };
+        cards.push(card);
+        return {
+          start: vi.fn(), setVisible: vi.fn(), setLive: vi.fn(), updateActivity: vi.fn(), setTurnCompleted: vi.fn(),
+          animateInteraction: vi.fn(), stop: (onStopped?: () => void) => onStopped?.(),
+          setStackPosition: card.position, raise: card.raise,
+          stackLead: () => ({ frame: { x: 24, y: 24, width: 320, height: 240 }, alignment: "top-left" as const, dragging: false }),
+        };
+      },
+    );
+    return { coordinator, cards, raised };
+  }
+
+  it("does not present another session when the selected card completes", () => {
+    const { coordinator, cards, raised } = makeStack();
+    coordinator.setActiveThread("thread-b");
+    coordinator.update(activity({ thread_id: "thread-a" }));
+    coordinator.update(activity({ thread_id: "thread-b", target: "com.apple.Notes" }));
+    const [a, b] = cards;
+    expect(a.position).not.toHaveBeenCalled();
+    raised.length = 0;
+    b.sink.onEvent({ event: "completion_expired" });
+    expect(a.position).not.toHaveBeenCalled();
+    expect(raised).toEqual([]);
+    void coordinator.shutdown();
+  });
+
+  it("restores the stack order when cards show again", () => {
+    const { coordinator, cards, raised } = makeStack();
+    coordinator.update(activity({ thread_id: "thread-a" }));
+    coordinator.update(activity({ thread_id: "thread-b", target: "com.apple.Notes" }));
+    coordinator.setActiveThread("thread-a");
+    raised.length = 0;
+    // A hidden host shows its cards again one by one; the last shown lands on top.
+    cards[0].sink.onEvent({ event: "shown" });
+    cards[1].sink.onEvent({ event: "shown" });
+    expect(raised.at(-1)).toBe("thread-a");
+    void coordinator.shutdown();
+  });
+
+  it("keeps the chosen corner for a card that starts after the stack emptied", () => {
+    const { coordinator, cards } = makeStack();
+    coordinator.setActiveThread("thread-a");
+    coordinator.update(activity({ thread_id: "thread-a" }));
+    cards[0].sink.onGone();
+    coordinator.setActiveThread("thread-b");
+    coordinator.update(activity({ thread_id: "thread-b", target: "com.apple.Notes" }));
+    expect(cards[1].position).toHaveBeenLastCalledWith(0, expect.objectContaining({ alignment: "top-left" }));
+    void coordinator.shutdown();
+  });
+});
+
+it("shutdown waits for every card to exit and starts nothing afterwards", async () => {
+  const stops: Array<() => void> = [];
   const starts = vi.fn();
   const coordinator = new ObservationCoordinator(
     { mainWindow: () => undefined } as unknown as WindowRegistry,
     undefined,
     () => ({
       start: starts, setVisible: vi.fn(), setLive: vi.fn(), animateInteraction: vi.fn(),
-      stop: (callback?: () => void) => { stopped = callback; },
+      stop: (callback?: () => void) => { if (callback) stops.push(callback); },
     }),
   );
   coordinator.setActiveThread("thread-1");
   coordinator.update(activity());
   coordinator.update(activity({ process_id: 43, updated_at: "2026-07-10T10:00:02Z" }));
+  coordinator.update(activity({ thread_id: "thread-2", updated_at: "2026-07-10T10:00:02Z" }));
+  expect(starts).toHaveBeenCalledTimes(3);
   let finished = false;
   const done = coordinator.shutdown().then(() => { finished = true; });
   await Promise.resolve();
   expect(finished).toBe(false);
-  stopped?.();
+  for (const stop of stops) stop();
   await done;
   coordinator.update(activity({ updated_at: "2026-07-10T10:00:03Z" }));
-  expect(starts).toHaveBeenCalledTimes(1);
+  expect(starts).toHaveBeenCalledTimes(3);
 });

@@ -10,12 +10,13 @@ State lives in workspace-scoped plugin storage, keyed by session. Each continuat
 
 Token usage is recorded at settled turn boundaries, including the turn that creates the goal, and requires the provider to report usage. Usage covers input and output tokens reported for this session, not descendant sessions or a live in-flight estimate. Time counts the active portion of observed model turns, excluding time spent paused or waiting in the queue. `get_goal` returns the most recently settled usage; the completion tool's own turn settles afterward. Objectives are limited to 8 KiB so sourced goal context fits the public pre-step message boundary.
 
-The desktop build automatically discovers `cmd/wuu-goal-plugin`. Rebuild with `npm --prefix desktop run build:core`, then start the desktop app. For a standalone helper, run `go build -o bin/wuu-goal-plugin ./cmd/wuu-goal-plugin` and configure `WUU_GOAL_PLUGIN_HELPER` to its absolute path.
+The canonical runtime is `plugins/goal/src/index.ts`, using the public TypeScript plugin SDK. Run `npm ci --prefix plugins` and `npm --prefix plugins run build` to rebuild the self-contained bundled runtimes. For local iteration, run `wuu plugin dev plugins/goal`; the ordinary plugin watcher rebuilds and reloads the same package. Node 22.7 or newer is required.
 
 Validation:
 
 ```sh
-go test -race ./plugins/goal
+npm --prefix plugins run typecheck
+node scripts/bundled-plugins-e2e.mjs --plugin=goal
 go test -race ./internal/appserver -run 'TestGoalExtension|TestSharedSessionPlugin'
 cd desktop && npx vitest run src/renderer/plugins/GoalPlugin.test.tsx
 ```

@@ -1,0 +1,257 @@
+import { app, globalShortcut, Notification, type Rectangle } from "electron";
+import { execFile, type ChildProcess } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { release } from "node:os";
+import { createRequire } from "node:module";
+const requireFromMain = createRequire(import.meta.url);
+import type { AppContextSettings, AppContextSnapshot, AppContextState, SystemPermissionsState } from "../shared/protocol";
+import { normalizeAppContextShortcut } from "../shared/appContextShortcut";
+import { ENABLE_APP_SNAPSHOTS } from "../shared/featureFlags";
+import { writeTextFileAtomicSync } from "./atomicFile";
+import { wuuHomePath } from "./projects";
+
+const defaults: AppContextSettings = { enabled: false, shortcut: "Control+Alt+Space", include_text: false };
+const maxOutputBytes = 24 * 1024 * 1024;
+
+function parseSettings(value: unknown): AppContextSettings {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid app snapshot settings.");
+  const record = value as Record<string, unknown>;
+  if (typeof record.enabled !== "boolean" || typeof record.include_text !== "boolean" || typeof record.shortcut !== "string") {
+    throw new Error("Invalid app snapshot settings.");
+  }
+  const shortcut = normalizeAppContextShortcut(record.shortcut);
+  return { enabled: record.enabled, shortcut, include_text: record.include_text };
+}
+
+function isSnapshot(value: unknown): value is AppContextSnapshot {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Record<string, unknown>;
+  return ["id", "captured_at", "app_name", "bundle_id", "window_title", "image_base64", "available_text"].every(key => typeof item[key] === "string")
+    && typeof item.image_base64 === "string" && item.image_base64.length > 0 && item.image_base64.length <= maxOutputBytes
+    && /^[A-Za-z0-9+/]+=*$/.test(item.image_base64)
+    && typeof item.available_text === "string" && item.available_text.length <= 160_000
+    && ["window_id", "width", "height"].every(key => Number.isSafeInteger(item[key]) && (item[key] as number) > 0)
+    && ["included", "truncated", "not_requested", "permission_missing", "unavailable"].includes(item.text_status as string);
+}
+
+export class AppContextCapture {
+  private readonly file = join(wuuHomePath(), "app-snapshot-settings.json");
+  private readonly helper = app.isPackaged
+    ? join(process.resourcesPath, "app-context", "Wuu App Snapshot.app", "Contents", "MacOS", "wuu-app-context")
+    : join(app.getAppPath(), "build", "app-context", "Wuu App Snapshot.app", "Contents", "MacOS", "wuu-app-context");
+  private readonly bridge = app.isPackaged
+    ? join(process.resourcesPath, "app-context", "capture-target.node")
+    : join(app.getAppPath(), "build", "app-context", "capture-target.node");
+  private pinTarget?: () => string;
+  private guideWindow?: () => Rectangle | null;
+  private owner?: string;
+  private settings = { ...defaults };
+  private registered?: string;
+  private recordingOwner?: string;
+  private child?: ChildProcess;
+  private epoch = 0;
+  private phase: AppContextState["phase"] = "idle";
+  private error?: string;
+  private snapshot?: AppContextSnapshot;
+  private targetName?: string;
+  private notice?: Notification;
+
+  constructor(private readonly notify: (reveal: boolean, owner?: string) => void, private readonly currentOwner: () => string | undefined) {}
+
+  start(): void {
+    if (!ENABLE_APP_SNAPSHOTS) return;
+    try { this.settings = parseSettings(JSON.parse(readFileSync(this.file, "utf8"))); } catch { /* Missing or invalid saved settings use opt-out defaults. */ }
+    if (this.available() && this.settings.enabled) {
+      try { this.register(this.settings.shortcut); } catch (error) { this.error = (error as Error).message; }
+    }
+  }
+
+  private available(): boolean { return ENABLE_APP_SNAPSHOTS && this.helperAvailable(); }
+
+  private helperAvailable(): boolean { return process.platform === "darwin" && Number.parseInt(release(), 10) >= 23 && existsSync(this.helper) && existsSync(this.bridge); }
+
+  state(): AppContextState {
+    if (this.owner && this.owner !== this.currentOwner()) this.cancel();
+    return { available: this.available(), settings: { ...this.settings }, shortcut_registered: Boolean(this.registered),
+      phase: this.phase, ...(this.error ? { error: this.error } : {}), ...(this.snapshot ? { snapshot: this.snapshot } : {}),
+      ...(this.targetName ? { app_name: this.targetName } : {}) };
+  }
+
+  update(value: unknown): AppContextState {
+    const next = parseSettings(value);
+    if (next.enabled && !this.available()) throw new Error("App snapshots require macOS 14 or later and the capture helper. Build or update Wuu on a supported Mac first.");
+    const previousKey = this.registered;
+    if (next.enabled) this.register(next.shortcut);
+    try { writeTextFileAtomicSync(this.file, `${JSON.stringify(next, null, 2)}\n`); }
+    catch (error) {
+      if (this.registered && this.registered !== previousKey) globalShortcut.unregister(this.registered);
+      this.registered = previousKey;
+      throw error;
+    }
+    if (previousKey && previousKey !== (next.enabled ? next.shortcut : undefined)) globalShortcut.unregister(previousKey);
+    this.registered = next.enabled ? next.shortcut : undefined;
+    this.settings = next;
+    this.recordingOwner = undefined;
+    // Any settings change revokes an in-flight one-shot capture.
+    this.cancel();
+    return this.state();
+  }
+
+  private register(shortcut: string): void {
+    if (shortcut === this.registered) return;
+    // Load before registration: the shortcut callback itself must only make a
+    // synchronous metadata call, never launch a process to discover its target.
+    const bridge = requireFromMain(this.bridge) as { pinTarget?: unknown };
+    if (typeof bridge.pinTarget !== "function") throw new Error("The capture target bridge is unavailable. Update Wuu and try again.");
+    this.pinTarget = bridge.pinTarget as () => string;
+    // Never unregister an accelerator owned by another desktop feature.
+    if (globalShortcut.isRegistered(shortcut) || !globalShortcut.register(shortcut, () => {
+      if (this.child) this.cancel(); else this.capture();
+    })) throw new Error("That shortcut is already in use. Choose another shortcut.");
+    this.registered = shortcut;
+  }
+
+  setShortcutRecording(recording: boolean): AppContextState {
+    if (recording) {
+      const owner = this.currentOwner();
+      if (!owner) throw new Error("Open Wuu's main window before changing the shortcut.");
+      this.recordingOwner = owner;
+      if (this.registered) globalShortcut.unregister(this.registered);
+      this.registered = undefined;
+      this.cancel();
+    } else if (this.recordingOwner) {
+      this.recordingOwner = undefined;
+      if (this.settings.enabled) {
+        try { this.register(this.settings.shortcut); }
+        catch (error) { this.error = (error as Error).message; }
+      }
+      this.notify(false);
+    }
+    return this.state();
+  }
+
+  invalidateOwner(windowID: number): void {
+    if (this.recordingOwner?.startsWith(`${windowID}:`)) this.setShortcutRecording(false);
+    if (this.owner?.startsWith(`${windowID}:`)) this.cancel();
+  }
+
+  cancel(snapshotID?: string): AppContextState {
+    if (snapshotID && this.owner !== this.currentOwner()) {
+      this.cancel();
+      throw new Error("The snapshot window was closed or reloaded. Capture the app again.");
+    }
+    if (snapshotID && this.snapshot?.id !== snapshotID) throw new Error("This snapshot was replaced or discarded. Capture the app again.");
+    this.epoch += 1;
+    this.child?.kill();
+    this.child = undefined;
+    this.notice?.close();
+    this.notice = undefined;
+    this.snapshot = undefined;
+    this.owner = undefined;
+    this.targetName = undefined;
+    this.error = undefined;
+    this.phase = "idle";
+    this.notify(false);
+    return this.state();
+  }
+
+  permissionGuideWindow(): Rectangle | null {
+    this.guideWindow ??= (requireFromMain(this.bridge) as { permissionGuideWindow: () => Rectangle | null }).permissionGuideWindow;
+    return this.guideWindow();
+  }
+
+  async permissionStatus(): Promise<SystemPermissionsState> {
+    if (!this.helperAvailable()) return { available: false, screen: false, accessibility: false };
+    // Each check and each capture runs in a new process, so granting access
+    // does not require discarding the user's desktop window or conversations.
+    const output = await new Promise<string>((resolve, reject) => {
+      execFile(this.helper, ["--status"],
+        { timeout: 5_000, maxBuffer: 16_384, encoding: "utf8", env: this.helperEnvironment() },
+        (error, stdout) => error ? reject(error) : resolve(stdout));
+    });
+    const result = JSON.parse(output);
+    if (result.ok !== true || typeof result.permissions?.screen_recording !== "boolean" || typeof result.permissions?.accessibility !== "boolean") {
+      throw new Error("Could not read macOS permissions.");
+    }
+    return { available: true, screen: result.permissions.screen_recording, accessibility: result.permissions.accessibility };
+  }
+
+  private helperEnvironment(): NodeJS.ProcessEnv {
+    // The capture process never receives model credentials or inherited tool settings.
+    return { HOME: app.getPath("home"), PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "en_US.UTF-8" };
+  }
+
+  private capture(): void {
+    if (!this.settings.enabled || !this.available()) return;
+    this.cancel();
+    const epoch = this.epoch;
+    const owner = this.currentOwner();
+    this.owner = owner;
+    if (!owner) {
+      this.phase = "error";
+      this.error = "Open Wuu's main window before using the app snapshot shortcut.";
+      if (Notification.isSupported()) {
+        this.notice = new Notification({ title: "App snapshot unavailable", body: this.error, silent: true });
+        this.notice.show();
+      }
+      return;
+    }
+    let target: string;
+    try {
+      target = this.pinTarget!();
+      if (typeof target !== "string" || target.length > 2048) throw new Error("The app capture target could not be identified.");
+    } catch (error) {
+      this.phase = "error";
+      this.error = (error as Error).message;
+      this.notify(true, owner);
+      return;
+    }
+    this.phase = "capturing";
+    this.notify(false, owner);
+    const args = ["--capture", "--exclude-pid", String(process.pid), "--target", target, ...(this.settings.include_text ? ["--include-text"] : [])];
+    let progress = "";
+    this.child = execFile(this.helper, args, { timeout: 12_000, maxBuffer: maxOutputBytes, encoding: "utf8", env: this.helperEnvironment() }, (error, stdout) => {
+      if (epoch !== this.epoch || owner !== this.currentOwner()) return;
+      this.child = undefined;
+      this.notice?.close();
+      this.notice = undefined;
+      let result: { ok?: boolean; message?: string; snapshot?: unknown } | undefined;
+      try { result = JSON.parse(stdout.trim().split("\n").at(-1) ?? ""); } catch { /* The process may have timed out or exited before producing a result. */ }
+      if (!error && result?.ok && isSnapshot(result.snapshot)) {
+        this.snapshot = result.snapshot;
+        this.phase = "ready";
+      } else {
+        this.phase = "error";
+        this.error = typeof result?.message === "string" ? result.message : "App capture did not finish. Keep the app window visible, check permissions, and try again.";
+      }
+      // Only the terminal result may reveal Wuu. The helper pins and revalidates
+      // the exact shortcut-pinned target before this point; no last-app inference is used.
+      this.notify(true, owner);
+    });
+    this.child.stdout?.on("data", (chunk: Buffer | string) => {
+      if (epoch !== this.epoch || owner !== this.currentOwner() || this.targetName) return;
+      progress += chunk.toString();
+      const newline = progress.indexOf("\n");
+      if (newline < 0) { if (progress.length > 4096) progress = ""; return; }
+      if (newline > 4096) { progress = ""; return; }
+      try {
+        const event = JSON.parse(progress.slice(0, newline)) as { event?: string; app_name?: string };
+        if (event.event !== "pinned" || typeof event.app_name !== "string") return;
+        this.targetName = event.app_name;
+        this.notify(false, owner);
+        if (Notification.isSupported()) {
+          this.notice = new Notification({ title: "Capturing app snapshot", body: `${event.app_name}. Press ${this.settings.shortcut} again to cancel.`, silent: true });
+          this.notice.on("click", () => this.cancel());
+          this.notice.show();
+        }
+      } catch { /* Progress is optional; the bounded terminal response is authoritative. */ }
+    });
+  }
+
+  dispose(): void {
+    this.cancel();
+    if (this.registered) globalShortcut.unregister(this.registered);
+    this.registered = undefined;
+  }
+}

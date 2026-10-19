@@ -4,13 +4,77 @@ Remote control connects a paired client to a Wuu host through a Relay. The host
 runs the agent and accesses the workspace; the Relay routes the end-to-end encrypted
 app-server connection. Pairing grants control of the host, not just a read-only view.
 
-All production desktop builds, including local packages, hide account and
-remote-control UI until phone access ships. These entries remain available through
-`make dev`; setting `VITE_ENABLE_ACCOUNT=true` or `VITE_ENABLE_REMOTE_CONTROL=true`
-does not enable them in a production build. This
-guide covers the source CLI and development client, not a promised phone setup
-screen in the released desktop. Build the CLI using the
-[development guide](../project/development.md).
+Phone pairing is a development preview: start the desktop with `npm --prefix desktop run dev:remote`
+to show Settings → Phone access and pair the native iOS app without an account.
+Release builds hide the phone access page until mobile release acceptance is complete. Build the app from [the native client project](../../../clients/native/README.md);
+there is no public App Store distribution yet. Account login on the desktop remains
+development-only. Build the CLI using the [development guide](../project/development.md).
+
+## Connect the iOS app
+
+1. Keep Wuu open on your computer. In Settings → Phone access, allow access and
+   show a pairing code.
+2. Put the phone on the same Wi-Fi, or configure a reachable Tailscale address or
+   relay as described below. In the app, choose Connect computer and scan the
+   pairing code, or paste its link and choose Connect.
+3. Choose a conversation, or start a new one and select a working folder. You can
+   also enter an existing absolute folder path on the computer. Messages and task
+   controls use the encrypted connection to that computer.
+
+Open **… → Conversation settings** to choose an engine before sending the first
+message. The list comes from the connected computer's enabled, available engines.
+Existing conversations display their bound engine; start a new conversation to use
+another one. The same page offers models, reasoning and permission modes exposed
+by the selected engine. Changes require an online computer and an idle task.
+iOS remembers saved model, reasoning and permission choices for new conversations
+using the same computer and engine, including after relaunch; account connections
+keep separate preferences. This includes Unrestricted access after confirmation.
+Existing conversations retain their own settings. Removed models fall back to the
+computer's defaults without discarding a permission choice that the engine still
+supports. Engine installation, sign-in and credentials remain on the computer.
+
+The app saves the pinned computer identity and phone key in the iOS keychain.
+It restores the last computer, folder and conversation after relaunch. Returning
+from the background creates a fresh encrypted connection; sent messages are never
+automatically replayed. The computer must be online to create, send or stop work.
+Account-based history sync and notifications require an account connection.
+
+While a reply is running, follow-ups wait in a compact queue above the input.
+Tap a preview to read it in full, remove it, or steer the current reply. Pending
+steering can be moved back to the queue. Once the computer starts processing a
+message, it leaves the queue. Scroll up to load older messages automatically;
+tap an operation summary to see its details. When the final answer arrives, preceding
+process text and tools fold into a summary. Images read or inspected by tools stay
+inside the operation details and load when opened; explicitly presented images
+remain visible in the conversation. Published image previews and originals load
+through the encrypted connection when needed; opening an image checks its stored
+content digest.
+
+The native iOS and Android apps render Mermaid code blocks offline, including
+while a reply is arriving. Incomplete syntax keeps the last valid diagram until
+more text arrives; invalid final syntax shows the source. Use View source or Copy
+code to inspect it, and scroll inside wide or tall diagrams. Diagram colors and
+text size follow the phone's appearance settings.
+
+Long-press your message bubble or attachments to copy, edit, select text, or
+share. Replies show copy and fork buttons after their turn finishes. Forking lets
+you choose the current folder or a new Git worktree based on the current commit;
+a new worktree requires a Git repository. The new conversation initially loads
+recent history, with older messages available by scrolling up.
+Editing an earlier user message keeps its attachments and replaces subsequent
+conversation when you send it again. Cancel leaves history intact. Editing requires
+an online computer, an idle writable conversation, and no pending messages.
+
+For Tailscale or a reverse proxy, configure the desktop process with
+`WUU_WEB_URL` set to the reachable HTTP(S) origin and `WUU_WEB_LISTEN` set to the
+local address to listen on (for example, a Tailscale address and port). For a
+separate relay, also set `WUU_WEB_RELAY_URL` to its `wss://…/v1/connect` endpoint.
+The pairing code carries that endpoint. Both devices must be able to reach it;
+installing Tailscale alone does not change an already saved relay address.
+Generate a new code and pair again after changing the advertised endpoint.
+
+Removing a computer on the phone forgets its local identity. To revoke that
+phone's access, remove the device in the computer's Phone access settings.
 
 ## Prepare a Relay
 

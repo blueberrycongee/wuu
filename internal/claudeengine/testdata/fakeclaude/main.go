@@ -18,6 +18,17 @@ func send(v any) {
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		if ready := os.Getenv("WUU_TEST_CLAUDE_VERSION_READY"); ready != "" {
+			if err := os.WriteFile(ready, nil, 0600); err != nil {
+				panic(err)
+			}
+			for {
+				if _, err := os.Stat(os.Getenv("WUU_TEST_CLAUDE_VERSION_GATE")); err == nil {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
 		fmt.Println("2.1.226 (fake)")
 		return
 	}
@@ -134,6 +145,24 @@ func main() {
 				continue
 			}
 		}
+		if prompt, ok := envelope.Message.Content.(string); ok && strings.HasPrefix(prompt, "provider_error") {
+			if prompt == "provider_error_partial" {
+				send(map[string]any{"type": "stream_event", "event": map[string]any{
+					"type": "content_block_delta", "index": 0,
+					"delta": map[string]any{"type": "text_delta", "text": "已检查仓库结构。"},
+				}})
+			}
+			const diagnostic = "API Error: Request rejected (429) · [1309]套餐已到期，请续订后重试。"
+			send(map[string]any{"type": "assistant", "error": "rate_limit", "message": map[string]any{
+				"role": "assistant", "content": []any{map[string]any{"type": "text", "text": diagnostic}},
+			}})
+			if prompt == "provider_error_close" {
+				return
+			}
+			send(map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true, "errors": []string{diagnostic}})
+			continue
+		}
+
 		if strings.Contains(line, "wait_forever") {
 			send(map[string]any{
 				"type": "stream_event",

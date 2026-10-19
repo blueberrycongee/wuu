@@ -9,7 +9,10 @@
 
 :root {
   --control-size-inline: max(28px, round(nearest, calc(var(--font-ui) * 1.4 + 8px), 2px));
-  --control-size-toolbar: max(32px, var(--control-field-height, calc(var(--font-ui) * 1.4 + 12px)));
+  /* Icon-only actions follow their glyphs, not text-field height. */
+  --control-size-toolbar: calc(var(--icon-size) + 12px);
+  --control-icon-size-dismiss: min(var(--icon-size-xs), 14px);
+  --control-size-dismiss: calc(var(--control-icon-size-dismiss) + 12px);
   --control-size-roomy: max(36px, var(--control-field-height, calc(var(--font-ui) * 1.4 + 12px)));
   --control-size-touch: 44px;
   --control-toolbar-gap: 8px;
@@ -20,13 +23,13 @@
 
 :is(.icon-button, .settings-icon-button, .composer-tool-button,
     .sidebar-row-icon-button, .sidebar-functional-action, .sidebar-notifications-button,
-    .session-tab-close, .workspace-tool-tab-close) {
+    .session-tab-close, .workspace-tool-tab-close, .composer-attachment-card-remove) {
   --control-icon-size: var(--icon-size);
   --control-icon-stroke: var(--icon-stroke);
 }
 
-:is(.session-tab-close, .workspace-tool-tab-close) {
-  --control-icon-size: var(--icon-size-sm);
+:is(.session-tab-close, .workspace-tool-tab-close, .composer-attachment-card-remove) {
+  --control-icon-size: var(--control-icon-size-dismiss);
 }
 
 /* Row actions share the navigation glyph scale. Utility classes must not
@@ -43,7 +46,7 @@
 
 :is(.icon-button, .settings-icon-button, .composer-tool-button,
     .sidebar-row-icon-button, .sidebar-functional-action, .sidebar-notifications-button,
-    .session-tab-close, .workspace-tool-tab-close) > :is(svg.wuu-icon, svg.lucide) {
+    .session-tab-close, .workspace-tool-tab-close, .composer-attachment-card-remove) > :is(svg.wuu-icon, svg.lucide) {
   display: block;
   flex: 0 0 auto;
   width: var(--control-icon-size);
@@ -52,9 +55,23 @@
 }
 
 :is(.session-tab-close, .workspace-tool-tab-close) {
-  width: var(--control-size-inline);
-  height: var(--control-size-inline);
+  width: var(--control-size-dismiss);
+  height: var(--control-size-dismiss);
   color: var(--ink-tertiary);
+}
+
+/* Inset the visible feedback without shrinking the dismissal target. */
+:is(.session-tab-close, .workspace-tool-tab-close,
+    .composer-document-card .composer-attachment-card-remove) {
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  background-clip: content-box;
+}
+
+:is(.session-tab-close, .workspace-tool-tab-close,
+    .composer-document-card .composer-attachment-card-remove):hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
 }
 
 .title-actions,
@@ -101,7 +118,8 @@ html[data-focus-modality="keyboard"] :is(
   .composer-tool-button,
   .sidebar-row-icon-button,
   .session-tab-close,
-  .workspace-tool-tab-close
+  .workspace-tool-tab-close,
+  .composer-document-card .composer-attachment-card-remove
 ):focus-visible {
   outline-offset: -2px;
 }

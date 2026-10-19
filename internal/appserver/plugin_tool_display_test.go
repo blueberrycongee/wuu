@@ -10,7 +10,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
-	pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
 )
 
 type toolLabelTestClient struct {
@@ -28,13 +27,8 @@ func (*toolLabelTestClient) ExecuteTool(context.Context, pluginhost.ToolExecuteP
 }
 
 func TestPluginToolLabelsSurvivePersistenceAndRestoreLegacyCalls(t *testing.T) {
-	// Exercise a Go extension's wire declaration through the host schema.
-	raw, err := json.Marshal([]pluginapi.Tool{{ID: "inspect", Description: "Inspect session state", InputSchema: map[string]any{"type": "object"}, Display: &pluginapi.ToolDisplay{
-		Label: "Inspect", LabelTranslations: map[string]string{"zh-CN": "检查"},
-	}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Exercise a plugin's JSONL declaration through the host schema.
+	raw := []byte(`[{"id":"inspect","description":"Inspect session state","input_schema":{"type":"object"},"display":{"label":"Inspect","label_translations":{"zh-CN":"检查"}}}]`)
 	client := &toolLabelTestClient{}
 	if err := json.Unmarshal(raw, &client.tools); err != nil {
 		t.Fatal(err)

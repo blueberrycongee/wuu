@@ -33,6 +33,42 @@ Memory 还通过 `session_memory` 提供 `summary`、`checkpoint` 和 `notes` �
 
 只保存已经确认、长期有效的信息。不要把记忆当作会话归档、密钥存储或临时任务日志。记忆与当前证据冲突时，应修正记忆，而不是盲目遵循。
 
-记忆可能发送给已配置的模型，并影响后续操作。请检查敏感条目和导入的不可信文本。禁用插件会移除它的提示、工具和设置页，但不会删除已有笔记本文件。
+记忆可能发送给已配置的模型，并影响后续操作。请检查敏感条目和导入的不可信文本。禁用插件会移除它的提示、工具、服务和设置页，但不会删除已有笔记本文件。
 
 [Dream](dream.md) 可以在后台整理工作区知识，需要单独开启，也会产生额外模型请求。`AGENTS.md` 等项目指令独立于这两个插件；相关说明见[配置](../reference/configuration.md)和[安全模型](../reference/security-model.md)。
+
+## 面向扩展的只读服务
+
+Memory 通过已有的服务注册表提供 `memory.notebook` 版本 `1.0.0`。
+在 `required_services` 中声明
+`{ name: "memory.notebook", major_version: 1, required: false }`，
+再通过 `host.service.call` 调用 `service: "memory.notebook"` 的以下方法：
+
+| 方法 | 参数 | 结果上限 |
+| --- | --- | --- |
+| `index` | 可选 `max_bytes` | 经过过滤的 `MEMORY.md`，最多 200 行、25,000 个 UTF-8 字节 |
+| `read` | `file`、可选 `max_bytes` | 一个主题，默认 16,384 个 UTF-8 字节，最大 65,536 |
+
+省略 `max_bytes` 或设为零时采用默认值；负数或超过上限的值会报错。
+`read` 只接受非隐藏的普通 `.md` 文件名，不接受 `MEMORY.md`、目录路径或符号链接。
+源文件必须是有效的 UTF-8 普通文件，大小不超过 256 KiB。截断不会切开 UTF-8 字符。
+这些方法不会批量加载全部主题、写入记忆或调用模型。
+
+两个方法都返回 `{ version: 1, source: { scope: "user_notebook", file },
+found, revision?, content, truncated }`。`revision` 标识完整源内容，即使返回的片段
+被截断或经过过滤也保持相同；调用方应把它作为不透明标识使用。空文件仍返回
+`found: true` 和版本；删除或不存在的文件返回 `found: false`、空内容且不带版本。
+请求 schema 标识分别为 `memory.notebook.index.request.v1` 和
+`memory.notebook.read.request.v1`，响应均为 `memory.notebook.snapshot.v1`。
+TypeScript SDK 导出对应的 `MemoryNotebook*` 类型。
+
+服务与现有记忆工具共用笔记本读取逻辑，`index` 与 agent 提示共用索引过滤逻辑。
+每次调用都重新读取文件，不设服务缓存。调用方在复用记忆前必须重读；文件不存在
+或服务不可用时，应清除保留的内容。服务提供方解析发生变化时，还应处理
+`service.changed`；该通知不追踪文件编辑。每次结果只代表一个文件，索引和主题
+之间不保证原子快照。
+
+Memory 禁用或不可用时，注册表返回 `service_unavailable`；可选消费者仍可在没有记忆
+的情况下工作。不要回退到直接读文件，也不要自动启用 Memory。笔记本内容是不可信的
+上下文，当前指令和证据优先。个性化写作、补全或任务交接扩展可以按需读取相关主题；
+这些是可行用途，并非已有内置集成。工作区和会话记忆仍使用独立的 `memory.session` 服务。

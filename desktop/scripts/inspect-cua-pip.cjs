@@ -1,23 +1,11 @@
 #!/usr/bin/env node
 "use strict";
 
-// Dev-only diagnostic for the native CUA picture-in-picture (PiP) window.
-//
-// The PiP is not part of the Electron window: the Electron main process spawns
-// a separate `wuu-cua-mac-pip --native-pip` helper, and that helper owns an
-// independent NSPanel. So "the PiP is not visible in Wuu Dev" is not enough to
-// tell whether the helper never started, started but has no panel, has a panel
-// that is hidden/offscreen, or has a visible panel with no real content.
-//
-// This script correlates all three observation planes:
-//   A. Electron main process (who spawned the helper)
-//   B. the helper process + its arguments (target, window identity, parent pid)
-//   C. the real NSPanel via CGWindowList, a window capture, and the visible
-//      screen region the user actually sees
-//
-// It writes artifacts/cua-pip/<timestamp>/{diagnostic.json,pip-<id>.png} and
-// prints a classification of why the PiP is (not) visible. It never runs in
-// production and draws nothing into the PiP itself.
+// Dev-only diagnostic for a native source in Wuu's shared activity preview.
+// The headless --native-preview helper owns capture only; Electron owns the
+// window titled "Wuu Live Activity". Correlate helper, parent process, and that
+// exact window instead of expecting the helper to own an NSPanel.
+// Artifacts are local diagnostics, not proof of valid/live target pixels.
 
 const { execFileSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
@@ -30,7 +18,7 @@ function fail(message) {
 }
 
 if (process.platform !== "darwin") {
-  fail("the native CUA PiP only exists on macOS; run this on the machine hosting Wuu Dev");
+  fail("native capture diagnostics require macOS; run this on the machine hosting Wuu");
 }
 
 function run(cmd, args, opts = {}) {
@@ -85,39 +73,21 @@ function listProcesses() {
     .filter(Boolean);
 }
 
-// argv for the helper is:
-//   <path> --native-pip <activityID> <target...> <x> <y> <w> <h> <pid> <winID> <parentPID>
-// The target may contain spaces, and the executable path may too ("Wuu Dev.app"),
-// so parse the fixed head/tail and treat the middle as the target.
+// The target and executable path may contain spaces. The first argument and
+// final three numeric arguments have fixed positions in this process listing.
 function parseHelper(proc) {
-  const marker = "--native-pip";
+  const marker = "--native-preview";
   const at = proc.args.indexOf(marker);
   if (at < 0) return undefined;
   const binaryPath = proc.args.slice(0, at).trim();
-  const tail = proc.args
-    .slice(at + marker.length)
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (tail.length < 8) return undefined;
-  const parentPID = Number(tail[tail.length - 1]);
-  const targetWindowID = Number(tail[tail.length - 2]);
-  const targetProcessID = Number(tail[tail.length - 3]);
-  const frame = {
-    x: Number(tail[tail.length - 7]),
-    y: Number(tail[tail.length - 6]),
-    width: Number(tail[tail.length - 5]),
-    height: Number(tail[tail.length - 4]),
-  };
-  const activityID = tail[0];
-  const target = tail.slice(1, tail.length - 7).join(" ");
+  const tail = proc.args.slice(at + marker.length).trim().split(/\s+/).filter(Boolean);
+  if (tail.length < 5) return undefined;
+  const parentPID = Number(tail.at(-1));
+  const targetWindowID = Number(tail.at(-2));
+  const targetProcessID = Number(tail.at(-3));
   return {
-    pid: proc.pid,
-    ppid: proc.ppid,
-    etime: proc.etime,
-    binaryPath,
-    activityID,
-    target,
+    pid: proc.pid, ppid: proc.ppid, etime: proc.etime, binaryPath,
+    activityID: tail[0], target: tail.slice(1, -3).join(" "),
     targetProcessID: targetProcessID > 0 ? targetProcessID : undefined,
     targetWindowID: targetWindowID > 0 ? targetWindowID : undefined,
     parentProcessID: parentPID > 0 ? parentPID : undefined,
@@ -128,16 +98,18 @@ function parseHelper(proc) {
 
 // ---- Plane C: window server ------------------------------------------------
 
-const WINDOW_QUERY = `
+function windowQuery(parentPIDs) { return `
 import CoreGraphics
 import Foundation
 let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
 var out: [[String: Any]] = []
-let ownerNames: Set<String> = ["wuu-cua-mac-pip", "wuu-cua-mac"]
-for w in list where ownerNames.contains(w[kCGWindowOwnerName as String] as? String ?? "") {
+let ownerPIDs: Set<Int> = [${parentPIDs.filter(Number.isInteger).join(",")}]
+for w in list where ownerPIDs.contains((w[kCGWindowOwnerPID as String] as? NSNumber)?.intValue ?? 0)
+    && (w[kCGWindowName as String] as? String ?? "") == "Wuu Live Activity" {
     var e: [String: Any] = [:]
     e["windowID"] = w[kCGWindowNumber as String] ?? 0
     e["ownerPID"] = w[kCGWindowOwnerPID as String] ?? 0
+    e["title"] = w[kCGWindowName as String] ?? ""
     e["layer"] = w[kCGWindowLayer as String] ?? 0
     e["alpha"] = w[kCGWindowAlpha as String] ?? 0
     e["onscreen"] = w[kCGWindowIsOnscreen as String] ?? false
@@ -148,10 +120,10 @@ for w in list where ownerNames.contains(w[kCGWindowOwnerName as String] as? Stri
 if let data = try? JSONSerialization.data(withJSONObject: out, options: []) {
     FileHandle.standardOutput.write(data)
 }
-`;
+`; }
 
-function listPiPWindows() {
-  const { ok, out, err } = run("swift", ["-e", WINDOW_QUERY]);
+function listPiPWindows(parentPIDs) {
+  const { ok, out, err } = run("swift", ["-e", windowQuery(parentPIDs)]);
   if (!ok) return { available: false, windows: [], reason: err.trim() || "swift unavailable" };
   try {
     return { available: true, windows: JSON.parse(out.trim() || "[]") };
@@ -207,16 +179,17 @@ function classify({ helpers, windows, windowPlane }) {
     };
   }
   if (!windowPlane.available) {
-    return { stage: "window_plane_unavailable", likely: `Could not enumerate windows (${windowPlane.reason}). Cannot confirm the panel; check the helper stderr in the Electron dev log.` };
+    return { stage: "window_plane_unavailable", likely: `Could not enumerate windows (${windowPlane.reason}). Cannot identify the Electron preview; check the helper stderr in the Electron dev log.` };
   }
-  const livePIDs = new Set(live.map((h) => h.pid));
+  const livePIDs = new Set(live.map((h) => h.parentProcessID));
   const panels = windows.filter((w) => livePIDs.has(Number(w.ownerPID)));
   if (panels.length === 0) {
     return {
-      stage: "helper_started_no_panel",
+      stage: "helper_started_preview_not_identified",
       likely:
-        "A live helper exists but owns no discoverable NSPanel. It may have failed before creating the controller, " +
-        "or the WindowServer query may not recognize the helper owner name. Check the helper stderr and process path.",
+        "Capture is running, but the parent Electron process has no identifiable Wuu Live Activity window. " +
+        "Window titles may be unavailable to this diagnostic without Screen Recording permission. " +
+        "Inspect Electron's preview state and the helper stderr; the helper itself intentionally owns no window.",
     };
   }
   const visible = panels.filter((w) => Boolean(w.onscreen) && Number(w.alpha) > 0.01);
@@ -224,14 +197,14 @@ function classify({ helpers, windows, windowPlane }) {
     return {
       stage: "panel_hidden",
       likely:
-        "A panel exists but is offscreen or alpha 0. Either coordinator visibility (active thread / dismissed) is keeping it hidden, " +
+        "The Electron preview exists but is offscreen or alpha 0. Either coordinator visibility (active thread / dismissed) is keeping it hidden, " +
         "or saved user bounds place it offscreen. Check bounds vs your displays.",
     };
   }
   return {
     stage: "panel_visible_unverified",
     likely:
-      "A panel is on-screen with alpha > 0, but this does not prove live capture: the frosted app-icon placeholder is also visible. " +
+      "The Electron preview is on-screen with alpha > 0, but this does not prove live capture: the frosted app-icon placeholder is also visible. " +
       "Inspect the captured PNG and confirm real target pixels (and a changing value) before calling the PiP live.",
   };
 }
@@ -264,10 +237,10 @@ for (const helper of helpers) {
   if (parent) electronMains.set(parent.pid, { pid: parent.pid, args: parent.args, etime: parent.etime });
 }
 
-const windowPlane = listPiPWindows();
+const windowPlane = listPiPWindows([...electronMains.keys()]);
 const windows = windowPlane.windows || [];
 
-// Capture each on-screen panel so the content can be inspected by eye.
+// Capture only the identified Electron preview, never every parent window.
 const captures = [];
 for (const w of windows) {
   if (!w.onscreen) continue;
@@ -315,7 +288,7 @@ writeFileSync(jsonPath, `${JSON.stringify(diagnostic, null, 2)}\n`);
 const c = diagnostic.classification;
 const lines = [];
 lines.push("");
-lines.push(`CUA PiP diagnostic  (${stamp})`);
+lines.push(`Native activity preview diagnostic  (${stamp})`);
 lines.push(`  artifacts: ${outDir}`);
 lines.push("");
 lines.push(`STAGE: ${c.stage}`);

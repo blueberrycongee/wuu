@@ -25,6 +25,22 @@ It renders the real first-run component without the product preload, app-server,
 
 The [mascot lab](../../../desktop/dev/mascot/README.md) uses `npm --prefix desktop run lab:mascot`. Use the full `make dev` path when the change depends on native behavior, IPC, or real session state. Keep temporary screenshots in ignored output directories and use synthetic content in committed fixtures.
 
+## Desktop updates
+
+Signed macOS release builds show available GitHub stable releases beside the
+account control at the bottom of the sidebar. Click the download arrow to start;
+a ring tracks download progress and a green restart icon marks a ready update.
+Restart still requires confirmation. Failed downloads keep a retry action.
+Hover or keyboard focus reveals the version or progress. OS and in-app reduced
+motion preferences disable the arrival and completion animations.
+
+The compact state feedback draws on Motionbook's
+[Micro progress button](https://github.com/blueberrycongee/motionbook/tree/main/examples/micro-progress-button),
+referencing [withAnimationUI](https://x.com/withAnimationUI/status/2107359197511692380).
+Wuu uses independently drawn geometry, its shared icons and measured download
+progress; no reference artwork or font assets are included. See
+[automatic updates](release.md#automatic-updates) for release requirements.
+
 ## Archived conversations
 
 Settings → Archive lists archived conversations across all workspaces. **Delete
@@ -44,11 +60,10 @@ added to that retry. Cancel or dismiss the confirmation to keep the conversation
 The right panel's plus button creates a closable **New page** tab. Choosing a tool
 replaces that page in place; if the tool is already open, Wuu closes the new page
 and focuses its existing tab. Installed extensions appear under **More tools**.
-**Continue viewing** links to up to four currently open files, diffs, or delivered
-artifacts; it is absent when none are open. Closing a page restores
-the previously active tab. The page's sections keep a readable width but start
-on the pane inset under the tabs instead of centering in a wide panel, so tool
-icons line up with the tab icons.
+Use the tab strip to return to open files, diffs, or delivered artifacts.
+Closing a page restores the previously active tab. The tool list keeps a readable
+width but starts on the pane inset under the tabs instead of centering in a wide
+panel, so tool icons line up with the tab icons.
 
 Each tab fits its title, up to a cap, instead of stretching to share the strip.
 The selected tab is a quiet fill one step off the paper, and its title takes the
@@ -167,15 +182,15 @@ themes at default and large text.
 
 ## Settings pages
 
-Settings lists its pages in one unlabeled column: model providers, agents, built-in agent, MCP servers, appearance, general, phone access, usage, subscriptions, and archive. With this few pages, group headings cost more reading than they save. Plugin pages follow after a group gap, because their number and content come from installed plugins. Page IDs are part of the plugin settings snapshot, so they stay stable when a label or position changes; the built-in agent page keeps the `advanced` ID.
+Settings starts with General, Appearance, and Phone access when available. **Models, agents & tools** groups model providers, external agents, the built-in agent, and MCP servers; **Account & data** groups subscriptions when enabled, usage, and archive. Plugin pages follow under **Plugins**. Search filters page names and setting keywords, including plugin page names, and hides empty groups. Filtering preserves the current page; Escape clears the query. Page IDs and the complete page list exposed in plugin settings snapshots remain stable while searching; the built-in agent page keeps the `advanced` ID.
 
 Every page shares one column measured in UI text, so content stays in place while navigating and a label stays within a glance of its control at large sizes. The titlebar reads "Settings / page", set like the conversation title, with page actions at its trailing edge; a refresh action is an icon button whose tooltip names it. The page opens on an optional line that states a non-obvious scope, then its first group. Section titles are quiet labels in soft ink; the setting's name in each row carries the medium weight, over a regular, soft description. Groups, service lists, the provider catalog, and subscription cards share one sheet: the `--hairline` edge, the panel radius, and a soft shadow, with rows spaced by `--settings-row-pad-block`. A section title sits `--section-heading-gap` above its content. Keep a row description only for constraints or consequences the title does not already state. A unit belongs inside its numeric field instead: a numeric placeholder keeps the unit, while a word such as "Auto" appears alone.
 
 A row that works says nothing about it. Only a state that needs a look gets a symbol — a warning triangle for a missing credential or a pending decision, a circled mark for a failure — and the symbol's accessible name and tooltip carry the reason, so the meaning never rests on color. **General** gathers how a new conversation starts: the agent, then the built-in agent's model, reasoning effort, and environment, with one line saying the last three apply to Wuu only; language and the version follow. The Agent page lists installed agents, each with a switch and a disclosure; agents Wuu cannot find wait under **Not installed**, each with an install action and its path override, instead of repeating why on every row. Agents expand in place under their own row. Rows without a disclosure reserve its footprint so trailing controls end on one axis. The titlebar gains its hairline only after content scrolls beneath it.
 
-**Model providers** is built for bring-your-own-key use and reads by how often each part is used. Connected services come first, as one list with their vendor mark, a **Default** badge, and a warning when a key or sign-in is missing. Providers to add are quieter tiles in one run on the same surface, their marks on the cards' inset: subscription sign-ins, then likely vendors for the interface language, with **More providers** for the whole model catalog and **Custom endpoint** for any OpenAI- or Anthropic-compatible URL. Only the full catalog names its kinds (subscription, vendor, relay, local); the short list on the page does not. The page carries no explanatory lines; a service's name, mark, and model count say what it is. Connecting asks only for the key — the catalog supplies the endpoint and a suggested model — and becomes the default only when switched on, which it is when the current default cannot answer. A service card opens its own page with a way back: its connection (key, Base URL, or sign-in), edited in place without changing the row's height, and its models, whose names share the row labels' edge while a trailing check marks the model the service uses. Hidden choices wait under a disclosure, and **Add model** takes an unlisted model ID. Dialogs put their mark, title, and close button on one row, and each dropdown lines its options up under the text of its trigger. Editing a service never changes the default; **Make default** does. Vendor marks are the bundled models.dev logos, so no artwork is fetched.
+**Model providers** is built for bring-your-own-key use and reads by how often each part is used. Connected services come first, as one list with their vendor mark, a **Default** badge, and a warning when a key or sign-in is missing. Providers to add are quieter tiles in one run on the same surface, their marks on the cards' inset: subscription sign-ins, then likely vendors for the interface language, with **More providers** for the whole model catalog and **Custom endpoint** for any OpenAI- or Anthropic-compatible URL. Only the full catalog names its kinds (subscription, vendor, relay, local); the short list on the page does not. The page carries no explanatory lines; a service's name, mark, and model count say what it is. Connecting asks only for the key — the catalog supplies the endpoint and a suggested model — and becomes the default only when switched on, which it is when the current default cannot answer. A service card opens its own page with a way back: its connection (key, Base URL, or sign-in), edited in place without changing the row's height, and its models, whose names share the row labels' edge while a trailing check marks the model the service uses. A visible trash icon removes any model choice; deleting the selected model requires an explicit replacement. Removed choices wait under a disclosure for restoration, and **Add model** takes an unlisted model ID. Dialogs put their mark, title, and close button on one row, and each dropdown lines its options up under the text of its trigger. Editing a service never changes the default; **Make default** does. Vendor marks are the bundled models.dev logos, so no artwork is fetched.
 
-`npm --prefix desktop run test:e2e:model-services` drives these flows through Electron and the Go core with a disposable profile, credential store, and local provider: it connects a catalog provider without moving the default, chooses and hides its models, makes a custom endpoint the default, removes a service with its key, and sends a turn that must reach the new default with the saved key. Screenshots and `evidence.json` go to `artifacts/model-services-e2e/`.
+`npm --prefix desktop run test:e2e:model-services` drives these flows through Electron and the Go core with a disposable profile, credential store, and local provider: it connects a catalog provider without moving the default, chooses, removes, and restores its models across a reload, makes a custom endpoint the default, removes a service with its key, and sends a turn that must reach the new default with the saved key. Screenshots and `evidence.json` go to `artifacts/model-services-e2e/`.
 
 Programmatic tool calling is agent runtime behavior, so it sits on the built-in agent page. The Codex pet is part of how the app looks, so it has a section on **Appearance**; **General** keeps the language and **About**. Archive groups show the project with a bare conversation count, rows show the year only when it differs from this one, and restoring is an icon button named for the conversation.
 
@@ -191,7 +206,7 @@ A plugin opens as its own page, with a back link to the catalog. The header hold
 
 Preview `/dev/extensions/` with optional `theme=dark`, `size=20`, `lang=en`, `long`, and `empty` parameters. Skills and plugin packages are synthetic and cover every plugin state; switches and detail actions change only the preview's state.
 
-The fork destination dialog offers the current directory and a new worktree. Click outside or press Escape to dismiss it without creating a conversation; focus returns to the message action. Dismissal is temporarily locked while a fork is being created.
+The fork destination dialog offers the current directory and a new worktree. Its width and spacing follow the saved UI text size; both choices share icon and text columns, with space reserved for loading feedback so text does not shift. Click outside or press Escape to dismiss it without creating a conversation; focus returns to the message action. Dismissal is temporarily locked while a fork is being created.
 
 ## Review panel
 

@@ -80,41 +80,47 @@ Keep status semantics separate from emphasis. TODO progress uses text colors and
 
 ## Typography
 
-Use the system UI font with CJK fallback and respect user font choices. Code, editors, and diffs retain independent monospace typography rather than scaling mechanically with UI text. Avoid unrelated typefaces for headings, prose, and numbers; use tabular numbers or monospace where numerical alignment requires them.
+Use the system UI font with CJK fallback and respect user font choices. The content font defaults to the UI family and can be overridden for messages, drafts, and Markdown previews without changing navigation or controls. Code, editors, and diffs retain independent monospace typography rather than scaling mechanically with UI text. Avoid unrelated typefaces for headings, prose, and numbers; use tabular numbers or monospace where numerical alignment requires them.
 
-The current runtime defaults are **14.5px UI** and **11px code**. Ratios in `appearance.css` use 14 as their denominator: 14px is the proportional reference, not the current startup default. Valid saved preferences remain authoritative and must not be reset to the documented defaults.
+The current runtime defaults are **15px UI** and **13px code**. Ratios in `appearance.css` use 14 as their denominator: 14px is the proportional reference, not the current startup default. Valid saved preferences remain authoritative and must not be reset to the documented defaults.
 
-| Role | Variables | Relationship to UI size U | Value at U = 14.5px |
+| Role | Variables | Relationship to UI size U | Value at U = 15px |
 | --- | --- | --- | --- |
-| Hero | `--font-hero` | round(U × 32 / 14) | 33px |
-| Display | `--font-display` | round(U × 24 / 14) | 25px |
+| Hero | `--font-hero` | round(U × 32 / 14) | 34px |
+| Display | `--font-display` | round(U × 24 / 14) | 26px |
 | Heading | `--font-heading` | round(U × 20 / 14) | 21px |
 | Title | `--font-title` | round(U × 16 / 14) | 17px |
-| UI and body | `--font-ui`, `--font-body`, `--font-content` | U | 14.5px |
-| Menus and compact controls | `--font-menu`, `--font-sm` | round(U × 13 / 14) | 13px |
-| Metadata | `--font-xs` | max(12px, round(U × 12 / 14)) | 12px |
-| Code | `--appearance-code-size` | Independent preference | 11px |
+| UI and body | `--font-ui`, `--font-body`, `--font-content` | U | 15px |
+| Menus and compact controls | `--font-menu`, `--font-sm` | round(U × 13 / 14) | 14px |
+| Metadata | `--font-xs` | max(12px, round(U × 12 / 14)) | 13px |
+| Code | `--appearance-code-size` | Independent preference | 13px |
 
 Derived roles round to whole pixels. The saved UI size may be a half step, but fractional derived sizes would put line boxes and 1px edges between device pixels.
 
-Use 400 for ordinary text, 500 for compact menu items, and 500 or 600 selectively for headings and emphasis. Reserve 700 for occasional strong emphasis. Base line-height roles are 1.35 for UI, 1.55 for body, and 1.6 for metadata; individual reading surfaces may have semantic overrides, not one forced line height for every component. Conversation reading and process leading are whole-pixel lengths derived from the message size (1.8 and 1.6, rounded to 2px), so stacked rows and cards share edges. Composer drafts use the same reading leading as sent queries and answers, so text keeps its rhythm when it is sent. Message headings step to 1.5, 1.25, and 1.1 times the body size, rounded to whole pixels, so hierarchy does not rest on weight alone. Preserve natural letter spacing instead of shrinking type or tightening tracking to repair layout.
+Use 400 for ordinary text, 500 for compact menu items, and 500 or 600 selectively for headings and emphasis. Reserve 700 for occasional strong emphasis. Message emphasis uses 600. On macOS, system font smoothing is the default; grayscale is an optional appearance preference. Inspect both themes at regular weight before increasing emphasis. Base line-height roles are 1.35 for UI, 1.55 for body, and 1.6 for metadata; individual reading surfaces may have semantic overrides, not one forced line height for every component. Conversation reading and process leading are whole-pixel lengths derived from the message size (both 1.6, rounded to 2px), so stacked rows and cards share edges. Composer drafts use the same reading leading as sent queries and answers, so text keeps its rhythm when it is sent. Message headings step to 1.5, 1.25, and 1.1 times the body size, rounded to whole pixels, so hierarchy does not rest on weight alone. At the default size, conversation text is 15px/24px with a 16px paragraph gap. Paragraph gaps use the shared one-em spacing role, snapped to the module described below. Fenced code, hover diffs, and code editors share the independent code size with 1.5 leading rounded to 1px, giving 13px/20px by default. Inline code remains 0.92 times the surrounding prose size. Preserve natural letter spacing instead of shrinking type or tightening tracking to repair layout.
+
+The latest active process label uses a quiet, theme-relative tone with a highlight that sweeps for one second in each four-second cycle, after an initial 600ms delay. The base text stays visible beneath the decorative highlight. Once a summary is no longer active, it uses steady `--ink-tertiary` text. Reduced motion, background conversations, and stream-following suppress the highlight; result prose keeps its normal contrast.
 
 ## Spacing and layout
 
-The standard unit is 4px, multiplied by density to form `--space-1`. The existing scale is 4, 8, 12, 16, 20, 24, 32px through `--space-1/2/3/4/5/6/8`. Prefer semantic roles; use scale steps only when local adjustment is genuinely needed.
+The spacing module is one quarter of the saved UI font size, rounded to a whole pixel and multiplied by density to form `--space-1`. At the default 15px size it remains 4px, giving 4, 8, 12, 16, 20, 24, 32px through `--space-1/2/3/4/5/6/8`; at 20px it becomes 5px. Themes may still supply an explicit `--wuu-space-unit`. Half, one, and two em relationships therefore share one grid instead of separate font multipliers or fixed gaps. Prefer semantic roles; account for line-box leading and control footprints when assessing visible whitespace.
 
 | Relationship | Variables | Standard density |
 | --- | --- | --- |
 | Pane edge to first and last glyph | `--pane-inset` | 20px |
 | Page inset | `--page-padding` | 32px |
 | Between groups, including the latest turn and the input | `--section-gap` | 32px |
-| Heading to content | `--section-heading-gap` | 16px |
+| Heading to content | `--section-heading-gap` | 8px |
 | Card and panel insets | `--card-padding`, `--panel-padding` | 16px, 20px |
 | Compact block/inline padding | `--compact-padding-block`, `--compact-padding-inline` | 8px, 12px |
 | Control block/inline padding | `--control-padding-block`, `--control-padding-inline` | 4px, 12px |
 | Menu inset and item gap | `--menu-inset`, `--menu-item-gap` | 6px, 8px |
 
-At widths up to 560px, page, pane, and panel insets become 16px and card insets 12px, still affected by density. Shared fields and menu rows have a 32px floor, or 44px for coarse pointers, and round up to the 4px grid. They grow further with text and content; fixed heights must not clip text. These field and menu-row roles do not assign one size to every icon button.
+Responsive layouts retain these spacing roles while reflowing content and controls to fit the available pane. Shared fields and menu rows have a 32px floor, or 44px for coarse pointers, and round up to the 4px grid. They grow further with text and content; fixed heights must not clip text. These field and menu-row roles do not assign one size to every icon button.
+
+In the sidebar, sibling rows use one module, headings attach to their content with two, and functional groups separate by six. The pinned append drop target owns its group break, so it does not add a second gap. In conversations, paragraphs use four modules, list items and heading-to-content gaps use two, and a new heading or turn uses eight. A process header attaches to its first detail with two modules; the final answer starts six modules after the process cluster. Message frames and the composer share the same text inset and reading leading. Settings use the two-module heading gap, four-module row padding and one-module label-to-description gap, with eight modules between sections. Settings navigation uses the shared sibling-row gap; its top margin is two modules, while six modules separate navigation groups. Connected service descriptions and catalog row gaps use one module, and catalog tiles use one module of vertical padding.
+
+A settings section separates its heading from its body: the heading-to-body gap is two modules, while sibling content blocks inside the body use four. This keeps theme previews and background controls, or font controls and smoothing controls, related without squeezing them together. Inline forms separate their fields from commit actions by four modules. Service catalogs and subscription cards use four-module insets and block gaps; label-to-field gaps use two. Usage tables share the settings row padding, and model names, archive titles and their descriptions use the one-module detail gap. The usage table folds below 36 UI em so larger text gets the same reading room. Connected services and catalog choices share an eight-module icon slot and three-module icon-to-name gap (32px and 12px at a 4px module). Artwork scales with the UI text independently of the slot, so the extra room remains whitespace. Connected rows use an eight-module horizontal inset. The featured catalog first divides its content width into at most three equal columns, then gives every cell four-module horizontal insets; those insets own the column gutter. Each column keeps fixed icon and text starts regardless of name length or an incomplete final row. Below 39 and 26 UI em of catalog content width, it switches to two and one equal columns respectively. Both sections share the identity proportions while laying them out within their own available width; row height and secondary text express their different information density. Chart cell geometry and optical icon offsets retain their own roles.
 
 ### Alignment axes
 
@@ -164,7 +170,7 @@ copy in the file manager. External editors never receive the immutable snapshot.
 
 ## Icons, motion, and controls
 
-Controls reuse [WuuIcons](../../../desktop/src/renderer/WuuIcons.tsx), not a competing stroke style. Standard drawings use a 24-unit canvas and 1.75 stroke. Use `--icon-size-*` roles with bounded growth as UI text increases. Sizes round to even pixels so glyphs center in even control boxes; at the 14px reference and the 14.5px default they are 12, 14, 16, 18, and 20px. Still inspect apparent size, centering, and stroke density.
+Controls reuse [WuuIcons](../../../desktop/src/renderer/WuuIcons.tsx), not a competing stroke style. Standard drawings use a 24-unit canvas and 1.75 stroke. Use `--icon-size-*` roles with bounded growth as UI text increases. Sizes round to even pixels so glyphs center in even control boxes; at the 14px reference they are 12, 14, 16, 18, and 20px; the 15px default resolves to 12, 16, 18, 20, and 22px. Still inspect apparent size, centering, and stroke density.
 
 Motion provides feedback and explains position changes: `--motion-fast` 120ms for immediate feedback, `--motion-base` 180ms for menus and content swaps, `--motion-slow` 280ms for structural moves, and `--motion-slower` 440ms for larger folds. Entrances decelerate with `--ease-out` and exits accelerate away with `--ease-in`, shorter than the entrance. Prefer existing semantic aliases and the shared entrance and exit keyframes described in [desktop UI maintenance](desktop-ui.md#motion). The OS setting and the in-app Motion preference both reduce motion, with the same result. Frequent actions must not wait for decorative animation; preserve established component-specific motion contracts.
 

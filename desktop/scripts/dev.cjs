@@ -11,7 +11,7 @@ const { ensureDevSigningIdentity } = require("./dev-signing.cjs");
 
 const desktopRoot = resolve(__dirname, "..");
 const buildHelper = join(__dirname, "build-cua-mac.cjs");
-const buildCoreAndPluginHelpers = join(__dirname, "build-core.cjs");
+const buildCoreAndPluginRuntimes = join(__dirname, "build-core.cjs");
 const electronVitePackage = require.resolve("electron-vite/package.json", { paths: [desktopRoot] });
 const electronViteManifest = JSON.parse(readFileSync(electronVitePackage, "utf8"));
 const electronVite = join(dirname(electronVitePackage), electronViteManifest.bin["electron-vite"]);
@@ -31,7 +31,13 @@ const build = spawnSync(process.execPath, [buildHelper], {
 if (build.status !== 0) {
   process.exit(build.status ?? 1);
 }
-const coreBuild = spawnSync(process.execPath, [buildCoreAndPluginHelpers, ...process.argv.slice(2)], {
+const appContextBuild = spawnSync(process.execPath, [join(__dirname, "build-app-context-mac.cjs")], {
+  cwd: desktopRoot,
+  env: { ...process.env, ...(devSigning ? { WUU_APP_CONTEXT_SIGN_ID: devSigning.identity } : {}) },
+  stdio: "inherit",
+});
+if (appContextBuild.status !== 0) process.exit(appContextBuild.status ?? 1);
+const coreBuild = spawnSync(process.execPath, [buildCoreAndPluginRuntimes, ...process.argv.slice(2)], {
   cwd: desktopRoot,
   env: process.env,
   stdio: "inherit",
@@ -52,9 +58,8 @@ if (env.WUU_ENABLE_BROWSER === "1") {
   env.VITE_ENABLE_BROWSER = "true";
 }
 if (process.platform === "darwin") {
-  // Keep the stable signed host for macOS permissions, but do not bypass
-  // feature gates. CUA is enabled only when the caller explicitly exports
-  // WUU_ENABLE_CUA_MAC=1 (for example through npm run dev:direct).
+  // Match packaged macOS builds while preserving explicit development overrides.
+  env.WUU_ENABLE_CUA_MAC ??= "1";
   env.WUU_DEV_ELECTRON_APP = prepareDevElectronApp(devSigning);
   env.WUU_CUA_MAC_HELPER = helperPathForApp(env.WUU_DEV_ELECTRON_APP);
   env.WUU_CUA_MAC_PIP_HELPER = pipHelperPathForApp(env.WUU_DEV_ELECTRON_APP);

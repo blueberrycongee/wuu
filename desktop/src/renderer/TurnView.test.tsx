@@ -86,12 +86,14 @@ function render(turn: Turn, isLatestTurn = false, streamStatus?: TurnStreamStatu
   root = createRoot(container);
   act(() => {
     root!.render(
-      <TurnView
-        turn={turn}
-        onStreamFrame={() => {}}
-        isLatestTurn={isLatestTurn}
-        streamStatus={streamStatus}
-      />,
+      <ImagePreviewProvider>
+        <TurnView
+          turn={turn}
+          onStreamFrame={() => {}}
+          isLatestTurn={isLatestTurn}
+          streamStatus={streamStatus}
+        />
+      </ImagePreviewProvider>,
     );
   });
   return container;
@@ -100,11 +102,13 @@ function render(turn: Turn, isLatestTurn = false, streamStatus?: TurnStreamStatu
 function rerender(turn: Turn, isLatestTurn = false): void {
   act(() => {
     root!.render(
-      <TurnView
-        turn={turn}
-        onStreamFrame={() => {}}
-        isLatestTurn={isLatestTurn}
-      />,
+      <ImagePreviewProvider>
+        <TurnView
+          turn={turn}
+          onStreamFrame={() => {}}
+          isLatestTurn={isLatestTurn}
+        />
+      </ImagePreviewProvider>,
     );
   });
 }

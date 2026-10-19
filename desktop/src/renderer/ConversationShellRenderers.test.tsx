@@ -21,13 +21,28 @@ vi.mock("./ConversationSplitPane", () => ({
   ConversationSplitPane: ({
     onOpenFile,
     thread,
+    queuedCount,
+    pendingCount,
+    workspaceId,
+    workspaceRoot,
+    activeContextCwd,
   }: {
     onOpenFile?: (path: string) => void;
     thread: Thread;
+    queuedCount?: number;
+    pendingCount?: number;
+    workspaceId?: string;
+    workspaceRoot?: string;
+    activeContextCwd?: string;
   }) => (
     <button
       type="button"
       data-testid={`open-file-${thread.id}`}
+      data-queued-count={queuedCount}
+      data-pending-count={pendingCount}
+      data-workspace-id={workspaceId}
+      data-workspace-root={workspaceRoot}
+      data-display-root={activeContextCwd}
       onClick={() => onOpenFile?.("src/App.tsx")}
     >
       open file
@@ -68,8 +83,13 @@ function thread(id: string, cwd: string): Thread {
 }
 
 describe("ConversationSplitPaneRenderer file routing", () => {
-  it("reports the pane thread together with the opened file path", () => {
-    const secondaryThread = thread("secondary", "/repo/worktrees/secondary");
+  it.each([true, false])("routes the pane thread and preserves known versus unknown pending counts (known=%s)", (known) => {
+    const secondaryThread = { ...thread("secondary", "/secondary"), workspace_id: "secondary-workspace" };
+    const primaryThread = { ...thread("secondary", "/primary"), workspace_id: "primary-workspace" };
+    const projects = [primaryThread, secondaryThread].map((item) => ({
+      id: item.workspace_id, name: item.workspace_id, path: item.cwd,
+      created_at: item.created_at, updated_at: item.updated_at,
+    }));
     const onOpenFile = vi.fn();
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -78,7 +98,8 @@ describe("ConversationSplitPaneRenderer file routing", () => {
     act(() => {
       root?.render(
         <ConversationSplitPaneRenderer
-          state={{ ...initialState, threads: [secondaryThread] }}
+          state={{ ...initialState, projects, thread: primaryThread, threads: [primaryThread, secondaryThread],
+            activeContext: { kind: "project", project_id: "primary-workspace", cwd: "/primary" } }}
           thread={secondaryThread}
           pane="secondary"
           splitComposerDrafts={{
@@ -87,6 +108,11 @@ describe("ConversationSplitPaneRenderer file routing", () => {
           }}
           splitPaneRefs={{ current: { primary: null, secondary: null } }}
           viewSwitchPending={false}
+          pendingComposerMessagesForThread={known ? (threadID) => {
+            expect(threadID).toBe("secondary");
+            const message = { id: "one", text: "Queued", files: [], images: [] };
+            return { queued: [message, { ...message, id: "two" }], guides: [{ ...message, id: "three" }] };
+          } : undefined}
           onActivatePane={() => {}}
           onClosePane={() => {}}
           onConversationScroll={() => {}}
@@ -114,6 +140,12 @@ describe("ConversationSplitPaneRenderer file routing", () => {
     });
 
     expect(onOpenFile).toHaveBeenCalledWith(secondaryThread, "src/App.tsx");
+    const pane = container.querySelector('[data-testid="open-file-secondary"]')!;
+    expect(pane.getAttribute("data-queued-count")).toBe(known ? "2" : null);
+    expect(pane.getAttribute("data-pending-count")).toBe(known ? "1" : null);
+    expect(pane.getAttribute("data-workspace-id")).toBe("secondary-workspace");
+    expect(pane.getAttribute("data-workspace-root")).toBe("/secondary");
+    expect(pane.getAttribute("data-display-root")).toBe("/primary");
   });
 });
 

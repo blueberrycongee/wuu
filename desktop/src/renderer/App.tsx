@@ -1,6 +1,9 @@
+import { useAppContextDraftTarget } from "./AppContextCapture";
+import { readComposerDraftRecovery, sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { validPdfSelectionReference } from "./PdfSelection";
 import { createArtifactComposerFile } from "./ArtifactComposerFile";
-import { composerSkillPrompt } from "./ComposerSlashCommands";
+import { SideConversationAvailableContext } from "./ResponseSelection";
+import { buildComposerSlashCommands, composerSkillPrompt } from "./ComposerSlashCommands";
 import { forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { subscribeServerEvents } from "./ServerEvents";
 import { AccountScreen } from "./AccountScreen";
@@ -162,6 +165,7 @@ import {
   threadForPane,
   threadSessionTabID,
   turnStreamStatusForThread,
+  turnPreview,
   updateThreadByID,
   upsertThread,
   upsertTurn,
@@ -195,10 +199,7 @@ import {
   resolveDraftEngineMemory,
   writeDraftEngineMemory,
 } from "./DraftEngineMemory";
-import {
-  FirstRunOnboarding,
-  hasOnboardingProvider as hasReadyProvider,
-} from "./FirstRunOnboarding";
+import { FirstRunOnboarding } from "./FirstRunOnboarding";
 import {
   EmptyConversationHome,
   RuntimeLoading,
@@ -207,6 +208,7 @@ import { EmptyHomeOverview } from "./EmptyHomeOverview";
 import { WuuMascotRuntimeProvider } from "./WuuMascot";
 import { deriveActiveSessionHints } from "./activeSessionHint";
 import {
+  hasAuthenticatedProvider as hasReadyProvider,
   providerModelContextWindow,
   pullRequestUnavailableReason,
 } from "./RuntimeHelpers";
@@ -219,7 +221,7 @@ import {
 import { ArchiveTip } from "./ArchiveTip";
 import { TopNotice } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
-import { showErrorToast, showToast } from "./Toast";
+import { showActionErrorToast, showErrorToast, showToast } from "./Toast";
 import { useArchiveDeletion } from "./useArchiveDeletion";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { CircleAlert, RefreshCw } from "./WuuIcons";
@@ -262,6 +264,7 @@ import {
 import { requestWorkspaceBrowserNavigation } from "./WorkspaceBrowserNavigation";
 import {
   desktopPluginHost,
+  desktopPluginRuntime,
   desktopWorkbenchController,
   useDesktopPluginRuntime,
 } from "./plugins/DesktopPluginRuntime";
@@ -414,6 +417,13 @@ function useStableCallback<T extends (...args: any[]) => any>(callback: T): T {
   );
 }
 
+// Canonical prompts include serialized file/quote context that is hidden behind
+// attachment chips. Only user-authored text crosses the recovery boundary.
+function composerRecoveryText(prompt: string, parts?: MessageContentPart[]): string {
+  return parts ? parts.filter((part) => part.type === "text" || part.type === "pasted_text")
+    .map((part) => part.text).join("") : prompt;
+}
+
 function readPopOutInit(): PopOutInitResult | null {
   try {
     const init = window.wuu.popOutInit();
@@ -453,8 +463,10 @@ export function App(): JSX.Element {
   const { locale, t } = useI18n();
   const [popOutInit] = useState<PopOutInitResult | null>(() => readPopOutInit());
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
+  const [recoveredDrafts] = useState(readComposerDraftRecovery);
   const [state, setState] = useState<AppState>(() => ({
     ...initialState,
+    sessionTabs: recoveredDrafts.tabs,
     lastViewedTurnByThreadID: readThreadReadState(),
   }));
   useEffect(() => {
@@ -475,7 +487,7 @@ export function App(): JSX.Element {
     prompt,
     promptRevision,
     setPrompt,
-    setPromptFromInput,
+    setPromptFromInput: updatePromptFromInput,
     composerImages,
     setComposerImages,
     composerFiles,
@@ -487,7 +499,7 @@ export function App(): JSX.Element {
     attachComposerAttachmentFiles,
     removeComposerImage,
     removeComposerFile,
-    setSplitComposerPrompt,
+    setSplitComposerPrompt: updateSplitComposerPrompt,
     attachSplitComposerAttachmentFiles,
     removeSplitComposerImage,
     removeSplitComposerFile,
@@ -566,6 +578,7 @@ export function App(): JSX.Element {
     animateRightPanelLayout,
     animateSidebarLayout,
     startSidebarResize,
+    trackSidebarResizerPointer,
     startRightPanelResize,
     handleRightPanelSeparatorKey,
     resetWorkspaceRightPanelWidth,
@@ -669,6 +682,7 @@ export function App(): JSX.Element {
     setSidebarSectionOrder,
     cacheSidebarThreads,
     updateCachedSidebarThread,
+    patchCachedSidebarThread,
     updateCachedSidebarThreadPinned,
     removeCachedSidebarThread,
     syncSidebarServerEvent,
@@ -682,11 +696,9 @@ export function App(): JSX.Element {
     threads: state.threads,
     activeContext: state.activeContext,
     activeWorkspaceID: state.activeProjectId,
-    setStatus: (status) =>
-      setState((current) => ({
-        ...current,
-        status,
-      })),
+    setStatus: (status) => {
+      showErrorToast(status);
+    },
   });
   const syncSidebarServerEventStable = useStableCallback(syncSidebarServerEvent);
   const loadWorkspaceThreadsStable = useStableCallback(loadWorkspaceThreads);
@@ -738,7 +750,6 @@ export function App(): JSX.Element {
     openWorkspaceProjectTab,
     syncWorkspaceProjectTab,
     showWorkspaceToolPicker,
-    resumeWorkspaceViewTab,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
     closeWorkspaceViewTabsWhere,
@@ -1039,7 +1050,81 @@ export function App(): JSX.Element {
   const codexRuntimeRef = useRef<HTMLDivElement>(null);
   const environmentToggleRef = useRef<HTMLButtonElement>(null);
   const environmentPanelRef = useRef<HTMLDivElement>(null);
-  const appStateRef = useRef<AppState>(initialState);
+  const appStateRef = useRef<AppState>(state);
+  const pendingDraftRecovery = useRef(new Map<string, SessionTab>());
+  const recoveryTextSnapshots = useRef(new Map<string, { prompt: string; text: string; hasReferences: boolean }>());
+  const recoveryStorageWarning = useRef(false);
+  const saveDraftRecovery = useStableCallback((input?: { prompt: string; pane?: ConversationPaneID }) => {
+    const current = appStateRef.current;
+    // Boot has not selected a workspace yet. Never replace the recovery store
+    // with the initial empty/default composer while that selection is pending.
+    if (!current.initialized || !current.activeContext) return;
+    const tabs = new Map(current.sessionTabs.map((tab) => [tab.id, tab]));
+    if (current.thread && current.secondaryThread) {
+      for (const pane of ["primary", "secondary"] as const) {
+        const thread = pane === "primary" ? current.thread : current.secondaryThread;
+        const id = threadSessionTabID(thread.id);
+        const tab = tabs.get(id) ?? createThreadSessionTab(thread, resolveThreadRuntimeContext(thread, current.projects));
+        if (tab.kind === "skills") continue;
+        tabs.set(id, { ...tab, prompt: input?.pane === pane ? input.prompt : composerDraftsRef.current.split[pane].prompt });
+      }
+    } else {
+      const tab = tabs.get(current.activeSessionTabID);
+      if (tab && tab.kind !== "skills") {
+        tabs.set(tab.id, { ...tab, prompt: input && !input.pane ? input.prompt : composerDraftsRef.current.primary().prompt });
+      }
+    }
+    for (const [id, tab] of tabs) {
+      if (tab.kind === "skills") continue;
+      const parts = readCollapsedPromptParts(tab.kind === "thread" ? tab.threadID : id, tab.prompt);
+      const previous = recoveryTextSnapshots.current.get(id);
+      // The fold registry is bounded. Its eviction must not later serialize an
+      // unchanged hidden reference as if it were newly typed text. If input
+      // changes after its source metadata is lost, omit that uncertain draft.
+      const hasReferences = parts ? parts.some((part) => part.type !== "text" && part.type !== "pasted_text")
+        : Boolean(previous?.hasReferences && tab.prompt && tab.prompt !== previous.text);
+      const text = parts ? composerRecoveryText(tab.prompt, parts)
+        : previous?.prompt === tab.prompt ? previous.text
+        : hasReferences ? "" : tab.prompt;
+      recoveryTextSnapshots.current.set(id, { prompt: tab.prompt, text, hasReferences });
+      tabs.set(id, { ...tab, prompt: text });
+    }
+    for (const id of recoveryTextSnapshots.current.keys()) {
+      if (!tabs.has(id)) recoveryTextSnapshots.current.delete(id);
+    }
+    // Optimistic UI clearing is not acceptance. Retain the submitted text until
+    // the operation settles, without replacing input typed in the meantime.
+    for (const [messageID, tab] of pendingDraftRecovery.current) {
+      const live = tabs.get(tab.id);
+      if (!live || live.kind === "skills" || tab.kind === "skills") continue;
+      if (!live.prompt.trim()) tabs.set(tab.id, tab);
+      else if (live.prompt !== tab.prompt) {
+        const recovery = createDraftSessionTab(`draft:recovery:${messageID}`, tab.context, tab);
+        tabs.set(recovery.id, recovery);
+      }
+    }
+    const saved = writeComposerDraftRecovery([...tabs.values()], current.activeSessionTabID);
+    if (!saved && !recoveryStorageWarning.current) showErrorToast(t("settings.draftRecoveryUnavailable"));
+    recoveryStorageWarning.current = !saved;
+  });
+  function setPromptFromInput(value: string): void {
+    updatePromptFromInput(value);
+    // This is deliberately before the 400 ms shell publication: an immediate
+    // reload must recover the textarea's latest input, not its idle snapshot.
+    saveDraftRecovery({ prompt: value });
+  }
+  function setSplitComposerPrompt(pane: ConversationPaneID, value: string): void {
+    updateSplitComposerPrompt(pane, value);
+    saveDraftRecovery({ pane, prompt: value });
+  }
+  useEffect(() => {
+    saveDraftRecovery();
+  }, [state.sessionTabs, state.activeSessionTabID, state.initialized, state.activeContext,
+    state.thread?.id, state.secondaryThread?.id, prompt, promptRevision, splitComposerDrafts, saveDraftRecovery]);
+  useEffect(() => {
+    const timer = window.setInterval(() => saveDraftRecovery(), 60_000);
+    return () => window.clearInterval(timer);
+  }, [saveDraftRecovery]);
   const runningThreadReconcileInFlightRef = useRef("");
   const workspaceHasDirtyFilesRef = useRef(false);
   const lastFocusOutsideWorkspaceRef = useRef<{
@@ -1084,7 +1169,7 @@ export function App(): JSX.Element {
         const pane = currentState.thread.id === threadID ? "primary"
           : currentState.secondaryThread.id === threadID ? "secondary" : undefined;
         if (pane) {
-          setSplitComposerDrafts((current) => ({ ...current, [pane]: draft }));
+          setSplitComposerDrafts((current) => ({ ...current, [pane]: cloneComposerDraft(draft) }));
           return;
         }
       }
@@ -1235,6 +1320,19 @@ export function App(): JSX.Element {
       : undefined;
   const activeThread = activeThreadForState(state);
   const activeThreadID = activeThread?.id;
+  const activeThreadCwd = activeThread?.cwd;
+  const previousThreadWorkspace = useRef({ id: activeThreadID, cwd: activeThreadCwd });
+  useEffect(() => {
+    const previous = previousThreadWorkspace.current;
+    previousThreadWorkspace.current = { id: activeThreadID, cwd: activeThreadCwd };
+    if (activeThreadID && previous.id === activeThreadID && previous.cwd &&
+      activeThreadCwd && previous.cwd !== activeThreadCwd) {
+      showToast({
+        message: translateCurrent("app.workspaceSwitched"),
+        dedupeKey: `workspace-switched:${activeThreadID}:${activeThreadCwd}`,
+      });
+    }
+  }, [activeThreadID, activeThreadCwd]);
   const activeProjectDraft = projectAgentEnabled && !activeThread && currentSessionTab?.kind === "draft" && currentSessionTab.project === true;
   const activeThreadRunning = isThreadRunning(activeThread);
   const activeThreadHasRunningTurn = activeThread?.turns.some(turn => turn.status === "in_progress") ?? false;
@@ -1391,9 +1489,20 @@ export function App(): JSX.Element {
   }, [activeThreadID]);
   const activeTabKind = activeSessionTab(state)?.kind;
   const environmentContext = workspacePanelContext(state.activeContext, activeThread);
+  const sideCommands = useMemo(() => buildComposerSlashCommands({
+    activeContext: state.activeContext, initialized: state.initialized, running: false,
+  }).filter((command) => command.action === "open-side-thread"), [state.activeContext, state.initialized]);
+  const [sideCommandByThread, setSideCommandByThread] = useState<Record<string, string>>({});
+  const sideCommandKey = `${state.activeContext?.cwd ?? ""}\0${activeThreadID ?? ""}`;
+  const selectedSideCommandID = sideCommandByThread[sideCommandKey];
+  const activeSideCommand = sideCommands.find((command) => !selectedSideCommandID || `${command.pluginId}.${command.pluginCommandId}` === selectedSideCommandID);
+  const sideCommandID = activeSideCommand ? `${activeSideCommand.pluginId}.${activeSideCommand.pluginCommandId}` : undefined;
+  const sideConversationAvailable = Boolean(sideCommandID);
   const sideThread = useSideThreadController({
     activeThreadId: activeThreadID,
     activeContext: state.activeContext,
+    commandID: sideCommandID,
+    disabled: sideCommands.length === 0,
   });
   const sideThreadPanelRef = useRef<SideThreadPanelHandle>(null);
   const pendingSideSelectionRef = useRef<{ threadID: string; selection: SideThreadSelection } | null>(null);
@@ -1453,6 +1562,7 @@ export function App(): JSX.Element {
         activeBrowserActivity.thread_id,
         activeBrowserActivity.id,
         inputGeneration,
+        activeBrowserActivity.execution_id,
       );
       mergeActivityResponse(result.activity);
     } catch (error) {
@@ -1877,6 +1987,17 @@ export function App(): JSX.Element {
       if (!serverEventTargetsActiveContext(event, appStateRef.current)) {
         return;
       }
+      // Before initialization, the launch view already displays these failures.
+      if (appStateRef.current.initialized) {
+        if (event.kind === "server-error") {
+          showErrorToast(event.message, translateCurrent("error.server"));
+        } else if (event.kind === "server-exit") {
+          showErrorToast(event.message, translateCurrent("appState.coreExited"), "app-server:exit");
+        } else if (event.kind === "notification" && event.message.method === "config/error") {
+          const configError = (event.message.params as { message?: unknown } | undefined)?.message;
+          if (typeof configError === "string") showErrorToast(configError, "", "app-server:config-error");
+        }
+      }
       const handling = handleStreamingNotification(event, appStateRef.current);
       if (handling === "stream" || handling === "stream-state") {
         // The first visible delta still needs to mount and reveal the live
@@ -1925,7 +2046,7 @@ export function App(): JSX.Element {
             return;
           }
           const { heldComposerMessages, ...runtimeAppState } = loadedState;
-          setState((current) => ({ ...current, ...runtimeAppState }));
+          restoreInitialComposerRuntime(runtimeAppState);
           if (loadedState.thread) {
             seedHeldComposerMessages(loadedState.thread.id, heldComposerMessages ?? []);
           }
@@ -1935,14 +2056,17 @@ export function App(): JSX.Element {
         const runtimeState = listedWorkspaces.active_context
           ? listedWorkspaces
           : await window.wuu.selectNoProject(false);
-        const loadedState = await loadRuntime(runtimeState);
+        const activeRecovery = recoveredDrafts.tabs.find((tab) => tab.id === recoveredDrafts.activeTabID &&
+          runtimeState.active_context && sameRecoveryContext(tab.context, runtimeState.active_context));
+        const loadedState = await loadRuntime(runtimeState, {
+          resumeLatestThread: activeRecovery?.kind !== "draft",
+          resumeThreadID: activeRecovery?.kind === "thread" ? activeRecovery.threadID : undefined,
+        });
         if (!mounted) {
           return;
         }
         const { heldComposerMessages, ...runtimeAppState } = loadedState;
-        setState((current) =>
-          withLoadedRuntimeSessionTab(current, runtimeAppState),
-        );
+        restoreInitialComposerRuntime(runtimeAppState);
         if (loadedState.thread) {
           seedHeldComposerMessages(loadedState.thread.id, heldComposerMessages ?? []);
         }
@@ -2280,7 +2404,9 @@ export function App(): JSX.Element {
       return;
     }
   }
-  const [failedDraftTabIDs, setFailedDraftTabIDs] = useState<string[]>([]);
+  const [failedDraftTabIDs, setFailedDraftTabIDs] = useState<string[]>(() => recoveredDrafts.tabs
+    .filter((tab) => tab.id.startsWith("draft:recovery:"))
+    .map((tab) => tab.id));
   useEffect(() => {
     setFailedDraftTabIDs((ids) => ids.includes(state.activeSessionTabID)
       ? ids.filter((id) => id !== state.activeSessionTabID)
@@ -2911,7 +3037,13 @@ export function App(): JSX.Element {
     }
     return Array.from(names);
   }, [state.thread, state.secondaryThread, state.threads]);
-  const sideThreadPanelVisible = Boolean(activeThreadID && rightPanelOpen &&
+  useEffect(() => {
+    if (!state.initialized?.extension_inventory || sideConversationAvailable) return;
+    pendingSideSelectionRef.current = null;
+    if (sideThread.entry?.open) sideThread.close();
+    if (workspaceViewTabs.some((tab) => tab.id === "side-thread")) closeWorkspaceViewTab("side-thread");
+  }, [sideConversationAvailable, activeThreadID, workspaceViewTabs, state.initialized?.extension_inventory]);
+  const sideThreadPanelVisible = Boolean(sideConversationAvailable && activeThreadID && rightPanelOpen &&
     !workspaceConversationActive && workspaceActiveViewTabID === "side-thread");
   useEffect(() => {
     if (sideThreadPanelVisible && !sideThread.entry?.open) sideThread.open();
@@ -3040,21 +3172,22 @@ export function App(): JSX.Element {
     });
   }, [state.activeSessionTabID, state.thread, state.threads]);
 
-  function openSideThreadPanel(prompt?: string): void {
-    if (!activeThreadID) {
+  function openSideThreadPanel(prompt?: string, commandID = sideCommandID): void {
+    if (!activeThreadID || !commandID || !sideCommands.some((command) => `${command.pluginId}.${command.pluginCommandId}` === commandID)) {
       return;
     }
+    setSideCommandByThread((current) => ({ ...current, [sideCommandKey]: commandID }));
     openWorkspaceSideThread();
     if (!sideThread.entry?.open) sideThread.open();
     requestAnimationFrame(() => sideThreadPanelRef.current?.focusComposer());
     const trimmed = prompt?.trim();
     if (trimmed) {
-      sideThread.sendMessage(trimmed);
+      sideThread.sendMessage(trimmed, commandID);
     }
   }
 
   function openSideThreadWithSelection(selection: SideThreadSelection): void {
-    if (!activeThreadID) return;
+    if (!activeThreadID || !sideConversationAvailable) return;
     openSideThreadPanel();
     sideThread.setDraftSelection(selection);
     requestAnimationFrame(() => sideThreadPanelRef.current?.focusComposer());
@@ -3168,11 +3301,19 @@ export function App(): JSX.Element {
             onAnswer={async (answer) => {
               const prompt = formatUserQuestionSteerPrompt(pendingUserQuestionOffer, answer);
               await answerUserQuestion(pendingUserQuestionOffer.request_id, answer);
-              await sendPrompt("steer", prompt);
+              if (!pendingUserQuestionOffer.reply_to_tool) await sendPrompt("steer", prompt);
             }}
             onCancel={() => cancelUserQuestion(pendingUserQuestionOffer.request_id)}
             onHold={() => holdUserQuestion(pendingUserQuestionOffer.request_id)}
             onCustom={async (text) => {
+              if (pendingUserQuestionOffer.reply_to_tool) {
+                if (text?.trim()) {
+                  await answerUserQuestion(pendingUserQuestionOffer.request_id, { answers: [{
+                    id: pendingUserQuestionOffer.questions[0].id, selected: [], custom: text.trim(),
+                  }] });
+                }
+                return;
+              }
               if (text?.trim()) {
                 await sendPrompt("steer", text.trim(), undefined, pendingUserQuestionOffer.request_id);
                 return;
@@ -3220,9 +3361,9 @@ export function App(): JSX.Element {
               : t("app.childTaskReadOnly")
             : state.status
         }
-        statusLiveProgress={
-          false
-        }
+        disabledReason={activeThreadReadOnly
+          ? activeThreadIsRunning ? t("app.childTaskRunning") : t("app.childTaskReadOnly")
+          : undefined}
         readOnly={activeThreadReadOnly || submissionTargetPending}
         initialized={composerRuntime}
         engines={engineInventory?.engines}
@@ -3292,6 +3433,7 @@ export function App(): JSX.Element {
         }}
         projects={state.projects}
         activeContext={state.activeContext}
+        inlineCompletionWorkspace={activeThread ? resolveThreadRuntimeContext(activeThread, state.projects) : state.activeContext}
         activeWorkspace={activeWorkspace}
         compactDisabledReason={
           !activeThread
@@ -3415,6 +3557,7 @@ export function App(): JSX.Element {
         }}
         queryHistorySessionID={activeThread?.id ?? currentSessionTab?.id}
         skillThreadID={activeThread?.id}
+        threadId={activeThread?.id}
         queryHistory={composerQueryHistory}
         requestedHandoffIntent={requestedHandoffIntentForThread(activeThread)}
       />
@@ -3542,6 +3685,28 @@ export function App(): JSX.Element {
     );
   }
 
+  function restoreInitialComposerRuntime(loadedState: Partial<AppState>): void {
+    const context = loadedState.activeContext;
+    const current = appStateRef.current;
+    const sessionTabs = current.sessionTabs.filter((tab) => {
+      // Check inactive projects too: their id may now name another directory.
+      if (tab.context.kind === "project") {
+        const tabContext = tab.context;
+        const project = loadedState.projects?.find((project) => project.id === tabContext.project_id);
+        if (!project || project.path !== tab.context.cwd) return false;
+      }
+      return !context || !sameRuntimeContext(tab.context, context) || sameRecoveryContext(tab.context, context);
+    });
+    let next = withLoadedRuntimeSessionTab({ ...current, sessionTabs }, loadedState);
+    const active = sessionTabs.find((tab) => tab.id === recoveredDrafts.activeTabID &&
+      context && sameRecoveryContext(tab.context, context));
+    if (!next.thread && active?.kind === "draft") next = { ...next, activeSessionTabID: active.id };
+    const tab = activeSessionTab(next);
+    if (tab) restorePrimaryComposerDraft(cloneSessionTabDraft(tab));
+    appStateRef.current = next;
+    setState(next);
+  }
+
   function restoreSessionTabComposerDraft(tab: SessionTab): void {
     restorePrimaryComposerDraft(cloneSessionTabDraft(tab));
     setSplitComposerDrafts(initialSplitComposerDrafts());
@@ -3658,7 +3823,7 @@ export function App(): JSX.Element {
   useEffect(() => {
     const ask = (event: Event) => {
       const selection = (event as CustomEvent<ResponseSelection>).detail;
-      if (!selection?.source?.thread_id) return;
+      if (!sideConversationAvailable || !selection?.source?.thread_id) return;
       const reference: SideThreadSelection = { type: "response", response: selection };
       if (selection.source.thread_id === activeThreadID) {
         openSideThreadWithSelection(reference);
@@ -3669,7 +3834,7 @@ export function App(): JSX.Element {
     };
     window.addEventListener("wuu:ask-side-selection", ask);
     return () => window.removeEventListener("wuu:ask-side-selection", ask);
-  }, [activeThreadID, activateThread, sideThread.open, sideThread.setDraftSelection]);
+  }, [activeThreadID, activateThread, sideThread.open, sideThread.setDraftSelection, sideConversationAvailable]);
 
   useEffect(() => {
     const pending = pendingSideSelectionRef.current;
@@ -3898,7 +4063,7 @@ export function App(): JSX.Element {
     const source = activeThreadForState(currentState);
     const activeContext = currentState.activeContext;
     if (!source || !activeContext) {
-      showErrorToast(t("app.openConversationFirst"));
+      showActionErrorToast(t("app.openConversationFirst"));
       return;
     }
     try {
@@ -4214,10 +4379,7 @@ export function App(): JSX.Element {
     const targetPane = pane ?? currentState.activePane;
     const targetThread = threadForPane(currentState, targetPane);
     if (targetThread?.read_only) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.childTaskReadOnly"),
-      }));
+      showActionErrorToast(t("app.childTaskReadOnly"));
       return false;
     }
     if (
@@ -4261,13 +4423,33 @@ export function App(): JSX.Element {
     const submissionKey = targetThread?.id ?? currentState.activeSessionTabID;
     const admission = turnAdmissionsRef.current.get(submissionKey);
     const busy = targetThread && isThreadRunning(targetThread) && !activeTurnIsAnswerReady(targetThread);
+    const recoveryOwner = targetThread
+      ? createThreadSessionTab(targetThread, resolveThreadRuntimeContext(targetThread, currentState.projects), draft)
+      : activeSessionTab(currentState);
+    if (recoveryOwner && recoveryOwner.kind !== "skills") {
+      const parts = contentParts ?? readCollapsedPromptParts(
+        recoveryOwner.kind === "thread" ? recoveryOwner.threadID : recoveryOwner.id, draft.prompt,
+      );
+      const previous = recoveryTextSnapshots.current.get(recoveryOwner.id);
+      const text = parts ? composerRecoveryText(draft.prompt, parts)
+        : previous?.prompt === draft.prompt ? previous.text
+        : previous?.hasReferences ? "" : draft.prompt;
+      pendingDraftRecovery.current.set(message.id, { ...recoveryOwner, prompt: text });
+    }
     const operation = admission || (!busy && queueLanesRef.current.has(submissionKey))
       ? queueComposerMessage(message, targetThread, admission)
       : busy
       ? resolveComposerRunningAction(runningAction, targetThread) === "steer"
         ? steerComposerMessage(message, targetThread)
         : queueComposerMessage(message, targetThread)
-      : sendComposerMessage(message, targetThread, targetPane, (thread) => { submittedThread = thread; });
+      : sendComposerMessage(message, targetThread, targetPane, (thread) => {
+          submittedThread = thread;
+          for (const [id, recovery] of pendingDraftRecovery.current) {
+            if (recovery.kind !== "skills" && recovery.id === recoveryOwner?.id) {
+              pendingDraftRecovery.current.set(id, createThreadSessionTab(thread, recovery.context, recovery));
+            }
+          }
+        });
     if (pane) {
       setSplitComposerDrafts((current) => ({ ...current, [pane]: emptyComposerDraft() }));
     } else {
@@ -4275,7 +4457,8 @@ export function App(): JSX.Element {
     }
     const sessionTabID = currentState.activeSessionTabID;
     void operation.then((sent) => {
-      if (sent) return;
+      pendingDraftRecovery.current.delete(message.id);
+      if (sent) { saveDraftRecovery(); return; }
       submittedThread ??= admission?.thread;
       const latest = appStateRef.current;
       const recoveryDraft = { ...composerContextFromMessage(message.text, message.contentParts), images: message.images, files: message.files.filter(file => file.id !== implicitArtifactFileID) };
@@ -4289,13 +4472,19 @@ export function App(): JSX.Element {
       if (stillTarget && !composerDraftHasContent(latestDraft)) {
         rememberCollapsedPromptParts(submittedThread?.id ?? sessionTabID, recoveryDraft.prompt, recoveryDraft.contentParts);
         if (pane) {
-          setSplitComposerDrafts((current) => ({ ...current, [pane]: recoveryDraft }));
+          setSplitComposerDrafts((current) => ({ ...current, [pane]: cloneComposerDraft(recoveryDraft) }));
         } else {
           restorePrimaryComposerDraft(recoveryDraft);
         }
       } else if (submittedThread) {
         // Keep failed input in its conversation without replacing a newer draft.
         preserveFailedComposerMessage(submittedThread.id, message);
+        const recoveryTab = createDraftSessionTab(`draft:recovery:${message.id}`, recoveryOwner?.context ?? currentState.activeContext!, recoveryDraft);
+        rememberCollapsedPromptParts(recoveryTab.id, recoveryDraft.prompt, recoveryDraft.contentParts);
+        const preserve = (state: AppState): AppState => ({ ...state, sessionTabs: [recoveryTab, ...state.sessionTabs] });
+        appStateRef.current = preserve(appStateRef.current);
+        setState(preserve);
+        setFailedDraftTabIDs((ids) => [...ids, recoveryTab.id]);
       } else {
         // Thread creation failed before there was a conversation to retain the
         // input. A separate draft must not replace newer work in the source tab.
@@ -4459,24 +4648,15 @@ export function App(): JSX.Element {
       return;
     }
     if (!targetThread) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.openConversationFirst"),
-      }));
+      showActionErrorToast(t("app.openConversationFirst"));
       return;
     }
     if (targetThread.read_only) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.childTaskReadOnly"),
-      }));
+      showActionErrorToast(t("app.childTaskReadOnly"));
       return;
     }
     if (isStateActiveThreadRunning(currentState)) {
-      setState((current) => ({
-        ...current,
-        status: localizedText("app.currentTaskRunning"),
-      }));
+      showActionErrorToast(t("app.currentTaskRunning"));
       return;
     }
 
@@ -4539,7 +4719,6 @@ export function App(): JSX.Element {
       );
     } catch (error) {
       const rawMessage = rawErrorMessage(error, t("composer.compactFailed"));
-      const errorMessage = statusMessageForError(rawMessage, t("composer.compactFailed"));
       const failedTurn = failOptimisticCompactTurn(
         optimisticTurn,
         rawMessage,
@@ -4558,7 +4737,7 @@ export function App(): JSX.Element {
             ),
         ),
         running: false,
-        status: errorMessage,
+        status: "ready",
       };
       setState((current) =>
         updateThreadByID(
@@ -4571,7 +4750,7 @@ export function App(): JSX.Element {
               failedTurn,
               upsertTurn,
             ),
-          { running: false, status: errorMessage },
+          { running: false, status: "ready" },
         ),
       );
     }
@@ -4620,7 +4799,25 @@ export function App(): JSX.Element {
         removePendingComposerMessageByID(pendingKey(), message.id, "queue");
         return !stillPending;
       }
-      const targetContext = resolveThreadRuntimeContext(targetThread, currentState.projects);
+      return await submitQueuedComposerMessage(message, targetThread, () =>
+        lane.stopVersion !== stopVersion || Boolean(admission?.stopRequested),
+      );
+    } finally {
+      release();
+      if (lane.tail === tail) {
+        queueLanesRef.current.delete(queueKey);
+        if (admission?.thread) queueLanesRef.current.delete(admission.thread.id);
+      }
+    }
+  }
+
+  async function submitQueuedComposerMessage(
+    message: QueuedComposerMessage,
+    targetThread: Thread,
+    shouldHold: () => boolean,
+  ): Promise<boolean> {
+    const targetContext = resolveThreadRuntimeContext(targetThread, appStateRef.current.projects);
+    try {
       const [encodedImages, encodedFiles] = await Promise.all([
         awaitComposerImages(message.images), awaitComposerFiles(message.files),
       ]);
@@ -4643,7 +4840,7 @@ export function App(): JSX.Element {
       const images = inputImagesFromComposer(encodedImages);
       const result = await window.wuu.queueTurn(
         targetThread.id,
-        text,
+        message.text.trim(),
         images,
         message.id,
         files,
@@ -4651,7 +4848,7 @@ export function App(): JSX.Element {
         message.activeDocument,
         message.contentParts,
         targetContext,
-        lane.stopVersion !== stopVersion || Boolean(admission?.stopRequested),
+        shouldHold(),
       );
       updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
         ...previous,
@@ -4670,28 +4867,16 @@ export function App(): JSX.Element {
       return true;
     } catch (error) {
       const stillPending = Boolean(
-        pendingComposerMessagesByThreadRef.current[pendingKey()]?.queued.some(
+        pendingComposerMessagesByThreadRef.current[targetThread.id]?.queued.some(
           (candidate) => candidate.id === message.id,
         ),
       );
-      removePendingComposerMessageByID(pendingKey(), message.id, "queue");
+      removePendingComposerMessageByID(targetThread.id, message.id, "queue");
       if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
-        setState((current) => ({
-          ...current,
-          status:
-            activeThreadIDForState(current) === pendingKey()
-              ? error instanceof Error ? error.message : t("app.queueFailed")
-              : current.status,
-        }));
+        showActionErrorToast(error, t("app.queueFailed"));
       }
       return !stillPending;
-    } finally {
-      release();
-      if (lane.tail === tail) {
-        queueLanesRef.current.delete(queueKey);
-        if (admission?.thread) queueLanesRef.current.delete(admission.thread.id);
-      }
     }
   }
 
@@ -4770,13 +4955,7 @@ export function App(): JSX.Element {
       removePendingComposerMessageByID(targetThread.id, message.id, "guide");
       if (stillPending) discardSubmittedMessage(message.id);
       if (stillPending) {
-        setState((current) => ({
-          ...current,
-          status:
-            activeThreadIDForState(current) === targetThread.id
-              ? error instanceof Error ? error.message : t("composer.guideFailed")
-              : current.status,
-        }));
+        showActionErrorToast(error, t("composer.guideFailed"));
       }
       return !stillPending;
     }
@@ -4921,28 +5100,17 @@ export function App(): JSX.Element {
           }), cancelledCreation!]),
           "thread/start did not return a thread",
         );
-      if (!targetThread && !creationCancelled && !projectDraft) {
-        const draftTab = currentState.sessionTabs.find(
-          (tab) => tab.id === currentState.activeSessionTabID,
-        );
-        const customTitle = customDraftConversationTitle(
-          draftTab?.kind === "draft" ? draftTab.title : undefined,
-          t("tabs.newConversation"),
-        );
-        // Set the user's name before the first turn so a generated title
-        // cannot replace a name they already chose.
-        if (customTitle) {
-          try {
-            const renamed = await window.wuu.renameThread(thread.id, customTitle);
-            if (renamed.thread) {
-              thread = renamed.thread;
-              updateCachedSidebarThread(thread);
-            }
-          } catch (error) {
-            showErrorToast(error, t("thread.rename.failed"));
-          }
-        }
-      }
+      const draftTab = currentState.sessionTabs.find(
+        (tab) => tab.id === currentState.activeSessionTabID,
+      );
+      const customTitle = !targetThread && !creationCancelled && !projectDraft
+        ? customDraftConversationTitle(
+            draftTab?.kind === "draft" ? draftTab.title : undefined,
+            t("tabs.newConversation"),
+          )
+        : "";
+      const originalTitle = thread.title;
+      if (customTitle) thread = { ...thread, title: customTitle };
       admission.thread = thread;
       if (!targetThread) {
         const oldOwner = currentState.activeSessionTabID;
@@ -4997,6 +5165,33 @@ export function App(): JSX.Element {
         ),
       );
       clearPendingThreadCreation(optimisticTurn.id);
+      // Complete the draft-to-thread handoff before another IPC wait can
+      // expose both the pending row and the server's thread/started snapshot.
+      // Persist the draft name before sending, while retaining its optimistic
+      // title and first turn during that wait.
+      if (customTitle) {
+        // The persisted name is exactly the trimmed optimistic title. A late
+        // success must not replay its snapshot over a newer edit or deletion.
+        const renaming = window.wuu.renameThread(thread.id, customTitle).catch((error) => {
+          const revertTitle = (value: Thread): Thread => value.title === customTitle
+            ? { ...value, title: originalTitle } : value;
+          patchCachedSidebarThread(thread.id, revertTitle);
+          const fallbackTitle = baseThreadTitle({ ...thread, title: originalTitle,
+            preview: thread.preview || turnPreview(optimisticTurn) });
+          const revert = (current: AppState): AppState => {
+            const next = updateThreadByID(current, thread.id, revertTitle);
+            return { ...next, sessionTabs: next.sessionTabs.map((tab) =>
+              tab.kind === "thread" && tab.threadID === thread.id && tab.title === customTitle
+                ? { ...tab, title: fallbackTitle } : tab) };
+          };
+          appStateRef.current = revert(appStateRef.current);
+          setState(revert);
+          showErrorToast(error, t("thread.rename.failed"));
+        });
+        // Stop releases preparation immediately; a late failure still rolls
+        // back the title without starting a turn or dropping local input.
+        await Promise.race([renaming, admission.cancelled]);
+      }
       const attachments = await Promise.race([
         Promise.all([awaitComposerImages(message.images), awaitComposerFiles(message.files)]),
         admission.cancelled,
@@ -5039,7 +5234,6 @@ export function App(): JSX.Element {
         await interruptAcceptedThread(thread.id);
       }
     } catch (error) {
-      admission.stopRequested = true;
       const rawMessage = rawErrorMessage(error, t("composer.sendFailed"));
       const errorMessage = statusMessageForError(rawMessage, t("composer.sendFailed"));
       const noModelConfigured = isNoModelConfiguredError(rawMessage);
@@ -5055,6 +5249,28 @@ export function App(): JSX.Element {
         optimisticTurnID,
         previousTurnIDs,
       );
+      // Only a definite admission rejection may become a queued send. Timeouts
+      // can follow acceptance and must not replay the same input. Keep the
+      // admission unresolved until this message is queued so later sends cannot
+      // overtake it through their queue lane.
+      const busyMessage = `thread ${JSON.stringify(optimisticThreadID)} already has a running turn`;
+      const admissionBusy = rawMessage.endsWith(busyMessage)
+        || rawMessage.endsWith(`${busyMessage} in another app-server: thread execution is owned by another app-server`);
+      if (!interrupted && !alreadyAccepted && admission.sent && admission.thread && admissionBusy) {
+        const thread = admission.thread;
+        const deferSend = (current: AppState) => {
+          const next = updateThreadByID(current, thread.id,
+            (value) => dropOptimisticTurn(value, optimisticTurnID));
+          return activeThreadIDForState(next) === thread.id
+            ? { ...next, running: isThreadRunning(threadForTab(next, thread.id)) }
+            : next;
+        };
+        appStateRef.current = deferSend(appStateRef.current);
+        setState(deferSend);
+        enqueueComposerMessage(thread.id, { ...message, operationState: "preparing" });
+        return await submitQueuedComposerMessage(message, thread, () => admission.stopRequested);
+      }
+      admission.stopRequested = true;
       const keepAcceptedTurn = alreadyAccepted && !interrupted;
       if (!interrupted && !keepAcceptedTurn) discardSubmittedMessage(optimisticTurn.items[0].id);
       const settle = (current: AppState): AppState => {
@@ -5076,7 +5292,7 @@ export function App(): JSX.Element {
         return stillTarget ? {
           ...next,
           running: keepAcceptedTurn,
-          status: noModelConfigured || interrupted || keepAcceptedTurn ? "" : errorMessage,
+          status: "",
         } : next;
       };
       appStateRef.current = settle(appStateRef.current);
@@ -5085,6 +5301,10 @@ export function App(): JSX.Element {
       if (!optimisticThreadID) forgetLocalTurnTiming(optimisticTurn.id);
       if (noModelConfigured) {
         showNoModelConfiguredToast();
+      } else if (!interrupted && !keepAcceptedTurn) {
+        // The rejected turn was removed from the transcript, so nothing else
+        // tells the user why their message came back to the composer.
+        showActionErrorToast(errorMessage);
       }
       if (admission.sent && optimisticThreadID && stopRequestsRef.current[optimisticThreadID]) {
         await interruptAcceptedThread(optimisticThreadID!);
@@ -5111,12 +5331,13 @@ export function App(): JSX.Element {
     return sendComposerMessage(message, targetThread, appStateRef.current.activePane, undefined, prepareThread);
   }
 
-  const failedDraftTabID = failedDraftTabIDs[0];
+  const failedDraftTabID = failedDraftTabIDs.find((id) => state.sessionTabs.some((tab) => tab.id === id));
   const failedDraftNotice = failedDraftTabID ? (
     <UILayerPortal layer="notice">
       <TopNotice
         key={failedDraftTabID}
-        message={t("composer.failedDraftSaved")}
+        message={t(recoveredDrafts.tabs.some((tab) => tab.id === failedDraftTabID)
+          ? "composer.recoveredInterruptedDraft" : "composer.failedDraftSaved")}
         icon={CircleAlert}
         isError
         persistent
@@ -5188,6 +5409,30 @@ export function App(): JSX.Element {
     return () => window.removeEventListener("wuu:workbench-back", back);
   }, [accountOpen, settingsOpen, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, setRightPanelOpenWithMotion]);
 
+  useAppContextDraftTarget(submissionTargetPending || !state.initialized || showingManagementCatalog ? undefined : JSON.stringify([
+    state.activeContext ? runtimeContextKey(state.activeContext) : undefined, state.activeSessionTabID, state.activePane, state.thread?.id, state.secondaryThread?.id,
+  ]), (image, context) => {
+    // A workspace panel may cover split panes without changing their draft
+    // ownership. Route by the conversation state, never by panel visibility.
+    const current = appStateRef.current;
+    setSettingsOpen(false);
+    setAccountOpen(false);
+    if (rightPanelGlobalized) focusWorkspaceConversation();
+    setRightPanelOpenWithMotion(false);
+    closePrimaryPluginView();
+    if (current.thread && current.secondaryThread) {
+      const pane = current.activePane;
+      setSplitComposerDrafts((drafts) => ({ ...drafts, [pane]: {
+        ...drafts[pane], images: [...drafts[pane].images, image], files: [...drafts[pane].files, context],
+      } }));
+      requestAnimationFrame(() => focusComposerTextarea(document.querySelector<HTMLTextAreaElement>(".conversation-split-pane.active textarea")));
+    } else {
+      setComposerImages((images) => [...images, image]);
+      setComposerFiles((files) => [...files, context]);
+      requestMainComposerFocus(emptyConversation ? "hero" : "dock");
+    }
+  });
+
   if (ENABLE_ACCOUNT && accountOpen && window.wuu?.remoteAccount) {
     return <AccountScreen driver={window.wuu.remoteAccount} onBack={() => setAccountOpen(false)} />;
   }
@@ -5236,6 +5481,7 @@ export function App(): JSX.Element {
           onCodexPetsRefresh={refreshCodexPets}
           onCodexPetsUpdate={updateCodexPets}
           onSidebarResizeStart={startSidebarResize}
+          onSidebarResizerPointer={trackSidebarResizerPointer}
           onSidebarSeparatorKey={handleSidebarSeparatorKey}
           archivedThreads={state.threads
             .filter((thread) => thread.archived)
@@ -5308,13 +5554,14 @@ export function App(): JSX.Element {
       providers={mascotProviderNames}
       model={mascotRuntimePreview?.model ?? sessionRuntime?.model}
     >
+      <SideConversationAvailableContext.Provider value={sideConversationAvailable}>
       <FileSelectionProvider
         ownerKey={selectionThread?.id ?? currentSessionTab?.id}
         interactionOwnerKey={selectionThread ? fileSelectionDraftOwners.current.get(selectionThread.id) : undefined}
         getPrompt={() => selectionUsesSplitDraft ? splitComposerDrafts[appStateRef.current.activePane].prompt : currentPrimaryComposerDraft().prompt}
         setPrompt={(value) => selectionUsesSplitDraft ? setSplitComposerPrompt(appStateRef.current.activePane, value) : setPrompt(value)}
         onEdit={submitFileSelectionEdit}
-        onAskSide={activeThreadID ? (source) => openSideThreadWithSelection({ type: "file", file: source }) : undefined}
+        onAskSide={activeThreadID && sideConversationAvailable ? (source) => openSideThreadWithSelection({ type: "file", file: source }) : undefined}
         onOpenFile={openWorkspaceFile}
         onOpenPdf={(source) => {
           const pdf = source.pdf;
@@ -5518,6 +5765,8 @@ export function App(): JSX.Element {
             aria-valuenow={sidebarWidth}
             tabIndex={0}
             onPointerDown={startSidebarResize}
+            onPointerEnter={trackSidebarResizerPointer}
+            onPointerMove={trackSidebarResizerPointer}
             onDoubleClick={toggleSidebar}
             onKeyDown={handleSidebarSeparatorKey}
           />
@@ -5632,6 +5881,7 @@ export function App(): JSX.Element {
         {state.initialized ? (
           <div
             data-pip-anchor-host="conversation"
+            data-scroll-fade={!emptyConversation && !splitConversation && !showingManagementCatalog ? "" : undefined}
             className={`scroll-region${emptyConversation ? " empty-scroll-region" : ""}${
               splitConversation ? " split-scroll-region" : ""
             }${showingManagementCatalog ? " skills-scroll-region" : ""}`}
@@ -5656,6 +5906,7 @@ export function App(): JSX.Element {
                 {splitConversation && state.thread && state.secondaryThread ? (
                   <ConversationSplitLayoutRenderer
                     state={state}
+                    pendingComposerMessagesForThread={pendingComposerMessagesForActiveThread}
                     primaryThread={state.thread}
                     secondaryThread={state.secondaryThread}
                     splitLeftPercent={splitLeftPercent}
@@ -5842,7 +6093,6 @@ export function App(): JSX.Element {
           onOpenTool={openWorkspaceTool}
           onOpenPluginTool={openWorkspacePluginTool}
           onShowTools={showWorkspaceToolPicker}
-          onResumeTab={resumeWorkspaceViewTab}
           onCloseTab={(id) => {
             if (id === "side-thread") sideThread.close();
             closeWorkspaceViewTab(id);
@@ -5856,7 +6106,7 @@ export function App(): JSX.Element {
             active: workspaceConversationActive,
             onSelect: focusWorkspaceConversation,
           } : undefined}
-          sideThreadContent={activeThreadID && sideThread.entry ? (
+          sideThreadContent={sideConversationAvailable && activeThreadID && sideThread.entry ? (
             <SideThreadPanel
               key={activeThreadID}
               ref={sideThreadPanelRef}
@@ -5874,7 +6124,8 @@ export function App(): JSX.Element {
                   onOpenFile={openWorkspaceFile}
                   running={sideThread.entry.streaming}
                   disabledReason={sideThread.sendDisabledReason}
-                  error={sideThread.requestError}
+                  mainThreadId={activeThreadID}
+                  sideThreadId={sideThread.entry.summary?.side_thread_id}
                   queryHistorySessionID={
                     sideThread.entry.summary?.side_thread_id ?? `side:${activeThreadID}`
                   }
@@ -5938,6 +6189,7 @@ export function App(): JSX.Element {
       )}
       </>
 
+
       {environmentDialog === "commit" ? (
         <CommitChangesDialog
           gitStatus={state.gitStatus}
@@ -5973,11 +6225,13 @@ export function App(): JSX.Element {
           },
           getStorage: async (pluginId, generation, key, scope) => {
             if (!window.wuu?.getPluginStorage) throw new Error("Plugin storage service is unavailable");
-            return (await window.wuu.getPluginStorage({ id: pluginId, fingerprint: generation, key, scope })).value;
+            const fingerprint = desktopPluginRuntime.storageFingerprint(pluginId, generation, appStateRef.current.initialized?.extension_inventory ?? []);
+            return (await window.wuu.getPluginStorage({ id: pluginId, fingerprint, key, scope })).value;
           },
           setStorage: async (pluginId, generation, key, value, scope) => {
             if (!window.wuu?.setPluginStorage) throw new Error("Plugin storage service is unavailable");
-            await window.wuu.setPluginStorage({ id: pluginId, fingerprint: generation, key, value, scope });
+            const fingerprint = desktopPluginRuntime.storageFingerprint(pluginId, generation, appStateRef.current.initialized?.extension_inventory ?? []);
+            await window.wuu.setPluginStorage({ id: pluginId, fingerprint, key, value, scope });
           },
           openSettings: () => {
             setSettingsInitialPage("providers");
@@ -6017,6 +6271,7 @@ export function App(): JSX.Element {
     </ProjectActionsProvider>
     </ImagePreviewProvider>
     </FileSelectionProvider>
+    </SideConversationAvailableContext.Provider>
     </WuuMascotRuntimeProvider>
   );
 }

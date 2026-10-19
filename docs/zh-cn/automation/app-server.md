@@ -39,6 +39,58 @@ wuu app-server --workdir /path/to/project
 Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束。用 `run/interrupt`
 停止运行；关闭由客户端启动的服务前，先请求 `shutdown`。
 
+## 分页读取会话历史
+
+需要紧凑会话视图时，在 `thread/resume` 中传入 `conversation_history: true`。
+主机会先将已结束的工具活动和过程说明折叠为 `process_summary` 条目，再计算历史页大小。
+回复、错误和已发布附件仍然可见；正在执行的轮次保留实时条目。
+将返回的 `history_cursor` 原样传给 `thread/history/read` 读取更早的会话页。
+会话页当前最多包含 100 个轮次、1 MiB 的序列化条目数据；分页可以拆分轮次，
+但不会拆分处理过程摘要。iOS 在打开会话后自动逐页加载更早的历史，直到读取完成。
+每次只请求一页；关闭视图、切换会话或断线时停止。浏览旧消息时保持阅读位置，
+加载失败可在时间线顶部重试。工具详情和超长内容的完整版仍按需读取。
+
+用户打开摘要时，调用 `thread/activity/read`，传入 `thread_id`、`turn_id`、摘要的
+`item_id`，并将 `activity.last_item_id` 作为 `last_item_id`。响应包含 `turn` 和可选的
+`next_cursor`；将后者作为 `cursor` 读取下一页详情。详情页应与会话状态分开保存。
+单个超长条目通过 `remote_content_ref` 和 `thread/content/read` 获取完整内容。
+若历史编辑移除了分页边界，应重新打开会话，不再使用过期游标。
+
+未传入 `conversation_history` 的客户端继续使用原来的历史格式。
+旧版主机会忽略此选项，返回常规历史页。
+
+## 排队输入与崩溃恢复
+
+持久对话中的 `turn/queue`、`turn/steer` 接收输入，以及编辑和取消操作，都会先提交本地存储，
+再返回成功响应。重试响应不明确的请求时应复用稳定的 `client_id`：重复排队返回原内容，
+已消费的 ID 在不同输入方法间也会被拒绝。取消会阻止同一发送模式的重试；明确切换排队与即时引导模式，
+会取代前一种模式的取消记录。修改内容使用 `turn/update-queued`；重复 `turn/queue` 不会修改或重新执行输入。
+`hold: true` 只保留输入，不派发。
+
+核心重启后，未消费输入通过 `held_user_messages` 返回，不会恢复为自动执行的队列。
+仍由当前进程管理的输入只出现在 `pending_user_messages` 中。用户可以用 `turn/steer` 明确发送待处理项。
+输入进入历史和清理恢复记录在同一事务中完成；即时引导在下一次模型请求前提交尚未归档的完整历史后缀，
+避免把已经派发的输入当作未执行消息重放。并发编辑和取消会阻止过时输入进入历史。
+
+持久 Codex 对话支持向当前轮次补充明确的人类输入。Wuu 用 `expected_turn_id`
+绑定当前轮次，适配器再用原生轮次 ID 约束发送目标；附件和稳定的 `client_id`
+沿用普通输入入口，不改变工具或权限。RPC 成功只确认本地接收，原生确认返回的
+轮次 ID 匹配且用户历史提交成功后，才显示已消费的用户消息。同一轮次可以接收多次补充。
+
+引导结果的可选 `delivery` 字段表示计划发送路径 `active_turn` 或 `queued`，不代表原生已消费。
+不支持当前轮次引导的
+引擎和临时原生对话继续使用下一轮排队；原生返回不支持该方法时也退回普通队列。
+原生明确拒绝的输入则恢复为待处理，不会静默转入后续轮次。
+
+如果发送后的确认丢失、发送后被取消，或确认记录无法提交，待处理项会包含
+`delivery_unconfirmed: true`。即使重启，也不能编辑、撤回、重新排队或重发这个 ID。
+桌面端显示原因，并保留原始内容供查看和复制。
+应先检查原生对话，再决定是否提交替代输入。这个边界防止自动重复执行，
+不承诺外部工具效果恰好发生一次。原生轮次结束时尚未接收的补充会保留为待处理。
+
+执行时重新读取当前权限选择，不会恢复旧权限。这些保证针对本地进程崩溃，不会自动重试效果不明的工具调用。
+临时会话仍只保存在内存中，也不提供持久待处理输入。
+
 ## 托管浏览器请求
 
 内嵌浏览器客户端的基础能力包含六个反向请求方法：`browser/cdp`、`browser/screenshot`、
@@ -170,6 +222,15 @@ PDF 选区增加可选的 `source.pdf` 元数据，其中 `start_page` 和 `end_
 无法展示元数据时，回退到完整的消息 `text` 或队列 `prompt`。模型所需的上下文
 不能只保存在元数据中。
 
+## 刷新外部引擎
+
+`engine/list` 接受 `{ "cwd": "/absolute/session/directory", "refresh_models": true }`。
+`cwd` 默认使用运行时根目录；会话位于其他目录或 worktree 时应传入实际路径。
+显式刷新重新扫描桌面安装目录和登录 shell 路径，将保存的启用/禁用选择重新应用到
+运行时，并绕过原生模型发现缓存。应用启动后新安装的引擎无需重启即可使用，
+正在执行的轮次保留原有引擎租约。`enabled` 表示运行时可用性，`binary_ok` 表示
+检测到了可执行文件；保存的 `settings.<id>.enabled` 仅表示用户选择。
+
 ## 查询订阅状态
 
 `engine/list` 可选参数 `{ "include_quota": true }` 使用各模型服务和支持的外部 Agent 自己的凭据查询上游额度，返回已配置服务 `subscription_providers`。服务或引擎可附带 `quota`：
@@ -207,3 +268,21 @@ wuu debug app-server send --workdir /path/to/project config/read '{}'
 stdio 协议是受信任的本地控制接口，不是带认证的网络服务。远程或托管部署必须在外围提供
 传输安全和隔离。[协议参考](../../en/integrations/app-server-protocol.md)（英文）说明消息
 格式、能力协商、选择规则和云端进程身份。
+
+## 回答原生引擎问题
+
+Codex 提问复用现有的 `user-question/requested`、`user-question/resolved`
+通知及 `user-question/list`、`user-question/respond`、`user-question/cancel`、
+`user-question/hold` 方法。请求携带所属 Wuu `thread_id` 和 `turn_id`，原生条目标识
+位于 `call_id`。问题 ID 仅在当前宿主请求内有效，回答时应原样返回。
+
+`reply_to_tool: true` 表示答案直接返回正在等待的引擎调用，不应再发送消息或追加 steer。
+`mode: "ask"` 使用常规问答表单；`mode: "offer"` 使用可跳过卡片，并沿用 20 秒过期时间，
+`user-question/hold` 可暂停倒计时。取消、跳过或过期均返回无答案，不会自动选择选项。
+回合完成、中断或原生进程断线会撤销问题，迟到的回复会被拒绝。原生请求省略阻塞标记时
+按阻塞问题处理。秘密输入请求明确不受支持，不会显示在明文输入框中。
+
+宿主问答桥接可用时，Wuu 为普通原生回合启用提问。原生配置显式设置
+`features.default_mode_request_user_input = false` 时会保留禁用，Wuu 也不会覆盖
+原生工具级别的禁用设置。功能配置在创建线程或冷恢复时生效；已加载的原生线程保留
+首次加载的功能配置。更改原生提问开关后，需重新连接原生引擎或开启新对话才能生效。

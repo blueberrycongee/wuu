@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { RuntimeContext } from "../shared/protocol";
-import type { ArtifactPreviewRequest } from "./ArtifactPreviewContext";
+import { restoreArtifactPreviewFocus, type ArtifactPreviewRequest } from "./ArtifactPreviewContext";
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import type { RegisteredPluginViewEntry } from "./plugins/PluginHost";
@@ -42,7 +42,6 @@ export function useWorkspaceToolState({
   openWorkspaceProjectTab: (projectID: string, title: string) => void;
   syncWorkspaceProjectTab: (project: { id: string; title: string } | undefined) => void;
   showWorkspaceToolPicker: () => void;
-  resumeWorkspaceViewTab: (id: string) => void;
   focusWorkspaceViewTab: (id: string | undefined) => void;
   closeWorkspaceViewTab: (id: string) => void;
   closeWorkspaceViewTabsWhere: (predicate: (tab: WorkspaceViewTab) => boolean) => void;
@@ -124,11 +123,6 @@ export function useWorkspaceToolState({
     setRightPanelOpenWithMotion(true);
   }
 
-  function resumeWorkspaceViewTab(id: string): void {
-    const tab = workspaceViewTabs.find((candidate) => candidate.id === id);
-    if (tab) openTab(tab, { replaceActiveNewTab: true });
-  }
-
   function toggleRightPanel(): void {
     if (rightPanelOpen) {
       setRightPanelOpenWithMotion(false);
@@ -144,7 +138,7 @@ export function useWorkspaceToolState({
   // through the pinned conversation tab while the workspace is expanded.
   function closeWorkspaceViewTab(id: string): void {
     const tab = workspaceViewTabs.find((candidate) => candidate.id === id);
-    if (rightPanelOpen && workspaceActiveViewTabID === id && tab?.kind === "artifact") tab.motion?.close();
+    if (rightPanelOpen && workspaceActiveViewTabID === id && tab?.kind === "artifact") restoreArtifactPreviewFocus(tab.origin);
     const willEmpty =
       workspaceViewTabs.length === 1 && workspaceViewTabs[0]?.id === id;
     closeTab(id);
@@ -183,7 +177,6 @@ export function useWorkspaceToolState({
     openWorkspaceProjectTab,
     syncWorkspaceProjectTab: syncProjectTab,
     showWorkspaceToolPicker,
-    resumeWorkspaceViewTab,
     focusWorkspaceViewTab: focusTab,
     closeWorkspaceViewTab,
     closeWorkspaceViewTabsWhere,

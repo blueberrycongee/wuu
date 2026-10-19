@@ -117,7 +117,7 @@ const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.ex
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
-  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+  const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
     default_provider: 'fixture', engines,
     providers: { fixture: { type: 'openai-compatible', base_url: endpoint, api_key: 'fixture-only', model: 'fixture' } },
@@ -196,9 +196,11 @@ async function run() {
   assert.equal(config.providers.deepseek.model, nextModel);
   assert.equal(config.default_provider, 'fixture');
 
-  // Hiding a choice persists so catalog refreshes cannot bring it back.
+  // Removing a choice persists so catalog refreshes cannot bring it back.
   const hidden = catalogModels.find(model => model.id !== nextModel).id;
-  await evaluate(main, id => document.querySelector(`[data-model="${id}"]`).closest('.model-choice').querySelector('.model-choice-hide').click(), hidden);
+  await evaluate(main, id => document.querySelector(`[data-model="${id}"]`).closest('.model-choice').querySelector('[data-testid="settings-provider-remove-model"]').click(), hidden);
+  await waitFor(main, () => document.querySelector('[data-testid="settings-provider-remove-model-confirm"]'));
+  await click(main, '[data-testid="settings-provider-remove-model-confirm"]');
   await waitFor(main, id => !document.querySelector(`[data-testid="settings-provider-model"][data-model="${id}"]`) && document.querySelector('.model-choice-hidden'), hidden);
   assert.equal(readConfig().providers.deepseek.models[hidden].disabled, true);
   await evaluate(main, () => document.querySelector('.model-choice-hidden').setAttribute('open', ''));
@@ -221,6 +223,36 @@ async function run() {
   assert.equal(config.default_provider, 'gateway');
   assert.equal(config.providers.gateway.model, 'fixture-b');
 
+  // Add a custom model, explicitly replace the selected model, and reload.
+  await click(main, '[data-testid="settings-provider-add-model-open"]');
+  await type(main, '[data-testid="settings-provider-add-model"]', 'fixture-extra');
+  await click(main, '.model-choice-add button[type="submit"]');
+  await waitFor(main, () => document.querySelector('[data-testid="settings-provider-model"][data-model="fixture-extra"]'));
+  await click(main, '[data-testid="settings-provider-remove-model"][data-model="fixture-b"]');
+  assert.equal(await evaluate(main, () => document.querySelector('[data-testid="settings-provider-remove-model-confirm"]').disabled), true);
+  await click(main, '[data-testid="settings-provider-replacement-model"]');
+  await click(main, '[data-value="fixture-extra"]');
+  await click(main, '[data-testid="settings-provider-remove-model-confirm"]');
+  await waitFor(main, () => !document.querySelector('.model-remove-dialog') && !document.querySelector('[data-testid="settings-provider-model"][data-model="fixture-b"]'));
+  assert.equal(readConfig().providers.gateway.model, 'fixture-extra');
+  assert.equal(readConfig().providers.gateway.models['fixture-b'].disabled, true);
+  await capture(main, '05b-selected-model-removed.png');
+  main.reload();
+  await waitFor(main, () => document.querySelector('.composer textarea'));
+  await click(main, '.sidebar-account-trigger');
+  await waitFor(main, () => document.querySelector('[data-settings-page="providers"]'));
+  await click(main, '[data-settings-page="providers"]');
+  await waitFor(main, () => document.querySelector('[data-provider="gateway"]'));
+  await click(main, '[data-provider="gateway"]');
+  await waitFor(main, () => document.querySelector('[data-testid="settings-provider-model"][data-model="fixture-extra"]'));
+  assert.equal(await evaluate(main, () => Boolean(document.querySelector('[data-testid="settings-provider-model"][data-model="fixture-b"]'))), false);
+  await evaluate(main, () => document.querySelector('.model-choice-hidden').setAttribute('open', ''));
+  await click(main, '[aria-label="恢复 fixture-b"]');
+  await waitFor(main, () => document.querySelector('[data-testid="settings-provider-model"][data-model="fixture-b"]'));
+  await click(main, '[data-testid="settings-provider-model"][data-model="fixture-b"]');
+  await waitFor(main, () => document.querySelector('[data-testid="settings-provider-model"][data-model="fixture-b"]').getAttribute('aria-pressed') === 'true');
+  assert.ok(!readConfig().providers.gateway.models['fixture-b'].disabled);
+
   await click(main, '[data-testid="settings-provider-back"]');
   await waitFor(main, () => document.querySelector('[data-provider="gateway"] .model-service-badge'));
   const cards = await evaluate(main, () => [...document.querySelectorAll('[data-testid="settings-provider-card"]')].map(card => ({ name: card.dataset.provider, label: card.getAttribute('aria-label'), isDefault: Boolean(card.querySelector('.model-service-badge')) })));
@@ -228,10 +260,10 @@ async function run() {
   await capture(main, '06-overview-after.png');
 
   // General gathers how new conversations start; it shows the new default.
-  await click(main, '[data-settings-page="general"]');
+  await evaluate(main, () => [...document.querySelectorAll('.settings-nav-item')].find(item => item.textContent.trim() === '常规').click());
   await waitFor(main, () => document.querySelector('[data-testid="settings-default-model-select"]')?.textContent.includes('fixture-b'));
   await capture(main, '06-general-new-conversations.png');
-  await click(main, '[data-settings-page="providers"]');
+  await evaluate(main, () => [...document.querySelectorAll('.settings-nav-item')].find(item => item.textContent.trim() === '模型服务').click());
   await waitFor(main, () => document.querySelector('[data-provider="gateway"]'));
 
   // Every theme, text size, and width keeps controls inside the column.

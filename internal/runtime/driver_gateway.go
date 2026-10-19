@@ -40,11 +40,11 @@ func (t *driverGatewayTable) register(executionID string, gateway loopdriver.Ker
 		return nil, fmt.Errorf("driver gateway for execution %s is already registered", executionID)
 	}
 	t.gateways[executionID] = driverGatewayEntry{gateway: gateway, ownerPluginID: ownerPluginID}
-	return func() {
+	return sync.OnceFunc(func() {
 		t.mu.Lock()
 		delete(t.gateways, executionID)
 		t.mu.Unlock()
-	}, nil
+	}), nil
 }
 
 func (t *driverGatewayTable) lookup(executionID string) (driverGatewayEntry, bool) {

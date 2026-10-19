@@ -1,5 +1,7 @@
 # Configuration
 
+The desktop settings page does not expose maximum steps or temperature. Built-in desktop conversations, including resumed conversations and delegated workers, use unlimited steps and automatic model/provider temperature. Desktop execution ignores saved `agent.max_steps` and `agent.temperature` values in both user configuration and project overlays without rewriting those files. CLI execution and explicit automation configuration continue to honor these values; omit them or set them to `0` for unlimited steps and automatic temperature. External engines retain their own execution settings.
+
 Wuu keeps model connections and execution choices in user configuration, while projects can supply additional behavior. Start with `wuu init` for CLI use or desktop onboarding, then edit only the settings you need. Wuu rejects unknown configuration fields rather than silently ignoring typos.
 
 The built-in agent can use ordinary file tools to edit configuration in Standard or Unconfined mode; Read only permits inspection but refuses edits. Wuu home is part of the normal file scope, so no separate configuration tool is needed. To add a provider or change the default model, edit the user file described below; project-layer restrictions still apply. The desktop uses its existing refresh path for valid model changes, while other settings retain their documented restart requirements.

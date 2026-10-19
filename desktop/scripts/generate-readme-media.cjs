@@ -3,11 +3,11 @@
 // no account, key or personal data appears in the output.
 //
 // Build the app being described (usually a release tag checkout), then run
-// with Node from this checkout. A display is required (xvfb-run on Linux), and
-// ffmpeg encodes the GIFs:
+// with Node from this checkout. A display is required (xvfb-run on Linux),
+// ffmpeg renders the demo, and img2webp and webpmux from libwebp encode it:
 //   (cd <app>/desktop && npm run build:core && npm run build)
 //   node desktop/scripts/generate-readme-media.cjs [<app>/desktop]
-// Output: landing/assets/readme/{hero-light,hero-dark,files,models,plugins}-<lang>.* and demo-<lang>.gif
+// Output: landing/assets/readme/{hero-light,hero-dark,files,models,plugins}-<lang>.jpg and demo-<lang>.webp
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -17,6 +17,19 @@ const { spawnSync } = require('node:child_process');
 const repository = path.resolve(__dirname, '../..');
 const output = path.join(repository, 'landing/assets/readme');
 const brand = path.join(repository, 'landing/assets/brand');
+// Full windows sit on this stage, in CSS pixels; every capture renders at
+// captureScale device pixels per CSS pixel.
+const captureScale = 2;
+const windowStage = { width: 1640, height: 1100, left: 100, top: 85 };
+// The demo camera frames the stage by its center and the share of the stage it
+// shows, and eases between framings over cameraMoveSeconds. The demo plays at
+// frameRate; while the camera moves, each frame averages shutterFrames renders
+// taken renderRate apart, a 180-degree shutter.
+const wideShot = { x: windowStage.width / 2, y: windowStage.height / 2, scale: 1 };
+const cameraMoveSeconds = 0.8;
+const frameRate = 24;
+const renderRate = 192;
+const shutterFrames = 4;
 
 if (!process.versions.electron) {
   const appDesktop = path.resolve(process.argv[2] || path.join(repository, 'desktop'));
@@ -37,13 +50,72 @@ if (!process.versions.electron) {
       });
       if (capture.error) throw capture.error;
       assert.equal(capture.status, 0, `Capture failed for ${lang}`);
-      const encode = spawnSync('ffmpeg', [
+      // Each recorded frame fills the window on the stage; demo-frame.png then
+      // covers everything outside the rounded window with the backdrop, shadow
+      // and edge. Captures can come out a few pixels short of 1440x900, so they
+      // stretch to the window as the stills do. The camera then crops the stage
+      // at renderRate.
+      const [width, height, left, top] = ['width', 'height', 'left', 'top'].map(key => windowStage[key] * captureScale);
+      const moves = JSON.parse(fs.readFileSync(path.join(temporary, 'camera.json'), 'utf8'));
+      // Each framing holds until the next move, which eases in and out.
+      const track = key => moves.reduceRight((rest, move, index) => {
+        const from = (index ? moves[index - 1].to : wideShot)[key];
+        const progress = `((it-${move.at})/${cameraMoveSeconds})`;
+        const eased = `${progress}*${progress}*(3-2*${progress})`;
+        return `if(lt(it,${move.at}),${from},if(lt(it,${move.at + cameraMoveSeconds}),${from}+(${move.to[key] - from})*${eased},${rest}))`;
+      }, String(moves.at(-1).to[key]));
+      const moving = moves.map(move => `between(t,${move.at},${move.at + cameraMoveSeconds})`).join('+');
+      const camera = [
+        `z='1/(${track('scale')})'`,
+        `x='(${track('x')})*${captureScale}-iw/zoom/2'`,
+        `y='(${track('y')})*${captureScale}-ih/zoom/2'`,
+        `d=1:s=1600x${Math.round(1600 * windowStage.height / windowStage.width)}:fps=${renderRate}`,
+      ].join(':');
+      const rendered = path.join(temporary, 'demo');
+      fs.mkdirSync(rendered);
+      const render = spawnSync('ffmpeg', [
         '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', path.join(temporary, 'frames.txt'),
-        '-vf', 'fps=12,scale=1600:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle',
-        '-loop', '0', path.join(output, `demo-${lang}.gif`),
+        '-i', path.join(temporary, 'demo-frame.png'),
+        '-filter_complex', [
+          `[0:v]scale=${1440 * captureScale}:${900 * captureScale}:flags=lanczos,pad=${width}:${height}:${left}:${top}[stage]`,
+          `[stage][1:v]overlay=format=rgb,fps=${renderRate},zoompan=${camera},split[sharp][moving]`,
+          // tmix only keeps its window current while it receives every frame, so
+          // it blurs the whole stream and the blurred copy shows during moves.
+          `[moving]tmix=frames=${shutterFrames}[blurred]`,
+          `[sharp][blurred]overlay=format=rgb:enable='${moving}',fps=${frameRate}`,
+        ].join(';'),
+        path.join(rendered, '%05d.png'),
       ], { stdio: 'inherit' });
-      if (encode.error) throw encode.error;
-      assert.equal(encode.status, 0, `ffmpeg failed for ${lang}`);
+      if (render.error) throw render.error;
+      assert.equal(render.status, 0, `ffmpeg failed for ${lang}`);
+      // Lossy frames reuse nearly equal pixels from earlier frames, so the blur
+      // of a move could linger on the still shot after it. Each stretch between
+      // moves is encoded on its own and opens on a full frame; webpmux joins the
+      // stretches' frames unchanged.
+      const run = (command, args) => {
+        const result = spawnSync(command, args, { encoding: 'utf8' });
+        if (result.error) throw result.error;
+        assert.equal(result.status, 0, `${command} failed for ${lang}: ${result.stderr}`);
+        return result.stdout;
+      };
+      const files = fs.readdirSync(rendered).sort();
+      const duration = index => Math.round((index + 1) * 1000 / frameRate) - Math.round(index * 1000 / frameRate);
+      const cuts = [0, ...moves.map(move => Math.floor((move.at + cameraMoveSeconds) * frameRate) + 1), files.length];
+      const joined = [];
+      for (let k = 0; k + 1 < cuts.length; k++) {
+        const indices = files.map((_, index) => index).slice(cuts[k], cuts[k + 1]);
+        const stretch = path.join(temporary, `stretch-${k}.webp`);
+        run('img2webp', ['-loop', '0', '-mixed', '-q', '85', ...indices.flatMap(index => ['-d', String(duration(index)), path.join(rendered, files[index])]), '-o', stretch]);
+        // A stretch that never changes is a still image without a frame table.
+        const rows = [...run('webpmux', ['-info', stretch]).matchAll(/^\s*(\d+):\s+\d+\s+\d+\s+(?:yes|no)\s+(\d+)\s+(\d+)\s+(\d+)\s+(none|background)\s+(yes|no)/gm)];
+        if (!rows.length) joined.push('-frame', stretch, `+${indices.reduce((sum, index) => sum + duration(index), 0)}+0+0+0-b`);
+        for (const [, number, x, y, ms, dispose, blend] of rows) {
+          const frame = path.join(temporary, `stretch-${k}-${number}.webp`);
+          run('webpmux', ['-get', 'frame', number, stretch, '-o', frame]);
+          joined.push('-frame', frame, `+${ms}+${x}+${y}+${dispose === 'background' ? 1 : 0}${blend === 'yes' ? '+b' : '-b'}`);
+        }
+      }
+      run('webpmux', [...joined, '-loop', '0', '-o', path.join(output, `demo-${lang}.webp`)]);
     } finally {
       fs.rmSync(temporary, { recursive: true, force: true });
     }
@@ -57,7 +129,7 @@ function capture(desktop, lang, temporary) {
   const { pathToFileURL } = require('node:url');
   const { app, BrowserWindow } = require('electron');
   const zh = lang === 'zh';
-  app.commandLine.appendSwitch('force-device-scale-factor', '2');
+  app.commandLine.appendSwitch('force-device-scale-factor', String(captureScale));
   app.commandLine.appendSwitch('force-color-profile', 'srgb');
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-readme-'));
   const home = path.join(fixture, 'wuu-home');
@@ -485,18 +557,54 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
     shots[name] = file;
   };
   // Bounds of the matched elements in window pixels, padded and kept in the
-  // window. The app zooms its page, so CSS pixels are rescaled to the window.
+  // window, or null when nothing matches. The app zooms its page, so CSS pixels
+  // are rescaled to the window.
   const bounds = (win, selector, pad) => evaluate(win, ({ selector, pad, width }) => {
     const zoom = width / innerWidth;
     const rects = [...document.querySelectorAll(selector)].map(element => element.getBoundingClientRect());
+    if (!rects.length) return null;
     const left = Math.max(0, Math.min(...rects.map(rect => rect.left)) - pad);
     const top = Math.max(0, Math.min(...rects.map(rect => rect.top)) - pad);
     const right = Math.min(innerWidth, Math.max(...rects.map(rect => rect.right)) + pad);
     const bottom = Math.min(innerHeight, Math.max(...rects.map(rect => rect.bottom)) + pad);
     return { x: Math.round(left * zoom), y: Math.round(top * zoom), width: Math.round((right - left) * zoom), height: Math.round((bottom - top) * zoom) };
   }, { selector, pad, width: win.getContentSize()[0] });
+  // Everything the matched elements cover until the returned stop() is awaited.
+  const sweep = (win, selector) => {
+    let area = null;
+    let active = true;
+    const loop = (async () => {
+      while (active) {
+        const rect = await bounds(win, selector, 0);
+        if (rect && area) {
+          const x = Math.min(area.x, rect.x);
+          const y = Math.min(area.y, rect.y);
+          area = { x, y, width: Math.max(area.x + area.width, rect.x + rect.width) - x, height: Math.max(area.y + area.height, rect.y + rect.height) - y };
+        } else {
+          area = rect || area;
+        }
+        await delay(200);
+      }
+    })();
+    return async () => {
+      active = false;
+      await loop;
+      return area;
+    };
+  };
+  // The framing that fits a window rect on the stage, zoomed in at most 1.8x and
+  // kept inside the stage.
+  const framing = (rect, pad = 48) => {
+    const { width, height, left, top } = windowStage;
+    const scale = Math.min(1, Math.max(1 / 1.8, (rect.width + 2 * pad) / width, (rect.height + 2 * pad) / height));
+    const fit = (center, size) => Math.min(Math.max(center, size * scale / 2), size * (1 - scale / 2));
+    const round = value => Number(value.toFixed(3));
+    return { x: round(fit(left + rect.x + rect.width / 2, width)), y: round(fit(top + rect.y + rect.height / 2, height)), scale: round(scale) };
+  };
 
   // Capture frames continuously while `body` runs; ffmpeg reads the timings.
+  // `body` receives mark(name); record returns each mark in seconds from the
+  // first frame.
   const record = async (win, body) => {
     const dir = path.join(temporary, 'frames');
     fs.mkdirSync(dir);
@@ -511,7 +619,8 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
         await delay(Math.max(0, 90 - (Date.now() - at)));
       }
     })();
-    await body();
+    const marks = {};
+    await body(name => { marks[name] = Date.now(); });
     recording = false;
     await loop;
     const lines = frames.flatMap((frame, index) => {
@@ -521,15 +630,20 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
     // The concat demuxer ignores the final duration unless the last file repeats.
     lines.push(`file '${frames.at(-1).file}'`);
     fs.writeFileSync(path.join(temporary, 'frames.txt'), `${lines.join('\n')}\n`);
+    return Object.fromEntries(Object.entries(marks).map(([name, at]) => [name, (at - frames[0].at) / 1000]));
   };
 
   // ---- framing ----------------------------------------------------------------
-  // Lay captures out on an offscreen page at the capture scale, then export.
-  const compose = async (name, size, body, format) => {
-    const page = path.join(temporary, `${name}.html`);
+  // Every image sets its capture on a blurred brand backdrop as a rounded window
+  // or panel with an inner edge and a drop shadow. Pages render offscreen at the
+  // capture scale.
+  const url = file => pathToFileURL(file).href;
+  const render = async (size, body) => {
+    const page = path.join(temporary, 'frame.html');
     fs.writeFileSync(page, `<!doctype html><meta charset="utf-8"><style>
       html, body { margin: 0; background: transparent; }
       .stage { position: relative; width: ${size.width}px; height: ${size.height}px; overflow: hidden; }
+      .layer { position: absolute; inset: 0; }
       .backdrop { position: absolute; inset: -12px; width: calc(100% + 24px); height: calc(100% + 24px); object-fit: cover; filter: blur(2.5px); }
       .shot { position: absolute; overflow: hidden; background-repeat: no-repeat; background-size: 1440px 900px; }
       .shot::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--edge); }
@@ -542,27 +656,46 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
       await win.loadFile(page);
       await evaluate(win, () => Promise.all([...document.images].map(image => image.decode())));
       await delay(300);
-      const image = (await win.webContents.capturePage()).resize({ width: format.width, quality: 'best' });
-      fs.writeFileSync(path.join(output, `${name}-${lang}.${format.jpeg ? 'jpg' : 'png'}`), format.jpeg ? image.toJPEG(86) : image.toPNG());
+      const image = await win.webContents.capturePage();
+      assert.equal(image.getSize().width, size.width * captureScale, 'Frames render at the capture scale');
+      return image;
     } finally {
       win.destroy();
     }
   };
-  const url = file => pathToFileURL(file).href;
-  const windowFrame = (file, left, top, edge, shadow) => `<div class="shot" style="left:${left}px;top:${top}px;width:1440px;height:900px;border-radius:12px;--edge:${edge};background-image:url('${url(file)}');box-shadow:${shadow}"></div>`;
+  const save = async (name, size, body, width) => {
+    const image = (await render(size, body)).resize({ width, quality: 'best' });
+    fs.writeFileSync(path.join(output, `${name}-${lang}.jpg`), image.toJPEG(86));
+  };
+  const backdrop = scene => `<img class="backdrop" src="${url(path.join(brand, `${scene}.webp`))}">`;
+  // A box shows the region of a window capture at (x, y). Without a capture it
+  // draws only its edge and shadow.
+  const box = ({ shot, left, top, width = 1440, height = 900, x = 0, y = 0, radius = 12, edge, shadow = 'none' }) =>
+    `<div class="shot" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;border-radius:${radius}px;--edge:${edge};box-shadow:${shadow}${shot ? `;background-image:url('${url(shot)}');background-position:-${x}px -${y}px` : ''}"></div>`;
+  const placed = { left: windowStage.left, top: windowStage.top };
+  const windowShadow = '0 12px 40px rgba(0,0,0,.59)';
+  const lightEdge = 'rgba(0,0,0,.18)';
   const frameAll = async crops => {
-    for (const [theme, scene, edge] of [['light', 'shore', 'rgba(0,0,0,.18)'], ['dark', 'dusk', 'rgba(255,255,255,.16)']]) {
-      await compose(`hero-${theme}`, { width: 1640, height: 1100 },
-        `<img class="backdrop" src="${url(path.join(brand, `${scene}.webp`))}">${windowFrame(shots[`hero-${theme}`], 100, 85, edge, '0 12px 40px rgba(0,0,0,.59)')}`,
-        { width: 1800, jpeg: true });
+    for (const [theme, scene, edge] of [['light', 'shore', lightEdge], ['dark', 'dusk', 'rgba(255,255,255,.16)']]) {
+      await save(`hero-${theme}`, windowStage, backdrop(scene) + box({ shot: shots[`hero-${theme}`], ...placed, edge, shadow: windowShadow }), 1800);
     }
-    await compose('files', { width: 1500, height: 960 }, windowFrame(shots.files, 30, 20, 'rgba(0,0,0,.18)', '0 7px 26px rgba(0,0,0,.27)'), { width: 1600 });
+    await save('files', windowStage, backdrop('shore') + box({ shot: shots.files, ...placed, edge: lightEdge, shadow: windowShadow }), 1800);
     for (const name of ['models', 'plugins']) {
       const crop = crops[name];
-      await compose(name, { width: crop.width + 40, height: crop.height + 45 },
-        `<div class="shot" style="left:20px;top:15px;width:${crop.width}px;height:${crop.height}px;border-radius:10px;--edge:rgba(0,0,0,.16);background-image:url('${url(shots[name])}');background-position:-${crop.x}px -${crop.y}px;box-shadow:0 5px 20px rgba(0,0,0,.2)"></div>`,
-        { width: 1400 });
+      await save(name, { width: crop.width + 88, height: crop.height + 96 },
+        backdrop('meadow') + box({ shot: shots[name], left: 44, top: 40, ...crop, radius: 10, edge: 'rgba(0,0,0,.16)', shadow: '0 10px 30px rgba(0,0,0,.45)' }), 1400);
     }
+    // The demo layer covers everything outside the rounded window; the encoder
+    // places each recorded frame beneath it.
+    const { width, height, left, top } = windowStage;
+    const right = left + 1440;
+    const bottom = top + 900;
+    const r = 12;
+    const outside = `M0 0H${width}V${height}H0Z M${left + r} ${top}H${right - r}A${r} ${r} 0 0 1 ${right} ${top + r}V${bottom - r}A${r} ${r} 0 0 1 ${right - r} ${bottom}H${left + r}A${r} ${r} 0 0 1 ${left} ${bottom - r}V${top + r}A${r} ${r} 0 0 1 ${left + r} ${top}Z`;
+    const mask = encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><path fill-rule="evenodd" d="${outside}"/></svg>`);
+    const layer = await render(windowStage,
+      `<div class="layer" style="-webkit-mask:url('data:image/svg+xml,${mask}')">${backdrop('meadow')}${box({ ...placed, edge: 'transparent', shadow: windowShadow })}</div>${box({ ...placed, edge: lightEdge })}`);
+    fs.writeFileSync(path.join(temporary, 'demo-frame.png'), layer.toPNG());
   };
 
   let main;
@@ -571,7 +704,7 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const endpoint = `http://127.0.0.1:${server.address().port}/v1`;
     // External engines stay off so the model picker shows only the scripted provider.
-    const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
+    const engines = Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }]));
     write(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'openai', engines, providers: { openai: { type: 'openai-compatible', base_url: endpoint, api_key: 'readme-only', model: 'gpt-6.1-sol' } } }));
     const stamp = '2026-09-20T00:00:00Z';
     write(path.join(home, 'projects.json'), JSON.stringify({
@@ -598,18 +731,24 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
     await send(main, S.thinkPrompt);
     await newThread(main, 'landing-site');
     await send(main, S.sitePrompt);
-    // The Git card opens beside non-empty conversations in a repository.
-    // Closing it once keeps it closed for the session, including the recording.
-    await waitFor(main, () => document.querySelector('.environment-toggle-button.active'), undefined, 15000);
-    await evaluate(main, () => document.querySelector('.environment-toggle-button.active').click());
-    await waitFor(main, () => !document.querySelector('.environment-toggle-button.active'));
+    // Builds with the environment panel open its Git card beside non-empty
+    // conversations in a repository. Closing it once keeps it closed for the
+    // session, including the recording.
+    if (await evaluate(main, () => !!document.querySelector('.environment-toggle-button'))) {
+      await waitFor(main, () => document.querySelector('.environment-toggle-button.active'), undefined, 15000);
+      await evaluate(main, () => document.querySelector('.environment-toggle-button.active').click());
+      await waitFor(main, () => !document.querySelector('.environment-toggle-button.active'));
+    }
 
     await expandWorkspaces(main);
     await newThread(main, 'pocket-ledger');
     await delay(800);
     pace = true;
-    await record(main, async () => {
+    const focus = {};
+    const marks = await record(main, async mark => {
       await delay(700);
+      focus.composer = await bounds(main, '.composer', 0);
+      mark('type');
       const stride = zh ? 1 : 3;
       for (let i = stride; i < S.fixPrompt.length + stride; i += stride) {
         await draft(main, S.fixPrompt.slice(0, i));
@@ -617,14 +756,33 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
       }
       await delay(600);
       await submit(main);
+      mark('submit');
+      const turn = sweep(main, '.turn');
       await waitTurn(main, 1600);
+      focus.turn = await turn();
+      mark('done');
       await delay(1200);
       await openTool(main, L.review);
       await delay(1500);
       await openReviewFile(main, 'totals.js');
-      await delay(3000);
+      focus.diff = await bounds(main, '.workspace-diff-detail-header, .workspace-review-diff-panel .view-line', 0);
+      mark('diff');
+      await delay(2600);
+      mark('outro');
+      await delay(1400);
     });
     pace = false;
+    // The camera opens on the whole window, moves in on the prompt, the agent's
+    // work and the diff, and ends on the whole window so the demo loops.
+    const moves = [
+      { at: Math.max(0, marks.type - 0.4), to: framing(focus.composer) },
+      { at: marks.submit, to: framing(focus.turn) },
+      { at: marks.done, to: wideShot },
+      { at: marks.diff, to: framing(focus.diff) },
+      { at: marks.outro, to: wideShot },
+    ].map(move => ({ at: Number(move.at.toFixed(3)), to: move.to }));
+    moves.forEach((move, index) => assert.ok(!index || move.at >= moves[index - 1].at + cameraMoveSeconds, 'Camera moves do not overlap'));
+    fs.writeFileSync(path.join(temporary, 'camera.json'), JSON.stringify(moves));
 
     for (const theme of ['light', 'dark']) {
       await reset(main);
@@ -665,6 +823,10 @@ When importing a CSV, unknown columns are ignored. Rows without a date or amount
     await reset(main);
     await clickLabel(main, L.plugins);
     await delay(1400);
+    // The Plugins page can open at the scroll offset left by the settings page.
+    await evaluate(main, () => {
+      for (let node = document.querySelector('.skills-catalog'); node; node = node.parentElement) node.scrollTop = 0;
+    });
     await shot(main, 'plugins');
     crops.plugins = await bounds(main, '.skills-catalog > *', 14);
     await frameAll(crops);

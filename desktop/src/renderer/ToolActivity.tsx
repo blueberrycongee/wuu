@@ -116,14 +116,23 @@ const ToolActivityTimelineItem = memo(function ToolActivityTimelineItem({
   );
 });
 
-function ToolSourceRecord({ item, code, label, language, children }: {
+function ToolSourceRecord({ item, code, label, language, children, detailsOnly }: {
   item: ThreadItem;
   code: string;
   label: string;
   language: string;
   children?: ReactNode;
+  detailsOnly: boolean;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
+  const details = (
+    <div className="program-tool-details">
+      <RichCodeBlock code={code} displayedCode={code} language={language} />
+      {children}
+      {item.error ? <p>{item.error}</p> : null}
+    </div>
+  );
+  if (detailsOnly) return details;
   return (
     <details
       className="program-tool-record activity-group"
@@ -138,13 +147,7 @@ function ToolSourceRecord({ item, code, label, language, children }: {
         </span>
         <ChevronDown className="program-tool-chevron icon-sm" aria-hidden="true" />
       </summary>
-      {open ? (
-        <div className="program-tool-details">
-          <RichCodeBlock code={code} displayedCode={code} language={language} />
-          {children}
-          {item.error ? <p>{item.error}</p> : null}
-        </div>
-      ) : null}
+      {open ? details : null}
     </details>
   );
 }
@@ -162,8 +165,11 @@ function ToolSourceRecord({ item, code, label, language, children }: {
 export function ToolActivityRow({
   items,
   streaming = false,
+  detailsOnly = false,
 }: {
   items: ThreadItem[];
+  /** The enclosing process fold already provides the summary and disclosure. */
+  detailsOnly?: boolean;
   /**
    * Drives the fake-stream on the summary text. When true, the summary
    * reveals progressively at a deliberate cadence; when false it snaps
@@ -184,6 +190,13 @@ export function ToolActivityRow({
     const item = items[0];
     const destination = stringValue(parseJSONRecord(item.result), "root")
       ?? stringValue(parseJSONRecord(item.arguments), "root");
+    const details = (
+      <div className="workspace-tool-details">
+        {destination ? <code>{destination}</code> : null}
+        {item.error ? <p>{item.error}</p> : null}
+      </div>
+    );
+    if (detailsOnly) return details;
     return (
       <details className="workspace-tool-record activity-group" data-status={item.status}>
         <summary className="activity-row activity-summary">
@@ -193,10 +206,7 @@ export function ToolActivityRow({
             : summary.running ? "toolActivity.workspaceSwitching" : "toolActivity.workspaceSwitched")}</span>
           <ChevronDown className="workspace-tool-chevron icon-sm" aria-hidden="true" />
         </summary>
-        <div className="workspace-tool-details">
-          {destination ? <code>{destination}</code> : null}
-          {item.error ? <p>{item.error}</p> : null}
-        </div>
+        {details}
       </details>
     );
   }
@@ -209,15 +219,14 @@ export function ToolActivityRow({
     // Keep source verbatim; stringValue trims meaningful indentation and newlines.
     if (typeof code === "string" && code.trim()) {
       const cwd = isCommand ? stringValue(args, "cwd") : undefined;
-      const firstLine = code.split("\n", 1)[0].trim();
-      const pragma = !isCommand && firstLine.startsWith("// @run_code:") ? parseJSONRecord(firstLine.slice("// @run_code:".length)) : undefined;
       return (
         <ToolSourceRecord
           key={item.id}
           item={item}
           code={code}
-          label={isCommand ? code.replace(/\s+/g, " ").trim() : stringValue(pragma, "description") || stringValue(args, "description") || readableToolActivityName(item)}
+          label={isCommand ? code.replace(/\s+/g, " ").trim() : readableToolActivityName(item)}
           language={isCommand ? "bash" : "typescript"}
+          detailsOnly={detailsOnly}
         >
           {cwd ? <p>{t("toolActivity.workingDirectory")}: <code>{cwd}</code></p> : null}
           {isCommand && item.result ? (

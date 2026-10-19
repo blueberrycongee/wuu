@@ -3,9 +3,8 @@
 // case holds the result of an actual CDP geometry read to exercise its async
 // boundary without replacing the browser or fabricating a command response.
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, nativeImage, type WebContentsView, type WebContentsViewConstructorOptions } from "electron";
@@ -23,13 +22,14 @@ import {
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const output = process.env.WUU_BROWSER_OWNERSHIP_OUTPUT ?? join(desktop, "out", "browser-task-ownership");
-const fixture = mkdtempSync(join(tmpdir(), "wuu-browser-ownership-"));
+const fixture = process.env.WUU_BROWSER_OWNERSHIP_FIXTURE;
+assert(fixture, "Run the fixture through browser-task-ownership-e2e.cjs");
 const home = join(fixture, "home");
 const workdir = join(fixture, "project");
 for (const directory of [output, home, workdir]) mkdirSync(directory, { recursive: true });
 app.setPath("userData", join(fixture, "profile"));
 process.env.WUU_HOME = home;
-process.env.WUU_DESKTOP_CORE = process.env.WUU_BROWSER_OWNERSHIP_CORE ?? join(desktop, "build", "bin", "wuu-core");
+process.env.WUU_DESKTOP_CORE = resolve(process.env.WUU_BROWSER_OWNERSHIP_CORE ?? join(desktop, "build", "bin", "wuu-core"));
 process.env.WUU_SAFE_MODE = "1";
 process.env.WUU_ENABLE_BROWSER = "1";
 
@@ -295,6 +295,10 @@ async function request(threadID: string, method: string, params: Record<string, 
     } } as Extract<ServerEvent, { kind: "server-request" }>);
   }));
 }
+function controlParams(threadID: string) {
+  const current = activityByThread.get(threadID)! as ActivitySession & { execution_id?: string };
+  return { thread_id: threadID, activity_id: current.id, execution_id: current.execution_id };
+}
 async function readTab(tabID: string): Promise<WebContentsView | undefined> {
   const meta = host!.tabSurfaceMeta(workdir, tabID);
   return views.find(view => view.webContents && !view.webContents.isDestroyed() && view.webContents.getURL() === meta?.url);
@@ -308,17 +312,18 @@ app.whenReady().then(async () => {
     ptc: { enabled: false },
     agent: { tool_loading: "flat", max_steps: 20 },
     providers: { fixture: { type: "openai-compatible", base_url: `${baseURL}/v1`, api_key: "fixture-only", model: "fixture", models: { fixture: { tool_call: true, modalities: { input: ["text"], output: ["text"] }, limit: { context: 200000, output: 8000 } } } } },
-    engines: Object.fromEntries(["codex", "claude", "cursor", "devin", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }])),
+    engines: Object.fromEntries(["codex", "claude", "cursor", "devin", "dsh", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }])),
   }));
   const nativePresentations: { windowID: number; event: string }[] = [];
   const hostWindows: BrowserWindow[] = [];
   function watchPresentation(window: BrowserWindow) {
-    for (const event of ["show", "focus"] as const) {
-      window.on(event, () => nativePresentations.push({ windowID: window.id, event }));
-    }
+    window.on("show", () => nativePresentations.push({ windowID: window.id, event: "show" }));
+    window.on("focus", () => nativePresentations.push({ windowID: window.id, event: "focus" }));
     return window;
   }
-  const main = watchPresentation(new BrowserWindow({ show: false, width: 900, height: 650 }));
+  const main = watchPresentation(new BrowserWindow({ show: false, width: 900, height: 650,
+    ...(process.platform === "linux" ? { frame: false, autoHideMenuBar: true } : {}),
+  }));
   const context: RuntimeContext = { kind: "no_project", cwd: workdir };
   pool = new AppServerClientPool(() => context, () => workdir, notify, undefined, () => ({
     protocol_version: APP_SERVER_PROTOCOL_VERSION,
@@ -342,7 +347,7 @@ app.whenReady().then(async () => {
     },
   }, defaultBrowserHostDeps(
     () => {
-      const window = watchPresentation(new BrowserWindow({ show: false, webPreferences: { sandbox: true } }));
+      const window = watchPresentation(new BrowserWindow({ show: false, skipTaskbar: true, frame: false, webPreferences: { sandbox: true } }));
       hostWindows.push(window);
       return window as unknown as BrowserHostWindowHandle;
     },
@@ -779,6 +784,9 @@ app.whenReady().then(async () => {
     await start(cMarker, c);
     await bounded("a real new C execution reconciles its retained tabs", controlledWaiter(cMarker).promise);
     check("C resumes with a fresh core execution identity", Boolean(activeExecutionIDs.get(c)) && activeExecutionIDs.get(c) !== previousExecution);
+    // Listing tabs does not acquire UI control. The first real Go observation
+    // must establish this run's activity lease before direct CDP race probes.
+    await controlledTool(cMarker, { action: "observe", tab_id: cTab });
   }
   const observation = await request(c, "browser/cdp", { tab_id: cTab, method: "observe", params: {} }) as { result: { nodes: { node_id: number; name: string }[] } };
   const target = observation.result.nodes.find(node => node.name === "Target");
@@ -790,7 +798,7 @@ app.whenReady().then(async () => {
   await bounded("real geometry response barrier", gate.entered.promise);
   revocations.set(c, deferred());
   const activity = activityByThread.get(c)!;
-  await pool.request("activity/takeover", { thread_id: c, activity_id: activity.id });
+  await pool.request("activity/takeover", controlParams(c));
   await bounded("desktop receives takeover", revocations.get(c)!.promise);
   gate.resume.resolve();
   const interrupted = await pending;
@@ -801,7 +809,7 @@ app.whenReady().then(async () => {
   await cView.webContents.executeJavaScript("document.querySelector('#field').focus()");
   const staleType = await request(c, "browser/cdp", { tab_id: cTab, method: "type", params: { text: "stale" } }).then(() => "delivered", error => String(error));
   check("hidden input remains revoked", staleType !== "delivered" && await cView.webContents.executeJavaScript("document.querySelector('#field').value") === "", staleType);
-  await pool.request("activity/release", { thread_id: c, activity_id: activity.id });
+  await pool.request("activity/release", controlParams(c));
   const oldReleasedInput = await request(c, "browser/cdp", { tab_id: cTab, method: "type", params: { text: "old-release" } }).then(() => "delivered", error => String(error));
   check("explicit release cannot revive an ended execution", oldReleasedInput !== "delivered" && await cView.webContents.executeJavaScript("document.querySelector('#field').value") === "", oldReleasedInput);
   await resumeC();
@@ -831,8 +839,8 @@ app.whenReady().then(async () => {
     },
   });
   heldControlThread = c;
-  await pool.request("activity/takeover", { thread_id: c, activity_id: activity.id });
-  await pool.request("activity/release", { thread_id: c, activity_id: activity.id });
+  await pool.request("activity/takeover", controlParams(c));
+  await pool.request("activity/release", controlParams(c));
   await awaitCTakeover("queued older takeover");
   heldControlThread = undefined;
   const delayedControls = heldControls.splice(0);
@@ -844,9 +852,9 @@ app.whenReady().then(async () => {
   for (const held of delayedControls) host.updateActivity(held.activity, held.method);
   const queuedGrant = await request(c, "browser/cdp", { tab_id: localTab, method: "type", params: { text: "old-grant" } }).then(() => "delivered", error => String(error));
   check("queued old takeover and grant cannot override newer native input", queuedGrant !== "delivered", queuedGrant);
-  const acknowledged = await pool.request<{ activity: ActivitySession }>("activity/takeover", { thread_id: c, activity_id: activity.id });
+  const acknowledged = await pool.request<{ activity: ActivitySession }>("activity/takeover", controlParams(c));
   host.acknowledgeLocalTakeover(acknowledged.activity, localGeneration);
-  await pool.request("activity/release", { thread_id: c, activity_id: activity.id });
+  await pool.request("activity/release", controlParams(c));
   await awaitCTakeover("acknowledged native takeover");
   await resumeC();
   await localView.webContents.executeJavaScript("document.querySelector('#field').value='';document.querySelector('#field').focus()");
@@ -911,6 +919,8 @@ app.whenReady().then(async () => {
   main.showInactive();
   await cView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
   writeFileSync(join(output, "page.png"), (await cView.webContents.capturePage(undefined, { stayHidden: true })).toPNG());
+  const stoppedTurnID = activeTurnIDs.get(c);
+  const stoppedExecutionID = activeExecutionIDs.get(c);
   const commandsBeforeStop = nativeInputCommands.length;
   const stopObserve = await request(c, "browser/cdp", { tab_id: cTab, method: "observe", params: {} }) as { result: { nodes: { node_id: number; name: string }[] } };
   const stopTarget = stopObserve.result.nodes.find(node => node.name === "Target")!;
@@ -918,12 +928,41 @@ app.whenReady().then(async () => {
   geometryGate = stopGate;
   const stoppedInput = request(c, "browser/cdp", { tab_id: cTab, method: "click", params: { node_id: stopTarget.node_id } }).then(() => "delivered", error => String(error));
   await bounded("C geometry before stop", stopGate.entered.promise);
-  await pool.request("activity/stop", { thread_id: c, activity_id: activity.id });
+  await pool.request("activity/stop", controlParams(c));
   stopGate.resume.resolve();
   const stopResult = await stoppedInput;
   check("activity stop cancels pending input", stopResult !== "delivered" && !nativeInputCommands.slice(commandsBeforeStop).some(command => command.webContentsID === cContentsID), stopResult);
 
+  await awaitCTakeover("activity stop");
+  const stoppedRelease = await pool.request("activity/release", controlParams(c))
+    .then(() => "released", error => String(error));
+  check("release alone cannot revive a stopped activity", stoppedRelease !== "released", stoppedRelease);
+  const staleStoppedInput = await request(c, "browser/cdp", {
+    tab_id: cTab, method: "click", params: { x: 140, y: 120 },
+    turn_id: stoppedTurnID, execution_id: stoppedExecutionID,
+  }).then(() => "delivered", error => String(error));
+  check("a stopped execution cannot issue later input", staleStoppedInput !== "delivered", staleStoppedInput);
+
+  await resumeC();
+  // These are real Go tool calls, not direct host requests. A fresh explicit
+  // turn must cross the registry's stopped tombstone with new authority.
+  await controlledTool(cMarker, { action: "observe", tab_id: cTab });
+  const freshActivity = activityByThread.get(c)!;
+  check("a new user run reacquires activity authority after stop", freshActivity.controller === "agent" && freshActivity.state !== "stopped", JSON.stringify(freshActivity));
+  const staleControl = await pool.request("activity/stop", { ...controlParams(c), execution_id: stoppedExecutionID })
+    .then(() => "stopped", error => String(error));
+  check("a stale preview control cannot stop the new execution", staleControl !== "stopped" && activityByThread.get(c)?.controller === "agent", staleControl);
+  await controlledTool(cMarker, { action: "click", tab_id: cTab, x: 140, y: 120 });
+  check("a new user run performs real page input after stop", await cView.webContents.executeJavaScript("window.clicks") === 1);
+  const oldEpochAfterResume = await request(c, "browser/cdp", {
+    tab_id: cTab, method: "click", params: { x: 140, y: 120 },
+    turn_id: stoppedTurnID, execution_id: stoppedExecutionID,
+  }).then(() => "delivered", error => String(error));
+  check("fresh authority never revives the old execution epoch", oldEpochAfterResume !== "delivered" && await cView.webContents.executeJavaScript("window.clicks") === 1, oldEpochAfterResume);
   await finishControlled(cMarker, c);
+  const lateCompletedInput = await request(c, "browser/cdp", { tab_id: cTab, method: "click", params: { x: 140, y: 120 } })
+    .then(() => "delivered", error => String(error));
+  check("completion revokes the fresh execution too", lateCompletedInput !== "delivered", lateCompletedInput);
   const disposal = await start("OWNERSHIP_DISPOSE");
   await bounded("disposal turn opens a live page", controlledWaiter("OWNERSHIP_DISPOSE").promise);
   const disposalTab = openedForThread(disposal)[0];
@@ -948,7 +987,6 @@ app.whenReady().then(async () => {
   host.destroyAll();
   main.destroy();
   server.close();
-  rmSync(fixture, { recursive: true, force: true });
   assert.equal(failures.length, 0, failures.join("\n"));
   console.log(`PASS: browser task ownership and takeover; evidence ${output}`);
   app.exit(0);

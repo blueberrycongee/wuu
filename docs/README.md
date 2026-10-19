@@ -27,4 +27,6 @@ make docs-dev
 
 Run `make build-docs` before submitting changes. The site uses Astro Starlight in `docs-site/`; GitHub Actions builds and deploys documentation changes on `main` to GitHub Pages.
 
+The social preview images `docs-site/public/og-zh.png` and `og-en.png` are generated from the current README app captures by `node docs-site/scripts/generate-og.mjs`. Rerun that command when the captures they use change. The two guide screenshots under `docs/*/assets/product/` are the localized README captures; replace them when the corresponding capture is regenerated.
+
 The `customize/theme-surface-matrix.md` pages are generated references. Update them with `make generate-theme-surface-matrix`, not by hand.

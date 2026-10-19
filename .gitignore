@@ -23,10 +23,14 @@ desktop/out-e2e/
 # artifacts under tracked icon resources.
 desktop/build/mobile-web/
 desktop/build/bin/
+desktop/build/app-context/
+desktop/build/tools/
+desktop/build/licenses/
 desktop/build/dev-host/
 desktop/build/.icon-work/
 desktop/release/
 desktop/native/cua-mac/.build/
+desktop/native/app-context-mac/.build/
 # inspect-cua-pip.cjs writes diagnostic JSON and window screenshots here.
 /artifacts/cua-pip/
 # Local agent snapshots, screenshots, and commit-check copies.
@@ -139,6 +143,12 @@ coverage.out
 *.key
 *.p12
 *.pfx
+*.p8
+*.keychain
+*.keychain-db
+# Encrypted certificate exports and handoff archives still contain private keys.
+Wuu-signing-handoff-*.zip
+Wuu-signing-handoff-*/
 
 # ============================================================
 # Personal scratch
@@ -152,6 +162,9 @@ landing/.redesign-ref/
 
 # local CLI build artifact (use ~/go/bin/wuu via `make install`)
 /wuu
+
+# Local authoring packages are generated from the canonical bundled assets.
+/plugins/*/plugin.json
 
 # Machine-specific first-run helper; never commit local credentials.
 scripts/reset-first-run.sh

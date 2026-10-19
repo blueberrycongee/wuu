@@ -1,9 +1,8 @@
 // Package sdk is Wuu's internal application-embedding facade for the
 // UI-neutral agent host. It is not a public Go API; it exists to let the
 // wuu exec and wuu app-server entrypoints share one in-process client over the
-// versioned app-server protocol. It is separate from packages/plugin-go, the
-// helper-side SDK used by plugin runtime processes; plugin authors do not need
-// this package.
+// versioned app-server protocol. Plugin authors use packages/plugin-sdk and
+// do not need this package.
 //
 // A Runtime owns the provider clients, durable session mechanisms, tools,
 // plugin generations, and recovery services for one workspace. Applications

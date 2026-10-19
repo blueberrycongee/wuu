@@ -3,7 +3,9 @@
 const { app, BrowserWindow } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
-const output = path.resolve(__dirname, "../../../artifacts/sidebar-accessories");
+const output = process.env.WUU_SIDEBAR_OUTPUT || path.resolve(__dirname, "../../../artifacts/sidebar-accessories");
+// Compare the pre-refinement surfaces with the current product renderer.
+const baseline = process.env.WUU_SIDEBAR_BASELINE === "1";
 fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
 
@@ -42,17 +44,22 @@ const measure = () => {
     const end = rect.right - parseFloat(getComputedStyle(title).paddingRight);
     return row.querySelector(".thread-row-fork-icon").getBoundingClientRect().left - end;
   });
+  out.rows = [...document.querySelectorAll(".thread-row")].map(row => ({
+    bounds: row.getBoundingClientRect().toJSON(),
+    title: row.querySelector(".thread-row-title").getBoundingClientRect().toJSON(),
+  }));
   out.focus = document.activeElement?.className;
+  out.keyboardFocusVisible = document.documentElement.dataset.focusModality === "keyboard" && document.activeElement?.matches(":focus-visible");
   return out;
 };
 
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ show: false, width: 1100, height: 960,
+  const win = new BrowserWindow({ show: true, width: 1100, height: 960,
     webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
   const errors = [];
   win.webContents.on("console-message", event => { if (event.level === "error") { errors.push(event.message); console.error(event.message); } });
   const report = {};
-  for (const theme of ["light", "dark"]) for (const size of [14, 20]) {
+  for (const theme of ["light", "dark"]) for (const size of [15, 20]) {
     const name = `${theme}-${size}`;
     win.setContentSize(size === 20 ? 900 : 1100, 960);
     await win.loadURL(`http://127.0.0.1:5208/dev/sidebar-accessories/?theme=${theme}&size=${size}&width=${size === 20 ? 260 : 296}`);
@@ -64,6 +71,8 @@ app.whenReady().then(async () => {
         requestAnimationFrame(ready);
       } ready();
     })`);
+    if (baseline) await win.webContents.insertCSS(require("./baseline.cjs"));
+    await win.webContents.executeJavaScript(`document.querySelector('.project-section .thread-row-main').click(); document.fonts.ready`);
     // Settle section transitions before measuring; no live application is touched.
     await new Promise(resolve => setTimeout(resolve, 350));
     report[name] = { idle: await win.webContents.executeJavaScript(`(${measure})()`) };
@@ -77,12 +86,20 @@ app.whenReady().then(async () => {
     report[name].hover = await win.webContents.executeJavaScript(`(${measure})()`);
     fs.writeFileSync(path.join(output, `${name}-hover.png`), (await win.webContents.capturePage()).toPNG());
     win.webContents.sendInputEvent({ type: "mouseMove", x: 800, y: 10 });
-    await win.webContents.executeJavaScript(`document.querySelector('.thread-row:has(.thread-row-fork-icon) .thread-row-action').focus()`);
+    win.focus();
+    win.webContents.focus();
+    await win.webContents.executeJavaScript(`document.querySelector('.thread-row:has(.thread-row-fork-icon) .thread-row-main').focus()`);
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab" });
     await new Promise(resolve => setTimeout(resolve, 350));
     report[name].focus = await win.webContents.executeJavaScript(`(${measure})()`);
+    if (!report[name].focus.keyboardFocusVisible) throw new Error(`${name}: keyboard focus is not visible`);
+    fs.writeFileSync(path.join(output, `${name}-focus.png`), (await win.webContents.capturePage()).toPNG());
     console.log(`captured ${name}`);
   }
   await win.loadURL("http://127.0.0.1:5208/dev/sidebar-accessories/?empty&size=20");
+  if (baseline) await win.webContents.insertCSS(require("./baseline.cjs"));
+  await win.webContents.executeJavaScript("document.fonts.ready");
   await new Promise(resolve => setTimeout(resolve, 500));
   fs.writeFileSync(path.join(output, "empty.png"), (await win.webContents.capturePage()).toPNG());
   fs.writeFileSync(path.join(output, "geometry.json"), JSON.stringify({ report, errors }, null, 2));

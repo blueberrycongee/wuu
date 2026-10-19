@@ -1,3 +1,4 @@
+import { ComposerInlineCompletionOverlay, useComposerInlineCompletion, type ComposerInlineCompletionActions } from "./ComposerInlineCompletion";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import { effectiveModelSpeed } from "./RuntimeHelpers";
@@ -28,6 +29,7 @@ import {
   useContext,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -72,7 +74,6 @@ import {
   useCollapsedComposerPrompt
 } from "./ComposerCollapsedPrompt";
 import { useFileSelectionActions } from "./FileSelectionContext";
-import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
 import {
   WORKSPACE_FILE_DRAG_MIME,
@@ -111,7 +112,7 @@ import type {
   ComposerWorktreeControl,
   PermissionMode
 } from "./ComposerTypes";
-import { COMPOSER_COMMAND_MENU_WIDTH, COMPOSER_PROJECT_MENU_WIDTH, composerStatusIsLiveProgress, composerStatusText } from "./ComposerTypes";
+import { COMPOSER_COMMAND_MENU_WIDTH, COMPOSER_PROJECT_MENU_WIDTH, composerStatusText } from "./ComposerTypes";
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import { ComposerRuntimeMeters } from "./ComposerRuntimeMeters";
 import { ComposerPresentation } from "./plugins/ComposerPresentation";
@@ -119,6 +120,7 @@ import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { useComposerHeight } from "./useComposerHeight";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import type { TurnContextUsage } from "./AppState";
+import type { ComposerInlineCompletionContext, ComposerSubmissionModeV1 } from "../shared/workbench";
 
 const MemoizedComposerPluginSlot = memo(PluginSlot);
 const MemoizedComposerPluginToolbar = memo(ComposerPluginToolbar);
@@ -163,7 +165,7 @@ export function Composer({
   submitting = false,
   runtimeControlsDisabled = running,
   status,
-  statusLiveProgress,
+  disabledReason,
   readOnly,
   initialized,
   projects,
@@ -175,6 +177,7 @@ export function Composer({
   onCreateGitBranch,
   worktree,
   activeContext,
+  inlineCompletionWorkspace = activeContext,
   activeWorkspace,
   compactDisabledReason,
   sideThreadDisabledReason,
@@ -238,6 +241,9 @@ export function Composer({
   contextUsage,
   queryHistorySessionID,
   skillThreadID,
+  inlineCompletionKind = "main",
+  threadId,
+  sideThreadId,
   queryHistory = [],
   requestedHandoffIntent,
   hideRuntimeControls = false,
@@ -276,7 +282,7 @@ export function Composer({
   submitting?: boolean;
   runtimeControlsDisabled?: boolean;
   status: string;
-  statusLiveProgress?: boolean;
+  disabledReason?: string;
   readOnly: boolean;
   initialized?: InitializeResult;
   gitStatus?: GitStatusResult;
@@ -285,6 +291,8 @@ export function Composer({
   worktree?: ComposerWorktreeControl;
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
+  /** The conversation's runtime can differ from the workspace shown by controls. */
+  inlineCompletionWorkspace?: RuntimeContext;
   activeWorkspace?: DesktopProject;
   compactDisabledReason?: string;
   sideThreadDisabledReason?: string;
@@ -329,7 +337,7 @@ export function Composer({
   onHandoffSession?: (input: { provider: string; model: string; effort?: string; intent: string }) => void;
   // Open or focus the side thread attached to the active main conversation.
   // When prompt is non-empty, also send it as the side-thread query.
-  onOpenSideThread?: (prompt?: string) => void;
+  onOpenSideThread?: (prompt?: string, commandID?: string) => void;
   onOpenWorkspaceTool: (view: WorkspacePanelView) => void;
   onOpenContextComposition?: () => void;
   onCompactContext?: () => void;
@@ -357,6 +365,10 @@ export function Composer({
   queryHistorySessionID?: string;
   // Draft tabs have local history IDs but no server thread to query yet.
   skillThreadID?: string;
+  inlineCompletionKind?: ComposerInlineCompletionContext["kind"];
+  // Real protocol identities; a draft tab ID is only a local editor identity.
+  threadId?: string;
+  sideThreadId?: string;
   queryHistory?: string[];
   requestedHandoffIntent?: string;
   // Suppress the model/context/token runtime chrome on the bar's right edge.
@@ -395,11 +407,13 @@ export function Composer({
   const [prompt, setLocalPrompt] = useState(committedPrompt);
   const [lastCommittedPrompt, setLastCommittedPrompt] = useState(committedPrompt);
   const [lastPromptRevision, setLastPromptRevision] = useState(promptRevision);
+  const [programmaticPromptRevision, setProgrammaticPromptRevision] = useState(0);
   const optimisticPromptQueueRef = useRef<string[]>([]);
   // Parent draft clearing crosses an async/transition boundary. Close the
   // interval where two gestures can still read the same rendered draft, while
   // allowing a real input change (even to the same eventual text) to re-arm it.
   const submittedDraftSignatureRef = useRef<string | null>(null);
+  const inlineCompletionActionsRef = useRef<ComposerInlineCompletionActions | null>(null);
   if (promptRevision !== lastPromptRevision) {
     setLastPromptRevision(promptRevision);
     setLastCommittedPrompt(committedPrompt);
@@ -423,13 +437,13 @@ export function Composer({
     }
   }
   function setPrompt(value: string): void {
+    setProgrammaticPromptRevision((revision) => revision + 1);
     optimisticPromptQueueRef.current.length = 0;
     submittedDraftSignatureRef.current = null;
     setLocalPrompt(value);
     commitPrompt(value);
   }
   const statusText = composerStatusText(status);
-  const statusIsLiveProgress = composerStatusIsLiveProgress(statusLiveProgress);
   const className = `composer-wrap ${
     variant === "hero"
       ? "hero-composer-wrap"
@@ -480,6 +494,9 @@ export function Composer({
   const documentDrawer = useContext(WorkspaceDocumentDrawerContext);
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const showComposerStopAction = showComposerStop;
+  const sendDisabledReason = !showComposerStopAction && (readOnly || effectiveSendDisabled)
+    ? disabledReason
+    : undefined;
   const voiceActionLabel = composerSendLabel;
   const [expandedDrawer, setExpandedDrawer] = useState<ExpandedComposerDrawer>(null);
   const [dropActive, setDropActive] = useState(false);
@@ -761,6 +778,7 @@ export function Composer({
   function submitComposerWith(
     onSubmit: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void,
     promptOverride = prompt,
+    mode: ComposerSubmissionModeV1 = "send",
   ): void {
     // A disconnected (or otherwise send-disabled) composer must not clear the
     // local draft before the bridge has a chance to reject the dispatch.
@@ -798,6 +816,7 @@ export function Composer({
       ? onSubmit(canonicalPrompt, contentParts)
       : onSubmit(promptOverride);
     if (accepted === false) return;
+    inlineCompletionActionsRef.current?.dispatched(canonicalPrompt, mode);
     submittedDraftSignatureRef.current = draftSignature;
     optimisticPromptQueueRef.current.length = 0;
     setLocalPrompt("");
@@ -845,6 +864,7 @@ export function Composer({
     submitComposerWith(
       running && submittingHasDraft && onSteer ? onSteer : onSend,
       promptOverride,
+      running && submittingHasDraft && onSteer ? "steer" : running && onQueue ? "queue" : "send",
     );
   }
 
@@ -941,7 +961,7 @@ export function Composer({
         onStartNewThread();
         break;
       case "open-side-thread":
-        onOpenSideThread?.(draft?.args.trim() || undefined);
+        onOpenSideThread?.(draft?.args.trim() || undefined, `${command.pluginId}.${command.pluginCommandId}`);
         break;
       case "reset-side-thread":
         onResetSideThread?.();
@@ -1020,11 +1040,35 @@ export function Composer({
     focusComposerSoon();
   }
 
-  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
+  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>, inline: ComposerInlineCompletionActions): void {
     if (readOnly) {
       return;
     }
     if (isComposerTextComposing(event)) {
+      return;
+    }
+    const currentPrompt = hasCollapsedPromptBlocks
+      ? `${collapsedPromptPrefix}${event.currentTarget.value}`
+      : event.currentTarget.value;
+    // One owner arbitrates Tab against the live value, which may be ahead of
+    // the rendered slash menu. Modified Tab always retains native focus travel.
+    if (event.key === "Tab") {
+      if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return;
+      if (document.querySelector('[data-floating-menu-owner]:not([data-wuu-layer="tooltip"]):not([data-floating-menu-owner="composer-slash"]), .composer-textarea-context-menu, [aria-modal="true"]')) return;
+      const currentDraft = !(textOnly && !slashCommandsOverride)
+        ? parseComposerSlashDraft(currentPrompt) : undefined;
+      if (currentDraft && currentDraft.query !== "handoff" && slashDismissedValue !== currentPrompt) {
+        const commands = filterComposerSlashCommands(slashCommands, currentDraft.query);
+        const selected = currentDraft.query === slashQuery ? commands[selectedSlashIndex] : undefined;
+        const command = selected && !selected.disabledReason
+          ? selected : commands[firstEnabledSlashCommandIndex(commands)];
+        if (command && !command.disabledReason) {
+          event.preventDefault();
+          applySlashCommand(command, currentDraft);
+        }
+        return;
+      }
+      if (!event.repeat && inline.accept()) event.preventDefault();
       return;
     }
     if (slashMenuOpen) {
@@ -1043,7 +1087,7 @@ export function Composer({
         setSelectedSlashIndex((current) => nextEnabledSlashCommandIndex(visibleSlashCommands, current, -1));
         return;
       }
-      if ((event.key === "Enter" || event.key === "Tab") && !event.metaKey && !event.ctrlKey && visibleSlashCommands.length > 0) {
+      if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && visibleSlashCommands.length > 0) {
         event.preventDefault();
         const fallbackCommand = visibleSlashCommands[firstEnabledSlashCommandIndex(visibleSlashCommands)];
         applySlashCommand(selectedSlashCommand?.disabledReason ? fallbackCommand : (selectedSlashCommand ?? fallbackCommand), slashDraft);
@@ -1055,6 +1099,10 @@ export function Composer({
         return;
       }
     }
+    if (event.key === "Escape" && inline.dismiss()) {
+      event.preventDefault();
+      return;
+    }
     if (handleQueryHistoryKeyDown(event)) {
       return;
     }
@@ -1063,9 +1111,6 @@ export function Composer({
       onInterrupt();
       return;
     }
-    const currentPrompt = hasCollapsedPromptBlocks
-      ? `${collapsedPromptPrefix}${event.currentTarget.value}`
-      : event.currentTarget.value;
     const currentHasDraft = currentPrompt.trim().length > 0 || hasAttachments;
     const primaryModifier = event.metaKey || event.ctrlKey;
     if (
@@ -1078,7 +1123,7 @@ export function Composer({
       onQueue
     ) {
       event.preventDefault();
-      submitComposerWith(onQueue, currentPrompt);
+      submitComposerWith(onQueue, currentPrompt, "queue");
       return;
     }
     if (event.key === "Enter" && !event.shiftKey && !primaryModifier) {
@@ -1201,7 +1246,6 @@ export function Composer({
           onEditQueuedMessage={onEditQueuedMessage}
         />
         <div className="composer-frame-shell">
-          <ComposerFeedback text={statusText} liveProgress={statusIsLiveProgress} />
           {canSelectWorkspace ? (
             <div className="composer-workspace-bar" ref={menuRef}>
               <div className="hero-project-pill-anchor composer-project-control composer-workspace-group">
@@ -1322,6 +1366,23 @@ export function Composer({
               submissionClearRevision={submissionClearRevision}
               placeholder={composerPlaceholder}
               disabled={readOnly}
+              pluginHost={pluginHost}
+              inlineCompletionKind={inlineCompletionKind}
+              workspaceId={inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined}
+              workspaceRoot={inlineCompletionWorkspace?.cwd}
+              attachmentCount={files.length + images.length + selections.length}
+              queuedCount={queuedMessages.length}
+              pendingCount={guideMessages.length}
+              inlineCompletionEnabled={!hasCollapsedPromptBlocks && !disconnected && !topAccessory
+                && !menuOpen && !accessMenuOpen && !branchMenuOpen && !codexRuntimeMenu && !composerContextMenu}
+              inlineCompletionContextKey={JSON.stringify([queryHistorySessionID, slashSkillContextKey, threadId, sideThreadId,
+                inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined, inlineCompletionWorkspace?.cwd])}
+              inlineCompletionRevisionKey={JSON.stringify([promptRevision, programmaticPromptRevision, submissionClearRevision, telemetryTurnID])}
+              inlineCompletionResetKey={JSON.stringify([promptRevision, programmaticPromptRevision])}
+              inlineCompletionActionsRef={inlineCompletionActionsRef}
+              threadId={threadId}
+              sideThreadId={sideThreadId}
+              running={running}
               ariaControls={slashMenuOpen ? slashMenuID : undefined}
               ariaActiveDescendant={
                 selectedSlashCommand
@@ -1463,29 +1524,32 @@ export function Composer({
                     ) : null}
                   </>
                 )}
-                <button
-                  className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
-                  data-wuu-component="composer-send"
-                  data-wuu-state={stopState ?? (showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
-                  aria-busy={stopState === "pending" || (showComposerStopAction && submitting) || undefined}
-                  type="button"
-                  onPointerDown={(event) => {
-                    if (!showComposerStopAction && event.button === 0 && document.activeElement === textareaRef.current) {
-                      // Keep editing focus while the pointer activates Send;
-                      // keyboard navigation and the Stop action stay native.
-                      event.preventDefault();
+                <Tooltip content={sendDisabledReason}>
+                  <button
+                    className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
+                    data-wuu-component="composer-send"
+                    data-wuu-state={stopState ?? (showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
+                    aria-busy={stopState === "pending" || (showComposerStopAction && submitting) || undefined}
+                    type="button"
+                    onPointerDown={(event) => {
+                      if (!showComposerStopAction && event.button === 0 && document.activeElement === textareaRef.current) {
+                        // Keep editing focus while the pointer activates Send;
+                        // keyboard navigation and the Stop action stay native.
+                        event.preventDefault();
+                      }
+                    }}
+                    onClick={showComposerStopAction ? (disconnected ? undefined : onInterrupt) : submitComposer}
+                    aria-label={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pause") : voiceActionLabel}
+                    aria-description={sendDisabledReason}
+                    title={sendDisabledReason ? undefined : stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel}
+                    disabled={
+                      stopState === "pending" || (!showComposerStopAction &&
+                      (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff)))
                     }
-                  }}
-                  onClick={showComposerStopAction ? (disconnected ? undefined : onInterrupt) : submitComposer}
-                  aria-label={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pause") : voiceActionLabel}
-                  title={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel}
-                  disabled={
-                    stopState === "pending" || (!showComposerStopAction &&
-                    (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff)))
-                  }
-                >
-                  {showComposerStopAction ? <ComposerStopIcon state={stopState} submitting={submitting} /> : <ArrowUp aria-hidden="true" />}
-                </button>
+                  >
+                    {showComposerStopAction ? <ComposerStopIcon state={stopState} submitting={submitting} /> : <ArrowUp aria-hidden="true" />}
+                  </button>
+                </Tooltip>
               </div>
             </div>
           </div>
@@ -1616,7 +1680,7 @@ export function Composer({
         threadId={queryHistorySessionID}
         initialized={initialized}
         contextUsage={contextUsage}
-        disabledReason={readOnly || effectiveSendDisabled ? statusText || undefined : undefined}
+        disabledReason={readOnly || effectiveSendDisabled ? disabledReason || statusText || undefined : undefined}
         activeSubmissionMode={activeSubmissionMode}
         availableSubmissionModes={availableSubmissionModes}
         attachmentInputRef={attachmentInputRef}
@@ -1638,13 +1702,28 @@ type ComposerTextareaProps = {
   submissionClearRevision: number;
   placeholder: string;
   disabled: boolean;
+  pluginHost: PluginHost;
+  inlineCompletionKind: ComposerInlineCompletionContext["kind"];
+  inlineCompletionEnabled: boolean;
+  inlineCompletionContextKey: string;
+  inlineCompletionRevisionKey: string;
+  inlineCompletionResetKey: string;
+  inlineCompletionActionsRef: RefObject<ComposerInlineCompletionActions | null>;
+  threadId?: string;
+  sideThreadId?: string;
+  workspaceId?: string;
+  workspaceRoot?: string;
+  attachmentCount: number;
+  queuedCount: number;
+  pendingCount: number;
+  running: boolean;
   ariaControls?: string;
   ariaActiveDescendant?: string;
   ariaExpanded?: boolean;
   onValueChange: (value: string) => void;
   onBlurValue: (value: string) => void;
   onPaste: (event: ReactClipboardEvent<HTMLTextAreaElement>) => void;
-  onKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLTextAreaElement>, inline: ComposerInlineCompletionActions) => void;
   onContextMenu: (event: ReactMouseEvent<HTMLTextAreaElement>) => void;
 };
 
@@ -1659,6 +1738,17 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
     submissionClearRevision,
     placeholder,
     disabled,
+    pluginHost,
+    inlineCompletionKind,
+    inlineCompletionEnabled,
+    inlineCompletionContextKey,
+    inlineCompletionRevisionKey,
+    inlineCompletionResetKey,
+    inlineCompletionActionsRef,
+    threadId,
+    sideThreadId,
+    workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount,
+    running,
     ariaControls,
     ariaActiveDescendant,
     ariaExpanded,
@@ -1668,11 +1758,13 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
     onKeyDown,
     onContextMenu,
   }, ref): JSX.Element {
+    const { t } = useI18n();
     const inputRef = useRef<HTMLTextAreaElement>(null);
     useImperativeHandle(ref, () => inputRef.current!, []);
     const [value, setValue] = useState(committedValue);
     useComposerHeight(inputRef, expanded, value);
     const [lastCommittedValue, setLastCommittedValue] = useState(committedValue);
+    const [externalResetRevision, setExternalResetRevision] = useState(0);
     const [lastValueRevision, setLastValueRevision] = useState(valueRevision);
     const [lastSubmissionClearRevision, setLastSubmissionClearRevision] = useState(
       submissionClearRevision,
@@ -1689,6 +1781,7 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
       setValue("");
     } else if (valueRevision !== lastValueRevision) {
       setLastValueRevision(valueRevision);
+      setExternalResetRevision((revision) => revision + 1);
       setLastCommittedValue(committedValue);
       optimisticValueQueueRef.current.length = 0;
       if (compositionActiveRef.current) {
@@ -1702,25 +1795,50 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
       const optimisticValueIndex = optimisticValueQueueRef.current.lastIndexOf(committedValue);
       if (optimisticValueIndex >= 0) {
         optimisticValueQueueRef.current.splice(0, optimisticValueIndex + 1);
-      } else if (compositionActiveRef.current) {
-        pendingProgrammaticValueRef.current = { value: committedValue };
       } else {
-        optimisticValueQueueRef.current.length = 0;
-        setValue(committedValue);
+        setExternalResetRevision((revision) => revision + 1);
+        if (compositionActiveRef.current) {
+          pendingProgrammaticValueRef.current = { value: committedValue };
+        } else {
+          optimisticValueQueueRef.current.length = 0;
+          setValue(committedValue);
+        }
       }
     }
 
+    function publishValue(nextValue: string): void {
+      setValue(nextValue);
+      optimisticValueQueueRef.current.push(nextValue);
+      startTransition(() => onValueChange(nextValue));
+    }
+    const inline = useComposerInlineCompletion({
+      host: pluginHost, inputRef, value, enabled: inlineCompletionEnabled && !disabled,
+      kind: inlineCompletionKind,
+      contextKey: inlineCompletionContextKey, revisionKey: inlineCompletionRevisionKey,
+      resetKey: JSON.stringify([inlineCompletionResetKey, externalResetRevision]),
+      threadId, sideThreadId, workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount, running, compositionActive: compositionActiveRef.current, onInsert: publishValue,
+    });
+
+    useLayoutEffect(() => {
+      inlineCompletionActionsRef.current = inline.actions;
+      return () => { inlineCompletionActionsRef.current = null; };
+    });
+
     return (
+      <>
       <textarea
         ref={inputRef}
         data-wuu-component="composer-input"
         value={value}
-        placeholder={placeholder}
+        placeholder={inline.text ? "" : placeholder}
         disabled={disabled}
         aria-readonly={disabled}
         aria-controls={ariaControls}
         aria-activedescendant={ariaActiveDescendant}
         aria-expanded={ariaExpanded}
+        aria-describedby={inline.text ? inline.descriptionId : undefined}
+        onFocus={() => inline.observe()}
+        onSelect={() => inline.observe()}
         onChange={(event) => {
           const pendingValue = pendingProgrammaticValueRef.current;
           if (!compositionActiveRef.current && pendingValue !== null) {
@@ -1729,16 +1847,16 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
             setValue(pendingValue.value);
             return;
           }
-          const nextValue = event.target.value;
-          setValue(nextValue);
-          optimisticValueQueueRef.current.push(nextValue);
-          startTransition(() => onValueChange(nextValue));
+          publishValue(event.target.value);
+          inline.observe();
         }}
         onCompositionStart={() => {
           compositionActiveRef.current = true;
+          inline.observe(true);
         }}
         onCompositionEnd={() => {
           compositionActiveRef.current = false;
+          inline.observe(false);
           const pendingValue = pendingProgrammaticValueRef.current;
           if (pendingValue === null) {
             return;
@@ -1752,10 +1870,18 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
           });
         }}
         onPaste={onPaste}
-        onBlur={() => onBlurValue(value)}
-        onKeyDown={onKeyDown}
+        onBlur={() => { inline.observe(); onBlurValue(value); }}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
+          onKeyDown(event, inline.actions);
+        }}
         onContextMenu={onContextMenu}
       />
+      {inline.text ? <ComposerInlineCompletionOverlay inputRef={inputRef} value={value} text={inline.text} /> : null}
+      {inline.text ? <span className="sr-only" id={inline.descriptionId} role="status">
+        {t("composer.inlineCompletionAvailable", { text: inline.text })}
+      </span> : null}
+      </>
     );
   },
 );

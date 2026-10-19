@@ -94,7 +94,11 @@ async function reentrantServices(): Promise<void> {
     initialize: definition,
     async invokeService(params, host) {
       events.push(params.service);
-      if (params.service === "a.leaf") return { text: "composed" };
+      if (params.service === "a.leaf") {
+        assert(host.supports("host.storage.get"), "typed kernel service did not recognize gateway support");
+        const stored = await host.call("host.storage.get", { scope: "workspace", key: "report" });
+        return { text: stored.value };
+      }
       return await host.call("host.service.call", { service: "b.middle", method: "call" });
     },
   };
@@ -107,6 +111,8 @@ async function reentrantServices(): Promise<void> {
     },
   });
   const route = async (frame: Frame) => {
+    assert(frame.method === "host.service.call", "kernel service bypassed the registry gateway");
+    if (frame.params.service === "host.storage.get") return { value: "composed" };
     const target = frame.params.service === "b.middle" ? b : a;
     const response = await target.request("service.invoke", {
       ...frame.params, caller: target === a ? "b" : "a",
@@ -134,17 +140,24 @@ async function sharedExecutionCancellation(): Promise<void> {
   const peer = new Peer({
     concurrentServices: ["wait.service"],
     initialize: definition,
-    async invokeService(params, _host, execution) {
+    async invokeService(params, host, execution) {
       const index = (params.params as { index: number }).index;
       signals[index] = execution.signal;
       started[index]!.resolve();
-      await new Promise<void>((resolve) => {
-        if (execution.signal.aborted) resolve();
-        else execution.signal.addEventListener("abort", () => resolve(), { once: true });
-      });
+      try {
+        await host.call("host.session.inspect", { session_id: "child", wait: "terminal" });
+        throw new Error("host call unexpectedly completed before cancellation");
+      } catch (error) {
+        assert(error === execution.signal.reason, "host call did not preserve its execution cancellation");
+      }
+      const before = peer.frames.length;
+      try { await host.call("host.storage.get", { scope: "workspace", key: "cancelled" }); }
+      catch (error) { assert(error === execution.signal.reason, "cancelled execution started a new host call"); }
+      assert(peer.frames.length === before, "cancelled execution emitted another host call");
       return { cancelled: execution.signal.aborted };
     },
   } as RuntimePlugin);
+  peer.onCall = () => new Promise(() => {});
   await peer.start();
   const first = peer.request("service.invoke", { service: "wait.service", method: "call", caller: "test", execution_id: "shared", params: { index: 0 } });
   await started[0]!.promise;
@@ -154,6 +167,9 @@ async function sharedExecutionCancellation(): Promise<void> {
   const responses = await Promise.all([first, second]);
   assert(signals.every((signal) => signal.aborted), "cancellation did not reach every handler in the execution");
   assert(responses.every((response) => response.result?.cancelled), "cancelled handlers failed to settle");
+  for (const frame of peer.frames.filter((frame) => frame.method)) peer.send({ id: frame.id, result: {} });
+  await peer.request("service.changed", { service: "remote.service" });
+  assert(!peer.frames.some((frame) => frame.id === "invalid"), "late cancelled host response was treated as a request");
   await peer.close();
 }
 
@@ -165,16 +181,21 @@ async function lifecycleBarriers(): Promise<void> {
   const activateRelease = deferred<void>();
   const serviceStarted = deferred<void>();
   const serviceRelease = deferred<void>();
+  let lifetime!: AbortSignal;
   const peer = new Peer({
     concurrentServices: ["wait.service"],
-    async initialize() {
+    concurrentCapabilities: ["probe.capability"],
+    async initialize(_params, _host, lifecycle) {
+      lifetime = lifecycle.signal;
       initializeStarted.resolve();
       await initializeRelease.promise;
       events.push("initialized");
       return definition();
     },
-    async activate() {
+    async activate(_host, lifecycle) {
+      assert(!lifetime.aborted, "initialization ended the background lifetime");
       activateStarted.resolve();
+      lifecycle.signal.addEventListener("abort", () => activateRelease.resolve(), { once: true });
       await activateRelease.promise;
       events.push("activated");
     },
@@ -185,7 +206,11 @@ async function lifecycleBarriers(): Promise<void> {
       events.push("service completed");
       return {};
     },
-    shutdown() { events.push("shutdown"); },
+    invokeCapability(params) { return { output: params.output }; },
+    shutdown() {
+      assert(lifetime.aborted, "shutdown did not stop the background lifetime");
+      events.push("shutdown");
+    },
   } as RuntimePlugin);
   const initialize = peer.request("initialize", {});
   await initializeStarted.promise;
@@ -194,12 +219,12 @@ async function lifecycleBarriers(): Promise<void> {
   initializeRelease.resolve();
   await activateStarted.promise;
   assert(events.join(",") === "initialized", "service bypassed activation barrier");
-  activateRelease.resolve();
-  await serviceStarted.promise;
   const shutdown = peer.request("shutdown");
   const rejected = peer.request("service.invoke", { service: "wait.service", method: "call", caller: "test" });
   const rejection = await rejected;
   assert(rejection.error?.message === "runtime is shutting down", "shutdown admitted a new service call");
+  assert(lifetime.aborted, "shutdown waited for activation before cancelling its background work");
+  await serviceStarted.promise;
   serviceRelease.resolve();
   await Promise.all([initialize, activate, service, shutdown]);
   assert(events.join(",") === "initialized,activated,service started,service completed,shutdown", `lifecycle ordering changed: ${events}`);
@@ -209,13 +234,21 @@ async function lifecycleBarriers(): Promise<void> {
 async function transportClose(failed: boolean): Promise<void> {
   const started = deferred<void>();
   const events: string[] = [];
+  let lifetime!: AbortSignal;
   const peer = new Peer({
     initialize: definition,
-    async invokeService(_params, host, execution) {
+    activate(_host, lifecycle) { lifetime = lifecycle.signal; },
+    shutdown() { events.push("shutdown"); },
+    async invokeService(params, host, execution) {
+      if (params.service === "queued.service") {
+        events.push("queued handler ran");
+        return {};
+      }
       started.resolve();
       try { await host.call("host.service.call", { service: "remote.service", method: "call" }); }
       catch { events.push("pending rejected"); }
       assert(execution.signal.aborted, "EOF failed to cancel the handler");
+      assert(lifetime.aborted, "EOF failed to cancel background work");
       try { await host.call("host.service.call", { service: "remote.service", method: "call" }); }
       catch { events.push("new rejected"); }
       return {};
@@ -227,12 +260,16 @@ async function transportClose(failed: boolean): Promise<void> {
   await peer.start();
   const response = peer.request("service.invoke", { service: "local.service", method: "call", caller: "test", execution_id: "closed" });
   await started.promise;
+  const queued = peer.request("service.invoke", { service: "queued.service", method: "call", caller: "test", execution_id: "queued-close" });
+  const shutdown = peer.request("shutdown");
   const failure = failed ? new Error("input stream failed") : undefined;
   let caught: unknown;
   try { await peer.close(failure); } catch (error) { caught = error; }
   assert(caught === failure, "transport did not preserve the input error");
   await response;
-  assert(events.join(",") === "pending rejected,new rejected", "EOF left a host call pending");
+  assert((await queued).error, "transport loss admitted a queued handler");
+  assert(!(await shutdown).error, "transport loss skipped lifecycle cleanup");
+  assert(events.join(",") === "pending rejected,new rejected,shutdown", `EOF dispatch or cleanup changed: ${events}`);
 }
 
 async function serialDispatchAndFailure(): Promise<void> {
@@ -241,7 +278,17 @@ async function serialDispatchAndFailure(): Promise<void> {
   const events: string[] = [];
   const peer = new Peer({
     concurrentServices: ["probe.service"],
+    concurrentCapabilities: ["probe.capability"],
     initialize: definition,
+    executeTool() {
+      events.push("cancelled.tool");
+      return { result: { content: [] } };
+    },
+    invokeCapability(params) {
+      if (params.capability !== "probe.capability") events.push("cancelled.capability");
+      return { output: { capability: params.capability } };
+    },
+    shutdown() { events.push("shutdown"); },
     async invokeService(params) {
       if (params.service === "probe.service") return {};
       events.push(params.service);
@@ -256,14 +303,30 @@ async function serialDispatchAndFailure(): Promise<void> {
   await peer.start();
   const first = peer.request("service.invoke", { service: "first.service", method: "call", caller: "test" });
   await firstStarted.promise;
+  const cancelled = [
+    peer.request("tool.execute", { tool_id: "effect", tool: "effect", call_id: "queued", cwd: ".", arguments: {}, execution_id: "queued-tool" }),
+    peer.request("capability.invoke", { capability: "agent.request.transform", input: {}, execution_id: "queued-capability" }),
+    peer.request("service.invoke", { service: "cancelled.service", method: "call", caller: "test", execution_id: "queued-service" }),
+  ];
+  for (const executionId of ["queued-tool", "queued-capability", "queued-service"]) {
+    peer.send({ id: `cancel-${executionId}`, method: "execution.cancel", params: { execution_id: executionId } });
+  }
   const second = peer.request("service.invoke", { service: "second.service", method: "call", caller: "test" });
-  // The probe response establishes that the preceding frame was received.
+  // The probe response establishes that every cancellation frame was received.
   await peer.request("service.invoke", { service: "probe.service", method: "call", caller: "test" });
+  const probe = await peer.request("capability.invoke", { capability: "probe.capability", input: {}, output: {} });
+  assert(probe.result?.output?.capability === "probe.capability", "concurrent capability could not bypass blocked work");
   assert(events.join(",") === "first.service", "default service dispatch stopped being serial");
   firstRelease.resolve();
   assert((await first).error?.message === "provider failed", "service error was not returned");
   assert((await second).result?.recovered, "one provider failure poisoned later requests");
-  assert(events.join(",") === "first.service,second.service", "serial request order changed");
+  assert((await Promise.all(cancelled)).every((response) => response.error), "cancelled queued requests did not return errors");
+  assert(events.join(",") === "first.service,second.service", `cancelled queued handler ran: ${events}`);
+  peer.send({ id: "late-cancel", method: "execution.cancel", params: { execution_id: "queued-service" } });
+  assert((await peer.request("service.invoke", { service: "fresh.service", method: "call", caller: "test", execution_id: "fresh" })).result?.recovered,
+    "late cancellation prevented fresh work");
+  await peer.request("shutdown");
+  assert(events.join(",") === "first.service,second.service,fresh.service,shutdown", "cancellation prevented lifecycle cleanup");
   await peer.close();
 }
 

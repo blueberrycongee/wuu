@@ -22,32 +22,24 @@ const sources: TurnSource[] = Array.from({ length: 20 }, (_, i) => ({ host: `sit
 function links(container: ParentNode) { return [...container.querySelectorAll<HTMLButtonElement>(".web-source-link")]; }
 describe("TurnSourcesRow", () => {
   it("stays absent without web sources", () => { expect(mount(<TurnSourcesRow sources={[]} />).container.firstChild).toBeNull(); });
-  it("keeps direct link routing and modifiers separate from the group disclosure", () => {
-    const onOpen = vi.fn(), onExpandedChange = vi.fn();
-    const { container } = mount(<TurnSourcesRow sources={sources} onOpen={onOpen} onExpandedChange={onExpandedChange} />);
+  it("keeps direct link routing and modifiers", () => {
+    const onOpen = vi.fn();
+    const { container } = mount(<TurnSourcesRow sources={sources} onOpen={onOpen} />);
     act(() => links(container)[0].click());
     expect(onOpen).toHaveBeenCalledExactlyOnceWith(sources[0].url);
     act(() => links(container)[1].dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true })));
     expect(onOpen.mock.calls[1]).toEqual([sources[1].url, expect.objectContaining({ metaKey: true })]);
-    expect(onExpandedChange).not.toHaveBeenCalled();
   });
-  it("announces the total source count and controls the owning disclosure", () => {
-    const onExpandedChange = vi.fn();
-    const { container, rerender } = mount(<TurnSourcesRow sources={sources.slice(0, 8)} detailsID="group-details" onExpandedChange={onExpandedChange} />);
+  it("announces the total source count for the compact group", () => {
+    const { container } = mount(<TurnSourcesRow sources={sources.slice(0, 8)} />);
     expect(links(container)).toHaveLength(6);
-    const toggle = container.querySelector<HTMLButtonElement>(".web-research-more")!;
-    expect(toggle.textContent).toContain("8"); expect(toggle.textContent).not.toContain("+2");
-    expect(toggle.getAttribute("aria-controls")).toBe("group-details");
-    act(() => toggle.click()); expect(onExpandedChange).toHaveBeenCalledWith(true, toggle);
-    rerender(<TurnSourcesRow sources={sources.slice(0, 8)} detailsID="group-details" expanded onExpandedChange={onExpandedChange} />);
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    act(() => toggle.click()); expect(onExpandedChange).toHaveBeenLastCalledWith(false, toggle);
+    expect(container.querySelector("[role=group]")?.getAttribute("aria-label")).toContain("8");
   });
   it("reduces inline icons without losing the total count on narrow headers", () => {
-    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) { return this.classList.contains("process-surface-inline-controls") ? 320 : 0; });
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) { return this.classList.contains("process-surface-inline-controls") ? 160 : 0; });
     const view = (items: TurnSource[]) => <div className="process-surface-inline-controls"><TurnSourcesRow sources={items} inline /></div>;
     const { container, rerender } = mount(view([])); rerender(view(sources));
-    expect(links(container)).toHaveLength(1); expect(container.querySelector(".web-research-more")?.textContent).toContain("20");
+    expect(links(container)).toHaveLength(3); expect(container.querySelector("[role=group]")?.getAttribute("aria-label")).toContain("20");
   });
   it("keeps full titles and URLs in hints and accessible names", async () => {
     vi.useFakeTimers(); const { container } = mount(<TurnSourcesRow sources={sources.slice(0, 1)} />);

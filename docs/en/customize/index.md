@@ -10,6 +10,7 @@ Choose an extension mechanism for the behavior you need. A reusable task procedu
 | Install packaged agent or desktop behavior | [Wuu plugins](plugins.md) |
 | Choose a theme or configure a plugin | [Themes and settings](themes-settings.md) |
 | Keep durable information | [Memory](memory.md) and optional [Dream](dream.md) |
+| Predict an optional next message | [Next-message suggestions](next-message.md) |
 
 Skills add instructions and resources. MCP exposes tools from another process or service. Hooks run commands or model checks at supported events. A plugin can combine these contributions with agent code, desktop code, themes, and settings under one package lifecycle.
 

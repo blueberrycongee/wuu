@@ -4,6 +4,10 @@ A provider tells Wuu where to send model requests and which credentials to use. 
 
 These settings apply to the **Wuu** engine. Selecting an [external engine](external-engines.md), such as Codex, Claude Code, or Devin, runs that program with its own authentication and configuration. Reusing a subscription credential in a Wuu provider is a different choice from running the corresponding external engine.
 
+![The Add provider sheet in Settings → Model providers, with fields for service type, model, and credentials.](../assets/product/models-en.jpg)
+
+<p class="docs-caption">Choose the API type, then enter the provider identifier, model, and credentials.</p>
+
 ## Add a provider in the desktop app
 
 1. Open **Settings → Model providers → Add provider**.
@@ -12,7 +16,7 @@ These settings apply to the **Wuu** engine. Selecting an [external engine](exter
 4. Save the provider, return to the composer, and select the provider and model for the conversation.
 5. Send a small request that includes a tool call, such as reading a project file, to check more than text-only replies.
 
-The first-run form offers a simpler connection setup. Use Settings for a custom endpoint and additional model options. A model listed in a configuration is not a guarantee that your account can access it.
+First-run setup lists detected local Codex and Grok logins together. Select a login to connect it and use it as the default model service, or connect another service. Existing connections do not hide these choices. Use Settings for additional model options. A model listed in a configuration is not a guarantee that your account can access it.
 
 The composer's selection belongs to the conversation, or to the draft before its first message. Settings also lets you set workspace defaults; changing a conversation's model does not silently replace those defaults.
 
@@ -22,6 +26,14 @@ Selecting either source prevents an unrelated ambient API key or bearer token
 from being added to the request. Explicitly configuring both headers remains
 supported. Saving a new API key in Settings replaces the previous bearer token,
 including its configured environment-variable reference.
+
+## Manage providers and models
+
+Open a connected provider in **Settings → Model providers**. **Add model** accepts a model ID without duplicating the provider or its credentials. The trash icon removes a model from that provider's choices. Removing the selected model asks you to choose its replacement before saving; add another model first if it is the only one.
+
+Removed choices stay removed after reloading or refreshing the catalog. You can restore them from **Removed models**. Existing conversations, model roles, and aliases keep their model selections and metadata; removing a choice does not revoke model access or erase conversation history.
+
+Use the provider's **… → Delete provider** action to remove the entire connection and its provider-specific saved key. Shared subscription sign-ins are kept. Removing the default provider asks you to choose another default. Existing conversations remain and switch from the removed provider to the current default on their next turn. Roles that used it return to inherited defaults, and its aliases are removed. Add another provider before deleting the last configured provider. Automatically discovered services and OpenAI OAuth-managed connections cannot be removed here; their authentication remains managed by the original sign-in flow.
 
 ## Current OpenAI and Anthropic models
 
@@ -34,6 +46,16 @@ To use GPT-6.1 Sol through an existing Codex subscription, reuse your local Code
 GPT-6 Sol and Luna support reasoning levels from `none` through `max`, defaulting to `medium`. Their Fast entries use the same model with priority processing and a different price. Wuu defaults an unspecified official OpenAI connection to Responses for these models. If you explicitly selected Chat Completions, choose Responses for reasoning with tools; Chat Completions supports their tool calls only at `none`. Custom endpoints retain their configured transport. See the official [Sol](https://developers.openai.com/api/docs/models/gpt-6-sol) and [Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) specifications.
 
 Claude Opus 5.5 and Fable 5.1 always use adaptive thinking. Wuu maps a saved `none` selection to `low`; their defaults are `medium` and `high`, respectively. Wuu requests readable thinking summaries and lets the API drop thinking blocks invalidated by context changes while retaining valid signed blocks. These models reject forced tool choice, so Wuu expresses a required closing tool call as an instruction with automatic tool selection; this does not guarantee that the model calls it. See the official [Opus 5.5](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide) and [Fable 5.1](https://platform.claude.com/docs/en/models/fable-5-1/migration-guide) migration guides.
+
+## DeepSeek models
+
+Use `deepseek-flash` for DeepSeek V4.1 Flash 1017, or `deepseek-v4-pro` for V4 Pro. The official base URL is `https://api.deepseek.com`; Wuu defaults these models to Responses. Anthropic-compatible connections use `https://api.deepseek.com/anthropic`. Both models have a 1M context window, a maximum output of 393,216 tokens, and reasoning levels `none`, `low`, `high` (default), and `max`. Flash also accepts images.
+
+The catalog no longer advertises the retired `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` models. Saved selections using these accepted aliases retain Flash capabilities and resolve to the latest `deepseek-flash`; explicitly configured model choices remain until you remove them. The discontinued `deepseek-chat` and `deepseek-reasoner` IDs are not offered by the official catalog; replace saved selections with `deepseek-flash`. V4 Pro remains available.
+
+In Chat Completions thinking mode, DeepSeek rejects forced tool choice. Wuu uses automatic tool selection for these reasoning variants; `none` retains forced tool support. Thinking mode ignores temperature. For Flash, `top_p` only takes effect while thinking, with an effective range of 0.95–1.0; outside thinking it is fixed at 1.0.
+
+Catalog prices use **peak USD rates per million tokens**: Flash input $0.30, cached input $0.006, output $1.20; Pro input $1.32, cached input $0.044, output $3.96. Off-peak rates are half. Peak hours are Monday–Friday 01:00–04:00 and 06:00–10:00 UTC, excluding Chinese public holidays. These static catalog rates do not calculate a time-dependent bill. See the official [model update](https://api-docs.deepseek.com/updates), [API parameters](https://api-docs.deepseek.com/api/create-chat-completion), and [pricing](https://api-docs.deepseek.com/quick_start/pricing).
 
 ## Use an existing subscription
 
@@ -98,6 +120,57 @@ wuu exec --provider openai --permission-mode read_only "Read this project and ex
 
 `--provider` selects a configured identifier, and `--model` overrides the model for this run. See [configuration](../reference/configuration.md) for precedence and the limits on project-level settings.
 
+## Streaming latency
+
+Wuu's built-in HTTP model clients reuse a streaming connection pool across turns.
+The pool survives Codex credential reloads; each request still uses the current
+credentials. Connect, response-header and stream-idle deadlines remain separate,
+so connection reuse does not impose a total timeout on a long answer.
+
+Codex defaults to `stream_transport: "auto"`. In eligible built-in sessions,
+thread creation, resume and model changes can prewarm its WebSocket before the
+next send, without submitting an inference request. A compatible continuation
+on the same connection sends `previous_response_id` plus new input. Reconnection,
+changed request options or incompatible history require full context again.
+Prewarming removes setup from the send path only when that connection survives
+until use; it does not remove provider queueing or model computation.
+
+An unavailable WebSocket can fall back to HTTP before submission. Once a request
+may have been submitted, normal recovery accounting governs any further attempt.
+HTTP gzip is a separate upload optimization and does not compress WebSocket
+messages. Keep the configured transport when testing it: forcing SSE can lose
+existing connection and context reuse. See the [latency evaluation workflow](../project/development.md#provider-latency-evaluation)
+for measurements and correctness checks.
+
+## Experimental HTTP request compression
+
+HTTP request gzip is disabled by default. To test an endpoint whose operator has
+confirmed it accepts `Content-Encoding: gzip`, set
+`WUU_EXPERIMENTAL_REQUEST_GZIP_ENDPOINTS` in the process that launches Wuu. Use a
+comma-separated list of exact, complete request URLs, for example:
+
+```bash
+export WUU_EXPERIMENTAL_REQUEST_GZIP_ENDPOINTS="https://gateway.example/v1/responses"
+```
+
+This example is a placeholder, not a claim of endpoint support. Include the full
+`/responses`, `/chat/completions`, or `/v1/messages` path as applicable. Matching
+includes the query string; host-only values, wildcards, URL userinfo and fragments
+are not supported. Redirect destinations must also be explicitly listed.
+API-format compatibility does not imply request-compression support.
+
+The experiment uses fast gzip for serialized JSON bodies of at least 64 KiB,
+only when it reduces bytes. The cutoff is experimental. Existing
+`Content-Encoding` headers disable automatic compression for that request.
+JSON content, token accounting, response streaming and WebSocket behavior stay
+unchanged. Compression adds local CPU and memory work; fewer uploaded bytes do
+not establish lower time to first token or lower model charges.
+
+No extra retry or uncompressed resend is added for rejected gzip or connection
+failures. Existing recovery rules still apply. If the endpoint rejects the
+encoding, unset the variable and restart Wuu before retrying deliberately.
+This setting applies to Wuu's HTTP model clients, not external agent engines.
+
 ## Turn completion and extra requests
 
 Wuu follows the selected API's completion signals. A normal stop ends the turn even if the response is empty; it does not prove that the task is complete. Empty text or a commentary message alone does not trigger another billable request.
@@ -125,6 +198,11 @@ submission also share a 20 MiB total limit. The complete encoded desktop request
 including all images, files, text, and metadata, must fit within 64 MiB. Base64
 encoding increases file sizes by about one third. If the request is too large,
 Wuu keeps the draft so you can remove attachments or shorten the message and retry.
+
+If an attachment cannot be read while preparing it, its card stays in the draft.
+Choose **Retry** to read the same selected file again, or remove it and select a
+replacement. A successful retry does not send the message. These unsent files
+remain in memory only; reattach them after closing or reloading the window.
 
 Path-only delivery counts the reference text toward context, not the file's
 disk or Base64 size. Native images use image estimates; other admitted native
@@ -184,9 +262,13 @@ succeed before the file is written. These tools remain available inside
 use the same execution, permission and workspace checks. Other ordinary tools
 use PTC while it is enabled.
 
+The Peers plugin’s read-only `list_peers` tool supports discovery and filtering
+inside `run_code`. It remains limited to root sessions and peers in the current
+workspace. Sending a peer request remains a separate direct tool.
+
 ### Discover, execute and inspect results
 
-On OpenAI Responses (including the Codex provider), `run_code` accepts raw JavaScript source through a custom text tool. Do not wrap it in JSON or Markdown fences. Other provider APIs accept the same source as `{"input":"..."}`. An optional first-line `// @run_code: {...}` comment sets `description`, `timeout_ms`, `result_view`, and `max_output_tokens`; unknown options fail before execution. Previously recorded `code` calls remain executable when resuming a session.
+On Responses connections with a recognized GPT-5-or-later model, `run_code` accepts raw JavaScript source through a custom text tool. Do not wrap custom-tool input in JSON or Markdown fences. Older GPT models, unknown models, and other provider APIs accept the same source as `{"input":"..."}`. For a Responses gateway that does not support custom tools, set `providers.<provider>.models.<model>.options.freeform_tool` to `false`; use `true` only when the endpoint supports that wire format. Unknown models use JSON tools by default. This setting changes the wire format, not whether PTC is enabled. Historical calls are converted for the current request without changing saved conversation history. An optional first-line `// @run_code: {...}` comment sets `description`, `timeout_ms`, `result_view`, and `max_output_tokens`; unknown options fail before execution. Previously recorded `code` calls remain executable when resuming a session.
 The description is display metadata; omitting it does not prevent execution.
 Its description includes core file, search and command definitions within a
 fixed catalog budget, with previews for other bindings. Use included schemas

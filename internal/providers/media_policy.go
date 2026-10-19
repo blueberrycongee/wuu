@@ -6,10 +6,41 @@ import (
 )
 
 // MediaInputPolicy carries the resolved admission decision for user-supplied
-// media on one request. A known unsupported kind is stripped at the request
-// boundary and replaced with a short marker. Unknown kinds pass through so a
-// missing catalog entry cannot silently discard media the user explicitly
-// supplied; provider validation remains the authority in that case.
+// media on one request.
+//
+// Design: the front end may attach anything; the model backend's declared
+// capabilities decide what reaches the wire. Unsupported media is stripped
+// from the request copy instead of failing the turn, and the model keeps text
+// plus a path it can open with tools. At submission, appserver writes every
+// attachment to an expiring working copy and appends its path to the message
+// text (inputImagePathReference, inputFilePathReference). At request time,
+// ProjectMediaForPolicy removes the bytes the policy rejects and adds a short
+// omission marker. A model that cannot take a PDF, image, or video natively
+// therefore still sees the prompt, the path, and the marker, and can read the
+// file by running tools or writing code. Stored history keeps the original
+// media for the UI and for later models that can consume it natively.
+//
+// Admission per kind:
+//   - Images follow the model's image capability.
+//   - Videos need both the model capability and a connection that carries
+//     video (ResolveVideoInputPolicy).
+//   - Files follow the model's file capability, and PDF is the only file type
+//     with a native transport; other attached files always reach the model as
+//     a path only.
+//   - Pasted long text is always materialized as a text file and referenced
+//     by path, independent of this policy.
+//   - Media produced by rich tool results, such as history reads, and the
+//     token budgets used by compaction go through the same projection, so
+//     switching to a less capable model cannot reintroduce stripped media.
+//
+// Deliberate exceptions:
+//   - Unknown capabilities pass through so a missing catalog entry cannot
+//     silently discard media the user explicitly supplied; provider
+//     validation remains the authority in that case.
+//   - Required media fails the request (ValidateRequiredMedia), because a
+//     path cannot satisfy a task that depends on the model seeing it.
+//   - Media without a working copy has no path fallback: stripped images keep
+//     only the marker, and a new unsupported video fails (PrepareVideoInput).
 //
 // The policy is request metadata only: provider clients must never serialize
 // it on the wire.

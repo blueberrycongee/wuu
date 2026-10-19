@@ -122,6 +122,7 @@ type Client struct {
 	authToken                       string
 	headers                         map[string]string
 	httpClient                      *http.Client
+	streamHTTPClient                *http.Client
 	maxTokens                       int
 	streamConfig                    providers.StreamTransportConfig
 	coordinator                     *providers.ProviderCoordinator
@@ -153,6 +154,7 @@ func New(cfg ClientConfig) (*Client, error) {
 		providerScope = providers.NewProviderScope(cfg.BaseURL, credential, "")
 	}
 
+	streamConfig := streamTransportConfig(cfg.StreamConfig)
 	return &Client{
 		baseURL:                         strings.TrimRight(cfg.BaseURL, "/"),
 		messagesURL:                     anthropicMessagesURL(cfg.BaseURL),
@@ -160,8 +162,9 @@ func New(cfg ClientConfig) (*Client, error) {
 		authToken:                       cfg.AuthToken,
 		headers:                         cloneHeaders(cfg.Headers),
 		httpClient:                      hc,
+		streamHTTPClient:                providers.BuildStreamingHTTPClient(hc, streamConfig),
 		maxTokens:                       maxTokens,
-		streamConfig:                    streamTransportConfig(cfg.StreamConfig),
+		streamConfig:                    streamConfig,
 		coordinator:                     cfg.Coordinator,
 		providerScope:                   providerScope,
 		cacheCreationInputTokensOmitted: cfg.CacheCreationInputTokensOmitted,
@@ -339,7 +342,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	sseClient := providers.BuildStreamingHTTPClient(c.httpClient, c.streamConfig)
+	sseClient := c.streamHTTPClient
 	// Use the single-attempt request — ReliableStreamClient handles retries
 	// with proper UI feedback at the caller layer.
 	providers.DebugLogf("StreamChat: sending %d bytes to %s/v1/messages (max_tokens=%d, model=%s, msgs=%d)",
@@ -472,13 +475,10 @@ func buildAnthropicRequestWithSupport(req providers.ChatRequest, maxTokens int, 
 	}
 
 	systemTexts := make([]string, 0, 1)
-	// stableTail tracks the payload coordinates of the last cacheable block
-	// that came from a non-hidden source message. Hidden messages are
-	// per-request volatile context (system reminders, injected state): a
-	// cache marker placed on or after them can never be read back, so the
-	// sliding tail marker must land on this boundary instead of the raw
-	// payload tail.
-	var stableTail *anthropicStableTail
+	// Keep injected context outside the sliding cache boundary, including
+	// when it becomes part of a tool result. Retained context can enter the
+	// cached prefix once a later stable block follows it.
+	var stableTail, beforeToolResult *anthropicStableTail
 	for _, msg := range req.Messages {
 		if strings.EqualFold(msg.Role, "system") {
 			systemTexts = append(systemTexts, msg.Content)
@@ -488,6 +488,31 @@ func buildAnthropicRequestWithSupport(req providers.ChatRequest, maxTokens int, 
 		mapped, err := mapMessage(msg, toolSearchEnabled, thinkingReplay, allowEmptySignature)
 		if err != nil {
 			return anthropicRequest{}, err
+		}
+		injected := msg.Hidden || wuucontext.IsSystemReminder(msg.Name, msg.Content)
+		if n := len(payload.Messages); n > 0 && msg.Role == "user" && injected {
+			previous := &payload.Messages[n-1]
+			if last := len(previous.Content) - 1; previous.Role == "user" && last >= 0 && previous.Content[last].Type == "tool_result" {
+				// Runtime context and projected tool media continue the tool
+				// turn. Top-level user text would strip prior thinking on older
+				// Claude models, even with caching disabled. Canonicalize before
+				// choosing markers so later requests never rewrite this layout.
+				result := &previous.Content[last]
+				var content []anthropicBlock
+				if text, ok := result.Content.(string); ok {
+					if text != "" {
+						content = append(content, anthropicBlock{Type: "text", Text: text})
+					}
+				} else {
+					content = result.Content.([]anthropicBlock)
+				}
+				result.Content = append(content, mapped.Content...)
+				stableTail = beforeToolResult
+				continue
+			}
+		}
+		if msg.Role == "tool" {
+			beforeToolResult = stableTail
 		}
 		destIdx := len(payload.Messages)
 		blockBase := 0
@@ -505,20 +530,16 @@ func buildAnthropicRequestWithSupport(req providers.ChatRequest, maxTokens int, 
 		} else {
 			payload.Messages = append(payload.Messages, mapped)
 		}
-		// Volatile context is flagged either by Hidden or by being a
-		// system-reminder message (some call sites set only the name).
-		if !msg.Hidden && !wuucontext.IsSystemReminder(msg.Name, msg.Content) {
+		if !injected {
 			if last := lastCacheableBlockIndex(mapped.Content); last >= 0 {
 				stableTail = &anthropicStableTail{Message: destIdx, Block: blockBase + last}
 			}
 		}
 	}
 	providers.DebugLogf("buildAnthropicRequest: %d input msgs → %d merged msgs", len(req.Messages), len(payload.Messages))
+	// Cache metadata never controls the representation of message content.
 	if !cacheDisabled {
 		applyAnthropicCacheHint(&payload, req.CacheHint, cacheTTL, stableTail)
-	}
-	for i := range payload.Messages {
-		payload.Messages[i] = smooshSystemReminderBlocks(payload.Messages[i])
 	}
 	// Log the role sequence to diagnose alternation violations.
 	if len(payload.Messages) > 0 {
@@ -895,9 +916,9 @@ func anthropicCompactedDiscoveredToolNames(messages []providers.ChatMessage) map
 
 // anthropicStableTail is the payload position (message index, absolute block
 // index within that message's merged content) of the last cacheable block
-// that originated from a non-hidden source message. It is captured during
-// message mapping in buildAnthropicRequest, where source-message hiddenness
-// is still known.
+// that originated from a non-hidden source message without injected context.
+// It is captured during message mapping, where source-message hiddenness is
+// still known.
 type anthropicStableTail struct {
 	Message int
 	Block   int
@@ -917,13 +938,14 @@ func applyAnthropicCacheHint(payload *anthropicRequest, hint *providers.CacheHin
 	// 2. Compact anchor: when hint.HasCompactSummary, mark the first message
 	//    as a cache anchor close to the rewritten history root.
 	// 3. Sliding tail marker: mark the last cacheable block that came from a
-	//    non-hidden source message. The single marker moves with every request
-	//    round in an intra-turn tool loop, eliminating O(n²) re-caching and
-	//    staying inside Anthropic's 20-block breakpoint lookback window.
+	//    non-hidden source message without injected context. The marker moves
+	//    with every request round in an intra-turn tool loop, avoiding repeated
+	//    caching of the full history. Nearby prior markers remain reachable
+	//    within Anthropic's 20-block breakpoint lookback window.
 	//    Hidden trailing context (per-request system reminders and similar)
-	//    stays after the marker: those bytes never repeat across requests, so
-	//    a marker beyond them could never produce a cache hit — and the
-	//    smoosh pass below would delete a marker riding on a reminder block.
+	//    stays after the marker, together with any tool result containing it.
+	//    Retained context keeps the same representation on later requests,
+	//    when a newer tail marker can include it.
 	// Budget: system (1) + optional compact anchor (1) + tail (1) = 2-3 of
 	// the API maximum of 4 cache_control blocks per request.
 
@@ -1058,6 +1080,11 @@ func (c *Client) doSingleMessagesRequest(
 	}
 	if len(betas) > 0 {
 		httpReq.Header.Set("anthropic-beta", strings.Join(betas, ","))
+	}
+
+	httpClient, err = providers.PrepareRequestCompression(httpReq, body, httpClient)
+	if err != nil {
+		return nil, nil, fmt.Errorf("prepare request body: %w", err)
 	}
 
 	lease, err := c.coordinator.AcquireForAttempt(ctx, c.providerScope, attempt)
@@ -1575,47 +1602,6 @@ func joinReasoningText(blocks []providers.ReasoningBlock) string {
 		}
 	}
 	return strings.TrimSpace(strings.Join(parts, "\n"))
-}
-
-func smooshSystemReminderBlocks(msg anthropicMessage) anthropicMessage {
-	if msg.Role != "user" || len(msg.Content) == 0 {
-		return msg
-	}
-
-	lastToolResultIdx := -1
-	reminders := make([]string, 0, 1)
-	kept := make([]anthropicBlock, 0, len(msg.Content))
-	for _, block := range msg.Content {
-		if block.Type == "text" && wuucontext.IsSystemReminder("", block.Text) {
-			reminders = append(reminders, strings.TrimSpace(block.Text))
-			continue
-		}
-		kept = append(kept, block)
-		if block.Type == "tool_result" {
-			lastToolResultIdx = len(kept) - 1
-		}
-	}
-	if lastToolResultIdx < 0 || len(reminders) == 0 {
-		return msg
-	}
-
-	toolResult := kept[lastToolResultIdx]
-	if toolResult.CacheControl != nil {
-		return msg
-	}
-	parts := make([]string, 0, 1+len(reminders))
-	existingContent, ok := toolResult.Content.(string)
-	if !ok {
-		return msg
-	}
-	if existing := strings.TrimSpace(existingContent); existing != "" {
-		parts = append(parts, existing)
-	}
-	parts = append(parts, reminders...)
-	toolResult.Content = strings.Join(parts, "\n\n")
-	kept[lastToolResultIdx] = toolResult
-	msg.Content = kept
-	return msg
 }
 
 func cloneHeaders(input map[string]string) map[string]string {

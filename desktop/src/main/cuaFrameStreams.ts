@@ -1,117 +1,227 @@
 import { shutdownChild } from "./childShutdown";
-import { StringDecoder } from "node:string_decoder";
+import type { NativePreviewFrame } from "../shared/nativePreview";
 import type { ActivitySession } from "../shared/protocol";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { Rectangle } from "electron";
 
 export type CUANativePiPEvent = {
-  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry" | "control" | "gone" | "expand";
-  action?: "takeover" | "release" | "stop";
+  event: "ready" | "user_close" | "user_input" | "capture_status" | "geometry" | "gone" | "expand" | "promote" | "drag_start" | "shown" | "completion_expired" | "retry";
   x?: number;
   y?: number;
   width?: number;
   height?: number;
   status?: "healthy" | "idle" | "blank" | "suspended" | "stopped" | "error";
+  reason?: "target_hidden";
   message?: string;
 };
 
+export type CUANativePreviewFrame = NativePreviewFrame;
+
+// Host-mode packets name their session; `closed` and `failed` end one session.
+type CUANativePreviewMessage = (
+  | CUANativePiPEvent
+  | (CUANativePreviewFrame & { event: "frame" })
+  | { event: "closed" }
+  | { event: "failed"; message?: string }
+) & { session?: string };
+
 export const CUA_PIP_FORCE_STOP_TIMEOUT_MS = 2_000;
 
-export class CUALineDecoder {
-  private buffer = "";
-  private readonly decoder = new StringDecoder("utf8");
+export class CUAStreamDecoder {
+  private buffer: Buffer = Buffer.alloc(0);
 
-  push(chunk: Buffer | string): CUANativePiPEvent[] {
-    this.buffer += typeof chunk === "string" ? chunk : this.decoder.write(chunk);
-    if (this.buffer.length > 1_048_576) throw new Error("native PiP event exceeds the size limit");
-    const lines = this.buffer.split("\n");
-    this.buffer = lines.pop() ?? "";
-    return lines
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as CUANativePiPEvent);
+  push(chunk: Buffer): CUANativePreviewMessage[] {
+    this.buffer = this.buffer.length ? Buffer.concat([this.buffer, chunk]) : chunk;
+    const messages: CUANativePreviewMessage[] = [];
+    while (this.buffer.length >= 12) {
+      if (this.buffer.toString("ascii", 0, 4) !== "WCU1") throw new Error("invalid native preview stream version");
+      const headerLength = this.buffer.readUInt32BE(4), payloadLength = this.buffer.readUInt32BE(8);
+      if (!headerLength || headerLength > 16_384 || payloadLength > 3_000_000) {
+        throw new Error("native preview event exceeds the size limit");
+      }
+      const length = 12 + headerLength + payloadLength;
+      if (this.buffer.length < length) break;
+      const message = JSON.parse(this.buffer.toString("utf8", 12, 12 + headerLength)) as CUANativePreviewMessage;
+      if (!message || typeof message !== "object" || typeof message.event !== "string") {
+        throw new Error("invalid native preview event");
+      }
+      if (message.event === "frame") {
+        if (!Number.isSafeInteger(message.sequence) || message.sequence <= 0
+          || !Number.isSafeInteger(message.generation) || message.generation <= 0
+          || !Number.isSafeInteger(message.configuration) || message.configuration <= 0
+          || !Number.isSafeInteger(message.timestamp) || message.timestamp < 0
+          || !Number.isInteger(message.width) || message.width <= 0 || message.width > 1280
+          || !Number.isInteger(message.height) || message.height <= 0 || message.height > 1280
+          || typeof message.codec !== "string" || !/^avc1\.[0-9a-f]{6}$/i.test(message.codec)
+          || typeof message.keyframe !== "boolean" || !payloadLength
+          || (message.keyframe && (!Array.isArray(message.description) || message.description.length < 4))
+          || (message.description !== undefined && (!Array.isArray(message.description)
+            || message.description.length > 4096
+            || !message.description.every(value => Number.isInteger(value) && value >= 0 && value <= 255)))) {
+          throw new Error("invalid native preview frame");
+        }
+        message.data = this.buffer.subarray(12 + headerLength, length);
+      } else if (payloadLength) throw new Error("unexpected native preview payload");
+      messages.push(message);
+      this.buffer = this.buffer.subarray(length);
+    }
+    return messages;
   }
 }
 
-type Interaction = {
-  kind: "click" | "drag" | "scroll" | "type" | "observe";
-  x: number;
-  y: number;
-  to_x?: number;
-  to_y?: number;
-  revision: number;
+type PreviewSessionHandlers = {
+  message(message: CUANativePreviewMessage): void;
+  hostExited(message: string): void;
 };
 
-export class CUANativePiP {
+// One native helper streams every live preview. replayd groups capture
+// clients by executable path, so separate helper processes of one executable
+// interrupt each other's streams. The host exits once its last session closes.
+class CUANativePreviewHost {
   private child: ChildProcessWithoutNullStreams | undefined;
+  private readonly sessions = new Map<string, PreviewSessionHandlers>();
+  private stderr = "";
+
+  constructor(private readonly helper: string, private readonly spawnHelper: typeof spawn) {}
+
+  open(session: string, command: Record<string, unknown>, handlers: PreviewSessionHandlers): void {
+    this.sessions.set(session, handlers);
+    this.ensureChild();
+    this.send({ ...command, session, type: "open" });
+  }
+
+  send(command: { session: string; type: string } & Record<string, unknown>): void {
+    const child = this.child;
+    if (!child || !child.stdin.writable || child.stdin.destroyed || child.stdin.writableEnded) return;
+    child.stdin.write(`${JSON.stringify(command)}\n`, (error) => {
+      if (error) this.fail(child, error.message);
+    });
+  }
+
+  // Forget a session. Once none remain, closing stdin lets the helper exit.
+  release(session: string): void {
+    this.sessions.delete(session);
+    const child = this.child;
+    if (this.sessions.size > 0 || !child) return;
+    this.child = undefined;
+    void shutdownChild(child, () => {
+      if (!child.stdin.destroyed && !child.stdin.writableEnded) child.stdin.end();
+      else child.kill("SIGTERM");
+    }, CUA_PIP_FORCE_STOP_TIMEOUT_MS).catch((error: Error) => {
+      process.stderr.write(`[cua-preview] ${error.message}\n`);
+    });
+  }
+
+  private ensureChild(): void {
+    if (this.child) return;
+    // Dev-only trace of the helper lifecycle to the Electron process stderr.
+    // Enable with WUU_CUA_DEBUG=1. Screen pixels are never logged.
+    const debug = process.env.WUU_CUA_DEBUG === "1";
+    const trace = (message: string) => {
+      if (debug) process.stderr.write(`[cua-pip] ${message}\n`);
+    };
+    const decoder = new CUAStreamDecoder();
+    const child = this.spawnHelper(this.helper, ["--native-preview-host", String(process.pid)], { stdio: ["pipe", "pipe", "pipe"] });
+    this.child = child;
+    this.stderr = "";
+    trace(`spawn helperPid=${child.pid}`);
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (this.child !== child) return;
+      try {
+        for (const message of decoder.push(chunk)) {
+          if (this.child !== child) break;
+          if (message.event !== "frame") trace(`event ${JSON.stringify(message)}`);
+          const session = (message as { session?: unknown }).session;
+          if (typeof session === "string") this.sessions.get(session)?.message(message);
+        }
+      } catch (error) {
+        this.fail(child, error instanceof Error ? error.message : String(error));
+      }
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      this.stderr = (this.stderr + chunk).slice(-4096);
+      trace(`stderr ${chunk.trim()}`);
+    });
+    child.stdin.on("error", (error) => this.fail(child, error.message));
+    child.on("error", (error) => this.fail(child, error.message));
+    child.on("exit", (code, signal) => {
+      if (this.child !== child) return;
+      trace(`exit code=${code} signal=${signal}`);
+      this.child = undefined;
+      this.notifyExit(this.stderr.trim() || `native PiP exited with code ${code}, signal ${signal}`);
+    });
+  }
+
+  // A broken pipe or protocol error ends the shared helper; every session
+  // reports it once and may start again on a fresh helper.
+  private fail(child: ChildProcessWithoutNullStreams, message: string): void {
+    if (this.child !== child) return;
+    this.child = undefined;
+    void shutdownChild(child, () => { child.kill("SIGTERM"); }, CUA_PIP_FORCE_STOP_TIMEOUT_MS)
+      .catch((failure: Error) => { process.stderr.write(`[cua-preview] ${failure.message}\n`); });
+    this.notifyExit(message);
+  }
+
+  private notifyExit(message: string): void {
+    const sessions = [...this.sessions.values()];
+    this.sessions.clear();
+    for (const session of sessions) session.hostExited(message);
+  }
+}
+
+const previewHosts = new WeakMap<typeof spawn, Map<string, CUANativePreviewHost>>();
+let previewSessionCounter = 0;
+
+function previewHost(helper: string, spawnHelper: typeof spawn): CUANativePreviewHost {
+  let hosts = previewHosts.get(spawnHelper);
+  if (!hosts) {
+    hosts = new Map();
+    previewHosts.set(spawnHelper, hosts);
+  }
+  let host = hosts.get(helper);
+  if (!host) {
+    host = new CUANativePreviewHost(helper, spawnHelper);
+    hosts.set(helper, host);
+  }
+  return host;
+}
+
+export class CUANativePreview {
+  private stopped = false;
+  private session: string | undefined;
+  private pendingSequence: number | undefined;
+  private failed = false;
+  private onClosed: Array<() => void> = [];
+  private readonly host: CUANativePreviewHost;
 
   constructor(
-    private readonly helper: string,
+    helper: string,
     private readonly threadID: string,
     private readonly target: string,
     private readonly processID: number | undefined,
     private readonly windowID: number | undefined,
-    private readonly initialBounds: Rectangle,
     private readonly onEvent: (event: CUANativePiPEvent) => void,
     private readonly onError: (message: string) => void,
-    private readonly spawnHelper: typeof spawn = spawn,
-  ) {}
+    private readonly onFrame: (frame: CUANativePreviewFrame) => void,
+    spawnHelper: typeof spawn = spawn,
+  ) {
+    this.host = previewHost(helper, spawnHelper);
+  }
 
   start(): void {
-    if (this.child) return;
-    // Dev-only trace of the whole helper lifecycle to the Electron process
-    // stderr (the `wuu-dev` terminal). Enable with WUU_CUA_DEBUG=1. This never
-    // touches the PiP content or any product UI.
-    const debug = process.env.WUU_CUA_DEBUG === "1";
-    const trace = (message: string) => {
-      if (debug) process.stderr.write(`[cua-pip:${this.target}] ${message}\n`);
-    };
-    const decoder = new CUALineDecoder();
-    const { x, y, width, height } = this.initialBounds;
-    const child = this.spawnHelper(this.helper, [
-      "--native-pip",
-      this.threadID,
-      this.target,
-      String(x),
-      String(y),
-      String(width),
-      String(height),
-      String(this.processID ?? 0),
-      String(this.windowID ?? 0),
-      String(process.pid),
-    ], { stdio: ["pipe", "pipe", "pipe"] });
-    this.child = child;
-    trace(`spawn helperPid=${child.pid} processID=${this.processID ?? 0} windowID=${this.windowID ?? 0}`);
-    child.stdout.on("data", (chunk: Buffer) => {
-      try {
-        for (const event of decoder.push(chunk)) {
-          trace(`event ${JSON.stringify(event)}`);
-          this.onEvent(event);
-        }
-      } catch (error) {
-        this.onError(error instanceof Error ? error.message : String(error));
-        this.stop();
-      }
-    });
-    let stderr = "";
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => {
-      stderr = (stderr + chunk).slice(-4096);
-      trace(`stderr ${chunk.trim()}`);
-    });
-    child.stdin.on("error", (error) => {
-      trace(`stdin error ${error.message}`);
-      this.handleInputFailure(child, error);
-    });
-    child.on("error", (error) => { trace(`error ${error.message}`); this.onError(error.message); });
-    child.on("exit", (code, signal) => {
-      if (this.child !== child) return;
-      this.child = undefined;
-      trace(`exit code=${code} signal=${signal}`);
-      if (code !== 0) this.onError(stderr.trim() || `native PiP exited with code ${code}, signal ${signal}`);
-      else this.onEvent({ event: "gone" });
+    if (this.session || this.stopped) return;
+    const session = `${this.threadID}:${++previewSessionCounter}`;
+    this.session = session;
+    this.host.open(session, {
+      activity_id: this.threadID,
+      target: this.target,
+      process_id: this.processID ?? 0,
+      window_id: this.windowID ?? 0,
+    }, {
+      message: (message) => this.handleMessage(session, message),
+      hostExited: (message) => this.handleClosed(session, message),
     });
   }
 
@@ -119,62 +229,79 @@ export class CUANativePiP {
     this.send({ type: "visible", visible });
   }
 
-  setAppearance(dark: boolean): void {
-    this.send({ type: "appearance", dark });
-  }
-
   setLive(live: boolean): void {
     this.send({ type: "live", live });
   }
 
-  updateActivity(activity: ActivitySession): void {
-    this.send({ type: "activity", state: activity.state, controller: activity.controller, error: activity.error ?? "" });
+  updateActivity(activity: ActivitySession, restoreTarget = false): void {
+    this.send({ type: "activity", state: activity.state, controller: activity.controller, error: activity.error ?? "", restore: restoreTarget });
   }
 
-  animateInteraction(interaction?: Interaction): void {
-    if (!interaction || interaction.kind === "observe") return;
-    this.send({ type: "interaction", ...interaction });
+  requestKeyframe(): void { this.send({ type: "keyframe" }); }
+
+  acknowledgeFrame(sequence: number): void {
+    if (this.pendingSequence !== sequence) return;
+    this.pendingSequence = undefined;
+    this.send({ type: "ack", sequence });
   }
 
   stop(onStopped?: () => void): void {
-    const child = this.child;
-    this.child = undefined;
-    if (!child) {
+    this.stopped = true;
+    this.pendingSequence = undefined;
+    const session = this.session;
+    if (!session) {
       onStopped?.();
       return;
     }
-    // Native staging and state restoration use public AX APIs. Leave enough
-    // time for a graceful close to put a hidden/minimized target back before a
-    // genuinely stuck helper is terminated.
-    void shutdownChild(child, () => {
-      if (!child.stdin.destroyed && !child.stdin.writableEnded) {
-        child.stdin.end(`${JSON.stringify({ type: "close" })}\n`);
-      } else {
-        child.kill("SIGTERM");
-      }
-    }, CUA_PIP_FORCE_STOP_TIMEOUT_MS)
-      .catch((error) => this.onError(error.message))
-      .finally(() => onStopped?.());
+    if (onStopped) this.onClosed.push(onStopped);
+    if (this.onClosed.length > (onStopped ? 1 : 0)) return;
+    this.host.send({ session, type: "close" });
+    // A session stuck in a wedged capture call must not hold teardown hostage.
+    const timer = setTimeout(() => this.handleClosed(session), CUA_PIP_FORCE_STOP_TIMEOUT_MS);
+    timer.unref?.();
+    this.onClosed.push(() => clearTimeout(timer));
   }
 
-  isLive(): boolean { return this.child !== undefined; }
+  isLive(): boolean { return this.session !== undefined && !this.stopped; }
 
-  private send(command: object): void {
-    const child = this.child;
-    if (!child || !child.stdin.writable || child.stdin.destroyed || child.stdin.writableEnded) return;
-    child.stdin.write(`${JSON.stringify(command)}\n`, (error) => {
-      if (error) this.handleInputFailure(child, error);
-    });
+  private send(command: { type: string } & Record<string, unknown>): void {
+    const session = this.session;
+    if (!session || this.stopped) return;
+    this.host.send({ ...command, session });
   }
 
-  private handleInputFailure(child: ChildProcessWithoutNullStreams, error: Error): void {
-    // A pipe can close between the writable-state check above and the actual
-    // write. Clear this exact helper before reporting the failure so the
-    // coordinator can replace it without sending another command to it.
-    if (this.child !== child) return;
-    this.child = undefined;
-    child.kill("SIGTERM");
-    this.onError(error.message);
+  private handleMessage(session: string, message: CUANativePreviewMessage): void {
+    if (this.session !== session) return;
+    if (message.event === "closed") {
+      this.handleClosed(session);
+      return;
+    }
+    if (this.stopped) return;
+    if (message.event === "failed") {
+      this.failed = true;
+      this.onError(message.message ?? "native preview failed");
+      return;
+    }
+    if (message.event === "frame") {
+      this.pendingSequence = message.sequence;
+      this.onFrame(message);
+      return;
+    }
+    this.onEvent(message);
+  }
+
+  private handleClosed(session: string, hostFailure?: string): void {
+    if (this.session !== session) return;
+    this.session = undefined;
+    this.pendingSequence = undefined;
+    this.host.release(session);
+    const wasStopped = this.stopped;
+    this.stopped = true;
+    if (!wasStopped) {
+      if (hostFailure !== undefined) this.onError(hostFailure);
+      else if (!this.failed) this.onEvent({ event: "gone" });
+    }
+    for (const callback of this.onClosed.splice(0)) callback();
   }
 }
 

@@ -4,39 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
-	pluginapi "github.com/blueberrycongee/wuu/packages/plugin-go"
-	askuser "github.com/blueberrycongee/wuu/plugins/ask-user"
 )
-
-func TestAppServerAskUserPluginProcessHelper(t *testing.T) {
-	if os.Getenv("WUU_APP_SERVER_ASK_USER_HELPER") != "1" {
-		return
-	}
-	if err := pluginapi.Serve(context.Background(), askuser.Handler()); err != nil {
-		os.Exit(2)
-	}
-	os.Exit(0)
-}
 
 func TestRealAskUserPluginResumesThroughPublicAppServerProtocol(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.UserQuestions = pluginhost.NewUserQuestionBroker()
-	client, err := pluginhost.Start(context.Background(), pluginhost.ProcessConfig{
-		ID: "ask-user", Command: os.Args[0], Args: []string{"-test.run=^TestAppServerAskUserPluginProcessHelper$"},
-		Env: map[string]string{"WUU_APP_SERVER_ASK_USER_HELPER": "1"}, Timeout: 5 * time.Second,
-		ServiceRouter: userQuestionBrokerRouter{broker: rt.UserQuestions},
-	})
-	if err != nil {
+	client := startBundledPluginTestProcess(t, "ask-user", userQuestionBrokerRouter{broker: rt.UserQuestions})
+	if err := client.Activate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = client.Close(context.Background()) })
 	var out synchronizedBuffer
 	srv := New(rt, &out)
 	defer srv.Close()

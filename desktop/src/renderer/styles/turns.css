@@ -44,6 +44,10 @@
   --reasoning-stream-cursor-color: var(--gray-500);
   --turn-process-entry-color: var(--ink-tertiary);
   --process-control-color-fallback: var(--ink-tertiary);
+  /* Tool activity and standalone reasoning summaries share the quiet ink
+     used by the composer placeholder, in every running/settled state. */
+  --process-summary-color: var(--ink-quiet);
+  --process-active-highlight: var(--ink-muted);
   --activity-toggle-hover-color: var(--gray-650);
   --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-600));
   --activity-detail-color: var(--wuu-color-text-muted, var(--gray-550));
@@ -608,8 +612,8 @@
   overflow: hidden;
   color: var(--ink);
   font-size: var(--font-ui);
-  font-weight: var(--weight-semibold);
-  line-height: 1.2;
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -984,8 +988,9 @@
   border-radius: var(--radius-sm);
   background: var(--message-file-bg);
   color: var(--message-file-fg);
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
 }
 
 .message-file .icon {
@@ -1590,13 +1595,22 @@
    * can still set their own offset. */
   margin-inline-start: var(--wuu-message-actions-inline-offset, calc((var(--conversation-message-action-icon-size, 15px) - var(--conversation-message-action-size)) / 2));
   padding-top: var(--conversation-answer-hover-action-gap);
+  /* Button padding supplies the visible icon-to-icon gap. Adding a flex
+   * gap here would count that whitespace twice. */
+  gap: var(--wuu-message-actions-control-gap, 0px);
 }
 
-/* Continue the live answer's reading order through copy, fork, and time.
+.agent-message-actions > .message-time:not(:first-child) {
+  /* Text has no button padding. Complete the same visible gap after the
+   * last control, including larger touch targets and theme overrides. */
+  margin-inline-start: max(0px, calc((var(--conversation-message-action-size) - var(--conversation-message-action-icon-size)) / 2));
+}
+
+/* Continue the live answer's reading order through its actions and time.
  * Animate the children without moving their slots; historical turns never
  * receive the entrance marker. The short initial pause lets the stream
  * cursor begin settling before the staggered rise and fade. */
-.agent-actions-enter .agent-message-actions > * {
+.agent-actions-enter .agent-message-actions:not([data-reveal-finished]) > * {
   animation: agent-actions-reveal 1000ms var(--ease-out)
     calc(80ms + var(--agent-action-index, 0) * 300ms) both;
 }
@@ -1609,9 +1623,22 @@
   --agent-action-index: 2;
 }
 
-/* Keyboard focus must never land on a visually delayed control. */
-.agent-actions-enter .agent-message-actions:focus-within > * {
-  animation: none;
+.agent-actions-enter .agent-message-actions > :nth-child(4) {
+  --agent-action-index: 3;
+}
+
+.agent-actions-enter .agent-message-actions > :nth-child(5) {
+  --agent-action-index: 4;
+}
+
+/* Two direct plugin actions and their overflow control can extend the row
+ * to seven slots, including the timestamp and trigger. */
+.agent-actions-enter .agent-message-actions > :nth-child(6) {
+  --agent-action-index: 5;
+}
+
+.agent-actions-enter .agent-message-actions > :nth-child(7) {
+  --agent-action-index: 6;
 }
 
 @keyframes agent-actions-reveal {
@@ -1623,7 +1650,7 @@
 }
 
 @container style(--motion-reduced: 1) {
-  .agent-actions-enter .agent-message-actions > * {
+  .agent-actions-enter .agent-message-actions:not([data-reveal-finished]) > * {
     animation: none;
   }
 }
@@ -1700,7 +1727,8 @@
 
 .message-actions .message-action-button:hover,
 .message-actions .message-action-button:focus-visible,
-.message-actions .message-action-button[aria-pressed="true"] {
+.message-actions .message-action-button[aria-pressed="true"],
+.message-actions .message-action-button[aria-expanded="true"] {
   outline: 0;
   background: var(--surface-2);
   box-shadow: none;
@@ -1797,8 +1825,8 @@
   background: var(--stream-cursor-color);
 }
 
-/* Block-final messages carry no inline cursor slot (for example a closed
- * fence or prose ending in blank lines). The sibling cursor keeps the
+/* Diagram-final messages carry no inline cursor slot: a rendered Mermaid
+ * diagram has no text line to follow. The sibling cursor keeps the
  * settle-stable DOM presence at zero flow height so no blank paragraph
  * survives after the content. */
 .stream-cursor-block-tail {
@@ -2030,7 +2058,9 @@
 }
 
 .turn-process-fold-body {
-  padding: var(--conversation-process-detail-gap) 0 0 0;
+  /* The header and its first detail form one group; prose entries keep the
+   * wider reading gap below. */
+  padding: var(--conversation-activity-gap) 0 0 0;
 }
 
 /* A direct reply begins here until the provider confirms it as an answer.
@@ -2093,8 +2123,10 @@
   line-height: inherit;
 }
 
+/* A streamed reply can become the final answer at completion. Inherit the
+ * conversation's reading rhythm so that handoff cannot re-space its content. */
 .turn-process-entry.turn-process-entry-commentary .rich-content {
-  --conversation-prose-block-gap: 1.15em;
+  --conversation-prose-block-gap: inherit;
 }
 
 .turn-process-entry .rich-content .rich-paragraph,
@@ -2103,7 +2135,6 @@
   color: inherit;
   font-size: inherit;
   line-height: inherit;
-  margin: 0;
 }
 
 .turn-process-entry .activity-group {
@@ -2415,7 +2446,7 @@
   border: 0;
   overflow: visible;
   background: transparent;
-  color: var(--ink-muted);
+  color: var(--process-summary-color);
   cursor: default;
   font-size: var(--conversation-process-font-size);
   font-weight: var(--conversation-process-font-weight);
@@ -2532,8 +2563,8 @@
   margin-right: 2px;
 }
 
-/* Mask the actual glyphs so segmented labels and changing counts stay aligned.
- * The mascot sits outside this wrapper and keeps its normal contrast. */
+/* Keep segmented labels and changing counts aligned. Only the active process
+ * label receives the sweep; completed summaries retain their steady ink. */
 .process-surface-summary-text {
   --process-segment-gap: 8px;
   --process-segment-inner-gap: 4px;
@@ -2545,46 +2576,60 @@
   overflow: hidden;
 }
 
-.process-surface-summary-text.wuu-live-text-wave {
-  mask-image: linear-gradient(
-    90deg,
-    currentColor calc(50% - 60px),
-    color-mix(in srgb, currentColor 15%, transparent) 50%,
-    currentColor calc(50% + 60px)
-  );
-  mask-size: calc(200% + 120px) 100%;
-  mask-repeat: no-repeat;
-  animation: process-summary-soft-wave 2s linear infinite;
+.process-label {
+  position: relative;
 }
 
-.process-surface-summary-text.wuu-live-text-wave::after {
+/* The base children keep their original flex positions and selection. */
+.process-label-content {
+  display: contents;
+}
+
+.process-label-highlight {
+  position: absolute;
+  inset: 0;
+  display: inherit;
+  align-items: inherit;
+  gap: inherit;
+  overflow: hidden;
+  color: var(--process-active-highlight);
+  pointer-events: none;
+  user-select: none;
+  mask-image: linear-gradient(
+    90deg,
+    transparent calc(50% - 30px),
+    #000 50%,
+    transparent calc(50% + 30px)
+  );
+  mask-size: calc(200% + 60px) 100%;
+  mask-position: 100% 50%;
+  mask-repeat: no-repeat;
+  animation: process-summary-soft-wave 4s linear 600ms infinite;
+}
+
+/* The highlight has the same segmented layout as the source, and is hidden
+ * from assistive technology. Never paint a second flat data-text string. */
+.process-label.wuu-live-text-wave::after {
   content: none;
   animation: none;
 }
 
 @keyframes process-summary-soft-wave {
   from { mask-position: 100% 50%; }
-  to { mask-position: 0% 50%; }
+  25%, to { mask-position: 0% 50%; }
 }
 
-:root[data-renderer-hidden] .process-surface-summary-text.wuu-live-text-wave {
-  animation-play-state: paused;
-}
-
-:root[data-stream-following] .process-surface-summary-text.wuu-live-text-wave {
+:root[data-renderer-hidden] .process-label-highlight,
+:root[data-stream-following] .process-label-highlight,
+.cached-conversation-pane[data-active="false"] .process-label-highlight {
+  display: none;
   animation: none;
-  mask-image: none;
-}
-
-.cached-conversation-pane[data-active="false"] .process-surface-summary-text.wuu-live-text-wave {
-  animation: none;
-  mask-image: none;
 }
 
 @container style(--motion-reduced: 1) {
-  .process-surface-summary-text.wuu-live-text-wave {
+  .process-label-highlight {
+    display: none;
     animation: none;
-    mask-image: none;
   }
 }
 
@@ -2619,6 +2664,53 @@
 
 .process-surface-reasoning-segment > .process-surface-separator {
   margin-inline: 0 calc(var(--process-segment-gap) - var(--process-segment-inner-gap));
+}
+
+/* Keep the ring on the summary line. A wrapping line places the text at its
+ * full max-content width first, so the indicator drops below before the text
+ * gets a chance to truncate. */
+.process-surface-summary-line.has-compaction {
+  flex-wrap: nowrap;
+}
+
+.process-surface-compactions {
+  display: inline-flex;
+  /* Reserve the ring's footprint; the summary text yields width first. */
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+}
+
+.process-surface-summary-text + .process-surface-compactions {
+  margin-inline-start: var(--space-2);
+}
+
+.context-compaction-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  color: var(--ink-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+.context-compaction-indicator .context-usage-ring {
+  color: var(--token-gauge-mid);
+}
+
+.context-compaction-indicator.is-failed {
+  color: var(--danger);
+}
+
+.context-compaction-indicator:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.context-compaction-arrow {
+  color: var(--ink-tertiary);
 }
 
 /* Keep the compacted-state label readable and give the longer detail the
@@ -2684,17 +2776,15 @@
 /* The turn's answer did not arrive. One row, read left to right: the symbol,
  * what happened, then the recovery slot on the trailing edge. The slot holds
  * the retry countdown while the core retries and the action once it gives
- * up; both are the same pill, so the change happens in place. The surface is
- * a fill, not a frame, that hugs its sentence from the reply's text edge, so
- * the action follows the words instead of waiting across the column. It
- * turns to the error tint only when the turn has failed. */
+ * up. The surface spans the reading column so changing status text cannot
+ * resize it. It turns to the error tint only when the turn has failed. */
 .turn-failure {
   /* The pill tracks the reading line so it stays concentric at any type size. */
   --turn-failure-pill-height: calc(var(--conversation-process-line-height) + 6px);
   --turn-failure-inset: 6px;
   display: flex;
   align-items: flex-start;
-  width: fit-content;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
@@ -2732,13 +2822,12 @@
 
 /* Everything after the symbol starts at one text edge. */
 .turn-failure-main {
-  flex: 0 1 auto;
+  flex: 1;
   min-width: 0;
 }
 
-/* The recovery slot follows the sentence while both fit on a line;
- * otherwise it moves under the words, starting where they do, instead of
- * squeezing them. */
+/* Keep recovery on the trailing edge; wrap it below the message when the
+ * reading column cannot fit both without squeezing the text. */
 .turn-failure-line {
   display: flex;
   flex-wrap: wrap;
@@ -2747,6 +2836,7 @@
 }
 
 .turn-failure-message {
+  flex: 1 1 auto;
   min-width: 0;
   margin: 0;
   padding-block: calc((var(--turn-failure-pill-height) - 1lh) / 2);
@@ -2805,13 +2895,16 @@
 .turn-failure-recovery {
   display: flex;
   flex: none;
+  flex-wrap: wrap;
+  max-width: 100%;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-1);
+  margin-inline-start: auto;
   margin-inline-end: calc(var(--turn-failure-inset) - var(--space-3));
 }
 
-/* Countdown and action share one geometry so the slot never resizes its
- * row when recovery gives up. */
+/* Countdown and actions share the same reading-line height. */
 .turn-failure-pill {
   display: inline-flex;
   min-width: 4.5em;
@@ -2831,6 +2924,15 @@
 /* The wait fills the pill from the leading edge, like progress inside a
  * button, and empties into the action that replaces it. */
 .turn-failure-countdown {
+  /* Reserve room for seconds, minutes and the retrying label at any UI size. */
+  width: 13em;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  min-height: var(--turn-failure-pill-height);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
   background:
     linear-gradient(
       to right,
@@ -2871,8 +2973,7 @@
   opacity: 0.6;
 }
 
-/* Beside the fix, resending is the quieter choice: bare text, so it starts
- * on the text edge when the slot wraps under the sentence. */
+/* Beside provider settings, resending remains the quieter text action. */
 .turn-failure-action:not(.is-primary):has(+ .is-primary) {
   min-width: 0;
   margin-inline-end: var(--space-2);
@@ -3061,11 +3162,16 @@
   }
 }
 
+.process-surface-body,
+.process-surface-tool-list .activity-timeline,
+.process-surface-reasoning-list {
+  gap: var(--space-2);
+}
+
 .process-surface-body {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-4);
   /* Expanded details are the fold's own content, not a nested column: every
    * row starts on the summary row's left edge, so the leading glyphs line up
    * as one list instead of stepping inward under the summary text. */
@@ -3104,10 +3210,6 @@
   min-width: 0;
 }
 
-.process-surface-tool-list .activity-timeline {
-  gap: var(--space-2);
-}
-
 .process-surface-tool-list .activity-row {
   display: flex;
   align-items: flex-start;
@@ -3123,6 +3225,7 @@
 }
 
 .process-surface-reasoning-list {
+  display: grid;
   min-width: 0;
 }
 
@@ -3137,6 +3240,26 @@
   gap: var(--conversation-prose-block-gap, 10px);
   line-height: var(--conversation-reading-line-height, var(--line-body));
   white-space: normal;
+}
+
+.rich-content .katex-display {
+  max-width: 100%;
+  margin: 0;
+  padding-block: 0.25em;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.rich-content .katex-display > .katex {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
+.rich-content .katex {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 /* Compact Markdown fallback. Conversation reading surfaces refine the
@@ -3489,7 +3612,7 @@
 
 .rich-code-block {
   --rich-code-padding-block: 10px;
-  --rich-code-line-height: 1.5;
+  --rich-code-line-height: var(--appearance-code-line-height);
   /* Label, code and copy glyph share the card inset measured from the outer
    * edge, the same axis as composer text; the 1px is the frame. */
   --rich-code-inset: calc(var(--card-padding) - 1px);
@@ -3527,7 +3650,7 @@
 .rich-code-block--no-header .rich-code-copy {
   position: absolute;
   /* Center the action on the first code line, including custom code sizes. */
-  top: calc(var(--rich-code-padding-block) + (var(--appearance-code-size, 11px) * var(--rich-code-line-height) - 24px) / 2);
+  top: calc(var(--rich-code-padding-block) + (var(--rich-code-line-height) - 24px) / 2);
   right: calc(var(--rich-code-inset) - var(--rich-code-copy-glyph-offset));
   margin-left: 0;
   z-index: 1;
@@ -3796,6 +3919,11 @@
   margin: var(--space-2) 0 0 22px;
 }
 
+/* The process fold already supplies the single-call detail spacing. */
+.process-surface-body > :is(.program-tool-details, .workspace-tool-details) {
+  margin: 0;
+}
+
 .program-tool-details .rich-code-block {
   margin: 0;
 }
@@ -3905,6 +4033,11 @@
 }
 
 .rich-mermaid {
+  /* Retain the ready diagram's footprint while rendering or showing an error. */
+  width: 100%;
+  height: 360px;
+  min-width: 0;
+  box-sizing: border-box;
   overflow: auto;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
@@ -3923,11 +4056,15 @@
   appearance: none;
   display: grid;
   width: 100%;
-  height: 360px;
+  height: 100%;
+  min-height: 0;
   box-sizing: border-box;
   place-items: center;
   overflow: hidden;
-  margin-inline: auto;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
   color: inherit;
   cursor: zoom-in;
   font: inherit;
@@ -3947,15 +4084,25 @@
 
 .rich-mermaid-loading,
 .rich-mermaid-error {
-  color: var(--ink-tertiary);
+  min-height: 100%;
+  color: var(--ink-soft);
   font-size: var(--font-ui);
+}
+
+.rich-mermaid-loading {
+  display: grid;
+  place-items: center;
+}
+
+.rich-mermaid[data-mermaid-state="error"] {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
 }
 
 .rich-mermaid-error {
   display: grid;
+  align-content: start;
   gap: 10px;
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
   color: var(--danger);
 }
 
@@ -4002,7 +4149,7 @@
   padding: 2px 0;
   cursor: pointer;
   list-style: none;
-  color: var(--conversation-process-control-color, var(--process-control-color-fallback));
+  color: var(--process-summary-color);
   font-size: var(--conversation-process-font-size);
   font-weight: var(--conversation-process-font-weight);
   line-height: var(--conversation-process-line-height);
@@ -4030,10 +4177,6 @@
   flex: 0 1 auto;
   min-width: 0;
 }
-
-/* (the overlay, keyframes, and reduced-motion handling for
-   `.turn-reasoning-summary-text.is-streaming` live with the unified
-   process-surface shimmer selectors above) */
 
 .turn-reasoning-chevron {
   flex: 0 0 auto;
@@ -4918,9 +5061,9 @@ pre {
   overflow: auto;
   padding: var(--compact-padding-block) 0;
   background: var(--paper);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.55;
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: var(--appearance-code-line-height);
 }
 
 .tool-diff-preview-summary {
@@ -4943,7 +5086,7 @@ pre {
 
 .tool-diff-line {
   display: grid;
-  grid-template-columns: 36px 36px 1fr;
+  grid-template-columns: repeat(2, calc(5ch + 16px)) minmax(0, 1fr);
   min-width: 0;
 }
 
@@ -5031,9 +5174,10 @@ pre {
   min-width: 0;
   overflow: hidden;
   color: var(--ink);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: var(--font-sm);
-  font-weight: 400;
+  font-family: inherit;
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5044,6 +5188,7 @@ pre {
  * outputs collect at the turn end, matching the existing file-change summary.
  */
 .turn-artifact-inline-list {
+  --artifact-gallery-control-inset: 8px;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -5051,11 +5196,10 @@ pre {
   min-width: 0;
 }
 
-.turn-artifact-gallery-toolbar,
-.turn-artifact-image-toolbar {
+.turn-artifact-gallery-toolbar {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: var(--artifact-gallery-control-inset);
+  right: var(--artifact-gallery-control-inset);
   z-index: 1;
   display: flex;
   opacity: 0;
@@ -5065,8 +5209,7 @@ pre {
 }
 
 /* White light supports the icon over media without a dark halo or button box. */
-.turn-artifact-gallery-toolbar::before,
-.turn-artifact-image-toolbar::before {
+.turn-artifact-gallery-toolbar::before {
   content: "";
   position: absolute;
   inset: -4px;
@@ -5077,36 +5220,27 @@ pre {
   pointer-events: none;
 }
 
-.turn-artifact-inline-list:is(:hover, :focus-within) > .turn-artifact-gallery-toolbar,
-.turn-artifact-inline-image:is(:hover, :focus-within) .turn-artifact-image-toolbar {
+.turn-artifact-inline-list:is(:hover, :focus-within) > .turn-artifact-gallery-toolbar {
   opacity: 1;
   pointer-events: auto;
 }
 
-.turn-artifact-gallery-toolbar .icon-button,
-.turn-artifact-image-toolbar .icon-button {
+.turn-artifact-gallery-toolbar .icon-button {
   color: var(--artifact-gallery-control-fg);
   background: transparent;
   border: 0;
 }
 
-.turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled),
-.turn-artifact-image-toolbar .icon-button:is(:hover, :active):not(:disabled) {
+.turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled) {
   color: var(--artifact-gallery-control-fg-hover);
   background: transparent;
 }
 
 @media (hover: none), (pointer: coarse) {
-  .turn-artifact-gallery-toolbar,
-  .turn-artifact-image-toolbar {
+  .turn-artifact-gallery-toolbar {
     opacity: 1;
     pointer-events: auto;
   }
-}
-
-.turn-artifact-image-toolbar {
-  top: auto;
-  bottom: 8px;
 }
 
 .turn-artifact-gallery-items {
@@ -5116,6 +5250,11 @@ pre {
   overflow-x: auto;
   padding: 4px;
   scroll-padding-inline: 32px;
+}
+
+/* Small thumbnails must still contain the full font-scaled view control. */
+.turn-artifact-gallery-toolbar + .turn-artifact-gallery-items {
+  min-height: calc(var(--control-size-roomy) + var(--artifact-gallery-control-inset) * 2);
 }
 
 .turn-artifact-gallery-items:not(.is-tiled) > * {
@@ -5337,15 +5476,6 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
   background: var(--artifact-preview-frame-bg);
 }
 
-.artifact-preview-image {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
 .artifact-preview-audio {
   width: min(680px, 90%);
   margin: auto;
@@ -5359,7 +5489,7 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
   padding: 18px;
   overflow: auto;
   color: var(--ink);
-  font: var(--appearance-code-size, 11px)/1.55 var(--font-mono);
+  font: var(--appearance-code-size)/var(--appearance-code-line-height) var(--font-mono);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -5651,13 +5781,6 @@ button.turn-edit-summary-overview:focus-visible {
   width: var(--icon-size);
   height: var(--icon-size);
   color: var(--ink-muted);
-}
-
-.turn-edit-summary-card[data-wuu-component="turn-artifacts"] .turn-output-summary-name {
-  font-family: inherit;
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  line-height: 1.35;
 }
 
 .turn-edit-summary-stats {

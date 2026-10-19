@@ -22,6 +22,7 @@ export type ComposerVariant = "dock" | "document" | "hero";
 export type FloatingMenuOwner =
   | "sidebar-account"
   | "conversation-actions"
+  | "conversation-triggers"
   | "composer-handoff"
   | "composer-runtime"
   | "composer-access"
@@ -56,10 +57,6 @@ const HIDDEN_COMPOSER_STATUSES = new Set([
 export function composerStatusText(status: string): string {
   const resolved = resolveLocalizedText(status);
   return HIDDEN_COMPOSER_STATUSES.has(resolved) ? "" : resolved;
-}
-
-export function composerStatusIsLiveProgress(liveProgress?: boolean): boolean {
-  return liveProgress === true;
 }
 
 /** Starting a new conversation in its own Git worktree, and where from. */

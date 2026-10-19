@@ -8,7 +8,7 @@ type Delimiter = { char: string; length: number; position: number };
 export function mendStreamingMarkdown(text: string): string {
   // Fences are handled by the canonical Markdown parser, including unclosed ones.
   // Do not reinterpret code or math as incomplete prose.
-  if (/^ {0,3}(`{3,}|~{3,})/m.test(text)) return text;
+  if (/^ {0,3}(`{3,}|~{3,})/m.test(text) || /\$|\\[([]/.test(text)) return text;
   const delimiters: Delimiter[] = [];
   const brackets: number[] = [];
   let code: { length: number; position: number } | undefined;

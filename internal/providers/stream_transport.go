@@ -108,6 +108,9 @@ func durationFromEnv(name string) time.Duration {
 
 // BuildStreamingHTTPClient clones base into a long-lived streaming client and
 // attaches connect-stage deadlines without imposing a total request timeout.
+// Build once per provider client: cloning a transport per request discards its
+// connection pool. Credential adapters should share the built client while
+// setting authentication on each request. Custom RoundTrippers are shared as-is.
 func BuildStreamingHTTPClient(base *http.Client, cfg StreamTransportConfig) *http.Client {
 	if base == nil {
 		base = &http.Client{}

@@ -17,16 +17,14 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="landing/assets/readme/hero-dark-en.jpg">
-  <img src="landing/assets/readme/hero-light-en.jpg" alt="wuu with a finished bug fix: the conversation explains the cause and the test results, and Review shows the diff">
+  <img src="landing/assets/readme/hero-light-en.jpg" alt="wuu desktop app">
 </picture>
 
 Point wuu at a folder, describe the task, and let an agent read the code, run commands and edit files. The conversation shows each step as it happens. Beside it, Review shows the actual diff on disk, so you check the result rather than taking the summary on trust.
 
 ## See it in action
 
-![An agent investigates a date bug, runs the tests, patches the code, and the change opens in Review](landing/assets/readme/demo-en.gif)
-
-A user reports that October 1 expenses land in September. The agent searches the code, runs the tests to reproduce the bug, fixes the month calculation and adds a test. One click opens the change in Review.
+![wuu demo](landing/assets/readme/demo-en.webp)
 
 ## Agent benchmark
 
@@ -46,10 +44,10 @@ All three harnesses used GPT-6 Astra with high reasoning effort: 18 tasks each, 
 
 Connect OpenAI, Anthropic, DeepSeek, xAI, Kimi, Z.AI, MiniMax or Alibaba Cloud Model Studio with an API key. Gateways such as OpenRouter and SiliconFlow and local servers such as LM Studio work too, as does any custom OpenAI- or Anthropic-compatible endpoint. You can also reuse a subscription you already have: a Codex login, xAI SuperGrok or Grok Build.
 
-Already use another coding agent? wuu can run Claude Code, Codex, Cursor, Devin, Grok, Hermes, OpenCode, Pi or Antigravity as the conversation's engine, with that agent's own login and tools. **Settings → Subscriptions** shows plan quotas and balances for every account in one place.
+Already use another coding agent? wuu can run Claude Code, Codex, Cursor, Devin, DeepSeek Harness, Grok, Hermes, OpenCode, Pi or Antigravity as the conversation's engine, with that agent's own login and tools. **Settings → Subscriptions** shows plan quotas and balances for every account in one place.
 
 <p align="center">
-  <img src="landing/assets/readme/models-en.png" width="640" alt="The Add a provider page: subscriptions, model-provider APIs, gateways, local servers and a custom endpoint">
+  <img src="landing/assets/readme/models-en.jpg" width="640" alt="Add a provider">
 </p>
 
 ### Keep the work in view
@@ -64,8 +62,16 @@ The workspace panel sits beside the conversation:
 Select text in a file to add it to the conversation, leave a comment, ask about it in a side chat, or have the agent edit just that passage. Responses work the same way: quote a passage into your next message.
 
 <p align="center">
-  <img src="landing/assets/readme/files-en.png" alt="A selected passage in docs/design.md with Add to conversation, Comment, Ask in side chat and Edit">
+  <img src="landing/assets/readme/files-en.jpg" alt="Selection actions in Files">
 </p>
+
+### Work inside Mac apps
+
+Computer Use lets the agent observe and operate native macOS apps through Accessibility and native input. A floating preview follows its pointer and shows each click and keystroke while the target app stays in the background. The agent saves through the app itself, so Review shows the real file change. Screen Recording and Accessibility permissions apply.
+
+[![Computer Use in wuu](landing/assets/readme/cua-en.webp)](landing/assets/readme/cua-en.mp4)
+
+[Watch the video](landing/assets/readme/cua-en.mp4)
 
 ### Steer without starting over
 
@@ -79,17 +85,17 @@ When the work belongs somewhere else, run the agent's tools in Docker, over SSH,
 
 ### Make it yours
 
-Plugins add tools and features: scheduled automation, persistent goals, task checklists, memory, subagents and more. Each one can be turned on or off. You can install a local plugin, add skills, connect MCP servers and run hooks. Extensions use the same public API as the bundled plugins. See [Extend wuu](docs/en/customize/index.md).
+Plugins add tools and features: scheduled automation, persistent goals, task checklists, memory, subagents and more. Each one can be turned on or off. You can install a local plugin, add skills, connect MCP servers and run hooks. The official TypeScript SDK gives external and bundled plugins the same public API. See [Extend wuu](docs/en/customize/index.md).
 
 <p align="center">
-  <img src="landing/assets/readme/plugins-en.png" width="640" alt="The Plugins page listing Automation, Goal, Peers, TODO, Ask User, Dream, Memory and Subagent">
+  <img src="landing/assets/readme/plugins-en.jpg" width="640" alt="Plugins">
 </p>
 
 ## Get started
 
 The desktop preview runs on Apple silicon Macs. Download it from [GitHub Releases](https://github.com/blueberrycongee/wuu/releases/latest), move `wuu.app` to `/Applications`, and open it.
 
-The preview is unsigned. It has ad-hoc signatures only, with no Apple Developer ID or notarization. If macOS blocks it, follow the [installation guide](docs/en/getting-started/installation.md).
+The release pipeline requires Apple Developer ID signing and notarization. Older previews used ad-hoc signatures; check the release notes and [installation guide](docs/en/getting-started/installation.md) for the downloaded version.
 
 On first launch, connect a model service and add a project folder as a workspace. Start with a small task, then check the changes and test results in Review. The [quick start](docs/en/getting-started/index.md) walks through an example.
 
@@ -121,8 +127,15 @@ wuu reads and changes local files and runs commands within the active permission
 
 See [Contributing](CONTRIBUTING.md) to work on wuu, or [open an issue](https://github.com/blueberrycongee/wuu/issues) to report a problem. Report security vulnerabilities through [SECURITY.md](SECURITY.md).
 
+## Core developers
+
+<p>
+  <a href="https://github.com/blueberrycongee"><picture><source media="(prefers-color-scheme: dark)" srcset="landing/assets/readme/core-blueberrycongee-dark.svg"><img src="landing/assets/readme/core-blueberrycongee-light.svg" width="140" height="124" alt="@blueberrycongee"></picture></a>
+  <a href="https://github.com/Rosemary1812"><picture><source media="(prefers-color-scheme: dark)" srcset="landing/assets/readme/core-rosemary1812-dark.svg"><img src="landing/assets/readme/core-rosemary1812-light.svg" width="140" height="124" alt="@Rosemary1812"></picture></a>
+</p>
+
 ## Acknowledgements
 
-Thanks to [@Rosemary1812](https://github.com/Rosemary1812) for contributing to Fusion's multi-agent collaboration, including Lead/Sidekick collaboration design, user experience, and behavioral testing ([#489](https://github.com/blueberrycongee/wuu/pull/489)).
+Licensed under [MIT](LICENSE). Agent avatars use [blobatar](https://github.com/Alain00/blobatar), also MIT-licensed.
 
-Licensed under [MIT](LICENSE). Agent avatars use [blobatar](https://github.com/Alain00/blobatar), also MIT-licensed. The screenshots above come from the real app working on synthetic example projects; [landing/README.md](landing/README.md#readme-media) explains how to regenerate them.
+Wuu's macOS Computer Use implementation draws on the design of [Cua Driver](https://github.com/trycua/cua/tree/main/libs/cua-driver), an [MIT-licensed](https://github.com/trycua/cua/blob/main/LICENSE.md) project by Cua AI, Inc. Thanks to its contributors for their work on native computer use.

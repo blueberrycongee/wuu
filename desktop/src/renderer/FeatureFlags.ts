@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
 
-/** Phone access is development-only until the mobile connection flow ships. */
+/** Keep new phone pairing in explicitly opted-in development builds until mobile release acceptance. */
 export const ENABLE_REMOTE_CONTROL =
-  import.meta.env.DEV && import.meta.env.VITE_ENABLE_REMOTE_CONTROL !== "false";
+  import.meta.env.DEV && import.meta.env.VITE_ENABLE_REMOTE_CONTROL === "true";
 
 /** Temporarily hidden to keep the conversation focused; retain the edit data and components. */
 export const ENABLE_TURN_EDIT_SUMMARY = false;
@@ -12,6 +12,9 @@ export const ENABLE_ENVIRONMENT_PANEL = false;
 
 /** Explicit file deliveries remain accessible beside their conversation. */
 export const ENABLE_TURN_ARTIFACT_SUMMARY = true;
+
+/** Keep the Trigger entry hidden until it is ready to return to answer actions. */
+export const ENABLE_CONVERSATION_TRIGGERS = false;
 
 /**
  * Account and device-linking UI stays available in development. All production

@@ -45,7 +45,7 @@ v2 是有界的数据程序。表达式读取已声明状态，支持算术、�
 不执行生成的 JavaScript，也不接收任意 HTML、CSS、URL、
 网络访问或 React 属性。
 
-原生工具和桌面端都验证程序。每个 spec 最多 128 KiB，最多 32 个状态项、
+TypeScript 工具运行时与桌面端共用程序验证器。每个 spec 最多 128 KiB，最多 32 个状态项、
 初始状态 16 KiB、256 个声明节点及 12 层节点嵌套、2,048 个表达式节点及 16 层
 表达式嵌套。运行时还限制计算和展开规模，超限时停止而非继续无限工作。
 v1 历史产物仍可阅读和交互。
@@ -73,7 +73,7 @@ v1 历史产物仍可阅读和交互。
 `title`、有意义的非空文字 `fallback`，以及 1–16 个 ID 不重复的 `blocks`。
 完整工具 schema 位于
 [`plugins/generative-ui/schema.json`](../../../plugins/generative-ui/schema.json)。
-原生工具验证后发布 MIME 为 `application/vnd.wuu.ui+json`、
+工具运行时验证后发布 MIME 为 `application/vnd.wuu.ui+json`、
 `placement: inline` 的 resource；桌面展示历史内容前再次验证。
 
 | 类型 | 必填内容 | 限制 |
@@ -126,23 +126,36 @@ MIME 渲染器，在最终结果接受前保持只读。Wuu 的 React 组件使�
 spec、禁用或缺失插件、渲染异常会降级为 resource 随附的普通文字。其他客户端
 也可直接阅读这段文字，无需实现交互渲染器。
 
+## 插件热更新
+
+工具运行时与桌面渲染器使用普通的公开扩展生命周期。首次构建后，运行
+`wuu plugin dev plugins/generative-ui` 即可监听开发目录，包括 schema、
+共用验证器、桌面入口和 SDK 输入。修改会重新构建并发布新一代插件，
+无需重新编译 Go 或重启 Wuu，生成产物不会触发重复构建。
+
+渲染器更新立即替换已挂载的视图。工具定义和 schema 在下一轮空闲边界采用；
+正在执行的对话轮次保留原运行时快照。新版本加载失败时保留上一可用版本。
+禁用会撤掉交互渲染并撤销工具，包括被旧轮次保留的运行时代次。历史结果保留
+带版本的数据与文字降级，重新启用后恢复兼容的已保存输入。更新必须保留
+v1/v2 结果与存储兼容性，或明确提供迁移。
+
 ## 开发验证
 
-运行 `npm --prefix desktop run build:core` 构建核心和 helper，再在图形环境中
+运行 `npm --prefix plugins run build -- --plugin=generative-ui` 构建插件运行包，再在图形环境中
 运行 `npm --prefix desktop run test:e2e:generative-ui`。无头 Linux 可给同一
 Electron 脚本加 `--no-sandbox --ozone-platform=headless
 --ozone-override-screen-size=1440,1400`。
-`WUU_GENERATIVE_UI_PLUGIN_HELPER` 可指定已构建的 helper，
-`WUU_GENUI_OUTPUT` 指定产物目录。
+`WUU_GENUI_OUTPUT` 指定产物目录。脚本通过桌面自带的 Node 运行时执行
+JavaScript 工具，不需要独立的辅助程序。
 
-E2E 用合成数据连接真实原生工具进程和生产用 artifact/插件渲染组件，检查
-原生与桌面验证一致性、控件、状态隔离和恢复、禁用与错误降级、存储失败，并
+E2E 用合成数据连接真实 JavaScript 工具进程和生产用 artifact/插件渲染组件，检查
+运行时与桌面验证一致性、控件、状态隔离和恢复、禁用与错误降级、存储失败，并
 记录工具结果、JSON 报告及深浅主题、宽窄窗口、默认和大字号截图。其存储适配器
 是合成的，不代表实际模型调用或打包应用验收。
 
 完整应用链路可运行 `npm --prefix desktop run test:e2e:generative-ui-app`。
 该脚本构建并启动真实 App/main/preload/core，在临时 home 中使用本机合成
-HTTP provider，检查默认关闭的工具发现、目录启用、原生工具结果进入消息流、
+HTTP provider，检查默认关闭的工具发现、目录启用、插件工具结果进入消息流、
 生产插件存储写入和刷新恢复，以及禁用和重新启用后的降级恢复。还检查交错工具参数的预览、取消，
 以及明确发送后续消息时保留输入框草稿和附件。
 实际 IPC、provider 请求、原生存储、截图和构建哈希保存在
@@ -150,7 +163,8 @@ HTTP provider，检查默认关闭的工具发现、目录启用、原生工具�
 不使用外部模型或用户凭据；这是源码构建的应用验收，不是安装包验收。
 
 在仓库根目录运行 `go run scripts/generative-ui-lifecycle-e2e.go`，可使用独立
-临时 home 验证原生工具发现、执行、禁用、重新启用和安全模式；
-`WUU_GENERATIVE_UI_PLUGIN_HELPER` 指定 helper，`WUU_GENUI_LIFECYCLE_OUTPUT`
-指定 JSON 证据文件。该检查还会编译经 Wuu provider 规范化后的工具 schema，
+临时 home 验证插件工具发现、执行、保留前台快照的热替换、失败更新恢复、
+禁用、重新启用和安全模式。先构建插件
+运行包，并确保 `PATH` 中有 Node.js；`WUU_GENUI_LIFECYCLE_OUTPUT` 指定
+JSON 证据文件。该检查还会编译经 Wuu provider 规范化后的工具 schema，
 不调用 provider，也不代表所有 provider 或模型都支持此 schema。

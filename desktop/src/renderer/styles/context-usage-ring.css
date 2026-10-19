@@ -1,0 +1,38 @@
+:root {
+  --context-meter-track: rgba(138, 142, 145, 0.24);
+}
+
+.context-usage-ring {
+  display: block;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  overflow: visible;
+}
+
+.context-usage-ring-track {
+  stroke: var(--context-meter-track);
+  fill: none;
+  stroke-width: 2;
+}
+
+.context-usage-ring-progress {
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  /* Dash math: strokeDasharray is the full circumference, strokeDashoffset
+     shrinks toward 0 as the fill grows. The fold rung matches the
+     token-speed gauge's color settle, so the two meters share a cadence. */
+  transition:
+    stroke-dashoffset var(--motion-slower) var(--ease-out),
+    stroke var(--motion-slower) var(--ease-out);
+}
+
+@container style(--motion-reduced: 1) {
+  .context-usage-ring-progress { transition: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-usage-ring-progress { transition: none; }
+}

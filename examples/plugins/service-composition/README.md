@@ -1,6 +1,6 @@
 # Service composition example
 
-Two independently installable runtime packages compose a writing report:
+Two independently installable runtime packages use the official TypeScript SDK to compose a writing report:
 
 - `text-analysis` provides `example.text.analysis` version `1.0.0` with a `measure` method.
 - `writing-report` contributes a tool that calls this service through `host.service.call`.
@@ -28,6 +28,6 @@ The smoke harness starts both bundled processes and routes one tool call through
 
 Use the [plugin management flow](../../../docs/en/customize/plugins.md) to install and approve each directory separately, provider first. In a new conversation, ask Wuu to use the writing-report tool on `Hello world.\n\nReady to publish.` (with real blank lines). The report should contain 31 characters, 5 whitespace-separated words, and 2 paragraphs.
 
-Disable the provider and verify that the consumer no longer becomes available at the next runtime adoption boundary. Re-enable it and verify recovery. A provider update rebuilds the runtime generation; a running turn retains its original generation until its work settles. The example has no desktop entry and does not exercise rendered UI.
+Disable the provider and verify that the committed change revokes its required consumer across retained generations without waiting for the next idle turn. Retained consumer toolkits must reject new calls to the revoked tool. Re-enable the provider and verify recovery. An ordinary provider update rebuilds the runtime generation; a running turn and its outstanding workers retain their original generation until their work settles, then the conversation adopts the update at its next idle turn boundary. The example has no desktop entry and does not exercise rendered UI.
 
 See the [authoring reference](../../../docs/en/customize/plugin-authoring.md) for package versions, optional dependencies, services, and concurrency boundaries, or [编写插件](../../../docs/zh-cn/customize/plugin-authoring.md) for the Chinese reference.

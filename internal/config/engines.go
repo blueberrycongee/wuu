@@ -22,6 +22,7 @@ type EnginesConfig struct {
 	Claude        *EngineBinaryConfig `json:"claude,omitempty"`
 	Cursor        *EngineBinaryConfig `json:"cursor,omitempty"`
 	Devin         *EngineBinaryConfig `json:"devin,omitempty"`
+	DSH           *EngineBinaryConfig `json:"dsh,omitempty"`
 	Grok          *EngineBinaryConfig `json:"grok,omitempty"`
 	Hermes        *EngineBinaryConfig `json:"hermes,omitempty"`
 	Pi            *EngineBinaryConfig `json:"pi,omitempty"`
@@ -43,6 +44,8 @@ func (c *EnginesConfig) Binary(id string) *EngineBinaryConfig {
 		return c.Cursor
 	case "devin":
 		return c.Devin
+	case "dsh":
+		return c.DSH
 	case "grok":
 		return c.Grok
 	case "hermes":
@@ -97,6 +100,7 @@ type EnginesSettingsUpdate struct {
 	Claude        *EngineBinaryUpdate `json:"claude,omitempty"`
 	Cursor        *EngineBinaryUpdate `json:"cursor,omitempty"`
 	Devin         *EngineBinaryUpdate `json:"devin,omitempty"`
+	DSH           *EngineBinaryUpdate `json:"dsh,omitempty"`
 	Grok          *EngineBinaryUpdate `json:"grok,omitempty"`
 	Hermes        *EngineBinaryUpdate `json:"hermes,omitempty"`
 	Pi            *EngineBinaryUpdate `json:"pi,omitempty"`
@@ -123,7 +127,7 @@ func UpdateEnginesSettings(configPath string, update EnginesSettingsUpdate) erro
 	}
 	updates := map[string]*EngineBinaryUpdate{
 		"codex": update.Codex, "claude": update.Claude, "cursor": update.Cursor,
-		"devin": update.Devin, "grok": update.Grok, "hermes": update.Hermes,
+		"devin": update.Devin, "dsh": update.DSH, "grok": update.Grok, "hermes": update.Hermes,
 		"pi": update.Pi, "opencode": update.OpenCode, "antigravity": update.Antigravity,
 	}
 	for id, binaryUpdate := range updates {

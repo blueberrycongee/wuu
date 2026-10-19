@@ -13,6 +13,7 @@ import (
 type fakeServiceProcess struct {
 	id          string
 	state       State
+	onStatus    func()
 	provided    []ServiceDescriptor
 	required    []ServiceRequirement
 	invoke      func(ctx context.Context, params ServiceInvokeParams) (json.RawMessage, error)
@@ -20,8 +21,13 @@ type fakeServiceProcess struct {
 	invokeCalls []ServiceInvokeParams
 }
 
-func (c *fakeServiceProcess) ID() string     { return c.id }
-func (c *fakeServiceProcess) Status() Status { return Status{ID: c.id, State: c.state} }
+func (c *fakeServiceProcess) ID() string { return c.id }
+func (c *fakeServiceProcess) Status() Status {
+	if c.onStatus != nil {
+		c.onStatus()
+	}
+	return Status{ID: c.id, State: c.state}
+}
 func (c *fakeServiceProcess) Close(context.Context) error {
 	if c.state == StateActive {
 		c.state = StateStopped
@@ -132,6 +138,79 @@ func TestServiceRegistryCall(t *testing.T) {
 	}
 	if len(provider.invokeCalls) != 1 || provider.invokeCalls[0].Caller != "notes" || provider.invokeCalls[0].Method != "query" {
 		t.Fatalf("invoke params = %+v", provider.invokeCalls)
+	}
+
+	// Transport cancellation ends a service invocation even while its host-owned
+	// root remains live. Nested participants must not cancel their siblings.
+	host := New(provider, consumer)
+	host.AttachServiceRegistry(registry, nil)
+	rootID := host.executions.BeginTool("notes", context.Background(), ToolExecuteInput{})
+	defer host.executions.End(rootID)
+	callerContext, cancelCaller := context.WithCancel(context.Background())
+	defer cancelCaller()
+	key := serviceKey{name: "search.provider", major: 1}
+	rootContext, _, releaseRoot, rootErr := registry.acquireExecution(callerContext, rootID, "notes", key, "search", true)
+	if rootErr != nil {
+		t.Fatal(rootErr)
+	}
+	defer releaseRoot()
+	nestedCaller, cancelNested := context.WithCancel(context.Background())
+	defer cancelNested()
+	nestedContext, _, releaseNested, nestedErr := registry.acquireExecution(nestedCaller, rootID, "search", key, "search", true)
+	if nestedErr != nil {
+		t.Fatal(nestedErr)
+	}
+	defer releaseNested()
+	cancelNested()
+	if _, _, release, cancelledErr := registry.acquireExecution(nestedCaller, rootID, "search", key, "search", true); cancelledErr == nil || cancelledErr.Code != "request_cancelled" {
+		if release != nil {
+			release()
+		}
+		t.Fatalf("cancelled transport admitted another invocation: %v", cancelledErr)
+	}
+	select {
+	case <-nestedContext.Done():
+	case <-time.After(time.Second):
+		t.Fatal("nested caller transport loss did not cancel its service")
+	}
+	if rootContext.Err() != nil {
+		t.Fatal("nested caller transport loss cancelled the shared chain")
+	}
+	cancelCaller()
+	select {
+	case <-rootContext.Done():
+	case <-time.After(time.Second):
+		t.Fatal("caller transport loss did not cancel its rooted service")
+	}
+	owner, ownerErr := host.ResolveExecution("notes", rootID)
+	if ownerErr != nil || owner.Context.Err() != nil {
+		t.Fatalf("service transport loss cancelled its independent owner: %+v, %v", owner, ownerErr)
+	}
+	releaseNested()
+	releaseRoot()
+	// Updates stop autonomous work through both plugin and kernel providers,
+	// while a retained foreground owner keeps its declared services.
+	host.StopBackground()
+	for _, kernel := range []bool{false, true} {
+		entry := registry.providers[key]
+		entry.kernel = kernel
+		registry.providers[key] = entry
+		if _, err := registry.Call(context.Background(), "notes", call); err == nil || err.Code != "generation_closed" {
+			t.Fatalf("retired autonomous call (kernel=%v) = %v", kernel, err)
+		}
+		scopedCall := call
+		scopedCall.ExecutionID = rootID
+		if _, err := registry.Call(context.Background(), "notes", scopedCall); err != nil {
+			t.Fatalf("retained foreground call (kernel=%v) failed: %v", kernel, err)
+		}
+	}
+	finishCleanup := registry.allowShutdownCleanup("notes")
+	finishCleanup()
+	finishReplacementCleanup := registry.allowShutdownCleanup("notes")
+	defer finishReplacementCleanup()
+	finishCleanup()
+	if _, err := registry.Call(context.Background(), "notes", call); err != nil {
+		t.Fatalf("old disposer revoked newer shutdown cleanup: %v", err)
 	}
 }
 

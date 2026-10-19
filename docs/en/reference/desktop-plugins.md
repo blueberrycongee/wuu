@@ -5,9 +5,13 @@ Desktop modules export `activate(api)` and use the generation-scoped `PluginGene
 | Contract | Guide |
 | --- | --- |
 | Slots, surfaces, presenters, views, cards, and status sources | [Desktop UI plugins](../customize/desktop-plugins.md) |
+| Composer inline-completion providers | [Composer inline-completion providers](../customize/desktop-plugins.md#composer-inline-completions) |
+| Runtime model service | [One-shot model requests](../customize/plugin-authoring.md#one-shot-model-requests) |
 | A complete local package and build commands | [Desktop quickstart](../customize/desktop-plugin-quickstart.md) |
 | Draft actions, workspace pages, and runtime calls | [Desktop recipes](../customize/plugin-recipes.md) |
 | Manifest, runtime lifecycle, storage, and distribution | [Plugin authoring](../customize/plugin-authoring.md) |
 | Public theme tokens and semantic anchors | [Theme surface matrix](../customize/theme-surface-matrix.md) |
 
 Registration methods return disposable handles and belong to the active generation. Actions advertised by a presentation host are specific to that render, not a global command permission. Private renderer modules, DOM nesting, and React internals are outside the public API.
+
+`api.signal` remains live after activation and aborts when that generation is disposed. Async startup is bounded; see [desktop generation lifecycle](../customize/plugin-system.md#desktop-generations-and-composition) for timeout and supersession behavior.

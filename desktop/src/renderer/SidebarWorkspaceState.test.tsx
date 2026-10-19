@@ -286,6 +286,9 @@ describe("useSidebarWorkspaceState", () => {
     await hook.rerender({ threads: [betaThread], activeContext: { kind: "no_project", cwd: betaThread.cwd } });
 
     expect(hook.get().cachedScratchThreads.find((item) => item.id === alphaThread.id)?.title).toBe(renamed.title);
+    act(() => { hook.get().patchCachedSidebarThread(alphaThread.id, (value) =>
+      value.title === renamed.title ? { ...value, title: undefined } : value); });
+    expect(hook.get().cachedScratchThreads.find((item) => item.id === alphaThread.id)).toEqual({ ...renamed, title: undefined });
   });
 
   it("waits for bootstrap before fetching background catalogs, then populates the sidebar", async () => {
@@ -587,6 +590,16 @@ describe("useSidebarWorkspaceState", () => {
     });
 
     expect(hook.get().workspaceThreadsByWorkspaceID.alpha?.[0]?.pinned).toBe(true);
+    const rename = (value: Thread): Thread => value.title === cached.title
+      ? { ...value, title: "Confirmed name" } : value;
+    act(() => { hook.get().patchCachedSidebarThread(cached.id, rename); });
+    expect(hook.get().workspaceThreadsByWorkspaceID.alpha?.[0]).toEqual({ ...cached, pinned: true, title: "Confirmed name" });
+    act(() => { hook.get().patchCachedSidebarThread(cached.id, (value) =>
+      value.title === cached.title ? { ...value, title: "Stale name" } : value); });
+    expect(hook.get().workspaceThreadsByWorkspaceID.alpha?.[0]?.title).toBe("Confirmed name");
+    act(() => { hook.get().removeCachedSidebarThread(cached.id); });
+    act(() => { hook.get().patchCachedSidebarThread(cached.id, rename); });
+    expect(hook.get().workspaceThreadsByWorkspaceID.alpha).toEqual([]);
   });
 
   it("keeps other workspaces' scratch sessions when switching no-project workspaces", async () => {

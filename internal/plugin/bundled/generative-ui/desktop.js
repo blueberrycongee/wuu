@@ -240,7 +240,8 @@ function validateProgram(spec) {
         }
         case "table":
           check(["columns", "rows", "title"], ["columns", "rows"]); expr("title"); expr("rows"); list(node.columns, 1, 8); unique(node.columns.map(column => column?.key));
-          for (const column of node.columns) { object(column, ["key", "label"]); programID(column.key); string(column.label, 80); } break;
+          for (const column of node.columns) { object(column, ["key", "label"]); programID(column.key); string(column.label, 80); }
+          validateLiteralTable(node); break;
         case "chart": {
           check(["chartType", "points", "series", "stacked", "title", "xLabel", "yLabel"], ["chartType"]);
           requireValue(["bar", "line", "area", "scatter", "pie", "donut"].includes(node.chartType), "Unsupported chart type");
@@ -256,7 +257,7 @@ function validateProgram(spec) {
               if (node.stacked) requireValue(["bar", "area"].includes(series.chartType ?? node.chartType), "Stacking requires bar or area series");
             }
           }
-          break;
+          validateLiteralChart(node); break;
         }
         default: throw new Error("Unsupported UI node");
       }
@@ -1151,6 +1152,42 @@ function validateChartPoints(points, type) {
     object(point, ["label", "value", "x"], ["label", "value"]); string(point.label, 80); number(point.value);
     if (point.x !== undefined || type === "scatter") number(point.x);
     if (type === "pie" || type === "donut") requireValue(point.value >= 0, "Circular charts require nonnegative values");
+  }
+}
+function literalValue(expression) {
+  if (expression !== null && typeof expression === "object") {
+    return expression.op === "literal" ? { value: expression.value } : undefined;
+  }
+  return { value: expression };
+}
+// Reject malformed static data before publishing a resource. Dynamic values are
+// checked by the renderer after evaluation, including after local state changes.
+function validateLiteralTable(node) {
+  const literal = literalValue(node.rows);
+  if (!literal) return;
+  list(literal.value, 0, 200);
+  for (const row of literal.value) {
+    list(row, node.columns.length, node.columns.length);
+    row.forEach(scalar);
+  }
+}
+function validateLiteralChart(node) {
+  if (node.points !== undefined) {
+    const literal = literalValue(node.points);
+    if (literal) validateChartPoints(literal.value, node.chartType);
+    return;
+  }
+  const numericAxis = node.series.some(series => (series.chartType ?? node.chartType) === "scatter");
+  let labels;
+  for (const series of node.series) {
+    const literal = literalValue(series.points);
+    if (!literal) continue;
+    validateChartPoints(literal.value, series.chartType ?? node.chartType);
+    if (!numericAxis) {
+      const current = JSON.stringify(literal.value.map(point => point.label));
+      requireValue(labels === undefined || labels === current, "Category series require the same ordered labels");
+      labels = current;
+    }
   }
 }
 function formatAxis(value) {

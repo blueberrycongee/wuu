@@ -28,10 +28,13 @@ export function ConversationSplitPane({
   thread,
   active,
   activeContextCwd,
-  appStatus,
+  workspaceId,
+  workspaceRoot,
   streamStatus,
   draft,
   viewSwitchPending,
+  queuedCount,
+  pendingCount,
   stopState,
   submitting,
   queryHistory,
@@ -66,10 +69,13 @@ export function ConversationSplitPane({
   thread: Thread;
   active: boolean;
   activeContextCwd?: string;
-  appStatus: string;
+  workspaceId?: string;
+  workspaceRoot?: string;
   streamStatus?: TurnStreamStatus;
   draft: ComposerDraftState;
   viewSwitchPending: boolean;
+  queuedCount?: number;
+  pendingCount?: number;
   stopState?: "pending" | "retry";
   submitting?: boolean;
   queryHistory: string[];
@@ -139,7 +145,6 @@ export function ConversationSplitPane({
   };
   const paneRunning = isThreadRunning(thread);
   const paneReadOnly = Boolean(thread.read_only);
-  const paneStatus = active ? appStatus : "";
 
   return (
     <section
@@ -164,6 +169,7 @@ export function ConversationSplitPane({
       <div
         ref={onBodyRef}
         className="conversation-split-body"
+        data-scroll-fade=""
         onScroll={(event) => onScroll(event.currentTarget)}
       >
         <div className="conversation-width conversation-split-width session-flow">
@@ -191,6 +197,7 @@ export function ConversationSplitPane({
             renderTurn={(turn) => (
                 <TurnView
                   threadID={thread.id}
+                  engineID={thread.engine_id}
                   turn={turn}
                   cwd={thread.cwd ?? activeContextCwd}
                   onOpenFile={onOpenFile}
@@ -240,14 +247,17 @@ export function ConversationSplitPane({
           submitting={submitting}
           stopState={stopState}
           readOnly={viewSwitchPending}
-          status={paneStatus}
-          statusLiveProgress={false}
           onPasteAttachmentFiles={onPasteAttachmentFiles}
           onRemoveFile={onRemoveFile}
           onRemoveImage={onRemoveImage}
           onSend={onSend}
           onInterrupt={onInterrupt}
           queryHistorySessionID={thread.id}
+          workspaceId={workspaceId}
+          workspaceRoot={workspaceRoot}
+          queuedCount={queuedCount}
+          pendingCount={pendingCount}
+          turnId={thread.turns?.at(-1)?.id}
           queryHistory={queryHistory}
           requestedHandoffIntent={requestedHandoffIntent}
         />

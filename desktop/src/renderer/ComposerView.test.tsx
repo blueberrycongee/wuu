@@ -23,7 +23,7 @@ import { WORKSPACE_FILE_DRAG_MIME, type QueuedComposerMessage } from "./Composer
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
 import { PluginHost } from "./plugins/PluginHost";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
-import { COMPOSER_ACTIONS, type PresentationHost } from "../shared/workbench";
+import { COMPOSER_ACTIONS, type PresentationHost, type ComposerInlineCompletionProviderHandle, type ComposerInlineCompletionInteraction } from "../shared/workbench";
 import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
 import { buildFileSelectionPart } from "./FileSelectionContext";
 import type {
@@ -64,6 +64,12 @@ afterEach(() => {
 
 function initialized(permissions?: PermissionSummary): InitializeResult {
   return {
+    extension_inventory: [{
+      id: "plugin:bundled:side", kind: "plugin", name: "Side", state: "active", enabled: true,
+      approval_state: "official", runtime_state: "active",
+      provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: "side", official: true },
+      contributions: { commands: [{ id: "side", title: "Side chat", kind: "side_conversation", template: "Side policy" }] },
+    }],
     protocol_version: "wuu-app-server/v0.1",
     provider: "fake",
     model: "fake-model",
@@ -130,7 +136,7 @@ function renderComposer(props: {
   queuedMessages?: QueuedComposerMessage[];
   guideMessages?: QueuedComposerMessage[];
   status?: string;
-  statusLiveProgress?: boolean;
+  disabledReason?: string;
   runtimeControlsDisabled?: boolean;
   connectionAvailable?: boolean;
   initialized?: InitializeResult;
@@ -152,6 +158,7 @@ function renderComposer(props: {
   onEditGuideMessage?: (id: string) => void;
   permissions?: PermissionSummary;
   activeContext?: RuntimeContext;
+  inlineCompletionWorkspace?: RuntimeContext;
   setPrompt?: (value: string) => void;
   pluginHost?: PluginHost;
   onSelectPermissionMode?: (mode: PermissionMode, approveForMe?: boolean) => void;
@@ -189,7 +196,7 @@ function renderComposer(props: {
           running={props.running ?? false}
           runtimeControlsDisabled={props.runtimeControlsDisabled}
           status={props.status ?? "ready"}
-          statusLiveProgress={props.statusLiveProgress}
+          disabledReason={props.disabledReason}
           readOnly={props.readOnly ?? false}
           initialized={props.initialized ?? initialized(props.permissions)}
           activeEngine={props.activeEngine}
@@ -201,6 +208,7 @@ function renderComposer(props: {
           branchPickerDisabled={props.branchPickerDisabled}
           projects={props.projects ?? []}
           activeContext={props.activeContext}
+          inlineCompletionWorkspace={props.inlineCompletionWorkspace}
           activeWorkspace={props.activeWorkspace}
           sideThreadDisabledReason={props.sideThreadDisabledReason}
           codexModels={codexModels}
@@ -566,8 +574,6 @@ function renderSplitPaneComposer(props: {
   prompt?: string;
   running?: boolean;
   stopState?: "pending" | "retry";
-  status?: string;
-  statusLiveProgress?: boolean;
   onSend?: () => void;
   onInterrupt?: () => void;
 }): void {
@@ -585,8 +591,6 @@ function renderSplitPaneComposer(props: {
           stopState={props.stopState}
           running={props.running ?? false}
           readOnly={false}
-          status={props.status ?? "ready"}
-          statusLiveProgress={props.statusLiveProgress}
           onPasteAttachmentFiles={() => {}}
           onRemoveFile={() => {}}
           onRemoveImage={() => {}}
@@ -618,7 +622,6 @@ function renderStatefulSplitPaneComposer(props: {
           images={[]}
           running={false}
           readOnly={props.readOnly ?? false}
-          status="ready"
           requestedHandoffIntent={props.requestedHandoffIntent}
           queryHistorySessionID={props.queryHistorySessionID}
           onPasteAttachmentFiles={props.onPasteAttachmentFiles ?? (() => {})}
@@ -1323,20 +1326,141 @@ describe("Composer send control", () => {
     expect(textarea.value).toBe("");
   });
 
-  it("retains a rejected draft and permits another submission attempt", () => {
-    const onSend = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
-    renderComposer({ prompt: "keep until accepted", onSend });
+  it("provides exact workspace identity and pending-input counts to completion providers", async () => {
+    const host = new PluginHost({ react: React });
+    const observations: Array<{ context: unknown; signal: AbortSignal }> = [];
+    await host.activateGeneration({ pluginId: "workspace-completion", generation: "one", register(api) {
+      api.registerComposerInlineCompletionProvider({ id: "observe", provideCompletion(context, signal) {
+        observations.push({ context, signal }); return new Promise<null>(() => {});
+      } });
+    } });
+    const queued = { id: "queued", text: "Next", files: [], images: [] };
+    renderComposer({ pluginHost: host, activeContext: { kind: "project", project_id: "a", cwd: "/a" },
+      queuedMessages: [queued], guideMessages: [{ ...queued, id: "pending" }] });
     const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => { textarea.focus(); });
+    expect(observations.at(-1)?.context).toMatchObject({ workspaceId: "a", workspaceRoot: "/a",
+      attachmentCount: 0, queuedCount: 1, pendingCount: 1 });
+    const previous = observations.at(-1)!;
+    renderComposer({ pluginHost: host, activeContext: { kind: "project", project_id: "b", cwd: "/b" } });
+    await act(async () => {});
+    expect(previous.signal.aborted).toBe(true);
+    expect(observations.at(-1)?.context).toMatchObject({ workspaceId: "b", workspaceRoot: "/b",
+      attachmentCount: 0, queuedCount: 0, pendingCount: 0 });
+    act(() => host.unload("workspace-completion"));
+  });
+
+  it("uses the conversation workspace for completion when display controls retain another workspace", async () => {
+    const host = new PluginHost({ react: React });
+    const observations: unknown[] = [];
+    await host.activateGeneration({ pluginId: "conversation-workspace", generation: "one", register(api) {
+      api.registerComposerInlineCompletionProvider({ id: "observe", provideCompletion(context) {
+        observations.push(context); return null;
+      } });
+    } });
+    renderComposer({ pluginHost: host, queryHistorySessionID: "same-thread",
+      activeContext: { kind: "project", project_id: "display", cwd: "/display" },
+      inlineCompletionWorkspace: { kind: "project", project_id: "conversation", cwd: "/conversation" } });
+    await act(async () => { container.querySelector<HTMLTextAreaElement>("textarea")!.focus(); });
+    expect(observations.at(-1)).toMatchObject({ workspaceId: "conversation", workspaceRoot: "/conversation" });
+    const previousComposerId = (observations.at(-1) as { composerId: string }).composerId;
+    renderComposer({ pluginHost: host, queryHistorySessionID: "same-thread",
+      activeContext: { kind: "project", project_id: "display", cwd: "/display" },
+      inlineCompletionWorkspace: { kind: "project", project_id: "other-conversation", cwd: "/other-conversation" } });
+    await act(async () => {});
+    expect((observations.at(-1) as { composerId: string }).composerId).not.toBe(previousComposerId);
+    await act(async () => { host.unload("conversation-workspace"); });
+  });
+
+  it("updates split completion queue counts, aborts stale requests and preserves unknown counts", async () => {
+    const observations: Array<{ context: unknown; signal: AbortSignal }> = [];
+    await desktopPluginHost.activateGeneration({ pluginId: "split-counts", generation: "one", register(api) {
+      api.registerComposerInlineCompletionProvider({ id: "observe", provideCompletion(context, signal) {
+        observations.push({ context, signal }); return new Promise(() => {});
+      } });
+    } });
+    function renderCounts(queuedCount?: number, pendingCount?: number): void {
+      act(() => {
+        root ??= createRoot(container);
+        root.render(<ImagePreviewProvider><WorkbenchConnectionContext.Provider value={true}>
+          <SplitPaneComposer prompt="" setPrompt={() => {}} files={[]} images={[]} running={false} readOnly={false}
+            queryHistorySessionID="split-thread" workspaceId="workspace" workspaceRoot="/workspace"
+            queuedCount={queuedCount} pendingCount={pendingCount}
+            onPasteAttachmentFiles={() => {}} onRemoveFile={() => {}} onRemoveImage={() => {}}
+            onSend={() => {}} onInterrupt={() => {}} />
+        </WorkbenchConnectionContext.Provider></ImagePreviewProvider>);
+      });
+    }
+    try {
+      renderCounts(0, 0);
+      await act(async () => { container.querySelector<HTMLTextAreaElement>("textarea")!.focus(); });
+      expect(observations.at(-1)?.context).toMatchObject({ queuedCount: 0, pendingCount: 0 });
+      const previous = observations.at(-1)!;
+      renderCounts(2, 1);
+      await act(async () => {});
+      expect(previous.signal.aborted).toBe(true);
+      expect(observations.at(-1)?.context).toMatchObject({ queuedCount: 2, pendingCount: 1 });
+      renderCounts();
+      await act(async () => {});
+      expect(observations.at(-1)?.context).toMatchObject({ queuedCount: undefined, pendingCount: undefined });
+    } finally { await act(async () => { desktopPluginHost.unload("split-counts"); }); }
+  });
+
+  it("retains a rejected draft and permits another submission attempt", async () => {
+    const host = new PluginHost({ react: React });
+    const interactions: ComposerInlineCompletionInteraction[] = [];
+    let provider!: ComposerInlineCompletionProviderHandle;
+    let ready = false;
+    let latestContext: { composerId: string; revision: number } | undefined;
+    await host.activateGeneration({ pluginId: "snippets", generation: "one", register(api) {
+      provider = api.registerComposerInlineCompletionProvider({
+        id: "cached", provideCompletion(context) {
+          latestContext = context;
+          return ready && context.draftText === "retry" ? { id: "snippet-1", text: " this draft" } : null;
+        },
+        onDidInteract: (event) => { interactions.push(event); },
+      });
+    } });
+    const onSend = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    renderComposer({ prompt: "retry", onSend, pluginHost: host });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => { textarea.focus(); textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      textarea.dispatchEvent(new Event("select", { bubbles: true })); });
+    expect(container.querySelector('[data-wuu-component="composer-inline-completion-text"]')).toBeNull();
+    ready = true;
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        provider.refresh(latestContext);
+        provider.refresh(latestContext);
+        await vi.advanceTimersByTimeAsync(100);
+      });
+    } finally { vi.useRealTimers(); }
+    expect(container.querySelector('[data-wuu-component="composer-inline-completion-text"]')?.textContent).toBe(" this draft");
+    expect(interactions.map((event) => event.type)).toEqual(["shown"]);
+    act(() => { textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true })); });
+    expect(textarea.value).toBe("retry this draft");
+    expect(interactions.map((event) => event.type)).toEqual(["shown", "accepted"]);
+    act(() => { textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    expect(textarea.value).toBe("retry this draft");
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(interactions.map((event) => event.type)).toEqual(["shown", "accepted"]);
     act(() => {
-      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    });
-    expect(textarea.value).toBe("keep until accepted");
-    act(() => {
+      setTextareaValue(textarea, "retry this draft with an edit");
       textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     expect(onSend).toHaveBeenCalledTimes(2);
-    expect(onSend).toHaveBeenLastCalledWith("keep until accepted");
+    expect(onSend).toHaveBeenLastCalledWith("retry this draft with an edit");
     expect(textarea.value).toBe("");
+    expect(interactions.map((event) => event.type)).toEqual(["shown", "accepted", "dispatched"]);
+    expect(interactions[2]).toMatchObject({ suggestionId: "snippet-1", interactionId: interactions[0].interactionId,
+      source: interactions[0].source, type: "dispatched", mode: "send", edited: true });
+    expect(JSON.stringify(interactions)).not.toContain("retry");
+    await act(async () => {
+      setTextareaValue(textarea, "unrelated draft");
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(interactions).toHaveLength(3);
   });
 
   it("submits a quote-only split draft once when duplicate gestures race its clear", () => {
@@ -1874,58 +1998,13 @@ describe("Composer send control", () => {
     expect(stopButton.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }))).toBe(true);
   });
 
-  describe.each([
-    ["main", renderComposer],
-    ["split", renderSplitPaneComposer],
-  ] as const)("%s composer feedback", (_name, render) => {
-    it.each(["ready", "正在发送请求", "Sending request"])("does not announce transient status %s", (status) => {
-      render({ prompt: "queued follow-up", running: true, status });
+  it.each(["stream request failed: stream error (102503): upstream timeout", "附件无法读取，请重新选择文件"])("keeps app status text out of the composer: %s", (status) => {
+    renderComposer({ prompt: "retry later", running: true, status });
 
-      expect(container.querySelector("[role='status']")).toBeNull();
-    });
-
-    it.each(["Attachment rejected: unsupported media", "附件无法读取，请重新选择文件"])("keeps actionable feedback outside the send toolbar: %s", (status) => {
-      render({ prompt: "retry later", running: true, status });
-
-      const feedback = container.querySelector("[role='status']");
-      expect(feedback?.textContent).toBe(status);
-      expect(container.querySelector(".composer-bar")?.contains(feedback)).toBe(false);
-      expect(container.querySelector("textarea")?.value).toBe("retry later");
-    });
-  });
-
-  it.each([true, false])("only shows app feedback in the active split pane while running (active=%s)", (active) => {
-    const status = "Attachment upload rejected";
-    act(() => {
-      root = createRoot(container);
-      root.render(
-        <ImagePreviewProvider>
-          <ConversationSplitPane
-            pane="primary"
-            thread={{ id: "running-thread", status: "in_progress", turns: [] } as unknown as Thread}
-            active={active}
-            appStatus={status}
-            draft={{ prompt: "follow-up", files: [], images: [] }}
-            viewSwitchPending={false}
-            queryHistory={[]}
-            onActivate={() => {}}
-            onClose={() => {}}
-            onBodyRef={() => {}}
-            onScroll={() => {}}
-            onSetPrompt={() => {}}
-            onPasteAttachmentFiles={() => {}}
-            onRemoveFile={() => {}}
-            onRemoveImage={() => {}}
-            onSend={() => {}}
-            onInterrupt={() => {}}
-            onForkMessage={() => {}}
-            onStreamFrame={() => {}}
-          />
-        </ImagePreviewProvider>,
-      );
-    });
-
-    expect(container.querySelector("[role='status']")?.textContent ?? "").toBe(active ? status : "");
+    expect(container.querySelector(".composer-wrap")?.textContent).not.toContain(status);
+    expect(container.querySelector("textarea")?.value).toBe("retry later");
+    renderComposer({ prompt: "retry later", readOnly: true, status });
+    expect(container.querySelector(".composer-send-button")?.getAttribute("aria-description")).toBeNull();
   });
 
   it("hides session context chips in the dock composer", () => {
@@ -2753,7 +2832,7 @@ describe("Composer send control", () => {
     act(() => sendButton?.click());
 
     expect(onOpenSideThread).toHaveBeenCalledTimes(1);
-    expect(onOpenSideThread).toHaveBeenCalledWith(undefined);
+    expect(onOpenSideThread).toHaveBeenCalledWith(undefined, "side.side");
     expect(setPrompt).toHaveBeenCalledWith("");
   });
 
@@ -2773,7 +2852,7 @@ describe("Composer send control", () => {
     act(() => sendButton?.click());
 
     expect(onOpenSideThread).toHaveBeenCalledTimes(1);
-    expect(onOpenSideThread).toHaveBeenCalledWith("现在进度怎么样");
+    expect(onOpenSideThread).toHaveBeenCalledWith("现在进度怎么样", "side.side");
     expect(setPrompt).toHaveBeenCalledWith("");
   });
 });
@@ -3878,14 +3957,17 @@ describe("Composer expand button", () => {
     expect(button?.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("disables expansion in read-only mode", () => {
-    renderComposer({ readOnly: true });
+  it("disables expansion and explains send restrictions in read-only mode", () => {
+    renderComposer({ readOnly: true, disabledReason: "Child conversations are read-only" });
     const stack = container.querySelector(".composer-stack");
     const button = container.querySelector<HTMLButtonElement>(".composer-expand-button");
     expect(button).not.toBeNull();
     expect(button?.disabled).toBe(true);
     expect(button?.getAttribute("title")).toBe("只读对话不可展开");
+    expect(container.querySelector(".composer-send-button")?.getAttribute("aria-description")).toBe("Child conversations are read-only");
     expect(stack?.classList.contains("is-expanded")).toBe(false);
+    renderComposer({ disabledReason: "Child conversations are read-only" });
+    expect(container.querySelector(".composer-send-button")?.getAttribute("aria-description")).toBeNull();
   });
 });
 

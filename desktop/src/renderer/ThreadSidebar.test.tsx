@@ -204,9 +204,28 @@ describe("WorkspaceList", () => {
     return Array.from(container.querySelectorAll(".thread-row-title"), row => row.textContent ?? "");
   }
 
-  it("reveals history in batches and can return to the recent range", () => {
+  it("keeps the recent range through creation and reveals history in batches", () => {
     renderHistory();
     expect(historyTitles()).toHaveLength(5);
+    const pending = {
+      id: "draft-new",
+      context: { kind: "project" as const, project_id: "history", cwd: "/repo/history" },
+      title: "First message",
+    };
+    renderHistory({ pendingConversations: [pending], activeSessionTabID: pending.id });
+    expect(historyTitles()).toEqual(["First message", "History 0", "History 1", "History 2", "History 3"]);
+    const retainedRow = container.querySelectorAll(".thread-row-main")[1];
+    renderHistory({
+      activeThreadID: "created-new",
+      threadsByWorkspaceID: { history: summarizeThreadsForSidebar([
+        makeWorkspaceThread("created-new", "/repo/history", pending.title, [], { status: "in_progress" }),
+        ...Array.from({ length: 30 }, (_, index) =>
+          makeWorkspaceThread(`history-${index}`, "/repo/history", `History ${index}`)),
+      ]) },
+    });
+    expect(historyTitles()).toEqual(["First message", "History 0", "History 1", "History 2", "History 3"]);
+    expect(container.querySelectorAll(".thread-row-main")[1]).toBe(retainedRow);
+    renderHistory();
     act(() => container.querySelector<HTMLButtonElement>(".thread-list-more")!.click());
     expect(historyTitles()).toEqual(Array.from({ length: 10 }, (_, index) => `History ${index}`));
     act(() => container.querySelector<HTMLButtonElement>(".thread-list-more")!.click());
@@ -214,6 +233,13 @@ describe("WorkspaceList", () => {
     act(() => container.querySelector<HTMLButtonElement>(".thread-list-collapse-btn")!.click());
     expect(historyTitles()).toHaveLength(5);
     expect(container.querySelector(".project-row")?.getAttribute("aria-expanded")).toBe("true");
+    renderHistory({ pendingConversations: [pending], activeSessionTabID: pending.id });
+    act(() => container.querySelector<HTMLButtonElement>(".thread-list-more")!.click());
+    expect(historyTitles()).toEqual(["First message", ...Array.from({ length: 9 }, (_, index) => `History ${index}`)]);
+    act(() => container.querySelector<HTMLButtonElement>(".thread-list-collapse-btn")!.click());
+    expect(historyTitles()).toHaveLength(5);
+    renderHistory({ pendingConversations: [pending], activeThreadID: "history-20" });
+    expect(historyTitles()).toEqual(["First message", "History 0", "History 1", "History 2", "History 3", "History 20"]);
   });
 
   it("adds hidden rows even when the next range is already visible as unread", () => {

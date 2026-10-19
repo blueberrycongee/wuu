@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,6 +59,8 @@ type ParticipantStore interface {
 
 // AgentControl owns the orchestration runtime for one wuu session.
 type AgentControl struct {
+	useCurrentTemperatureOnRestore bool
+
 	manager       *subagent.Manager
 	workspaceMu   sync.RWMutex
 	worktrees     *worktree.Manager // nil when workspace is not a git repo
@@ -89,6 +92,7 @@ type AgentControl struct {
 	queueStartMu      sync.Mutex
 	queueStarted      bool
 	queueStopped      bool
+	queuePauses       int // concurrent StopAll calls pause queue admission and parent wakeups
 	queueDrainMu      sync.Mutex
 	queueMu           sync.Mutex
 	queued            []preparedSpawn
@@ -233,15 +237,18 @@ type Config struct {
 	// worker runners so worker-produced native state carries its provider
 	// of origin, and it seeds the worker-provider identity used by
 	// model-pin comparisons.
-	ProviderName                   string
-	DefaultModel                   string
-	DefaultEffort                  string
-	DefaultOptions                 map[string]any
-	DefaultContextWindow           int
-	DefaultMaxInputTokens          int
-	DefaultOutputReserveTokens     int
-	DefaultCompactThresholdTokens  int
-	DefaultTemperature             float64
+	ProviderName                  string
+	DefaultModel                  string
+	DefaultEffort                 string
+	DefaultOptions                map[string]any
+	DefaultContextWindow          int
+	DefaultMaxInputTokens         int
+	DefaultOutputReserveTokens    int
+	DefaultCompactThresholdTokens int
+	DefaultTemperature            float64
+	// UseCurrentTemperatureOnRestore lets a host retire saved sampling overrides
+	// without changing a worker's pinned provider, model, or other runtime options.
+	UseCurrentTemperatureOnRestore bool
 	DefaultCompactThresholdPct     float64
 	DefaultCompactKeepRecentTokens int
 	DefaultDisableAutoCompact      bool
@@ -324,6 +331,8 @@ func New(cfg Config) (*AgentControl, error) {
 		harnessDir = filepath.Join(filepath.Dir(cfg.ThreadDir), "harness")
 	}
 	c := &AgentControl{
+		useCurrentTemperatureOnRestore: cfg.UseCurrentTemperatureOnRestore,
+
 		manager:                  mgr,
 		workerProviderName:       strings.TrimSpace(cfg.ProviderName),
 		worktrees:                wt,
@@ -553,7 +562,7 @@ func (c *AgentControl) queuedWorkEnabled() bool {
 	}
 	c.queueStartMu.Lock()
 	defer c.queueStartMu.Unlock()
-	return c.queueStarted && !c.queueStopped
+	return c.queueStarted && !c.queueStopped && c.queuePauses == 0
 }
 
 // SetWorkerExecutionReleaseHookForTest installs a synchronization hook that
@@ -1849,12 +1858,36 @@ func (c *AgentControl) StopAll() {
 	if c == nil {
 		return
 	}
+	// Pause queue admission and automatic parent wakeups before cancellation
+	// releases running slots or delivers child results to still-open edges.
+	c.queueStartMu.Lock()
+	c.queuePauses++
+	c.queueStartMu.Unlock()
+	defer func() {
+		c.queueStartMu.Lock()
+		c.queuePauses--
+		c.queueStartMu.Unlock()
+	}()
 	// Issue the cancellation wave before waiting on queue storage or admission
 	// compensation. A durable queue outage must not leave already-running
 	// workers consuming provider calls indefinitely.
 	c.manager.StopAll()
+	// Finish any dequeue admitted before the pause before taking the final
+	// worker snapshot; it must not publish a worker behind cancellation.
 	c.queueDrainMu.Lock()
 	defer c.queueDrainMu.Unlock()
+	// Shutdown already closed all turn admission and must reach the caller's
+	// durable-terminal yield without waiting for a worker transition. A failing
+	// terminal finalizer holds that lock until yield; parked workers likewise
+	// leave their durable intent for recovery rather than starting another
+	// terminal transition here. Explicit StopAll still closes every edge.
+	if !c.isStopping() {
+		workers := c.manager.List()
+		sort.Slice(workers, func(i, j int) bool { return workers[i].AgentPath < workers[j].AgentPath })
+		for _, worker := range workers {
+			c.stopWorker(worker.ID)
+		}
+	}
 	c.queueMu.Lock()
 	queued := c.queued
 	c.queued = nil
@@ -1918,14 +1951,32 @@ func (c *AgentControl) StopFrom(currentPath, target string) bool {
 		if node.Path == agentthread.RootPath || queuedHandled[node.ID] {
 			continue
 		}
-		if c.manager.Stop(node.ID) {
+		if c.stopWorker(node.ID) {
 			stopped = true
-		}
-		if closed, found := c.threads.UpdateEdgeStatus(node.ID, agentthread.EdgeClosed, now); found {
-			_ = c.threadStore.RecordEdgeStatus(closed)
 		}
 	}
 	return stopped
+}
+
+// stopWorker serializes cancellation with automatic and explicit follow-ups.
+// Never hold parent and child transition locks together: child terminal
+// delivery acquires the parent's lock.
+func (c *AgentControl) stopWorker(workerID string) bool {
+	unlockTransition := c.lockWorkerTransition(workerID)
+	defer unlockTransition()
+	if sa := c.manager.Get(workerID); sa != nil && sa.Snapshot().Status == subagent.StatusWaitingChildren {
+		// Parking released execution ownership. Retake it before changing the
+		// snapshot so terminal recovery cannot replay the old completed intent
+		// while the asynchronous cancellation prepares its new generation.
+		if _, err := c.acquireWorkerExecution(workerID); err != nil {
+			providers.DebugLogf("agentcontrol: acquire parked worker %s for stop: %v", workerID, err)
+			return false
+		}
+	}
+	if closed, found := c.threads.UpdateEdgeStatus(workerID, agentthread.EdgeClosed, time.Now().UTC()); found {
+		_ = c.threadStore.RecordEdgeStatus(closed)
+	}
+	return c.manager.Stop(workerID)
 }
 
 // List returns snapshots of all sub-agents in this session.
@@ -2013,7 +2064,7 @@ func (c *AgentControl) SendMessageFrom(currentPath string, ctx context.Context, 
 	if msg == "" {
 		return errors.New("message is required")
 	}
-	snap, newLease, unlockTransition, err := c.prepareWorkerFollowup(ctx, id)
+	snap, newLease, unlockTransition, err := c.prepareWorkerFollowup(ctx, id, false)
 	if err != nil {
 		return err
 	}
@@ -2067,7 +2118,7 @@ func (c *AgentControl) FollowupTaskFrom(currentPath string, ctx context.Context,
 	if msg == "" {
 		return subagent.SubAgentSnapshot{}, errors.New("message is required")
 	}
-	current, newLease, unlockTransition, err := c.prepareWorkerFollowup(ctx, id)
+	current, newLease, unlockTransition, err := c.prepareWorkerFollowup(ctx, id, false)
 	if err != nil {
 		return subagent.SubAgentSnapshot{}, err
 	}
@@ -2563,11 +2614,20 @@ func (c *AgentControl) maybeStartQueued(ctx context.Context) {
 		if !c.hasQueuedSpawns() {
 			return
 		}
+		// Coordinate the capacity check and dequeue with StopAll's pause before
+		// it cancels running workers and makes their slots available.
+		c.queueStartMu.Lock()
+		if !c.queueStarted || c.queueStopped || c.queuePauses > 0 {
+			c.queueStartMu.Unlock()
+			return
+		}
 		spawnSlot, admitted := c.tryReserveSpawnSlot("")
 		if !admitted {
+			c.queueStartMu.Unlock()
 			return
 		}
 		prepared, ok := c.popQueuedSpawn()
+		c.queueStartMu.Unlock()
 		if !ok {
 			spawnSlot.release()
 			return
@@ -3923,12 +3983,27 @@ func (c *AgentControl) consumeWorkerNotification(n subagent.Notification) (worke
 				if err := c.threadStore.RecordCommunication(c.rootThreadID, c.newAgentCompletionCommunication(n.Snapshot, agentthread.RootPath)); err != nil {
 					return workerNotificationSettled, fmt.Errorf("persist root completion communication: %w", err)
 				}
-			} else if workerID := firstNonEmptyString(strings.TrimSpace(n.AgentID), strings.TrimSpace(n.Snapshot.ID)); workerTerminalFinalizationPath(c.harnessDir, workerID) != "" {
-				// A busy parent (including one blocked in Wait on this very
-				// terminal transition) cannot claim yet. Defer: the durable
-				// terminal record and result-ready entry hand delivery to
-				// terminal recovery instead of this observer spinning on it.
-				return workerNotificationDeferred, nil
+			} else {
+				// Stop may close the parent after delivery failed for another
+				// reason. Settle any reservation before acknowledging this child,
+				// under the same lock that fences an explicit parent resume.
+				unlockParent := c.lockWorkerTransition(n.Snapshot.ParentID)
+				stopped := c.workerEdgeClosed(n.Snapshot.ParentID)
+				var settleErr error
+				if stopped {
+					_, settleErr = c.settleClosedParentResult(n.Snapshot.ParentID, agentResultDeliveryID(n.Snapshot))
+				}
+				unlockParent()
+				if settleErr != nil {
+					return workerNotificationSettled, fmt.Errorf("settle stopped parent result %s: %w", n.AgentID, settleErr)
+				}
+				if workerID := firstNonEmptyString(strings.TrimSpace(n.AgentID), strings.TrimSpace(n.Snapshot.ID)); !stopped && workerTerminalFinalizationPath(c.harnessDir, workerID) != "" {
+					// A busy parent (including one blocked in Wait on this very
+					// terminal transition) cannot claim yet. Defer: the durable
+					// terminal record and result-ready entry hand delivery to
+					// terminal recovery instead of this observer spinning on it.
+					return workerNotificationDeferred, nil
+				}
 			}
 		}
 		go c.maybeStartQueued(context.Background())
@@ -4056,6 +4131,11 @@ func (c *AgentControl) recordWorkerResumed(snap subagent.SubAgentSnapshot) {
 			c.markReportSettlementPending(snap.ID)
 		}
 	}
+	if c.workerEdgeClosed(snap.ID) {
+		if meta, ok := c.threads.UpdateEdgeStatus(snap.ID, agentthread.EdgeOpen, time.Now().UTC()); ok {
+			_ = c.threadStore.RecordEdgeStatus(meta)
+		}
+	}
 	c.recordHarnessResume(snap)
 	if meta, ok := c.threads.UpdateStatus(snap.ID, agentthread.StatusRunning, time.Now().UTC()); ok {
 		_ = c.threadStore.RecordStatus(meta)
@@ -4181,7 +4261,7 @@ func (c *AgentControl) maybeNudgeReportClosing(n subagent.Notification) bool {
 		return false
 	}
 	meta, ok := c.threads.Resolve(n.AgentID)
-	if !ok {
+	if !ok || meta.Source.EdgeStatus == agentthread.EdgeClosed {
 		return false
 	}
 	wt, err := LookupWorkerType(meta.Role)
@@ -4276,8 +4356,16 @@ func (c *AgentControl) deliverNestedResultToParent(ctx context.Context, snap sub
 		// single-consumer behavior and do not send a second copy to the parent.
 		return consumedBy != ""
 	}
-	parentBefore, newParentLease, unlockTransition, leaseErr := c.prepareWorkerFollowup(ctx, parentID)
+	parentBefore, newParentLease, unlockTransition, leaseErr := c.prepareWorkerFollowup(ctx, parentID, true)
 	if leaseErr != nil {
+		if errors.Is(leaseErr, errWorkerEdgeClosed) {
+			defer unlockTransition()
+			applied, err := c.settleClosedParentResult(parentID, resultID)
+			if err != nil {
+				providers.DebugLogf("agentcontrol: settle stopped parent result %s: %v", resultID, err)
+			}
+			return err == nil && applied
+		}
 		providers.DebugLogf("agentcontrol: acquire parent worker %s for nested result: %v", parentID, leaseErr)
 		return false
 	}
@@ -4410,7 +4498,7 @@ func (c *AgentControl) parkWaitingChildren(n subagent.Notification) bool {
 		return false
 	}
 	workerID := firstNonEmptyString(strings.TrimSpace(n.AgentID), strings.TrimSpace(n.Snapshot.ID))
-	if workerID == "" || !c.hasLiveDirectChildren(workerID) {
+	if workerID == "" || c.workerEdgeClosed(workerID) || !c.hasLiveDirectChildren(workerID) {
 		return false
 	}
 	if c.manager != nil {
@@ -4664,8 +4752,9 @@ func (c *AgentControl) rehydrateAgent(id string) (*subagent.SubAgent, error) {
 	var modelOverride string
 	if run.Runtime != nil {
 		// The snapshot was started with an aliased/default runtime. Rebuild
-		// only the client for the persisted provider; the rest of the runtime
-		// must stay exactly as it was at first run. If the persisted provider
+		// only the client for the persisted provider; model and provider options
+		// stay pinned. A host may retire the saved temperature override below.
+		// If the persisted provider
 		// is non-empty, a missing/failing resolver must fail explicitly rather
 		// than routing through the current default client, which would violate
 		// the frozen runtime provenance. An empty persisted provider safely
@@ -4688,6 +4777,9 @@ func (c *AgentControl) rehydrateAgent(id string) (*subagent.SubAgent, error) {
 			providerOverride = provider
 		}
 		cloned := run.Runtime.Clone()
+		if c.useCurrentTemperatureOnRestore {
+			cloned.Temperature = c.manager.DefaultWorkerRuntime().Temperature
+		}
 		runtime = &cloned
 		runtime.Client = clientOverride
 	} else {

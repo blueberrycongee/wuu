@@ -13,6 +13,7 @@ import (
 	_ "image/png"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 )
@@ -39,6 +40,7 @@ func (s *Server) handleThreadAttachmentRead(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	var found ThreadItemImage
+	var artifactURI string
 	var content *ThreadItem
 	th.mu.Lock()
 	for _, turn := range th.Turns {
@@ -50,10 +52,17 @@ func (s *Server) handleThreadAttachmentRead(req Request) error {
 				if req.Method == "thread/content/read" {
 					copy := cloneThreadItem(item)
 					content = &copy
-				} else if params.Kind == "result" && item.ResultDetail != nil && params.Index < len(item.ResultDetail.Content) {
+				} else if (params.Kind == "result" || params.Kind == "artifact") && item.ResultDetail != nil && params.Index < len(item.ResultDetail.Content) {
 					part := item.ResultDetail.Content[params.Index]
 					if part.Type == "image" {
-						found = ThreadItemImage{MediaType: part.MIMEType, Data: part.Data}
+						if params.Kind == "artifact" {
+							if part.Artifact != nil && part.Artifact.SHA256 == params.SHA256 {
+								artifactURI = part.URI
+								found.MediaType = part.MIMEType
+							}
+						} else {
+							found = ThreadItemImage{MediaType: part.MIMEType, Data: part.Data}
+						}
 					}
 				} else if params.Kind == "" && params.Index < len(item.Images) {
 					found = item.Images[params.Index]
@@ -65,7 +74,21 @@ func (s *Server) handleThreadAttachmentRead(req Request) error {
 	}
 	th.mu.Unlock()
 	hash := sha256.New()
-	if content != nil {
+	if artifactURI != "" {
+		stateDir, err := s.workspaceStateDir()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		data, media, err := runtime.ReadManagedArtifact(s.rt.WuuHome, stateDir, params.ThreadID, artifactURI, 12*1024*1024)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if media != found.MediaType {
+			return s.writeResponse(req.ID, nil, errors.New("artifact media type changed"))
+		}
+		hash.Write(data)
+		found.Data = base64.StdEncoding.EncodeToString(data)
+	} else if content != nil {
 		raw, _ := json.Marshal(content)
 		hash.Write(raw)
 		found = ThreadItemImage{MediaType: "application/json", Data: base64.StdEncoding.EncodeToString(raw)}

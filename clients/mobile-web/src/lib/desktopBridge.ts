@@ -19,6 +19,7 @@ import type {
   LanguagePreference,
   MessageFlowFontSize,
   PluginConflictPreferences,
+  PluginClientCancelResult,
   ProjectListResult,
   RunningThreadSnapshot,
   RuntimeContext,
@@ -181,6 +182,9 @@ export class RemoteDesktopBridge {
   // round trip, while explicit refreshes still refetch and failed or
   // disconnected connections clear the flag.
   private workspaceSnapshotFresh = false;
+  // Separate from the one-shot project cache: event consumers must not start
+  // fresh work from replay, including notifications during runtime restoration.
+  private liveNotifications = false;
   private readonly snapshotReads = new Map<string, Promise<unknown>>();
 
   getConnectionSnapshot = (): WebConnectionSnapshot => this.connection;
@@ -203,6 +207,7 @@ export class RemoteDesktopBridge {
   }
 
   private async synchronize(first: boolean, resumed = false): Promise<void> {
+    this.resetConnectionEvents();
     const restoreNeeded = !resumed || this.needsRestore;
     const revision = this.setConnection(first ? "connecting" : "restoring");
     this.workspaceSnapshotFresh = false;
@@ -217,6 +222,7 @@ export class RemoteDesktopBridge {
       if (!first && restoreNeeded) await Promise.all([...this.restoreListeners].map((restore) => restore()));
       if (this.connection.revision !== revision || this.stopped) return;
       this.needsRestore = false;
+      this.liveNotifications = true;
       this.setConnection("connected");
     } catch (error) {
       if (this.connection.revision !== revision || this.stopped) return;
@@ -362,6 +368,7 @@ export class RemoteDesktopBridge {
       },
       onDetach: () => {
         if (this.stopped) return;
+        this.resetConnectionEvents();
         this.workspaceSnapshotFresh = false;
         // Keep a live workbench up through a brief drop so returning from
         // background does not flash the reconnect strip. In-flight RPCs still
@@ -395,6 +402,7 @@ export class RemoteDesktopBridge {
 
   async disconnect(): Promise<void> {
     this.stopped = true;
+    this.resetConnectionEvents();
     this.cancelReconnecting();
     this.workspaceSnapshotFresh = false;
     this.setConnection("disconnected");
@@ -575,7 +583,14 @@ export class RemoteDesktopBridge {
   }
 
   private emitServerEvent(event: ServerEvent): void {
+    if (event.kind === "notification" && !this.liveNotifications) event = { ...event, replayed: true };
     for (const listener of this.serverListeners) listener(event);
+  }
+
+  private resetConnectionEvents(): void {
+    const wasLive = this.liveNotifications;
+    this.liveNotifications = false;
+    if (wasLive) this.emitServerEvent({ kind: "connection-reset", workdir: this.workdir() });
   }
 
   private handleServerRequest(request: ServerRequest): Promise<ServerRequestResult> {
@@ -597,6 +612,7 @@ export class RemoteDesktopBridge {
    return this.applyProjectState(await this.call(id?'desktop/projects/relocate':'desktop/projects/add',{path,id}));
   }
   private createApi(): WuuDesktopApi {
+    const pluginRequests = new Map<string, { id: string; fingerprint: string; workdir: string; revision: number }>();
     const target: WuuDesktopApi = {
       ...unavailableWebActions,
       hostKind: "web",
@@ -835,7 +851,37 @@ export class RemoteDesktopBridge {
       getPluginDiagnostics: (params) => this.call("plugin/diagnostics/list", params),
       getPluginStorage: (params) => this.call("plugin/storage/get", params),
       setPluginStorage: (params) => this.call("plugin/storage/set", params),
-      requestPluginRuntime: (params) => this.call("plugin/client/request", params),
+      requestPluginRuntime: async (params) => {
+        const workdir = this.requestWorkdir(params);
+        const requestID = params.request_id;
+        const identity = { id: params.id, fingerprint: params.fingerprint };
+        const revision = this.connection.revision;
+        if (requestID && pluginRequests.has(requestID)) throw new Error("Plugin request ID is already active");
+        if (requestID) pluginRequests.set(requestID, { ...identity, workdir, revision });
+        try {
+          const { workspace_id: _workspaceID, ...request } = params;
+          return await this.call("plugin/client/request", request, workdir);
+        } catch (error) {
+          // A local RPC deadline only forgets its reply. Stop the host work too,
+          // while the original connection still owns this request identity.
+          if (requestID && revision === this.connection.revision) {
+            void this.call<PluginClientCancelResult>("plugin/client/cancel", {
+              ...identity, request_id: requestID,
+            }, workdir).catch((cancelError: unknown) => {
+              console.error("Plugin runtime cancellation failed", cancelError);
+            });
+          }
+          throw error;
+        } finally {
+          if (requestID) pluginRequests.delete(requestID);
+        }
+      },
+      cancelPluginRuntime: async (params) => {
+        const request = pluginRequests.get(params.request_id);
+        if (!request || request.id !== params.id || request.fingerprint !== params.fingerprint
+          || request.revision !== this.connection.revision) return { cancelled: false };
+        return this.call<PluginClientCancelResult>("plugin/client/cancel", params, request.workdir);
+      },
       readManagedProcess: (params) => this.call("process/read", params),
       holdUserQuestion: (request_id) => this.call("user-question/hold", { request_id }),
       useCodexCredentials: (provider) => this.call("config/codex/credentials", { provider }),
@@ -860,6 +906,7 @@ export class RemoteDesktopBridge {
       reorderSessionFolders: (ids) => this.call("sessionFolder/reorder", { ids }),
       deleteSessionFolder: (id) => this.call("sessionFolder/delete", { id }),
       listManagedProcesses: (thread_id) => this.call("process/list", { thread_id }),
+      cancelProcessNotifications: (thread_id, process_id) => this.call("process/cancel-notifications", { thread_id, process_id }),
       takeoverActivity: (thread_id, activity_id) => this.call("activity/takeover", { thread_id, activity_id }),
       releaseActivity: (thread_id, activity_id) => this.call("activity/release", { thread_id, activity_id }),
       stopActivity: (thread_id, activity_id) => this.call("activity/stop", { thread_id, activity_id }),

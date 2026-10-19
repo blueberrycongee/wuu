@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/hooks"
@@ -28,9 +29,10 @@ import (
 
 // PluginGeneration is a complete replacement for the plugin-owned surfaces of a
 // Session. It owns every process and private package snapshot. Conversations
-// adopt published updates at their next idle turn boundary; active turns and
-// background work retain their generation until they settle. Committed removal
-// or disable revokes that plugin across all retained generations immediately.
+// adopt published updates at their next idle turn boundary. Active foreground
+// turns retain their generation; publication cancels its background jobs and
+// local UI control. Committed removal or disable revokes that plugin across all
+// retained generations immediately.
 // Close retires the remaining resources in reverse ownership order and records
 // a structured revocation report.
 type PluginGeneration struct {
@@ -44,20 +46,24 @@ type PluginGeneration struct {
 	pluginSkills      pluginSkillSnapshot
 	mcp               *mcp.Manager
 	mcpBinding        map[string]tools.MCPActivityBinding
+	activityRegistry  *activity.Registry
 	requestTransforms *agent.RequestTransformChain
 	systemPrompts     *agent.SystemPromptAssembler
 	compactions       *agent.CompactionRegistry
 	ownedRoots        []string
 	revocation        *GenerationRevocationReport
+	closeErr          error
 	// driverGateways is this generation's remote-driver gateway routing
 	// table; executions registered here route only to this generation's
 	// kernel services.
 	driverGateways *driverGatewayTable
 	// refs counts the live Session plus any ThreadRuntime still bound to this
 	// generation. A retired generation stays open until the last conversation
-	// that started against it is released.
-	refs           atomic.Int32
-	revocationMu   sync.Mutex
+	// that started against it is released. A negative count seals retirement;
+	// zero is reserved for a prepared candidate that has not been published.
+	refs         atomic.Int32
+	revocationMu sync.Mutex
+	// revokedMu also protects host detachment from read-only diagnostics.
 	revokedMu      sync.Mutex
 	revokedPlugins map[string]bool
 }
@@ -68,7 +74,17 @@ func (s *Session) PreflightExtensions(cfg config.Config) (*PluginGeneration, err
 	if s == nil {
 		return nil, errors.New("runtime is not initialized")
 	}
-	return s.buildPluginGeneration(cfg, discoverPlugins(s.RootDir, s.WuuHome), nil, nil, startPluginClient)
+	return s.PreflightDiscoveredExtensions(cfg, discoverPlugins(s.RootDir, s.WuuHome))
+}
+
+// PreflightDiscoveredExtensions builds the already-observed catalog, allowing
+// refresh admission to fingerprint its exact inputs before starting processes.
+// Callers must serialize discovery and preparation with catalog publication.
+func (s *Session) PreflightDiscoveredExtensions(cfg config.Config, discovered []pluginpkg.Plugin) (*PluginGeneration, error) {
+	if s == nil {
+		return nil, errors.New("runtime is not initialized")
+	}
+	return s.buildPluginGeneration(cfg, discovered, nil, nil, startPluginClient)
 }
 
 // PluginGenerationNeedsRecovery reports a runtime process that reached active
@@ -304,6 +320,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		}
 		return nil, err
 	}
+	kernel.bindModelSession(s, host)
 	// Service negotiation can reject a prepared runtime after process startup.
 	// Treat that exactly like startup failure for required replacements.
 	for _, status := range host.Statuses() {
@@ -329,8 +346,9 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		return nil, errors.Join(err, closeErr)
 	}
 	pluginSkills := discoverPluginSkills(active)
+	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
-		id:                newPluginGenerationID(s.WuuHome),
+		id:                generationID,
 		settings:          cfg,
 		plugins:           append([]pluginpkg.Plugin(nil), discovered...),
 		active:            append([]pluginpkg.Plugin(nil), active...),
@@ -338,14 +356,14 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		hooks:             buildHookDispatcher(cfg, active, s.TitleClient, s.Model, nil),
 		skills:            discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, pluginSkills, cfg.Skills),
 		pluginSkills:      pluginSkills,
-		mcpBinding:        mcpActivityBindingsFromPlugins(active),
+		mcpBinding:        mcpActivityBindingsFromPlugins(active, generationID),
 		requestTransforms: buildPluginRequestTransforms(host, s.ProviderName, "", s.RootDir),
 		systemPrompts:     systemPrompts,
 		compactions:       compactions,
 		ownedRoots:        append([]string(nil), ownedRoots...),
 		driverGateways:    kernel.driverGateways,
 	}
-	generation.mcp, err = startMCPManager(cfg, active, required)
+	generation.mcp, err = startMCPManager(cfg, active, required, s.mcpOAuth)
 	if err != nil {
 		_ = generation.close()
 		s.persistRevocationReport(generation)
@@ -353,6 +371,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 	}
 	// Activation acquires the Session reference. A prepared candidate has no
 	// live owners and must not keep an extra reference after publication.
+	generation.bindActivityOwnership(s.ActivityRegistry)
 	return generation, nil
 }
 
@@ -376,8 +395,9 @@ func (e *pluginGenerationCommittedError) Unwrap() error { return e.cause }
 // without invoking candidate activation. After commit, activation failure is a
 // degraded published generation, exposed through status inventory and a
 // PluginGenerationWasCommitted error; external effects cannot be rolled back.
-// Active work retains same-ID implementations until its idle boundary, while
-// removal or disable revokes that plugin across all retained generations.
+// Active work retains same-ID implementations until its idle boundary. Local
+// control and previews stop at publication, while removal or disable revokes all
+// of that plugin's surfaces across retained generations.
 func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit func() error) error {
 	if s == nil {
 		return errors.New("runtime is not initialized")
@@ -401,6 +421,12 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		}
 	}
 	s.pluginGenerationMu.Unlock()
+	// Local control cannot outlive provider replacement. Revoke leases before
+	// the replacement activates, so a pinned foreground turn cannot keep sending
+	// input or silently switch control surfaces after publication.
+	old.revokeActivities("")
+	// Ordinary foreground calls retain their generation until the idle boundary.
+	old.host.StopBackground()
 	// Activation may synchronously call host services. Keep old bindings
 	// available until activation settles, without holding their lookup mutex.
 	activationErr := activatePluginHost(context.Background(), candidate.host)
@@ -414,7 +440,7 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		candidate.active = available
 		candidate.pluginSkills = discoverPluginSkills(available)
 		candidate.skills = discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, candidate.pluginSkills, candidate.settings.Skills)
-		candidate.mcpBinding = mcpActivityBindingsFromPlugins(available)
+		candidate.mcpBinding = mcpActivityBindingsFromPlugins(available, candidate.id)
 	}
 	// Preparation materializes native contributions before the effectful
 	// lifecycle opens. Failed runtimes must not leave cached prompts or win
@@ -544,6 +570,7 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 		g.hooks.Replace(buildHookDispatcher(g.settings, remaining, client, model, nil))
 	}
 	for _, item := range retiring {
+		g.revokeActivities(item.ID)
 		if g.host != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			outcome, _ := g.host.RetirePlugin(ctx, item.ID, &pluginhost.UserQuestionError{Code: "plugin_disabled", Message: "plugin was removed or disabled"})
@@ -580,7 +607,11 @@ func (g *PluginGeneration) retain() {
 	if g == nil {
 		return
 	}
-	g.refs.Add(1)
+	for refs := g.refs.Load(); refs >= 0; refs = g.refs.Load() {
+		if g.refs.CompareAndSwap(refs, refs+1) {
+			return
+		}
+	}
 }
 
 // Release drops one conversation or Session reference. It returns true when
@@ -590,12 +621,20 @@ func (g *PluginGeneration) Release() bool {
 	if g == nil {
 		return false
 	}
-	remaining := g.refs.Add(-1)
-	if remaining > 0 {
-		return false
-	}
-	if remaining < 0 {
-		g.refs.Store(0)
+	for refs := g.refs.Load(); ; refs = g.refs.Load() {
+		if refs < 0 {
+			return false
+		}
+		remaining := refs - 1
+		if remaining <= 0 {
+			remaining = -1
+		}
+		if g.refs.CompareAndSwap(refs, remaining) {
+			if remaining > 0 {
+				return false
+			}
+			break
+		}
 	}
 	if err := g.close(); err != nil {
 		providers.DebugLogf("plugin generation cleanup: %v", err)
@@ -613,6 +652,26 @@ func (s *Session) IsCurrentPluginGeneration(generation *PluginGeneration) bool {
 	s.pluginGenerationMu.Lock()
 	defer s.pluginGenerationMu.Unlock()
 	return s.pluginGeneration == generation
+}
+
+// RetainPluginHost captures the published host only when it registers the
+// requested capability, keeping that generation alive while callbacks run.
+// The caller must release the returned generation.
+func (s *Session) RetainPluginHost(capabilityID string) (*pluginhost.Host, *PluginGeneration) {
+	if s == nil {
+		return nil, nil
+	}
+	s.pluginGenerationMu.Lock()
+	defer s.pluginGenerationMu.Unlock()
+	if s.PluginHost == nil || len(s.PluginHost.Capabilities(capabilityID)) == 0 {
+		return nil, nil
+	}
+	if s.pluginGeneration == nil {
+		s.pluginGeneration = s.capturePluginGeneration()
+	}
+	generation := s.pluginGeneration
+	generation.retain()
+	return generation.host, generation
 }
 
 func (s *Session) RetainPluginGeneration() *PluginGeneration {
@@ -656,8 +715,9 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 	}
 	hookSnapshot := hooks.NewDispatcher(nil)
 	hookSnapshot.Replace(s.HookDispatcher)
+	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
-		id:                newPluginGenerationID(s.WuuHome),
+		id:                generationID,
 		settings:          config.Config{Extensions: s.ExtensionSettings},
 		plugins:           append([]pluginpkg.Plugin(nil), s.Plugins...),
 		active:            append([]pluginpkg.Plugin(nil), s.ActivePlugins...),
@@ -666,12 +726,16 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 		skills:            append([]skills.Skill(nil), s.Skills...),
 		pluginSkills:      s.pluginSkills,
 		mcp:               manager,
-		mcpBinding:        mcpActivityBindingsFromPlugins(s.ActivePlugins),
+		mcpBinding:        mcpActivityBindingsFromPlugins(s.ActivePlugins, generationID),
 		requestTransforms: buildPluginRequestTransforms(s.PluginHost, s.ProviderName, "", s.RootDir),
 		systemPrompts:     s.systemPrompts,
 	}
 	if s.StreamRunner != nil {
 		generation.compactions = s.StreamRunner.CompactionRegistry
+	}
+	generation.bindActivityOwnership(s.ActivityRegistry)
+	if s.Toolkit != nil {
+		s.Toolkit.SetMCPActivityBindings(generation.mcpBinding)
 	}
 	generation.retain()
 	return generation
@@ -687,10 +751,17 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	s.PluginHost = generation.host
 	s.systemPrompts = generation.systemPrompts
 	if s.StreamRunner != nil {
-		s.StreamRunner.Tools = replacePluginToolHost(s.StreamRunner.Tools, generation.host, "", s.RootDir)
+		s.StreamRunner.Tools = replacePluginToolBindings(s.StreamRunner.Tools, generation.host, generation.hooks, "", s.RootDir)
+		bindPluginCompactionHooks(s.StreamRunner, generation.hooks, "", s.RootDir)
 		s.StreamRunner.BeforeModelStep = pluginPreStepInjector(generation.host, s.ProviderName, s.Model, "", s.RootDir)
 		s.StreamRunner.BeforeRequest = pluginRequestInterceptorWithTransforms(generation.host, generation.requestTransforms, s.ProviderName, "", s.RootDir)
+		s.StreamRunner.WrapModelClient = pluginModelClientWrapper(generation.host, "")
 		s.StreamRunner.CompactionRegistry = generation.compactions
+		if profile := strings.TrimSpace(s.DriverProfile); profile != "" {
+			s.StreamRunner.LoopDriver = resolveLoopDriver(profile, generation.host, func() *driverGatewayTable {
+				return generation.driverGateways
+			})
+		}
 	}
 	s.HookDispatcher = generation.hooks
 	s.Skills = append([]skills.Skill(nil), generation.skills...)
@@ -698,6 +769,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	if s.Toolkit != nil {
 		s.Toolkit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 		s.Toolkit.SetSkillsWithAvailability(s.Skills, generation.skillAvailable)
+		s.bindLocalSkillRefresh(s.Toolkit, s.RootDir, generation)
 		s.Toolkit.SetMCPActivityBindings(generation.mcpBinding)
 		s.Toolkit.SetMCPManager(generation.mcp)
 		configureToolkitSecurityExtensions(s.Toolkit, generation.host.ServiceRegistry())
@@ -713,6 +785,12 @@ func (g *PluginGeneration) close() error {
 	if g == nil {
 		return nil
 	}
+	g.revocationMu.Lock()
+	defer g.revocationMu.Unlock()
+	if g.revocation != nil {
+		return g.closeErr
+	}
+	g.refs.Store(-1)
 	g.revokedMu.Lock()
 	if g.revokedPlugins == nil {
 		g.revokedPlugins = make(map[string]bool)
@@ -722,7 +800,9 @@ func (g *PluginGeneration) close() error {
 	}
 	g.revokedMu.Unlock()
 	report := &GenerationRevocationReport{GenerationID: g.id, RetiredAt: time.Now().UTC()}
-	g.revocation = report
+	for _, owner := range g.revokeActivities("") {
+		report.record(owner, "activity-control", RevocationPhaseCancelExecutions, nil)
+	}
 	var err error
 	if g.mcp != nil {
 		mcpErr := g.mcp.Close()
@@ -758,7 +838,9 @@ func (g *PluginGeneration) close() error {
 		}
 
 		cancel()
+		g.revokedMu.Lock()
 		g.host = nil
+		g.revokedMu.Unlock()
 	}
 	g.requestTransforms = nil
 	for index := len(g.ownedRoots) - 1; index >= 0; index-- {
@@ -767,6 +849,7 @@ func (g *PluginGeneration) close() error {
 		err = errors.Join(err, rootErr)
 	}
 	g.ownedRoots = nil
+	g.revocation, g.closeErr = report, err
 	return err
 }
 
@@ -775,6 +858,8 @@ func (g *PluginGeneration) revocationReport() *GenerationRevocationReport {
 	if g == nil {
 		return nil
 	}
+	g.revocationMu.Lock()
+	defer g.revocationMu.Unlock()
 	return g.revocation
 }
 
@@ -783,10 +868,10 @@ func (g *PluginGeneration) revocationReport() *GenerationRevocationReport {
 // gone. Persistence failure is only debug-logged: it must not block the
 // lifecycle transition the report describes.
 func (s *Session) persistRevocationReport(g *PluginGeneration) {
-	if s == nil || g == nil || g.revocation == nil {
+	if s == nil || g == nil {
 		return
 	}
-	if err := appendGenerationRevocation(s.WuuHome, g.revocation); err != nil {
+	if err := appendGenerationRevocation(s.WuuHome, g.revocationReport()); err != nil {
 		providers.DebugLogf("persist plugin generation revocation: %v", err)
 	}
 }
@@ -894,15 +979,60 @@ func (s *Session) PluginServiceRegistrySnapshot() (pluginhost.ServiceRegistrySna
 	return registry.Snapshot(epoch), nil
 }
 
-// PluginExecutionSnapshots returns the live execution table of the active
-// plugin host: which tool/capability executions are open right now, owned by
-// which plugin, with their latest self-reported progress. Read-only; each
-// entry is authored by the owning plugin about its own execution.
-func (s *Session) PluginExecutionSnapshots() []pluginhost.ExecutionSnapshot {
-	if s == nil || s.PluginHost == nil {
+// PluginExecutionSnapshot attributes one host-local execution to its generation.
+// The (GenerationID, ID) pair is the diagnostic identity; ID remains unchanged
+// for execution-scoped services and cancellation on the owning host.
+type PluginExecutionSnapshot struct {
+	pluginhost.ExecutionSnapshot
+	GenerationID string `json:"generation_id"`
+	Retained     bool   `json:"retained"`
+}
+
+// PluginExecutionSnapshots returns this Session's current and retained live
+// executions, ordered by generation ID and host-local execution ID. It neither
+// retains generations nor extends execution leases. Rows are point-in-time
+// diagnostics and may finish while the caller consumes the result.
+func (s *Session) PluginExecutionSnapshots() []PluginExecutionSnapshot {
+	if s == nil {
 		return nil
 	}
-	return s.PluginHost.ExecutionSnapshots()
+	s.pluginGenerationMu.Lock()
+	current := s.pluginGeneration
+	generations := make([]*PluginGeneration, 0, len(s.retiredPluginGenerations)+1)
+	if current != nil {
+		generations = append(generations, current)
+	}
+	for generation := range s.retiredPluginGenerations {
+		if generation != current {
+			generations = append(generations, generation)
+		}
+	}
+	s.pluginGenerationMu.Unlock()
+	var snapshots []PluginExecutionSnapshot
+	for _, generation := range generations {
+		// A thread-model shadow can release its last reference without the
+		// Session mutex. Serialize only the snapshot with host detachment;
+		// never acquire a lifecycle reference or wait for plugin callbacks.
+		generation.revokedMu.Lock()
+		if generation.refs.Load() > 0 && generation.host != nil {
+			for _, execution := range generation.host.ExecutionSnapshots() {
+				execution.Detail = append([]byte(nil), execution.Detail...)
+				snapshots = append(snapshots, PluginExecutionSnapshot{
+					ExecutionSnapshot: execution,
+					GenerationID:      generation.id,
+					Retained:          generation != current,
+				})
+			}
+		}
+		generation.revokedMu.Unlock()
+	}
+	sort.Slice(snapshots, func(i, j int) bool {
+		if snapshots[i].GenerationID != snapshots[j].GenerationID {
+			return snapshots[i].GenerationID < snapshots[j].GenerationID
+		}
+		return snapshots[i].ID < snapshots[j].ID
+	})
+	return snapshots
 }
 
 // snapshotMutableExecutionPackages detaches executable and lazy declarative paths

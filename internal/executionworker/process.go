@@ -64,6 +64,8 @@ func (s *Server) process(ctx context.Context, method string, data json.RawMessag
 		result, err = manager.MarkCompletionDelivered(request.ID, request.Consumer)
 	case "recheck":
 		result, err = manager.SetRecheck(request.ID, request.Minutes)
+	case "cancel_notifications":
+		result, err = manager.CancelNotifications(request.ID)
 	case "completion_mode":
 		result, err = manager.SetCompletionMode(request.ID, request.Mode)
 	case "recheck_delivered":

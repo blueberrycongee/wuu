@@ -1,9 +1,9 @@
 //go:build ignore
 
-// Run from the repository root after building the plugin helpers:
+// Run from the repository root after building the TypeScript plugin runtime:
 // go run scripts/generative-ui-lifecycle-e2e.go
 //
-// This driver uses the real bundled package, native helper and runtime lifecycle
+// This driver uses the real bundled package, JavaScript runtime and host lifecycle
 // with synthetic input. It creates a temporary home and never invokes a model.
 package main
 
@@ -49,7 +49,7 @@ type lifecycleReport struct {
 	RecordedAt          string           `json:"recordedAt"`
 	Plugin              string           `json:"plugin"`
 	PackageFingerprint  string           `json:"packageFingerprint"`
-	HelperSHA256        string           `json:"helperSha256"`
+	RuntimeSHA256       string           `json:"runtimeSha256"`
 	SchemaNormalization []string         `json:"schemaNormalization"`
 	SchemaBytes         map[string]int   `json:"schemaBytes"`
 	ProgramChecks       []programCheck   `json:"programChecks"`
@@ -57,25 +57,22 @@ type lifecycleReport struct {
 }
 
 func main() {
-	helperDefault := os.Getenv("WUU_GENERATIVE_UI_PLUGIN_HELPER")
-	if helperDefault == "" {
-		helperDefault = "desktop/build/bin/wuu-generative-ui-plugin"
-	}
+	runtimeDefault := "internal/plugin/bundled/generative-ui/runtime.mjs"
 	outputDefault := os.Getenv("WUU_GENUI_LIFECYCLE_OUTPUT")
 	if outputDefault == "" {
 		outputDefault = "desktop/out/e2e/generative-ui/lifecycle-results.json"
 	}
-	helper := flag.String("helper", helperDefault, "path to the built generative UI helper")
+	runtimePath := flag.String("runtime", runtimeDefault, "path to the bundled generative UI runtime")
 	output := flag.String("output", outputDefault, "path for the JSON evidence file")
 	flag.Parse()
-	if err := runLifecycle(*helper, *output); err != nil {
+	if err := runLifecycle(*runtimePath, *output); err != nil {
 		fmt.Fprintln(os.Stderr, "Generative UI lifecycle E2E:", err)
 		os.Exit(1)
 	}
 }
 
-func runLifecycle(helperPath, outputPath string) error {
-	helper, err := filepath.Abs(helperPath)
+func runLifecycle(runtimePath, outputPath string) error {
+	runtimeBundle, err := filepath.Abs(runtimePath)
 	if err != nil {
 		return err
 	}
@@ -83,9 +80,9 @@ func runLifecycle(helperPath, outputPath string) error {
 	if err != nil {
 		return err
 	}
-	file, err := os.Open(helper)
+	file, err := os.Open(runtimeBundle)
 	if err != nil {
-		return fmt.Errorf("open built helper (run npm --prefix desktop run build:core first): %w", err)
+		return fmt.Errorf("open bundled runtime (run npm --prefix plugins run build first): %w", err)
 	}
 	hash := sha256.New()
 	_, copyErr := io.Copy(hash, file)
@@ -93,9 +90,9 @@ func runLifecycle(helperPath, outputPath string) error {
 		return err
 	}
 	report := lifecycleReport{
-		RecordedAt:   time.Now().UTC().Format(time.RFC3339),
-		HelperSHA256: hex.EncodeToString(hash.Sum(nil)),
-		SchemaBytes:  make(map[string]int),
+		RecordedAt:    time.Now().UTC().Format(time.RFC3339),
+		RuntimeSHA256: hex.EncodeToString(hash.Sum(nil)),
+		SchemaBytes:   make(map[string]int),
 	}
 	dir, err := os.MkdirTemp("", "wuu-generative-ui-e2e-")
 	if err != nil {
@@ -111,7 +108,7 @@ func runLifecycle(helperPath, outputPath string) error {
 	// Isolate both explicit runtime paths and fallback home/cwd discovery.
 	for key, value := range map[string]string{
 		"HOME": dir, "USERPROFILE": dir, "XDG_CONFIG_HOME": filepath.Join(dir, "config"),
-		"WUU_HOME": home, "WUU_GENERATIVE_UI_PLUGIN_HELPER": helper,
+		"WUU_HOME": home,
 	} {
 		if err := os.Setenv(key, value); err != nil {
 			return err
@@ -130,7 +127,7 @@ func runLifecycle(helperPath, outputPath string) error {
 		}
 	}
 	if target.ID == "" {
-		return errors.New("bundled generative-ui plugin was not discovered; verify that the helper is executable")
+		return errors.New("bundled generative-ui plugin was not discovered; verify that Node.js is available")
 	}
 	if target.EnabledByDefault() {
 		return errors.New("bundled generative-ui plugin must be disabled by default")
@@ -144,6 +141,7 @@ func runLifecycle(helperPath, outputPath string) error {
 	defer rt.Cleanup()
 	cfg := config.Config{Extensions: settings}
 	var toolName string
+	var retainedHost *pluginhost.Host
 	arguments := json.RawMessage(`{"spec":{"version":1,"title":"Lifecycle check","fallback":"Hello","blocks":[{"id":"hello","type":"text","text":"Hello"}]}}`)
 	for _, stage := range []string{"default-disabled", "enabled", "disabled", "reenabled", "safe-mode"} {
 		switch stage {
@@ -188,6 +186,18 @@ func runLifecycle(helperPath, outputPath string) error {
 			}
 			check.Tool, check.ContentParts = toolName, len(result.Content)
 			if stage == "enabled" {
+				retainedHost = rt.PluginHost
+				retained := rt.RetainPluginGeneration()
+				if retained == nil {
+					return errors.New("enabled runtime did not expose a retainable generation")
+				}
+				defer rt.ReleasePluginGeneration(retained)
+				if err := checkRuntimeReplacement(rt, cfg, target, arguments, &report); err != nil {
+					return err
+				}
+				if rt.IsCurrentPluginGeneration(retained) {
+					return errors.New("replacement did not advance the live generation")
+				}
 				if err := checkPrograms(rt, toolName, &report); err != nil {
 					return err
 				}
@@ -221,6 +231,7 @@ func runLifecycle(helperPath, outputPath string) error {
 					}
 					report.SchemaNormalization = append(report.SchemaNormalization, route)
 				}
+
 			}
 		} else if toolName != "" {
 			_, err := rt.PluginHost.ExecuteTool(context.Background(), toolName, pluginhost.ToolExecuteInput{Arguments: arguments})
@@ -228,6 +239,12 @@ func runLifecycle(helperPath, outputPath string) error {
 				return fmt.Errorf("%s left the stale tool binding executable", stage)
 			}
 			check.StaleCallRejected = true
+			if stage == "disabled" && retainedHost != nil {
+				if _, err := retainedHost.ExecuteTool(context.Background(), toolName, pluginhost.ToolExecuteInput{Arguments: arguments}); err == nil {
+					return errors.New("disable left the retained foreground generation executable")
+				}
+				report.Checks = append(report.Checks, lifecycleCheck{Stage: "retained-generation-revoked", StaleCallRejected: true, Passed: true})
+			}
 		}
 		report.Checks = append(report.Checks, check)
 	}
@@ -241,11 +258,99 @@ func runLifecycle(helperPath, outputPath string) error {
 	if err := os.WriteFile(output, append(raw, '\n'), 0o600); err != nil {
 		return err
 	}
-	fmt.Printf("Native lifecycle passed: %s\nSchema normalization passed: %s (no provider API calls)\nEvidence: %s\n", "default-disabled, enabled, disabled, reenabled, safe-mode", strings.Join(report.SchemaNormalization, ", "), output)
+	fmt.Printf("Plugin lifecycle passed: %s\nSchema normalization passed: %s (no provider API calls)\nEvidence: %s\n", "default-disabled, enabled, disabled, reenabled, safe-mode", strings.Join(report.SchemaNormalization, ", "), output)
 	return nil
 }
 
-// Exercise the real native helper through the activated extension generation.
+// Publish a changed copy of the real shipped runtime while a foreground owner
+// retains its old generation. Only temporary fixture package bytes are changed.
+func checkRuntimeReplacement(rt *runtime.Session, cfg config.Config, target plugin.Plugin, arguments json.RawMessage, report *lifecycleReport) error {
+	oldHost := rt.PluginHost
+	oldDefinition := oldHost.ToolDefinitions()[0]
+	root := filepath.Join(rt.RootDir, "replacement-package")
+	if err := os.CopyFS(root, os.DirFS(target.Root)); err != nil {
+		return err
+	}
+	path := filepath.Join(root, "runtime.mjs")
+	original, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	const marker = "Generation replacement fixture"
+	updated := strings.Replace(string(original), "Render an experimental interactive UI", marker+": Render an experimental interactive UI", 1)
+	updated = strings.Replace(updated, "input_schema: {", "input_schema: { description: \""+marker+"\",", 1)
+	if updated == string(original) {
+		return errors.New("runtime fixture did not change its tool contract")
+	}
+	load := func() (plugin.Plugin, error) {
+		return plugin.LoadManifestWithOptions(filepath.Join(root, "plugin.json"), plugin.LoadOptions{Source: target.Source, Official: target.Official, WorkspaceID: target.WorkspaceID})
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		return err
+	}
+	replacement, err := load()
+	if err != nil {
+		return err
+	}
+	if replacement.SubjectID != target.SubjectID || replacement.Fingerprint == target.Fingerprint {
+		return errors.New("runtime replacement did not preserve its subject and advance its fingerprint")
+	}
+	candidate, err := rt.PreflightDiscoveredExtensions(cfg, []plugin.Plugin{replacement})
+	if err != nil {
+		return fmt.Errorf("replacement preflight: %w", err)
+	}
+	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
+		return err
+	}
+	currentHost := rt.PluginHost
+	definitions := currentHost.ToolDefinitions()
+	if len(definitions) != 1 || !strings.Contains(definitions[0].Description, marker) || definitions[0].InputSchema["description"] != marker {
+		return errors.New("replacement did not publish the changed tool and schema")
+	}
+	retained := oldHost.ToolDefinitions()
+	if len(retained) != 1 || retained[0].Description != oldDefinition.Description || retained[0].InputSchema["description"] == marker {
+		return errors.New("replacement mutated the retained foreground tool snapshot")
+	}
+	execute := func(host *pluginhost.Host, name string) error {
+		result, err := host.ExecuteTool(context.Background(), name, pluginhost.ToolExecuteInput{
+			ThreadID: "retained-thread", TurnID: "retained-turn", CallID: "retained-call", Arguments: arguments,
+		})
+		if err != nil || result.IsError || len(result.Content) != 2 {
+			return fmt.Errorf("runtime generation became unusable: %v (%+v)", err, result)
+		}
+		return nil
+	}
+	if err := execute(oldHost, oldDefinition.Name); err != nil {
+		return err
+	}
+	if err := execute(currentHost, definitions[0].Name); err != nil {
+		return err
+	}
+	report.Checks = append(report.Checks, lifecycleCheck{Stage: "replacement-retains-foreground-snapshot", ToolCount: 1, Passed: true})
+	if err := os.WriteFile(path, []byte("throw new Error('invalid replacement fixture');\n"), 0o600); err != nil {
+		return err
+	}
+	broken, err := load()
+	if err != nil {
+		return err
+	}
+	if _, err := rt.PreflightDiscoveredExtensions(cfg, []plugin.Plugin{broken}); err == nil {
+		return errors.New("invalid runtime replacement unexpectedly passed preflight")
+	}
+	if rt.PluginHost != currentHost {
+		return errors.New("failed replacement changed the live runtime host")
+	}
+	if err := execute(currentHost, definitions[0].Name); err != nil {
+		return err
+	}
+	if err := execute(oldHost, oldDefinition.Name); err != nil {
+		return err
+	}
+	report.Checks = append(report.Checks, lifecycleCheck{Stage: "failed-replacement-preserves-both-generations", ToolCount: 1, Passed: true})
+	return nil
+}
+
+// Exercise the real JavaScript runtime through the activated extension generation.
 // These are public protocol, persistence identity, and failure-boundary cases;
 // no model, credential, or isolated replacement of the handler is involved.
 func checkPrograms(rt *runtime.Session, toolName string, report *lifecycleReport) error {
@@ -495,6 +600,7 @@ func invalidPrograms() []programFailure {
 		s["state"] = []any{map[string]any{"id": "count", "value": values}}
 	})
 	failures = append(failures,
+		programFailure{name: "numeric-exponent-overflow", arguments: json.RawMessage(`{"spec":{"version":2,"title":"Overflow","fallback":"Reject overflow","state":[{"id":"n","value":1e999}],"body":[{"id":"value","type":"text","text":{"op":"state","key":"n"}}]}}`)},
 		programFailure{name: "argument-byte-budget", arguments: json.RawMessage(`{"spec":{"title":"` + strings.Repeat("x", 128*1024) + `"}}`)},
 		programFailure{name: "json-depth-budget", arguments: json.RawMessage(strings.Repeat("[", 97) + "0" + strings.Repeat("]", 97))},
 		programFailure{name: "malformed-json", arguments: json.RawMessage(`{"spec":`)},

@@ -311,7 +311,15 @@ func inferredOptionsForProvider(providerName string, provider config.ProviderCon
 		return compatVariantsFromEfforts(efforts, compatOpenAIProviderVariantOptions)
 	case compatNPMCerebras, compatNPMTogetherAI, compatNPMXAI, compatNPMDeepInfra, compatNPMVenice, compatNPMOpenAICompatible:
 		if isDeepSeekV4Family(desc) {
-			return compatDeepSeekV4Variants(provider.WireAPI, modelReasoningEfforts(provider.Models[model]))
+			variants := compatDeepSeekV4Variants(provider.WireAPI, modelReasoningEfforts(provider.Models[model]))
+			if isDirectDeepSeek(desc) && !isResponsesWire(provider) {
+				// Chat Completions rejects forced tools while thinking is on.
+				// Responses has its own tool-choice contract.
+				for effort, options := range variants {
+					options["toolChoiceAutoOnly"] = effort != "none"
+				}
+			}
+			return variants
 		}
 		efforts := modelReasoningEfforts(provider.Models[model])
 		if len(efforts) == 0 {

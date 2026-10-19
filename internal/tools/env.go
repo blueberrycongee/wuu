@@ -73,6 +73,9 @@ func (r *readFileState) hasBeenRead(absPath string) bool {
 func (r *readFileState) snapshot() map[string]ReadFileEntry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	if r.state == nil {
+		return nil
+	}
 	out := make(map[string]ReadFileEntry, len(r.state))
 	for path, entry := range r.state {
 		out[path] = entry
@@ -182,6 +185,9 @@ type Env struct {
 	ProcessMgr             *proc.Manager
 	ProcessSandboxProvider processsandbox.Provider
 	AgentControl           *agentcontrol.AgentControl
+	// ShellEarlyHandoffDisabled preserves the requested foreground wait for
+	// hosts that cannot deliver background completion to this conversation.
+	ShellEarlyHandoffDisabled bool
 	// ProjectSessions is set only for a project coordinator conversation;
 	// it exposes the session tool and the coordinator's tool surface.
 	ProjectSessions ProjectSessionHandler
@@ -211,6 +217,9 @@ type Env struct {
 	// Runtime updates publish skillCatalog instead of mutating this slice.
 	Skills       []skills.Skill
 	skillCatalog atomic.Pointer[skillCatalog]
+	// Bound to this toolkit, never inherited from another toolkit's callbacks.
+	// Reads include its pinned extension catalogs and current revocation state.
+	skillSurface func() capability.Surface
 	// ActiveSurface is the compiled model profile surface currently
 	// governing this tool environment. Tools with secondary catalogs
 	// such as load_skill use it to avoid exposing instructions that
@@ -224,7 +233,7 @@ type Env struct {
 	// workspace move before subsequent tools start resolving paths there.
 	OnSessionWorkspaceChanged func(root string) error
 
-	readState *readFileState
+	readState readFileState
 	webState  webEvidenceState
 
 	toolTelemetry toolTelemetry
@@ -342,9 +351,6 @@ type BrowserTabStore interface {
 
 // RecordRead records a successful read_file invocation.
 func (e *Env) RecordRead(absPath string, entry ReadFileEntry) {
-	if e.readState == nil {
-		e.readState = &readFileState{}
-	}
 	e.readState.record(absPath, entry)
 }
 
@@ -368,7 +374,7 @@ func (e *Env) RecordWriteState(absPath string, content []byte) {
 }
 
 func (e *Env) ForgetRead(absPath string) {
-	if e == nil || e.readState == nil {
+	if e == nil {
 		return
 	}
 	e.readState.delete(absPath)
@@ -376,16 +382,10 @@ func (e *Env) ForgetRead(absPath string) {
 
 // HasBeenRead reports whether a file has been read via read_file.
 func (e *Env) HasBeenRead(absPath string) bool {
-	if e.readState == nil {
-		return false
-	}
 	return e.readState.hasBeenRead(absPath)
 }
 
 func (e *Env) ReadEntries() map[string]ReadFileEntry {
-	if e.readState == nil {
-		return nil
-	}
 	return e.readState.snapshot()
 }
 
@@ -784,12 +784,27 @@ func (e *Env) SkillNames() []string {
 	return out
 }
 
-// VisibleSkills returns the skills allowed by the active model surface.
+// VisibleSkills returns model-invocable skills allowed by the active surface.
+// The user-facing catalog remains invocation-neutral.
 func (e *Env) VisibleSkills() []skills.Skill {
 	if e == nil {
 		return nil
 	}
-	return FilterSkillsForSurface(e.AvailableSkills(), e.ActiveSurface)
+	available := FilterSkillsForSurface(e.AvailableSkills(), e.skillSurfaceSnapshot())
+	visible := make([]skills.Skill, 0, len(available))
+	for _, skill := range available {
+		if !skill.DisableModelInvoke {
+			visible = append(visible, skill)
+		}
+	}
+	return visible
+}
+
+func (e *Env) skillSurfaceSnapshot() capability.Surface {
+	if e.skillSurface != nil {
+		return e.skillSurface()
+	}
+	return e.ActiveSurface
 }
 
 // ProcessSkillBody processes a skill body with variable substitution. Inline

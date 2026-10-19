@@ -5,7 +5,7 @@ Automations send a task prompt on a schedule. Use them for a recurring project c
 ## Create a task
 
 1. Open **Automations** and choose the workspace. This selects the task's workspace without changing your open conversation.
-2. Choose **New automation**, or start from a suggestion when nothing is scheduled. Enter a name and clear instructions.
+2. Choose **New automation**. Enter a name and clear instructions.
 3. Under **Runs in**, choose **New chat each run** or an existing chat.
 4. Set a daily, weekday, weekly, or custom schedule, and turn on **Run once** for a single run. **More settings** contains timezone and **Isolated run**.
 5. Choose **Create**. Later edits require **Save changes**.

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
 
@@ -41,7 +42,23 @@ func (c *AgentControl) lockWorkerTransition(workerID string) func() {
 // terminal record that cannot be finalized.
 const workerTerminalFollowupWait = 30 * time.Second
 
-func (c *AgentControl) prepareWorkerFollowup(ctx context.Context, workerID string) (subagent.SubAgentSnapshot, bool, func(), error) {
+var errWorkerEdgeClosed = errors.New("worker edge is closed")
+
+func (c *AgentControl) workerEdgeClosed(workerID string) bool {
+	// StopAll cancels running turns before it can persist each closed edge.
+	// Treat the whole tree as closed during that wave so a cancelled child's
+	// result is released and settled instead of waking its parked parent.
+	c.queueStartMu.Lock()
+	stoppingAll := c.queuePauses > 0
+	c.queueStartMu.Unlock()
+	if stoppingAll {
+		return true
+	}
+	meta, ok := c.threads.Resolve(workerID)
+	return ok && meta.Source.EdgeStatus == agentthread.EdgeClosed
+}
+
+func (c *AgentControl) prepareWorkerFollowup(ctx context.Context, workerID string, automatic bool) (subagent.SubAgentSnapshot, bool, func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -55,6 +72,15 @@ func (c *AgentControl) prepareWorkerFollowup(ctx context.Context, workerID strin
 			return subagent.SubAgentSnapshot{}, false, nil, errAgentControlStopping
 		}
 		unlockTransition := c.lockWorkerTransition(workerID)
+		// Stop and automatic resumption share this lock. A cancellation result
+		// must not resurrect its stopped parent, even before that parent's
+		// asynchronous terminal observer has finished.
+		if automatic && c.workerEdgeClosed(workerID) {
+			// Unlike other errors, this returns the held lock: the caller must
+			// settle its result reservation before an explicit resume reopens
+			// this edge and starts applying pending results.
+			return subagent.SubAgentSnapshot{}, false, unlockTransition, errWorkerEdgeClosed
+		}
 		if pending, err := c.workerTerminalFinalizationPending(workerID); err != nil {
 			unlockTransition()
 			return subagent.SubAgentSnapshot{}, false, nil, err

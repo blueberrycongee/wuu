@@ -16,6 +16,9 @@ public struct AccountDevice: Codable, Identifiable, Sendable {
     public let role: String
     public let online: Bool
     public var id: String { pub }
+    public init(pub: String, name: String, role: String, online: Bool) {
+        self.pub = pub; self.name = name; self.role = role; self.online = online
+    }
 }
 
 public struct DeviceDirectory: Codable, Sendable {

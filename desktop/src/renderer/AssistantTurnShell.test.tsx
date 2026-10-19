@@ -279,7 +279,7 @@ function processSurfaceRows(container: HTMLElement): HTMLElement[] {
 }
 
 function reasoningSummaryText(fold: HTMLDetailsElement): string {
-  return fold.querySelector(".turn-reasoning-summary-text")?.textContent ?? "";
+  return fold.querySelector(".turn-reasoning-summary-text .process-label-content")?.textContent ?? "";
 }
 
 type StubbedScrollLayout = {
@@ -456,6 +456,38 @@ afterEach(() => {
 });
 
 describe("AssistantTurnShell — process fold default state (rule 2 + rule 8)", () => {
+  it("preserves an opened compaction summary and focus when work resumes", () => {
+    const compaction: ThreadItem = {
+      id: nextID("compaction"),
+      type: "context_compaction",
+      status: "completed",
+      reason: "proactive",
+      text: "Compacted history: 18 → 5 messages (~12k → ~3k tokens)",
+      summary: "The current task and completed work remain available.",
+    };
+    const { container, root } = renderShell(makeTurn("in_progress", [compaction]));
+    const folds = Array.from(container.querySelectorAll<HTMLDetailsElement>("details.process-surface-fold"));
+    act(() => {
+      for (const fold of folds) {
+        fold.open = true;
+        fold.dispatchEvent(new Event("toggle", { bubbles: true }));
+      }
+    });
+    const notice = container.querySelector(".context-compaction-notice");
+    const trigger = notice!.querySelector<HTMLElement>("summary")!;
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+
+    rerenderShell(root, makeTurn("in_progress", [compaction, makeReadFileTool("src/App.tsx")]));
+
+    expect(container.querySelector(".context-compaction-notice")).toBe(notice);
+    expect(document.activeElement).toBe(trigger);
+    for (const fold of folds) {
+      expect(fold.isConnected).toBe(true);
+      expect(fold.open).toBe(true);
+    }
+  });
+
   it("opens the process fold while a turn is in flight with only commentary", () => {
     const turn = makeTurn("in_progress", [makeCommentary("thinking through it")]);
     const { container } = renderShell(turn);
@@ -898,7 +930,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     const folds = reasoningFolds(container);
     expect(folds).toHaveLength(1);
     const label = folds[0].querySelector(".turn-reasoning-summary-text");
-    expect(label?.textContent).toBe("查看思考过程");
+    expect(label?.querySelector(".process-label-content")?.textContent).toBe("查看思考过程");
     expect(label?.classList.contains("is-live-gray")).toBe(true);
     expect(label?.classList.contains("is-streaming")).toBe(false);
   });
@@ -913,7 +945,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     const folds = reasoningFolds(container);
     expect(folds).toHaveLength(1);
     const label = folds[0].querySelector(".turn-reasoning-summary-text");
-    expect(label?.textContent).toBe("查看思考过程");
+    expect(label?.querySelector(".process-label-content")?.textContent).toBe("查看思考过程");
     expect(label?.classList.contains("is-live-gray")).toBe(false);
     expect(label?.classList.contains("is-streaming")).toBe(false);
   });

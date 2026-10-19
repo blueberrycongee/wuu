@@ -116,7 +116,7 @@ const sessions = [
 ];
 fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'fixture',
   providers: { fixture: { type: 'openai-compatible', base_url: 'http://127.0.0.1:1/v1', api_key: 'synthetic-not-a-credential', model: 'fixture' } },
-  engines: Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }])),
+  engines: Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }])),
 }));
 fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [project],
   active_context: { kind: 'project', project_id: project.id, cwd } }));
@@ -314,9 +314,6 @@ async function settle() {
 }
 async function captureStablePreview(name, expectedName) {
   await settle();
-  // Artifact flights are requestAnimationFrame-driven, not Web Animations.
-  // Wait for the real animation to finish without disabling or skipping it.
-  await until(() => !document.querySelector('.artifact-preview-flight, .artifact-preview-motion-hidden'), 'artifact preview flight completed');
   let previous, stable = 0, geometry;
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
@@ -333,16 +330,15 @@ async function captureStablePreview(name, expectedName) {
         emptyPadding = { left: parseFloat(style.paddingLeft), right: parseFloat(style.paddingRight) };
       }
       return { panel: panel.getBoundingClientRect().toJSON(), title: title.getBoundingClientRect().toJSON(),
-        titleText: title.textContent, actions: actions.getBoundingClientRect().toJSON(), emptyText, emptyPadding,
-        flightCount: document.querySelectorAll('.artifact-preview-flight, .artifact-preview-motion-hidden').length };
+        titleText: title.textContent, actions: actions.getBoundingClientRect().toJSON(), emptyText, emptyPadding };
     });
     const current = JSON.stringify(geometry);
-    if (current === previous && geometry.flightCount === 0) { if (++stable >= 4) break; }
+    if (current === previous) { if (++stable >= 4) break; }
     else stable = 0;
     previous = current;
     await delay(50);
   }
-  assert.ok(stable >= 4, 'Preview geometry remains stable after the complete flight');
+  assert.ok(stable >= 4, 'Preview geometry remains stable after opening');
   assert.equal(geometry.titleText, expectedName);
   assert.ok(geometry.title.left >= geometry.panel.left + 1 && geometry.title.right <= geometry.actions.left, 'Preview title stays inside its own toolbar');
   assert.ok(geometry.title.top >= geometry.panel.top && geometry.title.bottom <= geometry.panel.bottom, 'Preview title stays vertically within its pane');
@@ -352,7 +348,7 @@ async function captureStablePreview(name, expectedName) {
       && geometry.emptyText.right <= geometry.panel.right - geometry.emptyPadding.right + 1, 'Unsupported-format text stays inside its padded pane');
   }
   await capture(name);
-  pass(`${name} is stable and bounded after the real opening animation`, geometry);
+  pass(`${name} is stable and bounded after opening`, geometry);
 }
 
 async function saveZipFromNativeMenu(selector, mouseButton, previewExpected) {

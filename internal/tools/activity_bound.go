@@ -15,11 +15,13 @@ import (
 // It is the small, family-neutral part of the CUA MCP wrapper and the embedded
 // browser tool that both callers share verbatim.
 type activitySpec struct {
-	Kind     activity.Kind
-	ThreadID string
-	Workdir  string
-	PluginID string
-	Target   string
+	Kind         activity.Kind
+	ThreadID     string
+	Workdir      string
+	PluginID     string
+	GenerationID string
+	ConnectionID string
+	Target       string
 }
 
 // activityHooks injects the parts of an activity-bound action that legitimately
@@ -55,23 +57,24 @@ type activityHooks struct {
 //
 // The critical, non-negotiable discipline lives here so neither caller can lose
 // it: A revoked lease cancels the action and rejects subsequent updates while
-// preserving any partial execution evidence. Acquire's ErrStopped/ErrControlRevoked
-// are returned verbatim (never silently rebuilt).
+// preserving any partial execution evidence. A revoked task cannot change
+// backends or silently reacquire control; only explicit run admission can restore it.
 func (t *Toolkit) runActivityBoundAction(ctx context.Context, spec activitySpec, hooks activityHooks) (toolresult.Result, error) {
 	if t == nil || t.activityRegistry == nil {
 		return toolresult.Result{}, errors.New("activity registry is unavailable")
 	}
-	session, lease, err := t.activityRegistry.Acquire(activity.StartOptions{
-		Kind:     spec.Kind,
-		ThreadID: spec.ThreadID,
-		Workdir:  spec.Workdir,
-		PluginID: spec.PluginID,
-		Target:   spec.Target,
+	session, lease, err := t.activityRegistry.AcquireForExecution(ctx, activity.StartOptions{
+		Kind:         spec.Kind,
+		ThreadID:     spec.ThreadID,
+		Workdir:      spec.Workdir,
+		PluginID:     spec.PluginID,
+		GenerationID: spec.GenerationID,
+		ConnectionID: spec.ConnectionID,
+		Target:       spec.Target,
 	})
 	if err != nil {
-		// ErrStopped / ErrControlRevoked flow straight back to the caller, which
-		// translates them for the model. Rebuilding a stopped session behind the
-		// user's back would defeat the Stop button (registry hard invariant).
+		// Preserve the task fence. Retrying another backend cannot turn a
+		// stopped or taken-over execution into a new run.
 		return toolresult.Result{}, err
 	}
 	if err := t.activityRegistry.CheckControl(spec.ThreadID, session.ID, lease.Token); err != nil {

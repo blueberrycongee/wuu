@@ -15,6 +15,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/modelrequest"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -104,8 +105,8 @@ func TestClientUsesCodexCLIAuthReadOnlyWhenEnabled(t *testing.T) {
 		if _, exists := body["max_output_tokens"]; exists {
 			t.Fatalf("Codex request must omit unsupported max_output_tokens, got %#v", body["max_output_tokens"])
 		}
-		if body["instructions"] == "" {
-			t.Fatalf("Codex request must include instructions: %#v", body)
+		if body["model"] != "gpt-5-codex" || body["instructions"] != "sys" || body["tools"] != nil {
+			t.Fatalf("Codex request changed the explicit model, instructions, or tool-free input: %#v", body)
 		}
 		if body["store"] != false {
 			t.Fatalf("Codex request must set store=false, got %#v", body["store"])
@@ -121,12 +122,20 @@ func TestClientUsesCodexCLIAuthReadOnlyWhenEnabled(t *testing.T) {
 		if text["verbosity"] != "low" {
 			t.Fatalf("Codex request must default text.verbosity to low, got %#v", text["verbosity"])
 		}
+		if body["stream"] == true {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("event: response.output_text.delta\n" +
+				"data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n" +
+				"event: response.completed\n" +
+				"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n"))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))
 	}))
 	defer server.Close()
 
-	client, err := New(ClientConfig{BaseURL: server.URL, Home: home, HTTPClient: server.Client(), ReuseCodexCredentials: true})
+	client, err := New(ClientConfig{BaseURL: server.URL, Home: home, HTTPClient: server.Client(), ReuseCodexCredentials: true, StreamTransport: providers.StreamTransportSSE})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -148,6 +157,23 @@ func TestClientUsesCodexCLIAuthReadOnlyWhenEnabled(t *testing.T) {
 	}
 	if resp.Content != "ok" {
 		t.Fatalf("content = %q", resp.Content)
+	}
+	// Approve for me uses an uncapped text request. Its sanitization must keep
+	// Codex's prepared defaults stable when Chat prepares the journaled request
+	// again, while rejecting inherited context and tool overrides.
+	resp, err = modelrequest.Execute(ctx, client, providers.ChatRequest{
+		Model: "gpt-5-codex",
+		ProviderOptions: map[string]any{
+			"model": "unrelated-model", "instructions": "unrelated-instructions",
+			"tools": []any{"unrelated-tool"}, "parallelToolCalls": false,
+		},
+		Messages: []providers.ChatMessage{
+			{Role: "system", Content: "sys"},
+			{Role: "user", Content: "hello"},
+		},
+	}, modelrequest.Options{})
+	if err != nil || resp.Content != "ok" {
+		t.Fatalf("journaled text request: content=%q err=%v", resp.Content, err)
 	}
 	store, err := authstorage.ForHome(home)
 	if err != nil {

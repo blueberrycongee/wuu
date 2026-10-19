@@ -34,12 +34,14 @@ func newPluginToolExecutor(inner agent.ToolExecutor, host *pluginhost.Host, thre
 	if inner == nil || host == nil {
 		if kit, ok := inner.(*tools.Toolkit); ok {
 			kit.SetCodeModeAdditionalTools(nil)
+			kit.SetSkillToolProvider(nil)
 		}
 		return inner
 	}
 	executor := &pluginToolExecutor{inner: inner, host: host, threadID: threadID, cwd: cwd}
 	if kit, ok := inner.(*tools.Toolkit); ok {
 		kit.SetCodeModeAdditionalTools(executor.pluginDefinitions)
+		kit.SetSkillToolProvider(executor.livePluginDefinitions)
 	}
 	return executor
 }
@@ -52,18 +54,17 @@ func newPluginAwareToolExecutor(inner agent.ToolExecutor, host *pluginhost.Host,
 	return executor
 }
 
-func replacePluginToolHost(executor agent.ToolExecutor, host *pluginhost.Host, threadID, cwd string) agent.ToolExecutor {
+func replacePluginToolBindings(executor agent.ToolExecutor, host *pluginhost.Host, dispatcher *hooks.Dispatcher, threadID, cwd string) agent.ToolExecutor {
+	if executor == nil {
+		return nil
+	}
 	if hooked, ok := executor.(*hooks.HookedExecutor); ok {
-		inner := hooked.Inner()
-		if previous, ok := inner.(*pluginToolExecutor); ok {
-			inner = previous.inner
-		}
-		return hooked.WithInner(newPluginToolExecutor(inner, host, threadID, cwd))
+		executor = hooked.Inner()
 	}
 	if previous, ok := executor.(*pluginToolExecutor); ok {
 		executor = previous.inner
 	}
-	return newPluginToolExecutor(executor, host, threadID, cwd)
+	return newPluginAwareToolExecutor(executor, host, dispatcher, threadID, threadID, cwd)
 }
 
 func (e *pluginToolExecutor) Definitions() []providers.ToolDefinition {
@@ -145,6 +146,9 @@ func (e *pluginToolExecutor) ExecuteResult(ctx context.Context, call providers.T
 			if err := gate.AuthorizeTool(ctx, call, metadata); err != nil {
 				return toolresult.Result{}, err
 			}
+		}
+		if kit, ok := e.inner.(*tools.Toolkit); ok {
+			ctx = context.WithValue(ctx, pluginProcessToolkitKey{}, kit)
 		}
 		result, executeErr = e.host.ExecuteTool(ctx, call.Name, input)
 	} else if rich, ok := e.inner.(agent.RichToolExecutor); ok {
@@ -289,4 +293,11 @@ func (e *pluginToolExecutor) UnfreezeToolSurface() {
 	if freezer, ok := e.inner.(agent.ToolSurfaceFreezer); ok {
 		freezer.UnfreezeToolSurface()
 	}
+}
+
+func (e *pluginToolExecutor) PrepareModelStep(ctx context.Context, history []providers.ChatMessage) ([]providers.ChatMessage, error) {
+	if preparer, ok := e.inner.(agent.ModelStepPreparer); ok {
+		return preparer.PrepareModelStep(ctx, history)
+	}
+	return nil, nil
 }

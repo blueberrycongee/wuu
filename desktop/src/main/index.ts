@@ -1,11 +1,15 @@
+import { AppContextCapture } from "./appContextCapture";
+import { SystemPermissions } from "./systemPermissions";
 import { createBrowserView } from "./browserView";
+import { importBrowserCookies, listBrowserProfiles } from "./browserCookieImport";
+import { BrowserExtensionManager } from "./browserExtensions";
 import { saveArtifactFile } from "./artifactSave";
 import { showArtifactItemMenu } from "./artifactItemMenu";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
-import { PhoneAccess, phonePairLink } from "./phoneAccess";
+import { PhoneAccess } from "./phoneAccess";
 import {
   app,
   BrowserWindow,
@@ -14,6 +18,7 @@ import {
   dialog,
   ipcMain,
   type IpcMainInvokeEvent,
+  type IpcMainEvent,
   Menu,
   nativeImage,
   nativeTheme,
@@ -28,6 +33,7 @@ import {
   type WebContents,
 } from "electron";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -39,6 +45,7 @@ import {
 } from "../shared/protocol";
 import type {
   ArtifactItemMenuParams,
+  AppServerResponse,
   ConfigAdvancedUpdateResult,
   ConfigGeneralUpdateResult,
   ConfigCodexModelsResult,
@@ -133,7 +140,11 @@ import type {
   PluginStorageSetParams,
   PluginStorageResult,
   PluginClientRequestParams,
+  PluginClientCancelParams,
+  PluginClientCancelResult,
   PluginClientRequestResult,
+  PluginVisibleHistoryRequest,
+  PluginVisibleHistoryResult,
   WorkspaceFileSaveParams,
   CodexPetFeed,
   CodexPetSubmitResult,
@@ -143,8 +154,10 @@ import type {
   SideThreadSendResult,
 } from "../shared/protocol";
 import { AppServerClientPool, configurePackagedCUA } from "./appServerClients";
+import { visibleMainTurns, visibleSideTurns } from "./pluginVisibleHistory";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
-import { ObservationCoordinator, activityControlMethod, observationActivityFromServerEvent } from "./cuaActivityWindows";
+import { ObservationCoordinator, observationActivityFromServerEvent } from "./cuaActivityWindows";
+import type { ActivityPreviewAppearance } from "../shared/activityPreview";
 import { browserPiPHostClient } from "./browserPiPPlacement";
 import { createObservationPiPFactory } from "./browserPiPWindow";
 import { removeLegacyDesktopCliLink } from "./legacyCliLink";
@@ -159,6 +172,8 @@ import { CodexPetActivity } from "./codexPetActivity";
 import { CodexPetCommandRelay, type CodexPetCommandTarget } from "./codexPetCommands";
 import { RemoteHostManager } from "./remoteControl";
 import {
+  getActivityPreviewAutoShow,
+  setActivityPreviewAutoShow,
   getCodexPetSettings,
   getCodexPetScale,
   getCodexPetSize,
@@ -186,6 +201,7 @@ import { openExternalURL, wireExternalNavigationGuards } from "./externalNavigat
 import { ProjectManager, wuuHomePath } from "./projects";
 import { discoverRecentWorkspaces } from "./recentWorkspaces";
 import { mainTranslate, resolveMainLocale, setMainLocale } from "./i18n";
+import { installDesktopUpdates } from "./desktopUpdateMenu";
 import { sideThreadEventFromServerEvent } from "./sideThreadEvents";
 import {
   registerRenderableFileProtocol,
@@ -236,10 +252,17 @@ const DEFAULT_WINDOW_BACKGROUND = "#f6f6f4";
 // what shows behind the transparent web layer before first paint, so a
 // dark-theme launch must not flash white.
 const DARK_WINDOW_BACKGROUND = "#1c1c1d";
-// Matches the renderer titlebar row (48px in the tabbed/popped-out states)
-// so the overlay buttons center on the same strip the renderer draws.
-const WINDOWS_TITLEBAR_OVERLAY_HEIGHT = 48;
+// Center the overlay buttons on the renderer's 56-DIP titlebar while its
+// controls fit; the renderer can grow for larger text or page zoom.
+const WINDOWS_TITLEBAR_OVERLAY_HEIGHT = 56;
 const ENABLE_EMBEDDED_BROWSER = process.env.WUU_ENABLE_BROWSER !== "0";
+let browserExtensionManager: BrowserExtensionManager | undefined;
+function embeddedBrowserSession() {
+  if (!ENABLE_EMBEDDED_BROWSER) {
+    throw new Error("The embedded browser is disabled in this build.");
+  }
+  return electronSession.fromPartition(BROWSER_PARTITION);
+}
 if (process.argv.includes("--safe-mode")) {
   process.env.WUU_SAFE_MODE = "1";
 }
@@ -336,10 +359,9 @@ appServerClientPool.setClientTorndownHandler((workdir) => {
   browserHostCoordinator.onClientTorndown(workdir);
   observationCoordinator.dropWorkdir(workdir);
 });
-// The single observation surface for agent live activity (CUA native PiP +
-// browser preview), fed by the same activity notifications the renderer uses.
-// The factory picks the surface per activity kind; the coordinator owns
-// lifecycle, single-instance discipline, and position memory.
+// Shared observation stack for CUA windows and browser tabs, fed by the same
+// activity notifications the renderer uses. The coordinator owns per-target
+// lifecycle, session visibility, stack ordering, and position memory.
 const observationCoordinator = new ObservationCoordinator(
   windowRegistry,
   async (threadID): Promise<ActivitySession[]> => {
@@ -357,14 +379,9 @@ const observationCoordinator = new ObservationCoordinator(
     isPackaged: app.isPackaged,
     parent: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined),
   }),
-  async (activity, action) => {
-    const result = await appServerClientPool.requestForWorkdir<ActivityActionResult>(
-      activity.workdir, activityControlMethod(action), { thread_id: activity.thread_id, activity_id: activity.id },
-    );
-    return result.activity;
-  },
 );
 observationCoordinator.setAppearance(resolvedThemeIsDark());
+observationCoordinator.setAutoShow(getActivityPreviewAutoShow());
 browserHostCoordinator.setRendererSink({
   surface: (snapshot) => broadcastToAll("wuu:browser-surface", snapshot),
   userInput: (payload) => broadcastToAll("wuu:browser-user-input", payload),
@@ -435,6 +452,54 @@ const terminalSessionManager = new TerminalSessionManager(
   (windowID, event) => emitTerminalEvent(windowID, event),
 );
 
+const appContextOwnerGenerations = new Map<number, number>();
+function appContextOwner(): string | undefined {
+  const host = windowRegistry.mainWindow();
+  if (!host || host.isDestroyed() || host.webContents.isDestroyed()) return undefined;
+  const generation = appContextOwnerGenerations.get(host.webContents.id);
+  return generation === undefined ? undefined : `${host.webContents.id}:${generation}`;
+}
+const appContextCapture = new AppContextCapture((reveal, owner) => {
+  const host = windowRegistry.mainWindow();
+  if (!host || host.isDestroyed() || host.webContents.isDestroyed() || (owner && owner !== appContextOwner())) return;
+  // Delivery never creates a replacement owner for a cancelled/closed window.
+  if (reveal) { if (host.isMinimized()) host.restore(); host.show(); host.focus(); }
+  const generation = appContextOwner();
+  const send = (): void => {
+    if (!host.isDestroyed() && !host.webContents.isDestroyed() && generation === appContextOwner()) host.webContents.send("wuu:app-context-changed");
+  };
+  if (host.webContents.isLoadingMainFrame()) host.webContents.once("did-finish-load", send);
+  else send();
+}, appContextOwner);
+const systemPermissions = new SystemPermissions(appContextCapture);
+
+function isAppContextSender(event: IpcMainInvokeEvent | IpcMainEvent): boolean {
+  const host = windowRegistry.mainWindow();
+  return Boolean(host && !host.isDestroyed() && event.sender === host.webContents && event.senderFrame === event.sender.mainFrame);
+}
+
+function requireAppContextSender(event: IpcMainInvokeEvent): void {
+  if (!isAppContextSender(event)) {
+    throw new Error("App snapshots are available from Wuu's main window only.");
+  }
+}
+
+function requireBrowserSettingsSender(event: IpcMainInvokeEvent): BrowserWindow {
+  const host = BrowserWindow.fromWebContents(event.sender);
+  const main = windowRegistry.mainWindow();
+  if (!host || host.isDestroyed() || !main || host !== main) {
+    throw new Error("Browser settings are available from Wuu's main window only.");
+  }
+  return host;
+}
+
+function requireBrowserExtensionManager(): BrowserExtensionManager {
+  if (!browserExtensionManager) {
+    throw new Error("Embedded browser extensions are unavailable.");
+  }
+  return browserExtensionManager;
+}
+
 async function showProjectDirectoryDialog(
   options: OpenDialogOptions,
 ): Promise<string | undefined> {
@@ -494,6 +559,21 @@ function runtimeContextForWorkspaceID(workspaceID: string): RuntimeContext {
     throw new Error(`workspace ${project.name} is unavailable`);
   }
   return { kind: "project", project_id: project.id, cwd: project.path };
+}
+
+function runtimeContextForPluginWorkspace(
+  event: IpcMainInvokeEvent,
+  workspaceID?: string,
+  workspaceRoot?: string,
+): RuntimeContext {
+  if (workspaceID?.trim()) return runtimeContextForWorkspaceID(workspaceID);
+  if (!workspaceRoot?.trim()) return runtimeContextForEvent(event);
+  const current = runtimeContextForEvent(event);
+  if (current.kind === "no_project" && resolve(current.cwd) === resolve(workspaceRoot)) return current;
+  if (projectManager.list().projects.some((project) => resolve(project.path) === resolve(workspaceRoot))) {
+    throw new Error("Plugin workspace ID is required for a registered project");
+  }
+  return projectManager.resolveSubmissionContext({ kind: "no_project", cwd: workspaceRoot });
 }
 
 function codexPetDirs(): string[] {
@@ -629,8 +709,75 @@ function unregisterWindow(windowID: number): void {
 // independent of the per-workdir app-server pool. Events (pairing URI,
 // paired, exit) fan out to every window; the settings panel re-pulls its
 // snapshot on each one.
+// Window and remote-peer requests share one ownership rule. A cancellation
+// targets the exact process admitted for the original request, even if the
+// workspace moves or is re-registered before its response arrives.
+const pluginRuntimeRequests = new Map<string, Map<string, {
+  id: string;
+  fingerprint: string;
+  cancel: () => Promise<PluginClientCancelResult>;
+}>>();
+
+async function requestPluginRuntime(
+  owner: string,
+  context: RuntimeContext,
+  params: PluginClientRequestParams,
+  onResponse?: (response: AppServerResponse) => void,
+  onOwnerCreated?: () => void,
+): Promise<PluginClientRequestResult> {
+  const { workspace_id: _workspaceID, workspace_root: _workspaceRoot, ...request } = params;
+  if (params.request_id === undefined) {
+    return appServerClientPool.requestInContext<PluginClientRequestResult>(context, "plugin/client/request", request, onResponse);
+  }
+  if (typeof params.request_id !== "string" || params.request_id.length > 128 || !params.request_id.trim()) {
+    throw new Error("Plugin request ID must contain 1 to 128 characters");
+  }
+  let requests = pluginRuntimeRequests.get(owner);
+  if (!requests) {
+    requests = new Map();
+    pluginRuntimeRequests.set(owner, requests);
+    onOwnerCreated?.();
+  }
+  if (requests.has(params.request_id)) throw new Error("Plugin request ID is already active");
+  const requestInOwner = appServerClientPool.bindContextRequest(context);
+  const identity = { id: params.id, fingerprint: params.fingerprint, request_id: randomUUID() };
+  let cancellation: Promise<PluginClientCancelResult> | undefined;
+  requests.set(params.request_id, {
+    id: params.id,
+    fingerprint: params.fingerprint,
+    cancel: () => cancellation ??= requestInOwner<PluginClientCancelResult>("plugin/client/cancel", identity),
+  });
+  try {
+    return await requestInOwner<PluginClientRequestResult>(
+      "plugin/client/request", { ...request, request_id: identity.request_id }, onResponse,
+    );
+  } finally {
+    requests.delete(params.request_id);
+  }
+}
+
+function cancelPluginRuntime(owner: string, params: PluginClientCancelParams): Promise<PluginClientCancelResult> {
+  const request = params && pluginRuntimeRequests.get(owner)?.get(params.request_id);
+  if (!request || request.id !== params.id || request.fingerprint !== params.fingerprint) {
+    return Promise.resolve({ cancelled: false });
+  }
+  return request.cancel();
+}
+
+function cancelPluginRuntimeOwner(owner: string): void {
+  const requests = pluginRuntimeRequests.get(owner);
+  pluginRuntimeRequests.delete(owner);
+  for (const request of requests?.values() ?? []) {
+    void request.cancel().catch((error: unknown) => console.error("Plugin runtime cancellation failed", error));
+  }
+}
+
 const remoteTerminals = new TerminalSessionManager((owner,event)=>remoteAppServerBridge.notifyPeer(owner,"desktop/terminal/event",event));
 const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply, peerID) => {
+  const pluginOwner = `remote:${peerID}`;
+  // Existing ownership is enough to cancel; the original workspace may no
+  // longer be listed by the time the paired client disconnects or switches.
+  if (method === "plugin/client/cancel") return cancelPluginRuntime(pluginOwner, params as PluginClientCancelParams);
   // Keep the desktop's reverse-RPC capabilities: a phone attachment must not
   // disable browser tools on the shared execution service.
   if (method === "initialize") params = desktopInitializeParams();
@@ -645,12 +792,16 @@ const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, 
   else if (state.active_context?.kind === "no_project" && resolve(state.active_context.cwd) === cwd) context = state.active_context;
   else if (cwd.startsWith(resolve(wuuHomePath(), "scratch") + sep)) context = { kind: "no_project", cwd };
   else throw new Error("Unknown or unavailable remote workspace");
+  if (method === "plugin/client/request") return requestPluginRuntime(pluginOwner, context, params as PluginClientRequestParams, reply);
   if (method.startsWith("desktop/terminal/")) return requestRemoteTerminal(remoteTerminals,context,peerID,method,params);
   if (method === "desktop/skill/content") return readCatalogSkill(await appServerClientPool.requestInContext<SkillListResult>(context,"skill/list"),params as SkillContentParams);
   if (method.startsWith("desktop/file/")) return requestRemoteFiles(context,method,params);
   if (method.startsWith("desktop/git/")) return requestRemoteGit(gitServiceForContext(() => context), method, params);
   return appServerClientPool.requestInContext(context, method, params, reply);
-}, peerID=>remoteTerminals.stopForOwner(peerID));
+}, (peerID) => {
+  remoteTerminals.stopForOwner(peerID);
+  cancelPluginRuntimeOwner(`remote:${peerID}`);
+});
 
 const remoteHostManager = new RemoteHostManager({
   appServerEndpoint: () => remoteAppServerBridge.currentEndpoint(),
@@ -674,7 +825,7 @@ async function remoteControlSnapshot(workdir: string): Promise<RemoteControlSnap
     status_error: statusError || phoneAccess.error() || undefined,
     host_running: remoteHostManager.isRunning(),
     host_enabled: phoneAccess.enabled(),
-    pair_uri: phonePairLink(phoneAccess.url(), remoteHostManager.currentPairUri()),
+    pair_uri: remoteHostManager.currentPairUri(),
     web_url: phoneAccess.url(),
   };
 }
@@ -835,9 +986,9 @@ function usesWindowControlsOverlay(): boolean {
   return process.platform === "win32";
 }
 
-// 14px lights at y=17 sit on the 24px center of the 48px renderer
+// 14px lights at y=21 sit on the 28px center of the 56px renderer
 // titlebar, matching the CSS-centered toolbar controls beside them.
-const MAC_TRAFFIC_LIGHT_POSITION = { x: 18, y: 17 };
+const MAC_TRAFFIC_LIGHT_POSITION = { x: 18, y: 21 };
 
 function applyMacTrafficLightPosition(win: BrowserWindow): void {
   if (process.platform !== "darwin" || win.isDestroyed()) return;
@@ -939,10 +1090,12 @@ function syncThemedWindowChrome(): void {
 
 function broadcastThemePreference(): void {
   broadcastToAll("wuu:theme-preference-changed", getThemePreference());
+  systemPermissions.refreshAppearance(resolvedThemeIsDark());
 }
 
 function broadcastLanguagePreference(): void {
   broadcastToAll("wuu:language-preference-changed", getLanguagePreference());
+  systemPermissions.refreshAppearance(resolvedThemeIsDark());
 }
 
 function syncThemeAcrossWindows(): void {
@@ -1161,6 +1314,21 @@ function createWindow(options: { inactive?: boolean } = {}): void {
   windowRegistry.registerWindow(mainWindow, "main");
   const win = mainWindow;
   const windowID = win.webContents.id;
+  appContextOwnerGenerations.set(windowID, 0);
+  const invalidateAppContextOwner = (): void => {
+    const generation = appContextOwnerGenerations.get(windowID);
+    if (generation === undefined) return;
+    appContextOwnerGenerations.set(windowID, generation + 1);
+    appContextCapture.invalidateOwner(windowID);
+  };
+  win.webContents.on("did-start-navigation", (details) => {
+    if (details.isMainFrame && !details.isSameDocument) invalidateAppContextOwner();
+  });
+  win.webContents.on("render-process-gone", invalidateAppContextOwner);
+  win.webContents.once("destroyed", invalidateAppContextOwner);
+  win.on("blur", () => appContextCapture.setShortcutRecording(false));
+  win.on("close", invalidateAppContextOwner);
+  win.once("closed", () => { invalidateAppContextOwner(); appContextOwnerGenerations.delete(windowID); });
 
   windowRegistry.attachResizeHandlers(win, (phase) => {
     handleNativeWindowResizePhase(phase, win);
@@ -1252,6 +1420,7 @@ async function directorySize(path: string): Promise<number> {
   return total;
 }
 
+let desktopUpdates: ReturnType<typeof installDesktopUpdates>;
 app.whenReady().then(async () => {
   await inheritSystemProxy();
   if (app.isPackaged) configurePackagedCUA(process.env, process.resourcesPath, process.platform);
@@ -1299,6 +1468,18 @@ app.whenReady().then(async () => {
       );
     }
     installBrowserSessionHandlers(browserSession, browserHostCoordinator);
+    if (process.env.WUU_SAFE_MODE === "1") {
+      console.info("[desktop] embedded-browser extensions disabled by safe mode");
+    } else {
+      browserExtensionManager = new BrowserExtensionManager(browserSession);
+      try {
+        await browserExtensionManager.initialize();
+      } catch (error) {
+        console.warn(
+          `[desktop] failed to initialize embedded-browser extensions: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
   }
   // Pick up the user's chosen size before the pet window is created, so the
   // initial BrowserWindow and the inline data: URL are sized right the first
@@ -1536,6 +1717,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:managed-process-list", (event, threadId: string) =>
     appServerRequest<ManagedProcessListResult>(event, "process/list", { thread_id: threadId }),
   );
+  ipcMain.handle("wuu:process-cancel-notifications", (event, threadId: string, processId: string) =>
+    appServerRequest<ManagedProcessActionResult>(event, "process/cancel-notifications", { thread_id: threadId, process_id: processId }),
+  );
   ipcMain.handle("wuu:managed-process-read", (event, params: ManagedProcessReadParams) =>
     appServerRequest<ManagedProcessReadResult>(event, "process/read", params),
   );
@@ -1663,6 +1847,19 @@ app.whenReady().then(async () => {
       return { shown: true };
     },
   );
+  ipcMain.handle("wuu:desktop-update-state", () => desktopUpdates?.state ?? { kind: "unsupported" });
+  ipcMain.handle("wuu:desktop-update-download", event => {
+    if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("Updates are available from Wuu windows only.");
+    }
+    return desktopUpdates?.download();
+  });
+  ipcMain.handle("wuu:desktop-update-restart", event => {
+    if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("Updates are available from Wuu windows only.");
+    }
+    return desktopUpdates?.restart();
+  });
   ipcMain.handle("wuu:build-info", (): BuildInfoResult => ({
     core: cachedCoreBuildInfo,
     desktop: DESKTOP_BUILD_INFO,
@@ -1905,16 +2102,41 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:plugin-storage-set", (event, params: PluginStorageSetParams) =>
     appServerRequest<PluginStorageResult>(event, "plugin/storage/set", params));
   ipcMain.handle("wuu:plugin-runtime-request", (event, params: PluginClientRequestParams) => {
-    const workspaceID = params.workspace_id?.trim();
-    if (!workspaceID) {
-      return appServerRequest<PluginClientRequestResult>(event, "plugin/client/request", params);
+    const context = runtimeContextForPluginWorkspace(event, params.workspace_id, params.workspace_root);
+    if (params.workspace_root && resolve(params.workspace_root) !== resolve(context.cwd)) {
+      throw new Error("Plugin runtime workspace changed");
     }
-    const { workspace_id: _workspaceID, ...request } = params;
-    return appServerClientPool.requestInContext<PluginClientRequestResult>(
-      runtimeContextForWorkspaceID(workspaceID),
-      "plugin/client/request",
-      request,
-    );
+    const owner = `window:${event.sender.id}`;
+    return requestPluginRuntime(owner, context, params, undefined, () => {
+      event.sender.once("destroyed", () => cancelPluginRuntimeOwner(owner));
+    });
+  });
+  ipcMain.handle("wuu:plugin-runtime-cancel", (event, params: PluginClientCancelParams) =>
+    cancelPluginRuntime(`window:${event.sender.id}`, params));
+  ipcMain.handle("wuu:plugin-visible-history", async (event, request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult> => {
+    if (!request || !request.threadId?.trim() || !request.workspaceRoot?.trim()) throw new Error("Conversation identity is required");
+    const context = runtimeContextForPluginWorkspace(event, request.workspaceId, request.workspaceRoot);
+    if (resolve(context.cwd) !== resolve(request.workspaceRoot)
+      || (!request.workspaceId && context.kind !== "no_project")) throw new Error("Conversation workspace changed");
+    if (request.kind === "main") {
+      if (!request.beforeTurnId?.trim() || request.sideThreadId) throw new Error("Main conversation turn is required");
+      const history = await appServerClientPool.requestInContext<{ thread_id: string; turns: Turn[] }>(
+        context, "thread/history/read", { thread_id: request.threadId, cursor: `conversation:turn:${request.beforeTurnId}` },
+      );
+      if (history.thread_id !== request.threadId) throw new Error("Conversation identity changed");
+      return { turns: visibleMainTurns(history.turns) };
+    }
+    if (request.kind === "side") {
+      if (!request.sideThreadId?.trim() || request.beforeTurnId) throw new Error("Side conversation identity is required");
+      const history = await appServerClientPool.requestInContext<SideThreadHistoryResult>(
+        context, "sideThread/getHistory", { main_thread_id: request.threadId },
+      );
+      if (history.summary.main_thread_id !== request.threadId || history.summary.side_thread_id !== request.sideThreadId) {
+        throw new Error("Side conversation identity changed");
+      }
+      return { turns: visibleSideTurns(history, request.sideThreadId) };
+    }
+    throw new Error("Unknown conversation kind");
   });
   ipcMain.handle(
     "wuu:config-provider-remove",
@@ -2043,18 +2265,18 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:activity-list", (event, threadId: string) =>
     appServerRequest<ActivityListResult>(event, "activity/list", { thread_id: threadId }),
   );
-  ipcMain.handle("wuu:activity-takeover", async (event, threadId: string, activityId: string, inputGeneration?: number) => {
-    const result = await appServerRequest<ActivityActionResult>(event, "activity/takeover", { thread_id: threadId, activity_id: activityId });
+  ipcMain.handle("wuu:activity-takeover", async (event, threadId: string, activityId: string, inputGeneration?: number, executionId?: string) => {
+    const result = await appServerRequest<ActivityActionResult>(event, "activity/takeover", { thread_id: threadId, activity_id: activityId, execution_id: executionId });
     if (typeof inputGeneration === "number" && Number.isSafeInteger(inputGeneration)) {
       browserHostCoordinator.acknowledgeLocalTakeover(result.activity, inputGeneration);
     }
     return result;
   });
-  ipcMain.handle("wuu:activity-release", (event, threadId: string, activityId: string) =>
-    appServerRequest<ActivityReleaseResult>(event, "activity/release", { thread_id: threadId, activity_id: activityId }),
+  ipcMain.handle("wuu:activity-release", (event, threadId: string, activityId: string, executionId?: string) =>
+    appServerRequest<ActivityReleaseResult>(event, "activity/release", { thread_id: threadId, activity_id: activityId, execution_id: executionId }),
   );
-  ipcMain.handle("wuu:activity-stop", (event, threadId: string, activityId: string) =>
-    appServerRequest<ActivityActionResult>(event, "activity/stop", { thread_id: threadId, activity_id: activityId }),
+  ipcMain.handle("wuu:activity-stop", (event, threadId: string, activityId: string, executionId?: string) =>
+    appServerRequest<ActivityActionResult>(event, "activity/stop", { thread_id: threadId, activity_id: activityId, execution_id: executionId }),
   );
   ipcMain.handle("wuu:side-thread-open", (event, mainThreadId: string) =>
     appServerRequest<SideThreadOpenResult>(event, "sideThread/open", { main_thread_id: mainThreadId }),
@@ -2205,6 +2427,25 @@ app.whenReady().then(async () => {
     const win = BrowserWindow.fromWebContents(event.sender);
     return Boolean(win && !win.isDestroyed() && win.isMaximized());
   });
+  ipcMain.handle("wuu:activity-preview-auto-show-get", () => getActivityPreviewAutoShow());
+  ipcMain.handle("wuu:activity-preview-auto-show-set", (_event, enabled: unknown) => {
+    if (typeof enabled !== "boolean") throw new Error("Invalid activity preview preference");
+    setActivityPreviewAutoShow(enabled);
+    observationCoordinator.setAutoShow(enabled);
+    broadcastToAll("wuu:activity-preview-auto-show-changed", enabled);
+  });
+  ipcMain.handle("wuu:activity-preview-appearance", (event, value: unknown) => {
+    // Only the main workbench supplies global presentation preferences.
+    if (event.sender !== mainWindow?.webContents || !value || typeof value !== "object") return;
+    const appearance = value as ActivityPreviewAppearance;
+    if (typeof appearance.reducedMotion !== "boolean" ||
+      typeof appearance.fontSize !== "number" || !Number.isFinite(appearance.fontSize) ||
+      appearance.fontSize < MESSAGE_FLOW_FONT_SIZE_RANGE.min || appearance.fontSize > MESSAGE_FLOW_FONT_SIZE_RANGE.max ||
+      (appearance.locale !== "en-US" && appearance.locale !== "zh-CN") ||
+      [appearance.fontFamily, appearance.surface, appearance.text, appearance.muted]
+        .some(field => typeof field !== "string" || field.length > 512)) return;
+    observationCoordinator.setAppearance(resolvedThemeIsDark(), appearance);
+  });
   ipcMain.handle("wuu:theme-preference-get", () => getThemePreference());
   ipcMain.on("wuu:onboarding-complete-get-sync", (event) => {
     event.returnValue = isOnboardingComplete();
@@ -2246,6 +2487,7 @@ app.whenReady().then(async () => {
     setLanguagePreference(next);
     setMainLocale(resolveMainLocale(next, app.getLocale()));
     codexPetWindowManager.refreshLocale();
+    desktopUpdates?.refresh();
     broadcastLanguagePreference();
     return { ok: true, language: next };
   });
@@ -2288,6 +2530,7 @@ app.whenReady().then(async () => {
         ? (fontSize as MessageFlowFontSize)
         : MESSAGE_FLOW_FONT_SIZE_RANGE.default;
       setMessageFlowFontSize(next);
+      systemPermissions.refreshAppearance(resolvedThemeIsDark());
       return { ok: true, fontSize: next };
     },
   );
@@ -2655,8 +2898,104 @@ app.whenReady().then(async () => {
       return { ok: true };
     },
   );
+  ipcMain.handle("wuu:browser-profiles", (event) => {
+    requireBrowserSettingsSender(event);
+    if (!ENABLE_EMBEDDED_BROWSER) {
+      throw new Error("The embedded browser is disabled in this build.");
+    }
+    return listBrowserProfiles();
+  });
+  ipcMain.handle(
+    "wuu:browser-import-cookies",
+    async (event, profilePath: unknown) => {
+      requireBrowserSettingsSender(event);
+      if (!ENABLE_EMBEDDED_BROWSER) {
+        throw new Error("The embedded browser is disabled in this build.");
+      }
+      if (typeof profilePath !== "string" || !profilePath.trim()) {
+        throw new Error("A browser profile path is required.");
+      }
+      return importBrowserCookies({
+        profilePath,
+        session: embeddedBrowserSession(),
+      });
+    },
+  );
+  ipcMain.handle("wuu:browser-extensions-list", (event) => {
+    requireBrowserSettingsSender(event);
+    return requireBrowserExtensionManager().list();
+  });
+  ipcMain.handle("wuu:browser-extensions-add", async (event) => {
+    const host = requireBrowserSettingsSender(event);
+    const manager = requireBrowserExtensionManager();
+    const result = await dialog.showOpenDialog(host, {
+      title: mainTranslate("chooseExtensionFolder"),
+      properties: ["openDirectory"],
+    });
+    if (result.canceled || !result.filePaths[0]) return manager.list();
+    return manager.addFromDirectory(result.filePaths[0]);
+  });
+  ipcMain.handle(
+    "wuu:browser-extensions-set-enabled",
+    (event, id: unknown, enabled: unknown) => {
+      requireBrowserSettingsSender(event);
+      if (typeof id !== "string" || !id.trim() || typeof enabled !== "boolean") {
+        throw new Error("Extension id and enabled state are required.");
+      }
+      return requireBrowserExtensionManager().setEnabled(id, enabled);
+    },
+  );
+  ipcMain.handle("wuu:browser-extensions-remove", (event, id: unknown) => {
+    requireBrowserSettingsSender(event);
+    if (typeof id !== "string" || !id.trim()) {
+      throw new Error("Extension id is required.");
+    }
+    return requireBrowserExtensionManager().remove(id);
+  });
+  systemPermissions.start();
+  ipcMain.handle("wuu:system-permissions", event => {
+    requireAppContextSender(event);
+    return systemPermissions.state();
+  });
+  ipcMain.handle("wuu:system-permission-request", (event, permission: unknown, presentation: unknown) => {
+    requireAppContextSender(event);
+    return systemPermissions.open(permission, windowRegistry.mainWindow()!, resolvedThemeIsDark(), presentation);
+  });
+  ipcMain.on("wuu:system-permission-guide-update", (event, presentation: unknown) => {
+    if (isAppContextSender(event)) systemPermissions.update(presentation);
+  });
+  ipcMain.handle("wuu:system-permission-guide-close", (event, requestId: unknown) => {
+    requireAppContextSender(event);
+    systemPermissions.cancel(requestId);
+  });
+  ipcMain.handle("wuu:app-context-state", (event) => {
+    requireAppContextSender(event);
+    return appContextCapture.state();
+  });
+  ipcMain.handle("wuu:app-context-recording", (event, recording: unknown) => {
+    requireAppContextSender(event);
+    if (typeof recording !== "boolean") throw new Error("Invalid shortcut recording state.");
+    return appContextCapture.setShortcutRecording(recording);
+  });
+  ipcMain.handle("wuu:app-context-settings", (event, settings: unknown) => {
+    requireAppContextSender(event);
+    return appContextCapture.update(settings);
+  });
+  ipcMain.handle("wuu:app-context-permission", async (event, kind: unknown) => {
+    requireAppContextSender(event);
+    if (kind !== "screen" && kind !== "text") throw new Error("Unknown app snapshot permission.");
+    await systemPermissions.open(kind === "text" ? "accessibility" : "screen", windowRegistry.mainWindow()!, resolvedThemeIsDark());
+    return appContextCapture.state();
+  });
+  ipcMain.handle("wuu:app-context-discard", (event, id: unknown) => {
+    requireAppContextSender(event);
+    if (id !== undefined && typeof id !== "string") throw new Error("Invalid snapshot identifier.");
+    return appContextCapture.cancel(id);
+  });
+  appContextCapture.start();
   syncNativeThemeSource();
   createWindow();
+  desktopUpdates = installDesktopUpdates(prepareToQuit, state => broadcastToAll("wuu:desktop-update-changed", state));
   void phoneAccess.run(() => phoneAccess.restore(projectManager.ensureRuntimeContext().cwd));
 
   app.on("activate", () => {
@@ -2674,11 +3013,23 @@ app.on("before-quit", (event) => {
   if (quitCleanupFinished) return;
   event.preventDefault();
   if (quitCleanup) return;
-  terminalSessionManager.cleanup();
-  // Destroy every agent view + the hidden host window before the pool shuts
-  // down so no WebContentsView leaks past quit.
-  browserHostCoordinator.destroyAll();
-  quitCleanup = Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(), phoneAccess.shutdown()])
+  void prepareToQuit().finally(() => app.quit());
+});
+
+function prepareToQuit(): Promise<void> {
+  if (quitCleanup) return quitCleanup;
+  // Publish the shared promise before destroying windows: closing the hidden
+  // host can synchronously re-enter quit through window-all-closed.
+  quitCleanup = Promise.resolve().then(() => {
+    desktopUpdates?.stop();
+    systemPermissions.close();
+    appContextCapture.dispose();
+    terminalSessionManager.cleanup();
+    // Destroy every agent view + the hidden host window before the pool shuts
+    // down so no WebContentsView leaks past quit.
+    browserHostCoordinator.destroyAll();
+    return Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(), phoneAccess.shutdown()]);
+  })
     .then((results) => {
       for (const result of results) {
         if (result.status === "rejected") console.error("Shutdown cleanup failed", result.reason);
@@ -2686,12 +3037,28 @@ app.on("before-quit", (event) => {
     })
     .finally(() => {
       quitCleanupFinished = true;
-      app.quit();
     });
-});
+  return quitCleanup;
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
 });
+
+if (process.platform === "linux") {
+  app.on("browser-window-created", (_event, window) => {
+    window.once("closed", () => {
+      // The hidden browser host is infrastructure, not a way to reopen Wuu.
+      // Preserve last-window quit behavior after browsing; pet, PiP and other
+      // application windows still keep the app alive as before.
+      setImmediate(() => {
+        const remaining = BrowserWindow.getAllWindows().filter(win => !win.isDestroyed());
+        if (remaining.length === 1 && browserHostCoordinator.isHostWindow(remaining[0])) {
+          app.quit();
+        }
+      });
+    });
+  });
+}

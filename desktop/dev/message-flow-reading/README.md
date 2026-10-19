@@ -55,9 +55,26 @@ clearance; neither relies on an extra turn-boundary margin at the end.
 
 `?surface=lifecycle&lateTerminal=1` starts an unclassified multi-paragraph
 stream and confirms it as the final answer when the stream toggle is cleared.
-`scripts/stream-settlement-layout-e2e.cjs` compares paragraph positions, dimensions
-and total turn height across this handoff at default/large sizes and wide/narrow
-windows in both themes. Run it with the current checkout's Wuu Dev executable.
+`npm --prefix desktop run test:e2e:stream-settlement` starts an isolated server
+and compares rendered blocks across this handoff and already classified answers,
+using prose and mixed Markdown in both themes, wide/narrow windows and 14/15/20px
+text. New answer actions may extend a provisional reply; the existing text must
+stay in place. Results and screenshots are saved in `desktop/out/stream-settlement/`.
+See the [development guide](../../../docs/en/project/development.md) for CI and
+artifact options. The fixture accepts `live=1` and `content=prose|markdown` for
+manual replay of the same cases.
+
+The streaming surface also accepts `stream=open-code|open-code-newline|open-code-plain|open-code-empty|open-code-list|closed-code|closed-code-blank`
+to end the answer in a fenced code block. With `live=1` the cursor should follow
+the last code character inside the card. `npm --prefix desktop run test:e2e:stream-code-cursor`
+measures these cases and saves screenshots in `desktop/out/stream-code-cursor/`.
+
+Use `?surface=stream&stream=math&live=1` to inspect inline and display formulas,
+aligned equations with blank lines, matrices, wide formulas, lists, tables,
+literal code, escaped currency, and unsupported commands. Switch to
+`surface=workspace` to compare file previews. Play the sample through the stream
+store, then compare both themes at 15px/20px and 1000px/420px. Wide display formulas
+should scroll within their own region without widening the message.
 
 The image surface (`?surface=images`) includes a user attachment, a tool image,
 and landscape, portrait, and panoramic Markdown images. Inspect the preview

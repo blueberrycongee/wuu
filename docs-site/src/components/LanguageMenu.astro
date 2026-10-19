@@ -8,7 +8,8 @@ const locales = [
 const pathSegments = Astro.url.pathname.split("/")
 const currentLocale = locales.find(({ locale }) => pathSegments.includes(locale))?.locale ?? "zh-cn"
 const currentLabel = locales.find(({ locale }) => locale === currentLocale)!.label
-const defaultLocale = manifest.locales[manifest.site.default_locale].root
+const defaultLocale =
+  manifest.locales[manifest.site.default_locale as keyof typeof manifest.locales].root
 const siteBase = import.meta.env.BASE_URL
 const routesByLocale = Object.fromEntries(
   Object.values(manifest.locales).map((config) => [
@@ -41,7 +42,7 @@ function localizedHref(locale: string) {
 <wuu-language-menu>
   <button class="header-menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
     <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
-      <path d="M5 4h7M8.5 2v2m-5 4h10m-2 0a12 12 0 0 1-7 8m2-8a12 12 0 0 0 7 8m1.5 4 3.5-8 3.5 8m-5.8-2h4.6" />
+      <path d="M12 3.9a8.1 8.1 0 1 0 0 16.2 8.1 8.1 0 0 0 0-16.2ZM4.5 12h15M12 4.1c-2.1 2-3.2 4.6-3.2 7.9s1.1 5.9 3.2 7.9c2.1-2 3.2-4.6 3.2-7.9S14.1 6.1 12 4.1" />
     </svg>
     <span>{currentLabel}</span>
     <svg class="header-menu-caret" aria-hidden="true" viewBox="0 0 16 16" width="14" height="14">

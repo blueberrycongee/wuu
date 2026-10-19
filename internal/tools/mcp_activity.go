@@ -18,14 +18,16 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 type MCPActivityBinding struct {
-	Kind     activity.Kind
-	PluginID string
+	Kind         activity.Kind
+	PluginID     string
+	GenerationID string
 }
 
 type cuaSequenceRequest struct {
@@ -88,17 +90,35 @@ func (t *Toolkit) executeActivityBoundToolResult(ctx context.Context, call provi
 		return toolresult.Result{}, errors.New("activity-bound MCP tool requires a thread context")
 	}
 	target := mcpActivityTarget(call.Arguments)
-	if binding.Kind == activity.KindCUA {
-		target = t.canonicalCUATarget(ctx, tool, target)
-	}
 	sequence, isSequence := parseCUASequence(call.Arguments)
 
 	// The lease lifecycle (Acquire, before/after CheckControl, re-target, and the
 	// state/preview/error Update) is the shared spine in runActivityBoundAction.
 	// Only the CUA-specific derivations stay here as hooks.
-	spec := activitySpec{Kind: binding.Kind, ThreadID: threadID, Workdir: workdir, PluginID: binding.PluginID, Target: target}
+	spec := activitySpec{Kind: binding.Kind, ThreadID: threadID, Workdir: workdir, PluginID: binding.PluginID, GenerationID: binding.GenerationID, Target: target}
+	if native, ok := tool.(*mcp.MCPTool); ok {
+		spec.ConnectionID = native.ConnectionID()
+	}
 	hooks := activityHooks{
 		run: func(ctx context.Context, session activity.Session, lease activity.Lease) (toolresult.Result, string, error) {
+			if binding.Kind == activity.KindCUA {
+				if native, ok := tool.(*mcp.MCPTool); ok && cuaSchemaProperty(tool, "control_epoch") {
+					params, _ := json.Marshal(map[string]string{"control_epoch": cuaControlEpoch(lease.Token)})
+					defer native.NotifyOnControlRevoked(ctx, "notifications/wuu/control_revoked", params)
+				}
+				// Resolving an app may invoke the native helper. Bind ownership
+				// first so even a first-call failure revokes this task's backends.
+				canonical := t.canonicalCUATarget(ctx, tool, target)
+				if err := activity.ControlErr(ctx); err != nil {
+					return toolresult.Result{}, "", err
+				}
+				sequence.App = canonical
+				if canonical != "" && canonical != session.Target {
+					if _, err := t.activityRegistry.UpdateWithLease(lease, activity.UpdateOptions{Target: canonical, ClearWindowIdentity: true}); err != nil {
+						return toolresult.Result{}, "", err
+					}
+				}
+			}
 			if isSequence {
 				return t.executeCUASequence(ctx, tool, threadID, session.ID, lease.Token, sequence)
 			}
@@ -272,6 +292,33 @@ func parseCUASequence(arguments string) (cuaSequenceRequest, bool) {
 }
 
 func (t *Toolkit) executeCUASequence(ctx context.Context, tool Tool, threadID, activityID, leaseToken string, request cuaSequenceRequest) (toolresult.Result, string, error) {
+	// Validate every target before executing any step. Steps run under the outer
+	// app's lease and must never dispatch input to a different app.
+	if strings.TrimSpace(request.App) == "" {
+		return toolresult.Result{}, "", errors.New("CUA sequence requires an app")
+	}
+	var apps json.RawMessage
+	for index, step := range request.Steps {
+		if value, present := step["app"]; present {
+			app, ok := value.(string)
+			if !ok || strings.TrimSpace(app) == "" {
+				return toolresult.Result{}, "", fmt.Errorf("CUA sequence step %d requires a non-empty app string", index+1)
+			}
+			if strings.TrimSpace(app) != request.App {
+				// Resolve aliases from running apps without launching an unleased target.
+				if apps == nil {
+					result, err := t.executeKnownToolResult(ctx, providers.ToolCall{Name: tool.Name(), Arguments: `{"action":"list_apps"}`}, tool)
+					if err != nil {
+						return toolresult.Result{}, "", err
+					}
+					apps = result.StructuredContent
+				}
+				if canonicalCUATargetFromApps(app, apps) != request.App {
+					return toolresult.Result{}, "", fmt.Errorf("CUA sequence step %d must target the sequence app %q", index+1, request.App)
+				}
+			}
+		}
+	}
 	// Track the most-disruptive control level any step actually used so the whole
 	// sequence maps to an honest activity state (a background sequence must not look
 	// foreground just because foreground_policy was allowed). The generic risk
@@ -282,9 +329,7 @@ func (t *Toolkit) executeCUASequence(ctx context.Context, tool Tool, threadID, a
 	supportsSnapshots := cuaSchemaProperty(tool, "snapshot_id")
 	hooks := riskSequenceHooks{
 		augment: func(step map[string]any) {
-			if _, ok := step["app"]; !ok && request.App != "" {
-				step["app"] = request.App
-			}
+			step["app"] = request.App
 			if _, ok := step["foreground_policy"]; !ok && request.ForegroundPolicy != "" {
 				step["foreground_policy"] = request.ForegroundPolicy
 			}
@@ -491,6 +536,10 @@ func cuaSchemaProperty(tool Tool, name string) bool {
 	return ok
 }
 
+func cuaControlEpoch(leaseToken string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(leaseToken)))
+}
+
 // Capability-driven defaults apply at the shared invocation boundary, including
 // Code Mode. Alternative CUA extensions opt in by declaring these schema fields.
 func (t *Toolkit) prepareCUAArguments(tool Tool, arguments, leaseToken string) string {
@@ -499,7 +548,7 @@ func (t *Toolkit) prepareCUAArguments(tool Tool, arguments, leaseToken string) s
 		return arguments
 	}
 	if cuaSchemaProperty(tool, "control_epoch") {
-		args["control_epoch"] = fmt.Sprintf("%x", sha256.Sum256([]byte(leaseToken)))
+		args["control_epoch"] = cuaControlEpoch(leaseToken)
 	}
 	textOnly := t.env != nil && t.env.ImageInputSupported != nil && !*t.env.ImageInputSupported
 	if cuaSchemaProperty(tool, "mode") {

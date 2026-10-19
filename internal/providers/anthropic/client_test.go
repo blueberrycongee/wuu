@@ -422,51 +422,62 @@ func TestChat_ParsesReasoningBlocks(t *testing.T) {
 	}
 }
 
-func TestBuildAnthropicRequest_SmooshesSystemReminderIntoToolResult(t *testing.T) {
+func TestBuildAnthropicRequest_FoldsSystemReminderBeforeCacheMarkers(t *testing.T) {
 	reminder := wuucontext.FormatSystemReminder(wuucontext.EnvInfo{
-		CWD:       "/tmp/project",
-		Date:      "2026-04-21",
-		GitBranch: "main",
-		GitStatus: "clean",
+		CWD: "/tmp/project", Date: "2026-04-21",
 	})
-
-	payload, err := buildAnthropicRequest(providers.ChatRequest{
-		Model: "claude-test",
-		Messages: []providers.ChatMessage{
-			{Role: "user", Content: "check repo"},
-			{Role: "assistant", ToolCalls: []providers.ToolCall{
-				{ID: "tool_1", Name: "git", Arguments: `{"subcommand":"status"}`},
-			}},
-			{Role: "tool", ToolCallID: "tool_1", Name: "git", Content: `{"exit_code":0}`},
-			{Role: "user", Name: wuucontext.SystemReminderMessageName, Content: reminder},
-		},
-	}, 1024, false)
-	if err != nil {
-		t.Fatalf("buildAnthropicRequest: %v", err)
-	}
-
-	if len(payload.Messages) != 3 {
-		t.Fatalf("expected 3 messages after merge, got %d", len(payload.Messages))
-	}
-	last := payload.Messages[2]
-	if last.Role != "user" {
-		t.Fatalf("expected final message to be user, got %q", last.Role)
-	}
-	if len(last.Content) != 1 {
-		t.Fatalf("expected tool_result-only user content, got %+v", last.Content)
-	}
-	if last.Content[0].Type != "tool_result" {
-		t.Fatalf("expected tool_result block, got %+v", last.Content[0])
-	}
-	content, ok := last.Content[0].Content.(string)
-	if !ok {
-		t.Fatalf("expected string tool_result content, got %#v", last.Content[0].Content)
-	}
-	if !strings.Contains(content, `{"exit_code":0}`) {
-		t.Fatalf("expected tool output to be preserved, got %q", content)
-	}
-	if !strings.Contains(content, "<system-reminder>") {
-		t.Fatalf("expected system reminder to be folded into tool_result, got %q", content)
+	for _, model := range []string{"claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-7", "k3"} {
+		for _, cacheMode := range []string{"auto", "off", "no_hint"} {
+			t.Run(model+"/"+cacheMode, func(t *testing.T) {
+				request := providers.ChatRequest{
+					Model: model,
+					ProviderOptions: map[string]any{
+						"anthropicCache": cacheMode,
+						"thinking":       map[string]any{"type": "enabled", "budget_tokens": 1024},
+					},
+					Messages: []providers.ChatMessage{
+						{Role: "user", Content: "check repo"},
+						{Role: "assistant", ReasoningBlocks: []providers.ReasoningBlock{
+							{Type: "thinking", Thinking: "inspect", Signature: "signed-thought"},
+						}, ToolCalls: []providers.ToolCall{{ID: "tool_1", Name: "git", Arguments: `{}`}}},
+						{Role: "tool", ToolCallID: "tool_1", Content: "  output\n"},
+						{Role: "user", Name: wuucontext.SystemReminderMessageName, Content: reminder},
+						{Role: "user", Hidden: true, Content: "Tool observations", Images: []providers.InputImage{{Data: "AAA", MediaType: "image/png"}}},
+					},
+					CacheHint: &providers.CacheHint{StablePrefixMessages: 3},
+				}
+				if cacheMode == "no_hint" {
+					request.CacheHint = nil
+					delete(request.ProviderOptions, "anthropicCache")
+				}
+				payload, err := buildAnthropicRequest(request, 4096, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(payload.Messages) != 3 {
+					t.Fatalf("expected 3 messages after merge, got %d", len(payload.Messages))
+				}
+				thinking := payload.Messages[1].Content[0]
+				if thinking.Type != "thinking" || thinking.Signature == nil || *thinking.Signature != "signed-thought" {
+					t.Fatalf("signed thinking changed: %+v", thinking)
+				}
+				last := payload.Messages[2]
+				if last.Role != "user" || len(last.Content) != 1 || last.Content[0].Type != "tool_result" {
+					t.Fatalf("tool continuation must contain only tool results, got %+v", last)
+				}
+				content, ok := last.Content[0].Content.([]anthropicBlock)
+				if !ok || len(content) != 4 || content[0].Text != "  output\n" || content[1].Text != reminder || content[2].Text != "Tool observations" || content[3].Type != "image" || content[3].Source.Data != "AAA" {
+					t.Fatalf("tool output, reminders or media changed: %#v", last.Content[0].Content)
+				}
+				if last.Content[0].CacheControl != nil {
+					t.Fatal("volatile injected context must remain outside the cache boundary")
+				}
+				toolUse := payload.Messages[1].Content[1]
+				if (toolUse.CacheControl != nil) != (cacheMode == "auto") {
+					t.Fatalf("unexpected cache boundary: %+v", toolUse)
+				}
+			})
+		}
 	}
 }
 
@@ -512,7 +523,7 @@ func TestBuildAnthropicRequest_ReplaysInvalidToolArgumentsWithErrorResult(t *tes
 	}
 }
 
-func TestBuildAnthropicRequest_CacheBoundaryKeepsSystemReminderAfterToolResult(t *testing.T) {
+func TestBuildAnthropicRequest_CacheBoundaryPrecedesInjectedToolContext(t *testing.T) {
 	reminder := wuucontext.FormatSystemReminder(wuucontext.EnvInfo{
 		CWD:       "/tmp/project",
 		Date:      "2026-04-21",
@@ -520,7 +531,7 @@ func TestBuildAnthropicRequest_CacheBoundaryKeepsSystemReminderAfterToolResult(t
 		GitStatus: "clean",
 	})
 
-	payload, err := buildAnthropicRequest(providers.ChatRequest{
+	request := providers.ChatRequest{
 		Model: "claude-test",
 		Messages: []providers.ChatMessage{
 			{Role: "user", Content: "check repo"},
@@ -531,7 +542,8 @@ func TestBuildAnthropicRequest_CacheBoundaryKeepsSystemReminderAfterToolResult(t
 			{Role: "user", Name: wuucontext.SystemReminderMessageName, Content: reminder},
 		},
 		CacheHint: &providers.CacheHint{StablePrefixMessages: 3},
-	}, 1024, false)
+	}
+	payload, err := buildAnthropicRequest(request, 1024, false)
 	if err != nil {
 		t.Fatalf("buildAnthropicRequest: %v", err)
 	}
@@ -539,31 +551,44 @@ func TestBuildAnthropicRequest_CacheBoundaryKeepsSystemReminderAfterToolResult(t
 	if len(payload.Messages) != 3 {
 		t.Fatalf("expected 3 messages after merge, got %d", len(payload.Messages))
 	}
-	if payload.Messages[1].Content[0].CacheControl != nil {
-		t.Fatalf("did not expect cache marker to stop at tool_use, got %+v", payload.Messages[1].Content[0].CacheControl)
+	if payload.Messages[1].Content[0].CacheControl == nil {
+		t.Fatal("expected cache boundary before tool result with injected context")
 	}
 	last := payload.Messages[2]
-	if len(last.Content) != 2 {
-		t.Fatalf("expected tool_result plus volatile reminder, got %+v", last.Content)
+	if len(last.Content) != 1 || last.Content[0].Type != "tool_result" || last.Content[0].CacheControl != nil {
+		t.Fatalf("expected uncached tool_result-only continuation, got %+v", last.Content)
 	}
-	if last.Content[0].Type != "tool_result" {
-		t.Fatalf("expected tool_result block, got %+v", last.Content[0])
+	content, ok := last.Content[0].Content.([]anthropicBlock)
+	if !ok || len(content) != 2 || content[0].Text != `{"exit_code":0}` || content[1].Text != reminder {
+		t.Fatalf("expected original output and reminder within tool result, got %#v", last.Content[0].Content)
 	}
-	if last.Content[0].CacheControl == nil || last.Content[0].CacheControl.Type != "ephemeral" {
-		t.Fatalf("expected cache marker on stable tool_result block, got %+v", last.Content[0].CacheControl)
+
+	request.Messages = append(request.Messages,
+		providers.ChatMessage{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "tool_2", Name: "git", Arguments: `{}`}}},
+		providers.ChatMessage{Role: "tool", ToolCallID: "tool_2", Name: "git", Content: "next result"},
+	)
+	continued, err := buildAnthropicRequest(request, 1024, false)
+	if err != nil {
+		t.Fatalf("build continued request: %v", err)
 	}
-	content, ok := last.Content[0].Content.(string)
-	if !ok {
-		t.Fatalf("expected string tool_result content, got %#v", last.Content[0].Content)
+	// Moving the breakpoint changes only cache metadata, never old content.
+	if continued.Messages[1].Content[0].CacheControl != nil {
+		t.Fatal("old tool use retained the sliding tail marker")
 	}
-	if strings.Contains(content, "<system-reminder>") {
-		t.Fatalf("did not expect volatile reminder in cached tool_result, got %q", content)
+	payload.Messages[1].Content[0].CacheControl = nil
+	before, err := json.Marshal(payload.Messages)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if last.Content[1].Type != "text" || !strings.Contains(last.Content[1].Text, "<system-reminder>") {
-		t.Fatalf("expected volatile system reminder after cache boundary, got %+v", last.Content[1])
+	after, err := json.Marshal(continued.Messages[:len(payload.Messages)])
+	if err != nil {
+		t.Fatal(err)
 	}
-	if last.Content[1].CacheControl != nil {
-		t.Fatalf("did not expect cache marker on volatile reminder, got %+v", last.Content[1].CacheControl)
+	if string(before) != string(after) {
+		t.Fatalf("advancing the cache marker rewrote the history prefix:\nbefore: %s\nafter: %s", before, after)
+	}
+	if tail := continued.Messages[len(continued.Messages)-1].Content[0]; tail.CacheControl == nil {
+		t.Fatal("continued request lost its sliding tail marker")
 	}
 }
 
@@ -592,29 +617,21 @@ func TestBuildAnthropicRequest_TailMarkerSkipsHiddenTrailingContext(t *testing.T
 	if len(payload.Messages) != 3 {
 		t.Fatalf("expected 3 messages after merge, got %d", len(payload.Messages))
 	}
-	// The sliding tail marker lands on the last cacheable block from a
-	// non-hidden source: the tool_result. The per-request reminder that
-	// merged in after it stays outside the cached prefix, and the earlier
-	// user message carries no marker of its own.
-	first := payload.Messages[0]
-	if first.Role != "user" || len(first.Content) != 1 {
-		t.Fatalf("unexpected first message: %+v", first)
+	// Folding runtime context must not pull the volatile suffix into the
+	// cached prefix. The boundary moves back before the affected tool result.
+	if payload.Messages[0].Content[0].CacheControl != nil {
+		t.Fatal("unexpected extra marker on first user message")
 	}
-	if first.Content[0].CacheControl != nil {
-		t.Fatalf("did not expect marker on earlier user message, got %+v", first.Content[0].CacheControl)
+	if payload.Messages[1].Content[0].CacheControl == nil {
+		t.Fatal("expected sliding marker on tool_use before injected context")
 	}
 	last := payload.Messages[2]
-	if len(last.Content) != 2 || last.Content[0].Type != "tool_result" || last.Content[1].Type != "text" {
-		t.Fatalf("expected marked tool_result followed by reminder text, got %+v", last.Content)
+	if len(last.Content) != 1 || last.Content[0].Type != "tool_result" || last.Content[0].CacheControl != nil {
+		t.Fatalf("expected unmarked tool result, got %+v", last.Content)
 	}
-	if last.Content[0].CacheControl == nil || last.Content[0].CacheControl.Type != "ephemeral" {
-		t.Fatalf("expected sliding tail marker on stable tool_result, got %+v", last.Content[0].CacheControl)
-	}
-	if last.Content[1].CacheControl != nil {
-		t.Fatalf("did not expect marker on volatile reminder, got %+v", last.Content[1].CacheControl)
-	}
-	if !strings.Contains(last.Content[1].Text, "<system-reminder>") {
-		t.Fatalf("expected volatile reminder after the cache boundary, got %q", last.Content[1].Text)
+	content, ok := last.Content[0].Content.([]anthropicBlock)
+	if !ok || len(content) != 2 || content[1].Text != reminder {
+		t.Fatalf("missing reminder within tool result: %#v", last.Content[0].Content)
 	}
 }
 
@@ -811,6 +828,7 @@ func TestBuildAnthropicRequest_RegularToolResultCanDiscoverDeferredTools(t *test
 					InputSchema: map[string]any{"type": "object"},
 				}},
 			},
+			{Role: "user", Name: wuucontext.SystemReminderMessageName, Content: "runtime context"},
 		},
 		Tools: []providers.ToolDefinition{
 			{Name: "tool_search", InputSchema: map[string]any{"type": "object"}, CacheStable: true},
@@ -836,7 +854,7 @@ func TestBuildAnthropicRequest_RegularToolResultCanDiscoverDeferredTools(t *test
 		t.Fatalf("unexpected final message: %+v", last)
 	}
 	blocks, ok := last.Content[0].Content.([]anthropicBlock)
-	if !ok || len(blocks) != 2 {
+	if !ok || len(blocks) != 3 {
 		t.Fatalf("expected text plus tool_reference content, got %#v", last.Content[0].Content)
 	}
 	if blocks[0].Type != "text" || blocks[0].Text == "" {
@@ -844,6 +862,9 @@ func TestBuildAnthropicRequest_RegularToolResultCanDiscoverDeferredTools(t *test
 	}
 	if blocks[1].Type != "tool_reference" || blocks[1].ToolName != "await_agents" {
 		t.Fatalf("unexpected discovered tool_reference: %+v", blocks[1])
+	}
+	if blocks[2].Type != "text" || blocks[2].Text != "runtime context" {
+		t.Fatalf("missing injected context after tool reference: %+v", blocks)
 	}
 }
 

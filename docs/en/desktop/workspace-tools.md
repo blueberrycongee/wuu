@@ -6,7 +6,13 @@ The left sidebar keeps the visibility and width you choose when you resize the w
 
 Expanding the right panel adds the current conversation as the first tab beside the tool tabs. Select it to return to the conversation without leaving the expanded layout; select a tool tab to switch back. The conversation draft is preserved. Exiting the expanded layout restores the conversation and tools side by side.
 
+![The action menu shown after selecting code in the file preview, with options to add it to the conversation, annotate it, or ask in side chat.](../assets/product/files-en.jpg)
+
+<p class="docs-caption">Select text in a file to bring the passage, an annotation, or a question into the conversation while the file stays in its tab.</p>
+
 ## Side chat
+
+The bundled Side plugin supplies `/side` and is selected in the recommended first-run setup. You can turn it off during setup or later in Settings → Plugins. Disabling it removes side-chat entry points and stops active side answers while preserving history; enabling it restores access.
 
 Use `/side` or **Ask in side chat** to open the side chat tab in the right sidebar. It shares the sidebar width and expanded layout with files and other tools. File selections keep their quote card, and the original file stays available in its tab.
 
@@ -39,15 +45,15 @@ Later pages are a snapshot continuation, not a refresh. Keep the search argument
 
 An agent can present a requested image, chart, or document as an output in the conversation. Images, including SVG, appear inline with a larger preview on click; other files appear as output cards.
 
-Click an image to open its preview. Pinch the trackpad or hold Ctrl/Command while scrolling to zoom around the pointer; use two-finger scrolling or drag to move an enlarged image. Double-click to enlarge or return to fit. The toolbar offers **Fit to window**, **Actual size**, **Rotate**, and **Save image as…**. Save As lets you choose a filename and directory and keeps the original bytes, including animation; preview rotation does not change the saved file.
+Click an image or an image output card to open the full-window image viewer. Pinch the trackpad or hold Ctrl/Command while scrolling to zoom around the pointer; use two-finger scrolling or drag to move an enlarged image. Double-click to enlarge or return to fit. The toolbar offers **Fit to window**, **Actual size**, **Rotate**, and **Save image as…**. Save As lets you choose a filename and directory and keeps the original bytes, including animation; preview rotation does not change the saved file.
 
 Keyboard controls: **+ / −** zoom, **0** fits the image, **1** shows actual size, **R** rotates, arrow keys pan, **Command/Ctrl + S** saves, and **Esc** closes the preview.
 
 These outputs are saved snapshots. Changing or deleting the original file later does not change the delivered version. A normal file link or diff is not an artifact snapshot.
 
-On desktop, click a file output card to open its snapshot in a workspace tab beside the conversation. PDF, HTML, images, audio, and text use their supported viewers; other formats retain a download action. HTML previews do not run scripts. Text previews load up to 2 MiB; download larger files to read them in another application.
+On desktop, other file output cards open their snapshots in a workspace tab beside the conversation. PDF, HTML, audio, and text use their supported viewers; other formats retain a download action. HTML previews do not run scripts. Text previews load up to 2 MiB; download larger files to read them in another application.
 
-When a live turn finishes successfully with exactly one delivered file, desktop can open it automatically after checking that the snapshot is available. Automatic preview supports PDF, HTML, images, and text up to 20 MiB (2 MiB for non-HTML text). It does not fetch ordinary links or open file edits. Multiple files, unsupported formats, failed or interrupted turns, and historical conversations require a click.
+When a live turn finishes successfully with exactly one delivered file, desktop can open it automatically after checking that the snapshot is available. Automatic preview supports PDF, HTML, and text up to 20 MiB (2 MiB for non-HTML text). Images open only when clicked. It does not fetch ordinary links or open file edits. Multiple files, unsupported formats, failed or interrupted turns, and historical conversations require a click.
 
 Automatic previews leave an occupied panel and foreground browser alone. Using the panel during the turn, opening an overlay, or switching to a narrow window suppresses automatic opening for that turn. Navigation cancels pending preview checks, and closing a preview does not reopen it on later updates. Downloads always require an explicit action.
 
@@ -95,17 +101,31 @@ Open **Terminal** or enter `/terminal` to run a shell in the workspace. Commands
 
 Agent commands also have activity entries and results in the conversation. Long output can be stored as a log reference. For long-running processes, use their process controls to inspect output, send input, or stop them. See [commands and background tasks](../reference/agent-command-system.md).
 
+## App snapshots on macOS
+
+App snapshots are disabled in this release. The settings entry is hidden and previously saved shortcuts are inactive. The instructions below apply only to builds that enable the feature.
+
+App snapshots are an opt-in, read-only way to attach one visible app window to a conversation. They require macOS 14 or later and a desktop build with the Wuu App Snapshot helper.
+
+Open **Settings → General → App snapshot**, set a shortcut and enable it. Changes save automatically. Click the shortcut button and press a new key combination to record it; Escape or leaving the button cancels recording. The current capture shortcut is paused while recording. Screen Recording permission is required; optional available window text also needs Accessibility permission. Grant the entry macOS shows for Wuu or Wuu App Snapshot in **System Settings → Privacy & Security**. These permissions do not turn on autonomous Computer Use.
+
+Keep Wuu’s main window open, switch to the app window you want to share, and press the shortcut. The shortcut synchronously identifies that window before the capture helper starts. Keep it in front until capture finishes. Wuu returns to the active conversation draft, adds the screenshot and source information (including available text when enabled), and focuses the input. Existing draft text is preserved. You can inspect or remove the attachments before sending. The snapshot is sent to your selected model provider only when you send your message. Available text can include content outside the visible scroll area; secure Accessibility fields are skipped. Screenshots are not redacted, so review all visible content before sending them. Text is included only when a single app window can be associated unambiguously across the window and Accessibility APIs; multi-window apps and uncertain matches produce screenshot-only attachments.
+
+Press the shortcut again while capture is running to cancel. Closing or reloading Wuu’s main window also cancels capture; a late result will not reopen a replacement window. Switching conversations or panes during attachment preparation rejects the result instead of redirecting it to another draft. If the target window changes, closes, or loses capture permission, Wuu discards that attempt rather than capturing a different app or the whole screen. Turning the shortcut off stops an in-progress capture. Attachments already in a draft can be removed there. It does not revoke macOS permissions; those remain under System Settings.
+
+The shortcut starts disabled, and no background history or audio is recorded. Ad-hoc preview builds may need permissions granted again after an update. Native capture and permission behavior require macOS validation; browser/Electron UI checks alone do not establish that support.
+
 ## Browser
 
 Open **Browser** or enter `/browser` to view a page in the workspace panel beside the conversation. That panel and the page the agent is using are the same tab: the address bar, back, forward, and reload all drive it. Clicking a web link in a message, a turn source capsule, or a compact browser activity row also opens or focuses that panel and navigates to the page. Hold Command (Ctrl on Windows) or middle-click to open it in the system browser instead. If you are already using another workspace tool, the page still navigates in that tab and does not steal the panel.
 
-Desktop browser automation is available by default. The active conversation automatically previews the Agent's page in a floating card, including during background browser actions; switching conversations hides it. The preview does not require an explicit visibility request and stays visible across further actions. Hiding or minimizing Wuu also hides the card; showing or restoring the window brings it back. Dragging the card snaps it to a corner of that column, clear of the composer. The page keeps its layout size and is zoomed so the whole page fits in the card. Dragging an edge or corner changes the card, and the zoom follows. Pointer events on the card move or resize it; they do not click or scroll the page. The card does not paint the page scrollbar or automatically open the side panel. Open the browser or expand the card to use that same page in the panel. Set `WUU_ENABLE_BROWSER=0` before launching Wuu to hide the automation tool.
+Desktop browser automation is available by default. The active conversation can show the Agent's page in the [live activity preview](#live-activity-preview), including during background browser actions. Open the browser or expand the preview to use that same page in the panel. Showing the page in the panel replaces its floating preview. Set `WUU_ENABLE_BROWSER=0` before launching Wuu to hide the automation tool.
 
 Each conversation owns its browser tabs, including pages opened in a new window. Listing or cleaning up tabs in one conversation leaves other conversations' pages alone. Tabs still share the app's browser profile and signed-in sessions; task ownership is not a separate login profile.
 
 Page-opened windows keep their original content and opener connection, including script-filled blank pages and forms submitted to a new window. When a turn finishes or is interrupted, Wuu closes temporary task pages and releases automation control. Pages you opened or took over, pages retained for handoff, and deliverables stay available. Keeping a popup also keeps its live opener so messaging and review context continue working. A later instruction can use a retained page with fresh control authority.
 
-Clicking or typing in the Agent's page, submitting an address, or using its navigation buttons pauses the current task and leaves the page available for you to use. Hovering and scrolling alone do not pause it. Send your next instruction in the conversation when you are ready to continue; background updates do not restore browser input. Use the conversation's Stop action to interrupt a task. The browser has no separate control-transfer buttons or ownership status bar.
+Clicking or typing in the Agent's page, submitting an address, or using its navigation buttons pauses the current task and leaves the page available for you to use. Hovering and scrolling alone do not pause it. Send your next instruction in the conversation when you are ready to continue; background updates do not restore browser input. Use the conversation's Stop action to interrupt a task.
 
 The floating preview and workspace panel share an animated pointer. It stays legible when the page is scaled, moves to the target before input, and shows click, typing, and scroll feedback. Direct page input clears it. Reduced-motion settings disable travel and idle movement.
 
@@ -116,6 +136,37 @@ WUU_BROWSER_PROXY=http://proxy.example:7897 npm run dev --prefix desktop
 ```
 
 Use the address and port of your own proxy. This setting does not configure model API or app-server traffic. If browser requests fail after enabling it, check the proxy and restart Wuu with the corrected setting.
+
+## Live activity preview
+
+A conversation can retain separate watch-only previews for each browser tab and supported local app window. Only the selected conversation shows its stack, with up to five cards visible at once. New targets lead the stack; dragging a card behind the front one raises it temporarily and brings it to the front on release. Cards overlap diagonally from a shared corner, with a common size limit that preserves each target’s proportions. Hiding or closing one target leaves the others in place and lets the next retained card appear. Returning to the same target updates its existing preview. After a successful turn, visible previews show completion and leave after 30 seconds; stopped or failed turns dismiss the stack. A minimized or hidden target app stays where you put it, and its preview waits until you show it again. Moving or resizing a preview does not send input to the target.
+
+In **Settings → General → Live activity**, **Show preview automatically** controls whether local activity opens the preview. The setting is saved across restarts. It does not enable an extension or give the Agent control. Hiding a preview leaves the task running; later activity updates do not reopen a preview you hid. There is no title-bar control for manually reopening a hidden preview.
+
+Previews appear while their Wuu window is visible, without activating it or taking keyboard focus from another app. Hiding or minimizing Wuu hides the stack too. Restoring Wuu shows only eligible cards that were not explicitly hidden. Foreground image viewers and dialogs temporarily hide the whole stack. Drag the front card to place the stack in a corner of the conversation column, clear of the composer, or resize it from an edge or corner. Browser pages keep their layout size and scale to fit. Previews follow the app’s appearance and text settings and respect reduced motion.
+
+The preview has two display controls for browser pages, and only Hide for native apps:
+
+- **Hide preview** hides the card and leaves the task running.
+- **Open in side panel** opens a browser page at full size.
+
+Use **Stop** in the conversation to interrupt the task. To take over a browser page, open it in the side panel and click or type in it. This does not bring retained native apps to the foreground. Send another instruction in the conversation to continue with fresh control authority.
+
+Hiding the preview or stopping the task does not quit the application being observed. Disabling or retiring the owning extension stops its preview activity. If a capture target disappears, Wuu closes its preview; unchanged activity updates do not reopen that target. Unavailable capture shows a brief recovery hint, and a retained frame is labelled paused rather than live. Individual tool errors stay in the conversation's tool records and do not cover the preview. The preview does not silently switch to another app window or the whole screen.
+
+Native app previews use a low-latency H.264 video stream with hardware acceleration where available. Hiding or pausing the preview stops capture; resuming or resizing it refreshes the video, and decoder recovery stays on the same target window.
+
+Native app previews require a macOS build with Computer Use enabled and the relevant macOS permissions. The floating preview does not itself grant Screen Recording or Accessibility access. See [installation](../getting-started/installation.md) for build availability and permissions.
+
+## Mac app control
+
+In builds with Computer Use enabled, the Agent can work in a background app while your current app stays in front. The preview's existing cursor shows its actions. Background focus support keeps menus available between steps; applications that require foreground input still need an explicit foreground action. Stopping or taking over app control releases background focus even between tool calls.
+
+Text operations include plain text, Markdown and HTML paste, selecting a unique text match, and placing the insertion point before or after it. Paste restores the previous clipboard unless another app or you copied something in the meantime. Clicks support modifier keys and holds; held keys and mouse buttons are released when an action is cancelled.
+
+After input, Wuu waits briefly for Accessibility and visual changes to settle before returning or taking a requested follow-up observation. This does not prove that a save, navigation or other asynchronous task has finished: the Agent must still check the intended result.
+
+Observations include control relationships, focused text and selection ranges, and changes since the previous comparable snapshot. Large trees remain paged, and incomplete differences are marked. Input that uses elements or coordinates still needs a fresh snapshot, even when a control keeps its element ID. The Computer Use skill includes workflows for Notion blocks, Spotify playback and library updates, native text editors, and web-based editors.
 
 ## Find an action
 

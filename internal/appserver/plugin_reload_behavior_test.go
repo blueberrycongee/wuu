@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -24,57 +26,203 @@ import (
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/tools"
-	plugingo "github.com/blueberrycongee/wuu/packages/plugin-go"
 )
 
-// The fixture uses the public Go extension protocol in a separate process, so
-// assertions cover real generation ownership and tool routing rather than a
-// synthetic epoch comparison.
+// The fixture speaks the process wire protocol directly, so these assertions
+// cover generation ownership and routing without a plugin authoring SDK.
 func TestPluginReloadBehaviorProcess(t *testing.T) {
 	marker := os.Getenv("WUU_RELOAD_TEST_MARKER")
 	if marker == "" {
 		return
 	}
-	var callbackHost plugingo.Host
-	var required []plugingo.HostService
-	if os.Getenv("WUU_RELOAD_TEST_SESSION") != "" {
-		required = []plugingo.HostService{{ID: plugingo.HostServiceSessionSend, Required: true}}
-	}
-	err := plugingo.Serve(context.Background(), plugingo.Handler{
-		Initialize: func(_ context.Context, host plugingo.Host, _ plugingo.InitializeParams) error {
-			callbackHost = host
-			return nil
-		},
-		Activate: func(context.Context) error {
-			if message := os.Getenv("WUU_RELOAD_TEST_ACTIVATE_ERROR"); message != "" {
-				return fmt.Errorf("%s", message)
-			}
-
-			if target := os.Getenv("WUU_RELOAD_TEST_SESSION"); target != "" {
-				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-				defer cancel()
-				var result plugingo.SessionSendResult
-				err := plugingo.CallHostService(ctx, callbackHost, plugingo.HostServiceSessionSend, plugingo.SessionSendParams{RequestID: "activate-send", SessionID: target, Input: plugingo.SessionInput{Prompt: "activation callback"}}, &result)
+	scanner := bufio.NewScanner(os.Stdin)
+	enc := json.NewEncoder(os.Stdout)
+	activationID := ""
+	for scanner.Scan() {
+		var req struct {
+			ID     string          `json:"id"`
+			Method string          `json:"method"`
+			Result json.RawMessage `json:"result"`
+			Error  json.RawMessage `json:"error"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+			os.Exit(2)
+		}
+		var result any = map[string]any{}
+		var callErr error
+		switch req.Method {
+		case "initialize":
+			if path := os.Getenv("WUU_RELOAD_TEST_ATTEMPTS"); path != "" {
+				file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 				if err != nil {
-					return err
+					os.Exit(2)
 				}
-				raw, _ := json.Marshal(result)
-				return os.WriteFile(os.Getenv("WUU_RELOAD_TEST_CALLBACK_RESULT"), raw, 0600)
+				_, callErr = fmt.Fprintln(file, time.Now().UnixNano())
+				if err := file.Close(); err != nil {
+					callErr = err
+				}
 			}
-			return nil
-		},
-		Shutdown: func(context.Context) error {
-			return os.WriteFile(os.Getenv("WUU_RELOAD_TEST_SHUTDOWN"), []byte(marker), 0600)
-		},
-		Definition: plugingo.Definition{RequiredHostServices: required, Tools: []plugingo.Tool{{ID: "read", Description: os.Getenv("WUU_RELOAD_TEST_DESCRIPTION"), InputSchema: map[string]any{"type": "object"}, Activity: &plugingo.ToolActivity{ReadOnly: true, ConcurrencySafe: true, Risk: "low"}}}},
-		ExecuteTool: func(context.Context, plugingo.Host, plugingo.ToolCall) (plugingo.ToolResult, error) {
-			return plugingo.TextResult(marker), nil
-		},
-	})
-	if err != nil {
-		os.Exit(2)
+			if path := os.Getenv("WUU_RELOAD_TEST_FAILURE"); path != "" {
+				if message, err := os.ReadFile(path); err == nil {
+					callErr = fmt.Errorf("%s", message)
+				}
+			}
+			definition := pluginhost.CapabilityInitializeResult{
+				ProtocolVersion:  pluginhost.CapabilityProtocolVersion,
+				LifecycleVersion: pluginhost.RuntimeLifecycleVersion,
+				InitializeResult: pluginhost.InitializeResult{Tools: []pluginhost.ToolRegistration{{ID: "read", Description: os.Getenv("WUU_RELOAD_TEST_DESCRIPTION"), InputSchema: map[string]any{"type": "object"}, Activity: &pluginhost.ToolActivityMetadata{ReadOnly: true, ConcurrencySafe: true, Risk: "low"}}}},
+			}
+			if os.Getenv("WUU_RELOAD_TEST_SESSION") != "" {
+				definition.RequiredServices = []pluginhost.ServiceRequirement{{Name: pluginhost.KernelSessionSendService, MajorVersion: 1, Required: true}}
+			}
+			result = definition
+		case "activate":
+			if message := os.Getenv("WUU_RELOAD_TEST_ACTIVATE_ERROR"); message != "" {
+				callErr = fmt.Errorf("%s", message)
+			}
+			if target := os.Getenv("WUU_RELOAD_TEST_SESSION"); target != "" && callErr == nil {
+				activationID = req.ID
+				_ = enc.Encode(map[string]any{"id": "fixture-session-send", "method": "host.service.call", "params": pluginhost.ServiceCallParams{Service: pluginhost.KernelSessionSendService, Method: "call", Params: json.RawMessage(fmt.Sprintf(`{"request_id":"activate-send","session_id":%q,"input":{"prompt":"activation callback"}}`, target))}})
+				continue
+			}
+		case "":
+			if req.ID != "fixture-session-send" || activationID == "" {
+				continue
+			}
+			if len(req.Error) != 0 && string(req.Error) != "null" {
+				_ = enc.Encode(map[string]any{"id": activationID, "error": req.Error})
+				activationID = ""
+				continue
+			}
+			callErr = os.WriteFile(os.Getenv("WUU_RELOAD_TEST_CALLBACK_RESULT"), req.Result, 0600)
+			req.ID, activationID = activationID, ""
+		case "tool.execute":
+			result = map[string]any{"result": map[string]any{"content": []map[string]string{{"type": "text", "text": marker}}}}
+		case "shutdown":
+			callErr = os.WriteFile(os.Getenv("WUU_RELOAD_TEST_SHUTDOWN"), []byte(marker), 0600)
+		}
+		if callErr != nil {
+			_ = enc.Encode(map[string]any{"id": req.ID, "error": map[string]string{"code": "fixture_error", "message": callErr.Error()}})
+		} else {
+			_ = enc.Encode(map[string]any{"id": req.ID, "result": result})
+		}
+		if req.Method == "shutdown" {
+			os.Exit(0)
+		}
 	}
 	os.Exit(0)
+}
+
+func TestPluginRefreshFailureBackoffKeepsRealRuntimeAndManualRetry(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = retryingTempDir(t)
+	control := t.TempDir()
+	attemptsPath := filepath.Join(control, "attempts")
+	failurePath := filepath.Join(control, "failure")
+	manifest := pluginpkg.Manifest{SchemaVersion: 1, ID: "retry-fixture", Runtime: &pluginpkg.RuntimeSpec{
+		Protocol: pluginhost.ProtocolName, Command: os.Args[0], Args: []string{"-test.run=^TestPluginReloadBehaviorProcess$"},
+		Env: map[string]string{"WUU_RELOAD_TEST_MARKER": "last good runtime", "WUU_RELOAD_TEST_DESCRIPTION": "Read fixture",
+			"WUU_RELOAD_TEST_SHUTDOWN": filepath.Join(control, "shutdown"), "WUU_RELOAD_TEST_ATTEMPTS": attemptsPath, "WUU_RELOAD_TEST_FAILURE": failurePath},
+	}}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(rt.WuuHome, "plugins", manifest.ID, "plugin.json")
+	writePluginPackageFile(t, path, string(raw))
+	item, err := pluginpkg.LoadManifest(path, "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		DefaultProvider: "fake-provider",
+		Providers:       map[string]config.ProviderConfig{"fake-provider": {Type: "openai-compatible", BaseURL: "https://example.test/v1", Model: "fake-model"}},
+		Extensions:      &extensions.Settings{},
+	}
+	if err := cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint, Permissions: item.EffectivePermissions}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePluginPackageFile(t, rt.ConfigPath, string(raw))
+	if _, _, err := rt.LoadEffectiveConfig(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.RefreshExtensions(cfg); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = rt.Cleanup() })
+	oldHost := rt.PluginHost
+	pinned := rt.RetainPluginGeneration()
+	defer rt.ReleasePluginGeneration(pinned)
+	toolName := ""
+	for _, tool := range oldHost.ToolDefinitions() {
+		if registered, ok := oldHost.Tool(tool.Name); ok && registered.PluginID == manifest.ID {
+			toolName = tool.Name
+		}
+	}
+	if toolName == "" {
+		t.Fatalf("fixture tool is missing: %+v", oldHost.Statuses())
+	}
+	assertOldTool := func() {
+		t.Helper()
+		result, err := oldHost.ExecuteTool(context.Background(), toolName, pluginhost.ToolExecuteInput{
+			ThreadID: "retained-thread", TurnID: "retained-turn", CallID: "read", CWD: rt.RootDir, Arguments: json.RawMessage(`{}`),
+		})
+		if err != nil || !strings.Contains(fmt.Sprint(result), "last good runtime") {
+			t.Fatalf("retained process is unusable: %+v, %v", result, err)
+		}
+	}
+	attempts := func() int {
+		t.Helper()
+		data, err := os.ReadFile(attemptsPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(strings.Fields(string(data)))
+	}
+	out := &lockedBuffer{}
+	srv := &Server{rt: rt, out: out, threads: map[string]*threadState{}}
+	defer srv.Close()
+	writePluginPackageFile(t, failurePath, "initialization refused")
+	epoch := advancePluginGenerationWatchTestEpoch(t, rt.WuuHome)
+	if err := srv.refreshPluginGenerationIfChanged(); err == nil || !strings.Contains(err.Error(), "initialization refused") {
+		t.Fatalf("candidate failure was hidden: %v", err)
+	}
+	for range 8 {
+		_ = srv.refreshPluginGenerationIfChanged()
+		thread := &threadState{ID: "waiting-for-recovery"}
+		thread.mu.Lock()
+		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(thread)
+		thread.mu.Unlock()
+		if err != nil || acquired {
+			t.Fatalf("turn admission did not wait for recovery: acquired=%t err=%v", acquired, err)
+		}
+		srv.backgroundWG.Wait()
+	}
+	if attempts() != 2 || rt.PluginHost != oldHost || srv.pluginGenerationEpoch.Load() == epoch {
+		t.Fatalf("failed candidate was rebuilt or published: attempts=%d epoch=%d", attempts(), srv.pluginGenerationEpoch.Load())
+	}
+	assertOldTool()
+	// The real Refresh RPC is an explicit attempt even during automatic backoff.
+	callPluginPackageRPC(t, srv, "retry-failed", MethodExtensionCatalogRefresh, struct{}{})
+	response := responseByID(t, parseOutput(t, out.String()), "retry-failed")
+	if response["error"] == nil || attempts() != 3 || rt.PluginHost != oldHost {
+		t.Fatalf("manual retry did not attempt and report failure: %+v; attempts=%d", response, attempts())
+	}
+	assertOldTool()
+	if err := os.Remove(failurePath); err != nil {
+		t.Fatal(err)
+	}
+	callPluginPackageRPC(t, srv, "retry-repaired", MethodExtensionCatalogRefresh, struct{}{})
+	response = responseByID(t, parseOutput(t, out.String()), "retry-repaired")
+	if response["error"] != nil || attempts() != 4 || rt.PluginHost == oldHost {
+		t.Fatalf("repaired manual retry did not publish: %+v; attempts=%d", response, attempts())
+	}
+	assertOldTool()
+	t.Logf("real plugin initialize attempts=%d; failed candidates retained callable old process; manual failure and recovery reported through Refresh RPC", attempts())
 }
 
 func publishReloadBehaviorGeneration(t *testing.T, rt *runtime.Session, marker, description string) {
@@ -527,7 +675,7 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 			if err != nil {
 				t.Fatalf("activation callback did not complete: %v; statuses=%+v", err, rt.PluginHost.Statuses())
 			}
-			var result plugingo.SessionSendResult
+			var result pluginhost.SessionSendResult
 			if err := json.Unmarshal(raw, &result); err != nil {
 				t.Fatal(err)
 			}

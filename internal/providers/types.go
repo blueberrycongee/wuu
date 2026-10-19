@@ -331,7 +331,12 @@ type ChatMessage struct {
 	Hidden bool
 	// ProviderItemID preserves provider-native assistant output item identity,
 	// such as OpenAI Responses msg_* ids, for same-model replay.
-	ProviderItemID       string
+	ProviderItemID string
+	// EngineTurnID binds an admitted user message to its native engine turn.
+	EngineTurnID string
+	// EngineTurnPending marks only newly admitted native work whose terminal
+	// state has not been durably confirmed. Legacy rows default to false.
+	EngineTurnPending    bool
 	ProviderItemProvider string
 	ProviderItemModel    string
 	// Steered marks user input that was injected into an already-running turn.
@@ -425,7 +430,10 @@ type ChatRequest struct {
 	// Provider is Wuu's configured provider identity. It is request metadata
 	// used to prevent provider-native state from crossing endpoints and is
 	// never serialized by provider adapters.
-	Provider    string
+	Provider string
+	// Adapter selects an exact plugin adapter. Empty or native uses the host protocol.
+	// It is host routing metadata and must never be sent to a provider.
+	Adapter     string
 	Model       string
 	Messages    []ChatMessage
 	Tools       []ToolDefinition
@@ -798,6 +806,14 @@ type StreamEvent struct {
 type StreamClient interface {
 	Client
 	StreamChat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error)
+}
+
+// StreamAccountingOwner identifies a stream boundary that records physical
+// provider evidence before forwarding logical or transformed events. Wrappers
+// that change stream events must preserve this ownership contract: an outer
+// retry executor still owns attempts, but must not rewrite physical receipts.
+type StreamAccountingOwner interface {
+	OwnsStreamAccounting() bool
 }
 
 var ErrNativeCompactionUnavailable = errors.New("native compaction unavailable")

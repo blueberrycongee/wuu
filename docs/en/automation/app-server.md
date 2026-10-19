@@ -59,6 +59,33 @@ for future conversations; add `keep_selection: true` to save a provider's
 connection without making it the default. Do not try to override a turn's permission mode through
 `turn/start`.
 
+## Page conversation history
+
+For a compact conversation view, send `conversation_history: true` with
+`thread/resume`. The response folds settled tool activity and commentary into
+`process_summary` items before applying the history page budget. Replies, errors
+and published attachments remain visible; active turns retain live items.
+Pass the returned opaque `history_cursor` to `thread/history/read` to load older
+conversation pages. These pages currently allow up to 100 turns and 1 MiB of
+serialized item data; a page can split a turn, but never a process summary.
+The iOS timeline starts loading older pages automatically after opening a
+conversation and continues until history is complete. Requests run one at a
+time and stop when the view closes, the conversation changes, or the connection
+is lost. Reading position is retained while browsing older messages; a failed
+page can be retried at the top of the timeline. Tool details and full oversized
+content remain on demand.
+
+When the user opens a summary, call `thread/activity/read` with `thread_id`,
+`turn_id`, the summary’s `item_id`, and `activity.last_item_id` as `last_item_id`.
+The response contains `turn` and an optional `next_cursor`. Pass that cursor as
+`cursor` to read the next detail page. Keep these detail pages separate from the
+conversation state. Oversized individual items retain `remote_content_ref` for
+`thread/content/read`. If history editing removes a boundary, reopen the
+conversation instead of continuing with the stale cursor.
+
+Clients that omit `conversation_history` keep the existing item history format.
+Older hosts ignore the option and return their usual history pages.
+
 ## Delete archived conversations
 
 `thread/listArchived` returns archived conversations across the configured
@@ -151,3 +178,27 @@ The stdio protocol is a trusted local control surface, not an authenticated netw
 service. A remote or hosted deployment must provide its own transport security and
 isolation around it. The [protocol reference](../integrations/app-server-protocol.md)
 covers message shapes, capabilities, selection rules, and cloud process identity.
+
+## Answer native engine questions
+
+Codex questions use the existing `user-question/requested` and
+`user-question/resolved` notifications and `user-question/list`,
+`user-question/respond`, `user-question/cancel`, and `user-question/hold` methods.
+Requests carry the owning Wuu `thread_id` and `turn_id`, plus the native item in
+`call_id`. Question IDs are scoped to this host request; echo them unchanged.
+
+A request with `reply_to_tool: true` returns answers to the waiting engine call.
+Do not also submit a message or steer a turn. `mode: "ask"` uses the regular
+question form; `mode: "offer"` uses the optional card with the existing 20-second
+expiry, paused by `user-question/hold`. Cancelling, skipping, or expiry supplies
+no answer and never selects an option. Turn completion, interruption, and native
+process disconnect retire the question; late responses fail. Missing native
+blocking metadata defaults to a blocking question. Secret-input requests are
+explicitly unsupported and are never shown in a plain-text field.
+
+Wuu enables questions in ordinary native turns when the host question bridge is
+available. An explicit native `features.default_mode_request_user_input = false`
+is retained, and Wuu never overrides the native tool-level disable setting.
+Feature configuration is applied at thread creation or cold resume. Loaded native
+threads keep their initial feature configuration; reconnect the native engine or
+start another conversation to apply a changed native question setting.

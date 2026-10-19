@@ -12,6 +12,7 @@ import (
 // attempt, execution, and telemetry fields are excluded.
 func InferenceRequestHash(req ChatRequest) (string, error) {
 	payload := struct {
+		Adapter                     string `json:",omitempty"`
 		Model                       string
 		Messages                    []ChatMessage
 		Tools                       []ToolDefinition
@@ -23,6 +24,7 @@ func InferenceRequestHash(req ChatRequest) (string, error) {
 		NativeDeferredToolDiscovery bool
 		ForceToolName               string
 	}{
+		Adapter:                     req.Adapter,
 		Model:                       req.Model,
 		Messages:                    req.Messages,
 		Tools:                       req.Tools,

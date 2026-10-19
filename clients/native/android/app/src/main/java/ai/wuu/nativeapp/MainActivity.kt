@@ -308,7 +308,8 @@ class MainActivity : ComponentActivity() {
                                         if (collapsible) {
                                             Text(message.text, maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis)
                                             TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起" else "显示更多") }
-                                        } else MessageText(message.text, message.role == "assistant", Modifier)
+                                        } else MessageText(message.text, message.role == "assistant", Modifier,
+                                            isLive = message.role == "assistant" && model.running && message.id == model.messages.lastOrNull()?.id)
                                     }
                                 }
                             }

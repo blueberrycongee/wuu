@@ -6,7 +6,10 @@ import {
   type MessageFlowFontSize,
   type PopOutInitResult,
   type BrowserCommandParams,
+  type BrowserCookieImportResult,
   type BrowserDockTarget,
+  type BrowserExtensionRecord,
+  type BrowserProfile,
   type BrowserSurfaceSnapshot,
   type BrowserTabAdopted,
   type RemoteControlEvent,
@@ -24,6 +27,7 @@ import {
   type WuuDesktopApi,
 } from "../shared/protocol";
 
+import type { ActivityPreviewAppearance } from "../shared/activityPreview";
 import { initializeDesktopPageZoom, type DesktopZoomAction } from "../shared/DesktopPageZoom";
 
 // Restore shell zoom independently of font preferences.
@@ -142,6 +146,33 @@ try {
 }
 
 const api: WuuDesktopApi = {
+  getDesktopUpdateState: () => ipcRenderer.invoke("wuu:desktop-update-state"),
+  downloadDesktopUpdate: () => ipcRenderer.invoke("wuu:desktop-update-download"),
+  restartDesktopUpdate: () => ipcRenderer.invoke("wuu:desktop-update-restart"),
+  onDesktopUpdateChanged: handler => {
+    const listener = (_event: Electron.IpcRendererEvent, state: Parameters<typeof handler>[0]) => handler(state);
+    ipcRenderer.on("wuu:desktop-update-changed", listener);
+    return () => ipcRenderer.removeListener("wuu:desktop-update-changed", listener);
+  },
+  getSystemPermissions: () => ipcRenderer.invoke("wuu:system-permissions"),
+  requestSystemPermission: (permission, presentation) => ipcRenderer.invoke("wuu:system-permission-request", permission, presentation),
+  updateSystemPermissionGuide: presentation => ipcRenderer.send("wuu:system-permission-guide-update", presentation),
+  onSystemPermissionGuideChanged: handler => {
+    const listener = (_event: Electron.IpcRendererEvent, state: Parameters<typeof handler>[0]) => handler(state);
+    ipcRenderer.on("wuu:system-permission-guide-changed", listener);
+    return () => ipcRenderer.removeListener("wuu:system-permission-guide-changed", listener);
+  },
+  closeSystemPermissionGuide: requestId => ipcRenderer.invoke("wuu:system-permission-guide-close", requestId),
+  getAppContextState: () => ipcRenderer.invoke("wuu:app-context-state"),
+  setAppContextShortcutRecording: (recording) => ipcRenderer.invoke("wuu:app-context-recording", recording),
+  updateAppContextSettings: (settings) => ipcRenderer.invoke("wuu:app-context-settings", settings),
+  requestAppContextPermission: (kind) => ipcRenderer.invoke("wuu:app-context-permission", kind),
+  discardAppContextSnapshot: (id) => ipcRenderer.invoke("wuu:app-context-discard", id),
+  onAppContextChanged: (handler) => {
+    const listener = () => handler();
+    ipcRenderer.on("wuu:app-context-changed", listener);
+    return () => ipcRenderer.removeListener("wuu:app-context-changed", listener);
+  },
   initialOnboardingComplete,
   completeOnboarding: () => ipcRenderer.invoke("wuu:onboarding-complete"),
   discoverRecentWorkspaces: () => ipcRenderer.invoke("wuu:onboarding-discover-workspaces"),
@@ -196,6 +227,8 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:terminal-stop", id),
   listManagedProcesses: (threadId: string) =>
     ipcRenderer.invoke("wuu:managed-process-list", threadId),
+  cancelProcessNotifications: (threadId: string, processId: string) =>
+    ipcRenderer.invoke("wuu:process-cancel-notifications", threadId, processId),
   readManagedProcess: (params) =>
     ipcRenderer.invoke("wuu:managed-process-read", params),
   writeManagedProcess: (threadId: string, processId: string, input: string) =>
@@ -278,6 +311,8 @@ const api: WuuDesktopApi = {
   getPluginStorage: (params) => ipcRenderer.invoke("wuu:plugin-storage-get", params),
   setPluginStorage: (params) => ipcRenderer.invoke("wuu:plugin-storage-set", params),
   requestPluginRuntime: (params) => ipcRenderer.invoke("wuu:plugin-runtime-request", params),
+  readPluginVisibleHistory: (params) => ipcRenderer.invoke("wuu:plugin-visible-history", params),
+  cancelPluginRuntime: (params) => ipcRenderer.invoke("wuu:plugin-runtime-cancel", params),
   listSkills: (params) => ipcRenderer.invoke("wuu:skill-list", params),
   readSkillContent: (params) => ipcRenderer.invoke("wuu:skill-content", params),
   returnManagedSession: (params) => ipcRenderer.invoke("wuu:session-control-return", params),
@@ -301,12 +336,12 @@ const api: WuuDesktopApi = {
   pollXAILogin: (loginId: string) => ipcRenderer.invoke("wuu:auth-xai-login-poll", loginId),
   cancelXAILogin: (loginId: string) => ipcRenderer.invoke("wuu:auth-xai-login-cancel", loginId),
   listActivities: (threadId: string) => ipcRenderer.invoke("wuu:activity-list", threadId),
-  takeoverActivity: (threadId: string, activityId: string, inputGeneration?: number) =>
-    ipcRenderer.invoke("wuu:activity-takeover", threadId, activityId, inputGeneration),
-  releaseActivity: (threadId: string, activityId: string) =>
-    ipcRenderer.invoke("wuu:activity-release", threadId, activityId),
-  stopActivity: (threadId: string, activityId: string) =>
-    ipcRenderer.invoke("wuu:activity-stop", threadId, activityId),
+  takeoverActivity: (threadId: string, activityId: string, inputGeneration?: number, executionId?: string) =>
+    ipcRenderer.invoke("wuu:activity-takeover", threadId, activityId, inputGeneration, executionId),
+  releaseActivity: (threadId: string, activityId: string, executionId?: string) =>
+    ipcRenderer.invoke("wuu:activity-release", threadId, activityId, executionId),
+  stopActivity: (threadId: string, activityId: string, executionId?: string) =>
+    ipcRenderer.invoke("wuu:activity-stop", threadId, activityId, executionId),
   listCodexPets: () => ipcRenderer.invoke("wuu:codex-pets-list"),
   updateCodexPetSettings: (settings) =>
     ipcRenderer.invoke("wuu:codex-pets-update", settings),
@@ -371,6 +406,13 @@ const api: WuuDesktopApi = {
       ipcRenderer.removeListener("wuu:language-preference-changed", listener);
   },
   initialMessageFlowFontSize,
+  getActivityPreviewAutoShow: () => ipcRenderer.invoke("wuu:activity-preview-auto-show-get"),
+  setActivityPreviewAutoShow: (enabled) => ipcRenderer.invoke("wuu:activity-preview-auto-show-set", enabled),
+  onActivityPreviewAutoShowChange: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, enabled: boolean) => handler(enabled);
+    ipcRenderer.on("wuu:activity-preview-auto-show-changed", listener);
+    return () => ipcRenderer.removeListener("wuu:activity-preview-auto-show-changed", listener);
+  },
   getThemePreference: () => ipcRenderer.invoke("wuu:theme-preference-get"),
   setThemePreference: (theme: ThemePreference) =>
     ipcRenderer.invoke("wuu:theme-preference-set", theme),
@@ -599,6 +641,7 @@ type BrowserTakeoverApi = {
   ) => () => void;
   onBrowserTabAdopted: (handler: (payload: BrowserTabAdopted) => void) => () => void;
   onBrowserDock: (handler: (payload: BrowserDockTarget) => void) => () => void;
+  reportActivityPreviewAppearance: (appearance: ActivityPreviewAppearance) => void;
   reportBrowserPiPHostLayout: (
     payload: {
       host: { x: number; y: number; width: number; height: number };
@@ -648,6 +691,9 @@ browserApi.onBrowserTabAdopted = (handler) => {
   ipcRenderer.on("wuu:browser-tab-adopted", listener);
   return () => ipcRenderer.removeListener("wuu:browser-tab-adopted", listener);
 };
+browserApi.reportActivityPreviewAppearance = (appearance) => {
+  void ipcRenderer.invoke("wuu:activity-preview-appearance", appearance);
+};
 browserApi.reportBrowserPiPHostLayout = (payload) => {
   void ipcRenderer.invoke("wuu:browser-pip-host-layout", payload);
 };
@@ -656,6 +702,18 @@ browserApi.onBrowserDock = (handler) => {
   ipcRenderer.on("wuu:browser-dock", listener);
   return () => ipcRenderer.removeListener("wuu:browser-dock", listener);
 };
+browserApi.listBrowserProfiles = () =>
+  ipcRenderer.invoke("wuu:browser-profiles") as Promise<BrowserProfile[]>;
+browserApi.importBrowserCookies = (profilePath) =>
+  ipcRenderer.invoke("wuu:browser-import-cookies", profilePath) as Promise<BrowserCookieImportResult>;
+browserApi.listBrowserExtensions = () =>
+  ipcRenderer.invoke("wuu:browser-extensions-list") as Promise<BrowserExtensionRecord[]>;
+browserApi.addBrowserExtension = () =>
+  ipcRenderer.invoke("wuu:browser-extensions-add") as Promise<BrowserExtensionRecord[]>;
+browserApi.setBrowserExtensionEnabled = (id, enabled) =>
+  ipcRenderer.invoke("wuu:browser-extensions-set-enabled", id, enabled) as Promise<BrowserExtensionRecord[]>;
+browserApi.removeBrowserExtension = (id) =>
+  ipcRenderer.invoke("wuu:browser-extensions-remove", id) as Promise<BrowserExtensionRecord[]>;
 
 contextBridge.exposeInMainWorld("wuu", api);
 

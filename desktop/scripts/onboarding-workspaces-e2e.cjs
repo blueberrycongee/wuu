@@ -43,13 +43,13 @@ if (partial) write(path.join(codex, 'sessions', 'unreadable.jsonl'), 'x'.repeat(
 write(path.join(home, 'desktop-settings.json'), JSON.stringify({ language: empty ? 'zh-CN' : 'en-US', theme: 'dark' }));
 write(path.join(home, 'config.json'), JSON.stringify({
   default_provider: 'fixture', providers: { fixture: { type: 'openai-compatible', model: 'fixture', base_url: 'http://127.0.0.1:1', api_key: 'synthetic-test-key' } },
-  engines: Object.fromEntries(['codex','claude','cursor','devin','grok','hermes','pi','opencode','antigravity'].map(id => [id, { enabled: false }])),
+  engines: Object.fromEntries(['codex','claude','cursor','devin','dsh','grok','hermes','pi','opencode','antigravity'].map(id => [id, { enabled: false }])),
 }));
 app.setPath('userData', path.join(fixture, 'electron'));
 process.env.WUU_HOME = home;
 process.env.CODEX_HOME = codex;
 process.env.CLAUDE_CONFIG_DIR = claude;
-process.env.WUU_DESKTOP_CORE = path.join(desktop, 'build/bin/wuu-core');
+process.env.WUU_DESKTOP_CORE ||= path.join(desktop, 'build/bin/wuu-core');
 process.env.WUU_ENABLE_BROWSER = '0';
 process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
@@ -90,7 +90,7 @@ async function screenshot(name) {
   console.log("CAPTURE", name);
   await evaluate(async () => {
     await document.fonts.ready;
-    await Promise.all((document.querySelector('.first-run-onboarding')?.getAnimations({ subtree: true }) ?? []).filter(animation => animation.playState === 'running' && animation.effect?.getComputedTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {})));
+    await Promise.all((document.querySelector('.first-run-onboarding')?.getAnimations({ subtree: true }) ?? []).filter(animation => animation.timeline instanceof DocumentTimeline && animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => {})));
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
   fs.writeFileSync(path.join(output, `${name}.png`), (await main.webContents.capturePage()).toPNG());
@@ -98,6 +98,18 @@ async function screenshot(name) {
     viewport: { width: innerWidth, height: innerHeight, scale: devicePixelRatio },
     theme: document.documentElement.dataset.theme,
     scrollbarWidth: getComputedStyle(document.documentElement).getPropertyValue('--scrollbar-width'),
+    chrome: (() => {
+      const chrome = document.querySelector('.onboarding-chrome');
+      if (!chrome) return null;
+      const header = chrome.getBoundingClientRect();
+      const peers = [...document.querySelectorAll('.onboarding-progress, .linux-window-control')].map(element => {
+        const bounds = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+        return { target: element.className, bounds: bounds.toJSON(), centerY: bounds.y + bounds.height / 2,
+          button: element instanceof HTMLButtonElement, hit: element === hit || element.contains(hit) };
+      });
+      return { header: header.toJSON(), peers };
+    })(),
     regions: Object.fromEntries([
       '.onboarding-heading', '.onboarding-lead', '.onboarding-workspace-toolbar',
       '.onboarding-workspace-section-title', '.onboarding-workspace-select',
@@ -119,6 +131,23 @@ async function screenshot(name) {
     })),
   }));
   fs.writeFileSync(path.join(output, `${name}.json`), JSON.stringify(layout, null, 2));
+  if (name === 'landed') {
+    assert.equal(layout.chrome, null, 'Completing setup removes the onboarding chrome');
+    return;
+  }
+  assert.ok(layout.chrome, `${name}: onboarding chrome is present`);
+  assert.ok(Math.abs(layout.chrome.header.top) < 0.1, `${name}: onboarding chrome starts at the window edge`);
+  // The titlebar grows with the UI font; progress and Linux captions must
+  // stay centered in the same visible row at every supported size.
+  const centerY = layout.chrome.header.top + layout.chrome.header.height / 2;
+  for (const peer of layout.chrome.peers) {
+    assert.ok(Math.abs(peer.centerY - centerY) < 0.6, `${name}: onboarding progress and caption controls share the titlebar center`);
+    assert.ok(peer.bounds.top >= -0.1 && peer.bounds.bottom <= layout.chrome.header.bottom + 0.1,
+      `${name}: onboarding chrome is fully visible`);
+    if (peer.button) assert.ok(peer.hit, `${name}: Linux caption controls retain their native pointer lane`);
+  }
+  if (process.platform === 'linux') assert.equal(layout.chrome.peers.filter(peer => peer.button).length, 3,
+    `${name}: the real Linux main/preload mounts all three caption buttons`);
 }
 async function run() {
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
@@ -126,6 +155,26 @@ async function run() {
   if (!main) await new Promise(resolve => app.once('browser-window-created', resolve));
   if (main.webContents.isLoading()) await new Promise(resolve => main.webContents.once('did-finish-load', resolve));
   await waitFor(() => document.querySelector('.onboarding-stage-welcome'));
+  const originalBounds = main.getBounds();
+  main.setResizable(true);
+  for (const theme of ['light', 'dark']) for (const size of [13, 15, 20]) {
+    for (const width of [920, 620]) {
+      main.setContentSize(width, 720);
+      await waitFor(width => innerWidth === width, width);
+      await evaluate(({ theme, size }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty('--font-ui', `${size}px`);
+      }, { theme, size });
+      await screenshot(`titlebar-${theme}-${size}px-${width}`);
+    }
+  }
+  observed.push({ scenario: 'onboarding progress and real Linux captions share the titlebar center across UI font sizes',
+    themes: ['light', 'dark'], fonts: [13, 15, 20], widths: [920, 620],
+    nativeTrafficLights: { expectedPositionDIP: { x: 18, y: 21 }, expectedCenterDIP: 28,
+      configuredPositionDIP: process.platform === 'darwin' ? main.getWindowButtonPosition() : null,
+      pixelVerification: 'Requires separate native macOS visual acceptance.' } });
+  main.setBounds(originalBounds);
+  await evaluate(() => { document.documentElement.dataset.theme = 'light'; document.documentElement.style.removeProperty('--font-ui'); });
   await click(empty ? '开始设置' : 'Set up Wuu');
   await waitFor(() => document.querySelector('.onboarding-stage-plugins button:not(:disabled)'));
   await click(empty ? '极简' : 'Minimal');
@@ -134,6 +183,19 @@ async function run() {
   await click(empty ? '继续' : 'Continue');
   await waitFor(() => document.querySelector('.onboarding-stage-provider'));
   await click(empty ? '继续' : 'Continue');
+  if (process.platform === 'darwin') {
+    await waitFor(() => document.querySelector('.onboarding-stage-permissions'));
+    await screenshot('permissions');
+    main.setResizable(true);
+    for (const theme of ['light', 'dark']) {
+      main.setSize(620, 600);
+      await main.webContents.executeJavaScript(`document.documentElement.dataset.theme=${JSON.stringify(theme)};document.documentElement.style.setProperty('--conversation-message-font-size', '20px');`);
+      await screenshot(`permissions-narrow-large-${theme}`);
+    }
+    main.setSize(920, 720);
+    await evaluate(() => { document.documentElement.dataset.theme = 'light'; document.documentElement.style.setProperty('--conversation-message-font-size', '15px'); });
+    await click(empty ? '稍后设置' : 'Set up later');
+  }
   if (empty) {
     await waitFor(() => document.querySelector('.onboarding-stage-ready') && [...document.querySelectorAll('button')].some(button => (button.textContent.trim() === '重新查找' || button.getAttribute('aria-label') === '重新查找') && !button.disabled));
     assert.equal(await evaluate(() => document.querySelectorAll('.onboarding-workspace-row').length), 0);
@@ -206,6 +268,41 @@ async function run() {
   assert.equal(listed.active_context.cwd, second);
   observed.push({ scenario: 'atomic retry and landing', workspaceCount: persisted.projects.length, selectedWorkspace: 'api-server' });
   await screenshot('landed');
+  if (process.platform === 'linux') {
+    // A fixed Linux caption once covered the visible workspace toggle, so
+    // clicking that toggle closed the application instead of opening a panel.
+    for (const theme of ['light', 'dark']) for (const size of [15, 20]) for (const width of [920, 1280]) {
+      main.setSize(width, 720);
+      await evaluate(({ theme, size }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty('--font-ui', `${size}px`);
+      }, { theme, size });
+      for (const open of [true, false]) {
+        const hit = await evaluate(async () => {
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const button = document.querySelector('.shell-right-sidebar-toggle');
+          const box = button.getBoundingClientRect();
+          const point = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+          const target = document.elementFromPoint(point.x, point.y);
+          return { point, reachable: target === button || button.contains(target), target: target?.className };
+        });
+        assert.ok(hit.reachable, `Linux workspace toggle is reachable at ${theme}/${size}/${width}: ${hit.target}`);
+        main.webContents.sendInputEvent({ type: 'mouseDown', ...hit.point, button: 'left', clickCount: 1 });
+        main.webContents.sendInputEvent({ type: 'mouseUp', ...hit.point, button: 'left', clickCount: 1 });
+        await waitFor(open => document.querySelector('.shell-right-sidebar-toggle')?.getAttribute('aria-expanded') === String(open), open);
+        const captionReachable = await evaluate(() => [...document.querySelectorAll('.linux-window-control')].every(button => {
+          const box = button.getBoundingClientRect();
+          const target = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+          return target === button || button.contains(target);
+        }));
+        assert.ok(captionReachable, 'Opening the workspace panel preserves all caption hit targets');
+      }
+      await waitFor(() => !document.querySelector('.window-resizing, .right-panel-animating'));
+      const name = `linux-caption-${theme}-${size}-${width}`;
+      fs.writeFileSync(path.join(output, `${name}.png`), (await main.webContents.capturePage()).toPNG());
+      observed.push({ scenario: 'Linux workspace toggle and caption hit targets', theme, size, width, passed: true });
+    }
+  }
   main.webContents.reload();
   await new Promise(resolve => main.webContents.once('did-finish-load', resolve));
   await waitFor(() => document.querySelector('.app-shell') && !document.querySelector('.first-run-onboarding'));

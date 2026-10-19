@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/grokbuildspec"
+	"github.com/blueberrycongee/wuu/internal/mcpconfig"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/storelock"
@@ -75,6 +76,7 @@ type MCPServerConfig struct {
 	OAuth         *MCPOAuthConfig            `json:"oauth,omitempty"`
 	Enabled       *bool                      `json:"enabled,omitempty"`
 	ToolOverrides map[string]MCPToolOverride `json:"tool_overrides,omitempty"`
+	ToolTimeoutMS mcpconfig.ToolTimeoutMS    `json:"tool_timeout_ms,omitempty"`
 }
 
 // definesServer reports whether the entry says how to reach a server, as
@@ -717,6 +719,11 @@ func (c Config) ResolveProvider(name string) (ProviderConfig, string, error) {
 
 // Validate performs semantic checks.
 func (c Config) Validate() error {
+	for name, server := range c.MCPServers {
+		if _, err := server.ToolTimeoutMS.Duration(); err != nil {
+			return fmt.Errorf("mcp_servers.%s: %w", name, err)
+		}
+	}
 	if err := c.ExecutionEnvironments.Validate(); err != nil {
 		return err
 	}
@@ -1431,34 +1438,18 @@ func RemoveProvider(configPath, providerName, fallbackName, fallbackModel string
 		newDefault = fallbackName
 	}
 
-	// Clean up any model_role entries that pointed at the removed
-	// provider. Empty roles fall back to the main selection per the
-	// existing resolver, so dropping the name is the right default
-	// rather than erroring.
+	// Selections that used the removed provider must inherit completely;
+	// keeping its model or variant would route them through an unrelated
+	// provider. Aliases cannot inherit, so remove their entire entry too.
 	if agent, ok := raw["agent"].(map[string]any); ok {
-		if roles, ok := agent["model_roles"].(map[string]any); ok {
-			for roleKey, raw := range roles {
-				role, _ := raw.(map[string]any)
-				if role == nil {
-					continue
-				}
-				if name, _ := role["provider"].(string); name == providerName {
-					delete(role, "provider")
-				}
-				_ = roleKey
-			}
-		}
-		// Aliases require an explicit provider and model, so an alias that
-		// pointed at the removed provider is no longer valid. Delete the
-		// whole entry to keep the config valid.
-		if aliases, ok := agent["model_aliases"].(map[string]any); ok {
-			for aliasKey, raw := range aliases {
-				alias, _ := raw.(map[string]any)
-				if alias == nil {
-					continue
-				}
-				if name, _ := alias["provider"].(string); name == providerName {
-					delete(aliases, aliasKey)
+		for _, section := range []string{"model_roles", "project_models", "model_aliases"} {
+			selections, _ := agent[section].(map[string]any)
+			for key, rawSelection := range selections {
+				selection, _ := rawSelection.(map[string]any)
+				name, _ := selection["provider"].(string)
+				name = strings.TrimSpace(name)
+				if name == providerName || (removedWasDefault && section == "model_roles" && name == "") {
+					delete(selections, key)
 				}
 			}
 		}

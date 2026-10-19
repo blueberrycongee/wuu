@@ -54,6 +54,21 @@ func DiscoveryContext(id, binary, root string) ([32]byte, error) {
 		for _, dir := range []string{filepath.Join(dataHome, "devin"), filepath.Join(configHome, "devin"), filepath.Join(home, "Library", "Application Support", "devin")} {
 			add(dir, "credentials.toml", "config.toml")
 		}
+	case "dsh":
+		// DSH expands both tilde separators and preserves nonblank path whitespace.
+		dshHome := os.Getenv("DSH_HOME")
+		switch {
+		case strings.TrimSpace(dshHome) == "":
+			dshHome = filepath.Join(home, ".dsh")
+		case dshHome == "~":
+			dshHome = home
+		case strings.HasPrefix(dshHome, "~/"), strings.HasPrefix(dshHome, "~\\"):
+			dshHome = filepath.Join(home, dshHome[2:])
+		}
+		if !filepath.IsAbs(dshHome) {
+			dshHome = filepath.Join(root, dshHome)
+		}
+		add(filepath.Join(dshHome, "profiles", "acp"), "package.json", "cordis.patch.yml")
 	case "grok":
 		add(location("GROK_HOME", filepath.Join(home, ".grok")), "auth.json", "config.toml")
 		projectFiles = []string{".grok/config.toml"}

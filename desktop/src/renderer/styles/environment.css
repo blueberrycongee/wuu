@@ -1038,29 +1038,29 @@
 /* Fork-from-earlier picker. Reuses the .environment-dialog shell while
    keeping the dialog body on the two fork choices, which are its actions. */
 .fork-dialog {
-  --environment-dialog-max-width: 440px;
+  --environment-dialog-max-width: calc(var(--font-ui) * 28);
+  padding: var(--space-2);
 }
 
-/* Rows reach into the panel padding so their glyphs start on the content's
-   edge; the row corner is the panel corner minus that remaining inset. */
+/* The panel frames the hit areas; each row owns its content inset. */
 .fork-dialog-options {
   display: grid;
-  gap: 2px;
-  margin-inline: calc(-1 * var(--compact-padding-inline));
+  gap: var(--space-2);
 }
 
 .fork-dialog-option {
   display: grid;
-  grid-template-columns: var(--icon-size) minmax(0, 1fr) auto;
+  /* Reserve the status column so starting a fork cannot rewrap its text. */
+  grid-template-columns: max(var(--icon-size), var(--space-6)) minmax(0, 1fr) var(--icon-size);
   align-items: start;
   column-gap: var(--space-3);
-  row-gap: 2px;
+  row-gap: var(--space-1);
   width: 100%;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
   text-align: start;
-  padding: var(--compact-padding-block) var(--compact-padding-inline);
+  padding: var(--space-3) var(--space-4);
   cursor: pointer;
   transition: background-color var(--motion-fast) var(--ease-out);
 }
@@ -1087,6 +1087,7 @@ html[data-focus-modality="keyboard"] .fork-dialog-option:focus-visible {
 
 .fork-dialog-option-icon {
   grid-row: 1;
+  justify-self: center;
   width: var(--icon-size);
   height: var(--icon-size);
   /* Centered on the title's first line at every text size. */
@@ -1096,6 +1097,7 @@ html[data-focus-modality="keyboard"] .fork-dialog-option:focus-visible {
 
 .fork-dialog-option-title {
   grid-column: 2;
+  overflow-wrap: anywhere;
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
   line-height: var(--line-ui);
@@ -1103,6 +1105,7 @@ html[data-focus-modality="keyboard"] .fork-dialog-option:focus-visible {
 
 .fork-dialog-option-description {
   grid-column: 2;
+  overflow-wrap: anywhere;
   color: var(--ink-soft);
   font-size: var(--font-sm);
   line-height: var(--line-ui);

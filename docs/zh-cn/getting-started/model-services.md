@@ -4,6 +4,10 @@
 
 本页设置适用于 **Wuu** 引擎。选择 Codex、Claude Code、Devin 等[外部引擎](external-engines.md)时，运行的是对应程序，使用它自身的认证和配置。在 Wuu 服务中复用订阅凭据，与运行对应的外部引擎，是两种不同的用法。
 
+![设置 → 模型服务中的新增服务窗口，列出服务类型、模型和凭据字段。](../assets/product/models-zh.jpg)
+
+<p class="docs-caption">新增服务时选择 API 类型，再填写服务标识、模型和凭据。</p>
+
 ## 在桌面应用中添加服务
 
 1. 打开**设置 → 模型服务 → 新增服务**。
@@ -12,7 +16,7 @@
 4. 保存后回到输入框，选择本次对话使用的服务和模型。
 5. 发送一个包含工具调用的小请求，例如读取项目文件，确认它不只是能回复文字。
 
-首次设置提供了较简单的连接表单。自定义端点和更多模型选项请在设置中调整。配置里列出的模型不代表你的账号一定有访问权限。
+首次设置会一起列出检测到的本机 Codex 和 Grok 登录。选择其中一个，即可接入并设为默认模型服务，也可以连接其他服务。已有连接不会隐藏这些选项。更多模型选项可在设置中调整。配置里列出的模型不代表你的账号一定有访问权限。
 
 输入框中的选择属于当前对话；第一条消息发出前，它属于当前草稿。设置中还可以保存工作区默认值，切换一次对话的模型不会自动替换这些默认值。
 
@@ -20,6 +24,14 @@ Anthropic 兼容连接优先使用配置中明确指定的凭据或其命名环�
 已保存的凭据。选定这些来源后，请求不会额外附带环境中无关的 API key 或 bearer
 token；明确配置两种请求头仍受支持。在设置中保存新的 API key 会替换旧 bearer
 token，并删除旧 token 对应的环境变量引用。
+
+## 管理服务和模型
+
+在**设置 → 模型服务**中打开已连接的服务。**添加模型**可直接输入模型 ID，无需重复添加服务或凭据。模型行的垃圾桶图标会从此服务的可选项中删除该模型。删除当前选中的模型前，需要明确选择替代模型；只有一个模型时，请先添加另一个。
+
+删除后的模型不会因重新加载或刷新目录而恢复，可在**已删除的模型**中手动恢复。已有对话、模型角色和别名保留原来的模型选择及元数据；删除可选项不会撤销模型访问权限，也不会清除对话记录。
+
+使用服务的 **… → 删除服务**可删除整个连接及其专用密钥，共享的订阅登录会保留。删除默认服务前，需要选择另一个默认服务。已有对话会保留，使用已删除服务的对话会在下次发送时改用当前默认服务。引用该服务的模型角色恢复继承默认值，别名会被移除。删除最后一个已配置服务前，请先添加另一个。自动发现的服务和由 OpenAI OAuth 管理的连接不能在此删除，认证仍由原来的登录流程管理。
 
 ## 当前 OpenAI 和 Anthropic 模型
 
@@ -32,6 +44,16 @@ GPT-6.1 Sol 支持 `low`、`medium`（默认）、`high`、`xhigh` 和 `max`，�
 GPT-6 Sol 和 Luna 支持 `none` 至 `max` 推理档位，默认 `medium`。Fast 条目使用同一个模型，通过优先处理提供不同速度和价格。对这两个模型，官方 OpenAI 连接未指定协议时，Wuu 默认使用 Responses。如果明确选择了 Chat Completions，使用推理和工具时请切换为 Responses；Chat Completions 仅在 `none` 档位支持它们的工具调用。自定义端点保留原有协议。详见官方 [Sol](https://developers.openai.com/api/docs/models/gpt-6-sol) 和 [Luna](https://developers.openai.com/api/docs/models/gpt-6-luna) 规格。
 
 Claude Opus 5.5 和 Fable 5.1 始终使用自适应思考。Wuu 将已保存的 `none` 选择映射为 `low`，两者默认档位分别为 `medium` 和 `high`。Wuu 请求可读的思考摘要，并允许 API 丢弃因上下文变更而失效的思考块，同时保留有效的签名块。这两个模型不接受强制工具选择，因此 Wuu 通过指令表达收尾工具调用要求，使用自动工具选择；这不保证模型一定调用工具。详见官方 [Opus 5.5](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide) 和 [Fable 5.1](https://platform.claude.com/docs/en/models/fable-5-1/migration-guide) 迁移指南。
+
+## DeepSeek 模型
+
+使用 `deepseek-flash` 调用 DeepSeek V4.1 Flash 1017，或使用 `deepseek-v4-pro` 调用 V4 Pro。官方基础地址为 `https://api.deepseek.com`，Wuu 默认使用 Responses；Anthropic 兼容连接使用 `https://api.deepseek.com/anthropic`。两者均支持 1M 上下文、最多 393,216 token 输出，以及 `none`、`low`、`high`（默认）、`max` 思考档位。Flash 还支持图片输入。
+
+目录不再推荐已下线的 `deepseek-v4-flash` 和 `deepseek-v4-flash-vision-exp`。已有选择使用这两个仍被官方接受的别名时，保留 Flash 能力并解析到最新 `deepseek-flash`；明确配置过的模型选项会保留，直到手动删除。官方目录不再提供已停用的 `deepseek-chat`、`deepseek-reasoner`，保存过这些选择时请改用 `deepseek-flash`。V4 Pro 仍可使用。
+
+DeepSeek 的 Chat Completions 思考模式不接受强制工具选择。Wuu 对这些思考档位使用自动工具选择，`none` 档仍支持强制工具调用。思考模式忽略 temperature；Flash 的 `top_p` 仅在思考模式生效，有效范围为 0.95–1.0，非思考模式固定为 1.0。
+
+目录按**高峰时段美元价格／百万 token**记录：Flash 输入 $0.30、缓存命中 $0.006、输出 $1.20；Pro 输入 $1.32、缓存命中 $0.044、输出 $3.96。空闲时段半价。高峰为北京时间周一至周五 09:00–12:00、14:00–18:00，中国法定节假日除外。这些静态目录价格不计算随时段变化的实际账单。详见官方[模型更新](https://api-docs.deepseek.com/zh-cn/updates)、[接口参数](https://api-docs.deepseek.com/zh-cn/api/create-chat-completion)和[价格说明](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)。
 
 ## 使用已有订阅
 
@@ -71,6 +93,47 @@ wuu exec --provider openai --permission-mode read_only "阅读这个项目，告
 
 `--provider` 选择已配置的服务标识，`--model` 覆盖本次运行的模型。配置优先级和项目级设置的限制见[配置说明](../reference/configuration.md)。
 
+## 流式响应延迟
+
+Wuu 内置的 HTTP 模型客户端跨回合复用流式连接池。Codex 重新读取凭证时仍保留连接池，
+每个请求继续使用当前凭证。连接、响应头和流空闲超时分别管理，连接复用不会给长回答
+增加总时长限制。
+
+Codex 默认使用 `stream_transport: "auto"`。符合条件的内置会话在创建、恢复或切换模型
+时可提前建立 WebSocket，不提交推理请求。同一连接上的兼容续接使用
+`previous_response_id` 加新增输入；重连、请求选项改变或历史不兼容时恢复发送完整上下文。
+预热只有在连接保持到实际使用时才能移走发送路径上的连接开销，不会消除服务端排队
+或模型计算时间。
+
+WebSocket 在提交前不可用时可回退到 HTTP。请求一旦可能已经提交，后续尝试仍由正常
+恢复计量规则管理。HTTP gzip 是独立的上传优化，不压缩 WebSocket 消息。测试时保留
+原有传输配置：强制使用 SSE 可能失去已有的连接与上下文复用。测量与正确性检查见
+[延迟评估流程](../project/development.md#服务商延迟评估)。
+
+## 实验性 HTTP 请求压缩
+
+HTTP 请求 gzip 默认关闭。只有端点运营方确认支持 `Content-Encoding: gzip` 后，
+才在启动 Wuu 的进程中设置 `WUU_EXPERIMENTAL_REQUEST_GZIP_ENDPOINTS`。
+该变量接受逗号分隔的完整请求 URL，例如：
+
+```bash
+export WUU_EXPERIMENTAL_REQUEST_GZIP_ENDPOINTS="https://gateway.example/v1/responses"
+```
+
+示例域名仅为占位，不表示该服务支持压缩。按实际协议包含完整的 `/responses`、
+`/chat/completions` 或 `/v1/messages` 路径。匹配包含查询字符串；不支持仅填主机名、
+通配符、URL 用户信息或片段。重定向目标也必须显式列入名单。
+兼容 API 格式不意味着支持请求压缩。
+
+此实验仅对至少 64 KiB 的序列化 JSON 使用快速 gzip，并且只有字节数减少时才发送
+压缩结果。这个阈值是实验性选择。请求已有 `Content-Encoding` 头时，不再自动压缩。
+JSON 内容、token 计量、响应流和 WebSocket 行为保持不变。压缩会增加本机 CPU 和
+内存开销；上传字节减少不代表首 token 更快或模型费用更低。
+
+拒绝 gzip 或连接失败时，不会增加额外重试或自动改发未压缩请求；现有恢复规则仍然
+适用。如果端点拒绝该编码，请取消该环境变量并重启 Wuu，再明确决定是否重试。
+此设置作用于 Wuu 的 HTTP 模型客户端，不作用于外部 Agent 引擎。
+
 ## 回合结束与额外请求
 
 Wuu 按所选 API 的结束信号处理回合。正常停止会结束回合，即使响应没有正文；这不代表任务一定完成。仅有空文本或过程说明，不会触发另一次收费请求。
@@ -84,6 +147,8 @@ Anthropic Messages 可通过 `pause_turn` 明确要求继续。Responses 兼容�
 桌面输入框支持图片、PDF、视频和普通文件。每次上传都会保留原始字节，作为七天有效的本地工作副本。即使所选模型不能原生接收该格式，Agent 仍会获得文件引用，并可通过获准的文件工具或命令完成复制、解压、转换或分析。原生媒体输入是额外能力；获得路径不代表模型已经看过文件内容，分析仍取决于可用工具和权限。
 
 需要长期保留时，请让 Agent 将附件复制或移动到工作区。清理只删除受管理的工作副本，不影响已保存到工作区的文件。历史记录保留附件引用，但不会重建已过期、移动或删除的副本；路径对应的文件不存在时，需要重新上传。桌面端每个文件上限为 20 MiB，同一次提交中的非图片文件另有合计 20 MiB 的限制。桌面端编码后的完整请求（包括所有图片、文件、文字和元数据）不能超过 64 MiB；Base64 编码会使文件体积增加约三分之一。请求过大时，Wuu 会保留草稿，方便移除附件或缩短消息后重试。
+
+准备附件时如果读取失败，附件卡片会留在草稿中。点击**重试**可重新读取同一个已选文件，也可以移除后选择其他文件。重试成功不会自动发送消息。这些未发送的文件只保留在内存中；关闭或重新加载窗口后，需要重新添加。
 
 仅通过路径交付时，上下文预算只计算引用文本，不计算磁盘文件或 Base64 体积。原生图片采用图片估算；其他获准的原生媒体目前采用有界的备用估算，尚未按页数或视频帧数计量，以服务实际返回的用量为准。明确要求原生媒体证据的调用，在不支持该证据或无法在上下文预算内保留它时会报错。
 
@@ -125,9 +190,12 @@ await tools.read_file({path: "screenshots/settings.png"});
 参数依赖计算或前序结果时，仍可在 `run_code` 内调用这些工具。
 两条路径使用相同的执行、权限和工作区检查；其他普通工具在启用 PTC 时通过程序调用。
 
+Peers 插件的只读 `list_peers` 工具支持在 `run_code` 内发现并筛选会话，
+仍仅供根会话使用，且只返回当前工作区的同级会话。发送协作请求继续使用独立直调工具。
+
 ### 发现、执行与结果
 
-使用 OpenAI Responses（包括 Codex provider）时，`run_code` 通过自定义文本工具直接接收 JavaScript 源码，不要加 JSON 包装或 Markdown 围栏。其他 provider API 使用 `{"input":"..."}` 传入同一份源码。可选的首行 `// @run_code: {...}` 注释设置 `description`、`timeout_ms`、`result_view` 和 `max_output_tokens`；未知选项会在执行前报错。恢复历史会话时，原有 `code` 调用仍可执行。
+在已识别的 GPT-5 及更新模型 Responses 连接上，`run_code` 通过自定义文本工具直接接收 JavaScript 源码，不要给这类输入加 JSON 包装或 Markdown 围栏。旧版 GPT、未知模型和其他 provider API 使用 `{"input":"..."}` 传入同一份源码。若 Responses 网关不支持自定义工具，将 `providers.<provider>.models.<model>.options.freeform_tool` 设为 `false`；只有确认端点支持时才设为 `true`。未知模型默认使用 JSON 工具。这个选项只改变传输格式，不改变 PTC 开关。历史调用会按当前请求转换，已保存的会话历史保持不变。可选的首行 `// @run_code: {...}` 注释设置 `description`、`timeout_ms`、`result_view` 和 `max_output_tokens`；未知选项会在执行前报错。恢复历史会话时，原有 `code` 调用仍可执行。
 `description` 是展示元数据，省略它不会阻止执行。
 入口说明在固定目录预算内提供常用文件、搜索和命令工具的完整定义，其他绑定提供预览。
 可直接使用已列出的参数定义；只有预览的绑定再查询精确参数。`await searchTools(query, {limit: 8, offset: 0})`

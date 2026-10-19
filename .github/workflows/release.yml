@@ -1,158 +1,381 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to build and publish (empty means validation only)
+        type: string
+        default: ""
+      checkpoint_run:
+        description: Completed Release run whose signed checkpoint should be resumed (empty builds from source)
+        type: string
+        default: ""
   push:
     tags:
       - "v*"
 
+concurrency:
+  group: release-${{ inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  desktop-macos:
-    name: Desktop macOS
-    runs-on: macos-15
-    env:
-      WUU_SKIP_CUA_MAC: "1"
-      WUU_ENABLE_CUA_MAC: "0"
-    defaults:
-      run:
-        working-directory: desktop
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      source: ${{ steps.source.outputs.source }}
+      tag: ${{ steps.source.outputs.tag }}
+      checkpoint: ${{ steps.checkpoint.outputs.checkpoint }}
+      checkpoint-artifact: ${{ steps.checkpoint.outputs.artifact }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - uses: actions/setup-go@v5
+      - id: source
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        run: |
+          tag="$REQUESTED_TAG"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then tag="$GITHUB_REF_NAME"; fi
+          if [[ -n "$tag" ]]; then
+            [[ "$tag" =~ ^v[0-9]{4}\.[0-9]{1,2}\.[0-9]{1,2}(-rc\.[0-9]+)?$ ]] || exit 1
+            source=$(git rev-parse "refs/tags/$tag^{commit}")
+            git merge-base --is-ancestor "$source" origin/main
+          else
+            source="$GITHUB_SHA"
+          fi
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Import a signed checkpoint from a completed release run
+        id: checkpoint
+        env:
+          CHECKPOINT_RUN: ${{ inputs.checkpoint_run }}
+          RELEASE_SOURCE: ${{ steps.source.outputs.source }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node desktop/scripts/restore-release-checkpoint.cjs "$CHECKPOINT_RUN" "$RELEASE_SOURCE" "$(git show "$RELEASE_SOURCE:VERSION")"
+      - name: Preserve imported checkpoint and submission receipt
+        if: steps.checkpoint.outputs.checkpoint != ''
+        uses: actions/upload-artifact@v4
         with:
-          go-version-file: go.mod
+          name: ${{ steps.checkpoint.outputs.artifact }}
+          path: ${{ runner.temp }}/wuu-release-checkpoint/
+          if-no-files-found: error
+          retention-days: 30
 
+  signed-app:
+    name: Build signed app
+    if: needs.prepare.outputs.checkpoint == ''
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      WUU_RELEASE_SOURCE_COMMIT: ${{ needs.prepare.outputs.source }}
+      WUU_RELEASE_TEAM_ID: ${{ secrets.WUU_RELEASE_TEAM_ID }}
+      WUU_RELEASE_SIGN_ID: ${{ secrets.WUU_RELEASE_SIGN_ID }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        working-directory: source/desktop
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+          path: source
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          path: release-tools
       - uses: actions/setup-node@v4
         with:
-          node-version-file: .node-version
-          cache: npm
-          cache-dependency-path: |
-            desktop/package-lock.json
-            clients/core/package-lock.json
-            clients/mobile-web/package-lock.json
-
-      - name: Verify tag source
-        run: |
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::release tag ${GITHUB_REF_NAME} must point to a commit on main"
-            exit 1
-          fi
-
+          node-version-file: source/.node-version
+      - name: Resolve tool dependencies from product checkout
+        run: echo "NODE_PATH=$PWD/node_modules" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache-dependency-path: source/go.sum
       - name: Check release version
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          node --test ../scripts/release-version.test.mjs
-          node ../scripts/release-version.mjs check "$GITHUB_REF_NAME"
-
+          node --test ../../release-tools/scripts/release-version.test.mjs
+          node ../scripts/release-version.mjs check "$RELEASE_TAG"
+      - name: Install release credentials
+        env:
+          WUU_RELEASE_CERTIFICATE_P12: ${{ secrets.WUU_RELEASE_CERTIFICATE_P12 }}
+          WUU_RELEASE_CERTIFICATE_PASSWORD: ${{ secrets.WUU_RELEASE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          node ../../release-tools/desktop/scripts/install-notary-key.cjs
+          node ../../release-tools/desktop/scripts/import-release-signing.cjs
       - name: Check and test Go packages
         run: make -C .. check-go test-go-uncached
-
       - name: Install
         run: |
           npm ci
+          npm ci --prefix ../plugins
           npm ci --prefix ../clients/core
           npm ci --prefix ../clients/mobile-web
           node node_modules/electron/install.js
           node -e 'require("electron")'
-
       - name: Test
         timeout-minutes: 10
         run: |
+          make -C .. check-plugins test-plugins
           npm test
           npm run test:release-signing
-
-      - name: Build desktop release
-        run: npm run release:desktop
+          npm run test:cua-mac
+          node --test ../../release-tools/desktop/scripts/test-notarization.cjs ../../release-tools/desktop/scripts/test-release-checkpoint.cjs ../../release-tools/desktop/scripts/test-update-metadata.cjs
+      - name: Build and preserve signed app
         env:
+          WUU_RELEASE: "1"
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           VITE_ENABLE_ACCOUNT: "false"
           VITE_ENABLE_REMOTE_CONTROL: "false"
           NODE_OPTIONS: "--max-old-space-size=4096"
-
-      - name: Verify packaged app
-        run: |
-          node scripts/verify-mac-release.cjs
-          echo "::notice::macOS preview uses ad-hoc signing without a certificate, excludes CUA, and is not notarized."
-
-          core="release/mac-arm64/wuu.app/Contents/Resources/bin/wuu-core"
-          version_output="$("$core" --version)"
-          echo "$version_output"
-          if echo "$version_output" | grep -q dirty; then
-            echo "::error::Packaged core was built from a dirty worktree."
-            exit 1
-          fi
-
-          if [ -e "release/mac-arm64/wuu.app/Contents/Resources/bin/wuu" ]; then
-            echo "::error::Packaged app must keep its core private as wuu-core."
-            exit 1
-          fi
-
-          hdiutil verify release/wuu-*-mac-arm64.dmg
-          unzip -t release/wuu-*-mac-arm64.zip >/tmp/wuu-desktop-zip-test.txt
-
-      - name: Upload desktop artifacts
-        uses: actions/upload-artifact@v4
+        run: node ../../release-tools/desktop/scripts/release-desktop.cjs --sign-only
+      - uses: actions/upload-artifact@v4
         with:
-          name: desktop-macos-arm64
+          name: signed-app
           path: |
-            desktop/release/*.dmg
-            desktop/release/*.zip
-            desktop/release/*.blockmap
+            source/desktop/release/signed-app.zip
+            source/desktop/release/checkpoint.json
           if-no-files-found: error
+          retention-days: 30
+      - name: Remove release credentials
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/wuu-release.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/wuu-release.keychain-db"
+          fi
+          rm -f "$RUNNER_TEMP/wuu-notary.p8" "$RUNNER_TEMP/wuu-release.p12"
 
-  release:
-    name: GitHub Release
-    needs:
-      - desktop-macos
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+  distribution:
+    name: Notarize app and package
+    needs: [prepare, signed-app]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.checkpoint != 'distribution' && (needs.signed-app.result == 'success' || (needs.signed-app.result == 'skipped' && needs.prepare.outputs.checkpoint == 'signed-app')) }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      WUU_RELEASE: "1"
+      WUU_RELEASE_SOURCE_COMMIT: ${{ needs.prepare.outputs.source }}
+      WUU_RELEASE_TEAM_ID: ${{ secrets.WUU_RELEASE_TEAM_ID }}
+      WUU_RELEASE_SIGN_ID: ${{ secrets.WUU_RELEASE_SIGN_ID }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        working-directory: source/desktop
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.prepare.outputs.source }}
+          path: source
           fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          path: release-tools
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: source/.node-version
+      - name: Resolve tool dependencies from product checkout
+        run: echo "NODE_PATH=$PWD/node_modules" >> "$GITHUB_ENV"
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.prepare.outputs.checkpoint-artifact || 'signed-app' }}
+          path: source/desktop/release
+      - name: Install release credentials
+        env:
+          WUU_RELEASE_CERTIFICATE_P12: ${{ secrets.WUU_RELEASE_CERTIFICATE_P12 }}
+          WUU_RELEASE_CERTIFICATE_PASSWORD: ${{ secrets.WUU_RELEASE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          node ../../release-tools/desktop/scripts/install-notary-key.cjs
+          node ../../release-tools/desktop/scripts/import-release-signing.cjs
+      - name: Restore previous app submission
+        run: node ../../release-tools/desktop/scripts/restore-notarization.cjs app
+      - name: Submit saved app for notarization
+        timeout-minutes: 12
+        run: node ../../release-tools/desktop/scripts/release-stages.cjs submit-app
+      - name: Preserve app submission before waiting for Apple
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-submission-${{ github.run_attempt }}
+          path: source/desktop/release/notarization/app.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Notarize the saved app and build distribution archives
+        timeout-minutes: 40
+        run: node ../../release-tools/desktop/scripts/release-stages.cjs package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-distribution
+          path: |
+            source/desktop/release/wuu-mac-arm64.dmg
+            source/desktop/release/wuu-mac-arm64.zip
+            source/desktop/release/wuu-mac-arm64.zip.blockmap
+            source/desktop/release/signed-dmg.dmg
+            source/desktop/release/*-mac.yml
+            source/desktop/release/checkpoint.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve app submission on success or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-receipts-${{ github.run_attempt }}
+          path: source/desktop/release/notarization/*.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Remove release credentials
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/wuu-release.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/wuu-release.keychain-db"
+          fi
+          rm -f "$RUNNER_TEMP/wuu-notary.p8" "$RUNNER_TEMP/wuu-release.p12"
 
+  verification:
+    name: Notarize DMG and verify
+    needs: [prepare, distribution]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && (needs.distribution.result == 'success' || (needs.distribution.result == 'skipped' && needs.prepare.outputs.checkpoint == 'distribution')) }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      WUU_RELEASE: "1"
+      WUU_RELEASE_SOURCE_COMMIT: ${{ needs.prepare.outputs.source }}
+      WUU_RELEASE_TEAM_ID: ${{ secrets.WUU_RELEASE_TEAM_ID }}
+      WUU_RELEASE_SIGN_ID: ${{ secrets.WUU_RELEASE_SIGN_ID }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        working-directory: source/desktop
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+          path: source
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          path: release-tools
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: source/.node-version
+      - name: Resolve tool dependencies from product checkout
+        run: echo "NODE_PATH=$PWD/node_modules" >> "$GITHUB_ENV"
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.prepare.outputs.checkpoint == 'distribution' && needs.prepare.outputs.checkpoint-artifact || 'signed-distribution' }}
+          path: source/desktop/release
+      - name: Install notarization key
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: node ../../release-tools/desktop/scripts/install-notary-key.cjs
+      - name: Restore previous DMG submission
+        run: node ../../release-tools/desktop/scripts/restore-notarization.cjs dmg
+      - name: Submit saved DMG for notarization
+        timeout-minutes: 12
+        run: node ../../release-tools/desktop/scripts/release-stages.cjs submit-dmg
+      - name: Preserve DMG submission before waiting for Apple
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-submission-${{ github.run_attempt }}
+          path: source/desktop/release/notarization/dmg.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Notarize and verify the saved distribution
+        timeout-minutes: 40
+        run: node ../../release-tools/desktop/scripts/release-stages.cjs verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos-arm64
+          path: |
+            source/desktop/release/wuu-mac-arm64.dmg
+            source/desktop/release/wuu-mac-arm64.zip
+            source/desktop/release/wuu-mac-arm64.zip.blockmap
+            source/desktop/release/*-mac.yml
+            source/desktop/release/verification.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve DMG submission on success or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-receipts-${{ github.run_attempt }}
+          path: source/desktop/release/notarization/*.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Remove release credentials
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/wuu-release.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/wuu-release.keychain-db"
+          fi
+          rm -f "$RUNNER_TEMP/wuu-notary.p8" "$RUNNER_TEMP/wuu-release.p12"
+
+  release:
+    name: GitHub Release
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.verification.result == 'success' && needs.prepare.outputs.tag != '' }}
+    needs: [prepare, verification]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source }}
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: desktop-macos-arm64
           path: desktop-release
-
-      - name: Create GitHub Release
+      - name: Publish verified assets
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_SOURCE: ${{ needs.prepare.outputs.source }}
         run: |
-          node scripts/release-version.mjs notes "$GITHUB_REF_NAME" > release-notes.md
-          printf '\n\n' >> release-notes.md
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$RELEASE_SOURCE"
+          node -e 'const v=require("./desktop-release/verification.json"); if(v.commit!==process.env.RELEASE_SOURCE || "v"+v.version!==process.env.RELEASE_TAG) throw Error("Published artifact identity mismatch")'
+          node scripts/release-version.mjs notes "$RELEASE_TAG" > release-notes.md
           cat >> release-notes.md <<'EOF'
           This release contains the macOS arm64 desktop app:
 
-          - `wuu-<version>-mac-arm64.dmg`
-          - `wuu-<version>-mac-arm64.zip`
+          - `wuu-mac-arm64.dmg`
+          - `wuu-mac-arm64.zip`
 
           The app includes its own private wuu core. Standalone CLI archives are not published.
 
-          This is an unsigned preview (ad-hoc code signatures only), without Apple Developer ID or notarization. After moving `wuu.app` to `/Applications`, macOS may block it. For the official asset you trust, try opening it, then use System Settings → Privacy & Security → Open Anyway.
+          This app is signed with Apple Developer ID and notarized. Both the DMG and ZIP contain an app with a stapled notarization ticket. Final packages pass signature and Gatekeeper assessment before publication.
 
-          If macOS still blocks this trusted official download, remove quarantine only from the installed app: `xattr -dr com.apple.quarantine /Applications/wuu.app`. Do not disable Gatekeeper globally. Ad-hoc signatures do not establish publisher identity or guarantee permission retention across updates.
+          Signed builds with automatic updates check stable releases from GitHub. Use Wuu > Check for Updates to download an update, then confirm Restart and Install after saving work. Older builds without this menu need one manual installation into `/Applications/wuu.app`. No separate CUA helper installation or certificate import is needed.
 
-          To update, quit Wuu with Cmd+Q, wait for it to exit, then replace `/Applications/wuu.app` with the new app. Open that copy, not the copy inside the DMG. No separate CUA helper installation or certificate import is needed.
-
-          Computer Use is not included in this release. The macOS preview does not build or package the native CUA helper.
+          Computer Use is included. Grant Screen Recording and Accessibility permissions in System Settings when requested to observe and control native macOS apps.
 
           EOF
 
           release_args=()
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
-            release_args+=(--prerelease)
+          if [[ "$RELEASE_TAG" == *-* ]]; then release_args+=(--prerelease); fi
+          if gh release view "$RELEASE_TAG" --json isDraft > existing-release.json; then
+            node -e 'if (!require("./existing-release.json").isDraft) throw Error("Release is already public; refusing replacement")'
+          else
+            gh release create "$RELEASE_TAG" --draft --verify-tag --title "wuu $RELEASE_TAG" --notes-file release-notes.md "${release_args[@]}"
           fi
-
-          gh release create "$GITHUB_REF_NAME" desktop-release/* \
-            --verify-tag \
-            --title "wuu ${GITHUB_REF_NAME}" \
-            --notes-file release-notes.md \
-            "${release_args[@]}"
+          gh release upload "$RELEASE_TAG" desktop-release/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

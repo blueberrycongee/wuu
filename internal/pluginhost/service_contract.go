@@ -53,6 +53,7 @@ const (
 	KernelUserQuestionAskService        = "host.user-question.ask"
 	KernelUserQuestionOfferService      = "host.user-question.offer"
 	KernelArtifactImportService         = "host.artifact.import"
+	KernelFileLockService               = "host.file-lock"
 
 	// KernelRegistryIntrospectService is the kernel's read-only registry
 	// introspection service: which services exist, at what version, provided
@@ -154,6 +155,18 @@ func KernelArtifactImportDescriptor() ServiceDescriptor {
 	return ServiceDescriptor{
 		Name: KernelArtifactImportService, Version: "1.0.0",
 		Methods: []ServiceMethodDescriptor{{Name: KernelServiceMethod, InputSchema: "host.artifact.import.input.v1", OutputSchema: "host.artifact.import.output.v1"}},
+	}
+}
+
+// KernelFileLockDescriptor exposes generation-owned OS advisory locks for
+// extensions that persist files instead of key/value state.
+func KernelFileLockDescriptor() ServiceDescriptor {
+	return ServiceDescriptor{
+		Name: KernelFileLockService, Version: "1.0.0",
+		Methods: []ServiceMethodDescriptor{
+			{Name: "acquire", InputSchema: "host.file-lock.acquire.input.v1", OutputSchema: "host.file-lock.acquire.output.v1"},
+			{Name: "release", InputSchema: "host.file-lock.release.input.v1", OutputSchema: "host.file-lock.release.output.v1"},
+		},
 	}
 }
 

@@ -561,6 +561,8 @@ func runSession(args []string) error {
 		return runSessionDelete(args[1:])
 	case "export":
 		return runSessionExport(args[1:])
+	case "compact":
+		return runSessionCompact(args[1:])
 	default:
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, fmt.Errorf("unknown session subcommand %q", args[0]))
 	}
@@ -2115,6 +2117,7 @@ func runAppServer(args []string) error {
 	instanceID := fs.String("instance-id", "", "cloud runtime instance identity")
 	noTools := fs.Bool("no-tools", false, "disable local tools")
 	safeMode := fs.Bool("safe-mode", false, "start without activating plugins")
+	desktopExecutionDefaults := fs.Bool("desktop-execution-defaults", false, "use unlimited steps and automatic temperature for desktop conversations")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2130,11 +2133,12 @@ func runAppServer(args []string) error {
 		enginecatalog.InstallUserPath()
 	}
 	rt, err := wuusdk.New(wuusdk.Options{
-		WorkDir:               *workdir,
-		WorkspaceID:           *workspaceID,
-		HomeDir:               os.Getenv("HOME"),
-		ConfigPath:            *configFile,
-		CreateConfigIfMissing: strings.TrimSpace(*configFile) == "",
+		WorkDir:                  *workdir,
+		WorkspaceID:              *workspaceID,
+		HomeDir:                  os.Getenv("HOME"),
+		ConfigPath:               *configFile,
+		CreateConfigIfMissing:    strings.TrimSpace(*configFile) == "",
+		DesktopExecutionDefaults: *desktopExecutionDefaults,
 		Host: wuusdk.Host{
 			Kind:       wuusdk.HostKind(host.Kind),
 			InstanceID: host.InstanceID,
@@ -2260,7 +2264,7 @@ Usage:
   wuu exec review (--uncommitted|--base REF|--commit SHA) [flags]
   wuu -c|--continue [flags] [prompt...]          shortcut: exec -c
   wuu -r|--resume THREAD_ID [flags] [prompt...]  shortcut: exec -r
-  wuu session list|show|trace|search|archive|delete|export [flags]
+  wuu session list|show|trace|search|archive|delete|export|compact [flags]
   wuu skills lint [--json] PATH...
   wuu plugin inspect|install|update|list|approve|reject|enable|disable|remove [flags]
   wuu plugin create|validate|build|test|pack [flags]

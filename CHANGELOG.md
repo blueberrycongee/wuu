@@ -16,153 +16,130 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   arguments arrive and let explicit user actions continue the source conversation
   without consuming composer drafts or attachments.
 
-- Run a default-exported TypeScript plugin directly with `wuu plugin dev`, using
-  the embedded SDK without a manifest or build, and keep watching through failed saves.
-
-- Add a compact conversation input inside the right file preview, keeping the
-  conversation visible and the selected file attached as request context. Preserve
-  the current draft when closing, minimizing, or restoring the preview input.
-  Keep short inputs compact and adapt to narrow panels, wrapped text, or attachments.
-
-- Add a small side-panel action to delivered images while keeping direct clicks
-  in the full image viewer. Connect artifact previews to the right panel with
-  reversible transitions that respect reduced motion and fit portrait images.
-
-- Add count-driven progress rings and in-place running-to-completed transitions
-  to conversation TODO plans, respecting reduced-motion preferences.
-
-### Changed
-
-- Show the source of received session messages as a compact, theme-aware card
-  that opens the related conversation in a split pane. Keep message text,
-  copying, and long-message expansion separate from the navigation control.
-  Unify its card surface and corners with generated files and turn summaries.
-  Put artifact filenames first, with concise format and known size beneath,
-  with internal preview, workspace, and download actions. Show multi-file outputs
-  without a repeated heading and reveal larger groups three files at a time.
-  Add native file actions for managed artifacts, including macOS associated
-  applications and exported copies that preserve the original delivery.
-
-- Keep PDF selections highlighted while writing a compact annotation, show draft
-  excerpts as readable document tiles, and group sent references into count pills
-  with expandable excerpts and source navigation.
-
-- Add a subtle, continuous divider below the conversation titlebar and the
-  right workspace panel header, using the same theme-aware line strength.
-
-- Paint the light navigation rail as one opaque near-white surface on every
-  platform instead of the macOS sidebar material, whose wallpaper-tinted gray
-  read as dirt beside the white canvas. Workspace tabs now fit their titles,
-  select with a quieter fill, and stand a size above the strip's icon buttons.
-
-- Gather how new conversations start on General: the default agent, then the
-  built-in agent's model, reasoning effort and environment. The Agents, Model
-  providers and Built-in agent pages keep their lists.
-
-- Redraw settings as lifted sheets with quiet section labels and roomier rows
-  that name each setting in medium weight, move the page name and its actions
-  into a "Settings / page" titlebar, and mark the selected rail row in light
-  mode as paper lifted off the rail instead of a darker fill.
-
-- Reorganize settings around one label and one control per row with a shared
-  control width: pick the default agent from a menu above the installed list,
-  show the default model and reasoning effort as rows, list connected providers
-  in one group, and set interface and code fonts with their sizes on two rows.
-  Keep subscriptions in the same column as other settings pages, let theme
-  previews span it, and hide Delete all archived when nothing is archived.
-
-- Give the neutral grays a true neutral hue instead of a cool cyan cast, and draw
-  the macOS light sidebar on the system sidebar material under a thinner veil.
-
-- Draw links in answers, user messages, and file previews in body ink with a
-  thin underline instead of blue, and set tool-row targets (files, commands,
-  queries) a step darker than their verbs so a run of tool rows scans by target.
-
-- Align the right panel's tabs, file tree, review list, and tool list on the
-  sidebar's pane inset, and give the file and review filters one quiet search
-  field. Settings rows are denser, and settings groups and cards share one frame.
-
-- Show inline code in answers as the same chip as in user messages, so a theme's
-  inline-code background now applies to answers too.
-- Apply published plugin generations at the next idle conversation turn while
-  retaining active work, conversation history, and session identity.
-
-- Move side chat into the right sidebar's shared tabs, preserving each conversation's
-  history and draft across tool switches and keeping the expanded layout when opened.
-
-- Remove the legacy compact navigation layout. Resizing desktop windows keeps
-  the sidebar's chosen visibility and width, with the same navigation and tools.
-
-- Temporarily hide the conversation information/environment panel and its titlebar
-  button, including automatic expansion in wide windows.
-
-- Move web sources into their tool-call groups as compact circular website icons,
-  with continuous arrival, title and URL tooltips, readable keyboard-accessible
-  overflow, and reduced-motion support that does not replay received sources.
+- Monitor plugin for background scripts, event delivery into the active conversation,
+  timeout and persistent watches, output inspection, and per-task stop controls.
+- Public process service for conversation-bound extension commands and event delivery,
+  with process-tree cleanup and optional handoff from completed child sessions.
 
 ### Fixed
 
-- Keep streamed tool arguments attached to their originating call when providers
-  interleave parallel tool-call updates.
+- Continue failed external-agent sessions when their native history cannot be rewound,
+  avoiding an unsupported edit-and-resend request from the recovery button. Hide
+  the Wuu model-provider settings shortcut for engines that own their credentials.
+- Preserve and queue desktop messages when another turn wins a concurrent send, retaining attachments, send order, and Stop intent.
+- Guide next-message predictions toward concrete follow-ups instead of polite
+  acknowledgments, and allow no suggestion when the next intent is unclear.
 
-- Keep browser tab listing and cleanup within the owning conversation, including
-  popups. Reject cross-conversation tab access, and stop stale input after user
-  takeover, request cancellation, navigation, or tab teardown.
-- Preserve page-created browsing contexts, opener messaging, script-filled blank
-  pages and submitted form bodies in embedded browser popups. At turn end,
-  close temporary tabs while keeping user pages, handoffs, deliverables and
-  their live opener context; release automation control on retained pages.
-  Clean up native page self-closes without losing tab-close notifications or
-  leaving stale permission ownership. Wait for the first rendered frame before
-  capturing hidden browser previews, and preserve history previews if capture
-  times out or the task is interrupted.
+## [2026.10.19] - 2026-10-18
 
-- Keep development renderer crash recovery running when the Vite server is
-  unavailable, instead of quitting the entire desktop app on the failed reload.
+### Contributors
 
-- Keep selection comment editors open when Escape is used by an active text
-  composition, including PDF, file and response selections.
+@blueberrycongee
 
-- Discover external-engine models in the conversation's actual working directory,
-  with native refresh, bounded probes and context-aware cache invalidation for
-  Codex, Claude Code, ACP engines and OpenCode. Preserve Claude aliases, discover
-  per-model ACP options and OpenCode variants, and distinguish empty, partial,
-  unsupported and failed catalogs. Save model options through resume and fork;
-  resetting selections restores native configured behavior on the next turn.
-  New conversations wait for engine discovery before submitting model parameters.
+### Highlights
 
-- Expand a workspace without conversations in place instead of flashing a
-  loading row and spinner. The workspace header shows a spinner only when its
-  conversation list or switch takes longer than a moment.
-- Preserve working plugins when replacement startup or service negotiation fails,
-  propagate execution cancellation, and retire stale desktop callbacks on reload.
+- Import cookies from local browser profiles and manage unpacked extensions in the embedded browser.
+- Add DeepSeek Harness as an external ACP engine with model and reasoning selection, HTTP MCP tools, and conversation recovery; improve ACP session restoration and shutdown.
+- Show independent activity previews for multiple browser tabs and native windows, hide previews behind dialogs, and keep computer-control focus and state isolated between conversations.
+- Search grouped settings pages, use font-relative spacing throughout the desktop, and move subscriptions with observed allowances or balances to the front after loading.
+- Restore follow-up messages in forks created after context-window switches, preserve next-message suggestions over usage hints, and improve right-to-left message selection and alignment.
+- Refine sidebar history and fork controls, keep small image previews usable at large font sizes, and remove duplicate workspace content.
 
-- Avoid delivering an already-answered background process result again when a new
-  user turn reloads a session before the result acknowledgement was saved.
+## [2026.10.18] - 2026-10-18
 
-- Keep conversation messages and image tables within narrow panes when the sidebar
-  remains open, and let page scrolling resume at fractional image-gallery edges.
+### Contributors
 
-- Align document-preview workspace controls inside the inset conversation tray.
+@blueberrycongee
 
-- Keep Claude engine turns open for background agents and their automatic
-  summaries, preserving the full reply and surfacing follow-up failures. Ignore
-  late task updates after completion and distinguish stopped agents from success.
+### Highlights
 
-- Keep resumed Claude engine turns running when a background task notification
-  produces a result before the user's reply, preventing silent empty completion.
+- Refresh external agent discovery after CLI installation and offer detected Codex and Grok logins together during setup, while preserving current settings and other connection options.
+- Let independent tools proceed while long foreground commands continue in the background, with output and completion notifications preserved.
+- Restore next-message suggestions after clearing or undoing an accepted draft, preserve composer focus on Tab, and improve natural continuations.
+- Refine rounded settings and sidebar layouts, align workspace and branch labels, keep compaction indicators on long summaries, and unify Markdown document previews.
+- Keep the macOS Dock icon visible with the desktop pet, and make the permission guide follow window movement while avoiding system dialogs.
+- Synchronize workspace switches with a clear success notice and simplify Automations around existing tasks and completed runs.
 
-- Retry failed file previews in place without closing or replacing the selected tab.
+## [2026.10.17] - 2026-10-17
 
-- Restore complete conversation history after reload, including intermediate
-  reasoning, tool results, and image artifacts released from model context.
+### Contributors
 
-- Keep basic file and command tools directly callable alongside Code Mode, support
-  atomic literal edits, and prefer existing verification unless new tests are requested.
-- Preserve provider-native response order and restart context for cache-friendly
-  continuation; deliver background results during active work and persist their consumption.
-- Remove duplicate terminal receipts and failure reminders; apply one recoverable
-  output budget while retaining canonical tool data and complete audit records.
+@blueberrycongee, @Rosemary1812
+
+### Highlights
+
+- Add optional next-message suggestions for main and side chats, with independent model and reasoning settings and Tab-to-insert drafts.
+- Show context compaction alongside tool activity with paired token rings, before/after counts, and expandable details.
+- Refine the rounded conversation canvas with compact headers, centered workspace tabs, responsive sidebar resizing, readable workspace labels, and streaming scroll fades.
+- Reuse streaming model connections across turns and keep Claude provider errors in the conversation notice without duplicating assistant replies.
+- Refresh DeepSeek Flash 1017 availability, output limits, and pricing while preserving saved model aliases.
+
+## [2026.10.16] - 2026-10-16
+
+### Contributors
+
+@blueberrycongee
+
+### Highlights
+
+- Refresh the shared icon family and sidebar surfaces for a lighter, more consistent desktop interface.
+- Simplify settings, improve narrow layouts, and show the inherited font in the default body-font option.
+- Improve first-run plugin selection with aligned switches, Side chat visual feedback, and restored scroll-edge hints.
+- Live previews follow the selected conversation and appear without waiting for keyboard focus, with clearer startup failures and retry.
+- Recover retained agent results after failed completion without duplicate delivery or unrelated work waiting indefinitely.
+
+## [2026.10.15] - 2026-10-15
+
+### Contributors
+
+@blueberrycongee, @Rosemary1812
+
+### Highlights
+
+- macOS releases now use a pinned Apple Developer ID with notarization and stapled tickets for the app and disk image.
+- Signed builds check for updates from GitHub, with sidebar download progress, retry, and explicit restart confirmation.
+- Computer Use is included on macOS, with guided permission setup, improved background app control, and stacked live video previews.
+- Conversations render math formulas and improve streamed Markdown, typography, image viewing, and sidebar readability.
+- Recover unsent text after a reload; improve native-engine steering, interrupted-turn recovery, MCP connections, and session storage efficiency.
+- Choose Side chat during onboarding. Extension authors now use the TypeScript SDK and versioned services; the public Go plugin SDK and legacy service declarations are retired.
+
+## [2026.10.12] - 2026-10-12
+
+### Contributors
+
+@blueberrycongee
+
+### Highlights
+
+- See background task wakeups, scheduled checks, and recent output from a Trigger
+  button beside the latest reply, and cancel automatic continuation without
+  stopping the task. Scheduled checks now arrive while the task is still running.
+- Search tools and agent shells can use the bundled ripgrep on machines without
+  `rg`; a user-installed `rg` still takes precedence.
+- Model services show vendor marks for LM Studio, Lynkr, Privatemode AI, and
+  Atomic Chat.
+
+## [2026.10.11] - 2026-10-11
+
+### Contributors
+
+@blueberrycongee
+
+### Highlights
+
+- Continue conversations inside expanded document previews, with preserved drafts,
+  PDF selections and annotations, and side chat in shared workspace tabs.
+- Refined desktop navigation, settings, artifact cards, web sources, and task
+  progress, with compact controls, steadier narrow layouts, and source highlights
+  that survive scrolling and resizing.
+- Pair a separately built native iOS app through desktop Phone access. This
+  release publishes the macOS desktop only; no mobile app is included.
+- Apply plugin updates between turns without losing active work or conversation
+  history, and keep working plugins when replacement startup fails.
+- More reliable model discovery, Claude background-agent follow-ups, interrupted
+  replies, and complete conversation history after reload.
+- Preserve embedded-browser popups and submitted forms, keep tab access within
+  its owning conversation, and retain user pages while cleaning up temporary tabs.
 
 ## [2026.10.6] - 2026-10-06
 

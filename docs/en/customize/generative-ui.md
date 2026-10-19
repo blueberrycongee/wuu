@@ -55,7 +55,7 @@ Unknown nodes, properties, state references, and out-of-scope expressions fail
 validation. It does not execute generated JavaScript or accept arbitrary HTML,
 CSS, URLs, network access, or React props.
 
-The native tool and desktop both validate programs. Limits include 128 KiB per
+The TypeScript tool runtime and desktop share the same program validator. Limits include 128 KiB per
 spec, 32 state slots with a 16 KiB initial state budget, 256 declared nodes with
 12 nesting levels, and 2,048 expression nodes with 16 nesting levels. Runtime
 execution is also bounded; oversized computed views fail instead of continuing
@@ -84,7 +84,7 @@ A small calculator uses the same controls and expression format as a larger form
 nonblank `title`, a useful nonblank `fallback`, and 1–16 `blocks` with unique IDs.
 The canonical tool schema is
 [`plugins/generative-ui/schema.json`](../../../plugins/generative-ui/schema.json).
-The native tool validates it before publishing a resource with MIME type
+The tool runtime validates it before publishing a resource with MIME type
 `application/vnd.wuu.ui+json` and `placement: inline`; the desktop validates
 stored content again before rendering it.
 
@@ -144,17 +144,33 @@ in text. Unsupported historical specs, disabled/missing plugins, and renderer
 errors fall back to the ordinary text accompanying the resource. Other clients
 can use that same text without implementing the interactive renderer.
 
+## Live plugin updates
+
+The tool runtime and desktop renderer use the ordinary public extension lifecycle.
+After building once, `wuu plugin dev plugins/generative-ui` watches the development
+package, including its schema, shared validator, desktop entry and SDK inputs.
+It rebuilds and publishes changed generations without rebuilding Go or restarting
+Wuu. Generated output does not trigger another build.
+
+Renderer updates replace mounted views immediately. Tool definitions and schemas
+are adopted at the next idle turn boundary; an in-progress turn keeps its previous
+runtime snapshot. A failed replacement preserves the last usable generation.
+Disabling the plugin removes interactive rendering and revokes its tools, including
+retained runtime generations. Existing results keep their versioned data and text
+fallback; re-enabling restores compatible saved input state. Updates must preserve
+v1/v2 result and storage compatibility or provide an explicit migration.
+
 ## Developer verification
 
-Build the core/helpers with `npm --prefix desktop run build:core`, then run
+Build the plugin runtime with `npm --prefix plugins run build -- --plugin=generative-ui`, then run
 `npm --prefix desktop run test:e2e:generative-ui` in a graphical session. On
 headless Linux, invoke the same Electron script with `--no-sandbox
 --ozone-platform=headless --ozone-override-screen-size=1440,1400`.
-`WUU_GENERATIVE_UI_PLUGIN_HELPER` selects an already-built helper and
-`WUU_GENUI_OUTPUT` selects an output directory.
+`WUU_GENUI_OUTPUT` selects an output directory. The script runs the bundled
+JavaScript tool with the desktop Node runtime; no separate helper is required.
 
-The E2E uses a real native tool process and production artifact/plugin renderer
-components with synthetic data. It checks native/desktop validation agreement,
+The E2E uses a real JavaScript tool process and production artifact/plugin renderer
+components with synthetic data. It checks runtime/desktop validation agreement,
 interactive controls, state isolation and restoration, disabled/error fallback,
 and storage failure; it records tool output, JSON results, and light/dark,
 wide/narrow, default/large-font screenshots. Its storage adapter is synthetic;
@@ -163,7 +179,7 @@ it does not claim a live provider call or packaged-app verification.
 For the complete application path, run
 `npm --prefix desktop run test:e2e:generative-ui-app`. This builds and opens the
 real App/main/preload/core with a loopback synthetic HTTP provider in a temporary
-home. It checks default-off tool discovery, catalog enablement, a real native
+home. It checks default-off tool discovery, catalog enablement, a real plugin
 tool result in the conversation, production plugin storage writes and reload,
 disable/re-enable fallback, interleaved tool-argument previews, cancellation, and
 explicit follow-up submission while preserving composer drafts. It records actual IPC, provider requests,
@@ -173,8 +189,9 @@ No external model or user credential is used. This is source-build application
 acceptance, not a packaged-distribution check.
 
 Run `go run scripts/generative-ui-lifecycle-e2e.go` from the repository root to
-check native tool discovery, execution, disable/re-enable and safe mode with an
-isolated temporary home; `WUU_GENERATIVE_UI_PLUGIN_HELPER` selects the helper and
-`WUU_GENUI_LIFECYCLE_OUTPUT` selects the JSON evidence file. It also compiles the
+check plugin tool discovery, execution, live replacement with a retained foreground
+snapshot, failed replacement recovery, disable/re-enable and safe mode with an
+isolated temporary home. Build the bundled runtime first and provide Node.js on
+`PATH`; `WUU_GENUI_LIFECYCLE_OUTPUT` selects the JSON evidence file. It also compiles the
 advertised schema after Wuu's provider normalization, without calling a provider;
 this does not establish schema support for every provider or model.

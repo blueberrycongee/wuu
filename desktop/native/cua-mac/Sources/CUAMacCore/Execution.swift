@@ -21,6 +21,7 @@ public final class ComputerExecution: @unchecked Sendable {
         lock.unlock()
         if stopped { throw ComputerError.cancelled("request cancelled; input may have partially executed") }
         if Date() >= deadline { throw ComputerError.cancelled("request deadline exceeded; input may have partially executed") }
+        try inputGuard?()
     }
 
     public func beginInput() throws {
@@ -58,13 +59,23 @@ public final class ComputerExecution: @unchecked Sendable {
     static func input() throws { try current?.beginInput() }
 }
 
+// Run the event loop while holding input so cancellation can interrupt a long
+// press. Callers release in defer, including when this checkpoint throws.
+func holdInput(for duration: TimeInterval) throws {
+    let deadline = Date().addingTimeInterval(duration)
+    while Date() < deadline {
+        try ComputerExecution.checkpoint()
+        RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.02)))
+    }
+}
+
 private struct RequestMessage: @unchecked Sendable { let value: [String: Any] }
 
 // Native work is serialized on the supplied queue; notification handling never
 // waits behind that work. Register before enqueueing so queued calls cancel too.
 public final class MCPRequestQueue: @unchecked Sendable {
     private let lock = NSLock()
-    private var pending: [String: ComputerExecution] = [:]
+    private var pending: [String: (execution: ComputerExecution, epoch: String)] = [:]
     private var closing = false
     private let server: MCPServer
     private let queue: DispatchQueue
@@ -77,20 +88,31 @@ public final class MCPRequestQueue: @unchecked Sendable {
     public func submit(_ request: [String: Any], reply: @escaping @Sendable ([String: Any]) -> Void) {
         if request["method"] as? String == "notifications/cancelled" {
             if let params = request["params"] as? [String: Any], let id = params["requestId"] {
-                lock.lock(); let execution = pending[Self.key(id)]; lock.unlock()
+                lock.lock(); let execution = pending[Self.key(id)]?.execution; lock.unlock()
                 execution?.cancel()
             }
             return
         }
+        let params = request["params"] as? [String: Any]
+        if request["id"] == nil, request["method"] as? String == "notifications/wuu/control_revoked",
+           let epoch = params?["control_epoch"] as? String, !epoch.isEmpty {
+            lock.lock()
+            for entry in pending.values where entry.epoch == epoch { entry.execution.cancel() }
+            lock.unlock()
+            // Resource cleanup below runs on the native queue, after interrupted
+            // input has released its held keys/buttons, even when no call remains.
+        }
+        let arguments = params?["arguments"] as? [String: Any]
+        let epoch = arguments?["control_epoch"] as? String ?? ""
         let execution = ComputerExecution()
         let key = request["id"].map(Self.key)
         lock.lock()
-        if closing || pending.count >= 64 || key.map({ pending[$0] != nil }) == true {
+        if closing || (key != nil && pending.count >= 64) || key.map({ pending[$0] != nil }) == true {
             lock.unlock()
             reply(["jsonrpc": "2.0", "id": request["id"] ?? NSNull(), "error": ["code": -32000, "message": "request queue unavailable or duplicate request id"]])
             return
         }
-        if let key { pending[key] = execution }
+        if let key { pending[key] = (execution, epoch) }
         lock.unlock()
         let message = RequestMessage(value: request)
         queue.async { [self] in
@@ -105,7 +127,7 @@ public final class MCPRequestQueue: @unchecked Sendable {
     }
 
     public func shutdown(completion: @escaping @Sendable () -> Void) {
-        lock.lock(); closing = true; for execution in pending.values { execution.cancel() }; lock.unlock()
+        lock.lock(); closing = true; for entry in pending.values { entry.execution.cancel() }; lock.unlock()
         queue.async { [self] in server.shutdown(); completion() }
     }
 

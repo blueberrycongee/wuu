@@ -1164,8 +1164,16 @@ export function readableToolName(name: string | undefined): string {
 
 /** Resolve user-facing identity without replacing the raw dispatch name. */
 export function readableToolActivityName(
-  item: Pick<ThreadItem, "name" | "display">,
+  item: Pick<ThreadItem, "name" | "display" | "arguments">,
 ): string {
+  if (item.name === "run_code") {
+    const args = parseJSONRecord(item.arguments);
+    const code = args?.input ?? args?.code;
+    const firstLine = typeof code === "string" ? code.split("\n", 1)[0].trim() : "";
+    const pragma = firstLine.startsWith("// @run_code:") ? parseJSONRecord(firstLine.slice("// @run_code:".length)) : undefined;
+    const description = stringValue(pragma, "description") || stringValue(args, "description");
+    if (description) return description;
+  }
   return toolDisplayLabel(item.display) || readableToolName(item.name);
 }
 

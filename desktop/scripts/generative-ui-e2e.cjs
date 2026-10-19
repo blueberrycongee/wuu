@@ -1,4 +1,4 @@
-// Runs the real native tool process, then feeds its result through Wuu's real
+// Runs the real bundled TypeScript runtime, then feeds its result through Wuu's real
 // artifact collector, plugin lifecycle, renderer and storage adapter in Electron.
 // No inference service, account, API key, or user Wuu data is used.
 const assert = require('node:assert/strict');
@@ -11,7 +11,7 @@ let activeWindow;
 const { buildSync } = require('esbuild');
 const root = path.resolve(__dirname, '../..');
 const output = path.resolve(process.env.WUU_GENUI_OUTPUT || path.join(root, 'desktop/out/e2e/generative-ui'));
-const helper = process.env.WUU_GENERATIVE_UI_PLUGIN_HELPER || path.join(root, 'desktop/build/bin/wuu-generative-ui-plugin');
+const runtime = path.join(root, 'internal/plugin/bundled/generative-ui/runtime.mjs');
 fs.mkdirSync(output, { recursive: true });
 const profile = fs.mkdtempSync(path.join(output, 'profile-'));
 if (app) app.setPath('userData', profile);
@@ -109,9 +109,9 @@ function toolCall(value, index = 1) {
     { id: 'call', method: 'tool.execute', params: { tool_id: 'render_ui', thread_id: 'synthetic-thread', turn_id: 'synthetic-turn', call_id: `call-${index}`, arguments: { spec: value } } },
     { id: 'end', method: 'shutdown' },
   ];
-  const stdout = execFileSync(helper, [], { input: requests.map(request => JSON.stringify(request)).join('\n') + '\n', encoding: 'utf8', timeout: 15000, maxBuffer: 2 * 1024 * 1024 });
+  const stdout = execFileSync(process.execPath, [runtime], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, input: requests.map(request => JSON.stringify(request)).join('\n') + '\n', encoding: 'utf8', timeout: 15000, maxBuffer: 2 * 1024 * 1024 });
   const messages = stdout.trim().split('\n').map(line => JSON.parse(line));
-  assert.ok(messages.find(message => message.id === 'init')?.result, 'Native plugin initialized');
+  assert.ok(messages.find(message => message.id === 'init')?.result, 'Bundled TypeScript plugin initialized');
   return messages.find(message => message.id === 'call');
 }
 function edit(change) { const value = structuredClone(spec); change(value); return value; }
@@ -141,7 +141,7 @@ const cases = [
   ['too-many-rows', edit(s => { s.blocks[1].rows = Array(201).fill(['x', 1]); }), false],
   ['byte-budget', edit(s => { s.blocks = Array.from({ length: 16 }, (_, i) => ({ id: `text${i}`, type: 'text', text: '界'.repeat(4000) })); }), false],
 ];
-const results = { sourceSha256: createHash('sha256').update(fs.readFileSync(source)).digest('hex'), helperSha256: createHash('sha256').update(fs.readFileSync(helper)).digest('hex'), cases: [], checks: [], categoryAxes: [] };
+const results = { sourceSha256: createHash('sha256').update(fs.readFileSync(source)).digest('hex'), runtimeSha256: createHash('sha256').update(fs.readFileSync(runtime)).digest('hex'), cases: [], checks: [], categoryAxes: [] };
 const result = toolCall(spec).result?.result;
 assert.ok(result && !result.is_error, 'Valid tool result');
 const resource = result.content.find(part => part.type === 'resource');
@@ -152,7 +152,7 @@ fs.writeFileSync(path.join(output, 'tool-result.json'), JSON.stringify(result, n
 for (const [name, value, valid] of cases) {
   const response = toolCall(value, name);
   const accepted = !!response.result?.result && !response.result.result.is_error && !response.error;
-  assert.equal(accepted, valid, `Native schema: ${name}`);
+  assert.equal(accepted, valid, `Runtime schema: ${name}`);
   results.cases.push({ name, accepted });
 }
 const fixture = path.join(output, 'fixture.tsx');
@@ -163,6 +163,7 @@ import { collectTurnArtifacts, TurnInlineArtifactOutputs } from ${JSON.stringify
 import { ArtifactThreadContext } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/ArtifactPreviewContext'))};
 import { desktopPluginHost, desktopWorkbenchController } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/plugins/DesktopPluginRuntime'))};
 import { I18nProvider } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/i18n'))};
+import { ImagePreviewProvider } from ${JSON.stringify(path.join(root, 'desktop/src/renderer/ImagePreview'))};
 import { applyMessageFlowFontSize } from ${JSON.stringify(path.join(root, "desktop/src/renderer/MessageFlowFontSizeSection"))};
 import { activate, parseSpec, parseToolInput } from ${JSON.stringify(source)};
 import ${JSON.stringify(path.join(root, 'desktop/src/renderer/styles.css'))};
@@ -178,19 +179,48 @@ let holdReads = false;
 let storageKey = null;
 const heldReads = [];
 let pending = 0;
+let currentRendererHost;
+let retiredRendererHost;
+let releaseStaging;
+let stagedReplacement;
+async function replaceRenderer(generation, failure = false, deferred = false) {
+ retiredRendererHost = currentRendererHost;
+ return desktopPluginHost.activateGeneration({ pluginId: 'generative-ui', generation, register: async api => {
+   await activate({ ...api, registerRenderer(definition) {
+     const Renderer = definition.render;
+     return api.registerRenderer({ ...definition, render(props) {
+       currentRendererHost = props.host;
+       return <div data-fixture-generation={generation}><Renderer {...props} /></div>;
+     } });
+   } });
+   if (deferred) await new Promise(resolve => { releaseStaging = resolve; });
+   if (failure) throw Error('Replacement staging rejected');
+ } });
+}
 desktopWorkbenchController.updateServices({
  getStorage: async (_p, _g, key) => { storageKey=key; if (failStorage) throw Error('Fixture storage unavailable'); const saved=localStorage.getItem(key); if(holdReads) await new Promise(resolve=>heldReads.push(resolve)); return saved; },
  setStorage: async (_p, _g, key, value) => { pending++; try { if (failStorage) throw Error('Fixture storage unavailable'); localStorage.setItem(key, value); } finally { pending--; } },
 });
 function render() {
  const turn = { id:'fixture-turn', items: [{ id:itemId, type:'tool_call', status:streamingInput?.status ?? 'completed', arguments:streamingInput?.text, display:streamingInput ? {capability:'generative-ui', label:'Building view'} : undefined, result_detail:streamingInput?.final ? currentResult : streamingInput ? undefined : currentResult }] };
- root.render(<I18nProvider><ArtifactThreadContext.Provider value={threadId}>{mounted ? Array.from({length:copies},(_,copy)=><section key={copy} data-fixture-copy={copy}><TurnInlineArtifactOutputs artifacts={collectTurnArtifacts(turn)} /></section>) : null}</ArtifactThreadContext.Provider></I18nProvider>);
+ root.render(<I18nProvider><ImagePreviewProvider><ArtifactThreadContext.Provider value={threadId}>{mounted ? Array.from({length:copies},(_,copy)=><section key={copy} data-fixture-copy={copy}><TurnInlineArtifactOutputs artifacts={collectTurnArtifacts(turn)} /></section>) : null}</ArtifactThreadContext.Provider></ImagePreviewProvider></I18nProvider>);
 }
 window.nativeEvents=[];
 for(const type of ["submit","invalid","keydown","keypress","keyup"]) document.addEventListener(type,event=>{window.nativeEvents.push({type,trusted:event.isTrusted,target:event.target.getAttribute("data-genui-node"),key:event.key,value:event.target.value});if(window.nativeEvents.length>100)window.nativeEvents.shift();},true);
 window.probe = {
  fontSize: applyMessageFlowFontSize,
- async enable() { await desktopPluginHost.activateGeneration({ pluginId:'generative-ui', generation:'e2e', register:activate }); render(); },
+ async enable() { await replaceRenderer('e2e'); render(); },
+ async replace(generation, failure = false) {
+   try { await replaceRenderer(generation, failure); return null; }
+   catch (error) { return error.message; }
+ },
+ stage(generation) { stagedReplacement = replaceRenderer(generation, false, true); },
+ async commitStaging() { releaseStaging(); await stagedReplacement; },
+ get staging() { return Boolean(releaseStaging); },
+ async staleAction() {
+   try { await retiredRendererHost.invoke('conversation.composer.submit', { text: 'Stale continuation' }); return null; }
+   catch (error) { return error.message; }
+ },
  disable() { desktopPluginHost.disable('generative-ui'); render(); },
  mount(value = true) { mounted=value; render(); },
  copies(value) {copies=value;render();},
@@ -219,10 +249,10 @@ buildSync({ entryPoints: [fixture], outfile: path.join(output, 'fixture.js'), bu
 fs.writeFileSync(path.join(output, 'index.html'), '<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\'; font-src \'self\' data:; img-src \'self\' data:"><link rel="stylesheet" href="fixture.css"><style>body{overflow:auto;margin:0;padding:32px}#root{max-width:760px;margin:auto}html{--font-size:14px}</style></head><body><main id="root"></main><script src="fixture.js"></script></body></html>');
 if (process.env.WUU_GENUI_PREPARE_ONLY === '1') {
   const checkedProgram = toolCall(program, 'prepare-reactive-program').result?.result;
-  assert.ok(checkedProgram && !checkedProgram.is_error, 'Native helper accepts the complete v2 fixture');
-  fs.writeFileSync(path.join(output, 'native-validation.json'), JSON.stringify(results, null, 2));
+  assert.ok(checkedProgram && !checkedProgram.is_error, 'Bundled runtime accepts the complete v2 fixture');
+  fs.writeFileSync(path.join(output, 'runtime-validation.json'), JSON.stringify(results, null, 2));
   fs.rmSync(profile, { recursive:true, force:true });
-  console.log('Native validation passed and Electron fixture built; renderer checks not run.');
+  console.log('Runtime validation passed and Electron fixture built; renderer checks not run.');
   process.exit(0);
 }
 let lastOperation = 'Start Electron renderer';
@@ -251,7 +281,7 @@ async function click(win, selector) {
   win.webContents.sendInputEvent({ type:'mouseUp', x:Math.round(box.x), y:Math.round(box.y), button:'left', clickCount:1 });
 }
 const rendererRun = app.whenReady().then(async () => {
-  const win = new BrowserWindow({ width:1100, height:1200, show:true, webPreferences:{ contextIsolation:true, nodeIntegration:false, sandbox:true, backgroundThrottling:false } });
+  const win = new BrowserWindow({ width:1100, height:1200, show:true, ...(process.platform === 'linux' ? { frame:false, autoHideMenuBar:true } : {}), webPreferences:{ contextIsolation:true, nodeIntegration:false, sandbox:true, backgroundThrottling:false } });
   activeWindow = win;
   win.webContents.on('console-message', event => { if (event.level === 'error') console.error(event.message); });
   await withDeadline(win.loadFile(path.join(output, 'index.html')),'Load renderer fixture');
@@ -262,7 +292,7 @@ const rendererRun = app.whenReady().then(async () => {
   assert.ok(await evaluate(win, `document.body.textContent.includes('Design: 12 tasks')`));
   results.checks.push('disabled renderer keeps ordinary text fallback');
   for (const [name, value, valid] of cases) assert.equal(await evaluate(win, `window.probe.parse(${JSON.stringify(JSON.stringify(value))})`), valid, `Renderer schema: ${name}`);
-  results.checks.push('native and renderer schema agreement');
+  results.checks.push('runtime and renderer schema agreement');
   await evaluate(win, 'window.probe.enable()');
   await waitFor(win, `document.querySelector('[data-wuu-component="generated-ui"]')?.getAttribute('aria-busy') === 'false'`);
   await input(win, '[data-genui-block="teams"] input', 'engineering');
@@ -304,6 +334,21 @@ const rendererRun = app.whenReady().then(async () => {
   await evaluate(win, `window.probe.result(${JSON.stringify(result)})`);
   await waitFor(win, `document.querySelector('[data-genui-block="draft"] input[type="text"]')?.value === 'Saved owner'`);
   results.checks.push('message and explicit resource-instance isolation');
+
+  await evaluate(win, `window.probe.stage('hot-reload')`);
+  await waitFor(win, 'window.probe.staging');
+  assert.equal(await evaluate(win, `document.querySelector('[data-fixture-generation]')?.dataset.fixtureGeneration`), 'e2e');
+  assert.equal(await evaluate(win, `document.querySelector('[data-genui-block="draft"] input[type="text"]')?.value`), 'Saved owner');
+  await evaluate(win, 'window.probe.commitStaging()');
+  await waitFor(win, `document.querySelector('[data-fixture-generation="hot-reload"] [data-genui-block="draft"] input[type="text"]')?.value === 'Saved owner'`);
+  assert.match(await evaluate(win, 'window.probe.staleAction()'), /no longer active/);
+  assert.equal(await evaluate(win, `window.probe.replace('broken-reload', true)`), 'Replacement staging rejected');
+  assert.equal(await evaluate(win, `document.querySelector('[data-fixture-generation]')?.dataset.fixtureGeneration`), 'hot-reload');
+  assert.equal(await evaluate(win, `document.querySelectorAll('style[data-wuu-plugin-id="generative-ui"]').length`), 1);
+  await evaluate(win, `window.probe.replace('hot-reload')`);
+  await waitFor(win, `document.querySelector('[data-genui-block="draft"] input[type="text"]')?.value === 'Saved owner'`);
+  assert.match(await evaluate(win, 'window.probe.staleAction()'), /no longer active/);
+  results.checks.push('renderer hot replacement is atomic, failed staging retains the previous renderer, saved v1 state survives and retired actions are fenced even for the same fingerprint');
 
   await evaluate(win, 'window.probe.disable()');
   await waitFor(win, `!document.querySelector('[data-wuu-component="generated-ui"]') && document.body.textContent.includes('Design: 12 tasks')`);
@@ -423,7 +468,7 @@ const rendererRun = app.whenReady().then(async () => {
   results.checks.push('invalid historical payload preserves text fallback');
   await evaluate(win, 'window.probe.failStorage(false)');
   const programResult = toolCall(program, 'reactive-program').result?.result;
-  assert.ok(programResult && !programResult.is_error, 'Native helper accepts rich version 2 program');
+  assert.ok(programResult && !programResult.is_error, 'Bundled runtime accepts rich version 2 program');
   await evaluate(win, `window.probe.result(${JSON.stringify(programResult)})`);
   await waitFor(win, `document.querySelector('.plugin-genui-program')?.getAttribute('aria-busy') === 'false'`);
   assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="capacityMetric"] strong')?.textContent`), '160');
@@ -590,6 +635,15 @@ const rendererRun = app.whenReady().then(async () => {
   assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="detailsV2"]').open`),true);
   assert.equal(await evaluate(win, `document.querySelector(${JSON.stringify(`${movedAlpha} [data-genui-node="nestedDisclosure"]`)}).open`),true);
   results.checks.push('combined snapshot restores table query/sort, chart legend/data disclosure, nested disclosures and keyed collections; pie hiding survives data reordering');
+  await evaluate(win, `window.probe.replace('v2-hot-reload')`);
+  await waitFor(win, `document.querySelector('[data-fixture-generation="v2-hot-reload"] .plugin-genui-program')?.getAttribute('aria-busy')==='false'`);
+  assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="tableV2"] input').value`),'0');
+  assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="tableV2"] th:nth-child(2)').getAttribute('aria-sort')`),'descending');
+  assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="mixedV2"] .plugin-genui-legend button:first-child').getAttribute('aria-pressed')`),'false');
+  assert.equal(await evaluate(win, `document.querySelector('[data-genui-node="areaV2"] details').open`),true);
+  assert.equal(await evaluate(win, `document.querySelector(${JSON.stringify(`${movedAlpha} [data-genui-node="nestedDisclosure"]`)}).open`),true);
+  assert.match(await evaluate(win, 'window.probe.staleAction()'), /no longer active/);
+  results.checks.push('live renderer replacement preserves v2 model state, component state and keyed nested disclosures');
 
   // The new mount reads an older saved value while the existing mount edits.
   // Releasing that read must not overwrite the newer shared snapshot.
@@ -703,7 +757,7 @@ const rendererRun = app.whenReady().then(async () => {
   const duplicateKeys={version:2,title:'Duplicate keys',fallback:'Duplicate entity keys are rejected.',state:[],body:[{id:'items',type:'each',items:literal(['same','same']),key:{op:'item'},children:[{id:'text',type:'text',text:{op:'item'}}]}]};
   for (const [name,value,message] of [['expanded-data-budget',renderBudget,'Rendered data limit reached'],['aliased-computation-budget',aliasBudget,'Local computation limit reached'],['duplicate-entity-key',duplicateKeys,'Collection keys must be unique']]) {
     const bounded = toolCall(value,name).result?.result;
-    assert.ok(bounded&&!bounded.is_error,'Native schema accepts the bounded program syntax');
+    assert.ok(bounded&&!bounded.is_error,'Runtime schema accepts the bounded program syntax');
     await evaluate(win, `window.probe.result(${JSON.stringify(bounded)})`);
     await waitFor(win, `document.body.textContent.includes(${JSON.stringify(message)})`);
     assert.equal(await evaluate(win, `document.querySelectorAll('.plugin-genui-program td').length`),0,'Preflight rejects oversized output before data DOM is constructed');

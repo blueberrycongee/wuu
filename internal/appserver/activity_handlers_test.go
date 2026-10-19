@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -86,74 +87,157 @@ func TestServerActivityLifecycleRequestsAndNotifications(t *testing.T) {
 	}
 }
 
-func TestServerBrowserInputPausesUntilUserContinuation(t *testing.T) {
-	for _, method := range []string{MethodTurnStart, MethodTurnQueue, MethodTurnSteer} {
-		t.Run(method, func(t *testing.T) {
-			client := newBlockingStreamClient("done")
-			rt := newTestRuntime(t, &fakeClient{})
-			rt.StreamRunner.Client = client
-			rt.ActivityRegistry = activity.NewRegistry()
-			out := &lockedBuffer{}
-			srv := New(rt, out)
-			defer srv.Close()
-			if err := srv.handleLine(context.Background(), []byte(`{"id":"thread","method":"thread/start"}`)); err != nil {
-				t.Fatal(err)
+func TestServerActivityInputPausesUntilUserContinuation(t *testing.T) {
+	for _, kind := range []activity.Kind{activity.KindBrowser, activity.KindCUA} {
+		for _, controlMethod := range []string{MethodActivityTakeover, MethodActivityStop, MethodTurnInterrupt} {
+			for _, method := range []string{MethodTurnStart, MethodTurnQueue, MethodTurnSteer} {
+				t.Run(string(kind)+"/"+controlMethod+"/"+method, func(t *testing.T) {
+					client := newBlockingStreamClient("done")
+					rt := newTestRuntime(t, &fakeClient{})
+					rt.StreamRunner.Client = client
+					rt.ActivityRegistry = activity.NewRegistry()
+					out := &lockedBuffer{}
+					srv := New(rt, out)
+					defer srv.Close()
+					if err := srv.handleLine(context.Background(), []byte(`{"id":"thread","method":"thread/start"}`)); err != nil {
+						t.Fatal(err)
+					}
+					threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "thread")["result"]).Thread.ID
+					request := func(id, method, fields string) {
+						t.Helper()
+						if fields != "" {
+							fields = "," + fields
+						}
+						raw := fmt.Sprintf(`{"id":%q,"method":%q,"params":{"thread_id":%q%s}}`, id, method, threadID, fields)
+						if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
+							t.Fatal(err)
+						}
+						if response := responseByID(t, parseOutput(t, out.String()), id); response["error"] != nil {
+							t.Fatalf("%s: %+v", method, response)
+						}
+					}
+					request("start", MethodTurnStart, `"prompt":"browse"`)
+					select {
+					case <-client.started:
+					case <-time.After(3 * time.Second):
+						t.Fatal("turn did not start")
+					}
+					options := activity.StartOptions{ThreadID: threadID, Workdir: rt.RootDir, PluginID: string(kind), Kind: kind, Target: "tab-live"}
+					current, oldLease, err := rt.ActivityRegistry.Acquire(options)
+					if err != nil {
+						t.Fatal(err)
+					}
+					siblingKind := activity.KindCUA
+					if kind == activity.KindCUA {
+						siblingKind = activity.KindBrowser
+					}
+					siblingOptions := activity.StartOptions{ThreadID: threadID, Workdir: rt.RootDir, PluginID: string(siblingKind), Kind: siblingKind, Target: "sibling"}
+					sibling, siblingLease, err := rt.ActivityRegistry.Acquire(siblingOptions)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, lease := range []activity.Lease{oldLease, siblingLease} {
+						if _, err := rt.ActivityRegistry.UpdateWithLease(lease, activity.UpdateOptions{Preview: "file:///previous-preview.png", ProcessID: 41, WindowID: 42}); err != nil {
+							t.Fatal(err)
+						}
+					}
+					expectedPauseError := activity.ErrControlRevoked
+					if controlMethod == MethodActivityStop {
+						expectedPauseError = activity.ErrStopped
+					}
+					if method == MethodTurnSteer {
+						request("queue", MethodTurnQueue, `"prompt":"continue","client_id":"held"`)
+					}
+					controlFields := fmt.Sprintf(`"activity_id":%q,"execution_id":%q`, current.ID, current.ExecutionID)
+					if controlMethod == MethodTurnInterrupt {
+						controlFields = ""
+					}
+					request("input", controlMethod, controlFields)
+					waitForMethod(t, out, NotificationTurnError)
+					if _, _, err := rt.ActivityRegistry.Acquire(options); !errors.Is(err, expectedPauseError) {
+						t.Fatalf("activity after input = %v", err)
+					}
+					if controlMethod == MethodTurnInterrupt {
+						for _, interrupted := range rt.ActivityRegistry.List(threadID) {
+							if interrupted.Controller != activity.ControllerNone || interrupted.State != activity.StateActive {
+								t.Fatalf("ordinary interruption invented manual ownership: %+v", interrupted)
+							}
+						}
+					}
+					if err := rt.ActivityRegistry.CheckControl(threadID, sibling.ID, siblingLease.Token); !errors.Is(err, activity.ErrControlRevoked) {
+						t.Fatalf("sibling activity retained control: %v", err)
+					}
+					if _, _, err := rt.ActivityRegistry.Acquire(siblingOptions); !errors.Is(err, expectedPauseError) {
+						t.Fatalf("sibling backend resumed task: %v", err)
+					}
+					close(client.release)
+					// A queued extension turn can run, but must not regain local UI input.
+					if _, err := srv.startQueuedTurn(context.Background(), threadID, queuedTurn{
+						id: "background", msg: providers.ChatMessage{Role: "user", Content: "background update", Origin: "plugin"},
+					}); err != nil {
+						t.Fatal(err)
+					}
+					waitForTurnCompletedCountForThread(t, out, threadID, 1)
+					if _, _, err := rt.ActivityRegistry.Acquire(options); !errors.Is(err, expectedPauseError) {
+						t.Fatalf("background turn resumed activity: %v", err)
+					}
+					fields := `"prompt":"continue"`
+					if method != MethodTurnStart {
+						fields += `,"client_id":"held"`
+					}
+					client.started = make(chan struct{})
+					client.release = make(chan struct{})
+					client.once = sync.Once{}
+					request("continue", method, fields)
+					select {
+					case <-client.started:
+					case <-time.After(3 * time.Second):
+						t.Fatal("continuation did not start")
+					}
+					for _, pending := range rt.ActivityRegistry.List(threadID) {
+						if pending.Controller != activity.ControllerNone {
+							t.Fatalf("text-only admission resumed UI control: %+v", pending)
+						}
+					}
+					if _, err := rt.ActivityRegistry.Stop(threadID, current.ID, current.ExecutionID); !errors.Is(err, activity.ErrControlRevoked) {
+						t.Fatalf("old idle activity stopped a newer text-only turn: %v", err)
+					}
+					for _, freshOptions := range []activity.StartOptions{options, siblingOptions} {
+						freshOptions.Target = "next-" + freshOptions.Target
+						var activation activity.Session
+						unsubscribe := rt.ActivityRegistry.Subscribe(func(event activity.Event) {
+							if event.Type == activity.EventControlChanged && event.Activity.Kind == freshOptions.Kind && event.Activity.Controller == activity.ControllerAgent {
+								activation = event.Activity
+							}
+						})
+						_, _, err := rt.ActivityRegistry.Acquire(freshOptions)
+						unsubscribe()
+						if err != nil {
+							t.Fatalf("new execution could not acquire UI control: %v", err)
+						}
+						if activation.Target != freshOptions.Target || activation.Preview != "" || activation.ProcessID != 0 || activation.WindowID != 0 {
+							t.Fatalf("first activation published the previous target or preview identity: %+v", activation)
+						}
+					}
+					close(client.release)
+					waitForTurnCompletedCountForThread(t, out, threadID, 2)
+					if _, _, err := rt.ActivityRegistry.Acquire(options); !errors.Is(err, activity.ErrControlRevoked) {
+						t.Fatalf("completed execution retained input authority: %v", err)
+					}
+					for _, resumed := range rt.ActivityRegistry.List(threadID) {
+						if resumed.Controller != activity.ControllerNone || resumed.State != activity.StateActive || resumed.ExecutionID == "" || resumed.ExecutionID == current.ExecutionID {
+							t.Fatalf("continuation did not finish a fresh execution: %+v", resumed)
+						}
+					}
+					if _, err := rt.ActivityRegistry.Stop(threadID, current.ID, current.ExecutionID); !errors.Is(err, activity.ErrControlRevoked) {
+						t.Fatalf("stale desktop action reached newer execution: %v", err)
+					}
+					if err := rt.ActivityRegistry.CheckControl(threadID, current.ID, oldLease.Token); !errors.Is(err, activity.ErrControlRevoked) {
+						t.Fatalf("old activity action regained control: %v", err)
+					}
+				})
 			}
-			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "thread")["result"]).Thread.ID
-			request := func(id, method, fields string) {
-				t.Helper()
-				raw := fmt.Sprintf(`{"id":%q,"method":%q,"params":{"thread_id":%q,%s}}`, id, method, threadID, fields)
-				if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
-					t.Fatal(err)
-				}
-				if response := responseByID(t, parseOutput(t, out.String()), id); response["error"] != nil {
-					t.Fatalf("%s: %+v", method, response)
-				}
-			}
-			request("start", MethodTurnStart, `"prompt":"browse"`)
-			select {
-			case <-client.started:
-			case <-time.After(3 * time.Second):
-				t.Fatal("turn did not start")
-			}
-			options := activity.StartOptions{ThreadID: threadID, Workdir: rt.RootDir, PluginID: "browser", Kind: activity.KindBrowser, Target: "tab-live"}
-			current, oldLease, err := rt.ActivityRegistry.Acquire(options)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if method == MethodTurnSteer {
-				request("queue", MethodTurnQueue, `"prompt":"continue","client_id":"held"`)
-			}
-			request("input", MethodActivityTakeover, fmt.Sprintf(`"activity_id":%q`, current.ID))
-			waitForMethod(t, out, NotificationTurnError)
-			if _, _, err := rt.ActivityRegistry.Acquire(options); !errors.Is(err, activity.ErrControlRevoked) {
-				t.Fatalf("browser after input = %v", err)
-			}
-			close(client.release)
-			// A queued extension turn can run, but must not regain browser input.
-			if _, err := srv.startQueuedTurn(context.Background(), threadID, queuedTurn{
-				id: "background", msg: providers.ChatMessage{Role: "user", Content: "background update", Origin: "plugin"},
-			}); err != nil {
-				t.Fatal(err)
-			}
-			waitForTurnCompletedCountForThread(t, out, threadID, 1)
-			if _, _, err := rt.ActivityRegistry.Acquire(options); !errors.Is(err, activity.ErrControlRevoked) {
-				t.Fatalf("background turn resumed browser: %v", err)
-			}
-			fields := `"prompt":"continue"`
-			if method != MethodTurnStart {
-				fields += `,"client_id":"held"`
-			}
-			request("continue", method, fields)
-			waitForTurnCompletedCountForThread(t, out, threadID, 2)
-			resumed, nextLease, err := rt.ActivityRegistry.Acquire(options)
-			if err != nil || resumed.ID != current.ID || nextLease.Token == oldLease.Token {
-				t.Fatalf("browser after continuation = %+v / %+v, %v", resumed, nextLease, err)
-			}
-			if err := rt.ActivityRegistry.CheckControl(threadID, current.ID, oldLease.Token); !errors.Is(err, activity.ErrControlRevoked) {
-				t.Fatalf("old browser action regained control: %v", err)
-			}
-		})
+		}
 	}
 }
 

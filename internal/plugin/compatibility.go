@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/version"
 )
 
@@ -18,6 +19,7 @@ type CompatibilityOptions struct {
 	GOOS       string
 	WuuVersion string
 	LookPath   func(string) (string, error)
+	LookupEnv  func(string) (string, bool)
 }
 
 func defaultCompatibilityOptions() CompatibilityOptions {
@@ -58,7 +60,11 @@ func ValidateHostCompatibility(item Plugin, options CompatibilityOptions) error 
 		}
 	}
 	if item.Runtime != nil {
-		if _, err := options.LookPath(item.Runtime.Command); err != nil {
+		command, _ := pluginhost.ResolveRuntimeCommand(item.Runtime.Command, options.LookupEnv)
+		if _, err := options.LookPath(command); err != nil {
+			if item.Runtime.Command == "node" || item.Runtime.Command == "node.exe" {
+				return fmt.Errorf("plugin %q requires Node.js 22.7+ or the Wuu desktop runtime (runtime command %q is not executable): %w", item.ID, command, err)
+			}
 			return fmt.Errorf("plugin %q runtime command %q is not executable: %w", item.ID, item.Runtime.Command, err)
 		}
 	}

@@ -115,78 +115,27 @@ describe("appServerExitMessage", () => {
 });
 
 describe("appServerHelperEnvironment", () => {
-  it("injects packaged first-party plugin helpers and the signed macOS helper", () => {
+  it("injects the packaged signed macOS helper", () => {
     const resourcesPath = "/Applications/wuu.app/Contents/Resources";
-    const packagedBin = join(resourcesPath, "bin");
-    const available = new Set([
-      join(packagedBin, "wuu-subagent-plugin"),
-      join(packagedBin, "wuu-automation-plugin"),
-      join(packagedBin, "wuu-memory-plugin"),
-      join(packagedBin, "wuu-dream-plugin"),
-      join(packagedBin, "wuu-todo-plugin"),
-      join(packagedBin, "wuu-goal-plugin"),
-      join(packagedBin, "wuu-cua-mac"),
-    ]);
+    const helper = join(resourcesPath, "bin", "wuu-cua-mac");
     const result = appServerHelperEnvironment(
-      { HOME: "/Users/test" },
-      "/source",
-      resourcesPath,
-      "darwin",
-      (path) => available.has(path),
+      { HOME: "/Users/test" }, "/source", resourcesPath, "darwin", (path) => path === helper,
     );
-    expect(result.WUU_SUBAGENT_PLUGIN_HELPER).toBe(join(packagedBin, "wuu-subagent-plugin"));
-    expect(result.WUU_AUTOMATION_PLUGIN_HELPER).toBe(join(packagedBin, "wuu-automation-plugin"));
-    expect(result.WUU_MEMORY_PLUGIN_HELPER).toBe(join(packagedBin, "wuu-memory-plugin"));
-    expect(result.WUU_DREAM_PLUGIN_HELPER).toBe(join(packagedBin, "wuu-dream-plugin"));
-    expect(result.WUU_GOAL_PLUGIN_HELPER).toBe(join(packagedBin, "wuu-goal-plugin"));
-    expect(result.WUU_TODO_PLUGIN_HELPER).toBe(join(packagedBin, "wuu-todo-plugin"));
-    expect(result.WUU_CUA_MAC_HELPER).toBe(join(packagedBin, "wuu-cua-mac"));
+    expect(result.WUU_CUA_MAC_HELPER).toBe(helper);
   });
 
-  it("uses development plugin helpers without replacing explicit overrides", () => {
-    const sourceBin = join("/source", "desktop", "build", "bin");
-    const available = new Set([
-      join(sourceBin, "wuu-subagent-plugin"),
-      join(sourceBin, "wuu-automation-plugin"),
-      join(sourceBin, "wuu-memory-plugin"),
-      join(sourceBin, "wuu-dream-plugin"),
-      join(sourceBin, "wuu-todo-plugin"),
-      join(sourceBin, "wuu-goal-plugin"),
-      join(sourceBin, "wuu-cua-mac"),
-    ]);
-    const discovered = appServerHelperEnvironment(
-      {},
-      "/source",
-      undefined,
-      "darwin",
-      (path) => available.has(path),
-    );
-    expect(discovered.WUU_GOAL_PLUGIN_HELPER).toBe(join(sourceBin, "wuu-goal-plugin"));
-    expect(discovered.WUU_TODO_PLUGIN_HELPER).toBe(join(sourceBin, "wuu-todo-plugin"));
-    expect(discovered.WUU_CUA_MAC_HELPER).toBe(join(sourceBin, "wuu-cua-mac"));
+  it("uses the development native helper without replacing explicit overrides", () => {
+    const helper = join("/source", "desktop", "build", "bin", "wuu-cua-mac");
+    const discovered = appServerHelperEnvironment({}, "/source", undefined, "darwin", (path) => path === helper);
+    expect(discovered.WUU_CUA_MAC_HELPER).toBe(helper);
     const overridden = appServerHelperEnvironment(
-      {
-        WUU_SUBAGENT_PLUGIN_HELPER: "/custom/subagent",
-        WUU_CUA_MAC_HELPER: "/custom/cua",
-      },
-      "/source",
-      undefined,
-      "darwin",
-      () => true,
+      { WUU_CUA_MAC_HELPER: "/custom/cua" }, "/source", undefined, "darwin", () => true,
     );
-    expect(overridden.WUU_SUBAGENT_PLUGIN_HELPER).toBe("/custom/subagent");
     expect(overridden.WUU_CUA_MAC_HELPER).toBe("/custom/cua");
   });
 
-  it("uses .exe plugin helpers on Windows without injecting the macOS helper", () => {
-    const result = appServerHelperEnvironment(
-      {},
-      "C:\\source",
-      undefined,
-      "win32",
-      (path) => path.endsWith("wuu-subagent-plugin.exe"),
-    );
-    expect(result.WUU_SUBAGENT_PLUGIN_HELPER).toMatch(/wuu-subagent-plugin\.exe$/);
+  it("does not inject the macOS helper on Windows", () => {
+    const result = appServerHelperEnvironment({}, "C:\\source", undefined, "win32", () => true);
     expect(result.WUU_CUA_MAC_HELPER).toBeUndefined();
   });
 });

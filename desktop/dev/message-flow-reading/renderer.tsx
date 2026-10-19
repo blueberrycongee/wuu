@@ -86,6 +86,53 @@ applyTheme(theme);
 
 长路径 \`desktop/src/renderer/styles/conversation-shell.css\` 在窄窗口和大字号下也应能够阅读。`;
 
+// `?stream=<name>` replaces the streaming sample to inspect where the cursor
+// sits while a fenced code block is still the last visible block.
+const streamSamples: Record<string, string> = {
+  math: String.raw`行内公式 $E = mc^2$ 与 \(a^2 + b^2 = c^2\) 跟随正文。
+
+$$
+x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
+$$
+
+\[
+\begin{aligned}
+f(x) &= \int_0^x t^2\,dt \\
+
+     &= \frac{x^3}{3}
+\end{aligned}
+\]
+
+矩阵与求和：
+
+$$
+A = \begin{pmatrix}1 & 2 \\ 3 & 4\end{pmatrix}, \qquad \sum_{n=1}^{\infty}\frac{1}{n^2} = \frac{\pi^2}{6}
+$$
+
+长公式在自己的区域内滚动：
+
+$$
+\underbrace{a_1 + a_2 + a_3 + a_4 + a_5 + a_6 + a_7 + a_8 + a_9 + a_{10} + a_{11} + a_{12}}_{\text{twelve terms}} = \sum_{i=1}^{12} a_i
+$$
+
+- 列表公式：$\alpha + \beta = \gamma$
+
+| 项目 | 公式 |
+| --- | --- |
+| 概率 | $P(A \mid B) = \frac{P(A \cap B)}{P(B)}$ |
+
+代码保留原文：${"`$x^2$`"}。价格：\$5 和 \$10。
+
+无法解析的公式保留可读内容：$\notARealCommand{x}$。`,
+  "open-code": "先写一个辅助函数：\n\n```ts\nexport function clamp(value: number, min: number, max: number) {\n  return Math.min(max, Math.max(min, value));",
+  "open-code-newline": "先写一个辅助函数：\n\n```ts\nexport function clamp(value: number, min: number, max: number) {\n  return Math.min(max, Math.max(min, value));\n",
+  "open-code-plain": "运行下面的命令：\n\n```\ncd desktop\nnpm run dev",
+  "open-code-empty": "运行下面的命令：\n\n```bash\n",
+  "open-code-list": "- 第一步：\n\n  ```bash\n  cd desktop\n  npm run dev",
+  "closed-code": "运行下面的命令：\n\n```bash\ncd desktop\nnpm run dev\n```",
+  "closed-code-blank": "运行下面的命令：\n\n```bash\ncd desktop\nnpm run dev\n```\n\n",
+};
+
 const conversationTurns: Turn[] = [
   {
     id: "sample-first", status: "completed", items_view: "full", duration_ms: 42000,
@@ -195,10 +242,11 @@ function Fixture(): JSX.Element {
   const [theme, setTheme] = useState(params.get("theme") || "light");
   const [surface, setSurface] = useState(params.get("surface") || "stream");
   const turns = surface === "images" ? mediaTurns : conversationTurns;
-  const [live, setLive] = useState(params.has("lateTerminal"));
+  const [live, setLive] = useState(params.has("lateTerminal") || params.has("live"));
   const [playing, setPlaying] = useState(false);
   const [run, setRun] = useState(0);
   const key = `reading-fixture-${run}`;
+  const streamSample = streamSamples[params.get("stream") ?? ""] ?? sample;
   useEffect(() => applyMessageFlowFontSize(size), [size]);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
   useEffect(() => {
@@ -207,20 +255,20 @@ function Fixture(): JSX.Element {
     streamTextStore.seed(key, "");
     setLive(true);
     const timer = window.setInterval(() => {
-      const chunk = sample.slice(offset, offset + 60);
+      const chunk = streamSample.slice(offset, offset + 60);
       streamTextStore.append(key, chunk);
       offset += chunk.length;
-      if (offset >= sample.length) { setLive(false); setPlaying(false); }
+      if (offset >= streamSample.length) { setLive(false); setPlaying(false); }
     }, 70);
     return () => window.clearInterval(timer);
-  }, [key, playing]);
+  }, [key, playing, streamSample]);
   const markdown = surface === "stream"
-    ? <StreamingMarkdown key={key} streamKey={key} initialText={playing ? "" : sample} isLive={live} phase="final_answer" />
-    : <RichContent text={surface === "user" ? userSample : sample} />;
+    ? <StreamingMarkdown key={key} streamKey={key} initialText={playing ? "" : streamSample} isLive={live} phase="final_answer" />
+    : <RichContent text={surface === "user" ? userSample : streamSample} />;
   return <ImagePreviewProvider>
     <header className="fixture-toolbar">
       <strong>Wuu · 消息流排版验收</strong>
-      <label>字号<select aria-label="字号" value={size} onChange={event => setSize(Number(event.target.value))}>{[MESSAGE_FLOW_FONT_SIZE_RANGE.min, 14, 14.5, 16, 18, MESSAGE_FLOW_FONT_SIZE_RANGE.max].map(value => <option key={value}>{value}</option>)}</select></label>
+      <label>字号<select aria-label="字号" value={size} onChange={event => setSize(Number(event.target.value))}>{Array.from(new Set([MESSAGE_FLOW_FONT_SIZE_RANGE.min, 14, 14.5, MESSAGE_FLOW_FONT_SIZE_RANGE.default, 16, 18, MESSAGE_FLOW_FONT_SIZE_RANGE.max])).sort((a, b) => a - b).map(value => <option key={value}>{value}</option>)}</select></label>
       <label>主题<select aria-label="主题" value={theme} onChange={event => setTheme(event.target.value)}><option value="light">浅色</option><option value="dark">深色</option></select></label>
       <label>渲染方式<select aria-label="渲染方式" value={surface} onChange={event => setSurface(event.target.value)}><option value="conversation">完整对话</option><option value="images">消息图片</option><option value="lifecycle">回复完成与动作占位</option><option value="stream">流式分块</option><option value="rich">普通 Markdown</option><option value="chat">聊天气泡</option><option value="user">用户消息</option><option value="edit">编辑用户消息</option><option value="workspace">文件预览</option><option value="failures">失败与中断</option></select></label>
       <label><input aria-label="流式状态" type="checkbox" checked={live} onChange={event => setLive(event.target.checked)} />显示流式光标</label>
@@ -235,7 +283,7 @@ function Fixture(): JSX.Element {
           {surface === "lifecycle" ? <WuuUIRoot><TurnView
             turn={{ id: "fixture-lifecycle", status: live ? "in_progress" : "completed", started_at: "2026-09-17T06:00:00Z", answer_ready_at: live ? undefined : "2026-09-17T06:00:06Z", items_view: "full", items: [
               { id: "fixture-request", type: "user_message", status: "completed", text: "检查回复完成后的空白。" },
-              { id: "fixture-answer", type: "agent_message", terminal: live && params.has("lateTerminal") ? undefined : true, status: live ? "in_progress" : "completed", text: params.has("lateTerminal") ? Array(4).fill("在技术演进与协作模式持续变迁的当下，软件工程的重心正逐渐从单纯的代码编写转向更高维度的系统设计、上下文维护与心智模型对齐。现代开发工作流不再是由孤立的函数或离散的代码提交拼凑而成，而是一个需要持续演进、自我校准并包容复杂性的动态生态系统。").join("\n\n") : "这段回答结束后，操作出现，但下一条消息的位置不应变化。" },
+              { id: "fixture-answer", type: "agent_message", terminal: live && params.has("lateTerminal") ? undefined : true, status: live ? "in_progress" : "completed", text: params.get("content") === "markdown" ? sample : params.has("lateTerminal") || params.get("content") === "prose" ? Array(4).fill("在技术演进与协作模式持续变迁的当下，软件工程的重心正逐渐从单纯的代码编写转向更高维度的系统设计、上下文维护与心智模型对齐。现代开发工作流不再是由孤立的函数或离散的代码提交拼凑而成，而是一个需要持续演进、自我校准并包容复杂性的动态生态系统。").join("\n\n") : "这段回答结束后，操作出现，但下一条消息的位置不应变化。" },
             ] }}
             isLatestTurn latestAgentMessageID="fixture-answer"
             streamStatus={live && params.has("notice") ? { text: "连接恢复提示需要在窄窗口和大字号下自然换行，而不是用一个固定高度的空白代替。", liveProgress: false } : undefined}
