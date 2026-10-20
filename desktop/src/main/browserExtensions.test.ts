@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -15,7 +16,7 @@ const roots: string[] = [];
 const approve = async () => true;
 
 function tempRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), "wuu-browser-extension-test-"));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "wuu-browser-extension-test-")));
   roots.push(root);
   return root;
 }

@@ -1187,6 +1187,7 @@ export type BrowserExtensionRecord = {
   path: string;
   enabled: boolean;
   loaded: boolean;
+  hasOptions?: boolean;
   manifest?: BrowserExtensionManifest;
   needsReview?: boolean;
   error?: string;
@@ -3501,6 +3502,7 @@ export type WuuDesktopApi = {
     enabled: boolean,
   ) => Promise<BrowserExtensionRecord[]>;
   reloadBrowserExtension?: (id: string) => Promise<BrowserExtensionRecord[]>;
+  openBrowserExtensionOptions?: (id: string) => Promise<void>;
   removeBrowserExtension?: (id: string) => Promise<BrowserExtensionRecord[]>;
   // Renderer→main: hide the agent view while a full-window overlay (settings,
   // dialogs, search) is open so it can't occlude the modal; false restores it.

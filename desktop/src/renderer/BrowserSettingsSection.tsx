@@ -4,7 +4,7 @@ import type {
   BrowserExtensionRecord,
   BrowserProfile,
 } from "../shared/protocol";
-import { ChevronDown, Folder, Globe, Loader2, RefreshCw, Trash2 } from "./WuuIcons";
+import { ChevronDown, Folder, Globe, Loader2, RefreshCw, Settings, Trash2 } from "./WuuIcons";
 import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
 import { SettingsRow } from "./SettingsRow";
 import { useI18n } from "./i18n";
@@ -148,6 +148,19 @@ export function BrowserSettingsSection(): JSX.Element | null {
     }
   };
 
+  const openOptions = async (extension: BrowserExtensionRecord): Promise<void> => {
+    if (busy || !window.wuu.openBrowserExtensionOptions) return;
+    setBusy(`options:${extension.id}`);
+    setExtensionError("");
+    try {
+      await window.wuu.openBrowserExtensionOptions(extension.id);
+    } catch (reason) {
+      if (mounted.current) setExtensionError(messageOf(reason));
+    } finally {
+      if (mounted.current) setBusy("");
+    }
+  };
+
   return (
     <>
       <SettingsPageHeader
@@ -274,6 +287,16 @@ export function BrowserSettingsSection(): JSX.Element | null {
                   ].filter(Boolean).join(" · ")}
                 >
                   <div className="browser-settings-actions">
+                    {extension.hasOptions && window.wuu.openBrowserExtensionOptions ? <button
+                      className="settings-button settings-button-ghost settings-icon-button"
+                      type="button"
+                      title={t("settings.browserExtensionsOptions", { name: extension.name })}
+                      aria-label={t("settings.browserExtensionsOptions", { name: extension.name })}
+                      disabled={Boolean(busy) || !extension.loaded}
+                      onClick={() => void openOptions(extension)}
+                    >
+                      <Settings size={16} aria-hidden="true" />
+                    </button> : null}
                     <button
                       className="settings-button settings-button-ghost settings-icon-button"
                       type="button"

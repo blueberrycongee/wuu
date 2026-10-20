@@ -803,6 +803,8 @@ browserApi.setBrowserExtensionEnabled = (id, enabled) =>
 browserApi.reloadBrowserExtension = (id) =>
   ipcRenderer.invoke("wuu:browser-extensions-reload", id) as Promise<BrowserExtensionRecord[]>;
 browserApi.removeBrowserExtension = (id) =>
+browserApi.openBrowserExtensionOptions = (id) =>
+  ipcRenderer.invoke("wuu:browser-extensions-options", id) as Promise<void>;
   ipcRenderer.invoke("wuu:browser-extensions-remove", id) as Promise<BrowserExtensionRecord[]>;
 
 (api as WuuDesktopApi & PageContextApi).readPageContext = (id, tabId) => ipcRenderer.invoke("wuu:page-context-read", id, tabId);

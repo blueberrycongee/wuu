@@ -172,6 +172,7 @@ export class BrowserExtensionManager {
         name: extension?.name ?? manifest?.name ?? basename(preference.path),
         version: extension?.version ?? manifest?.version ?? "", path: preference.path,
         enabled: preference.enabled, loaded: Boolean(extension),
+        hasOptions: Boolean(manifest?.compatibility.includes("options")),
         ...(manifest ? { manifest } : { needsReview: true }),
         ...(this.errors.get(pathKey(preference.path)) ? { error: this.errors.get(pathKey(preference.path)) } : {}),
       };
@@ -189,6 +190,24 @@ export class BrowserExtensionManager {
       const preference: StoredBrowserExtension = { path, enabled: true };
       await this.installSnapshot(preference, consent);
       return this.list();
+    });
+  }
+
+  async optionsURL(id: string): Promise<string> {
+    await this.initialize();
+    return this.serializeMutation(async () => {
+      const preference = this.requirePreference(id);
+      const active = this.snapshotPath(preference.path, "active");
+      const loaded = this.session.extensions.getAllExtensions().find(item => pathKey(item.path) === pathKey(active));
+      if (!preference.enabled || !loaded) throw new Error("The extension must be enabled and loaded before opening its settings.");
+      if (this.manifestHash(active) !== preference.manifestHash) throw new Error("The installed extension manifest changed. Reload its source folder first.");
+      readManifest(active);
+      const manifest = JSON.parse(readFileSync(join(active, "manifest.json"), "utf8")) as Record<string, unknown>;
+      const resource = isRecord(manifest.options_ui) ? manifest.options_ui.page : manifest.options_page;
+      if (typeof resource !== "string" || !resource) throw new Error("This extension does not provide a settings page.");
+      const url = new URL(resource, `chrome-extension://${loaded.id}/`);
+      if (url.protocol !== "chrome-extension:" || url.hostname !== loaded.id) throw new Error("Extension settings must stay inside their extension.");
+      return url.href;
     });
   }
 

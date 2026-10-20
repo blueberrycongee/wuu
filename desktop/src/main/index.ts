@@ -13,6 +13,7 @@ import type { ChromeOverlayRequest } from "../shared/chromeOverlay";
 import type { WebWorkspaceTooltip, WebWorkspaceMenuRequest, WebWorkspaceBounds, WebWorkspaceCommand, WebWorkspaceDestination, WebWorkspaceLegacyDestination, WebWorkspaceFindOptions } from "../shared/webWorkspace";
 import { importBrowserCookies, listBrowserProfiles } from "./browserCookieImport";
 import { BrowserExtensionManager, type BrowserExtensionConsent } from "./browserExtensions";
+import { BrowserExtensionWindows } from "./browserExtensionWindows";
 import { saveArtifactFile } from "./artifactSave";
 import { showArtifactItemMenu } from "./artifactItemMenu";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
@@ -264,6 +265,7 @@ const DEFAULT_TITLEBAR_HEIGHT = 56;
 const WORKBENCH_TITLEBAR_HEIGHT = 44;
 const ENABLE_EMBEDDED_BROWSER = process.env.WUU_ENABLE_BROWSER !== "0";
 let browserExtensionManager: BrowserExtensionManager | undefined;
+let browserExtensionWindows: BrowserExtensionWindows | undefined;
 function embeddedBrowserSession() {
   if (!ENABLE_EMBEDDED_BROWSER) {
     throw new Error("The embedded browser is disabled in this build.");
@@ -1477,6 +1479,7 @@ app.whenReady().then(async () => {
       console.info("[desktop] embedded-browser extensions disabled by safe mode");
     } else {
       browserExtensionManager = new BrowserExtensionManager(browserSession);
+      browserExtensionWindows = new BrowserExtensionWindows(browserSession, browserExtensionManager);
       try {
         await browserExtensionManager.initialize();
       } catch (error) {
@@ -3078,6 +3081,12 @@ app.whenReady().then(async () => {
   });
   systemPermissions.start();
   ipcMain.handle("wuu:system-permissions", event => {
+  ipcMain.handle("wuu:browser-extensions-options", async (event, id: unknown) => {
+    const host = requireBrowserSettingsSender(event);
+    if (typeof id !== "string" || !id.trim()) throw new Error("Extension id is required.");
+    if (!browserExtensionWindows) throw new Error("Embedded browser extensions are unavailable.");
+    await browserExtensionWindows.openOptions(id, host);
+  });
     requireAppContextSender(event);
     return systemPermissions.state();
   });
