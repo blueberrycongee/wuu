@@ -1984,6 +1984,8 @@ export type Thread = {
   worktree?: WorktreeInfo;
   created_at: string;
   updated_at: string;
+  /** Last user turn activity; independent of streaming and read access. */
+  recency_at?: string;
   latest_completed_turn_id?: string;
   turns: Turn[];
   /** Opaque remote cursor for older turns; absent when the snapshot is complete. */

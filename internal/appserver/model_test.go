@@ -21,6 +21,23 @@ func TestThreadSnapshotExposesInterruptedOrchestration(t *testing.T) {
 	}
 }
 
+func TestRecentActivityDoesNotAdvanceWithStreamingOrCompletion(t *testing.T) {
+	created := time.Unix(100, 0).UTC()
+	sent := created.Add(time.Hour)
+	th := newThreadState("recent", nil, "provider", "model", "/repo", false, created)
+	th.startTurnLocked("turn", providers.ChatMessage{Role: "user", Content: "hello"}, sent)
+	th.applyStreamEventLocked("turn", providers.StreamEvent{Type: providers.EventContentDelta, Content: "answer"}, sent.Add(time.Minute))
+	th.finishTurnLocked("turn", TurnStatusCompleted, nil, sent.Add(2*time.Minute), "stop", "", false)
+	if got := th.listSnapshotLocked(true).RecencyAt; !got.Equal(sent) {
+		t.Fatalf("summary recency = %v, want %v", got, sent)
+	}
+	next := sent.Add(time.Hour)
+	th.startTurnLocked("next", providers.ChatMessage{Role: "user", Content: "continue"}, next)
+	if got := th.snapshotLocked().RecencyAt; !got.Equal(next) {
+		t.Fatalf("follow-up recency = %v, want %v", got, next)
+	}
+}
+
 func TestThreadStateStreamSnapshotsSurviveReplaceAndCompletion(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	for _, kind := range []string{"content", "reasoning", "arguments"} {

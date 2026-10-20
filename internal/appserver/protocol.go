@@ -2466,6 +2466,7 @@ type Thread struct {
 	Worktree              *WorktreeInfo `json:"worktree,omitempty"`
 	CreatedAt             time.Time     `json:"created_at"`
 	UpdatedAt             time.Time     `json:"updated_at"`
+	RecencyAt             time.Time     `json:"recency_at"`
 	LatestCompletedTurnID string        `json:"latest_completed_turn_id,omitempty"`
 	Turns                 []Turn        `json:"turns"`
 	HistoryCursor         string        `json:"history_cursor,omitempty"`

@@ -1517,6 +1517,7 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	if !metadata.CreatedAt.IsZero() {
 		th.CreatedAt = metadata.CreatedAt
 	}
+	th.RecencyAt = metadata.RecencyAt
 	if !metadata.UpdatedAt.IsZero() {
 		th.UpdatedAt = metadata.UpdatedAt
 	} else if !metadata.CreatedAt.IsZero() {
@@ -1647,6 +1648,7 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 			Worktree:              threadWorktreeInfo(sess.WorktreePath, sess.WorktreeBaseHEAD, sess.WorktreeBaseRepo),
 			CreatedAt:             sess.CreatedAt,
 			UpdatedAt:             updatedAt,
+			RecencyAt:             sess.RecencyAt,
 			LatestCompletedTurnID: sess.LatestCompletedTurnID,
 			Turns:                 []Turn{},
 		},

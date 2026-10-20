@@ -34,6 +34,7 @@ func newThreadState(id string, history []providers.ChatMessage, rtProvider, mode
 		historyHeadSeq: maxHistorySeq(history),
 		CreatedAt:      now,
 		UpdatedAt:      now,
+		RecencyAt:      now,
 		LastAccessedAt: now,
 		ModelProvider:  rtProvider,
 		Model:          model,
@@ -101,6 +102,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		Worktree:              threadWorktreeInfo(th.WorktreePath, th.WorktreeBaseHEAD, th.WorktreeBaseRepo),
 		CreatedAt:             th.CreatedAt,
 		UpdatedAt:             th.UpdatedAt,
+		RecencyAt:             th.RecencyAt,
 		LatestCompletedTurnID: latestCompletedTurnID(th.Turns),
 		Turns:                 cloneTurns(turns),
 	}
@@ -136,6 +138,9 @@ func (th *threadState) startTurnLocked(turnID string, userMsg providers.ChatMess
 	th.runningProviderName = th.ModelProvider
 	th.runningModel = th.Model
 	th.UpdatedAt = now
+	if !userMsg.Hidden {
+		th.RecencyAt = now
+	}
 	th.pendingSteers = nil
 	th.nextItemIndex = 0
 	th.activeAgentItemID = ""

@@ -37,6 +37,44 @@ func TestCreateAndList(t *testing.T) {
 	}
 }
 
+func TestRecencySurvivesReloadWithoutFollowingAssistantActivity(t *testing.T) {
+	dir := t.TempDir()
+	sess, err := Create(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sentAt := sess.CreatedAt.Add(time.Minute)
+	for _, record := range []HistoryRecord{
+		{Role: "user", Content: "hello", At: sentAt},
+		{Role: "assistant", Content: "answer", At: sentAt.Add(time.Minute)},
+	} {
+		if err := AppendHistoryRecord(dir, sess.ID, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := UpdateIndex(dir, sess.ID, 2, "answer"); err != nil {
+		t.Fatal(err)
+	}
+	for _, read := range []func() (Session, error){
+		func() (Session, error) { s, _, err := Find(dir, sess.ID); return s, err },
+		func() (Session, error) {
+			rows, err := List(dir, 0)
+			if err != nil {
+				return Session{}, err
+			}
+			return rows[0], nil
+		},
+	} {
+		loaded, err := read()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !loaded.RecencyAt.Equal(sentAt) {
+			t.Fatalf("recency = %v, want last user input %v", loaded.RecencyAt, sentAt)
+		}
+	}
+}
+
 func TestHistoryContentPartsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	sess, err := CreateWithMetadata(dir, "thread-content-parts", t.TempDir())

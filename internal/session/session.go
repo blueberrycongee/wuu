@@ -41,6 +41,7 @@ type Session struct {
 	ID                    string            `json:"id"`
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at,omitempty"`
+	RecencyAt             time.Time         `json:"recency_at,omitempty"`
 	Title                 string            `json:"title,omitempty"`
 	Summary               string            `json:"summary,omitempty"`
 	Entries               int               `json:"entries"`
@@ -401,7 +402,11 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
-	                 ORDER BY m.seq DESC LIMIT 1), '')
+	                 ORDER BY m.seq DESC LIMIT 1), ''),
+       COALESCE((SELECT NULLIF(m.at, '') FROM session_messages m
+                 WHERE m.session_id = sessions.id AND m.role = 'user'
+                   AND m.hidden = 0 AND m.steered = 0 AND m.at IS NOT NULL AND m.at <> ''
+                 ORDER BY m.seq DESC LIMIT 1), created_at)
 FROM sessions`
 	if where != "" {
 		query += " WHERE " + where
@@ -572,7 +577,11 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
        COALESCE((SELECT m.client_id FROM session_messages m
                  WHERE m.session_id = sessions.id AND m.role = 'meta'
                    AND m.content = 'turn_terminal' AND m.client_id <> ''
-                 ORDER BY m.seq DESC LIMIT 1), '')
+                 ORDER BY m.seq DESC LIMIT 1), ''),
+       COALESCE((SELECT NULLIF(m.at, '') FROM session_messages m
+                 WHERE m.session_id = sessions.id AND m.role = 'user'
+                   AND m.hidden = 0 AND m.steered = 0 AND m.at IS NOT NULL AND m.at <> ''
+                 ORDER BY m.seq DESC LIMIT 1), created_at)
 FROM sessions
 WHERE owner = ? AND creation_request_id = ?`, owner, requestID)
 	sess, err := scanSession(row)
@@ -2248,7 +2257,11 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
-	                 ORDER BY m.seq DESC LIMIT 1), '')
+	                 ORDER BY m.seq DESC LIMIT 1), ''),
+       COALESCE((SELECT NULLIF(m.at, '') FROM session_messages m
+                 WHERE m.session_id = sessions.id AND m.role = 'user'
+                   AND m.hidden = 0 AND m.steered = 0 AND m.at IS NOT NULL AND m.at <> ''
+                 ORDER BY m.seq DESC LIMIT 1), created_at)
 FROM sessions
 WHERE id = ?`, id)
 	return scanSessionRow(row)
@@ -2265,7 +2278,11 @@ SELECT id, created_at, updated_at, title, summary, entries, cwd,
 	       COALESCE((SELECT m.client_id FROM session_messages m
 	                 WHERE m.session_id = sessions.id AND m.role = 'meta'
 	                   AND m.content = 'turn_terminal' AND m.client_id <> ''
-	                 ORDER BY m.seq DESC LIMIT 1), '')
+	                 ORDER BY m.seq DESC LIMIT 1), ''),
+       COALESCE((SELECT NULLIF(m.at, '') FROM session_messages m
+                 WHERE m.session_id = sessions.id AND m.role = 'user'
+                   AND m.hidden = 0 AND m.steered = 0 AND m.at IS NOT NULL AND m.at <> ''
+                 ORDER BY m.seq DESC LIMIT 1), created_at)
 FROM sessions
 WHERE id = ?`, id)
 	return scanSessionRow(row)
@@ -2288,7 +2305,7 @@ func scanSession(scanner interface {
 	Scan(dest ...any) error
 }) (Session, error) {
 	var s Session
-	var createdAt, updatedAt, modelOptions string
+	var createdAt, updatedAt, recencyAt, modelOptions string
 	var pinnedAt, archivedAt sql.NullString
 	if err := scanner.Scan(
 		&s.ID, &createdAt, &updatedAt, &s.Title, &s.Summary, &s.Entries, &s.CWD,
@@ -2297,7 +2314,7 @@ func scanSession(scanner interface {
 		&s.WorktreePath, &s.WorktreeBaseHEAD, &s.WorktreeBaseRepo,
 		&s.WorkspaceID, &s.Source, &s.Owner, &s.Visibility, &s.ParentID, &s.ContextSource, &s.CreationRequestID,
 		&s.Provider, &s.Model, &s.Variant, &s.Effort, &s.Speed, &modelOptions, &s.PermissionMode, &s.ApproveForMe, &s.EngineID, &s.EngineRef, &s.Instructions, &s.ProjectRole, &s.ToolPolicyJSON,
-		&s.LatestCompletedTurnID,
+		&s.LatestCompletedTurnID, &recencyAt,
 	); err != nil {
 		return Session{}, err
 	}
@@ -2306,6 +2323,10 @@ func scanSession(scanner interface {
 	}
 	s.CreatedAt = parseTime(createdAt)
 	s.UpdatedAt = parseTime(updatedAt)
+	s.RecencyAt = parseTime(recencyAt)
+	if s.RecencyAt.Before(s.CreatedAt) {
+		s.RecencyAt = s.CreatedAt
+	}
 	if pinnedAt.Valid {
 		if t := parseTime(pinnedAt.String); !t.IsZero() {
 			s.PinnedAt = &t

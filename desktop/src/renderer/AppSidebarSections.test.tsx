@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   attentionStickyThreadIDs,
   partitionAttentionThreads,
+  recentSidebarThreads,
   reconcileSidebarSectionOrder,
   reorderSidebarSections,
   SIDEBAR_SECTION_PINNED,
@@ -24,6 +25,35 @@ function thread(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
     ...overrides,
   } as ThreadSummary;
 }
+
+describe("recentSidebarThreads", () => {
+  it("keeps activity order across streaming, completion and duplicate project buckets", () => {
+    const old = thread({ id: "old", recency_at: "2026-01-02T00:00:00Z", status: "in_progress" });
+    const newer = thread({ id: "new", recency_at: "2026-01-03T00:00:00Z", status: "idle" });
+    expect(recentSidebarThreads([old, newer, old]).map(t => t.id)).toEqual(["new", "old"]);
+    expect(recentSidebarThreads([
+      { ...old, status: "idle", updated_at: "2026-01-09T00:00:00Z" }, newer,
+    ]).map(t => t.id)).toEqual(["new", "old"]);
+    expect(recentSidebarThreads([
+      { ...old, recency_at: "2026-01-10T00:00:00Z" }, newer,
+    ]).map(t => t.id)).toEqual(["old", "new"]);
+  });
+
+  it("excludes archived, pinned, filed and non-user sessions", () => {
+    const normal = thread({ id: "normal" });
+    const hidden = [
+      thread({ id: "archived", archived: true }),
+      thread({ id: "pinned", pinned: true }),
+      thread({ id: "folder", folder_id: "folder" }),
+      thread({ id: "ephemeral", ephemeral: true }),
+      thread({ id: "worker", parent_id: "parent" }),
+      thread({ id: "recovered-worker", agent_path: "/parent/worker" }),
+      thread({ id: "readonly", read_only: true }),
+      thread({ id: "coordinator", source: "project" }),
+    ];
+    expect(recentSidebarThreads([...hidden, normal]).map(t => t.id)).toEqual(["normal"]);
+  });
+});
 
 describe("partitionAttentionThreads", () => {
   it("puts running sessions before unread sessions and excludes read sessions", () => {

@@ -10,6 +10,14 @@ Delete is permanent: it removes saved history and cleans up associated artifacts
 
 After the first send, the workspace sidebar immediately shows the pending conversation. You can switch away and return while it is being created. Stop cancels this wait and retains your input; a late creation response does not send the cancelled message or keep an unused empty conversation. Starting another conversation uses a separate draft.
 
+## Recent conversations
+
+The sidebar's **Recent** group brings conversations from all workspaces together, including conversations in collapsed projects. A conversation can appear both here and in its project; both entries open the same conversation.
+
+Order follows creation and new user turns. Opening a conversation, streaming output, and finishing a response do not move it. Pinned, filed, archived, temporary, and child-agent conversations stay out of this group. The first ten appear initially; **Show more** reveals older entries. The selected conversation stays visible even beyond that limit.
+
+Use the group's menu to hide or show project conversations. This preference and the group's collapsed state survive a reload.
+
 ## Recover unsent text
 
 Wuu automatically restores unsent text in the same window after a reload. No setting is required. Recovery copies stay local to that window for up to 24 hours, with at most 20 drafts and 32K characters per draft. Closing the window clears them. Attachments and quoted context are not restored, and recovered text is never sent automatically.

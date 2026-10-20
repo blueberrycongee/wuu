@@ -5,6 +5,8 @@ execution, persistence, and notifications; a client supplies interaction and
 presentation. Start with the [integration guide](../automation/app-server.md) for
 a minimal exchange, or use [`wuu exec`](../automation/exec.md) for one-shot tasks.
 
+Thread snapshots include `recency_at`, the latest visible user-turn activity time, falling back to creation time. Unlike `updated_at`, it does not advance for output streaming, completion, or reading. Lists recover it from persisted user history, without a storage migration. Clients connecting to an older host can fall back to `updated_at`.
+
 ## Transport and initialization
 
 `wuu app-server` reads and writes newline-delimited JSON over stdio. Requests use
