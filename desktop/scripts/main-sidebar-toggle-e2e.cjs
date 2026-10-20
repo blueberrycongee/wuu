@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { app, BrowserWindow } = require("electron");
 const root = path.resolve(__dirname, "..");
-const output = path.resolve(root, "../.tmp/sidebar-main-toggle/verified");
+const output = path.resolve(process.env.WUU_SIDEBAR_TOGGLE_OUTPUT || path.join(root, "../.tmp/sidebar-main-toggle/verified"));
 fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
 
@@ -53,6 +53,7 @@ app.whenReady().then(async () => {
     const { button, hitsButton } = await measure();
     assert(hitsButton, "Sidebar toggle must own its hit target");
     const point = { x: Math.round(button.x + button.width / 2), y: Math.round(button.y + button.height / 2) };
+    assert(await js(`document.querySelector('.app-shell').classList.contains('sidebar-animating')`), "Diagnostic timing invalid: opening transition settled before pointer input");
     win.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount: 1 });
     win.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount: 1 });
   }
@@ -65,6 +66,50 @@ app.whenReady().then(async () => {
   const report = [];
   await win.loadFile(path.join(root, "out/renderer/index.html"));
   await wait(`!!document.querySelector('${toggle}')`);
+  // Opt-in diagnostic until this interruption case is verified on a native
+  // desktop. Use real Chromium layout and trusted mouse input, never mocked
+  // rectangles or pointerdown dispatched past CSS hit-testing restrictions.
+  if (process.env.WUU_E2E_INTERRUPT_RESIZE === "true") {
+    await win.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
+    });
+    if (!(await js(collapsed))) { await clickToggle(); await wait(collapsed); await settled(); }
+    await js(`document.documentElement.dataset.appearanceMotion='full';document.documentElement.style.setProperty('--sidebar-motion-duration','10000ms')`);
+    await clickToggle();
+    const before = await js(`(async () => {
+      const shell = document.querySelector('.app-shell');
+      for (let i = 0; i < 20; i++) {
+        const animation = shell.getAnimations().find(item => item.transitionProperty === 'grid-template-columns');
+        if (animation) {
+          animation.pause();
+          animation.currentTime = animation.effect.getComputedTiming().endTime * 0.25;
+          const divider = document.querySelector('.sidebar-resizer');
+          const rect = divider.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = Math.min(rect.bottom - 20, Math.max(rect.top + 80, 180));
+          const hit = document.elementFromPoint(x, y);
+          return { x, y, sidebar: document.querySelector('.sidebar').getBoundingClientRect().toJSON(),
+            divider: rect.toJSON(), hitsDivider: hit === divider || divider.contains(hit),
+            animating: shell.classList.contains('sidebar-animating') };
+        }
+        await new Promise(requestAnimationFrame);
+      }
+      throw new Error('No actual opening grid transition found');
+    })()`);
+    assert(before.animating && before.hitsDivider, `Mid-flight divider must be reachable: ${JSON.stringify(before)}`);
+    const point = { x: Math.round(before.x), y: Math.round(before.y) };
+    win.webContents.sendInputEvent({ type: "mouseMove", ...point });
+    assert(await js(`document.querySelector('.app-shell').classList.contains('sidebar-animating')`), "Diagnostic timing invalid: opening transition settled before pointer input");
+    win.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount: 1 });
+    await wait(`document.querySelector('.app-shell').classList.contains('resizing-sidebar')`);
+    const after = await measure();
+    win.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount: 1 });
+    const evidence = { before, after, jump: after.sidebar.width - before.sidebar.width };
+    fs.writeFileSync(path.join(output, "interrupt-resize.json"), JSON.stringify(evidence, null, 2));
+    assert(Math.abs(evidence.jump) <= 2, `Pointer-down without movement must preserve rendered width: ${JSON.stringify(evidence)}`);
+    console.log("PASS: midpoint sidebar divider takeover preserves rendered geometry");
+    win.destroy(); app.exit(0); return;
+  }
   for (const theme of ["light", "dark"]) for (const font of [14, 20]) {
     await js(`document.documentElement.dataset.theme='${theme}';document.documentElement.style.setProperty('--font-ui','${font}px')`);
     await resize(1200);

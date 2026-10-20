@@ -7,7 +7,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const { buildSync } = require('esbuild');
 assert.equal(process.platform, 'linux');
 app.disableHardwareAcceleration();
-const output = path.resolve('out/e2e/web-workspace-lifecycle');
+const output = path.resolve(process.env.WUU_LIFECYCLE_OUTPUT || 'out/e2e/web-workspace-lifecycle');
 fs.mkdirSync(output, { recursive: true });
 process.on('uncaughtException',error=>{console.error(error);fs.writeFileSync(path.join(output,'failure.txt'),String(error.stack));process.exit(1)});
 app.setPath('userData', path.join(output, 'profile'));
@@ -110,7 +110,56 @@ async function until(fn, label) { for (let i = 0; i < 300; i++) { if (await fn()
     assert.equal(restored.webContents.navigationHistory.canGoForward(),true);
     cycles.push({repeat,count,oldID,newID:restored.webContents.id,views:win.contentView.children.length});
   }
-  fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', first, result, before, after: app.getAppMetrics(), restoredHistory: restored.webContents.navigationHistory.getAllEntries().map(entry => ({url:entry.url,title:entry.title})), protectedCount: 9, cycles }, null, 2));
+  // Selection and explicit close can arrive while Chromium is still running
+  // beforeunload. Exercise real native close, not a simulated destroyed event.
+  host.setTabPinned(win, group, cold.id, true);
+  const beginSlowDiscard = async (name, vetoClose = false) => {
+    const target = await create(name);
+    await target.wc.executeJavaScript(`window.onbeforeunload=()=>{const start=performance.now();while(performance.now()-start<700){};${vetoClose ? 'return false;' : ''}};void 0`, true);
+    const guard = await create(name + '-guard');
+    host.setTabPinned(win, group, guard.id, true);
+    const publicId = host.browserSource(() => win).list().find(tab => tab.url === origin + '/' + name).tab_id;
+    let closeStarted = false;
+    const close = target.wc.close.bind(target.wc);
+    target.wc.close = options => { closeStarted = true; close(options); };
+    const pending = host.discardInactiveTabs(performance.now() + 31 * 60 * 1000);
+    await until(() => closeStarted, 'native idle close started: ' + name);
+    return { target, pending, publicId };
+  };
+  const selectedRace = await beginSlowDiscard('selected-during-discard');
+  const source = host.browserSource(() => win);
+  assert.ok(!source.list().some(tab => tab.url === origin + '/selected-during-discard'), 'Closing contents cannot be offered to an Agent');
+  assert.throws(() => source.attach(selectedRace.publicId, () => {}, () => {}, () => false), /no longer available/, 'An Agent cannot borrow contents already closing');
+  host.selectTab(win, group, selectedRace.target.id);
+  host.command(win, group, 'focus');
+  const focusedBeforeDiscardCompletion = selectedRace.target.wc.isFocused();
+  await selectedRace.pending;
+  let selectedRestored;
+  await until(() => { selectedRestored = win.contentView.children.find(view => view.webContents?.getURL() === origin + '/selected-during-discard'); return selectedRestored && !selectedRestored.webContents.isLoading(); }, 'selected tab restored after idle close');
+  assert.ok(selectedRace.target.wc.isDestroyed());
+  assert.ok(selectedRestored.getVisible(), 'Reselected tab has a visible native surface without another click');
+  // Observe native focus ownership without assuming that destruction should
+  // focus a replacement over newer address-bar or overlay interaction.
+  const focusedAfterRestore = selectedRestored.webContents.isFocused();
+  const shellFocusedAfterRestore = win.webContents.isFocused();
+  assert.equal(changes.at(-1).activeTabId, selectedRace.target.id);
+  assert.ok(source.list().some(tab => tab.tab_id === selectedRace.publicId), 'Restored page keeps its public Agent tab identity');
+  host.setTabPinned(win, group, selectedRace.target.id, true);
+
+  const closedRace = await beginSlowDiscard('closed-during-discard');
+  const explicitClose = host.closeTab(win, group, closedRace.target.id);
+  await Promise.all([closedRace.pending, explicitClose]);
+  assert.ok(!changes.at(-1).tabs.some(tab => tab.id === closedRace.target.id), 'Explicit close during idle cleanup removes the tab');
+
+  const vetoRace = await beginSlowDiscard('veto-during-discard', true);
+  const vetoExplicitClose = host.closeTab(win, group, vetoRace.target.id);
+  await Promise.all([vetoRace.pending, vetoExplicitClose]);
+  assert.equal(vetoRace.target.wc.isDestroyed(), false, 'Vetoed idle cleanup retains the live page');
+  assert.ok(changes.at(-1).tabs.some(tab => tab.id === vetoRace.target.id), 'Vetoed concurrent close keeps its tab');
+  await vetoRace.target.wc.executeJavaScript('window.onbeforeunload=null;void 0');
+  const races = { selectedRestored: true, explicitClose: true, vetoedCloseSettled: true, agentClosingPageHidden: true,
+    focusDiagnostics: { focusedBeforeDiscardCompletion, focusedAfterRestore, shellFocusedAfterRestore } };
+  fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', sourceCommit: process.env.GITHUB_SHA ?? null, runtime: { platform: process.platform, electron: process.versions.electron, chrome: process.versions.chrome, hardwareAcceleration: false }, first, result, races, before, after: app.getAppMetrics(), restoredHistory: restored.webContents.navigationHistory.getAllEntries().map(entry => ({url:entry.url,title:entry.title})), protectedCount: 9, cycles }, null, 2));
   await veto.wc.executeJavaScript('window.onbeforeunload=null;void 0');
   host.destroyAll(); win.destroy(); server.close(); app.quit();
 })().catch(error => { console.error(error); fs.writeFileSync(path.join(output, 'failure.txt'), String(error.stack)); process.exit(1); });

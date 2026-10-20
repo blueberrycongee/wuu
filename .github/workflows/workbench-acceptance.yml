@@ -7,6 +7,7 @@ on:
       - 'desktop/src/**'
       - 'desktop/scripts/workbench-acceptance-e2e.cjs'
       - 'desktop/scripts/web-workspace-acceptance.cjs'
+      - 'desktop/scripts/web-workspace-lifecycle-e2e.cjs'
       - 'desktop/scripts/browser-media-acceptance.cjs'
       - 'desktop/scripts/browser-task-ownership-e2e*'
       - 'desktop/scripts/browser-pip-e2e*'
@@ -36,6 +37,7 @@ on:
       - 'desktop/src/**'
       - 'desktop/scripts/workbench-acceptance-e2e.cjs'
       - 'desktop/scripts/web-workspace-acceptance.cjs'
+      - 'desktop/scripts/web-workspace-lifecycle-e2e.cjs'
       - 'desktop/scripts/browser-media-acceptance.cjs'
       - 'desktop/scripts/browser-task-ownership-e2e*'
       - 'desktop/scripts/browser-pip-e2e*'
@@ -175,6 +177,41 @@ jobs:
             ${{ runner.temp }}/wuu-workbench-acceptance/video.json
             ${{ runner.temp }}/wuu-workbench-acceptance/*failure*.png
             ${{ runner.temp }}/wuu-workbench-acceptance/native-dialog-*.png.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Diagnose sidebar divider motion interruption
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 2
+        env:
+          WUU_E2E_INTERRUPT_RESIZE: 'true'
+          WUU_SIDEBAR_TOGGLE_OUTPUT: ${{ runner.temp }}/wuu-workbench-lifecycle/sidebar-interruption
+        run: |
+          set -o pipefail
+          mkdir -p "$WUU_SIDEBAR_TOGGLE_OUTPUT"
+          timeout --signal=TERM --kill-after=10s 90s xvfb-run --auto-servernum desktop/node_modules/.bin/electron desktop/scripts/main-sidebar-toggle-e2e.cjs 2>&1 | tee "$WUU_SIDEBAR_TOGGLE_OUTPUT/run.log"
+      - name: Verify real browser discard and activation lifecycle
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 3
+        env:
+          WUU_LIFECYCLE_OUTPUT: ${{ runner.temp }}/wuu-workbench-lifecycle
+        run: |
+          set -o pipefail
+          mkdir -p "$WUU_LIFECYCLE_OUTPUT"
+          git rev-parse HEAD > "$WUU_LIFECYCLE_OUTPUT/source-commit.txt"
+          cd desktop
+          timeout --signal=TERM --kill-after=10s 120s xvfb-run --auto-servernum node_modules/.bin/electron scripts/web-workspace-lifecycle-e2e.cjs 2>&1 | tee "$WUU_LIFECYCLE_OUTPUT/run.log"
+      - name: Upload browser lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workbench-lifecycle-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/wuu-workbench-lifecycle/report.json
+            ${{ runner.temp }}/wuu-workbench-lifecycle/failure.txt
+            ${{ runner.temp }}/wuu-workbench-lifecycle/run.log
+            ${{ runner.temp }}/wuu-workbench-lifecycle/source-commit.txt
+            ${{ runner.temp }}/wuu-workbench-lifecycle/sidebar-interruption/*.json
+            ${{ runner.temp }}/wuu-workbench-lifecycle/sidebar-interruption/run.log
           if-no-files-found: warn
           retention-days: 14
       - name: Verify browser ownership and adopted plugin views

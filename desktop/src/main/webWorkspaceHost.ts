@@ -184,13 +184,33 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
             page.contents.close({ waitForBeforeUnload: true });
           });
           page.discarding = false;
-          if (!closed) { page.discardProtected = true; continue; }
+          // Beforeunload is asynchronous. The owner, group or tab may have
+          // been removed while Chromium was deciding whether to close.
+          if (this.groups.get(page.group.id) !== page.group || page.owner.isDestroyed()
+            || this.pages.get(page.id) !== page || page.tab.page !== page
+            || !page.group.tabs.includes(page.tab)) continue;
+          if (!closed) {
+            page.discardProtected = true;
+            page.pendingClose?.resolve();
+            page.pendingClose = undefined;
+            continue;
+          }
           page.tab.discarded = { entries, index, scroll: safe };
-          this.destroyPage(page);
-          this.emit(page.group);
+          if (page.pendingClose) {
+            // An explicit close during idle cleanup still closes the tab and
+            // keeps its navigation state available for Reopen Closed Tab.
+            this.removeTab(page.group, page.group.tabs.indexOf(page.tab));
+          } else {
+            this.destroyPage(page);
+            // Selecting a tab cannot cancel a close already sent to Chromium.
+            // Restore the selected page immediately instead of leaving a
+            // discarded active tab with no native surface until another click.
+            if (page.group.activeTabId === page.tab.id) this.ensurePage(page.group, page.tab);
+            this.emit(page.group);
+          }
           discarded++;
         } catch { /* A navigating or unresponsive page stays resident. */ }
-        finally { if (timeout) clearTimeout(timeout); }
+        finally { page.discarding = false; if (timeout) clearTimeout(timeout); }
       }
     } finally { this.discarding = false; }
     return discarded;
@@ -200,12 +220,12 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
   browserSource(owner: () => BrowserWindow | null): BrowserWorkspaceSource {
     return {
       list: () => [...this.pages.values()]
-        .filter(page => page.owner === owner() && !page.contents.isDestroyed() && !page.automation && !page.pendingClose)
+        .filter(page => page.owner === owner() && !page.contents.isDestroyed() && !page.automation && !page.pendingClose && !page.discarding)
         .map(page => ({ tab_id: BROWSER_WORKSPACE_TAB_PREFIX + page.tab.id, url: page.contents.getURL(), title: page.contents.getTitle(),
           workspace_id: page.group.id, active: page.group.activeTabId === page.tab.id, source: page.group.tabbed ? "website" : "plugin" })),
       attach: (tabID, reclaim, layout, agentInput): BrowserWorkspaceAttachment => {
         const page = [...this.pages.values()].find(page => BROWSER_WORKSPACE_TAB_PREFIX + page.tab.id === tabID && page.owner === owner());
-        if (!page || page.contents.isDestroyed() || page.pendingClose) throw new Error("Workspace tab is no longer available");
+        if (!page || page.contents.isDestroyed() || page.pendingClose || page.discarding) throw new Error("Workspace tab is no longer available");
         if (page.automation) throw new Error("Workspace tab is already attached to another task");
         if (page.contents.debugger.isAttached()) throw new Error("Workspace tab already has a debugger attached");
         const automation = { reclaim, layout, agentInput, external: false, restriction: { active: true } };
@@ -509,7 +529,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
         };
         // Keep the tab and its reopen entry unchanged until Chromium accepts
         // the close. A site's beforeunload can still let the user stay.
-        page.contents.close({ waitForBeforeUnload: true });
+        if (!page.discarding) page.contents.close({ waitForBeforeUnload: true });
       }
       await page.pendingClose?.promise;
     }

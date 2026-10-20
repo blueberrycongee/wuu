@@ -8,13 +8,14 @@ on:
       - 'desktop/src/main/browserHostWindows.ts'
       - 'desktop/src/main/chromeOverlayHost.ts'
       - 'desktop/src/renderer/WebWorkspace.tsx'
+      - 'desktop/src/renderer/TabMotion.ts'
       - 'desktop/scripts/browser-window-perf-e2e.cjs'
       - '.github/workflows/browser-window-performance.yml'
   workflow_dispatch:
     inputs:
       baseline:
         description: Exact pre-optimization source commit
-        default: 9df75fa36fa65af47c6b9a277933cda7b7a3485e
+        default: 11c2373516fd52ba7d7443f9ae25432bf16ae4c0
         required: true
 
 permissions:
@@ -38,7 +39,7 @@ jobs:
       run:
         shell: bash
     env:
-      BASELINE: ${{ inputs.baseline || '9df75fa36fa65af47c6b9a277933cda7b7a3485e' }}
+      BASELINE: ${{ inputs.baseline || '11c2373516fd52ba7d7443f9ae25432bf16ae4c0' }}
       GOFLAGS: '-p=2'
       GOMAXPROCS: '2'
       NODE_OPTIONS: --max-old-space-size=4096

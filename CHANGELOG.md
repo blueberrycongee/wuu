@@ -76,6 +76,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Restore a website selected during inactive-tab cleanup and prevent Agent operations from attaching to a native page already closing.
+- Keep closing workspace tabs in place through unrelated renders and rapid sequential closes until their exit motion finishes.
+
 - Keep the expanded browser navigation ribbon's header above the toolbar, with continuous hover behavior across its native page overlay.
 
 - Restore desktop startup and browser download history persistence by passing the history path to the download manager instead of the chrome overlay host.
