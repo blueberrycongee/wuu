@@ -13,7 +13,7 @@ import type { WebWorkspaceDownloads } from "./webWorkspaceDownloads";
 // Website pages keep their native ownership. Explicit, turn-scoped automation
 // borrows a live view; restored tabs create native views only when selected.
 type WorkspaceTab = { id: string; url: string; title: string; zoomFactor: number; pinned?: boolean; muted?: boolean; favicon?: string; startPage?: boolean; page?: WorkspacePage;
-  discarded?: { entries: NavigationEntry[]; index: number; scroll: { x: number; y: number } } };
+  discarded?: { entries: NavigationEntry[]; index: number; scroll?: { x: number; y: number } } };
 type WorkspaceGroup = {
   id: string;
   owner: BrowserWindow;
@@ -23,7 +23,7 @@ type WorkspaceGroup = {
   activeTabId: string;
   bounds: WebWorkspaceBounds | null;
   lastBounds?: WebWorkspaceBounds;
-  closedTabs: { url: string; title: string; zoomFactor: number; pinned?: boolean; muted?: boolean }[];
+  closedTabs: { url: string; title: string; zoomFactor: number; pinned?: boolean; muted?: boolean; discarded?: WorkspaceTab["discarded"] }[];
   migratedTabGroups?: Record<string, string[]>;
 };
 type AutomationRestriction = { active: boolean };
@@ -42,7 +42,7 @@ type WorkspacePage = {
   error?: string;
   findResult?: WebWorkspaceFindResult;
   findRequestId?: number;
-  pendingClose?: { promise: Promise<void>; resolve: () => void };
+  pendingClose?: { promise: Promise<void>; resolve: () => void; navigation?: WorkspaceTab["discarded"] };
   popups: Set<BrowserWindow>;
   automation?: { restriction: AutomationRestriction; reclaim(): void; layout(): void; agentInput(): boolean; external: boolean };
   inheritedAutomation?: readonly AutomationRestriction[];
@@ -501,7 +501,11 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
       if (!page.pendingClose) {
         let resolve!: () => void;
         const promise = new Promise<void>(done => { resolve = done; });
-        page.pendingClose = { promise, resolve };
+        const entries = page.contents.navigationHistory.getAllEntries();
+        const index = page.contents.navigationHistory.getActiveIndex();
+        page.pendingClose = { promise, resolve,
+          ...(entries[index] ? { navigation: { entries, index } } : {}),
+        };
         // Keep the tab and its reopen entry unchanged until Chromium accepts
         // the close. A site's beforeunload can still let the user stay.
         page.contents.close({ waitForBeforeUnload: true });
@@ -753,7 +757,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
       if (this.pages.get(page.id) !== page || page.contents.isDestroyed() || page.navigationGeneration !== 1) return;
       // Chromium serializes pageState periodically; its saved scroll can lag
       // behind the final viewport. Apply the live offset captured at discard.
-      await page.contents.executeJavaScriptInIsolatedWorld(999, [{ code: `scrollTo(${history.scroll.x}, ${history.scroll.y})` }]);
+      if (history.scroll) await page.contents.executeJavaScriptInIsolatedWorld(999, [{ code: `scrollTo(${history.scroll.x}, ${history.scroll.y})` }]);
     }).catch((error: Error) => {
       if (this.pages.get(page.id) !== page || page.navigationGeneration > 1) return;
       page.error = error.message; this.emit(group);
@@ -882,7 +886,8 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
   private removeTab(group: WorkspaceGroup, index: number): void {
     const tab = group.tabs[index];
     const state = this.tabState(tab);
-    group.closedTabs.push({ url: state.url, title: state.title, zoomFactor: tab.zoomFactor, pinned: tab.pinned, muted: tab.muted });
+    group.closedTabs.push({ url: state.url, title: state.title, zoomFactor: tab.zoomFactor, pinned: tab.pinned, muted: tab.muted,
+      discarded: tab.discarded ?? tab.page?.pendingClose?.navigation });
     if (group.closedTabs.length > 20) group.closedTabs.shift();
     group.tabs.splice(index, 1);
     if (tab.page) this.destroyPage(tab.page);

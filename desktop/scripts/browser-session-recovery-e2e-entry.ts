@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { app, BrowserWindow, WebContentsView } from "electron";
+import { app, BrowserWindow, dialog, WebContentsView } from "electron";
 import { WebWorkspaceHost } from "../src/main/webWorkspaceHost";
 import { WebWorkspaceLibrary } from "../src/main/webWorkspaceLibrary";
 import { WEB_WORKSPACE_RIBBON_ID as id } from "../src/shared/webWorkspace";
@@ -74,6 +74,53 @@ app.whenReady().then(async () => {
   assert.ok(Math.abs(view().webContents.getZoomFactor() - 0.8) < 1e-6);
   host.selectTab(owner, id, first); await settle();
   assert.ok(Math.abs(view().webContents.getZoomFactor() - 1.5) < 1e-6);
+  // Closing a tab must preserve its full Back/Forward chain, including when
+  // the current page is in the middle. A rejected beforeunload must not create
+  // a closed-tab record or move focus away from the unsaved page.
+  const reading = view().webContents;
+  for (const path of ["journey-one", "journey-two", "journey-three"]) await reading.loadURL(`${url}/${path}`);
+  reading.navigationHistory.goBack();
+  await waitFor(() => reading.getURL() === `${url}/journey-two` && !reading.isLoading());
+  const expectedHistory = reading.navigationHistory.getAllEntries().map(entry => entry.url);
+  const expectedIndex = reading.navigationHistory.getActiveIndex();
+  await reading.executeJavaScript("window.onbeforeunload=()=>false;void 0", true);
+  reading.focus();
+  const originalDialog = dialog.showMessageBoxSync;
+  dialog.showMessageBoxSync = () => 0;
+  try {
+    const retained = await host.closeTab(owner, id, first);
+    assert.equal(retained.activeTabId, first);
+    assert.equal(retained.tabs!.length, 2);
+    assert.equal(retained.canReopenTab, false, "Rejected closes do not create reopen entries");
+    assert.equal(reading.isFocused(), true, "Rejected close keeps the unsaved page focused");
+  } finally { dialog.showMessageBoxSync = originalDialog; }
+  await reading.executeJavaScript("window.onbeforeunload=null;void 0", true);
+  const closed = await host.closeTab(owner, id, first);
+  assert.equal(closed.activeTabId, second, "Closing the selected tab chooses its surviving neighbor");
+  const reopened = host.reopenTab(owner, id);
+  assert.notEqual(reopened.activeTabId, first, "Reopened views receive a new tab identity");
+  await settle();
+  await waitFor(() => view().webContents.getURL() === `${url}/journey-two`);
+  const restored = view().webContents;
+  assert.deepEqual(restored.navigationHistory.getAllEntries().map(entry => entry.url), expectedHistory);
+  assert.equal(restored.navigationHistory.getActiveIndex(), expectedIndex);
+  assert.equal(restored.navigationHistory.canGoBack(), true);
+  assert.equal(restored.navigationHistory.canGoForward(), true);
+  assert.equal(restored.isAudioMuted(), true);
+  assert.ok(Math.abs(restored.getZoomFactor() - 1.5) < 1e-6);
+  restored.navigationHistory.goBack();
+  await waitFor(() => restored.getURL() === `${url}/journey-one` && !restored.isLoading());
+  restored.navigationHistory.goForward();
+  await waitFor(() => restored.getURL() === `${url}/journey-two` && !restored.isLoading());
+  restored.navigationHistory.goForward();
+  await waitFor(() => restored.getURL() === `${url}/journey-three` && !restored.isLoading());
+  await host.closeTab(owner, id, second);
+  const empty = await host.closeTab(owner, id, reopened.activeTabId!);
+  assert.equal(empty.tabs!.length, 0);
+  assert.equal(empty.activeTabId, "");
+  assert.equal(empty.canReopenTab, true);
+  host.reopenTab(owner, id); await settle();
+  assert.equal(view().webContents.navigationHistory.canGoBack(), true, "Reopening the final closed tab restores its history");
   writeFileSync(join(output, "restored-page.png"), (await view().webContents.capturePage()).toPNG());
   writeFileSync(join(output, "report.json"), JSON.stringify({ status: "passed", electron: process.versions.electron,
     chromium: process.versions.chrome, platform: process.platform, checks: [
@@ -81,6 +128,9 @@ app.whenReady().then(async () => {
       "Distinct zoom preferences survive restart and switching between same-origin tabs",
       "Muted tabs stay muted after restart without muting a same-origin sibling",
       "Restored background tabs do not create native views until selected",
+      "Closing and reopening a tab restores its current history index and both Back/Forward directions",
+      "Rejecting beforeunload preserves focus and does not create a reopen entry",
+      "Closing the selected and final tabs preserves neighbor selection and last-tab reopening",
     ], limitations: ["Local HTTP fixture; no account authentication", "Screenshot is the actual native webpage, not the full product shell"] }, null, 2));
   host.destroyAll();
   app.exit(0);
