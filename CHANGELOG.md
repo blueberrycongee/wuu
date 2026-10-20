@@ -34,6 +34,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Reduce desktop sidebar group gaps and conversation title emphasis, and align
+  the account control's bottom edge with the message composer.
 - Fix macOS background pointer events landing outside the intended control. Pace key presses, text input, and repeated clicks, and retain the observed window for background input after AX-only observations.
 - Match the DeepSeek Harness icon's visible size to peer agent icons in settings, runtime menus, and onboarding.
 - Allow background task and question notifications on Linux desktops with native notification support.
