@@ -74,6 +74,7 @@ import {
   useCollapsedComposerPrompt
 } from "./ComposerCollapsedPrompt";
 import { useFileSelectionActions } from "./FileSelectionContext";
+import { showToast } from "./Toast";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
 import {
   WORKSPACE_FILE_DRAG_MIME,
@@ -98,6 +99,7 @@ import {
   PERMISSION_MENU_WIDTH,
   WorkspacePickerMenu,
   RuntimePicker,
+  RuntimeSpeedControls,
   RuntimeModelMenu,
   runtimePanelWidth,
   SlashCommandIcon,
@@ -247,6 +249,7 @@ export function Composer({
   queryHistory = [],
   requestedHandoffIntent,
   hideRuntimeControls = false,
+  runtimeSelection,
   hideExpandButton = false,
   placeholder,
   textOnly = false,
@@ -374,6 +377,9 @@ export function Composer({
   // Suppress the model/context/token runtime chrome on the bar's right edge.
   // Side-thread composers reuse this input without a separate runtime picker.
   hideRuntimeControls?: boolean;
+  // Project creation or a persisted preset replaces model selection while
+  // retaining runtime telemetry. Model and effort commands do not apply.
+  runtimeSelection?: ReactNode;
   hideExpandButton?: boolean;
   // A shared composer can be embedded in a conversation surface whose
   // transport accepts text only. The editor, keyboard handling, expansion,
@@ -660,8 +666,8 @@ export function Composer({
       skills: slashSkills,
       availablePluginRuntimeCommands,
       fastMode: { supported: fastModeSupported, enabled: fastModeEnabled },
-    }),
-    [fastModeSupported, fastModeEnabled, activeContext, availablePluginRuntimeCommands, compactDisabledReason, handoffDisabledReason, initialized, locale, running, sideThreadDisabledReason, slashSkills]
+    }).filter((command) => runtimeSelection === undefined || !["model", "effort"].includes(command.action ?? "")),
+    [runtimeSelection, fastModeSupported, fastModeEnabled, activeContext, availablePluginRuntimeCommands, compactDisabledReason, handoffDisabledReason, initialized, locale, running, sideThreadDisabledReason, slashSkills]
   );
   const slashCommands = slashCommandsOverride ?? builtinSlashCommands;
   const permissionMode = permissionModeFromSummary(initialized?.permissions);
@@ -1020,11 +1026,17 @@ export function Composer({
         onToggleCodexRuntimeMenu("model");
         break;
       case "fast":
-        if (draft?.args.trim() === "status") {
+        if (runtimeSelection !== undefined && draft?.args.trim() === "status") {
+          showToast({ message: t(fastModeEnabled ? "runtime.fastModeOn" : "runtime.fastModeOff") });
+        } else if (draft?.args.trim() === "status") {
           onToggleCodexRuntimeMenu("model");
         } else if (fastModeSupported) {
           const argument = draft?.args.trim();
-          if (argument && !["on", "off"].includes(argument)) { onToggleCodexRuntimeMenu("model"); break; }
+          if (argument && !["on", "off"].includes(argument)) {
+            if (runtimeSelection === undefined) onToggleCodexRuntimeMenu("model");
+            else showToast({ message: t(fastModeEnabled ? "runtime.fastModeOn" : "runtime.fastModeOff") });
+            break;
+          }
           void onSelectSpeed?.(argument === "on" ? "fast" : argument === "off" ? "standard" : fastModeEnabled ? "standard" : "fast");
         }
         break;
@@ -1497,7 +1509,15 @@ export function Composer({
                       activeEngine={activeEngine}
                     />
                     {/* Until the runtime reports, there is no model to name. */}
-                    {initialized ? (
+                    {runtimeSelection !== undefined ? <>
+                      {runtimeSelection}
+                      {fastModeSupported && onSelectSpeed ? <RuntimeSpeedControls
+                        key={queryHistorySessionID}
+                        model={activeEngine && activeEngine !== "wuu" ? engineModel ?? "" : initialized?.model ?? ""}
+                        speed={activeEngine && activeEngine !== "wuu" ? engineSpeed : initialized?.speed}
+                        defaultSpeed={fastModeModel?.default_speed} disabled={effectiveRuntimeControlsDisabled}
+                        onSelectSpeed={onSelectSpeed} /> : null}
+                    </> : initialized ? (
                       <RuntimePicker
                         initialized={initialized}
                         state={codexModels}

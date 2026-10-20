@@ -38,6 +38,7 @@ export type FloatingMenuOwner =
   | "composer-query-history"
   | "minute-clock"
   | "project-sessions"
+  | "project-preset"
   | "select-menu";
 export type FloatingMenuPlacement = "above" | "below" | "middle";
 export type FloatingMenuAlign = "left" | "center" | "right";

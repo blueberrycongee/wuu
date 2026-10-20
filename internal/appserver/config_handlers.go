@@ -91,6 +91,7 @@ func (s *Server) handleInitialize(req Request) error {
 		ModelRoles:         s.currentModelRoleSummaries(),
 		ModelAliases:       s.currentModelAliasSummaries(),
 		ProjectModels:      s.rt.ProjectModels,
+		ProjectPresets:     s.rt.ProjectPresets,
 		Providers:          s.providerSummaries(),
 		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
@@ -118,6 +119,7 @@ func (s *Server) handleConfigRead(req Request) error {
 		ModelRoles:         s.currentModelRoleSummaries(),
 		ModelAliases:       s.currentModelAliasSummaries(),
 		ProjectModels:      s.rt.ProjectModels,
+		ProjectPresets:     s.rt.ProjectPresets,
 		Providers:          s.providerSummaries(),
 		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
@@ -1042,7 +1044,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	}
 	modelAliases := modelAliasConfigUpdate(params.ModelAliases)
 	verificationModel := modelRoleConfigUpdate(params.VerificationModel)
-	if modelAliases != nil || verificationModel != nil || params.ProjectModels != nil {
+	if modelAliases != nil || verificationModel != nil || params.ProjectModels != nil || params.ProjectPresets != nil {
 		candidate, _, err := s.rt.LoadEffectiveConfig()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -1057,6 +1059,9 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		}
 		if verificationModel != nil {
 			candidate.Agent.ModelRoles.Verification = *verificationModel
+		}
+		if params.ProjectPresets != nil {
+			candidate.Agent.ProjectPresets = *params.ProjectPresets
 		}
 		if params.ProjectModels != nil {
 			candidate.Agent.ProjectModels = *params.ProjectModels
@@ -1076,6 +1081,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		ModelAliases:            modelAliases,
 		VerificationModel:       verificationModel,
 		ProjectModels:           params.ProjectModels,
+		ProjectPresets:          params.ProjectPresets,
 	}); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -1103,6 +1109,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 	}
 	s.rt.ModelRoles = roleSelections
 	s.rt.ProjectModels = cfg.Agent.ProjectModels
+	s.rt.ProjectPresets = cfg.Agent.ProjectPresets
 	modelBudget := runtime.ResolveModelBudget(s.rt.Model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
 	s.rt.ModelBudget = modelBudget
 	workerBudget := runtime.ResolveModelBudget(roleSelections.Worker.Model, roleSelections.Worker.RuleProviderConfig, cfg.Agent.MaxContextTokens)
@@ -1127,6 +1134,7 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		AdvancedSettings: s.currentAdvancedSettingsSummary(),
 		ModelAliases:     modelAliasSummaries(cfg.Agent.ModelAliases),
 		ProjectModels:    cfg.Agent.ProjectModels,
+		ProjectPresets:   cfg.Agent.ProjectPresets,
 		ModelRoles:       s.currentModelRoleSummaries(),
 		Providers:        s.providerSummaries(),
 	}, nil)
@@ -1724,6 +1732,7 @@ func (s *Server) applyModelSelectionToRuntime(
 	}
 	s.rt.ModelRoles = roleSelections
 	s.rt.ProjectModels = cfg.Agent.ProjectModels
+	s.rt.ProjectPresets = cfg.Agent.ProjectPresets
 	apiModel := modelcatalog.APIModel(ruleProviderCfg, model)
 	if roleSelections.Title.Inherited && client != nil {
 		s.rt.TitleClient = client
@@ -2203,6 +2212,10 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 		th.runtimeSelectionMutation = false
 		th.mu.Unlock()
 	}
+	if err := s.refreshThreadSessionMetadata(th); err != nil {
+		release()
+		return nil, func() {}, err
+	}
 	return th, release, nil
 }
 
@@ -2221,6 +2234,7 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	variant, effort, permission := th.ModelVariant, th.ModelEffort, th.PermissionMode
 	speed, engineID, approveForMe := th.Speed, th.EngineID, th.ApproveForMe
 	modelOptions := th.ModelOptions
+	preset := th.ProjectPreset
 	th.mu.Unlock()
 	if params.ModelOptions != nil && len(*params.ModelOptions) > 0 {
 		entry, ok := enginecatalog.Lookup(engineID)
@@ -2236,6 +2250,40 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		if err := validateSpeed(speed); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
+	}
+	if preset != nil {
+		if params.Provider != "" && strings.TrimSpace(params.Provider) != provider ||
+			params.Model != "" && strings.TrimSpace(params.Model) != model ||
+			params.Variant != nil && strings.TrimSpace(*params.Variant) != variant ||
+			params.Effort != nil && strings.TrimSpace(*params.Effort) != effort {
+			return s.writeResponse(req.ID, nil, errors.New("project preset role models are locked at creation"))
+		}
+		if params.Speed != nil {
+			cfg, _, err := s.rt.LoadEffectiveConfig()
+			if err != nil {
+				return s.writeResponse(req.ID, nil, err)
+			}
+			providerCfg, name, err := cfg.ResolveProvider(provider)
+			if err != nil {
+				return s.writeResponse(req.ID, nil, err)
+			}
+			ruleName, ruleCfg := modelcatalog.EnrichProvider(name, providerCfg, model)
+			selection := modelvariant.ResolveExplicitForProvider(ruleName, ruleCfg, model, variant, effort)
+			if err := modelvariant.ApplySpeed(ruleCfg, model, speed, &selection); err != nil {
+				return s.writeResponse(req.ID, nil, err)
+			}
+		}
+		if params.PermissionMode != nil {
+			permission = config.NormalizePermissionMode(*params.PermissionMode)
+		}
+		if params.ApproveForMe != nil {
+			approveForMe = *params.ApproveForMe
+		}
+		approveForMe = approveForMe && approvefor.EnabledForMode(permission)
+		if err := s.updateThreadRuntimeForModelUpdate(th, provider, model, variant, effort, speed, permission, approveForMe, modelOptions); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		return s.writeThreadModelSelectionResponse(req, th)
 	}
 	if agentengine.NormalizeEngineID(engineID) != agentengine.EngineWuu {
 		if params.Provider != "" && params.Provider != provider {

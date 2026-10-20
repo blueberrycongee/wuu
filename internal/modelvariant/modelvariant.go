@@ -25,6 +25,16 @@ func Resolve(provider config.ProviderConfig, model, variant, legacyEffort string
 }
 
 func ResolveForProvider(providerName string, provider config.ProviderConfig, model, variant, legacyEffort string) Selection {
+	return resolveForProvider(providerName, provider, model, variant, legacyEffort, false)
+}
+
+// ResolveExplicitForProvider preserves an already resolved selection, including
+// an empty variant/effort, instead of adopting later configured model defaults.
+func ResolveExplicitForProvider(providerName string, provider config.ProviderConfig, model, variant, legacyEffort string) Selection {
+	return resolveForProvider(providerName, provider, model, variant, legacyEffort, true)
+}
+
+func resolveForProvider(providerName string, provider config.ProviderConfig, model, variant, legacyEffort string, defaultsResolved bool) Selection {
 	variant = strings.TrimSpace(variant)
 	legacyEffort = strings.TrimSpace(legacyEffort)
 	if strings.EqualFold(variant, "none") || (variant == "" && strings.EqualFold(legacyEffort, "none")) {
@@ -43,7 +53,7 @@ func ResolveForProvider(providerName string, provider config.ProviderConfig, mod
 			variant = legacyEffort
 		}
 	}
-	if variant == "" {
+	if variant == "" && !defaultsResolved {
 		if candidate := DefaultVariantForProvider(providerName, provider, model); candidate != "" {
 			if _, ok := OptionsForProvider(providerName, provider, model, candidate); ok {
 				variant = candidate

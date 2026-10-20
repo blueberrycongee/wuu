@@ -82,6 +82,7 @@ import { ENABLE_REMOTE_CONTROL } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
 import { DefaultEnvironmentRow, ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
+import { ProjectPresetSettings } from "./ProjectPresetSettings";
 import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot, type SettingsStatusTone } from "./SettingsSection";
 import { ActivityPreviewPreferenceSection } from "./ActivityPreviewPreferenceSection";
@@ -1226,6 +1227,7 @@ function SettingsRuntimePage({
   return (
     <>
       <SettingsPageHeader title={t("settings.runtime")} description={t("settings.runtimeDescription")} />
+      {initialized?.features?.project_agent && <ProjectPresetSettings initialized={initialized} running={running} onSave={onAdvancedSave} />}
       {initialized?.features?.project_agent && (
         <SettingsSection title={t("settings.projectModels")} description={t("settings.projectModelsDescription")}>
           <div className="settings-form"><SettingsGroup>

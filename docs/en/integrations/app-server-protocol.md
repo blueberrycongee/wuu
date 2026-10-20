@@ -657,3 +657,8 @@ Treat method names, field meanings, and notification handling as integration
 contracts. Tolerate additive fields, validate the protocol version, and test against
 the core revision you ship. Product CalVer and protocol version describe different
 compatibility concerns.
+
+Project Agent builds also accept `project.preset` on `thread/start`. The saved
+`project_preset` contains `mode`, `coordinator`, `technical_lead`, and `executor`;
+its explicit model selections are immutable for that project and its work members.
+See the [preset and work contracts](../automation/app-server.md).

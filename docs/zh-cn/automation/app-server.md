@@ -138,6 +138,9 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 
 ## 运行项目
 
+这些方法要求 `features.project_agent: true`，仅由[开发构建开关](../project/development.md)
+启用；发布构建不启用此功能。
+
 `thread/start` 带 `project: {"name": "..."}` 时，在工作区创建项目主 Agent。返回的会话带
 `source: "project"`，遵循普通会话的模型和权限设置。主 Agent 可以直接动手，通过
 `session` 工具管理其他会话。每个托管会话都是普通会话，带
@@ -162,11 +165,30 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 Worker。结果包含 `turn_id`、`turn_status` 和终态 `final_output`。`timeout_ms` 默认
 60000，上限为 300000；超时返回 `timed_out: true`。超时或调用方取消都不会停止子会话。
 
-主 Agent 使用会话模型。`agent.project_models.side` 和 `.worker` 为新成员指定服务
-和模型，空选择继承主 Agent。创建时明确传入的 `model_alias` 优先于角色默认值，已有
-会话保留保存的模型。`config/advanced/update` 接受同结构的 `project_models`；初始化、
-配置读取、更新和配置变更事件返回当前默认值。在 `features.project_agent` 为 true
-的构建中，桌面运行设置提供这两项选择。
+选择已配置模式时，向 `thread/start` 传入
+`project: {"name": "Example project", "preset": "low"}`。名称只允许 `low`、`medium`、
+`high`、`ultra`。须省略顶层的 `provider`、`model`、`effort`、`speed` 和非空
+`model_options`，由预设拥有角色配置。每个预设须明确指定 `coordinator`、
+`technical_lead`、`executor` 的服务和模型。创建时一次性解析 effort/variant 默认值；
+选择不完整或不可用时，不会创建项目。参见
+[配置说明](../reference/configuration.md#project-agent-模型选择)。
+
+协调者和托管成员返回 `project_preset`：
+`{mode, coordinator, technical_lead, executor}`，每个角色包含 `provider`、`model`
+和可选的 `effort`、`variant`。创建工作时，技术负责人和延迟创建的执行者均使用
+快照，每个成员也单独保存快照。修改设置和重启不会改变保存的选择。预设项目的工作
+和旧式成员创建均拒绝 `model_alias`；`config/model/update` 拒绝改变已保存的
+服务、模型或推理配置，支持的速度和权限更新仍可使用。原服务或模型不可用时明确
+报错，不会自动替换。
+
+`config/advanced/update` 接受 `project_presets` 并替换整个映射；`{}` 清除未来创建
+使用的预设。编辑时可保存未完成的角色。初始化、配置读取、更新和 `config/changed`
+返回当前映射，与各会话保存的快照相互独立。
+
+省略 `project.preset` 保留原行为：协调者使用会话模型，
+`agent.project_models.technical_lead` 和 `.executor` 决定新工作的默认模型。
+旧式成员工作流仍可使用 side/worker 默认值。没有快照的项目保留模型别名和普通
+模型更新语义。
 
 协调者以用户条目接收宿主事件，条目带 `origin: "host"`，`related_session_id` 指向相关会话，
 `cause` 给出事件：
@@ -188,6 +210,10 @@ worktree 改动留在成员的 worktree 里。`thread/control/take` 和 `thread/
 
 `project/session` 修改项目成员：`adopt` 传入 `project_id` 和 `session_id`，把项目所在工作区
 的普通对话交给项目管理；`release` 让托管会话重新成为普通对话。两者都返回更新后的 `thread`。
+
+对于预设项目，`adopt` 要求对话的服务、模型、effort 和 variant 与保存的执行者
+选择一致，再为其应用快照和锁定。`release` 清除快照和锁定。普通 `thread/fork`
+复制原会话的模型选择，但不继承项目成员关系或预设锁定。
 
 ## 输入内容分段
 

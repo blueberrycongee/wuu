@@ -105,6 +105,9 @@ to be deleted.
 
 ## Run a project
 
+These methods require `features.project_agent: true`, enabled only by the
+[development build gate](../project/development.md). Release builds do not enable it.
+
 `thread/start` with `project: {"name": "..."}` creates a project coordinator in the
 workspace. The returned thread has `source: "project"` and follows ordinary
 session permission and model settings. The lead can work directly and manages
@@ -137,12 +140,34 @@ members, and the side can wait for workers. Results include `turn_id`, `turn_sta
 and terminal `final_output`. `timeout_ms` defaults to 60000 and is capped at 300000;
 expiry returns `timed_out: true`. Timeout or caller cancellation never stops the child.
 
-The lead uses its conversation model. `agent.project_models.side` and `.worker`
-select provider/model defaults for new members; empty selections inherit the lead.
-A creation-time `model_alias` overrides the role default. Existing sessions retain
-their saved model. `config/advanced/update` accepts `project_models` with the same
-shape; initialize, config reads, updates and config-change events return the current
-defaults. Desktop runtime settings expose both choices when `features.project_agent` is true.
+To select a configured mode, send `thread/start` with
+`project: {"name": "Example project", "preset": "low"}`. Preset names are `low`,
+`medium`, `high`, and `ultra`. Omit top-level `provider`, `model`, `effort`, `speed`,
+and nonempty `model_options`: a preset owns the role selections. Each configured
+preset requires explicit `coordinator`, `technical_lead`, and `executor` provider
+and model selections. Creation resolves effort/variant defaults once. Incomplete
+or unavailable selections fail before a project is created. See
+[configuration](../reference/configuration.md#project-agent-model-choices).
+
+The coordinator and managed members expose `project_preset` with
+`{mode, coordinator, technical_lead, executor}`. Every role contains `provider`,
+`model`, and optional `effort` and `variant`. Work creation uses this snapshot for
+its technical lead and delayed executor, and each member stores its own copy.
+Settings edits and restart do not change the saved choices. Preset work and legacy
+session creation reject `model_alias`; `config/model/update` rejects changes to
+saved provider/model/effort/variant. Supported speed and permission updates remain
+available. Removed providers and unavailable models fail without replacing the pin.
+
+`config/advanced/update` accepts `project_presets`, replacing the map; `{}` clears
+presets for future creation. Partial role configurations can be saved while
+editing. Initialize, config reads, updates, and `config/changed` return the current
+map independently of each thread's snapshot.
+
+Omitting `project.preset` preserves existing behavior: the coordinator uses its
+conversation model; `agent.project_models.technical_lead` and `.executor` select
+new work defaults. The existing side/worker defaults remain available to legacy
+session workflows. Aliases and ordinary model updates retain their existing
+semantics for projects without snapshots.
 
 The coordinator receives host events as user items with `origin: "host"`,
 `related_session_id` naming the session, and a `cause`:
@@ -169,6 +194,11 @@ plugin-managed sessions, not project members.
 brings an ordinary conversation of the project's workspace under the project, and
 `release` makes a managed session an ordinary conversation again. Both return the
 updated `thread`.
+
+For preset projects, `adopt` requires the conversation's provider, model, effort,
+and variant to match the saved executor choice; it then applies the snapshot and
+lock. `release` clears the snapshot and lock. An ordinary `thread/fork` copies the
+source selection without inheriting project membership or its preset lock.
 
 ## Probe the protocol
 

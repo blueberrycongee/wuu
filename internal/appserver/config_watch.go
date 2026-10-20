@@ -359,13 +359,14 @@ func (s *Server) effectiveConfigFingerprint() (string, error) {
 
 func (s *Server) currentConfigChangedNotification() ConfigChangedNotification {
 	return ConfigChangedNotification{
-		Provider:      s.rt.ProviderName,
-		Model:         s.rt.Model,
-		Effort:        s.currentDisplayEffort(),
-		Variant:       s.currentVariant(),
-		ModelRoles:    s.currentModelRoleSummaries(),
-		ModelAliases:  s.currentModelAliasSummaries(),
-		ProjectModels: s.rt.ProjectModels,
-		Providers:     s.providerSummaries(),
+		Provider:       s.rt.ProviderName,
+		Model:          s.rt.Model,
+		Effort:         s.currentDisplayEffort(),
+		Variant:        s.currentVariant(),
+		ModelRoles:     s.currentModelRoleSummaries(),
+		ModelAliases:   s.currentModelAliasSummaries(),
+		ProjectModels:  s.rt.ProjectModels,
+		ProjectPresets: s.rt.ProjectPresets,
+		Providers:      s.providerSummaries(),
 	}
 }

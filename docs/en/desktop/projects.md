@@ -48,6 +48,18 @@ does not resolve interface dependencies or authorize integration.
 
 ## Models, usage and responsiveness
 
+Choose `low`, `medium`, `high`, or `ultra` in a new project's composer. New
+project drafts start at `low`. **Configure modes** opens the three role selections
+in Settings; finish configuring the chosen preset before sending. The names are
+editable presets, not automatic reasoning or quality levels.
+
+Creation saves the coordinator, technical lead, and executor selections. Later
+settings edits do not change that project or the members it creates. Open the
+mode panel to inspect its saved configuration. Model and effort controls are
+locked; supported speed and permission controls remain available. Start another
+project to use a different preset. Projects created without a preset retain the
+ordinary model controls and the defaults described below.
+
 The coordinator uses its conversation model. **Settings → Runtime → Project
 Agent models** selects defaults for the technical lead and persistent executor.
 An unset role inherits the coordinator model; an unset executor also honors an
