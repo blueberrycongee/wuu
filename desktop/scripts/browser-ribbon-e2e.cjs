@@ -194,11 +194,23 @@ function key(keyCode) {
   nativeHost.show(win, pending);
   const openingView = win.contentView.children.find(view => view.webContents?.getURL().includes("surface=ribbon"));
   await until(() => openingView.getVisible() && openingView.getBounds().width === Math.ceil(pending.bounds.width), "complete native opening");
+  // setBounds updates the native view before Chromium receives its resize.
+  // Wait for that renderer acknowledgement before calculating a click point.
+  await until(async () => {
+    const viewport = await openingView.webContents.executeJavaScript('new Promise(resolve=>requestAnimationFrame(()=>resolve({width:innerWidth,height:innerHeight})))');
+    const bounds = openingView.getBounds(), zoom = openingView.webContents.getZoomFactor();
+    nativeEvents.push({ type: "opening-viewport", bounds, zoom, viewport });
+    return Math.abs(viewport.width * zoom - bounds.width) < 1 && Math.abs(viewport.height * zoom - bounds.height) < 1
+      && bounds.width === Math.ceil(pending.bounds.width);
+  }, "native renderer viewport matches expanded view");
   const hit = await openingView.webContents.executeJavaScript(`(()=>{
     const row=document.querySelector("[data-ribbon-id=tab-0]");row.scrollIntoView({block:"nearest"});
     const r=row.getBoundingClientRect(),x=Math.min(r.right-10,r.left+100),y=r.y+r.height/2;
-    return {x,y,clickable:row.contains(document.elementFromPoint(x,y)),pinnedClose:!!document.querySelector("[data-ribbon-close-id=tab-1]")}
+    const target=document.elementFromPoint(x,y);
+    return {x,y,clickable:row.contains(target),pinnedClose:!!document.querySelector("[data-ribbon-close-id=tab-1]"),
+      viewport:{width:innerWidth,height:innerHeight},row:{x:r.x,y:r.y,width:r.width,height:r.height},hit:target?.outerHTML.slice(0,500)}
   })()`);
+  nativeEvents.push({ type: "opening-hit", bounds: openingView.getBounds(), ...hit });
   assert.equal(hit.clickable, true, "Native expanded label remains clickable over the webpage");
   assert.equal(hit.pinnedClose, false);
   openingView.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, x: hit.x, y: hit.y });
