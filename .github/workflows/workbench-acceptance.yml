@@ -10,6 +10,14 @@ on:
       - 'desktop/scripts/browser-media-acceptance.cjs'
       - 'desktop/scripts/browser-task-ownership-e2e*'
       - 'desktop/scripts/browser-pip-e2e*'
+      - 'desktop/scripts/browser-session-recovery-e2e*'
+      - 'desktop/scripts/browser-media-permissions-e2e*'
+      - 'desktop/scripts/browser-download-recovery-e2e*'
+      - 'desktop/scripts/browser-extension-options-e2e*'
+      - 'desktop/scripts/browser-display-capture-e2e*'
+      - 'desktop/scripts/browser-library-edit-e2e*'
+      - 'desktop/scripts/browser-ribbon-e2e*'
+      - 'packages/protocol/**'
       - 'desktop/scripts/context-chat-capsule-e2e*'
       - 'internal/**'
       - 'scripts/plugin-credentials-e2e/**'
@@ -28,6 +36,14 @@ on:
       - 'desktop/scripts/browser-media-acceptance.cjs'
       - 'desktop/scripts/browser-task-ownership-e2e*'
       - 'desktop/scripts/browser-pip-e2e*'
+      - 'desktop/scripts/browser-session-recovery-e2e*'
+      - 'desktop/scripts/browser-media-permissions-e2e*'
+      - 'desktop/scripts/browser-download-recovery-e2e*'
+      - 'desktop/scripts/browser-extension-options-e2e*'
+      - 'desktop/scripts/browser-display-capture-e2e*'
+      - 'desktop/scripts/browser-library-edit-e2e*'
+      - 'desktop/scripts/browser-ribbon-e2e*'
+      - 'packages/protocol/**'
       - 'desktop/scripts/context-chat-capsule-e2e*'
       - 'internal/**'
       - 'scripts/plugin-credentials-e2e/**'
@@ -75,13 +91,19 @@ jobs:
           npm ci --prefix desktop
           node desktop/node_modules/electron/install.js
           sudo apt-get update
-          sudo apt-get install -y xvfb ffmpeg openbox xdotool fonts-noto-cjk fonts-noto-color-emoji
+          sudo apt-get install -y xvfb ffmpeg openbox xdotool fonts-noto-cjk fonts-noto-color-emoji pulseaudio pulseaudio-utils
+          pulseaudio --check || pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=wuu_e2e sink_properties=device.description=WuuE2E
+          pactl set-default-sink wuu_e2e
       - name: Check acceptance syntax and test policy
         run: |
           node --check desktop/scripts/workbench-acceptance-e2e.cjs
           node --check desktop/scripts/web-workspace-acceptance.cjs
           node --check desktop/scripts/browser-media-acceptance.cjs
           node --check desktop/scripts/browser-pip-e2e.cjs
+          for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon; do
+            node --check "desktop/scripts/browser-$journey-e2e.cjs"
+          done
           node --check desktop/scripts/context-chat-capsule-e2e.cjs
           make test-policy-check
       - name: Build shipping app serially
@@ -167,6 +189,28 @@ jobs:
           mkdir -p "$WUU_BROWSER_PIP_E2E_ARTIFACTS"
           set -o pipefail
           timeout --signal=TERM --kill-after=10s 2m xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' node scripts/browser-pip-e2e.cjs 2>&1 | tee "$WUU_BROWSER_PIP_E2E_ARTIFACTS/run.log"
+      - name: Verify daily browser recovery, permissions and extension settings
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 5
+        env:
+          WUU_BROWSER_SESSION_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-session-recovery
+          WUU_MEDIA_PERMISSIONS_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-media-permissions
+          WUU_DOWNLOAD_RECOVERY_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-download-recovery
+          WUU_EXTENSION_OPTIONS_ARTIFACTS: ${{ runner.temp }}/wuu-workbench-acceptance/browser-extension-options
+          WUU_DISPLAY_CAPTURE_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-display-capture
+          WUU_LIBRARY_EDIT_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-library-edit
+          WUU_RIBBON_E2E_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-ribbon
+          WUU_WORKBENCH_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance
+        run: |
+          mkdir -p "$WUU_WORKBENCH_OUTPUT"
+          set -o pipefail
+          timeout --signal=TERM --kill-after=10s 4m xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' bash <<'JOURNEYS' 2>&1 | tee "$WUU_WORKBENCH_OUTPUT/browser-daily.log"
+          result=0
+          for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon; do
+            node "desktop/scripts/browser-$journey-e2e.cjs" || result=1
+          done
+          exit "$result"
+          JOURNEYS
       - name: Verify context capsule with authored loopback provider
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         timeout-minutes: 3

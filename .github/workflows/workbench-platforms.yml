@@ -83,6 +83,7 @@ jobs:
           done
           node desktop/node_modules/electron/install.js
           node -e 'require("./desktop/node_modules/electron")'
+          echo "WUU_E2E_ELECTRON=$(node -p 'require("./desktop/node_modules/electron")')" >> "$GITHUB_ENV"
       - name: Build native core and desktop
         id: build
         timeout-minutes: 20
@@ -101,6 +102,29 @@ jobs:
         run: |
           set -o pipefail
           node desktop/scripts/browser-task-ownership-e2e.cjs 2>&1 | tee "$WUU_PLATFORM_OUTPUT/browser.log"
+      - name: Exercise daily browser recovery, permissions and extension settings
+        id: daily
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 5
+        env:
+          WUU_BROWSER_SESSION_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-session-recovery
+          WUU_MEDIA_PERMISSIONS_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-media-permissions
+          WUU_DOWNLOAD_RECOVERY_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-download-recovery
+          WUU_EXTENSION_OPTIONS_ARTIFACTS: ${{ runner.temp }}/wuu-platform-smoke/browser-extension-options
+          WUU_DISPLAY_CAPTURE_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-display-capture
+          WUU_LIBRARY_EDIT_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-library-edit
+          WUU_RIBBON_E2E_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-ribbon
+        run: |
+          set -o pipefail
+          export WUU_DOWNLOAD_RECOVERY_ELECTRON="$WUU_E2E_ELECTRON"
+          export WUU_LIBRARY_EDIT_ELECTRON="$WUU_E2E_ELECTRON"
+          {
+            result=0
+            for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon; do
+              node "desktop/scripts/browser-$journey-e2e.cjs" || result=1
+            done
+            exit "$result"
+          } 2>&1 | tee "$WUU_PLATFORM_OUTPUT/browser-daily.log"
       - name: Exercise native shell zoom shortcuts
         id: zoom
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -114,6 +138,7 @@ jobs:
         env:
           BUILD_RESULT: ${{ steps.build.outcome }}
           BROWSER_RESULT: ${{ steps.browser.outcome }}
+          DAILY_RESULT: ${{ steps.daily.outcome }}
           ZOOM_RESULT: ${{ steps.zoom.outcome }}
         run: |
           node - <<'NODE'
@@ -124,6 +149,7 @@ jobs:
             `Source: ${e.GITHUB_SHA}`,
             `- Native core/desktop build: ${e.BUILD_RESULT}`,
             `- Local-page browser adoption/ownership: ${e.BROWSER_RESULT}`,
+            `- Browser recovery, library edits, tab controls, synthetic media permissions, sharing chooser and extension settings: ${e.DAILY_RESULT}`,
             `- Native shell zoom shortcuts: ${e.ZOOM_RESULT}`,
             '',
             'Browser fixtures use local pages and disposable data.',
