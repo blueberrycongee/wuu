@@ -60,13 +60,19 @@ export class NativeBrowserPopover {
     const x = Math.max(0, Math.floor(bounds.x * zoom)), y = Math.max(0, Math.floor(bounds.y * zoom));
     const right = Math.min(width, Math.ceil((bounds.x + bounds.width) * zoom));
     const bottom = Math.min(height, Math.ceil((bounds.y + bounds.height) * zoom));
-    view.webContents.setZoomFactor(zoom);
+    if (view.webContents.getZoomFactor() !== zoom) view.webContents.setZoomFactor(zoom);
     // Keep CSS coordinates in the owner's viewport. Only the native parent
     // clips; the website below is neither resized nor hidden.
-    view.setBounds({ x: -x, y: -y, width, height });
-    this.viewport.setBounds({ x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y) });
-    this.owner.contentView.addChildView(this.viewport);
-    this.viewport.setVisible(true);
+    const contentBounds = { x: -x, y: -y, width, height };
+    const viewportBounds = { x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y) };
+    for (const [target, next] of [[view, contentBounds], [this.viewport, viewportBounds]] as const) {
+      const previous = target.getBounds();
+      if (previous.x !== next.x || previous.y !== next.y || previous.width !== next.width || previous.height !== next.height) target.setBounds(next);
+    }
+    // Reattaching an already topmost native view needlessly rebuilds stacking
+    // during suggestion/filter resizing. Only raise after a sibling was added.
+    if (this.owner.contentView.children.at(-1) !== this.viewport) this.owner.contentView.addChildView(this.viewport);
+    if (!this.viewport.getVisible()) this.viewport.setVisible(true);
     if (opening) {
       const watch = (parent: View): void => {
         for (const child of parent.children) {

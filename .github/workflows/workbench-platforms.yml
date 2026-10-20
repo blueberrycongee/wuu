@@ -114,13 +114,14 @@ jobs:
           WUU_DISPLAY_CAPTURE_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-display-capture
           WUU_LIBRARY_EDIT_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-library-edit
           WUU_RIBBON_E2E_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-ribbon
+          WUU_POPOVER_STABILITY_OUTPUT: ${{ runner.temp }}/wuu-platform-smoke/browser-popover-stability
         run: |
           set -o pipefail
           export WUU_DOWNLOAD_RECOVERY_ELECTRON="$WUU_E2E_ELECTRON"
           export WUU_LIBRARY_EDIT_ELECTRON="$WUU_E2E_ELECTRON"
           {
             result=0
-            for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon; do
+            for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon popover-stability; do
               node "desktop/scripts/browser-$journey-e2e.cjs" || result=1
             done
             exit "$result"

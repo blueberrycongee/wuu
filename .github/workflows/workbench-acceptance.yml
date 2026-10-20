@@ -17,6 +17,7 @@ on:
       - 'desktop/scripts/browser-display-capture-e2e*'
       - 'desktop/scripts/browser-library-edit-e2e*'
       - 'desktop/scripts/browser-ribbon-e2e*'
+      - 'desktop/scripts/browser-popover-stability-e2e*'
       - 'packages/protocol/**'
       - 'desktop/scripts/context-chat-capsule-e2e*'
       - 'internal/**'
@@ -43,6 +44,7 @@ on:
       - 'desktop/scripts/browser-display-capture-e2e*'
       - 'desktop/scripts/browser-library-edit-e2e*'
       - 'desktop/scripts/browser-ribbon-e2e*'
+      - 'desktop/scripts/browser-popover-stability-e2e*'
       - 'packages/protocol/**'
       - 'desktop/scripts/context-chat-capsule-e2e*'
       - 'internal/**'
@@ -101,7 +103,7 @@ jobs:
           node --check desktop/scripts/web-workspace-acceptance.cjs
           node --check desktop/scripts/browser-media-acceptance.cjs
           node --check desktop/scripts/browser-pip-e2e.cjs
-          for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon; do
+          for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon popover-stability; do
             node --check "desktop/scripts/browser-$journey-e2e.cjs"
           done
           node --check desktop/scripts/context-chat-capsule-e2e.cjs
@@ -200,13 +202,14 @@ jobs:
           WUU_DISPLAY_CAPTURE_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-display-capture
           WUU_LIBRARY_EDIT_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-library-edit
           WUU_RIBBON_E2E_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-ribbon
+          WUU_POPOVER_STABILITY_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-popover-stability
           WUU_WORKBENCH_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance
         run: |
           mkdir -p "$WUU_WORKBENCH_OUTPUT"
           set -o pipefail
           timeout --signal=TERM --kill-after=10s 4m xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' bash <<'JOURNEYS' 2>&1 | tee "$WUU_WORKBENCH_OUTPUT/browser-daily.log"
           result=0
-          for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon; do
+          for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon popover-stability; do
             node "desktop/scripts/browser-$journey-e2e.cjs" || result=1
           done
           exit "$result"
