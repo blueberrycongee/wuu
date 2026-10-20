@@ -2758,6 +2758,12 @@ button.settings-engine-expand:hover {
   background: var(--workbench-canvas-bg);
 }
 
+/* Lazy settings load inside their existing pane so window chrome stays usable. */
+.settings-workbench-layer > .view-switch-loading-inline,
+.settings-standalone-layer > .view-switch-loading-inline {
+  height: 100%;
+}
+
 .app-shell .settings-shell.settings-embedded {
   --canvas-titlebar-height: max(44px, calc(var(--control-size-toolbar) + var(--space-2) * 2));
   grid-template-columns: max(0px, calc(var(--sidebar-width) - var(--sidebar-ribbon-width))) minmax(0, 1fr);

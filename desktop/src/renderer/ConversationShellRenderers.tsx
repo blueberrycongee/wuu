@@ -690,7 +690,7 @@ export function SettingsShellRenderer(
   props: SettingsShellRendererProps,
 ): JSX.Element {
   return (
-    <Suspense fallback={<ViewSwitchLoading />}>
+    <Suspense fallback={<ViewSwitchLoading placement="inline" />}>
       <SettingsView
         {...props}
         sidebarMinWidth={SIDEBAR_MIN_WIDTH}

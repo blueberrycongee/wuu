@@ -1109,7 +1109,7 @@ async function runWebsiteAcceptance(h, fixture) {
       await fill(startInput, origin + '/alpha'); xinput(['key', '--clearmodifiers', 'Return']);
       await until(() => nativeView('/alpha')?.getVisible() && !nativeView('/alpha').webContents.isLoading(), 'First left tab loads fixture');
       const options = await tabMenu(alphaID, 'pin-alpha');
-      assert.deepEqual(options, ['Pin tab', 'Close tab'], 'Website context menu stays minimal');
+      assert.deepEqual(options, ['Pin tab', 'Mute tab', 'Close tab'], 'Website context menu exposes pin, audio, and close actions');
       xinput(['key', 'Home', 'key', 'Return']);
       await waitFor(id => document.querySelector(`[data-ribbon-id="${id}"]`)?.dataset.pinned === 'true', alphaID);
       await addSite('Fixture Beta', '/beta');
