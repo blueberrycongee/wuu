@@ -179,10 +179,15 @@ async function until(fn, label) { for (let i = 0; i < 300; i++) { if (await fn()
 
   const vetoRace = await beginSlowDiscard('veto-during-discard', true);
   const vetoExplicitClose = host.closeTab(win, group, vetoRace.target.id);
-  await Promise.all([vetoRace.pending, vetoExplicitClose]);
+  await Promise.all([vetoRace.pending.then(() => diagnostic('veto-discard-settled')), vetoExplicitClose.then(() => diagnostic('veto-explicit-close-settled'))]);
+  diagnostic('veto-both-settled', { destroyed: vetoRace.target.wc.isDestroyed() });
+  await delay(0);
+  diagnostic('veto-native-callback-drained', { destroyed: vetoRace.target.wc.isDestroyed() });
   assert.equal(vetoRace.target.wc.isDestroyed(), false, 'Vetoed idle cleanup retains the live page');
   assert.ok(changes.at(-1).tabs.some(tab => tab.id === vetoRace.target.id), 'Vetoed concurrent close keeps its tab');
+  diagnostic('veto-cleanup-start');
   await vetoRace.target.wc.executeJavaScript('window.onbeforeunload=null;void 0');
+  diagnostic('veto-cleanup-finished');
   const races = { selectedRestored: true, explicitClose: true, vetoedCloseSettled: true, agentClosingPageHidden: true,
     focusDiagnostics: { focusedBeforeDiscardCompletion, focusedAfterRestore, shellFocusedAfterRestore } };
   fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', sourceCommit: process.env.GITHUB_SHA ?? null, runtime: { platform: process.platform, electron: process.versions.electron, chrome: process.versions.chrome, hardwareAcceleration: false }, first, result, races, before, after: app.getAppMetrics(), restoredHistory: restored.webContents.navigationHistory.getAllEntries().map(entry => ({url:entry.url,title:entry.title})), protectedCount: 9, cycles }, null, 2));

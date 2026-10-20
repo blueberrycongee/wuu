@@ -194,7 +194,9 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 .navigation-ribbon-layout:has(.sidebar-ribbon) > .sidebar-resizer {
   top: var(--workbench-top);
   bottom: var(--conversation-pane-inset);
-  left: calc(var(--sidebar-width) - 5px);
+  /* The Workbench canvas meets the first track without the legacy inset. */
+  left: auto;
+  right: -5px;
 }
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) > .workspace-right-panel-resizer {

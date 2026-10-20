@@ -172,13 +172,19 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
           // confirmation dialog. The tab remains resident if it refuses.
           page.discarding = true;
           const closed = await new Promise<boolean>(resolve => {
+            let settled = false;
             const finish = (value: boolean): void => {
+              if (settled) return;
+              settled = true;
               page.contents.removeListener("destroyed", destroyed);
               page.contents.removeListener("will-prevent-unload", prevented);
               resolve(value);
             };
             const destroyed = (): void => finish(true);
-            const prevented = (): void => finish(false);
+            // Do not resume callers inside Chromium's veto callback. A caller
+            // may navigate or close again before the native callback returns.
+            // Keep observing destruction until that callback has completed.
+            const prevented = (): void => { setImmediate(() => finish(false)); };
             page.contents.once("destroyed", destroyed);
             page.contents.once("will-prevent-unload", prevented);
             page.contents.close({ waitForBeforeUnload: true });
@@ -209,7 +215,11 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
             this.emit(page.group);
           }
           discarded++;
-        } catch { /* A navigating or unresponsive page stays resident. */ }
+        } catch (error) {
+          // Navigation/preflight failures are expected; a transaction failure
+          // after issuing close needs a diagnostic without exposing page data.
+          if (page.discarding) console.warn("[web-workspace] Idle discard transaction failed", error instanceof Error ? error.name : "UnknownError");
+        }
         finally { page.discarding = false; if (timeout) clearTimeout(timeout); }
       }
     } finally { this.discarding = false; }

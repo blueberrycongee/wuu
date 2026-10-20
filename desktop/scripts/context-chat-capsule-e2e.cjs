@@ -7,7 +7,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
-const { app, webContents, nativeImage, screen } = require('electron');
+const { app, webContents, nativeImage, screen, ipcMain } = require('electron');
 const desktop = path.resolve(__dirname, '..');
 const output = process.env.WUU_CAPSULE_OUTPUT || path.join(desktop, 'out/e2e/context-chat-capsule');
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-capsule-'));
@@ -22,6 +22,31 @@ for (const name of Object.keys(process.env)) if (/(?:API_KEY|ACCESS_TOKEN|AUTH_T
 const requests = [], checks = [], errors = [], screenshots = [];
 let diagnostics;
 let main, phase = 'startup';
+let capsuleModel, capsulePaint;
+const capsuleProtocol = [];
+// Observe the shipping handlers without bypassing their token/generation checks.
+const originalHandle = ipcMain.handle;
+ipcMain.handle = function (channel, handler) {
+  if (channel !== 'wuu:chrome-overlay-show') return originalHandle.call(this, channel, handler);
+  return originalHandle.call(this, channel, (event, request) => {
+    if (request.model?.kind === 'capsule') {
+      capsuleModel = { token: request.token, generation: request.generation };
+      capsuleProtocol.push({ type: 'model', ...capsuleModel, at: Date.now() });
+    }
+    return handler(event, request);
+  });
+};
+ipcMain.on('wuu:chrome-overlay-painted', (event, token, generation) => {
+  if (!event.sender.getURL().includes('surface=capsule')) return;
+  capsulePaint = { token, generation };
+  capsuleProtocol.push({ type: 'paint', token, generation, at: Date.now() });
+});
+ipcMain.on('wuu:chrome-overlay-command', (event, message) => {
+  if (event.sender.getURL().includes('surface=capsule')) capsuleProtocol.push({
+    type: 'command', command: message.command?.type, token: message.token,
+    generation: message.generation, current: capsuleModel, at: Date.now(),
+  });
+});
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url.startsWith('/page')) {
     res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -119,7 +144,7 @@ async function clickCapsule(target, button = 'left') {
   target.sendInputEvent({ type: 'mouseDown', ...point, button, clickCount: 1 });
   target.sendInputEvent({ type: 'mouseUp', ...point, button, clickCount: 1 });
 }
-function report(passed) { fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed, platform: process.platform, executable: process.execPath, desktop, phase, checks, errors, screenshots, diagnostics,
+function report(passed) { fs.writeFileSync(path.join(output, 'capsule-protocol.json'), JSON.stringify(capsuleProtocol, null, 2)); fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed, platform: process.platform, executable: process.execPath, desktop, phase, checks, errors, screenshots, diagnostics,
   boundary: 'Shipping Electron main/preload/renderer and Go core; disposable profile and local synthetic HTTP model provider. Chromium input on macOS and native pointer hover on X11 exercise the isolated capsule surface. Screenshots capture the composed native window on the recorded platform.', requests: requests.length }, null, 2));
   fs.writeFileSync(path.join(output, 'provider-requests.json'), JSON.stringify(requests, null, 2)); }
 const timeout = setTimeout(() => fail(new Error('Capsule acceptance timed out')), 150000);
@@ -134,6 +159,7 @@ module.exports = (async () => {
   fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en-US', theme: 'light' }));
   assert.equal(app.isReady(), false);
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
+  ipcMain.handle = originalHandle;
   void run(port).catch(fail);
 })().catch(fail);
 async function run(port) {
@@ -240,9 +266,15 @@ async function run(port) {
   main.focus(); if (process.platform === 'darwin') app.focus({ steal: true });
   await until(() => main.isFocused() && capsuleView()?.getVisible(), 'Foreground capsule is ready to send');
   await until(() => evaluate(native, () => document.documentElement.dataset.theme === 'light' && innerWidth === 416), 'Final appearance has painted');
+  // Theme restoration and window resize can publish another generation after
+  // the viewport already matches. Let the owner commit those updates, then
+  // require the same generation's native paint before issuing one Send.
+  await evaluate(main.webContents, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await until(() => capsuleModel && capsulePaint?.token === capsuleModel.token
+    && capsulePaint.generation === capsuleModel.generation, 'Final capsule generation has painted');
   native.focus();
   await evaluate(native, () => document.querySelector('form').requestSubmit());
-  const thread = await until(() => evaluate(main.webContents, async () => (await window.wuu.listThreads()).threads.find(thread => !thread.ephemeral)));
+  const thread = await until(() => evaluate(main.webContents, async () => (await window.wuu.listThreads()).threads.find(thread => !thread.ephemeral)), 'Single capsule Send creates a normal thread');
   await until(() => requests.some(body => body.tools?.length && JSON.stringify(body.messages).includes('Explain this page')));
   await until(() => evaluate(main.webContents, async id => (await window.wuu.resumeThread(id)).thread.turns.some(turn => turn.status === 'completed'), thread.id));
   assert.equal(await evaluate(main.webContents, () => document.querySelector('.web-workspace-stage')?.hidden), false);

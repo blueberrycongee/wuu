@@ -72,6 +72,8 @@ app.whenReady().then(async () => {
     await win.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", {
       features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
     });
+    const interruptions = [];
+    for (const gesture of ["release", "outward", "collapse"]) {
     if (!(await js(collapsed))) { await clickToggle(); await wait(collapsed); await settled(); }
     await js(`document.documentElement.dataset.appearanceMotion='full';document.documentElement.style.setProperty('--sidebar-motion-duration','10000ms')`);
     await clickToggle();
@@ -87,7 +89,7 @@ app.whenReady().then(async () => {
           const x = rect.left + rect.width / 2;
           const y = Math.min(rect.bottom - 20, Math.max(rect.top + 80, 180));
           const hit = document.elementFromPoint(x, y);
-          return { x, y, sidebar: document.querySelector('.sidebar').getBoundingClientRect().toJSON(),
+          return { x, y, targetWidth: parseFloat(getComputedStyle(shell).getPropertyValue('--sidebar-open-width')), sidebar: document.querySelector('.sidebar').getBoundingClientRect().toJSON(),
             divider: rect.toJSON(), hitsDivider: hit === divider || divider.contains(hit),
             animating: shell.classList.contains('sidebar-animating') };
         }
@@ -96,17 +98,48 @@ app.whenReady().then(async () => {
       throw new Error('No actual opening grid transition found');
     })()`);
     assert(before.animating && before.hitsDivider, `Mid-flight divider must be reachable: ${JSON.stringify(before)}`);
+    assert(Math.abs(before.x - before.sidebar.right) <= 2,
+      `Divider must follow the painted sidebar boundary during opening: ${JSON.stringify(before)}`);
     const point = { x: Math.round(before.x), y: Math.round(before.y) };
     win.webContents.sendInputEvent({ type: "mouseMove", ...point });
     assert(await js(`document.querySelector('.app-shell').classList.contains('sidebar-animating')`), "Diagnostic timing invalid: opening transition settled before pointer input");
     win.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount: 1 });
     await wait(`document.querySelector('.app-shell').classList.contains('resizing-sidebar')`);
     const after = await measure();
-    win.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount: 1 });
-    const evidence = { before, after, jump: after.sidebar.width - before.sidebar.width };
-    fs.writeFileSync(path.join(output, "interrupt-resize.json"), JSON.stringify(evidence, null, 2));
+    const evidence = { gesture, before, after, jump: after.sidebar.width - before.sidebar.width };
+    interruptions.push(evidence);
+    const save = () => fs.writeFileSync(path.join(output, "interrupt-resize.json"), JSON.stringify(interruptions, null, 2));
+    save();
     assert(Math.abs(evidence.jump) <= 2, `Pointer-down without movement must preserve rendered width: ${JSON.stringify(evidence)}`);
-    console.log("PASS: midpoint sidebar divider takeover preserves rendered geometry");
+    if (gesture !== "release") {
+      const delta = gesture === "outward" ? 12 : -12;
+      win.webContents.sendInputEvent({ type: "mouseMove", x: point.x + delta, y: point.y, button: "left" });
+      await js(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+      evidence.moved = await measure();
+      save();
+      if (gesture === "outward") {
+        assert(Math.abs(evidence.moved.sidebar.width - before.sidebar.width - delta) <= 2,
+          `Outward drag must track the pointer from its displayed width: ${JSON.stringify(evidence)}`);
+      } else {
+        assert(await js(collapsed), `An intentional inward drag below the collapse threshold still collapses: ${JSON.stringify(evidence)}`);
+      }
+    }
+    // Restore the normal rhythm before release; the long duration above only
+    // makes the captured interruption independent of slow CI scheduling.
+    await js(`document.documentElement.style.setProperty('--sidebar-motion-duration','180ms')`);
+    win.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount: 1 });
+    await settled();
+    evidence.released = await measure();
+    save();
+    if (gesture === "release") {
+      assert(Math.abs(evidence.released.sidebar.width - before.targetWidth) <= 2,
+        `A press without dragging resumes the original width: ${JSON.stringify(evidence)}`);
+    } else if (gesture === "outward") {
+      assert(evidence.released.sidebar.width >= 240 && evidence.released.sidebar.width <= 520,
+        `Released sidebar obeys its normal width constraints: ${JSON.stringify(evidence)}`);
+    } else assert(await js(collapsed));
+    }
+    console.log("PASS: midpoint sidebar divider takeover, drag and release preserve continuity");
     win.destroy(); app.exit(0); return;
   }
   for (const theme of ["light", "dark"]) for (const font of [14, 20]) {

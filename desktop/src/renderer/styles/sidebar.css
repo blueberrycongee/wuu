@@ -303,6 +303,7 @@
 /* While the rail column animates (or sits collapsed) the fixed-width
  * `.sidebar-content` inside must be clipped, not squished — both shells. */
 .sidebar-animating :is(.sidebar, .settings-sidebar),
+.resizing-sidebar :is(.sidebar, .settings-sidebar),
 .sidebar-collapsed :is(.sidebar, .settings-sidebar) {
   overflow: hidden;
 }
@@ -609,7 +610,11 @@
 }
 
 :is(.app-shell, .settings-shell) > .sidebar-resizer {
-  left: calc(var(--sidebar-width, 296px) + var(--conversation-pane-inset) - 5px);
+  /* Absolute grid placement follows the animated first track, rather than
+     jumping its hit target to the destination width before the pane arrives. */
+  grid-column: 1 / 2;
+  left: auto;
+  right: calc(-5px - var(--conversation-pane-inset));
   /* Container height lets the light clamp its transform to this rail without
    * measuring layout on pointermove or changing its top every frame. */
   container-type: size;

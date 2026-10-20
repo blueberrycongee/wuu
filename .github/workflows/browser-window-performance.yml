@@ -9,6 +9,8 @@ on:
       - 'desktop/src/main/chromeOverlayHost.ts'
       - 'desktop/src/renderer/WebWorkspace.tsx'
       - 'desktop/src/renderer/TabMotion.ts'
+      - 'desktop/src/renderer/AppLayoutState.ts'
+      - 'desktop/src/renderer/styles/sidebar.css'
       - 'desktop/src/renderer/styles/turns.css'
       - 'desktop/scripts/browser-window-perf-e2e.cjs'
       - '.github/workflows/browser-window-performance.yml'

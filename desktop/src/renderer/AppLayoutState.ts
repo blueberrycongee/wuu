@@ -66,6 +66,9 @@ type SidebarResizeSession = {
   startX: number;
   startWidth: number;
   currentWidth: number;
+  // An opening animation may be narrower than the settled minimum. Preserve
+  // that temporary width until release, rather than jumping to its endpoint.
+  interruptedTargetWidth?: number;
   // Tracks whether the sidebar collapsed during the current drag (either at
   // pointerdown or by crossing the collapse-intent width mid-drag). When true
   // and the user drags back above that width without releasing, the move
@@ -413,10 +416,11 @@ export function useAppLayoutState({
 
   const writeLiveSidebarWidth = useCallback(
     (nextWidth: number): void => {
-      const clampedWidth = clampSidebarWidth(nextWidth);
+      const interrupted = resizeSessionRef.current?.interruptedTargetWidth !== undefined;
+      const clampedWidth = interrupted ? clamp(nextWidth, 0, SIDEBAR_MAX_WIDTH) : clampSidebarWidth(nextWidth);
       for (const root of sidebarLayoutRoots()) {
         root.style.setProperty("--sidebar-width", `${clampedWidth}px`);
-        root.style.setProperty("--sidebar-open-width", `${clampedWidth}px`);
+        root.style.setProperty("--sidebar-open-width", `${Math.max(SIDEBAR_MIN_WIDTH, clampedWidth)}px`);
         root.style.setProperty("--workspace-sheet-left", `${clampedWidth}px`);
       }
     },
@@ -565,6 +569,12 @@ export function useAppLayoutState({
       sidebarLight.schedule({ resizer: session.resizer, y: event.clientY - session.resizerTop });
       const nextWidth = session.startWidth + event.clientX - session.startX;
       session.currentWidth = nextWidth;
+      // Moving outward from an interrupted opening must not interpret its
+      // below-minimum starting width as a new collapse gesture.
+      if (session.interruptedTargetWidth !== undefined && !session.collapsedDuringDrag && nextWidth >= session.startWidth && nextWidth < SIDEBAR_MIN_WIDTH) {
+        sidebarLive.schedule(nextWidth);
+        return;
+      }
       if (sidebarShouldCollapse(nextWidth)) {
         sidebarLive.cancel();
         applySidebarWidth(nextWidth);
@@ -595,7 +605,15 @@ export function useAppLayoutState({
     (session: SidebarResizeSession | null): void => {
       sidebarLight.flush();
       if (session) {
-        if (session.currentWidth === session.startWidth) {
+        if (session.interruptedTargetWidth !== undefined && !session.collapsedDuringDrag) {
+          const target = session.currentWidth === session.startWidth
+            ? session.interruptedTargetWidth : clampSidebarWidth(session.currentWidth);
+          // Resume toward a valid settled width. The frame writer runs after
+          // React removes direct-manipulation suppression and restores motion.
+          startSidebarMotion();
+          applySidebarWidth(target);
+          sidebarLive.schedule(target);
+        } else if (session.currentWidth === session.startWidth) {
           sidebarLive.cancel();
         } else {
           if (!sidebarShouldCollapse(session.currentWidth)) {
@@ -619,6 +637,7 @@ export function useAppLayoutState({
       sidebarLive,
       sidebarLight,
       sidebarPreferredWidth,
+      startSidebarMotion,
     ]
   );
 
@@ -769,13 +788,24 @@ export function useAppLayoutState({
       "--sidebar-resizer-grab-x",
       `${clamp(event.clientX - bounds.left - bounds.width / 2, -3, 3)}px`
     );
+    const sidebar = resizer.parentElement?.querySelector<HTMLElement>(":scope > .sidebar, :scope > .settings-sidebar");
+    const measuredWidth = sidebarAnimating ? sidebar?.getBoundingClientRect().width : undefined;
+    const interrupted = measuredWidth !== undefined && measuredWidth > 0 && !sidebarCollapsed;
+    const startWidth = interrupted ? measuredWidth : sidebarCollapsed ? 0 : sidebarWidth;
+    if (interrupted) {
+      for (const root of sidebarLayoutRoots()) {
+        root.style.setProperty("--sidebar-width", `${startWidth}px`);
+        root.style.setProperty("--workspace-sheet-left", `${startWidth}px`);
+      }
+    }
     finishPanelMotion();
     resizeSessionRef.current = {
       resizer,
       resizerTop: bounds.top,
       startX: event.clientX,
-      startWidth: sidebarCollapsed ? 0 : sidebarWidth,
-      currentWidth: sidebarCollapsed ? 0 : sidebarWidth,
+      startWidth,
+      currentWidth: startWidth,
+      ...(interrupted ? { interruptedTargetWidth: sidebarWidth } : {}),
       collapsedDuringDrag: sidebarCollapsed
     };
     onCloseWorkspaceMenu();
