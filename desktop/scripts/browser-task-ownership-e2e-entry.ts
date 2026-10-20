@@ -317,6 +317,27 @@ async function readTab(tabID: string): Promise<WebContentsView | undefined> {
   return views.find(view => view.webContents && !view.webContents.isDestroyed() && view.webContents.getURL() === meta?.url);
 }
 
+async function waitForPopupDocument(openerTabID: string, path: string, existingTabID?: string): Promise<string> {
+  await bounded(`popup document ${path}`, popupLoads.get(path)!.promise);
+  const url = `${baseURL}${path}`;
+  const adoption = popupAdoptions.find(item => item.openerTabID === openerTabID &&
+    (existingTabID ? item.tabID === existingTabID : item.url === url));
+  assert(adoption, `The popup document ${path} belongs to an adopted child`);
+  // The page's ready fetch can precede Chromium publishing its committed URL
+  // to the main process. Follow the adopted identity across that boundary,
+  // including a named window's second navigation without another adoption.
+  const navigation = deferred();
+  const removeNavigation = host!.addNavigateListener((cwd, tabID, committedURL) => {
+    if (cwd === workdir && tabID === adoption.tabID && committedURL === url) navigation.resolve();
+  });
+  try {
+    if (host!.tabSurfaceMeta(workdir, adoption.tabID)?.url === url) navigation.resolve();
+    await bounded(`popup native navigation commits ${path}`, navigation.promise);
+  } finally { removeNavigation(); }
+  assert.equal(host!.tabSurfaceMeta(workdir, adoption.tabID)?.url, url, "The adopted popup publishes its committed URL");
+  return adoption.tabID;
+}
+
 app.whenReady().then(async () => {
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   baseURL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -536,10 +557,10 @@ app.whenReady().then(async () => {
   }
   type ListedTabs = { tab_ids: string[]; tabs: { tab_id: string; url: string; title: string }[] };
   async function popupTabs() { return await request(popup, "browser/list_tabs") as ListedTabs; }
-  async function clickPopup(y: number, path?: string) {
+  async function clickPopup(y: number, path?: string, existingTabID?: string) {
     if (path) popupLoads.set(path, deferred());
     await popupTool({ action: "click", tab_id: popupTab, x: 120, y });
-    if (path) await bounded(`popup document ${path}`, popupLoads.get(path)!.promise);
+    if (path) return await waitForPopupDocument(popupTab, path, existingTabID);
   }
   await clickPopup(60);
   const blankState = await popupView.webContents.executeJavaScript("window.popupState");
@@ -551,9 +572,9 @@ app.whenReady().then(async () => {
     const blankView = await readTab(blank.tab_id);
     check("adopted blank popup retains synchronously written content", await blankView?.webContents.executeJavaScript("document.body.dataset.nonce") === popupNonce);
   }
-  await clickPopup(120, "/popup-message");
-  const message = (await popupTabs()).tabs.find(tab => tab.url === `${baseURL}/popup-message`);
-  check("navigated popup is adopted into the owning task", Boolean(message));
+  const messageID = await clickPopup(120, "/popup-message");
+  const message = (await popupTabs()).tabs.find(tab => tab.tab_id === messageID);
+  check("navigated popup is adopted into the owning task", message?.url === `${baseURL}/popup-message`);
   const messageView = message ? await readTab(message.tab_id) : undefined;
   check("child sees the original opener", await messageView?.webContents.executeJavaScript("window.popupProof.hasOpener") === true);
   const messageProof = await popupView.webContents.executeJavaScript(`new Promise(resolve => {
@@ -568,9 +589,9 @@ app.whenReady().then(async () => {
   const submitted = popupRequests.filter(item => item.url === "/popup-form");
   const formBody = new URLSearchParams(submitted[0]?.body);
   check("target=_blank form preserves POST and encoded body", submitted.length === 1 && submitted[0]?.method === "POST" && formBody.get("nonce") === popupNonce && formBody.get("payload") === "two words & a plus +", JSON.stringify(submitted));
-  await clickPopup(240, "/popup-named?step=1");
+  const namedID = await clickPopup(240, "/popup-named?step=1");
   const namedBefore = (await popupTabs()).tabs.filter(tab => tab.url.includes("/popup-named"));
-  await clickPopup(300, "/popup-named?step=2");
+  await clickPopup(300, "/popup-named?step=2", namedID);
   const namedAfter = (await popupTabs()).tabs.filter(tab => tab.url.includes("/popup-named"));
   check("named popup reuses its WindowProxy", await popupView.webContents.executeJavaScript("window.popupState.namedReused") === true);
   check("named popup reuses one owned tab", namedBefore.length === 1 && namedAfter.length === 1 && namedBefore[0].tab_id === namedAfter[0].tab_id && namedAfter[0].url.endsWith("?step=2"), JSON.stringify({ namedBefore, namedAfter }));
@@ -589,22 +610,10 @@ app.whenReady().then(async () => {
   // A page closes its native child directly. Observe the real destruction
   // before the host's listener, since the regression throws inside that listener.
   // Record that exception only for this bounded scenario and fail explicitly.
-  await clickPopup(540, "/popup-self-close");
-  const selfCloseURL = `${baseURL}/popup-self-close`;
-  const selfCloseAdoption = popupAdoptions.find(item => item.openerTabID === popupTab && item.url === selfCloseURL);
-  assert(selfCloseAdoption, "The self-closing popup is adopted before it closes itself");
-  // The page's ready fetch can precede Chromium publishing its committed URL
-  // to the main process. Follow the adopted identity across that boundary.
-  const selfCloseNavigation = deferred();
-  const removeSelfCloseNavigation = host.addNavigateListener((cwd, tabID, url) => {
-    if (cwd === workdir && tabID === selfCloseAdoption.tabID && url === selfCloseURL) selfCloseNavigation.resolve();
-  });
-  try {
-    if (host.tabSurfaceMeta(workdir, selfCloseAdoption.tabID)?.url === selfCloseURL) selfCloseNavigation.resolve();
-    await bounded("self-closing popup native navigation commits", selfCloseNavigation.promise);
-  } finally { removeSelfCloseNavigation(); }
-  const selfCloseTab = (await popupTabs()).tabs.find(tab => tab.tab_id === selfCloseAdoption.tabID);
-  assert.equal(selfCloseTab?.url, selfCloseURL, "The adopted self-closing popup publishes its committed URL");
+  const selfCloseTabID = await clickPopup(540, "/popup-self-close");
+  assert(selfCloseTabID, "The self-closing popup is adopted before it closes itself");
+  const selfCloseTab = (await popupTabs()).tabs.find(tab => tab.tab_id === selfCloseTabID);
+  assert.equal(selfCloseTab?.url, `${baseURL}/popup-self-close`, "The adopted self-closing popup publishes its committed URL");
   assert(selfCloseTab);
   const selfCloseView = await readTab(selfCloseTab.tab_id);
   const siblingTab = openedForThread(sibling)[0];
@@ -704,10 +713,9 @@ app.whenReady().then(async () => {
   await retainedOpenerView.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
   popupLoads.set("/popup-message", deferred());
   await controlledTool("OWNERSHIP_KEEP", { action: "click", tab_id: retainedOpenerTab, x: 120, y: 120 });
-  await bounded("retained popup loads with original opener", popupLoads.get("/popup-message")!.promise);
+  const handoffTab = await waitForPopupDocument(retainedOpenerTab, "/popup-message");
   const retainedTabs = await request(retained, "browser/list_tabs") as ListedTabs;
-  const handoffTab = retainedTabs.tabs.find(tab => tab.url === `${baseURL}/popup-message`)?.tab_id;
-  assert(handoffTab, "Handoff target is a genuine page-created child");
+  assert.equal(retainedTabs.tabs.find(tab => tab.tab_id === handoffTab)?.url, `${baseURL}/popup-message`, "Handoff target is a genuine page-created child");
   await controlledTool("OWNERSHIP_KEEP", { action: "navigate", url: `${baseURL}/deliverable` });
   const deliverableTab = openedForThread(retained).at(-1)!;
   const persistentTab = "manually-opened-persistent-tab";
@@ -766,7 +774,7 @@ app.whenReady().then(async () => {
     popupLoads.set(scenario.path, deferred());
     retainedOpenerView.webContents.sendInputEvent({ type: "mouseDown", x: 120, y: scenario.y, button: "left", clickCount: 1, modifiers: scenario.modifiers });
     retainedOpenerView.webContents.sendInputEvent({ type: "mouseUp", x: 120, y: scenario.y, button: "left", clickCount: 1, modifiers: scenario.modifiers });
-    await bounded(`${scenario.label} loads the actual destination`, popupLoads.get(scenario.path)!.promise);
+    await waitForPopupDocument(retainedOpenerTab, scenario.path);
     const adopted = popupAdoptions.find(item => item.openerTabID === retainedOpenerTab && item.url === `${baseURL}${scenario.path}`);
     check(`${scenario.label} adopts and navigates its child`, Boolean(adopted && host.tabSurfaceMeta(workdir, adopted.tabID)?.url === `${baseURL}${scenario.path}`));
     check(`${scenario.label} leaves its retained opener in place`, host.tabSurfaceMeta(workdir, retainedOpenerTab)?.url === `${baseURL}/popup-opener`);
