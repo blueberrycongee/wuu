@@ -22,6 +22,12 @@ fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [{
 fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en-US', theme: 'light', message_flow_font_size: 15 }));
 const report = { status: 'running', platform: process.platform, versions: process.versions, bundle, commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: desktop, encoding: 'utf8' }).trim(), transitions: [], events: [], navigations: [], screenshots: [], limitations: ['Synthetic local websites and isolated account profile', 'Real Electron input events, not physical input', 'Visibility events and sampled stable frames cannot prove every compositor frame; composed recording is supplied for inspection'] };
 const save = () => fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
+// A late native blur callback can fail after the last assertion, even after
+// Electron emits quit. Fail the process instead of leaving a modal error open.
+process.on('uncaughtException', error => {
+  report.status = 'failed'; report.error = String(error.stack || error); save();
+  console.error(error); app.exit(1);
+});
 let win, recording;
 app.on('browser-window-created', (_event, created) => { win ||= created; });
 const handle = ipcMain.handle.bind(ipcMain);
@@ -329,9 +335,25 @@ async function run() {
     report.recording.modifiedAt = file.mtimeMs;
     assert.ok(file.size > 0 && file.mtimeMs >= report.recordingStart.wallClock, 'Recording must contain fresh footage from this run');
   }
-  report.status = 'passed'; report.checks = ['54 real clicks across two browser tabs, Chat and Settings', 'Every guest visibility transition recorded with no repeated hide/show per action', 'Four stable compositor-paced visibility samples after each action', 'Guest identity, unsent draft and exact scroll retained throughout', 'No unexpected navigation or WebContents recreation', 'Cold first Settings visit never displays a window-covering loading surface', 'Native page follows ancestor transforms and reversals, moving menu ancestors, and concurrent effects without idle polling']; save();
-  console.log(JSON.stringify({ status: report.status, output, transitions: report.transitions.length, visibilityEvents: report.events.length, recording: report.recording }, null, 2));
+  // Keep the native ribbon focused when its owner closes, so its queued blur
+  // runs during native teardown rather than testing only an unfocused surface.
+  win.webContents.focus();
+  await evaluate(() => document.querySelector('.sidebar-ribbon [data-ribbon-id]').focus());
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'ArrowDown' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'ArrowDown' });
+  const ribbon = win.contentView.children.find(view => view.webContents && !view.webContents.isDestroyed()
+    && view.webContents.getURL() === 'wuu-chrome://ui/chrome-overlay.html?surface=ribbon');
+  await until(() => ribbon?.getVisible() && ribbon.webContents.isFocused(), 'keyboard opens and focuses native ribbon before quit');
+  step = 'quit';
+  report.status = 'quitting'; report.checks = ['54 real clicks across two browser tabs, Chat and Settings', 'Every guest visibility transition recorded with no repeated hide/show per action', 'Four stable compositor-paced visibility samples after each action', 'Guest identity, unsent draft and exact scroll retained throughout', 'No unexpected navigation or WebContents recreation', 'Cold first Settings visit never displays a window-covering loading surface', 'Native page follows ancestor transforms and reversals, moving menu ancestors, and concurrent effects without idle polling']; save();
+  app.once('quit', (_event, exitCode) => {
+    if (exitCode !== 0 || report.status !== 'quitting') return;
+    report.status = 'passed'; report.normalQuit = true;
+    report.checks.push('Closing the focused native ribbon owner completes without a late blur exception');
+    save();
+    console.log(JSON.stringify({ status: report.status, output, transitions: report.transitions.length, visibilityEvents: report.events.length, recording: report.recording, normalQuit: report.normalQuit }, null, 2));
+  });
   app.quit();
 }
-const timeout = setTimeout(() => { report.status = 'timed-out'; save(); app.exit(1); }, 100000);
-run().catch(async error => { report.failureInput = await failureInputState().catch(cause => ({ error: String(cause) })); report.status = 'failed'; report.error = String(error.stack); await capture('failure').catch(() => {}); save(); console.error(error); if (recording) await recording; app.exit(1); }).finally(() => { clearTimeout(timeout); server.close(); });
+setTimeout(() => { report.status = 'timed-out'; save(); app.exit(1); }, 100000).unref();
+run().catch(async error => { report.failureInput = await failureInputState().catch(cause => ({ error: String(cause) })); report.status = 'failed'; report.error = String(error.stack); await capture('failure').catch(() => {}); save(); console.error(error); if (recording) await recording; app.exit(1); }).finally(() => { server.close(); });

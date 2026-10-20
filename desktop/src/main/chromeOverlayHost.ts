@@ -251,7 +251,12 @@ export class ChromeOverlayHost {
             { label: model.closeTabLabel, enabled: item.closable, click: () => this.emitCurrent(surface, { type: "close-tab", id: item.id }) },
           ]);
           const zoom = surface.owner.webContents.getZoomFactor();
-          menu.popup({ window: surface.owner, x: Math.round((request.bounds.x + Math.max(0, Math.min(request.bounds.width, command.x))) * zoom), y: Math.round((request.bounds.y + Math.max(0, Math.min(request.bounds.height, command.y))) * zoom), callback: () => { surface.menu = undefined; if (!surface.view.webContents.isFocused()) surface.retained = false; this.dismissOutsideRibbon(surface); } });
+          menu.popup({ window: surface.owner, x: Math.round((request.bounds.x + Math.max(0, Math.min(request.bounds.width, command.x))) * zoom), y: Math.round((request.bounds.y + Math.max(0, Math.min(request.bounds.height, command.y))) * zoom), callback: () => {
+            surface.menu = undefined;
+            if (this.surfaces.get(surface.kind) !== surface || surface.owner.isDestroyed() || surface.view.webContents.isDestroyed()) return;
+            if (!surface.view.webContents.isFocused()) surface.retained = false;
+            this.dismissOutsideRibbon(surface);
+          } });
           return;
         }
       } else if (command.type === "new-tab") { if (!model.canCreateTab) return; }
@@ -274,7 +279,7 @@ export class ChromeOverlayHost {
   }
 
   private dismissOutsideRibbon(surface: Surface): void {
-    if (!surface.request || surface.retained || surface.menu || this.surfaces.get("account")?.request) return;
+    if (surface.owner.isDestroyed() || !surface.request || surface.retained || surface.menu || this.surfaces.get("account")?.request) return;
     if (this.pointerInside(surface)) return;
     this.dismiss(surface, "leave");
   }
@@ -346,6 +351,8 @@ export class ChromeOverlayHost {
   }
 
   private dismiss(surface: Surface, reason?: Extract<ChromeOverlayCommand, { type: "dismiss" }>["reason"], restoreFocus = false, immediate = false): void {
+    // Native teardown can deliver blur before the owner's JS closed callback.
+    if (surface.owner.isDestroyed() || this.surfaces.get(surface.kind) !== surface) return;
     if (surface.kind === "ribbon" && surface.request && surface.view.getVisible() && !immediate) {
       if (reason === "leave") {
         if (!surface.closing) {
@@ -476,9 +483,13 @@ export class ChromeOverlayHost {
   }
 
   private remove(surface: Surface): void {
-    if (surface.leaveTimer) clearTimeout(surface.leaveTimer);
+    // Revoke the surface before closing contents can enqueue blur/load callbacks.
+    surface.request = undefined;
+    surface.retained = false;
+    surface.closing = false;
+    this.cancelLeave(surface);
+    this.surfaces.delete(surface.kind);
     if (!surface.owner.isDestroyed()) surface.owner.contentView.removeChildView(surface.view);
     if (!surface.view.webContents.isDestroyed()) surface.view.webContents.close();
-    this.surfaces.delete(surface.kind);
   }
 }
