@@ -97,7 +97,7 @@ jobs:
           npm ci --prefix desktop
           node desktop/node_modules/electron/install.js
           sudo apt-get update
-          sudo apt-get install -y xvfb ffmpeg openbox xdotool fonts-noto-cjk fonts-noto-color-emoji pulseaudio pulseaudio-utils
+          sudo apt-get install -y xvfb ffmpeg openbox xdotool x11-utils fonts-noto-cjk fonts-noto-color-emoji pulseaudio pulseaudio-utils
           pulseaudio --check || pulseaudio --start --exit-idle-time=-1
           pactl load-module module-null-sink sink_name=wuu_e2e sink_properties=device.description=WuuE2E
           pactl set-default-sink wuu_e2e
@@ -230,6 +230,11 @@ jobs:
         run: |
           set -o pipefail
           xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' bash <<'JOURNEYS'
+          mkdir -p "$WUU_BROWSER_DAILY_OUTPUT"
+          openbox --sm-disable > "$WUU_BROWSER_DAILY_OUTPUT/window-manager.log" 2>&1 &
+          wm=$!
+          trap 'kill "$wm" 2>/dev/null || true' EXIT
+          timeout 5s bash -c 'until [[ "$(xprop -root _NET_SUPPORTING_WM_CHECK)" == *"window id # 0x"* ]]; do sleep 0.05; done' || exit 1
           result=0
           for journey in daily-use workspace-switch; do
             desktop/node_modules/.bin/electron "desktop/scripts/browser-$journey-e2e.cjs" || result=1
