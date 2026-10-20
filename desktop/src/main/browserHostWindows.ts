@@ -2496,7 +2496,7 @@ export interface BrowserSessionPermissionDelegate {
     callback: (allowed: boolean) => void,
     details: BrowserPermissionRequestDetails,
   ): void;
-  checkPermission(contents: WebContents, permission: string, requestingOrigin: string): boolean;
+  checkPermission(contents: WebContents, permission: string, requestingOrigin: string, mediaType?: string): boolean;
 }
 
 // Keep the existing agent policy and legacy user-browser path. Full-page website
@@ -2518,13 +2518,13 @@ export function installBrowserSessionHandlers(
     const owned = webContents ? coordinator.ownsWebContents(webContents.id) : false;
     callback(browserPermissionDecision(owned, permission));
   });
-  session.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+  session.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     // Background contexts without a tab cannot borrow the legacy user-surface
     // grant and bypass the website host's explicit permission decision.
     if (!webContents && websites) return false;
     if (webContents && coordinator.ownsWebContents(webContents.id)) return browserPermissionDecision(true, permission);
     if (webContents && websites?.ownsWebContents(webContents.id)) {
-      return websites.checkPermission(webContents, permission, requestingOrigin);
+      return websites.checkPermission(webContents, permission, requestingOrigin, details.mediaType);
     }
     const owned = webContents ? coordinator.ownsWebContents(webContents.id) : false;
     return browserPermissionDecision(owned, permission);

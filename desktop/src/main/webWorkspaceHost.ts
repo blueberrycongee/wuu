@@ -52,10 +52,20 @@ type WorkspacePage = {
 };
 type PermissionOwner = { page: WorkspacePage; grants: Set<string>; navigationGeneration: number };
 
-// Resource-scoped media, files, devices, and external apps always ask again.
+// Files, individual devices, and external apps always ask again. Camera and
+// microphone grants are separate and scoped to this tab and both page origins.
 // Notifications are unsupported: Electron may check them without a contents
 // owner, and this shared profile cannot safely grant unattributed access.
 const TAB_PERMISSIONS = new Set(["geolocation", "geolocation-approximate", "fullscreen", "screen-wake-lock", "persistent-storage"]);
+
+function permissionGrantKeys(permission: string, mediaTypes: readonly string[] = []): string[] {
+  if (permission === "media") {
+    // An unspecified device must never borrow a microphone or camera grant.
+    return mediaTypes.length && mediaTypes.every(type => type === "audio" || type === "video")
+      ? [...new Set(mediaTypes)].map(type => `media:${type}`) : [];
+  }
+  return TAB_PERMISSIONS.has(permission) ? [permission] : [];
+}
 const ZOOM_LEVELS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 // Preserve Retina/5K page pixels without allowing an unusually large display
 // or high-entropy page to create an unbounded encode or renderer IPC payload.
@@ -600,12 +610,13 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     return this.contentsOwners.has(id);
   }
 
-  checkPermission(contents: WebContents, permission: string, requestingOrigin: string): boolean {
+  checkPermission(contents: WebContents, permission: string, requestingOrigin: string, mediaType?: string): boolean {
     const origin = requestOrigin(requestingOrigin);
     const topOrigin = requestOrigin(contents.getURL());
     const owned = this.contentsOwners.get(contents.id);
-    return Boolean(origin && topOrigin && owned && !this.automationRestricted(owned.page) && TAB_PERMISSIONS.has(permission)
-      && owned.grants.has(`${topOrigin}\n${origin}\n${permission}`));
+    const keys = permissionGrantKeys(permission, mediaType ? [mediaType] : []);
+    return Boolean(origin && topOrigin && owned && !this.automationRestricted(owned.page) && keys.length
+      && keys.every(key => owned.grants.has(`${topOrigin}\n${origin}\n${key}`)));
   }
 
   requestPermission(
@@ -620,16 +631,17 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
       callback(false);
       return;
     }
-    if (this.checkPermission(contents, permission, origin)) {
+    const mediaTypes = "mediaTypes" in details ? details.mediaTypes : undefined;
+    const grantKeys = permissionGrantKeys(permission, mediaTypes);
+    const pageOrigin = requestOrigin(contents.getURL());
+    if (pageOrigin && grantKeys.length && grantKeys.every(key => owned.grants.has(`${pageOrigin}\n${origin}\n${key}`))) {
       callback(true);
       return;
     }
     const parent = BrowserWindow.fromWebContents(contents) ?? owned.page.owner;
     if (parent.isDestroyed() || !parent.isVisible() || parent.isMinimized()
       || (contents === owned.page.contents && !owned.page.bounds)) { callback(false); return; }
-    const pageOrigin = requestOrigin(contents.getURL());
     const navigationGeneration = owned.navigationGeneration;
-    const mediaTypes = "mediaTypes" in details ? details.mediaTypes : undefined;
     this.permissionPrompts.add(contents.id);
     void dialog.showMessageBox(parent, {
       type: "question",
@@ -640,7 +652,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
         ...("filePath" in details ? [`File: ${details.filePath} (${details.fileAccessType}).`] : []),
         ...("externalURL" in details ? [`Application link: ${details.externalURL}`] : []),
         ...(pageOrigin && pageOrigin !== origin ? [`Embedded in ${pageOrigin}.`] : []),
-        TAB_PERMISSIONS.has(permission) ? "Allow for this website tab until it is closed?" : "Allow this request?",
+        grantKeys.length ? "Allow for this website tab until it is closed?" : "Allow this request?",
       ].join("\n"),
       buttons: ["Deny", "Allow"], defaultId: 0, cancelId: 0, noLink: true,
     }).then(({ response }) => {
@@ -648,7 +660,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
         && this.contentsOwners.get(contents.id) === owned && owned.navigationGeneration === navigationGeneration
         && requestOrigin(contents.getURL()) === pageOrigin;
       if (allowed) owned.page.discardProtected = true;
-      if (allowed && TAB_PERMISSIONS.has(permission)) owned.grants.add(`${pageOrigin}\n${origin}\n${permission}`);
+      if (allowed) for (const key of grantKeys) owned.grants.add(`${pageOrigin}\n${origin}\n${key}`);
       if (allowed && permission === "fullscreen" && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized()
         && (contents !== owned.page.contents || (owned.page.bounds && owned.page.view.getVisible()
           && owned.page.group.activeTabId === owned.page.tab.id))) {
