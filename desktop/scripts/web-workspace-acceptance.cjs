@@ -468,7 +468,21 @@ async function runWebsiteAcceptance(h, fixture) {
       }
       assert.equal(coveringPages.length, 0, `Shell ribbon target must not be covered by a live native page: ${JSON.stringify({ point: p, input, coveringPages })}`);
     }
-    xinput(['mousemove', String(Math.round(bounds.x + p.x * zoom)), String(Math.round(bounds.y + p.y * zoom)), 'click', '1']);
+    const movement = ['mousemove', String(Math.round(bounds.x + p.x * zoom)), String(Math.round(bounds.y + p.y * zoom))];
+    const nativeChrome = ['ribbon', 'account'].includes(p.nativeChrome) ? chromeView(p.nativeChrome) : undefined;
+    if (nativeChrome) {
+      // A DOM hit test does not acknowledge native pointer routing. Let the
+      // real move reach the child before issuing the single button sequence;
+      // spawnSync otherwise queues both while Electron cannot process either.
+      xinput(movement);
+      const query = typeof target === 'string' ? { selector: target } : target;
+      await until(() => evaluateContents(nativeChrome.webContents, ({ selector, text }) =>
+        [...document.querySelectorAll(selector)].some(node =>
+          (text === undefined || (node.getAttribute('aria-label') || node.textContent || '').trim() === text)
+          && node.getBoundingClientRect().width > 0 && node.matches(':hover')), query),
+      'Native chrome acknowledges the real pointer target');
+      xinput(['click', '1']);
+    } else xinput([...movement, 'click', '1']);
     report.actions.push({ label: `web-${label}`, input: 'native-x11', atMs: Date.now() - started, point: p });
     await settle();
     if (evidence) await capture(`after-${label}`);
@@ -1137,24 +1151,89 @@ async function runWebsiteAcceptance(h, fixture) {
     await hoverTab(alphaID);
     const retainedRibbon = chromeView('ribbon');
     const width = retainedRibbon.getBounds().width;
-    const selections = [
-      { target: tabButton(siteIDs.get('Fixture Beta')), id: siteIDs.get('Fixture Beta'), label: 'beta' },
-      { target: conversations, id: 'conversations', label: 'conversations' },
-      { target: '.sidebar-ribbon-footer button[aria-label="Settings"]', label: 'settings' },
-      { target: tabButton(alphaID), id: alphaID, label: 'alpha' },
-    ];
-    for (const { target, id, label } of selections) {
-      await click(target, `retained-hover-${label}`, true, true);
-      await until(() => evaluateRibbon(({ target, id }) => document.querySelector(id ? `[data-ribbon-id="${id}"]` : target)?.getAttribute('aria-current') === 'page', { target, id }), `Selected ${label}`);
-      assert.equal(chromeView('ribbon'), retainedRibbon, 'Navigation reuses the current native ribbon');
-      assert.equal(retainedRibbon.getVisible(), true, 'Selecting a destination does not dismiss the hovered ribbon');
-      assert.equal(retainedRibbon.getBounds().width, width, 'Selection does not start a collapse or reopen animation');
-      assert.equal(await evaluate(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded), 'true');
+    const trace = report.hoverRibbonSelectionTrace = { commands: [], forwarded: [], models: [], nativeInput: [] };
+    const overlay = retainedRibbon.webContents;
+    const summarize = request => request && ({ token: request.token, generation: request.generation, focus: request.focus,
+      items: request.model.items?.map(({ id, title, active, disabled }) => ({ id, title, active, disabled })) });
+    const before = await evaluateContents(overlay, () => window.wuuChromeOverlay.ready());
+    trace.models.push({ atMs: Date.now() - started, request: summarize(before) });
+    const overlaySend = overlay.send, shellSend = win.webContents.send;
+    overlay.send = function (channel, ...args) {
+      if (channel === 'wuu:chrome-overlay-state' && trace.models.length < 120) trace.models.push({ atMs: Date.now() - started, request: summarize(args[0]) });
+      return Reflect.apply(overlaySend, this, [channel, ...args]);
+    };
+    win.webContents.send = function (channel, ...args) {
+      if (channel === 'wuu:chrome-overlay-event' && trace.forwarded.length < 120) trace.forwarded.push({ atMs: Date.now() - started, message: args[0] });
+      return Reflect.apply(shellSend, this, [channel, ...args]);
+    };
+    const observeCommand = (event, message) => {
+      if (event.sender !== overlay || message?.command?.type === 'reveal' || trace.commands.length >= 120) return;
+      trace.commands.push({ atMs: Date.now() - started, message, hostModel: trace.models.at(-1)?.request,
+        visible: retainedRibbon.getVisible(), focused: overlay.isFocused() });
+    };
+    const observeMouse = (_event, input) => {
+      if (trace.nativeInput.length < 80) trace.nativeInput.push({ atMs: Date.now() - started, ...input });
+    };
+    ipcMain.prependListener('wuu:chrome-overlay-command', observeCommand);
+    overlay.on('before-mouse-event', observeMouse);
+    const probeContents = [win.webContents, overlay];
+    try {
+      for (const wc of probeContents) await evaluateContents(wc, () => {
+        const events = [], snapshot = (type, details) => {
+          if (events.length >= 160) return;
+          events.push({ type, at: performance.now(), details, focused: document.hasFocus(),
+            activeElement: document.activeElement?.outerHTML.slice(0, 240),
+            selected: [...document.querySelectorAll('.sidebar-ribbon [aria-current="page"]')].map(node => node.dataset.ribbonId || node.getAttribute('aria-label')) });
+        };
+        const observe = event => {
+          snapshot(event.type, { trusted: event.isTrusted, x: event.clientX, y: event.clientY, button: event.button,
+            target: event.target?.closest?.('[data-ribbon-id]')?.dataset.ribbonId,
+            defaultPrevented: event.defaultPrevented });
+          if (event.type === 'click') requestAnimationFrame(() => snapshot('after-click-frame'));
+        };
+        const types = ['pointerdown', 'pointerup', 'click', 'focusin', 'focusout'];
+        types.forEach(type => document.addEventListener(type, observe, true));
+        const off = window.wuu?.chromeOverlay?.onEvent(message => {
+          snapshot('shell-command', message);
+          requestAnimationFrame(() => snapshot('after-shell-command-frame', message));
+        }) || window.wuuChromeOverlay.onState(request => snapshot('overlay-model',
+          request && { token: request.token, generation: request.generation }));
+        window.__wuuAcceptanceHoverSelection = { events, stop: () => {
+          types.forEach(type => document.removeEventListener(type, observe, true)); off(); snapshot('finished'); return events;
+        } };
+        snapshot('ready');
+      });
+      const selections = [
+        { target: tabButton(siteIDs.get('Fixture Beta')), id: siteIDs.get('Fixture Beta'), label: 'beta' },
+        { target: conversations, id: 'conversations', label: 'conversations' },
+        { target: '.sidebar-ribbon-footer button[aria-label="Settings"]', label: 'settings' },
+        { target: tabButton(alphaID), id: alphaID, label: 'alpha' },
+      ];
+      for (const { target, id, label } of selections) {
+        await click(target, `retained-hover-${label}`, true, true);
+        await until(() => evaluateRibbon(({ target, id }) => document.querySelector(id ? `[data-ribbon-id="${id}"]` : target)?.getAttribute('aria-current') === 'page', { target, id }), `Selected ${label}`);
+        assert.equal(chromeView('ribbon'), retainedRibbon, 'Navigation reuses the current native ribbon');
+        assert.equal(retainedRibbon.getVisible(), true, 'Selecting a destination does not dismiss the hovered ribbon');
+        assert.equal(retainedRibbon.getBounds().width, width, 'Selection does not start a collapse or reopen animation');
+        assert.equal(await evaluate(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded), 'true');
+      }
+      await leaveRail();
+      assert.equal(retainedRibbon.getVisible(), false, 'Real pointer departure still closes the ribbon');
+      assert.equal(nativeView('/alpha').getVisible(), true, 'Pointer departure leaves the selected website visible');
+      return { destinations: selections.map(({ label }) => label), width };
+    } finally {
+      overlay.send = overlaySend; win.webContents.send = shellSend;
+      ipcMain.removeListener('wuu:chrome-overlay-command', observeCommand);
+      overlay.removeListener('before-mouse-event', observeMouse);
+      trace.renderers = await Promise.all(probeContents.map(async wc => ({ id: wc.id, url: wc.getURL(),
+        events: await evaluateContents(wc, () => {
+          const probe = window.__wuuAcceptanceHoverSelection;
+          delete window.__wuuAcceptanceHoverSelection;
+          return probe?.stop();
+        }).catch(error => ({ error: String(error) })) })));
+      trace.visiblePages = views().filter(view => view.getVisible()).map(view => ({ id: view.webContents.id, url: view.webContents.getURL() }));
+      save();
     }
-    await leaveRail();
-    assert.equal(retainedRibbon.getVisible(), false, 'Real pointer departure still closes the ribbon');
-    assert.equal(nativeView('/alpha').getVisible(), true, 'Pointer departure leaves the selected website visible');
-    return { destinations: selections.map(({ label }) => label), width };
   });
   await testNative('ribbon reorders Chat away from first with real keyboard and pointer', async () => {
     await openSite('Fixture Alpha', '/alpha');
