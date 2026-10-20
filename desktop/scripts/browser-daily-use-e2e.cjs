@@ -59,27 +59,36 @@ function key(contents, keyCode, modifiers = []) {
   contents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
   contents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
 }
+function visibleContents(parent = win.contentView) {
+  return parent.children.flatMap(view => !view.getVisible() ? [] : [...(view.webContents ? [view.webContents] : []), ...visibleContents(view)]);
+}
 async function click(selector) {
-  const surfaces = [win.webContents, ...win.contentView.children.filter(v => v.webContents && v.getVisible()).map(v => v.webContents)];
-  for (const wc of surfaces.reverse()) {
-    const point = await wc.executeJavaScript(`(selector => {
-      const element = [...document.querySelectorAll(selector)].find(e => e.getBoundingClientRect().width && !e.closest("[inert]"));
-      if (!element) return null;
-      element.scrollIntoView({block:"nearest"});
-      const r = element.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2;
-      return element.contains(document.elementFromPoint(x,y)) ? {x,y} : null;
-    })(${JSON.stringify(selector)})`);
-    if (!point) continue;
-    wc.focus();
-    wc.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...point });
-    wc.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...point });
-    return;
-  }
+  const deadline = Date.now() + 5000;
+  do {
+    const surfaces = [win.webContents, ...visibleContents()];
+    for (const wc of surfaces.reverse()) {
+      const point = await wc.executeJavaScript(`(selector => {
+        const element = [...document.querySelectorAll(selector)].find(e => e.getBoundingClientRect().width && !e.closest("[inert]"));
+        if (!element || element.disabled) return null;
+        element.scrollIntoView({block:"nearest"});
+        const r = element.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2;
+        return element.contains(document.elementFromPoint(x,y)) ? {x,y} : null;
+      })(${JSON.stringify(selector)})`);
+      if (!point) continue;
+      await wc.executeJavaScript("window.__wuuClickObserved=false;document.addEventListener('click',()=>{window.__wuuClickObserved=true},{once:true,capture:true})");
+      wc.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...point });
+      wc.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...point });
+      await until(() => wc.executeJavaScript("window.__wuuClickObserved === true"), `click delivered: ${selector}`);
+      await wc.executeJavaScript("new Promise(resolve => setTimeout(resolve, 0))");
+      return wc;
+    }
+    await delay(40);
+  } while (Date.now() < deadline);
   throw new Error(`No visible clickable target: ${selector}`);
 }
 async function capture(name) {
   await evaluate(async () => { await document.fonts.ready; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
-  for (const child of win.contentView.children) if (child.webContents && child.getVisible()) await child.webContents.capturePage();
+  for (const contents of visibleContents()) await contents.capturePage();
   const file = path.join(output, `${name}.png`);
   if (process.platform === "darwin") execFileSync("screencapture", ["-x", "-o", "-l", win.getMediaSourceId().split(":")[1], file]);
   else fs.writeFileSync(file, (await win.webContents.capturePage()).toPNG());
@@ -136,10 +145,103 @@ async function run() {
   const view = win.contentView.children.find(v => v.webContents === guest);
   await until(() => ["x", "y", "width", "height"].every(k => Math.abs(view.getBounds()[k] - Math.round(geometry[k] * win.webContents.getZoomFactor())) <= 2), "native view aligns");
   report.checks.push("Cmd/Ctrl+L focuses the address and local history suggestions open", "Dark theme at 20px and 960px keeps native page aligned");
+  if (process.env.WUU_BROWSER_STRESS === "1") {
+    const transitions = [], unexpectedNavigations = [];
+    const visibility = view.setVisible.bind(view);
+    view.setVisible = value => { if (view.getVisible() !== value) transitions.push({ at: Date.now(), visible: value }); return visibility(value); };
+    const navigation = details => { if (details.isMainFrame) unexpectedNavigations.push(details.url); };
+    guest.on("did-start-navigation", navigation);
+    report.repeatedControls = [];
+    let recording;
+    if (process.platform === "darwin") {
+      const video = path.join(output, "repeated-controls.mov");
+      fs.rmSync(video, { force: true });
+      const recordingStarted = Date.now();
+      const recorder = require("node:child_process").spawn("screencapture", ["-x", "-v", "-V", "35", "-l", win.getMediaSourceId().split(":")[1], video], { stdio: ["ignore", "ignore", "pipe"] });
+      let recordingLog = ""; recorder.stderr.on("data", data => { recordingLog += data; });
+      recording = new Promise(resolve => recorder.once("close", code => { report.recording = { path: video, exitCode: code, log: recordingLog, fresh: fs.existsSync(video) && fs.statSync(video).mtimeMs >= recordingStarted }; resolve(); }));
+    }
+    if (recording) await delay(1200); // Let the native recorder start before the interaction sequence.
+    const expanded = selector => evaluate(selector => document.querySelector(selector)?.getAttribute("aria-expanded"), selector);
+    for (let cycle = 0; cycle < 12; cycle++) {
+      for (const selector of ["[data-browser-library-trigger]", "[data-web-workspace-downloads-trigger]"]) {
+        const before = transitions.length;
+        let error;
+        try {
+          await click(selector);
+          await until(async () => await expanded(selector) === "true", "panel opens", 2000);
+          await until(() => visibleContents().some(wc => wc.getURL() === "about:blank"), "native panel visible");
+          await delay(140); // Deliberate repeat-click cadence for the recording.
+          await click(selector);
+          await until(async () => await expanded(selector) === "false", "same button closes panel", 2000);
+          await delay(140);
+        } catch (cause) { error = String(cause); }
+        const popup = visibleContents().find(wc => wc.getURL() === "about:blank");
+        if (popup) key(popup, "ESC");
+        report.repeatedControls.push({ cycle, selector, pageVisibilityChanges: transitions.length - before, error });
+      }
+      const before = transitions.length;
+      await click("[data-browser-bookmark-current]");
+      await click("[data-browser-bookmark-current]");
+      report.repeatedControls.push({ cycle, selector: "bookmark toggle twice", pageVisibilityChanges: transitions.length - before });
+      guest.focus(); key(guest, "L", [process.platform === "darwin" ? "meta" : "control"]);
+      await until(() => evaluate(() => document.activeElement?.matches(".workspace-browser-url-input")), "repeated address focus");
+      await win.webContents.insertText("Browser");
+      key(win.webContents, "ESC"); key(win.webContents, "ESC");
+      assert.equal(await guest.executeJavaScript("document.querySelector('#draft').value"), "Keep this draft");
+    }
+    guest.removeListener("did-start-navigation", navigation);
+    view.setVisible = visibility;
+    report.repeatedSummary = { navigationCount: unexpectedNavigations.length, pageVisibilityChanges: transitions.length,
+      errors: report.repeatedControls.filter(step => step.error), cycles: 12 };
+    if (recording) {
+      await recording;
+      assert.equal(report.recording.exitCode, 0, "Native recorder must finish successfully");
+      assert.equal(report.recording.fresh, true, "Native recording must be produced by this run");
+      assert.ok(fs.statSync(report.recording.path).size > 0, "Native recording must not be empty");
+    }
+    save();
+    assert.equal(unexpectedNavigations.length, 0, "Chrome buttons must not reload the webpage");
+    assert.equal(transitions.length, 0, "Chrome buttons must not hide/show the webpage");
+    assert.equal(report.repeatedSummary.errors.length, 0, "Repeated toolbar buttons must toggle predictably");
+  }
+  await click("[data-browser-bookmark-current]");
+  await until(() => evaluate(() => document.querySelector("[data-browser-bookmark-current]")?.getAttribute("aria-pressed") === "true"), "bookmark saved");
+  await click("[data-browser-library-trigger]");
+  await until(async () => (await Promise.all(webContents.getAllWebContents().map(wc => wc.executeJavaScript("Boolean(document.querySelector('[data-library-section=\"bookmarks\"]'))").catch(() => false)))).some(Boolean), "library menu");
+  await click('[data-library-section="bookmarks"]');
+  const libraryContents = await click("[data-library-edit-bookmark]");
+  await until(() => libraryContents.executeJavaScript("Boolean(document.querySelector('[data-library-bookmark-title]'))"), "bookmark editor");
+  await capture("04-bookmark-editor-dark-large");
+  await click("[data-library-bookmark-title]");
+  libraryContents.selectAll(); // Native Edit > Select All; synthetic macOS keys do not invoke menu accelerators.
+  await until(() => libraryContents.executeJavaScript("(() => { const e=document.querySelector('[data-library-bookmark-title]'); return e && e.selectionStart===0 && e.selectionEnd===e.value.length; })()"), "bookmark title select all");
+  await libraryContents.insertText("My reading desk");
+  await click("[data-library-save-bookmark]");
+  await until(() => evaluate(async () => (await window.wuu.webWorkspace.library.getState()).bookmarks.some(bookmark => bookmark.title === "My reading desk")), "bookmark renamed through product UI");
+  key(libraryContents, "ESC");
+  report.checks.push("Bookmark editor opens in native chrome and saves through production IPC");
+  if (process.env.WUU_BROWSER_PUBLIC === "1") {
+    report.publicSites = [];
+    for (const [name, address] of [["GitHub", "https://github.com"], ["Wikipedia", "https://www.wikipedia.org"], ["YouTube", "https://www.youtube.com"], ["Bilibili", "https://www.bilibili.com"]]) {
+      await evaluate(url => window.wuu.webWorkspace.command("ribbon-browser", "navigate", url), address);
+      let error;
+      try { await until(() => !guest.isLoadingMainFrame() && guest.getURL().startsWith(address), `${name} public page`, 20000); }
+      catch (cause) { error = String(cause); }
+      const document = await guest.executeJavaScript("({title:document.title, text:document.body?.innerText.slice(0,400), links:document.links.length})").catch(() => null);
+      report.publicSites.push({ name, address, finalURL: guest.getURL(), document, error,
+        scope: "Public-page rendering only; login, DRM and protected playback unverified" });
+      await capture(`public-${name}`); save();
+    }
+  }
   report.status = "passed"; save();
   if (process.env.WUU_BROWSER_DAILY_KEEP_OPEN === "1") { console.log(`Ready for native inspection: ${output}`); return; }
   app.quit();
 }
-const watchdog = setTimeout(() => { report.status = "timed-out"; save(); app.exit(1); }, 120000);
-run().catch(error => { report.status = "failed"; report.errors.push(String(error.stack)); save(); console.error(error); app.exit(1); })
+const watchdog = setTimeout(() => { report.status = "timed-out"; save(); app.exit(1); }, 240000);
+run().catch(async error => {
+  if (win && !win.isDestroyed()) {
+    await capture("failure").catch(() => {});
+  }
+  report.status = "failed"; report.errors.push(String(error.stack)); save(); console.error(error); app.exit(1); })
   .finally(() => { clearTimeout(watchdog); if (process.env.WUU_BROWSER_DAILY_KEEP_OPEN !== "1") server.close(); });

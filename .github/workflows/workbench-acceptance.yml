@@ -18,6 +18,8 @@ on:
       - 'desktop/scripts/browser-library-edit-e2e*'
       - 'desktop/scripts/browser-ribbon-e2e*'
       - 'desktop/scripts/browser-popover-stability-e2e*'
+      - 'desktop/scripts/browser-daily-use-e2e*'
+      - 'desktop/scripts/browser-workspace-switch-e2e*'
       - 'packages/protocol/**'
       - 'desktop/scripts/context-chat-capsule-e2e*'
       - 'internal/**'
@@ -45,6 +47,8 @@ on:
       - 'desktop/scripts/browser-library-edit-e2e*'
       - 'desktop/scripts/browser-ribbon-e2e*'
       - 'desktop/scripts/browser-popover-stability-e2e*'
+      - 'desktop/scripts/browser-daily-use-e2e*'
+      - 'desktop/scripts/browser-workspace-switch-e2e*'
       - 'packages/protocol/**'
       - 'desktop/scripts/context-chat-capsule-e2e*'
       - 'internal/**'
@@ -103,6 +107,8 @@ jobs:
           node --check desktop/scripts/web-workspace-acceptance.cjs
           node --check desktop/scripts/browser-media-acceptance.cjs
           node --check desktop/scripts/browser-pip-e2e.cjs
+          node --check desktop/scripts/browser-daily-use-e2e.cjs
+          node --check desktop/scripts/browser-workspace-switch-e2e.cjs
           for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon popover-stability; do
             node --check "desktop/scripts/browser-$journey-e2e.cjs"
           done
@@ -211,6 +217,22 @@ jobs:
           result=0
           for journey in session-recovery media-permissions download-recovery extension-options display-capture library-edit ribbon popover-stability; do
             node "desktop/scripts/browser-$journey-e2e.cjs" || result=1
+          done
+          exit "$result"
+          JOURNEYS
+      - name: Repeat browser controls and switch between web, Chat and Settings
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        timeout-minutes: 4
+        env:
+          WUU_BROWSER_STRESS: '1'
+          WUU_BROWSER_DAILY_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-daily-use
+          WUU_BROWSER_SWITCH_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance/browser-workspace-switch
+        run: |
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' bash <<'JOURNEYS'
+          result=0
+          for journey in daily-use workspace-switch; do
+            desktop/node_modules/.bin/electron "desktop/scripts/browser-$journey-e2e.cjs" || result=1
           done
           exit "$result"
           JOURNEYS

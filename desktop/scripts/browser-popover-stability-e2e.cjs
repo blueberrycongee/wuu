@@ -45,6 +45,7 @@ if(typeof electron==='string'){
     const bounds={x:24,y:70,width:480,height:200,focus:false};
     host.report('address',bounds);for(let i=0;i<16;i++)host.report('address',{...bounds,height:200+(i%2)});
     assert.equal(win.webContents.isFocused(),true,'address suggestion relayout retains shell focus');
+    assert.equal(win.contentView.children.find(child=>child.children.includes(view)).getVisible(),true,'address suggestions remain visible while shell keeps focus');
     await win.webContents.insertText('/typing');assert.equal(await run(win.webContents,'document.querySelector("#address").value'),'example.test/typing');
     checks.push('address suggestions preserve native typing focus');
     key(win.webContents,'A',[process.platform==='darwin'?'meta':'control']);await run(win.webContents,'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');const shellSyntheticSelectAll=await run(win.webContents,'document.activeElement.selectionStart===0&&document.activeElement.selectionEnd===19');
