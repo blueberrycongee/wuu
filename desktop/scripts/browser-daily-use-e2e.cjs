@@ -221,6 +221,36 @@ async function run() {
   await until(() => evaluate(async () => (await window.wuu.webWorkspace.library.getState()).bookmarks.some(bookmark => bookmark.title === "My reading desk")), "bookmark renamed through product UI");
   key(libraryContents, "ESC");
   report.checks.push("Bookmark editor opens in native chrome and saves through production IPC");
+  const originalOrder = await evaluate(() => [...document.querySelectorAll(".sidebar-ribbon [data-ribbon-id]")].map(item => item.dataset.ribbonId));
+  await evaluate(() => {
+    window.__restoredTabOrders = [];
+    window.__stopRestoredTabOrders = window.wuu.webWorkspace.onState(state => {
+      if (state.id === "ribbon-browser") window.__restoredTabOrders.push((state.tabs ?? []).map(tab => tab.id));
+    });
+  });
+  guest.focus(); key(guest, "W", [process.platform === "darwin" ? "meta" : "control"]);
+  await until(() => evaluate(id => !document.querySelector(`[data-ribbon-id="${id}"]`), first), "close active tab with keyboard");
+  const neighbor = webContents.getAllWebContents().find(wc => wc.getURL() === `${base}/second`);
+  assert.ok(neighbor, "Closing selects the retained neighbor");
+  neighbor.focus(); key(neighbor, "T", [process.platform === "darwin" ? "meta" : "control", "shift"]);
+  let restoredID;
+  await until(async () => {
+    restoredID = await evaluate(() => document.querySelector('.sidebar-ribbon [data-ribbon-id][aria-current="page"]')?.dataset.ribbonId);
+    return restoredID && restoredID !== first && restoredID !== second && restoredID.startsWith("website:");
+  }, "reopen closed tab with keyboard");
+  await until(() => {
+    guest = webContents.getAllWebContents().find(wc => wc.getURL() === `${base}/first` && !wc.isLoadingMainFrame());
+    return Boolean(guest);
+  }, "reopened native webpage");
+  const expectedOrder = originalOrder.map(id => id === first ? restoredID : id);
+  assert.deepEqual(await evaluate(() => [...document.querySelectorAll(".sidebar-ribbon [data-ribbon-id]")].map(item => item.dataset.ribbonId)), expectedOrder,
+    "Reopening restores the original slot among apps and tabs");
+  const restoredOrders = await evaluate(() => { window.__stopRestoredTabOrders(); return window.__restoredTabOrders; });
+  assert.ok(restoredOrders.some(order => order.includes(restoredID)));
+  assert.ok(restoredOrders.filter(order => order.includes(restoredID)).every(order => order.indexOf(restoredID) < order.indexOf(second)),
+    "The renderer never moves the restored tab behind its former neighbor");
+  report.checks.push("Cmd/Ctrl+W then Cmd/Ctrl+Shift+T restores a fresh native tab at its original mixed navigation position");
+  await capture("05-reopened-tab-position");
   if (process.env.WUU_BROWSER_PUBLIC === "1") {
     report.publicSites = [];
     for (const [name, address] of [["GitHub", "https://github.com"], ["Wikipedia", "https://www.wikipedia.org"], ["YouTube", "https://www.youtube.com"], ["Bilibili", "https://www.bilibili.com"]]) {

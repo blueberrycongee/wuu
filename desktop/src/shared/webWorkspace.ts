@@ -18,6 +18,8 @@ export type WebWorkspaceFindOptions = { forward?: boolean; findNext?: boolean };
 export type WebWorkspaceTabState = {
   discarded?: true;
   id: string;
+  /** Former identity lets the ribbon reclaim its mixed navigation slot. Not persisted. */
+  reopenedFrom?: string;
   url: string;
   title: string;
   loading: boolean;

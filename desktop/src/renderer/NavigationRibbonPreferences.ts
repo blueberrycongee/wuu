@@ -2,6 +2,7 @@ import { useMemo, useSyncExternalStore } from "react";
 
 export interface RibbonWebsite {
   id: string;
+  reopenedFrom?: string;
   title: string;
   url: string;
   pinned?: boolean;

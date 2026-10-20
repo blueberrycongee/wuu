@@ -13,7 +13,7 @@ import type { WebWorkspaceDownloads } from "./webWorkspaceDownloads";
 
 // Website pages keep their native ownership. Explicit, turn-scoped automation
 // borrows a live view; restored tabs create native views only when selected.
-type WorkspaceTab = { id: string; url: string; title: string; zoomFactor: number; pinned?: boolean; muted?: boolean; favicon?: string; startPage?: boolean; page?: WorkspacePage;
+type WorkspaceTab = { id: string; reopenedFrom?: string; url: string; title: string; zoomFactor: number; pinned?: boolean; muted?: boolean; favicon?: string; startPage?: boolean; page?: WorkspacePage;
   discarded?: { entries: NavigationEntry[]; index: number; scroll?: { x: number; y: number } } };
 type WorkspaceGroup = {
   id: string;
@@ -24,7 +24,7 @@ type WorkspaceGroup = {
   activeTabId: string;
   bounds: WebWorkspaceBounds | null;
   lastBounds?: WebWorkspaceBounds;
-  closedTabs: { url: string; title: string; zoomFactor: number; pinned?: boolean; muted?: boolean; discarded?: WorkspaceTab["discarded"] }[];
+  closedTabs: { id: string; index: number; url: string; title: string; zoomFactor: number; pinned?: boolean; muted?: boolean; discarded?: WorkspaceTab["discarded"] }[];
   migratedTabGroups?: Record<string, string[]>;
 };
 type AutomationRestriction = { active: boolean };
@@ -522,8 +522,9 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     if (group.tabs.length >= WEB_WORKSPACE_TAB_LIMIT) throw new Error(`Close a tab before restoring another. The browser limit is ${WEB_WORKSPACE_TAB_LIMIT} tabs.`);
     const closed = group.closedTabs.pop();
     if (closed) {
-      const tab: WorkspaceTab = { ...closed, id: group.id === WEB_WORKSPACE_RIBBON_ID ? `website:${randomUUID()}` : randomUUID() };
-      group.tabs.push(tab);
+      const { id: previousId, index, ...state } = closed;
+      const tab: WorkspaceTab = { ...state, reopenedFrom: previousId, id: group.id === WEB_WORKSPACE_RIBBON_ID ? `website:${randomUUID()}` : randomUUID() };
+      group.tabs.splice(index, 0, tab);
       this.activate(group, tab);
       this.emit(group);
       if (group.id === WEB_WORKSPACE_RIBBON_ID) this.options.onReveal?.(owner, group.id);
@@ -753,6 +754,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     const page = tab.page;
     const contents = page && !page.contents.isDestroyed() ? page.contents : undefined;
     return {
+      ...(tab.reopenedFrom ? { reopenedFrom: tab.reopenedFrom } : {}),
       id: tab.id, url: page?.error || contents?.isLoading() ? page!.requestedURL : contents?.getURL() || tab.url,
       title: contents?.getTitle() || tab.title, loading: contents?.isLoading() ?? false,
       canGoBack: contents?.navigationHistory.canGoBack() ?? Boolean(tab.discarded && tab.discarded.index > 0),
@@ -927,7 +929,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
   private removeTab(group: WorkspaceGroup, index: number): void {
     const tab = group.tabs[index];
     const state = this.tabState(tab);
-    group.closedTabs.push({ url: state.url, title: state.title, zoomFactor: tab.zoomFactor, pinned: tab.pinned, muted: tab.muted,
+    group.closedTabs.push({ id: tab.id, index, url: state.url, title: state.title, zoomFactor: tab.zoomFactor, pinned: tab.pinned, muted: tab.muted,
       discarded: tab.discarded ?? tab.page?.pendingClose?.navigation });
     if (group.closedTabs.length > 20) group.closedTabs.shift();
     group.tabs.splice(index, 1);

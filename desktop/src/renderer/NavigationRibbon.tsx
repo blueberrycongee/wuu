@@ -50,6 +50,12 @@ export interface RibbonBrowserActions {
 }
 
 
+function restoreReopenedOrder(order: readonly string[], tabs: readonly Pick<RibbonWebsite, "id" | "reopenedFrom">[]): string[] {
+  const present = new Set(order);
+  const replacements = new Map(tabs.filter(tab => tab.reopenedFrom && !present.has(tab.id)).map(tab => [tab.reopenedFrom!, tab.id]));
+  return order.map(id => replacements.get(id) ?? id);
+}
+
 export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSelectWebsite, onNewTab, onCloseTab, onPinTab, onMuteTab, onReorderTabs, footer, ribbonRef, footerSettings, onExpandedChange }: {
   items: NavigationRibbonItem[];
   activeWebsiteId?: string | null;
@@ -125,17 +131,22 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     })),
   ];
   const availableIDs = JSON.stringify(destinations.map((item) => item.id));
+  const reopenedTabs = JSON.stringify(websites.filter(tab => tab.reopenedFrom).map(({ id, reopenedFrom }) => ({ id, reopenedFrom })));
+  // Resolve the slot during render, before the reorder effect can publish an
+  // appended UUID back to the host. A later manual reorder stays authoritative.
+  const restoredOrder = restoreReopenedOrder(preferences.order, websites);
   useEffect(() => {
     const ids = JSON.parse(availableIDs) as string[];
     const current = readNavigationRibbonPreferences();
-    const additions = ids.filter((id) => !current.order.includes(id));
-    if (!additions.length) return;
-    try { saveNavigationRibbonPreferences({ ...current, order: [...current.order, ...additions] }); }
+    const restored = restoreReopenedOrder(current.order, JSON.parse(reopenedTabs));
+    const additions = ids.filter((id) => !restored.includes(id));
+    if (!additions.length && restored.every((id, index) => id === current.order[index])) return;
+    try { saveNavigationRibbonPreferences({ ...current, order: [...restored, ...additions] }); }
     catch (saveError) { showActionErrorToast(saveError, t("ribbon.saveFailed")); }
-  }, [availableIDs, t]);
+  }, [availableIDs, reopenedTabs, t]);
   const destinationByID = new Map(destinations.map((item) => [item.id, item]));
-  const orderedIDs = [...preferences.order.filter((id) => destinationByID.has(id)),
-    ...destinations.map((item) => item.id).filter((id) => !preferences.order.includes(id))];
+  const orderedIDs = [...restoredOrder.filter((id) => destinationByID.has(id)),
+    ...destinations.map((item) => item.id).filter((id) => !restoredOrder.includes(id))];
   const ordered = orderedIDs.map((id) => destinationByID.get(id)!);
   const tabStop = (ordered.find(item => item.active && !item.disabled) ?? ordered.find(item => !item.disabled))?.id;
   const websiteIDs = new Set(websites.map((website) => website.id));

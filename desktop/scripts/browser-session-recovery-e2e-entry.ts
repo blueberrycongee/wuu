@@ -95,10 +95,15 @@ app.whenReady().then(async () => {
     assert.equal(reading.isFocused(), true, "Rejected close keeps the unsaved page focused");
   } finally { dialog.showMessageBoxSync = originalDialog; }
   await reading.executeJavaScript("window.onbeforeunload=null;void 0", true);
+  // Close from the middle so appending would visibly move the restored tab.
+  const withThird = host.createTab(owner, id, `${url}/third`, { background: true });
+  const third = withThird.tabs!.at(-1)!.id;
   const closed = await host.closeTab(owner, id, first);
-  assert.equal(closed.activeTabId, second, "Closing the selected tab chooses its surviving neighbor");
+  assert.equal(closed.activeTabId, third, "Closing the selected tab chooses its surviving neighbor");
   const reopened = host.reopenTab(owner, id);
   assert.notEqual(reopened.activeTabId, first, "Reopened views receive a new tab identity");
+  assert.deepEqual(reopened.tabs!.map(tab => tab.id), [second, reopened.activeTabId, third], "Reopening restores the closed tab's middle position");
+  assert.equal(reopened.tabs![1].pinned, true, "Restoring position preserves pin status without regrouping tabs");
   await settle();
   await waitFor(() => view().webContents.getURL() === `${url}/journey-two`);
   const restored = view().webContents;
@@ -115,6 +120,10 @@ app.whenReady().then(async () => {
   restored.navigationHistory.goForward();
   await waitFor(() => restored.getURL() === `${url}/journey-three` && !restored.isLoading());
   await host.closeTab(owner, id, second);
+  const front = host.reopenTab(owner, id);
+  assert.deepEqual(front.tabs!.map(tab => tab.id), [front.activeTabId, reopened.activeTabId, third], "Reopening the first tab restores the front position");
+  await host.closeTab(owner, id, front.activeTabId!);
+  await host.closeTab(owner, id, third);
   const empty = await host.closeTab(owner, id, reopened.activeTabId!);
   assert.equal(empty.tabs!.length, 0);
   assert.equal(empty.activeTabId, "");
@@ -129,6 +138,7 @@ app.whenReady().then(async () => {
       "Muted tabs stay muted after restart without muting a same-origin sibling",
       "Restored background tabs do not create native views until selected",
       "Closing and reopening a tab restores its current history index and both Back/Forward directions",
+      "Reopened tabs retain their middle/front position, pin and fresh identity",
       "Rejecting beforeunload preserves focus and does not create a reopen entry",
       "Closing the selected and final tabs preserves neighbor selection and last-tab reopening",
     ], limitations: ["Local HTTP fixture; no account authentication", "Screenshot is the actual native webpage, not the full product shell"] }, null, 2));

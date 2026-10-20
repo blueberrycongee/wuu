@@ -169,3 +169,33 @@ describe("NavigationRibbon keyboard and close behavior", () => {
     expect(document.activeElement).toBe(button("beta"));
   });
 });
+
+// A reopened tab has a new native identity, but must reclaim its old mixed
+// navigation slot before an effect can send an appended order back to the host.
+describe("NavigationRibbon reopened positions", () => {
+  it("restores the former slot on first render and preserves later user reordering", () => {
+    localStorage.setItem("wuu.navigation-ribbon.v1", JSON.stringify({ websites: [], order: ["conversations", "alpha", "beta", "files", "gamma"] }));
+    const reorder = vi.fn();
+    const render = (restored?: { id: string; reopenedFrom: string }) => root.render(<NavigationRibbon
+      items={["conversations", "files"].map(id => ({ id, title: id, icon: null, nativeIcon: { kind: "conversations" as const }, onSelect: () => {} }))}
+      websites={[{ id: "alpha", title: "Alpha", url: "https://alpha.example/" },
+        ...(restored ? [{ ...restored, title: "Beta", url: "https://beta.example/", pinned: true }] : []),
+        { id: "gamma", title: "Gamma", url: "https://gamma.example/" }]}
+      onSelectWebsite={() => {}} onReorderTabs={reorder}
+    />);
+    act(() => render());
+    reorder.mockClear();
+    act(() => render({ id: "beta-restored", reopenedFrom: "beta" }));
+    const order = () => [...container.querySelectorAll<HTMLElement>("[data-ribbon-id]")].map(element => element.dataset.ribbonId);
+    expect(order()).toEqual(["conversations", "alpha", "beta-restored", "files", "gamma"]);
+    expect(reorder.mock.calls.length).toBeGreaterThan(0);
+    expect(reorder.mock.calls.every(([ids]) => JSON.stringify(ids) === JSON.stringify(["alpha", "beta-restored", "gamma"]))).toBe(true);
+    expect(JSON.parse(localStorage.getItem("wuu.navigation-ribbon.v1")!).order).toEqual(order());
+    act(() => {
+      localStorage.setItem("wuu.navigation-ribbon.v1", JSON.stringify({ websites: [], order: ["conversations", "beta-restored", "alpha", "files", "gamma"] }));
+      window.dispatchEvent(new Event("wuu-navigation-ribbon-change"));
+    });
+    act(() => render({ id: "beta-restored", reopenedFrom: "beta" }));
+    expect(order()).toEqual(["conversations", "beta-restored", "alpha", "files", "gamma"]);
+  });
+});
