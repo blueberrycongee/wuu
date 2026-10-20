@@ -31,6 +31,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Hide successfully settled one-time routines from twin’s default activity list and count while retaining history, repeating schedules, and unresolved or failed work.
+
 - Preserve pending fallback messages until a real server turn acknowledges them, so a rejected concurrent send can restore its draft instead of being mistaken for delivered input.
 - Keep hidden and generated context out of Personal conversation history and search while preserving audit records and exact user-authored text.
 - Preserve accepted Personal user inputs when stopping a reply. Deliver background questions and failures to the main conversation, resume the same task from its answer, and update routines without duplicating schedules.
