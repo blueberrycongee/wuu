@@ -30,7 +30,13 @@ const report = { status: "running", platform: process.platform, versions: proces
     "macOS native composed screenshots; other platforms capture shell only"], errors: [] };
 const save = () => fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(report, null, 2));
 let win;
-app.on("browser-window-created", (_event, created) => { win ||= created; });
+report.focusEvents = [];
+app.on("browser-window-created", (_event, created) => {
+  win ||= created;
+  for (const event of ["focus", "blur"]) created.on(event, () => {
+    report.focusEvents.push({ event, window: created.id, at: performance.now(), lastInput: report.lastInput });
+  });
+});
 const handle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, listener) => handle(channel, (...args) => {
   if (["wuu:turn-start", "wuu:turn-queue", "wuu:turn-steer"].includes(channel)) throw new Error("Inference is disabled in this fixture");
@@ -56,6 +62,7 @@ async function until(check, label, timeout = 15000) {
 }
 const evaluate = (fn, value) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(value)})`);
 function key(contents, keyCode, modifiers = []) {
+  report.lastInput = { type: "key", contents: contents.id, keyCode, modifiers, at: performance.now() };
   contents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
   contents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
 }
@@ -94,13 +101,65 @@ async function capture(name) {
   else fs.writeFileSync(file, (await win.webContents.capturePage()).toPNG());
   report.screenshots.push(file); save();
 }
+async function verifyRibbonHeader(name, resizeFont = false) {
+  const before = await evaluate(() => document.querySelector("[data-ribbon-id]").getBoundingClientRect().y);
+  win.webContents.focus();
+  await evaluate(() => {
+    window.__ribbonKeyboardObserved = false;
+    document.addEventListener("keydown", () => { window.__ribbonKeyboardObserved = true; }, { once: true, capture: true });
+  });
+  key(win.webContents, "HOME");
+  await until(() => evaluate(() => window.__ribbonKeyboardObserved && document.documentElement.dataset.focusModality === "keyboard"), "keyboard opening input delivered");
+  await evaluate(() => document.querySelector("[data-ribbon-id]").focus());
+  let ribbon;
+  await until(() => {
+    ribbon = win.contentView.children.find(view => view.webContents?.getURL().includes("surface=ribbon"));
+    return ribbon?.getVisible();
+  }, "native ribbon opens for header verification");
+  await until(async () => {
+    const state = await ribbon.webContents.executeJavaScript("window.wuuChromeOverlay.ready().then(request=>({width:innerWidth,bounds:request?.bounds,focus:request?.focus}))");
+    report.ribbonOpening = { ...state, nativeBounds: ribbon.getBounds(), visible: ribbon.getVisible() };
+    return state.bounds && Math.abs(state.width - state.bounds.width) < 1;
+  }, "native ribbon fully revealed");
+  const geometry = await evaluate(() => {
+    const toolbar = document.querySelector(".web-workspace-stage:not([hidden]) .web-workspace-toolbar").getBoundingClientRect();
+    return { toolbarBottom: toolbar.bottom, firstRowY: document.querySelector("[data-ribbon-id]").getBoundingClientRect().y,
+      fontSize: Number.parseFloat(getComputedStyle(document.querySelector(".workspace-browser-url-input")).fontSize) };
+  });
+  const nativeBounds = ribbon.getBounds();
+  report.checks.push({ name, nativeBounds, ...geometry, firstRowBefore: before }); save();
+  assert.ok(nativeBounds.y / win.webContents.getZoomFactor() >= geometry.toolbarBottom - 1, "Expanded native ribbon must leave the whole browser toolbar unobstructed");
+  assert.equal(geometry.firstRowY, before, "Opening native ribbon must not move its destination rows");
+  if (resizeFont) for (const fontSize of [15, 20]) {
+    await setFontSize(fontSize);
+    await until(async () => {
+      const bottom = await evaluate(() => document.querySelector(".web-workspace-stage:not([hidden]) .web-workspace-toolbar").getBoundingClientRect().bottom);
+      return Math.abs(ribbon.getBounds().y / win.webContents.getZoomFactor() - bottom) <= 1;
+    }, `open native ribbon follows toolbar at ${fontSize}px`);
+    assert.equal(ribbon.getVisible(), true, "Changing font size keeps the native ribbon open");
+    report.checks.push({ fontSize, nativeBounds: ribbon.getBounds() }); save();
+  }
+  await capture(name);
+  key(ribbon.webContents, "ESC");
+  await until(() => !ribbon.getVisible(), "native ribbon dismisses");
+}
+async function setFontSize(size) {
+  await evaluate(async size => {
+    await window.wuu.setMessageFlowFontSize(size);
+    // Match the Settings control's apply step; its IPC only persists the value.
+    document.documentElement.style.setProperty("--conversation-message-font-size", `${size}px`);
+    window.dispatchEvent(new Event("wuu-content-size-change"));
+  }, size);
+  await until(() => evaluate(size => Number.parseFloat(getComputedStyle(document.querySelector(".workspace-browser-url-input")).fontSize) === size, size), "UI font preference applied");
+}
 async function run() {
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   await import(pathToFileURL(path.join(desktop, "out/main/index.js")).href);
   await until(() => win && !win.webContents.isLoadingMainFrame(), "shell load");
   await until(() => evaluate(() => Boolean(window.wuu?.webWorkspace && document.querySelector(".sidebar-ribbon"))), "browser chrome");
-  win.setBounds({ x: 120, y: 90, width: 1280, height: 860 }); win.show(); win.focus();
+  win.setBounds({ x: 120, y: 90, width: 1280, height: 860 }); win.show(); app.focus({ steal: true }); win.focus();
+  await until(() => win.isFocused(), "fixture window foreground");
   const first = await evaluate(async url => {
     await window.wuu.webWorkspace.initializeTabs([]);
     return (await window.wuu.webWorkspace.createTab("ribbon-browser", url)).activeTabId;
@@ -127,17 +186,19 @@ async function run() {
     return Boolean(controls && !controls.hidden && controls.getBoundingClientRect().width);
   }), false, "A website must show one navigation pair, without competing app-history arrows");
   await guest.executeJavaScript("scrollTo(0,0)");
-  await capture("01-light-wide-native");
+  await verifyRibbonHeader("01-light-wide-native");
+  assert.equal(win.isFocused(), true, "Foreground window is required for address keyboard verification");
   guest.focus(); key(guest, "L", [process.platform === "darwin" ? "meta" : "control"]);
   await until(() => evaluate(() => document.activeElement?.matches(".workspace-browser-url-input")), "address shortcut focus");
   await win.webContents.insertText("Browser");
   await until(() => evaluate(() => Boolean(document.querySelector('[aria-expanded="true"][role="combobox"]'))), "history completion");
   await capture("02-address-completion");
   key(win.webContents, "ESC"); key(win.webContents, "ESC");
-  await evaluate(async () => { await window.wuu.setThemePreference("dark"); await window.wuu.setMessageFlowFontSize(20); });
+  await evaluate(() => window.wuu.setThemePreference("dark"));
+  await setFontSize(20);
   win.setBounds({ width: 960, height: 740 });
   await until(() => evaluate(() => document.documentElement.dataset.theme === "dark"), "dark theme");
-  await capture("03-dark-large-narrow-native");
+  await verifyRibbonHeader("03-dark-large-narrow-native", true);
   const geometry = await evaluate(() => {
     const r = document.querySelector(".web-workspace-stage:not([hidden]) .web-workspace-host").getBoundingClientRect();
     return { x: r.x, y: r.y, width: r.width, height: r.height };
@@ -276,6 +337,11 @@ async function run() {
 const watchdog = setTimeout(() => { report.status = "timed-out"; save(); app.exit(1); }, 240000);
 run().catch(async error => {
   if (win && !win.isDestroyed()) {
+    report.failureFocus = { owner: win.isFocused(), shell: win.webContents.isFocused(),
+      focusedContents: webContents.getAllWebContents().filter(contents => contents.isFocused()).map(contents => ({ id: contents.id, url: contents.getURL() })),
+      renderer: await evaluate(() => ({ activeElement: document.activeElement?.outerHTML.slice(0, 500),
+        address: document.querySelector(".workspace-browser-url-input")?.value,
+        focusModality: document.documentElement.dataset.focusModality })).catch(() => null) };
     await capture("failure").catch(() => {});
   }
   report.status = "failed"; report.errors.push(String(error.stack)); save(); console.error(error); app.exit(1); })

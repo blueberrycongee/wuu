@@ -4,6 +4,8 @@
 :root {
   /* Keep the reading canvas distinct from white controls and floating surfaces. */
   --workbench-canvas-bg: var(--wuu-color-canvas, #fcfcfd);
+  --web-workspace-address-height: max(var(--control-size-toolbar), calc(var(--font-ui) * 1.4 + var(--space-1) * 2));
+  --web-workspace-toolbar-height: calc(var(--web-workspace-address-height) + var(--space-2) * 2 + 1px);
 }
 
 :root:has(.app-shell.navigation-ribbon-layout:not(.popped-out-shell)) {
@@ -35,10 +37,6 @@
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-brand {
   padding-bottom: 0;
   -webkit-app-region: drag;
-}
-
-:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-ribbon {
-  padding-top: var(--window-titlebar-height);
 }
 
 /* The rail belongs to the sidebar's stacking context. Raise that context over
@@ -240,7 +238,9 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   min-height: 0;
   flex-direction: column;
   align-items: center;
-  padding: calc(var(--workbench-top) + var(--space-2)) 0 var(--space-2);
+  /* All destinations keep the same row positions; native hover chrome starts
+     below the browser toolbar, including when the UI font grows. */
+  padding: calc(var(--workbench-top) + var(--web-workspace-toolbar-height)) 0 var(--space-2);
   background: transparent;
   overflow: hidden;
   border-radius: 0 var(--radius-md) var(--radius-md) 0;

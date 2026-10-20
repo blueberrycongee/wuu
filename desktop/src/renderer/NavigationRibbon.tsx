@@ -197,12 +197,23 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   useLayoutEffect(() => () => onExpandedChange?.(false), [onExpandedChange]);
   useLayoutEffect(() => {
     if (!nativeAvailable || !expanded || !navRef.current) { setNativeOpen(false); return; }
-    const nav = navRef.current, rect = nav.getBoundingClientRect();
-    const top = Number.parseFloat(getComputedStyle(nav).paddingTop);
+    if (nativeClosing) return;
+    const nav = navRef.current;
     scrollTop.current = nav.querySelector(".sidebar-ribbon-main")?.scrollTop ?? 0;
-    setNativeBounds({ x: rect.x, y: rect.y + top, width: rect.width, height: rect.height - top });
+    const measure = () => {
+      const rect = nav.getBoundingClientRect();
+      const top = Number.parseFloat(getComputedStyle(nav).paddingTop);
+      const next = { x: rect.x, y: rect.y + top, width: rect.width, height: rect.height - top };
+      setNativeBounds(current => current && Object.keys(next).every(key => current[key as keyof ChromeOverlayRect] === next[key as keyof ChromeOverlayRect]) ? current : next);
+    };
+    measure();
+    // Content-box changes include font-driven header padding while the native
+    // ribbon is open. Its own close animation must not feed back into sizing.
+    const observer = new ResizeObserver(measure);
+    observer.observe(nav);
     setNativeOpen(true);
-  }, [nativeAvailable, expanded]);
+    return () => observer.disconnect();
+  }, [nativeAvailable, expanded, nativeClosing]);
   const nativeModel: ChromeRibbonModel = { kind: "ribbon", collapsedWidth: SIDEBAR_RIBBON_WIDTH, items: ordered.map(item => ({ id: item.id, title: item.title, icon: item.nativeIcon,
     active: item.active, disabled: item.disabled, pinned: item.pinned, audible: item.audible, muted: item.muted, canMute: Boolean(item.onMute), closable: Boolean(item.onClose), website: websiteIDs.has(item.id), component: item.component, pluginId: item.pluginId })),
     label: t("sidebar.mainNavigation"), newTabLabel: t("webWorkspace.newTab"), canCreateTab: Boolean(onNewTab), closeTabLabel: t("webWorkspace.closeCurrentTab"),

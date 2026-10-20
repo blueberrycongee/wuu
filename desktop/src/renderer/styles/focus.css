@@ -47,6 +47,11 @@ html[data-focus-modality="keyboard"] .conversation-title-rename:focus-visible {
   outline-offset: -2px;
 }
 
+/* Native panel and scrollport edges clip exterior rings on ribbon controls. */
+html[data-focus-modality="keyboard"] .sidebar-ribbon :focus-visible {
+  outline-offset: -2px;
+}
+
 html[data-focus-modality="keyboard"] :is(
   .menu-search,
   .catalog-search,
