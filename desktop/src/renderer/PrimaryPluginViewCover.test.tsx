@@ -335,4 +335,25 @@ describe("primary plugin view covers the conversation", () => {
     expect(container.querySelector(".workspace-right-panel-resizer")).not.toBeNull();
   });
 
+  it("places the collapsed sidebar toggle after a user-space view so native drag regions cannot cover it", async () => {
+    window.localStorage.setItem("wuu.desktop.sidebarCollapsed", "true");
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => {
+      await desktopPluginHost.activateGeneration({ pluginId, generation: "user-sidebar-toggle", register(api) {
+        api.registerViewType({ id: "generic.user", title: "User dashboard", layout: "user-space", render: () => <article>Independent user view</article> });
+      } });
+      await desktopWorkbenchController.openPluginView(pluginId, "generic.user");
+    });
+
+    const view = container.querySelector(".plugin-workbench-view-primary");
+    const toggle = container.querySelector<HTMLButtonElement>('[data-wuu-component="sidebar-toggle"]');
+    expect(view).not.toBeNull();
+    expect(toggle).not.toBeNull();
+    expect(view!.compareDocumentPosition(toggle!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+
+    await act(async () => toggle!.click());
+    expect(container.querySelector(".app-shell")?.classList.contains("sidebar-collapsed")).toBe(false);
+  });
+
 });

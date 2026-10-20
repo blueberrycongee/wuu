@@ -82,6 +82,18 @@
   -webkit-app-region: no-drag;
 }
 
+.shell-left-sidebar-toggle {
+  position: fixed;
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  left: var(--window-titlebar-leading-inset);
+  z-index: 151;
+  -webkit-app-region: no-drag;
+}
+
+.shell-left-sidebar-toggle * {
+  -webkit-app-region: no-drag;
+}
+
 .shell-right-sidebar-toggle * {
   -webkit-app-region: no-drag;
 }

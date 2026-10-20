@@ -5602,7 +5602,7 @@ export function App(): JSX.Element {
             onPointerEnter={scheduleSidebarDrawerOpen}
             onPointerLeave={cancelSidebarDrawerOpen}
           />
-          {rightPanelGlobalized && sidebarDrawerMode && sidebarToggleVisible ? (
+          {rightPanelGlobalized && sidebarDrawerMode && sidebarToggleVisible && !userSpaceViewActive ? (
             <div className="globalized-sidebar-toggle-region">
               <button
                 className="icon-button side-panel-toggle-button sidebar-toggle-button globalized-sidebar-toggle"
@@ -5804,7 +5804,7 @@ export function App(): JSX.Element {
         }`}
         ref={conversationPaneRef}
       >
-        {(!userSpaceViewActive || (sidebarToggleVisible && sidebarDrawerMode && !rightPanelGlobalized)) && <header className="titlebar" data-wuu-component="conversation-titlebar">
+        {!userSpaceViewActive && <header className="titlebar" data-wuu-component="conversation-titlebar">
           <div className="title-block">
             {sidebarToggleVisible && sidebarDrawerMode && !rightPanelGlobalized ? (
               <button
@@ -6276,8 +6276,30 @@ export function App(): JSX.Element {
           },
         }}
       />
-      {/* macOS applies app regions in DOM order, so a later drag titlebar would
-        * cover this no-drag control. Keep it as the shell's last child. */}
+      {/* macOS applies app regions in DOM order, so plugin titlebars would cover
+        * earlier no-drag controls. Keep window-level toggles after the workbench. */}
+      {!poppedOutMode && userSpaceViewActive && sidebarDrawerMode && sidebarToggleVisible ? (
+        <button
+          className="icon-button side-panel-toggle-button sidebar-toggle-button shell-left-sidebar-toggle"
+          data-wuu-component="sidebar-toggle"
+          type="button"
+          aria-label={t(
+            sidebarDrawerVisible
+              ? "app.collapseLeftSidebar"
+              : "app.expandLeftSidebar",
+          )}
+          aria-pressed={sidebarDrawerVisible}
+          onClick={rightPanelGlobalized
+            ? sidebarDrawerVisible ? closeSidebarDrawer : openSidebarDrawerNow
+            : toggleSidebar}
+          onPointerEnter={scheduleSidebarDrawerOpen}
+          onPointerLeave={(event) =>
+            scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
+          }
+        >
+          <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
+        </button>
+      ) : null}
       {!poppedOutMode && !userSpaceViewActive ? (
         <button
           className="icon-button side-panel-toggle-button shell-right-sidebar-toggle"

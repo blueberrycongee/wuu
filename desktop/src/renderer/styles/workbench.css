@@ -291,8 +291,8 @@
 }
 .conversation-pane[data-workbench-layout="user-space"] > .titlebar button { pointer-events: auto; }
 /* The host lifts its drawer toggle over independent conversation headers.
- * Reserve that occupied slot only while the lifted toggle exists. */
-.conversation-pane[data-workbench-layout="user-space"]:has(> .titlebar [data-wuu-component="sidebar-toggle"]) .plugin-conversation-titlebar {
+ * Reserve that occupied slot only while the collapsed shell renders it. */
+.app-shell.sidebar-collapsed[data-workbench-layout="user-space"] .plugin-conversation-titlebar {
   padding-left: calc(var(--window-titlebar-leading-inset) - var(--conversation-pane-inset) + var(--control-size-toolbar) + var(--control-toolbar-gap));
 }
 
