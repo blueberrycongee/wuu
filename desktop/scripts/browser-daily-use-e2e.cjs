@@ -224,6 +224,8 @@ async function run() {
   const originalOrder = await evaluate(() => [...document.querySelectorAll(".sidebar-ribbon [data-ribbon-id]")].map(item => item.dataset.ribbonId));
   await evaluate(() => {
     window.__restoredTabOrders = [];
+    window.__reopenAddressRequests = [];
+    window.__stopReopenAddressRequests = window.wuu.webWorkspace.onFocusAddress((id) => window.__reopenAddressRequests.push(id));
     window.__stopRestoredTabOrders = window.wuu.webWorkspace.onState(state => {
       if (state.id === "ribbon-browser") window.__restoredTabOrders.push((state.tabs ?? []).map(tab => tab.id));
     });
@@ -251,6 +253,9 @@ async function run() {
     "The renderer never moves the restored tab behind its former neighbor");
   report.checks.push("Cmd/Ctrl+W then Cmd/Ctrl+Shift+T restores a fresh native tab at its original mixed navigation position");
   await capture("05-reopened-tab-position");
+  assert.equal(guest.isFocused(), true, "Reopening from the webpage returns keyboard focus to the restored webpage");
+  assert.deepEqual(await evaluate(() => { window.__stopReopenAddressRequests(); return window.__reopenAddressRequests; }), [],
+    "Reopening a page must not request address editing during restoration");
   if (process.env.WUU_BROWSER_PUBLIC === "1") {
     report.publicSites = [];
     for (const [name, address] of [["GitHub", "https://github.com"], ["Wikipedia", "https://www.wikipedia.org"], ["YouTube", "https://www.youtube.com"], ["Bilibili", "https://www.bilibili.com"]]) {

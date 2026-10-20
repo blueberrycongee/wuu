@@ -528,6 +528,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
       this.activate(group, tab);
       this.emit(group);
       if (group.id === WEB_WORKSPACE_RIBBON_ID) this.options.onReveal?.(owner, group.id);
+      if (tab.page?.view.getVisible()) tab.page.contents.focus();
     }
     return this.state(group);
   }
@@ -1125,9 +1126,12 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     } else if (key === "t" && group.tabbed) {
       event.preventDefault();
       if (group.tabs.length >= WEB_WORKSPACE_TAB_LIMIT) return;
-      const next = input.shift ? this.reopenTab(page.owner, group.id) : this.createTab(page.owner, group.id);
-      page.owner.webContents.focus();
-      this.onFocusAddress(page.owner, group.id, input.shift ? undefined : next.activeTabId);
+      if (input.shift) this.reopenTab(page.owner, group.id);
+      else {
+        const next = this.createTab(page.owner, group.id);
+        page.owner.webContents.focus();
+        this.onFocusAddress(page.owner, group.id, next.activeTabId);
+      }
     } else if (key === "w" && !input.shift && group.tabbed) {
       event.preventDefault();
       void this.closeTab(page.owner, group.id, group.activeTabId).then(() => {
