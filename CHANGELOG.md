@@ -70,6 +70,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Restore desktop startup and browser download history persistence by passing the history path to the download manager instead of the chrome overlay host.
+
 - Align browser fallback icons with the other navigation ribbon icons in both the main window and native overlay.
 - Give plugin website destinations the same full-width ribbon layout as browser tabs, without a duplicate plugin sidebar or page title row.
 - Keep the expanded workbench tab ribbon open when switching between websites and app pages while the pointer remains inside it.
