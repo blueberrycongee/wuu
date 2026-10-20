@@ -139,26 +139,42 @@ async function until(fn, label) { for (let i = 0; i < 300; i++) { if (await fn()
   // Selection and explicit close can arrive while Chromium is still running
   // beforeunload. Exercise real native close, not a simulated destroyed event.
   host.setTabPinned(win, group, cold.id, true);
-  const beginSlowDiscard = async (name, vetoClose = false) => {
+  // Chromium 152 gives beforeunload 500 ms before forced continuation.
+  // Keep this real handler below that deadline; trigger the competing action
+  // synchronously after native close starts, not through a long polling delay.
+  const beginSlowDiscard = async (name, vetoClose = false, onStarted = () => {}) => {
     const target = await create(name);
-    await target.wc.executeJavaScript(`window.onbeforeunload=()=>{const start=performance.now();while(performance.now()-start<700){};${vetoClose ? 'return false;' : ''}};void 0`, true);
+    await target.wc.executeJavaScript(`window.onbeforeunload=()=>{const start=performance.now();while(performance.now()-start<150){};${vetoClose ? 'return false;' : ''}};void 0`, true);
     const guard = await create(name + '-guard');
     host.setTabPinned(win, group, guard.id, true);
     const publicId = host.browserSource(() => win).list().find(tab => tab.url === origin + '/' + name).tab_id;
-    let closeStarted = false;
+    let closeStarted = false, actionResult, actionError;
     const close = target.wc.close.bind(target.wc);
-    target.wc.close = options => { closeStarted = true; close(options); };
+    target.wc.close = options => {
+      close(options);
+      if (closeStarted) return;
+      closeStarted = true;
+      try {
+        assert.ok([...host.pages.values()].some(page => page.tab.id === target.id && page.discarding), 'Competing action overlaps an in-flight native discard');
+        assert.equal(target.wc.isDestroyed(), false);
+        actionResult = onStarted(target, publicId);
+        actionResult?.catch?.(() => {});
+      } catch (error) { actionError = error; }
+    };
     const pending = host.discardInactiveTabs(performance.now() + 31 * 60 * 1000);
     await until(() => closeStarted, 'native idle close started: ' + name);
-    return { target, pending, publicId };
+    if (actionError) throw actionError;
+    return { target, pending, publicId, actionResult };
   };
-  const selectedRace = await beginSlowDiscard('selected-during-discard');
   const source = host.browserSource(() => win);
-  assert.ok(!source.list().some(tab => tab.url === origin + '/selected-during-discard'), 'Closing contents cannot be offered to an Agent');
-  assert.throws(() => source.attach(selectedRace.publicId, () => {}, () => {}, () => false), /no longer available/, 'An Agent cannot borrow contents already closing');
-  host.selectTab(win, group, selectedRace.target.id);
-  host.command(win, group, 'focus');
-  const focusedBeforeDiscardCompletion = selectedRace.target.wc.isFocused();
+  let focusedBeforeDiscardCompletion;
+  const selectedRace = await beginSlowDiscard('selected-during-discard', false, (target, publicId) => {
+    assert.ok(!source.list().some(tab => tab.url === origin + '/selected-during-discard'), 'Closing contents cannot be offered to an Agent');
+    assert.throws(() => source.attach(publicId, () => {}, () => {}, () => false), /no longer available/, 'An Agent cannot borrow contents already closing');
+    host.selectTab(win, group, target.id);
+    host.command(win, group, 'focus');
+    focusedBeforeDiscardCompletion = target.wc.isFocused();
+  });
   await selectedRace.pending;
   let selectedRestored;
   await until(() => { selectedRestored = win.contentView.children.find(view => view.webContents?.getURL() === origin + '/selected-during-discard'); return selectedRestored && !selectedRestored.webContents.isLoading(); }, 'selected tab restored after idle close');
@@ -172,13 +188,13 @@ async function until(fn, label) { for (let i = 0; i < 300; i++) { if (await fn()
   assert.ok(source.list().some(tab => tab.tab_id === selectedRace.publicId), 'Restored page keeps its public Agent tab identity');
   host.setTabPinned(win, group, selectedRace.target.id, true);
 
-  const closedRace = await beginSlowDiscard('closed-during-discard');
-  const explicitClose = host.closeTab(win, group, closedRace.target.id);
+  const closedRace = await beginSlowDiscard('closed-during-discard', false, target => host.closeTab(win, group, target.id));
+  const explicitClose = closedRace.actionResult;
   await Promise.all([closedRace.pending, explicitClose]);
   assert.ok(!changes.at(-1).tabs.some(tab => tab.id === closedRace.target.id), 'Explicit close during idle cleanup removes the tab');
 
-  const vetoRace = await beginSlowDiscard('veto-during-discard', true);
-  const vetoExplicitClose = host.closeTab(win, group, vetoRace.target.id);
+  const vetoRace = await beginSlowDiscard('veto-during-discard', true, target => host.closeTab(win, group, target.id));
+  const vetoExplicitClose = vetoRace.actionResult;
   await Promise.all([vetoRace.pending.then(() => diagnostic('veto-discard-settled')), vetoExplicitClose.then(() => diagnostic('veto-explicit-close-settled'))]);
   diagnostic('veto-both-settled', { destroyed: vetoRace.target.wc.isDestroyed() });
   await delay(0);

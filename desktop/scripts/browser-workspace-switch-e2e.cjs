@@ -34,11 +34,53 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, label, timeout = 12000) { const end = Date.now() + timeout; while (Date.now() < end) { if (await check()) return; await delay(20); } throw new Error('Timed out: ' + label); }
 const evaluate = (fn, argument) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(argument)})`);
 function visibleContents(parent = win.contentView) { return parent.children.flatMap(view => !view.getVisible() ? [] : [...(view.webContents ? [view.webContents] : []), ...visibleContents(view)]); }
+
+// Diagnostic-only event capture: does not synthesize events or alter readiness.
+const observedInputContents = new Set();
+async function observeInput(contents) {
+  if (observedInputContents.has(contents.id)) return;
+  await contents.executeJavaScript(`(() => {
+    window.__fixtureInputTrace = [];
+    for (const type of ['pointerdown', 'pointerup', 'click', 'keydown', 'focusin', 'focusout']) {
+      document.addEventListener(type, event => {
+        const target = event.target instanceof Element ? event.target : null;
+        window.__fixtureInputTrace.push({ type, at: performance.now(), trusted: event.isTrusted,
+          key: event.key, x: event.clientX, y: event.clientY,
+          target: target ? { tag: target.tagName, className: target.className,
+            ribbonId: target.closest('[data-ribbon-id]')?.getAttribute('data-ribbon-id') } : null });
+        if (window.__fixtureInputTrace.length > 32) window.__fixtureInputTrace.shift();
+      }, { capture: true, passive: true });
+    }
+  })()`);
+  observedInputContents.add(contents.id);
+}
+async function failureInputState() {
+  if (!win || win.isDestroyed()) return null;
+  const surfaces = win.contentView.children.filter(view => view.webContents).map(view => ({
+    id: view.webContents.id, url: view.webContents.getURL(), visible: view.getVisible(), bounds: view.getBounds(),
+    focused: view.webContents.isFocused(), loading: view.webContents.isLoadingMainFrame(),
+  }));
+  const delivered = [];
+  for (const contents of webContents.getAllWebContents()) {
+    if (!observedInputContents.has(contents.id) || contents.isDestroyed()) continue;
+    delivered.push({ id: contents.id, events: await contents.executeJavaScript('window.__fixtureInputTrace').catch(() => null) });
+  }
+  return { ownerFocused: win.isFocused(), shellFocused: win.webContents.isFocused(), surfaces, delivered,
+    focusedContents: webContents.getAllWebContents().filter(contents => contents.isFocused()).map(contents => ({ id: contents.id, url: contents.getURL() })),
+    shell: await evaluate(() => ({
+      selected: [...document.querySelectorAll('[data-ribbon-id][aria-current="page"]')].map(node => node.getAttribute('data-ribbon-id')),
+      ribbon: document.querySelector('.sidebar-ribbon') ? { ...document.querySelector('.sidebar-ribbon').dataset } : null,
+      activeElement: document.activeElement ? { tag: document.activeElement.tagName, className: document.activeElement.className } : null,
+      focusModality: document.documentElement.dataset.focusModality,
+    })).catch(() => null) };
+}
 async function click(selector) {
   for (let attempt = 0; attempt < 100; attempt++) {
     for (const contents of [win.webContents, ...visibleContents()].reverse()) {
       const point = await contents.executeJavaScript(`(selector=>{const e=[...document.querySelectorAll(selector)].find(e=>e.getBoundingClientRect().width&&!e.closest('[inert]'));if(!e)return null;e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;return e.contains(document.elementFromPoint(x,y))?{x,y}:null})(${JSON.stringify(selector)})`);
       if (!point) continue;
+      await observeInput(contents);
+      report.lastInput = { type: 'click', selector, contents: contents.id, point, at: performance.now() };
       contents.focus(); contents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point }); contents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point }); return;
     }
     await delay(30);
@@ -157,4 +199,4 @@ async function run() {
   app.quit();
 }
 const timeout = setTimeout(() => { report.status = 'timed-out'; save(); app.exit(1); }, 100000);
-run().catch(async error => { report.status = 'failed'; report.error = String(error.stack); await capture('failure').catch(() => {}); save(); console.error(error); if (recording) await recording; app.exit(1); }).finally(() => { clearTimeout(timeout); server.close(); });
+run().catch(async error => { report.failureInput = await failureInputState().catch(cause => ({ error: String(cause) })); report.status = 'failed'; report.error = String(error.stack); await capture('failure').catch(() => {}); save(); console.error(error); if (recording) await recording; app.exit(1); }).finally(() => { clearTimeout(timeout); server.close(); });

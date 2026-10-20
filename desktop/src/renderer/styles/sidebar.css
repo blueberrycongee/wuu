@@ -606,7 +606,9 @@
 
 .sidebar-resizer {
   left: calc(var(--sidebar-width, 296px) - 5px);
-  z-index: 10;
+  /* The centered hit strip overlaps the sidebar's edge, including fractional
+     animated widths. Keep both halves above the sidebar surface (120). */
+  z-index: 121;
 }
 
 :is(.app-shell, .settings-shell) > .sidebar-resizer {

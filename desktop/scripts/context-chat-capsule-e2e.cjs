@@ -28,13 +28,16 @@ const capsuleProtocol = [];
 const originalHandle = ipcMain.handle;
 ipcMain.handle = function (channel, handler) {
   if (channel !== 'wuu:chrome-overlay-show') return originalHandle.call(this, channel, handler);
-  return originalHandle.call(this, channel, (event, request) => {
+  const result = originalHandle.call(this, channel, (event, request) => {
     if (request.model?.kind === 'capsule') {
       capsuleModel = { token: request.token, generation: request.generation };
       capsuleProtocol.push({ type: 'model', ...capsuleModel, at: Date.now() });
     }
     return handler(event, request);
   });
+  // Registration happens after app.whenReady(), not when the main import resolves.
+  ipcMain.handle = originalHandle;
+  return result;
 };
 ipcMain.on('wuu:chrome-overlay-painted', (event, token, generation) => {
   if (!event.sender.getURL().includes('surface=capsule')) return;
@@ -159,7 +162,6 @@ module.exports = (async () => {
   fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en-US', theme: 'light' }));
   assert.equal(app.isReady(), false);
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
-  ipcMain.handle = originalHandle;
   void run(port).catch(fail);
 })().catch(fail);
 async function run(port) {

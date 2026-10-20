@@ -69,6 +69,46 @@ function key(contents, keyCode, modifiers = []) {
 function visibleContents(parent = win.contentView) {
   return parent.children.flatMap(view => !view.getVisible() ? [] : [...(view.webContents ? [view.webContents] : []), ...visibleContents(view)]);
 }
+
+// Diagnostic-only event capture: does not synthesize events or alter readiness.
+const observedInputContents = new Set();
+async function observeInput(contents) {
+  if (observedInputContents.has(contents.id)) return;
+  await contents.executeJavaScript(`(() => {
+    window.__fixtureInputTrace = [];
+    for (const type of ['pointerdown', 'pointerup', 'click', 'keydown', 'focusin', 'focusout']) {
+      document.addEventListener(type, event => {
+        const target = event.target instanceof Element ? event.target : null;
+        window.__fixtureInputTrace.push({ type, at: performance.now(), trusted: event.isTrusted,
+          key: event.key, x: event.clientX, y: event.clientY,
+          target: target ? { tag: target.tagName, className: target.className,
+            ribbonId: target.closest('[data-ribbon-id]')?.getAttribute('data-ribbon-id') } : null });
+        if (window.__fixtureInputTrace.length > 32) window.__fixtureInputTrace.shift();
+      }, { capture: true, passive: true });
+    }
+  })()`);
+  observedInputContents.add(contents.id);
+}
+async function failureInputState() {
+  if (!win || win.isDestroyed()) return null;
+  const surfaces = win.contentView.children.filter(view => view.webContents).map(view => ({
+    id: view.webContents.id, url: view.webContents.getURL(), visible: view.getVisible(), bounds: view.getBounds(),
+    focused: view.webContents.isFocused(), loading: view.webContents.isLoadingMainFrame(),
+  }));
+  const delivered = [];
+  for (const contents of webContents.getAllWebContents()) {
+    if (!observedInputContents.has(contents.id) || contents.isDestroyed()) continue;
+    delivered.push({ id: contents.id, events: await contents.executeJavaScript('window.__fixtureInputTrace').catch(() => null) });
+  }
+  return { ownerFocused: win.isFocused(), shellFocused: win.webContents.isFocused(), surfaces, delivered,
+    focusedContents: webContents.getAllWebContents().filter(contents => contents.isFocused()).map(contents => ({ id: contents.id, url: contents.getURL() })),
+    shell: await evaluate(() => ({
+      selected: [...document.querySelectorAll('[data-ribbon-id][aria-current="page"]')].map(node => node.getAttribute('data-ribbon-id')),
+      ribbon: document.querySelector('.sidebar-ribbon') ? { ...document.querySelector('.sidebar-ribbon').dataset } : null,
+      activeElement: document.activeElement ? { tag: document.activeElement.tagName, className: document.activeElement.className } : null,
+      focusModality: document.documentElement.dataset.focusModality,
+    })).catch(() => null) };
+}
 async function click(selector) {
   const deadline = Date.now() + 5000;
   do {
@@ -82,6 +122,8 @@ async function click(selector) {
         return element.contains(document.elementFromPoint(x,y)) ? {x,y} : null;
       })(${JSON.stringify(selector)})`);
       if (!point) continue;
+      await observeInput(wc);
+      report.lastInput = { type: "click", selector, contents: wc.id, point, at: performance.now() };
       await wc.executeJavaScript("window.__wuuClickObserved=false;document.addEventListener('click',()=>{window.__wuuClickObserved=true},{once:true,capture:true})");
       wc.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...point });
       wc.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...point });
@@ -108,6 +150,7 @@ async function verifyRibbonHeader(name, resizeFont = false) {
     window.__ribbonKeyboardObserved = false;
     document.addEventListener("keydown", () => { window.__ribbonKeyboardObserved = true; }, { once: true, capture: true });
   });
+  await observeInput(win.webContents);
   key(win.webContents, "HOME");
   await until(() => evaluate(() => window.__ribbonKeyboardObserved && document.documentElement.dataset.focusModality === "keyboard"), "keyboard opening input delivered");
   await evaluate(() => document.querySelector("[data-ribbon-id]").focus());
@@ -336,6 +379,7 @@ async function run() {
 }
 const watchdog = setTimeout(() => { report.status = "timed-out"; save(); app.exit(1); }, 240000);
 run().catch(async error => {
+  report.failureInput = await failureInputState().catch(cause => ({ error: String(cause) }));
   if (win && !win.isDestroyed()) {
     report.failureFocus = { owner: win.isFocused(), shell: win.webContents.isFocused(),
       focusedContents: webContents.getAllWebContents().filter(contents => contents.isFocused()).map(contents => ({ id: contents.id, url: contents.getURL() })),

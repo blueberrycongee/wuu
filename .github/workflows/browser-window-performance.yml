@@ -130,6 +130,21 @@ jobs:
           else
             bash "$RUNNER_TEMP/run-browser-performance.sh"
           fi
+      - name: Capture separate macOS resize attribution traces
+        if: runner.os == 'macOS'
+        timeout-minutes: 6
+        run: |
+          # Observer-heavy diagnosis is deliberately outside every A/B timed run.
+          # Keep failures visible; these samples never enter the comparison summary.
+          for variant in baseline candidate; do
+            tree="$GITHUB_WORKSPACE"
+            if [ "$variant" = baseline ]; then tree="$RUNNER_TEMP/wuu-browser-baseline"; fi
+            output="$WUU_BROWSER_PERF_EVIDENCE/diagnostic-$variant"
+            mkdir -p "$output"
+            WUU_BROWSER_PERF_TRACE=1 WUU_BROWSER_PERF_ROOT="$tree" WUU_BROWSER_PERF_OUTPUT="$output" \
+              "$GITHUB_WORKSPACE/desktop/node_modules/.bin/electron" \
+              "$GITHUB_WORKSPACE/desktop/scripts/browser-window-perf-e2e.cjs" 2>&1 | tee "$output/run.log"
+          done
       - name: Summarize measurements and their limits
         if: always()
         run: |

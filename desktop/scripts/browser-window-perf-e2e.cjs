@@ -1,5 +1,6 @@
 // Diagnostic shipping-main/preload/renderer benchmark. Run the same harness
-// against both builds; never record video or enable tracing during timed phases.
+// against both builds; never enable tracing during comparative timed phases.
+// WUU_BROWSER_PERF_TRACE=1 is a separate instrumented resize-only diagnostic.
 // WUU_BROWSER_PERF_ROOT selects a baseline checkout without modifying its source.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -9,7 +10,7 @@ const http = require('node:http');
 const { spawn, spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
-const { app, ipcMain, webContents } = require('electron');
+const { app, ipcMain, webContents, contentTracing } = require('electron');
 
 const root = path.resolve(process.env.WUU_BROWSER_PERF_ROOT || path.join(__dirname, '../..'));
 const desktop = path.join(root, 'desktop');
@@ -41,10 +42,12 @@ fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({
   active_context: { kind: 'project', project_id: 'perf-project', cwd: project },
 }));
 fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en-US', theme: 'light', message_flow_font_size: 15 }));
-const duration = Number(process.env.WUU_BROWSER_PERF_PHASE_MS || 6000);
+const traceDiagnostic = process.env.WUU_BROWSER_PERF_TRACE === '1';
+const duration = traceDiagnostic ? 6000 : Number(process.env.WUU_BROWSER_PERF_PHASE_MS || 6000);
 assert(duration >= 6000 && duration <= 10000, 'Timed phases must be bounded to 6–10 seconds');
 const pointer = process.platform === 'linux' && process.env.WUU_BROWSER_PERF_POINTER === '1';
 const report = {
+  mode: traceDiagnostic ? 'instrumented-resize-diagnostic-not-comparable' : 'uninstrumented-comparison',
   status: 'running', startedAt: new Date().toISOString(), fixtureDirectory: fixture,
   commit: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim(),
   harnessSha256: createHash('sha256').update(fs.readFileSync(__filename)).digest('hex'),
@@ -55,7 +58,9 @@ const report = {
     'rAF intervals measure renderer scheduling, not compositor/presentation FPS or tearing.',
     'Input probes use Electron sendInputEvent, not physical keyboard input; dispatch-to-HTTP-ack includes loopback/main-loop scheduling.',
     'Virtual/cloud display and GPU differ from a user desktop. macOS pointer/live-resize acceptance remains separate.',
-    'Minimal counters add the same overhead to both builds. No video, tracing, capturePage or CDP during timed phases.'],
+    traceDiagnostic
+      ? 'Tracing adds observer overhead. Diagnostic resize samples must not be mixed with uninstrumented A/B measurements; stacks may be incomplete or unsymbolicated.'
+      : 'Minimal counters add the same overhead to both builds. No video, tracing, capturePage or CDP during timed phases.'],
   readiness: [], phases: [], errors: [],
 };
 const save = () => fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(report, null, 2) + '\n');
@@ -333,7 +338,26 @@ async function run() {
   report.environment.window = win.getBounds();
   report.setupElapsedMs = performance.now() - setupStarted;
   save();
-  for (const name of ['idle', 'move', 'resize']) await phase(name);
+  if (traceDiagnostic) {
+    // Separate invocation/output directory, never silently trace comparative runs.
+    // https://www.electronjs.org/docs/latest/api/content-tracing
+    const categories = ['devtools.timeline', 'disabled-by-default-devtools.timeline',
+      'disabled-by-default-devtools.timeline.stack', 'v8', 'disabled-by-default-v8.cpu_profiler',
+      'toplevel', 'blink', 'cc', 'gpu', 'electron'];
+    report.trace = { categories, availableCategories: await contentTracing.getCategories(),
+      file: 'resize-trace.json', includesStartup: false, includesPhaseReadiness: true,
+      hostProcessId: win.webContents.getOSProcessId(), guestProcessId: guest.getOSProcessId() };
+    save();
+    await contentTracing.startRecording({ included_categories: categories, excluded_categories: ['*'] });
+    try { await phase('resize'); }
+    finally {
+      report.trace.path = await contentTracing.stopRecording(path.join(output, report.trace.file));
+      report.trace.bytes = fs.statSync(report.trace.path).size;
+      save();
+    }
+  } else {
+    for (const name of ['idle', 'move', 'resize']) await phase(name);
+  }
   report.status = 'passed'; finish(0);
 }
 run().catch(error => { report.status = 'failed'; report.errors.push(String(error.stack || error)); console.error(error); finish(1); });

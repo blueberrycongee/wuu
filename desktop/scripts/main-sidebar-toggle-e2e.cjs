@@ -91,12 +91,18 @@ app.whenReady().then(async () => {
           const hit = document.elementFromPoint(x, y);
           return { x, y, targetWidth: parseFloat(getComputedStyle(shell).getPropertyValue('--sidebar-open-width')), sidebar: document.querySelector('.sidebar').getBoundingClientRect().toJSON(),
             divider: rect.toJSON(), hitsDivider: hit === divider || divider.contains(hit),
+            hit: hit ? { tag: hit.tagName, className: hit.className } : null,
+            hitStack: document.elementsFromPoint(x, y).slice(0, 6).map(element => ({
+              tag: element.tagName, className: element.className, zIndex: getComputedStyle(element).zIndex,
+            })),
             animating: shell.classList.contains('sidebar-animating') };
         }
         await new Promise(requestAnimationFrame);
       }
       throw new Error('No actual opening grid transition found');
     })()`);
+    // Preserve geometry and the actual hit target even if a pre-input check fails.
+    fs.writeFileSync(path.join(output, "interrupt-resize-hit-" + gesture + ".json"), JSON.stringify(before, null, 2));
     assert(before.animating && before.hitsDivider, `Mid-flight divider must be reachable: ${JSON.stringify(before)}`);
     assert(Math.abs(before.x - before.sidebar.right) <= 2,
       `Divider must follow the painted sidebar boundary during opening: ${JSON.stringify(before)}`);

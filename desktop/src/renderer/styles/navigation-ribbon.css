@@ -192,6 +192,8 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 }
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) > .sidebar-resizer {
+  /* This shell raises its sidebar to 132; its separator must own the edge. */
+  z-index: 133;
   top: var(--workbench-top);
   bottom: var(--conversation-pane-inset);
   /* The Workbench canvas meets the first track without the legacy inset. */
