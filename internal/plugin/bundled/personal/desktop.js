@@ -421,7 +421,7 @@ export async function activate(api) {
     const [panelOpen, setPanelOpen] = React.useState(true), [showAll, setShowAll] = React.useState(false);
     const [, setDraftVersion] = React.useState(0);
     const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), controlRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
-    const calendarRead = React.useRef(0), calendarOpening = React.useRef(false);
+    const calendarRead = React.useRef(0), calendarOpening = React.useRef(false), historyRecovery = React.useRef({ complete: false, endSeq: undefined });
     currentAgent.current = agent;
     const conversationID = agent?.main_session_id || "", draft = draftFor(conversationID), files = draft.files;
     const stream = streamFor(conversationID), running = stream.running, activeTurnID = stream.activeTurnID, queuedCount = draft.queueIds.size, liveMessages = [...stream.items.values()], stopState = draft.stopState;
@@ -450,22 +450,37 @@ export async function activate(api) {
     const loadConversation = async identity => {
       if (!identity) return;
       const epoch = ++sequence.current, stream = streamFor(identity.main_session_id), version = stream.version;
-      const [opened, history] = await Promise.all([call("agents.open", { agent_id: identity.agent_id }), call("agents.history", { agent_id: identity.agent_id })]);
-      if (!mounted.current || epoch !== sequence.current) return;
-      if (opened.agent?.main_session_id && opened.agent.main_session_id !== identity.main_session_id) throw new Error("main_session_binding_conflict");
-      setRecords(current => [...new Map([...current, ...(history.records || [])].map(record => [record.seq, record])).values()].sort((a, b) => a.seq - b.seq));
-      setHistoryInfo(current => current && current.first_seq < history.first_seq ? current : { first_seq: history.first_seq, has_earlier: history.has_earlier });
-      for (const [id, message] of stream.items) {
-        if (!message.streaming && (history.records || []).some(record => (message.seq !== undefined && record.seq === message.seq) || (message.source_id && record.provider_item_id === message.source_id))) stream.items.delete(id);
-      }
-      const state = opened.session?.state;
-      if (version === stream.version) {
-        stream.running = ["running", "queued"].includes(state);
-        stream.activeTurnID = opened.turn?.state === "running" ? opened.turn.turn_id : undefined;
-        const pending = draftFor(identity.main_session_id);
-        if (pending.stopTarget && opened.turn?.turn_id === pending.stopTarget && ["completed", "failed", "interrupted", "cancelled"].includes(opened.turn.state)) updateDraft(identity.main_session_id, { stopState: undefined, stopTarget: undefined });
-      }
-      draftListeners.forEach(listener => listener());
+      const current = () => mounted.current && epoch === sequence.current && !api.signal.aborted;
+      try {
+        const [opened, latest] = await Promise.all([call("agents.open", { agent_id: identity.agent_id }), call("agents.history", { agent_id: identity.agent_id })]);
+        if (!current()) return;
+        if (opened.agent?.main_session_id && opened.agent.main_session_id !== identity.main_session_id) throw new Error("main_session_binding_conflict");
+        let history = latest;
+        const recovery = historyRecovery.current;
+        // The runtime bounds each audit scan. Finish the initial visible page
+        // across those boundaries, retaining progress if a newer read takes over.
+        while (!recovery.complete && !history.records?.length && history.has_earlier && history.first_seq > 1) {
+          recovery.endSeq = Math.min(recovery.endSeq ?? Infinity, history.first_seq - 1);
+          history = await call("agents.history", { agent_id: identity.agent_id, end_seq: recovery.endSeq });
+          if (!current()) return;
+          if (history.first_seq > recovery.endSeq) throw new Error("history recovery did not advance");
+        }
+        recovery.complete = true;
+        setRecords(current => [...new Map([...current, ...(history.records || [])].map(record => [record.seq, record])).values()].sort((a, b) => a.seq - b.seq));
+        setHistoryInfo(current => current && current.first_seq < history.first_seq ? current : { first_seq: history.first_seq, has_earlier: history.has_earlier });
+        for (const [id, message] of stream.items) {
+          if (!message.streaming && (history.records || []).some(record => (message.seq !== undefined && record.seq === message.seq) || (message.source_id && record.provider_item_id === message.source_id))) stream.items.delete(id);
+        }
+        const state = opened.session?.state;
+        if (version === stream.version) {
+          stream.running = ["running", "queued"].includes(state);
+          stream.activeTurnID = opened.turn?.state === "running" ? opened.turn.turn_id : undefined;
+          const pending = draftFor(identity.main_session_id);
+          if (pending.stopTarget && opened.turn?.turn_id === pending.stopTarget && ["completed", "failed", "interrupted", "cancelled"].includes(opened.turn.state)) updateDraft(identity.main_session_id, { stopState: undefined, stopTarget: undefined });
+        }
+        draftListeners.forEach(listener => listener());
+      } catch (cause) { if (current()) throw cause; }
+      finally { if (current()) setLoading(false); }
     };
     const initialize = async () => {
       setError(""); setLoading(true);

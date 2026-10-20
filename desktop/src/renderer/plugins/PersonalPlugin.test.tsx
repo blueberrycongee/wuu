@@ -425,6 +425,95 @@ it("restores the same main conversation draft after leaving and reopening its vi
   expect(ui.invoke.mock.calls.filter(([request]) => request.method === "agents.ensure_default")).toHaveLength(2);
 });
 
+it("recovers the first visible conversation through empty bounded history pages without repeating recovery on refresh", async () => {
+  const reads: Array<number | undefined> = [];
+  const ui = await mount(undefined, main, undefined, { history: async input => {
+    reads.push(input.end_seq);
+    const end = input.end_seq ?? 652;
+    return end > 52 ? { records: [], first_seq: end - 199, has_earlier: true }
+      : { records: [{ seq: 1, role: "user", content: "Original question" }, { seq: 2, role: "assistant", content: "Original reply" }], first_seq: 1, has_earlier: false };
+  } });
+  expect(ui.container.textContent).toContain("Original question");
+  expect(ui.container.textContent).toContain("Original reply");
+  expect(reads).toEqual([undefined, 452, 252, 52]);
+  await act(async () => ui.publish());
+  expect(reads).toEqual([undefined, 452, 252, 52, undefined]);
+  expect(ui.container.textContent).toContain("Original reply");
+});
+
+it("finishes recovery of an entirely hidden transcript once and leaves ordinary refresh bounded", async () => {
+  const reads: Array<number | undefined> = [];
+  const ui = await mount(undefined, main, undefined, { history: async input => {
+    reads.push(input.end_seq);
+    return input.end_seq === 52 ? { records: [], first_seq: 1, has_earlier: false }
+      : { records: [], first_seq: input.end_seq === 252 ? 53 : 253, has_earlier: true };
+  } });
+  expect(reads).toEqual([undefined, 252, 52]);
+  expect(ui.container.querySelector("textarea")!.disabled).toBe(false);
+  await act(async () => ui.publish());
+  expect(reads).toEqual([undefined, 252, 52, undefined]);
+});
+
+it("resumes an interrupted history recovery at its pending boundary and ignores the superseded page", async () => {
+  const reads: Array<number | undefined> = [];
+  let release!: (value: unknown) => void;
+  const pending = new Promise(resolve => { release = resolve; });
+  let olderReads = 0;
+  const ui = await mount(undefined, main, undefined, { history: async input => {
+    reads.push(input.end_seq);
+    if (input.end_seq === undefined) return { records: [], first_seq: 453, has_earlier: true };
+    if (input.end_seq === 452) return { records: [], first_seq: 253, has_earlier: true };
+    if (++olderReads === 1) return pending;
+    return { records: [{ seq: 112, role: "assistant", content: "Recovered reply" }], first_seq: 53, has_earlier: true };
+  } });
+  expect(reads).toEqual([undefined, 452, 252]);
+  await act(async () => ui.publish());
+  expect(reads).toEqual([undefined, 452, 252, undefined, 252]);
+  expect(ui.container.textContent).toContain("Recovered reply");
+  expect(ui.container.querySelector("textarea")!.disabled).toBe(false);
+  await act(async () => release({ records: [], first_seq: 53, has_earlier: true }));
+  expect(reads).toEqual([undefined, 452, 252, undefined, 252]);
+  expect(ui.container.textContent).toContain("Recovered reply");
+});
+
+it("discards a pending history recovery when a newer read has visible messages", async () => {
+  let release!: (value: unknown) => void;
+  const pending = new Promise(resolve => { release = resolve; });
+  let fresh = false;
+  const reads: Array<number | undefined> = [];
+  const ui = await mount(undefined, main, undefined, { history: async input => {
+    reads.push(input.end_seq);
+    if (fresh) return { records: [{ seq: 253, role: "assistant", content: "Newest persisted reply" }], first_seq: 203, has_earlier: true };
+    return input.end_seq === undefined ? { records: [], first_seq: 53, has_earlier: true } : pending;
+  } });
+  expect(reads).toEqual([undefined, 52]);
+  fresh = true;
+  await act(async () => ui.publish());
+  expect(ui.container.textContent).toContain("Newest persisted reply");
+  expect(ui.container.querySelector("textarea")!.disabled).toBe(false);
+  await act(async () => release({ records: [{ seq: 2, role: "assistant", content: "Superseded old page" }], first_seq: 1, has_earlier: false }));
+  expect(ui.container.textContent).not.toContain("Superseded old page");
+  expect(reads).toEqual([undefined, 52, undefined]);
+});
+
+it("does not continue or report a failed history recovery after leaving and reopening the conversation", async () => {
+  let reject!: (cause: Error) => void;
+  const pending = new Promise((_, fail) => { reject = fail; });
+  let reopened = false;
+  const reads: Array<number | undefined> = [];
+  const ui = await mount(undefined, main, undefined, { history: async input => {
+    reads.push(input.end_seq);
+    if (reopened) return { records: [{ seq: 2, role: "assistant", content: "Reopened conversation" }], first_seq: 1, has_earlier: false };
+    return input.end_seq === undefined ? { records: [], first_seq: 53, has_earlier: true } : pending;
+  } });
+  expect(reads).toEqual([undefined, 52]);
+  await ui.remount(() => { reopened = true; });
+  await act(async () => reject(new Error("Stale history failure")));
+  expect(reads).toEqual([undefined, 52, undefined]);
+  expect(ui.container.textContent).toContain("Reopened conversation");
+  expect(ui.container.querySelector('[role="alert"]')).toBeNull();
+});
+
 it("renders only the main session stream and ignores late deltas after completion", async () => {
   let records: unknown[] = [];
   const ui = await mount(undefined, main, undefined, { history: async () => ({ records }) });

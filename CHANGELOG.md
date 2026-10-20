@@ -31,6 +31,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Restore twin conversation history automatically when recent background context fills the first history pages, including tab reentry and interrupted reads.
 - Hide successfully settled one-time routines from twin’s default activity list and count while retaining history, repeating schedules, and unresolved or failed work.
 
 - Preserve pending fallback messages until a real server turn acknowledges them, so a rejected concurrent send can restore its draft instead of being mistaken for delivered input.

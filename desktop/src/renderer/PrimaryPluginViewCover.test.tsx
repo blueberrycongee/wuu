@@ -261,6 +261,51 @@ describe("primary plugin view covers the conversation", () => {
     expect(request.mock.calls.filter(([params]) => params.method !== "agents.send").every(([params]) => params.user_input === undefined)).toBe(true);
   });
 
+  it("loads twin history through sidebar navigation and fences late reads after rapid reentry", async () => {
+    const main = { agent_id: "main", user_space_id: "local", name: "twin", kind: "main", main_session_id: "personal-main", status: "active", revision: 1 };
+    let resolveOld!: (value: unknown) => void;
+    const oldRead = new Promise(resolve => { resolveOld = resolve; });
+    let reads = 0;
+    let content = "Saved twin conversation";
+    const request = vi.fn(async (params) => ({ result: params.method === "agents.ensure_default" ? { agent: main }
+      : params.method === "agents.open" ? { agent: main, session: { state: "completed" } }
+      : params.method === "agents.history" ? ++reads === 1 ? await oldRead : { records: [{ seq: 2, role: "assistant", content }], first_seq: 1, has_earlier: false }
+      : params.method === "tasks.list" ? { tasks: [] }
+      : params.method === "routines.list" ? { routines: [] } : {} }));
+    Object.assign(window.wuu, { requestPluginRuntime: request, cancelPluginRuntime: vi.fn().mockResolvedValue({ cancelled: false }) });
+    const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/personal/desktop.js"), "utf8");
+    const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    await act(async () => desktopPluginHost.activateGeneration({ pluginId, generation: "navigation-history", contributions: { navigation: [{ id: "twin", title: "twin", view: "personal.home" }] }, register: activate }));
+    const clickTwin = async () => act(async () => container.querySelector<HTMLButtonElement>(`[data-wuu-component="plugin-navigation-item"][data-wuu-plugin="${pluginId}"]`)!.click());
+    const clickCoding = async () => act(async () => container.querySelector<HTMLButtonElement>(".primary-nav > button")!.click());
+    await clickTwin();
+    expect(container.querySelector(".plugin-conversation")?.getAttribute("data-conversation-id")).toBe("personal-main");
+    expect(container.querySelector('.plugin-conversation [role="log"]')?.getAttribute("aria-busy")).toBe("true");
+    await clickCoding();
+    expect(container.querySelector(".mosaic")).toBeNull();
+    await clickTwin();
+    expect(container.querySelector(".mosaic-main")?.textContent).toContain("Saved twin conversation");
+    await act(async () => resolveOld({ records: [{ seq: 9, role: "assistant", content: "Stale response from closed view" }], first_seq: 1, has_earlier: false }));
+    expect(container.querySelector(".mosaic-main")?.textContent).not.toContain("Stale response from closed view");
+    content = "New saved twin reply";
+    await clickTwin();
+    await clickTwin();
+    expect(container.querySelector(".mosaic-main")?.textContent).toContain(content);
+    expect(container.querySelectorAll('.plugin-conversation [data-role="assistant"]')).toHaveLength(1);
+    await clickCoding();
+    expect(container.querySelector(".mosaic")).toBeNull();
+    await clickTwin();
+    expect(container.querySelector(".mosaic-main")?.textContent).toContain(content);
+    expect(request.mock.calls.filter(([params]) => params.method === "agents.history").every(([params]) => params.input.agent_id === main.agent_id && params.user_space_id === "local" && params.product_domain === "personal")).toBe(true);
+    expect(window.wuu.resumeThread).not.toHaveBeenCalledWith(main.main_session_id);
+    await act(async () => { root!.unmount(); root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    expect(container.querySelector(".mosaic-main")?.textContent).toContain(content);
+    expect(container.querySelector(".plugin-conversation")?.getAttribute("data-conversation-id")).toBe("personal-main");
+  });
+
   it("keeps existing Wuu navigation in a user-space view and restores the saved Coding panel", async () => {
     window.localStorage.setItem("wuu.desktop.workspaceRightPanelOpen", "true");
     await act(async () => { root = createRoot(container); root.render(<App />); });
