@@ -175,6 +175,7 @@ export function PluginConversationMessage({ id: suppliedId, role, content, times
   const messageTurnId = turnId ?? `plugin-message-${id}`;
   const item: ThreadItem = { id, origin: role === "user" ? "user" : undefined, type: role === "user" ? "user_message" : "agent_message", text: content, status: streaming ? "in_progress" : "completed", terminal: role === "assistant" && !streaming };
   const attachmentContent = attachments ? <div className="plugin-conversation-attachments">{attachments}</div> : undefined;
+  const inlineAttachments = bubble.enabled ? undefined : attachmentContent;
   const processTurn: Turn | undefined = role === "assistant" && process ? {
     id: messageTurnId, status: turnStatus, items_view: "full", answer_ready_at: streaming ? undefined : timestamp,
     items: [...(process.content ? [{ id: `${id}:process`, type: "agent_message" as const, text: process.content, status: "completed" as const }] : []), ...(content ? [item] : [])],
@@ -182,17 +183,29 @@ export function PluginConversationMessage({ id: suppliedId, role, content, times
   const processDisplay = processTurn ? buildAssistantTurnDisplay(processTurn, id) ?? { entries: [], hasAnswer: false } : undefined;
   const messageContent = processTurn && processDisplay ? <AssistantTurnShell turn={processTurn} display={processDisplay}
         processLabel={process!.label} processContent={process!.details} onStreamFrame={noop} actionableAgentMessageID={id} latestAgentMessageID={latest ? id : undefined}
-        messagePresentation={{ pluginHost: conversationHost, linkPolicy, messageActions }} trailingContent={attachmentContent} /> : <ThreadItemView turnID={messageTurnId} turnStatus={turnStatus} turnStartedAt={timestamp}
+        messagePresentation={{ pluginHost: conversationHost, linkPolicy, messageActions }} trailingContent={inlineAttachments} /> : <ThreadItemView turnID={messageTurnId} turnStatus={turnStatus} turnStartedAt={timestamp}
         turnAnswerReadyAt={streaming ? undefined : timestamp} streaming={streaming} onStreamFrame={noop} pluginHost={conversationHost}
         actionableAgentMessageID={role === "assistant" ? id : undefined} latestAgentMessageID={latest ? id : undefined}
-        messageActions={messageActions} messageAttachments={attachmentContent} linkPolicy={linkPolicy} item={item} />;
+        messageActions={messageActions} messageAttachments={inlineAttachments} linkPolicy={linkPolicy} item={item} />;
   return <ArtifactThreadContext.Provider value={undefined}><SideConversationAvailableContext.Provider value={false}>
     <div className={["plugin-conversation-message", className].filter(Boolean).join(" ")} data-wuu-component="plugin-ui-conversation-message" data-role={role}
       data-turn-id={role === "assistant" ? messageTurnId : undefined} data-bubble={bubble.enabled || undefined}>
       {bubble.enabled && validTime && <time className="bubble-message-time" dateTime={validTime} aria-hidden={!bubble.revealed} title={formatDate(validTime, { dateStyle: "medium", timeStyle: "short" })}>{formatDate(validTime, { hour: "2-digit", minute: "2-digit" })}</time>}
-      {bubble.enabled ? <div className="bubble-message-content">{messageContent}</div> : messageContent}
+      {bubble.enabled ? <>{attachmentContent}{(content.trim() || process) && <div className="bubble-message-content">{messageContent}</div>}</> : messageContent}
     </div>
   </SideConversationAvailableContext.Provider></ArtifactThreadContext.Provider>;
+}
+
+// Compact attachment-specific artwork uses a 20-unit grid so its visible
+// contour, not just the SVG box, aligns with the filename.
+function ConversationAttachmentIcon({ mediaType }: { mediaType: string }): JSX.Element {
+  const kind = mediaType === "text/html" ? "html" : mediaType.startsWith("video/") ? "video" : /zip|archive|compressed/.test(mediaType) ? "archive" : "document";
+  return <svg data-attachment-icon={kind} width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    {kind === "html" ? <><circle cx="10" cy="10" r="8.1" /><ellipse cx="10" cy="10" rx="3.5" ry="8.1" /><path d="M2 10h16" /></>
+      : kind === "video" ? <><rect x="1.8" y="2.7" width="16.4" height="14.6" rx="2.5" /><path d="M2 8h16M7.1 3l-2.3 5m8-5-2.3 5m7-5-2.3 5" /></>
+      : kind === "archive" ? <><rect x="3.1" y="1.7" width="13.8" height="16.6" rx="2.5" /><path d="M9 5h2M9 7.4h2M9 9.8h2m-1 2.4-1.6 3h3.2l-1.6-3Z" /></>
+      : <><path d="M11.5 1.8H5.4a2 2 0 0 0-2 2v12.4a2 2 0 0 0 2 2h9.2a2 2 0 0 0 2-2V7l-5.1-5.2Z" /><path d="M11.4 2v5.2h5M6.7 11h6.6m-6.6 3.3h5" /></>}
+  </svg>;
 }
 
 type PendingAttachmentURL = {
@@ -207,6 +220,7 @@ type PendingAttachmentURL = {
 export function PluginConversationAttachment({ resourceId, onOpen, onRead, name, mediaType, size, url, loading, error, loadLabel, downloadLabel, onLoad }: PluginUIConversationAttachmentProps): JSX.Element {
   const { t, formatNumber } = useI18n();
   const openPreview = useContext(ConversationAttachmentPreviewContext);
+  const bubble = useContext(ConversationBubbleContext);
   const fallbackId = useId();
   const localURL = url?.startsWith("blob:") ? url : undefined;
   const raster = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"].includes(mediaType);
@@ -316,10 +330,10 @@ export function PluginConversationAttachment({ resourceId, onOpen, onRead, name,
   return <div className="plugin-conversation-attachment">
     <div className="conversation-file-card" data-wuu-component="conversation-attachment">
       <button type="button" className="conversation-file-card-main" data-action="open-attachment" aria-label={t("conversationAttachment.open", { name })} disabled={opening} aria-busy={opening} onClick={() => { void open(); }}>
-        {opening ? <LoaderCircle className="is-spinning" /> : <FileText />}<span className="conversation-file-card-copy"><strong title={`${name} · ${mediaType} · ${formatByteSize(size, formatNumber)}`}>{name}</strong></span>
+        {opening ? <LoaderCircle className="is-spinning" /> : bubble.enabled ? <ConversationAttachmentIcon mediaType={mediaType} /> : <FileText />}<span className="conversation-file-card-copy"><strong title={`${name} · ${mediaType} · ${formatByteSize(size, formatNumber)}`}>{name}</strong></span>
       </button>
-      {localURL ? <a className="icon-button" href={localURL} download={name} aria-label={downloadLabel} title={downloadLabel}><Download /></a>
-        : <button type="button" className="icon-button" data-action="load-attachment" aria-label={loadLabel} title={loadLabel} disabled={loading || downloading} onClick={() => { void download(); }}>{loading || downloading ? <LoaderCircle className="is-spinning" /> : <Download />}</button>}
+      {localURL ? <a className="icon-button conversation-file-download" href={localURL} download={name} aria-label={downloadLabel} title={downloadLabel}><Download /></a>
+        : <button type="button" className="icon-button conversation-file-download" data-action="load-attachment" aria-label={loadLabel} title={loadLabel} disabled={loading || downloading} onClick={() => { void download(); }}>{loading || downloading ? <LoaderCircle className="is-spinning" /> : <Download />}</button>}
     </div>
     {(actionError || error) && <p role="alert">{actionError || error}</p>}
     {raster && localURL && <img src={localURL} alt={name} />}

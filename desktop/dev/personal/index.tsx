@@ -19,6 +19,8 @@ const now = "2026-10-18T10:00:00Z";
 const agents = [
   { agent_id:"mosaic",user_space_id:"local",kind:"main",name:"twin",responsibility:"",communication:"简洁、自然，重要的事情说清楚。",main_session_id:"synthetic-main",status:"active",revision:1 },
 ];
+const savedSyntheticName = localStorage.getItem("wuu.fixture.personal-name");
+if (savedSyntheticName?.trim() && Array.from(savedSyntheticName.trim()).length <= 64) agents[0].name = savedSyntheticName.trim();
 const tasks = [
   {task_id:"trip",agent_id:"lin",title:"京都的四天，慢慢走",goal:"安排一个不赶路的四天行程，留出下午休息的时间。交通以公共交通为主，雨天也有替代方案。",state:"running",requirements_revision:2,revision:3,updated_at:now},
   {task_id:"dinner",agent_id:"mosaic",title:"周五和朋友吃饭",goal:"在三家安静的餐厅中选一家，确认后再预订。",state:"waiting_user",requirements_revision:1,revision:2,updated_at:now,result:{summary:"找到了三家合适的餐厅，等你选一个更方便的地点。"}},
@@ -64,6 +66,14 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
   switch(method){
     case "agents.list":return {agents:empty?[]:agents,default_agent_id:"mosaic"};
     case "agents.ensure_default":empty=false;return {agent:agents[0]};
+    case "agents.update": {
+      const agent = agents.find(value => value.agent_id === data.agent_id);
+      if (!agent || agent.revision !== data.expected_revision) throw new Error("revision conflict");
+      const name = typeof data.name === "string" ? data.name.trim() : "";
+      if (!name || Array.from(name).length > 64) throw new Error("name must contain 1–64 characters");
+      localStorage.setItem("wuu.fixture.personal-name", name);
+      agent.name = name; agent.revision++; return { agent: { ...agent } };
+    }
     case "agents.open":return {agent:agents.find(a=>a.agent_id===data.agent_id),session:{state:fixtureActivity === "idle" ? "completed" : "running"}};
     case "agents.history":return {records:(histories[data.agent_id]||[]).filter(record=>(!data.start_seq||record.seq>=data.start_seq)&&(!data.end_seq||record.seq<=data.end_seq))};
     case "agents.search":{const matches=(histories[data.agent_id]||[]).filter(record=>record.content.includes(data.query)&&(!data.time_min||(record.at&&record.at>=data.time_min))&&(!data.time_max||(record.at&&record.at<data.time_max))).map(record=>({seq:record.seq,role:record.role,excerpt:record.content.slice(0,120),at:record.at}));return {matches,has_more:false};}
@@ -95,6 +105,34 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
 };
 installFixtureBridge(invokeRuntime);
 const params=new URLSearchParams(location.search);
+// Normal preview stays representative; stress/error files remain opt-in for QA.
+if (!["all", "reference"].includes(params.get("attachments") || "")) histories.mosaic[3].attachments = histories.mosaic[3].attachments!.slice(0, 2);
+if (params.get("attachments") === "layout") {
+  const sample = histories.mosaic[3].attachments![0];
+  const note = histories.mosaic[3].attachments![1];
+  const longName = "合成的很长很长文件名，用来检查窄窗口截断与时间显示.txt";
+  files.set(`mosaic:5:${sample.sha256}`, {...files.get(`mosaic:4:${sample.sha256}`)!,name:longName});
+  files.set(`mosaic:5:${note.sha256}`, files.get(`mosaic:4:${note.sha256}`)!);
+  files.set(`mosaic:6:${sample.sha256}`, files.get(`mosaic:4:${sample.sha256}`)!);
+  histories.mosaic.push(
+    {seq:5,role:"user",at:now,content:"这些是我想一起看的文件。",attachments:[{...sample,name:longName},note]},
+    {seq:6,role:"assistant",at:now,content:"",attachments:[sample]},
+  );
+}
+if (params.get("attachments") === "reference") {
+  // Self-generated 0.2 second white video: visual fixture, not a user file.
+  const video = {"kind": "artifact", "index": 0, "name": "synthetic-preview.mp4", "mime_type": "video/mp4", "size": 1694, "sha256": "89df5a6a21329d6817067a34e6e258317b44a942fea192985a67b5700e9de36c"};
+  const html = histories.mosaic[3].attachments![2], archive = histories.mosaic[3].attachments![3];
+  histories.mosaic = [
+    {seq:1,role:"assistant",at:now,content:"文件会独立展示，说明文字保留在自己的消息气泡里。"},
+    {seq:2,role:"assistant",at:now,content:"这是一段合成的空白视频，只用于检查文件图标和卡片样式。",attachments:[video]},
+    {seq:3,role:"assistant",at:now,content:"网页和压缩包也放在这里，可以点击文件在 Wuu 内打开。",attachments:[html,archive]},
+  ];
+  files.set(`mosaic:2:${video.sha256}`, {"data": "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAN0bW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAAMgAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAp90cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAAMgAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAACAAAAAgAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAADIAAAEAAABAAAAAAIXbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAyAAAACgBVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABwm1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAYJzdGJsAAAAvnN0c2QAAAAAAAAAAQAAAK5hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAACAAIABIAAAASAAAAAAAAAABFUxhdmM2MS4xOS4xMDEgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAANGF2Y0MBZAAK/+EAF2dkAAqs2UlsBEAAAAMAQAAADIPEiWWAAQAGaOvjyyLA/fj4AAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAHcQAAAAAAAAABhzdHRzAAAAAAAAAAEAAAAFAAACAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAOGN0dHMAAAAAAAAABQAAAAEAAAQAAAAAAQAACgAAAAABAAAEAAAAAAEAAAAAAAAAAQAAAgAAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAUAAAABAAAAKHN0c3oAAAAAAAAAAAAAAAUAAALKAAAADAAAAAwAAAAMAAAADAAAABRzdGNvAAAAAAAAAAEAAAOkAAAAYXVkdGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAAACSpdG9vAAAAHGRhdGEAAAABAAAAAExhdmY2MS43LjEwMwAAAAhmcmVlAAADAm1kYXQAAAKuBgX//6rcRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY0IHIzMTA4IDMxZTE5ZjkgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDIzIC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MSByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9MHgzOjB4MTEzIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFuZ2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0xIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodGI9MSBvcGVuX2dvcD0wIHdlaWdodHA9MiBrZXlpbnQ9MjUwIGtleWludF9taW49MjUgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD00MCByYz1jcmYgbWJ0cmVlPTEgY3JmPTIzLjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEuNDAgYXE9MToxLjAwAIAAAAAUZYiEADP//vbsvgU1/Z/QlnnHF8EAAAAIQZokbEK//lYAAAAIQZ5CeIX/VcEAAAAIAZ5hdEK/WsAAAAAIAZ5jakK/WsE=", "name": "synthetic-preview.mp4", "mime": "video/mp4"});
+  for (const file of [html, archive]) files.set(`mosaic:3:${file.sha256}`,files.get(`mosaic:4:${file.sha256}`)!);
+}
+const motionScale = Math.min(8, Math.max(1, Number(params.get("motionScale")) || 1));
+if (motionScale > 1) document.documentElement.style.setProperty("--mosaic-profile-motion-duration", `${300 * motionScale}ms`);
 if (params.get("grouping") === "1") histories.mosaic.push(
   {seq:5,role:"assistant",at:now,content:"也可以先不做决定。等你忙完，我们再慢慢选。"},
   {seq:6,role:"user",at:now,content:"那就选离家近一点的。"},
@@ -104,7 +142,7 @@ applyThemePreference(params.get("theme")==="dark"?"dark":"light");
 document.documentElement.style.setProperty("--conversation-message-font-size",`${params.get("font")==="19"?19:15}px`);
 document.documentElement.dataset.platform="linux";
 function FixtureSurface(){
-  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label"><span>twin · 实际桌面组件 · 合成演示数据 · 非生产账号</span><div><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div></div><div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView> : <App />}</div></div></WuuUIRoot></I18nProvider>;
+  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label"><span>twin · 实际桌面组件 · 合成演示数据 · 非生产账号 · 名称仅存当前浏览器{motionScale > 1 ? ` · 动画轨迹检查 ${motionScale}×慢速` : ""}</span><div><a href="?attachments=reference">参考文件展示</a><a href="?attachments=all">文件类型测试</a><a href="?attachments=layout">附件布局测试</a><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div></div><div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView> : <App />}</div></div></WuuUIRoot></I18nProvider>;
 }
 let fixtureTurn = 0;
 function setActivity(status: "idle" | "thinking" | "responding") {

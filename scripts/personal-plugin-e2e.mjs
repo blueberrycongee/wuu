@@ -158,6 +158,46 @@ try {
     host.histories.set(main.main_session_id, [{ seq: 1, role: 'user', content: 'Hello' }, { seq: 2, role: 'tool', tool_result: 'private' }, { seq: 3, role: 'assistant', content: 'Hi', reasoning_content: 'hidden' }]);
     const history = await runtime.client('agents.history', { agent_id: main.agent_id }); assert.equal(history.records.length, 2); assert(!JSON.stringify(history).includes('private')); assert(!JSON.stringify(history).includes('hidden'));
   });
+  await scenario('main name edits validate Unicode, survive restart, and preserve identity and unrelated fields', async () => {
+    const before = (await runtime.client('agents.list')).agents[0];
+    const renamed = (await runtime.client('agents.update', { agent_id: before.agent_id, expected_revision: before.revision, name: '  🍄  ' })).agent;
+    assert.equal(renamed.name, '🍄');
+    const unchanged = ({ name, revision, updated_at, ...rest }) => rest;
+    assert.deepEqual(unchanged(renamed), unchanged(before));
+    assert.equal(renamed.revision, before.revision + 1);
+    await runtime.close(); runtime = await new Runtime(host).start();
+    assert.deepEqual((await runtime.client('agents.ensure_default')).agent, renamed);
+    for (const name of ['', ' \n\t ', 'x'.repeat(65), '🍄'.repeat(65), 42, null]) {
+      await assert.rejects(runtime.client('agents.update', { agent_id: renamed.agent_id, expected_revision: renamed.revision, name }), /name/);
+      assert.deepEqual((await runtime.client('agents.list')).agents[0], renamed);
+    }
+    const boundary = (await runtime.client('agents.update', { agent_id: renamed.agent_id, expected_revision: renamed.revision, name: '🍄'.repeat(64) })).agent;
+    assert.equal(Array.from(boundary.name).length, 64);
+    main = (await runtime.client('agents.update', { agent_id: boundary.agent_id, expected_revision: boundary.revision, name: 'River' })).agent;
+  });
+  await scenario('name save failures leave durable identity unchanged and competing edits cannot overwrite the winner', async () => {
+    const before = (await runtime.client('agents.list')).agents[0];
+    host.intercept = service => { if (service === 'host.storage.compare-exchange') throw new Error('name storage unavailable'); };
+    await assert.rejects(runtime.client('agents.update', { agent_id: before.agent_id, expected_revision: before.revision, name: 'Not saved' }), /storage unavailable/);
+    host.intercept = undefined;
+    assert.deepEqual((await runtime.client('agents.list')).agents[0], before);
+    let release, reached;
+    const held = new Promise(resolve => { release = resolve; });
+    const entered = new Promise(resolve => { reached = resolve; });
+    host.intercept = async (service, params) => {
+      if (service === 'host.storage.compare-exchange' && JSON.parse(params.value).name === 'Losing edit') { reached(); await held; }
+    };
+    const losing = runtime.client('agents.update', { agent_id: before.agent_id, expected_revision: before.revision, name: 'Losing edit' });
+    const rejected = assert.rejects(losing, /revision_conflict/);
+    await entered;
+    const winner = (await runtime.client('agents.update', { agent_id: before.agent_id, expected_revision: before.revision, name: 'River' })).agent;
+    release(); await rejected; host.intercept = undefined;
+    assert.equal(winner.revision, before.revision + 1);
+    assert.deepEqual((await runtime.client('agents.list')).agents[0], winner);
+    await runtime.close(); runtime = await new Runtime(host).start();
+    main = (await runtime.client('agents.ensure_default')).agent;
+    assert.deepEqual(main, winner);
+  });
   await scenario('missing bound session fails without silent replacement', async () => {
     const original = host.sessions.get(main.main_session_id); host.sessions.delete(main.main_session_id);
     await assert.rejects(runtime.client('agents.open', { agent_id: main.agent_id }), /recover|missing|unavailable/i); assert.equal(host.sessions.size, 0); host.sessions.set(main.main_session_id, original);

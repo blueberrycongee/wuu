@@ -848,7 +848,9 @@ export class PersonalPlugin implements RuntimePlugin {
           if (current.status === "archived") throw new Error("agent is archived");
           if (method === "agents.resume" && current.status === "stopping") throw new Error("agent cancellation is still stopping; wait for reconciliation before resuming");
           const stop = method === "agents.pause" || method === "agents.archive";
-          return { ...current, name: input.name === undefined ? current.name : text(input, "name", true), responsibility: current.kind === "main" ? "" : input.responsibility === undefined ? current.responsibility : text(input, "responsibility", true), communication: input.communication === undefined ? current.communication : text(input, "communication"), status: stop ? "stopping" : method === "agents.resume" ? "active" : current.status,
+          const name = input.name === undefined ? current.name : text(input, "name", true);
+          if (input.name !== undefined && Array.from(name).length > 64) throw new Error("name must be 64 characters or fewer");
+          return { ...current, name, responsibility: current.kind === "main" ? "" : input.responsibility === undefined ? current.responsibility : text(input, "responsibility", true), communication: input.communication === undefined ? current.communication : text(input, "communication"), status: stop ? "stopping" : method === "agents.resume" ? "active" : current.status,
             ...(stop ? { stop_target: method === "agents.archive" ? "archived" as const : "paused" as const, stop_request_id: `agent-stop-${id(current.agent_id, String(current.revision + 1))}`, cancellation_pending: true, cancellation_error: undefined } : {}) };
         }, number(input, "expected_revision"));
         return { agent: agent.status === "stopping" ? await this.settleAgent(agent.agent_id) : agent };

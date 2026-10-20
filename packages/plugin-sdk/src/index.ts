@@ -575,6 +575,8 @@ export interface PluginGenerationApi {
   registerComposerInlineCompletionProvider(provider: ComposerInlineCompletionProviderRegistration): ComposerInlineCompletionProviderHandle;
   registerCleanup(cleanup: () => void): Disposable;
   registerViewType(definition: ViewTypeDefinition): Disposable;
+  /** Set a declared navigation entry title for this generation only (1–64 characters). */
+  setNavigationTitle(id: string, title: string): boolean;
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
   registerInspectorSection(definition: InspectorSectionDefinition): Disposable;
   registerRenderer(definition: RendererDefinition): Disposable;

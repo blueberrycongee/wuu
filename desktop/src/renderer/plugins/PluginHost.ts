@@ -203,6 +203,8 @@ export interface PluginGenerationApi {
 
   /** Register a view type that the host can open in a semantic region. */
   registerViewType(definition: ViewTypeDefinition): Disposable;
+  /** Presentation only: update one declared navigation entry owned by this generation. */
+  setNavigationTitle(id: string, title: string): boolean;
   /** Request a default View placement in a stable host-owned region. */
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
   /** Register a short, context-driven summary in the host-owned Inspector. */
@@ -522,6 +524,7 @@ interface GenerationState {
   readonly pluginId: string;
   readonly generation: string;
   readonly declaredContributions?: PluginContributionDeclarations;
+  readonly navigationTitles: Map<string, string>;
   readonly slots: SlotRecord[];
   readonly surfaces: SurfaceRecord[];
   readonly commands: CommandRecord[];
@@ -1372,6 +1375,17 @@ export class PluginHost {
         return disposable;
       },
 
+      setNavigationTitle: (id: string, title: string) => {
+        this.assertUsable(state);
+        if (!state.declaredContributions?.navigation?.some(entry => entry.id === id)) return false;
+        const normalized = typeof title === "string" ? title.trim() : "";
+        if (!normalized || Array.from(normalized).length > 64) throw new Error("Navigation title must contain 1–64 characters");
+        if (state.navigationTitles.get(id) === normalized) return true;
+        state.navigationTitles.set(id, normalized);
+        if (state.active) this.refreshPublicState();
+        return true;
+      },
+
       registerViewType: (definition: ViewTypeDefinition) => {
         this.assertAccepting(state);
         const id = this.claimRegistrationId(state, "view", definition.id);
@@ -1772,7 +1786,7 @@ export class PluginHost {
         pluginId: state.pluginId,
         generation: state.generation,
       });
-      navigationEntries.push(...(state.declaredContributions?.navigation ?? []).map(declaredEntry));
+      navigationEntries.push(...(state.declaredContributions?.navigation ?? []).map(entry => declaredEntry({ ...entry, title: state.navigationTitles.get(entry.id) ?? entry.title })));
       workspaceTools.push(...(state.declaredContributions?.workspace_tools ?? []).map(declaredEntry));
       settingsPages.push(...(state.declaredContributions?.settings_pages ?? []).map(declaredEntry));
     }
@@ -1844,7 +1858,7 @@ export class PluginHost {
       || compareText(left.pluginId, right.pluginId)
       || compareText(left.id, right.id);
     const nextNavigation = Object.freeze(navigationEntries.sort(compareViewEntry));
-    if (replaceSnapshots || !sameContributions(this.navigationSnapshot, nextNavigation)) {
+    if (replaceSnapshots || !sameContributions(this.navigationSnapshot, nextNavigation) || this.navigationSnapshot.some((entry, index) => entry.title !== nextNavigation[index]?.title)) {
       this.navigationSnapshot = nextNavigation;
       changed = true;
     }
@@ -2075,6 +2089,7 @@ function createGenerationState(
     pluginId,
     generation,
     declaredContributions,
+    navigationTitles: new Map(),
     slots: [],
     surfaces: [],
     commands: [],

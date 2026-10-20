@@ -139,7 +139,7 @@ async function geometry() {
 
 async function load({ width = 1440, height = 1000, theme = "light", font = 15, query = "" } = {}) {
   await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
-  await send("Page.navigate", { url: `http://127.0.0.1:${server.address().port}/?theme=${theme}&font=${font}${query}` });
+  await send("Page.navigate", { url: `http://127.0.0.1:${server.address().port}/?theme=${theme}&font=${font}&attachments=all${query}` });
   if (!query.includes("presentation=standard")) {
     await until(() => !!window.mosaicFixture && !!document.querySelector('[data-wuu-plugin="personal"]'), "production shell fixture");
     await click('[data-wuu-plugin="personal"]');
@@ -516,7 +516,7 @@ async function runDomOnly() {
       observer.observe(window.document, { childList: true, subtree: true, attributes: true });
     });
   }
-  const dom = createDom();
+  const dom = createDom("?attachments=all");
   try {
     const { window } = dom, document = window.document;
     await wait(window, () => !!document.querySelector('[data-wuu-plugin="personal"]'), "twin navigation");
@@ -576,7 +576,8 @@ async function runDomOnly() {
         window.mosaicFixture.setActivity(status);
         await wait(window, () => trigger.querySelector('[data-agent-avatar-state]')?.dataset.agentAvatarState === status, status);
         assert.equal(trigger.querySelector('[data-wuu-mascot-morph]').dataset.wuuMascotMorph, 'idle');
-        assert.equal(trigger.querySelector('small').textContent, { thinking: '正在思考', responding: '正在回复', idle: '已就绪' }[status]);
+        assert.ok(trigger.getAttribute('aria-label').endsWith({ thinking: '正在思考', responding: '正在回复', idle: '已就绪' }[status]));
+        assert.equal(trigger.textContent, '');
       }
     });
     await check("DOM: only twin main conversation opts into bubbles and removes action toolbar", async () => {
@@ -588,15 +589,17 @@ async function runDomOnly() {
     await check("DOM: identity opens an accessible floating panel, details return and Escape restores focus", async () => {
       const trigger = document.querySelector('[data-action="toggle-personal-panel"]');
       const panel = document.querySelector('[data-personal-panel]');
-      assert.equal(panel.hidden, true);
+      await wait(window, () => panel.hidden, "profile exit finished");
       assert.equal(trigger.getAttribute("aria-haspopup"), "dialog");
       trigger.focus(); trigger.click(); await nextFrame();
       assert.equal(panel.hidden, false);
       assert.equal(panel.getAttribute("role"), "dialog");
       assert.ok(panel.contains(document.activeElement));
-      const close = panel.querySelector('[data-action="close-personal-panel"]');
+      const first = panel.querySelector('summary,button:not(:disabled)');
+      assert.equal(document.activeElement, panel);
+      assert.equal(trigger.getAttribute('aria-hidden'), 'true');
       const last = [...panel.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),textarea:not(:disabled),select:not(:disabled),summary')].filter(node => !node.closest('details:not([open])') || node.tagName === 'SUMMARY').at(-1);
-      last.focus(); keyboard(last, "Tab"); await nextFrame(); assert.equal(document.activeElement, close);
+      last.focus(); keyboard(last, "Tab"); await nextFrame(); assert.equal(document.activeElement, first);
       const showOutputs = panel.querySelector('[data-action="show-more-outputs"]');
       assert.equal(panel.querySelectorAll('[data-output-sha256]').length, 3);
       showOutputs.click(); await nextFrame();
@@ -610,14 +613,14 @@ async function runDomOnly() {
       assert.equal(panel.querySelector('[data-task-detail]'), null);
       assert.equal(document.activeElement.dataset.taskId, "trip");
       keyboard(document.activeElement, "Escape"); await nextFrame();
-      assert.equal(panel.hidden, true);
+      await wait(window, () => panel.hidden, "profile exit finished");
       assert.equal(document.activeElement, trigger);
       trigger.click(); await nextFrame();
       const prose = document.querySelector(".agent-text");
       const stopPointer = event => event.stopPropagation();
       prose.addEventListener("pointerdown", stopPointer);
       pointer(prose, "pointerdown", 20, 20);
-      await nextFrame(); assert.equal(panel.hidden, true);
+      await wait(window, () => panel.hidden, "outside exit finished");
       prose.removeEventListener("pointerdown", stopPointer);
     });
     await check("DOM: accessible toggle, Alt+Left/Right and Escape update timestamps", async () => {
@@ -682,7 +685,7 @@ async function runDomOnly() {
       const tabs = () => document.querySelectorAll('[data-wuu-tab-kind="conversation-attachment"]');
       assert.equal(tabs().length, 1);
       assert.equal(document.querySelector('[data-action="toggle-personal-panel"]').getAttribute("aria-expanded"), "false");
-      assert.equal(document.querySelector("[data-personal-panel]").hidden, true);
+      await wait(window, () => document.querySelector("[data-personal-panel]").hidden, "file open exits profile");
       assert.ok(tabs()[0].textContent.includes("合成示例.txt"));
       card.click(); await nextFrame(); assert.equal(tabs().length, 1);
       tabs()[0].querySelector(".workspace-tool-tab-close").click();
@@ -696,7 +699,7 @@ async function runDomOnly() {
       assert.ok(panel.querySelector('[data-artifact-detail]'));
       panel.querySelector('[data-action="open-attachment"]').click();
       await wait(window, () => document.querySelector(".conversation-attachment-preview pre")?.textContent === "hello", "output detail internal file preview");
-      assert.equal(panel.hidden, true);
+      await wait(window, () => panel.hidden, "profile exit finished");
       document.querySelector('[data-wuu-tab-kind="conversation-attachment"] .workspace-tool-tab-close').click();
       await wait(window, () => !document.querySelector(".conversation-attachment-preview"), "output preview closes");
     });
@@ -713,6 +716,23 @@ async function runDomOnly() {
       await wait(window, () => !!document.querySelector('.conversation-attachment-preview [role="alert"] button'), "retryable error");
       assert.equal(document.querySelectorAll('[data-wuu-tab-kind="conversation-attachment"]').length, 3);
     });
+    await check("DOM: persistent synthetic rename updates navigation without changing product settings", async () => {
+      const rename = async value => {
+        document.querySelector('.mosaic-identity-hover').click();
+        await wait(window, () => !!document.querySelector('.mosaic-name-input'), 'rename dialog');
+        const input = document.querySelector('.mosaic-name-input');
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, value);
+        input.dispatchEvent(new window.Event('input', { bubbles:true })); await nextFrame();
+        document.querySelector('.mosaic-name-save').click();
+        await wait(window, () => !document.querySelector('.mosaic-name-dialog'), 'rename saved');
+      };
+      await rename('<Cloud twin>');
+      assert.equal(document.querySelector('[data-wuu-plugin="personal"] > span:last-child').textContent, '<Cloud twin>');
+      assert.equal(window.localStorage.getItem('wuu.fixture.personal-name'), '<Cloud twin>');
+      assert.ok(document.querySelector('[data-action="toggle-personal-panel"]').getAttribute('aria-label').includes('<Cloud twin>'));
+      assert.equal(document.querySelector('cloud'), null);
+      await rename('twin');
+    });
     await check("DOM: Settings remains reachable and uses the same twin identity", async () => {
       document.querySelector('.sidebar-account-trigger').click();
       await wait(window, () => !!document.querySelector('[data-settings-page="providers"]'), 'account settings action');
@@ -722,6 +742,35 @@ async function runDomOnly() {
       assert.equal(mark.dataset.agentAvatarId, 'wuu-mascot');
     });
   } finally { dom.window.close(); }
+  const regular = createDom();
+  try {
+    const { window } = regular, document = window.document;
+    await wait(window, () => !!document.querySelector('[data-wuu-plugin="personal"]'), "regular attachment fixture");
+    document.querySelector('[data-wuu-plugin="personal"]').click();
+    await wait(window, () => document.querySelectorAll('.conversation-file-card').length === 2, "two representative attachments");
+    await check("DOM: default files are siblings before prose, not nested grey bubbles", async () => {
+      const row = document.querySelector('.plugin-conversation-message > .plugin-conversation-attachments');
+      assert.ok(row);
+      assert.ok(row.nextElementSibling.matches('.bubble-message-content'));
+      assert.equal(row.querySelectorAll('.plugin-conversation-attachment').length, 2);
+      assert.equal(row.querySelector('.mosaic-attachments'), null);
+      assert.equal(document.querySelector('.bubble-message-content .conversation-file-card'), null);
+    });
+  } finally { regular.window.close(); }
+  const layout = createDom("?attachments=layout");
+  try {
+    const { window } = layout, document = window.document;
+    await wait(window, () => !!document.querySelector('[data-wuu-plugin="personal"]'), "attachment layout fixture");
+    document.querySelector('[data-wuu-plugin="personal"]').click();
+    await wait(window, () => document.querySelectorAll('.plugin-conversation-message').length === 6, "layout messages");
+    await check("DOM: user files and attachment-only messages preserve separate layout", async () => {
+      const messages = document.querySelectorAll('.plugin-conversation-message');
+      assert.equal(messages[4].dataset.role, 'user');
+      assert.equal(messages[4].querySelectorAll('.conversation-file-card').length, 2);
+      assert.equal(messages[5].querySelector('.bubble-message-content'), null);
+      assert.equal(messages[5].querySelectorAll('.conversation-file-card').length, 1);
+    });
+  } finally { layout.window.close(); }
   const grouped = createDom("?grouping=1");
   try {
     const { window } = grouped, document = window.document;

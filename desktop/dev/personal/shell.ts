@@ -9,6 +9,7 @@ export function installFixtureBridge(invoke: NonNullable<PluginHostOptions["invo
   window.wuu = {
     getBuildInfo: async () => ({ desktop: { version: "synthetic-fixture" } }),
     listMCPServers: async () => ({ servers: [] }),
+    listEngines: async () => ({ engines: [] }),
     listProjects: async () => projects,
     selectNoProject: async () => projects,
     initialize: async () => ({ protocol_version: "wuu-app-server/v0.1", provider: "synthetic", model: "synthetic", workspace_root: workspace, permissions: { mode: "standard" }, providers: [{ name: "synthetic", type: "openai-compatible", model: "synthetic", api_key_configured: true }], advanced_settings: { max_steps: 64, max_context_tokens: 0, temperature: 0, disable_auto_compact: false } }),

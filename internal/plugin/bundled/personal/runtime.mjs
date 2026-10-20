@@ -572,6 +572,7 @@ var PUBLIC_ICON_NAMES = [
   "inbox",
   "layout-grid",
   "list-todo",
+  "mascot",
   "message-square",
   "moon",
   "plug",
@@ -1941,9 +1942,11 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
           if (current.status === "archived") throw new Error("agent is archived");
           if (method === "agents.resume" && current.status === "stopping") throw new Error("agent cancellation is still stopping; wait for reconciliation before resuming");
           const stop = method === "agents.pause" || method === "agents.archive";
+          const name = input.name === void 0 ? current.name : text(input, "name", true);
+          if (input.name !== void 0 && Array.from(name).length > 64) throw new Error("name must be 64 characters or fewer");
           return {
             ...current,
-            name: input.name === void 0 ? current.name : text(input, "name", true),
+            name,
             responsibility: current.kind === "main" ? "" : input.responsibility === void 0 ? current.responsibility : text(input, "responsibility", true),
             communication: input.communication === void 0 ? current.communication : text(input, "communication"),
             status: stop ? "stopping" : method === "agents.resume" ? "active" : current.status,

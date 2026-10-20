@@ -679,3 +679,40 @@
 .conversation-attachment-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--font-mono-size, 13px); user-select: text; }
 .conversation-attachment-preview img { display: block; max-width: 100%; max-height: 80vh; object-fit: contain; }
 .conversation-attachment-preview [role="alert"] { color: var(--danger); }
+
+/* Bubble attachments form their own compact row above the prose, never a card
+   inside a second grey bubble. Standard conversation layout stays unchanged. */
+.plugin-conversation-message[data-bubble] > .plugin-conversation-attachments {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px;
+  width: fit-content; max-width: calc(100% - 73px); align-self: flex-start;
+}
+.plugin-conversation-message[data-bubble] > .plugin-conversation-attachments:has(+ .bubble-message-content) { margin-bottom: 7px; }
+.plugin-conversation-message[data-bubble][data-role="user"] > .plugin-conversation-attachments {
+  align-self: flex-end; justify-content: flex-end; max-width: calc(100% - 80px);
+  transform: translateX(calc(-1 * var(--bubble-time-offset, 0px)));
+  transition: transform 300ms cubic-bezier(.19, 1, .22, 1);
+}
+.plugin-conversation-message[data-bubble] .conversation-file-card {
+  --attachment-chip-background: var(--paper);
+  position: relative; gap: 0; padding: 0; border-radius: 12px;
+  background: var(--attachment-chip-background);
+  border-color: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink);
+}
+.plugin-conversation-message[data-bubble] .conversation-file-card-main {
+  padding: 9px 12px 9px 10px; min-height: 38px; line-height: 20px; gap: 6px;
+  font-size: max(16px, var(--conversation-message-font-size));
+}
+.plugin-conversation-message[data-bubble] .conversation-file-card-main > svg { width: 20px; height: 20px; flex: 0 0 20px; color: currentColor; }
+.plugin-conversation-message[data-bubble] .conversation-file-card-copy strong { font-weight: 400; }
+.plugin-conversation-message[data-bubble] .conversation-file-download {
+  position: absolute; right: 4px; top: 4px; width: 30px; height: 30px;
+  opacity: 0; pointer-events: none; background: var(--attachment-chip-background);
+  box-shadow: -6px 0 5px var(--attachment-chip-background);
+}
+.plugin-conversation-message[data-bubble] .conversation-file-card:hover .conversation-file-download,
+.plugin-conversation-message[data-bubble] .conversation-file-card:focus-within .conversation-file-download { opacity: 1; pointer-events: auto; }
+[data-times-dragging="true"] .plugin-conversation-message[data-bubble][data-role="user"] > .plugin-conversation-attachments { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .plugin-conversation-message[data-bubble][data-role="user"] > .plugin-conversation-attachments { transition: none; }
+}
