@@ -561,6 +561,8 @@ export const zhCN = {
   "webWorkspace.tabs": "浏览器标签页",
   "webWorkspace.pinTab": "固定标签页",
   "webWorkspace.unpinTab": "取消固定标签页",
+  "webWorkspace.muteTab": "标签页静音",
+  "webWorkspace.unmuteTab": "取消标签页静音",
   "webWorkspace.closeCurrentTab": "关闭标签页",
   "webWorkspace.newTab": "新标签页",
   "webWorkspace.closeTab": "关闭 {title}",

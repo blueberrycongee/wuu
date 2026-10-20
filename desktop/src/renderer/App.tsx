@@ -5827,6 +5827,7 @@ export function App(): JSX.Element {
               onNewTab={ribbonBrowser.state && (ribbonBrowser.state.tabs?.length ?? 0) < WEB_WORKSPACE_TAB_LIMIT ? () => { void createWebsiteTab(); } : undefined}
               onCloseTab={ribbonBrowser.closeTab}
               onPinTab={ribbonBrowser.pinTab}
+              onMuteTab={ribbonBrowser.muteTab}
               onReorderTabs={ribbonBrowser.reorderTabs}
               onSelectWebsite={showWebsite}
               catalogActive={showingSkillsCatalog}

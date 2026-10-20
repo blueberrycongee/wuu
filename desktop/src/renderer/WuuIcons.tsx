@@ -29,6 +29,8 @@ function createIcon(name: IconName, defaultStrokeWidth = 1.75) {
 }
 
 export const Activity = createIcon("Activity");
+export const Volume2 = createIcon("Volume2");
+export const VolumeX = createIcon("VolumeX");
 export const AlertCircle = createIcon("AlertCircle");
 export const AlertTriangle = createIcon("AlertTriangle");
 export const Archive = createIcon("Archive");

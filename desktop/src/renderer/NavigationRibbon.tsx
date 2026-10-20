@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { closestCenter, DndContext, useSensor, useSensors } from "@dnd-kit/core";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { arrayMove, SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { Globe, Pin, PinOff, Plus, RotateCw, X } from "./WuuIcons";
+import { Globe, Pin, PinOff, Plus, RotateCw, Volume2, VolumeX, X } from "./WuuIcons";
 import { SIDEBAR_RIBBON_WIDTH } from "./AppLayoutState";
 import { readFocusModality } from "./FocusModality";
 import { HoverRevealScopeContext } from "./HoverReveal";
@@ -14,7 +14,7 @@ import {
   type RibbonWebsite,
 } from "./NavigationRibbonPreferences";
 import { SidebarPointerSensor } from "./SidebarPointerSensor";
-import { RibbonDestination } from "./NavigationRibbonDestination";
+import { focusAfterRibbonClose, RibbonDestination } from "./NavigationRibbonDestination";
 import { chromeOverlayApi, NativeRibbonFooterContext, useChromeOverlay } from "./ChromeOverlay";
 import type { ChromeAccountTrigger, ChromeDesktopUpdate, ChromeOverlayRect, ChromeRibbonFocus, ChromeRibbonModel, RibbonIconModel } from "../shared/chromeOverlay";
 import { ThreadContextMenu } from "./ThreadContextMenu";
@@ -31,10 +31,13 @@ export interface NavigationRibbonItem {
   active?: boolean;
   disabled?: boolean;
   pinned?: boolean;
+  audible?: boolean;
+  muted?: boolean;
   component?: string;
   pluginId?: string;
   onSelect: () => void;
   onClose?: () => void;
+  onMute?: () => void;
 }
 
 export interface RibbonBrowserActions {
@@ -42,11 +45,12 @@ export interface RibbonBrowserActions {
   onNewTab?: () => void;
   onCloseTab?: (id: string) => void;
   onPinTab?: (id: string, pinned: boolean) => void;
+  onMuteTab?: (id: string, muted: boolean) => void;
   onReorderTabs?: (ids: string[]) => void;
 }
 
 
-export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSelectWebsite, onNewTab, onCloseTab, onPinTab, onReorderTabs, footer, ribbonRef, footerSettings, onExpandedChange }: {
+export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSelectWebsite, onNewTab, onCloseTab, onPinTab, onMuteTab, onReorderTabs, footer, ribbonRef, footerSettings, onExpandedChange }: {
   items: NavigationRibbonItem[];
   activeWebsiteId?: string | null;
   onSelectWebsite?: (website: RibbonWebsite) => void;
@@ -112,9 +116,12 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
       active: activeWebsiteId === website.id,
       disabled: !onSelectWebsite,
       pinned: website.pinned,
+      audible: website.audible,
+      muted: website.muted,
       component: "website-navigation-item",
       onSelect: () => onSelectWebsite?.(website),
       onClose: onCloseTab ? () => closeWebsite(website.id) : undefined,
+      onMute: onMuteTab ? () => onMuteTab(website.id, !website.muted) : undefined,
     })),
   ];
   const availableIDs = JSON.stringify(destinations.map((item) => item.id));
@@ -130,6 +137,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   const orderedIDs = [...preferences.order.filter((id) => destinationByID.has(id)),
     ...destinations.map((item) => item.id).filter((id) => !preferences.order.includes(id))];
   const ordered = orderedIDs.map((id) => destinationByID.get(id)!);
+  const tabStop = (ordered.find(item => item.active && !item.disabled) ?? ordered.find(item => !item.disabled))?.id;
   const websiteIDs = new Set(websites.map((website) => website.id));
   const browserOrder = JSON.stringify(orderedIDs.filter((id) => websiteIDs.has(id)));
   useEffect(() => {
@@ -166,9 +174,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   }
 
   function closeWebsite(id: string): void {
-    const index = orderedIDs.indexOf(id);
-    const next = orderedIDs[index + 1] ?? orderedIDs[index - 1];
-    focusRibbonItem(next);
+    focusAfterRibbonClose(id);
     onCloseTab?.(id);
   }
 
@@ -187,9 +193,10 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     setNativeOpen(true);
   }, [nativeAvailable, expanded]);
   const nativeModel: ChromeRibbonModel = { kind: "ribbon", collapsedWidth: SIDEBAR_RIBBON_WIDTH, items: ordered.map(item => ({ id: item.id, title: item.title, icon: item.nativeIcon,
-    active: item.active, disabled: item.disabled, pinned: item.pinned, closable: Boolean(item.onClose), website: websiteIDs.has(item.id), component: item.component, pluginId: item.pluginId })),
+    active: item.active, disabled: item.disabled, pinned: item.pinned, audible: item.audible, muted: item.muted, canMute: Boolean(item.onMute), closable: Boolean(item.onClose), website: websiteIDs.has(item.id), component: item.component, pluginId: item.pluginId })),
     label: t("sidebar.mainNavigation"), newTabLabel: t("webWorkspace.newTab"), canCreateTab: Boolean(onNewTab), closeTabLabel: t("webWorkspace.closeCurrentTab"),
     pinTabLabel: t("webWorkspace.pinTab"), unpinTabLabel: t("webWorkspace.unpinTab"), reorderHint: t("ribbon.reorderHint"),
+    muteTabLabel: t("webWorkspace.muteTab"), unmuteTabLabel: t("webWorkspace.unmuteTab"),
     paddingTop: 0,
     paddingBottom: navRef.current ? Number.parseFloat(getComputedStyle(navRef.current).paddingBottom) : 8,
     scrollTop: scrollTop.current, focusTarget: nativeFocusTarget,
@@ -207,6 +214,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     // would steal keyboard input while the native surface is still open.
     else if (command.type === "close-tab") onCloseTab?.(command.id);
     else if (command.type === "pin-tab") onPinTab?.(command.id, command.pinned);
+    else if (command.type === "mute-tab") onMuteTab?.(command.id, command.muted);
     else if (command.type === "reorder") reorder(command.id, command.target);
     else if (command.type === "new-tab") onNewTab?.();
     else if (command.type === "desktop-update") updateActivate.current?.();
@@ -245,7 +253,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
         onDragEnd={({ active, over }) => { setDragging(false); if (over) reorder(String(active.id), String(over.id)); }}>
         <div className="sidebar-ribbon-main scrollbar-hidden">
           <SortableContext items={orderedIDs} strategy={verticalListSortingStrategy}>
-            {ordered.map((item) => <RibbonDestination key={item.id} item={item} boundedNative={nativePresented} nativeTooltip={Boolean(activeWebsiteId)}
+            {ordered.map((item) => <RibbonDestination key={item.id} item={item} tabStop={item.id === tabStop} boundedNative={nativePresented} nativeTooltip={Boolean(activeWebsiteId)}
               onMove={(direction) => move(item.id, direction)}
               onMenu={websiteIDs.has(item.id) ? (x, y) => setMenu({ id: item.id, x, y }) : undefined} />)}
           </SortableContext>
@@ -264,6 +272,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     </NativeRibbonFooterContext.Provider>
     {menu && menuWebsite ? <ThreadContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={[
       { label: t(menuWebsite.pinned ? "webWorkspace.unpinTab" : "webWorkspace.pinTab"), icon: menuWebsite.pinned ? <PinOff /> : <Pin />, onSelect: () => { focusRibbonItem(menuWebsite.id); onPinTab?.(menuWebsite.id, !menuWebsite.pinned); } },
+      { label: t(menuWebsite.muted ? "webWorkspace.unmuteTab" : "webWorkspace.muteTab"), icon: menuWebsite.muted ? <Volume2 /> : <VolumeX />, disabled: !onMuteTab, onSelect: () => onMuteTab?.(menuWebsite.id, !menuWebsite.muted) },
       { label: t("webWorkspace.closeCurrentTab"), icon: <X />, onSelect: () => closeWebsite(menuWebsite.id) },
     ]} /> : null}
   </>;

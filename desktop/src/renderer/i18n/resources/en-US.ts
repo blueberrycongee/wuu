@@ -564,6 +564,8 @@ export const enUS = {
   "webWorkspace.tabs": "Browser tabs",
   "webWorkspace.pinTab": "Pin tab",
   "webWorkspace.unpinTab": "Unpin tab",
+  "webWorkspace.muteTab": "Mute tab",
+  "webWorkspace.unmuteTab": "Unmute tab",
   "webWorkspace.closeCurrentTab": "Close tab",
   "webWorkspace.newTab": "New tab",
   "webWorkspace.closeTab": "Close {title}",

@@ -228,17 +228,19 @@ export class ChromeOverlayHost {
       } else if (command.type !== "capsule-expand" && command.type !== "capsule-open") return;
     } else {
       const model = request.model;
-      if (["select", "close-tab", "pin-tab", "tab-menu", "reorder"].includes(command.type)) {
+      if (["select", "close-tab", "pin-tab", "mute-tab", "tab-menu", "reorder"].includes(command.type)) {
         if (!("id" in command)) return;
         const item = model.items.find(item => item.id === command.id && !item.disabled);
         if (!item || (command.type !== "select" && command.type !== "reorder" && !item.website)) return;
         if (command.type === "close-tab" && !item.closable) return;
         if (command.type === "reorder" && !model.items.some(item => item.id === command.target)) return;
         if (command.type === "pin-tab" && typeof command.pinned !== "boolean") return;
+        if (command.type === "mute-tab" && (!item.canMute || typeof command.muted !== "boolean")) return;
         if (command.type === "tab-menu") {
           if (![command.x, command.y].every(Number.isFinite)) return;
           const menu = surface.menu = Menu.buildFromTemplate([
             { label: item.pinned ? model.unpinTabLabel : model.pinTabLabel, click: () => this.emitCurrent(surface, { type: "pin-tab", id: item.id, pinned: !item.pinned }) },
+            { label: item.muted ? model.unmuteTabLabel : model.muteTabLabel, enabled: item.canMute, click: () => this.emitCurrent(surface, { type: "mute-tab", id: item.id, muted: !item.muted }) },
             { label: model.closeTabLabel, enabled: item.closable, click: () => this.emitCurrent(surface, { type: "close-tab", id: item.id }) },
           ]);
           const zoom = surface.owner.webContents.getZoomFactor();

@@ -25,6 +25,8 @@ export type WebWorkspaceTabState = {
   canGoForward: boolean;
   zoomFactor: number;
   pinned?: boolean;
+  audible?: boolean;
+  muted?: boolean;
   favicon?: string;
   /** False for a live about:blank popup, which may contain script-written content. */
   startPage?: boolean;
@@ -88,6 +90,7 @@ export type WebWorkspaceApi = {
   closeTab: (id: string, tabId: string) => Promise<WebWorkspaceState>;
   reopenTab: (id: string) => Promise<WebWorkspaceState>;
   setTabPinned: (id: string, tabId: string, pinned: boolean) => Promise<WebWorkspaceState>;
+  setTabMuted: (id: string, tabId: string, muted: boolean) => Promise<WebWorkspaceState>;
   reorderTabs: (id: string, tabIds: string[]) => Promise<WebWorkspaceState>;
   find: (id: string, text: string, options?: WebWorkspaceFindOptions) => Promise<WebWorkspaceState>;
   stopFind: (id: string) => Promise<WebWorkspaceState>;

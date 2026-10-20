@@ -18,6 +18,7 @@ export type RibbonIconModel =
 export type ChromeRibbonItem = {
   id: string; title: string; icon: RibbonIconModel; active?: boolean; disabled?: boolean;
   pinned?: boolean; closable?: boolean; website?: boolean; component?: string; pluginId?: string;
+  audible?: boolean; muted?: boolean; canMute?: boolean;
 };
 export type ChromeAccountTrigger = { title: string; initials?: string; disabled: boolean; open: boolean; label: string };
 export type ChromeDesktopUpdate = { state: "available" | "ready" | "error" | "downloading" | "checking" | "prompting" | "installing"; label: string; progressLabel: string; busy: boolean; percent?: number };
@@ -35,6 +36,7 @@ export type ChromeRibbonModel = {
   items: ChromeRibbonItem[];
   label: string; newTabLabel: string; canCreateTab: boolean;
   closeTabLabel: string; pinTabLabel: string; unpinTabLabel: string; reorderHint: string;
+  muteTabLabel: string; unmuteTabLabel: string;
   paddingTop: number; paddingBottom: number; scrollTop: number;
   focusTarget?: ChromeRibbonFocus;
   footer?: { settings: ChromeRibbonItem; account?: ChromeAccountTrigger; update?: ChromeDesktopUpdate };
@@ -57,6 +59,7 @@ export type ChromeOverlayCommand =
   | { type: "capsule-collapse" | "capsule-draft" | "capsule-send"; text: string }
   | { type: "select" | "close-tab"; id: string }
   | { type: "pin-tab"; id: string; pinned: boolean }
+  | { type: "mute-tab"; id: string; muted: boolean }
   | { type: "reorder"; id: string; target: string }
   | { type: "new-tab" | "settings" | "desktop-update" }
   | { type: "account-open"; anchor: ChromeOverlayRect }

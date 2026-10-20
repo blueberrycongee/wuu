@@ -12,7 +12,7 @@ if (!process.versions.electron) {
   const { spawnSync } = require("node:child_process");
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "wuu-media-permissions-"));
   try {
-    const result = spawnSync(String(require("electron")), [
+    const result = spawnSync(process.env.WUU_E2E_ELECTRON || String(require("electron")), [
       ...(process.platform === "linux" ? ["--no-sandbox", ...(!process.env.DISPLAY ? ["--ozone-platform=headless"] : [])] : []),
       __filename,
     ], { stdio: "inherit", env: { ...process.env, WUU_MEDIA_PERMISSIONS_PROFILE: profile } });
@@ -27,7 +27,7 @@ const { app, BrowserWindow, dialog, session } = require("electron");
 const { buildSync } = require("esbuild");
 
 const root = path.resolve(__dirname, "..");
-const output = path.join(root, "out/e2e/browser-media-permissions");
+const output = process.env.WUU_MEDIA_PERMISSIONS_OUTPUT || path.join(root, "out/e2e/browser-media-permissions");
 const profile = process.env.WUU_MEDIA_PERMISSIONS_PROFILE;
 assert(profile, "Use the Node launcher so the temporary browser profile is cleaned after Electron exits.");
 fs.mkdirSync(output, { recursive: true });
@@ -78,7 +78,8 @@ const fixture = `<!doctype html><title>Browser media permission acceptance</titl
   const otherOrigin = `http://localhost:${server.address().port}`;
   win = new BrowserWindow({ width: 960, height: 760, webPreferences: { sandbox: true } });
   await win.loadURL("data:text/html,<title>Wuu browser media acceptance</title>");
-  host = new WebWorkspaceHost(() => {}, () => {});
+  const states = [];
+  host = new WebWorkspaceHost((_owner, next) => states.push(next), () => {});
   installBrowserSessionHandlers(session.fromPartition(BROWSER_PARTITION), { ownsWebContents: () => false }, host);
   host.initializeTabs(win, []);
   const group = "ribbon-browser";
@@ -134,6 +135,35 @@ const fixture = `<!doctype html><title>Browser media permission acceptance</titl
   check("Returning to the interrupted origin asks again", prompts.length, 6);
   await wc.loadURL(origin + "/returned");
   check("Returning to the original origin retains its own tab grant", await acquire({ audio: true }), "audio");
+  // A tab mute must affect Chromium output, retain selection and permission
+  // state, and survive navigation without muting same-origin sibling tabs.
+  const tabID = state.activeTabId;
+  let audioState = host.setTabMuted(win, group, tabID, true);
+  check("Muting a tab reaches Chromium audio output", wc.isAudioMuted(), true);
+  check("Muted status reaches browser tab state", audioState.tabs.find(tab => tab.id === tabID).muted, true);
+  await wc.loadURL(origin + "/muted-navigation");
+  check("Tab mute survives navigation", wc.isAudioMuted(), true);
+  const sibling = host.createTab(win, group, origin + "/sibling");
+  let siblingContents;
+  await until(() => {
+    siblingContents = win.contentView.children.find(view => view.webContents?.getURL() === origin + "/sibling")?.webContents;
+    return siblingContents && !siblingContents.isLoading();
+  }, "audio sibling");
+  check("A same-origin sibling does not inherit another tab's mute", siblingContents.isAudioMuted(), false);
+  audioState = host.setTabMuted(win, group, tabID, false);
+  check("Unmuting a background tab does not change the selected tab", audioState.activeTabId, sibling.activeTabId);
+  check("Unmute reaches Chromium", wc.isAudioMuted(), false);
+  host.selectTab(win, group, tabID);
+  // A brief, quiet tone exercises Chromium's real audibility signal. Chromium's
+  // --mute-audio disables that signal, so it cannot validate the product state.
+  await wc.executeJavaScript(`window.audioContext=new AudioContext();window.tone=audioContext.createOscillator();
+    const gain=audioContext.createGain();gain.gain.value=0.01;tone.frequency.value=220;
+    tone.connect(gain);gain.connect(audioContext.destination);tone.start();tone.stop(audioContext.currentTime+0.5);audioContext.resume()`, true);
+  await until(() => states.at(-1)?.tabs.find(tab => tab.id === tabID)?.audible === true, "real Chromium audio status");
+  check("Chromium audio playback is reported to the ribbon", wc.isCurrentlyAudible(), true);
+  await wc.executeJavaScript("audioContext.close()", true);
+  await until(() => !states.at(-1)?.tabs.find(tab => tab.id === tabID)?.audible, "audio status cleared");
+  check("Stopping playback clears the audio indicator", wc.isCurrentlyAudible(), false);
   await wc.executeJavaScript(`document.querySelector("#results").innerHTML=${JSON.stringify(checks.map(name => `<li>PASS: ${name}</li>`).join(""))}`);
   fs.writeFileSync(path.join(output, "media-permissions.png"), (await wc.capturePage()).toPNG());
   fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({

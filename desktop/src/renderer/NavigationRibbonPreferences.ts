@@ -5,6 +5,8 @@ export interface RibbonWebsite {
   title: string;
   url: string;
   pinned?: boolean;
+  audible?: boolean;
+  muted?: boolean;
   loading?: boolean;
   favicon?: string;
   startPage?: boolean;

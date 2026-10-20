@@ -59,6 +59,7 @@ function savedSession(value: unknown, ribbon = false): WebWorkspaceSavedSession 
     if (!url) continue;
     tabs.push({ id: tab.id, url, title: url === tab.url ? titleText(tab.title, url) : new URL(url).hostname,
       ...(tab.pinned === true ? { pinned: true } : {}),
+      ...(tab.muted === true ? { muted: true } : {}),
       ...(typeof tab.zoomFactor === "number" && Number.isFinite(tab.zoomFactor)
         && tab.zoomFactor >= WEB_WORKSPACE_ZOOM_MIN && tab.zoomFactor <= WEB_WORKSPACE_ZOOM_MAX
         ? { zoomFactor: tab.zoomFactor } : {}) });

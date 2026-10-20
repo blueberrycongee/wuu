@@ -12,7 +12,7 @@ import type { WebWorkspaceDownloads } from "./webWorkspaceDownloads";
 
 // Website pages keep their native ownership. Explicit, turn-scoped automation
 // borrows a live view; restored tabs create native views only when selected.
-type WorkspaceTab = { id: string; url: string; title: string; zoomFactor: number; pinned?: boolean; favicon?: string; startPage?: boolean; page?: WorkspacePage;
+type WorkspaceTab = { id: string; url: string; title: string; zoomFactor: number; pinned?: boolean; muted?: boolean; favicon?: string; startPage?: boolean; page?: WorkspacePage;
   discarded?: { entries: NavigationEntry[]; index: number; scroll: { x: number; y: number } } };
 type WorkspaceGroup = {
   id: string;
@@ -23,7 +23,7 @@ type WorkspaceGroup = {
   activeTabId: string;
   bounds: WebWorkspaceBounds | null;
   lastBounds?: WebWorkspaceBounds;
-  closedTabs: { url: string; title: string; zoomFactor: number; pinned?: boolean }[];
+  closedTabs: { url: string; title: string; zoomFactor: number; pinned?: boolean; muted?: boolean }[];
   migratedTabGroups?: Record<string, string[]>;
 };
 type AutomationRestriction = { active: boolean };
@@ -536,6 +536,17 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     return this.state(group);
   }
 
+  setTabMuted(owner: BrowserWindow, id: string, tabId: string, muted: boolean): WebWorkspaceState {
+    const group = this.tabGroup(owner, id);
+    if (typeof muted !== "boolean") throw new Error("A tab's muted state must be a boolean.");
+    const tab = group.tabs.find(candidate => candidate.id === tabId);
+    if (!tab) throw new Error("The website tab is no longer open.");
+    tab.muted = muted;
+    if (tab.page && !tab.page.contents.isDestroyed()) tab.page.contents.setAudioMuted(muted);
+    this.emit(group);
+    return this.state(group);
+  }
+
   reorderTabs(owner: BrowserWindow, id: string, tabIds: string[]): WebWorkspaceState {
     const group = this.tabGroup(owner, id);
     if (!Array.isArray(tabIds) || tabIds.some(tabId => typeof tabId !== "string") || new Set(tabIds).size !== tabIds.length) throw new Error("Invalid browser tab order.");
@@ -704,6 +715,8 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
       ...(tab.discarded ? { discarded: true } : {}),
       zoomFactor: tab.zoomFactor,
       ...(tab.pinned ? { pinned: true } : {}),
+      ...(tab.muted ? { muted: true } : {}),
+      ...(contents?.isCurrentlyAudible() ? { audible: true } : {}),
       ...(tab.favicon ? { favicon: tab.favicon } : {}),
       startPage: tab.startPage !== false,
       ...(page?.automation ? { agentControlled: true } : {}),
@@ -724,7 +737,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     if (this.groups.get(group.id) !== group || group.owner.isDestroyed()) return;
     if (group.tabbed) this.options.library?.saveSession(group.id, {
       homeURL: group.homeURL,
-      tabs: group.tabs.map(tab => { const state = this.tabState(tab); return { id: state.id, url: state.url, title: state.title, zoomFactor: tab.zoomFactor, ...(tab.pinned ? { pinned: true } : {}) }; }),
+      tabs: group.tabs.map(tab => { const state = this.tabState(tab); return { id: state.id, url: state.url, title: state.title, zoomFactor: tab.zoomFactor, ...(tab.pinned ? { pinned: true } : {}), ...(tab.muted ? { muted: true } : {}) }; }),
       activeTabId: group.activeTabId,
       ...(group.migratedTabGroups ? { migratedTabGroups: group.migratedTabGroups } : {}),
     });
@@ -756,6 +769,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
       inactiveSince: group.activeTabId === tab.id ? undefined : performance.now(),
     };
     tab.page = page;
+    page.contents.setAudioMuted(tab.muted ?? false);
     this.pages.set(page.id, page);
     view.setVisible(false);
     // Chromium can focus a newly attached hidden view before bounds arrive.
@@ -783,6 +797,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     });
     page.contents.on("did-start-loading", () => { page.error = undefined; this.emit(group); });
     page.contents.on("did-stop-loading", () => this.emit(group));
+    page.contents.on("audio-state-changed", () => this.emit(group));
     page.contents.on("did-start-navigation", details => {
       if (!details.isMainFrame) return;
       page.navigationGeneration++;
@@ -867,7 +882,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
   private removeTab(group: WorkspaceGroup, index: number): void {
     const tab = group.tabs[index];
     const state = this.tabState(tab);
-    group.closedTabs.push({ url: state.url, title: state.title, zoomFactor: tab.zoomFactor, pinned: tab.pinned });
+    group.closedTabs.push({ url: state.url, title: state.title, zoomFactor: tab.zoomFactor, pinned: tab.pinned, muted: tab.muted });
     if (group.closedTabs.length > 20) group.closedTabs.shift();
     group.tabs.splice(index, 1);
     if (tab.page) this.destroyPage(tab.page);

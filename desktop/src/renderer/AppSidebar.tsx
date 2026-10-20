@@ -470,6 +470,7 @@ export function AppSidebar({
   onNewTab,
   onCloseTab,
   onPinTab,
+  onMuteTab,
   onReorderTabs,
 }: {
   state: AppState;
@@ -1816,6 +1817,7 @@ export function AppSidebar({
         onNewTab={onNewTab ? () => activateNative(onNewTab) : undefined}
         onCloseTab={onCloseTab}
         onPinTab={onPinTab}
+        onMuteTab={onMuteTab}
         onReorderTabs={onReorderTabs}
         activeWebsiteId={activeWebsiteId}
         onSelectWebsite={onSelectWebsite ? (website) => activateNative(() => onSelectWebsite(website)) : undefined}

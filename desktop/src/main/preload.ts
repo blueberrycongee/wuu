@@ -751,6 +751,7 @@ if (!process.argv.includes("--wuu-browser-disabled")) {
     closeTab: (id, tabId) => ipcRenderer.invoke("wuu:web-workspace-tab-close", id, tabId),
     reopenTab: (id) => ipcRenderer.invoke("wuu:web-workspace-tab-reopen", id),
     setTabPinned: (id, tabId, pinned) => ipcRenderer.invoke("wuu:web-workspace-tab-pin", id, tabId, pinned),
+    setTabMuted: (id, tabId, muted) => ipcRenderer.invoke("wuu:web-workspace-tab-mute", id, tabId, muted),
     reorderTabs: (id, tabIds) => ipcRenderer.invoke("wuu:web-workspace-tabs-reorder", id, tabIds),
     find: (id, text, options) => ipcRenderer.invoke("wuu:web-workspace-find", id, text, options),
     stopFind: (id) => ipcRenderer.invoke("wuu:web-workspace-stop-find", id),
@@ -802,9 +803,9 @@ browserApi.setBrowserExtensionEnabled = (id, enabled) =>
   ipcRenderer.invoke("wuu:browser-extensions-set-enabled", id, enabled) as Promise<BrowserExtensionRecord[]>;
 browserApi.reloadBrowserExtension = (id) =>
   ipcRenderer.invoke("wuu:browser-extensions-reload", id) as Promise<BrowserExtensionRecord[]>;
-browserApi.removeBrowserExtension = (id) =>
 browserApi.openBrowserExtensionOptions = (id) =>
   ipcRenderer.invoke("wuu:browser-extensions-options", id) as Promise<void>;
+browserApi.removeBrowserExtension = (id) =>
   ipcRenderer.invoke("wuu:browser-extensions-remove", id) as Promise<BrowserExtensionRecord[]>;
 
 (api as WuuDesktopApi & PageContextApi).readPageContext = (id, tabId) => ipcRenderer.invoke("wuu:page-context-read", id, tabId);

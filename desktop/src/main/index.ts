@@ -2979,6 +2979,8 @@ app.whenReady().then(async () => {
     webWorkspaceHost.reopenTab(webWorkspaceSender(event), id));
   ipcMain.handle("wuu:web-workspace-tab-pin", (event, id: string, tabId: string, pinned: boolean) =>
     webWorkspaceHost.setTabPinned(webWorkspaceSender(event), id, tabId, pinned));
+  ipcMain.handle("wuu:web-workspace-tab-mute", (event, id: string, tabId: string, muted: boolean) =>
+    webWorkspaceHost.setTabMuted(webWorkspaceSender(event), id, tabId, muted));
   ipcMain.handle("wuu:web-workspace-tabs-reorder", (event, id: string, tabIds: string[]) =>
     webWorkspaceHost.reorderTabs(webWorkspaceSender(event), id, tabIds));
   ipcMain.handle("wuu:web-workspace-find", (event, id: string, text: string, options?: WebWorkspaceFindOptions) =>
@@ -3079,14 +3081,14 @@ app.whenReady().then(async () => {
     }
     return requireBrowserExtensionManager().remove(id);
   });
-  systemPermissions.start();
-  ipcMain.handle("wuu:system-permissions", event => {
   ipcMain.handle("wuu:browser-extensions-options", async (event, id: unknown) => {
     const host = requireBrowserSettingsSender(event);
     if (typeof id !== "string" || !id.trim()) throw new Error("Extension id is required.");
     if (!browserExtensionWindows) throw new Error("Embedded browser extensions are unavailable.");
     await browserExtensionWindows.openOptions(id, host);
   });
+  systemPermissions.start();
+  ipcMain.handle("wuu:system-permissions", event => {
     requireAppContextSender(event);
     return systemPermissions.state();
   });

@@ -39,6 +39,7 @@ app.whenReady().then(async () => {
     await settle();
     host.setZoom(owner, id, 1.5);
     host.setTabPinned(owner, id, first, true);
+    host.setTabMuted(owner, id, first, true);
     await view().webContents.session.cookies.set({ url, name: "sessionFixture", value: "retained", expirationDate: Date.now() / 1000 + 3600 });
     const second = host.createTab(owner, id, `${url}/second`).activeTabId!;
     await settle();
@@ -59,14 +60,17 @@ app.whenReady().then(async () => {
   assert.deepEqual(initial.tabs!.map(tab => tab.id), [second, first]);
   assert.equal(initial.activeTabId, first);
   assert.equal(initial.tabs!.find(tab => tab.id === first)!.pinned, true);
+  assert.equal(initial.tabs!.find(tab => tab.id === first)!.muted, true);
   assert.equal(initial.tabs!.find(tab => tab.id === first)!.zoomFactor, 1.5, "Chosen page zoom must survive restart");
   assert.equal(initial.tabs!.find(tab => tab.id === second)!.zoomFactor, 0.8);
   host.open(owner, { id, url: "about:blank" });
   await settle();
   assert.ok(Math.abs(view().webContents.getZoomFactor() - 1.5) < 1e-6);
+  assert.equal(view().webContents.isAudioMuted(), true, "Restored muted tabs must stay silent before page playback starts");
   assert.equal((await view().webContents.session.cookies.get({ url, name: "sessionFixture" }))[0]?.value, "retained");
   assert.equal(owner.contentView.children.filter(child => child instanceof WebContentsView).length, 1);
   host.selectTab(owner, id, second); await settle();
+  assert.equal(view().webContents.isAudioMuted(), false, "A same-origin sibling retains its own audio choice");
   assert.ok(Math.abs(view().webContents.getZoomFactor() - 0.8) < 1e-6);
   host.selectTab(owner, id, first); await settle();
   assert.ok(Math.abs(view().webContents.getZoomFactor() - 1.5) < 1e-6);
@@ -75,6 +79,7 @@ app.whenReady().then(async () => {
     chromium: process.versions.chrome, platform: process.platform, checks: [
       "Two fresh Electron processes retain tab order, selected tab, pin and persistent cookies",
       "Distinct zoom preferences survive restart and switching between same-origin tabs",
+      "Muted tabs stay muted after restart without muting a same-origin sibling",
       "Restored background tabs do not create native views until selected",
     ], limitations: ["Local HTTP fixture; no account authentication", "Screenshot is the actual native webpage, not the full product shell"] }, null, 2));
   host.destroyAll();

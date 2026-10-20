@@ -56,10 +56,11 @@ export function useRibbonBrowserTabs(enabled = true) {
   const selectTab = useCallback((id: string) => update((browser) => browser.selectTab(WEB_WORKSPACE_RIBBON_ID, id)), [update]);
   const closeTab = useCallback((id: string) => { void update((browser) => browser.closeTab(WEB_WORKSPACE_RIBBON_ID, id)); }, [update]);
   const pinTab = useCallback((id: string, pinned: boolean) => { void update((browser) => browser.setTabPinned(WEB_WORKSPACE_RIBBON_ID, id, pinned)); }, [update]);
+  const muteTab = useCallback((id: string, muted: boolean) => { void update((browser) => browser.setTabMuted(WEB_WORKSPACE_RIBBON_ID, id, muted)); }, [update]);
   const reorderTabs = useCallback((ids: string[]) => {
     const tabs = stateRef.current?.tabs ?? [];
     if (ids.length !== tabs.length || tabs.every((tab, index) => tab.id === ids[index])) return;
     void update((browser) => browser.reorderTabs(WEB_WORKSPACE_RIBBON_ID, ids));
   }, [update]);
-  return { state, createTab, reopenTab, selectTab, closeTab, pinTab, reorderTabs };
+  return { state, createTab, reopenTab, selectTab, closeTab, pinTab, muteTab, reorderTabs };
 }

@@ -4,7 +4,7 @@ import { closestCenter, DndContext, useSensor, useSensors } from "@dnd-kit/core"
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import type { ChromeOverlayCommand, ChromeOverlayRendererApi, ChromeOverlayRequest, ChromeRibbonModel } from "../shared/chromeOverlay";
-import { RibbonDestination } from "./NavigationRibbonDestination";
+import { focusAfterRibbonClose, RibbonDestination } from "./NavigationRibbonDestination";
 import { ChromeRibbonIcon } from "./ChromeRibbonIcon";
 import { SidebarAccountPanel, SidebarAccountTrigger } from "./SidebarAccountParts";
 import { SidebarPointerSensor } from "./SidebarPointerSensor";
@@ -24,14 +24,14 @@ function RibbonSurface({ model, send }: { model: ChromeRibbonModel; send: (comma
   const main = useRef<HTMLDivElement>(null);
   const sensors = useSensors(useSensor(SidebarPointerSensor, { activationConstraint: { distance: 6 } }));
   const ids = model.items.map(item => item.id);
+  const tabStop = (model.items.find(item => item.active && !item.disabled) ?? model.items.find(item => !item.disabled))?.id;
   useLayoutEffect(() => { if (main.current) main.current.scrollTop = model.scrollTop; }, []);
   const active = model.items.find(item => item.active)?.id;
   useLayoutEffect(() => {
     [...document.querySelectorAll<HTMLButtonElement>("[data-ribbon-id]")].find(button => button.dataset.ribbonId === active)?.scrollIntoView({ block: "nearest" });
   }, [active]);
   const close = (id: string) => {
-    const index = ids.indexOf(id), next = ids[index + 1] ?? ids[index - 1];
-    [...document.querySelectorAll<HTMLButtonElement>("[data-ribbon-id]")].find(button => button.dataset.ribbonId === next)?.focus();
+    focusAfterRibbonClose(id);
     send({ type: "close-tab", id });
   };
   return <nav className="sidebar-ribbon" data-expanded="true" aria-label={model.label}
@@ -51,8 +51,9 @@ function RibbonSurface({ model, send }: { model: ChromeRibbonModel; send: (comma
       }}>
       <div ref={main} className="sidebar-ribbon-main scrollbar-hidden" onScroll={event => send({ type: "scroll", top: event.currentTarget.scrollTop })}>
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-          {model.items.map(item => <RibbonDestination key={item.id} boundedNative nativeTooltip={false}
-            item={{ ...item, nativeIcon: item.icon, icon: <ChromeRibbonIcon icon={item.icon} />, onSelect: () => send({ type: "select", id: item.id }), onClose: item.closable ? () => close(item.id) : undefined }}
+          {model.items.map(item => <RibbonDestination key={item.id} tabStop={item.id === tabStop} boundedNative nativeTooltip={false}
+            item={{ ...item, nativeIcon: item.icon, icon: <ChromeRibbonIcon icon={item.icon} />, onSelect: () => send({ type: "select", id: item.id }), onClose: item.closable ? () => close(item.id) : undefined,
+              onMute: item.canMute ? () => send({ type: "mute-tab", id: item.id, muted: !item.muted }) : undefined }}
             onMove={direction => { const target = ids[ids.indexOf(item.id) + direction]; if (target) send({ type: "reorder", id: item.id, target }); }}
             onMenu={item.website ? (x, y) => send({ type: "tab-menu", id: item.id, x, y }) : undefined} />)}
         </SortableContext>
