@@ -34,6 +34,8 @@ app.whenReady().then(async () => {
     const hit = rect && document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
     return { width: window.innerWidth, mode: shell.dataset.wuuSidebarMode,
       sidebar: sidebar.toJSON(), reserved: parseFloat(shell.style.getPropertyValue('--sidebar-width')),
+      ribbon: document.querySelector('.sidebar-ribbon')?.getBoundingClientRect().toJSON(),
+      conversation: document.querySelector('.conversation-pane').getBoundingClientRect().toJSON(),
       savedCollapsed: localStorage.getItem('wuu.desktop.sidebarCollapsed'),
       savedWidth: localStorage.getItem('wuu.desktop.sidebarWidth'),
       button: rect?.toJSON(), hitsButton: !!button && (hit === button || button.contains(hit)),
@@ -89,12 +91,15 @@ app.whenReady().then(async () => {
           const x = rect.left + rect.width / 2;
           const y = Math.min(rect.bottom - 20, Math.max(rect.top + 80, 180));
           const hit = document.elementFromPoint(x, y);
+          const inputHit = document.elementFromPoint(Math.round(x), Math.round(y));
           return { x, y, targetWidth: parseFloat(getComputedStyle(shell).getPropertyValue('--sidebar-open-width')), sidebar: document.querySelector('.sidebar').getBoundingClientRect().toJSON(),
             divider: rect.toJSON(), hitsDivider: hit === divider || divider.contains(hit),
-            hit: hit ? { tag: hit.tagName, className: hit.className } : null,
+            hit: hit ? { tag: hit.tagName, className: hit.className, rect: hit.getBoundingClientRect().toJSON() } : null,
             hitStack: document.elementsFromPoint(x, y).slice(0, 6).map(element => ({
               tag: element.tagName, className: element.className, zIndex: getComputedStyle(element).zIndex,
             })),
+            hitsInputTarget: inputHit === divider || divider.contains(inputHit),
+            inputHit: inputHit ? { tag: inputHit.tagName, className: inputHit.className, rect: inputHit.getBoundingClientRect().toJSON() } : null,
             animating: shell.classList.contains('sidebar-animating') };
         }
         await new Promise(requestAnimationFrame);
@@ -104,6 +109,7 @@ app.whenReady().then(async () => {
     // Preserve geometry and the actual hit target even if a pre-input check fails.
     fs.writeFileSync(path.join(output, "interrupt-resize-hit-" + gesture + ".json"), JSON.stringify(before, null, 2));
     assert(before.animating && before.hitsDivider, `Mid-flight divider must be reachable: ${JSON.stringify(before)}`);
+    assert(before.hitsInputTarget, `The integer mouse coordinate must reach the divider: ${JSON.stringify(before)}`);
     assert(Math.abs(before.x - before.sidebar.right) <= 2,
       `Divider must follow the painted sidebar boundary during opening: ${JSON.stringify(before)}`);
     const point = { x: Math.round(before.x), y: Math.round(before.y) };
@@ -174,12 +180,22 @@ app.whenReady().then(async () => {
       await resize(width);
       assert(await js(collapsed));
       const current = await measure();
-      assert.equal(current.reserved, 0);
+      assert(current.ribbon, "Collapsed navigation retains its fixed ribbon");
+      assert(Math.abs(current.reserved - current.sidebar.width) < 1, JSON.stringify(current));
+      assert(Math.abs(current.sidebar.right - current.ribbon.right) < 1, JSON.stringify(current));
+      assert(Math.abs(current.conversation.left - current.ribbon.right) < 1, JSON.stringify(current));
       assert.equal(current.savedCollapsed, "true");
       report.push({ theme, font, ...current });
     }
-    const beforeHover = await measure();
-    win.webContents.sendInputEvent({ type: "mouseMove", x: Math.round(beforeHover.button.x + beforeHover.button.width / 2), y: Math.round(beforeHover.button.y + beforeHover.button.height / 2) });
+    const hoverPoint = await js(`(() => {
+      const zone = document.querySelector('.sidebar-hover-zone');
+      const rect = zone.getBoundingClientRect();
+      const x = Math.round(rect.x + rect.width / 2);
+      const y = Math.round(rect.y + rect.height / 2);
+      return { x, y, reachable: document.elementFromPoint(x, y) === zone };
+    })()`);
+    assert(hoverPoint.reachable, "The collapsed sidebar edge must expose its hover target");
+    win.webContents.sendInputEvent({ type: "mouseMove", x: hoverPoint.x, y: hoverPoint.y });
     await wait(drawerOpen); await settled();
     const hover = await measure();
     assert(hover.hitsButton, JSON.stringify(hover));

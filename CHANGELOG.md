@@ -76,6 +76,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep opening sidebar content clipped so the moving resize divider remains clickable.
+
 - Preserve the rendered sidebar width when a drag interrupts its opening animation, then settle to normal width constraints on release.
 
 - Keep native browser bounds and occlusion tracking active through CSS transitions,

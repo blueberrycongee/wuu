@@ -97,7 +97,6 @@ html[data-app-background] .app-shell.navigation-ribbon-layout:has(.sidebar-ribbo
    its overlay, so neither the secondary pane nor the page changes geometry. */
 .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar {
   grid-column: 1;
-  overflow: visible;
   border: 0;
   background: transparent;
   box-shadow: none;
