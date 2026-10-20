@@ -27,8 +27,14 @@ function RibbonSurface({ model, send }: { model: ChromeRibbonModel; send: (comma
   const tabStop = (model.items.find(item => item.active && !item.disabled) ?? model.items.find(item => !item.disabled))?.id;
   useLayoutEffect(() => { if (main.current) main.current.scrollTop = model.scrollTop; }, []);
   const active = model.items.find(item => item.active)?.id;
+  const previousActive = useRef(active);
   useLayoutEffect(() => {
-    [...document.querySelectorAll<HTMLButtonElement>("[data-ribbon-id]")].find(button => button.dataset.ribbonId === active)?.scrollIntoView({ block: "nearest" });
+    // Opening the native surface restores the shell's scroll position. Only a
+    // subsequent tab selection should move it to the active row.
+    if (previousActive.current !== active) {
+      [...document.querySelectorAll<HTMLButtonElement>("[data-ribbon-id]")].find(button => button.dataset.ribbonId === active)?.scrollIntoView({ block: "nearest" });
+      previousActive.current = active;
+    }
   }, [active]);
   const close = (id: string) => {
     focusAfterRibbonClose(id);
@@ -142,7 +148,9 @@ function Overlay(): JSX.Element | null {
       if (request.model.kind === "ribbon" && event.key === "Tab") {
         const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
         const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-        if (index >= 0 && (event.shiftKey ? index > 0 : index < buttons.length - 1)) return;
+        // Roving rows and their trailing actions have tabIndex=-1. Count only
+        // reachable buttons when handing keyboard focus back to the webpage.
+        if (index >= 0 && (event.shiftKey ? buttons.slice(0, index) : buttons.slice(index + 1)).some(button => button.tabIndex >= 0)) return;
       }
       if (request.model.kind !== "capsule" && (event.key === "Escape" || event.key === "Tab")) {
         event.preventDefault(); event.stopPropagation(); send({ type: "dismiss", reason: event.key === "Escape" ? "escape" : "tab" });

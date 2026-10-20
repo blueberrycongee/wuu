@@ -1,5 +1,5 @@
-// Exercise the shipping ribbon in Chromium with a long synthetic tab list.
-// This renderer fixture complements the full native workspace acceptance.
+// Exercise the shipping shell and isolated native ribbon over a live page.
+// Synthetic tab models complement the full native workspace acceptance.
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -17,14 +17,19 @@ if (!process.versions.electron) {
   } finally { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
   return;
 }
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, WebContentsView, ipcMain, protocol } = require("electron");
 assert(process.env.WUU_RIBBON_PROFILE);
 app.setPath("userData", process.env.WUU_RIBBON_PROFILE);
 fs.mkdirSync(output, { recursive: true });
-for (const name of ["failure.txt", "failure.png"]) fs.rmSync(path.join(output, name), { force: true });
-const checks = [], screenshots = [];
+for (const name of ["failure.txt", "failure.png", "failure-events.json"]) fs.rmSync(path.join(output, name), { force: true });
+const checks = [], screenshots = [], limitations = [];
+const nativeEvents = [];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-let win;
+let win, nativeHost;
+require("esbuild").buildSync({ entryPoints: [path.join(root, "src/main/chromeOverlayHost.ts")], outfile: path.join(output, "native-host.cjs"),
+  bundle: true, platform: "node", format: "cjs", external: ["electron"] });
+const { ChromeOverlayHost, chromeOverlayScheme } = require(path.join(output, "native-host.cjs"));
+protocol.registerSchemesAsPrivileged([chromeOverlayScheme]);
 async function until(fn, label) {
   for (let i = 0; i < 150; i++) { if (await fn()) return; await delay(20); }
   throw new Error("Timed out: " + label);
@@ -39,14 +44,14 @@ function key(keyCode) {
   await require("esbuild").build({
     stdin: { resolveDir: root, loader: "tsx", contents: `
       import React,{useState} from "react";import{createRoot}from"react-dom/client";
-      import{NavigationRibbon}from"./src/renderer/NavigationRibbon";import{startFocusModality}from"./src/renderer/FocusModality";
+      import{NavigationRibbon}from"./src/renderer/NavigationRibbon";import{Settings}from"./src/renderer/WuuIcons";import{startFocusModality}from"./src/renderer/FocusModality";
       import"./src/renderer/styles.css";startFocusModality();
       function Fixture(){const[tabs,setTabs]=useState(Array.from({length:48},(_,i)=>({id:"tab-"+i,title:i===0?"Playing audio · a very long page title that must not overlap controls":i===1?"Pinned and muted · 固定的标签页":i===2?"Loading the next page…":"Reference "+i+" · 浏览器标签页",url:"https://example.com/"+i,audible:i===0,muted:i===1,pinned:i===1,loading:i===2})));
       const[active,setActive]=useState("tab-0");window.fixture={tabs,active};
       return <><aside className="sidebar" style={{position:"absolute",inset:0,width:64}}><NavigationRibbon items={[]} websites={tabs} activeWebsiteId={active} onSelectWebsite={tab=>setActive(tab.id)}
         onCloseTab={id=>setTabs(tabs.filter(tab=>tab.id!==id))} onMuteTab={(id,muted)=>setTabs(tabs.map(tab=>tab.id===id?{...tab,muted}:tab))}
         onPinTab={(id,pinned)=>setTabs(tabs.map(tab=>tab.id===id?{...tab,pinned}:tab))} onNewTab={()=>{}}
-        footer={<button>Settings</button>}/></aside><main style={{marginLeft:280,padding:32}}><h1>Browser ribbon acceptance</h1>
+        footer={<button className="sidebar-ribbon-button" aria-label="Settings"><Settings/><span className="sidebar-ribbon-label">Settings</span></button>}/></aside><main style={{marginLeft:280,padding:32}}><h1>Browser ribbon acceptance</h1>
         <p>The production ribbon with 48 fixture tabs.</p><input aria-label="Page editor" placeholder="Page input keeps focus when a background tab closes"/></main></>}
       createRoot(document.getElementById("root")).render(<Fixture/>);` },
     outfile: path.join(output, "ribbon.js"), bundle: true, platform: "browser", format: "iife", define: { "import.meta.env.DEV": "false", "import.meta.env.MODE": '"production"' }, loader: { ".woff2": "file", ".png": "file", ".svg": "file" },
@@ -104,12 +109,120 @@ function key(keyCode) {
   checks.push("Collapsed audio and pinned indicators occupy separate corners");
   fs.writeFileSync(path.join(output, "dark-20px-collapsed.png"), (await win.webContents.capturePage()).toPNG());
   screenshots.push("dark-20px-collapsed.png");
-  fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ status: "passed", versions: process.versions, checks, screenshots,
-    scope: "Production React/CSS rendered in Chromium. Synthetic tabs; native overlay transport and full app navigation are covered by workspace acceptance." }, null, 2));
+
+  // Run the actual isolated native ribbon and its trusted IPC host over a live
+  // animated WebContentsView. Record every native visibility/geometry/tree
+  // mutation, not just the final frame.
+  const esbuild = require("esbuild");
+  await esbuild.build({ entryPoints: [path.join(root, "src/renderer/chromeOverlayMain.tsx")], outfile: path.join(output, "assets/native-ribbon.js"),
+    bundle: true, platform: "browser", format: "iife", jsx: "automatic",
+    define: { "import.meta.env.DEV": "false", "import.meta.env.MODE": '"production"' },
+    loader: { ".woff2": "file", ".png": "file", ".svg": "file" },
+    plugins: [{ name: "native-raw-svg", setup(build) {
+      build.onResolve({ filter: /\.svg\?raw$/ }, args => ({ path: path.resolve(args.resolveDir, args.path.slice(0, -4)), namespace: "raw-svg" }));
+      build.onLoad({ filter: /.*/, namespace: "raw-svg" }, args => ({ contents: fs.readFileSync(args.path, "utf8"), loader: "text" }));
+    } }] });
+  esbuild.buildSync({ entryPoints: [path.join(root, "src/main/chromeOverlayPreload.ts")], outfile: path.join(output, "native-preload.cjs"),
+    bundle: true, platform: "node", format: "cjs", external: ["electron"] });
+  fs.writeFileSync(path.join(output, "chrome-overlay.html"), '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="wuu-chrome://ui/assets/native-ribbon.css"><div id="root"></div><script src="wuu-chrome://ui/assets/native-ribbon.js"></script>');
+  const page = new WebContentsView({ webPreferences: { sandbox: true } });
+  page.setBounds({ x: 64, y: 0, width: 936, height: 720 });
+  win.contentView.addChildView(page);
+  await page.webContents.loadURL('data:text/html,' + encodeURIComponent('<body style="background:#badced"><h1>Live browser page</h1><input placeholder="Page focus target"><script>window.framesSeen=[];function tick(t){framesSeen.push({t,visibility:document.visibilityState});if(framesSeen.length>400)framesSeen.shift();requestAnimationFrame(tick)}requestAnimationFrame(tick)</script>'));
+  page.webContents.focus();
+  const appearance = await run(`(()=>{const c=getComputedStyle(document.querySelector("nav"));return{theme:"dark",locale:"en-US",fontFamily:c.fontFamily,variables:Object.fromEntries([...c].filter(k=>k.startsWith("--")).map(k=>[k,c.getPropertyValue(k)]))}})()`);
+  let request = { version: 1, token: "native-ribbon-fixture", generation: 1, bounds: { x: 0, y: 0, width: 248, height: 720 }, focus: true, appearance,
+    model: { kind: "ribbon", collapsedWidth: 64, label: "Browser tabs", newTabLabel: "New tab", canCreateTab: true,
+      closeTabLabel: "Close tab", pinTabLabel: "Pin tab", unpinTabLabel: "Unpin tab", muteTabLabel: "Mute tab", unmuteTabLabel: "Unmute tab", reorderHint: "Move tabs",
+      paddingTop: 0, paddingBottom: 8, scrollTop: 600, focusTarget: { kind: "settings" }, footer: { settings: { id: "settings", title: "Settings", icon: { kind: "settings" } } },
+      items: Array.from({ length: 48 }, (_, i) => ({ id: "native-" + i, title: "Native page " + i, active: i === 0, website: true, closable: true, canMute: true, audible: i === 0,
+        icon: { kind: "website", url: "https://example.com/" + i, title: "Native page " + i } })) } };
+  nativeHost = new ChromeOverlayHost((_owner, event) => {
+    nativeEvents.push({ type: "command", command: event.command, at: performance.now() });
+    const command = event.command;
+    if (command.type === "mute-tab" || command.type === "pin-tab") {
+      if (command.type === "mute-tab") page.webContents.setAudioMuted(command.muted);
+      request = { ...request, generation: request.generation + 1, model: { ...request.model, items: request.model.items.map(item => item.id !== command.id ? item
+        : { ...item, ...(command.type === "mute-tab" ? { muted: command.muted } : { pinned: command.pinned }) }) } };
+      nativeHost.show(win, request);
+    }
+  }, output, path.join(output, "native-preload.cjs"));
+  const readySurfaces = new Set();
+  ipcMain.handle("wuu:chrome-overlay-ready", event => { readySurfaces.add(event.sender.id); return nativeHost.ready(event); });
+  ipcMain.on("wuu:chrome-overlay-painted", (event, token, generation) => nativeHost.painted(event, token, generation));
+  ipcMain.on("wuu:chrome-overlay-command", (event, message) => nativeHost.command(event, message));
+  app.on("web-contents-created", (_event, contents) => {
+    contents.on("console-message", (_event, details) => { console.error("Native renderer:", details); });
+    contents.on("preload-error", (_event, _path, error) => console.error("Native preload:", error));
+  });
+  nativeHost.prepare(win);
+  const mutations = [];
+  for (const [target, method] of [[page, "setVisible"], [page, "setBounds"], [win.contentView, "addChildView"], [win.contentView, "removeChildView"]]) {
+    const original = target[method].bind(target);
+    target[method] = (...args) => { mutations.push({ method, page: target === page || args[0] === page, args: method === "setVisible" || method === "setBounds" ? args : [], at: performance.now() }); return original(...args); };
+  }
+  await until(() => win.contentView.children.filter(view => view.webContents?.getURL().startsWith("wuu-chrome:")).length === 2
+    && win.contentView.children.filter(view => view.webContents?.getURL().startsWith("wuu-chrome:")).every(view => !view.webContents.isLoading()), "native surfaces preloaded");
+  await until(() => readySurfaces.size === 2, "native renderers ready");
+  win.focus();
+  page.webContents.focus();
+  await delay(0);
+  nativeHost.show(win, request);
+  let ribbon;
+  await until(() => { ribbon = win.contentView.children.find(view => view.webContents?.getURL().includes("surface=ribbon")); return ribbon?.getVisible(); }, "native ribbon painted");
+  const nativeRun = code => ribbon.webContents.executeJavaScript(code, true);
+  await until(() => nativeRun('document.querySelectorAll("[data-ribbon-id]").length===48'), "native tab rows");
+  await nativeRun('window.wuuChromeOverlay.ready().then(request=>window.wuuChromeOverlay.command({token:request.token,generation:request.generation,command:{type:"retain",active:true}}))');
+  assert.equal(await nativeRun('document.querySelector(".sidebar-ribbon-main").scrollTop'), 600, "Opening the native ribbon preserves the user's saved scroll");
+  checks.push("Native ribbon opening preserves manually scrolled long lists");
+  ribbon.webContents.focus();
+  await nativeRun('document.querySelector("[data-ribbon-id=native-0]").focus()');
+  for (const pinned of [true, false, true]) {
+    await nativeRun(`(()=>{const state=window.wuuChromeOverlay.ready();state.then(request=>window.wuuChromeOverlay.command({token:request.token,generation:request.generation,command:{type:"pin-tab",id:"native-0",pinned:${pinned}}}))})()`);
+    await until(() => request.model.items[0].pinned === pinned, "native pin update");
+    const muted = !request.model.items[0].muted;
+    await nativeRun('document.querySelector("[data-ribbon-audio-id=native-0]").click()');
+    await until(() => request.model.items[0].muted === muted, "native mute update");
+    await until(() => nativeRun('document.querySelector("[data-ribbon-audio-id=native-0]").getAttribute("aria-pressed")===' + JSON.stringify(String(Boolean(request.model.items[0].muted)))), "native mute paint");
+  }
+  await delay(250);
+  const frames = await page.webContents.executeJavaScript("framesSeen");
+  assert.equal(page.getVisible(), true);
+  assert.equal(mutations.some(event => event.page && (event.method === "setVisible" && event.args[0] === false || event.method === "addChildView" || event.method === "removeChildView")), false);
+  assert(frames.length >= 10 && frames.every(frame => frame.visibility === "visible"));
+  assert.equal(await nativeRun("document.activeElement.dataset.ribbonId"), "native-0");
+  checks.push("Native pin/mute model updates keep the page visible, attached and animating without losing ribbon focus");
+  nativeEvents.push({ type: "native-mutations", mutations, frames });
+  // Electron's window capture omits WebContentsView children. On macOS capture
+  // the compositor's window; elsewhere keep explicitly labelled view captures.
+  await ribbon.webContents.capturePage();
+  await page.webContents.capturePage();
+  const capture = process.platform === "darwin" ? require("node:child_process").spawnSync("/usr/sbin/screencapture",
+    ["-x", "-o", "-l", win.getMediaSourceId().split(":")[1], path.join(output, "native-ribbon-over-page.png")], { encoding: "utf8" }) : undefined;
+  if (capture?.status === 0) screenshots.push("native-ribbon-over-page.png");
+  else {
+    limitations.push("Composited native window screenshot unavailable; separate view captures do not verify overlap: " + (capture?.stderr?.trim() || "non-macOS runner"));
+    for (const [name, contents] of [["native-ribbon-view.png", ribbon.webContents], ["native-page-view.png", page.webContents]]) {
+      fs.writeFileSync(path.join(output, name), (await contents.capturePage()).toPNG()); screenshots.push(name);
+    }
+  }
+  request = { ...request, generation: request.generation + 1, model: { ...request.model, focusTarget: { kind: "item", id: "native-20" },
+    items: request.model.items.map(item => ({ ...item, active: item.id === "native-20" })) } };
+  nativeHost.show(win, request);
+  await until(() => nativeRun('document.activeElement.dataset.ribbonId==="native-20"'), "selected row focus");
+  assert(await nativeRun('document.querySelector(".sidebar-ribbon-main").scrollTop>0'));
+  ribbon.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab", modifiers: ["shift"] });
+  ribbon.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab", modifiers: ["shift"] });
+  await until(() => nativeEvents.some(event => event.command?.type === "dismiss" && event.command.reason === "tab"), "Shift+Tab leaves the first tabbable row");
+  assert.equal(page.webContents.isFocused(), true);
+  checks.push("Changing the selected tab reveals it; Shift+Tab from the roving tab stop dismisses the ribbon and restores page focus");
+  fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ status: "passed", versions: process.versions, checks, screenshots, limitations,
+    nativeEvents, scope: "Production React/CSS and native ChromeOverlayHost over a live webpage. Synthetic tab models; complete app navigation is covered by workspace acceptance." }, null, 2));
   console.log(checks.join("\n"));
   console.log("Evidence:", output);
 })().catch(async error => {
   if (win) fs.writeFileSync(path.join(output, "failure.png"), (await win.webContents.capturePage()).toPNG());
+  fs.writeFileSync(path.join(output, "failure-events.json"), JSON.stringify(nativeEvents, null, 2));
   console.error(error); fs.writeFileSync(path.join(output, "failure.txt"), String(error.stack)); process.exitCode = 1;
-}).finally(() => { win?.destroy(); app.exit(process.exitCode || 0); });
+}).finally(() => { if (win) nativeHost?.close(win); win?.destroy(); app.exit(process.exitCode || 0); });
 setTimeout(() => app.exit(1), 60000).unref();
