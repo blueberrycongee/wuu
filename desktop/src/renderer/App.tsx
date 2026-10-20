@@ -629,7 +629,9 @@ export function App(): JSX.Element {
       if (workspaceSheetPhase === "open" || workspaceSheetPhase === "arming") {
         return undefined;
       }
-      setWorkspaceSheetPhase("arming");
+      // An exiting sheet is already promoted. Retarget its live transform;
+      // arming would disable the transition and teleport it back to the dock.
+      setWorkspaceSheetPhase(workspaceSheetPhase === "exiting" ? "open" : "arming");
       return undefined;
     }
     if (workspaceSheetPhase === "docked") {
@@ -659,8 +661,8 @@ export function App(): JSX.Element {
     // grid snap commit transition-free before the data attribute clears.
     const next = workspaceSheetPhase === "arming" ? "open" : "docked";
     const from = workspaceSheetPhase;
-    const raf = requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
+    let raf = requestAnimationFrame(() => {
+      raf = requestAnimationFrame(() => {
         setWorkspaceSheetPhase((current) => (current === from ? next : current));
       });
     });

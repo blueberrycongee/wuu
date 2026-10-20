@@ -10,6 +10,7 @@ import {
   useAppLayoutState
 } from "./AppLayoutState";
 import {
+  createWindowResizeSettleScheduler,
   LAYOUT_MOTION_CLASS,
   WINDOW_RESIZING_CLASS,
 } from "./WindowResizeState";
@@ -282,6 +283,26 @@ describe("useAppLayoutState window-resizing class", () => {
       vi.advanceTimersByTime(sidebarMotionMs());
     });
     expect(document.documentElement.classList.contains(LAYOUT_MOTION_CLASS)).toBe(false);
+  });
+
+  it("defers geometry recovery until overlapping panel motions both finish", () => {
+    vi.useFakeTimers();
+    renderHookHarness();
+    const recoverGeometry = vi.fn();
+    const recovery = createWindowResizeSettleScheduler(recoverGeometry);
+    const stagger = Math.min(sidebarMotionMs(), rightPanelMotionMs()) / 3;
+    act(() => {
+      latest!.toggleSidebar();
+      recovery.schedule();
+    });
+    act(() => vi.advanceTimersByTime(stagger));
+    act(() => latest!.setRightPanelOpenWithMotion(true));
+    expect(recoverGeometry).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(sidebarMotionMs() - stagger));
+    expect(recoverGeometry).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(stagger + rightPanelMotionMs()));
+    expect(recoverGeometry).toHaveBeenCalledTimes(1);
+    recovery.cancel();
   });
 
   it("does not add the class for non-primary-button pointerdowns on the sidebar", () => {

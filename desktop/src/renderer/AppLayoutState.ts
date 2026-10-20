@@ -224,10 +224,13 @@ function useWindowPointerResize<Session>({
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerEnd);
     window.addEventListener("pointercancel", handlePointerEnd);
+    // A window deactivation can deliver the eventual mouse-up elsewhere.
+    window.addEventListener("blur", handlePointerEnd);
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerEnd);
       window.removeEventListener("pointercancel", handlePointerEnd);
+      window.removeEventListener("blur", handlePointerEnd);
     };
   }, [onEnd, onMove, resizing, sessionRef]);
 }
@@ -723,8 +726,9 @@ export function useAppLayoutState({
   // Reuse the window-resize deferred-scroll path so ResizeObserver consumers
   // (ConversationScrollState, AutoFollowScroll) stop forcing layout +
   // scrollTop writes on every pointermove.
+  const panelResizing = resizingSidebar || resizingRightPanel || resizingSplit;
   useEffect(() => {
-    if (!resizingSidebar && !resizingRightPanel && !resizingSplit) {
+    if (!panelResizing) {
       return undefined;
     }
     const root = document.documentElement;
@@ -732,15 +736,16 @@ export function useAppLayoutState({
     return () => {
       releaseWindowResizeClass(WINDOW_RESIZING_CLASS);
     };
-  }, [resizingSidebar, resizingRightPanel, resizingSplit]);
+  }, [panelResizing]);
 
   // Opening and closing structural panels changes the conversation viewport
   // on every CSS frame just like a live resize. Mark only the geometry phase
   // (without the window-resizing CSS that would cancel the transition) so
   // scroll followers and ResizeObserver consumers defer their layout reads
   // until the panel settles.
+  const panelAnimating = sidebarAnimating || rightPanelAnimating;
   useEffect(() => {
-    if (!sidebarAnimating && !rightPanelAnimating) {
+    if (!panelAnimating) {
       return undefined;
     }
     const root = document.documentElement;
@@ -748,7 +753,7 @@ export function useAppLayoutState({
     return () => {
       releaseWindowResizeClass(LAYOUT_MOTION_CLASS);
     };
-  }, [rightPanelAnimating, sidebarAnimating]);
+  }, [panelAnimating]);
 
   function finishPanelMotion(): void {
     // A direct manipulation takes over the shared grid immediately, even if
