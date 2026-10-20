@@ -51,7 +51,7 @@ test('unconnected runtime exposes honest read-only capability; Coding does no st
   const coding = await fixture({ domain: 'coding', fetch: () => assert.fail('Coding contacted Calendar') });
   assert.equal(coding.definition.provided_services.length, 0); assert.equal(coding.host.calls.length, 0);
   await assert.rejects(coding.call('agenda', query), /unavailable/);
-  assert.equal(missing.definition.tools.some(t => /create|update|delete/.test(t.id)), false);
+  assert.deepEqual(missing.definition.tools, []);
 });
 
 test('read adapter fixes the official endpoint, sends GET only, preserves dates and recurring cancellation provenance', async () => {
@@ -79,7 +79,6 @@ test('session-bound reads reject Coding and foreign user spaces, including forge
   for (const context of [{ ...f.host.context, product_domain: 'coding' }, { ...f.host.context, user_space_id: 'other-user' }]) {
     f.host.context = context;
     await assert.rejects(f.call('agenda', { ...query, session_id: 'personal-session', user_space_id: 'user-one' }, 'personal'), /scope/);
-    await assert.rejects(f.plugin.executeTool({ tool_id: 'calendar_agenda', session_id: 'personal-session', arguments: query }), /scope/);
   }
   await assert.rejects(f.call('disconnect', {}, 'personal'), /user client/);
 });
@@ -160,11 +159,11 @@ test('second-page HTTP failure does not replace a previously complete snapshot',
   const result = await f.call('refresh', query); assert.equal(result.freshness, 'stale'); assert.equal(result.events[0].id, 'meeting'); assert.equal(result.events.length, 1);
 });
 
-test('cancelled tool execution stops its refresh transport without marking cached data fresh', async () => {
+test('cancelled service execution stops its refresh transport without marking cached data fresh', async () => {
   const started = deferred(), release = deferred(); let transportSignal;
   const f = await fixture({ fetch: async (_url, init) => { transportSignal = init.signal; started.resolve(); await release.promise; return page(); } });
   const execution = new AbortController();
-  const pending = f.plugin.executeTool({ tool_id: 'calendar_refresh', session_id: 'personal-session', arguments: query }, f.host, { executionId: 'synthetic-execution', signal: execution.signal });
+  const pending = f.plugin.invokeService({ service: 'calendar.personal', method: 'refresh', caller: 'personal', params: { ...query, session_id: 'personal-session' } }, f.host, { executionId: 'synthetic-execution', signal: execution.signal });
   await started.promise; execution.abort(); assert.equal(transportSignal.aborted, true); release.resolve();
-  const result = JSON.parse((await pending).result.content[0].text); assert.equal(result.state, 'error'); assert.equal(result.freshness, 'empty');
+  const result = await pending; assert.equal(result.state, 'error'); assert.equal(result.freshness, 'empty');
 });

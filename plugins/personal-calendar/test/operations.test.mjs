@@ -65,7 +65,6 @@ test('readonly default cannot propose writes; models and services cannot confirm
   const f = await fixture(); const op = await f.service('operations.propose', proposal()); assert.equal(op.status, 'proposed'); assert.equal(f.provider.writes, 0);
   assert.equal(op.agent_id, 'agent-one'); assert.equal(op.session_id, 'session-one'); assert.equal(op.user_space_id, 'one');
   await assert.rejects(f.service('operations.confirm', { operation_id: op.operation_id, expected_revision: op.revision, preview_digest: op.preview_digest, confirmed: true }), /client/);
-  await assert.rejects(f.plugin.executeTool({ tool_id: 'calendar_confirm', session_id: 'session-one', arguments: { confirmed: true } }), /unknown/);
   await assert.rejects(f.confirm({ ...op, preview_digest: 'forged' }), /preview|confirmation/); assert.equal(f.provider.writes, 0);
 });
 

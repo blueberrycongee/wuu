@@ -123,6 +123,7 @@ var PUBLIC_ICON_NAMES = [
   "inbox",
   "layout-grid",
   "list-todo",
+  "mascot",
   "message-square",
   "moon",
   "plug",
@@ -951,7 +952,6 @@ var object2 = (raw) => {
   return raw;
 };
 var sameQuery = (a, b) => a.calendar_id === b.calendar_id && a.time_min === b.time_min && a.time_max === b.time_max && a.timezone === b.timezone && (b.account_id === void 0 || a.account_id === b.account_id);
-var querySchema = { type: "object", properties: { calendar_id: { type: "string" }, time_min: { type: "string" }, time_max: { type: "string" }, timezone: { type: "string" }, account_id: { type: "string" } }, required: ["calendar_id", "time_min", "time_max", "timezone"], additionalProperties: false };
 var PersonalCalendarPlugin = class {
   concurrentServices = [service];
   concurrentCapabilities = ["plugin.client.request"];
@@ -1011,12 +1011,9 @@ var PersonalCalendarPlugin = class {
       required_services: [...["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.context"].map(requireKernelService), { name: "personal.agents", major_version: 1, required: false }],
       provided_services: [{ name: service, version: "1.0.0", methods: methods.map((name) => ({ name, input_schema: `calendar.personal.${name}.request.v1`, output_schema: "calendar.personal.snapshot.v1" })) }],
       capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }],
-      tools: [
-        { id: "calendar_agenda", description: "Read the cached Personal calendar with source and freshness. Empty or stale data is not evidence of availability. Calendar permission does not authorize event changes.", input_schema: querySchema, activity: { read_only: true, concurrency_safe: true } },
-        { id: "calendar_refresh", description: "Refresh one bounded Personal calendar window using an already authorized account. Read-only; cannot connect an account, create an event, or modify an event.", input_schema: querySchema, activity: { read_only: true, concurrency_safe: true } },
-        { id: "calendar_propose", description: "Prepare an immutable create or reschedule proposal for a current Personal task. Reads availability and the original event; never writes the calendar. The user client must display and confirm the exact proposal before any external action.", input_schema: { type: "object", properties: { operation_id: { type: "string" }, kind: { type: "string", enum: ["create", "reschedule"] }, account_id: { type: "string" }, calendar_id: { type: "string" }, task_id: { type: "string" }, requirements_revision: { type: "integer" }, event_id: { type: "string" }, original_event_etag: { type: "string" }, fields: { type: "object" } }, required: ["operation_id", "kind", "account_id", "calendar_id", "task_id", "requirements_revision", "fields"], additionalProperties: false }, activity: { concurrency_safe: true } },
-        { id: "calendar_operation", description: "Read or reconcile an existing Calendar operation. Reconciliation reads provider evidence only; it never repeats a write or confirms a proposal.", input_schema: { type: "object", properties: { operation_id: { type: "string" }, reconcile: { type: "boolean" } }, required: ["operation_id"], additionalProperties: false }, activity: { read_only: true, concurrency_safe: true } }
-      ]
+      // Keep existing calendar state and client reconciliation available without
+      // exposing a native Calendar tool surface to the model.
+      tools: []
     };
   }
   async activate() {
@@ -1132,15 +1129,6 @@ var PersonalCalendarPlugin = class {
     const input = object2(call.input);
     if (typeof input.method !== "string") throw new Error("invalid calendar method");
     return { output: { result: await this.request(input.method.replace(/^calendar\./, ""), object2(input.input), execution?.signal, true) } };
-  }
-  async executeTool(call, _host, execution) {
-    this.assertActive();
-    await this.session(call.session_id || call.thread_id);
-    if (!["calendar_agenda", "calendar_refresh", "calendar_propose", "calendar_operation"].includes(call.tool_id)) throw new Error("unknown calendar tool");
-    const input = object2(call.arguments);
-    if (input.reconnect !== void 0) throw new Error("calendar connection changes require the user client");
-    const method = call.tool_id === "calendar_agenda" ? "agenda" : call.tool_id === "calendar_refresh" ? "refresh" : call.tool_id === "calendar_propose" ? "operations.propose" : input.reconcile === true ? "operations.reconcile" : "operations.get";
-    return { result: { content: [{ type: "text", text: JSON.stringify(await this.request(method, { ...input, session_id: call.session_id || call.thread_id }, execution?.signal)) }] } };
   }
   async request(method, input, executionSignal, client = false) {
     this.assertActive();
