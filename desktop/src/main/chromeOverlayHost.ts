@@ -131,6 +131,7 @@ export class ChromeOverlayHost {
       || request.bounds.width <= 0 || request.bounds.height <= 0 || request.bounds.width > 640
       || JSON.stringify(request).length > 512 * 1024) throw new Error("Invalid browser chrome surface.");
     if (request.model.kind === "ribbon" && (!Number.isFinite(request.model.collapsedWidth) || request.model.collapsedWidth <= 0 || request.model.collapsedWidth > request.bounds.width || !Array.isArray(request.model.items) || request.model.items.length > 256
+      || (request.model.headerHeight !== undefined && (!Number.isFinite(request.model.headerHeight) || request.model.headerHeight < 0 || request.model.headerHeight > request.bounds.y))
       || new Set(request.model.items.map(item => item.id)).size !== request.model.items.length)) throw new Error("Invalid browser chrome destinations.");
     if (request.model.kind === "capsule" && (typeof request.model.draft !== "string" || request.model.draft.length > 8000)) throw new Error("Invalid browser capsule draft.");
     if (request.model.kind === "account" && (!Array.isArray(request.model.panel.rows) || request.model.panel.rows.some(row => !["devices", "usage", "account", "providers", "logout"].includes(row.action)))) throw new Error("Invalid browser account actions.");
@@ -207,6 +208,7 @@ export class ChromeOverlayHost {
     if (command.type === "reveal" && surface.kind === "ribbon") {
       if (!Number.isFinite(command.fraction) || command.fraction < 0 || command.fraction > 1) return;
       surface.reveal = command.fraction;
+      this.emitCurrent(surface, command);
       if (surface.closing && command.fraction === 0) this.dismiss(surface, "leave", false, true);
       else this.layout(surface);
       return;
@@ -279,7 +281,9 @@ export class ChromeOverlayHost {
 
   private pointerInside(surface: Surface): boolean {
     const cursor = screen.getCursorScreenPoint(), origin = surface.owner.getContentBounds(), bounds = surface.view.getBounds();
-    return cursor.x >= origin.x + bounds.x && cursor.x < origin.x + bounds.x + bounds.width && cursor.y >= origin.y + bounds.y && cursor.y < origin.y + bounds.y + bounds.height;
+    const model = surface.request?.model;
+    const headerHeight = model?.kind === "ribbon" ? (model.headerHeight ?? 0) * surface.owner.webContents.getZoomFactor() : 0;
+    return cursor.x >= origin.x + bounds.x && cursor.x < origin.x + bounds.x + bounds.width && cursor.y >= origin.y + bounds.y - headerHeight && cursor.y < origin.y + bounds.y + bounds.height;
   }
 
   private cancelLeave(surface: Surface): void {

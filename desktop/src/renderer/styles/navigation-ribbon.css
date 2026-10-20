@@ -227,6 +227,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 }
 
 .sidebar-ribbon {
+  --ribbon-header-height: calc(var(--workbench-top) + var(--web-workspace-toolbar-height));
   --ribbon-motion-duration: 220ms;
   --sidebar-ribbon-icon-size: var(--icon-size-xl);
   --sidebar-ribbon-expanded-width: min(248px, calc(100vw - var(--space-4)));
@@ -240,7 +241,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   align-items: center;
   /* All destinations keep the same row positions; native hover chrome starts
      below the browser toolbar, including when the UI font grows. */
-  padding: calc(var(--workbench-top) + var(--web-workspace-toolbar-height)) 0 var(--space-2);
+  padding: var(--ribbon-header-height) 0 var(--space-2);
   background: transparent;
   overflow: hidden;
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
@@ -786,15 +787,28 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 /* The native surface owns browser reveal geometry. Closing shell chrome follows
    the same duration while the live native rail completes its exit. */
 .sidebar-ribbon[data-native-supported="true"][data-expanded="true"] { transition: none; }
+.sidebar-ribbon[data-native-supported="true"][data-native-overlay="true"] {
+  width: var(--sidebar-ribbon-expanded-width);
+  transition: none;
+}
 
-/* Keep the measured expanded width for the native surface, but the shell must
-   remain a collapsed rail while that surface paints, reveals or closes. */
+/* The native view covers the webpage below the toolbar. Complete its header
+   in the shell, using the same reveal progress, while keeping duplicate rows
+   clipped to the collapsed rail and window controls above this surface. */
 .sidebar-ribbon[data-native-supported="true"] {
-  clip-path: inset(0 max(0px, calc(100% - var(--sidebar-ribbon-width))) 0 0);
+  --ribbon-header-width: calc(var(--sidebar-ribbon-width) + (100% - var(--sidebar-ribbon-width)) * var(--ribbon-native-reveal, 0));
+  clip-path: polygon(0 0, var(--ribbon-header-width) 0,
+    var(--ribbon-header-width) var(--ribbon-header-height),
+    var(--sidebar-ribbon-width) var(--ribbon-header-height),
+    var(--sidebar-ribbon-width) 100%, 0 100%);
 }
 
 .sidebar-ribbon[data-native-supported="true"]::before {
-  opacity: 0;
+  bottom: auto;
+  height: var(--ribbon-header-height);
+  border-bottom-right-radius: 0;
+  opacity: var(--ribbon-native-reveal, 0);
+  transition: none;
 }
 
 .sidebar-ribbon[data-native-supported="true"] :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {

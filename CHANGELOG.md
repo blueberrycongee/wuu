@@ -76,6 +76,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the expanded browser navigation ribbon's header above the toolbar, with continuous hover behavior across its native page overlay.
+
 - Restore desktop startup and browser download history persistence by passing the history path to the download manager instead of the chrome overlay host.
 
 - Align browser fallback icons with the other navigation ribbon icons in both the main window and native overlay.

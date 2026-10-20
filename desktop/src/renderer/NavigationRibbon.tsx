@@ -220,13 +220,15 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     pinTabLabel: t("webWorkspace.pinTab"), unpinTabLabel: t("webWorkspace.unpinTab"), reorderHint: t("ribbon.reorderHint"),
     muteTabLabel: t("webWorkspace.muteTab"), unmuteTabLabel: t("webWorkspace.unmuteTab"),
     paddingTop: 0,
+    headerHeight: navRef.current ? Number.parseFloat(getComputedStyle(navRef.current).paddingTop) : 0,
     paddingBottom: navRef.current ? Number.parseFloat(getComputedStyle(navRef.current).paddingBottom) : 8,
     scrollTop: scrollTop.current, focusTarget: nativeFocusTarget,
     footer: footerSettings ? { settings: { id: "settings", title: footerSettings.title, icon: { kind: "settings" }, active: footerSettings.active, disabled: footerSettings.disabled }, account: accountTrigger, update: updateModel } : undefined,
   };
-  const closeNative = () => { clearTimeout(enterTimer.current); enterTimer.current = undefined; setNativeClosing(false); setNativeOpen(false); setPointerInside(false); setKeyboardFocusWithin(false); setDragging(false); };
+  const closeNative = () => { navRef.current?.style.removeProperty("--ribbon-native-reveal"); clearTimeout(enterTimer.current); enterTimer.current = undefined; setNativeClosing(false); setNativeOpen(false); setPointerInside(false); setKeyboardFocusWithin(false); setDragging(false); };
   const nativePresented = useChromeOverlay(nativeAvailable && nativeOpen, nativeBounds, nativeModel, command => {
-    if (command.type === "pointer") {
+    if (command.type === "reveal") navRef.current?.style.setProperty("--ribbon-native-reveal", String(command.fraction));
+    else if (command.type === "pointer") {
       setNativeClosing(!command.inside);
       if (command.inside) { setPointerInside(true); setNativeOpen(true); }
     }

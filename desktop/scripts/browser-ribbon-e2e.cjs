@@ -51,7 +51,10 @@ function key(keyCode) {
       return <><aside className="sidebar" style={{position:"absolute",inset:0,width:64}}><NavigationRibbon items={[]} websites={tabs} activeWebsiteId={active} onSelectWebsite={tab=>setActive(tab.id)}
         onCloseTab={id=>setTabs(tabs.filter(tab=>tab.id!==id))} onMuteTab={(id,muted)=>setTabs(tabs.map(tab=>tab.id===id?{...tab,muted}:tab))}
         onPinTab={(id,pinned)=>setTabs(tabs.map(tab=>tab.id===id?{...tab,pinned}:tab))} onNewTab={()=>{}}
-        footer={<button className="sidebar-ribbon-button" aria-label="Settings"><Settings/><span className="sidebar-ribbon-label">Settings</span></button>}/></aside><main style={{marginLeft:280,padding:32}}><h1>Browser ribbon acceptance</h1>
+        footer={<button className="sidebar-ribbon-button" aria-label="Settings"><Settings/><span className="sidebar-ribbon-label">Settings</span></button>}/></aside>
+        <div style={{position:"absolute",top:0,left:64,right:0,height:"var(--web-workspace-toolbar-height)",background:"var(--workbench-canvas-bg)",display:"flex",alignItems:"center",gap:20,paddingLeft:40}}>
+          <button aria-label="Browser back">Back</button><span>Search or enter address</span>
+        </div><main style={{marginLeft:280,padding:80}}><h1>Browser ribbon acceptance</h1>
         <p>The production ribbon with 48 fixture tabs.</p><input aria-label="Page editor" placeholder="Page input keeps focus when a background tab closes"/></main></>}
       createRoot(document.getElementById("root")).render(<Fixture/>);` },
     outfile: path.join(output, "ribbon.js"), bundle: true, platform: "browser", format: "iife", define: { "import.meta.env.DEV": "false", "import.meta.env.MODE": '"production"' }, loader: { ".woff2": "file", ".png": "file", ".svg": "file" },
@@ -127,7 +130,9 @@ function key(keyCode) {
     bundle: true, platform: "node", format: "cjs", external: ["electron"] });
   fs.writeFileSync(path.join(output, "chrome-overlay.html"), '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="wuu-chrome://ui/assets/native-ribbon.css"><div id="root"></div><script src="wuu-chrome://ui/assets/native-ribbon.js"></script>');
   const page = new WebContentsView({ webPreferences: { sandbox: true } });
-  page.setBounds({ x: 64, y: 0, width: 936, height: 720 });
+  const pageTop = await run('Math.ceil(parseFloat(getComputedStyle(document.querySelector("nav")).paddingTop))');
+  const pageBounds = { x: 64, y: pageTop, width: 936, height: 720 - pageTop };
+  page.setBounds(pageBounds);
   win.contentView.addChildView(page);
   await page.webContents.loadURL('data:text/html,' + encodeURIComponent('<body style="background:#badced"><h1>Live browser page</h1><input placeholder="Page focus target"><script>window.framesSeen=[];function tick(t){framesSeen.push({t,visibility:document.visibilityState});if(framesSeen.length>400)framesSeen.shift();requestAnimationFrame(tick)}requestAnimationFrame(tick)</script>'));
   page.webContents.focus();
@@ -140,6 +145,7 @@ function key(keyCode) {
         icon: { kind: "website", url: "https://example.com/" + i, title: "Native page " + i } })) } };
   nativeHost = new ChromeOverlayHost((_owner, event) => {
     nativeEvents.push({ type: "command", command: event.command, at: performance.now() });
+    if (event.command.type === "reveal") void run(`window.emitRibbon?.(${JSON.stringify(event)})`);
     const command = event.command;
     if (command.type === "mute-tab" || command.type === "pin-tab") {
       if (command.type === "mute-tab") page.webContents.setAudioMuted(command.muted);
@@ -194,6 +200,8 @@ function key(keyCode) {
   nativeHost.show(win, pending);
   const openingView = win.contentView.children.find(view => view.webContents?.getURL().includes("surface=ribbon"));
   await until(() => openingView.getVisible() && openingView.getBounds().width === Math.ceil(pending.bounds.width), "complete native opening");
+  openingView.webContents.sendInputEvent({ type: "keyDown", keyCode: "Home" });
+  openingView.webContents.sendInputEvent({ type: "keyUp", keyCode: "Home" });
   // setBounds updates the native view before Chromium receives its resize.
   // Wait for that renderer acknowledgement before calculating a click point.
   await until(async () => {
@@ -203,6 +211,15 @@ function key(keyCode) {
     return Math.abs(viewport.width * zoom - bounds.width) < 1 && Math.abs(viewport.height * zoom - bounds.height) < 1
       && bounds.width === Math.ceil(pending.bounds.width);
   }, "native renderer viewport matches expanded view");
+  await until(() => run(`document.querySelector("nav").style.getPropertyValue("--ribbon-native-reveal")==="1"`), "native header reveal completes");
+  await until(() => run(`Boolean(document.elementFromPoint(124, 4)?.closest("nav"))`), "expanded ribbon header covers the browser toolbar");
+  const header = await run(`(()=>{const nav=document.querySelector("nav"),rect=nav.getBoundingClientRect();
+    return {covered:nav.contains(document.elementFromPoint(124,4)),outside:nav.contains(document.elementFromPoint(rect.right+8,4))}})()`);
+  assert.equal(header.covered, true, "Expanded browser ribbon covers its toolbar header");
+  assert.equal(header.outside, false, "The rest of the browser toolbar stays reachable");
+  fs.writeFileSync(path.join(output, "browser-ribbon-header-shell.png"), (await win.webContents.capturePage()).toPNG());
+  screenshots.push("browser-ribbon-header-shell.png");
+  checks.push("Native reveal extends the shell header over the toolbar without intercepting controls outside the ribbon");
   const hit = await openingView.webContents.executeJavaScript(`(()=>{
     const row=document.querySelector("[data-ribbon-id=tab-0]");row.scrollIntoView({block:"nearest"});
     const r=row.getBoundingClientRect(),x=Math.min(r.right-10,r.left+100),y=r.y+r.height/2;
@@ -217,7 +234,7 @@ function key(keyCode) {
   openingView.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, x: hit.x, y: hit.y });
   await until(() => nativeEvents.some(event => event.command?.type === "select" && event.command.id === "tab-0"), "native expanded row click");
   assert.equal(page.getVisible(), true);
-  assert.deepEqual(page.getBounds(), { x: 64, y: 0, width: 936, height: 720 });
+  assert.deepEqual(page.getBounds(), pageBounds);
   nativeHost.hide(win, pending.token, pending.generation);
   await run(`window.emitRibbon({token:${JSON.stringify(pending.token)},generation:${pending.generation},command:{type:"dismiss",reason:"escape"}});
     delete window.wuu.chromeOverlay;document.querySelector("[data-ribbon-audio-id=tab-0]").click();document.querySelector("input").focus()`);

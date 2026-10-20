@@ -37,7 +37,7 @@ export function useChromeOverlay(enabled: boolean, bounds: ChromeOverlayRect | n
       if (!token.current || event.token !== token.current) return;
       // Dismissal ends this opening, even if a presentation update crossed it.
       // Business commands still require the exact currently displayed model.
-      const lifecycle = event.command.type === "dismiss" || event.command.type === "pointer";
+      const lifecycle = event.command.type === "dismiss" || event.command.type === "pointer" || event.command.type === "reveal";
       if (lifecycle ? event.generation > generation.current : event.generation !== generation.current) return;
       callbacks.current.onCommand(event.command);
       if (event.command.type === "dismiss") callbacks.current.onDismiss();

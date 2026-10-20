@@ -41,6 +41,7 @@ function RibbonSurface({ model, send }: { model: ChromeRibbonModel; send: (comma
     send({ type: "close-tab", id });
   };
   return <nav className="sidebar-ribbon" data-expanded="true" aria-label={model.label}
+    data-shell-header={Boolean(model.headerHeight) || undefined}
     style={{ paddingTop: model.paddingTop, paddingBottom: model.paddingBottom }}
     onKeyDownCapture={() => send({ type: "retain", active: true })}
     onPointerDownCapture={() => send({ type: "retain", active: false })}

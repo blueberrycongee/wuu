@@ -32,6 +32,8 @@ export type ChromeAccountPanel = {
 export type ChromeRibbonFocus = { kind: "item" | "close"; id: string } | { kind: "account" | "settings" | "new-tab" | "desktop-update" };
 export type ChromeRibbonModel = {
   collapsedWidth: number;
+  /** Shell-painted header immediately above the native surface, in CSS pixels. */
+  headerHeight?: number;
   kind: "ribbon";
   items: ChromeRibbonItem[];
   label: string; newTabLabel: string; canCreateTab: boolean;
