@@ -70,6 +70,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Align browser fallback icons with the other navigation ribbon icons in both the main window and native overlay.
 - Give plugin website destinations the same full-width ribbon layout as browser tabs, without a duplicate plugin sidebar or page title row.
 - Keep the expanded workbench tab ribbon open when switching between websites and app pages while the pointer remains inside it.
 - Keep native tab context menus responsive when a title or favicon update crosses the right-click, while validating the current tab and menu actions.

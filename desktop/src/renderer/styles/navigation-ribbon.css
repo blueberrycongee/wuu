@@ -454,6 +454,11 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   line-height: 1;
 }
 
+.sidebar-ribbon-website-icon > svg {
+  width: 100%;
+  height: 100%;
+}
+
 .sidebar-ribbon-add {
   margin-top: var(--space-2);
 }
