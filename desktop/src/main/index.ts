@@ -358,9 +358,9 @@ const browserHostCoordinator = new BrowserHostCoordinator(
 const webWorkspaceLibrary = new WebWorkspaceLibrary(join(app.getPath("userData"), "web-workspace.json"));
 const webWorkspaceDownloads = new WebWorkspaceDownloads(
   (owner, items) => sendToWindow(owner, "wuu:web-workspace-downloads", items),
+  join(app.getPath("userData"), "browser-downloads.json"),
 );
 const chromeOverlayHost = new ChromeOverlayHost(
-  join(app.getPath("userData"), "browser-downloads.json"),
   (owner, event) => sendToWindow(owner, "wuu:chrome-overlay-event", event),
   join(__dirname, "../renderer"), join(__dirname, "../preload/chromeOverlay.cjs"), !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined,
 );
