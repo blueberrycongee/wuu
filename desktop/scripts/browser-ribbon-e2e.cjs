@@ -99,6 +99,7 @@ function key(keyCode) {
   }
   checks.push("Long titles do not overlap mute and close controls in light/dark at 15/20px");
   await run('document.querySelector("input").focus();document.querySelector("[data-ribbon-id=tab-2]").dispatchEvent(new MouseEvent("auxclick",{button:1,bubbles:true}))');
+  win.webContents.sendInputEvent({ type: "mouseMove", x: 500, y: 400 });
   await until(() => run('!document.querySelector("[data-ribbon-id=tab-2]")'), "background close");
   assert.equal(await run('document.activeElement.tagName'), "INPUT");
   checks.push("Closing a background tab preserves the page editor focus");
@@ -164,6 +165,51 @@ function key(keyCode) {
   await until(() => win.contentView.children.filter(view => view.webContents?.getURL().startsWith("wuu-chrome:")).length === 2
     && win.contentView.children.filter(view => view.webContents?.getURL().startsWith("wuu-chrome:")).every(view => !view.webContents.isLoading()), "native surfaces preloaded");
   await until(() => readySurfaces.size === 2, "native renderers ready");
+  // Hold the shell's opening request before forwarding it to the real host.
+  // A cold native renderer must not expose a second expanded rail underneath
+  // the webpage or intercept the toolbar while its first paint is pending.
+  await run(`window.wuu.chromeOverlay={
+    show:async request=>{window.pendingRibbon=request},
+    hide:async()=>{},
+    onEvent:callback=>{window.emitRibbon=callback;return()=>{}}
+  };document.querySelector("[data-ribbon-audio-id=tab-1]").click();
+  document.querySelector("[data-ribbon-id=tab-0]").focus()`);
+  key("HOME");
+  await until(() => run('Boolean(window.pendingRibbon)'), "shell native opening request");
+  const pending = await run("window.pendingRibbon");
+  const shellOpening = await run(`(()=>{
+    const nav=document.querySelector("nav"),row=document.querySelector("[data-ribbon-id=tab-0]").closest(".sidebar-ribbon-tab-row");
+    const collapsed=parseFloat(getComputedStyle(nav).getPropertyValue("--sidebar-ribbon-width"));
+    return {width:nav.getBoundingClientRect().width,
+      toolbarObscured:!!document.elementFromPoint(collapsed+60,4)?.closest("nav"),
+      labelsVisible:[...nav.querySelectorAll(".sidebar-ribbon-label")].some(label=>getComputedStyle(label).visibility!=="hidden"),
+      badgeVisible:getComputedStyle(row.querySelector(".sidebar-ribbon-audio-badge")).visibility==="visible"}
+  })()`);
+  assert.equal(shellOpening.toolbarObscured, false, "Pending native ribbon must not intercept toolbar outside the collapsed rail");
+  assert.equal(shellOpening.labelsVisible, false, "Pending native ribbon must not expose duplicated expanded labels beneath the webpage");
+  assert.equal(shellOpening.badgeVisible, true, "Collapsed audio status remains visible while native paint is pending");
+  assert.equal(shellOpening.width, pending.bounds.width, "Suppressing shell paint must preserve the measured native width");
+  assert.ok(pending.bounds.width > pending.model.collapsedWidth);
+  nativeEvents.push({ type: "pending-shell", ...shellOpening, nativeBounds: pending.bounds });
+  nativeHost.show(win, pending);
+  const openingView = win.contentView.children.find(view => view.webContents?.getURL().includes("surface=ribbon"));
+  await until(() => openingView.getVisible() && openingView.getBounds().width === Math.ceil(pending.bounds.width), "complete native opening");
+  const hit = await openingView.webContents.executeJavaScript(`(()=>{
+    const row=document.querySelector("[data-ribbon-id=tab-0]");row.scrollIntoView({block:"nearest"});
+    const r=row.getBoundingClientRect(),x=Math.min(r.right-10,r.left+100),y=r.y+r.height/2;
+    return {x,y,clickable:row.contains(document.elementFromPoint(x,y)),pinnedClose:!!document.querySelector("[data-ribbon-close-id=tab-1]")}
+  })()`);
+  assert.equal(hit.clickable, true, "Native expanded label remains clickable over the webpage");
+  assert.equal(hit.pinnedClose, false);
+  openingView.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, x: hit.x, y: hit.y });
+  openingView.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, x: hit.x, y: hit.y });
+  await until(() => nativeEvents.some(event => event.command?.type === "select" && event.command.id === "tab-0"), "native expanded row click");
+  assert.equal(page.getVisible(), true);
+  assert.deepEqual(page.getBounds(), { x: 64, y: 0, width: 936, height: 720 });
+  nativeHost.hide(win, pending.token, pending.generation);
+  await run(`window.emitRibbon({token:${JSON.stringify(pending.token)},generation:${pending.generation},command:{type:"dismiss",reason:"escape"}});
+    delete window.wuu.chromeOverlay;document.querySelector("[data-ribbon-audio-id=tab-0]").click();document.querySelector("input").focus()`);
+  checks.push("Pending native paint leaves toolbar hit targets and collapsed audio status intact; measured full-width native rail opens and its expanded row receives real clicks");
   win.focus();
   page.webContents.focus();
   await delay(0);
@@ -171,7 +217,7 @@ function key(keyCode) {
   let ribbon;
   await until(() => { ribbon = win.contentView.children.find(view => view.webContents?.getURL().includes("surface=ribbon")); return ribbon?.getVisible(); }, "native ribbon painted");
   const nativeRun = code => ribbon.webContents.executeJavaScript(code, true);
-  await until(() => nativeRun('document.querySelectorAll("[data-ribbon-id]").length===48'), "native tab rows");
+  await until(() => nativeRun('document.querySelectorAll("[data-ribbon-id]").length===48&&!!document.querySelector("[data-ribbon-id=native-0]")'), "native tab rows");
   await nativeRun('window.wuuChromeOverlay.ready().then(request=>window.wuuChromeOverlay.command({token:request.token,generation:request.generation,command:{type:"retain",active:true}}))');
   assert.equal(await nativeRun('document.querySelector(".sidebar-ribbon-main").scrollTop'), 600, "Opening the native ribbon preserves the user's saved scroll");
   checks.push("Native ribbon opening preserves manually scrolled long lists");
