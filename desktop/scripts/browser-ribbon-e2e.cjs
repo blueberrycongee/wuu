@@ -329,6 +329,42 @@ function key(keyCode) {
   fs.writeFileSync(path.join(output, "native-capsule-after-resize.png"), (await capsule.webContents.capturePage()).toPNG());
   screenshots.push("native-capsule-after-resize.png");
   checks.push("Repeated owner resize keeps the native capsule continuously visible and preserves editor draft, selection and focus");
+  const paintEvidence = { type: "capsule-model-paint", samples: [] };
+  nativeEvents.push(paintEvidence);
+  let capsuleGeneration = capsuleRequest.generation;
+  for (const focusOwner of ["capsule", "page"]) {
+    if (focusOwner === "page") {
+      await page.webContents.executeJavaScript('document.querySelector("input").focus()');
+      page.webContents.focus();
+      await until(() => page.webContents.isFocused(), "page owns native keyboard focus before chrome updates");
+    }
+    for (let step = 0; step < 4; step++) {
+      const update = { ...capsuleRequest, generation: ++capsuleGeneration, focus: false,
+        bounds: { ...capsuleRequest.bounds, x: 280 + step * 5, y: 400 + step * 3 },
+        model: { ...capsuleRequest.model, expanded: focusOwner === "capsule", draft, sourceTitle: `Updated page ${step}` } };
+      const painted = new Promise(resolve => {
+        const observe = (_event, token, generation) => {
+          if (token !== update.token || generation !== update.generation) return;
+          ipcMain.removeListener("wuu:chrome-overlay-painted", observe);
+          resolve();
+        };
+        ipcMain.on("wuu:chrome-overlay-painted", observe);
+      });
+      nativeHost.show(win, update);
+      await painted;
+      const editor = await capsuleRun(`(()=>{const input=document.querySelector("[data-context-capsule] input");
+        return input?{value:input.value,start:input.selectionStart,end:input.selectionEnd,active:document.activeElement===input}:null})()`);
+      paintEvidence.samples.push({ focusOwner, generation: update.generation, visible: capsule.getVisible(),
+        capsuleFocused: capsule.webContents.isFocused(), pageFocused: page.webContents.isFocused(), editor });
+    }
+  }
+  fs.writeFileSync(path.join(output, "capsule-model-paint.json"), JSON.stringify(paintEvidence, null, 2));
+  for (const sample of paintEvidence.samples) {
+    assert.equal(sample.visible, true);
+    assert.equal(sample.focusOwner === "capsule" ? sample.capsuleFocused : sample.pageFocused, true, "Painting visible chrome preserves the current native keyboard owner");
+    if (sample.focusOwner === "capsule") assert.deepEqual(sample.editor, { value: draft, start: 5, end: 22, active: true }, "Chrome model updates preserve the editor draft and selection");
+  }
+  checks.push("Visible capsule model and bounds updates preserve page or editor focus without disturbing the draft and selection");
   fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ status: "passed", versions: process.versions, checks, screenshots, limitations,
     nativeEvents, scope: "Production React/CSS and native ChromeOverlayHost over a live webpage. Synthetic tab models; complete app navigation is covered by workspace acceptance." }, null, 2));
   console.log(checks.join("\n"));

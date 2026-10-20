@@ -179,9 +179,12 @@ export class ChromeOverlayHost {
     const request = surface.request;
     if (!request || request.token !== token || request.generation !== generation || !surface.owner.isVisible() || surface.owner.isMinimized() || this.fullscreen) return;
     this.layout(surface);
-    surface.view.setVisible(true);
+    const opening = !surface.view.getVisible();
+    if (opening) surface.view.setVisible(true);
     surface.view.webContents.setBackgroundThrottling(true);
-    this.raise(surface.owner);
+    // Model and viewport updates keep the existing native stacking. Newly
+    // attached website views already raise chrome through prepare().
+    if (opening) this.raise(surface.owner);
     if (surface.focusPending) { surface.focusPending = false; surface.view.webContents.focus(); }
     if (surface.kind === "ribbon" && !this.pointerInside(surface)) this.scheduleLeave(surface);
   }

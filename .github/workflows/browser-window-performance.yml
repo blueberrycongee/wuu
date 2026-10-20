@@ -141,11 +141,11 @@ jobs:
           const fixed = value => value == null ? 'n/a' : value.toFixed(1);
           const lines = ['## Native browser window performance', '', 'Same production main/preload/renderer, local animated + scrolling webpage, 6-second idle/move/resize phases, 1-second settling before each. Alternating A/B then B/A; no video/tracing during timing.', '', 'Diagnostic measurements, not a noisy-runner FPS pass gate. rAF intervals are renderer scheduling, not compositor presentation.', ''];
           for (const report of reports) {
-            lines.push(`### ${report.name}: ${report.status}`, `Commit: ${report.commit}`, `Motion: ${report.environment.motion}`, '', '| Phase | Renderer | rAF p50 / p95 / max ms | >50 ms intervals | Long tasks | DOM rect reads | Query scans |', '|---|---|---|---|---|---|---|');
+            lines.push(`### ${report.name}: ${report.status}`, `Commit: ${report.commit}`, `Motion: ${report.environment.motion}`, '', '| Phase | Renderer | rAF p50 / p95 / max ms | First / last frame gap ms | >50 ms intervals | Long tasks | DOM rect reads | Query scans |', '|---|---|---|---|---|---|---|---|');
             for (const phase of report.phases) {
               for (const renderer of ['host', 'guest']) {
                 const data = phase[renderer], frame = data.frameIntervals;
-                lines.push(`| ${phase.name} | ${renderer} | ${fixed(frame.p50Ms)} / ${fixed(frame.p95Ms)} / ${fixed(frame.maxMs)} | ${frame.stallsOver50Ms} | ${data.longTasks.count} | ${data.rectReads} | ${data.queryScans} |`);
+                lines.push(`| ${phase.name} | ${renderer} | ${fixed(frame.p50Ms)} / ${fixed(frame.p95Ms)} / ${fixed(frame.maxMs)} | ${fixed(data.initialFrameGapMs)} / ${fixed(data.trailingFrameGapMs)} | ${frame.stallsOver50Ms} | ${data.longTasks.count} | ${data.rectReads} | ${data.queryScans} |`);
               }
             }
             lines.push('', '| Phase | setBounds / setVisible / zoom / reparent | Bounds IPC | Input ack p95 / max ms | Input acknowledged / sent |', '|---|---|---|---|---|');

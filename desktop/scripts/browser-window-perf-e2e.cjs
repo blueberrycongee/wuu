@@ -85,7 +85,7 @@ const website = `<!doctype html><meta charset="utf-8"><title>Browser motion perf
 <style>body{margin:0;font:16px system-ui;background:#edf4fa;color:#17354a}header{height:80px;padding:20px;background:#fff}#viewport{height:calc(100vh - 120px);overflow:auto}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px;padding:22px}.card{height:120px;padding:14px;background:white;border-radius:12px;box-shadow:0 1px 8px #1232}.bar{width:30%;height:8px;background:#62a6d8;animation:slide 1.2s linear infinite alternate}@keyframes slide{to{transform:translateX(160%)}}#response{display:inline-block;margin-left:20px}</style>
 <header>Animated and scrolling local website <output id="response">0</output><p>96 cards, CSS transforms, continuous viewport scroll. No external requests.</p></header>
 <div id="viewport"><main>${Array.from({ length: 96 }, (_, i) => `<section class="card"><h3>Local card ${i + 1}</h3><div class="bar"></div><p>Responsive website content and input feedback.</p></section>`).join('')}</main></div>
-<script>const viewport=document.querySelector('#viewport');let direction=1,last=0;function animate(now){if(last){viewport.scrollTop+=direction*(now-last)*0.14;if(viewport.scrollTop+viewport.clientHeight>=viewport.scrollHeight-2)direction=-1;else if(viewport.scrollTop<=0)direction=1;}last=now;requestAnimationFrame(animate);}requestAnimationFrame(animate);let serial=0;addEventListener('keydown',event=>{if(event.key==='F8'){document.querySelector('#response').textContent=++serial;fetch('/input?serial='+serial);}});</script>`;
+<script>const viewport=document.querySelector('#viewport');let direction=1,last=0;function animate(now){if(last){viewport.scrollTop+=direction*(now-last)*0.14;if(viewport.scrollTop+viewport.clientHeight>=viewport.scrollHeight-2)direction=-1;else if(viewport.scrollTop<=0)direction=1;}last=now;requestAnimationFrame(animate);}requestAnimationFrame(animate);addEventListener('keydown',event=>{if(/^Key[A-Z]$/.test(event.code)){const serial=event.code.charCodeAt(3)-64+(event.shiftKey?26:0);document.querySelector('#response').textContent=serial;fetch('/input?serial='+serial);}});</script>`;
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   if (url.pathname === '/input') {
@@ -113,7 +113,7 @@ function stats(samples) {
 // Installed once outside measurement. Counters do no extra geometry reads.
 function installProbe() {
   let current = null, previous = 0;
-  const state = { start() { previous = 0; current = { startedAt: performance.now(), frames: [], longTasks: [], rectReads: 0, queryScans: 0, inputToFrame: [], visibility: document.visibilityState }; },
+  const state = { start() { previous = 0; current = { startedAt: performance.now(), initialFrameGapMs: null, frames: [], longTasks: [], rectReads: 0, queryScans: 0, inputToFrame: [], visibility: document.visibilityState }; },
     stop() { const result = current; result.elapsedMs = performance.now() - result.startedAt; result.trailingFrameGapMs = previous ? performance.now() - previous : result.elapsedMs; current = null; return result; } };
   window.__browserPerf = state;
   const rect = Element.prototype.getBoundingClientRect;
@@ -124,8 +124,8 @@ function installProbe() {
   }
   state.longTasksSupported = PerformanceObserver.supportedEntryTypes.includes('longtask');
   if (state.longTasksSupported) new PerformanceObserver(list => { if (current) current.longTasks.push(...list.getEntries().map(entry => entry.duration)); }).observe({ type: 'longtask' });
-  addEventListener('keydown', event => { if (current && event.key === 'F8') { const at = performance.now(), phase = current; requestAnimationFrame(() => { if (current === phase) current.inputToFrame.push(performance.now() - at); }); } });
-  function frame(now) { if (current) { if (previous) current.frames.push(now - previous); previous = now; } requestAnimationFrame(frame); }
+  addEventListener('keydown', event => { if (current && /^Key[A-Z]$/.test(event.code)) { const at = performance.now(), phase = current; requestAnimationFrame(() => { if (current === phase) current.inputToFrame.push(performance.now() - at); }); } });
+  function frame(now) { if (current) { if (previous) current.frames.push(now - previous); else current.initialFrameGapMs = performance.now() - current.startedAt; previous = now; } requestAnimationFrame(frame); }
   requestAnimationFrame(frame);
   return { longTasksSupported: state.longTasksSupported };
 }
@@ -157,7 +157,11 @@ async function phase(name) {
   const clock = setInterval(() => { const now = performance.now(); result.mainIntervalsMs.push(now - previous); previous = now; }, 16);
   const input = setInterval(() => {
     pendingInputs.set(++inputSerial, { at: performance.now(), phase: name }); result.inputSent++;
-    guest.sendInputEvent({ type: 'keyDown', keyCode: 'F8' }); guest.sendInputEvent({ type: 'keyUp', keyCode: 'F8' });
+    // Encode probe identity in the native key, rather than counting received
+    // events: one dropped key must not shift every later latency measurement.
+    // Three phases of at most ten seconds need fewer than 52 distinct keys.
+    const keyCode = String.fromCharCode(65 + (inputSerial - 1) % 26), modifiers = inputSerial > 26 ? ['shift'] : [];
+    guest.sendInputEvent({ type: 'keyDown', keyCode, modifiers }); guest.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
   }, 750);
   let motion, motionError;
   try {
@@ -177,7 +181,7 @@ async function phase(name) {
   active = null;
   const [host, page] = await Promise.all([evaluate(win.webContents, () => window.__browserPerf.stop()), evaluate(guest, () => window.__browserPerf.stop())]);
   const summarize = sample => ({ frameIntervals: stats(sample.frames), longTasks: stats(sample.longTasks), rectReads: sample.rectReads,
-    queryScans: sample.queryScans, elapsedMs: sample.elapsedMs, trailingFrameGapMs: sample.trailingFrameGapMs, inputEventToNextFrame: stats(sample.inputToFrame), visibility: sample.visibility });
+    queryScans: sample.queryScans, elapsedMs: sample.elapsedMs, initialFrameGapMs: sample.initialFrameGapMs, trailingFrameGapMs: sample.trailingFrameGapMs, inputEventToNextFrame: stats(sample.inputToFrame), visibility: sample.visibility });
   result.host = summarize(host); result.guest = summarize(page);
   result.raw = { host, guest: page, mainIntervalsMs: result.mainIntervalsMs, inputAckMs: result.inputAckMs };
   result.mainIntervals = stats(result.mainIntervalsMs); result.inputDispatchToAck = stats(result.inputAckMs);
