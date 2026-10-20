@@ -6536,12 +6536,12 @@ export function App(): JSX.Element {
         }}
       />
       {!poppedOutMode && !isTouchWebShell() ? <PageHistoryControls {...pageHistory}
-        hidden={window.wuu.platform === "darwin" && nativeRibbonPresent && (
+        hidden={(showingWebPage && !settingsOpen) || (window.wuu.platform === "darwin" && nativeRibbonPresent && (
           (!(showingWebPage && !settingsOpen) && sidebarDrawerPhase !== "closed")
           // The expanded ribbon covers the collapsed and browser header lanes.
           // Docked content starts beyond it, so its history remains available.
           || (nativeRibbonExpanded && (sidebarCollapsed || (showingWebPage && !settingsOpen)))
-        )}
+        ))}
       /> : null}
       {contextCapsule}
       {/* macOS applies app regions in DOM order, so a later drag titlebar would

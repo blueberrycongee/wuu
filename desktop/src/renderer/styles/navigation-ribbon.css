@@ -745,15 +745,6 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon).right-panel-globalized .workspace-panel-tabbar {
   padding-left: calc(var(--app-history-end) - var(--workspace-sheet-left));
 }
-/* Browser navigation stays beside the address field, separated from app
-   history by an extra gap in this existing row; the sidebar toggle is hidden. */
-:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon)[data-web-workspace-open] {
-  --app-history-origin: var(--sidebar-ribbon-width);
-  --app-history-inset: var(--control-toolbar-inset);
-}
-:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .web-workspace-toolbar {
-  padding-left: calc(var(--app-history-end) - var(--sidebar-ribbon-width) + var(--control-toolbar-gap));
-}
 /* The native surface owns browser reveal geometry. Closing shell chrome follows
    the same duration while the live native rail completes its exit. */
 .sidebar-ribbon[data-native-supported="true"][data-expanded="true"] { transition: none; }
