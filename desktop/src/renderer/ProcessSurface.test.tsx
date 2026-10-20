@@ -120,6 +120,7 @@ it("announces a running compaction from the summary only while details are close
 });
 
 it.each([
+  { name: "mcp_example_computer", arguments: { display_title: "Inspect target", action: "observe" }, source: JSON.stringify({ display_title: "Inspect target", action: "observe" }, null, 2) },
   { name: "exec", arguments: { command: "git status --short" }, source: "git status --short" },
   { name: "run_code", arguments: { code: "await tools.read_file({path: 'notes.md'});" }, source: "await tools.read_file({path: 'notes.md'});" },
 ])("keeps a single $name source disclosure reachable", ({ name, arguments: args, source }) => {

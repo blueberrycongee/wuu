@@ -148,6 +148,8 @@ function rawToolCommand(name: string, args: string | undefined): string {
 export function readableToolActivityCommand(
   item: Pick<ThreadItem, "name" | "arguments" | "result" | "result_detail" | "display">,
 ): string {
+  const title = mcpToolActivityTitle(item);
+  if (title) return title;
   return appendCapabilitySuffix(
     readableToolActivityCommandInner(item),
     item.display?.capability,
@@ -1162,10 +1164,21 @@ export function readableToolName(name: string | undefined): string {
   }
 }
 
+/** MCP tools may supply a per-call action title; execution still uses the raw name. */
+export function mcpToolActivityTitle(
+  item: Pick<ThreadItem, "name" | "arguments">,
+): string | undefined {
+  if (!isMCPToolName((item.name ?? "").trim())) return undefined;
+  const title = stringValue(parseJSONRecord(item.arguments), "display_title");
+  return title ? truncateText(title.replace(/\s+/g, " "), 160) : undefined;
+}
+
 /** Resolve user-facing identity without replacing the raw dispatch name. */
 export function readableToolActivityName(
   item: Pick<ThreadItem, "name" | "display" | "arguments">,
 ): string {
+  const title = mcpToolActivityTitle(item);
+  if (title) return title;
   if (item.name === "run_code") {
     const args = parseJSONRecord(item.arguments);
     const code = args?.input ?? args?.code;

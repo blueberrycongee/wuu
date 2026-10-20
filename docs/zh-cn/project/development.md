@@ -64,6 +64,28 @@ make build-go
 
 `make install` 从当前检出安装 CLI。发布工作流仅打包 macOS arm64 桌面预览版；Linux x64 AppImage / Debian 包仍为实验性源码构建。存在 Windows CI 和打包脚本，不代表已经发布 Windows 版本。用户可用的发行方式见[安装](../getting-started/installation.md)。
 
+### 桌面安装包体积与运行验证
+
+桌面的生产依赖仅保留 Electron 运行时加载的模块（`electron-updater` 和
+`node-pty`）。渲染进程依赖放在 devDependencies：Vite 已将代码、动态加载块、
+worker、字体和样式打入 `out/`。继续把这些库列为生产依赖会让 electron-builder
+再装入一份原始文件。渲染 JavaScript 经过压缩，同时保留 Cordis 使用的函数和类名。不要为缩小体积删除 worker、资源输出或原生 PTY 文件。
+
+渲染构建生成 `out/renderer/THIRD-PARTY-LICENSES.txt`，保留传递依赖的声明。
+缺失许可证正文会导致构建失败；按版本补充的上游许可证位于
+`desktop/vendor/licenses`。安装包排除 JavaScript/CSS source map，源码级调试应使用
+开发构建。每次 `afterPack` 都检查运行依赖、worker 和许可证是否完整。
+
+在 macOS 打包后执行 `npm --prefix desktop run test:e2e:packaged --
+/absolute/path/wuu.app /absolute/path/evidence`。脚本将应用复制到仓库外，使用隔离的
+配置和工作目录，实际验证 core、更新器、原生终端、Monaco TypeScript 诊断、PDF
+worker 与页面渲染，以及 Mermaid。证据目录保存归档哈希、日志、结果和截图。
+添加 `--artifact-only` 可只检查包内容而不启动应用。
+
+测量更新时，分别比较完整 ZIP 字节数和更新器计划下载的字节数。基线与优化组应
+使用相同的新旧源码版本、架构、签名策略、压缩选项和构建输入。未压缩的 ASAR
+缩减量不等于下载缩减量；即使多数文件未变，压缩仍可能影响差量块的复用。
+
 ### Linux 桌面包
 
 在 Linux x64 上，`npm --prefix desktop run pack:linux` 生成目录包，

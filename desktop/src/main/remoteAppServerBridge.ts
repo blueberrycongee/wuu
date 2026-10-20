@@ -131,6 +131,12 @@ export class RemoteAppServerBridge {
         };
         void Promise.resolve().then(async () => {
           if(socket.destroyed)throw new Error("Remote connection closed");
+          if (method.startsWith("auth/chatgpt/login/")) {
+            throw new Error("ChatGPT sign-in must be started on the local desktop");
+          }
+          if (method === "engine/authenticate" && (params as { method_id?: unknown } | undefined)?.method_id === "local-cli") {
+            throw new Error("CLI sign-in must be started on the local desktop");
+          }
           if (!this.compactSubscribers.has(socket)) return request(cwd, method, params, finish);
           if (method === "remote/content/read") {
             const input = params as { ref: string; offset?: number };

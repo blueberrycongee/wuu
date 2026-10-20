@@ -66,6 +66,36 @@ describe("browser host contract", () => {
     expect(remote.call).not.toHaveBeenCalled();
   });
 
+  it("keeps ChatGPT login local while exposing host-owned account management", async () => {
+    const host = await api();
+    for (const [method, args] of [
+      ["startChatGPTLogin", ["account-1", true]],
+      ["pollChatGPTLogin", ["attempt-1"]],
+      ["cancelChatGPTLogin", ["attempt-1"]],
+    ] as const) {
+      expect(host.unsupportedMethods).toContain(method);
+      await expect((host[method] as (...args: readonly unknown[]) => Promise<unknown>)(...args))
+        .rejects.toMatchObject({ code: "host_operation_unavailable", operation: method });
+    }
+    expect(remote.call).not.toHaveBeenCalled();
+    expect(window.open).not.toHaveBeenCalled();
+
+    const accounts = { accounts: [{ id: "account-1", email: "fixture@example.test", status: "connected" }] };
+    remote.call.mockResolvedValueOnce(accounts);
+    await expect(host.listChatGPTAccounts()).resolves.toEqual(accounts);
+    expect(remote.call).toHaveBeenLastCalledWith("auth/chatgpt/accounts", undefined, 30_000, expect.any(String));
+    const models = { models: [{ id: "fixture-model", name: "Fixture" }], providers: [] };
+    remote.call.mockResolvedValueOnce(models);
+    await expect(host.listChatGPTModels("account-1")).resolves.toEqual(models);
+    expect(remote.call).toHaveBeenLastCalledWith("auth/chatgpt/models", { account_id: "account-1" }, 30_000, expect.any(String));
+    const signedOut = { ok: true, revocation_confirmed: false, providers: [] };
+    remote.call.mockResolvedValueOnce(signedOut);
+    await expect(host.signOutChatGPTAccount("account-1")).resolves.toEqual(signedOut);
+    expect(remote.call).toHaveBeenLastCalledWith("auth/chatgpt/signout", { account_id: "account-1" }, 30_000, expect.any(String));
+    remote.call.mockRejectedValueOnce(new Error("account unavailable"));
+    await expect(host.listChatGPTModels("missing-account")).rejects.toThrow("account unavailable");
+  });
+
   it("preserves explicit resets and thread-scoped model selection over RPC", async () => {
     await (await api()).updateRuntimeSettings(undefined, undefined, "", undefined, "", "read_only", "thread-1");
     expect(remote.call).toHaveBeenCalledWith("config/model/update", {
@@ -83,6 +113,14 @@ describe("browser host contract", () => {
     expect(remote.call).toHaveBeenLastCalledWith("engine/auth/cancel", {
       engine_id: "antigravity",
     }, 30_000, expect.any(String));
+  });
+
+  it("does not forward the desktop-only local CLI login", async () => {
+    const host = await api();
+    await expect(host.authenticateEngine("grok", "local-cli")).rejects.toMatchObject({
+      code: "host_operation_unavailable", operation: "authenticateEngine",
+    });
+    expect(remote.call).not.toHaveBeenCalled();
   });
 
   it("does not open executable URL schemes", async () => {

@@ -145,6 +145,11 @@ func CodexSubscriptionModelAliases(modelID string) []Model {
 }
 
 func MatchProvider(providerName string, provider config.ProviderConfig) (Provider, bool) {
+	// A ChatGPT registration's models come only from its authenticated catalog.
+	// The shared public endpoint does not imply API-key model entitlement.
+	if normalizeID(provider.Type) == "chatgpt" {
+		return Provider{}, false
+	}
 	providers, err := Providers()
 	if err != nil {
 		return Provider{}, false

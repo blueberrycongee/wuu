@@ -288,6 +288,7 @@ const desktopAPI = {
     generalSettings = { ...generalSettings, ...settings };
     return { general_settings: generalSettings };
   },
+  listEngines: async () => ({ engines: [] }),
   getBuildInfo: async () => ({
     core: undefined,
     desktop: { version: "resize-e2e", date: "1970-01-01T00:00:00Z" }

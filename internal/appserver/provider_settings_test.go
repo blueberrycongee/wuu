@@ -2,8 +2,11 @@ package appserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -346,6 +349,168 @@ func TestServerModelCatalogProvidersListsConnectableServices(t *testing.T) {
 	} {
 		if request(id, params)["error"] == nil {
 			t.Fatalf("%s: listed a provider that cannot be connected", id)
+		}
+	}
+}
+
+func TestServerCreatesCodexProviderFromLocalLogin(t *testing.T) {
+	for _, keepSelection := range []bool{false, true} {
+		t.Run(fmt.Sprintf("keep_selection=%t", keepSelection), func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			t.Setenv("WUU_HOME", t.TempDir())
+			codexHome := t.TempDir()
+			t.Setenv("CODEX_HOME", codexHome)
+			claims := fmt.Sprintf(`{"exp":%d,"https://api.openai.com/auth":{"chatgpt_account_id":"acct_fixture"}}`, time.Now().Add(time.Hour).Unix())
+			token := "e30." + base64.RawURLEncoding.EncodeToString([]byte(claims)) + ".sig"
+			auth := `{"tokens":{"access_token":"` + token + `","refresh_token":"fixture-refresh"}}`
+			if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(auth), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
+			oldClient := rt.StreamRunner.Client
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			response := requestProviderSettings(t, srv, out, "create-codex", fmt.Sprintf(`{"provider":"chatgpt","model":"gpt-5.5","type":"openai-codex","create_provider":true,"reuse_codex_credentials":true,"keep_selection":%t}`, keepSelection))
+			if response["error"] != nil {
+				t.Fatalf("create Codex provider: %v", response["error"])
+			}
+			result := remarshal[ConfigModelUpdateResult](t, response["result"])
+			created := providerSummaryNamed(t, result.Providers, "chatgpt")
+			if !created.ConnectionLocked || !created.ReuseCodexCredentials || created.CodexCredentialSource != "codex-cli" || !created.APIKeyConfigured {
+				t.Fatalf("local login status = %+v", created)
+			}
+			cfg := readProviderSettingsConfig(t, rt)
+			saved := cfg.Providers["chatgpt"]
+			if saved.Type != "openai-codex" || saved.BaseURL != "https://chatgpt.com/backend-api/codex" || !saved.ReuseCodexCredentials || saved.Model != "gpt-5.5" || saved.APIKey != "" || saved.AuthToken != "" {
+				t.Fatalf("saved Codex provider = %+v", saved)
+			}
+			wantProvider, wantModel := "chatgpt", "gpt-5.5"
+			if keepSelection {
+				wantProvider, wantModel = "fake-provider", "fake-model"
+				if rt.StreamRunner.Client != oldClient || cfg.Agent.Variant != "high" {
+					t.Fatal("saving Codex changed the existing runtime or variant")
+				}
+			}
+			if cfg.DefaultProvider != wantProvider || rt.ProviderName != wantProvider || rt.Model != wantModel || result.Provider != wantProvider || result.Model != wantModel {
+				t.Fatalf("selection mismatch: config=%q runtime=%q/%q result=%q/%q", cfg.DefaultProvider, rt.ProviderName, rt.Model, result.Provider, result.Model)
+			}
+			data, err := os.ReadFile(rt.ConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), token) || strings.Contains(string(data), "fixture-refresh") {
+				t.Fatal("OAuth credentials were copied into provider configuration")
+			}
+		})
+	}
+}
+
+func TestServerRejectsCodexCreationWithoutUsableLocalLogin(t *testing.T) {
+	for _, tc := range []struct{ name, auth, extra, want string }{
+		{"missing", "", `,"reuse_codex_credentials":true`, "Codex CLI OAuth credentials not found"},
+		{"invalid", `{"tokens":{}}`, `,"reuse_codex_credentials":true`, "missing access_token"},
+		{"expired", `{"tokens":{"access_token":"e30.eyJleHAiOjF9.sig"}}`, `,"reuse_codex_credentials":true`, "expired"},
+		{"no-consent", `{"tokens":{"access_token":"fixture-token"}}`, "", "reuse_codex_credentials"},
+		{"declined", `{"tokens":{"access_token":"fixture-token"}}`, `,"reuse_codex_credentials":false`, "reuse_codex_credentials"},
+		{"endpoint", `{"tokens":{"access_token":"fixture-token"}}`, `,"reuse_codex_credentials":true,"base_url":"https://other.test"`, "managed by OpenAI OAuth"},
+		{"api-key", `{"tokens":{"access_token":"fixture-token"}}`, `,"reuse_codex_credentials":true,"api_key":"key"`, "managed by OpenAI OAuth"},
+		{"auth-token", `{"tokens":{"access_token":"fixture-token"}}`, `,"reuse_codex_credentials":true,"auth_token":"token"`, "managed by OpenAI OAuth"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			t.Setenv("WUU_HOME", t.TempDir())
+			codexHome := t.TempDir()
+			t.Setenv("CODEX_HOME", codexHome)
+			if tc.auth != "" {
+				if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(tc.auth), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
+			oldClient := rt.StreamRunner.Client
+			out := &lockedBuffer{}
+			response := requestProviderSettings(t, New(rt, out), out, "reject-codex", `{"provider":"chatgpt","model":"gpt-5.5","type":"openai-codex","create_provider":true,"keep_selection":true`+tc.extra+`}`)
+			if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), tc.want) {
+				t.Fatalf("expected %q error, got %v", tc.want, response)
+			}
+			data, err := os.ReadFile(rt.ConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != twoProviderSettingsConfig || rt.StreamRunner.Client != oldClient || rt.ProviderName != "fake-provider" {
+				t.Fatal("rejected login changed persisted config or runtime")
+			}
+		})
+	}
+}
+
+func TestServerReusesExistingCodexProviderOnlyWithLocalLogin(t *testing.T) {
+	for _, method := range []string{MethodConfigModelUpdate, MethodConfigCodexCredentials} {
+		for _, available := range []bool{false, true} {
+			for _, alreadyEnabled := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/login=%t/reuse=%t", method, available, alreadyEnabled), func(t *testing.T) {
+					rt := newTestRuntime(t, &fakeClient{})
+					t.Setenv("WUU_HOME", t.TempDir())
+					codexHome := t.TempDir()
+					t.Setenv("CODEX_HOME", codexHome)
+					if available {
+						claims := fmt.Sprintf(`{"exp":%d}`, time.Now().Add(time.Hour).Unix())
+						token := "e30." + base64.RawURLEncoding.EncodeToString([]byte(claims)) + ".sig"
+						if err := os.WriteFile(filepath.Join(codexHome, "auth.json"), []byte(`{"tokens":{"access_token":"`+token+`"}}`), 0o600); err != nil {
+							t.Fatal(err)
+						}
+					}
+					body := fmt.Sprintf(`{
+					"default_provider":"fake-provider",
+					"agent":{"variant":"high"},
+					"providers":{
+						"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key":"old-key","model":"fake-model"},
+						"my-chatgpt":{"type":"openai-codex","base_url":"https://chatgpt.com/backend-api/codex","model":"gpt-5.5","reuse_codex_credentials":%t,"models":{"custom-model":{"disabled":true}}}
+					}
+				}`, alreadyEnabled)
+					writeProviderSettingsConfig(t, rt, body)
+					oldClient := rt.StreamRunner.Client
+					out := &lockedBuffer{}
+					srv := New(rt, out)
+					params := `{"provider":"my-chatgpt","model":"gpt-5.5","reuse_codex_credentials":true,"keep_selection":true}`
+					if method == MethodConfigCodexCredentials {
+						params = `{"provider":"my-chatgpt"}`
+					}
+					if err := srv.handleLine(context.Background(), []byte(`{"id":"reuse-codex","method":"`+method+`","params":`+params+`}`)); err != nil {
+						t.Fatal(err)
+					}
+					response := responseByID(t, parseOutput(t, out.String()), "reuse-codex")
+					if !available {
+						if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "Codex CLI OAuth credentials not found") {
+							t.Fatalf("expected missing login error, got %v", response["error"])
+						}
+						data, err := os.ReadFile(rt.ConfigPath)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if string(data) != body {
+							t.Fatal("missing login changed provider configuration")
+						}
+					} else {
+						if response["error"] != nil {
+							t.Fatalf("reuse login: %v", response["error"])
+						}
+						cfg := readProviderSettingsConfig(t, rt)
+						provider := cfg.Providers["my-chatgpt"]
+						if len(cfg.Providers) != 2 || !provider.ReuseCodexCredentials || provider.Model != "gpt-5.5" || !provider.Models["custom-model"].Disabled || cfg.DefaultProvider != "fake-provider" || cfg.Agent.Variant != "high" {
+							t.Fatalf("existing provider settings or selection changed: %+v", cfg)
+						}
+						result := remarshal[ConfigModelUpdateResult](t, response["result"])
+						summary := providerSummaryNamed(t, result.Providers, "my-chatgpt")
+						if summary.CodexCredentialSource != "codex-cli" || !summary.ReuseCodexCredentials {
+							t.Fatalf("existing provider login status = %+v", summary)
+						}
+					}
+					if ((!available || method == MethodConfigModelUpdate) && rt.StreamRunner.Client != oldClient) || rt.ProviderName != "fake-provider" || rt.Model != "fake-model" {
+						t.Fatal("credential reuse changed workspace runtime")
+					}
+				})
+			}
 		}
 	}
 }

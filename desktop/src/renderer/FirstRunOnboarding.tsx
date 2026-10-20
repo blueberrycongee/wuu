@@ -99,6 +99,7 @@ export function FirstRunOnboarding({
   onDismissPreview,
   onUpdateExtensionPackage,
   onSaveProvider,
+  onProvidersChanged,
   onUpdateEngines,
   onComplete,
 }: {
@@ -109,6 +110,7 @@ export function FirstRunOnboarding({
   preview?: boolean;
   onDismissPreview?: () => void;
   onUpdateExtensionPackage: (update: ExtensionPackageUpdateParams) => Promise<void>;
+  onProvidersChanged?: (providers: ProviderSummary[]) => void;
   onSaveProvider: (
     provider: string,
     model: string,
@@ -410,6 +412,7 @@ export function FirstRunOnboarding({
 
   const connector = (
     <ServiceConnector
+      onProvidersChanged={onProvidersChanged}
       providers={providers?.filter((provider) => !provider.auto_discovered) ?? []}
       running={savingProvider}
       catalog={catalog}

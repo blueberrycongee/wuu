@@ -160,19 +160,30 @@ type InstructionFilesConfig struct {
 }
 
 // ProviderConfig configures one model gateway.
+type ChatGPTModelConfig struct {
+	AccountDescriptor json.RawMessage `json:"account_descriptor,omitempty"`
+	ID                string          `json:"id"`
+	DisplayName       string          `json:"display_name,omitempty"`
+}
+
 type ProviderConfig struct {
-	Type         string                         `json:"type"`
-	BaseURL      string                         `json:"base_url"`
-	API          string                         `json:"api,omitempty"`
-	NPM          string                         `json:"npm,omitempty"`
-	WireAPI      string                         `json:"wire_api,omitempty"`
-	APIKey       string                         `json:"api_key,omitempty"`
-	APIKeyEnv    string                         `json:"api_key_env,omitempty"`
-	AuthToken    string                         `json:"auth_token,omitempty"`
-	AuthTokenEnv string                         `json:"auth_token_env,omitempty"`
-	Model        string                         `json:"model"`
-	Models       map[string]ProviderModelConfig `json:"models,omitempty"`
-	Headers      map[string]string              `json:"headers,omitempty"`
+	// ChatGPTModels is the last account-discovered catalog in server order.
+	// It is saved atomically with ChatGPTAccountID, never filled by a static catalog.
+	ChatGPTModels []ChatGPTModelConfig `json:"chatgpt_models,omitempty"`
+	// ChatGPTAccountID references a protected SIWC registration, never a token.
+	ChatGPTAccountID string                         `json:"chatgpt_account_id,omitempty"`
+	Type             string                         `json:"type"`
+	BaseURL          string                         `json:"base_url"`
+	API              string                         `json:"api,omitempty"`
+	NPM              string                         `json:"npm,omitempty"`
+	WireAPI          string                         `json:"wire_api,omitempty"`
+	APIKey           string                         `json:"api_key,omitempty"`
+	APIKeyEnv        string                         `json:"api_key_env,omitempty"`
+	AuthToken        string                         `json:"auth_token,omitempty"`
+	AuthTokenEnv     string                         `json:"auth_token_env,omitempty"`
+	Model            string                         `json:"model"`
+	Models           map[string]ProviderModelConfig `json:"models,omitempty"`
+	Headers          map[string]string              `json:"headers,omitempty"`
 	// ReuseCodexCredentials lets Codex subscription providers read the local
 	// Codex CLI auth store (CODEX_HOME/auth.json or ~/.codex/auth.json) as a
 	// selected source, taking precedence over Wuu's saved OAuth session.
@@ -1251,6 +1262,8 @@ func UpdateProviderModel(configPath, providerName, newModel string) error {
 // pointers keep the saved value; an empty APIKey or AuthToken removes the
 // inline secret. Model is the provider's own model and is always written.
 type ProviderChange struct {
+	ChatGPTModels    *[]ChatGPTModelConfig
+	ChatGPTAccountID *string
 	// Create adds the provider; Type is written verbatim and defaults to
 	// "openai-compatible". The caller whitelists allowed types.
 	Create bool
@@ -1935,6 +1948,12 @@ func updateProviderSelection(configPath, providerName string, change ProviderCha
 		} else {
 			agent["variant"] = strings.TrimSpace(*variant)
 		}
+	}
+	if change.ChatGPTModels != nil {
+		provider["chatgpt_models"] = *change.ChatGPTModels
+	}
+	if change.ChatGPTAccountID != nil {
+		provider["chatgpt_account_id"] = strings.TrimSpace(*change.ChatGPTAccountID)
 	}
 	if change.ReuseCodexCredentials != nil {
 		provider["reuse_codex_credentials"] = *change.ReuseCodexCredentials

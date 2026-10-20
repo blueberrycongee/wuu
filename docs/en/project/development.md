@@ -79,6 +79,34 @@ without a manifest or build. See the [plugin quickstart](../customize/plugin-qui
 
 `make install` installs the CLI from the checkout. The release workflow packages only the macOS arm64 desktop preview. Linux x64 AppImage/Debian packages are experimental source builds. Windows CI and packaging scripts do not imply a published Windows release. See [installation](../getting-started/installation.md) for user-facing availability.
 
+### Desktop package size and runtime verification
+
+Desktop production dependencies are the modules loaded by Electron at runtime
+(`electron-updater` and `node-pty`). Renderer libraries belong in devDependencies:
+Vite bundles their code, lazy chunks, workers, fonts and styles into `out/`.
+Keeping them as production dependencies makes electron-builder ship a second raw
+copy. Renderer JavaScript is minified with function/class names preserved for Cordis.
+Do not remove worker/assets output or native PTY files to reduce size.
+
+Renderer builds emit `out/renderer/THIRD-PARTY-LICENSES.txt`, including transitive
+bundled notices. Missing license text fails the build; version-specific upstream
+supplements live in `desktop/vendor/licenses`. Packaged JavaScript/CSS source maps
+are excluded, so source-level debugging needs the development build. Every
+`afterPack` run checks the archive's runtime dependencies, workers and notices.
+
+After packaging on macOS, run `npm --prefix desktop run test:e2e:packaged --
+/absolute/path/wuu.app /absolute/path/evidence`. The check copies the app outside
+the checkout, uses an isolated profile/workspace, and exercises core/updater,
+native terminal, Monaco TypeScript diagnostics, PDF workers/rendering and Mermaid.
+The evidence directory contains the tested archive hash, logs, results and screenshots.
+Add `--artifact-only` for inventory checks without launching the app.
+
+Compare full ZIP bytes and updater-planned download bytes separately when measuring
+updates. Use the same old/new source revisions, architecture, signing policy,
+compression options and build inputs for baseline and optimized pairs. Uncompressed
+ASAR savings are not download savings; compression can change block reuse even
+when most underlying files are unchanged.
+
 ### Linux desktop packages
 
 On Linux x64, run `npm --prefix desktop run pack:linux` for an unpacked app,

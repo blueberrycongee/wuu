@@ -12,6 +12,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Add experimental Personal agents with persistent conversations, attributed shared memory, background tasks, attachment history, reminders, and desktop/native entry points. Personal now defaults to logical memory-domain isolation with explicit capability reporting. Verified host isolation remains an optional, fail-closed embedding mode; same-OS Shell confidentiality is not promised.
 - Add a persistent user-host SDK and scoped notification routing. Calendar authorization/write-provider wiring, native-device verification, and production push delivery remain integration requirements.
+- Show Computer Use calls as readable action titles, with original calls, outputs, and errors available in expandable records.
+
+- Show external connections as compact two-line rows with account plans, remaining quota bars and local reset times; omit unavailable quota details.
+
+- Offer account sign-in and local authentication as explicit connection methods, keeping official ChatGPT app authorization separate from Codex credentials and native-engine account ownership.
+
+- Sign in to Grok Build from its connection page using the installed Grok CLI, with cancellation and verified completion. Keep connection status and actions together, and group model management beside readable model names.
+
+- Connect ChatGPT directly through official browser sign-in without Codex CLI, with account-scoped model discovery, public Responses inference, protected refresh and sign-out. Unify model connections and account usage in Settings while keeping API keys and local Codex credentials distinct.
 - Let external agent engines use Wuu browser and enabled computer-control tools through turn-scoped MCP, with shared permissions, activity previews, screenshots, and Stop/Takeover controls.
 - Experimental Linux x64 AppImage and Debian packages with sandbox-preserving X11 launchers and CI artifact verification. Public releases remain macOS-only.
 - Linux MCP OAuth credential storage through Secret Service, with no plaintext fallback.
@@ -37,6 +46,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Preserve pending fallback messages until a real server turn acknowledges them, so a rejected concurrent send can restore its draft instead of being mistaken for delivered input.
 - Keep hidden and generated context out of Personal conversation history and search while preserving audit records and exact user-authored text.
 - Preserve accepted Personal user inputs when stopping a reply. Deliver background questions and failures to the main conversation, resume the same task from its answer, and update routines without duplicating schedules.
+- Fix macOS background pointer events landing outside the intended control. Pace key presses, text input, and repeated clicks, and retain the observed window for background input after AX-only observations.
 - Match the DeepSeek Harness icon's visible size to peer agent icons in settings, runtime menus, and onboarding.
 - Allow background task and question notifications on Linux desktops with native notification support.
 - Show the local model service directory immediately in settings and onboarding,

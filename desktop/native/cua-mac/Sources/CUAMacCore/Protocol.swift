@@ -377,10 +377,11 @@ public final class MCPServer {
             "description": "Observe and control macOS apps without disturbing the user. The runtime picks the lowest-disruption control level automatically: background Accessibility actions, then background directed input (keyboard and mouse delivered straight to the target process without activating it), and a visible foreground takeover only when foreground_policy asks for it. By default the user's frontmost app and real pointer stay put. Observe returns a canonical app target and snapshot_id. Pass snapshot_id with element IDs or coordinates; each input consumes it. query_snapshot pages or searches stored AX state. mode=ax supports text-only models; after optionally returns a fresh post-action observation. Input actions only deliver the requested event; they do not infer success from AX or pixels. Call observe after an action when the outcome matters. wait_for_change waits up to timeout seconds and returns changed=false when nothing changes; a normal timeout is not an error. conceal_app moves the target windows to an invisible agent display so the user never sees them while background control and live capture keep working; reveal_app restores them.",
             "inputSchema": [
                 "type": "object",
-                "required": ["action"],
+                "required": ["action", "display_title"],
                 "additionalProperties": false,
                 "oneOf": variants,
                 "properties": [
+                    "display_title": ["type": "string", "minLength": 1, "maxLength": 160, "description": "Short user-facing action title in the user's language, e.g. Observe the current window in Wuu Dev. Describe the intent of this call, not a claimed successful outcome. Do not include tool identifiers, code, or sensitive input."],
                     "action": ["type": "string", "enum": ComputerAction.allCases.map(\.rawValue)],
                     "app": ["type": "string", "description": "Target app display name, bundle identifier, or path. Required for every action except permission_status, request_permissions, and list_apps."],
                     "snapshot_id": ["type": "string", "description": "Required with element IDs or coordinates. Copy from observe; every input consumes it. A replaced, consumed, or stale snapshot is rejected before input."],

@@ -252,6 +252,7 @@ func (c *Client) buildResponsesRequest(req providers.ChatRequest, stream bool) (
 		MaxOutputTokens: req.MaxTokens,
 		Stream:          stream,
 		Options:         provideroptions.Clone(req.ProviderOptions),
+		ChatGPT:         c.responsesChatGPT,
 		Attempt:         req.Attempt,
 	}
 	if !providerOptionEnabled(req.ProviderOptions, "omitStore") {
@@ -332,7 +333,19 @@ func marshalResponsesRequest(payload responsesRequest) ([]byte, error) {
 	if err := json.Unmarshal(raw, &object); err != nil {
 		return nil, err
 	}
+	if payload.ChatGPT {
+		for _, key := range []string{"model", "input", "instructions"} {
+			if _, exists := payload.Options[key]; exists {
+				return nil, fmt.Errorf("ChatGPT provider options cannot replace %s", key)
+			}
+		}
+	}
 	mergeResponsesProviderOptions(object, payload.Options)
+	if payload.ChatGPT {
+		if err := prepareChatGPTResponsesPayload(object); err != nil {
+			return nil, err
+		}
+	}
 	return json.Marshal(object)
 }
 
@@ -890,7 +903,11 @@ func (c *Client) doSingleResponsesRequest(
 		return nil, nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 400))
+		limit := int64(400)
+		if c.responsesChatGPT {
+			limit = 16 << 10
+		}
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, limit))
 		_ = resp.Body.Close()
 		body := fmt.Sprintf("%s: %s", resp.Status, string(snippet))
 		err := &providers.HTTPError{
@@ -899,6 +916,9 @@ func (c *Client) doSingleResponsesRequest(
 			Body:            body,
 			RetryAfter:      providers.ParseRetryAfter(resp),
 			ContextOverflow: providers.DetectContextOverflow(body),
+		}
+		if c.responsesChatGPT {
+			err = providers.NewHTTPError("openai", resp, snippet)
 		}
 		lease.FailError(err)
 		return nil, nil, err
@@ -964,6 +984,12 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 	for scanner.Scan() {
 		data := scanner.Event().Data
 		if data == "[DONE]" {
+			if c.responsesChatGPT {
+				err := providers.NewIncompleteStreamError("ChatGPT stream ended before response.completed")
+				lease.FailError(err)
+				emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
+				return
+			}
 			pending.emitEnds(emit)
 			emitResponsesReplayItems(emit, nil, responseItems, text.emitted.String())
 			lease.Succeed()
@@ -1021,7 +1047,7 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 			case "reasoning":
 				pendingReasoning.emitDone(event, emit)
 			case "message":
-				if responsesFinalAnswerItemDone(event, sawToolCall) {
+				if !c.responsesChatGPT && responsesFinalAnswerItemDone(event, sawToolCall) {
 					armFinalAnswerTail()
 				}
 			case "function_call", "tool_search_call", "custom_tool_call":
@@ -1035,6 +1061,12 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 			}
 
 		case "response.completed", "response.done", "response.incomplete":
+			if c.responsesChatGPT && event.Type != "response.completed" {
+				err := fmt.Errorf("ChatGPT response did not complete: %s", event.Type)
+				lease.FailError(err)
+				emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
+				return
+			}
 			pending.emitEnds(emit)
 			usage, stopReason, finishReason, truncated := responsesDoneMetadata(event.Response, sawToolCall, event.Type)
 			lease.SucceedWithUsage(usage)
@@ -1051,6 +1083,9 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 
 		case "response.failed", "error":
 			err := event.asError()
+			if streamErr, ok := err.(*providers.StreamError); ok {
+				streamErr.RequestID = resp.Header.Get("x-request-id")
+			}
 			lease.FailError(err)
 			emit.Send(providers.StreamEvent{Type: providers.EventError, Error: err})
 			return
@@ -1397,6 +1432,7 @@ func (p *responsesPendingTool) update(item responsesOutputItem, outputIndex int)
 }
 
 type responsesRequest struct {
+	ChatGPT            bool                      `json:"-"`
 	Model              string                    `json:"model"`
 	Instructions       string                    `json:"instructions,omitempty"`
 	Input              []responsesInputItem      `json:"input"`
@@ -1775,6 +1811,7 @@ func (u *responsesUsage) asTokenUsage() *providers.TokenUsage {
 type responsesError struct {
 	Type    string `json:"type,omitempty"`
 	Code    string `json:"code,omitempty"`
+	Param   string `json:"param,omitempty"`
 	Message string `json:"message,omitempty"`
 }
 
@@ -1789,6 +1826,7 @@ func (e *responsesError) asError() error {
 	if code != "" || e.Message != "" {
 		err := providers.NewProviderStreamError(code, e.Message)
 		err.ProviderFamily = "openai"
+		err.Param = e.Param
 		return err
 	}
 	if e.Type != "" {
@@ -1823,6 +1861,7 @@ func (e responsesStreamEvent) errorDetail() responsesError {
 	}
 	if nested != nil {
 		detail.Type = nested.Type
+		detail.Param = nested.Param
 		if strings.TrimSpace(nested.Code) != "" {
 			detail.Code = nested.Code
 		} else if strings.TrimSpace(nested.Type) != "" {

@@ -2,6 +2,7 @@ import { act, createRef, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InitializeResult } from "../shared/protocol";
+import { connectionDisplayPreferences } from "./ConnectionDisplayPreferences";
 import { writeDraftRuntimeMemory } from "./DraftRuntimeMemory";
 import { permissionModeOption, RuntimePicker } from "./ComposerRuntimeMenus";
 import type { CodexRuntimeMenu } from "./ComposerTypes";
@@ -222,6 +223,18 @@ describe("RuntimePicker", () => {
     const button = document.querySelector<HTMLButtonElement>('button[aria-label="Fast mode"]');
     await act(async () => button?.click());
     expect(button?.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("updates model display order without selecting or moving the configured model to the front", () => {
+    const initialized = runtimeWithEffort();
+    initialized.providers![0].models!.push({ id: "other", display_name: "Other" });
+    const onSelectModel = vi.fn();
+    renderPicker("model", initialized, vi.fn(), vi.fn(), onSelectModel);
+    act(() => document.querySelector<HTMLButtonElement>(".runtime-panel-model")!.click());
+    act(() => connectionDisplayPreferences.setModelOrder("provider:work", ["other", "claude-sonnet"]));
+    expect(Array.from(document.querySelectorAll(".codex-model-item-name")).map(item => item.textContent)).toEqual(["Other", "Claude Sonnet"]);
+    expect(document.querySelector('.codex-model-item[aria-checked="true"]')?.textContent).toContain("Claude Sonnet");
+    expect(onSelectModel).not.toHaveBeenCalled();
   });
 
   it("opens the model panel from the trigger with a single click", () => {
@@ -756,7 +769,8 @@ describe("RuntimePicker", () => {
     expect(onSelectModel).toHaveBeenCalledWith("deepseek", "deepseek-reasoner", "high");
   });
 
-  it("falls back to the provider's configured model when the remembered one is gone", () => {
+  it("falls back to the provider's configured model when the remembered one is gone despite display ordering", () => {
+    connectionDisplayPreferences.setModelOrder("provider:deepseek", ["other", "deepseek-chat"]);
     writeDraftRuntimeMemory({
       provider: "deepseek",
       model: "retired-model",
@@ -770,7 +784,7 @@ describe("RuntimePicker", () => {
         name: "deepseek",
         type: "openai-compatible",
         model: "deepseek-chat",
-        models: [{ id: "deepseek-chat", display_name: "DeepSeek Chat" }],
+        models: [{ id: "deepseek-chat", display_name: "DeepSeek Chat" }, { id: "other" }],
       },
       {
         name: "tokenhub",

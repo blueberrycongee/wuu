@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -39,17 +38,7 @@ func envClaudeBinary() string {
 
 // Version reports the CLI version via `claude --version`. Empty on failure.
 func Version(binaryPath string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, binaryPath, "--version")
-	// Version discovery must not hold up settings recovery when a CLI wrapper
-	// hangs or leaves a child with inherited output pipes.
-	cmd.WaitDelay = time.Second
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
+	return enginecatalog.ObserveVersion(context.Background(), "claude", binaryPath)
 }
 
 // Engine is the claude agent engine: the Claude Code CLI hosted as an

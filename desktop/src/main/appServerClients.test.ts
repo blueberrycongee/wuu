@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AppServerResponseError } from "./appServerErrors";
 
 vi.mock("electron", () => ({
   app: {
@@ -228,6 +229,7 @@ describe("AppServerClientPool admission", () => {
           const rejected = expect(fifth).rejects.toThrow("fixture request failed");
           reply(4, { error: { code: "error", message: "fixture request failed" } });
           await rejected;
+          await expect(fifth).rejects.toBeInstanceOf(AppServerResponseError);
         } else {
           const result = operation === "turn"
             ? { turn: { status: "in_progress" } }

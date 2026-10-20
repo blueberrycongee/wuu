@@ -1,5 +1,5 @@
 // Package enginecatalog holds process launch metadata, without loading engines
-// or starting programs. Settings and runtime detection share this catalog.
+// or starting agent sessions. Settings and runtime detection share this catalog.
 package enginecatalog
 
 import (
@@ -18,6 +18,7 @@ type Entry struct {
 	Args       []string
 	Protocol   string
 	InstallURL string
+	UpdateURL  string
 }
 
 // Entries returns a fresh catalog so callers cannot mutate shared arguments.
@@ -27,8 +28,8 @@ func Entries() []Entry {
 		agyArgs = []string{"--uid="}
 	}
 	return []Entry{
-		{ID: "codex", Name: "Codex", Binary: "codex", Protocol: "codex"},
-		{ID: "claude", Name: "Claude Code", Binary: "claude", Protocol: "claude"},
+		{ID: "codex", Name: "Codex", Binary: "codex", Protocol: "codex", InstallURL: "https://developers.openai.com/codex/cli", UpdateURL: "https://developers.openai.com/codex/cli"},
+		{ID: "claude", Name: "Claude Code", Binary: "claude", Protocol: "claude", InstallURL: "https://code.claude.com/docs/en/setup", UpdateURL: "https://code.claude.com/docs/en/setup"},
 		{ID: "cursor", Name: "Cursor", Binary: "cursor-agent", Args: []string{"acp"}, Protocol: "acp", InstallURL: "https://cursor.com/docs/cli/acp"},
 		{ID: "devin", Name: "Devin", Binary: "devin", Args: []string{"acp"}, Protocol: "acp", InstallURL: "https://docs.devin.ai/cli"},
 		{ID: "dsh", Name: "DeepSeek Harness", Binary: "dsh", Args: []string{"--profile", "acp"}, Protocol: "acp", InstallURL: "https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/acp/acp"},

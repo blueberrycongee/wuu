@@ -1,3 +1,5 @@
+import { connectionDisplayPreferences, useConnectionDisplayPreferences } from "./ConnectionDisplayPreferences";
+import { chatGPTConnectionModels, isChatGPTProvider } from "./RuntimeHelpers";
 import { hostSupports } from "./HostCapabilities";
 import {
   Bug,
@@ -107,7 +109,7 @@ function availableEngineOptions(
   for (const engine of engines ?? []) {
     if (engine.id === "wuu") continue;
     if ((!engine.enabled || !engine.binary_ok) && engine.id !== activeEngine) continue;
-    options.push({ id: engine.id, label: engineLabel(engine.id, engine) });
+    options.push({ id: engine.id, label: connectionDisplayPreferences.label(`engine:${engine.id}`, engineLabel(engine.id, engine)) });
   }
   if (activeEngine && activeEngine !== "wuu" && !options.some((option) => option.id === activeEngine)) {
     options.push({ id: activeEngine, label: engineLabel(activeEngine) });
@@ -279,7 +281,7 @@ function RuntimePanelSummary({
     if (!effortSaving) setPreviewEffort(selectedEffort);
   }, [selectedEffort, effortSaving]);
 
-  const engineName = engineLabel(engine);
+  const engineName = connectionDisplayPreferences.label(`engine:${engineId}`, engineLabel(engine));
   // A bound conversation cannot switch engines, so the engine is a label that
   // says why rather than a way into a list of choices it cannot take.
   const engineItem = engineLocked ? (
@@ -559,6 +561,7 @@ export function RuntimePicker({
   handoff?: HandoffRuntimePicker;
 }): JSX.Element {
   const { t } = useI18n();
+  const display = useConnectionDisplayPreferences();
   const targetProvider = handoff?.provider ?? initialized.provider;
   const targetModel = handoff?.model ?? initialized.model;
   const targetVariant = handoff?.variant ?? (initialized.variant || initialized.effort || "");
@@ -584,7 +587,7 @@ export function RuntimePicker({
   const selectedEngine = handoff ? "wuu" : externalEngine || "wuu";
   const externalEngineInfo = engines?.find((engine) => engine.id === externalEngine);
   const externalModelInfo = externalEngineInfo?.models?.find((model) => engineModel ? model.id === engineModel : model.is_default);
-  const triggerEngineName = engineLabel(selectedEngine, externalEngineInfo);
+  const triggerEngineName = display.label(`engine:${selectedEngine}`, engineLabel(selectedEngine, externalEngineInfo));
   const triggerLabel = handoff
     ? handoff.model
       ? runtimeTriggerLabel(handoff.model, codexProvider, currentProviderModel, currentCodexModel)
@@ -782,7 +785,9 @@ function EngineRuntimeMenu({
     setView("summary");
   };
 
-  const models = engine?.models ?? [];
+  const display = useConnectionDisplayPreferences();
+  const catalogModels = engine?.models ?? [];
+  const models = display.visibleModels(`engine:${engine?.id}`, catalogModels, [selectedModel || catalogModels.find(model => model.is_default)?.id || ""]);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredModels = normalizedQuery
     ? models.filter((model) =>
@@ -1030,40 +1035,14 @@ export function RuntimeModelMenu({
     setView("summary");
   };
 
+  const display = useConnectionDisplayPreferences();
   const providers = initialized.providers ?? [];
-  const configuredModels = providers
-    .map((provider) => {
-      const model = configuredRuntimeModelForProvider(provider, state);
-      return model ? { provider, model } : undefined;
-    })
-    .filter((item): item is RuntimeModelOption => Boolean(item));
-  const additionalModels = providers.flatMap((provider) =>
-    runtimeModelsForProvider(provider, state)
-      .filter((model) => model.id !== provider.model)
-      .map((model) => ({ provider, model }))
-  );
-
-  // Group by provider with the configured model first, preserving provider
-  // order. The group header is the provider name — the classification users
-  // actually think in ("Claude is Anthropic's"), unlike a flat configured/
-  // additional split.
-  const groups: RuntimeModelGroup[] = [];
-  const groupByProvider = new Map<string, RuntimeModelGroup>();
-  for (const item of configuredModels) {
-    const group = { provider: item.provider, models: [item.model] };
-    groups.push(group);
-    groupByProvider.set(item.provider.name, group);
-  }
-  for (const item of additionalModels) {
-    const group = groupByProvider.get(item.provider.name);
-    if (group) {
-      group.models.push(item.model);
-    } else {
-      const created = { provider: item.provider, models: [item.model] };
-      groups.push(created);
-      groupByProvider.set(item.provider.name, created);
-    }
-  }
+  const groups: RuntimeModelGroup[] = providers.map(provider => {
+    const catalog = runtimeModelsForProvider(provider, state);
+    const configured = configuredRuntimeModelForProvider(provider, state);
+    const models = configured && !catalog.some(model => model.id === configured.id) ? [configured, ...catalog] : catalog;
+    return { provider, models: display.visibleModels(`provider:${provider.name}`, models, [provider.name === (optimistic?.provider ?? selectedProvider) ? optimistic?.model ?? selectedModel : ""]) };
+  });
 
   const effectiveProviderName = optimistic?.provider ?? selectedProvider;
   const effectiveModelID = optimistic?.model ?? selectedModel;
@@ -1074,7 +1053,7 @@ export function RuntimeModelMenu({
   const activeFilter = (query || filterQuery).trim().toLocaleLowerCase();
   const visibleProviderGroups = activeFilter
     ? groups.filter((group) =>
-        group.provider.name.toLocaleLowerCase().includes(activeFilter)
+        (group.provider.name.toLocaleLowerCase().includes(activeFilter) || display.label(`provider:${group.provider.name}`, group.provider.name).toLocaleLowerCase().includes(activeFilter))
         || group.models.some((model) =>
           providerModelDisplayName(model).toLocaleLowerCase().includes(activeFilter)
           || model.id.toLocaleLowerCase().includes(activeFilter)))
@@ -1087,7 +1066,7 @@ export function RuntimeModelMenu({
             (model) =>
               providerModelDisplayName(model).toLocaleLowerCase().includes(activeFilter) ||
               model.id.toLocaleLowerCase().includes(activeFilter) ||
-              group.provider.name.toLocaleLowerCase().includes(activeFilter)
+              (group.provider.name.toLocaleLowerCase().includes(activeFilter) || display.label(`provider:${group.provider.name}`, group.provider.name).toLocaleLowerCase().includes(activeFilter))
           )
         }))
         .filter((group) => group.models.length > 0)
@@ -1134,7 +1113,7 @@ export function RuntimeModelMenu({
           <RuntimePanelSummary
             engine={selectedEngine}
             engineId={selectedEngine}
-            provider={effectiveProviderName}
+            provider={display.label(`provider:${effectiveProviderName}`, effectiveProviderName)}
             showEngine={showEngine}
             engineLocked={engineLocked}
             lockedDescription={lockedDescription}
@@ -1199,14 +1178,16 @@ export function RuntimeModelMenu({
                     // default; a model that disappeared falls back to it.
                     const remembered = lastModelForProvider(group.provider.name);
                     const model =
-                      group.models.find((item) => item.id === remembered) ?? group.models[0];
+                      runtimeModelsForProvider(group.provider, state).find((item) => item.id === remembered)
+                      ?? configuredRuntimeModelForProvider(group.provider, state)
+                      ?? runtimeModelsForProvider(group.provider, state)[0];
                     if (model && !selected) {
                       selectModel(group.provider.name, model.id, rememberedVariantForRuntimeModel(group.provider, model));
                     }
                     showSummary();
                   }}
                 >
-                  <span>{group.provider.name}</span>
+                  <span>{display.label(`provider:${group.provider.name}`, group.provider.name)}</span>
                   {selected ? <Check aria-hidden="true" /> : null}
                 </button>
               );
@@ -1415,11 +1396,6 @@ function EffortSelector({
   );
 }
 
-type RuntimeModelOption = {
-  provider: ProviderSummary;
-  model: ProviderModelSummary;
-};
-
 type RuntimeModelGroup = {
   provider: ProviderSummary;
   models: ProviderModelSummary[];
@@ -1475,7 +1451,7 @@ function configuredRuntimeModelForProvider(
   provider: ProviderSummary,
   state: CodexModelLoadState
 ): ProviderModelSummary | undefined {
-  if (!provider.model) {
+  if (!provider.model || isChatGPTProvider(provider)) {
     return undefined;
   }
   return (
@@ -1485,6 +1461,7 @@ function configuredRuntimeModelForProvider(
 }
 
 function runtimeModelsForProvider(provider: ProviderSummary, _state: CodexModelLoadState): ProviderModelSummary[] {
+  if (isChatGPTProvider(provider)) return chatGPTConnectionModels(provider);
   if (provider.models?.length) {
     return provider.models;
   }

@@ -78,7 +78,7 @@ export type ArchivedSessionView = {
   archive_project_id?: string;
   archive_project_name?: string;
 };
-import { ENABLE_REMOTE_CONTROL, ENABLE_SUBSCRIPTIONS } from "./FeatureFlags";
+import { ENABLE_REMOTE_CONTROL } from "./FeatureFlags";
 import { AppearanceTypography } from "./AppearanceTypography";
 import { BackgroundSettings } from "./background/BackgroundSettings";
 import { DefaultEnvironmentRow, ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
@@ -91,9 +91,8 @@ import { ENABLE_APP_SNAPSHOTS } from "../shared/featureFlags";
 import { SystemPermissionsSection } from "./SystemPermissions";
 import { toastErrorMessage } from "./Toast";
 import type { ArchiveDeletionState } from "./useArchiveDeletion";
-import { DefaultEngineRow, EngineSettingsSection } from "./EngineSettingsSection";
+import { DefaultEngineRow } from "./EngineSettingsSection";
 import { DefaultModelRows, ModelServicesPage } from "./ModelServicesPage";
-import { SubscriptionDashboard } from "./SubscriptionDashboard";
 import { SettingsRemotePage } from "./SettingsRemotePage";
 import { ThemePreferenceControl } from "./ThemePreferenceSection";
 import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
@@ -210,7 +209,6 @@ function nativeSettingsGroups(): NativeSettingsGroup[] {
       labelKey: "settings.navModelsAgentsTools",
       pages: [
         "providers",
-        "agents",
         "advanced",
         "mcp",
       ],
@@ -219,7 +217,6 @@ function nativeSettingsGroups(): NativeSettingsGroup[] {
       id: "account-data",
       labelKey: "settings.navAccountData",
       pages: [
-        ...(ENABLE_SUBSCRIPTIONS ? ["subscriptions" as const] : []),
         "usage",
         "archive",
       ],
@@ -233,7 +230,7 @@ const COPY_RESET_MS = 1500;
 
 function availableSettingsPage(page: SettingsPage | undefined): SettingsPage {
   const next = page ?? "providers";
-  if (next === "subscriptions" && !ENABLE_SUBSCRIPTIONS) {
+  if (next === "subscriptions" || next === "agents") {
     return "providers";
   }
   if (next === "remote" && !remoteControlAvailable()) {
@@ -267,6 +264,8 @@ export function SettingsView({
   onSave,
   onRemoveProvider,
   onRefreshModelCatalog,
+  onProvidersChanged,
+  onProviderModelsChanged,
   onRefreshEngineInventory,
   onUpdateEngineInventory,
   onAdvancedSave,
@@ -311,6 +310,8 @@ export function SettingsView({
   onSave: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string) => Promise<void>;
   onRemoveProvider: (provider: string, options?: { fallbackProvider?: string; fallbackModel?: string }) => Promise<void>;
   onRefreshModelCatalog: () => Promise<void>;
+  onProvidersChanged?: (providers: NonNullable<InitializeResult["providers"]>) => void;
+  onProviderModelsChanged?: (name: string, accountId: string, models: NonNullable<NonNullable<InitializeResult["providers"]>[number]["models"]>) => void;
   onRefreshEngineInventory: () => Promise<EngineListResult | undefined>;
   onUpdateEngineInventory: (params: EngineUpdateParams) => Promise<EngineListResult>;
   onAdvancedSave: (settings: RuntimeAdvancedSettingsUpdate) => Promise<void>;
@@ -697,7 +698,9 @@ export function SettingsView({
     if (!normalizedNavQuery) {
       return true;
     }
-    return `${settingsPageTitle(page, t)} ${t(NATIVE_PAGE_SEARCH_KEY[page])}`
+    const connectionTerms = page === "providers"
+      ? `${t(NATIVE_PAGE_SEARCH_KEY.agents)} ${t(NATIVE_PAGE_SEARCH_KEY.subscriptions)}` : "";
+    return `${settingsPageTitle(page, t)} ${t(NATIVE_PAGE_SEARCH_KEY[page])} ${connectionTerms}`
       .toLocaleLowerCase()
       .includes(normalizedNavQuery);
   };
@@ -816,7 +819,7 @@ export function SettingsView({
                 {group.pages.map((page) => {
                   const Icon = NATIVE_PAGE_ICONS[page];
                   return (
-                    <SettingsNavItem key={page} icon={<Icon className="icon-lg" />} active={activePage === page} onClick={() => setActivePage(page)}>
+                    <SettingsNavItem key={page} pageID={page} icon={<Icon className="icon-lg" />} active={activePage === page} onClick={() => setActivePage(page)}>
                       {settingsPageTitle(page, t)}
                     </SettingsNavItem>
                   );
@@ -831,6 +834,7 @@ export function SettingsView({
                   return (
                     <SettingsNavItem
                       key={pageId}
+                      pageID={pageId}
                       icon={<PluginBlocksIcon className="icon-lg" />}
                       active={activePage === pageId}
                       onClick={() => setActivePage(pageId)}
@@ -844,6 +848,7 @@ export function SettingsView({
                   return (
                     <SettingsNavItem
                       key={pageId}
+                      pageID={pageId}
                       icon={<PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />}
                       active={activePage === pageId}
                       onClick={() => setActivePage(pageId)}
@@ -912,27 +917,20 @@ export function SettingsView({
                     onFailure={() => setActivePage("providers")}
                   />
                 </>
-              ) : activePage === "subscriptions" && ENABLE_SUBSCRIPTIONS ? (
-                <SubscriptionDashboard
-                  inventory={engineInventory}
-                  providers={providers}
-                  onSelectBuiltinModel={(provider, model) => onSave(provider, model)}
-                />
               ) : activePage === "providers" ? (
                 <ModelServicesPage
+                  inventory={engineInventory}
+                  inventoryError={engineInventoryError}
+                  onRefreshEngines={onRefreshEngineInventory}
+                  onUpdateEngines={onUpdateEngineInventory}
                   initialized={initialized}
                   running={running}
                   runningProviderNames={runningProviderNameSet}
                   onSave={onSave}
                   onRemoveProvider={onRemoveProvider}
                   onRefreshModelCatalog={onRefreshModelCatalog}
-                />
-              ) : activePage === "agents" ? (
-                <EngineSettingsSection
-                  result={engineInventory}
-                  loadError={engineInventoryError}
-                  onRefresh={onRefreshEngineInventory}
-                  onUpdate={onUpdateEngineInventory}
+                  onProvidersChanged={onProvidersChanged}
+                  onProviderModelsChanged={onProviderModelsChanged}
                 />
               ) : activePage === "advanced" ? (
                 <SettingsRuntimePage
@@ -1045,11 +1043,13 @@ export function SettingsView({
 /* -------------------------------------------------------------------------- */
 
 function SettingsNavItem({
+  pageID,
   icon,
   active,
   onClick,
   children
 }: {
+  pageID?: SettingsPage;
   icon: ReactNode;
   active: boolean;
   onClick: () => void;
@@ -1059,6 +1059,7 @@ function SettingsNavItem({
     <button
       className={`settings-nav-item${active ? " active" : ""}`}
       data-wuu-component="settings-navigation-item"
+      data-wuu-page={pageID}
       type="button"
       aria-current={active ? "page" : undefined}
       onClick={onClick}
@@ -1393,6 +1394,7 @@ function SettingsGeneralPage({
       >
         <SettingsGroup>
           <DefaultEngineRow result={engineInventory} onUpdate={onUpdateEngineInventory} />
+          <SettingsRow title={t("settings.providers")}><button type="button" className="settings-button settings-button-ghost" onClick={onAddService}>{t("provider.manageConnections")}</button></SettingsRow>
           <DefaultModelRows initialized={initialized} running={running} onSave={onSave} onAddService={onAddService} />
           <DefaultEnvironmentRow
             value={initialized?.general_settings?.execution_environments ?? {}}

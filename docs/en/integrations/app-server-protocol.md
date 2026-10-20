@@ -389,6 +389,8 @@ workspace default should be read during execution.
 
 ## Engine inventory and authentication
 
+`cli_version` is the observed installed CLI version (currently Codex and Claude Code); it is omitted on probe failure or for unsupported commands. The legacy `version` is an engine descriptor value and must not be displayed as the installed CLI version. `update_url`, when present, is a vendor installation/update guide, not an executable update action. Wuu accepts user-managed binary paths and does not own their installation or upgrade source. `engine/update` only changes Wuu settings.
+
 `engine/list` returns `{ engines, settings }`, including missing and disabled
 engines. Each entry has an `id`, `enabled`, and `binary_ok`; optional metadata
 includes `display_name`, `protocol`, `install_url`, `binary_path`, `error`,

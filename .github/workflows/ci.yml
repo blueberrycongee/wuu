@@ -1099,6 +1099,7 @@ jobs:
         if: github.event_name != 'push'
         run: |
           npm --prefix desktop run test:release-signing
+          npm --prefix desktop run test:release-packaging
           node --test desktop/scripts/test-notarization.cjs desktop/scripts/test-release-checkpoint.cjs desktop/scripts/test-update-metadata.cjs
 
       - name: Build read-only app snapshot helper

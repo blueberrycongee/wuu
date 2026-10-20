@@ -511,3 +511,14 @@ func TestGPT6SolLunaPreserveExplicitTransport(t *testing.T) {
 		}
 	}
 }
+
+func TestChatGPTAccountCatalogCannotInheritAPIKeyCatalog(t *testing.T) {
+	provider := config.ProviderConfig{Type: "chatgpt", BaseURL: "https://api.openai.com/v1", ChatGPTAccountID: "oaiapp_fixture", Model: "account-model"}
+	if _, ok := MatchProvider("openai", provider); ok {
+		t.Fatal("account catalog matched API-key catalog")
+	}
+	_, enriched := EnrichProvider("openai", provider, "account-model")
+	if len(enriched.Models) != 0 {
+		t.Fatal("static catalog added unavailable account models")
+	}
+}
