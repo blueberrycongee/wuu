@@ -296,6 +296,30 @@ JSON、合成 PDF 和截图写入 `desktop/out/e2e/workspace-preview/`，
 用真实 Node PDF.js 验证相同的 PDF 字节。此模式检查解析、命名和页面引用解析，
 以及不安全动作数据，不验证渲染或点击。
 
+### 原生浏览器布局与动画
+
+Workbench 网页使用保留的 Electron `WebContentsView` 实例。选择其他入口时隐藏
+页面，不重新导航或创建；显式关闭、资源回收和 renderer 恢复有各自的生命周期规则。
+Agent Browser 在现有任务归属约束下接入同一个页面。
+
+main 以设备独立像素管理原生视图边界。铺满窗口的页面上报 chrome 内边距，使原生
+窗口缩放无需等待 renderer 的下一帧；嵌入扩展面板的页面上报 DOM 矩形。后者跟踪
+页面及其祖先的 CSS transition 和 animation，包括取消、反向和重叠效果，也跟踪
+移动的遮挡层、合并重复几何上报，并在动画结束后停止采样。滚动驱动的效果依靠滚动
+事件更新，不在静止时保持连续定时采样。原生兄弟视图不会继承
+React 元素的 transform 或裁剪；renderer 到 main 的边界消息不是原子的呈现事务。
+
+不要让原生网页和 React 工具栏分别沿两条独立时间线运动。修改原生动画时必须检查
+合成画面、中间网页视口尺寸、原生命中测试、焦点与输入法、中断，以及页面实例保留。
+单纯看到合成器变换平滑，不能证明这些契约成立。
+
+构建 core 和桌面后，在图形会话运行
+`desktop/node_modules/.bin/electron desktop/scripts/browser-workspace-switch-e2e.cjs`。
+测试使用生产 main、preload、renderer 和真实网页，检查状态保留、CSS 动画期间的
+原生边界、遮挡、取消和静止后停止采样。产物位于
+`desktop/out/e2e/browser-workspace-switch/`，可通过 `WUU_BROWSER_SWITCH_OUTPUT`
+指定其他目录。几何检查容许异步采样偏差，不测量实际呈现帧率，也不证明每一帧都对齐。
+
 ### 实时缩放布局护栏
 
 桌面生产构建完成后，在图形会话中运行
@@ -305,7 +329,8 @@ JSON、合成 PDF 和截图写入 `desktop/out/e2e/workspace-preview/`，
 宿主边界；它不启动真实 Go 进程或嵌入式浏览器。
 
 `desktop/out/e2e/resize-live-layout.json` 记录公开主题/语法 token、宿主几何尺寸，
-以及左右拖动和收起/展开动画中的中间消息宽度与文字行数。测试还检查流式跟随、
+以及左右拖动和收起/展开动画中的中间消息宽度与文字行数。测试还检查退出中的工作区
+面板反向展开、窗口失焦时结束拖动、流式跟随、
 暂停阅读的终点锚定，以及重新排版期间的提交问题定位和保持。
 连续样本用于证明拖动中真实换行；终点检查本身不能证明每个绘制帧的滚动偏移都不变。
 CI 不使用实际耗时性能门槛。

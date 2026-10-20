@@ -78,6 +78,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Preserve the rendered sidebar width when a drag interrupts its opening animation, then settle to normal width constraints on release.
 
+- Keep native browser bounds and occlusion tracking active through CSS transitions,
+  ancestor motion, and overlapping animations. Reverse closing workspace sheets
+  continuously and release panel dragging when the window loses focus.
+- Retain deferred scroll recovery until all overlapping panel animations finish.
+
 - Keep the empty-workbench greeting readable beside both side panels at narrow widths and large text sizes, without clipping fixed grid gutters.
 
 - Restore a website selected during inactive-tab cleanup and prevent Agent operations from attaching to a native page already closing.

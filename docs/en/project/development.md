@@ -441,6 +441,37 @@ Without a graphical session, run
 same PDF bytes with real Node PDF.js. This checks parsing, named/page-reference
 resolution, and unsafe action data, but does not verify rendering or clicks.
 
+### Native browser layout and motion
+
+Workbench websites use retained Electron `WebContentsView` instances. Selecting
+another destination hides the page; it does not navigate or recreate it. Explicit
+closure, resource reclamation, and renderer recovery have separate lifecycle rules.
+Agent Browser attaches to the same page under its existing turn ownership.
+
+Main owns native view bounds in device-independent pixels. Window-filling pages
+report chrome insets so native window resizing can update them without waiting
+for a renderer frame. Embedded extension surfaces report their DOM rectangle.
+That fallback follows CSS transitions and animations on the surface and its
+ancestors, including cancellation, reversal, and overlapping effects. It also
+tracks moving occluders, deduplicates geometry reports, and stops sampling when
+motion settles. Scroll-driven effects follow scroll events rather than keeping a
+continuous timer while stationary. A native sibling does not inherit a React element's transform or
+clip; renderer-to-main bounds messages are not an atomic presentation transaction.
+
+Do not independently animate a native page while its React chrome follows another
+timeline. Any native animation change must verify composed pixels, intermediate
+viewport size, native hit testing, focus/IME, interruption, and retained page
+identity. A smooth compositor transform alone does not establish these contracts.
+
+After building core and desktop, run
+`desktop/node_modules/.bin/electron desktop/scripts/browser-workspace-switch-e2e.cjs`
+in a graphical session. It exercises the production main, preload, renderer, and
+real webpages, checking retained state, native bounds during CSS motion, overlay
+occlusion, cancellation, and sampling at rest. Artifacts are written under
+`desktop/out/e2e/browser-workspace-switch/`; `WUU_BROWSER_SWITCH_OUTPUT` selects a
+different directory. These geometry checks permit asynchronous sampling skew and
+do not measure presentation FPS or prove that every frame is aligned.
+
 ### Live resize layout guard
 
 After a desktop production build, run `npm --prefix desktop run test:e2e:resize-live-layout`
@@ -452,6 +483,7 @@ browser-host bounds. It does not exercise a real Go process or embedded browser.
 The JSON artifact at `desktop/out/e2e/resize-live-layout.json` records public
 theme/syntax tokens, host geometry, intermediate message widths and text line
 counts during left/right drags and collapse/expand animations. It also checks
+reversing an exiting workspace sheet, ending a drag on window deactivation,
 stream-following, paused-reader endpoint anchoring, and submitted-query placement
 and holding during reflow. Continuous samples establish live rewrapping; endpoint
 checks alone do not prove every painted frame keeps an identical scroll offset.
