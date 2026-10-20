@@ -1,4 +1,4 @@
-import { BrowserWindow, Menu, clipboard, dialog, shell, type DownloadItem, type WebContents, type WebContentsView, type WebContentsViewConstructorOptions } from "electron";
+import { BrowserWindow, Menu, clipboard, dialog, shell, type DownloadItem, type WebContents, type WebContentsView } from "electron";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { NavigationEntry } from "electron";
@@ -1167,14 +1167,6 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
       if (separateWindow) response.createWindow = options => {
         const window = new BrowserWindow(options);
         this.attachPopup(page, contents, window, true);
-        // Native modifier clicks can omit a guest WebContents. Electron's
-        // custom createWindow path then leaves the initial navigation to us.
-        if (!(options as WebContentsViewConstructorOptions).webContents) {
-          const post = details.postBody;
-          const headers = post ? `Content-Type: ${post.contentType}${post.boundary ? `; boundary=${post.boundary}` : ""}` : undefined;
-          void window.webContents.loadURL(target, { httpReferrer: details.referrer, postData: post?.data, extraHeaders: headers })
-            .catch(error => { if (error.code !== "ERR_ABORTED") console.warn("[web-workspace] Could not load website window", error); });
-        }
         return window.webContents;
       };
       else if (!popup) response.createWindow = options => {
@@ -1195,13 +1187,6 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
         child.discardProtected = true;
         // Keep Chromium's WindowProxy/opener, original POST, and referrer. A
         // supplied guest is already navigating; never load it a second time.
-        if (!(options as WebContentsViewConstructorOptions).webContents) {
-          const post = details.postBody;
-          const headers = post ? `Content-Type: ${post.contentType}${post.boundary ? `; boundary=${post.boundary}` : ""}` : undefined;
-          void view.webContents.loadURL(target, { httpReferrer: details.referrer, postData: post?.data, extraHeaders: headers }).catch(error => {
-            if (error.code !== "ERR_ABORTED" && this.pages.has(child.id)) { child.error = error.message; this.emit(page.group); }
-          });
-        }
         if (!restricted && details.disposition !== "background-tab") this.activate(page.group, tab);
         this.emit(page.group);
         if (ribbon && !restricted && details.disposition !== "background-tab") this.options.onReveal?.(page.owner, page.group.id);

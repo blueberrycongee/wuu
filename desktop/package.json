@@ -268,7 +268,7 @@
     "@xterm/xterm": "^6.0.0",
     "blobatar": "file:vendor/blobatar",
     "cordis": "4.0.0-rc.8",
-    "electron": "^44.1.0",
+    "electron": "^44.9.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "highlight.js": "^11.11.1",

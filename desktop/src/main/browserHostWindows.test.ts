@@ -822,12 +822,13 @@ describe("BrowserHostCoordinator visibility takeover", () => {
     expect(response.overrideBrowserWindowOptions?.webPreferences).toMatchObject({
       sandbox: true, contextIsolation: true, nodeIntegration: false,
     });
-    // Native-window dispositions ask the host to create their contents here.
+    // Chromium owns the initial navigation; the host only adopts the child.
     const popupContents = response.createWindow?.({});
+    harness.views[1].url = "https://example.com/next";
     expect(popupContents).toBe(harness.views[1].webContents);
     await vi.waitFor(() => expect(adopted).toHaveLength(1));
     expect(harness.views).toHaveLength(2);
-    expect(harness.views[1].loadedURLs).toContain("https://example.com/next");
+    expect(harness.views[1].loadedURLs).toEqual([]);
     expect(adopted[0].startsWith("popup-t1-")).toBe(true);
 
     await harness.coordinator.handleServerRequest(

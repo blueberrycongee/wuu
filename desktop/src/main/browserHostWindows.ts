@@ -1306,14 +1306,6 @@ export class BrowserHostCoordinator {
           if (!child.agentInputAllowed) this.releaseDebugger(child);
           // The supplied child retains Chromium's opener, WindowProxy, and POST
           // navigation. Calling loadURL here would destroy that original context.
-          const childOptions = options as WebContentsViewConstructorOptions;
-          if (!childOptions.webContents) {
-            const post = details.postBody;
-            const headers = post ? `Content-Type: ${post.contentType}${post.boundary ? `; boundary=${post.boundary}` : ""}` : undefined;
-            void this.withActiveEntry(child, () => view.webContents.loadURL(target, {
-              httpReferrer: details.referrer, postData: post?.data, extraHeaders: headers,
-            })).catch(() => undefined); // did-fail-load publishes the navigation failure.
-          }
           this.rendererSink?.adopted({ workdir: entry.workdir, openerTabID: entry.tabID, tabID, url: target });
           return view.webContents as WebContents;
         },
