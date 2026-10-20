@@ -360,6 +360,7 @@ const webWorkspaceDownloads = new WebWorkspaceDownloads(
   (owner, items) => sendToWindow(owner, "wuu:web-workspace-downloads", items),
 );
 const chromeOverlayHost = new ChromeOverlayHost(
+  join(app.getPath("userData"), "browser-downloads.json"),
   (owner, event) => sendToWindow(owner, "wuu:chrome-overlay-event", event),
   join(__dirname, "../renderer"), join(__dirname, "../preload/chromeOverlay.cjs"), !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined,
 );

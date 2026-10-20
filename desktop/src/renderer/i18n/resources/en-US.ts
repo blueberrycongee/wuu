@@ -617,6 +617,8 @@ export const enUS = {
   "webWorkspace.stop": "Stop loading",
   "webWorkspace.openExternal": "Open in default browser",
   "webWorkspace.loading": "Loading website…",
+  "webWorkspace.downloads.historyReadFailed": "Download history could not be read. These downloads remain usable, but their records cannot be saved. The original history file has been preserved.",
+  "webWorkspace.downloads.historyWriteFailed": "Download records could not be saved. Downloads can continue; check available disk space and folder permissions.",
   "webWorkspace.loadFailed": "This website couldn’t be loaded",
   "webWorkspace.retry": "Try again",
   "webWorkspace.unavailable": "Website workspaces are available in the desktop app.",

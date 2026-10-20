@@ -10,6 +10,8 @@ export type WebWorkspaceDownloadState = {
   canResume: boolean;
   done: boolean;
   startedAt: number;
+  /** The record remains usable in memory but cannot be saved in download history. */
+  persistenceError?: "read" | "write";
 };
 
 export type WebWorkspaceDownloadCommand = "pause" | "resume" | "cancel" | "open" | "reveal";

@@ -54,6 +54,7 @@ export function WebWorkspaceDownloadsMenu({ api, active = true, destinationId, p
     return () => document.removeEventListener("pointerdown", dismiss, true);
   }, [open]);
 
+  const persistenceError = items.find(item => item.persistenceError)?.persistenceError;
   const close = (): void => { setOpen(false); trigger.current?.focus(); };
   const command = (id: string, action: WebWorkspaceDownloadCommand): void => {
     if (!api || pending.current.has(id)) return;
@@ -109,6 +110,8 @@ export function WebWorkspaceDownloadsMenu({ api, active = true, destinationId, p
         </div>
         {loadError ? <p className="web-workspace-downloads-empty" role="alert">{t("webWorkspace.downloads.loadFailed")}</p>
           : !items.length ? <p className="web-workspace-downloads-empty">{t("webWorkspace.downloads.empty")}</p> : null}
+        {persistenceError ? <p className="web-workspace-downloads-empty" role="alert">{t(persistenceError === "read"
+          ? "webWorkspace.downloads.historyReadFailed" : "webWorkspace.downloads.historyWriteFailed")}</p> : null}
         {items.length ? <ul className="web-workspace-downloads-list">
           {items.map(item => <li key={item.id} className="web-workspace-download" data-download-id={item.id} data-download-state={item.state} data-download-paused={item.paused ? "true" : undefined}>
             <div className="web-workspace-download-filename" title={item.savePath || item.filename}>{item.filename}</div>
