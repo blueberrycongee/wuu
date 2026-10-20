@@ -56,11 +56,11 @@ const report = {
     'Input probes use Electron sendInputEvent, not physical keyboard input; dispatch-to-HTTP-ack includes loopback/main-loop scheduling.',
     'Virtual/cloud display and GPU differ from a user desktop. macOS pointer/live-resize acceptance remains separate.',
     'Minimal counters add the same overhead to both builds. No video, tracing, capturePage or CDP during timed phases.'],
-  phases: [], errors: [],
+  readiness: [], phases: [], errors: [],
 };
 const save = () => fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify(report, null, 2) + '\n');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-let win, guest, active, inputSerial = 0, pendingInputs = new Map();
+let win, guest, active, inputSerial = 0, pendingInputs = new Map(), readyProbe;
 const originalHandle = ipcMain.handle.bind(ipcMain);
 ipcMain.handle = (channel, handler) => originalHandle(channel, (...args) => {
   if (['wuu:turn-start', 'wuu:turn-queue', 'wuu:turn-steer'].includes(channel)) throw new Error('Inference is forbidden in the performance fixture');
@@ -85,9 +85,13 @@ const website = `<!doctype html><meta charset="utf-8"><title>Browser motion perf
 <style>body{margin:0;font:16px system-ui;background:#edf4fa;color:#17354a}header{height:80px;padding:20px;background:#fff}#viewport{height:calc(100vh - 120px);overflow:auto}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px;padding:22px}.card{height:120px;padding:14px;background:white;border-radius:12px;box-shadow:0 1px 8px #1232}.bar{width:30%;height:8px;background:#62a6d8;animation:slide 1.2s linear infinite alternate}@keyframes slide{to{transform:translateX(160%)}}#response{display:inline-block;margin-left:20px}</style>
 <header>Animated and scrolling local website <output id="response">0</output><p>96 cards, CSS transforms, continuous viewport scroll. No external requests.</p></header>
 <div id="viewport"><main>${Array.from({ length: 96 }, (_, i) => `<section class="card"><h3>Local card ${i + 1}</h3><div class="bar"></div><p>Responsive website content and input feedback.</p></section>`).join('')}</main></div>
-<script>const viewport=document.querySelector('#viewport');let direction=1,last=0;function animate(now){if(last){viewport.scrollTop+=direction*(now-last)*0.14;if(viewport.scrollTop+viewport.clientHeight>=viewport.scrollHeight-2)direction=-1;else if(viewport.scrollTop<=0)direction=1;}last=now;requestAnimationFrame(animate);}requestAnimationFrame(animate);addEventListener('keydown',event=>{if(/^Key[A-Z]$/.test(event.code)){const serial=event.code.charCodeAt(3)-64+(event.shiftKey?26:0);document.querySelector('#response').textContent=serial;fetch('/input?serial='+serial);}});</script>`;
+<script>const viewport=document.querySelector('#viewport');let direction=1,last=0;function animate(now){if(last){viewport.scrollTop+=direction*(now-last)*0.14;if(viewport.scrollTop+viewport.clientHeight>=viewport.scrollHeight-2)direction=-1;else if(viewport.scrollTop<=0)direction=1;}last=now;requestAnimationFrame(animate);}requestAnimationFrame(animate);addEventListener('keydown',event=>{if(event.key==='F8'&&window.readyToken){fetch('/ready?token='+window.readyToken);}if(/^Key[A-Z]$/.test(event.code)){const serial=event.code.charCodeAt(3)-64+(event.shiftKey?26:0);document.querySelector('#response').textContent=serial;fetch('/input?serial='+serial);}});</script>`;
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
+  if (url.pathname === '/ready') {
+    if (readyProbe?.token === url.searchParams.get('token')) readyProbe.acknowledged = true;
+    res.writeHead(204).end(); return;
+  }
   if (url.pathname === '/input') {
     const sent = pendingInputs.get(Number(url.searchParams.get('serial')));
     if (sent && active && sent.phase === active.name) active.inputAckMs.push(performance.now() - sent.at);
@@ -103,6 +107,35 @@ async function until(fn, label, timeout = 30000) {
   const end = Date.now() + timeout;
   while (Date.now() < end) { if (await fn()) return; await delay(50); }
   throw new Error(`Timed out: ${label}`);
+}
+async function readyForPhase(name) {
+  const started = performance.now(), sample = { phase: name, frameReadyMs: null, inputReadyMs: null, inputAttempts: 0 };
+  report.readiness.push(sample);
+  let timeout;
+  try {
+    await Promise.race([
+      Promise.all([win.webContents, guest].map(contents => evaluate(contents, () =>
+        new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))))),
+      new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(`${name}: visible renderers did not produce readiness frames`)), 10000); }),
+    ]);
+    sample.frameReadyMs = performance.now() - started;
+    readyProbe = { token: `${name}-${Date.now()}`, acknowledged: false };
+    await evaluate(guest, token => { window.readyToken = token; }, readyProbe.token);
+    const deadline = performance.now() + 5000;
+    while (!readyProbe.acknowledged && performance.now() < deadline) {
+      sample.inputAttempts++;
+      guest.sendInputEvent({ type: 'keyDown', keyCode: 'F8' });
+      guest.sendInputEvent({ type: 'keyUp', keyCode: 'F8' });
+      await delay(100);
+    }
+    assert(readyProbe.acknowledged, `${name}: native guest did not acknowledge readiness input`);
+    sample.inputReadyMs = performance.now() - started - sample.frameReadyMs;
+  } finally {
+    clearTimeout(timeout);
+    readyProbe = undefined;
+    sample.elapsedMs = performance.now() - started;
+    save();
+  }
 }
 function stats(samples) {
   const values = [...samples].sort((a, b) => a - b);
@@ -149,7 +182,9 @@ function nativeDrag(kind, bounds) {
 }
 async function phase(name) {
   win.setBounds({ x: 150, y: 120, width: 1240, height: 800 }); win.show(); win.focus(); guest.focus();
-  await delay(1000);
+  // Gate only the beginning of each phase. Never discard or retry measured
+  // stalls, and keep readiness latency separate from steady-state samples.
+  await readyForPhase(name);
   await Promise.all([evaluate(win.webContents, () => { window.__browserPerf.start(); }), evaluate(guest, () => { window.__browserPerf.start(); })]);
   const result = { name, ipc: {}, sent: {}, windowEvents: {}, windowBounds: [win.getBounds()], nativeSetBounds: 0, nativeSetVisible: 0, nativeSetZoomFactor: 0, nativeReparent: 0, nativeChrome: {}, inputSent: 0, inputAckMs: [], mainIntervalsMs: [] };
   active = result;
@@ -204,8 +239,25 @@ async function phase(name) {
   if (name === 'move') assert(result.boundsRange.x > 80 && result.boundsRange.width < 4, 'Move must change actual window position without changing its size');
   if (name === 'resize') assert(result.boundsRange.width > 120, 'Resize must change actual native window width');
 }
-const watchdog = setTimeout(() => { report.status = 'timed-out'; save(); app.exit(1); }, 150000);
+let finishing = false;
+function finish(code) {
+  if (finishing) return;
+  finishing = true;
+  clearTimeout(watchdog);
+  report.shutdown = { requestedCode: code };
+  save();
+  server.closeAllConnections();
+  server.close();
+  // Use the shipping quit path so its core processes receive shutdown. Keep
+  // independent bounds if native teardown or a before-quit hook never settles.
+  setTimeout(() => { report.shutdown.forced = true; save(); process.kill(process.pid, 'SIGKILL'); }, 10000);
+  setTimeout(() => app.exit(code), 8000);
+  app.once('will-quit', () => app.exit(code));
+  app.quit();
+}
+const watchdog = setTimeout(() => { report.status = 'timed-out'; report.errors.push('Harness exceeded its 150-second bound'); finish(1); }, 150000);
 async function run() {
+  const setupStarted = performance.now();
   for (const file of ['out/main/index.js', 'out/preload/index.cjs', 'out/renderer/index.html', 'build/bin/wuu-core']) assert(fs.existsSync(path.join(desktop, file)), `Build required: ${file}`);
   report.buildSha256 = Object.fromEntries(['out/main/index.js', 'out/preload/index.cjs', 'out/renderer/index.html'].map(file => [file, createHash('sha256').update(fs.readFileSync(path.join(desktop, file))).digest('hex')]));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -279,10 +331,9 @@ async function run() {
   report.probes = { host: await evaluate(win.webContents, installProbe), guest: await evaluate(guest, installProbe) };
   report.environment.gpuFeatureStatus = app.getGPUFeatureStatus();
   report.environment.window = win.getBounds();
-  await delay(1500);
+  report.setupElapsedMs = performance.now() - setupStarted;
+  save();
   for (const name of ['idle', 'move', 'resize']) await phase(name);
-  report.status = 'passed'; save(); clearTimeout(watchdog);
-  server.close(); app.quit();
-  setTimeout(() => app.exit(0), 1000).unref();
+  report.status = 'passed'; finish(0);
 }
-run().catch(error => { report.status = 'failed'; report.errors.push(String(error.stack || error)); save(); console.error(error); clearTimeout(watchdog); server.close(); app.exit(1); });
+run().catch(error => { report.status = 'failed'; report.errors.push(String(error.stack || error)); console.error(error); finish(1); });
