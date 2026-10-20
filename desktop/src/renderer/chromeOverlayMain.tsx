@@ -128,7 +128,9 @@ function Overlay(): JSX.Element | null {
   useLayoutEffect(() => {
     if (!request || request.model.kind !== "ribbon") { progress.current = 0; motionToken.current = undefined; setRevealed(true); return; }
     if (motionToken.current !== request.token) { motionToken.current = request.token; progress.current = 0; }
-    const duration = Number.parseFloat(getComputedStyle(document.querySelector(".sidebar-ribbon")!).getPropertyValue("--ribbon-motion-duration")) || 0;
+    // Production CSS can minify 220ms to .22s; preserve the unit when sampling.
+    const rawDuration = getComputedStyle(document.querySelector(".sidebar-ribbon")!).getPropertyValue("--ribbon-motion-duration").trim();
+    const duration = Number.parseFloat(rawDuration) * (rawDuration.endsWith("ms") ? 1 : 1000) || 0;
     const from = progress.current, to = revealed ? 1 : 0, start = performance.now();
     let frame = 0;
     const tick = (now: number): void => {

@@ -42,7 +42,7 @@ module.exports = async function acceptRibbon(h) {
           const before=await state();await move(anchor.x,anchor.y);
           await until(()=>surface.getVisible(),'native rail appears');await delay(300);
           const during=await state(), expanded=surface.getBounds();
-          const hit=await surface.webContents.executeJavaScript('(()=>{const e=document.querySelector("[data-wuu-component=website-navigation-item]"),r=e.getBoundingClientRect();return {hit:e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),iconX:e.firstElementChild.getBoundingClientRect().x}})()');
+          const hit=await surface.webContents.executeJavaScript('(()=>{const e=document.querySelector("[data-wuu-component=website-navigation-item]"),r=e.getBoundingClientRect();return {hit:e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),iconX:e.firstElementChild.getBoundingClientRect().x,motionDuration:getComputedStyle(document.querySelector(".sidebar-ribbon")).getPropertyValue("--ribbon-motion-duration")}})()');
           assert.ok(hit.hit,'Expanded labels receive native pointer input');
           assert.ok(win.contentView.children.indexOf(surface)>win.contentView.children.indexOf(view),'Rail is above the actual webpage');
           if(repeat===0)await capture(`ribbon-${width}-${theme}-${zoom}`);
@@ -51,15 +51,68 @@ module.exports = async function acceptRibbon(h) {
           for(const key of ['width','height','scroll','draft']) {assert.equal(during[key],before[key],key+' during hover');assert.equal(after[key],before[key],key+' after hover');}
           assert.equal(hides.filter(v=>!v).length,0,'Hover never hides the webpage');assert.equal(after.visibility,'visible');assert.ok(after.ticks>before.ticks+5,'Page animation remains live');
           const distinct=[...new Set(widths.map(sample=>sample.width))];
-          if(process.env.WUU_RIBBON_BASELINE!=='1')assert.ok(distinct.length>=5,'Native reveal has intermediate widths');
           report.ribbonMotion.push({width,zoom,theme,repeat,before,during,after,expanded,widths,distinctWidths:distinct.length,pageHides:hides.filter(v=>!v).length,hit});
+          if(process.env.WUU_RIBBON_BASELINE!=='1')assert.ok(distinct.length>=5,'Native reveal has intermediate widths');
+
           console.log('RIBBON',JSON.stringify({width,zoom,repeat,distinctWidths:distinct.length,pageHides:hides.filter(v=>!v).length}));
         } finally {surface.setBounds=originalBounds;view.setVisible=originalVisible;}
       }
       for(let i=0;i<5;i++){await move(anchor.x,anchor.y);await delay(170);await move(width/zoom-60,40);await wc.executeJavaScript(`document.title="Updating title ${i}"`);await delay(160);}
       await until(()=>!rail().getVisible(),'Rapid reversals settle');assert.ok(view.getVisible());
     }
+    // Navigation must keep one painted surface in both directions, including
+    // a fresh hover after leaving a non-browser destination.
+    report.destinationMotion = [];
     const surface = rail();
+    const origin = win.getContentBounds(), zoom = win.webContents.getZoomFactor();
+    const moveTo = (x, y) => nativeInput(['mousemove', String(Math.round(origin.x + x * zoom)), String(Math.round(origin.y + y * zoom))]);
+    const clickDestination = async selector => {
+      const point = await surface.webContents.executeJavaScript(`(selector => {
+        const r = document.querySelector(selector).getBoundingClientRect();
+        return { x: r.x + 12, y: r.y + r.height / 2 };
+      })(${JSON.stringify(selector)})`);
+      const bounds = surface.getBounds();
+      await moveTo(bounds.x / zoom + point.x, bounds.y / zoom + point.y);
+      await nativeInput(['click', '1']);
+    };
+    const website = await evaluate(() => document.querySelector('[data-wuu-component="website-navigation-item"][aria-current="page"]').dataset.ribbonId);
+    const websiteSelector = `[data-ribbon-id="${website}"]`;
+    for (const selector of ['[data-wuu-component="conversations-section"]', '.sidebar-ribbon-footer .sidebar-ribbon-button']) {
+      const anchor = await evaluate(() => { const r = document.querySelector('.sidebar-ribbon [data-ribbon-id]').getBoundingClientRect(); return { x: r.x + 12, y: r.y + r.height / 2 }; });
+      await moveTo(anchor.x, anchor.y);
+      await until(() => surface.getVisible() && surface.getBounds().width >= 240 * zoom, 'browser ribbon expanded');
+      await clickDestination(selector);
+      await until(() => evaluate(selector => document.querySelector(selector)?.getAttribute('aria-current') === 'page', selector), 'normal destination selected');
+      await moveTo(win.getContentSize()[0] / zoom - 60, 40);
+      await until(() => !surface.getVisible(), 'normal destination ribbon dismissed');
+      const widths = [], visibility = [];
+      const originalBounds = surface.setBounds, originalVisible = surface.setVisible;
+      surface.setBounds = function(bounds) { widths.push(bounds.width); return originalBounds.call(this, bounds); };
+      surface.setVisible = function(visible) { visibility.push(visible); return originalVisible.call(this, visible); };
+      try {
+        await moveTo(anchor.x, anchor.y);
+        await until(() => surface.getVisible() && surface.getBounds().width >= 240 * zoom, 'fresh normal-page hover uses the same animated surface');
+        const targetWidth = await evaluate(() => document.querySelector('.sidebar-ribbon').getBoundingClientRect().width);
+        await until(() => surface.getBounds().width === Math.ceil(targetWidth * zoom), 'normal-page reveal finishes');
+        assert.ok(new Set(widths).size >= 5, 'Normal-page hover has intermediate widths');
+        await capture(`normal-ribbon-${report.destinationMotion.length}`);
+        widths.length = 0; visibility.length = 0;
+        const expandedWidth = surface.getBounds().width;
+        for (const target of [websiteSelector, selector, websiteSelector]) {
+          await clickDestination(target);
+          await until(() => evaluate(target => document.querySelector(target)?.getAttribute('aria-current') === 'page', target), 'destination selected without replacing ribbon');
+          await settle();
+          assert.equal(surface.getVisible(), true, 'Switch keeps ribbon visible');
+          assert.equal(surface.getBounds().width, expandedWidth, 'Switch keeps expanded width');
+        }
+        assert.ok(visibility.every(Boolean), 'Switch never hides the navigation surface');
+        assert.ok(widths.every(width => width === expandedWidth), 'Switch never restarts reveal');
+        assert.equal(await wc.executeJavaScript('document.querySelector("#draft").value'), 'keep this draft');
+        report.destinationMotion.push({ selector, expandedWidth, widths, visibility });
+      } finally { surface.setBounds = originalBounds; surface.setVisible = originalVisible; }
+      await moveTo(win.getContentSize()[0] / zoom - 60, 40);
+      await until(() => !surface.getVisible(), 'switching ribbon dismissed');
+    }
     if (!surface.webContents.debugger.isAttached()) surface.webContents.debugger.attach('1.3');
     report.reducedMotion = [];
     for (const source of ['system', 'app']) {

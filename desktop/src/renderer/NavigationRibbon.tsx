@@ -77,9 +77,9 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   const updateActivate = useRef<(() => void) | undefined>(undefined);
   const scrollTop = useRef(0);
   const dismissedUnderPointer = useRef(false);
-  // A destination change must not replace the surface under the pointer.
-  // Keep this opening until the native host observes leave or dismissal.
-  const nativeAvailable = Boolean((activeWebsiteId || nativeOpen) && chromeOverlayApi());
+  // One desktop surface owns hover motion across every destination. Switching
+  // from a shell page to a website must not replace it or restart its reveal.
+  const nativeAvailable = Boolean(chromeOverlayApi());
   const accountContext = useMemo(() => ({ publishAccount: (trigger: ChromeAccountTrigger | undefined, open?: (bounds: ChromeOverlayRect) => void) => {
     setAccountTrigger(current => JSON.stringify(current) === JSON.stringify(trigger) ? current : trigger);
     accountOpen.current = open;
