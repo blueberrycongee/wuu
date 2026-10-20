@@ -254,7 +254,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     if (!Array.isArray(destinations)) throw new Error("Website destinations must be a list.");
     this.observeOwner(owner);
     const restored = this.options.library?.getSession(WEB_WORKSPACE_RIBBON_ID);
-    const tabs: WorkspaceTab[] = restored ? restored.tabs.map(tab => ({ ...tab, zoomFactor: 1 })) : [];
+    const tabs: WorkspaceTab[] = restored ? restored.tabs.map(tab => ({ ...tab, zoomFactor: tab.zoomFactor ?? 1 })) : [];
     const migratedTabGroups: Record<string, string[]> = restored?.migratedTabGroups ?? Object.create(null);
     if (!restored) {
       const ids = new Set<string>();
@@ -270,7 +270,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
           if (ids.has(id)) id = `website:${randomUUID()}`;
           ids.add(id);
           migratedTabGroups[destination.id].push(id);
-          tabs.push({ ...previous, id, zoomFactor: 1 });
+          tabs.push({ ...previous, id, zoomFactor: previous.zoomFactor ?? 1 });
         }
       }
     }
@@ -309,7 +309,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     const tabbed = destination.tabs === true;
     const restored = tabbed ? this.options.library?.getSession(destination.id) : undefined;
     const tabs: WorkspaceTab[] = restored?.tabs.length
-      ? restored.tabs.map(tab => ({ ...tab, zoomFactor: 1 }))
+      ? restored.tabs.map(tab => ({ ...tab, zoomFactor: tab.zoomFactor ?? 1 }))
       : [{ id: randomUUID(), url, title: "", zoomFactor: 1 }];
     const activeTabId = tabs.some(tab => tab.id === restored?.activeTabId) ? restored!.activeTabId : tabs[0].id;
     if (restored?.homeURL && restored.homeURL !== url) {
@@ -724,7 +724,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     if (this.groups.get(group.id) !== group || group.owner.isDestroyed()) return;
     if (group.tabbed) this.options.library?.saveSession(group.id, {
       homeURL: group.homeURL,
-      tabs: group.tabs.map(tab => { const state = this.tabState(tab); return { id: state.id, url: state.url, title: state.title, ...(tab.pinned ? { pinned: true } : {}) }; }),
+      tabs: group.tabs.map(tab => { const state = this.tabState(tab); return { id: state.id, url: state.url, title: state.title, zoomFactor: tab.zoomFactor, ...(tab.pinned ? { pinned: true } : {}) }; }),
       activeTabId: group.activeTabId,
       ...(group.migratedTabGroups ? { migratedTabGroups: group.migratedTabGroups } : {}),
     });

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { WEB_WORKSPACE_RIBBON_ID, WEB_WORKSPACE_TAB_LIMIT } from "../shared/webWorkspace";
+import { WEB_WORKSPACE_RIBBON_ID, WEB_WORKSPACE_TAB_LIMIT, WEB_WORKSPACE_ZOOM_MIN, WEB_WORKSPACE_ZOOM_MAX } from "../shared/webWorkspace";
 import {
   persistentWebWorkspaceURL,
   type WebWorkspaceBookmark,
@@ -58,7 +58,10 @@ function savedSession(value: unknown, ribbon = false): WebWorkspaceSavedSession 
     const url = restorableURL(tab.url);
     if (!url) continue;
     tabs.push({ id: tab.id, url, title: url === tab.url ? titleText(tab.title, url) : new URL(url).hostname,
-      ...(tab.pinned === true ? { pinned: true } : {}) });
+      ...(tab.pinned === true ? { pinned: true } : {}),
+      ...(typeof tab.zoomFactor === "number" && Number.isFinite(tab.zoomFactor)
+        && tab.zoomFactor >= WEB_WORKSPACE_ZOOM_MIN && tab.zoomFactor <= WEB_WORKSPACE_ZOOM_MAX
+        ? { zoomFactor: tab.zoomFactor } : {}) });
   }
   if (!tabs.length && !ribbon) return undefined;
   const requestedActive = "activeTabId" in value ? value.activeTabId : undefined;
