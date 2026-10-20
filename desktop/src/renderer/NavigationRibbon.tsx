@@ -67,7 +67,9 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   const updateActivate = useRef<(() => void) | undefined>(undefined);
   const scrollTop = useRef(0);
   const dismissedUnderPointer = useRef(false);
-  const nativeAvailable = Boolean(activeWebsiteId && chromeOverlayApi());
+  // A destination change must not replace the surface under the pointer.
+  // Keep this opening until the native host observes leave or dismissal.
+  const nativeAvailable = Boolean((activeWebsiteId || nativeOpen) && chromeOverlayApi());
   const accountContext = useMemo(() => ({ publishAccount: (trigger: ChromeAccountTrigger | undefined, open?: (bounds: ChromeOverlayRect) => void) => {
     setAccountTrigger(current => JSON.stringify(current) === JSON.stringify(trigger) ? current : trigger);
     accountOpen.current = open;

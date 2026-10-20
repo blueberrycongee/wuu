@@ -1132,6 +1132,30 @@ async function runWebsiteAcceptance(h, fixture) {
   });
 
   independentFixtures = true;
+  await testNative('hover ribbon stays open across website and app destinations', async () => {
+    await openSite('Fixture Alpha', '/alpha');
+    await hoverTab(alphaID);
+    const retainedRibbon = chromeView('ribbon');
+    const width = retainedRibbon.getBounds().width;
+    const selections = [
+      { target: tabButton(siteIDs.get('Fixture Beta')), id: siteIDs.get('Fixture Beta'), label: 'beta' },
+      { target: conversations, id: 'conversations', label: 'conversations' },
+      { target: '.sidebar-ribbon-footer button[aria-label="Settings"]', label: 'settings' },
+      { target: tabButton(alphaID), id: alphaID, label: 'alpha' },
+    ];
+    for (const { target, id, label } of selections) {
+      await click(target, `retained-hover-${label}`, true, true);
+      await until(() => evaluateRibbon(({ target, id }) => document.querySelector(id ? `[data-ribbon-id="${id}"]` : target)?.getAttribute('aria-current') === 'page', { target, id }), `Selected ${label}`);
+      assert.equal(chromeView('ribbon'), retainedRibbon, 'Navigation reuses the current native ribbon');
+      assert.equal(retainedRibbon.getVisible(), true, 'Selecting a destination does not dismiss the hovered ribbon');
+      assert.equal(retainedRibbon.getBounds().width, width, 'Selection does not start a collapse or reopen animation');
+      assert.equal(await evaluate(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded), 'true');
+    }
+    await leaveRail();
+    assert.equal(retainedRibbon.getVisible(), false, 'Real pointer departure still closes the ribbon');
+    assert.equal(nativeView('/alpha').getVisible(), true, 'Pointer departure leaves the selected website visible');
+    return { destinations: selections.map(({ label }) => label), width };
+  });
   await testNative('ribbon reorders Chat away from first with real keyboard and pointer', async () => {
     await openSite('Fixture Alpha', '/alpha');
     const before = await evaluate(() => [...document.querySelectorAll('.sidebar-ribbon-main [data-ribbon-id]')].map(node => node.dataset.ribbonId));

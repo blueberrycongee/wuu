@@ -121,6 +121,8 @@ The shortcut starts disabled, and no background history or audio is recorded. Ad
 
 In the experimental workbench, website tabs in the left ribbon retain their page while you switch destinations. Downloads, history, bookmarks, and address suggestions open above the live page. Hiding or minimizing Wuu keeps the selected page ready for restore.
 
+Hover over the left tab ribbon to expand it. Switching between website tabs and app pages keeps the ribbon open while the pointer stays inside, so you can select several destinations without reopening it. Move the pointer away to collapse it, or press Escape to dismiss the focused ribbon.
+
 Ordinary background tabs become eligible for memory reclamation after 30 minutes without selection; Wuu checks once a minute. Selecting a reclaimed tab reloads its page, restoring navigation history, zoom, and the saved scroll offset. Cookies and the shared browser profile remain intact. Page scripts start again, so pin a tab if its background work must remain running.
 
 The selected tab is kept even when Wuu is hidden. Pinned tabs, edited forms, playing media, captured pages, active downloads, automation, and pages that refuse to unload are protected. Pages with embedded frames, session storage, editors, live opener connections, or changed background titles/icons also stay resident because Electron cannot restore all their live state. This conservative policy does not promise a particular memory reduction or replace macOS visual acceptance.
