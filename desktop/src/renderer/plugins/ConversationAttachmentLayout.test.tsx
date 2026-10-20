@@ -1,8 +1,9 @@
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginUIConversationMessageProps } from "../../shared/workbench";
+import { ConversationAttachmentPreviewContext } from "../ConversationAttachmentPreview";
 import { ConversationBubbleContext } from "./ConversationBubbles";
 import { PluginConversationAttachment, PluginConversationMessage } from "./PluginConversation";
 
@@ -67,7 +68,7 @@ describe("conversation attachment layout", () => {
       expect(message.querySelectorAll('[data-wuu-component="conversation-attachment"]')).toHaveLength(2);
       expect([...attachments.querySelectorAll("strong")].map(node => node.textContent)).toEqual(["notes.txt", "report.pdf"]);
       expect(attachments.querySelectorAll('button[data-action="open-attachment"]')).toHaveLength(2);
-      expect(attachments.querySelectorAll('button[data-action="load-attachment"]')).toHaveLength(2);
+      expect(attachments.querySelectorAll('button[data-action="load-attachment"]')).toHaveLength(0);
     },
   );
 
@@ -156,3 +157,29 @@ describe("conversation attachment layout", () => {
     expect(processShell.querySelectorAll('[data-wuu-component="conversation-attachment"]')).toHaveLength(2);
   });
 });
+
+for (const url of [undefined, "blob:already-verified"]) {
+  it(`keeps a long Twin filename unobstructed and only opens the internal tab (${url ? "loaded" : "unloaded"})`, async () => {
+    const open = vi.fn(), load = vi.fn(), read = vi.fn(async () => new Blob(["verified"]));
+    const name = "A long attachment filename that must not be covered by a download action.txt";
+    await act(async () => root.render(
+      <ConversationBubbleContext.Provider value={{ enabled: true, revealed: false }}>
+        <ConversationAttachmentPreviewContext.Provider value={open}>
+          <PluginConversationAttachment resourceId="long-file" name={name} mediaType="text/plain" size={8} url={url} onRead={read} onLoad={load} loadLabel="Read" downloadLabel="Download" />
+        </ConversationAttachmentPreviewContext.Provider>
+      </ConversationBubbleContext.Provider>,
+    ));
+    const card = container.querySelector(".conversation-file-card")!;
+    const button = card.querySelector<HTMLButtonElement>("button")!;
+    expect(card.querySelectorAll("button,a")).toHaveLength(1);
+    expect(card.querySelector(".conversation-file-download,[download]")).toBeNull();
+    await act(async () => { button.focus(); button.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })); });
+    expect(document.activeElement).toBe(button);
+    expect(card.querySelector("strong")?.textContent).toBe(name);
+    expect(card.querySelector(".conversation-file-download,[download]")).toBeNull();
+    await act(async () => button.click());
+    expect(open).toHaveBeenCalledOnce();
+    expect(open.mock.calls[0][0]).toMatchObject({ resourceId: "long-file", name });
+    expect(load).not.toHaveBeenCalled();
+  });
+}

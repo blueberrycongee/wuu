@@ -274,6 +274,8 @@ export interface PluginUIConversationViewProps {
   avatar?: unknown;
   status?: unknown;
   loading?: boolean;
+  /** Hide only this conversation’s history trigger; defaults to true. */
+  showHistorySearch?: boolean;
   searchLabel: string;
   searchContent: unknown;
   children: unknown;

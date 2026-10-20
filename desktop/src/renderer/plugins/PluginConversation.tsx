@@ -63,7 +63,7 @@ class ConversationReadingBoundary extends Component<ReadingBoundaryProps> {
   render(): React.ReactNode { return this.props.children; }
 }
 
-export function PluginConversationView({ presentation = "standard", conversationId, sessionId, sessionScope, onQuestionReply, actions, title, subtitle, avatar, status, loading = false, searchLabel, searchContent, children, composer }: PluginUIConversationViewProps): JSX.Element {
+export function PluginConversationView({ presentation = "standard", conversationId, sessionId, sessionScope, onQuestionReply, actions, title, subtitle, avatar, status, loading = false, searchLabel, searchContent, showHistorySearch = true, children, composer }: PluginUIConversationViewProps): JSX.Element {
   const { t } = useI18n();
   const controller = useAutoFollowScrollContainer({ observeKey: conversationId });
   const rootRef = useRef<HTMLElement>(null);
@@ -71,7 +71,7 @@ export function PluginConversationView({ presentation = "standard", conversation
   const gesture = useConversationBubbleGesture(bubbles, conversationId, controller.scrollRef);
   const [composerNode, setComposerNode] = useState<HTMLDivElement | null>(null);
   const [searchFor, setSearchFor] = useState<string>();
-  const searchOpen = searchFor === conversationId;
+  const searchOpen = showHistorySearch && searchFor === conversationId;
   const closeSearch = () => setSearchFor(undefined);
   useLayoutEffect(() => setSearchFor(undefined), [conversationId]);
   useLayoutEffect(() => {
@@ -87,7 +87,7 @@ export function PluginConversationView({ presentation = "standard", conversation
   return <section ref={rootRef} className="plugin-conversation" data-conversation-id={conversationId} data-presentation={presentation}>
     <header className="titlebar plugin-conversation-titlebar" data-wuu-component="conversation-titlebar">
       <div className="title-block"><div className="conversation-title-heading">{avatar}<h1 tabIndex={-1}>{title}</h1>{subtitle && <span className="plugin-conversation-subtitle">{subtitle}</span>}</div></div>
-      <div className="title-actions">{status}<button type="button" className="icon-button" data-action="search-history" aria-label={searchLabel} title={searchLabel} aria-expanded={searchOpen} onClick={event => { event.currentTarget.focus({ preventScroll: true }); setSearchFor(conversationId); }}><Search /></button>{actions}</div>
+      <div className="title-actions">{status}{showHistorySearch && <button type="button" className="icon-button" data-action="search-history" aria-label={searchLabel} title={searchLabel} aria-expanded={searchOpen} onClick={event => { event.currentTarget.focus({ preventScroll: true }); setSearchFor(conversationId); }}><Search /></button>}{actions}</div>
     </header>
     <ConversationReadingBoundary conversationId={conversationId} loading={loading} controller={controller}>
       <div className="scroll-region plugin-conversation-scroll" ref={controller.scrollRef} onScroll={controller.handleScrollFrame} data-scroll-fade=""
@@ -332,8 +332,8 @@ export function PluginConversationAttachment({ resourceId, onOpen, onRead, name,
       <button type="button" className="conversation-file-card-main" data-action="open-attachment" aria-label={t("conversationAttachment.open", { name })} disabled={opening} aria-busy={opening} onClick={() => { void open(); }}>
         {opening ? <LoaderCircle className="is-spinning" /> : bubble.enabled ? <ConversationAttachmentIcon mediaType={mediaType} /> : <FileText />}<span className="conversation-file-card-copy"><strong title={`${name} · ${mediaType} · ${formatByteSize(size, formatNumber)}`}>{name}</strong></span>
       </button>
-      {localURL ? <a className="icon-button conversation-file-download" href={localURL} download={name} aria-label={downloadLabel} title={downloadLabel}><Download /></a>
-        : <button type="button" className="icon-button conversation-file-download" data-action="load-attachment" aria-label={loadLabel} title={loadLabel} disabled={loading || downloading} onClick={() => { void download(); }}>{loading || downloading ? <LoaderCircle className="is-spinning" /> : <Download />}</button>}
+      {!bubble.enabled && (localURL ? <a className="icon-button conversation-file-download" href={localURL} download={name} aria-label={downloadLabel} title={downloadLabel}><Download /></a>
+        : <button type="button" className="icon-button conversation-file-download" data-action="load-attachment" aria-label={loadLabel} title={loadLabel} disabled={loading || downloading} onClick={() => { void download(); }}>{loading || downloading ? <LoaderCircle className="is-spinning" /> : <Download />}</button>)}
     </div>
     {(actionError || error) && <p role="alert">{actionError || error}</p>}
     {raster && localURL && <img src={localURL} alt={name} />}

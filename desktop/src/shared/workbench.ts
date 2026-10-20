@@ -275,6 +275,8 @@ export interface PluginUIConversationViewProps {
   avatar?: React.ReactNode;
   status?: React.ReactNode;
   loading?: boolean;
+  /** Hide only this conversation’s history trigger; defaults to true. */
+  showHistorySearch?: boolean;
   searchLabel: string;
   searchContent: React.ReactNode;
   children: React.ReactNode;

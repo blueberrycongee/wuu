@@ -52,6 +52,7 @@ async function open(ui: Awaited<ReturnType<typeof mount>>) { await ui.click(trig
 it("uses a pure-avatar trigger while keeping its name and status accessible", async () => {
   const ui = await mount();
   expect(ui.trigger().textContent?.trim()).toBe("");
+  expect(ui.container.querySelector('[data-action="search-history"]')).toBeNull();
   expect(ui.trigger().querySelector(".mosaic-avatar")).not.toBeNull();
   expect(ui.trigger().getAttribute("aria-label")).toContain("Mosaic");
   expect(ui.trigger().getAttribute("aria-label")).toMatch(/Ready|已就绪/);

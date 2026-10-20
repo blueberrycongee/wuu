@@ -705,13 +705,6 @@
 }
 .plugin-conversation-message[data-bubble] .conversation-file-card-main > svg { width: 20px; height: 20px; flex: 0 0 20px; color: currentColor; }
 .plugin-conversation-message[data-bubble] .conversation-file-card-copy strong { font-weight: 400; }
-.plugin-conversation-message[data-bubble] .conversation-file-download {
-  position: absolute; right: 4px; top: 4px; width: 30px; height: 30px;
-  opacity: 0; pointer-events: none; background: var(--attachment-chip-background);
-  box-shadow: -6px 0 5px var(--attachment-chip-background);
-}
-.plugin-conversation-message[data-bubble] .conversation-file-card:hover .conversation-file-download,
-.plugin-conversation-message[data-bubble] .conversation-file-card:focus-within .conversation-file-download { opacity: 1; pointer-events: auto; }
 [data-times-dragging="true"] .plugin-conversation-message[data-bubble][data-role="user"] > .plugin-conversation-attachments { transition: none; }
 @media (prefers-reduced-motion: reduce) {
   .plugin-conversation-message[data-bubble][data-role="user"] > .plugin-conversation-attachments { transition: none; }

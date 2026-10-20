@@ -388,15 +388,17 @@ async function run() {
     await evaluate(() => window.getSelection().removeAllRanges());
     return { selected: selection };
   });
-  await check("attachment card remains clickable and downloads verified fixture bytes", async () => {
-    await click('[data-action="load-attachment"]');
+  await check("attachment card opens verified bytes in a tab without a chat download control", async () => {
+    await click('[data-action="open-attachment"]');
     const file = await until(() => {
-      const link = document.querySelector('.plugin-conversation-attachment a[download]');
+      const link = document.querySelector('.conversation-attachment-preview a[download]');
       return link && { name: link.download, href: link.href };
     }, "verified attachment ready");
     assert.ok(file.href.startsWith("blob:"));
     const text = await evaluate(async url => fetch(url).then(response => response.text()), file.href);
     assert.equal(text, "hello");
+    await click('.workspace-tool-tab-close');
+    await until(() => !document.querySelector('.conversation-attachment-preview'), "file tab closed");
     await revealed(false);
     return { name: file.name, verifiedText: text };
   });
@@ -641,7 +643,7 @@ async function runDomOnly() {
     await check("DOM: prose mouse drag and interactive control drag do not trigger reveal", async () => {
       assert.equal(await swipe(document.querySelector(".agent-text"), -70), false); await expectedReveal(false);
       assert.equal(await swipe(document.querySelector(".user-message"), -70), false); await expectedReveal(false);
-      assert.equal(await swipe(document.querySelector('[data-action="load-attachment"]'), -70, 0, "touch"), false); await expectedReveal(false);
+      assert.equal(await swipe(document.querySelector('[data-action="open-attachment"]'), -70, 0, "touch"), false); await expectedReveal(false);
       return { defaultPrevented: false, nativeSelectionVerified: false };
     });
     await check("DOM: touch prose horizontal intent reveals and vertical intent stays untouched", async () => {
@@ -661,7 +663,7 @@ async function runDomOnly() {
       assert.equal(wheel(scroll, 2, 90), false); await expectedReveal(false);
       assert.equal(wheel(scroll, 60, 0, { ctrlKey: true }), false); await expectedReveal(false);
       assert.equal(wheel(scroll, 60, 0, { shiftKey: true }), false); await expectedReveal(false);
-      assert.equal(wheel(document.querySelector('[data-action="load-attachment"]'), 60, 0), false); await expectedReveal(false);
+      assert.equal(wheel(document.querySelector('[data-action="open-attachment"]'), 60, 0), false); await expectedReveal(false);
       return { retainedForMs: wheelRetentionMs, layoutVerified: false };
     });
     await check("DOM: blank-column click dismisses time but bubble prose click does not", async () => {
@@ -672,10 +674,15 @@ async function runDomOnly() {
       pointer(scroll, "pointerup", 200, 100);
       scroll.click(); await expectedReveal(false);
     });
-    await check("DOM: attachment loading still verifies fixture bytes and exposes download", async () => {
-      document.querySelector('[data-action="load-attachment"]').click();
-      await wait(window, () => !!document.querySelector('.plugin-conversation-attachment a[download]'), "attachment download");
-      assert.equal(document.querySelector('.plugin-conversation-attachment a[download]').href, "blob:synthetic-dom-only");
+    await check("DOM: chat file has only an open action; download remains inside the viewer", async () => {
+      const chip = document.querySelector('.conversation-file-card');
+      assert.equal(chip.querySelectorAll('button').length, 1);
+      assert.equal(chip.querySelector('a[download],.conversation-file-download'), null);
+      chip.querySelector('button').focus();
+      assert.equal(chip.querySelector('.conversation-file-download'), null);
+      chip.querySelector('button').click();
+      await wait(window, () => !!document.querySelector('.conversation-attachment-preview a[download]'), "viewer download");
+      assert.equal(document.querySelector('.conversation-attachment-preview a[download]').href, "blob:synthetic-dom-only");
       await expectedReveal(false);
     });
     await check("DOM: attachment body opens a real shell tab, deduplicates and returns to chat on close", async () => {
@@ -717,6 +724,16 @@ async function runDomOnly() {
       assert.equal(document.querySelectorAll('[data-wuu-tab-kind="conversation-attachment"]').length, 3);
     });
     await check("DOM: persistent synthetic rename updates navigation without changing product settings", async () => {
+      assert.equal(document.querySelector('.mosaic [data-action="search-history"]'), null);
+      assert.equal(window.getComputedStyle(document.querySelector('.mosaic .plugin-conversation-titlebar')).overflow, "visible");
+      const identityCard = document.querySelector(".mosaic-identity-hover");
+      assert.equal(window.getComputedStyle(identityCard).minWidth, "0");
+      assert.equal(window.getComputedStyle(identityCard).top, "64px");
+      assert.equal(window.getComputedStyle(identityCard.querySelector("strong")).fontWeight, "400");
+      assert.equal(window.getComputedStyle(identityCard.querySelector("strong")).fontSize, "15px");
+      assert.equal(window.getComputedStyle(identityCard.querySelector("strong")).lineHeight, "20px");
+      assert.equal(window.getComputedStyle(identityCard.querySelector("small")).fontSize, "12px");
+      assert.equal(window.getComputedStyle(identityCard.querySelector("small")).lineHeight, "16px");
       const rename = async value => {
         document.querySelector('.mosaic-identity-hover').click();
         await wait(window, () => !!document.querySelector('.mosaic-name-input'), 'rename dialog');
@@ -791,6 +808,7 @@ async function runDomOnly() {
     await wait(window, () => document.querySelectorAll(".plugin-conversation-message").length === 4, "standard messages");
     await check("DOM: standard shared renderer keeps original action buttons with no bubbles or timestamp gesture", async () => {
       assert.equal(document.querySelector(".plugin-conversation").dataset.presentation, "standard");
+      assert.ok(document.querySelector('[data-action="search-history"]'));
       assert.equal(document.querySelectorAll(".plugin-conversation-message[data-bubble], .bubble-message-time, .bubble-time-toggle").length, 0);
       assert.equal(document.querySelectorAll(".plugin-conversation-message .message-actions").length, 4);
       assert.ok(document.querySelectorAll(".plugin-conversation-message .message-action-button").length >= 4);

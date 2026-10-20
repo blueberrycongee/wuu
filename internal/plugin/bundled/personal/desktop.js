@@ -213,10 +213,11 @@ export async function activate(api) {
     .mosaic-profile-copy .mosaic-status { margin-top:4px;font-size:calc(var(--font-ui) * 1.067);line-height:1.25; }
     .mosaic-profile-trigger { position:relative;width:56px;height:56px;border:0;background:transparent;color:inherit;display:grid;place-items:center;padding:0;border-radius:50%;cursor:pointer;font:inherit;-webkit-app-region:no-drag; }
     .mosaic-identity { position:absolute;left:50%;top:6px;transform:translateX(-50%);z-index:31; }
-    .mosaic-identity-hover { position:absolute;top:50px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:3px;min-width:120px;max-width:240px;padding:8px 14px;border:1px solid var(--hairline);border-radius:16px;background:var(--paper);box-shadow:0 2px 6px #00000010;color:var(--ink);font:inherit;cursor:pointer;visibility:hidden;opacity:0; }
+    .mosaic-identity-hover { position:absolute;top:64px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:240px;padding:6px 12px;border:1px solid var(--hairline);border-radius:16px;background:var(--paper);box-shadow:0 2px 6px #00000010;color:var(--ink);font:inherit;cursor:pointer;visibility:hidden;opacity:0; }
+    .mosaic-identity-hover::before { content:"";position:absolute;left:0;right:0;top:-9px;height:9px; }
     .mosaic-identity:hover .mosaic-identity-hover,.mosaic-identity:focus-within .mosaic-identity-hover { visibility:visible;opacity:1; }
-    .mosaic-identity-hover strong { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:calc(var(--font-ui) * 1.2);font-weight:600; }
-    .mosaic-identity-hover small { color:var(--ink-muted); }
+    .mosaic-identity-hover strong { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px;line-height:20px;font-weight:400; }
+    .mosaic-identity-hover small { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:16px;color:var(--ink-muted); }
     .mosaic[data-panel-open="true"] .mosaic-identity { visibility:hidden; }
     .mosaic[data-panel-open="true"] .mosaic-identity-hover { visibility:hidden;opacity:0;pointer-events:none; }
     .mosaic-profile-name-button { border:0;background:transparent;padding:0;text-align:left;color:inherit;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
@@ -228,7 +229,7 @@ export async function activate(api) {
     .mosaic-name-save { width:100%;margin-top:auto;border:0;border-radius:999px;min-height:40px;background:var(--ink);color:var(--paper);font:inherit;cursor:pointer; }
     .mosaic-name-save:disabled { opacity:.45;cursor:default; }
     .mosaic-name-error { margin:0;color:var(--danger,var(--ink));font-size:var(--font-ui-small); }
-    .mosaic .plugin-conversation-titlebar { position:relative;min-height:68px;height:68px;border:0;background:transparent;box-shadow:none; }
+    .mosaic .plugin-conversation-titlebar { position:relative;overflow:visible;z-index:10;min-height:68px;height:68px;border:0;background:transparent;box-shadow:none; }
     .mosaic .plugin-conversation-titlebar .title-block { visibility:hidden; }
     .mosaic-profile-trigger[aria-expanded="true"] { visibility:hidden; }
     .mosaic-profile-trigger:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
@@ -782,7 +783,7 @@ export async function activate(api) {
       !agent ? loading ? h(LoadingState, { label: "twin" }) : h(EmptyState, { title: t("hostUnavailable") }) : h(ConversationView, {
         presentation: "bubbles", conversationId: conversationID, sessionId: conversationID, sessionScope: route, onQuestionReply: replyToQuestion, title: "twin", loading,
         actions: h("div", { className: "mosaic-identity" }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} · ${displayName} · ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => { if (panelOpen) closePanel(); else openPanel(); } }, avatar()), h("button", { type: "button", className: "mosaic-identity-hover", "data-action": "rename-personal", "aria-label": `${t("rename")} · ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openRename }, h("strong", null, displayName), h("small", null, statusText))),
-        searchLabel: t("historySearch"), searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
+        showHistorySearch: false, searchLabel: t("historySearch"), searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
         composer: h(ConversationComposer, { conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles,
           attachments: files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(conversationID, { prompt: value }), onAddAttachments: selectFiles,
           onRemoveAttachment: id => updateDraft(conversationID, { files: files.filter((_, index) => String(index) !== id) }), onSend: send, onStop: stopReply })
