@@ -49,6 +49,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Replace the page chat shortcut with Wuu's mascot, with click-to-compose, a keyboard-accessible context menu, and draft-preserving focus return to the page.
+
 - Animate the hover tab ribbon with a stable icon column, reversible native bounds, and both system and in-app reduced-motion support.
 
 - Keep websites live beneath the hover tab ribbon and account menu with bounded, isolated native chrome surfaces.

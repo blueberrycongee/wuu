@@ -17,6 +17,7 @@ export class ChromeOverlayHost {
   private initialized = false;
   private fullscreen = false;
   private pointerSources = new Set<WebContents>();
+  private focusSources = new Map<WebContents, () => void>();
   // Vite rewrites these existing imports to /@fs/. Keep the exception finite:
   // neither arbitrary checkout files nor arbitrary developer-machine files.
   private readonly devFiles: Set<string>;
@@ -77,6 +78,7 @@ export class ChromeOverlayHost {
       const fsPath = path.startsWith("/@fs/") ? path.slice(5) : undefined;
       const allowedDevFile = fsPath !== undefined && this.devFiles.has(resolve(fsPath.startsWith("/") || /^[a-z]:/i.test(fsPath) ? fsPath : `/${fsPath}`));
       // The development server transpiles only this checkout's UI/source imports.
+      if (this.devURL && path === "/assets/app-icon-source.json") return net.fetch(new URL(url.pathname + url.search, this.devURL).href);
       if (this.devURL && (allowedDevFile || path === "/@vite/client" || path === "/@react-refresh" || path === "/node_modules/vite/dist/client/env.mjs" || /^\/(?:src\/(?:renderer|shared)\/|node_modules\/.vite\/)/.test(path))) {
         return net.fetch(new URL(url.pathname + url.search, this.devURL).href);
       }
@@ -227,8 +229,8 @@ export class ChromeOverlayHost {
       if (command.type === "capsule-collapse" || command.type === "capsule-draft" || command.type === "capsule-send") {
         if (typeof command.text !== "string" || command.text.length > 8000) return;
         if (command.type === "capsule-send" && request.model.busy) return;
-        if (command.type === "capsule-collapse" && surface.view.webContents.isFocused() && surface.focusBefore && !surface.focusBefore.isDestroyed()) surface.focusBefore.focus();
-      } else if (command.type !== "capsule-expand" && command.type !== "capsule-open") return;
+        if (command.type === "capsule-collapse" && surface.owner.isFocused() && surface.view.webContents.isFocused() && surface.focusBefore && !surface.focusBefore.isDestroyed()) surface.focusBefore.focus();
+      } else if (command.type !== "capsule-expand" && command.type !== "capsule-open" && command.type !== "capsule-menu") return;
     } else {
       const model = request.model;
       if (["select", "close-tab", "pin-tab", "mute-tab", "tab-menu", "reorder"].includes(command.type)) {
@@ -384,10 +386,30 @@ export class ChromeOverlayHost {
   /** Called after a new website view is attached; never restack over HTML fullscreen. */
   raise(owner: BrowserWindow): void {
     this.observePointerSources(owner);
-    for (const kind of ["capsule", "ribbon", "account"] as const) {
-      const surface = this.surfaces.get(kind);
-      if (surface?.owner === owner && surface.request && surface.view.getVisible()) owner.contentView.addChildView(surface.view);
+    // Keyboard and accessibility activation can enter the capsule without a
+    // pointer hover. Track the last actual page/shell focus throughout its life.
+    const chrome = [...this.surfaces.values()].map(surface => surface.view.webContents);
+    for (const contents of [owner.webContents, ...owner.contentView.children.map(child => (child as WebContentsView).webContents)]) {
+      if (!contents || contents.isDestroyed() || chrome.includes(contents) || this.focusSources.has(contents)) continue;
+      const focus = () => {
+        const capsule = this.surfaces.get("capsule");
+        if (capsule?.owner === owner) capsule.focusBefore = contents;
+      };
+      this.focusSources.set(contents, focus);
+      contents.on("focus", focus);
+      contents.once("destroyed", () => this.focusSources.delete(contents));
+      if (contents.isFocused()) focus();
     }
+    const overlays = (["capsule", "ribbon", "account"] as const).map(kind => this.surfaces.get(kind))
+      .filter((surface): surface is Surface => Boolean(surface?.owner === owner && surface.request && surface.view.getVisible()));
+    const children = owner.contentView.children;
+    if (overlays.every((surface, index) => children[children.length - overlays.length + index] === surface.view)) return;
+    // Reattaching a macOS native view can clear its sibling's keyboard focus.
+    // Model/paint updates usually need no stacking change at all.
+    const focused = [owner.webContents, ...children.map(child => (child as WebContentsView).webContents)]
+      .find(contents => contents && !contents.isDestroyed() && contents.isFocused());
+    for (const surface of overlays) owner.contentView.addChildView(surface.view);
+    if (focused && owner.isFocused()) focused.focus();
   }
 
   close(owner: BrowserWindow): void {
@@ -443,6 +465,8 @@ export class ChromeOverlayHost {
     owner.once("closed", () => {
       for (const surface of [...this.surfaces.values()]) this.remove(surface);
       this.stopObservingPointerSources();
+      for (const [contents, focus] of this.focusSources) if (!contents.isDestroyed()) contents.removeListener("focus", focus);
+      this.focusSources.clear();
       this.owner = undefined;
     });
   }

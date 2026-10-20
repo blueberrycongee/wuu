@@ -41,8 +41,8 @@ export type ChromeRibbonModel = {
   focusTarget?: ChromeRibbonFocus;
   footer?: { settings: ChromeRibbonItem; account?: ChromeAccountTrigger; update?: ChromeDesktopUpdate };
 };
-export type ChromeCapsuleModel = { kind: "capsule"; draft: string; expanded: boolean; busy: boolean; sessionId?: string; error?: string;
-  sourceTitle: string; label: string; placeholder: string; sendLabel: string; openLabel: string };
+export type ChromeCapsuleModel = { kind: "capsule"; draft: string; expanded: boolean; menuOpen: boolean; busy: boolean; sessionId?: string; error?: string;
+  sourceTitle: string; label: string; placeholder: string; sendLabel: string; openLabel: string; collapseLabel: string };
 export type ChromeOverlayModel = ChromeRibbonModel | { kind: "account"; panel: ChromeAccountPanel } | ChromeCapsuleModel;
 export type ChromeOverlayRequest = {
   version: typeof CHROME_OVERLAY_VERSION;
@@ -55,7 +55,7 @@ export type ChromeOverlayRequest = {
 };
 export type ChromeOverlayCommand =
   | { type: "reveal"; fraction: number }
-  | { type: "capsule-expand" | "capsule-open" }
+  | { type: "capsule-expand" | "capsule-open" | "capsule-menu" }
   | { type: "capsule-collapse" | "capsule-draft" | "capsule-send"; text: string }
   | { type: "select" | "close-tab"; id: string }
   | { type: "pin-tab"; id: string; pinned: boolean }

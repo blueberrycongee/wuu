@@ -10,6 +10,15 @@ Expanding the right panel adds the current conversation as the first tab beside 
 
 <p class="docs-caption">Select text in a file to bring the passage, an annotation, or a question into the conversation while the file stays in its tab.</p>
 
+## Ask about the current page
+
+The Wuu mascot at the bottom right opens a question about the current page.
+Hovering keeps the page in focus; click to type, or right-click for **Ask Wuu**
+and **Open chat**. The latter becomes available after a conversation is created.
+Press **Esc** or click the mascot again to collapse the editor and keep its
+draft. Clicking elsewhere returns control to that page. With the mascot focused,
+**Shift + F10** opens its menu; arrow keys select an action.
+
 ## Side chat
 
 The bundled Side plugin supplies `/side` and is selected in the recommended first-run setup. You can turn it off during setup or later in Settings → Plugins. Disabling it removes side-chat entry points and stops active side answers while preserving history; enabling it restores access.

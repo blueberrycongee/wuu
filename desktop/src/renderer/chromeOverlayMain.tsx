@@ -111,7 +111,8 @@ function Overlay(): JSX.Element | null {
     const targetKey = JSON.stringify(target);
     const takeFocus = request.focus && (previous.current?.token !== request.token || !previous.current.focus || previous.current.target !== targetKey);
     previous.current = { token: request.token, focus: request.focus, target: targetKey };
-    if (takeFocus) {
+    // The capsule chooses between its editor and context-menu item itself.
+    if (takeFocus && request.model.kind !== "capsule") {
       const focused = target?.kind === "item" ? [...document.querySelectorAll<HTMLElement>("[data-ribbon-id]")].find(element => element.dataset.ribbonId === target.id)
         : target?.kind === "close" ? [...document.querySelectorAll<HTMLElement>("[data-ribbon-close-id]")].find(element => element.dataset.ribbonCloseId === target.id)
         : target?.kind === "desktop-update" ? document.querySelector<HTMLElement>(".desktop-update-button")
