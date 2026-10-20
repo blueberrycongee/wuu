@@ -23,6 +23,11 @@ export const PREVIEW_PLUGINS: ExtensionInventoryRecord[] = ONBOARDING_PLUGIN_ORD
   }];
 });
 
+export const PREVIEW_BROWSER_PROFILES: import("../shared/protocol").BrowserProfile[] = [
+  { browserId: "chrome", appName: "Google Chrome", profileDirectoryName: "Default", profileName: "Personal", profilePath: "/preview/chrome/Default", hasCookies: true, hasPasswords: false, lastUsedAt: Date.now() - 3600000 },
+  { browserId: "edge", appName: "Microsoft Edge", profileDirectoryName: "Profile 1", profileName: "Work", profilePath: "/preview/edge/Profile 1", hasCookies: true, hasPasswords: false, lastUsedAt: Date.now() - 86400000 },
+];
+
 export const PREVIEW_WORKSPACES: import("../shared/protocol").RecentWorkspace[] = [
   { name: "website", path: "/Users/example/Projects/website", sources: ["codex", "claude"], sessionCount: 8, isRepository: true, lastUsedAt: new Date(Date.now() - 3600000).toISOString() },
   { name: "api-server", path: "/Users/example/Projects/api-server", sources: ["claude"], sessionCount: 5, isRepository: true, lastUsedAt: new Date(Date.now() - 86400000).toISOString() },

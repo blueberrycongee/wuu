@@ -30,6 +30,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/providers/chatgpt"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/providers/grokbuild"
 	"github.com/blueberrycongee/wuu/internal/providers/xaisub"
@@ -93,6 +94,7 @@ func (s *Server) handleInitialize(req Request) error {
 		Providers:          s.providerSummaries(),
 		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
 		GeneralSettings:    s.currentGeneralSettingsSummary(),
+		CatalogProviders:   catalogProviderSummaries(),
 		Features:           FeatureFlags{Browser: s.supportsBrowserClient(), SafeMode: s.rt.SafeMode, ProjectAgent: projectAgentEnabled},
 	}, nil)
 }
@@ -1224,7 +1226,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("model choices change on an existing provider, one direction per model"))
 	}
 	// A conversation selection must never persist workspace defaults.
-	if threadID != "" && params.BaseURL == nil && params.APIKey == nil && params.AuthToken == nil && params.Type == nil && !params.CreateProvider && params.RemoveModel == "" && addedModel == "" && params.ReuseCodexCredentials == nil {
+	if threadID != "" && params.BaseURL == nil && params.APIKey == nil && params.AuthToken == nil && params.Type == nil && !params.CreateProvider && params.RemoveModel == "" && addedModel == "" && params.ReuseCodexCredentials == nil && params.ChatGPTAccountID == nil {
 		return s.handleThreadModelSelection(req, params)
 	}
 	if threadID != "" && (providerName != "" || model != "" || params.Variant != nil || params.Effort != nil || params.PermissionMode != nil || params.ApproveForMe != nil) {
@@ -1284,7 +1286,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 				if requested != "" {
 					providerTypeValue = requested
 				}
-			case "anthropic", "claude", "anthropic-official":
+			case "chatgpt", "openai-codex", "anthropic", "claude", "anthropic-official":
 				providerTypeValue = requested
 			case "xai-subscription", "xai-oauth", "grok-subscription", "supergrok":
 				providerTypeValue = requested
@@ -1293,6 +1295,21 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			default:
 				return s.writeResponse(req.ID, nil, fmt.Errorf("unsupported provider type %q", requested))
 			}
+		}
+		if providerTypeValue == "chatgpt" {
+			if params.BaseURL != nil || params.APIKey != nil || params.AuthToken != nil || params.ReuseCodexCredentials != nil {
+				return s.writeResponse(req.ID, nil, errors.New("ChatGPT connections use only a signed-in account"))
+			}
+			baseURL = chatgpt.DefaultBaseURL
+		}
+		if isCodexProviderType(providerTypeValue) {
+			if params.ReuseCodexCredentials == nil || !*params.ReuseCodexCredentials {
+				return s.writeResponse(req.ID, nil, errors.New("creating an openai-codex provider requires reuse_codex_credentials"))
+			}
+			if params.BaseURL != nil || apiKey != "" || authToken != "" {
+				return s.writeResponse(req.ID, nil, errors.New("connection settings are managed by OpenAI OAuth for this provider"))
+			}
+			baseURL = codex.DefaultBaseURL
 		}
 		if baseURL == "" && config.IsXAISubscriptionProvider(providerTypeValue) {
 			baseURL = xaisub.DefaultBaseURL
@@ -1303,7 +1320,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 		if baseURL == "" {
 			return s.writeResponse(req.ID, nil, errors.New("base_url is required"))
 		}
-		if apiKey == "" && authToken == "" && !config.IsXAISubscriptionProvider(providerTypeValue) && !config.IsGrokBuildProvider(providerTypeValue) {
+		if apiKey == "" && authToken == "" && providerTypeValue != "chatgpt" && !isCodexProviderType(providerTypeValue) && !config.IsXAISubscriptionProvider(providerTypeValue) && !config.IsGrokBuildProvider(providerTypeValue) {
 			return s.writeResponse(req.ID, nil, errors.New("api_key or auth_token is required"))
 		}
 		providerCfg = config.ProviderConfig{
@@ -1375,13 +1392,38 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 		providerCfg.Models[addedModel] = entry
 	}
 	connectionChanged := creatingProvider
-	connectionLocked := isCodexProviderType(providerCfg.Type)
+	if params.ChatGPTAccountID != nil {
+		if providerCfg.Type != "chatgpt" {
+			return s.writeResponse(req.ID, nil, errors.New("chatgpt_account_id is only valid for ChatGPT connections"))
+		}
+		if providerCfg.ChatGPTAccountID != strings.TrimSpace(*params.ChatGPTAccountID) {
+			connectionChanged = true
+		}
+		providerCfg.ChatGPTAccountID = strings.TrimSpace(*params.ChatGPTAccountID)
+	}
+	if providerCfg.Type == "chatgpt" {
+		if params.AddModel != "" || params.RemoveModel != "" {
+			return s.writeResponse(req.ID, nil, errors.New("ChatGPT model choices are managed by the selected account"))
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := s.validateChatGPTModel(ctx, providerCfg)
+		cancel()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
+	connectionLocked := isCodexProviderType(providerCfg.Type) || providerCfg.Type == "chatgpt"
 	if connectionLocked && (params.BaseURL != nil || strings.TrimSpace(stringValue(params.APIKey)) != "" || strings.TrimSpace(stringValue(params.AuthToken)) != "") {
 		return s.writeResponse(req.ID, nil, errors.New("connection settings are managed by OpenAI OAuth for this provider"))
 	}
 	if params.ReuseCodexCredentials != nil {
 		if !isCodexProviderType(providerCfg.Type) {
 			return s.writeResponse(req.ID, nil, errors.New("reuse_codex_credentials is only valid for openai-codex providers"))
+		}
+		if *params.ReuseCodexCredentials {
+			if _, err := codex.LocalOAuthStatus(os.Getenv("HOME"), true); err != nil {
+				return s.writeResponse(req.ID, nil, err)
+			}
 		}
 		if providerCfg.ReuseCodexCredentials != *params.ReuseCodexCredentials {
 			connectionChanged = true
@@ -1480,7 +1522,15 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 
 	var client providers.StreamClient
 	if resolvedName != s.rt.ProviderName || connectionChanged || providerClientChanged {
-		client, err = providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName)
+		if ruleProviderCfg.Type == "chatgpt" {
+			var direct *chatgpt.Client
+			direct, err = s.chatGPTClient(ruleProviderCfg.ChatGPTAccountID)
+			if err == nil {
+				client = providers.AdaptStreamClient(direct)
+			}
+		} else {
+			client, err = providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName)
+		}
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -1526,10 +1576,20 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 		APIKey:                apiKeyForConfig,
 		AuthToken:             authTokenForConfig,
 		ReuseCodexCredentials: params.ReuseCodexCredentials,
+		ChatGPTAccountID:      params.ChatGPTAccountID,
 		Select:                !keepSelection,
 		Effort:                effortForConfig,
 		Variant:               variantForConfig,
 		PermissionMode:        params.PermissionMode,
+	}
+	if providerCfg.Type == "chatgpt" {
+		s.chatGPTMu.Lock()
+		catalog := make([]config.ChatGPTModelConfig, 0, len(s.chatGPTModelCache[providerCfg.ChatGPTAccountID]))
+		for _, model := range s.chatGPTModelCache[providerCfg.ChatGPTAccountID] {
+			catalog = append(catalog, config.ChatGPTModelConfig{ID: model.Slug, DisplayName: model.DisplayName, AccountDescriptor: model.Raw})
+		}
+		s.chatGPTMu.Unlock()
+		change.ChatGPTModels = &catalog
 	}
 	if creatingProvider && createBaseURL != nil {
 		change.BaseURL = createBaseURL
@@ -1738,6 +1798,7 @@ func providerClientConfigChanged(previous, next config.ProviderConfig) bool {
 		strings.TrimSpace(previous.APIKeyEnv) != strings.TrimSpace(next.APIKeyEnv) ||
 		strings.TrimSpace(previous.AuthToken) != strings.TrimSpace(next.AuthToken) ||
 		strings.TrimSpace(previous.AuthTokenEnv) != strings.TrimSpace(next.AuthTokenEnv) ||
+		previous.ChatGPTAccountID != next.ChatGPTAccountID ||
 		previous.ReuseCodexCredentials != next.ReuseCodexCredentials ||
 		previous.ReuseGrokCredentials != next.ReuseGrokCredentials ||
 		previous.NativeCompactionEnabled() != next.NativeCompactionEnabled() ||
@@ -1773,6 +1834,9 @@ func (s *Server) currentConfigModelUpdateResult() ConfigModelUpdateResult {
 func (s *Server) handleConfigCodexCredentials(req Request) error {
 	var params ConfigCodexModelsParams
 	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if _, err := codex.LocalOAuthStatus(os.Getenv("HOME"), true); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	if err := config.UseCodexCredentials(s.rt.ConfigPath, strings.TrimSpace(params.Provider)); err != nil {
@@ -2038,7 +2102,12 @@ func (s *Server) currentSkillCatalog(ctx context.Context, threadID string, force
 	if err != nil {
 		return nil, "", err
 	}
-	if threadRuntime.Toolkit != nil {
+	th.mu.Lock()
+	engineID := agentengine.NormalizeEngineID(th.EngineID)
+	th.mu.Unlock()
+	// The external host toolkit describes only browser/CUA capabilities, not
+	// the engine's native tools or its ability to use explicitly selected skills.
+	if threadRuntime.Toolkit != nil && engineID == agentengine.EngineWuu {
 		root := threadRuntime.Toolkit.RootDir()
 		th.mu.Lock()
 		baseRepo := th.WorktreeBaseRepo
@@ -2059,7 +2128,7 @@ func (s *Server) currentSkillCatalog(ctx context.Context, threadID string, force
 	if sessionWorkspacePath(root) == sessionWorkspacePath(s.rt.RootDir) {
 		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
 	}
-	// Engines without a native toolkit cannot resolve a different checkout's catalog.
+	// External engines cannot resolve a different checkout's host skill catalog.
 	return nil, root, nil
 }
 
@@ -2224,6 +2293,16 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		return s.writeResponse(req.ID, nil, err)
 	}
 	providerCfg = s.withCachedCodexModels(resolvedName, providerCfg)
+	if providerCfg.Type == "chatgpt" {
+		selected := providerCfg
+		selected.Model = model
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := s.validateChatGPTModel(ctx, selected)
+		cancel()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
 	if providerCfg.Models[model].Disabled {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("model %s is disabled", model))
 	}
@@ -2651,6 +2730,7 @@ func (s *Server) providerSummaries() []ProviderSummary {
 			}
 		}
 	}
+	s.enrichChatGPTSummaries(summaries, cfg)
 	s.lastProviderSummaries = summaries
 	return summaries
 }
@@ -2700,11 +2780,12 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 		provider := cfg.Providers[name]
 		summary := ProviderSummary{
 			Name:             name,
+			ChatGPTAccountID: provider.ChatGPTAccountID,
 			Type:             provider.Type,
 			Model:            provider.Model,
 			BaseURL:          provider.BaseURL,
 			APIKeyConfigured: providerHasAuth(name, provider, home),
-			ConnectionLocked: isCodexProviderType(provider.Type) || config.IsXAISubscriptionProvider(provider.Type) || config.IsGrokBuildProvider(provider.Type),
+			ConnectionLocked: provider.Type == "chatgpt" || isCodexProviderType(provider.Type) || config.IsXAISubscriptionProvider(provider.Type) || config.IsGrokBuildProvider(provider.Type),
 			Models:           providerModelSummaries(name, provider),
 		}
 		if matched, ok := modelcatalog.MatchProvider(name, provider); ok {
@@ -2730,6 +2811,9 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 }
 
 func providerHasAuth(name string, provider config.ProviderConfig, home string) bool {
+	if provider.Type == "chatgpt" {
+		return false
+	}
 	if isCodexProviderType(provider.Type) {
 		if strings.TrimSpace(provider.APIKey) != "" || configuredEnvValue(provider.APIKeyEnv) != "" {
 			return true
@@ -2796,6 +2880,13 @@ func providerUsesAnthropicAuth(provider config.ProviderConfig) bool {
 }
 
 func providerModelSummaries(providerName string, provider config.ProviderConfig) []ProviderModelSummary {
+	if provider.Type == "chatgpt" {
+		models := make([]ProviderModelSummary, 0, len(provider.ChatGPTModels))
+		for _, model := range provider.ChatGPTModels {
+			models = append(models, chatGPTModelSummary(providerName, provider, model))
+		}
+		return models
+	}
 	if config.IsGrokBuildProvider(provider.Type) {
 		provider = config.ApplyGrokBuildProviderDefaults(provider)
 	}
@@ -3271,4 +3362,9 @@ func validateSpeed(speed string) error {
 		return nil
 	}
 	return fmt.Errorf("unsupported speed %q", speed)
+}
+
+func chatGPTModelSummary(providerName string, provider config.ProviderConfig, model config.ChatGPTModelConfig) ProviderModelSummary {
+	capabilities, behavior := modelroles.BuildFacts(providerName, provider, model.ID)
+	return ProviderModelSummary{ID: model.ID, DisplayName: model.DisplayName, AccountDescriptor: model.AccountDescriptor, Source: "account", Capabilities: capabilities, Behavior: behavior}
 }

@@ -55,7 +55,7 @@ Hooks and MCP subprocesses likewise run code outside the narrow agent-command sa
 
 ## Credentials and local records
 
-Provider configuration can refer to environment variables. Managed desktop OAuth credentials use macOS Keychain; a Keychain failure is surfaced rather than silently falling back to a plaintext credential file. Headless authentication has file-based storage options, so secure the account and state directory that run it.
+Provider configuration can refer to environment variables. Managed desktop MCP OAuth credentials use macOS Keychain or Linux Secret Service. Linux requires a session D-Bus and an available Secret Service keyring. A keyring failure is surfaced rather than silently falling back to a plaintext credential file. Headless authentication has file-based storage options, so secure the account and state directory that run it.
 
 Conversation history, tool results, logs, artifacts, and plugin data can contain source code and private text. Treat Wuu's state directory, session exports, and diagnostic bundles as sensitive even when obvious tokens have been redacted. Review them before sharing or backing them up to another service.
 

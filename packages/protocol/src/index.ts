@@ -184,6 +184,8 @@ export type InitializeResult = {
   model_aliases?: Record<string, ModelAliasSummary>;
   project_models?: ProjectModelsConfig;
   providers?: ProviderSummary[];
+  // Local connectable directory, ready before settings or onboarding opens.
+  catalog_providers?: CatalogProviderSummary[];
   advanced_settings?: AdvancedSettingsSummary;
   general_settings?: GeneralSettingsSummary;
   features?: FeatureFlags;
@@ -808,6 +810,8 @@ export type ConfigModelUpdateResult = {
 };
 
 export type ProviderSummary = {
+  chatgpt_account_id?: string;
+  auth_status?: ChatGPTAuthStatus;
   name: string;
   type: string;
   model: string;
@@ -832,6 +836,8 @@ export type ProviderSummary = {
 };
 
 export type ProviderModelSummary = {
+  // Opaque account-provided metadata; only documented fields are interpreted.
+  account_descriptor?: Record<string, unknown>;
   fast_mode?: boolean;
   default_speed?: string;
   id: string;
@@ -1135,6 +1141,8 @@ export type BrowserProfile = {
   hasCookies: boolean;
   hasPasswords: boolean;
   userName?: string;
+  /** Last profile activity reported by the browser, as Unix milliseconds. */
+  lastUsedAt?: number;
 };
 
 export type BrowserCookieImportResult = {
@@ -1161,6 +1169,7 @@ export type BrowserExtensionRecord = {
 };
 
 export type RuntimeConnectionUpdate = {
+  chatgpt_account_id?: string;
   // Remove a model from this provider's choices, including future catalog refreshes.
   remove_model?: string;
   // Restore a removed choice or add a model ID the catalog does not list.
@@ -1173,12 +1182,25 @@ export type RuntimeConnectionUpdate = {
   auth_token?: string;
   // Optional provider protocol type used when creating a new provider.
   // Supported values: "openai", "openai-compatible", "anthropic", "claude",
-  // "anthropic-official", "xai-subscription". Omitted or empty keeps the
-  // default of "openai-compatible". OAuth-managed Codex types are
-  // intentionally not listed because they require a separate connection flow.
+  // "anthropic-official", "xai-subscription", "openai-codex". Omitted or empty
+  // keeps "openai-compatible". Codex requires explicit credential reuse consent.
   type?: string;
   create_provider?: boolean;
   reuse_codex_credentials?: boolean;
+};
+
+export type ChatGPTAuthStatus = "connected" | "reauth_required" | "permission_required";
+export type ChatGPTAccount = { id: string; email?: string; status: ChatGPTAuthStatus };
+export type AuthChatGPTLoginResult = {
+  providers?: ProviderSummary[];
+  login_id: string;
+  status: "pending" | "success" | "failed" | "expired" | "cancelled";
+  // Go-to-main only. Main opens the browser and removes this before renderer IPC.
+  authorization_url?: string;
+  account_id?: string;
+  interval_ms: number;
+  expires_in: number;
+  error?: string;
 };
 
 export type AuthXAILoginStartResult = {
@@ -1235,7 +1257,12 @@ export type EngineInfo = {
   display_name?: string;
   protocol?: string;
   install_url?: string;
+  /** Legacy descriptor version; not necessarily the installed CLI version. */
   version?: string;
+  /** Observed installed CLI version; omitted when unknown or unsupported. */
+  cli_version?: string;
+  /** Vendor guide only; Wuu does not manage the CLI installation. */
+  update_url?: string;
   capabilities?: string[];
   enabled: boolean;
   binary_path?: string;
@@ -1350,6 +1377,7 @@ export type EngineUpdateParams = EngineSettingsConfig;
 
 export type EngineAuthParams = {
   engine_id: string;
+  /** Agent-advertised method, or local-cli for explicit Grok login on the local desktop only. */
   method_id?: string;
 };
 
@@ -1404,6 +1432,7 @@ export type ConfigModelCatalogRefreshResult = {
   provider_count: number;
   model_count: number;
   providers: ProviderSummary[];
+  catalog_providers?: CatalogProviderSummary[];
 };
 
 export type DesktopProject = {
@@ -3113,6 +3142,12 @@ export type WuuDesktopApi = {
   getMCPAuthStatus: (name: string) => Promise<MCPAuthStatusResult>;
   finishMCPAuth: (name: string, state: string, code: string) => Promise<MCPAuthFinishResult>;
   removeMCPAuth: (name: string) => Promise<MCPAuthRemoveResult>;
+  startChatGPTLogin: (accountId?: string, enablePlanUsage?: boolean) => Promise<AuthChatGPTLoginResult>;
+  pollChatGPTLogin: (loginId: string) => Promise<AuthChatGPTLoginResult>;
+  cancelChatGPTLogin: (loginId: string) => Promise<{ ok: boolean }>;
+  listChatGPTAccounts: () => Promise<{ accounts: ChatGPTAccount[] }>;
+  signOutChatGPTAccount: (accountId: string) => Promise<{ ok: boolean; revocation_confirmed: boolean; providers: ProviderSummary[] }>;
+  listChatGPTModels: (accountId: string) => Promise<{ models: (ProviderModelSummary & { name: string })[]; providers?: ProviderSummary[] }>;
   startXAILogin: () => Promise<AuthXAILoginStartResult>;
   pollXAILogin: (loginId: string) => Promise<AuthXAILoginPollResult>;
   cancelXAILogin: (loginId: string) => Promise<{ ok: boolean }>;

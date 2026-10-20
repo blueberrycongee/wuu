@@ -319,7 +319,10 @@ type ReadinessIssue struct {
 // conversation. The desktop app can run multiple ThreadRuntimes at once; each
 // one has its own StreamRunner, Toolkit Env, usage tracker, and AgentControl.
 type ThreadRuntime struct {
-	StreamRunner      *agent.StreamRunner
+	StreamRunner *agent.StreamRunner
+	// CapabilityTools exposes host capabilities to an external engine without
+	// creating an in-process model runner or worker runtime.
+	CapabilityTools   agent.ToolExecutor
 	Toolkit           *tools.Toolkit
 	AgentControl      *agentcontrol.AgentControl
 	ProcessManager    *process.Manager

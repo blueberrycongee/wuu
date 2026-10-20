@@ -98,10 +98,12 @@ type ClientConfig struct {
 	// StreamingHTTPClient shares a preconfigured pool across credential adapters.
 	// When set, its transport deadlines must match StreamConfig and Timeout must
 	// be zero. Otherwise New builds and owns a streaming client from HTTPClient.
-	StreamingHTTPClient     *http.Client
-	StreamConfig            *providers.StreamTransportConfig
-	Coordinator             *providers.ProviderCoordinator
-	ProviderScope           providers.ProviderScope
+	StreamingHTTPClient *http.Client
+	StreamConfig        *providers.StreamTransportConfig
+	Coordinator         *providers.ProviderCoordinator
+	ProviderScope       providers.ProviderScope
+	// ResponsesChatGPT applies the official ChatGPT plan HTTP protocol constraints.
+	ResponsesChatGPT        bool
 	ResponsesStore          *bool
 	ResponsesTransport      providers.StreamTransportMode
 	ResponsesWebSocketCache *ResponsesWebSocketCache
@@ -120,6 +122,7 @@ type Client struct {
 	streamConfig       providers.StreamTransportConfig
 	coordinator        *providers.ProviderCoordinator
 	providerScope      providers.ProviderScope
+	responsesChatGPT   bool
 	responsesStore     *bool
 	responsesTransport providers.StreamTransportMode
 	responsesWSCache   *ResponsesWebSocketCache
@@ -173,6 +176,7 @@ func New(cfg ClientConfig) (*Client, error) {
 		streamConfig:       streamConfig,
 		coordinator:        cfg.Coordinator,
 		providerScope:      providerScope,
+		responsesChatGPT:   cfg.ResponsesChatGPT,
 		responsesStore:     cfg.ResponsesStore,
 		responsesTransport: responsesTransport,
 		responsesWSCache:   cfg.ResponsesWebSocketCache,

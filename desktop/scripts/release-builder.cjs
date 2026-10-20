@@ -10,7 +10,8 @@ module.exports = {
   ...build,
   publish,
   // electron-builder omits the feed for dir targets; persist it before signing.
-  afterPack(context) {
+  async afterPack(context) {
+    await require("./after-pack-linux.cjs")(context);
     require("node:fs").writeFileSync(
       require("node:path").join(context.packager.getResourcesDir(context.appOutDir), "app-update.yml"),
       require("js-yaml").dump(publish),

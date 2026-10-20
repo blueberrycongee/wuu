@@ -26,10 +26,12 @@ import (
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/providers/chatgpt"
 	"github.com/blueberrycongee/wuu/internal/providers/xaisub"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/sidethread"
+	"github.com/blueberrycongee/wuu/internal/siwc"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -218,6 +220,7 @@ type Server struct {
 	// respond with "remote-only" errors; the remote-host package binds
 	// a per-device registrar via WithPushRegistrar in RunStdioForDevice.
 	pushRegistrar PushRegistrar
+	remoteDevice  bool
 
 	mu      sync.Mutex
 	threads map[string]*threadState
@@ -263,6 +266,12 @@ type Server struct {
 	claudeEngineModelCatalog claudeengine.ModelCatalog
 	engineModelCatalogMu     sync.Mutex
 	engineModelCatalogCache  map[string]*engineModelCatalogCacheEntry
+
+	chatGPTMu         sync.Mutex
+	chatGPTManager    *siwc.Manager
+	chatGPTHTTP       *http.Client
+	chatGPTAttempts   map[string]bool
+	chatGPTModelCache map[string][]chatgpt.ModelInfo
 
 	xaiLoginMu sync.Mutex
 	xaiLogins  *xaisub.LoginHub
@@ -709,6 +718,7 @@ func (s *Server) Close() {
 	}
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		s.closeChatGPTLogins()
 		if s.nativeHistoryCancel != nil {
 			s.nativeHistoryCancel()
 		}
@@ -950,7 +960,7 @@ func shutdownExecutionActive(threads []*threadState, controls map[*agentcontrol.
 }
 
 func RunStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer) error {
-	return RunStdioForDevice(ctx, rt, in, out, nil)
+	return runStdio(ctx, rt, in, out, nil, false)
 }
 
 // RunStdioForDevice runs the protocol loop for a remote device session,
@@ -958,11 +968,16 @@ func RunStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Wri
 // Local desktop sessions call RunStdio, which leaves the registrar nil so
 // those methods fail explicitly instead of parking tokens nowhere.
 func RunStdioForDevice(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer, registrar PushRegistrar) error {
+	return runStdio(ctx, rt, in, out, registrar, true)
+}
+
+func runStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer, registrar PushRegistrar, remoteDevice bool) error {
 	if rt == nil {
 		return errors.New("runtime session is required")
 	}
 	s := New(rt, out)
 	s.pushRegistrar = registrar
+	s.remoteDevice = remoteDevice
 	defer s.Close()
 	if s.startupErr != nil {
 		return s.startupErr
@@ -1082,6 +1097,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 			return s.writeResponse(req.ID, nil, errServerClosed)
 		}
 		return nil
+	case "auth/chatgpt/login/start", "auth/chatgpt/login/poll", "auth/chatgpt/login/cancel", "auth/chatgpt/accounts", "auth/chatgpt/signout", "auth/chatgpt/models":
+		return s.handleAuthChatGPT(ctx, req)
 	case MethodAuthXAILoginStart:
 		return s.handleAuthXAILoginStart(ctx, req)
 	case MethodAuthXAILoginPoll:

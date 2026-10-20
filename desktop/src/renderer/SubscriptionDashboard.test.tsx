@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineListResult, ProviderSummary, SubscriptionQuota } from "../shared/protocol";
 import { clearDraftEngineMemory, readDraftEngineMemory } from "./DraftEngineMemory";
 import { SubscriptionDashboard } from "./SubscriptionDashboard";
+import { subscriptionSources } from "./SubscriptionSources";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -104,7 +105,7 @@ describe("SubscriptionDashboard", () => {
     expect(container.querySelector('[data-testid="subscription-builtin-xai-subscription"] button[aria-haspopup="menu"]')).not.toBeNull();
     expect(container.textContent).not.toContain("openai");
     const failed = container.querySelector('[data-testid="subscription-engine-grok"]')!;
-    expect(failed.querySelector('[data-testid="engine-auth-discover"]')).not.toBeNull();
+    expect(failed.querySelector('[data-testid="grok-login-start"]')).not.toBeNull();
   });
 
   it("switches an external model through draft memory and a built-in model through the provider save", async () => {
@@ -320,7 +321,7 @@ describe("SubscriptionDashboard", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toBeTruthy();
   });
 
-  it("refreshes the accepted catalog after a failed discovery", async () => {
+  it("refreshes the catalog after a failed discovery without inferring authentication", async () => {
     await render();
     vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{
       id: "grok", display_name: "Grok", protocol: "acp", enabled: true, binary_ok: true,
@@ -328,7 +329,7 @@ describe("SubscriptionDashboard", () => {
     }] });
     await act(async () => { container.querySelector<HTMLButtonElement>("header button")!.click(); });
     const source = container.querySelector('[data-testid="subscription-engine-grok"]')!;
-    expect(source.querySelector('[data-testid="engine-auth-discover"]')).toBeNull();
+    expect(source.querySelector('[data-testid="grok-login-start"]')).not.toBeNull();
     await act(async () => { source.querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')!.click(); });
     expect(document.querySelector('[role="menuitemradio"][data-value="new-model"]')).not.toBeNull();
     expect(document.querySelector('[role="menuitemradio"][data-value="grok-4.5"]')).toBeNull();
@@ -339,28 +340,62 @@ describe("SubscriptionDashboard", () => {
     vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{
       ...inventory.engines[0], models: [], models_error: diagnostic,
     }] });
-    window.wuu.listEngineAuthMethods = vi.fn().mockRejectedValueOnce(new Error(diagnostic))
-      .mockResolvedValue({ methods: [{ id: "browser", name: "Browser" }], authenticated: false });
-    window.wuu.authenticateEngine = vi.fn().mockResolvedValue({ methods: [], authenticated: true });
+    window.wuu.listEngineAuthMethods = vi.fn();
+    window.wuu.authenticateEngine = vi.fn().mockRejectedValueOnce(new Error(diagnostic))
+      .mockResolvedValue({ methods: [], authenticated: true });
     await render();
     const source = container.querySelector('[data-testid="subscription-engine-grok"]')!;
     expect(source.innerHTML).not.toContain("synthetic agent stderr");
     expect(source.textContent).not.toContain("login expired");
     expect(window.wuu.listEngineAuthMethods).not.toHaveBeenCalled();
-    await act(async () => source.querySelector<HTMLButtonElement>('[data-testid="engine-auth-discover"]')!.click());
-    expect(source.querySelector('[role="status"]')?.textContent).toBeTruthy();
-    expect(source.innerHTML).not.toContain("synthetic agent stderr");
-    await act(async () => source.querySelector<HTMLButtonElement>('[data-testid="engine-auth-discover"]')!.click());
     expect(window.wuu.authenticateEngine).not.toHaveBeenCalled();
+    await act(async () => source.querySelector<HTMLButtonElement>('[data-testid="grok-login-start"]')!.click());
+    expect(source.querySelector('[role="alert"]')?.textContent).toBeTruthy();
+    expect(source.innerHTML).not.toContain("synthetic agent stderr");
     vi.mocked(window.wuu.listEngines).mockResolvedValue({ engines: [{ ...inventory.engines[0], models_error: undefined }] });
-    await act(async () => source.querySelector<HTMLButtonElement>('[data-testid="engine-auth-method"]')!.click());
-    expect(window.wuu.authenticateEngine).toHaveBeenCalledWith("grok", "browser");
-    expect(source.querySelector('[data-testid="engine-auth-discover"]')).toBeNull();
+    await act(async () => source.querySelector<HTMLButtonElement>('[data-testid="grok-login-start"]')!.click());
+    expect(window.wuu.authenticateEngine).toHaveBeenLastCalledWith("grok", "local-cli");
+    expect(window.wuu.listEngines).toHaveBeenCalledTimes(2);
     expect(source.querySelector('button[aria-haspopup="menu"]')).not.toBeNull();
+  });
+
+  it.each(["codex", "claude", "opencode", "dsh"])("refreshes %s native account evidence without changing credentials or model selection", async (engineID) => {
+    const engine = { ...inventory.engines[0], id: engineID, protocol: engineID === "dsh" ? "acp" : engineID, models_error: undefined };
+    const nativeInventory = { engines: [engine] };
+    vi.mocked(window.wuu.listEngines).mockResolvedValue(nativeInventory);
+    window.wuu.authenticateEngine = vi.fn();
+    window.wuu.listEngineAuthMethods = vi.fn();
+    window.wuu.useCodexCredentials = vi.fn();
+    const onSelect = vi.fn();
+    const onInventoryLoaded = vi.fn();
+    await act(async () => root.render(<SubscriptionDashboard inventory={nativeInventory} scope={{ kind: "engine", id: engineID }} onSelectBuiltinModel={onSelect} onInventoryLoaded={onInventoryLoaded} />));
+    const source = container.querySelector(`[data-testid="subscription-engine-${engineID}"]`)!;
+    await act(async () => source.querySelector<HTMLButtonElement>('[data-testid="engine-auth-local"]')!.click());
+    expect(window.wuu.listEngines).toHaveBeenCalledTimes(2);
+    expect(onInventoryLoaded).toHaveBeenLastCalledWith(nativeInventory);
+    expect(window.wuu.authenticateEngine).not.toHaveBeenCalled();
+    expect(window.wuu.listEngineAuthMethods).not.toHaveBeenCalled();
+    expect(window.wuu.useCodexCredentials).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(readDraftEngineMemory()).toBeUndefined();
+    expect(subscriptionSources(nativeInventory, [])[0].login).toBe("unknown");
+  });
+
+  it("requires current account evidence before treating an engine's model catalog as signed in", async () => {
+    const engine = { ...inventory.engines[0], id: "dsh", models_error: undefined };
+    const staticInventory = { engines: [engine] };
+    vi.mocked(window.wuu.listEngines).mockResolvedValue(staticInventory);
+    await render(vi.fn(), staticInventory, []);
+    expect(container.querySelector('[data-testid="engine-auth-discover"]')).toBeNull();
+    expect(container.querySelector('[data-testid="engine-auth-local"]')).not.toBeNull();
+    expect(subscriptionSources(staticInventory, [])[0].login).toBe("unknown");
+    const verifiedInventory = { engines: [{ ...engine, quota: quota() }] };
+    expect(subscriptionSources(verifiedInventory, [])[0].login).toBe("ready");
+    expect(subscriptionSources({ engines: [{ ...engine, quota: quota({ status: "stale" }) }] }, [])[0].login).toBe("unknown");
   });
 });
 
-it("switches the Codex credential source without changing the model selection and checks authentication", async () => {
+it.each([false, true])("switches the Codex credential source without changing the model selection and checks authentication (provider detail: %s)", async (scoped) => {
  const provider: ProviderSummary = { name: "codex-login", type: "openai-codex", model: "test-model", codex_credential_source: "wuu-auth-store" };
  const updated = { ...provider, reuse_codex_credentials: true, codex_credential_source: "codex-cli" };
  const useLogin = vi.fn().mockResolvedValue({ providers: [updated] });
@@ -368,7 +403,8 @@ it("switches the Codex credential source without changing the model selection an
  window.wuu.useCodexCredentials = useLogin;
  window.wuu.loadCodexModels = check;
  const select = vi.fn();
- await act(async () => root.render(<SubscriptionDashboard providers={[provider]} inventory={inventory} onSelectBuiltinModel={select} />));
+ const providersChanged = vi.fn();
+ await act(async () => root.render(<SubscriptionDashboard onProvidersChanged={providersChanged} scope={scoped ? { kind: "provider", name: provider.name } : undefined} providers={[provider]} inventory={inventory} onSelectBuiltinModel={select} />));
  const source = container.querySelector('[data-testid="subscription-builtin-codex-login"]')!;
  const openActions = async () => act(async () => source.querySelector<HTMLButtonElement>('[data-testid="subscription-account-actions"]')!.click());
  await openActions();
@@ -376,6 +412,7 @@ it("switches the Codex credential source without changing the model selection an
  expect(check).not.toHaveBeenCalled();
  await act(async () => document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[0]!.click());
  expect(useLogin).toHaveBeenCalledWith("codex-login");
+ expect(providersChanged).toHaveBeenCalledExactlyOnceWith([updated]);
  expect(select).not.toHaveBeenCalled();
  expect(check).toHaveBeenCalledWith("codex-login");
  expect(container.querySelector('[role="alert"]')?.textContent).toBeTruthy();
@@ -385,7 +422,60 @@ it("switches the Codex credential source without changing the model selection an
  await openActions();
  await act(async () => document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[1]!.click());
  expect(check).toHaveBeenCalledTimes(2);
+ expect(providersChanged).toHaveBeenCalledTimes(2);
+ expect(providersChanged).toHaveBeenLastCalledWith([updated]);
  expect(useLogin).toHaveBeenCalledTimes(1);
  expect(container.querySelector('[role="alert"]')).toBeNull();
  expect(window.wuu.listEngines).toHaveBeenCalledTimes(3);
+ if (scoped) {
+   await act(async () => root.render(<SubscriptionDashboard onProvidersChanged={providersChanged} scope={{ kind: "provider", name: provider.name }} providers={[updated]} inventory={inventory} onSelectBuiltinModel={select} />));
+   expect(source.querySelector('[role="status"]')).not.toBeNull();
+   const credentialAttribution = source.querySelector('.sr-only')?.textContent;
+   expect(credentialAttribution).toBeTruthy();
+   const observed = { ...updated, quota: quota({ account: undefined, windows: [{ id: "updated", used_percent: 52 }] }) };
+   await act(async () => root.render(<SubscriptionDashboard onProvidersChanged={providersChanged} scope={{ kind: "provider", name: provider.name }} providers={[observed]} inventory={inventory} onSelectBuiltinModel={select} />));
+   expect(source.querySelector('[role="status"]')).not.toBeNull();
+   expect(source.querySelector('.sr-only')?.textContent).toBe(credentialAttribution);
+   await act(async () => root.render(<SubscriptionDashboard onProvidersChanged={providersChanged} scope={{ kind: "provider", name: provider.name }} providers={[{ ...observed, codex_credential_source: "changed-auth-store", api_key_configured: true }]} inventory={inventory} onSelectBuiltinModel={select} />));
+   expect(source.querySelector('[role="status"]')).toBeNull();
+ }
+});
+
+it("preserves reset credits, account context and rechecking in compact connection details", async () => {
+  const snapshot: EngineListResult = { engines: [{ id: "codex", enabled: true, binary_ok: true, quota: quota({ windows: [], reset_credits: 0 }) }] };
+  const read = vi.fn().mockResolvedValue(snapshot);
+  window.wuu = { ...window.wuu, listEngines: read };
+  await act(async () => root.render(<SubscriptionDashboard detailOnly scope={{ kind: "engine", id: "codex" }} inventory={snapshot} providers={[]} onSelectBuiltinModel={vi.fn()} />));
+  expect(container.querySelector('[data-testid="subscription-engine-codex"]')?.textContent).toContain("Example account");
+  expect(container.querySelector('[data-testid="subscription-engine-codex"]')?.textContent).toContain("0");
+  expect(container.querySelector("meter")).toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('.settings-section-actions button')!.click());
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
+it("exposes compact quota loading and completion on its accessible section", async () => {
+  const snapshot: EngineListResult = { engines: [{ id: "codex", enabled: true, binary_ok: true, quota: quota() }] };
+  let complete!: (result: EngineListResult) => void;
+  let fail!: (reason: Error) => void;
+  const read = vi.fn().mockReturnValueOnce(new Promise<EngineListResult>(resolve => { complete = resolve; }))
+    .mockReturnValueOnce(new Promise<EngineListResult>((_resolve, reject) => { fail = reject; }));
+  window.wuu = { ...window.wuu, listEngines: read };
+  await act(async () => root.render(<SubscriptionDashboard detailOnly scope={{ kind: "engine", id: "codex" }} inventory={snapshot} providers={[]} onSelectBuiltinModel={vi.fn()} />));
+  const section = container.querySelector('[data-testid="settings-subscriptions"]')!;
+  const refresh = section.querySelector<HTMLButtonElement>('header button')!;
+  expect(section.getAttribute("aria-busy")).toBe("true");
+  expect(refresh.disabled).toBe(true);
+  await act(async () => complete(snapshot));
+  expect(section.getAttribute("aria-busy")).toBe("false");
+  expect(refresh.disabled).toBe(false);
+  const observed = [...section.querySelectorAll("meter")].map(meter => meter.value);
+  expect(observed.length).toBeGreaterThan(0);
+  await act(async () => refresh.click());
+  expect(section.getAttribute("aria-busy")).toBe("true");
+  expect(refresh.disabled).toBe(true);
+  await act(async () => fail(new Error("fixture quota read failed")));
+  expect(section.getAttribute("aria-busy")).toBe("false");
+  expect(refresh.disabled).toBe(false);
+  expect(section.querySelector('[role="alert"]')).not.toBeNull();
+  expect([...section.querySelectorAll("meter")].map(meter => meter.value)).toEqual(observed);
 });

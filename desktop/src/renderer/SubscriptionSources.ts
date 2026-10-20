@@ -1,3 +1,4 @@
+import { connectionDisplayPreferences as display } from "./ConnectionDisplayPreferences";
 import type {
   EngineInfo,
   EngineListResult,
@@ -29,9 +30,10 @@ export type SubscriptionSource = {
 export function subscriptionSources(
   inventory: EngineListResult | undefined,
   providers: readonly ProviderSummary[] | undefined,
+  engineID?: string,
 ): SubscriptionSource[] {
   const engines = (inventory?.engines ?? [])
-    .filter((engine) => engine.id !== BUILTIN_ENGINE && (engine.binary_ok || engine.latest_request))
+    .filter((engine) => engine.id !== BUILTIN_ENGINE && (engine.binary_ok || engine.latest_request || engine.quota || engine.id === engineID))
     .map((engine) => engineSource(engine));
   const builtin = (providers ?? [])
     .filter(isBuiltInSubscription)
@@ -64,10 +66,10 @@ function engineSource(engine: EngineInfo): SubscriptionSource {
     key: `engine:${engine.id}`,
     kind: "engine",
     id: engine.id,
-    label: engine.display_name?.trim() || engine.id,
+    label: display.label(`engine:${engine.id}`, engine.display_name?.trim() || engine.id),
     login: engineLogin(engine),
     catalogFailed: !!(engine.models_error || engine.error),
-    models,
+    models: display.visibleModels(`engine:${engine.id}`, models, [selected]),
     selectedModel: selected,
     quota: engine.quota,
     engine,
@@ -76,9 +78,10 @@ function engineSource(engine: EngineInfo): SubscriptionSource {
 
 function engineLogin(engine: EngineInfo): SubscriptionLogin {
   if (!engine.binary_ok || !engine.enabled) return "unavailable";
-  // Only an ACP catalog was read from an accepted session. Static CLI model
-  // lists and Codex model/list do not establish an authenticated account.
-  if (engine.protocol === "acp" && (engine.models ?? []).length > 0) return "ready";
+  // Model catalogs can be static or available before provider authentication.
+  // Only a current account observation establishes an authenticated account.
+  if (engine.quota?.status === "available" && engine.quota.account
+    && (!engine.quota.expires_at || Date.parse(engine.quota.expires_at) > Date.now())) return "ready";
   // Catalog failures can be cancellations or transport errors, not proof that
   // credentials are missing. Authentication remains an explicit user action.
   return "unknown";
@@ -90,10 +93,10 @@ function providerSource(provider: ProviderSummary): SubscriptionSource {
     key: `provider:${provider.name}`,
     kind: "builtin",
     id: provider.name,
-    label: provider.name,
+    label: display.label(`provider:${provider.name}`, provider.name),
     login: provider.api_key_configured ? "ready" : "sign_in",
     catalogFailed: false,
-    models,
+    models: display.visibleModels(`provider:${provider.name}`, models, [provider.model]),
     selectedModel: provider.model,
     quota: provider.quota,
     provider,
@@ -103,7 +106,9 @@ function providerSource(provider: ProviderSummary): SubscriptionSource {
 function uniqueModels(provider: ProviderSummary): { id: string; label: string }[] {
   const seen = new Set<string>();
   const models: { id: string; label: string }[] = [];
-  for (const id of [provider.model, ...(provider.models ?? []).map((model) => model.id)]) {
+  const catalogIDs = (provider.models ?? []).map(model => model.id);
+  const ids = catalogIDs.includes(provider.model) ? catalogIDs : [provider.model, ...catalogIDs];
+  for (const id of ids) {
     const trimmed = id.trim();
     if (!trimmed || seen.has(trimmed)) continue;
     seen.add(trimmed);
@@ -126,7 +131,7 @@ function isXAI(type: string | undefined): boolean {
   return normalized === "xai-subscription" || normalized === "xai-oauth" || normalized === "grok-subscription" || normalized === "supergrok";
 }
 
-function isGrokBuild(type: string | undefined): boolean {
+export function isGrokBuild(type: string | undefined): boolean {
   const normalized = normalize(type);
   return normalized === "grok-build" || normalized === "xai-grok-build" || normalized === "grok-cli";
 }

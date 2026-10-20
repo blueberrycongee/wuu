@@ -57,6 +57,10 @@ var browserKnownActions = map[string]struct{}{
 
 func (t *BrowserTool) Definition() providers.ToolDefinition {
 	finalizeDescription := "Call finalize before ending browser work: it retains named tabs as handoff or deliverable and closes other temporary tabs. Previously retained pages survive. A tab_id without keep retains that one tab as handoff. "
+	screenshotDescription := "Screenshot saves a UI preview and returns its path and dimensions, not image content to the model. "
+	if t.env != nil && t.env.externalCapabilitiesOnly {
+		screenshotDescription = "Screenshot returns a bounded image, source and delivered dimensions, and the saved preview path. "
+	}
 	if t.env != nil && t.env.BrowserHostFinalize {
 		finalizeDescription = "Temporary tabs close automatically when the turn ends, including on interruption. finalize retains named tabs as handoff or deliverable and closes other temporary tabs; retained and user-owned pages survive. A tab_id without keep retains that one tab as handoff. "
 	}
@@ -66,7 +70,7 @@ func (t *BrowserTool) Definition() providers.ToolDefinition {
 			"Tabs stay hidden in the background by default; visiting a page does not show it to the user. " +
 			"Call set_visibility with visible=true only when the user's main goal is to watch the page, then set_visibility false or finalize when that goal ends. " +
 			"Read-only actions (observe, screenshot, tabs, wait_for) inspect page state; the others mutate it. " +
-			"Screenshot saves a UI preview and returns its path and dimensions, not image content to the model. " +
+			screenshotDescription +
 			"observe returns readable content (headings, paragraphs, lists, and tables) and the interactive nodes from the same page view. Content that can be clicked includes its node_id. " +
 			"A long page sets content_next_offset; pass that value as content_offset to read the next slice. Node ids expire on the next observe. " +
 			finalizeDescription +
@@ -470,10 +474,41 @@ func (t *BrowserTool) doScreenshot(ctx context.Context, argsJSON string, bctx br
 	if previewTarget == "" {
 		previewTarget = destPath
 	}
+	if t.env.externalCapabilitiesOnly {
+		// Read only the host-selected destination we sent to the browser. Neither
+		// caller arguments nor a returned path can select a file for attachment.
+		previewTarget = destPath
+	}
 	if bctx.setPreview != nil {
 		bctx.setPreview(fileURI(previewTarget))
 	}
-	return browserResult("screenshot", map[string]any{"tab_id": tabID, "width": res.Width, "height": res.Height, "path": previewTarget}), nil
+	result := browserResult("screenshot", map[string]any{"tab_id": tabID, "width": res.Width, "height": res.Height, "path": previewTarget})
+	if t.env.externalCapabilitiesOnly {
+		root, err := os.OpenRoot(t.env.SessionDir)
+		if err != nil {
+			return result, fmt.Errorf("open browser screenshot artifacts: %w", err)
+		}
+		defer root.Close()
+		relative, err := filepath.Rel(t.env.SessionDir, destPath)
+		if err != nil {
+			return result, err
+		}
+		file, err := root.Open(relative)
+		if err != nil {
+			return result, fmt.Errorf("open browser screenshot: %w", err)
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil {
+			return result, err
+		}
+		image, err := readFileImage(ctx, file, destPath, info.Size())
+		if err != nil {
+			return result, err
+		}
+		result.Content = append(result.Content, image.Content...)
+	}
+	return result, nil
 }
 
 func (t *BrowserTool) doSetVisibility(ctx context.Context, argsJSON string, bctx browserActionContext) (toolresult.Result, error) {

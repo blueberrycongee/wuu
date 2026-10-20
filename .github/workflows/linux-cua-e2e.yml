@@ -6,6 +6,13 @@ on:
       - "internal/cualinux/**"
       - "internal/plugin/bundled/cua-linux/**"
       - "internal/activity/**"
+      - "internal/appserver/external_capabilities.go"
+      - "internal/runtime/thread_capabilities.go"
+      - "internal/runtime/session.go"
+      - "internal/tools/external_capabilities.go"
+      - "internal/codexengine/**"
+      - "internal/claudeengine/**"
+      - "internal/externalengine/**"
       - "desktop/src/main/*PiP*"
       - "desktop/src/main/cuaActivityWindows.ts"
       - "desktop/src/main/linux*"
@@ -16,6 +23,7 @@ on:
       - "desktop/package*.json"
       - "desktop/scripts/*cua-linux*"
       - "desktop/scripts/linux-cua-e2e*"
+      - "desktop/scripts/external-capabilities-*"
       - "go.mod"
       - "go.sum"
       - ".github/workflows/linux-cua-e2e.yml"
@@ -58,6 +66,8 @@ jobs:
           WUU_CUA_LINUX_HELPER: ${{ github.workspace }}/desktop/build/bin/wuu-cua-linux
           XDG_SESSION_TYPE: x11
           WUU_LINUX_CUA_VIRTUAL_DISPLAY: "1"
+          WUU_EXTERNAL_CAPABILITIES_CUA: "1"
+          WUU_EXTERNAL_CAPABILITIES_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/linux-cua/external-capabilities
         shell: bash
         run: |
           mkdir -p "$WUU_LINUX_CUA_OUTPUT"
@@ -76,6 +86,7 @@ jobs:
               xprop -root _NET_SUPPORTING_WM_CHECK | grep -q "window id"
               kill -0 "$compositor"
               node desktop/scripts/linux-cua-e2e.cjs --no-sandbox
+              node desktop/scripts/external-capabilities-e2e.cjs
             ' 2>&1 | tee "$WUU_LINUX_CUA_OUTPUT/run.log"
       - name: Upload actual Linux acceptance evidence
         if: always()

@@ -1178,39 +1178,14 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 			return nil, errors.New("session must execute in its bound project runtime")
 		}
 	}
-	// External-engine threads (codex, later claude) carry no native
-	// StreamRunner: the engine session drives the turn in the external
-	// process. Only the engine stamp is needed on the runtime handle.
+	// External loops still use a host-owned capability runtime. They do not
+	// create a native model client or workers and cannot run remote tools.
 	if engineID != agentengine.EngineWuu {
 		if remote, err := s.rt.RemoteProcesses(th.ID); err != nil {
 			return nil, err
 		} else if remote != nil {
 			return nil, errors.New("selected execution environment requires the built-in engine")
 		}
-		th.mu.Lock()
-		if th.execRuntime != nil {
-			rt := th.execRuntime
-			th.mu.Unlock()
-			return rt, nil
-		}
-		rt := &runtime.ThreadRuntime{
-			EngineID: agentengine.NormalizeEngineID(th.EngineID),
-			Selection: runtime.ThreadModelSelection{
-				Provider:       th.ModelProvider,
-				Model:          th.Model,
-				Variant:        th.ModelVariant,
-				Effort:         th.ModelEffort,
-				Speed:          th.Speed,
-				PermissionMode: th.PermissionMode,
-			},
-		}
-		if err := s.configureSessionToolPolicy(th.ID, rt); err != nil {
-			th.mu.Unlock()
-			return nil, err
-		}
-		th.execRuntime = rt
-		th.mu.Unlock()
-		return rt, nil
 	}
 	th.mu.Lock()
 	existing := th.execRuntime
@@ -1271,7 +1246,13 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		Speed:          speed,
 		PermissionMode: permissionMode,
 	}
-	threadRuntime, err := s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
+	var threadRuntime *runtime.ThreadRuntime
+	var err error
+	if engineID == agentengine.EngineWuu {
+		threadRuntime, err = s.rt.NewThreadRuntimeForRootModel(th.ID, browserWorkdir, selection)
+	} else {
+		threadRuntime, err = s.rt.NewThreadCapabilityRuntime(th.ID, browserWorkdir, selection)
+	}
 	if errors.Is(err, runtime.ErrThreadProviderUnavailable) {
 		// Draft selections arrive through thread/start, not config/model/update.
 		// Register a discovered connection before treating the pin as removed.
@@ -1311,6 +1292,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		return nil, err
 	}
 	if err := s.configureSessionToolPolicy(th.ID, threadRuntime); err != nil {
+		s.releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: threadRuntime})
 		return nil, err
 	}
 	th.mu.Lock()
@@ -1355,7 +1337,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	th.mu.Lock()
 	if s.closed.Load() {
 		th.mu.Unlock()
-		releaseThreadRuntimeSubscription(threadRuntime, sub)
+		s.releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: threadRuntime, subscription: sub})
 		return nil, errServerClosed
 	}
 	if th.execRuntime == nil {
@@ -1389,7 +1371,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	}
 	existing = th.execRuntime
 	th.mu.Unlock()
-	releaseThreadRuntimeSubscription(threadRuntime, sub)
+	s.releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: threadRuntime, subscription: sub})
 	return existing, nil
 }
 
@@ -2475,8 +2457,9 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	browserTurn := &browserTurnState{threadID: th.ID, turnID: turnID, executionID: rand.Text(), bridges: make(map[string]*browserBridge)}
 	ctx = context.WithValue(ctx, browserTurnContextKey{}, browserTurn)
 	ctx = s.rt.ActivityRegistry.BeginExecution(ctx, th.ID, browserTurn.executionID)
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: th.ID, ExecutionID: turnID})
 	turnKit := s.rt.Toolkit
-	if threadRuntime != nil && threadRuntime.Toolkit != nil {
+	if threadRuntime != nil {
 		turnKit = threadRuntime.Toolkit
 	}
 	defer func() {
@@ -2494,7 +2477,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// re-wrapped with group Members (see notifyOutboundBatch).
 	notifyBatch := s.notifyOutboundBatch
 	runner := s.rt.StreamRunner
-	if threadRuntime != nil && threadRuntime.StreamRunner != nil {
+	if threadRuntime != nil {
 		runner = threadRuntime.StreamRunner
 	}
 	// Resolve the engine session for this turn. The built-in wuu engine is
@@ -2505,51 +2488,65 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	if metadata, ok, err := session.Find(s.rt.SessionDir, th.ID); err == nil && ok {
 		sessionInstructions = effectiveSessionInstructions(metadata)
 	}
+	capabilities, capabilityErr := startExternalCapabilities(ctx, threadRuntime)
+	if capabilities != nil {
+		defer capabilities.Close()
+	}
+	var mcpServers []agentengine.MCPServer
+	if capabilities != nil {
+		mcpServers = []agentengine.MCPServer{capabilities.Binding()}
+	}
 	s.retainCodexHost()
-	engine := s.rt.EngineSessionForThread(ctx, threadRuntime, agentengine.ThreadBinding{
-		ThreadID:       th.ID,
-		RootDir:        firstNonEmpty(turnRuntime.CWD, s.rt.RootDir),
-		Model:          th.Model,
-		Effort:         th.ModelEffort,
-		Speed:          th.Speed,
-		ModelOptions:   th.ModelOptions,
-		PermissionMode: turnRuntime.permissions().Mode,
-		Instructions:   sessionInstructions,
-		ExternalRef:    th.EngineRef,
-		PersistRef: func(ref string) error {
-			return s.persistThreadEngineRef(th.ID, ref)
-		},
-		PersistTurnRef: func(nativeTurnID string, pending bool) error {
-			th.mu.Lock()
-			defer th.mu.Unlock()
-			for i := len(th.History) - 1; i >= 0; i-- {
-				msg := &th.History[i]
-				if msg.Role != "user" || msg.Steered {
-					continue
-				}
-				// Settlement may reconcile an earlier canceled native turn before
-				// admitting the new prompt. Match its durable ID, not the latest row.
-				if !pending && nativeTurnID != "" && msg.EngineTurnID != nativeTurnID {
-					continue
-				}
-				if th.PersistHistory {
-					if err := session.SetHistoryEngineTurnID(s.rt.SessionDir, th.ID, msg.Seq, th.EngineRef, nativeTurnID, pending); err != nil {
-						return err
+	var engine agentengine.Session
+	if capabilityErr != nil {
+		engine = agentengine.FailedSession(capabilityErr)
+	} else {
+		engine = s.rt.EngineSessionForThread(ctx, threadRuntime, agentengine.ThreadBinding{
+			ThreadID:       th.ID,
+			RootDir:        firstNonEmpty(turnRuntime.CWD, s.rt.RootDir),
+			Model:          th.Model,
+			Effort:         th.ModelEffort,
+			Speed:          th.Speed,
+			ModelOptions:   th.ModelOptions,
+			PermissionMode: turnRuntime.permissions().Mode,
+			Instructions:   sessionInstructions,
+			MCPServers:     mcpServers,
+			ExternalRef:    th.EngineRef,
+			PersistRef: func(ref string) error {
+				return s.persistThreadEngineRef(th.ID, ref)
+			},
+			PersistTurnRef: func(nativeTurnID string, pending bool) error {
+				th.mu.Lock()
+				defer th.mu.Unlock()
+				for i := len(th.History) - 1; i >= 0; i-- {
+					msg := &th.History[i]
+					if msg.Role != "user" || msg.Steered {
+						continue
 					}
+					// Settlement may reconcile an earlier canceled native turn before
+					// admitting the new prompt. Match its durable ID, not the latest row.
+					if !pending && nativeTurnID != "" && msg.EngineTurnID != nativeTurnID {
+						continue
+					}
+					if th.PersistHistory {
+						if err := session.SetHistoryEngineTurnID(s.rt.SessionDir, th.ID, msg.Seq, th.EngineRef, nativeTurnID, pending); err != nil {
+							return err
+						}
+					}
+					msg.EngineTurnID = nativeTurnID
+					msg.EngineTurnPending = pending
+					return nil
 				}
-				msg.EngineTurnID = nativeTurnID
-				msg.EngineTurnPending = pending
-				return nil
-			}
-			return errors.New("native turn has no admitted user message")
-		},
-		RequestApproval: func(approvalCtx context.Context, request agentengine.ApprovalRequest) (agentengine.ApprovalDecision, error) {
-			return s.requestEngineApproval(approvalCtx, th.ID, turnID, request)
-		},
-		RequestUserInput: func(inputCtx context.Context, request agentengine.UserInputRequest) (map[string][]string, error) {
-			return s.requestEngineUserInput(inputCtx, th.ID, turnID, request)
-		},
-	})
+				return errors.New("native turn has no admitted user message")
+			},
+			RequestApproval: func(approvalCtx context.Context, request agentengine.ApprovalRequest) (agentengine.ApprovalDecision, error) {
+				return s.requestEngineApproval(approvalCtx, th.ID, turnID, request)
+			},
+			RequestUserInput: func(inputCtx context.Context, request agentengine.UserInputRequest) (map[string][]string, error) {
+				return s.requestEngineUserInput(inputCtx, th.ID, turnID, request)
+			},
+		})
+	}
 	if engine == nil {
 		engine = s.rt.WuuEngine().SessionForRunner(s.rt.StreamRunner)
 	}
@@ -2559,7 +2556,12 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// Bindings are acquired for this turn, including external-engine process
 	// ownership. Release before publishing its terminal outcome or admitting
 	// another turn, with the deferred call covering early exits as well.
-	closeEngine := sync.OnceFunc(func() { _ = engine.Close(context.Background()) })
+	closeEngine := sync.OnceFunc(func() {
+		if capabilities != nil {
+			capabilities.Close()
+		}
+		_ = engine.Close(context.Background())
+	})
 	defer closeEngine()
 	turnWorktreePath := ""
 	var frozenTreeContext []agent.ContextSegment
@@ -2734,7 +2736,13 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		th.mu.Lock()
 		approveForMe := th.ApproveForMe && approvefor.EnabledForMode(turnPermissions.Mode)
 		th.mu.Unlock()
-		applyApproveForMeToToolkit(threadRuntime.Toolkit, approveForMe, turnScopedReviewer{server: s, turnID: turnID, runner: runner, intent: reviewIntent})
+		var reviewer tools.Reviewer
+		if runner != nil {
+			reviewer = turnScopedReviewer{server: s, turnID: turnID, runner: runner, intent: reviewIntent}
+		}
+		// External engines own inference. Keep review-required actions blocked
+		// rather than silently invoking the workspace's unrelated Wuu model.
+		applyApproveForMeToToolkit(threadRuntime.Toolkit, approveForMe, reviewer)
 	}
 	// Resolve the real runtime context ceiling for the active provider/model
 	// so turn/usage notifications can drive a "已用 / 总数" meter in the UI.
@@ -3004,10 +3012,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			return segments
 		}
 	}
-	driverCtx := loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{
-		SessionID:   th.ID,
-		ExecutionID: turnID,
-	})
+	driverCtx := ctx
 	joinNativeSteering := func() {}
 	if native, ok := engine.(agentengine.SteeringSession); ok && th.PersistHistory {
 		th.mu.Lock()

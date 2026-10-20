@@ -152,6 +152,7 @@ func (s *Server) engineInventoryAt(root string, refreshModels bool) []EngineInfo
 			DisplayName:  entry.Name,
 			Protocol:     entry.Protocol,
 			InstallURL:   entry.InstallURL,
+			UpdateURL:    entry.UpdateURL,
 			Version:      desc.Version,
 			Capabilities: append([]string(nil), desc.Capabilities...),
 			Enabled:      s.rt.EngineAvailable(id),
@@ -190,6 +191,16 @@ func (s *Server) engineInventoryAt(root string, refreshModels bool) []EngineInfo
 		out = append(out, info)
 	}
 	var wg sync.WaitGroup
+	for index := range out {
+		if !out[index].BinaryOK || (out[index].ID != "codex" && out[index].ID != "claude") {
+			continue
+		}
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			out[index].CLIVersion = enginecatalog.ObserveVersion(context.Background(), out[index].ID, out[index].BinaryPath)
+		}(index)
+	}
 	if claudeIndex >= 0 {
 		wg.Add(1)
 		go func() {

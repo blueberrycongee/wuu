@@ -121,11 +121,11 @@
 /* On a display narrower than the window the choices keep the full width;
  * the companion is decoration and steps aside. */
 @media (max-width: 640px) {
-  :is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider, .onboarding-stage-permissions) {
+  :is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider, .onboarding-stage-permissions, .onboarding-stage-browser) {
     grid-template: "panel" minmax(0, 1fr) "actions" auto / minmax(0, 1fr);
   }
 
-  :is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider, .onboarding-stage-permissions) > .onboarding-plugin-mascot-stage {
+  :is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider, .onboarding-stage-permissions, .onboarding-stage-browser) > .onboarding-plugin-mascot-stage {
     display: none;
   }
 }
@@ -311,6 +311,10 @@
 .onboarding-body[data-scroll-fade-fitting] {
   animation: none;
   mask-image: none;
+}
+
+.onboarding-browser-refresh {
+  align-self: flex-start;
 }
 
 .onboarding-presets {

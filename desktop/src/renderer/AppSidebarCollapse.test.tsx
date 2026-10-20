@@ -120,6 +120,7 @@ function installWuuApi(): void {
       .fn()
       .mockImplementation(() => Promise.resolve(workspaceState())),
     initialize: vi.fn().mockResolvedValue(initialized()),
+    listEngines: vi.fn().mockResolvedValue({ engines: [] }),
     listThreads: vi.fn().mockResolvedValue({ threads: [pinnedThread] }),
     listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
     getSessionOrganization: vi.fn().mockResolvedValue({
@@ -284,4 +285,75 @@ describe("sidebar collapse-state independence", () => {
       "true",
     );
   });
+  it("retains an explicit Codex credential switch through App and detail reopening without changing the default model", async () => {
+    installWuuApi();
+    const codex = { name: "codex-account", type: "openai-codex", model: "configured-model", base_url: "https://chatgpt.com/backend-api/codex", api_key_configured: true, reuse_codex_credentials: false, codex_credential_source: "wuu-auth-store", models: [{ id: "configured-model" }] };
+    const config = initialized();
+    vi.mocked(window.wuu.initialize).mockResolvedValue({ ...config, providers: [...config.providers!, codex] });
+    const updated = { ...codex, model: "snapshot-model", reuse_codex_credentials: true, codex_credential_source: "codex-cli", models: [{ id: "configured-model" }, { id: "snapshot-model" }] };
+    window.wuu.useCodexCredentials = vi.fn().mockResolvedValue({ providers: [...config.providers!, updated] });
+    window.wuu.loadCodexModels = vi.fn().mockResolvedValue({ providers: [...config.providers!, updated], models: updated.models });
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const click = async (selector: string) => {
+      const button = container.querySelector<HTMLButtonElement>(selector);
+      expect(button).not.toBeNull();
+      await act(async () => button!.click());
+      await flushAsync();
+    };
+    await click('.sidebar-account-trigger');
+    await click('[data-settings-page="providers"]');
+    await act(async () => { await import("./SettingsView"); });
+    await click('[data-provider="codex-account"]');
+    const sourceValue = () => container.querySelector('.connection-fields .model-service-status')?.textContent;
+    expect(sourceValue()).toContain(translateCurrent("settings.codexSourceSaved"));
+    await click('[data-testid="settings-auth-method-local"]');
+    await flushAsync();
+    expect(window.wuu.useCodexCredentials).toHaveBeenCalledWith("codex-account");
+    expect(window.wuu.loadCodexModels).toHaveBeenCalledWith("codex-account");
+    await click('[data-testid="settings-provider-back"]');
+    expect(container.querySelector('[data-provider="fake"]')?.hasAttribute('data-default')).toBe(true);
+    await click('[data-provider="codex-account"]');
+    expect(sourceValue()).toContain(translateCurrent("settings.codexSourceLocal"));
+    expect(container.querySelector('[data-testid="settings-provider-model"][data-model="configured-model"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('[data-testid="settings-provider-model"][data-model="snapshot-model"]')?.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it("retains verified Grok login through App reopening without replacing the selected model or default", async () => {
+    installWuuApi();
+    const grok = { name: "grok-account", type: "grok-build", model: "configured-model", api_key_configured: false, models: [{ id: "configured-model" }] };
+    const config = initialized();
+    vi.mocked(window.wuu.initialize).mockResolvedValue({ ...config, providers: [...config.providers!, grok] });
+    const updated = { ...grok, model: "snapshot-model", api_key_configured: true, models: [{ id: "configured-model" }, { id: "snapshot-model" }] };
+    window.wuu.authenticateEngine = vi.fn().mockResolvedValue({ methods: [], authenticated: true });
+    window.wuu.cancelEngineAuth = vi.fn().mockResolvedValue(undefined);
+    window.wuu.refreshModelCatalog = vi.fn().mockResolvedValue({ providers: [...config.providers!, updated], model_count: 3 });
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const click = async (selector: string) => {
+      const button = container.querySelector<HTMLButtonElement>(selector);
+      expect(button).not.toBeNull();
+      expect(button!.disabled).toBe(false);
+      await act(async () => button!.click());
+      await flushAsync();
+    };
+    await click('.sidebar-account-trigger');
+    await click('[data-settings-page="providers"]');
+    await act(async () => { await import("./SettingsView"); });
+    await click('[data-provider="grok-account"]');
+    expect(window.wuu.authenticateEngine).not.toHaveBeenCalled();
+    await click('[data-testid="grok-login-start"]');
+    expect(window.wuu.authenticateEngine).toHaveBeenCalledExactlyOnceWith("grok", "local-cli");
+    expect(window.wuu.refreshModelCatalog).toHaveBeenCalledOnce();
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="grok-login-local"]')?.disabled).toBe(false);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-make-default"]')?.disabled).toBe(false);
+    await click('[data-testid="settings-provider-back"]');
+    expect(container.querySelector('[data-provider="fake"]')?.hasAttribute('data-default')).toBe(true);
+    await click('[data-provider="grok-account"]');
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="grok-login-local"]')?.disabled).toBe(false);
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-make-default"]')?.disabled).toBe(false);
+    expect(container.querySelector('[data-testid="settings-provider-model"][data-model="configured-model"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('[data-testid="settings-provider-model"][data-model="snapshot-model"]')?.getAttribute('aria-pressed')).toBe('false');
+  });
+
 });

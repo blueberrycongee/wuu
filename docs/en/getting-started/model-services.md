@@ -10,7 +10,7 @@ These settings apply to the **Wuu** engine. Selecting an [external engine](exter
 
 ## Add a provider in the desktop app
 
-1. Open **Settings → Model providers → Add provider**.
+1. Open **Settings → Model connections → Add provider**.
 2. Choose the service type. Use **OpenAI-compatible** or **Anthropic-compatible** for a service that implements that API.
 3. Enter an identifier, an available model ID, the API endpoint, and credentials. Include an API prefix such as `/v1` when your service requires it.
 4. Save the provider, return to the composer, and select the provider and model for the conversation.
@@ -29,11 +29,11 @@ including its configured environment-variable reference.
 
 ## Manage providers and models
 
-Open a connected provider in **Settings → Model providers**. **Add model** accepts a model ID without duplicating the provider or its credentials. The trash icon removes a model from that provider's choices. Removing the selected model asks you to choose its replacement before saving; add another model first if it is the only one.
+Open a connected provider in **Settings → External connections**. **Add model** accepts a model ID without duplicating the provider or its credentials. The trash icon removes a model from that provider's choices. Removing the selected model asks you to choose its replacement before saving; add another model first if it is the only one.
 
 Removed choices stay removed after reloading or refreshing the catalog. You can restore them from **Removed models**. Existing conversations, model roles, and aliases keep their model selections and metadata; removing a choice does not revoke model access or erase conversation history.
 
-Use the provider's **… → Delete provider** action to remove the entire connection and its provider-specific saved key. Shared subscription sign-ins are kept. Removing the default provider asks you to choose another default. Existing conversations remain and switch from the removed provider to the current default on their next turn. Roles that used it return to inherited defaults, and its aliases are removed. Add another provider before deleting the last configured provider. Automatically discovered services and OpenAI OAuth-managed connections cannot be removed here; their authentication remains managed by the original sign-in flow.
+Use the provider's **… → Delete provider** action to remove the entire connection and its provider-specific saved key. Shared subscription sign-ins are kept. Removing the default provider asks you to choose another default. Existing conversations remain and switch from the removed provider to the current default on their next turn. Roles that used it return to inherited defaults, and its aliases are removed. Add another provider before deleting the last configured provider. Automatically discovered services and legacy Codex OAuth connections cannot be removed here; their authentication remains managed by the original sign-in flow.
 
 ## Current OpenAI and Anthropic models
 
@@ -57,31 +57,53 @@ In Chat Completions thinking mode, DeepSeek rejects forced tool choice. Wuu uses
 
 Catalog prices use **peak USD rates per million tokens**: Flash input $0.30, cached input $0.006, output $1.20; Pro input $1.32, cached input $0.044, output $3.96. Off-peak rates are half. Peak hours are Monday–Friday 01:00–04:00 and 06:00–10:00 UTC, excluding Chinese public holidays. These static catalog rates do not calculate a time-dependent bill. See the official [model update](https://api-docs.deepseek.com/updates), [API parameters](https://api-docs.deepseek.com/api/create-chat-completion), and [pricing](https://api-docs.deepseek.com/quick_start/pricing).
 
+## Sign in with ChatGPT
+
+Open **Settings → Model connections → ChatGPT → Continue with ChatGPT**. Wuu opens OpenAI's authorization page in your system browser and completes sign-in through a local callback. Codex CLI is not required. Choose your account and explicitly authorize ChatGPT plan usage, then select a model from that account's live catalog before connecting. Adding a connection does not replace an existing workspace default.
+
+Each account registration stays separate. API-key connections, ChatGPT sign-in, and **Local Codex credentials** are distinct methods. Existing Codex connections keep their original credential source; no automatic migration occurs. The native Codex agent still manages its own authentication.
+
+Wuu stores OAuth credentials in the system Keychain and refreshes expiring tokens. The current secure-store implementation requires macOS. Other platforms report its unavailability rather than silently writing credentials to a file. Tokens never enter the renderer or ordinary configuration. Closing the sign-in dialog cancels the pending attempt.
+
+Use **Account and usage** inside a connection to sign in again or sign out. Enable missing plan permission only through an explicit reauthorization action. Expired or revoked sessions require sign-in. Sign-out stops this process's account requests immediately and signals other local projects to stop using the old session; the registration is retained for a later sign-in. If remote revocation cannot be confirmed, disconnect the app in ChatGPT Settings as the UI advises.
+
+This connection uses only the public Responses API, streaming with server-side response storage disabled and full context included in each request. Model choices come from the current account, not the API-key or legacy Codex catalog. API pricing is not a measure of plan quota. This connection does not yet expose a separate remote plan-quota reading; the UI keeps it unknown rather than querying the legacy Codex quota endpoint.
+
+See the official [registration and sign-in guide](https://developers.openai.com/siwc/token-sharing-open-source/sign-in) and [preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
+
 ## Use an existing subscription
 
 | Connection | Setup |
 |---|---|
-| Codex subscription | Sign in with Codex CLI, then choose to reuse the detected login during first-run setup. In configuration, use the `openai-codex` provider with `reuse_codex_credentials`. Wuu's desktop does not start OpenAI OAuth login itself. In Settings → Subscriptions, open the account’s **…** menu. “Use local Codex login” selects the local login over Wuu’s saved credentials without changing the model. “Check login again” verifies authentication by fetching the model list. Wuu reads the local login on each request, so refreshed credentials take effect without a restart. |
+| Local Codex credentials | Choose **ChatGPT → Use local sign-in** in External connections and explicitly approve reusing an existing file-backed Codex login. Wuu does not launch CLI sign-in or change its storage settings. Use the native Codex agent for keyring-only Codex logins. |
 | xAI SuperGrok | Add an **xAI SuperGrok** provider and follow the browser login. For the CLI, run `wuu login xai` and select `--provider xai-subscription`. |
-| Grok Build | Run `grok login`, then select the detected provider in Wuu or pass `--provider grok-build`. If the login expires, sign in again with Grok CLI; Wuu does not refresh or modify those credentials. |
+| Grok Build | In desktop Settings → External connections → Grok Build, choose **Sign in**. Wuu runs the installed Grok CLI’s `grok --no-auto-update login --oauth` and shows progress, cancellation, and completion; finish authorization in the browser opened by the CLI. No CLI is installed automatically. The CLI owns its credential file, which Wuu reuses without copying tokens. On web or phone, sign in on the desktop and reopen the connection page. You can still run `grok login` yourself and select the detected provider or pass `--provider grok-build`. |
 
 SuperGrok subscription login, Grok CLI login, and an `XAI_API_KEY` are separate credential sources. Use the connection that matches your account. File editing and command execution also require the selected service and model to support tool calling.
 
-## Check subscriptions in the desktop app
+### Sign-in methods and credential ownership
 
-**Settings → Subscriptions** groups installed external agents and configured
-model services into compact cards. Connections to the same model service share
-a card, with separate account sections and credential-source labels. Each account
-keeps its own subscription, plan windows, or prepaid balance; different accounts
-and currencies are never added together. Quota windows appear side by side when
-space permits, and stack in narrow cards. Supported accounts retain their existing
-model controls; Codex credential actions belong to the selected account’s **…** menu.
+ChatGPT offers **Sign in** (OpenAI's official SIWC authorization for Wuu) and **Use local sign-in** (an existing file-backed Codex session). These remain distinct connections; changing the displayed method never changes the default model or copies an account into another credential store. Existing Wuu SIWC accounts can be selected without a new login. The current secure SIWC store is supported on macOS; unsupported hosts do not fall back to plaintext or Codex identity.
+
+Grok Build offers browser login through the installed Grok CLI and a check of existing local authentication. Both use the CLI-owned source. Native engines reuse their own configuration; the local action rechecks it and does not import tokens. Direct engine sign-in is offered only through supported agent methods. Claude, Codex and OpenCode currently use their native setup instructions; DSH has no ACP account-login method and Hermes/Pi terminal setup is not an invocable Wuu login.
+
+Anthropic permits authentication through an unmodified Claude Code binary but does not permit third-party Claude.ai token intermediation; see [its authentication policy](https://code.claude.com/docs/en/legal-and-compliance#authentication-and-credential-use). [DSH's ACP contract](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/acp/acp/README.md#protocol-contract) does not establish provider-account login. API-key services remain API-key services unless a supported authentication integration exists.
+
+The existing xAI subscription route is preserved separately. xAI documents OAuth integrations with [named clients](https://x.ai/news/grok-opencode), but no public Wuu-specific app-registration contract has been verified. Wuu's existing static-client route must not be represented as Wuu's independently registered OAuth identity. Its saved xAI session is shared by xAI subscription connections, not a separate account per connection.
+
+## Check accounts and usage in the desktop app
+
+**Settings → External connections** lists configured connections once. Open a
+connection's **Account and usage** section for its authentication and available
+quota details. **Local agent accounts** keeps external-agent credentials separate
+from Wuu's model connections. Different accounts and currencies are never added
+together. Codex credential actions remain attached to the local Codex connection.
 ACP agents that need account setup offer a sign-in button; choose a method to start authentication,
 which may open your browser. A model-loading failure is not proof that credentials
 are missing, and a static CLI model list does not establish login status.
 
 Quota readers use the selected connection's credential source. Supported sources
-are ChatGPT/Codex, Grok Build, Anthropic OAuth or local Claude Code, Kimi Code,
+are legacy Codex, Grok Build, Anthropic OAuth or local Claude Code, Kimi Code,
 Zhipu/Z.ai plans, and DeepSeek/OpenRouter balances. Browser SuperGrok and arbitrary
 compatible endpoints do not currently expose supported quota details.
 

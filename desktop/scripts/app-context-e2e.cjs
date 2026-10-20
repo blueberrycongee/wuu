@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld("wuu", {
   platform: 'darwin',
   getBuildInfo: async () => ({ core: undefined, desktop: { version: 'app-snapshot-e2e', date: '2026-10-09' } }),
   listMCPServers: async () => ({ servers: [] }),
+  listEngines: async () => ({ engines: [] }),
   getAppContextState: () => ipcRenderer.invoke('snapshot:state'),
   setAppContextShortcutRecording: value => ipcRenderer.invoke('snapshot:recording', value),
   updateAppContextSettings: value => ipcRenderer.invoke('snapshot:save', value),

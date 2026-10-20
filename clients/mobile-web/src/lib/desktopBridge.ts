@@ -13,6 +13,7 @@ import {
   type ServerRequestResult,
 } from "@wuu/remote-core";
 import type {
+  ChatGPTAccount,
   DesktopPlatform,
   DesktopProject,
   InitializeResult,
@@ -21,6 +22,8 @@ import type {
   PluginConflictPreferences,
   PluginClientCancelResult,
   ProjectListResult,
+  ProviderModelSummary,
+  ProviderSummary,
   RunningThreadSnapshot,
   RuntimeContext,
   Thread,
@@ -128,6 +131,9 @@ const unavailableWebMethods = [
   "showArtifactItemMenu",
   "popOutSession",
   "popOutClosed",
+  "startChatGPTLogin",
+  "pollChatGPTLogin",
+  "cancelChatGPTLogin",
 ] as const satisfies readonly (keyof WuuDesktopApi)[];
 
 // An explicit, type-checked list keeps new protocol members from silently
@@ -830,6 +836,13 @@ export class RemoteDesktopBridge {
         this.call("config/model-catalog/providers", provider ? { provider } : {}),
       listMCPServers: () => this.call("mcp/list"),
       startXAILogin: () => this.call("auth/xai/login/start"),
+      listChatGPTAccounts: () => this.call<{ accounts: ChatGPTAccount[] }>("auth/chatgpt/accounts"),
+      signOutChatGPTAccount: (accountId) => this.call<{ ok: boolean; revocation_confirmed: boolean; providers: ProviderSummary[] }>(
+        "auth/chatgpt/signout", { account_id: accountId },
+      ),
+      listChatGPTModels: (accountId) => this.call<{ models: (ProviderModelSummary & { name: string })[]; providers?: ProviderSummary[] }>(
+        "auth/chatgpt/models", { account_id: accountId },
+      ),
       readSkillContent: (params) => this.call("desktop/skill/content",params),
       listSkills: (params) => this.call("skill/list", params),
       listInstructionFiles: () => this.call("instructions/list"),
@@ -841,7 +854,10 @@ export class RemoteDesktopBridge {
       updateGeneralSettings: (params) => this.call("config/general/update", params),
       updateEngines: (params) => this.call("engine/update", params),
       listEngineAuthMethods: (engineID) => this.call("engine/auth/methods", { engine_id: engineID }),
-      authenticateEngine: (engineID, methodID) => this.call("engine/authenticate", { engine_id: engineID, method_id: methodID }),
+      authenticateEngine: async (engineID, methodID) => {
+        if (methodID === "local-cli") throw new UnavailableHostOperationError("authenticateEngine");
+        return this.call("engine/authenticate", { engine_id: engineID, method_id: methodID });
+      },
       cancelEngineAuth: (engineID) => this.call("engine/auth/cancel", { engine_id: engineID }),
       updateExtensionPackage: (params) => this.call("extension/package/update", params),
       loadPluginDesktopModule: async (params) => this.pluginAssets.module(await this.call("plugin/desktop-module/read",params)),

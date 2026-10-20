@@ -1,5 +1,6 @@
 import { defineConfig } from "electron-vite";
 import react from "@vitejs/plugin-react";
+import { bundledDependencyLicenses } from "./scripts/bundled-dependency-licenses";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -54,7 +55,9 @@ export default defineConfig({
     cacheDir: resolve(__dirname, "node_modules/.vite/desktop-renderer"),
     optimizeDeps: { entries: ["index.html"], include: ["monaco-editor"] },
     define: desktopDefine,
-    plugins: [react()],
+    plugins: [react(), bundledDependencyLicenses(__dirname)],
+    // Cordis uses plugin/callback names; shrink code without changing those identities.
+    esbuild: { keepNames: true },
     resolve: {
       dedupe: ["react", "react-dom"],
     },
@@ -67,6 +70,7 @@ export default defineConfig({
       },
     },
     build: {
+      minify: "esbuild",
       // Local font files satisfy the renderer's self-only font policy; Vite's
       // small-asset data URLs would be blocked by the production CSP.
       assetsInlineLimit: (filePath) => /\.(?:woff2?|ttf|otf)$/i.test(filePath) ? false : undefined,

@@ -11,6 +11,7 @@ import {
 import type { ThreadItem } from "../shared/protocol";
 import {
   browserActivityOpenURL,
+  mcpToolActivityTitle,
   buildToolActivityProcessSegments,
   collectTurnSources,
   type ToolActivityProcessSegment,
@@ -268,7 +269,8 @@ export function ProcessSurface({
   const hasReasoning = reasoningItems.length > 0;
   const hasMultipleTools = toolItems.length > 1;
   const hasStandaloneDisclosure = toolItems.length === 1 && !hasReasoning && !hasCompaction
-    && ["set_session_workspace", "run_code", "exec"].includes(toolItems[0].name ?? "");
+    && (["set_session_workspace", "run_code", "exec"].includes(toolItems[0].name ?? "")
+      || Boolean(mcpToolActivityTitle(toolItems[0])));
   const hasInspection = !hasReasoning && !hasMultipleTools && !hasCompaction
     && collectTurnArtifacts({ items: toolItems }).some(artifact => artifact.foldPreview);
   const hasWebActivity = sources.length > 0 || toolItems.some(item => ["websearch", "webfetch"].includes((item.name ?? "").toLowerCase().replaceAll("_", "")));

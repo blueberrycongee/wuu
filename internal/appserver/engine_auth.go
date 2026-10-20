@@ -56,6 +56,14 @@ func (s *Server) handleEngineAuth(ctx context.Context, req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	id := strings.TrimSpace(params.EngineID)
+	if params.MethodID == "local-cli" && req.Method == MethodEngineAuthenticate {
+		if s.remoteDevice {
+			return s.writeResponse(req.ID, nil, errors.New("CLI sign-in must be started on the local desktop"))
+		}
+		if id != "grok" {
+			return s.writeResponse(req.ID, nil, errors.New("local CLI sign-in is not supported for this engine"))
+		}
+	}
 	entry, ok := enginecatalog.Lookup(id)
 	if !ok || entry.Protocol != "acp" {
 		return s.writeResponse(req.ID, nil, errors.New("engine does not support ACP authentication"))
@@ -79,6 +87,9 @@ func (s *Server) handleEngineAuth(ctx context.Context, req Request) error {
 	}
 	binary, err := entry.Resolve(override)
 	if err != nil {
+		if params.MethodID == "local-cli" {
+			return s.writeResponse(req.ID, nil, errors.New("Grok CLI was not found; install it or check its configured executable path"))
+		}
 		return s.writeResponse(req.ID, nil, err)
 	}
 	authCtx, release, err := s.beginEngineAuth(ctx, id)

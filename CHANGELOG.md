@@ -10,6 +10,20 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Show Computer Use calls as readable action titles, with original calls, outputs, and errors available in expandable records.
+
+- Show external connections as compact two-line rows with account plans, remaining quota bars and local reset times; omit unavailable quota details.
+
+- Offer account sign-in and local authentication as explicit connection methods, keeping official ChatGPT app authorization separate from Codex credentials and native-engine account ownership.
+
+- Sign in to Grok Build from its connection page using the installed Grok CLI, with cancellation and verified completion. Keep connection status and actions together, and group model management beside readable model names.
+
+- Connect ChatGPT directly through official browser sign-in without Codex CLI, with account-scoped model discovery, public Responses inference, protected refresh and sign-out. Unify model connections and account usage in Settings while keeping API keys and local Codex credentials distinct.
+- Let external agent engines use Wuu browser and enabled computer-control tools through turn-scoped MCP, with shared permissions, activity previews, screenshots, and Stop/Takeover controls.
+- Experimental Linux x64 AppImage and Debian packages with sandbox-preserving X11 launchers and CI artifact verification. Public releases remain macOS-only.
+- Linux MCP OAuth credential storage through Secret Service, with no plaintext fallback.
+- Offer optional browser cookie import during macOS onboarding, with recently
+  active local profiles listed first and explicit import actions.
 - Add an experimental headless workspace host and `wuu remote ssh` tunnel: use remote agent engines, files, Git, and terminals in the shared browser workbench, with running tasks preserved across SSH disconnects.
 - Add Linux X11 computer control with window-bound observation and foreground input,
   and watch-only activity previews that retain the existing controls and layout.
@@ -22,6 +36,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Reduce desktop sidebar group gaps and conversation title emphasis, and align
   the account control's bottom edge with the message composer.
+- Fix macOS background pointer events landing outside the intended control. Pace key presses, text input, and repeated clicks, and retain the observed window for background input after AX-only observations.
+- Match the DeepSeek Harness icon's visible size to peer agent icons in settings, runtime menus, and onboarding.
+- Allow background task and question notifications on Linux desktops with native notification support.
+- Show the local model service directory immediately in settings and onboarding,
+  without skeleton placeholders or a new directory request on each visit.
 - Keep SSH workspace tunnels owned by their foreground command, wait for host registration before reporting readiness, and clean up interrupted startup.
 - Keep SSH workspace discovery available after removal or relocation, and reject account-backed homes before local pairing.
 - Avoid false file-save conflicts in remote workspaces by using the same modification-time calculation for Go file reads and desktop saves.

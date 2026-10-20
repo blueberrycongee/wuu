@@ -77,7 +77,59 @@ generation takes precedence over its installed package while retaining developme
 provenance. Standalone TypeScript files still use `wuu plugin dev ./extension.ts`
 without a manifest or build. See the [plugin quickstart](../customize/plugin-quickstart.md).
 
-`make install` installs the CLI from the checkout. The current release workflow packages only the macOS arm64 desktop preview; Windows CI and packaging scripts do not imply a published Windows release. See [installation](../getting-started/installation.md) for user-facing availability.
+`make install` installs the CLI from the checkout. The release workflow packages only the macOS arm64 desktop preview. Linux x64 AppImage/Debian packages are experimental source builds. Windows CI and packaging scripts do not imply a published Windows release. See [installation](../getting-started/installation.md) for user-facing availability.
+
+### Desktop package size and runtime verification
+
+Desktop production dependencies are the modules loaded by Electron at runtime
+(`electron-updater` and `node-pty`). Renderer libraries belong in devDependencies:
+Vite bundles their code, lazy chunks, workers, fonts and styles into `out/`.
+Keeping them as production dependencies makes electron-builder ship a second raw
+copy. Renderer JavaScript is minified with function/class names preserved for Cordis.
+Do not remove worker/assets output or native PTY files to reduce size.
+
+Renderer builds emit `out/renderer/THIRD-PARTY-LICENSES.txt`, including transitive
+bundled notices. Missing license text fails the build; version-specific upstream
+supplements live in `desktop/vendor/licenses`. Packaged JavaScript/CSS source maps
+are excluded, so source-level debugging needs the development build. Every
+`afterPack` run checks the archive's runtime dependencies, workers and notices.
+
+After packaging on macOS, run `npm --prefix desktop run test:e2e:packaged --
+/absolute/path/wuu.app /absolute/path/evidence`. The check copies the app outside
+the checkout, uses an isolated profile/workspace, and exercises core/updater,
+native terminal, Monaco TypeScript diagnostics, PDF workers/rendering and Mermaid.
+The evidence directory contains the tested archive hash, logs, results and screenshots.
+Add `--artifact-only` for inventory checks without launching the app.
+
+Compare full ZIP bytes and updater-planned download bytes separately when measuring
+updates. Use the same old/new source revisions, architecture, signing policy,
+compression options and build inputs for baseline and optimized pairs. Uncompressed
+ASAR savings are not download savings; compression can change block reuse even
+when most underlying files are unchanged.
+
+### Linux desktop packages
+
+On Linux x64, run `npm --prefix desktop run pack:linux` for an unpacked app,
+`dist:linux` for local AppImage/Debian packages, or `release:linux` for packages
+with artifact verification. All three are experimental and have no public update feed. Install the
+same locked dependencies used by `make setup`; builds need `dpkg-deb` and the
+standard Electron Linux libraries. Packaging builds the Go core, Linux CUA helper, bundled
+plugins, Web assets, native node-pty module and checksum-pinned Linux ripgrep.
+The command does not publish anything. Before public Linux releases, verify real
+Secret Service integration, installed Debian packages on stock Ubuntu 24.04,
+FUSE-mounted AppImage launch, and an actual AppImage update/relaunch cycle.
+Launchers use X11 or XWayland with Chromium sandboxing enabled; never disable
+system security controls to make them start. Confined tool execution requires
+Landlock ABI 3 or later. MCP OAuth requires session D-Bus and an unlocked
+Secret Service keyring. Native Wayland and Linux arm64 remain unsupported.
+
+`npm --prefix desktop run test:e2e:linux-package` opens both extracted packages
+in an X11/XWayland session, checks their production renderer and preload, and
+saves screenshots/logs under `desktop/release/linux-package-evidence/`. CI uses
+`xvfb-run --auto-servernum` and keeps Chromium sandboxing enabled. This is not
+package-manager installation, a FUSE mount check, a native Wayland test, or a
+complete installed upgrade. Linux packaging CI also requires all five existing
+Landlock filesystem boundary cases to pass without skips.
 
 ### Native steering end-to-end check
 
@@ -132,6 +184,7 @@ separate evidence folders.
 | `make build-desktop` | Shared Web assets and Electron main/preload/renderer bundles; not a packaged app |
 | `make check-clients test-clients build-clients` | Protocol/SDK/client types, SDK/client tests, and retained Web/Expo bundles |
 | `make test-native` | Desktop macOS Computer Use helper tests, not phone app tests |
+| `make build-linux` | Linux x64 core, desktop build and directory package |
 | `make build-macos` | Core/helpers, desktop build, and directory-packaged macOS app |
 | `make docs-policy-check check-docs build-docs` | Documentation policy, site diagnostics, and generated site/link checks |
 
@@ -579,6 +632,33 @@ older diagnostic harness results. Compare the same exact UI when isolating a
 core-only change, retain all repetitions, and use the final main revision as the
 optimization baseline.
 
+### Desktop diagram rendering
+
+The desktop and shared Web renderer use [Pele](https://github.com/obsidianmd/pele)
+for `mermaid` fences. Native iOS/Android and the documentation site still use
+Mermaid.js. Keep the desktop Mermaid dependency while the native bundle generator
+uses it; changing the desktop lockfile requires refreshing its recorded hash with
+`node clients/native/shared-ui/build-mermaid.mjs`.
+
+Pele has its own layout and uses Wuu's CSS theme tokens. Mermaid `themeVariables`,
+arbitrary HTML labels, and external Mermaid plugins are not equivalent to the
+previous renderer. Links and images in diagram source are disabled. Explicit
+flow directions are preserved; diagrams fit the existing preview surface, with
+click-to-enlarge and standalone SVG export.
+
+After `npm --prefix desktop run build`, run
+`cd desktop && npx electron dev/pele/verify.cjs` for desktop acceptance. It loads
+the actual Markdown component across light/dark, 15/20px and wide/narrow cases,
+checks streaming/error recovery and exported colors, then opens the production
+desktop renderer with a synthetic conversation. JSON results, screenshots and an
+exported SVG are written to `desktop/out/pele-acceptance/`.
+
+The same run compares Pele and Mermaid.js in one Electron document: three warmup
+iterations and ten measured iterations per source, alternating engine order.
+Timings include SVG generation, DOM insertion and forced layout, but exclude
+module loading, paint and model latency. It also compares minified standalone
+engine bundles, including gzip sizes; these are not whole-app package sizes.
+
 ## Native phones and remote services
 
 The active phone implementations are SwiftUI on iOS and Jetpack Compose on Android in [`clients/native`](../../../clients/native/README.md) (Chinese). Their dedicated verification command is:
@@ -611,7 +691,7 @@ Styles, assets, test setup, runtime plugin modules, new/deleted/renamed files, d
 
 Desktop CI installs the Electron binary once before parallel unit tests to avoid concurrent extraction into the same directory. macOS and Windows retain their platform-specific tests on affected PRs. macOS also checks packaging when native resources or packaging inputs change.
 
-Main pushes do not repeat Go, Desktop, Clients, or native test suites. They only run macOS/Windows packaging when the changed paths select native checks. Manual `workflow_dispatch` runs all checks and both packages. Direct main pushes therefore do not receive the PR test coverage; use a PR or manually run CI when full validation is needed.
+Main pushes do not repeat Go, Desktop, Clients, or native test suites. When changed paths select native checks, they run macOS/Windows packaging and the Linux packaging, sandbox and launch gates. Manual `workflow_dispatch` runs all checks and all three platform packages. Direct main pushes therefore do not receive the PR test coverage; use a PR or manually run CI when full validation is needed.
 
 `Go check` accepts skipped Go jobs only when path selection explicitly excludes them. `CI check` requires successful selection and every selected job to succeed; unexpected skips, failures, and cancellations fail the summary. These summaries do not change repository protection rules.
 

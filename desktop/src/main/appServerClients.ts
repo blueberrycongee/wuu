@@ -1,4 +1,5 @@
 import { shutdownChild } from "./childShutdown";
+import { AppServerResponseError } from "./appServerErrors";
 import {
   spawn as spawnChild,
   type ChildProcessWithoutNullStreams,
@@ -906,7 +907,7 @@ export class AppServerClient {
     // otherwise put a newer notification ahead of this snapshot response.
     pending.onResponse?.(response);
     if (response.error) {
-      pending.reject(new Error(response.error.message));
+      pending.reject(new AppServerResponseError(response.error.message));
       return;
     }
     pending.resolve(response.result);

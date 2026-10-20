@@ -92,6 +92,51 @@ func TestACPStreamsAndResumesWithoutReplayingHistory(t *testing.T) {
 	}
 }
 
+func TestACPHostCapabilitiesRequireAdvertisedHTTPTransport(t *testing.T) {
+	for _, supported := range []bool{false, true} {
+		for _, resume := range []bool{false, true} {
+			t.Run(fmt.Sprintf("http=%t/resume=%t", supported, resume), func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				scenario := "host-mcp-unsupported"
+				if supported {
+					scenario = "host-mcp-http"
+				}
+				engine := testEngine(t, scenario)
+				binding := testBinding()
+				binding.MCPServers = []agentengine.MCPServer{{Name: "wuu_host", URL: "http://127.0.0.1:1234/mcp/turn-token"}}
+				if resume {
+					binding.ExternalRef = "native-session"
+				}
+				session, err := engine.SessionForThread(ctx, binding)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer session.Close(context.Background())
+				result, err := session.RunTurn(ctx, testInput(), func(providers.StreamEvent) {})
+				if err != nil {
+					t.Fatalf("ordinary chat failed: %v", err)
+				}
+				_, encoded, found := strings.Cut(result.Result.Content, "MCP_BINDINGS:")
+				if !found {
+					t.Fatalf("agent did not complete prompt: %q", result.Result.Content)
+				}
+				var servers []struct{ Type, Name, URL string }
+				if err := json.Unmarshal([]byte(encoded), &servers); err != nil {
+					t.Fatal(err)
+				}
+				if supported {
+					if len(servers) != 1 || servers[0].Type != "http" || servers[0].Name != binding.MCPServers[0].Name || servers[0].URL != binding.MCPServers[0].URL {
+						t.Fatalf("host binding was lost: %+v", servers)
+					}
+				} else if len(servers) != 0 || !strings.Contains(result.Result.Content, "does not advertise HTTP MCP support") {
+					t.Fatalf("unsupported host tools were not disclosed: %q", result.Result.Content)
+				}
+			})
+		}
+	}
+}
+
 func TestACPFailureIsNeverSuccessfulCompletion(t *testing.T) {
 	// load-error and no-load are absent on purpose: an agent that cannot resume
 	// the saved session continues in a fresh one with a notice (see
@@ -535,6 +580,7 @@ func TestACPHelper(t *testing.T) {
 		update("agent_message_chunk", map[string]any{"content": map[string]string{"type": "text", "text": value}})
 	}
 	var promptID json.RawMessage
+	var hostMCPServers json.RawMessage
 	selectedModel, selectedEffort, selectedMode := "", "", ""
 	selectedSpeed := "off"
 	booleanSupported, selectedBoolean := false, false
@@ -552,6 +598,17 @@ func TestACPHelper(t *testing.T) {
 		var msg rpcMessage
 		if json.Unmarshal(scanner.Bytes(), &msg) != nil {
 			os.Exit(2)
+		}
+		if strings.HasPrefix(scenario, "host-mcp-") && (msg.Method == "session/new" || msg.Method == "session/load") {
+			var params struct {
+				MCPServers json.RawMessage `json:"mcpServers"`
+			}
+			if json.Unmarshal(msg.Params, &params) != nil {
+				os.Exit(2)
+			}
+			if len(hostMCPServers) == 0 || msg.Method == "session/load" {
+				hostMCPServers = params.MCPServers
+			}
 		}
 		if strings.HasPrefix(scenario, "speed-reset-") && msg.Method != "initialize" {
 			var params struct {
@@ -630,6 +687,9 @@ func TestACPHelper(t *testing.T) {
 				version = 2
 			}
 			caps := map[string]any{"loadSession": scenario != "no-load"}
+			if scenario == "host-mcp-http" {
+				caps["mcpCapabilities"] = map[string]bool{"http": true}
+			}
 			if scenario == "echo-prompt-images" {
 				caps["promptCapabilities"] = map[string]any{"image": true}
 			}
@@ -784,6 +844,11 @@ func TestACPHelper(t *testing.T) {
 			}
 			text("old replay")
 		case "session/prompt":
+			if strings.HasPrefix(scenario, "host-mcp-") {
+				text("MCP_BINDINGS:" + string(hostMCPServers))
+				result = map[string]string{"stopReason": "end_turn"}
+				break
+			}
 			if scenario == "boolean-options" {
 				text(fmt.Sprint(selectedBoolean))
 				result = map[string]string{"stopReason": "end_turn"}

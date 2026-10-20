@@ -4,6 +4,8 @@ import type {
   CatalogProviderSummary,
   CodexPetsSnapshot,
   EngineListResult,
+  EngineUpdateParams,
+  EngineBinarySettings,
   ExtensionInventoryRecord,
   InitializeResult,
   MCPServerStatus,
@@ -54,6 +56,22 @@ const providers: ProviderSummary[] = empty ? [] : [
   },
 ];
 
+// Explicit synthetic login scenarios; no process, browser or credentials are used.
+const loginFixture = params.get("connections") === "login";
+if (loginFixture && providers[1]) {
+  providers[1].api_key_configured = false;
+  if (long) {
+    const id = "grok-build/selected-model-with-a-long-readable-identifier-for-narrow-layout-review";
+    providers[1].model = id;
+    providers[1].models = [{ id, display_name: "Grok Build selected model with a long descriptive name for narrow layout review" }, ...(providers[1].models ?? [])];
+  }
+}
+if (params.get("connections") === "methods") providers.push({
+  name: "chatgpt-personal", type: "chatgpt", model: "official-model", api_key_configured: true,
+  auth_status: "connected", chatgpt_account_id: "fixture-app-account", models: [{ id: "official-model", display_name: "Official account model" }],
+});
+let cancelFixtureLogin: (() => void) | undefined;
+
 const catalogProviders: CatalogProviderSummary[] = [
   ["deepseek", "DeepSeek", "openai-compatible", "https://api.deepseek.com", 4, "deepseek-v4-pro"],
   ["moonshotai-cn", "Moonshot AI (China)", "openai-compatible", "https://api.moonshot.cn/v1", 4, "kimi-k3"],
@@ -80,6 +98,51 @@ const engines: EngineListResult = {
     { id: "hermes", display_name: "Hermes", protocol: "acp", enabled: true, binary_ok: false },
   ],
 };
+
+// Opt-in allowance samples for visual review only; never contact an account.
+if (!empty && params.get("connections") === "quota") {
+  const now = Date.now();
+  const checked_at = new Date(now).toISOString();
+  const future = (hours: number) => new Date(now + hours * 3_600_000).toISOString();
+  providers[0].quota = {
+    status: "available", checked_at, expires_at: future(1),
+    windows: [
+      { id: "short", window_minutes: 300, used_percent: 25, resets_at: future(2) },
+      { id: "weekly", window_minutes: 10080, used_percent: 80, resets_at: future(72) },
+    ],
+  };
+  providers[1].quota = { status: "unavailable", checked_at };
+  providers[2].quota = {
+    status: "stale", checked_at, observed_at: new Date(now - 7_200_000).toISOString(),
+    windows: [{ id: "daily", window_minutes: 1440, used_percent: 42, resets_at: future(4) }],
+  };
+  engines.engines[0].quota = {
+    status: "available", checked_at, expires_at: future(1),
+    windows: [
+      { id: "short", window_minutes: 300, used_percent: 0, resets_at: future(3) },
+      { id: "weekly", window_minutes: 10080, used_percent: 100, resets_at: future(48) },
+    ],
+  };
+  engines.engines[2].quota = {
+    status: "available", checked_at,
+    windows: [{ id: "unknown", window_minutes: 300, resets_at: future(2) }],
+  };
+  engines.subscription_providers = providers;
+}
+
+// Approved detail review fixture. All values and authentication are synthetic.
+if (params.has("detail")) {
+  const now = Date.now();
+  const quota = { status: "available" as const, kind: "subscription" as const, plan: "Pro", checked_at: new Date(now).toISOString(), expires_at: new Date(now + 3600000).toISOString(), account: { id: "fixture-account", source: "claude-code" }, windows: [
+    { id: "short", window_minutes: 300, used_percent: 44, resets_at: new Date(now + 7200000).toISOString() },
+    { id: "weekly", window_minutes: 10080, used_percent: 86, resets_at: new Date(now + 172800000).toISOString() },
+  ] };
+  const engine = engines.engines.find(item => item.id === "claude");
+  if (engine) Object.assign(engine, { enabled: true, cli_version: "2.1.302", update_url: "https://code.claude.com/docs/en/setup#update-claude-code", quota, models: [{ id: "claude-sonnet", display_name: "Claude Sonnet", is_default: true }, { id: "claude-opus", display_name: "Claude Opus" }, { id: "claude-haiku", display_name: "Claude Haiku" }] });
+  if (engines.settings) engines.settings.claude = { enabled: true };
+  if (providers[0]) providers[0].quota = quota;
+  engines.subscription_providers = providers;
+}
 
 const mcpServers: MCPServerStatus[] = empty ? [] : [
   { name: "github", state: "connected", connected: true, tool_count: 26, auth_status: "oauth" },
@@ -193,7 +256,33 @@ window.wuu = {
         : catalogProviders,
     };
   },
+  listChatGPTAccounts: async () => ({ accounts: params.get("connections") === "methods" ? [{ id: "fixture-app-account", email: "account@example.test", status: "connected" }] : [] }),
+  listChatGPTModels: async () => ({ models: [{ id: "official-model", name: "Official account model" }] }),
+  startChatGPTLogin: async () => ({ login_id: "fixture-login", interval_ms: 1000 }),
+  pollChatGPTLogin: async () => ({ status: "pending" }),
+  cancelChatGPTLogin: async () => ({ ok: true }),
+  loadCodexModels: async () => ({ providers: structuredClone(providers) }),
+  useCodexCredentials: async (name: string) => {
+    const provider = providers.find(item => item.name === name);
+    if (provider) { provider.reuse_codex_credentials = true; provider.codex_credential_source = "codex-cli"; }
+    return { providers: structuredClone(providers) };
+  },
   listEngineAuthMethods: async () => ({ methods: [], authenticated: true }),
+  authenticateEngine: async (engine: string, method: string) => {
+    if (!loginFixture || engine !== "grok" || method !== "local-cli") throw new Error("Unsupported fixture operation");
+    await new Promise<void>((resolve, reject) => {
+      const timer = params.get("login") === "pending" ? undefined : window.setTimeout(() => {
+        cancelFixtureLogin = undefined;
+        if (params.get("login") === "failed") reject(new Error("Synthetic login failure"));
+        else resolve();
+      }, 1200);
+      cancelFixtureLogin = () => { window.clearTimeout(timer); cancelFixtureLogin = undefined; reject(new Error("Synthetic cancellation")); };
+    });
+    providers[1].api_key_configured = true;
+    return { methods: [], authenticated: true };
+  },
+  cancelEngineAuth: async () => { cancelFixtureLogin?.(); },
+  refreshModelCatalog: async () => ({ providers: structuredClone(providers), model_count: providers.reduce((count, provider) => count + (provider.models?.length ?? 0), 0) }),
   openExternal: async () => undefined,
   getRemoteControlSnapshot: async () => ({ status: { fingerprint: "AB12-CD34", store: "", devices: [] }, host_running: false }),
   onRemoteControlEvent: () => () => undefined,
@@ -221,11 +310,38 @@ startFocusModality();
 function Fixture(): JSX.Element {
   const shellRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState(initialized);
+  const [engineInventory, setEngineInventory] = useState(engines);
+  const updateEngines = async (update: EngineUpdateParams) => {
+    const { default_engine, ...changes } = update;
+    const { default_engine: previousDefault, ...previousBinarySettings } = engineInventory.settings ?? {};
+    const binarySettings: Record<string, EngineBinarySettings | undefined> = { ...previousBinarySettings };
+    const binaryChanges: Record<string, EngineBinarySettings | undefined> = changes;
+    for (const [id, change] of Object.entries(binaryChanges)) {
+      binarySettings[id] = { ...binarySettings[id], ...change };
+    }
+    const settings = { ...binarySettings, default_engine: default_engine ?? previousDefault };
+    const next: EngineListResult = {
+      settings,
+      engines: engineInventory.engines.map(engine => {
+        const change = binaryChanges[engine.id];
+        return change ? { ...engine, enabled: change.enabled ?? engine.enabled,
+          ...(change.binary_path ? { binary_path: change.binary_path, binary_ok: true, error: undefined } : {}) } : engine;
+      }),
+    };
+    setEngineInventory(next);
+    return next;
+  };
   const [collapsed, setCollapsed] = useState(params.has("collapsed"));
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = params.get("theme") || "light";
     document.documentElement.dataset.platform = "darwin";
     applyMessageFlowFontSize(Number(params.get("size")) || 14.5);
+    const detail = params.get("detail");
+    if (detail) {
+      const selector = detail === "engine" ? '[data-testid="settings-engine-claude-status"]' : '[data-testid="settings-provider-card"]';
+      const open = () => { const button = document.querySelector<HTMLButtonElement>(selector); if (!button) return false; button.click(); return true; };
+      if (!open()) { const observer = new MutationObserver(() => { if (open()) observer.disconnect(); }); observer.observe(document.body, { childList: true, subtree: true }); return () => observer.disconnect(); }
+    }
   }, []);
   // Mirrors the core's settings contract closely enough to review flows:
   // keep_selection edits a service without choosing it.
@@ -274,7 +390,7 @@ function Fixture(): JSX.Element {
         initialPage={(params.get("page") as SettingsPage | null) ?? undefined}
         running={false}
         usage={empty ? undefined : sampleUsage()}
-        engineInventory={engines}
+        engineInventory={engineInventory}
         codexPets={pets}
         codexPetsLoading={false}
         codexPetsError=""
@@ -286,9 +402,15 @@ function Fixture(): JSX.Element {
         onBack={() => undefined}
         onSave={save}
         onRemoveProvider={async (name) => setState((current) => ({ ...current, providers: current.providers?.filter((item) => item.name !== name) }))}
+        onProvidersChanged={updated => setState(current => ({ ...current,
+          providers: current.providers?.map(provider => {
+            const next = updated.find(item => item.name === provider.name && item.type === provider.type && item.base_url === provider.base_url);
+            return next ? { ...provider, api_key_configured: next.api_key_configured, auth_status: next.auth_status, reuse_codex_credentials: next.reuse_codex_credentials, codex_credential_source: next.codex_credential_source } : provider;
+          }),
+        }))}
         onRefreshModelCatalog={async () => undefined}
-        onRefreshEngineInventory={async () => engines}
-        onUpdateEngineInventory={async () => engines}
+        onRefreshEngineInventory={async () => engineInventory}
+        onUpdateEngineInventory={updateEngines}
         onAdvancedSave={async () => undefined}
         onGeneralSave={async () => undefined}
         onCodexPetsRefresh={async () => pets}
