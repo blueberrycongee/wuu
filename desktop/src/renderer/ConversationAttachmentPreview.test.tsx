@@ -19,6 +19,18 @@ it("shows HTML as text, never as an executable document", async () => {
   await vi.waitFor(() => expect(container.querySelector("pre")?.textContent).toContain("<script>"));
   expect(container.querySelector("iframe,script,h1,object,embed")).toBeNull();
 });
+it("reads Markdown attachments with the shared document presentation", async () => {
+  vi.stubGlobal("URL", { createObjectURL: () => "blob:test", revokeObjectURL: vi.fn() });
+  cleanups.push(() => vi.unstubAllGlobals());
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container);
+  cleanups.push(() => { act(() => root.unmount()); container.remove(); });
+  await act(async () => root.render(<ConversationAttachmentPreview resourceId="remote:markdown" name="report.md" mediaType="text/plain" size={16} read={async () => new NodeBlob(["# Report\n\n**Ready**"]) as unknown as Blob} />));
+  await vi.waitFor(() => expect(container.querySelector(".workspace-markdown-reading")).not.toBeNull());
+  expect(container.querySelector(".rich-heading")?.textContent).toBe("Report");
+  expect(container.querySelector("strong")?.textContent).toBe("Ready");
+  expect(container.querySelector("pre")).toBeNull();
+});
 it("shows pending reads and errors without an external navigation fallback", async () => {
   let reject!: (error: Error) => void;
   const container = await mount("text/plain", () => new Promise((_resolve, fail) => { reject = fail; }));

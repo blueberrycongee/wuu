@@ -1,6 +1,7 @@
 import { createContext, useEffect, useState } from "react";
 import { useI18n } from "./i18n";
 import { formatByteSize } from "./AttachmentFormat";
+import { isMarkdownDocument, MarkdownDocumentReading } from "./MarkdownDocumentReading";
 import { Download, LoaderCircle } from "./WuuIcons";
 
 export type ConversationAttachmentRequest = {
@@ -23,6 +24,7 @@ export function ConversationAttachmentPreview({ name, mediaType, size, read }: C
   const [attempt, setAttempt] = useState(0);
   const raster = rasterTypes.has(mediaType);
   const text = mediaType.startsWith("text/") || textTypes.has(mediaType);
+  const markdown = text && isMarkdownDocument(name, mediaType);
   const tooLarge = t("conversationAttachment.tooLarge");
   useEffect(() => {
     let live = true, url = "";
@@ -45,6 +47,6 @@ export function ConversationAttachmentPreview({ name, mediaType, size, read }: C
     <header><span>{mediaType} · {formatByteSize(size, formatNumber)}</span>{result && <a className="settings-button" href={result.url} download={name}><Download />{t("conversationAttachment.download")}</a>}</header>
     {!result && !error && <p role="status"><LoaderCircle className="is-spinning" />{t("conversationAttachment.loading")}</p>}
     {error && <div role="alert"><p>{error}</p><button type="button" className="settings-button" onClick={() => setAttempt(value => value + 1)}>{t("conversationAttachment.retry")}</button></div>}
-    {result && (raster ? <img src={result.url} alt={name} /> : text ? <>{size > 512 * 1024 && <p>{t("workspace.files.previewTruncated")}</p>}<pre>{result.text}</pre></> : <p>{t("conversationAttachment.unsupported")}</p>)}
+    {result && (raster ? <img src={result.url} alt={name} /> : text ? <>{size > 512 * 1024 && <p>{t("workspace.files.previewTruncated")}</p>}{markdown ? <div className="workspace-file-editor-scroll markdown-reading"><MarkdownDocumentReading text={result.text ?? ""} /></div> : <pre>{result.text}</pre>}</> : <p>{t("conversationAttachment.unsupported")}</p>)}
   </section>;
 }
