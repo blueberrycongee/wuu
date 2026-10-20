@@ -468,7 +468,21 @@ async function runWebsiteAcceptance(h, fixture) {
       }
       assert.equal(coveringPages.length, 0, `Shell ribbon target must not be covered by a live native page: ${JSON.stringify({ point: p, input, coveringPages })}`);
     }
-    xinput(['mousemove', String(Math.round(bounds.x + p.x * zoom)), String(Math.round(bounds.y + p.y * zoom)), 'click', '1']);
+    const movement = ['mousemove', String(Math.round(bounds.x + p.x * zoom)), String(Math.round(bounds.y + p.y * zoom))];
+    const nativeChrome = ['ribbon', 'account'].includes(p.nativeChrome) ? chromeView(p.nativeChrome) : undefined;
+    if (nativeChrome) {
+      // A DOM hit test does not acknowledge native pointer routing. Let the
+      // real move reach the child before issuing the single button sequence;
+      // spawnSync otherwise queues both while Electron cannot process either.
+      xinput(movement);
+      const query = typeof target === 'string' ? { selector: target } : target;
+      await until(() => evaluateContents(nativeChrome.webContents, ({ selector, text }) =>
+        [...document.querySelectorAll(selector)].some(node =>
+          (text === undefined || (node.getAttribute('aria-label') || node.textContent || '').trim() === text)
+          && node.getBoundingClientRect().width > 0 && node.matches(':hover')), query),
+      'Native chrome acknowledges the real pointer target');
+      xinput(['click', '1']);
+    } else xinput([...movement, 'click', '1']);
     report.actions.push({ label: `web-${label}`, input: 'native-x11', atMs: Date.now() - started, point: p });
     await settle();
     if (evidence) await capture(`after-${label}`);
