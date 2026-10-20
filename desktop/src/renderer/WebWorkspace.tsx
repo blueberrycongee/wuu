@@ -514,7 +514,15 @@ function observeWebWorkspaceBounds(host: HTMLElement, resizeWithWindow: boolean,
   let frame = 0;
   let overlays: Element[] = [];
   let overlaysDirty = true;
-  const movingLayers = new Set<Element>();
+  const movingAnimations = new Set<Animation>();
+  const trackMotion = (element: Element): void => {
+    if (!element.contains(host) && !element.matches(OCCLUDERS) && !element.querySelector(OCCLUDERS)) return;
+    for (const animation of element.getAnimations()) {
+      // Scroll-linked effects can remain "running" while stationary. Scroll
+      // events already schedule their geometry; only timed effects need a loop.
+      if (animation.timeline === document.timeline && (animation.playState === "running" || animation.pending)) movingAnimations.add(animation);
+    }
+  };
   const send = (): void => {
     if (frame) cancelAnimationFrame(frame);
     frame = 0;
@@ -565,18 +573,23 @@ function observeWebWorkspaceBounds(host: HTMLElement, resizeWithWindow: boolean,
     // Page zoom changes the native scale even when CSS insets stay identical.
     const key = JSON.stringify([geometry, window.devicePixelRatio]);
     if (key !== last) { last = key; report(geometry); }
-    for (const layer of movingLayers) if (!layer.isConnected) movingLayers.delete(layer);
-    if (movingLayers.size) frame = requestAnimationFrame(send);
+    for (const animation of movingAnimations) {
+      const target = animation.effect instanceof KeyframeEffect ? animation.effect.target : null;
+      if (!target?.isConnected || animation.timeline !== document.timeline
+        || (animation.playState !== "running" && !animation.pending)) movingAnimations.delete(animation);
+    }
+    if (movingAnimations.size) frame = requestAnimationFrame(send);
   };
   const schedule = (): void => { if (!frame) frame = requestAnimationFrame(send); };
   const onMotionStart = (event: Event): void => {
-    if (!(event.target instanceof Element) || !event.target.matches(OCCLUDERS)) return;
-    movingLayers.add(event.target);
-    schedule();
+    if (!(event.target instanceof Element)) return;
+    trackMotion(event.target);
+    if (movingAnimations.size) schedule();
   };
-  const onMotionEnd = (event: Event): void => {
-    if (!(event.target instanceof Element) || !movingLayers.has(event.target)) return;
-    movingLayers.delete(event.target);
+  const onMotionEnd = (): void => {
+    // Each effect has its own lifetime. An earlier opacity animation ending
+    // must not stop tracking a transform still moving the same surface.
+    if (!movingAnimations.size) return;
     schedule();
   };
   const resized = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : undefined;
@@ -597,6 +610,15 @@ function observeWebWorkspaceBounds(host: HTMLElement, resizeWithWindow: boolean,
   document.addEventListener("animationstart", onMotionStart);
   document.addEventListener("animationend", onMotionEnd);
   document.addEventListener("animationcancel", onMotionEnd);
+  document.addEventListener("transitionrun", onMotionStart);
+  document.addEventListener("transitionend", onMotionEnd);
+  document.addEventListener("transitioncancel", onMotionEnd);
+  // A surface may mount while its parent is already moving. Transforms change
+  // position without triggering ResizeObserver, so follow the active effects.
+  for (const animation of document.getAnimations()) {
+    const target = animation.effect instanceof KeyframeEffect ? animation.effect.target : null;
+    if (target) trackMotion(target);
+  }
   send();
   return () => {
     if (frame) cancelAnimationFrame(frame);
@@ -608,6 +630,9 @@ function observeWebWorkspaceBounds(host: HTMLElement, resizeWithWindow: boolean,
     document.removeEventListener("animationstart", onMotionStart);
     document.removeEventListener("animationend", onMotionEnd);
     document.removeEventListener("animationcancel", onMotionEnd);
+    document.removeEventListener("transitionrun", onMotionStart);
+    document.removeEventListener("transitionend", onMotionEnd);
+    document.removeEventListener("transitioncancel", onMotionEnd);
     report(null);
   };
 }

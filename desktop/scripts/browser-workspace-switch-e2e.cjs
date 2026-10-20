@@ -9,6 +9,7 @@ const { execFileSync, spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { app, ipcMain, webContents } = require('electron');
 const desktop = path.resolve(__dirname, '..');
+const bundle = path.resolve(process.env.WUU_E2E_BUNDLE || desktop);
 const output = path.resolve(process.env.WUU_BROWSER_SWITCH_OUTPUT || path.join(desktop, 'out/e2e/browser-workspace-switch'));
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-workspace-switch-'));
 const home = path.join(fixture, 'home'), project = path.join(fixture, 'project');
@@ -19,7 +20,7 @@ delete process.env.ELECTRON_RENDERER_URL;
 fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'fixture', providers: { fixture: { type: 'openai-compatible', base_url: 'http://127.0.0.1:1/v1', api_key: 'synthetic', model: 'fixture' } }, engines: Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }])) }));
 fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [{ id: 'switch-browser', name: 'Switching acceptance', path: project, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }], active_context: { kind: 'project', project_id: 'switch-browser', cwd: project } }));
 fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en-US', theme: 'light', message_flow_font_size: 15 }));
-const report = { status: 'running', platform: process.platform, versions: process.versions, commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: desktop, encoding: 'utf8' }).trim(), transitions: [], events: [], navigations: [], screenshots: [], limitations: ['Synthetic local websites and isolated account profile', 'Real Electron input events, not physical input', 'Visibility events and sampled stable frames cannot prove every compositor frame; composed recording is supplied for inspection'] };
+const report = { status: 'running', platform: process.platform, versions: process.versions, bundle, commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: desktop, encoding: 'utf8' }).trim(), transitions: [], events: [], navigations: [], screenshots: [], limitations: ['Synthetic local websites and isolated account profile', 'Real Electron input events, not physical input', 'Visibility events and sampled stable frames cannot prove every compositor frame; composed recording is supplied for inspection'] };
 const save = () => fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
 let win, recording;
 app.on('browser-window-created', (_event, created) => { win ||= created; });
@@ -77,7 +78,18 @@ async function failureInputState() {
 async function click(selector) {
   for (let attempt = 0; attempt < 100; attempt++) {
     for (const contents of [win.webContents, ...visibleContents()].reverse()) {
-      const point = await contents.executeJavaScript(`(selector=>{const e=[...document.querySelectorAll(selector)].find(e=>e.getBoundingClientRect().width&&!e.closest('[inert]'));if(!e)return null;e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;return e.contains(document.elementFromPoint(x,y))?{x,y}:null})(${JSON.stringify(selector)})`);
+      const point = await contents.executeJavaScript(`(selector => {
+        const element = [...document.querySelectorAll(selector)].find(e => e.getBoundingClientRect().width && !e.closest('[inert]'));
+        if (!element) return null;
+        element.scrollIntoView({ block: 'nearest' });
+        // A collapsed rail keeps a wider layout behind its visible icon.
+        // Use a hittable child when the button center lies under the page.
+        for (const target of [element, ...element.querySelectorAll('svg,span')]) {
+          const r = target.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2;
+          if (r.width && r.height && element.contains(document.elementFromPoint(x, y))) return { x, y };
+        }
+        return null;
+      })(${JSON.stringify(selector)})`);
       if (!point) continue;
       await observeInput(contents);
       report.lastInput = { type: 'click', selector, contents: contents.id, point, at: performance.now() };
@@ -94,11 +106,133 @@ async function capture(name) {
   else fs.writeFileSync(file, (await win.webContents.capturePage()).toPNG());
   report.screenshots.push({ file, composed: process.platform === 'darwin' });
 }
+// A native page does not inherit CSS transforms from the shell. Check position
+// tracking, retargeting, concurrent effects, and occlusion through actual views.
+async function checkGeometryMotion(page) {
+  report.geometryMotion = [];
+  await evaluate(() => {
+    const host = document.querySelector('.web-workspace-stage:not([hidden]) .web-workspace-host');
+    const ancestor = host.parentElement;
+    const style = document.createElement('style');
+    style.textContent = `
+      .geometry-motion-host { transition: transform 900ms linear !important; }
+      @keyframes geometry-travel { from { transform:translateX(-240px) } to { transform:translateX(240px) } }
+      @keyframes geometry-fade { from { opacity:.99 } to { opacity:1 } }
+      .geometry-motion-effects { animation:geometry-travel 900ms linear both,geometry-fade 150ms linear both !important; }
+      .geometry-scroll-effect { animation:geometry-fade linear both; animation-timeline:scroll(self); }
+    `;
+    document.head.append(style);
+    window.__geometryMotion = { host, ancestor, style };
+  });
+  const sample = async label => {
+    const dom = await evaluate(() => {
+      const r = window.__geometryMotion.host.getBoundingClientRect();
+      const x = Math.max(0, Math.round(r.x)), y = Math.max(0, Math.round(r.y));
+      return { x, y, width: Math.min(innerWidth, Math.round(r.right)) - x, height: Math.min(innerHeight, Math.round(r.bottom)) - y };
+    });
+    const native = page.view.getBounds();
+    const delta = Math.max(...Object.keys(dom).map(key => Math.abs(dom[key] - native[key])));
+    report.geometryMotion.push({ label, dom, native, delta });
+    save();
+    // A renderer sample and native read are not an atomic compositor snapshot.
+    // The generous moving tolerance still rejects an unchanged start rectangle.
+    assert.ok(delta <= 10, `${label}: native bounds follow shell geometry (${delta}px)`);
+  };
+  const progress = (element, target, name) => evaluate(({ element, target, name }) => new Promise((resolve, reject) => {
+    const started = performance.now();
+    const tick = () => {
+      const animation = window.__geometryMotion[element].getAnimations().find(animation => name ? animation.animationName === name : animation.playState === 'running');
+      const current = animation?.effect.getComputedTiming().progress;
+      if (typeof current === 'number' && current >= target) resolve();
+      else if (performance.now() - started > 5000) reject(new Error(`No animation progress on ${element}`));
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }), { element, target, name });
+  for (const element of ['host', 'ancestor']) {
+    await evaluate(element => {
+      const target = window.__geometryMotion[element];
+      target.classList.add('geometry-motion-host');
+      getComputedStyle(target).transform;
+      target.style.transform = 'translateX(72px)';
+    }, element);
+    await progress(element, 0.5);
+    await sample(`${element}-position-transition`);
+    await evaluate(element => { window.__geometryMotion[element].style.transform = 'translateX(0px)'; }, element);
+    await progress(element, 0.5);
+    await sample(`${element}-reversed-position-transition`);
+    await evaluate(element => Promise.all(window.__geometryMotion[element].getAnimations().map(animation => animation.finished)), element);
+    await frame();
+    await sample(`${element}-reversed-position-settled`);
+    await evaluate(element => {
+      const target = window.__geometryMotion[element];
+      target.classList.remove('geometry-motion-host');
+      target.style.transform = '';
+    }, element);
+  }
+  for (const indirect of [false, true]) {
+    await evaluate(indirect => {
+      const moving = document.createElement('div');
+      moving.style.cssText = 'position:fixed;left:0;top:180px;width:120px;height:100px;z-index:99999;transform:translateX(-240px)';
+      const menu = indirect ? moving.appendChild(document.createElement('div')) : moving;
+      menu.setAttribute('role', 'menu');
+      menu.style.width = '120px'; menu.style.height = '100px'; menu.style.background = '#537eab';
+      document.body.append(moving);
+      window.__geometryMotion.moving = moving;
+    }, indirect);
+    await frame();
+    assert.equal(page.view.getVisible(), true, 'Offscreen menu leaves the page visible');
+    await evaluate(() => { window.__geometryMotion.moving.classList.add('geometry-motion-effects'); });
+    await progress('moving', 0.8, 'geometry-travel');
+    await frame();
+    report.geometryMotion.push({ label: indirect ? 'moving-menu-ancestor' : 'concurrent-menu-effects', visible: page.view.getVisible() });
+    save();
+    assert.equal(page.view.getVisible(), false, 'Moving menu occludes the native page after its short sibling effect ends');
+    await evaluate(() => { window.__geometryMotion.moving.remove(); });
+    await until(() => page.view.getVisible(), 'Removing a moving menu restores the same page');
+  }
+  await evaluate(() => {
+    const scrolling = document.createElement('div');
+    scrolling.setAttribute('role', 'menu');
+    scrolling.className = 'geometry-scroll-effect';
+    scrolling.style.cssText = 'position:fixed;left:-240px;top:180px;width:120px;height:100px;overflow:auto';
+    scrolling.appendChild(document.createElement('div')).style.height = '1000px';
+    document.body.append(scrolling);
+    scrolling.scrollTop = 100;
+    window.__geometryMotion.scrolling = scrolling;
+  });
+  await until(() => evaluate(() => window.__geometryMotion.scrolling.getAnimations().some(animation =>
+    animation.playState === 'running' && animation.timeline !== document.timeline)), 'scroll-linked effect is active');
+  await frame();
+  const idle = await evaluate(() => new Promise(resolve => {
+    const { host } = window.__geometryMotion, read = host.getBoundingClientRect;
+    let reads = 0, frames = 0, previousReads = 0, quietFrames = 0;
+    host.getBoundingClientRect = function () { reads++; return read.call(this); };
+    const tick = () => {
+      quietFrames = reads === previousReads ? quietFrames + 1 : 0;
+      previousReads = reads;
+      // Let ordinary scrollbar/reveal transitions settle, but reject a loop
+      // that keeps measuring a stationary scroll timeline indefinitely.
+      if (++frames < 120 && quietFrames < 12) { requestAnimationFrame(tick); return; }
+      host.getBoundingClientRect = read;
+      resolve({ reads, frames, quietFrames });
+    };
+    requestAnimationFrame(tick);
+  }));
+  report.geometryMotion.push({ label: 'settled-scroll-timeline-idle-measurements', ...idle });
+  save();
+  assert.equal(idle.quietFrames, 12, 'Completed effects and stationary scroll-linked effects do not leave a permanent bounds loop');
+  await evaluate(() => { window.__geometryMotion.scrolling.remove(); window.__geometryMotion.style.remove(); delete window.__geometryMotion; });
+  assert.equal(await page.guest.executeJavaScript('window.fixtureIdentity'), page.original.identity, 'Geometry motion retains the page document');
+  await capture('native-page-geometry-settled');
+}
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
-  await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
-  await until(() => win && !win.webContents.isLoadingMainFrame(), 'shell');
+  await import(pathToFileURL(path.join(bundle, 'out/main/index.js')).href);
+  const rendererURL = pathToFileURL(path.join(bundle, 'out/renderer/index.html')).href;
+  await until(() => win && !win.webContents.isLoadingMainFrame() && win.webContents.getURL() === rendererURL, 'matching shell build');
+  report.rendererURL = win.webContents.getURL();
   await until(() => evaluate(() => Boolean(window.wuu?.webWorkspace && document.querySelector('.sidebar-ribbon'))), 'chrome ready');
   win.setBounds({ x: 120, y: 80, width: 1280, height: 850 }); win.show(); win.focus();
   await evaluate(() => window.wuu.webWorkspace.initializeTabs([]));
@@ -144,6 +278,7 @@ async function run() {
     requestAnimationFrame(sample);
   });
   await frame(); await capture('ready-page-b');
+  await checkGeometryMotion(pages.b);
   if (process.platform === 'darwin') {
     const file = path.join(output, 'workspace-switching.mov');
     fs.rmSync(file, { force: true });
@@ -194,7 +329,7 @@ async function run() {
     report.recording.modifiedAt = file.mtimeMs;
     assert.ok(file.size > 0 && file.mtimeMs >= report.recordingStart.wallClock, 'Recording must contain fresh footage from this run');
   }
-  report.status = 'passed'; report.checks = ['54 real clicks across two browser tabs, Chat and Settings', 'Every guest visibility transition recorded with no repeated hide/show per action', 'Four stable compositor-paced visibility samples after each action', 'Guest identity, unsent draft and exact scroll retained throughout', 'No unexpected navigation or WebContents recreation', 'Cold first Settings visit never displays a window-covering loading surface']; save();
+  report.status = 'passed'; report.checks = ['54 real clicks across two browser tabs, Chat and Settings', 'Every guest visibility transition recorded with no repeated hide/show per action', 'Four stable compositor-paced visibility samples after each action', 'Guest identity, unsent draft and exact scroll retained throughout', 'No unexpected navigation or WebContents recreation', 'Cold first Settings visit never displays a window-covering loading surface', 'Native page follows ancestor transforms and reversals, moving menu ancestors, and concurrent effects without idle polling']; save();
   console.log(JSON.stringify({ status: report.status, output, transitions: report.transitions.length, visibilityEvents: report.events.length, recording: report.recording }, null, 2));
   app.quit();
 }
