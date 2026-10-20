@@ -1,12 +1,28 @@
 /* Keep the conversation laid out underneath this destination, preserving its
    draft, scroll position and both saved sidebar widths. */
-.web-workspace-stage {
+.web-workspace-stage,
+.app-shell[data-web-workspace-open] > .conversation-pane[data-primary-plugin-web-page] {
   position: absolute;
   inset: var(--workbench-top, var(--window-titlebar-height)) var(--conversation-pane-inset) var(--conversation-pane-inset) var(--sidebar-ribbon-width);
   z-index: 127;
   overflow: hidden;
   border-radius: var(--conversation-canvas-radius);
   background: var(--workbench-canvas-bg, var(--paper));
+}
+
+/* Plugin WebPage views use the same canvas without moving their mounted page.
+   Their destinations remain in the ribbon; ordinary plugin views keep their
+   contextual navigation and titlebar. */
+.app-shell[data-web-workspace-open] > .conversation-pane[data-primary-plugin-web-page] {
+  grid-area: auto;
+  /* Retained conversation children still share row 2 with the plugin view. */
+  grid-template-rows: 0 minmax(0, 1fr);
+  margin: 0;
+  pointer-events: auto;
+}
+
+.conversation-pane[data-primary-plugin-web-page] > .titlebar {
+  display: none;
 }
 
 .web-workspace-stage[hidden] {
@@ -20,7 +36,7 @@
 }
 
 .app-shell[data-web-workspace-open] > :is(
-  .conversation-pane,
+  .conversation-pane:not([data-primary-plugin-web-page]),
   .workspace-right-panel,
   .workspace-right-panel-resizer,
   .sidebar-resizer,
@@ -61,9 +77,9 @@
   padding-inline: var(--space-1);
 }
 
-/* Only the full-workspace browser is window chrome; embedded plugin pages
-   retain ordinary pointer behavior. Controls below carve out the drag region. */
-.web-workspace-stage .workspace-browser-toolbar.web-workspace-toolbar {
+/* Primary website views share window chrome. Auxiliary embedded pages retain
+   ordinary pointer behavior. Controls below carve out the drag region. */
+:is(.web-workspace-stage, .conversation-pane[data-primary-plugin-web-page]) .workspace-browser-toolbar.web-workspace-toolbar {
   -webkit-app-region: drag;
 }
 
@@ -159,7 +175,7 @@
 
 /* Native views cannot inherit the stage's DOM clip. Report this resolved
    radius to Electron and use the same contour for an occlusion backdrop. */
-.web-workspace-stage :is(.web-workspace-host, .web-workspace-backdrop) {
+:is(.web-workspace-stage, .conversation-pane[data-primary-plugin-web-page]) :is(.web-workspace-host, .web-workspace-backdrop) {
   border-radius: var(--conversation-canvas-radius);
 }
 

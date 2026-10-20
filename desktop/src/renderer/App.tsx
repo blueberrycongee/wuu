@@ -749,6 +749,8 @@ export function App(): JSX.Element {
     desktopWorkbenchController.getSnapshot, desktopWorkbenchController.getSnapshot);
   const primaryPageView = visibleWorkbenchView(pageWorkbench, "primary");
   const showingPrimaryPluginView = primaryPageView !== undefined;
+  const showingPluginWebPage = Boolean(primaryPageView && pageWorkbench.webPageViewIds.includes(primaryPageView.view.id));
+  const showingWebPage = showingWebsite || showingPluginWebPage;
   const [accountOpen, setAccountOpen] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState(
     () => window.wuu?.initialOnboardingComplete ?? true,
@@ -5781,7 +5783,7 @@ export function App(): JSX.Element {
           style={shellStyle}
           data-wuu-component="app-shell"
           data-settings-open={settingsOpen ? "" : undefined}
-          data-web-workspace-open={showingWebsite && !settingsOpen ? "" : undefined}
+          data-web-workspace-open={showingWebPage && !settingsOpen ? "" : undefined}
           data-wuu-sidebar-mode={sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
         >
           <BrowserPiPHostReporter />
@@ -5996,6 +5998,7 @@ export function App(): JSX.Element {
         inert={workspaceToolsCoverConversation || settingsOpen || showingWebsite}
         data-wuu-component="conversation-pane"
         data-primary-plugin-view={showingPrimaryPluginView ? "" : undefined}
+        data-primary-plugin-web-page={showingPluginWebPage ? "" : undefined}
         data-native-section={showingManagementCatalog ? "catalog" : "conversations"}
         className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
           environmentPanelReserved ? " environment-panel-reserved" : ""
@@ -6534,10 +6537,10 @@ export function App(): JSX.Element {
       />
       {!poppedOutMode && !isTouchWebShell() ? <PageHistoryControls {...pageHistory}
         hidden={window.wuu.platform === "darwin" && nativeRibbonPresent && (
-          (!(showingWebsite && !settingsOpen) && sidebarDrawerPhase !== "closed")
+          (!(showingWebPage && !settingsOpen) && sidebarDrawerPhase !== "closed")
           // The expanded ribbon covers the collapsed and browser header lanes.
           // Docked content starts beyond it, so its history remains available.
-          || (nativeRibbonExpanded && (sidebarCollapsed || (showingWebsite && !settingsOpen)))
+          || (nativeRibbonExpanded && (sidebarCollapsed || (showingWebPage && !settingsOpen)))
         )}
       /> : null}
       {contextCapsule}

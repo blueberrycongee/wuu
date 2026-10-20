@@ -70,6 +70,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Give plugin website destinations the same full-width ribbon layout as browser tabs, without a duplicate plugin sidebar or page title row.
 - Keep native tab context menus responsive when a title or favicon update crosses the right-click, while validating the current tab and menu actions.
 - Dismiss the live native hover ribbon on real pointer movement into the shell or page after reopening a tab, including when the reused overlay never received a pointer-enter event.
 - Keep tab-close focus inside the native ribbon instead of moving to its duplicate shell controls.

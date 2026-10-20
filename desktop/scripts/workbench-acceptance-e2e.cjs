@@ -791,6 +791,7 @@ db.commit()
     assert.ok(await evaluate(selector => document.activeElement === document.querySelector(selector), composer));
     await capture('final-recovered-window');
   });
+  await selectThread('acceptance-reading');
   await runWebsiteAcceptance({ win, report, output, started, save, evaluate, waitFor, settle, delay, point, fill, key, pick, test,
     goConversations, goSettings, appearance, plugins, conversations }, websiteFixture);
   await test('no renderer errors or accidental inference', async () => {

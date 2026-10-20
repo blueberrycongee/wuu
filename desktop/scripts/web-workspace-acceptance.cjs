@@ -71,8 +71,17 @@ document.querySelector('#camera').onclick=async()=>{document.querySelector('#per
   fs.mkdirSync(plugin, { recursive: true });
   fs.writeFileSync(path.join(plugin, 'plugin.json'), JSON.stringify({ schemaVersion: 1, id: 'acceptance-webpage', name: 'Acceptance Webpage', version: '0.1.0',
     description: 'Authored local HTTP fixture, no external service or permission.', desktop: { entry: 'desktop.js' },
-    contributes: { navigation: [{ id: 'website-entry', view: 'website', title: 'Fixture Website' }] } }));
-  fs.writeFileSync(path.join(plugin, 'desktop.js'), `export function activate(api) { api.registerViewType({ id: 'website', title: 'Fixture Website', defaultRegion: 'primary', persistence: 'durable', render: () => api.react.createElement(api.ui.WebPage, { url: ${JSON.stringify(origin + '/extension')}, title: 'Fixture Website' }) }); }\n`);
+    contributes: { navigation: [
+      { id: 'website-entry', view: 'website', title: 'Fixture Website' },
+      { id: 'second-website-entry', view: 'second-website', title: 'Second Fixture Website' },
+      { id: 'overview-entry', view: 'overview', title: 'Fixture Overview' },
+    ] } }));
+  fs.writeFileSync(path.join(plugin, 'desktop.js'), `export function activate(api) {
+    for (const [id, title, path] of [['website', 'Fixture Website', '/extension'], ['second-website', 'Second Fixture Website', '/extension-second']]) {
+      api.registerViewType({ id, title, defaultRegion: 'primary', persistence: 'durable', render: () => api.react.createElement(api.ui.WebPage, { url: ${JSON.stringify(origin)} + path, title }) });
+    }
+    api.registerViewType({ id: 'overview', title: 'Fixture Overview', defaultRegion: 'primary', render: () => api.react.createElement('p', null, 'Ordinary plugin overview') });
+  }\n`);
   return { origin, requests, controls, downloadBytes, media, close: () => server.close() };
 }
 
@@ -897,6 +906,36 @@ async function runWebsiteAcceptance(h, fixture) {
   });
   let alphaID, savedOrder;
 
+  async function assertWebsiteLayout() {
+    await settle();
+    const layout = await evaluate(() => {
+      const visible = node => node && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0
+        && getComputedStyle(node).visibility !== 'hidden' && !node.closest('[hidden],[inert]');
+      const page = [...document.querySelectorAll('[data-wuu-component="web-workspace"]')].find(visible);
+      const canvas = page?.closest('.web-workspace-stage, .conversation-pane');
+      return {
+        page: page?.getBoundingClientRect().toJSON(),
+        canvas: canvas?.getBoundingClientRect().toJSON(),
+        canvasRadius: canvas && Number.parseFloat(getComputedStyle(canvas).borderBottomLeftRadius),
+        nativeRadius: page && Number.parseFloat(getComputedStyle(page.querySelector('.web-workspace-host')).borderBottomLeftRadius),
+        toolbar: page?.querySelector('[role="toolbar"]').getBoundingClientRect().toJSON(),
+        ribbon: document.querySelector('.sidebar-ribbon').getBoundingClientRect().toJSON(),
+        chrome: document.querySelector('.workbench-window-chrome').getBoundingClientRect().toJSON(),
+        secondarySidebar: Boolean(visible(document.querySelector('.sidebar-content'))),
+        titleRow: Boolean(visible(document.querySelector('.conversation-pane > .titlebar'))),
+      };
+    });
+    assert.ok(layout.page && layout.toolbar, 'The active website and address toolbar are visible');
+    assert.ok(Math.abs(layout.page.left - layout.ribbon.right) <= 1, 'Website starts immediately beside the ribbon');
+    assert.ok(Math.abs(layout.toolbar.top - layout.chrome.bottom) <= 1, 'Website toolbar starts below window chrome without a duplicate title row');
+    assert.ok(Math.abs(layout.page.right - layout.canvas.right) <= 1 && Math.abs(layout.page.bottom - layout.canvas.bottom) <= 1,
+      'Website fills the shared canvas without a retained conversation row taking space');
+    assert.equal(layout.nativeRadius, layout.canvasRadius, 'The native website clip follows the rounded canvas');
+    assert.equal(layout.secondarySidebar, false, 'Website destinations have no secondary plugin sidebar');
+    assert.equal(layout.titleRow, false, 'Website destinations have no duplicate page title');
+    return layout;
+  }
+
   await testNative('bundled Notion ribbon resolves its setting and creates the native website', async () => {
     const diagnostic = report.notionPlugin = {
       entry: 'notion-workspace:website', requestedURL: 'https://www.notion.so/',
@@ -982,6 +1021,7 @@ async function runWebsiteAcceptance(h, fixture) {
       assert.ok(diagnostic.events.some(event => event.event === 'did-start-navigation' && event.url === diagnostic.requestedURL), 'The actual plugin requests its default notion.so URL');
       assert.ok(last.native.some(page => page.visible), 'The Notion plugin presents its native page, independent of external network availability');
       assert.ok(created.length <= 2, `Plugin renders must not recreate native pages repeatedly: ${created.length}`);
+      diagnostic.layout = await assertWebsiteLayout();
       // Anonymous notion.so can redirect to marketing. Follow its real public
       // login link to observe the application, without entering any account data.
       const page = created.find(wc => !wc.isDestroyed() && /^https:\/\/(?:www\.)?notion\.(?:com|so)\//.test(wc.getURL()));
@@ -1550,8 +1590,21 @@ async function runWebsiteAcceptance(h, fixture) {
     const wc = await openSite('Fixture Website', '/extension');
     security(wc);
     assert.ok((await wc.executeJavaScript('document.cookie')).includes('wuu_acceptance=synthetic-session'));
+    await finishRailInteraction(wc, 'extension-full-width-layout');
+    const layout = await assertWebsiteLayout();
     await pageClick(wc, '#draft', 'type-retained-extension-draft'); await wc.insertText('Retain this extension draft across Chat');
     await capture('extension-native-website');
+    const second = await openSite('Second Fixture Website', '/extension-second');
+    await finishRailInteraction(second, 'second-extension-full-width-layout');
+    await assertWebsiteLayout();
+    await click(ribbon('Fixture Overview'), 'extension-non-website-overview');
+    await hidden('ordinary plugin overview');
+    const ordinaryNavigation = await evaluate(() => {
+      const nav = document.querySelector('.sidebar-section-navigation');
+      return nav && getComputedStyle(nav).visibility === 'visible' && nav.getBoundingClientRect().width > 0
+        ? [...nav.querySelectorAll('button')].map(node => node.textContent.trim()) : [];
+    });
+    assert.deepEqual(new Set(ordinaryNavigation), new Set(['Fixture Website', 'Second Fixture Website', 'Fixture Overview']), 'Non-website plugin views retain their contextual navigation');
     await click(conversations, 'extension-to-chat'); await hidden('extension off-stage');
     assert.ok(!wc.isDestroyed(), 'Hidden plugin page remains alive');
     const restored = await openSite('Fixture Website', '/extension');
@@ -1570,7 +1623,7 @@ async function runWebsiteAcceptance(h, fixture) {
     const replacement = await openSite('Fixture Website', '/extension');
     assert.notEqual(replacement.id, wc.id, 'Re-enabled generation gets a new page');
     assert.equal(views().filter(view => view.webContents.getURL() === origin + '/extension').length, 1, 'Exactly one replacement plugin native page');
-    return { sharedCookieRetained: true, hiddenPageRetained: true, retainedDraft: true, oldGenerationDestroyed: true, singleReplacementPage: true };
+    return { layout, multipleWebsiteDestinations: true, ordinaryNavigation, sharedCookieRetained: true, hiddenPageRetained: true, retainedDraft: true, oldGenerationDestroyed: true, singleReplacementPage: true };
   });
   // Public availability is diagnostic; actual tab ownership, chrome and return
   // behavior remain product gates even when a service blocks anonymous access.

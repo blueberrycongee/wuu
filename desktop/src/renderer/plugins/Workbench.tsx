@@ -59,6 +59,8 @@ export interface WorkbenchSnapshot extends WorkbenchLayoutState {
   /** Registered definitions are host-owned immutable snapshots. */
   viewTypes: readonly RegisteredViewType[];
   renderers: readonly RegisteredRenderer[];
+  /** Mounted native pages own their layout and lifetime, regardless of plugin ID. */
+  webPageViewIds: readonly string[];
 }
 
 const EMPTY_STATE: WorkbenchLayoutState = Object.freeze({
@@ -75,6 +77,7 @@ export class WorkbenchController {
   private readonly themeObserver: MutationObserver;
   private state: WorkbenchLayoutState;
   private snapshot: WorkbenchSnapshot;
+  private readonly webPageViews = new Map<string, number>();
   private availablePluginIds: ReadonlySet<string> | undefined;
   private readonly pendingRestoredViewIds: Set<string>;
   private nextInstance = 1;
@@ -118,6 +121,20 @@ export class WorkbenchController {
   };
 
   getSnapshot = (): WorkbenchSnapshot => this.snapshot;
+
+  retainWebPage(viewId: string): () => void {
+    const count = this.webPageViews.get(viewId) ?? 0;
+    this.webPageViews.set(viewId, count + 1);
+    if (count === 0) this.publish();
+    return () => {
+      const remaining = this.webPageViews.get(viewId)! - 1;
+      if (remaining > 0) this.webPageViews.set(viewId, remaining);
+      else {
+        this.webPageViews.delete(viewId);
+        this.publish();
+      }
+    };
+  }
 
   setAvailablePluginIds(pluginIds: ReadonlySet<string>): void {
     this.availablePluginIds = new Set(pluginIds);
@@ -398,6 +415,7 @@ export class WorkbenchController {
       activeViewByRegion: Object.freeze(activeViewByRegion),
       viewTypes: this.host.getViewTypes(),
       renderers: this.host.getRenderers(),
+      webPageViewIds: Object.freeze(views.filter((view) => this.webPageViews.has(view.id)).map((view) => view.id)),
     });
   }
 
@@ -510,6 +528,7 @@ export function DesktopWorkbench({
             view={view}
             siblingViews={views}
             active={visible?.view.id === view.id}
+            hasWebPage={snapshot.webPageViewIds.includes(view.id)}
           />
         </WorkbenchRegionPortal>,
       ];
@@ -628,6 +647,7 @@ interface WorkbenchViewProps {
   view: WorkbenchViewState;
   siblingViews: readonly WorkbenchViewState[];
   active: boolean;
+  hasWebPage: boolean;
 }
 
 function viewCommandContext(view: WorkbenchViewState) {
@@ -641,12 +661,8 @@ function viewCommandContext(view: WorkbenchViewState) {
   });
 }
 
-function WorkbenchView({ controller, definition, view, siblingViews, active }: WorkbenchViewProps): React.ReactNode {
-  const [webPageCount, setWebPageCount] = React.useState(0);
-  const retainWebPage = React.useCallback(() => {
-    setWebPageCount((count) => count + 1);
-    return () => setWebPageCount((count) => count - 1);
-  }, []);
+function WorkbenchView({ controller, definition, view, siblingViews, active, hasWebPage }: WorkbenchViewProps): React.ReactNode {
+  const retainWebPage = React.useCallback(() => controller.retainWebPage(view.id), [controller, view.id]);
   const webPageView = React.useMemo(() => ({ active, retain: retainWebPage }), [active, retainWebPage]);
   const View = definition.render;
   const commandContext = React.useMemo(() => viewCommandContext(view), [view]);
@@ -664,7 +680,7 @@ function WorkbenchView({ controller, definition, view, siblingViews, active }: W
   );
   // Ordinary plugin views still unmount when hidden. A native page keeps its
   // owner mounted until the page, view, or extension generation is removed.
-  if (!active && webPageCount === 0) return null;
+  if (!active && !hasWebPage) return null;
   return (
     <section
       className={`plugin-workbench-view plugin-workbench-view-${view.region}`}
