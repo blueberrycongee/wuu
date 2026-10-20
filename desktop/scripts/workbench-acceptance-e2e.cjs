@@ -195,7 +195,20 @@ async function point(target, scroll = true) {
     if (scroll) node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const r = node.getBoundingClientRect();
-    const x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
+    let x = Math.round(r.x + r.width / 2), y = Math.round(r.y + r.height / 2);
+    // Native-backed rails retain expanded measurement bounds while only their
+    // collapsed icon lane is painted. Click a visible child, never the clipped
+    // label midpoint or a renderer-only event underneath native chrome.
+    if (!node.contains(document.elementFromPoint(x, y))
+      && node.closest('.sidebar-ribbon[data-native-supported="true"]')) {
+      for (const child of node.children) {
+        const b = child.getBoundingClientRect();
+        const cx = Math.round(b.x + b.width / 2), cy = Math.round(b.y + b.height / 2);
+        if (b.width > 0 && b.height > 0 && child.contains(document.elementFromPoint(cx, cy))) {
+          x = cx; y = cy; break;
+        }
+      }
+    }
     const hit = document.elementFromPoint(x, y);
     if (r.width < 1 || r.height < 1 || x < 0 || x >= innerWidth || y < 0 || y >= innerHeight || !node.contains(hit)) {
       throw new Error(`Occluded target ${selector}: ${JSON.stringify({ rect: r.toJSON(), hit: hit?.outerHTML.slice(0, 260) })}`);

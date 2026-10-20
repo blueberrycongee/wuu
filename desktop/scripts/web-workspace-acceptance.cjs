@@ -1123,7 +1123,7 @@ async function runWebsiteAcceptance(h, fixture) {
       assert.equal(nativeView('/alpha').webContents.isFocused(), focusBeforeHover, 'Pointer hover preserves existing native keyboard focus');
       assert.deepEqual(nativeView('/alpha').getBounds(), hostBefore, 'Hover expansion does not resize the native website');
       assert.deepEqual(await nativeView('/alpha').webContents.executeJavaScript('({width:innerWidth,height:innerHeight})'), viewportBefore, 'Hover expansion leaves the page viewport unchanged');
-      assert.ok(await evaluateRibbon(id => { const close = document.querySelector(`[data-ribbon-close-id="${id}"]`); return close && getComputedStyle(close).visibility === 'visible' && Number(getComputedStyle(close).opacity) > 0.95; }, siteIDs.get('Fixture Beta')), 'Hovered native tab exposes its close control');
+      await until(() => evaluateRibbon(id => { const close = document.querySelector(`[data-ribbon-close-id="${id}"]`); return close && getComputedStyle(close).visibility === 'visible' && Number(getComputedStyle(close).opacity) > 0.95; }, siteIDs.get('Fixture Beta')), 'Hovered native tab exposes its close control after its reveal transition', 4000);
       await capture('vertical-left-tabs-with-hover-close');
       await leaveRail();
       await until(() => nativeView('/alpha')?.getVisible() && !chromeView('ribbon')?.getVisible(), 'Pointer leave dismisses chrome while retaining the same live page');
@@ -1382,6 +1382,10 @@ async function runWebsiteAcceptance(h, fixture) {
         }
         samples.push({ theme, size, width, zoom, bounds, chrome });
       }
+    } catch (error) {
+      report.nativeBoundsJourneyFailure = String(error.stack || error);
+      save();
+      throw error;
     } finally {
       if (visualTabID && (await readSite()).tabs.some(tab => tab.id === visualTabID)) {
         // A failed visual assertion must not leave this journey's blank tab as
