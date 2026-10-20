@@ -5,6 +5,15 @@ import {
 } from "../shared/protocol";
 
 const zhCN = {
+  displayShareTitle: "选择要分享的内容",
+  displayShareWith: "分享给",
+  displayShareSource: "共享来源",
+  displayShareScreens: "屏幕",
+  displayShareWindows: "窗口",
+  displaySharePreviewUnavailable: "暂无预览",
+  displayShareVideoOnly: "仅分享画面，不包含系统音频。",
+  displayShareCancel: "取消",
+  displayShareConfirm: "分享",
   updateCheck: "检查更新…",
   updateChecking: "正在检查更新…",
   updateProgress: "正在下载更新… {percent}%",
@@ -97,6 +106,15 @@ const zhCN = {
 export type MainTranslationKey = keyof typeof zhCN;
 
 const enUS = {
+  displayShareTitle: "Choose what to share",
+  displayShareWith: "Share with",
+  displayShareSource: "Sharing source",
+  displayShareScreens: "Screens",
+  displayShareWindows: "Windows",
+  displaySharePreviewUnavailable: "Preview unavailable",
+  displayShareVideoOnly: "Video only. System audio will not be shared.",
+  displayShareCancel: "Cancel",
+  displayShareConfirm: "Share",
   updateCheck: "Check for Updates…",
   updateChecking: "Checking for Updates…",
   updateProgress: "Downloading Update… {percent}%",

@@ -1,4 +1,5 @@
-import { BrowserWindow, Menu, clipboard, dialog, shell, type DownloadItem, type WebContents, type WebContentsView } from "electron";
+import { BrowserWindow, Menu, clipboard, dialog, shell, webContents, type DisplayMediaRequestHandlerHandlerRequest, type Streams, type DownloadItem, type WebContents, type WebContentsView } from "electron";
+import { chooseBrowserDisplaySource } from "./browserDisplayCapture";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { NavigationEntry } from "electron";
@@ -625,6 +626,41 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     return this.contentsOwners.has(id);
   }
 
+  requestDisplayMedia(request: DisplayMediaRequestHandlerHandlerRequest, callback: (streams: Streams | null) => void): void {
+    const frame = request.frame;
+    const contents = frame && !frame.isDestroyed() ? webContents.fromFrame(frame) : undefined;
+    const owned = contents && this.contentsOwners.get(contents.id);
+    const origin = requestOrigin(request.securityOrigin);
+    // This picker is scoped to foreground top-level documents. Embedded frames
+    // need their own origin/lifetime handling before joining this flow.
+    if (!frame || !contents || !owned || !origin || !request.videoRequested || !request.userGesture
+      || frame !== contents.mainFrame || this.permissionPrompts.has(contents.id)) {
+      callback(null);
+      return;
+    }
+    const parent = BrowserWindow.fromWebContents(contents) ?? owned.page.owner;
+    const navigationGeneration = owned.navigationGeneration;
+    const current = () => !contents.isDestroyed() && !frame.isDestroyed() && !frame.detached
+      && frame === contents.mainFrame && this.contentsOwners.get(contents.id) === owned
+      && owned.navigationGeneration === navigationGeneration && !this.automationRestricted(owned.page)
+      && requestOrigin(frame.url) === origin && requestOrigin(contents.getURL()) === origin
+      && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized()
+      && (contents !== owned.page.contents || Boolean(owned.page.bounds && owned.page.view.getVisible()
+        && owned.page.group.activeTabId === owned.page.tab.id));
+    if (!current()) { callback(null); return; }
+    this.permissionPrompts.add(contents.id);
+    void chooseBrowserDisplaySource(parent, origin, current).then(source => {
+      const allowed = source && current();
+      if (allowed) owned.page.discardProtected = true;
+      this.permissionPrompts.delete(contents.id);
+      // No system-audio grant: platform support and consent differ from video.
+      callback(allowed ? { video: source } : null);
+    }, () => {
+      this.permissionPrompts.delete(contents.id);
+      callback(null);
+    });
+  }
+
   checkPermission(contents: WebContents, permission: string, requestingOrigin: string, mediaType?: string): boolean {
     const origin = requestOrigin(requestingOrigin);
     const topOrigin = requestOrigin(contents.getURL());
@@ -688,8 +724,13 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
           contents.focus();
         }
       }
+      // Chromium can synchronously continue into display-source selection.
+      this.permissionPrompts.delete(contents.id);
       callback(allowed);
-    }, () => callback(false)).finally(() => { this.permissionPrompts.delete(contents.id); });
+    }, () => {
+      this.permissionPrompts.delete(contents.id);
+      callback(false);
+    });
   }
 
   private group(owner: BrowserWindow, id: string): WorkspaceGroup {

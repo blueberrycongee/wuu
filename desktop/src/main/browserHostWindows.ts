@@ -1,4 +1,4 @@
-import type { DownloadItem, FilesystemPermissionRequest, MediaAccessPermissionRequest, OpenExternalPermissionRequest, PermissionRequest, HandlerDetails, LoadURLOptions, Rectangle, Session, WebContents, WebContentsViewConstructorOptions, WindowOpenHandlerResponse } from "electron";
+import type { DisplayMediaRequestHandlerHandlerRequest, Streams, DownloadItem, FilesystemPermissionRequest, MediaAccessPermissionRequest, OpenExternalPermissionRequest, PermissionRequest, HandlerDetails, LoadURLOptions, Rectangle, Session, WebContents, WebContentsViewConstructorOptions, WindowOpenHandlerResponse } from "electron";
 import type { ActivitySession, BrowserListedTab, BrowserSurfaceSnapshot, BrowserTabStatus, BrowserTurnEndedResult, JsonValue, ServerEvent } from "../shared/protocol";
 import { activityTimestamp } from "../shared/activityTimestamp";
 import {
@@ -2481,6 +2481,7 @@ export type BrowserPermissionRequestDetails = PermissionRequest | FilesystemPerm
 
 export interface BrowserSessionPermissionDelegate {
   ownsWebContents(id: number): boolean;
+  requestDisplayMedia?(request: DisplayMediaRequestHandlerHandlerRequest, callback: (streams: Streams | null) => void): void;
   handleDownload?(contents: WebContents, item: DownloadItem): void;
   requestPermission(
     contents: WebContents,
@@ -2498,6 +2499,12 @@ export function installBrowserSessionHandlers(
   coordinator: BrowserHostCoordinator,
   websites?: BrowserSessionPermissionDelegate,
 ): void {
+  // The macOS system picker bypasses this handler, including our ownership
+  // checks. Keep source selection inside the user-tab delegate on both platforms.
+  session.setDisplayMediaRequestHandler((request, callback) => {
+    if (websites?.requestDisplayMedia) websites.requestDisplayMedia(request, callback);
+    else callback(null);
+  }, { useSystemPicker: false });
   session.setPermissionRequestHandler((webContents, permission, callback, details) => {
     if (webContents && coordinator.ownsWebContents(webContents.id)) {
       callback(browserPermissionDecision(true, permission));
