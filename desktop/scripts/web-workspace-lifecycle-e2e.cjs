@@ -11,6 +11,26 @@ const output = path.resolve(process.env.WUU_LIFECYCLE_OUTPUT || 'out/e2e/web-wor
 fs.mkdirSync(output, { recursive: true });
 process.on('uncaughtException',error=>{console.error(error);fs.writeFileSync(path.join(output,'failure.txt'),String(error.stack));process.exit(1)});
 app.setPath('userData', path.join(output, 'profile'));
+let diagnosticState = () => ({ phase: 'starting' });
+const diagnostic = (type, details = {}) => {
+  const entry = { at: new Date().toISOString(), type, ...details };
+  console.log('LIFECYCLE_TRACE', JSON.stringify(entry));
+  fs.appendFileSync(path.join(output, 'lifecycle-trace.jsonl'), JSON.stringify(entry) + '\n');
+};
+app.on('web-contents-created', (_event, contents) => {
+  const id = contents.id;
+  const close = contents.close.bind(contents);
+  contents.close = options => {
+    diagnostic('close-call', { id, url: contents.isDestroyed() ? null : contents.getURL(), options });
+    try { const result = close(options); diagnostic('close-return', { id }); return result; }
+    catch (error) { diagnostic('close-error', { id, error: String(error) }); throw error; }
+  };
+  for (const event of ['close', 'destroyed', 'will-prevent-unload', 'unresponsive', 'responsive', 'render-process-gone']) {
+    contents.on(event, () => diagnostic(event, { id }));
+  }
+});
+const diagnosticTimer = setInterval(() => diagnostic('watchdog-progress', diagnosticState()), 15000);
+diagnosticTimer.unref();
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn, label) { for (let i = 0; i < 300; i++) { if (await fn()) return; await delay(20); } throw new Error('Timeout: ' + label); }
 (async () => {
@@ -37,6 +57,12 @@ async function until(fn, label) { for (let i = 0; i < 300; i++) { if (await fn()
   const win = new BrowserWindow({ width: 900, height: 700, webPreferences: { sandbox: true } });
   await win.loadURL('data:text/html,<title>Lifecycle fixture</title>');
   const changes = [], host = new WebWorkspaceHost((_owner, state) => changes.push(state), () => {}, {downloads});
+  diagnosticState = () => ({ ownerDestroyed: win.isDestroyed(), discarding: host.discarding,
+    pages: [...host.pages.values()].map(page => ({ id: page.contents.id, tabId: page.tab.id,
+      destroyed: page.contents.isDestroyed(), url: page.tab.url, discarding: page.discarding,
+      pendingClose: Boolean(page.pendingClose), active: page.group.activeTabId === page.tab.id,
+      discarded: Boolean(page.tab.discarded), protected: page.discardProtected,
+      loading: !page.contents.isDestroyed() && page.contents.isLoading() })) });
   ipcMain.on('wuu:web-workspace-page-edited', event => host.protectEditedPage(event.sender));
   host.initializeTabs(win, []);
   const group = 'ribbon-browser';
@@ -163,4 +189,10 @@ async function until(fn, label) { for (let i = 0; i < 300; i++) { if (await fn()
   await veto.wc.executeJavaScript('window.onbeforeunload=null;void 0');
   host.destroyAll(); win.destroy(); server.close(); app.quit();
 })().catch(error => { console.error(error); fs.writeFileSync(path.join(output, 'failure.txt'), String(error.stack)); process.exit(1); });
-setTimeout(() => process.exit(1), 90000).unref();
+setTimeout(() => {
+  const snapshot = diagnosticState();
+  diagnostic('watchdog-timeout', snapshot);
+  fs.writeFileSync(path.join(output, 'timeout-state.json'), JSON.stringify(snapshot, null, 2));
+  fs.writeFileSync(path.join(output, 'failure.txt'), 'Lifecycle fixture exceeded 90 seconds; see lifecycle-trace.jsonl and timeout-state.json.');
+  process.exit(1);
+}, 90000).unref();

@@ -4336,11 +4336,16 @@ pre {
   /* Outer width, horizontal padding, and 12-col grid come from .session-flow
      (applied via className in JSX). View-specific rules stay here. */
   row-gap: var(--space-6);
+  min-width: 0;
+  /* Fixed gutters alone can exceed a narrow conversation beside both rails.
+     Keep the shared rhythm when it fits, and let the grid shrink with its pane. */
+  column-gap: min(var(--wuu-grid-gutter), calc(100% / var(--wuu-grid-cols) / 2));
 }
 
 /* The greeting follows the UI size between the display and hero roles, so
  * at large text it still leads the summary numbers beneath it. */
 .empty-home h2 {
+  flex: 1 1 10em;
   min-width: 0;
   overflow-wrap: anywhere;
   margin: 0;
@@ -4358,6 +4363,8 @@ pre {
      greeting shares its left edge with the usage overview and composer. */
   grid-column: 1 / -1;
   display: flex;
+  /* Move the title below the mascot before its words become a narrow column. */
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-start;
   gap: 20px;

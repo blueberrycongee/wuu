@@ -9,6 +9,7 @@ on:
       - 'desktop/src/main/chromeOverlayHost.ts'
       - 'desktop/src/renderer/WebWorkspace.tsx'
       - 'desktop/src/renderer/TabMotion.ts'
+      - 'desktop/src/renderer/styles/turns.css'
       - 'desktop/scripts/browser-window-perf-e2e.cjs'
       - '.github/workflows/browser-window-performance.yml'
   workflow_dispatch:

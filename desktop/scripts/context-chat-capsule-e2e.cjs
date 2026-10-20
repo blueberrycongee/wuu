@@ -42,10 +42,29 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const evaluate = (target, fn, value) => target.executeJavaScript(`(${fn})(${JSON.stringify(value)})`, true);
 async function until(fn, label = phase) { const deadline = Date.now() + 30000; while (Date.now() < deadline) { const value = await fn(); if (value) return value; await delay(30); } throw new Error(`Timed out: ${label}`); }
 async function shot(name) {
+  const previousPhase = phase;
+  phase = `${previousPhase}: capture ${name}`;
   const capsule = capsuleView();
   if (capsule?.getVisible()) await evaluate(capsule.webContents, async () => {
-    await Promise.all(document.getAnimations().filter(animation => animation.playState === 'running' && Number.isFinite(animation.effect.getComputedTiming().endTime)).map(animation => animation.finished));
-    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const deadline = performance.now() + 3000;
+    const running = () => document.getAnimations().filter(animation => animation.playState === 'running'
+      && Number.isFinite(animation.effect?.getComputedTiming().endTime));
+    // Hover/menu changes can cancel a CSS transition while capture awaits it.
+    // Only that expected AbortError is recoverable; recheck replacement motion.
+    for (;;) {
+      let timer;
+      try {
+        await Promise.race([
+          Promise.all(running().map(animation => animation.finished.catch(error => {
+            if (error?.name !== 'AbortError') throw error;
+          }))),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Capsule capture motion did not settle')), Math.max(0, deadline - performance.now())); }),
+        ]);
+      } finally { clearTimeout(timer); }
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      if (!running().length) break;
+      if (performance.now() >= deadline) throw new Error('Capsule capture replacement motion did not settle');
+    }
   });
   // BrowserWindow.capturePage omits WebContentsView children. Capture the real
   // X11 compositor so the fixture website and privileged capsule are visible.
@@ -55,7 +74,7 @@ async function shot(name) {
     const capture = spawnSync('/usr/sbin/screencapture', ['-x', '-o', '-l', main.getMediaSourceId().split(':')[1], file], { encoding: 'utf8' });
     assert.equal(capture.status, 0, capture.stderr);
     assert.ok(!nativeImage.createFromPath(file).isEmpty());
-    screenshots.push(`${name}.png`); return;
+    screenshots.push(`${name}.png`); phase = previousPhase; return;
   }
   const bounds = main.getBounds();
   const display = screen.getDisplayMatching(bounds);
@@ -68,7 +87,7 @@ async function shot(name) {
     '-i', `${process.env.DISPLAY}+${bounds.x},${bounds.y}`, '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1'], { timeout: 12000, maxBuffer: 24 * 1024 * 1024 });
   assert.equal(capture.status, 0, String(capture.stderr || capture.error));
   assert.ok(!nativeImage.createFromBuffer(capture.stdout).isEmpty());
-  fs.writeFileSync(path.join(output, `${name}.png`), capture.stdout); screenshots.push(`${name}.png`);
+  fs.writeFileSync(path.join(output, `${name}.png`), capture.stdout); screenshots.push(`${name}.png`); phase = previousPhase;
 }
 const capsuleView = () => main.contentView.children.find(view => view.webContents && !view.webContents.isDestroyed()
   && view.webContents.getURL().endsWith('/chrome-overlay.html?surface=capsule'));
@@ -251,7 +270,7 @@ async function run(port) {
   server.close(); app.quit();
 }
 async function fail(error) {
-  errors.push(error.stack || String(error)); console.error(error);
+  errors.push(error?.stack || (error?.name || error?.message ? `${error.name || 'Error'}: ${error.message || ''}` : String(error))); console.error(error);
   if (main && !main.isDestroyed()) {
     diagnostics = { ownerVisible: main.isVisible(), ownerFocused: main.isFocused(), bounds: main.getBounds(), display: screen.getDisplayMatching(main.getBounds()), views: main.contentView.children.filter(view => view.webContents && !view.webContents.isDestroyed())
       .map(view => ({ url: view.webContents.getURL(), visible: view.getVisible(), focused: view.webContents.isFocused(), bounds: view.getBounds() })) };

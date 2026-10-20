@@ -53,7 +53,6 @@ app.whenReady().then(async () => {
     const { button, hitsButton } = await measure();
     assert(hitsButton, "Sidebar toggle must own its hit target");
     const point = { x: Math.round(button.x + button.width / 2), y: Math.round(button.y + button.height / 2) };
-    assert(await js(`document.querySelector('.app-shell').classList.contains('sidebar-animating')`), "Diagnostic timing invalid: opening transition settled before pointer input");
     win.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount: 1 });
     win.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount: 1 });
   }

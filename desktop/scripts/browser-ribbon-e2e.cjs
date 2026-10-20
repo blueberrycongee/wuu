@@ -306,8 +306,17 @@ function key(keyCode) {
     return capsule?.getVisible() && capsule.webContents.isFocused();
   }, "native capsule editor visible and focused");
   const capsuleRun = code => capsule.webContents.executeJavaScript(code, true);
-  const editorPoint = await capsuleRun(`(()=>{const r=document.querySelector("[data-context-capsule] input").getBoundingClientRect();
-    return{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
+  // The native paint handshake precedes the finite clip-path unfold. A click
+  // on the still-clipped editor hits its background and legitimately blurs it.
+  // Wait for the actual hit target, not an arbitrary delay or forced DOM focus.
+  let editorPoint;
+  await until(async () => {
+    editorPoint = await capsuleRun(`(()=>{const input=document.querySelector("[data-context-capsule] input");
+      if(!input)return null;const r=input.getBoundingClientRect();
+      const point={x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)};
+      return r.width>0&&r.height>0&&document.elementFromPoint(point.x,point.y)===input?point:null})()`);
+    return editorPoint;
+  }, "capsule input center is hit-testable after reveal");
   capsule.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...editorPoint });
   capsule.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...editorPoint });
   await until(() => capsuleRun('document.activeElement?.matches("[data-context-capsule] input")'), "capsule input owns focus");
@@ -387,7 +396,15 @@ function key(keyCode) {
   console.log(checks.join("\n"));
   console.log("Evidence:", output);
 })().catch(async error => {
-  if (win) fs.writeFileSync(path.join(output, "failure.png"), (await win.webContents.capturePage()).toPNG());
+  if (win && !win.isDestroyed()) {
+    const surfaces = await Promise.all(win.contentView.children.filter(view => view.webContents && !view.webContents.isDestroyed()).map(async view => ({
+      url: view.webContents.getURL(), visible: view.getVisible(), focused: view.webContents.isFocused(), bounds: view.getBounds(),
+      renderer: await view.webContents.executeJavaScript(`({active:document.activeElement?.outerHTML?.slice(0,400),
+        animations:document.getAnimations().map(a=>({state:a.playState,end:a.effect?.getComputedTiming().endTime}))})`).catch(reason => ({ error: String(reason) })),
+    })));
+    fs.writeFileSync(path.join(output, "failure-surfaces.json"), JSON.stringify(surfaces, null, 2));
+    fs.writeFileSync(path.join(output, "failure.png"), (await win.webContents.capturePage()).toPNG());
+  }
   fs.writeFileSync(path.join(output, "failure-events.json"), JSON.stringify(nativeEvents, null, 2));
   console.error(error); fs.writeFileSync(path.join(output, "failure.txt"), String(error.stack)); process.exitCode = 1;
 }).finally(() => { if (win) nativeHost?.close(win); win?.destroy(); app.exit(process.exitCode || 0); });
