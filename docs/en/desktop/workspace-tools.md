@@ -123,6 +123,14 @@ In the experimental workbench, website tabs in the left ribbon retain their page
 
 Hover over the left tab ribbon to expand it. Switching between website tabs and app pages keeps the ribbon open while the pointer stays inside, so you can select several destinations without reopening it. Move the pointer away to collapse it, or press Escape to dismiss the focused ribbon.
 
+Use **Up/Down**, **Home/End** to move keyboard focus through the tab list without changing the selected page; press Enter to select it. **Alt + Up/Down** reorders a tab. Pinned tabs omit the hover close button. A playing or muted tab shows an audio control, and its context menu can mute it independently of other tabs. Closing a background tab keeps focus in the page you are editing.
+
+Tabs remember their order, selected tab, pinned state, zoom, and mute setting across restarts. Restored background tabs load when selected. Reopening a tab closed during the current run restores its back/forward history; it currently reappears at the end of the list. Restart recovery does not restore every page's JavaScript state or unsaved form contents.
+
+The history and bookmarks panel can remove individual history entries and rename bookmarks. The download panel keeps up to 100 finished records across restarts. Transfers interrupted by quitting appear as interrupted; Wuu does not claim they can resume after restart. Files already downloaded remain on disk.
+
+Camera and microphone requests are granted separately for the requesting tab and origin. Screen sharing requires a foreground user page, explicit source selection, and confirmation. The picker shows screens and windows with previews; it shares video only. Agent-controlled pages and embedded frames cannot initiate this flow. Operating-system recording permission is still required.
+
 Ordinary background tabs become eligible for memory reclamation after 30 minutes without selection; Wuu checks once a minute. Selecting a reclaimed tab reloads its page, restoring navigation history, zoom, and the saved scroll offset. Cookies and the shared browser profile remain intact. Page scripts start again, so pin a tab if its background work must remain running.
 
 The selected tab is kept even when Wuu is hidden. Pinned tabs, edited forms, playing media, captured pages, active downloads, automation, and pages that refuse to unload are protected. Pages with embedded frames, session storage, editors, live opener connections, or changed background titles/icons also stay resident because Electron cannot restore all their live state. This conservative policy does not promise a particular memory reduction or replace macOS visual acceptance.
@@ -159,7 +167,7 @@ Open **Settings → Browser → Browser extensions → Load unpacked** and choos
 
 Wuu keeps an installed copy and restores enabled extensions on restart. Expand a row for its version, ID, source, status and permissions. Disable or remove an extension to unload it; reload open pages to remove scripts that already ran. Removing the entry leaves its source folder and browser data intact. To apply a local update, enable the extension and choose **Reload**. New required or optional permissions need another review, and a failed load restores the previous working copy. Wuu does not download updates.
 
-These browser extensions are separate from Wuu TypeScript plugins. [Electron supports a subset of Chrome's extension API](https://www.electronjs.org/docs/latest/api/extensions), so loading successfully does not establish full compatibility. Chrome Web Store/CRX installation, toolbar actions, action popups and options-page integration are not provided. Manifest V3 background service workers may not work. Legacy direct-folder installs need review before migrating to an installed copy; keyless extensions receive a new ID, and old data is retained without automatic migration.
+These browser extensions are separate from Wuu TypeScript plugins. [Electron supports a subset of Chrome's extension API](https://www.electronjs.org/docs/latest/api/extensions), so loading successfully does not establish full compatibility. Extensions that declare an options page have a settings button. The page opens in an isolated window using the same browser profile and closes when its extension is disabled or its Wuu window closes. Chrome Web Store/CRX installation, toolbar actions and action popups are not provided. Manifest V3 background service workers may not work. Legacy direct-folder installs need review before migrating to an installed copy; keyless extensions receive a new ID, and old data is retained without automatic migration.
 
 ## Live activity preview
 

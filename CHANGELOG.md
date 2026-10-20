@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add per-tab audio controls, keyboard navigation for long vertical tab lists, persistent download history, bookmark renaming, and individual history deletion.
+- Open browser extension options in isolated windows and provide an explicit screen/window sharing picker.
+
 - Navigate window-local app page history across conversations, settings, workspace tools, and workbench destinations without changing website Back/Forward history.
 - Reclaim eligible website tabs after 30 minutes in the background, restoring their history and scroll position on selection while protecting edited, pinned, media, and other stateful pages.
 - Review local browser extension permissions before loading, manage installed snapshots with details and reload controls, and preserve the previous working copy when an update fails.
