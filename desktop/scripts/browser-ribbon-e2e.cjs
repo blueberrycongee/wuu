@@ -274,6 +274,61 @@ function key(keyCode) {
   await until(() => nativeEvents.some(event => event.command?.type === "dismiss" && event.command.reason === "tab"), "Shift+Tab leaves the first tabbable row");
   assert.equal(page.webContents.isFocused(), true);
   checks.push("Changing the selected tab reveals it; Shift+Tab from the roving tab stop dismisses the ribbon and restores page focus");
+
+  // A persistent editor must not disappear between owner resize notifications,
+  // even if a microtask makes it visible again before the final screenshot.
+  const capsuleRequest = { version: 1, token: "native-capsule-resize", generation: 1,
+    bounds: { x: 280, y: 400, width: 416, height: 96 }, focus: true, appearance,
+    model: { kind: "capsule", expanded: true, menuOpen: false, draft: "", busy: false,
+      sourceTitle: "Live browser page", label: "Ask Wuu", placeholder: "Ask about this page",
+      sendLabel: "Send", openLabel: "Open chat", collapseLabel: "Collapse and keep draft" } };
+  nativeHost.show(win, capsuleRequest);
+  let capsule;
+  await until(() => {
+    capsule = win.contentView.children.find(view => view.webContents?.getURL().includes("surface=capsule"));
+    return capsule?.getVisible() && capsule.webContents.isFocused();
+  }, "native capsule editor visible and focused");
+  const capsuleRun = code => capsule.webContents.executeJavaScript(code, true);
+  const editorPoint = await capsuleRun(`(()=>{const r=document.querySelector("[data-context-capsule] input").getBoundingClientRect();
+    return{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
+  capsule.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...editorPoint });
+  capsule.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...editorPoint });
+  await until(() => capsuleRun('document.activeElement?.matches("[data-context-capsule] input")'), "capsule input owns focus");
+  const draft = "Keep this browser draft through window resizing";
+  await capsule.webContents.insertText(draft);
+  await until(() => capsuleRun(`document.querySelector("[data-context-capsule] input").value===${JSON.stringify(draft)}`), "native capsule accepts draft");
+  await capsuleRun('document.querySelector("[data-context-capsule] input").setSelectionRange(5,22)');
+  const resizeEvidence = { type: "capsule-resize", transitions: [], samples: [] };
+  nativeEvents.push(resizeEvidence);
+  const capsuleSetVisible = capsule.setVisible.bind(capsule);
+  capsule.setVisible = visible => {
+    const before = capsule.getVisible();
+    const result = capsuleSetVisible(visible);
+    const after = capsule.getVisible();
+    if (before !== after) resizeEvidence.transitions.push({ visible: after, at: performance.now() });
+    return result;
+  };
+  for (const [width, height] of [[940, 720], [1080, 800], [820, 660], [1140, 820], [900, 700], [1000, 760]]) {
+    const resized = new Promise(resolve => win.once("resize", resolve));
+    win.setSize(width, height);
+    await resized;
+    const editor = await capsuleRun(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      const input=document.querySelector("[data-context-capsule] input");
+      resolve({value:input.value,start:input.selectionStart,end:input.selectionEnd,active:document.activeElement===input});
+    })))`);
+    resizeEvidence.samples.push({ window: win.getBounds(), visible: capsule.getVisible(),
+      focused: capsule.webContents.isFocused(), editor });
+  }
+  fs.writeFileSync(path.join(output, "capsule-resize.json"), JSON.stringify(resizeEvidence, null, 2));
+  assert.equal(resizeEvidence.transitions.some(event => !event.visible), false, "Resizing the owner must never hide the persistent capsule");
+  for (const sample of resizeEvidence.samples) {
+    assert.equal(sample.visible, true);
+    assert.equal(sample.focused, true, "Resizing preserves the native capsule keyboard owner");
+    assert.deepEqual(sample.editor, { value: draft, start: 5, end: 22, active: true }, "Resizing preserves the capsule draft and selection");
+  }
+  fs.writeFileSync(path.join(output, "native-capsule-after-resize.png"), (await capsule.webContents.capturePage()).toPNG());
+  screenshots.push("native-capsule-after-resize.png");
+  checks.push("Repeated owner resize keeps the native capsule continuously visible and preserves editor draft, selection and focus");
   fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ status: "passed", versions: process.versions, checks, screenshots, limitations,
     nativeEvents, scope: "Production React/CSS and native ChromeOverlayHost over a live webpage. Synthetic tab models; complete app navigation is covered by workspace acceptance." }, null, 2));
   console.log(checks.join("\n"));

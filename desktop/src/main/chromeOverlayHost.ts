@@ -425,7 +425,15 @@ export class ChromeOverlayHost {
     this.owner = owner;
     const close = () => this.close(owner);
     owner.on("blur", close).on("hide", close).on("minimize", close);
-    owner.on("resize", () => { close(); queueMicrotask(() => this.restoreCapsule(owner)); });
+    owner.on("resize", () => {
+      for (const surface of this.surfaces.values()) if (surface.owner === owner) {
+        // Persistent chrome must keep its native visibility and keyboard owner
+        // during live resize; hiding and restoring it interrupts both.
+        if (surface.kind === "capsule") {
+          if (surface.view.getVisible()) this.layout(surface);
+        } else this.dismiss(surface, "owner");
+      }
+    });
     owner.on("focus", () => this.restoreCapsule(owner)).on("show", () => this.restoreCapsule(owner)).on("restore", () => this.restoreCapsule(owner));
     owner.webContents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) { close(); for (const value of this.surfaces.values()) if (value.kind === "capsule") this.dismiss(value); } });
     owner.webContents.on("render-process-gone", () => { close(); for (const value of this.surfaces.values()) if (value.kind === "capsule") this.dismiss(value); });

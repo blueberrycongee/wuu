@@ -151,7 +151,7 @@ async function phase(name) {
   win.setBounds({ x: 150, y: 120, width: 1240, height: 800 }); win.show(); win.focus(); guest.focus();
   await delay(1000);
   await Promise.all([evaluate(win.webContents, () => { window.__browserPerf.start(); }), evaluate(guest, () => { window.__browserPerf.start(); })]);
-  const result = { name, ipc: {}, sent: {}, windowEvents: {}, windowBounds: [win.getBounds()], nativeSetBounds: 0, nativeSetVisible: 0, nativeSetZoomFactor: 0, nativeReparent: 0, inputSent: 0, inputAckMs: [], mainIntervalsMs: [] };
+  const result = { name, ipc: {}, sent: {}, windowEvents: {}, windowBounds: [win.getBounds()], nativeSetBounds: 0, nativeSetVisible: 0, nativeSetZoomFactor: 0, nativeReparent: 0, nativeChrome: {}, inputSent: 0, inputAckMs: [], mainIntervalsMs: [] };
   active = result;
   const started = performance.now(); let previous = started;
   const clock = setInterval(() => { const now = performance.now(); result.mainIntervalsMs.push(now - previous); previous = now; }, 16);
@@ -243,8 +243,35 @@ async function run() {
   }
   const zoom = guest.setZoomFactor.bind(guest);
   guest.setZoomFactor = (...args) => { if (active) active.nativeSetZoomFactor++; return zoom(...args); };
+  const watchedChrome = new Set();
+  const chromeCounter = child => {
+    const url = child.webContents?.getURL();
+    if (!active || !url?.startsWith('wuu-chrome://ui/')) return null;
+    const kind = new URL(url).searchParams.get('surface');
+    return active.nativeChrome[kind] ||= { boundsCalls: 0, visibilityChanges: 0, reparentCalls: 0 };
+  };
+  const watchChrome = child => {
+    if (child === view || !child.webContents || watchedChrome.has(child)) return;
+    watchedChrome.add(child);
+    for (const method of ['setBounds', 'setVisible']) {
+      const original = child[method].bind(child);
+      child[method] = (...args) => {
+        const before = child.getVisible(), result = original(...args), counter = chromeCounter(child);
+        if (counter && method === 'setBounds') counter.boundsCalls++;
+        if (counter && method === 'setVisible' && before !== child.getVisible()) counter.visibilityChanges++;
+        return result;
+      };
+    }
+  };
+  for (const child of win.contentView.children) watchChrome(child);
   const addChild = win.contentView.addChildView.bind(win.contentView);
-  win.contentView.addChildView = (...args) => { if (active && args[0] === view) active.nativeReparent++; return addChild(...args); };
+  win.contentView.addChildView = (...args) => {
+    if (active && args[0] === view) active.nativeReparent++;
+    watchChrome(args[0]);
+    const counter = chromeCounter(args[0]);
+    if (counter) counter.reparentCalls++;
+    return addChild(...args);
+  };
   report.probes = { host: await evaluate(win.webContents, installProbe), guest: await evaluate(guest, installProbe) };
   report.environment.gpuFeatureStatus = app.getGPUFeatureStatus();
   report.environment.window = win.getBounds();

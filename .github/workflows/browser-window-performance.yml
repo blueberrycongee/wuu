@@ -6,6 +6,7 @@ on:
     paths:
       - 'desktop/src/main/webWorkspaceHost.ts'
       - 'desktop/src/main/browserHostWindows.ts'
+      - 'desktop/src/main/chromeOverlayHost.ts'
       - 'desktop/src/renderer/WebWorkspace.tsx'
       - 'desktop/scripts/browser-window-perf-e2e.cjs'
       - '.github/workflows/browser-window-performance.yml'
@@ -149,6 +150,9 @@ jobs:
             }
             lines.push('', '| Phase | setBounds / setVisible / zoom / reparent | Bounds IPC | Input ack p95 / max ms | Input acknowledged / sent |', '|---|---|---|---|---|');
             for (const phase of report.phases) lines.push(`| ${phase.name} | ${phase.nativeSetBounds} / ${phase.nativeSetVisible} / ${phase.nativeSetZoomFactor} / ${phase.nativeReparent} | ${phase.ipc['wuu:web-workspace-bounds'] || 0} | ${fixed(phase.inputDispatchToAck.p95Ms)} / ${fixed(phase.inputDispatchToAck.maxMs)} | ${phase.inputDispatchToAck.count} / ${phase.inputSent} |`);
+            lines.push('');
+            lines.push('| Phase | Native chrome | Bounds calls | Visibility changes | Reparent calls |', '|---|---|---|---|---|');
+            for (const phase of report.phases) for (const [kind, data] of Object.entries(phase.nativeChrome || {})) lines.push(`| ${phase.name} | ${kind} | ${data.boundsCalls} | ${data.visibilityChanges} | ${data.reparentCalls} |`);
             lines.push('');
           }
           lines.push('Native Linux X11 pointer move/resize and macOS programmatic native-window motion are separate evidence. macOS physical pointer/live-resize-loop performance and user hardware GPU presentation remain unverified. Raw phase samples, bounds, IPC, input response and build hashes are attached.', '');
