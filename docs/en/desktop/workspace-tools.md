@@ -180,6 +180,8 @@ These browser extensions are separate from Wuu TypeScript plugins. [Electron sup
 
 ## Live activity preview
 
+Computer Use calls show a short action title supplied by the Agent, such as “Observe the current window in Wuu Dev”. Expand the record to inspect the original tool name, arguments, output, and errors. The title describes intent, not confirmation that the action succeeded. Older records without a title retain their original display.
+
 A conversation can retain separate watch-only previews for each browser tab and supported local app window. Only the selected conversation shows its stack, with up to five cards visible at once. New targets lead the stack; dragging a card behind the front one raises it temporarily and brings it to the front on release. Cards overlap diagonally from a shared corner, with a common size limit that preserves each target’s proportions. Hiding or closing one target leaves the others in place and lets the next retained card appear. Returning to the same target updates its existing preview. After a successful turn, visible previews show completion and leave after 30 seconds; stopped or failed turns dismiss the stack. A minimized or hidden target app stays where you put it, and its preview waits until you show it again. Moving or resizing a preview does not send input to the target.
 
 In **Settings → General → Live activity**, **Show preview automatically** controls whether local activity opens the preview. The setting is saved across restarts. It does not enable an extension or give the Agent control. Hiding a preview leaves the task running; later activity updates do not reopen a preview you hid. There is no title-bar control for manually reopening a hidden preview.
