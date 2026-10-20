@@ -9,6 +9,7 @@ import {
 } from "./agentCursor";
 import { writeBufferFileAtomicSync, writeTextFileAtomicSync } from "./atomicFile";
 import type { WindowRegistry } from "./windowRegistry";
+import { ownsBrowserExtensionOptions } from "./browserExtensionWindows";
 
 // One partition for every embedded browser tab. A login performed while the
 // agent drives a tab is still there when the user drives that same tab.
@@ -2506,6 +2507,9 @@ export function installBrowserSessionHandlers(
     else callback(null);
   }, { useSystemPicker: false });
   session.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    // Settings share extension storage, not the legacy user-surface grant.
+    // This also covers remote frames embedded by an extension options page.
+    if (webContents && ownsBrowserExtensionOptions(webContents)) { callback(false); return; }
     if (webContents && coordinator.ownsWebContents(webContents.id)) {
       callback(browserPermissionDecision(true, permission));
       return;
@@ -2518,6 +2522,7 @@ export function installBrowserSessionHandlers(
     callback(browserPermissionDecision(owned, permission));
   });
   session.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    if (webContents && ownsBrowserExtensionOptions(webContents)) return false;
     // Background contexts without a tab cannot borrow the legacy user-surface
     // grant and bypass the website host's explicit permission decision.
     if (!webContents && websites) return false;

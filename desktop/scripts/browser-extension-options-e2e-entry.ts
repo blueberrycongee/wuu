@@ -6,9 +6,13 @@ import { join } from "node:path";
 import { app, BrowserWindow, session } from "electron";
 import { BrowserExtensionManager } from "../src/main/browserExtensions";
 import { BrowserExtensionWindows } from "../src/main/browserExtensionWindows";
+import { installBrowserSessionHandlers, type BrowserHostCoordinator } from "../src/main/browserHostWindows";
 
 const profile = mkdtempSync(join(tmpdir(), "wuu-extension-options-"));
 const artifacts = process.env.WUU_EXTENSION_OPTIONS_ARTIFACTS ?? "/tmp/wuu-extension-options-e2e";
+// A storage-only settings page and its remote frames must not borrow the
+// legacy user-browser auto-grant. Synthetic devices keep failure checks private.
+app.commandLine.appendSwitch("use-fake-device-for-media-stream");
 app.setPath("userData", profile);
 app.on("window-all-closed", () => undefined);
 const checks: string[] = [];
@@ -38,6 +42,7 @@ app.whenReady().then(async () => {
   writeFileSync(join(source, "content.js"), `chrome.storage.local.get("readerMode").then(value=>{
     document.documentElement.dataset.readerMode=value.readerMode||"default";});`);
   const browserSession = session.fromPartition("persist:options-fixture");
+  installBrowserSessionHandlers(browserSession, { ownsWebContents: () => false } as unknown as BrowserHostCoordinator);
   const manager = new BrowserExtensionManager(browserSession, join(profile, "extensions.json"));
   const windows = new BrowserExtensionWindows(browserSession, manager);
   const [extension] = await manager.addFromDirectory(source, async () => true);
@@ -50,6 +55,14 @@ app.whenReady().then(async () => {
     ["undefined", "undefined", "undefined"]);
   assert.equal(options.webContents.getLastWebPreferences().sandbox, true);
   checks.push("Options use the browser partition with sandboxing and no Wuu or Node bridge");
+  const deniedDevices = async (frame: { executeJavaScript(code: string): Promise<unknown> }): Promise<void> => {
+    for (const constraints of [{ audio: true }, { video: true }]) {
+      assert.equal(await frame.executeJavaScript(`navigator.mediaDevices.getUserMedia(${JSON.stringify(constraints)}).then(stream=>{stream.getTracks().forEach(track=>track.stop());return "allowed"},error=>error.name)`), "NotAllowedError");
+    }
+    assert.equal(await frame.executeJavaScript(`new Promise(resolve=>navigator.geolocation.getCurrentPosition(()=>resolve("allowed"),error=>resolve(error.code),{timeout:3000}))`), 1);
+  };
+  await deniedDevices(options.webContents);
+  checks.push("Storage-only options cannot silently grant camera, microphone or location");
   assert.equal(await windows.openOptions(extension.id, owner), options);
   checks.push("Opening preferences again focuses the same window");
   assert.equal(await options.webContents.executeJavaScript('window.open("https://example.com") === null'), true);
@@ -62,6 +75,10 @@ app.whenReady().then(async () => {
   const address = server.address();
   assert.ok(address && typeof address !== "string");
   const url = `http://127.0.0.1:${address.port}`;
+  await options.webContents.executeJavaScript(`new Promise(resolve=>{const frame=document.createElement("iframe");frame.allow="camera *; microphone *; geolocation *";frame.src=${JSON.stringify(url)};frame.onload=resolve;document.body.append(frame)})`);
+  assert.equal(options.webContents.mainFrame.frames.length, 1);
+  await deniedDevices(options.webContents.mainFrame.frames[0]);
+  checks.push("Remote frames inside options cannot borrow legacy browser permission grants");
   const page = new BrowserWindow({ show: false, webPreferences: { session: browserSession, sandbox: true } });
   await page.loadURL(url);
   await waitFor(() => page.webContents.executeJavaScript('document.documentElement.dataset.readerMode==="comfortable"'));

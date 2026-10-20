@@ -1,5 +1,12 @@
-import { BrowserWindow, type Session } from "electron";
+import { BrowserWindow, type Session, type WebContents } from "electron";
 import type { BrowserExtensionManager } from "./browserExtensions";
+
+const optionsContents = new WeakSet<WebContents>();
+
+/** Shared-session permission routing must distinguish settings from user tabs. */
+export function ownsBrowserExtensionOptions(contents: WebContents): boolean {
+  return optionsContents.has(contents);
+}
 
 /** Extension-owned settings share browser storage, but never receive the Wuu bridge. */
 export class BrowserExtensionWindows {
@@ -30,6 +37,7 @@ export class BrowserExtensionWindows {
         nodeIntegration: false, webviewTag: false,
       },
     });
+    optionsContents.add(window.webContents);
     this.windows.set(extensionId, window);
     const close = () => { if (!window.isDestroyed()) window.destroy(); };
     parent.once("closed", close);
