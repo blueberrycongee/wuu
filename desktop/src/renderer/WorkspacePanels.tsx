@@ -1,3 +1,4 @@
+import { ConversationAttachmentPreview } from "./ConversationAttachmentPreview";
 import {
   type CSSProperties,
   type DragEvent as ReactDragEvent,
@@ -195,6 +196,8 @@ export function WorkspaceRightPanel({
   open,
   present,
   prewarm = false,
+  hidden = false,
+  toolsEnabled = true,
   tabs,
   activeTabID,
   activeFileTabID,
@@ -230,6 +233,8 @@ export function WorkspaceRightPanel({
   open: boolean;
   present: boolean;
   prewarm?: boolean;
+  hidden?: boolean;
+  toolsEnabled?: boolean;
   tabs: WorkspaceViewTab[];
   activeTabID: string | undefined;
   activeFileTabID?: string;
@@ -390,13 +395,13 @@ export function WorkspaceRightPanel({
   }, [selectedTabID, Boolean(conversationTab), tabListRef, visibleTabs.length]);
 
   useEffect(() => {
-    if (!prewarm && !open) {
+    if (!toolsEnabled || (!prewarm && !open)) {
       return undefined;
     }
     return scheduleIdleTask(() => {
       void loadWorkspaceTerminalPanel().catch(() => undefined);
     }, WORKSPACE_PANEL_PREWARM_TIMEOUT_MS);
-  }, [open, prewarm]);
+  }, [open, prewarm, toolsEnabled]);
 
   useEffect(() => {
     if (!prewarm || bodyPrewarmed || open) {
@@ -410,6 +415,7 @@ export function WorkspaceRightPanel({
   }, [dirtyFileTabIDs, onDirtyFileTabsChange]);
 
   useEffect(() => {
+    if (!toolsEnabled) return;
     window.localStorage.setItem(
       WORKSPACE_FILE_TREE_WIDTH_KEY,
       String(fileTreePreferredWidthRef.current),
@@ -700,6 +706,9 @@ export function WorkspaceRightPanel({
   return (
     <aside
       className={`workspace-right-panel${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer ? " document-focus" : ""}`}
+      style={hidden ? { display: "none" } : undefined}
+      hidden={hidden}
+      data-wuu-domain={toolsEnabled ? "coding" : "conversation"}
       data-wuu-component="workspace-panel"
       data-wuu-view={conversationActive ? "conversation" : activeTab?.kind ?? "picker"}
       data-sheet={
@@ -713,7 +722,7 @@ export function WorkspaceRightPanel({
       inert={!open}
     >
       <div className="workspace-panel-tabbar" data-wuu-component="workspace-panel-header">
-        <PluginSlot
+        {toolsEnabled && <PluginSlot
           host={pluginHost ?? desktopPluginHost}
           id="workspace.header"
           context={Object.freeze({
@@ -722,8 +731,9 @@ export function WorkspaceRightPanel({
             globalized,
             activeViewKind: conversationActive ? "conversation" : activeTab?.kind,
           })}
-        />
+        />}
         <HeaderPresentation
+          enabled={toolsEnabled}
           snapshot={headerSnapshot}
           host={pluginHost}
           controller={workbenchController}
@@ -842,7 +852,7 @@ export function WorkspaceRightPanel({
           )}
         </DndContext>
         <span className="workspace-panel-tabbar-spacer" />
-        <button
+        {toolsEnabled && <button
           ref={addButtonRef}
           className="icon-button workspace-panel-add"
           type="button"
@@ -851,7 +861,7 @@ export function WorkspaceRightPanel({
           onClick={onShowTools}
         >
           <Plus />
-        </button>
+        </button>}
         <button
           className={`icon-button workspace-panel-globalize${globalized ? " active" : ""}`}
           type="button"
@@ -1051,16 +1061,18 @@ export function WorkspaceRightPanel({
                 key={activeTab?.id ?? "picker"}
               >
                 {showingPicker ? (
-                  <WorkspaceToolPicker
+                  toolsEnabled ? <WorkspaceToolPicker
                     pluginTools={pluginTools}
                     onSelectTool={onOpenTool}
                     onSelectPluginTool={onOpenPluginTool}
-                  />
+                  /> : null
                 ) : activeTab.kind === "diff" ? (
                   <TurnFileDiffPanel
                     selection={activeTab.selection}
                     onClose={() => onCloseTab(activeTab.id)}
                   />
+                ) : activeTab.kind === "conversation-attachment" ? (
+                  <ConversationAttachmentPreview {...activeTab} />
                 ) : activeTab.kind === "artifact" ? (
                   <div className="workspace-artifact-document" ref={artifactContentRef}>
                   <ArtifactPreview
@@ -1421,7 +1433,7 @@ function workspaceToolFor(view: WorkspacePanelView): (typeof WORKSPACE_TOOL_ITEM
 function workspaceViewTabLabel(tab: WorkspaceViewTab): string {
   if (tab.kind === "new") return translateCurrent("workspace.newPage");
   if (tab.kind === "side-thread") return translateCurrent("sideThread.title");
-  return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project"
+  return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "conversation-attachment" || tab.kind === "project"
     ? tab.title
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
 }
@@ -1429,7 +1441,7 @@ function workspaceViewTabLabel(tab: WorkspaceViewTab): string {
 function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
   if (tab.kind === "new") return translateCurrent("workspace.newPage");
   if (tab.kind === "side-thread") return translateCurrent("sideThread.title");
-  if (tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "project") return tab.title;
+  if (tab.kind === "plugin" || tab.kind === "artifact" || tab.kind === "conversation-attachment" || tab.kind === "project") return tab.title;
   return tab.kind === "diff" || tab.kind === "file"
     ? tab.path
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
@@ -1444,7 +1456,7 @@ function WorkspaceViewTabIcon({ tab, className }: { tab: WorkspaceViewTab; class
   if (tab.kind === "project") {
     return <Project className={className} />;
   }
-  if (tab.kind === "file" || tab.kind === "artifact") {
+  if (tab.kind === "file" || tab.kind === "artifact" || tab.kind === "conversation-attachment") {
     return <FileText className={className} />;
   }
   if (tab.kind === "plugin") {

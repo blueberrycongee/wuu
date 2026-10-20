@@ -45,6 +45,7 @@ async function mount(fixtures: { routines: Record<string, unknown>[]; tasks?: Re
   await act(async () => render());
   return {
     container, invoke,
+    expand: async () => { await act(async () => (container.querySelector('[data-action="show-more-activity"]') as HTMLButtonElement | null)?.click()); },
     publish: (event: unknown) => host.publishHostEvent(event),
     activateEntry: () => controller.openPluginView("personal", "personal.home"),
     remount: async () => { await act(async () => root.render(null)); await act(async () => render()); },
@@ -67,8 +68,9 @@ it("hides settled one-time reminders without changing stored routines or convers
   const fixtures = { routines: [routine("delivered-reminder"), ...visible] };
   const stored = structuredClone(fixtures.routines);
   const ui = await mount(fixtures);
-  expect(Array.from(ui.container.querySelectorAll("[data-routine-id]"), element => element.getAttribute("data-routine-id"))).toEqual(visible.map(item => item.routine_id));
-  expect(ui.container.querySelector(".mosaic-routines summary .mosaic-count")?.textContent).toBe(String(visible.length));
+  await ui.expand();
+  expect(Array.from(ui.container.querySelectorAll("[data-routine-id]"), element => element.getAttribute("data-routine-id"))).toEqual([...visible.filter(item => item.run_at).map(item => item.routine_id).sort(), ...visible.filter(item => !item.run_at).map(item => item.routine_id).sort()]);
+  expect(ui.container.querySelectorAll("[data-routine-id]").length).toBe(visible.length);
   expect(ui.container.textContent).toContain("Delivered one-time reminder");
   expect(ui.container.querySelector('[data-routine-id="failed-reminder"] [role="alert"]')?.textContent).toContain("not confirmed");
   expect(fixtures.routines).toEqual(stored);
@@ -127,13 +129,32 @@ it("keeps completed task schedules visible until their current work and result d
     tasks,
   };
   const ui = await mount(fixtures);
-  const expected = [...cases.slice(2).map(({ id }) => id), "awaiting-task"];
+  await ui.expand();
+  const expected = [...cases.slice(2).map(({ id }) => id), "awaiting-task"].sort();
   expect(Array.from(ui.container.querySelectorAll("[data-routine-id]"), element => element.getAttribute("data-routine-id"))).toEqual(expected);
-  expect(ui.container.querySelector(".mosaic-routines summary .mosaic-count")?.textContent).toBe(String(expected.length));
+  expect(ui.container.querySelectorAll("[data-routine-id]").length).toBe(expected.length);
+  await act(async () => (ui.container.querySelector('[data-action="show-more-outputs"]') as HTMLButtonElement | null)?.click());
   expect(ui.container.querySelector('[data-output-task-id="task-delivered"]')).not.toBeNull();
 
   fixtures.tasks = tasks.map(task => task.task_id === "task-running" ? { ...task, state: "completed", revision: 2 } : task);
   await act(async () => ui.publish({ kind: "notification", message: { method: "turn/completed", params: { thread_id: main.main_session_id } } }));
   expect(ui.container.querySelector('[data-routine-id="running"]')).toBeNull();
-  expect(ui.container.querySelector(".mosaic-routines summary .mosaic-count")?.textContent).toBe(String(expected.length - 1));
+  expect(ui.container.querySelectorAll("[data-routine-id]").length).toBe(expected.length - 1);
+});
+
+it("prioritizes real schedules before the five-row activity limit, deduplicates their runs, and expands ordinary activity", async () => {
+  const tasks = Array.from({ length: 7 }, (_, index) => ({ task_id: `ordinary-${index}`, title: index === 0 ? "定时 is only a word" : `Ordinary ${index}`, state: ["waiting_user", "running", "queued", "stopping"][index % 4], updated_at: `2026-10-${20 - index}T10:00:00Z` }));
+  const ui = await mount({ routines: [routine("later", { status: "paused", binding: { status: "active", next_run_at: "2026-10-24T10:00:00Z" } }), routine("earlier", { status: "active", binding: { status: "active", next_run_at: "2026-10-23T10:00:00Z" } }), routine("settled")], tasks: [...tasks, { task_id: "run-earlier", title: "Duplicate run", routine_id: "earlier", routine_revision: 1, state: "running" }] });
+  const recent = () => ui.container.querySelector('[data-panel-section="recent"]')!;
+  const order = () => Array.from(recent().querySelectorAll('[data-routine-id],[data-task-id]'), node => node.getAttribute('data-routine-id') || node.getAttribute('data-task-id'));
+  expect(order()).toEqual(["earlier", "later", "ordinary-0", "ordinary-1", "ordinary-2"]);
+  expect(ui.container.querySelector('[data-task-id="run-earlier"]')).toBeNull();
+  expect(ui.container.querySelector('[data-routine-id="settled"]')).toBeNull();
+  await act(async () => (recent().querySelector('[data-action="show-more-activity"]') as HTMLButtonElement).click());
+  expect(order()).toEqual(["earlier", "later", ...tasks.map(task => task.task_id)]);
+});
+
+it("keeps ordinary activity chronological when no schedules exist", async () => {
+  const ui = await mount({ routines: [], tasks: [{ task_id: "older", title: "Older", state: "waiting_user", updated_at: "2026-10-19" }, { task_id: "newer", title: "Newer", state: "waiting_user", updated_at: "2026-10-20" }] });
+  expect(Array.from(ui.container.querySelectorAll('[data-panel-section="recent"] [data-task-id]'), node => node.getAttribute('data-task-id'))).toEqual(["newer", "older"]);
 });

@@ -13,6 +13,7 @@
 
 import type * as React from "react";
 import { createComposerDrawer, type ComposerDrawerProps } from "./ComposerDrawer";
+import { iconArtwork } from "./iconArtwork";
 import type {
   PublicIconName,
   PublicSyntaxTokenName,
@@ -232,6 +233,14 @@ export interface PluginUILiveDurationProps extends Omit<React.HTMLAttributes<HTM
   active?: boolean;
 }
 
+/** Decorative host identity. Static is the default; ambient keeps the same sphere and face. */
+export interface PluginUIAvatarProps {
+  size?: number;
+  status?: "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
+  motion?: "static" | "ambient";
+  className?: string;
+}
+
 /**
  * Small host-owned component set for plugin surfaces. These components own the
  * common visual rhythm while plugins retain freedom inside their contribution.
@@ -254,6 +263,8 @@ export interface PluginUIConversationMessageProps {
 }
 
 export interface PluginUIConversationViewProps {
+  /** Opt-in messaging bubbles; standard preserves Coding-style presentation. */
+  presentation?: "standard" | "bubbles";
   conversationId: string;
   sessionId?: string;
   sessionScope?: { userSpaceId: string; productDomain: "personal" | "coding" };
@@ -271,6 +282,10 @@ export interface PluginUIConversationViewProps {
 }
 
 export interface PluginUIConversationAttachmentProps {
+  resourceId?: string;
+  onOpen?(): void;
+  /** Read a verified byte snapshot independently of the card mount/Blob URL lifetime. */
+  onRead?(): Promise<Blob>;
   name: string;
   mediaType: string;
   size: number;
@@ -279,7 +294,7 @@ export interface PluginUIConversationAttachmentProps {
   error?: string;
   loadLabel: string;
   downloadLabel: string;
-  onLoad(): void;
+  onLoad(): void | Promise<string | void>;
 }
 
 export interface PluginUIConversationComposerProps {
@@ -310,6 +325,7 @@ export interface PluginConversationComponents {
 }
 
 export interface PluginUIKit {
+  readonly Avatar: React.ComponentType<PluginUIAvatarProps>;
   readonly ConversationView: React.ComponentType<PluginUIConversationViewProps>;
   readonly ConversationAttachment: React.ComponentType<PluginUIConversationAttachmentProps>;
   readonly ConversationComposer: React.ComponentType<PluginUIConversationComposerProps>;
@@ -333,7 +349,17 @@ export interface PluginUIKit {
   readonly LiveDuration: React.ComponentType<PluginUILiveDurationProps>;
 }
 
-export function createPluginUIKit(react: typeof React, renderConversationContent?: React.ComponentType<{ content: string; linkPolicy?: "external-only" }>, conversationComponents?: PluginConversationComponents): PluginUIKit {
+export function createPluginUIKit(react: typeof React, renderConversationContent?: React.ComponentType<{ content: string; linkPolicy?: "external-only" }>, conversationComponents?: PluginConversationComponents, avatarComponent?: React.ComponentType<PluginUIAvatarProps>): PluginUIKit {
+  function StaticAvatar({ size = 24, className }: PluginUIAvatarProps): React.ReactNode {
+    // Lightweight hosts without the desktop renderer keep an existing static agent mark.
+    return react.createElement("svg", {
+      className, width: size, height: size, viewBox: "0 0 24 24",
+      fill: "none", stroke: "currentColor", strokeWidth: 1.75,
+      strokeLinecap: "round", strokeLinejoin: "round", focusable: false,
+      "aria-hidden": true, "data-wuu-component": "plugin-ui-avatar",
+    }, ...iconArtwork.Bot.map(([tag, attributes], key) => react.createElement(tag, { ...attributes, key })));
+  }
+
   function ConversationMessage({ role, content, className, linkPolicy }: PluginUIConversationMessageProps): React.ReactNode {
     return react.createElement("div", {
       className: joinPluginUIClass(`plugin-ui-conversation-message ${role === "assistant" ? "rich-content" : "user-text"}`, className),
@@ -559,6 +585,7 @@ export function createPluginUIKit(react: typeof React, renderConversationContent
   }
 
   return Object.freeze({
+    Avatar: avatarComponent ?? StaticAvatar,
     ConversationView: conversationComponents?.View ?? (() => { throw new Error("Native conversation view is unavailable in this host"); }),
     ConversationAttachment: conversationComponents?.Attachment ?? (() => { throw new Error("Native conversation attachments are unavailable in this host"); }),
     ConversationMessage: conversationComponents?.Message ?? ConversationMessage,

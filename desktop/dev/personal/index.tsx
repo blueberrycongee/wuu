@@ -1,7 +1,8 @@
-/** Synthetic runtime fixture around the production Personal contribution. No account or external writes. */
+/** Synthetic runtime fixture around the production Personal contribution. No account, native local file reads or external writes. */
 import * as React from "react";
 import { createRoot } from "react-dom/client";
 import type { PluginHostOptions } from "../../src/renderer/plugins/PluginHost";
+import { PluginConversationMessage, PluginConversationView } from "../../src/renderer/plugins/PluginConversation";
 import { App } from "../../src/renderer/App";
 import { desktopPluginHost as host, desktopWorkbenchController as controller } from "../../src/renderer/plugins/DesktopPluginRuntime";
 import { installFixtureBridge } from "./shell";
@@ -36,6 +37,15 @@ const syntheticDigest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e7304336
 const files = new Map<string, {data:string;name:string;mime:string}>();
 histories.mosaic[3].attachments = [{ kind:"artifact",index:0,name:"合成示例.txt",mime_type:"text/plain",size:5,sha256:syntheticDigest }];
 files.set(`mosaic:4:${syntheticDigest}`, {data:"aGVsbG8=",name:"合成示例.txt",mime:"text/plain"});
+// Disclosed byte fixtures exercise real verified transport and internal file tabs.
+histories.mosaic[3].attachments!.push({"kind": "artifact", "index": 1, "name": "合成说明.md", "mime_type": "text/markdown", "size": 98, "sha256": "0447ade207af639c000604ac65231097ab74411a3cbe4c0d8e2e1ffc9932805a"});
+files.set("mosaic:4:0447ade207af639c000604ac65231097ab74411a3cbe4c0d8e2e1ffc9932805a", {"data": "IyDlkIjmiJDmlofku7bpooTop4gKCui/meWPquaYr+engeaciemihOiniOmhteWGhee9rueahOaVsOaNru+8jOS4jeS8muivu+WPluS9oOeahOacrOWcsOaWh+S7tuOAggo=", "name": "合成说明.md", "mime": "text/markdown"});
+histories.mosaic[3].attachments!.push({"kind": "artifact", "index": 2, "name": "合成网页.html", "mime_type": "text/html", "size": 139, "sha256": "b9f6336d9ce78ecd2fd24ceabd5c587b8d67b1c5f6926d248ff566df13338428"});
+files.set("mosaic:4:b9f6336d9ce78ecd2fd24ceabd5c587b8d67b1c5f6926d248ff566df13338428", {"data": "PCFkb2N0eXBlIGh0bWw+PGgxPuWQiOaIkCBIVE1MPC9oMT48c2NyaXB0PndpbmRvdy5fX3Vuc2FmZUF0dGFjaG1lbnRFeGVjdXRlZCA9IHRydWU8L3NjcmlwdD4KPHA+6ISa5pys5L2c5Li65rqQ56CB5pi+56S677yM5LiN5omn6KGM44CCPC9wPg==", "name": "合成网页.html", "mime": "text/html"});
+histories.mosaic[3].attachments!.push({"kind": "artifact", "index": 3, "name": "合成归档.zip", "mime_type": "application/zip", "size": 46, "sha256": "aba16615ae4487d98eddf1d76c7e4c08dea0c71bc99009c3a543f5090ad00586"});
+files.set("mosaic:4:aba16615ae4487d98eddf1d76c7e4c08dea0c71bc99009c3a543f5090ad00586", {"data": "UEsDBFN5bnRoZXRpYyBhcmNoaXZlIGZpeHR1cmU7IG5vdCBhIHJlYWwgWklQLg==", "name": "合成归档.zip", "mime": "application/zip"});
+histories.mosaic[3].attachments!.push({"kind": "artifact", "index": 4, "name": "合成读取失败.txt", "mime_type": "text/plain", "size": 13, "sha256": "72e3ff58d7416ac8436ed00564dda7b4f6d81b5f54ac903a555f3a234c74a9b9"});
+files.set("mosaic:4:72e3ff58d7416ac8436ed00564dda7b4f6d81b5f54ac903a555f3a234c74a9b9", {"data": "ZXJyb3IgZml4dHVyZQ==", "name": "合成读取失败.txt", "mime": "text/plain"});
 let calendarWriteDemo = false;
 let calendarOperation:any = {
   operation_id:"synthetic-calendar-operation",revision:1,status:"proposed",kind:"reschedule",preview_digest:"a".repeat(64),
@@ -46,6 +56,7 @@ let calendarOperation:any = {
   availability:{checked_at:now,calendar_id:"synthetic-calendar",scope:"selected_calendar_only",conflicting_event_ids:[]},notification_notice:"合成演示：确认后会向列出的参与者请求发送更新邀请。",reconciliation_required:false,cancel_requested:false,
 };
 let offline=false, empty=false;
+let fixtureActivity: "idle" | "thinking" | "responding" = "idle";
 let settings={revision:1,quiet_hours:{enabled:true,start:"22:00",end:"08:00",timezone:"Asia/Shanghai"},notifications:true,notification_batch_seconds:0};
 const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({method,input,userInput})=>{
   if(offline)throw new Error("演示：宿主暂时离线。未发送的内容会保留，请连接后重试。");
@@ -53,14 +64,14 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
   switch(method){
     case "agents.list":return {agents:empty?[]:agents,default_agent_id:"mosaic"};
     case "agents.ensure_default":empty=false;return {agent:agents[0]};
-    case "agents.open":return {agent:agents.find(a=>a.agent_id===data.agent_id),session:{state:"completed"}};
+    case "agents.open":return {agent:agents.find(a=>a.agent_id===data.agent_id),session:{state:fixtureActivity === "idle" ? "completed" : "running"}};
     case "agents.history":return {records:(histories[data.agent_id]||[]).filter(record=>(!data.start_seq||record.seq>=data.start_seq)&&(!data.end_seq||record.seq<=data.end_seq))};
     case "agents.search":{const matches=(histories[data.agent_id]||[]).filter(record=>record.content.includes(data.query)&&(!data.time_min||(record.at&&record.at>=data.time_min))&&(!data.time_max||(record.at&&record.at<data.time_max))).map(record=>({seq:record.seq,role:record.role,excerpt:record.content.slice(0,120),at:record.at}));return {matches,has_more:false};}
     case "agents.proposals":return {proposals:[]};
     case "agents.send":{const list=histories[data.agent_id],seq=list.length+1; const attachments = userInput?.attachments?.map((file,index)=>{files.set(`${data.agent_id}:${seq}:${file.sha256}`,{data:file.data,name:file.filename,mime:file.media_type});return {kind:file.media_type.startsWith("image/")?"image":"file",index,name:file.filename,mime_type:file.media_type,size:atob(file.data).length,sha256:file.sha256};});list.push({seq,role:"user",at:now,content:data.prompt,attachments},{seq:list.length+2,role:"assistant",at:now,content:"这是合成演示回复。主对话保持不变，后台事项仍会继续。"});return {state:"accepted"};}
-    case "agents.attachments.read":{const file=files.get(`${data.agent_id}:${data.seq}:${data.sha256}`);if(!file)throw new Error("Synthetic file missing");const offset=data.offset||0;return {data:file.data.slice(offset,offset+128*1024),offset,total:file.data.length,content_type:file.mime,name:file.name,sha256:data.sha256};}
+    case "agents.attachments.read":{const file=files.get(`${data.agent_id}:${data.seq}:${data.sha256}`);if(!file)throw new Error("Synthetic file missing");if(file.name === "合成读取失败.txt")throw new Error("合成读取失败：用于展示错误与重试，不涉及真实文件。");const offset=data.offset||0;return {data:file.data.slice(offset,offset+128*1024),offset,total:file.data.length,content_type:file.mime,name:file.name,sha256:data.sha256};}
     case "calendar.status":case "calendar.agenda":return {state:"unconnected",read_only:!calendarWriteDemo,freshness:"empty",events:[]};
-    case "calendar.operations.list":return {operations:[calendarOperation]};
+    case "calendar.operations.list":return {operations:calendarWriteDemo?[calendarOperation]:[]};
     case "calendar.operations.confirm":if(!calendarWriteDemo)throw new Error("Synthetic writer is disabled");calendarOperation={...calendarOperation,status:"uncertain",revision:calendarOperation.revision+1,reconciliation_required:true,error_code:"synthetic_acknowledgement_lost"};return calendarOperation;
     case "calendar.operations.cancel":calendarOperation={...calendarOperation,status:calendarOperation.status==="proposed"?"cancelled":"uncertain",cancel_requested:true,revision:calendarOperation.revision+1};return calendarOperation;
     case "calendar.operations.reconcile":return calendarOperation;
@@ -84,17 +95,35 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
 };
 installFixtureBridge(invokeRuntime);
 const params=new URLSearchParams(location.search);
+if (params.get("grouping") === "1") histories.mosaic.push(
+  {seq:5,role:"assistant",at:now,content:"也可以先不做决定。等你忙完，我们再慢慢选。"},
+  {seq:6,role:"user",at:now,content:"那就选离家近一点的。"},
+  {seq:7,role:"user",at:now,content:"安静、方便聊天就好。"},
+);
 applyThemePreference(params.get("theme")==="dark"?"dark":"light");
 document.documentElement.style.setProperty("--conversation-message-font-size",`${params.get("font")==="19"?19:15}px`);
 document.documentElement.dataset.platform="linux";
 function FixtureSurface(){
-  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label"><span>twin · 实际桌面组件 · 合成演示数据 · 非生产账号</span><div><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div></div><div className="mosaic-fixture-view"><App /></div></div></WuuUIRoot></I18nProvider>;
+  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label"><span>twin · 实际桌面组件 · 合成演示数据 · 非生产账号</span><div><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div></div><div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView> : <App />}</div></div></WuuUIRoot></I18nProvider>;
+}
+let fixtureTurn = 0;
+function setActivity(status: "idle" | "thinking" | "responding") {
+  fixtureActivity = status;
+  const publish = (method: string, extra: Record<string, unknown> = {}) => host.publishHostEvent({kind:"notification",message:{method,params:{thread_id:"synthetic-main",turn_id:`synthetic-avatar-state:${fixtureTurn}`,...extra}}});
+  publish("item/removed", {item_id:"synthetic-avatar-message"});
+  if (status !== "idle") fixtureTurn++;
+  if (status === "idle") publish("turn/completed", {turn:{id:`synthetic-avatar-state:${fixtureTurn}`}});
+  else {
+    publish("turn/started");
+    if (status === "responding") publish("item/agentMessage/delta", {item_id:"synthetic-avatar-message",delta:"这是合成状态演示，正在回复。"});
+  }
 }
 async function start(){
-  await host.activateGeneration({pluginId:"personal",generation:"synthetic-ui-fixture",contributions:{navigation:[{id:"personal",title:"twin",view:"personal.home",icon:{name:"sparkles"},order:41}],settings_pages:[{id:"personal-preferences",title:"twin",view:"personal.preferences",icon:{name:"sparkles"},order:41}]},register:activate});
+  await host.activateGeneration({pluginId:"personal",generation:"synthetic-ui-fixture",contributions:{navigation:[{id:"personal",title:"twin",view:"personal.home",icon:{name:"mascot"},order:41}],settings_pages:[{id:"personal-preferences",title:"twin",view:"personal.preferences",icon:{name:"mascot"},order:41}]},register:activate});
   await host.activateGeneration({pluginId:"personal-calendar",generation:"synthetic-ui-fixture",register:activateCalendar});
   await host.activateGeneration({pluginId:"automations",generation:"synthetic-ui-fixture",contributions:{navigation:[{id:"automations",title:"Automations",view:"automations.home",icon:{name:"clock"},order:40}]},register(api){api.registerViewType({id:"automations.home",title:"Automations",defaultRegion:"primary",render:()=> <div className="plugin-ui-page">合成 Automations 入口</div>});}});
+  if (params.get("presentation") !== "standard") await controller.openPluginView("personal", "personal.home");
   createRoot(document.getElementById("root")!).render(<FixtureSurface/>);
-  (window as any).mosaicFixture={host,controller,setOffline:(value:boolean)=>{offline=value;},setEmpty:(value:boolean)=>{empty=value;},state:()=>({agents,tasks,memories}),synthetic:true};
+  (window as any).mosaicFixture={host,controller,setOffline:(value:boolean)=>{offline=value;},setEmpty:(value:boolean)=>{empty=value;},state:()=>({agents,tasks,memories}),setActivity,synthetic:true};
 }
 start().catch(error=>{document.body.textContent=String(error);console.error(error);});

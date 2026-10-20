@@ -11,6 +11,7 @@ import {
   reorderViewTabs,
   workspaceDiffViewTab,
   workspaceArtifactViewTab,
+  workspaceConversationAttachmentTab,
   workspaceDiffViewTabID,
   workspaceFileViewTab,
   workspaceFileViewTabID,
@@ -448,4 +449,17 @@ describe("reorderViewTabs", () => {
     const next = reorderViewTabs(state, "files", "does-not-exist");
     expect(next).toBe(state);
   });
+});
+
+// Remote attachments must not alias a workspace path or an artifact snapshot.
+it("deduplicates conversation attachment tabs and closes back to the conversation", () => {
+  const request = { resourceId: "agent:1:file:0:digest", name: "notes.txt", mediaType: "text/plain", size: 5, read: async () => new Blob(["hello"]) };
+  const tab = workspaceConversationAttachmentTab(request);
+  let state = openViewTab(initialWorkspaceViewTabsState, tab);
+  state = openViewTab(state, workspaceConversationAttachmentTab(request));
+  expect(state.tabs).toHaveLength(1);
+  expect(state.tabs[0]).toMatchObject({ kind: "conversation-attachment", title: "notes.txt" });
+  expect(closeViewTab(state, tab.id).activeTabID).toBeUndefined();
+  state = openViewTab(state, workspaceConversationAttachmentTab({ ...request, resourceId: "other-agent:1:file:0:digest" }));
+  expect(state.tabs).toHaveLength(2);
 });

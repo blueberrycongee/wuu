@@ -262,6 +262,7 @@ export interface PluginUIComposerDrawerProps extends PluginUIContainerProps {
 export interface PluginUIConversationMessageProps { role: "user" | "assistant"; content: string; className?: string; linkPolicy?: "external-only"; timestamp?: string; id?: string; latest?: boolean; attachments?: unknown; streaming?: boolean; turnId?: string; turnStatus?: "in_progress" | "completed" | "failed" | "interrupted"; process?: { label: string; content?: string; details?: unknown }; messageActions?: "copy-only" | "none" }
 
 export interface PluginUIConversationViewProps {
+  presentation?: "standard" | "bubbles";
   /** Submit an offer reply to this conversation with stable admission identity. */
   onQuestionReply?: (requestId: string, prompt: string) => Promise<void>;
   conversationId: string;
@@ -280,6 +281,10 @@ export interface PluginUIConversationViewProps {
 }
 
 export interface PluginUIConversationAttachmentProps {
+  resourceId?: string;
+  onOpen?(): void;
+  /** Read a verified byte snapshot independently of the card mount/Blob URL lifetime. */
+  onRead?(): Promise<Blob>;
   name: string;
   mediaType: string;
   size: number;
@@ -288,7 +293,7 @@ export interface PluginUIConversationAttachmentProps {
   error?: string;
   loadLabel: string;
   downloadLabel: string;
-  onLoad(): void;
+  onLoad(): void | Promise<string | void>;
 }
 
 export interface PluginUIConversationComposerProps {
@@ -310,7 +315,16 @@ export interface PluginUIConversationComposerProps {
   onStop(): void;
 }
 
+/** Decorative host identity. Static is the default; ambient keeps the same sphere and face. */
+export interface PluginUIAvatarProps {
+  readonly size?: number;
+  readonly status?: "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
+  readonly motion?: "static" | "ambient";
+  readonly className?: string;
+}
+
 export interface PluginUIKit {
+  readonly Avatar: HostUIComponent<PluginUIAvatarProps>;
   readonly ConversationView: HostUIComponent<PluginUIConversationViewProps>;
   readonly ConversationAttachment: HostUIComponent<PluginUIConversationAttachmentProps>;
   readonly ConversationComposer: HostUIComponent<PluginUIConversationComposerProps>;

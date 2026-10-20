@@ -128,6 +128,8 @@ Provider 会收到尚未发送的草稿。应明确选择哪些数据可以离�
 
 使用 `api.react` 和 `api.ui`，让控件遵循宿主主题、间距和排版。UI 字号与代码字号应分开。只改外观时优先使用声明式主题 token，公开契约见[界面矩阵](theme-surface-matrix.md)。
 
+桌面上的 `api.ui.Avatar` 和公开图标 `mascot` 共用 Wuu 的圆球耳机形象。Avatar 接受像素尺寸 `size`、`className`、`status`（`idle`、`thinking`、`sending`、`responding`、`queued`、`waiting`、`failed` 或 `interrupted`）以及 `motion`（默认 `static`，也可选 `ambient`）。紧凑导航使用静态头像，较大且可见的身份区域可启用环境动效。状态变化保留圆球、面部和耳机，环境动效遵循减少动态效果偏好与页面可见性。头像仅作装饰，应为外围控件提供标签。未注入桌面头像渲染器的宿主提供静态智能体图标。兼容旧宿主时，应先检测 `api.ui.Avatar` 是否存在。
+
 可以使用选区、尺寸观察器等标准浏览器 API。定位时优先选择公开的 `data-wuu-component`、`data-wuu-slot`、`data-wuu-surface` 锚点，不要依赖私有类名或 React 内部对象；这些锚点也不保证周围 DOM 结构稳定。对于不由 React effect 清理的监听器、观察器、定时器和其他资源，应显式注册清理。
 
 注册项属于插件 generation，卸载时一起移除。这种生命周期管理不是安全沙箱，受信任的 renderer 代码和 CSS 仍可能出错。应保留默认界面的恢复路径、处理异步动作错误，并测试禁用和重载，而不只检查初次渲染。包的信任和更新行为见[插件管理](plugins.md)。

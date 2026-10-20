@@ -1,3 +1,4 @@
+import type { ConversationAttachmentRequest } from "./ConversationAttachmentPreview";
 import { useCallback, useLayoutEffect, useState } from "react";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { ExtensionIconDescriptor, RuntimeContext } from "../shared/protocol";
@@ -75,6 +76,11 @@ export function workspaceProjectViewTab(projectID: string, title: string): Works
   return { kind: "project", id: "project", projectID, title };
 }
 
+export type WorkspaceConversationAttachmentTab = ConversationAttachmentRequest & { kind: "conversation-attachment"; id: string; title: string };
+export function workspaceConversationAttachmentTab(input: ConversationAttachmentRequest): WorkspaceConversationAttachmentTab {
+  return { ...input, kind: "conversation-attachment", id: `conversation-attachment:${input.resourceId}`, title: input.name };
+}
+
 export type WorkspaceViewTab =
   | { kind: "new"; id: string }
   | { kind: "side-thread"; id: "side-thread" }
@@ -82,6 +88,7 @@ export type WorkspaceViewTab =
   | WorkspaceDiffViewTab
   | WorkspaceFileViewTab
   | WorkspacePluginViewTab
+  | WorkspaceConversationAttachmentTab
   | WorkspaceArtifactViewTab
   | WorkspaceProjectViewTab;
 

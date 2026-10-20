@@ -7,6 +7,8 @@ export function installFixtureBridge(invoke: NonNullable<PluginHostOptions["invo
   const projects = { projects: [], active_context: { kind: "no_project", cwd: workspace } };
   const thread = { id: "synthetic-coding", preview: "合成 Coding 对话", title: "", model_provider: "synthetic", model: "synthetic", cwd: workspace, workspace_kind: "scratch", status: "idle", pinned: false, archived: false, created_at: "2026-10-19T00:00:00Z", updated_at: "2026-10-19T00:00:00Z", turns: [] };
   window.wuu = {
+    getBuildInfo: async () => ({ desktop: { version: "synthetic-fixture" } }),
+    listMCPServers: async () => ({ servers: [] }),
     listProjects: async () => projects,
     selectNoProject: async () => projects,
     initialize: async () => ({ protocol_version: "wuu-app-server/v0.1", provider: "synthetic", model: "synthetic", workspace_root: workspace, permissions: { mode: "standard" }, providers: [{ name: "synthetic", type: "openai-compatible", model: "synthetic", api_key_configured: true }], advanced_settings: { max_steps: 64, max_context_tokens: 0, temperature: 0, disable_auto_compact: false } }),
@@ -16,7 +18,7 @@ export function installFixtureBridge(invoke: NonNullable<PluginHostOptions["invo
     startThread: async () => ({ thread }),
     getActiveGoalSummary: async () => null,
     gitStatus: async () => ({ is_repo: false, dirty_count: 0, files: [] }),
-    listUserQuestions: async () => ({ requests: [] }),
+    listUserQuestions: async () => ({ questions: [] }),
     answerUserQuestion: async () => ({ resolved: true }),
     cancelUserQuestion: async () => ({ resolved: true }),
     onServerEvent: () => () => {},

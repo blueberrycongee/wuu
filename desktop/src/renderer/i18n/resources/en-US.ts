@@ -1,6 +1,14 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const enUS = {
+  "conversationAttachment.readFailed": "Could not read the verified attachment. Please retry.",
+  "conversationAttachment.open": "Open {name}",
+  "conversationAttachment.download": "Download",
+  "conversationAttachment.loading": "Reading verified attachment…",
+  "conversationAttachment.retry": "Retry",
+  "conversationAttachment.unsupported": "This file type cannot be previewed here. Download it to open in a compatible app.",
+  "conversationAttachment.tooLarge": "This attachment is too large to preview.",
+
   "desktopUpdate.available": "Wuu {version} is available. Click to download",
   "desktopUpdate.downloading": "Downloading update · {percent}%",
   "desktopUpdate.ready": "Wuu {version} is ready. Click to restart and install",
@@ -1317,6 +1325,8 @@ export const enUS = {
   "process.viewReasoning": "View reasoning",
   "process.finishedUnderSecond": "Finished in under 1 second",
   "process.finishedIn": "Finished in {duration}",
+  "message.showTimes": "Show message times",
+  "message.hideTimes": "Hide message times",
   "message.userActions": "User message actions",
   "message.showMoreImages": "Show {count} more images",
   "message.collapseImages": "Collapse images",

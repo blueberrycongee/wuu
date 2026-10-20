@@ -1,4 +1,12 @@
 export const zhCN = {
+  "conversationAttachment.readFailed": "无法读取已验证的附件，请重试。",
+  "conversationAttachment.open": "打开 {name}",
+  "conversationAttachment.download": "下载",
+  "conversationAttachment.loading": "正在读取已验证的附件…",
+  "conversationAttachment.retry": "重试",
+  "conversationAttachment.unsupported": "暂不支持预览此文件类型。可以下载后在兼容的应用中打开。",
+  "conversationAttachment.tooLarge": "附件过大，无法预览。",
+
   "desktopUpdate.available": "Wuu {version} 已可用，点击下载",
   "desktopUpdate.downloading": "正在下载更新 · {percent}%",
   "desktopUpdate.ready": "Wuu {version} 已下载，点击重启安装",
@@ -1314,6 +1322,8 @@ export const zhCN = {
   "process.viewReasoning": "查看思考过程",
   "process.finishedUnderSecond": "用时不到 1 秒",
   "process.finishedIn": "用时 {duration}",
+  "message.showTimes": "显示消息时间",
+  "message.hideTimes": "隐藏消息时间",
   "message.userActions": "用户消息操作",
   "message.showMoreImages": "再显示 {count} 张图片",
   "message.collapseImages": "收起图片",

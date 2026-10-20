@@ -3,7 +3,7 @@
   "id": "personal",
   "name": "twin",
   "description": "One personal assistant, a continuous conversation, and traceable ongoing matters.",
-  "icon": "sparkles",
+  "icon": "mascot",
   "version": "0.1.0",
   "defaultEnabled": true,
   "author": {
@@ -26,7 +26,7 @@
         "id": "personal",
         "title": "twin",
         "view": "personal.home",
-        "icon": "sparkles",
+        "icon": "mascot",
         "order": 41
       }
     ],
@@ -35,7 +35,7 @@
         "id": "personal-preferences",
         "title": "twin",
         "view": "personal.preferences",
-        "icon": "sparkles",
+        "icon": "mascot",
         "order": 41
       }
     ]

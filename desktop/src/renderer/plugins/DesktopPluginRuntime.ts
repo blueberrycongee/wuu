@@ -1,5 +1,6 @@
 import { PluginConversationAttachment, PluginConversationView, PluginConversationComposer, PluginConversationMessage } from "./PluginConversation";
 import { MarkdownContent } from "../RichContent";
+import { PluginAvatar } from "../PluginAvatar";
 import * as React from "react";
 import { useEffect } from "react";
 
@@ -29,6 +30,7 @@ export interface DesktopPluginFailure {
 
 export const desktopPluginHost = new PluginHost({
   react: React,
+  avatarComponent: PluginAvatar,
   conversationComponents: { View: PluginConversationView, Attachment: PluginConversationAttachment, Composer: PluginConversationComposer, Message: PluginConversationMessage },
   renderConversationContent: ({ content, linkPolicy }) => React.createElement(MarkdownContent, { text: content, linkPolicy }),
   invokeRuntime: async ({ pluginId, generation, method, input, workspaceId, workspaceRoot, userSpaceId, productDomain, userInput, signal }) => {

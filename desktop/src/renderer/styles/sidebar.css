@@ -1156,7 +1156,7 @@
   grid-template-columns: var(--sidebar-nav-icon-col) minmax(0, 1fr);
 }
 
-.nav-item > :is(svg, .plugin-icon-themed, .plugin-icon-asset) {
+.nav-item > :is(svg, .plugin-icon-themed, .plugin-icon-asset, .plugin-ui-avatar) {
   grid-column: 1;
   justify-self: center;
   width: var(--sidebar-primary-icon-size);
@@ -1164,7 +1164,7 @@
   flex-shrink: 0;
 }
 
-.nav-item > span {
+.nav-item > span:not(.plugin-ui-avatar) {
   grid-column: 2;
   min-width: 0;
   overflow: hidden;

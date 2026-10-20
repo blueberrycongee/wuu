@@ -12,6 +12,7 @@ import { PluginPresentation } from "./PluginPresentation";
 import type { WorkbenchController } from "./Workbench";
 
 export interface HeaderPresentationProps {
+  enabled?: boolean;
   snapshot: HeaderSnapshotV1;
   fallback: ReactNode;
   onSelectTab?: (tabId: string) => void;
@@ -40,6 +41,7 @@ export function immutableHeaderTab(
 }
 
 export function HeaderPresentation({
+  enabled = true,
   snapshot,
   fallback,
   onSelectTab,
@@ -49,6 +51,7 @@ export function HeaderPresentation({
   host = desktopPluginHost,
   controller = desktopWorkbenchController,
 }: HeaderPresentationProps): JSX.Element {
+  if (!enabled) return <>{fallback}</>;
   const actions: HeaderActionId[] = [];
   if (onSelectTab) actions.push(HEADER_ACTIONS.selectTab);
   if (onCloseTab) actions.push(HEADER_ACTIONS.closeTab);

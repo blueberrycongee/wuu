@@ -1,3 +1,5 @@
+import { useConversationAttachmentTabs } from "./ConversationAttachmentTabs";
+import { ConversationAttachmentPreviewContext } from "./ConversationAttachmentPreview";
 import { useAppContextDraftTarget } from "./AppContextCapture";
 import { readComposerDraftRecovery, sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { validPdfSelectionReference } from "./PdfSelection";
@@ -460,6 +462,8 @@ export function App(): JSX.Element {
   const primaryPluginView = usePrimaryPluginViewDefinition();
   const showingPrimaryPluginView = primaryPluginView !== undefined;
   const userSpaceViewActive = primaryPluginView?.layout === "user-space";
+  const conversationAttachments = useConversationAttachmentTabs();
+  useEffect(() => { conversationAttachments.setOpen(false); }, [primaryPluginView, conversationAttachments.setOpen]);
   const [popOutInit] = useState<PopOutInitResult | null>(() => readPopOutInit());
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
   const [recoveredDrafts] = useState(readComposerDraftRecovery);
@@ -594,15 +598,16 @@ export function App(): JSX.Element {
     onCloseWorkspaceMenu: closeWorkspaceMenu,
   });
   // User-oriented pages temporarily cover Coding tools without changing the saved layout.
-  const rightPanelOpen = savedRightPanelOpen && !userSpaceViewActive;
-  const rightPanelAnimating = savedRightPanelAnimating && !userSpaceViewActive;
+  const rightPanelOpen = userSpaceViewActive ? conversationAttachments.open : savedRightPanelOpen;
+  const rightPanelAnimating = !userSpaceViewActive && savedRightPanelAnimating;
   const [rightPanelManualGlobalized, setRightPanelManualGlobalized] =
     useState(false);
   const rightPanelAutoGlobalized =
     rightPanelOpen && workspaceRightPanelAutoGlobalized;
-  const rightPanelGlobalized =
-    rightPanelOpen &&
-    (rightPanelManualGlobalized || rightPanelAutoGlobalized);
+  const codingRightPanelGlobalized = savedRightPanelOpen && (rightPanelManualGlobalized || workspaceRightPanelAutoGlobalized);
+  const rightPanelGlobalized = userSpaceViewActive
+    ? rightPanelOpen && (conversationAttachments.manualGlobalized || rightPanelAutoGlobalized)
+    : codingRightPanelGlobalized;
   const [workspaceSheetPhase, setWorkspaceSheetPhase] =
     useState<WorkspaceSheetPhase>(rightPanelGlobalized ? "open" : "docked");
   useLayoutEffect(() => {
@@ -738,7 +743,7 @@ export function App(): JSX.Element {
   const [workspaceFilter, setWorkspaceFilter] = useState("");
   const {
     workspaceViewTabs,
-    workspaceConversationActive,
+    workspaceConversationActive: codingWorkspaceConversationActive,
     focusWorkspaceConversation,
     workspaceActiveViewTabID,
     workspaceActiveFileTabID,
@@ -758,10 +763,13 @@ export function App(): JSX.Element {
     reorderWorkspaceViewTabs,
     toggleRightPanel,
   } = useWorkspaceToolState({
-    rightPanelOpen,
-    rightPanelGlobalized,
+    rightPanelOpen: savedRightPanelOpen,
+    rightPanelGlobalized: codingRightPanelGlobalized,
     setRightPanelOpenWithMotion,
   });
+  const workspaceConversationActive = userSpaceViewActive
+    ? rightPanelGlobalized && conversationAttachments.conversationSelected
+    : codingWorkspaceConversationActive;
   const workspaceToolsCoverConversation = rightPanelGlobalized && !workspaceConversationActive;
   const [environmentPanelOpen, setEnvironmentPanelOpen] = useState(false);
   const [environmentPanelDismissed, setEnvironmentPanelDismissed] =
@@ -795,10 +803,10 @@ export function App(): JSX.Element {
   // from current layout capacity above. Closing the workspace clears only the
   // manual request, while resizing can freely enter/leave automatic focus.
   useEffect(() => {
-    if (!rightPanelOpen) {
+    if (!savedRightPanelOpen) {
       setRightPanelManualGlobalized(false);
     }
-  }, [rightPanelOpen]);
+  }, [savedRightPanelOpen]);
   const toggleWorkspacePanelGlobalized = useCallback((): void => {
     animateRightPanelLayout();
     // The under-stage sidebar column collapses/restores while the sheet
@@ -827,6 +835,7 @@ export function App(): JSX.Element {
   ]);
   const revealConversationFromFocusedWorkspace = useCallback((): void => {
     desktopWorkbenchController.deactivateRegion("primary");
+    if (userSpaceViewActive) { conversationAttachments.setOpen(false); return; }
     if (!rightPanelGlobalized) {
       return;
     }
@@ -842,6 +851,8 @@ export function App(): JSX.Element {
       toggleSidebar();
     }
   }, [
+    userSpaceViewActive,
+    conversationAttachments.setOpen,
     rightPanelAutoGlobalized,
     rightPanelGlobalized,
     setRightPanelOpenWithMotion,
@@ -1136,6 +1147,7 @@ export function App(): JSX.Element {
   const previousWorkspaceFocusModeRef = useRef({
     fullPanel: false,
     open: false,
+    domain: "coding",
   });
   const {
     pendingComposerMessagesByThread,
@@ -1226,7 +1238,9 @@ export function App(): JSX.Element {
     };
   }, []);
 
+  const workspaceFocusDomain = userSpaceViewActive ? "conversation" : "coding";
   const workspaceFocusOwner = JSON.stringify([
+    workspaceFocusDomain,
     state.activeContext ? runtimeContextKey(state.activeContext) : "",
     state.activeContext?.cwd,
     state.activeSessionTabID,
@@ -1236,7 +1250,7 @@ export function App(): JSX.Element {
   useLayoutEffect(() => {
     const handleFocusIn = (event: FocusEvent): void => {
       const target = event.target;
-      const workspacePanel = appShellRef.current?.querySelector(".workspace-right-panel");
+      const workspacePanel = appShellRef.current?.querySelector('.workspace-right-panel:not([aria-hidden="true"])');
       if (
         target instanceof HTMLElement &&
         !workspacePanel?.contains(target) &&
@@ -1254,16 +1268,16 @@ export function App(): JSX.Element {
   useLayoutEffect(() => {
     const fullPanel = rightPanelOpen && rightPanelGlobalized;
     const previous = previousWorkspaceFocusModeRef.current;
-    previousWorkspaceFocusModeRef.current = { fullPanel, open: rightPanelOpen };
+    previousWorkspaceFocusModeRef.current = { fullPanel, open: rightPanelOpen, domain: workspaceFocusDomain };
 
     appShellRef.current
       ?.querySelector<HTMLElement>(".sidebar")
       ?.toggleAttribute("inert", fullPanel && sidebarDrawerMode && !sidebarDrawerVisible);
 
-    if (fullPanel && !previous.fullPanel) {
+    if (fullPanel && (!previous.fullPanel || previous.domain !== workspaceFocusDomain)) {
       appShellRef.current
         ?.querySelector<HTMLButtonElement>(
-          '.workspace-right-panel [role="tab"][aria-selected="true"]',
+          '.workspace-right-panel:not([aria-hidden="true"]) [role="tab"][aria-selected="true"]',
         )
         ?.focus({ preventScroll: true });
       return;
@@ -1305,7 +1319,7 @@ export function App(): JSX.Element {
     ? workspaceViewTabs.find((tab) => tab.id === workspaceActiveViewTabID)
     : undefined;
   const workspaceSelectionEnabled =
-    workspaceToolsCoverConversation &&
+    !userSpaceViewActive && workspaceToolsCoverConversation &&
     (activeWorkspaceViewTab?.kind === "files" ||
       activeWorkspaceViewTab?.kind === "file");
   const activeWorkspaceFileTab = workspaceActiveFileTabID
@@ -3049,7 +3063,7 @@ export function App(): JSX.Element {
     if (sideThread.entry?.open) sideThread.close();
     if (workspaceViewTabs.some((tab) => tab.id === "side-thread")) closeWorkspaceViewTab("side-thread");
   }, [sideConversationAvailable, activeThreadID, workspaceViewTabs, state.initialized?.extension_inventory]);
-  const sideThreadPanelVisible = Boolean(sideConversationAvailable && activeThreadID && rightPanelOpen &&
+  const sideThreadPanelVisible = Boolean(!userSpaceViewActive && sideConversationAvailable && activeThreadID && rightPanelOpen &&
     !workspaceConversationActive && workspaceActiveViewTabID === "side-thread");
   useEffect(() => {
     if (sideThreadPanelVisible && !sideThread.entry?.open) sideThread.open();
@@ -5350,11 +5364,11 @@ export function App(): JSX.Element {
       if (accountOpen) { event.preventDefault(); setAccountOpen(false); }
       else if (settingsOpen) { event.preventDefault(); setSettingsOpen(false); }
       else if (sidebarDrawerVisible) { event.preventDefault(); closeSidebarDrawer(); }
-      else if (rightPanelOpen) { event.preventDefault(); setRightPanelOpenWithMotion(false); }
+      else if (rightPanelOpen) { event.preventDefault(); if (userSpaceViewActive) conversationAttachments.setOpen(false); else setRightPanelOpenWithMotion(false); }
     };
     window.addEventListener("wuu:workbench-back", back);
     return () => window.removeEventListener("wuu:workbench-back", back);
-  }, [accountOpen, settingsOpen, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, setRightPanelOpenWithMotion]);
+  }, [accountOpen, settingsOpen, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, setRightPanelOpenWithMotion, userSpaceViewActive, conversationAttachments.setOpen]);
 
   useAppContextDraftTarget(submissionTargetPending || !state.initialized || showingManagementCatalog ? undefined : JSON.stringify([
     state.activeContext ? runtimeContextKey(state.activeContext) : undefined, state.activeSessionTabID, state.activePane, state.thread?.id, state.secondaryThread?.id,
@@ -5529,6 +5543,7 @@ export function App(): JSX.Element {
       <ImagePreviewProvider>
       <ProjectActionsProvider value={projectAgentEnabled ? projectActions : null}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
+      <ConversationAttachmentPreviewContext.Provider value={!poppedOutMode && userSpaceViewActive ? conversationAttachments.openAttachment : undefined}>
       <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
         <div
           ref={appShellRef}
@@ -6009,7 +6024,7 @@ export function App(): JSX.Element {
       </main>
 
       <>
-      {!poppedOutMode && (rightPanelOpen || rightPanelAnimating) ? (
+      {!poppedOutMode && !userSpaceViewActive && (rightPanelOpen || rightPanelAnimating) ? (
         <div
           className="workspace-right-panel-resizer"
           inert={rightPanelGlobalized}
@@ -6027,8 +6042,9 @@ export function App(): JSX.Element {
       ) : null}
       {poppedOutMode ? null : (
         <WorkspaceRightPanel
-          open={rightPanelOpen}
-          present={rightPanelOpen || rightPanelAnimating}
+          hidden={userSpaceViewActive}
+          open={!userSpaceViewActive && savedRightPanelOpen}
+          present={!userSpaceViewActive && (savedRightPanelOpen || savedRightPanelAnimating)}
           prewarm={Boolean(state.initialized)}
           tabs={workspaceViewTabs}
           activeTabID={workspaceActiveViewTabID}
@@ -6049,10 +6065,10 @@ export function App(): JSX.Element {
           onDirtyFileTabsChange={rememberWorkspaceDirtyFiles}
           onReorderTabs={reorderWorkspaceViewTabs}
           onOpenFile={openWorkspaceFile}
-          globalized={rightPanelGlobalized}
-          conversationTab={rightPanelGlobalized ? {
+          globalized={codingRightPanelGlobalized}
+          conversationTab={codingRightPanelGlobalized ? {
             title: activeTitle,
-            active: workspaceConversationActive,
+            active: codingWorkspaceConversationActive,
             onSelect: focusWorkspaceConversation,
           } : undefined}
           sideThreadContent={sideConversationAvailable && activeThreadID && sideThread.entry ? (
@@ -6136,6 +6152,29 @@ export function App(): JSX.Element {
           workbenchController={desktopWorkbenchController}
         />
       )}
+      {!poppedOutMode && conversationAttachments.state.tabs.length > 0 && <WorkspaceRightPanel
+        toolsEnabled={false}
+        hidden={!userSpaceViewActive || !conversationAttachments.open}
+        open={userSpaceViewActive && conversationAttachments.open}
+        present={userSpaceViewActive && conversationAttachments.open}
+        tabs={conversationAttachments.state.tabs}
+        activeTabID={conversationAttachments.state.activeTabID}
+        onSelectTab={conversationAttachments.focusTab}
+        onOpenTool={() => {}}
+        onShowTools={() => {}}
+        onCloseTab={conversationAttachments.closeTab}
+        onReorderTabs={conversationAttachments.reorderTabs}
+        onOpenFile={() => {}}
+        globalized={userSpaceViewActive && rightPanelGlobalized}
+        conversationTab={userSpaceViewActive && rightPanelGlobalized ? {
+          title: primaryPluginView.title,
+          active: conversationAttachments.conversationSelected,
+          onSelect: conversationAttachments.focusConversation,
+        } : undefined}
+        sheetPhase={userSpaceViewActive ? workspaceSheetPhase : "docked"}
+        onToggleGlobalize={() => conversationAttachments.setManualGlobalized(!conversationAttachments.manualGlobalized)}
+        canExitGlobalized={!rightPanelAutoGlobalized}
+      />}
       </>
 
 
@@ -6192,6 +6231,7 @@ export function App(): JSX.Element {
           },
           requestRegionVisible: (region, layout) => {
             if (layout === "user-space") return;
+            if (userSpaceViewActive) { conversationAttachments.setOpen(false); return; }
             if (region === "primary" && rightPanelGlobalized) setRightPanelOpenWithMotion(false);
             if (region === "auxiliary") setRightPanelOpenWithMotion(true);
           },
@@ -6214,6 +6254,7 @@ export function App(): JSX.Element {
       ) : null}
       </div>
     </ArtifactPreviewContext.Provider>
+    </ConversationAttachmentPreviewContext.Provider>
     </WorkspaceBrowserOpenContext.Provider>
     </ProjectActionsProvider>
     </ImagePreviewProvider>

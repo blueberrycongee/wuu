@@ -1,5 +1,6 @@
+import { ConversationAttachmentPreviewContext } from "../ConversationAttachmentPreview";
 import * as React from "react";
-import { Component, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Component, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PluginUIConversationAttachmentProps, PluginUIConversationComposerProps, PluginUIConversationMessageProps, PluginUIConversationViewProps } from "../../shared/workbench";
 import { SplitPaneComposer } from "../ComposerInputSections";
 import { FileSelectionProvider } from "../FileSelectionContext";
@@ -12,11 +13,11 @@ import { ConversationFlow } from "../ConversationFlow";
 import { useAutoFollowScrollContainer } from "../AutoFollowScroll";
 import { captureReadingAnchor, readingAnchorScrollTop, type ConversationReadingAnchor } from "../ConversationReadingAnchor";
 import { JumpToLatestPill } from "../JumpToLatestPill";
-import { TurnOutputSummaryCard } from "../TurnOutputSummaryCard";
 import { Modal } from "../Modal";
 import { Download, FileText, LoaderCircle, Search } from "../WuuIcons";
 import { formatByteSize } from "../AttachmentFormat";
 import { useI18n } from "../i18n";
+import { ConversationBubbleContext, useConversationBubbleGesture } from "./ConversationBubbles";
 import { PluginHost } from "./PluginHost";
 import { UserQuestionCard } from "../UserQuestionCard";
 import type { RuntimeContext, ThreadItem, Turn, UserQuestionRequest } from "../../shared/protocol";
@@ -62,10 +63,12 @@ class ConversationReadingBoundary extends Component<ReadingBoundaryProps> {
   render(): React.ReactNode { return this.props.children; }
 }
 
-export function PluginConversationView({ conversationId, sessionId, sessionScope, onQuestionReply, actions, title, subtitle, avatar, status, loading = false, searchLabel, searchContent, children, composer }: PluginUIConversationViewProps): JSX.Element {
+export function PluginConversationView({ presentation = "standard", conversationId, sessionId, sessionScope, onQuestionReply, actions, title, subtitle, avatar, status, loading = false, searchLabel, searchContent, children, composer }: PluginUIConversationViewProps): JSX.Element {
   const { t } = useI18n();
   const controller = useAutoFollowScrollContainer({ observeKey: conversationId });
   const rootRef = useRef<HTMLElement>(null);
+  const bubbles = presentation === "bubbles";
+  const gesture = useConversationBubbleGesture(bubbles, conversationId, controller.scrollRef);
   const [composerNode, setComposerNode] = useState<HTMLDivElement | null>(null);
   const [searchFor, setSearchFor] = useState<string>();
   const searchOpen = searchFor === conversationId;
@@ -81,14 +84,20 @@ export function PluginConversationView({ conversationId, sessionId, sessionScope
     observer.observe(composerNode);
     return () => observer.disconnect();
   }, [composerNode]);
-  return <section ref={rootRef} className="plugin-conversation" data-conversation-id={conversationId}>
+  return <section ref={rootRef} className="plugin-conversation" data-conversation-id={conversationId} data-presentation={presentation}>
     <header className="titlebar plugin-conversation-titlebar" data-wuu-component="conversation-titlebar">
       <div className="title-block"><div className="conversation-title-heading">{avatar}<h1 tabIndex={-1}>{title}</h1>{subtitle && <span className="plugin-conversation-subtitle">{subtitle}</span>}</div></div>
       <div className="title-actions">{status}<button type="button" className="icon-button" data-action="search-history" aria-label={searchLabel} title={searchLabel} aria-expanded={searchOpen} onClick={event => { event.currentTarget.focus({ preventScroll: true }); setSearchFor(conversationId); }}><Search /></button>{actions}</div>
     </header>
     <ConversationReadingBoundary conversationId={conversationId} loading={loading} controller={controller}>
-      <div className="scroll-region plugin-conversation-scroll" ref={controller.scrollRef} onScroll={controller.handleScrollFrame} data-scroll-fade="">
+      <div className="scroll-region plugin-conversation-scroll" ref={controller.scrollRef} onScroll={controller.handleScrollFrame} data-scroll-fade=""
+        data-times-revealed={bubbles ? gesture.revealed : undefined}
+        data-times-dragging={bubbles ? gesture.dragging : undefined}
+        style={bubbles ? { "--bubble-time-offset": `${gesture.offset}px` } as React.CSSProperties : undefined}>
+        {bubbles && <button type="button" className="bubble-time-toggle" aria-pressed={gesture.revealed} aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" onClick={gesture.toggle}>{t(gesture.revealed ? "message.hideTimes" : "message.showTimes")}</button>}
+        <ConversationBubbleContext.Provider value={{ enabled: bubbles, revealed: gesture.revealed }}>
         <ConversationFlow className="plugin-conversation-flow" role="log" aria-live="polite" aria-busy={loading}>{children}{sessionId && sessionScope && <PluginConversationQuestions sessionId={sessionId} scope={sessionScope} onReply={onQuestionReply} />}</ConversationFlow>
+        </ConversationBubbleContext.Provider>
       </div>
     </ConversationReadingBoundary>
     <div className="plugin-conversation-composer" ref={setComposerNode}>{composer}</div>
@@ -157,6 +166,10 @@ function PluginConversationQuestions({ sessionId, scope, onReply }: { sessionId:
 }
 
 export function PluginConversationMessage({ id: suppliedId, role, content, timestamp, latest = false, streaming = false, turnId, turnStatus = streaming ? "in_progress" : "completed", process, messageActions = "copy-only", attachments, className, linkPolicy }: PluginUIConversationMessageProps): JSX.Element {
+  const bubble = useContext(ConversationBubbleContext);
+  const { formatDate } = useI18n();
+  const validTime = timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : undefined;
+  if (bubble.enabled) messageActions = "none";
   const fallbackId = useId();
   const id = suppliedId ?? fallbackId;
   const messageTurnId = turnId ?? `plugin-message-${id}`;
@@ -167,33 +180,152 @@ export function PluginConversationMessage({ id: suppliedId, role, content, times
     items: [...(process.content ? [{ id: `${id}:process`, type: "agent_message" as const, text: process.content, status: "completed" as const }] : []), ...(content ? [item] : [])],
   } : undefined;
   const processDisplay = processTurn ? buildAssistantTurnDisplay(processTurn, id) ?? { entries: [], hasAnswer: false } : undefined;
-  return <ArtifactThreadContext.Provider value={undefined}><SideConversationAvailableContext.Provider value={false}>
-    <div className={["plugin-conversation-message", className].filter(Boolean).join(" ")} data-wuu-component="plugin-ui-conversation-message" data-role={role}
-      data-turn-id={role === "assistant" ? messageTurnId : undefined}>
-      {processTurn && processDisplay ? <AssistantTurnShell turn={processTurn} display={processDisplay}
+  const messageContent = processTurn && processDisplay ? <AssistantTurnShell turn={processTurn} display={processDisplay}
         processLabel={process!.label} processContent={process!.details} onStreamFrame={noop} actionableAgentMessageID={id} latestAgentMessageID={latest ? id : undefined}
         messagePresentation={{ pluginHost: conversationHost, linkPolicy, messageActions }} trailingContent={attachmentContent} /> : <ThreadItemView turnID={messageTurnId} turnStatus={turnStatus} turnStartedAt={timestamp}
         turnAnswerReadyAt={streaming ? undefined : timestamp} streaming={streaming} onStreamFrame={noop} pluginHost={conversationHost}
         actionableAgentMessageID={role === "assistant" ? id : undefined} latestAgentMessageID={latest ? id : undefined}
-        messageActions={messageActions} messageAttachments={attachmentContent} linkPolicy={linkPolicy} item={item} />}
+        messageActions={messageActions} messageAttachments={attachmentContent} linkPolicy={linkPolicy} item={item} />;
+  return <ArtifactThreadContext.Provider value={undefined}><SideConversationAvailableContext.Provider value={false}>
+    <div className={["plugin-conversation-message", className].filter(Boolean).join(" ")} data-wuu-component="plugin-ui-conversation-message" data-role={role}
+      data-turn-id={role === "assistant" ? messageTurnId : undefined} data-bubble={bubble.enabled || undefined}>
+      {bubble.enabled && validTime && <time className="bubble-message-time" dateTime={validTime} aria-hidden={!bubble.revealed} title={formatDate(validTime, { dateStyle: "medium", timeStyle: "short" })}>{formatDate(validTime, { hour: "2-digit", minute: "2-digit" })}</time>}
+      {bubble.enabled ? <div className="bubble-message-content">{messageContent}</div> : messageContent}
     </div>
   </SideConversationAvailableContext.Provider></ArtifactThreadContext.Provider>;
 }
 
-export function PluginConversationAttachment({ name, mediaType, size, url, loading, error, loadLabel, downloadLabel, onLoad }: PluginUIConversationAttachmentProps): JSX.Element {
-  const { formatNumber } = useI18n();
-  // Only caller-verified local bytes may become a preview or download here.
+type PendingAttachmentURL = {
+  promise: Promise<string>;
+  resolve: (url: string) => void;
+  reject: (cause: unknown) => void;
+  url?: string;
+  error?: string;
+  loading: boolean;
+};
+
+export function PluginConversationAttachment({ resourceId, onOpen, onRead, name, mediaType, size, url, loading, error, loadLabel, downloadLabel, onLoad }: PluginUIConversationAttachmentProps): JSX.Element {
+  const { t, formatNumber } = useI18n();
+  const openPreview = useContext(ConversationAttachmentPreviewContext);
+  const fallbackId = useId();
   const localURL = url?.startsWith("blob:") ? url : undefined;
   const raster = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"].includes(mediaType);
+  const readFailed = t("conversationAttachment.readFailed");
+  const pendingURL = useRef<PendingAttachmentURL | undefined>(undefined);
+  const mounted = useRef(true);
+  const active = useRef({ open: false, download: false });
+  const [opening, setOpening] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [actionError, setActionError] = useState("");
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      pendingURL.current?.reject(new DOMException("Attachment card was unmounted", "AbortError"));
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const pending = pendingURL.current;
+    if (!pending) return;
+    if (localURL) pending.resolve(localURL);
+    else if (url && url !== pending.url) pending.reject(new Error(readFailed));
+    else if (error && (error !== pending.error || (pending.loading && !loading))) pending.reject(new Error(error));
+    pending.url = url;
+    pending.error = error;
+    pending.loading ||= Boolean(loading);
+  }, [url, localURL, loading, error, readFailed]);
+  // Keep this adapter until the public attachment API no longer accepts void
+  // loaders that publish their verified URL/error through later prop updates.
+  const loadURL = (): Promise<string> => {
+    if (localURL) return Promise.resolve(localURL);
+    if (pendingURL.current) return pendingURL.current.promise;
+    let resolve!: (source: string) => void, reject!: (cause: unknown) => void;
+    const promise = new Promise<string>((done, fail) => { resolve = done; reject = fail; });
+    const pending: PendingAttachmentURL = {
+      promise, url, error, loading: Boolean(loading),
+      resolve: source => {
+        if (pendingURL.current !== pending) return;
+        pendingURL.current = undefined;
+        resolve(source);
+      },
+      reject: cause => {
+        if (pendingURL.current !== pending) return;
+        pendingURL.current = undefined;
+        reject(cause);
+      },
+    };
+    pendingURL.current = pending;
+    try {
+      void Promise.resolve(onLoad()).then(source => {
+        if (typeof source !== "string") return;
+        if (source.startsWith("blob:")) pending.resolve(source);
+        else pending.reject(new Error(readFailed));
+      }, pending.reject);
+    } catch (cause) { pending.reject(cause); }
+    return promise;
+  };
+  const reportError = (cause: unknown) => {
+    if (mounted.current) setActionError(cause instanceof Error ? cause.message : String(cause));
+  };
+  const download = async () => {
+    if (active.current.download) return;
+    active.current.download = true;
+    setDownloading(true); setActionError("");
+    try {
+      const source = await loadURL();
+      if (!mounted.current) return;
+      const link = document.createElement("a");
+      link.href = source; link.download = name; document.body.append(link); link.click(); link.remove();
+    } catch (cause) { reportError(cause); }
+    finally {
+      active.current.download = false;
+      if (mounted.current) setDownloading(false);
+    }
+  };
+  const open = async () => {
+    if (active.current.open) return;
+    active.current.open = true;
+    setActionError("");
+    try {
+      if (openPreview && onRead) {
+        let pending: Promise<Blob> | undefined;
+        onOpen?.();
+        openPreview({ resourceId: resourceId ?? fallbackId, name, mediaType, size, read: () => {
+          if (!pending) pending = (async () => onRead())().catch(cause => { pending = undefined; throw cause; });
+          return pending;
+        } });
+        return;
+      }
+      setOpening(true);
+      const source = await loadURL();
+      if (!mounted.current || !openPreview) return;
+      const response = await fetch(source);
+      if (!response.ok) throw new Error(readFailed);
+      const blob = await response.blob();
+      if (!mounted.current) return;
+      // Opening may unmount the plugin and revoke its URL. Tabs own bytes, not
+      // that card's URL, so complete the legacy snapshot before changing views.
+      onOpen?.();
+      openPreview({ resourceId: resourceId ?? fallbackId, name, mediaType, size, read: () => Promise.resolve(blob) });
+    } catch (cause) { reportError(cause); }
+    finally {
+      active.current.open = false;
+      if (mounted.current) setOpening(false);
+    }
+  };
   return <div className="plugin-conversation-attachment">
-    <TurnOutputSummaryCard component="conversation-attachment" icon={<FileText />} title={name}
-      subtitle={formatByteSize(size, formatNumber)} trailing={localURL
-        ? <a className="icon-button" href={localURL} download={name} aria-label={downloadLabel} title={downloadLabel}><Download /></a>
-        : <button type="button" className="icon-button" data-action="load-attachment" aria-label={loadLabel} title={loadLabel} disabled={loading} onClick={onLoad}>{loading ? <LoaderCircle className="is-spinning" /> : <Download />}</button>} />
-    {error && <p role="alert">{error}</p>}
+    <div className="conversation-file-card" data-wuu-component="conversation-attachment">
+      <button type="button" className="conversation-file-card-main" data-action="open-attachment" aria-label={t("conversationAttachment.open", { name })} disabled={opening} aria-busy={opening} onClick={() => { void open(); }}>
+        {opening ? <LoaderCircle className="is-spinning" /> : <FileText />}<span className="conversation-file-card-copy"><strong title={`${name} · ${mediaType} · ${formatByteSize(size, formatNumber)}`}>{name}</strong></span>
+      </button>
+      {localURL ? <a className="icon-button" href={localURL} download={name} aria-label={downloadLabel} title={downloadLabel}><Download /></a>
+        : <button type="button" className="icon-button" data-action="load-attachment" aria-label={loadLabel} title={loadLabel} disabled={loading || downloading} onClick={() => { void download(); }}>{loading || downloading ? <LoaderCircle className="is-spinning" /> : <Download />}</button>}
+    </div>
+    {(actionError || error) && <p role="alert">{actionError || error}</p>}
     {raster && localURL && <img src={localURL} alt={name} />}
   </div>;
 }
+
 
 export function PluginConversationComposer({ conversationId, prompt, placeholder, running, submitting, queuedCount, pendingCount, stopState, disabled = false, sendDisabled, attachments, onChangePrompt, onAddAttachments, onRemoveAttachment, onSend, onStop }: PluginUIConversationComposerProps): JSX.Element {
   const images = attachments.filter(file => ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"].includes(file.media_type)).map(file => ({ ...file }));

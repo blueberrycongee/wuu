@@ -118,7 +118,7 @@ it("refreshes a stopping routine after host events so settled cancellation can b
   let settled = false;
   const ui = await mount(async method => method === "routines.list" ? { routines: [{ routine_id:"routine-one",agent_id:"a-main",title:"Synthetic routine",status:settled?"paused":"stopping",cancellation_pending:!settled,revision:settled?3:2,binding:{} }] } : {});
 
-  const routine = () => Array.from(ui.container.querySelectorAll("article")).find(article => article.textContent?.includes("Synthetic routine"))!;
+  const routine = () => Array.from(ui.container.querySelectorAll("[data-routine-id]")).find(article => article.textContent?.includes("Synthetic routine"))!;
   expect(routine().querySelector("button")).toBeNull();
   settled = true; await act(async () => ui.publish());
   expect(routine().querySelector<HTMLButtonElement>("button")?.disabled).toBe(false);
@@ -225,29 +225,25 @@ it("preserves later drafts and panel selection when an earlier send settles", as
   expect(ui.container.querySelector(".composer-collapsed-prompt-card")).not.toBeNull();
 });
 
-// Personal answers must retain native copy/time behavior without offering a
-// Coding-only fork, and unknown legacy times must never be manufactured.
-it.each(["2026-10-18T09:00:00Z", undefined])("copies the exact assistant answer without Fork and uses only its persisted timestamp (%s)", async at => {
-  const descriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
-  const copy = vi.fn().mockResolvedValue(undefined);
-  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copy } });
-  cleanups.push(() => { if (descriptor) Object.defineProperty(navigator, "clipboard", descriptor); else Reflect.deleteProperty(navigator, "clipboard"); });
+// Twin hides persistent actions, and revealing time must never manufacture a
+// timestamp for legacy or still-streaming messages.
+it.each(["2026-10-18T09:00:00Z", undefined])("reveals only persisted message times without Coding action rows (%s)", async at => {
   const content = "  Answer **exactly**\nwith trailing space  ";
   const ui = await mount(undefined, main, [{ seq: 1, role: "assistant", content, ...(at ? { at } : {}) }]);
-  for (const _pass of [0]) {
-    const message = ui.container.querySelector('[data-wuu-component="plugin-ui-conversation-message"][data-role="assistant"]')!;
-    const actions = message.querySelector('[data-wuu-component="message-actions"]');
-    expect(actions).not.toBeNull();
-    const button = actions!.querySelector<HTMLButtonElement>(".message-copy-button");
-    expect(button).not.toBeNull();
-    expect(button!.disabled).toBe(false);
-    expect(Array.from(actions!.querySelectorAll("button"))).toEqual([button]);
-    const time = actions!.querySelector("time");
-    if (at) expect(time?.getAttribute("datetime")).toBe(at);
-    else expect(time).toBeNull();
-    await act(async () => button!.click());
-    expect(copy).toHaveBeenLastCalledWith(content);
-  }
+  const message = ui.container.querySelector('[data-wuu-component="plugin-ui-conversation-message"][data-role="assistant"]')!;
+  expect(message.querySelector('[data-wuu-component="message-actions"]')).toBeNull();
+  expect(message.querySelector("strong")?.textContent).toBe("exactly");
+  const time = message.querySelector("time");
+  if (at) {
+    expect(time?.getAttribute("datetime")).toBe(at);
+    expect(time?.getAttribute("aria-hidden")).toBe("true");
+  } else expect(time).toBeNull();
+  await ui.click('.bubble-time-toggle');
+  expect(ui.container.querySelector('.bubble-time-toggle')?.getAttribute('aria-pressed')).toBe('true');
+  if (at) expect(time?.getAttribute("aria-hidden")).toBe("false");
+  await act(async () => ui.container.querySelector('.bubble-time-toggle')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(ui.container.querySelector('.bubble-time-toggle')?.getAttribute('aria-pressed')).toBe('false');
+  if (at) expect(time?.getAttribute("aria-hidden")).toBe("true");
 });
 
 // Search is transient UI: dismissal restores keyboard focus without resetting
@@ -386,7 +382,7 @@ it("keeps task history in one native process fold without detail action rows or 
   expect(detail.textContent).not.toContain("Internal task context");
   expect(detail.textContent).not.toContain("Hidden bookkeeping");
   expect(detail.textContent).not.toContain("private-context.txt");
-  expect(ui.container.querySelector('.mosaic-main .message-copy-button')).not.toBeNull();
+  expect(ui.container.querySelector('.mosaic-main .message-copy-button')).toBeNull();
   expect(surface).not.toHaveBeenCalled();
 });
 it("keeps requirement history selection inside the native fold and ignores a late previous revision", async () => {

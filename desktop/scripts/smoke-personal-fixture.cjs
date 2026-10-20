@@ -35,6 +35,8 @@ function waitFor(predicate) {
   const twin = [...document.querySelectorAll(".primary-nav button")].find(button => button.textContent.trim() === "twin");
   document.querySelector('[data-wuu-plugin="personal"]').click();
   await waitFor(() => document.querySelector('[data-action="load-attachment"]'));
+  if (document.body.textContent.includes("合成日程：周五午餐")) throw new Error("Default preview must not display a synthetic calendar confirmation notice");
+  if (document.querySelector(".plugin-conversation-questions [role=alert]")) throw new Error("Conversation question fixture returned an invalid response");
   const mainName = document.querySelector(".plugin-conversation-titlebar h1").textContent;
   document.querySelector('[data-action="load-attachment"]').click();
   await waitFor(() => document.querySelector('a[download]'));

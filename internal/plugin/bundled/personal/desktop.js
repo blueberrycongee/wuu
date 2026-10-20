@@ -1,10 +1,14 @@
 export async function activate(api) {
   const React = api.react, h = React.createElement;
-  const { Button, TextInput, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select } = api.ui;
+  const { Button, TextInput, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
   const route = { userSpaceId: "local", productDomain: "personal" };
   const call = (method, input) => api.invokeRuntime(method, input, route);
   const words = {
     "en": {
+      "profile": "About twin",
+      "ready": "Ready",
+      "thinking": "Thinking",
+      "responding": "Replying",
       "historyFrom": "Sent from (local date)",
       "historyUntil": "Sent through (local date)",
       "historyDateHint": "Searches saved message times. The through date includes that whole local day. Older messages with unknown times are excluded when dates are set.",
@@ -67,6 +71,7 @@ export async function activate(api) {
       "stopTask": "Stop this task",
       "openMainChat": "Open chat",
       "close": "Close",
+      "back": "Back",
       "save": "Save changes",
       "hostUnavailable": "twin is not available on this host",
       "memoryHint": "Personal and Coding memory are logically separate. Shell and file access are not isolated by this setting.",
@@ -95,6 +100,10 @@ export async function activate(api) {
       "reconciliation": "The external outcome still needs checking. Stopping does not undo completed actions."
     },
     "zh": {
+      "profile": "关于 twin",
+      "ready": "已就绪",
+      "thinking": "正在思考",
+      "responding": "正在回复",
       "historyFrom": "发送日期从（本地日期）",
       "historyUntil": "发送日期至（本地日期）",
       "historyDateHint": "按已保存的消息时间搜索，结束日期包含本地当天。设置日期后，不计入时间未知的旧消息。",
@@ -157,6 +166,7 @@ export async function activate(api) {
       "stopTask": "停止这件事",
       "openMainChat": "打开聊天",
       "close": "关闭",
+      "back": "返回",
       "save": "保存修改",
       "hostUnavailable": "当前宿主还不能启用 twin",
       "memoryHint": "Personal 与 Coding 的记忆逻辑隔离。此设置不提供 Shell 和文件访问的强隔离。",
@@ -186,15 +196,35 @@ export async function activate(api) {
     }
   };
   api.registerStyle({ id: "personal", css: `
-    .mosaic { height:100%;min-height:0;display:flex;color:var(--ink); }
+    .mosaic { position:relative;height:100%;min-height:0;display:flex;color:var(--ink); }
     .mosaic-main { flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden; }
-    .mosaic-sidebar { width:310px;flex:none;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;border-left:1px solid var(--hairline-soft);background:var(--paper); }
-    .mosaic-panel-scroll { flex:1;min-height:0;overflow:auto;padding:var(--space-5) var(--space-4); }
-    :root[data-host-kind="desktop"][data-platform="linux"] .mosaic-sidebar::before,:root[data-host-kind="desktop"][data-platform="win32"] .mosaic-sidebar::before { content:"";display:block;flex:none;height:var(--window-titlebar-height); }
-    /* The docked panel owns the native caption edge. When hidden, retain the
-       host's window-control and shell-toggle exclusion on the chat titlebar. */
-    .app-shell .mosaic[data-panel-open="true"] .plugin-conversation .plugin-conversation-titlebar { padding-right:var(--control-toolbar-inset); }
+    .mosaic-sidebar { position:absolute;z-index:30;right:12px;top:calc(var(--canvas-titlebar-height) + 4px);width:min(360px, calc(100% - 24px));max-height:calc(100% - var(--canvas-titlebar-height) - 16px);min-height:0;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--hairline);border-radius:20px;background:var(--paper);box-shadow:0 12px 32px #00000016; }
+    .mosaic-panel-scroll { min-height:0;overflow:auto;padding:20px;overscroll-behavior:contain; }
     .mosaic-sidebar[hidden] { display:none; }
+    .mosaic-profile-head { display:flex;align-items:center;gap:14px;margin-bottom:24px; }
+    .mosaic-profile-copy { min-width:0;flex:1; }
+    .mosaic-profile-name { font-size:calc(var(--font-ui) * 1.2);font-weight:600;line-height:1.5; }
+    .mosaic-profile-copy .mosaic-status { margin-top:4px; }
+    .mosaic-profile-trigger { border:0;background:transparent;color:inherit;display:flex;align-items:center;gap:9px;padding:4px 6px;border-radius:10px;cursor:pointer;font:inherit;-webkit-app-region:no-drag; }
+    .mosaic .plugin-conversation-titlebar { position:relative; }
+    .mosaic .plugin-conversation-titlebar .title-block { visibility:hidden; }
+    .mosaic-profile-trigger { position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:calc(100% - 144px); }
+    .mosaic-profile-trigger-copy { min-width:0; }
+    .mosaic-profile-trigger-copy > span,.mosaic-profile-trigger-copy > small { overflow:hidden;white-space:nowrap;text-overflow:ellipsis; }
+    .mosaic-profile-trigger:hover,.mosaic-profile-trigger[aria-expanded="true"] { background:var(--surface-1); }
+    .mosaic-profile-trigger:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
+    .mosaic-profile-trigger-copy { text-align:left;display:flex;flex-direction:column;line-height:1.3; }
+    .mosaic-profile-trigger-copy small { font-size:var(--font-ui-small);color:var(--ink-muted); }
+    .mosaic-profile-head .mosaic-avatar { width:56px;height:56px; }
+    .mosaic-profile-close { align-self:flex-start; }
+    .mosaic-sidebar .mosaic-task { align-items:center;padding:8px 0;margin:0;gap:10px; }
+    .mosaic-sidebar .mosaic-task-title { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+    .mosaic-sidebar .mosaic-task-meta { display:none; }
+    .mosaic-sidebar .mosaic-detail .mosaic-task-meta,.mosaic-sidebar .mosaic-routines .mosaic-task-meta { display:block; }
+    .mosaic-sidebar .mosaic-task-state { font-size:12px; }
+    .mosaic-sidebar .mosaic-task-state[data-state="running"],.mosaic-sidebar .mosaic-task-state[data-state="queued"] { color:var(--accent); }
+    .mosaic-sidebar .mosaic-detail { min-height:320px; }
+    .mosaic-sidebar .mosaic-detail-content { overflow:auto; }
     .mosaic-section { margin-bottom:var(--space-6); }
     .mosaic-section h2,.mosaic-section h3 { display:flex;align-items:center;gap:var(--space-3);font:inherit;color:var(--ink-muted);margin:0 0 var(--space-3); }
     .mosaic-count { padding:0 var(--space-1);border-radius:var(--radius-xs);background:var(--surface-1);font-size:var(--font-ui-small); }
@@ -207,7 +237,7 @@ export async function activate(api) {
     .mosaic-task-meta { display:block;color:var(--ink-muted);margin:var(--space-1) 0 0;overflow-wrap:anywhere; }
     .mosaic-task-state { flex:none;min-width:10px;color:var(--ink-muted); }
     .mosaic-task-state[data-state="waiting_user"] { color:var(--warning,var(--ink)); }
-    .mosaic-avatar { width:30px;height:30px;flex:none;display:grid;place-items:center;border-radius:50%;background:var(--surface-1);color:var(--ink-muted); }
+    .mosaic-avatar { width:32px;height:32px;flex:none;display:grid;place-items:center; }
     .mosaic-status { display:flex;align-items:center;gap:var(--space-2);color:var(--ink-muted); }
     .mosaic-status-dot { width:6px;height:6px;background:var(--accent);border-radius:50%; }
     .mosaic-actions { display:flex;gap:var(--space-2);align-items:center;flex-wrap:wrap; }
@@ -227,6 +257,10 @@ export async function activate(api) {
     .mosaic-memory { padding:var(--space-3) 0;border-bottom:1px solid var(--hairline-soft); }
     .mosaic-memory p { margin:0 0 var(--space-2); }
     .mosaic-routines summary { display:flex;align-items:center;gap:var(--space-2);cursor:pointer;color:var(--ink-muted); }
+    .mosaic-routines summary.mosaic-task { color:var(--ink);list-style:none; }
+    .mosaic-routines summary.mosaic-task::-webkit-details-marker { display:none; }
+    .mosaic-routine-next { flex:none;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-muted);font-size:var(--font-ui-small); }
+    .mosaic-routine-detail { padding:4px 0 12px 32px; }
     .mosaic-settings { display:flex;flex-direction:column;gap:var(--space-5);padding:var(--space-5);max-width:700px; }
     .mosaic-settings p { color:var(--ink-muted); }
     .mosaic-history-search form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--space-3);margin-block:var(--space-3); }
@@ -234,10 +268,9 @@ export async function activate(api) {
     .mosaic-attachments { display:flex;flex-direction:column;gap:var(--space-2); }
     .mosaic-calendar-proposals { margin-block:var(--space-5);padding-top:var(--space-3);border-top:1px solid var(--hairline-soft); }
     .mosaic-calendar-proposals p { margin:var(--space-2) 0;color:var(--ink-muted); }
-    @media(max-width:1050px) { .mosaic-sidebar { width:245px; } .mosaic-panel-scroll { padding-inline:var(--space-3); } }
-    @media(max-width:760px) { .mosaic-sidebar { width:200px; } }
+    @media(max-width:480px) { .mosaic-sidebar { right:8px;width:calc(100% - 16px); } .mosaic-panel-scroll { padding:16px; } }
   ` });
-  const icons = { sparkles: "M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z M20 2v4 M18 4h4", progress: "M12 3a9 9 0 1 0 9 9 M12 3a9 9 0 0 1 9 9", activity: "M21 11.5a8.5 8.5 0 0 1-12.4 7.6L3 21l1.9-5.6A8.5 8.5 0 1 1 21 11.5", output: "M6 3h8l4 4v14H6z M14 3v5h4 M9 12h6 M9 16h6", panel: "M4 4h16v16H4z M15 4v16", today: "M4 5h16v15H4z M8 3v4 M16 3v4 M4 10h16", tasks: "M9 6h11 M9 12h11 M9 18h11 M3 6l1 1 2-2 M3 12l1 1 2-2 M3 18l1 1 2-2", memory: "M8 4a4 4 0 0 0-4 4 4 4 0 0 0 0 8 4 4 0 0 0 8 2V6a4 4 0 0 0-4-2 M16 4a4 4 0 0 1 4 4 4 4 0 0 1 0 8 4 4 0 0 1-8 2 M8 9h4 M12 15h4", settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6 7 7 M17 17l1.4 1.4 M5.6 18.4 7 17 M17 7l1.4-1.4" };
+  const icons = { clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l-3 3", progress: "M12 3a9 9 0 1 0 9 9 M12 3a9 9 0 0 1 9 9", activity: "M21 11.5a8.5 8.5 0 0 1-12.4 7.6L3 21l1.9-5.6A8.5 8.5 0 1 1 21 11.5", output: "M6 3h8l4 4v14H6z M14 3v5h4 M9 12h6 M9 16h6", panel: "M4 4h16v16H4z M15 4v16", today: "M4 5h16v15H4z M8 3v4 M16 3v4 M4 10h16", tasks: "M9 6h11 M9 12h11 M9 18h11 M3 6l1 1 2-2 M3 12l1 1 2-2 M3 18l1 1 2-2", memory: "M8 4a4 4 0 0 0-4 4 4 4 0 0 0 0 8 4 4 0 0 0 8 2V6a4 4 0 0 0-4-2 M16 4a4 4 0 0 1 4 4 4 4 0 0 1 0 8 4 4 0 0 1-8 2 M8 9h4 M12 15h4", settings: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6 7 7 M17 17l1.4 1.4 M5.6 18.4 7 17 M17 7l1.4-1.4" };
   const icon = key => h("svg", { className: "mosaic-nav-icon", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true }, h("path", { d: icons[key] }));
   const aliveTask = task => !["completed", "cancelled", "stopped", "failed", "archived"].includes(task.state);
 
@@ -247,33 +280,44 @@ export async function activate(api) {
   const digestBytes = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map(value => value.toString(16).padStart(2, "0")).join("");
   const decodeBytes = data => Uint8Array.from(atob(data), character => character.charCodeAt(0));
   const readFile = file => new Promise((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(reader.error || new Error("File read failed")); reader.onabort = () => reject(new Error("File read cancelled")); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.readAsDataURL(file); });
+  const AttachmentOpenContext = React.createContext(() => {});
   function Attachment({ agentId, taskId, requirementsRevision, seq, attachment, t }) {
+    const onOpen = React.useContext(AttachmentOpenContext);
     const [url, setURL] = React.useState(""), [loading, setLoading] = React.useState(false), [error, setError] = React.useState("");
-    const live = React.useRef(true), blobURL = React.useRef("");
+    const live = React.useRef(true), blobURL = React.useRef(""), pendingRead = React.useRef(null);
     React.useEffect(() => { live.current = true; return () => { live.current = false; if (blobURL.current) URL.revokeObjectURL(blobURL.current); }; }, []);
     const raster = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"].includes(attachment.mime_type);
-    const load = async () => {
-      if (loading || url) return;
+    const readVerifiedBlob = async () => {
+      if (attachment.size > fileLimit) throw new Error(t("oversizedAttachment"));
+      if (!Number.isSafeInteger(attachment.size) || attachment.size <= 0 || !safeFilename(attachment.name) || !safeMime(attachment.mime_type) || !/^[a-f0-9]{64}$/.test(attachment.sha256)) throw new Error(t("invalidAttachment"));
+      const total = Math.ceil(attachment.size / 3) * 4, chunks = [];
+      let offset = 0;
+      while (offset < total) {
+        if (api.signal.aborted) throw new Error("Attachment read cancelled");
+        const part = await call(taskId ? "tasks.attachments.read" : "agents.attachments.read", { ...(taskId ? { task_id: taskId, requirements_revision: requirementsRevision } : { agent_id: agentId }), seq, kind: attachment.kind, index: attachment.index, sha256: attachment.sha256, offset });
+        if (part.offset !== offset || part.total !== total || part.sha256 !== attachment.sha256 || part.name !== attachment.name || part.content_type !== attachment.mime_type || typeof part.data !== "string" || !part.data.length || part.data.length > 128 * 1024 || part.data.length % 4 || part.data.length + offset > total || !/^[A-Za-z0-9+/]*={0,2}$/.test(part.data)) throw new Error(t("invalidAttachment"));
+        chunks.push(part.data); offset += part.data.length;
+      }
+      const bytes = decodeBytes(chunks.join(""));
+      if (bytes.length !== attachment.size || await digestBytes(bytes) !== attachment.sha256) throw new Error(t("invalidAttachment"));
+      if (api.signal.aborted) throw new Error("Attachment read cancelled");
+      return new Blob([bytes], { type: raster ? attachment.mime_type : "application/octet-stream" });
+    };
+    const read = async () => {
+      if (blobURL.current) return blobURL.current;
       setLoading(true); setError("");
       try {
-        if (attachment.size > fileLimit) throw new Error(t("oversizedAttachment"));
-        if (!Number.isSafeInteger(attachment.size) || attachment.size <= 0 || !safeFilename(attachment.name) || !safeMime(attachment.mime_type) || !/^[a-f0-9]{64}$/.test(attachment.sha256)) throw new Error(t("invalidAttachment"));
-        const total = Math.ceil(attachment.size / 3) * 4, chunks = [];
-        let offset = 0;
-        while (offset < total) {
-          if (!live.current || api.signal.aborted) return;
-          const part = await call(taskId ? "tasks.attachments.read" : "agents.attachments.read", { ...(taskId ? { task_id: taskId, requirements_revision: requirementsRevision } : { agent_id: agentId }), seq, kind: attachment.kind, index: attachment.index, sha256: attachment.sha256, offset });
-          if (part.offset !== offset || part.total !== total || part.sha256 !== attachment.sha256 || part.name !== attachment.name || part.content_type !== attachment.mime_type || typeof part.data !== "string" || !part.data.length || part.data.length > 128 * 1024 || part.data.length % 4 || part.data.length + offset > total || !/^[A-Za-z0-9+/]*={0,2}$/.test(part.data)) throw new Error(t("invalidAttachment"));
-          chunks.push(part.data); offset += part.data.length;
-        }
-        const bytes = decodeBytes(chunks.join(""));
-        if (bytes.length !== attachment.size || await digestBytes(bytes) !== attachment.sha256) throw new Error(t("invalidAttachment"));
+        const blob = await readVerifiedBlob();
         if (!live.current || api.signal.aborted) return;
-        blobURL.current = URL.createObjectURL(new Blob([bytes], { type: raster ? attachment.mime_type : "application/octet-stream" })); setURL(blobURL.current);
+        blobURL.current = URL.createObjectURL(blob); setURL(blobURL.current); return blobURL.current;
       } catch (cause) { if (live.current) setError(cause instanceof Error ? cause.message : String(cause)); }
       finally { if (live.current) setLoading(false); }
     };
-    return h(ConversationAttachment, { name: attachment.name, mediaType: attachment.mime_type, size: attachment.size, url, loading, error, loadLabel: t(loading ? "verifying" : "readFile"), downloadLabel: t("download"), onLoad: load });
+    const load = () => {
+      if (!pendingRead.current) pendingRead.current = read().finally(() => { pendingRead.current = null; });
+      return pendingRead.current;
+    };
+    return h(ConversationAttachment, { onOpen, resourceId: JSON.stringify([taskId ? "task" : "agent", taskId || agentId, requirementsRevision, seq, attachment.kind, attachment.index, attachment.sha256]), name: attachment.name, mediaType: attachment.mime_type, size: attachment.size, url, loading, error, loadLabel: t(loading ? "verifying" : "readFile"), downloadLabel: t("download"), onLoad: load, onRead: readVerifiedBlob });
   }
   function TaskTrace({ taskId, taskRevision, requirementsRevision, requirements, t }) {
     const [records, setRecords] = React.useState(null), [error, setError] = React.useState(""), [revision, setRevision] = React.useState(requirementsRevision);
@@ -418,9 +462,24 @@ export async function activate(api) {
     const [calendar, setCalendar] = React.useState({ operations: [] }), [calendarError, setCalendarError] = React.useState(""), [calendarBusy, setCalendarBusy] = React.useState(false);
     const [loading, setLoading] = React.useState(true), [error, setError] = React.useState("");
     const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
-    const [panelOpen, setPanelOpen] = React.useState(true), [showAll, setShowAll] = React.useState(false);
+    const [panelOpen, setPanelOpen] = React.useState(false), [showAll, setShowAll] = React.useState(false), [showAllOutputs, setShowAllOutputs] = React.useState(false);
     const [, setDraftVersion] = React.useState(0);
     const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), controlRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
+    const panelRef = React.useRef(null), profileTrigger = React.useRef(null), focusVersion = React.useRef(0), panelID = React.useId();
+    const closePanel = (restoreFocus = true) => {
+      const version = ++focusVersion.current;
+      setPanelOpen(false); setSelection(null);
+      if (restoreFocus) requestAnimationFrame(() => { if (version === focusVersion.current) profileTrigger.current?.focus({ preventScroll: true }); });
+    };
+    React.useEffect(() => {
+      if (!panelOpen) return;
+      panelRef.current?.querySelector('[data-action="close-personal-panel"]')?.focus({ preventScroll: true });
+      const outside = event => {
+        if (!panelRef.current?.contains(event.target) && !profileTrigger.current?.contains(event.target)) closePanel(false);
+      };
+      document.addEventListener("pointerdown", outside, true);
+      return () => document.removeEventListener("pointerdown", outside, true);
+    }, [panelOpen]);
     const calendarRead = React.useRef(0), calendarOpening = React.useRef(false), historyRecovery = React.useRef({ complete: false, endSeq: undefined });
     currentAgent.current = agent;
     const conversationID = agent?.main_session_id || "", draft = draftFor(conversationID), files = draft.files;
@@ -573,17 +632,16 @@ export async function activate(api) {
       // Offer replies have their own admission and never consume a composer draft.
       try { await loadConversation(agent); } catch (cause) { report(cause); }
     };
-    const openDetail = (event, item, kind = "task") => { detailTrigger.current = `[data-${kind === "output" ? "output-task" : "task"}-id="${item.task_id}"]`; setSelection({ taskId: item.task_id, kind }); };
+    const openDetail = (event, item, kind = "task") => { focusVersion.current++; detailTrigger.current = `[data-${kind === "output" ? "output-task" : "task"}-id="${item.task_id}"]`; setSelection({ taskId: item.task_id, kind }); };
     React.useEffect(() => { if (selection) rootRef.current?.querySelector('[data-action="close-detail"]')?.focus({ preventScroll: true }); }, [selection]);
-    const closeDetail = () => { setSelection(null); requestAnimationFrame(() => rootRef.current?.querySelector(detailTrigger.current)?.focus({ preventScroll: true })); };
-    const date = value => { const parsed = new Date(value); return Number.isFinite(parsed.getTime()) ? new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(parsed) : ""; };
+    const closeDetail = () => { const version = ++focusVersion.current; setSelection(null); requestAnimationFrame(() => { if (version !== focusVersion.current) return; const target = rootRef.current?.querySelector(detailTrigger.current); const details = target?.closest("details"); if (details) details.open = true; target?.focus({ preventScroll: true }); }); };
+    const date = (value, compact = false) => { const parsed = new Date(value); return Number.isFinite(parsed.getTime()) ? new Intl.DateTimeFormat(locale, { month: compact ? "numeric" : "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(parsed) : ""; };
     const progressText = task => task.progress === "Previous execution is still stopping; replacement dispatch is held until cancellation is confirmed" ? t("applyingChanges") : task.progress;
     const taskRows = items => items.map(item => h("button", { key: item.task_id, className: "mosaic-task", "data-task-id": item.task_id, onClick: event => openDetail(event, item) },
       h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon(["running", "queued"].includes(item.state) ? "progress" : "activity")),
       h("span", { className: "mosaic-task-copy" }, h("span", { className: "mosaic-task-title" }, item.title), h("span", { className: "mosaic-task-meta" }, progressText(item) || item.question?.text || t(item.state))),
-      h("span", { className: "mosaic-task-state", "data-state": item.state, "aria-label": t(item.state) }, item.state === "waiting_user" || item.reconciliation_required ? "◦" : "›")));
-    const ongoing = tasks.filter(item => ["running", "queued", "stopping"].includes(item.state));
-    const recent = tasks.filter(item => !ongoing.includes(item)).sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
+      h("span", { className: "mosaic-task-state", "data-state": item.state, "aria-label": t(item.state) }, item.state === "waiting_user" || item.reconciliation_required ? "◦" : ["running", "queued"].includes(item.state) ? "●" : "›")));
+    const recent = [...tasks].sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
     const outputs = tasks.filter(item => item.state === "completed" && item.result).sort((a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
     const visibleRoutines = routines.filter(routine => {
       if (routine.status !== "completed" || routine.cron || routine.last_error || routine.cancellation_pending || routine.binding.status !== "active") return true;
@@ -592,11 +650,36 @@ export async function activate(api) {
       const work = tasks.filter(task => task.routine_id === routine.routine_id && task.routine_revision === routine.config_revision);
       return !work.length || work.some(task => task.state !== "completed" || task.error || task.reconciliation_required || task.cancel_requested || !["delivered", "suppressed"].includes(task.delivery?.status));
     });
-    const sidebar = h("aside", { className: "mosaic-sidebar", "data-personal-panel": true, hidden: !panelOpen, "aria-label": t("activity"), onKeyDown: event => { if (event.key === "Escape" && selection) { event.stopPropagation(); closeDetail(); } } },
+    const scheduledIDs = new Set(visibleRoutines.map(item => item.routine_id));
+    const scheduledTime = item => {
+      const value = Date.parse(item.binding?.next_run_at || item.run_at || "");
+      return Number.isFinite(value) ? value : Infinity;
+    };
+    const scheduled = [...visibleRoutines].sort((a, b) => scheduledTime(a) - scheduledTime(b) || a.routine_id.localeCompare(b.routine_id));
+    const activity = [...scheduled.map(item => ({ routine: item })), ...recent.filter(item => !scheduledIDs.has(item.routine_id)).map(item => ({ task: item }))];
+    const routineRow = routine => h("details", { key: `routine:${routine.routine_id}`, className: "mosaic-routines", "data-routine-id": routine.routine_id },
+      h("summary", { className: "mosaic-task" }, h("span", { className: "mosaic-task-mark" }, icon("clock")), h("span", { className: "mosaic-task-copy mosaic-task-title" }, routine.title), h("span", { className: "mosaic-routine-next", title: routine.binding?.next_run_at ? date(routine.binding.next_run_at) : t(routine.status) }, routine.binding?.next_run_at ? date(routine.binding.next_run_at, true) : t(routine.status))),
+      h("div", { className: "mosaic-routine-detail" }, h("p", { className: "mosaic-task-meta" }, t(routine.status), routine.binding?.next_run_at && ` · ${t("nextRun")} ${date(routine.binding.next_run_at)}`),
+        routine.last_error && h("p", { role: "alert" }, routine.last_error),
+        tasks.filter(item => item.routine_id === routine.routine_id).map(item => h("button", { key: item.task_id, className: "mosaic-task", "data-routine-task-id": item.task_id, onClick: event => { detailTrigger.current = `[data-routine-task-id="${item.task_id}"]`; setSelection({ taskId: item.task_id, kind: "task" }); } }, h("span", { className: "mosaic-task-copy" }, item.title), h("span", { className: "mosaic-routine-next" }, t(item.state)))),
+        ["active", "paused"].includes(routine.status) && h(Button, { disabled: busy || routine.cancellation_pending, onClick: () => mutate(async () => { await call(routine.status === "paused" ? "routines.resume" : "routines.pause", { routine_id: routine.routine_id, expected_revision: routine.revision }); await loadRoutines(); }) }, t(routine.status === "paused" ? "resumeRoutine" : "pauseRoutine"))));
+    const displayName = agent?.name || "twin";
+    const avatarStatus = running ? liveMessages.some(message => message.streaming && message.content) ? "responding" : "thinking" : queuedCount > 0 ? "queued" : "idle";
+    const statusText = running ? t(avatarStatus) : queuedCount > 0 ? `${queuedCount} · ${t("queued")}` : t("ready");
+    const avatar = (large = false) => h("span", { className: "mosaic-avatar", "aria-hidden": true }, h(Avatar, { size: large ? 56 : 32, status: avatarStatus, motion: large && panelOpen ? "ambient" : "static" }));
+    const sidebar = h("aside", { ref: panelRef, id: panelID, className: "mosaic-sidebar", "data-personal-panel": true, hidden: !panelOpen, role: "dialog", "aria-label": t("profile"), onKeyDown: event => {
+      if (event.key === "Escape") { event.stopPropagation(); event.preventDefault(); if (selection) closeDetail(); else closePanel(); }
+      if (event.key === "Tab") {
+        const controls = [...panelRef.current.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),textarea:not(:disabled),select:not(:disabled),summary')].filter(node => !node.closest('[hidden]') && (!node.closest("details:not([open])") || node.tagName === "SUMMARY"));
+        const first = controls[0], last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
+    } },
       h("div", { className: "mosaic-panel-scroll" }, selectedArtifact ? h("div", { className: "mosaic-detail", "data-artifact-detail": selectedArtifact.attachment.sha256 },
-        h("header", { className: "mosaic-detail-head" }, h("button", { type: "button", className: "icon-button", "data-action": "close-detail", "aria-label": t("close"), onClick: closeDetail }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "M15 5l-7 7 7 7" }))), h("span", { className: "mosaic-detail-title", title: selectedArtifact.attachment.name }, selectedArtifact.attachment.name)),
+        h("header", { className: "mosaic-detail-head" }, h("button", { type: "button", className: "icon-button", "data-action": "close-detail", "aria-label": t("back"), onClick: closeDetail }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "M15 5l-7 7 7 7" }))), h("span", { className: "mosaic-detail-title", title: selectedArtifact.attachment.name }, selectedArtifact.attachment.name)),
         h("div", { className: "mosaic-detail-content" }, h(Attachment, { key: `${selectedArtifact.seq}:${selectedArtifact.attachment.sha256}`, agentId: agent.agent_id, seq: selectedArtifact.seq, attachment: selectedArtifact.attachment, t }))) : selection && task ? h("div", { className: "mosaic-detail", "data-task-detail": task.task_id },
-        h("header", { className: "mosaic-detail-head" }, h("button", { type: "button", className: "icon-button", "data-action": "close-detail", "aria-label": t("close"), onClick: closeDetail }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "M15 5l-7 7 7 7" }))), h("span", { className: "mosaic-detail-title", title: task.title }, task.title)),
+        h("header", { className: "mosaic-detail-head" }, h("button", { type: "button", className: "icon-button", "data-action": "close-detail", "aria-label": t("back"), onClick: closeDetail }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "M15 5l-7 7 7 7" }))), h("span", { className: "mosaic-detail-title", title: task.title }, task.title)),
         h("div", { className: "mosaic-detail-content" },
           task.goal && h(ConversationMessage, { id: `task:${task.task_id}:${task.requirements_revision}:goal`, role: "user", content: task.goal, linkPolicy: "external-only", messageActions: "none" }),
           h(ConversationMessage, { id: `task:${task.task_id}:${task.requirements_revision}:result`, role: "assistant", content: (typeof task.result === "string" ? task.result : task.result?.summary) || task.question?.text || "", timestamp: task.result?.verified_at, latest: true, linkPolicy: "external-only", messageActions: "none", turnStatus: task.state === "completed" ? "completed" : task.state === "failed" ? "failed" : ["running", "queued", "stopping"].includes(task.state) ? "in_progress" : "interrupted", process: { label: t(task.state), content: progressText(task), details: h(TaskTrace, { key: `${task.task_id}:${task.requirements_revision}`, taskId: task.task_id, taskRevision: task.revision, requirementsRevision: task.requirements_revision, requirements: task.requirements, t }) } }),
@@ -604,17 +687,16 @@ export async function activate(api) {
           task.reconciliation_required && h("p", { role: "status" }, t("reconciliation"))),
         h("div", { className: "mosaic-detail-actions" },
           aliveTask(task) && h(Button, { disabled: busy || task.state === "stopping", "data-action": "stop-task", onClick: () => mutate(async () => { await call("tasks.stop", { task_id: task.task_id, expected_revision: task.revision }); await loadTasks(); }) }, t("stopTask")),
-          h(Button, { "data-action": "open-main-chat", variant: "ghost", onClick: () => rootRef.current?.querySelector(".mosaic-main textarea")?.focus({ preventScroll: true }) }, t("openMainChat")))) : h(React.Fragment, null,
-        h("section", { className: "mosaic-section", "data-panel-section": "ongoing" }, h("h2", null, t("progress"), ongoing.length > 0 && h("span", { className: "mosaic-count" }, ongoing.length)), ongoing.length ? taskRows(ongoing) : h("p", { className: "mosaic-eyebrow" }, t("noOngoing"))),
-        h("section", { className: "mosaic-section", "data-panel-section": "recent" }, h("h2", null, t("activity")), recent.length ? taskRows(showAll ? recent : recent.slice(0, 5)) : h("p", { className: "mosaic-eyebrow" }, t("quiet")), recent.length > 5 && h(Button, { variant: "ghost", onClick: () => setShowAll(value => !value) }, t(showAll ? "showLess" : "showMore"))),
-        h("section", { className: "mosaic-section", "data-panel-section": "outputs" }, h("h2", null, t("outputs")), artifactOutputs.map(output => h("button", { key: `${output.seq}:${output.attachment.sha256}`, className: "mosaic-task", "data-output-sha256": output.attachment.sha256, onClick: () => { detailTrigger.current = `[data-output-sha256="${output.attachment.sha256}"]`; setSelection({ kind: "artifact", seq: output.seq, sha256: output.attachment.sha256 }); } }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("output")), h("span", { className: "mosaic-task-copy" }, h("span", { className: "mosaic-task-title" }, output.attachment.name), h("span", { className: "mosaic-task-meta" }, date(output.at))))), outputs.length ? outputs.slice(0, showAll ? undefined : 5).map(item => h("button", { key: item.task_id, className: "mosaic-task", "data-output-task-id": item.task_id, onClick: event => openDetail(event, item, "output") }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("output")), h("span", { className: "mosaic-task-copy" }, h("span", { className: "mosaic-task-title" }, item.title), h("span", { className: "mosaic-task-meta" }, date(item.updated_at))))) : !artifactOutputs.length && h("p", { className: "mosaic-eyebrow" }, t("noOutputs"))),
-        visibleRoutines.length > 0 && h("details", { className: "mosaic-routines" }, h("summary", null, icon("today"), t("routines"), h("span", { className: "mosaic-count" }, visibleRoutines.length)), visibleRoutines.map(routine => h("article", { key: routine.routine_id, className: "mosaic-memory", "data-routine-id": routine.routine_id }, h("p", null, routine.title), h("p", { className: "mosaic-task-meta" }, t(routine.status), routine.binding?.next_run_at && ` · ${t("nextRun")} ${date(routine.binding.next_run_at)}`), routine.last_error && h("p", { role: "alert" }, routine.last_error), ["active", "paused"].includes(routine.status) && h(Button, { disabled: busy || routine.cancellation_pending, onClick: () => mutate(async () => { await call(routine.status === "paused" ? "routines.resume" : "routines.pause", { routine_id: routine.routine_id, expected_revision: routine.revision }); await loadRoutines(); }) }, t(routine.status === "paused" ? "resumeRoutine" : "pauseRoutine"))))))));
-    return h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h("main", { className: "mosaic-main" },
+          h(Button, { "data-action": "open-main-chat", variant: "ghost", onClick: () => { closePanel(false); rootRef.current?.querySelector(".mosaic-main textarea")?.focus({ preventScroll: true }); } }, t("openMainChat"))))  : h(React.Fragment, null,
+        h("header", { className: "mosaic-profile-head" }, avatar(true), h("div", { className: "mosaic-profile-copy" }, h("div", { className: "mosaic-profile-name" }, displayName), h("div", { className: "mosaic-status", role: "status" }, statusText)), h("button", { type: "button", className: "icon-button mosaic-profile-close", "data-action": "close-personal-panel", "aria-label": t("close"), onClick: () => closePanel() }, "×")),
+        h("section", { className: "mosaic-section", "data-panel-section": "recent" }, h("h2", null, t("activity")), activity.length ? (showAll ? activity : activity.slice(0, 5)).map(item => item.routine ? routineRow(item.routine) : taskRows([item.task])) : h("p", { className: "mosaic-eyebrow" }, t("quiet")), activity.length > 5 && h(Button, { variant: "ghost", "data-action": "show-more-activity", onClick: () => setShowAll(value => !value) }, t(showAll ? "showLess" : "showMore"))),
+        h("section", { className: "mosaic-section", "data-panel-section": "outputs" }, h("h2", null, t("outputs")), artifactOutputs.slice(0, showAllOutputs ? undefined : 3).map(output => h("button", { key: `${output.seq}:${output.attachment.sha256}`, className: "mosaic-task", "data-output-sha256": output.attachment.sha256, onClick: () => { detailTrigger.current = `[data-output-sha256="${output.attachment.sha256}"]`; setSelection({ kind: "artifact", seq: output.seq, sha256: output.attachment.sha256 }); } }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("output")), h("span", { className: "mosaic-task-copy" }, h("span", { className: "mosaic-task-title" }, output.attachment.name), h("span", { className: "mosaic-task-meta" }, date(output.at))))), outputs.length ? outputs.slice(0, showAllOutputs ? undefined : Math.max(0, 3 - artifactOutputs.length)).map(item => h("button", { key: item.task_id, className: "mosaic-task", "data-output-task-id": item.task_id, onClick: event => openDetail(event, item, "output") }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("output")), h("span", { className: "mosaic-task-copy" }, h("span", { className: "mosaic-task-title" }, item.title), h("span", { className: "mosaic-task-meta" }, date(item.updated_at))))) : !artifactOutputs.length && h("p", { className: "mosaic-eyebrow" }, t("noOutputs")), artifactOutputs.length + outputs.length > 3 && h(Button, { variant: "ghost", "data-action": "show-more-outputs", onClick: () => setShowAllOutputs(value => !value) }, t(showAllOutputs ? "showLess" : "showMore"))),
+        null)));
+    return h(AttachmentOpenContext.Provider, { value: () => closePanel(false) }, h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h("main", { className: "mosaic-main" },
       error && h("div", { className: "mosaic-error", role: "alert" }, h("span", null, error), h(Button, { onClick: agent ? () => { setError(""); Promise.all([loadConversation(agent), loadTasks(), loadRoutines()]).catch(report); } : initialize }, t("retry"))),
       !agent ? loading ? h(LoadingState, { label: "twin" }) : h(EmptyState, { title: t("hostUnavailable") }) : h(ConversationView, {
-        conversationId: conversationID, sessionId: conversationID, sessionScope: route, onQuestionReply: replyToQuestion, title: "twin", loading,
-        status: (running || queuedCount > 0) && h("span", { className: "mosaic-status", "data-queued-count": queuedCount }, running && h("span", { className: "mosaic-status-dot" }), queuedCount > 0 ? `${queuedCount} · ${t("queued")}` : t("running")),
-        actions: h("button", { type: "button", className: "icon-button", "data-action": "toggle-personal-panel", "aria-label": t("activity"), "aria-expanded": panelOpen, onClick: () => setPanelOpen(value => !value) }, icon("panel")),
+        presentation: "bubbles", conversationId: conversationID, sessionId: conversationID, sessionScope: route, onQuestionReply: replyToQuestion, title: "twin", loading,
+        actions: h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": t("profile"), "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => { if (panelOpen) closePanel(); else { focusVersion.current++; setPanelOpen(true); } } }, avatar(), h("span", { className: "mosaic-profile-trigger-copy" }, h("span", null, displayName), h("small", { "data-queued-count": queuedCount }, statusText))),
         searchLabel: t("historySearch"), searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
         composer: h(ConversationComposer, { conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles,
           attachments: files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(conversationID, { prompt: value }), onAddAttachments: selectFiles,
@@ -626,8 +708,8 @@ export async function activate(api) {
         })), liveMessages.map(message => h(ConversationMessage, { key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })), !loading && !records.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
         pendingCalendarOperations.length > 0 && h("section", { className: "mosaic-calendar-proposals", "data-calendar-proposals": true },
           pendingCalendarOperations.map(item => h(Button, { key: item.operation_id, variant: "ghost", "data-calendar-operation": item.operation_id, disabled: calendarBusy, onClick: () => openCalendar(item.operation_id) }, `${item.fields?.summary || t("calendarReview")} · ${t(item.status === "proposed" ? "calendarProposed" : item.status === "uncertain" ? "calendarUncertain" : item.status)}`)),
-          calendarError && h("p", { role: "alert" }, calendarError)))), sidebar);
+          calendarError && h("p", { role: "alert" }, calendarError)))), sidebar));
   }
-  api.registerViewType({ id: "personal.home", title: "twin", icon: "sparkles", defaultRegion: "primary", persistence: "durable", layout: "user-space", render: props => h(PersonalHome, props) });
+  api.registerViewType({ id: "personal.home", title: "twin", icon: "mascot", defaultRegion: "primary", persistence: "durable", layout: "user-space", render: props => h(PersonalHome, props) });
   api.registerViewType({ id: "personal.preferences", title: "twin", icon: "settings", defaultRegion: "settings", persistence: "session", render: props => h(PersonalPreferences, props) });
 }
