@@ -590,8 +590,22 @@ app.whenReady().then(async () => {
   // before the host's listener, since the regression throws inside that listener.
   // Record that exception only for this bounded scenario and fail explicitly.
   await clickPopup(540, "/popup-self-close");
-  const selfCloseTab = (await popupTabs()).tabs.find(tab => tab.url === `${baseURL}/popup-self-close`);
-  assert(selfCloseTab, "The self-closing popup is adopted before it closes itself");
+  const selfCloseURL = `${baseURL}/popup-self-close`;
+  const selfCloseAdoption = popupAdoptions.find(item => item.openerTabID === popupTab && item.url === selfCloseURL);
+  assert(selfCloseAdoption, "The self-closing popup is adopted before it closes itself");
+  // The page's ready fetch can precede Chromium publishing its committed URL
+  // to the main process. Follow the adopted identity across that boundary.
+  const selfCloseNavigation = deferred();
+  const removeSelfCloseNavigation = host.addNavigateListener((cwd, tabID, url) => {
+    if (cwd === workdir && tabID === selfCloseAdoption.tabID && url === selfCloseURL) selfCloseNavigation.resolve();
+  });
+  try {
+    if (host.tabSurfaceMeta(workdir, selfCloseAdoption.tabID)?.url === selfCloseURL) selfCloseNavigation.resolve();
+    await bounded("self-closing popup native navigation commits", selfCloseNavigation.promise);
+  } finally { removeSelfCloseNavigation(); }
+  const selfCloseTab = (await popupTabs()).tabs.find(tab => tab.tab_id === selfCloseAdoption.tabID);
+  assert.equal(selfCloseTab?.url, selfCloseURL, "The adopted self-closing popup publishes its committed URL");
+  assert(selfCloseTab);
   const selfCloseView = await readTab(selfCloseTab.tab_id);
   const siblingTab = openedForThread(sibling)[0];
   const siblingView = await readTab(siblingTab);

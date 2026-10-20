@@ -577,7 +577,7 @@ async function runWebsiteAcceptance(h, fixture) {
         const close = row.querySelector('.sidebar-ribbon-close'), tr = title.getBoundingClientRect();
         return { id: button.dataset.ribbonId, web: button.dataset.wuuComponent === 'website-navigation-item',
           title: title.textContent, titleWidth: tr.width, titleVisible: tr.width > 0 && getComputedStyle(title).visibility === 'visible',
-          close: Boolean(close), active: button.getAttribute('aria-current') === 'page',
+          close: Boolean(close), pinned: button.dataset.pinned === 'true', active: button.getAttribute('aria-current') === 'page',
           closeVisible: close ? close.getBoundingClientRect().width > 0 && getComputedStyle(close).visibility === 'visible' && Number(getComputedStyle(close).opacity) > 0.95 : false };
       });
       return { width: r.width, expanded: bar.dataset.expanded === 'true', viewportWidth: innerWidth, rows };
@@ -586,8 +586,8 @@ async function runWebsiteAcceptance(h, fixture) {
     assert.ok(Math.abs(geometry.width - expectedWidth) <= 1, `Native ribbon matches the shell interaction bounds: ${JSON.stringify(geometry)}`);
     assert.ok(geometry.rows.every(row => row.title && (expanded ? row.titleVisible && row.titleWidth >= 20 : !row.titleVisible)), 'Destination labels appear only in the expanded overlay');
     assert.ok(geometry.rows.some(row => row.id === 'conversations' && !row.close), 'Built-in Chat has no close button');
-    assert.ok(geometry.rows.every(row => row.close === row.web), 'Only real website tabs have direct close controls');
-    assert.ok(geometry.rows.filter(row => row.web && row.active).every(row => row.closeVisible === expanded), 'Active web tab exposes its direct close control only in the expanded rail');
+    assert.ok(geometry.rows.every(row => row.close === (row.web && !row.pinned)), 'Only unpinned website tabs have direct close controls');
+    assert.ok(geometry.rows.filter(row => row.web && row.active && !row.pinned).every(row => row.closeVisible === expanded), 'Active unpinned web tab exposes its direct close control only in the expanded rail');
     return geometry;
   }
   async function traceLoadedTabSwitches() {
@@ -1614,6 +1614,11 @@ async function runWebsiteAcceptance(h, fixture) {
     const wc = await openSite('Fixture Alpha', '/alpha');
     assert.ok((await wc.executeJavaScript('document.cookie')).includes('wuu_acceptance=synthetic-session'));
     const backgroundOwner = await openSite('Fixture Beta', '/beta'), beforeClose = win.getBounds();
+    const unpinOptions = await tabMenu(alphaID, 'unpin-background-alpha-before-close');
+    assert.equal(unpinOptions[0], 'Unpin tab', 'The retained Alpha tab starts pinned');
+    xinput(['key', 'Home', 'key', 'Return']);
+    await waitFor(id => { const button = document.querySelector(`[data-ribbon-id="${id}"]`); return button && button.dataset.pinned !== 'true'; }, alphaID);
+    assert.equal((await readSite()).activeTabId, siteIDs.get('Fixture Beta'), 'Unpinning a background tab preserves the active Beta tab');
     await hoverTab(alphaID);
     try {
       await until(() => evaluateRibbon(id => { const close = document.querySelector(`[data-ribbon-close-id="${id}"]`); return close && getComputedStyle(close).visibility === 'visible' && Number(getComputedStyle(close).opacity) > 0.95; }, alphaID), 'Native background close control settles before clicking', 4000);
