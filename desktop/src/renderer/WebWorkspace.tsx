@@ -34,6 +34,7 @@ export function WebWorkspacePanel({
   const api = (window.wuu as typeof window.wuu & { webWorkspace?: WebWorkspaceApi }).webWorkspace;
   const panelRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const pendingHides = useRef(new Map<string, number>());
   const inputRef = useRef<HTMLInputElement>(null);
   const startInputRef = useRef<HTMLInputElement>(null);
   const [focusNewTab, setFocusNewTab] = useState<string>();
@@ -232,11 +233,26 @@ export function WebWorkspacePanel({
   useLayoutEffect(() => {
     // Tabs share this host. Replacing its observer on tab selection would hide
     // the native page that the main process has just selected, then show it again.
+    if (site?.id) {
+      cancelAnimationFrame(pendingHides.current.get(site.id) ?? 0);
+      pendingHides.current.delete(site.id);
+    }
     const host = hostRef.current;
     const id = site?.id;
     if (!api || !id || !host || !current) return;
+    const hideAfterPaint = (): void => {
+      cancelAnimationFrame(pendingHides.current.get(id) ?? 0);
+      // Layout effects run before the shell paints its next destination. Keep
+      // the live page above it until that paint, rather than exposing old canvas.
+      pendingHides.current.set(id, requestAnimationFrame(() => {
+        pendingHides.current.set(id, requestAnimationFrame(() => {
+          pendingHides.current.delete(id);
+          void api.reportBounds(id, null).catch(() => undefined);
+        }));
+      }));
+    };
     if (!active || error || blank) {
-      void api.reportBounds(id, null).catch(() => undefined);
+      hideAfterPaint();
       return;
     }
     let disposed = false;
@@ -263,7 +279,7 @@ export function WebWorkspacePanel({
     return () => {
       disposed = true;
       stop();
-      report(null);
+      hideAfterPaint();
     };
   }, [api, site?.id, active, resizeWithWindow, Boolean(current), error, blank, captureBackdrop]);
 
