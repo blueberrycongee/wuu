@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import type { WebWorkspaceApi } from "../shared/webWorkspace";
 import { persistentWebWorkspaceURL, type WebWorkspaceLibraryState } from "../shared/webWorkspaceLibrary";
-import { Bookmark, BookOpen, Clock3, Search, X } from "./WuuIcons";
+import { Bookmark, BookOpen, Clock3, Pencil, Search, X } from "./WuuIcons";
 import { useI18n } from "./i18n";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { rawErrorMessage } from "./UserFacingErrors";
@@ -27,12 +27,14 @@ export function BrowserLibrary({ api, currentURL, currentTitle, onOpen, active =
   const [limit, setLimit] = useState(100);
   const [pending, setPending] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [editing, setEditing] = useState<{ url: string; title: string }>();
   const [error, setError] = useState("");
   const [position, setPosition] = useState<CSSProperties>({ visibility: "hidden" });
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const cancelClear = useRef<HTMLButtonElement>(null);
+  const bookmarkTitle = useRef<HTMLInputElement>(null);
   const updates = useRef(0);
   const panelId = useId();
   const headingId = useId();
@@ -60,9 +62,12 @@ export function BrowserLibrary({ api, currentURL, currentTitle, onOpen, active =
     if (open && confirmClear) cancelClear.current?.focus();
   }, [open, confirmClear]);
 
+  useEffect(() => { if (editing) bookmarkTitle.current?.focus(); }, [editing?.url]);
+
   const close = useCallback((restoreFocus = true) => {
     setOpen(false);
     setConfirmClear(false);
+    setEditing(undefined);
     if (restoreFocus) trigger.current?.focus();
   }, []);
 
@@ -106,7 +111,8 @@ export function BrowserLibrary({ api, currentURL, currentTitle, onOpen, active =
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
-      if (confirmClear) { setConfirmClear(false); search.current?.focus(); } else close();
+      if (editing) { setEditing(undefined); search.current?.focus(); }
+      else if (confirmClear) { setConfirmClear(false); search.current?.focus(); } else close();
     };
     document.addEventListener("pointerdown", outside, true);
     document.addEventListener("focusin", focusOutside, true);
@@ -116,21 +122,36 @@ export function BrowserLibrary({ api, currentURL, currentTitle, onOpen, active =
       document.removeEventListener("focusin", focusOutside, true);
       document.removeEventListener("keydown", escape, true);
     };
-  }, [open, refresh, close, confirmClear]);
+  }, [open, refresh, close, confirmClear, editing?.url]);
 
-  const changeBookmark = async (url: string, title: string, value: boolean): Promise<void> => {
-    if (!library || pending) return;
+  const changeBookmark = async (url: string, title: string, value: boolean): Promise<boolean> => {
+    if (!library || pending) return false;
     setPending(true);
     setError("");
     const version = updates.current;
     try {
       const next = await library.setBookmark(url, title, value);
       if (version === updates.current) { updates.current++; setState(next); }
+      return true;
     } catch (cause) {
       const message = rawErrorMessage(cause);
       setError(message);
       if (!open) showActionErrorToast(message);
+      return false;
     } finally { setPending(false); }
+  };
+
+  const removeHistory = async (id: string): Promise<void> => {
+    if (!library || pending) return;
+    setPending(true);
+    setError("");
+    const version = updates.current;
+    try {
+      const next = await library.removeHistory(id);
+      if (version === updates.current) { updates.current++; setState(next); }
+      search.current?.focus();
+    } catch (cause) { setError(rawErrorMessage(cause)); }
+    finally { setPending(false); }
   };
 
   const clearHistory = async (): Promise<void> => {
@@ -170,15 +191,16 @@ export function BrowserLibrary({ api, currentURL, currentTitle, onOpen, active =
         onKeyDown={(event) => {
           if (event.key !== "Escape") return;
           event.preventDefault(); event.stopPropagation();
-          if (confirmClear) { setConfirmClear(false); search.current?.focus(); } else close();
+          if (editing) { setEditing(undefined); search.current?.focus(); }
+          else if (confirmClear) { setConfirmClear(false); search.current?.focus(); } else close();
         }}>
         <div className="browser-library-heading">
           <span id={headingId}>{t("browserLibrary.title")}</span>
           <button type="button" className="icon-button" aria-label={t("browserLibrary.close")} onClick={() => close()}><X className="icon" /></button>
         </div>
         <div className="browser-library-sections" role="group" aria-label={t("browserLibrary.title")}>
-          <button type="button" data-library-section="history" aria-pressed={section === "history"} onClick={() => { setSection("history"); setConfirmClear(false); }}><Clock3 className="icon" />{t("browserLibrary.history")}</button>
-          <button type="button" data-library-section="bookmarks" aria-pressed={section === "bookmarks"} onClick={() => { setSection("bookmarks"); setConfirmClear(false); }}><Bookmark className="icon" />{t("browserLibrary.bookmarks")}</button>
+          <button type="button" data-library-section="history" aria-pressed={section === "history"} onClick={() => { setSection("history"); setConfirmClear(false); setEditing(undefined); }}><Clock3 className="icon" />{t("browserLibrary.history")}</button>
+          <button type="button" data-library-section="bookmarks" aria-pressed={section === "bookmarks"} onClick={() => { setSection("bookmarks"); setConfirmClear(false); setEditing(undefined); }}><Bookmark className="icon" />{t("browserLibrary.bookmarks")}</button>
         </div>
         <label className="browser-library-search"><Search className="icon" /><input ref={search} type="search" value={query}
           aria-label={t("browserLibrary.search")} placeholder={t("browserLibrary.search")} onChange={(event) => setQuery(event.target.value)} /></label>
@@ -190,15 +212,31 @@ export function BrowserLibrary({ api, currentURL, currentTitle, onOpen, active =
         </div> : <div className="browser-library-results">
           {!state && !error ? <p className="browser-library-empty" role="status">{t("browserLibrary.loading")}</p>
             : matching.length ? <ul>{matching.slice(0, limit).map((entry) => <li key={entry.id} data-library-entry>
+              {editing?.url === entry.url && section === "bookmarks" ? <form className="browser-library-edit" onSubmit={(event) => {
+                event.preventDefault();
+                void changeBookmark(entry.url, editing.title, true).then((saved) => { if (saved) setEditing(undefined); });
+              }}>
+                <label>{t("browserLibrary.bookmarkTitle")}<input ref={bookmarkTitle} data-library-bookmark-title value={editing.title}
+                  disabled={pending} maxLength={512} onChange={(event) => setEditing({ url: entry.url, title: event.target.value })} /></label>
+                <div><button type="button" className="settings-button settings-button-ghost" disabled={pending} onClick={() => setEditing(undefined)}>{t("browserLibrary.cancel")}</button>
+                  <button type="submit" className="settings-button" data-library-save-bookmark disabled={pending}>{t("browserLibrary.save")}</button></div>
+              </form> : <>
               <button type="button" className="browser-library-open" title={entry.url} data-library-url={entry.url}
                 onClick={() => { close(false); onOpen(entry.url); }}>
                 <span className="browser-library-entry-title">{entry.title || entry.url}</span>
                 <span className="browser-library-entry-url">{entry.url}</span>
                 {"visitedAt" in entry ? <time dateTime={new Date(entry.visitedAt).toISOString()}>{formatDate(entry.visitedAt, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time> : null}
               </button>
+              {section === "bookmarks" ? <button type="button" className="icon-button" data-library-edit-bookmark disabled={pending}
+                aria-label={`${t("browserLibrary.renameBookmark")}: ${entry.title || entry.url}`} title={t("browserLibrary.renameBookmark")}
+                onClick={() => { setError(""); setEditing({ url: entry.url, title: entry.title }); }}><Pencil className="icon" /></button> : null}
               {section === "bookmarks" ? <button type="button" className="icon-button browser-library-remove" disabled={pending}
                 aria-label={`${t("browserLibrary.removeBookmark")}: ${entry.title || entry.url}`} title={t("browserLibrary.removeBookmark")}
-                onClick={() => void changeBookmark(entry.url, entry.title, false)}><X className="icon" /></button> : null}
+                onClick={() => void changeBookmark(entry.url, entry.title, false)}><X className="icon" /></button>
+                : <button type="button" className="icon-button browser-library-remove" data-library-remove-history={entry.id} disabled={pending}
+                  aria-label={`${t("browserLibrary.removeHistory")}: ${entry.title || entry.url}`} title={t("browserLibrary.removeHistory")}
+                  onClick={() => void removeHistory(entry.id)}><X className="icon" /></button>}
+              </>}
             </li>)}</ul>
               : <p className="browser-library-empty">{t(needle ? "browserLibrary.noResults" : section === "history" ? "browserLibrary.emptyHistory" : "browserLibrary.emptyBookmarks")}</p>}
           {matching.length > limit ? <button type="button" className="settings-button settings-button-ghost browser-library-more" onClick={() => setLimit((value) => value + 100)}>{t("browserLibrary.showMore")}</button> : null}

@@ -2995,16 +2995,22 @@ app.whenReady().then(async () => {
     return webWorkspaceLibrary.getState();
   });
   ipcMain.handle("wuu:web-workspace-library-bookmark", (event, url: string, title: string, bookmarked: boolean) => {
-    const owner = webWorkspaceSender(event);
+    webWorkspaceSender(event);
     if (typeof url !== "string" || typeof title !== "string" || typeof bookmarked !== "boolean") throw new Error("Invalid website bookmark.");
     const state = webWorkspaceLibrary.setBookmark(url, title, bookmarked);
-    sendToWindow(owner, "wuu:web-workspace-library", state);
+    broadcastToAll("wuu:web-workspace-library", state);
+    return state;
+  });
+  ipcMain.handle("wuu:web-workspace-library-remove", (event, id: string) => {
+    webWorkspaceSender(event);
+    const state = webWorkspaceLibrary.removeHistory(id);
+    broadcastToAll("wuu:web-workspace-library", state);
     return state;
   });
   ipcMain.handle("wuu:web-workspace-library-clear", event => {
-    const owner = webWorkspaceSender(event);
+    webWorkspaceSender(event);
     const state = webWorkspaceLibrary.clearHistory();
-    sendToWindow(owner, "wuu:web-workspace-library", state);
+    broadcastToAll("wuu:web-workspace-library", state);
     return state;
   });
   ipcMain.handle("wuu:browser-profiles", (event) => {

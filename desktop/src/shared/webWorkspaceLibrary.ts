@@ -29,6 +29,7 @@ export type WebWorkspaceSavedSession = {
 export type WebWorkspaceLibraryApi = {
   getState: () => Promise<WebWorkspaceLibraryState>;
   setBookmark: (url: string, title: string, bookmarked: boolean) => Promise<WebWorkspaceLibraryState>;
+  removeHistory: (id: string) => Promise<WebWorkspaceLibraryState>;
   clearHistory: () => Promise<WebWorkspaceLibraryState>;
   onState: (handler: (state: WebWorkspaceLibraryState) => void) => () => void;
 };

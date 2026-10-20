@@ -137,6 +137,18 @@ export class WebWorkspaceLibrary {
     return this.getState();
   }
 
+  removeHistory(id: string): WebWorkspaceLibraryState {
+    this.load();
+    if (this.readError) throw this.readError;
+    if (!validId(id)) throw new Error("Invalid browser history entry.");
+    const original = this.store.history;
+    this.store.history = original.filter((entry) => entry.id !== id);
+    if (this.store.history.length === original.length) return this.getState();
+    this.dirty = true;
+    try { this.flush(); } catch (error) { this.store.history = original; throw error; }
+    return this.getState();
+  }
+
   clearHistory(): WebWorkspaceLibraryState {
     this.load();
     if (this.readError) throw this.readError;

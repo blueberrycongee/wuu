@@ -213,3 +213,40 @@
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
+
+.browser-library-edit {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.browser-library-edit label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.browser-library-edit input {
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--ink);
+  font: inherit;
+}
+
+.browser-library-edit input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.browser-library-edit > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}

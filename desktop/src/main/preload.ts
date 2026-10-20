@@ -765,6 +765,7 @@ if (!process.argv.includes("--wuu-browser-disabled")) {
     library: {
       getState: () => ipcRenderer.invoke("wuu:web-workspace-library-get"),
       setBookmark: (url, title, bookmarked) => ipcRenderer.invoke("wuu:web-workspace-library-bookmark", url, title, bookmarked),
+      removeHistory: id => ipcRenderer.invoke("wuu:web-workspace-library-remove", id),
       clearHistory: () => ipcRenderer.invoke("wuu:web-workspace-library-clear"),
       onState: handler => {
         const listener = (_event: Electron.IpcRendererEvent, state: WebWorkspaceLibraryState) => handler(state);
