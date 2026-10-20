@@ -26,6 +26,7 @@ export class ChromeOverlayHost {
     private readonly rendererRoot: string, private readonly preload: string, private readonly devURL?: string) {
     this.devFiles = new Set([
       "packages/protocol/src/index.ts",
+      "assets/app-icon-source.json",
       "internal/plugin/bundled/notion-workspace/icons/notion-light.svg",
       "internal/plugin/bundled/notion-workspace/icons/notion-dark.svg",
       "internal/plugin/bundled/feishu-workspace/icon-light.svg",
@@ -79,7 +80,10 @@ export class ChromeOverlayHost {
       const allowedDevFile = fsPath !== undefined && this.devFiles.has(resolve(fsPath.startsWith("/") || /^[a-z]:/i.test(fsPath) ? fsPath : `/${fsPath}`));
       // The development server transpiles only this checkout's UI/source imports.
       if (this.devURL && path === "/assets/app-icon-source.json") return net.fetch(new URL(url.pathname + url.search, this.devURL).href);
-      if (this.devURL && (allowedDevFile || path === "/@vite/client" || path === "/@react-refresh" || path === "/node_modules/vite/dist/client/env.mjs" || /^\/(?:src\/(?:renderer|shared)\/|node_modules\/.vite\/)/.test(path))) {
+      // Vite serves this linked UI dependency from its source tree in dev.
+      // Keep package metadata, demos and other vendor directories inaccessible.
+      const blobatarSource = /^\/vendor\/blobatar\/src\/(?:[\w-]+\/)*[\w-]+\.(?:ts|tsx|css)$/.test(path);
+      if (this.devURL && (blobatarSource || allowedDevFile || path === "/@vite/client" || path === "/@react-refresh" || path === "/node_modules/vite/dist/client/env.mjs" || /^\/(?:src\/(?:renderer|shared)\/|node_modules\/.vite\/)/.test(path))) {
         return net.fetch(new URL(url.pathname + url.search, this.devURL).href);
       }
       return new Response(null, { status: 403 });

@@ -1,5 +1,6 @@
 // Exercise the shipping shell and isolated native ribbon over a live page.
 // Synthetic tab models complement the full native workspace acceptance.
+// WUU_RIBBON_DEV=1 exercises the same host through the shipping Vite config.
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -25,7 +26,7 @@ for (const name of ["failure.txt", "failure.png", "failure-events.json"]) fs.rmS
 const checks = [], screenshots = [], limitations = [];
 const nativeEvents = [];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-let win, nativeHost;
+let win, nativeHost, devServer;
 require("esbuild").buildSync({ entryPoints: [path.join(root, "src/main/chromeOverlayHost.ts")], outfile: path.join(output, "native-host.cjs"),
   bundle: true, platform: "node", format: "cjs", external: ["electron"] });
 const { ChromeOverlayHost, chromeOverlayScheme } = require(path.join(output, "native-host.cjs"));
@@ -41,6 +42,17 @@ function key(keyCode) {
 }
 (async () => {
   await app.whenReady();
+  let devURL;
+  if (process.env.WUU_RIBBON_DEV === "1") {
+    const { loadConfigFromFile } = await import("electron-vite");
+    const { createServer } = await import("vite");
+    const loaded = await loadConfigFromFile({ command: "serve", mode: "development" }, path.join(root, "electron.vite.config.ts"), root);
+    devServer = await createServer({ ...loaded.config.renderer, configFile: false, root,
+      cacheDir: path.join(root, "node_modules/.vite/ribbon-acceptance"),
+      server: { ...loaded.config.renderer.server, host: "127.0.0.1", port: 0, open: false } });
+    await devServer.listen();
+    devURL = `http://127.0.0.1:${devServer.httpServer.address().port}`;
+  }
   await require("esbuild").build({
     stdin: { resolveDir: root, loader: "tsx", contents: `
       import React,{useState} from "react";import{createRoot}from"react-dom/client";
@@ -153,16 +165,27 @@ function key(keyCode) {
         : { ...item, ...(command.type === "mute-tab" ? { muted: command.muted } : { pinned: command.pinned }) }) } };
       nativeHost.show(win, request);
     }
-  }, output, path.join(output, "native-preload.cjs"));
+  }, devURL ? path.join(root, "out/renderer") : output, path.join(output, "native-preload.cjs"), devURL);
   const readySurfaces = new Set();
   ipcMain.handle("wuu:chrome-overlay-ready", event => { readySurfaces.add(event.sender.id); return nativeHost.ready(event); });
   ipcMain.on("wuu:chrome-overlay-painted", (event, token, generation) => nativeHost.painted(event, token, generation));
   ipcMain.on("wuu:chrome-overlay-command", (event, message) => nativeHost.command(event, message));
   app.on("web-contents-created", (_event, contents) => {
-    contents.on("console-message", (_event, details) => { console.error("Native renderer:", details); });
+    contents.on("console-message", event => console.error("Native renderer:", event.message));
+    contents.on("did-fail-load", (_event, code, description, url) => console.error("Native load:", code, description, url));
     contents.on("preload-error", (_event, _path, error) => console.error("Native preload:", error));
   });
+  const chromeSession = require("electron").session.fromPartition("wuu-chrome-overlays");
+  chromeSession.webRequest.onCompleted(details => {
+    if (details.statusCode >= 400) console.error("Native resource failed:", details.statusCode, details.url);
+  });
   nativeHost.prepare(win);
+  if (devURL) {
+    for (const resource of ["/vendor/blobatar/README.md", "/vendor/blobatar/package.json", "/vendor/blobatar/src/../../package.json", "/@fs/etc/passwd"]) {
+      assert.equal((await chromeSession.fetch("wuu-chrome://ui" + resource)).status, 403, `Private chrome rejects ${resource}`);
+    }
+    checks.push("Dev chrome refuses vendor metadata and arbitrary filesystem access");
+  }
   const mutations = [];
   for (const [target, method] of [[page, "setVisible"], [page, "setBounds"], [win.contentView, "addChildView"], [win.contentView, "removeChildView"]]) {
     const original = target[method].bind(target);
@@ -392,7 +415,7 @@ function key(keyCode) {
   }
   checks.push("Visible capsule model and bounds updates preserve page or editor focus without disturbing the draft and selection");
   fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ status: "passed", versions: process.versions, checks, screenshots, limitations,
-    nativeEvents, scope: "Production React/CSS and native ChromeOverlayHost over a live webpage. Synthetic tab models; complete app navigation is covered by workspace acceptance." }, null, 2));
+    nativeEvents, devServer: Boolean(devURL), scope: "Shipping React/CSS and native ChromeOverlayHost over a live webpage. Synthetic tab models; complete app navigation is covered by workspace acceptance." }, null, 2));
   console.log(checks.join("\n"));
   console.log("Evidence:", output);
 })().catch(async error => {
@@ -407,5 +430,5 @@ function key(keyCode) {
   }
   fs.writeFileSync(path.join(output, "failure-events.json"), JSON.stringify(nativeEvents, null, 2));
   console.error(error); fs.writeFileSync(path.join(output, "failure.txt"), String(error.stack)); process.exitCode = 1;
-}).finally(() => { if (win) nativeHost?.close(win); win?.destroy(); app.exit(process.exitCode || 0); });
+}).finally(async () => { if (win) nativeHost?.close(win); win?.destroy(); await devServer?.close(); app.exit(process.exitCode || 0); });
 setTimeout(() => app.exit(1), 60000).unref();
