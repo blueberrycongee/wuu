@@ -7,6 +7,8 @@ description: Observe and control Linux X11 windows using screenshots and native 
 
 Use the `computer` tool from the `cua-linux` plugin for an X11 desktop session. Native Wayland sessions are unsupported, including sessions that expose some applications through XWayland. This tool does not launch applications or provide an accessibility tree.
 
+Provide `display_title` on every computer call: a short action description in the user's language, such as “观察 Wuu Dev 当前窗口” or “点击搜索框”. Describe the intended action, never claim success before checking the result. Keep internal tool names and sensitive input out of the title.
+
 ## Choose and observe the window
 
 - Prefer a dedicated API, connector, or CLI when it can complete the task.
