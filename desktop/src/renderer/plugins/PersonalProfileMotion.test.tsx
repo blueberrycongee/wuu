@@ -51,7 +51,10 @@ async function open(ui: Awaited<ReturnType<typeof mount>>) { await ui.click(trig
 
 it("uses a pure-avatar trigger while keeping its name and status accessible", async () => {
   const ui = await mount();
+  const identity = ui.container.querySelector<HTMLButtonElement>('.mosaic-identity-label');
   expect(ui.trigger().textContent?.trim()).toBe("");
+  expect(identity?.textContent).toMatch(/Mosaic.*(Ready|已就绪)/);
+  expect(identity?.dataset.action).toBe("rename-personal");
   expect(ui.container.querySelector('[data-action="search-history"]')).toBeNull();
   expect(ui.trigger().querySelector(".mosaic-avatar")).not.toBeNull();
   expect(ui.trigger().getAttribute("aria-label")).toContain("Mosaic");
@@ -173,25 +176,25 @@ async function nameValue(ui: Awaited<ReturnType<typeof mount>>, value: string) {
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
 }
 it("renames through the persistent runtime contract and updates every visible identity as plain text", async () => {
-  const ui = await mount(); await ui.click('.mosaic-identity-hover');
+  const ui = await mount(); await ui.click('.mosaic-identity-label');
   expect(document.activeElement).toBe(ui.container.querySelector('.mosaic-name-input'));
   expect(ui.container.querySelector<HTMLButtonElement>('.mosaic-name-save')!.disabled).toBe(true);
   await nameValue(ui, '  <My twin>  '); await ui.click('.mosaic-name-save');
   expect(ui.updates).toEqual([{ agent_id: 'profile-main', expected_revision: 1, name: '<My twin>' }]);
   expect(ui.container.querySelector('.mosaic-name-dialog')).toBeNull();
   expect(ui.trigger().getAttribute('aria-label')).toContain('<My twin>');
-  expect(ui.container.querySelector('.mosaic-identity-hover strong')?.textContent).toBe('<My twin>');
+  expect(ui.container.querySelector('.mosaic-identity-label strong')?.textContent).toBe('<My twin>');
   expect(ui.container.querySelector('.mosaic-profile-name')?.textContent).toBe('<My twin>');
   expect(ui.container.querySelector('my')).toBeNull();
 });
 it("does not persist blank, overlong or cancelled names", async () => {
-  const ui = await mount(); await ui.click('.mosaic-identity-hover');
+  const ui = await mount(); await ui.click('.mosaic-identity-label');
   for (const value of ['   ', '🙂'.repeat(65)]) { await nameValue(ui, value); expect(ui.container.querySelector<HTMLButtonElement>('.mosaic-name-save')!.disabled).toBe(true); }
   await nameValue(ui, 'Cancelled'); await ui.click('.mosaic-name-close');
   expect(ui.updates).toHaveLength(0); expect(ui.trigger().getAttribute('aria-label')).toContain('Mosaic');
 });
 it("keeps the entered name and prior identity when the runtime save fails", async () => {
-  const ui = await mount({ failUpdate: true }); await ui.click('.mosaic-identity-hover'); await nameValue(ui, 'Retry me'); await ui.click('.mosaic-name-save');
+  const ui = await mount({ failUpdate: true }); await ui.click('.mosaic-identity-label'); await nameValue(ui, 'Retry me'); await ui.click('.mosaic-name-save');
   expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain('storage unavailable');
   expect(ui.container.querySelector<HTMLInputElement>('.mosaic-name-input')!.value).toBe('Retry me');
   expect(ui.trigger().getAttribute('aria-label')).toContain('Mosaic');
@@ -200,7 +203,7 @@ it("keeps the entered name and prior identity when the runtime save fails", asyn
 
 it("traps keyboard focus in the rename dialog while a save is pending and restores input on failure", async () => {
   let release!: () => void; const saveGate = new Promise<void>(resolve => { release = resolve; });
-  const ui = await mount({ saveGate, failUpdate: true }); await ui.click('.mosaic-identity-hover'); await nameValue(ui, 'Pending'); await ui.click('.mosaic-name-save');
+  const ui = await mount({ saveGate, failUpdate: true }); await ui.click('.mosaic-identity-label'); await nameValue(ui, 'Pending'); await ui.click('.mosaic-name-save');
   const dialog = ui.container.querySelector<HTMLElement>('.mosaic-name-dialog')!;
   expect(document.activeElement).toBe(dialog);
   for (const shiftKey of [false, true]) { const event = new KeyboardEvent('keydown', { key:'Tab', shiftKey, bubbles:true, cancelable:true }); await act(async () => dialog.dispatchEvent(event)); expect(event.defaultPrevented).toBe(true); expect(document.activeElement).toBe(dialog); }
@@ -212,7 +215,7 @@ it("rejects late older initialization and polling snapshots after a successful r
   let release!: () => void; const ensureGate = new Promise<void>(resolve => { release = resolve; });
   const ui = await mount({ ensureGate, staleOpen: true });
   await ui.remount();
-  await ui.click('.mosaic-identity-hover'); await nameValue(ui, 'Newest'); await ui.click('.mosaic-name-save');
+  await ui.click('.mosaic-identity-label'); await nameValue(ui, 'Newest'); await ui.click('.mosaic-name-save');
   expect(ui.trigger().getAttribute('aria-label')).toContain('Newest');
   await act(async () => { release(); });
   expect(ui.trigger().getAttribute('aria-label')).toContain('Newest');
