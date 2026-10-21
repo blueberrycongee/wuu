@@ -1237,7 +1237,10 @@ export class BrowserHostCoordinator {
       entry.nodeMap.clear();
     });
     listen("did-navigate", onNavigate);
-    listen("did-navigate-in-page", onNavigate);
+    listen("did-navigate-in-page", (...args: unknown[]) => {
+      if (args[2] === false) return;
+      onNavigate(...args);
+    });
     listen("did-start-loading", () => {
       entry.loading = true;
       entry.loadError = undefined;

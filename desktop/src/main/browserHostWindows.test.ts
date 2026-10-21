@@ -447,6 +447,59 @@ describe("BrowserHostCoordinator CDP routing", () => {
     expect(harness.reply.respond).toHaveBeenLastCalledWith("click-1", { result: { ok: true } });
   });
 
+  it.each([false, true])("only interrupts observation for main-frame in-page navigation (main=%s)", async (isMainFrame) => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    const navigated = vi.fn();
+    harness.coordinator.addNavigateListener(navigated);
+    const url = "https://example.com/#next";
+    view.responders.set("DOMSnapshot.captureSnapshot", () => {
+      for (const listener of view.listeners.get("did-navigate-in-page") ?? []) {
+        listener({}, url, isMainFrame, 1, 2);
+      }
+      return twoNodeSnapshot();
+    });
+
+    await harness.coordinator.handleServerRequest(serverRequest("browser/cdp", {
+      workdir: "/repo", tab_id: "t1", method: "observe", params: { screenshot: false },
+    }, "observe-navigation"));
+
+    if (isMainFrame) {
+      expect(harness.reply.reject).toHaveBeenCalledWith("observe-navigation", expect.stringContaining("page changed"));
+      expect(navigated).toHaveBeenCalledWith("/repo", "t1", url);
+    } else {
+      expect(harness.reply.reject).not.toHaveBeenCalled();
+      expect(harness.reply.respond).toHaveBeenLastCalledWith("observe-navigation", {
+        result: expect.objectContaining({ nodes: expect.arrayContaining([expect.objectContaining({ node_id: 1 })]) }),
+      });
+      expect(navigated).not.toHaveBeenCalled();
+    }
+  });
+
+  it("keeps observed node targets usable after an iframe changes its fragment", async () => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+    view.responders.set("DOMSnapshot.captureSnapshot", () => twoNodeSnapshot());
+    await harness.coordinator.handleServerRequest(serverRequest("browser/cdp", {
+      workdir: "/repo", tab_id: "t1", method: "observe", params: { screenshot: false },
+    }, "observe-before-fragment"));
+    for (const listener of view.listeners.get("did-navigate-in-page") ?? []) {
+      listener({}, "https://widget.test/#next", false, 1, 2);
+    }
+    const boxModel = vi.fn(() => ({ model: { content: [10, 20, 30, 20, 30, 40, 10, 40] } }));
+    view.responders.set("DOM.getBoxModel", boxModel);
+
+    await harness.coordinator.handleServerRequest(serverRequest("browser/cdp", {
+      workdir: "/repo", tab_id: "t1", method: "click", params: { node_id: 2 },
+    }, "click-after-fragment"));
+
+    expect(harness.reply.reject).not.toHaveBeenCalled();
+    expect(boxModel).toHaveBeenCalledWith({ backendNodeId: 200 });
+    expect(harness.reply.respond).toHaveBeenLastCalledWith("click-after-fragment", { result: { ok: true } });
+  });
+
   it("continues readable content from content_offset", async () => {
     const harness = makeHarness();
     await openTab(harness, "/repo", "t1");
