@@ -237,6 +237,10 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 .sidebar-ribbon {
   --ribbon-header-height: calc(var(--workbench-top) + var(--web-workspace-toolbar-height));
   --ribbon-motion-duration: 220ms;
+  /* Every destination shares one row gap; the footer owns the wider break. */
+  --ribbon-row-gap: var(--space-1);
+  --ribbon-group-gap: var(--space-3);
+  --ribbon-inline-inset: var(--space-2);
   --sidebar-ribbon-icon-size: var(--icon-size-xl);
   --sidebar-ribbon-expanded-width: min(248px, calc(100vw - var(--space-4)));
   position: absolute;
@@ -249,7 +253,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   align-items: center;
   /* All destinations keep the same row positions; native hover chrome starts
      below the browser toolbar, including when the UI font grows. */
-  padding: var(--ribbon-header-height) 0 var(--space-2);
+  padding: var(--ribbon-header-height) 0 var(--ribbon-inline-inset);
   background: transparent;
   overflow: hidden;
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
@@ -264,7 +268,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   top: var(--workbench-top);
   left: 0;
   display: grid;
-  width: 52px;
+  width: var(--sidebar-ribbon-compact-width, 52px);
   height: var(--web-workspace-toolbar-height);
   place-items: center;
   pointer-events: none;
@@ -273,7 +277,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 .sidebar-ribbon-brand > img {
   display: block;
   /* Match the destination's outer frame using artwork without launcher padding. */
-  width: calc(100% - var(--space-2) * 2);
+  width: calc(100% - var(--ribbon-inline-inset) * 2);
   height: auto;
   aspect-ratio: 1;
   /* Preserve the app icon's authored corner ratio. */
@@ -299,27 +303,28 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 
 .sidebar-ribbon-main,
 .sidebar-ribbon-footer {
-  --sidebar-row-pad-x: max(0px, calc((52px - var(--sidebar-ribbon-icon-size)) / 2 - var(--space-2)));
+  --sidebar-row-pad-x: max(0px, calc((var(--sidebar-ribbon-compact-width, 52px) - var(--sidebar-ribbon-icon-size)) / 2 - var(--ribbon-inline-inset)));
   --sidebar-nav-column-gap: var(--space-2);
   display: flex;
   width: 100%;
   min-height: 0;
   flex-direction: column;
   align-items: stretch;
-  gap: var(--space-1);
-  padding-inline: var(--space-2);
+  gap: var(--ribbon-row-gap);
+  padding-inline: var(--ribbon-inline-inset);
 }
 
 .sidebar-ribbon-main {
   flex: 1;
   overflow: hidden auto;
-  padding-bottom: var(--space-3);
+  /* The footer owns the single group break below the scrolling destinations. */
+  padding-bottom: 0;
 }
 
 .sidebar-ribbon-footer {
   position: relative;
   flex-shrink: 0;
-  padding-top: var(--space-3);
+  padding-top: var(--ribbon-group-gap);
 }
 
 .sidebar-ribbon-tab-row {
@@ -511,10 +516,6 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   height: 100%;
 }
 
-.sidebar-ribbon-add {
-  margin-top: var(--space-2);
-}
-
 /* Pinning marks a persistent browser destination without adding another tier. */
 .sidebar-ribbon .sidebar-ribbon-button > .sidebar-ribbon-pin {
   width: var(--icon-size-xs);
@@ -544,7 +545,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 .sidebar-ribbon-divider {
   height: 1px;
   flex-shrink: 0;
-  margin: var(--space-2) var(--sidebar-row-pad-x);
+  margin: calc(var(--ribbon-group-gap) - var(--ribbon-row-gap)) var(--sidebar-row-pad-x);
   background: var(--hairline);
 }
 
