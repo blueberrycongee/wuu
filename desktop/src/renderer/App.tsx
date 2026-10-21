@@ -3142,6 +3142,7 @@ export function App(): JSX.Element {
   const shellStyle = {
     "--sidebar-width": `${effectiveSidebarWidth}px`,
     "--sidebar-ribbon-width": `${ribbonWidth}px`,
+    "--sidebar-ribbon-compact-width": `${SIDEBAR_RIBBON_WIDTH}px`,
     "--sidebar-ribbon-extra": `${ribbonWidth - SIDEBAR_RIBBON_WIDTH}px`,
     "--sidebar-open-width": `${sidebarWidth}px`,
     "--workspace-sheet-left": `${effectiveSidebarWidth}px`,

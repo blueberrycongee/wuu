@@ -110,8 +110,8 @@ html[data-app-background] .app-shell.navigation-ribbon-layout:has(.sidebar-ribbo
 .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-content {
   --sidebar-content-pad-x: var(--space-2);
   --sidebar-row-pad-x: var(--space-2);
-  width: calc(var(--sidebar-open-width) - 52px);
-  min-width: calc(var(--sidebar-open-width) - 52px);
+  width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
+  min-width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
   height: calc(100% - var(--workbench-top) - var(--conversation-pane-inset));
   margin-top: var(--workbench-top);
   margin-left: var(--sidebar-ribbon-width);

@@ -159,9 +159,77 @@ async function run() {
 
   results.push({ scenario: "real-pointer-hover-and-dock", before, after, readability, hitSamples });
   saveResults();
+  await verifyDockedRibbonSettingsResize(win);
   console.log(`PASS: independent workbench rows, unclipped controls, and stable page/drawer click targets. Evidence: ${evidenceDir}`);
   win.close();
   app.quit();
+}
+
+// The saved sidebar width includes the fixed 52px icon rail, while a docked
+// ribbon adds its extra width on top. The settings rail must start after the
+// docked ribbon and keep the same right edge as the main sidebar so the
+// shared separator still owns the visible boundary.
+async function verifyDockedRibbonSettingsResize(win) {
+  win.setContentSize(1180, 820);
+  win.webContents.setZoomFactor(1);
+  await evaluate(win, () => {
+    localStorage.setItem("wuu.desktop.sidebarWidth", "296");
+    localStorage.setItem("wuu.desktop.sidebarCollapsed", "false");
+    localStorage.setItem("wuu.navigation-ribbon.v1", JSON.stringify({
+      websites: [], order: [], width: 248,
+    }));
+  });
+  await loadFile(win, rendererHtml);
+  await waitFor(win, () => !!document.querySelector(".conversation-pane"), 5000);
+  await evaluate(win, () => document.querySelector(".sidebar-account-trigger").click());
+  await waitFor(win, () => !!document.querySelector('[data-settings-page="providers"]'), 3000);
+  await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
+  await waitFor(win, () => !!document.querySelector(".settings-shell"), 3000);
+  await settleChrome(win);
+
+  const before = await settingsResizeGeometry(win);
+  assert.ok(Math.abs(before.rail.width - (before.width - before.compactWidth)) < 1,
+    `Docked ribbon leaves the settings rail at the saved content width: ${JSON.stringify(before)}`);
+  assert.ok(Math.abs(before.rail.right - before.resizerCenter) < 1,
+    `Settings rail ends on the shared separator: ${JSON.stringify(before)}`);
+  assert.equal(before.hitResizer, true,
+    `The visible settings boundary owns the separator hit target: ${JSON.stringify(before)}`);
+
+  const zoom = win.webContents.getZoomFactor();
+  const point = { x: Math.round(before.rail.right * zoom), y: Math.round((before.rail.top + before.rail.height / 2) * zoom) };
+  win.webContents.sendInputEvent({ type: "mouseMove", ...point });
+  win.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount: 1 });
+  win.webContents.sendInputEvent({ type: "mouseMove", x: point.x + 40, y: point.y, button: "left", modifiers: ["leftButtonDown"] });
+  win.webContents.sendInputEvent({ type: "mouseUp", x: point.x + 40, y: point.y, button: "left", clickCount: 1 });
+  await waitFor(win, width => Number(document.querySelector(".app-shell > .sidebar-resizer").getAttribute("aria-valuenow")) > width, 3000, before.width);
+  await settleChrome(win);
+
+  const after = await settingsResizeGeometry(win);
+  assert.ok(after.width > before.width, `Dragging the settings boundary grows the sidebar: ${JSON.stringify({ before, after })}`);
+  assert.ok(Math.abs(after.rail.width - (after.width - after.compactWidth)) < 1,
+    `Settings rail keeps the saved content width after resizing: ${JSON.stringify(after)}`);
+  assert.ok(Math.abs(after.rail.right - after.resizerCenter) < 1,
+    `Settings rail stays on the separator after resizing: ${JSON.stringify(after)}`);
+  results.push({ scenario: "docked-ribbon-settings-resize", before, after, point });
+  saveResults();
+  await capture(win, "settings-sidebar-docked-ribbon.png");
+}
+
+async function settingsResizeGeometry(win) {
+  return evaluate(win, () => {
+    const shell = document.querySelector(".app-shell");
+    const rail = document.querySelector(".settings-sidebar").getBoundingClientRect();
+    const resizer = document.querySelector(".app-shell > .sidebar-resizer").getBoundingClientRect();
+    const hit = document.elementFromPoint(rail.right, rail.top + rail.height / 2);
+    return {
+      rail: rail.toJSON(),
+      resizer: resizer.toJSON(),
+      resizerCenter: resizer.left + resizer.width / 2,
+      width: parseFloat(shell.style.getPropertyValue("--sidebar-width")),
+      compactWidth: parseFloat(getComputedStyle(shell).getPropertyValue("--sidebar-ribbon-compact-width")),
+      hitResizer: hit === document.querySelector(".app-shell > .sidebar-resizer"),
+    };
+  });
 }
 
 // Reproduce the native Mac collision: a 240px total sidebar is narrower than
@@ -841,11 +909,11 @@ function loadFile(win, file) {
   });
 }
 
-async function waitFor(win, predicate, timeoutMs) {
+async function waitFor(win, predicate, timeoutMs, argument) {
   const started = Date.now();
   let lastValue;
   while (Date.now() - started < timeoutMs) {
-    lastValue = await evaluate(win, predicate);
+    lastValue = await evaluate(win, predicate, argument);
     if (lastValue) {
       return lastValue;
     }
