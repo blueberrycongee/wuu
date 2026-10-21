@@ -228,8 +228,8 @@ export async function activate(api) {
     .mosaic .mosaic-replies .plugin-conversation { display:flex;flex-direction:column;height:auto;min-height:0;flex:1 1 auto;max-height:none;overflow:hidden; }
     .mosaic .mosaic-replies .plugin-conversation-titlebar { min-height:52px;height:52px;flex:none;padding:16px 20px 0 24px;display:flex;justify-content:flex-end; }
     .mosaic-replies .title-block { display:none; }
-    .mosaic-replies-close { display:flex;align-items:center;justify-content:center;flex:none;width:36px;height:36px;border:1px solid var(--hairline);border-radius:50%;background:var(--paper);box-shadow:0 2px 8px rgb(0 0 0 / .06);color:var(--ink);cursor:pointer; }
-    .mosaic-replies-close svg { width:20px;height:20px; }
+    .mosaic-replies-close { position:absolute;top:24px;right:24px;z-index:2;display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;padding:0;border:1px solid var(--hairline);border-radius:50%;background:var(--paper);box-shadow:0 2px 8px rgb(0 0 0 / .06);color:var(--ink);cursor:pointer; }
+    .mosaic-replies-close svg { width:16px;height:16px; }
     .mosaic-replies-close:hover { background:var(--surface-2);color:var(--ink); }
     .mosaic-replies .plugin-conversation-scroll { flex:1 1 auto;min-height:0;max-height:none;margin:0;overflow:auto;padding:4px 24px 12px; }
     .mosaic-replies .plugin-conversation-flow { padding:0;--conversation-flow-bottom-space:0px; }
