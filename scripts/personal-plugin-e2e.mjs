@@ -4,6 +4,8 @@
 // durable dispatch, stale/duplicate completion, cancellation, and unknown outcomes.
 // Calendar proposal visibility must stay main-scoped and never proxy confirmation
 // or cancellation through Personal, including forged client routing parameters.
+// Personal-only memory must retain main/worker authority, evidence validation and
+// correction routing without an external memory service or duplicate provider.
 // Run against source in an isolated JSONL subprocess; fixture implements only host services.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -31,6 +33,7 @@ class Host {
     if (this.intercept) { const result = await this.intercept(service, p); if (result !== undefined) return result; }
     const key = `${p.scope}:${p.key}`;
     switch (service) {
+      case 'host.file-lock': return method === 'acquire' ? { lock_id: 'personal-fixture-lock' } : { released: true };
       case 'calendar.personal': if (this.calendar) return this.calendar.call('service.invoke', { service, method, caller: 'personal', params: p }); throw new Error('calendar service unavailable');
       case 'automation.routines': {
         if (method === 'read') return { binding: this.bindings.get(p.binding_id) };
@@ -216,20 +219,12 @@ try {
     await assert.rejects(authority('missing-session'), /found/);
     for (const id of ['unbound-root', 'worker', 'unknown-agent', 'foreign-memory']) host.sessions.delete(id);
   });
-  await scenario('shipped Memory writes resolve authority through real Personal service dispatch', async () => {
+  await scenario('Personal alone owns memory tools, pre-step, worker evidence and main acceptance', async () => {
     const h = new Host(), p = await new Runtime(h).start();
     const agent = (await p.client('agents.ensure_default')).agent;
-    const memory = await new Runtime(h, join(root, 'internal/plugin/bundled/memory/runtime.mjs'), 'memory').start();
-    const originalCall = h.call.bind(h);
-    h.call = frame => {
-      const { service, method, params } = frame.params;
-      if (service === 'personal.agents') return p.call('service.invoke', { service, method, caller: 'memory', params });
-      if (service === 'memory.records') return memory.call('service.invoke', { service, method, caller: 'personal', params });
-      if (service === 'host.file-lock') return Promise.resolve(method === 'acquire' ? { lock_id: 'memory-fixture-lock' } : { released: true });
-      return originalCall(frame);
-    };
+    assert.equal(p.definition.provided_services.filter(service => service.name === 'memory.records').length, 1);
     const sources = [{ kind: 'message', ref: 'integration-source', occurred_at: new Date(Date.now() - 60000).toISOString() }];
-    const accepted = (await memory.tool('personal_memory_create', { key: 'integration-core', expected_revision: 0, content: 'Prefers concise replies', evidence: 'explicit', sources, tier: 'core' }, agent.main_session_id)).record;
+    const accepted = (await p.tool('personal_memory_create', { key: 'integration-core', expected_revision: 0, content: 'Prefers concise replies', evidence: 'explicit', sources, tier: 'core' }, agent.main_session_id)).record;
     assert.equal(accepted.status, 'active'); assert.equal(accepted.tier, 'core');
     const sourceTime = new Date(Date.now() - 120000).toISOString();
     h.histories.set(agent.main_session_id, [{ seq: 1, role: 'user', origin: 'user', content: 'I usually schedule meetings before lunch', at: sourceTime }]);
@@ -240,14 +235,14 @@ try {
     const mainStep = await p.call('capability.invoke', { capability: 'agent.pre_step', input: { session_id: agent.main_session_id, source_message: { session_id: agent.main_session_id, seq: 1 }, messages: [] } });
     const exposed = mainStep.output.append_messages.flatMap(message => message.content.match(/personal-message:[^\s]+:[1-9][0-9]*/g) ?? []);
     assert(exposed.includes(ref), 'ordinary main input must expose usable host-bound source identity without a reply relation');
-    const candidate = (await memory.tool('personal_memory_create', { key: 'integration-candidate', expected_revision: 0, content: 'May prefer morning meetings', evidence: 'inferred', sources: [{ ...sources[0], ref }] }, worker)).record;
+    const candidate = (await p.tool('personal_memory_create', { key: 'integration-candidate', expected_revision: 0, content: 'May prefer morning meetings', evidence: 'inferred', sources: [{ ...sources[0], ref }] }, worker)).record;
     assert.equal(candidate.status, 'candidate'); assert.equal(candidate.sources[0].occurred_at, sourceTime);
-    const reviewed = await memory.tool('personal_memory_evidence', { id: candidate.id }, agent.main_session_id);
+    const reviewed = await p.tool('personal_memory_evidence', { id: candidate.id }, agent.main_session_id);
     assert.equal(reviewed.sources[0].content, 'I usually schedule meetings before lunch');
-    const admitted = (await memory.tool('personal_memory_accept', { id: candidate.id, expected_revision: reviewed.record.revision }, agent.main_session_id)).record;
+    const admitted = (await p.tool('personal_memory_accept', { id: candidate.id, expected_revision: reviewed.record.revision }, agent.main_session_id)).record;
     assert.equal(admitted.status, 'active'); assert.equal(admitted.evidence, 'inferred');
     assert.deepEqual(admitted.sources, candidate.sources); assert.equal(admitted.source_at, sourceTime);
-    const resolve = (sourceRef, session_id = agent.main_session_id) => p.call('service.invoke', { service: 'personal.agents', method: 'agents.memory-evidence', caller: 'memory', params: { session_id, ref: sourceRef } });
+    const resolve = (sourceRef, session_id = agent.main_session_id) => p.call('service.invoke', { service: 'personal.agents', method: 'agents.memory-evidence', caller: 'fixture', params: { session_id, ref: sourceRef } });
     assert.equal((await resolve(ref, worker)).content, undefined, 'workers receive provenance metadata, not source text');
     for (const [i, override] of [{ role: 'assistant' }, { origin: 'plugin' }, { hidden: true }, { read_only: true }, { truncated: true }, { at: 'not-a-date' }, { at: new Date(Date.now() + 3600000).toISOString() }].entries()) {
       const seq = i + 2;
@@ -263,10 +258,11 @@ try {
     h.histories.set(worker, [{ seq: 1, role: 'user', origin: 'user', content: 'Original task reply', at: sourceTime }]);
     assert.equal((await resolve(`personal-message:${encodeURIComponent(worker)}:1`)).content, 'Original task reply');
 
-    await assert.rejects(memory.tool('personal_memory_forget', { id: accepted.id, expected_revision: 1 }, worker), /main/);
+    await assert.rejects(p.tool('personal_memory_forget', { id: accepted.id, expected_revision: 1 }, worker), /main/);
     const forgotten = await p.client('memory.forget', { agent_id: agent.agent_id, id: accepted.id, expected_revision: 1 });
     assert.equal(forgotten.record.status, 'forgotten');
-    await memory.close(); await p.close();
+    assert(!h.calls.some(call => call.service === 'memory.records' || call.service === 'personal.agents'), 'built-in memory must not route authority or persistence through another plugin');
+    await p.close();
   });
   await scenario('restart, persona edit, and history retain immutable main binding', async () => {
     await runtime.close(); runtime = await new Runtime(host).start();
@@ -587,11 +583,13 @@ try {
     }
     await calendar.close(); host.calendar = undefined;
   });
-  await scenario('memory correction forwards trusted session and excludes client routing fields', async () => {
-    let forwarded;
-    host.intercept = (service, p) => { if (service === 'memory.records') { forwarded = p; return { version: 1, record: { id: 'memory-one', revision: 2 } }; } };
-    await runtime.client('memory.correct', { agent_id: main.agent_id, request_id: 'edit-one', id: 'memory-one', expected_revision: 1, content: 'Updated preference' });
-    assert.equal(forwarded.session_id, main.main_session_id); assert.equal(forwarded.evidence, 'explicit'); assert.equal(forwarded.sources[0].kind, 'user_edit'); assert(!('request_id' in forwarded)); assert(!('agent_id' in forwarded)); host.intercept = undefined;
+  await scenario('memory correction uses the bound main session and ignores forged client routing fields', async () => {
+    const original = (await runtime.tool('personal_memory_create', { key: 'correction-routing', expected_revision: 0, content: 'Original preference', evidence: 'explicit', sources: [{ kind: 'message', ref: 'correction-source', occurred_at: new Date(Date.now() - 60000).toISOString() }] }, main.main_session_id)).record;
+    const corrected = (await runtime.client('memory.correct', { agent_id: main.agent_id, request_id: 'edit-one', id: original.id, expected_revision: 1, content: 'Updated preference' })).record;
+    assert.equal(corrected.updated_by_agent_id, main.agent_id); assert.equal(corrected.evidence, 'explicit'); assert.equal(corrected.sources[0].kind, 'user_edit');
+    const routed = (await runtime.client('memory.correct', { agent_id: main.agent_id, session_id: 'forged-main', request_id: 'edit-two', id: original.id, expected_revision: 2, content: 'Bound correction' })).record;
+    assert.equal(routed.updated_by_agent_id, main.agent_id);
+    assert.equal((await runtime.client('memory.read', { agent_id: main.agent_id, id: original.id })).record.revision, 3);
   });
   await scenario('queued result discarded on shutdown is retried using its original delivery identity', async () => {
     let queued = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'queued-result', title: 'Queued result', goal: 'Verify result delivery recovery' })).task;

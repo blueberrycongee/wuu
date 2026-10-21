@@ -1,6 +1,6 @@
 # Memory
 
-The Memory plugin keeps information that should remain useful after a conversation ends. Use the user notebook for preferences and reusable feedback, and workspace memory for durable project knowledge. Conversation history and the core agent's working notes are separate records.
+In Coding, the optional Memory plugin keeps information that should remain useful after a conversation ends. Use the user notebook for preferences and reusable feedback, and workspace memory for durable project knowledge. Conversation history and the core agent's working notes are separate records.
 
 ## User notebook
 
@@ -84,6 +84,21 @@ the separate `memory.session` service.
 
 ## Personal memory
 
+Personal includes its own source-backed memory module and assembles it at startup.
+No separate Memory plugin needs to be enabled. Personal itself remains a bundled,
+default-enabled plugin: disabling Personal also stops its memory tools, service
+and recall. Coding Memory remains optional and keeps its existing behavior.
+Personal is the sole provider of the compatible `memory.records` service; its
+identity binding, source verification and candidate admission are internal calls.
+Dream is optional, is not enabled by this change, and is not needed for memory.
+
+An upgrade transfers existing Personal record storage through matched package
+ownership declarations, even when Memory is disabled. Record IDs, revisions,
+sources, candidates, conflicts and forgotten-source tombstones are preserved.
+The transfer is resumable and idempotent; old storage is retained for recovery,
+not used as a second live store. A transfer failure is reported rather than
+silently starting with missing records. Coding notebooks are never imported.
+
 Personal uses a separate source-backed record store, not the Coding notebook.
 Each model step receives a small projection: an explicitly selected core profile,
 recent context whose source is within 14 days, and relevant details. The three
@@ -95,7 +110,7 @@ Expiry, corrections and forget tombstones apply to every projection, including
 new workers. The store is unchanged; projections do not duplicate records.
 
 The bound main conversation can publish, correct and forget. Background tasks
-and Personal Dream can create and revise candidates, but cannot edit accepted
+and optionally enabled Personal Dream can create and revise candidates, but cannot edit accepted
 records, select core, correct or forget. Candidates stay out of ordinary recall;
 `include_inactive: true` exposes them for review. The main conversation receives
 at most eight pending candidate IDs (not their facts) on its next normal model

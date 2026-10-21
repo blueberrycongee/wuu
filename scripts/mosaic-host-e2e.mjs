@@ -27,6 +27,10 @@ const personalRoot = join(home, "user-spaces", "local", "personal", "files");
 const personalState = join(home, "user-spaces", "local", "personal", "state");
 const invocation = join(scratch, "unrelated-project"), otherProject = join(scratch, "other-project");
 const codingMarker = "MOSAIC_SYNTHETIC_CODING_NOTEBOOK_9f071";
+const legacyKey = "fixture.legacy.personal", legacyID = "mem_" + createHash("sha256").update(legacyKey).digest("hex");
+const legacyForgottenID = "mem_" + createHash("sha256").update("fixture.legacy.forgotten").digest("hex");
+const legacyStoragePath = join(personalState, "plugin-storage", "user", `sha256-${createHash("sha256").update("plugin:bundled:memory").digest("hex")}.json`);
+let legacyRecord;
 const projectMarker = "MOSAIC_SYNTHETIC_PROJECT_AGENTS_f52ad";
 const globalMarker = "MOSAIC_SYNTHETIC_GLOBAL_AGENTS_7d810";
 const projectMemoryMarker = "MOSAIC_SYNTHETIC_PROJECT_MEMORY_25fc1";
@@ -38,6 +42,7 @@ const report = { started_at: new Date().toISOString(), binary, scratch, status: 
   failure_matrix: [
     "Stage 1: no registered project; host scope survives invocation-directory changes, restart and duplicate creation; Coding context must not enter Personal",
     "Stage 2: one main binding, idempotent send, durable readable history, stale fingerprint denied and plugin disable isolated",
+    "Built-in memory: disabled optional Memory must not disable Personal records; both plugins must expose one Personal tool set; Coding notebook remains optional",
     "Stage 3: Coding notebook retained; Personal query has no imported Coding facts; caller-supplied domain rejected; generic read cannot reveal Coding memory",
     "Stage 4: background dispatch deduplicates without blocking main chat; no ordinary thread leakage; unknown results are not completed; stop and restart retain task state",
     "Single assistant: waiting_user question must persist in main exactly once; a main resume_task answer must retain the task ID and advance its requirement revision",
@@ -272,6 +277,12 @@ class Host {
 
 async function codingBaseline() {
   coding = await new Host("coding", "").start();
+  const initial = coding.package("memory");
+  if (initial.enabled) {
+    const changed = await coding.rpc("extension/package/update", { id: initial.id, fingerprint: initial.fingerprint, action: "disable" });
+    coding.initialized.extension_inventory = changed.extension_inventory;
+  }
+  await assert.rejects(coding.client("memory.read", {}, "memory"), /inactive|disabled|unavailable|enabled/i);
   await coding.enable("memory");
   const notebook = await coding.client("memory.read", {}, "memory"); assert(JSON.stringify(notebook).includes(codingMarker));
   await assert.rejects(coding.client("agents.ensure_default"), /does not accept|unavailable|Personal/i);
@@ -282,7 +293,11 @@ async function codingBaseline() {
   const names = calls.flatMap(call => call.body.tools?.map(tool => tool.function?.name) ?? []);
   assert(!names.some(name => /personal_memory|propose_specialist|create_task|complete_task/.test(name)), JSON.stringify(names));
   assert(JSON.stringify(calls).includes(projectMarker), "Coding positive control did not load its project AGENTS");
-  return { thread_id: codingThread, notebook_retained: true };
+  const enabled = coding.package("memory");
+  const changed = await coding.rpc("extension/package/update", { id: enabled.id, fingerprint: enabled.fingerprint, action: "disable" });
+  coding.initialized.extension_inventory = changed.extension_inventory;
+  await assert.rejects(coding.client("memory.read", {}, "memory"), /inactive|disabled|unavailable|enabled/i);
+  return { thread_id: codingThread, notebook_retained: true, optional_disabled: true };
 }
 
 async function downloadAttachment(host, method, scope, record, attachment) {
@@ -318,7 +333,7 @@ async function buildSDKHost() {
   const source = join(scratch, "synthetic-sdk-host.go");
   await writeFile(source, `// Acceptance transport fixture only. Uses production logical-memory policy without overrides.
 package main
-import("bufio";"context";"encoding/json";"flag";"fmt";"io";"os";"sync";"github.com/blueberrycongee/wuu/internal/sdk";"github.com/blueberrycongee/wuu/internal/runtime";"github.com/blueberrycongee/wuu/internal/session")
+import("bufio";"context";"encoding/json";"flag";"fmt";"io";"os";"sync";"github.com/blueberrycongee/wuu/internal/sdk";"github.com/blueberrycongee/wuu/internal/runtime";"github.com/blueberrycongee/wuu/internal/session";"github.com/blueberrycongee/wuu/internal/pluginsettings")
 type output struct{mu sync.Mutex}
 func(o *output) emit(v any)error{o.mu.Lock();defer o.mu.Unlock();return json.NewEncoder(os.Stdout).Encode(v)}
 type writer struct{o *output;client string}
@@ -339,6 +354,7 @@ func multiplex(r *sdk.Runtime)error{
  }};return scan.Err()
 }
 func run()error{
+ if len(os.Args)==4&&os.Args[1]=="probe-storage-transfer"{doc,err:=pluginsettings.ReadState(os.Args[2],"","plugin:bundled:memory",pluginsettings.ScopeUser);if err!=nil{return err};_,visible:=doc.Values[os.Args[3]];_,err=pluginsettings.UpdateState(os.Args[2],"","plugin:bundled:memory",pluginsettings.ScopeUser,func(values map[string]string)error{values[os.Args[3]]="forbidden-old-owner-write";return nil});if err==nil{return fmt.Errorf("old owner write unexpectedly succeeded")};return json.NewEncoder(os.Stdout).Encode(map[string]any{"source_visible":visible,"write_denied":true,"error":err.Error()})}
  if len(os.Args)==4&&os.Args[1]=="read-persisted-history"{head,err:=session.ReadHistoryQuery(context.Background(),os.Args[2],session.HistoryReadQuery{SessionID:os.Args[3],StartSeq:1,Limit:1});if err!=nil{return err};page,err:=session.ReadHistoryQuery(context.Background(),os.Args[2],session.HistoryReadQuery{SessionID:os.Args[3],StartSeq:max(1,head.HeadSeq-49),Limit:50});if err!=nil{return err};return json.NewEncoder(os.Stdout).Encode(page)}
  if len(os.Args)==6&&os.Args[1]=="read-artifact"{data,_,err:=runtime.ReadManagedArtifact(os.Args[2],os.Args[3],os.Args[4],os.Args[5],1048576);if err!=nil{return err};_,err=os.Stdout.Write(data);return err}
  f:=flag.NewFlagSet("synthetic-sdk-host",flag.ContinueOnError)
@@ -385,6 +401,20 @@ try {
     default_provider: "fixture", providers: { fixture: { type: "openai-compatible", base_url: `http://127.0.0.1:${provider.address().port}`, api_key: "synthetic-unused", model: "mosaic-fixture", models: { "mosaic-fixture": { context_window: 131072 } } } },
     agent: { permission_mode: "standard", tool_loading: "flat", max_steps: 8 }, skills: { enabled: false }, ptc: { enabled: false },
   }));
+  // Seed persisted v1 bytes, not a live Memory provider. The first production
+  // Personal activation must adopt records even while the source is disabled.
+  const legacyTime = new Date(Date.now() - 60000).toISOString();
+  const legacySource = { kind: "message", ref: "synthetic-legacy-source", occurred_at: legacyTime };
+  legacyRecord = { id: legacyID, key: legacyKey, revision: 4, product_domain: "personal", user_space_id: "local", status: "active",
+    content: "Synthetic preserved Personal preference", evidence: "explicit", sources: [legacySource], source_at: legacyTime, effective_at: legacyTime,
+    contributor_agent_id: "legacy-personal-main", updated_by_agent_id: "legacy-personal-main", created_at: legacyTime, updated_at: legacyTime,
+    contributions: [{ revision: 4, agent_id: "legacy-personal-main", executor_session_id: "legacy-session", operation: "correct", source_at: legacyTime, effective_at: legacyTime, written_at: legacyTime, sources: [legacySource] }], superseded_sources: [] };
+  const forgotten = { id: legacyForgottenID, revision: 2, product_domain: "personal", user_space_id: "local", status: "forgotten", updated_at: legacyTime,
+    blocked_sources: [createHash("sha256").update(JSON.stringify(["message", "synthetic-legacy-forgotten-source"])).digest("hex")] };
+  await mkdir(join(personalState, "plugin-storage", "user"), { recursive: true });
+  await writeFile(legacyStoragePath, JSON.stringify({ schema_version: 1, plugin_id: "plugin:bundled:memory", values: {
+    [`personal.records.v1.${legacyID}`]: JSON.stringify(legacyRecord), [`personal.records.v1.${legacyForgottenID}`]: JSON.stringify(forgotten),
+  } }), { mode: 0o600 });
   await scenario("Production CLI activates logical-memory Personal without an isolation override", async () => {
     const started = spawnSync(binary, ["app-server", "--workdir", invocation, "--config", join(home, "config.json"), "--user-space", "local", "--product-domain", "personal"],
       { cwd: invocation, env: { PATH: process.env.PATH, HOME: fixtureHome, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath }, encoding: "utf8", timeout: 30_000,
@@ -392,6 +422,7 @@ try {
     assert.equal(started.status, 0, started.stderr);
     const initialized = started.stdout.trim().split("\n").map(line => JSON.parse(line)).find(frame => frame.id === "activation");
     assert(initialized?.result, started.stdout + started.stderr);
+    assert.equal(initialized.result.extension_inventory.find(item => item.id.endsWith(":memory") || item.id === "memory").enabled, false, "legacy migration must not require enabling the source");
     assert.deepEqual(initialized.result.user_host_isolation, { memory: "logical", host: "unverified" });
     assert.equal(initialized.result.user_space_id, "local"); assert.equal(initialized.result.product_domain, "personal");
     return { exit_code: started.status, capabilities: initialized.result.user_host_isolation };
@@ -406,8 +437,9 @@ try {
     }
     return { id: item.id, fingerprint: item.fingerprint };
   });
-  await scenario("Explicitly enabled Memory activates in the Personal host", async () => {
-    const item = await personal.enable("memory"); return { id: item.id, fingerprint: item.fingerprint };
+  await scenario("Personal starts with optional Memory disabled", async () => {
+    const item = personal.package("memory"); assert.equal(item.enabled, false);
+    return { optional_memory_enabled: item.enabled };
   });
   await scenario("Concurrent default requests bind one persistent main session", async () => {
     const results = await Promise.all([personal.client("agents.ensure_default"), personal.client("agents.ensure_default")]);
@@ -476,11 +508,17 @@ try {
     const input = { agent_id: main.agent_id, request_id: "attachment-only-intent", prompt: "", attachments: [ref] };
     const proof = { request_id: input.request_id, prompt: input.prompt, attachments: [file] };
     const before = providerCalls.length;
-    await assert.rejects(personal.client("agents.send", input), /attachment|user.input|submission/i);
-    await assert.rejects(personal.client("agents.send", input, "personal", { user_input: { ...proof, attachments: [{ ...file, data: Buffer.from("different bytes").toString("base64") }] } }), /digest|bytes/i);
-    await assert.rejects(personal.client("agents.send", { ...input, attachments: [{ ...ref, filename: "renamed.txt" }] }, "personal", { user_input: proof }), /match|selection/i);
-    await assert.rejects(personal.client("agents.send", { ...input, attachments: [{ ...ref, path: "/untrusted" }] }, "personal", { user_input: proof }), /path|unknown|reference/i);
-    await assert.rejects(personal.client("agents.send", { ...input, prompt: "text", attachments: [] }, "personal", { user_input: { ...proof, prompt: "text" } }), /match|selection/i);
+    // Each malformed submission is a distinct intent: otherwise the durable
+    // idempotency fence rejects changed fingerprints before proof validation.
+    const rejected = (suffix, candidate, userInput) => {
+      const request_id = `attachment-rejected-${suffix}`;
+      return personal.client("agents.send", { ...candidate, request_id }, "personal", userInput ? { user_input: { ...userInput, request_id } } : {});
+    };
+    await assert.rejects(rejected("missing", input), /attachment|user.input|submission/i);
+    await assert.rejects(rejected("bytes", input, { ...proof, attachments: [{ ...file, data: Buffer.from("different bytes").toString("base64") }] }), /digest|bytes/i);
+    await assert.rejects(rejected("renamed", { ...input, attachments: [{ ...ref, filename: "renamed.txt" }] }, proof), /match|selection/i);
+    await assert.rejects(rejected("path", { ...input, attachments: [{ ...ref, path: "/untrusted" }] }, proof), /path|unknown|reference/i);
+    await assert.rejects(rejected("omitted", { ...input, prompt: "text", attachments: [] }, { ...proof, prompt: "text" }), /match|selection/i);
     assert.equal(providerCalls.length, before);
     attachmentSubmission = { input, proof, bytes, file };
     return { rejected_cases: 5, zero_inference: true };
@@ -609,14 +647,33 @@ try {
     assert(messageText(toolResult).includes("MOSAIC_PERSONAL_SCOPED_NOTE"));
     return { main_session_id: main.main_session_id, working_notes_restored: true };
   });
-  await scenario("Personal memory has no legacy import and rejects caller-selected domain", async () => {
+  await scenario("Personal memory imports no Coding notebook and rejects caller-selected domain", async () => {
     const query = await personal.client("memory.query", { agent_id: main.agent_id });
     assert(!JSON.stringify(query).includes(codingMarker));
     await assert.rejects(personal.client("memory.query", { agent_id: main.agent_id, product_domain: "coding" }), /domain|scope|unexpected/i);
     return query;
   });
+  await scenario("Disabled legacy Memory records and forgotten-source barriers migrate before Personal activation", async () => {
+    assert.equal(personal.package("memory").enabled, false);
+    const restored = (await personal.client("memory.read", { agent_id: main.agent_id, id: legacyID })).record;
+    assert.equal(restored.revision, legacyRecord.revision); assert.equal(restored.content, legacyRecord.content);
+    assert.deepEqual(restored.sources, legacyRecord.sources); assert.deepEqual(restored.contributions, legacyRecord.contributions);
+    const tombstone = (await personal.client("memory.read", { agent_id: main.agent_id, id: legacyForgottenID })).record;
+    assert.equal(tombstone.status, "forgotten"); assert.equal(tombstone.revision, 2);
+    toolPlans.set("memory-forgotten-legacy", { plugin: "personal", tool: "personal_memory_create", arguments: {
+      key: "fixture.legacy.resurrection", expected_revision: 0, content: "Must not return", evidence: "explicit",
+      sources: [{ kind: "message", ref: "synthetic-legacy-forgotten-source", occurred_at: legacyTime }],
+    } });
+    await personal.send("memory-forgotten-legacy");
+    assert(agentCalls("memory-forgotten-legacy").at(-1).body.messages.some(message => message.role === "tool" && messageText(message).includes("forgotten_source")));
+    const probe = spawnSync(testBinary, ["probe-storage-transfer", personalState, `personal.records.v1.${legacyID}`], { encoding: "utf8" });
+    assert.equal(probe.status, 0, probe.stderr); const fenced = JSON.parse(probe.stdout);
+    assert.equal(fenced.source_visible, false); assert.equal(fenced.write_denied, true);
+    await writeFile(join(scratch, "legacy-owner-fence.json"), JSON.stringify(fenced, null, 2));
+    return { preserved_record: legacyID, revision: restored.revision, preserved_tombstone: legacyForgottenID, source_disabled: true, old_owner_fenced: true };
+  });
   await scenario("Real memory tool writes preserve trusted author and source attribution", async () => {
-    toolPlans.set("memory-create", { plugin: "memory", tool: "personal_memory_create", arguments: {
+    toolPlans.set("memory-create", { plugin: "personal", tool: "personal_memory_create", arguments: {
       key: "fixture.preference.drink", expected_revision: 0, content: "The synthetic user prefers mint tea",
       evidence: "explicit", sources: [{ kind: "message", ref: "mosaic-fixture-user-message-1", occurred_at: "2026-10-18T00:00:00Z" }],
     } });
@@ -627,6 +684,47 @@ try {
     assert.equal(memoryRecord.contributor_agent_id, main.agent_id);
     assert.equal(memoryRecord.product_domain, "personal"); assert.equal(memoryRecord.user_space_id, "local");
     assert(memoryRecord.sources.some(source => source.ref === "mosaic-fixture-user-message-1")); return memoryRecord;
+  });
+  await scenario("Personal-only worker candidates require main evidence review and acceptance", async () => {
+    await personal.send("memory-evidence-source");
+    const history = await personal.client("agents.history", { agent_id: main.agent_id });
+    const source = history.records.find(record => record.role === "user" && record.content === "MOSAIC_E2E_CASE:memory-evidence-source");
+    assert(source);
+    const ref = `personal-message:${encodeURIComponent(main.main_session_id)}:${source.seq}`;
+    toolPlans.set("memory-worker-candidate", { plugin: "personal", tool: "personal_memory_create", arguments: {
+      key: "fixture.worker.candidate", expected_revision: 0, content: "Synthetic worker review candidate", evidence: "inferred",
+      sources: [{ kind: "message", ref, occurred_at: "2026-01-01T00:00:00Z" }],
+    } });
+    const worker = (await personal.client("tasks.create", { agent_id: main.agent_id, request_id: "memory-candidate-worker", title: "Review memory evidence", goal: "MOSAIC_E2E_CASE:memory-worker-candidate" })).task;
+    await personal.settled({ session_id: worker.execution.session_id, turn_id: worker.execution.turn_id });
+    const records = (await personal.client("memory.query", { agent_id: main.agent_id, include_inactive: true })).records;
+    const candidate = records.find(record => record.key === "fixture.worker.candidate");
+    assert(candidate); assert.equal(candidate.status, "candidate"); assert.equal(candidate.sources[0].occurred_at, new Date(source.at).toISOString());
+    assert(!(await personal.client("memory.query", { agent_id: main.agent_id, query: "Synthetic worker review candidate" })).records.some(record => record.id === candidate.id));
+    toolPlans.set("memory-main-review", [
+      { plugin: "personal", tool: "personal_memory_evidence", arguments: { id: candidate.id } },
+      { plugin: "personal", tool: "personal_memory_accept", arguments: { id: candidate.id, expected_revision: candidate.revision } },
+    ]);
+    await personal.send("memory-main-review");
+    const review = agentCalls("memory-main-review").at(-1).body.messages.filter(message => message.role === "tool");
+    assert(review.some(message => messageText(message).includes("MOSAIC_E2E_CASE:memory-evidence-source")));
+    const accepted = (await personal.client("memory.read", { agent_id: main.agent_id, id: candidate.id })).record;
+    assert.equal(accepted.status, "active"); assert.equal(accepted.evidence, "inferred"); assert.deepEqual(accepted.sources, candidate.sources);
+    await personal.client("tasks.stop", { task_id: worker.task_id, expected_revision: (await personal.client("tasks.get", { task_id: worker.task_id })).task.revision });
+    return { candidate_id: candidate.id, worker_session: worker.execution.session_id, main_reviewed: true, source_timestamp_preserved: true };
+  });
+  await scenario("Enabling optional Memory adds no duplicate Personal tools or records provider", async () => {
+    assert.equal(personal.package("memory").enabled, false);
+    await personal.enable("memory");
+    await personal.send("memory-both-enabled");
+    const names = agentCalls("memory-both-enabled")[0].body.tools.map(item => item.function.name);
+    assert.equal(names.filter(name => name.startsWith("plugin_personal_personal_memory_que")).length, 1);
+    assert(!names.some(name => name.startsWith("plugin_memory_")));
+    const query = await personal.client("memory.query", { agent_id: main.agent_id, query: "mint tea" });
+    assert.equal(query.records.filter(record => record.id === memoryRecord.id).length, 1);
+    const notebook = await coding.client("memory.read", {}, "memory");
+    assert(JSON.stringify(notebook).includes(codingMarker));
+    return { one_personal_memory_tool_set: true, coding_notebook_retained: true };
   });
   await scenario("The public product exposes only its durable main conversation", async () => {
     const listed = await personal.client("agents.list");

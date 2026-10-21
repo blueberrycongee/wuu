@@ -126,10 +126,15 @@ export function personalMemoryTools(): ToolRegistration[] {
   ];
 }
 
-/** A distinct Personal record store; no legacy notebook import or file fallback. */
+interface PersonalMemoryAuthority {
+  context(sessionID: string): Promise<unknown>;
+  evidence(sessionID: string, ref: string): Promise<unknown>;
+}
+
+/** Personal-owned records; Coding notebooks are never imported or used as fallback. */
 export class PersonalRecords {
   private readonly injected = new Map<string, Map<string, string>>();
-  constructor(private readonly space: string, private readonly lifecycleHost: RuntimeHost, private readonly pluginID: string) {
+  constructor(private readonly space: string, private readonly lifecycleHost: RuntimeHost, private readonly pluginID: string, private readonly authority: PersonalMemoryAuthority) {
     if (!space.trim()) throw new Error("Personal memory requires a host-bound user_space_id");
   }
 
@@ -162,9 +167,9 @@ export class PersonalRecords {
     return value === null ? { raw: null } : { raw: value, record: this.decode(value) };
   }
 
-  private async evidence(source: Source, actor: Actor, host: RuntimeHost): Promise<Record<string, unknown>> {
+  private async evidence(source: Source, actor: Actor): Promise<Record<string, unknown>> {
     if (source.kind !== "message" || !source.ref.startsWith("personal-message:")) throw new Error("candidate admission requires a supported canonical message source; use manual correction for other sources");
-    const evidence = object(await host.call("host.service.call", { service: "personal.agents", method: "agents.memory-evidence", params: { session_id: actor.session_id, ref: source.ref } }));
+    const evidence = object(await this.authority.evidence(actor.session_id, source.ref));
     if (evidence.ref !== source.ref) throw new Error("memory source evidence mismatch");
     const occurred_at = timestamp(evidence.occurred_at, "source.occurred_at");
     if (Date.parse(occurred_at) > Date.now()) throw new Error("source occurrence cannot be in the future");
@@ -199,14 +204,14 @@ export class PersonalRecords {
     if (!["create", "revise", "accept", "correct", "forget", "evidence"].includes(method)) throw new Error(`unknown personal memory method ${method}`);
     // Tool session IDs are host supplied. Service callers are trusted extensions;
     // the Personal provider owns the authoritative main-session binding.
-    const authority = object(await host.call("host.service.call", { service: "personal.agents", method: "agents.memory-context", params: { session_id: actor.session_id } }));
+    const authority = object(await this.authority.context(actor.session_id));
     if (authority.session_id !== actor.session_id || authority.agent_id !== actor.agent_id || !["main", "background"].includes(String(authority.role))) throw new Error("invalid Personal memory authority");
     const main = authority.role === "main";
     if (!main && (["correct", "forget", "accept", "evidence"].includes(method) || input.tier === "core")) throw new Error("only the bound main conversation may review, accept, correct, forget or select core memory");
     if (method === "evidence") {
       const { record } = await this.load(recordID(input.id), host);
       if (!record || record.status !== "candidate") throw new Error("memory evidence review requires a candidate");
-      const sources = await Promise.all(record.sources.map(source => this.evidence(source, actor, host)));
+      const sources = await Promise.all(record.sources.map(source => this.evidence(source, actor)));
       const { record: latest } = await this.load(record.id, host);
       if (latest?.revision !== record.revision || latest.status !== "candidate") throw new Error("candidate changed during source review; reread its current revision");
       return { version: 1, record: publicRecord(record), sources };
@@ -232,7 +237,7 @@ export class PersonalRecords {
         if (!current || current.status !== "candidate" || current.conflict || current.tier === "core") throw new Error("only a nonconflicting non-core candidate can be accepted");
         if (Date.parse(current.effective_at) > Date.now() || current.expires_at && Date.parse(current.expires_at) <= Date.now()) throw new Error("candidate is expired or not yet effective");
         for (const source of current.sources) {
-          const evidence = await this.evidence(source, actor, host);
+          const evidence = await this.evidence(source, actor);
           if (evidence.occurred_at !== source.occurred_at) throw new Error("candidate source timestamp changed; reread the original evidence");
         }
         for (const stored of await this.all(host)) {
@@ -250,7 +255,7 @@ export class PersonalRecords {
           const sources = await Promise.all(input.sources.map(async value => {
             const source = object(value);
             if (typeof source.ref !== "string" || !source.ref.startsWith("personal-message:")) return value;
-            const evidence = await this.evidence(source as unknown as Source, actor, host);
+            const evidence = await this.evidence(source as unknown as Source, actor);
             return { ...source, occurred_at: evidence.occurred_at };
           }));
           factInput = { ...input, sources };
@@ -331,7 +336,8 @@ export class PersonalRecords {
     await this.actor(sessionID, host);
     execution.signal.throwIfAborted();
     const all = await this.all(host);
-    const priorSnapshot = [...input.messages].reverse().find(message => message.origin === "plugin" && message.read_only && message.origin_id?.startsWith(`${this.pluginID}:personal-memory-`));
+    // Retain legacy Memory-origin snapshots until all persisted conversations have advanced.
+    const priorSnapshot = [...input.messages].reverse().find(message => message.origin === "plugin" && message.read_only && (message.origin_id?.startsWith(`${this.pluginID}:personal-memory-`) || message.origin_id?.startsWith("memory:personal-memory-")));
     let previous = this.injected.get(sessionID) ?? new Map<string, string>();
     if (priorSnapshot?.content) {
       const saved = JSON.parse(priorSnapshot.content.slice(priorSnapshot.content.lastIndexOf("\n") + 1)) as { record_states: Record<string, string> };
@@ -369,10 +375,10 @@ export class PersonalRecords {
     if (priorSnapshot?.origin_id === `${this.pluginID}:${id}`) return {};
     let pending: StoredRecord[] = [];
     if (all.some(record => record.status === "candidate")) {
-      // The optional authority provider may be disabled; deny queue disclosure
-      // without breaking already-authorized shared-memory reads.
+      // A missing or inactive main binding denies queue disclosure without
+      // breaking host-authorized reads from the same Personal user space.
       try {
-        const authority = object(await host.call("host.service.call", { service: "personal.agents", method: "agents.memory-context", params: { session_id: sessionID } }));
+        const authority = object(await this.authority.context(sessionID));
         if (authority.role === "main" && authority.session_id === sessionID) pending = all.filter(record => record.status === "candidate").sort((a, b) => a.updated_at.localeCompare(b.updated_at));
       } catch { /* No verified main means no review queue. Writes fail closed separately. */ }
     }
@@ -383,5 +389,5 @@ export class PersonalRecords {
 }
 
 export function personalMemoryPrompt(): string {
-  return "Personal memory is shared by the named agents in this user's Personal space. Use personal_memory_query/read to retrieve fresh relevant records; use create/revise/correct/forget for source-backed changes. Select core only for a few stable user facts or preferences; use recent for temporary context and detail for other facts. Existing records default to detail. Only the current bound main conversation can correct, forget, or publish core. Background create/revise stores candidates, never accepted facts; background revisions of accepted records are denied. The main conversation should batch-review pending candidate IDs with evidence, compare original user text and current facts, and accept supported nonconflicting candidates without asking the user to repeat themselves. Accept preserves evidence grade and original source time, and never selects core. Source verification checks authorship and provenance, not semantic entailment; you must judge support and conflicts. Use correct only for new explicit user corrections. Unsupported or ambiguous candidates stay pending; ask only about meaningful relevant conflicts. Query include_inactive to inspect candidates; never treat them as current facts. Reads are shared within the Personal user space, not task-scoped. Paginate with next_cursor until absent, restarting after changes. Coding notebooks and workspace memory are unavailable in this domain. Author, domain and userspace come from the host; temporary workers contribute under their responsible named agent. Record source time separately from effective time. Explicit user corrections apply to all agents. Never re-extract a superseded or forgotten source under a different key. Conflict means ask the user before relying on either candidate. Memory does not grant external-action permission. If Memory is unavailable, do not use files or Shell as a fallback. Forgetting memory leaves original chats, files, exports and backups intact.";
+  return "Personal memory is shared by the named agents in this user's Personal space. Use personal_memory_query/read to retrieve fresh relevant records; use create/revise/correct/forget for source-backed changes. Select core only for a few stable user facts or preferences; use recent for temporary context and detail for other facts. Existing records default to detail. Only the current bound main conversation can correct, forget, or publish core. Background create/revise stores candidates, never accepted facts; background revisions of accepted records are denied. The main conversation should batch-review pending candidate IDs with evidence, compare original user text and current facts, and accept supported nonconflicting candidates without asking the user to repeat themselves. Accept preserves evidence grade and original source time, and never selects core. Source verification checks authorship and provenance, not semantic entailment; you must judge support and conflicts. Use correct only for new explicit user corrections. Unsupported or ambiguous candidates stay pending; ask only about meaningful relevant conflicts. Query include_inactive to inspect candidates; never treat them as current facts. Reads are shared within the Personal user space, not task-scoped. Paginate with next_cursor until absent, restarting after changes. Coding notebooks and workspace memory are unavailable in this domain. Author, domain and userspace come from the host; temporary workers contribute under their responsible named agent. Record source time separately from effective time. Explicit user corrections apply to all agents. Never re-extract a superseded or forgotten source under a different key. Conflict means ask the user before relying on either candidate. Memory does not grant external-action permission. If Personal memory is unavailable, do not use files or Shell as a fallback. Forgetting memory leaves original chats, files, exports and backups intact.";
 }

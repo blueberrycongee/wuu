@@ -49,5 +49,16 @@
       "Read",
       "Write"
     ]
+  },
+  "storageTransfers": {
+    "imports": [
+      {
+        "id": "personal-records-v1-owner",
+        "plugin": "memory",
+        "scope": "user",
+        "domain": "personal",
+        "keyPrefix": "personal.records.v1."
+      }
+    ]
   }
 }

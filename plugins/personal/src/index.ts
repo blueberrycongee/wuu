@@ -1,10 +1,11 @@
+import { PersonalRecords, PERSONAL_MEMORY_SERVICE, PERSONAL_MEMORY_METHODS, personalMemoryPrompt, personalMemoryTools } from "./personal-records.js";
 import { PersonalRoutines, quietUntil, type CalendarChange } from "./routines.js";
 import { createHash } from "node:crypto";
 import {
-  requireKernelService, SESSION_ATTENTION_CAPABILITY, type SessionAttentionInput, type SessionAttentionOutput, type AgentPreStepInput, type CapabilityInvokeParams,
+  requireKernelService, FILE_LOCK_SERVICE, SESSION_ATTENTION_CAPABILITY, type SessionAttentionInput, type SessionAttentionOutput, type AgentPreStepInput, type CapabilityInvokeParams,
   type HostServiceContracts, type JSONSchemaObject, type KernelHostServiceMethod,
   type RuntimeHost, type RuntimeInitializeParams, type RuntimeLifecycleContext,
-  type RuntimePlugin, type ServiceInvokeParams, type ToolExecuteParams,
+  type RuntimeExecutionContext, type RuntimePlugin, type ServiceInvokeParams, type ToolExecuteParams,
   type ToolExecuteResult, type TurnLifecycleInput, type SessionInputAttachment, type MessageRef, type MessageRelation,
 } from "@wuu/plugin-sdk";
 
@@ -74,7 +75,7 @@ const methodNames = ["agents.list", "agents.ensure_default", "agents.open", "age
 
 export class PersonalPlugin implements RuntimePlugin {
   readonly concurrentCapabilities = [clientCapability, "agent.pre_step", "agent.turn.lifecycle"];
-  readonly concurrentServices = [service, "automation.trigger"];
+  readonly concurrentServices = [service, "automation.trigger", PERSONAL_MEMORY_SERVICE];
   private host!: RuntimeHost;
   private space = "";
   private prefix = "";
@@ -84,6 +85,7 @@ export class PersonalPlugin implements RuntimePlugin {
   private recoveryTimer?: ReturnType<typeof setInterval>;
   private recovering = false;
   private routines!: PersonalRoutines;
+  private memory!: PersonalRecords;
   private transitions = new Map<string, Promise<unknown>>();
   private authorityEpoch = 0;
   private authorityMutations = 0;
@@ -95,6 +97,10 @@ export class PersonalPlugin implements RuntimePlugin {
     this.available = params.product_domain === "personal" && Boolean(this.space);
     this.prefix = `personal.v1.${id(this.space)}.`;
     if (!this.available) return { protocol_version: 3 as const, tools: [], capabilities: [], provided_services: [] };
+    this.memory = new PersonalRecords(this.space, host, params.plugin_id, {
+      context: session_id => this.request("agents.memory_context", { session_id }),
+      evidence: (session_id, ref) => this.request("agents.memory_evidence", { session_id, ref }),
+    });
     this.routines = new PersonalRoutines(host, this.space, {
       active: () => this.assertActive(), mutation: () => this.beginAuthorityMutation(), agent: (agentID, allowInactive) => this.agent(agentID, allowInactive), main: () => this.main(),
       send: (agentID, params) => this.sendForAgent(agentID, params),
@@ -105,15 +111,17 @@ export class PersonalPlugin implements RuntimePlugin {
     const services: KernelHostServiceMethod[] = ["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.create", "host.session.send", "host.session.inspect", "host.session.cancel", "host.session.history.read", "host.session.history.search", "host.session.attachment.read", "host.session.context"];
     return {
       protocol_version: 3 as const,
-      required_services: [...services.map(requireKernelService), { name: "memory.records", major_version: 1, required: false }, { name: "automation.routines", major_version: 1, required: false }, { name: "calendar.personal", major_version: 1, required: false }],
-      provided_services: [{ name: service, version: "1.0.0", methods: methodNames.map(name => ({ name: name.replaceAll("_", "-"), input_schema: `personal.${name.replaceAll("_", "-")}.input.v1`, output_schema: `personal.${name.replaceAll("_", "-")}.output.v1` })) }, { name: "automation.trigger", version: "1.0.0", methods: [{ name: "fire", input_schema: "automation.trigger.fire.input.v1", output_schema: "automation.trigger.fire.output.v1" }] }],
+      required_services: [...services.map(requireKernelService), { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, { name: "automation.routines", major_version: 1, required: false }, { name: "calendar.personal", major_version: 1, required: false }],
+      provided_services: [{ name: PERSONAL_MEMORY_SERVICE, version: "1.0.0", methods: PERSONAL_MEMORY_METHODS.map(name => ({ name, input_schema: `memory.records.${name}.request.v1`, output_schema: `memory.records.${name}.response.v1` })) }, { name: service, version: "1.0.0", methods: methodNames.map(name => ({ name: name.replaceAll("_", "-"), input_schema: `personal.${name.replaceAll("_", "-")}.input.v1`, output_schema: `personal.${name.replaceAll("_", "-")}.output.v1` })) }, { name: "automation.trigger", version: "1.0.0", methods: [{ name: "fire", input_schema: "automation.trigger.fire.input.v1", output_schema: "automation.trigger.fire.output.v1" }] }],
       capabilities: [
+        { id: "agent.system_prompt.section", kind: "transform" as const, version: 1 },
         { id: clientCapability, kind: "decision" as const, version: 1 },
         { id: SESSION_ATTENTION_CAPABILITY, kind: "decision" as const, version: 1 },
         { id: "agent.pre_step", kind: "transform" as const, version: 1 },
         { id: "agent.turn.lifecycle", kind: "observe" as const, version: 1, error_policy: "isolate" as const },
       ],
       tools: [
+        ...personalMemoryTools(),
         { id: "create_routine", description: "Create only an explicitly requested reminder or recurring responsibility. Use run_at for a one-time reminder or cron plus timezone for recurrence. A Calendar change source requires kind task, cron, and a verified matching Calendar source account/generation with a fixed window at most 31 days; first baseline is silent and no account connection is initiated.", input_schema: schema({ request_id: string, title: string, prompt: string, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string, cron: string, timezone: string, missed_policy: { type: "string", enum: ["run_once", "skip"] }, source: schema({ kind: { type: "string", enum: ["calendar"] }, account_id: string, generation: string, calendar_id: string, time_min: string, time_max: string, timezone: string }, "kind", "account_id", "generation", "calendar_id", "time_min", "time_max", "timezone") }, "request_id", "title", "prompt", "timezone"), activity: { concurrency_safe: true } },
         { id: "manage_routine", description: "List, update, pause, resume, or stop an explicitly requested Personal responsibility. Update the existing routine when the user changes its time or instructions. Mutations require the latest revision.", input_schema: schema({ action: { type: "string", enum: ["list", "update", "pause", "resume", "stop"] }, routine_id: string, expected_revision: integer, title: string, prompt: string, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string, cron: string, timezone: string, missed_policy: { type: "string", enum: ["run_once", "skip"] }, source: { type: "object" } }, "action"), activity: { concurrency_safe: true } },
         { id: "create_task", description: "Track and dispatch an explicitly delegated background task while this conversation continues. Keep the authorization scope in authorization_refs; this does not authorize external writes. Retrying the same request_id returns the existing task.", input_schema: schema({ request_id: string, title: string, goal: string, authorization_refs: { type: "array", items: string } }, "request_id", "title", "goal"), activity: { concurrency_safe: true } },
@@ -770,9 +778,10 @@ export class PersonalPlugin implements RuntimePlugin {
     }) };
   }
 
-  async executeTool(call: ToolExecuteParams): Promise<ToolExecuteResult> {
+  async executeTool(call: ToolExecuteParams, executionHost: RuntimeHost, execution: RuntimeExecutionContext): Promise<ToolExecuteResult> {
     this.assertActive();
     const input = object(call.arguments), sessionID = call.session_id || call.thread_id || "";
+    if (call.tool_id.startsWith("personal_memory_")) return result(await this.memory.invoke(call.tool_id.slice("personal_memory_".length), input, sessionID, executionHost, execution));
     const { agent, task } = await this.resolve(sessionID);
     if (agent.status !== "active") throw new Error(`agent is ${agent.status}`);
     switch (call.tool_id) {
@@ -809,10 +818,11 @@ export class PersonalPlugin implements RuntimePlugin {
       default: throw new Error(`unknown Personal tool ${call.tool_id}`);
     }
   }
-  async invokeCapability(call: CapabilityInvokeParams, executionHost: RuntimeHost) {
+  async invokeCapability(call: CapabilityInvokeParams, executionHost: RuntimeHost, execution: RuntimeExecutionContext) {
+    if (call.capability === "agent.system_prompt.section") return { output: { text: this.available ? personalMemoryPrompt() : "" } };
     if (call.capability === clientCapability) {
       const input = object(call.input);
-      return { output: { result: await this.request(text(input, "method", true), object(input.input), executionHost) } };
+      return { output: { result: await this.request(text(input, "method", true), object(input.input), executionHost, execution) } };
     }
     if (call.capability === SESSION_ATTENTION_CAPABILITY) {
       try {
@@ -850,8 +860,9 @@ export class PersonalPlugin implements RuntimePlugin {
     if (call.capability === "agent.turn.lifecycle") { await this.onLifecycle(call.input as TurnLifecycleInput); return { output: {} }; }
     if (call.capability === "agent.pre_step") {
       const input = call.input as AgentPreStepInput;
+      const memory = await this.memory.preStep(input, executionHost, execution);
       let resolved;
-      try { resolved = await this.resolve(input.session_id || input.thread_id || ""); } catch { return { output: {} }; }
+      try { resolved = await this.resolve(input.session_id || input.thread_id || ""); } catch { return { output: memory }; }
       const { agent, task } = resolved;
       const main = await this.main();
       const replyTargets = task ? [] : await this.relationTargets(input.message_relation, main, false);
@@ -861,14 +872,19 @@ export class PersonalPlugin implements RuntimePlugin {
       const source = input.source_message;
       const sourceMessages = !task && source?.session_id === main.main_session_id && Number.isSafeInteger(source.seq) && source.seq > 0
         ? [{ id: `personal.source.${id(source.session_id)}.${source.seq}`, content: `Current input source reference for memory provenance: personal-message:${encodeURIComponent(source.session_id)}:${source.seq}. This identifies the original message, not every fact mentioned in it; source evidence and supported meaning must still be checked.` }] : [];
-      return { output: { append_messages: [{ id: `personal.identity.${agent.agent_id}.${agent.revision}.${task?.requirements_revision ?? 0}`, content }, ...sourceMessages] } };
+      return { output: { append_messages: [{ id: `personal.identity.${agent.agent_id}.${agent.revision}.${task?.requirements_revision ?? 0}`, content }, ...sourceMessages, ...(memory.append_messages ?? [])] } };
     }
     throw new Error(`unknown Personal capability ${call.capability}`);
   }
-  async invokeService(call: ServiceInvokeParams) {
+  async invokeService(call: ServiceInvokeParams, executionHost: RuntimeHost, execution: RuntimeExecutionContext) {
+    if (call.service === PERSONAL_MEMORY_SERVICE) {
+      this.assertActive();
+      const { session_id, ...input } = object(call.params);
+      return this.memory.invoke(call.method, input, text({ session_id }, "session_id", true), executionHost, execution);
+    }
     if (call.service === "automation.trigger" && call.method === "fire") return this.routines.fire(object(call.params));
     if (call.service !== service) throw new Error("unknown service");
-    return this.request(call.method.replaceAll("-", "_"), object(call.params));
+    return this.request(call.method.replaceAll("-", "_"), object(call.params), executionHost, execution);
   }
   private async history(sessionID: string, input: Record<string, unknown>, snapshot?: number) {
     const limit = input.limit === undefined ? 50 : Math.max(1, Math.min(50, number(input, "limit")));
@@ -884,7 +900,7 @@ export class PersonalPlugin implements RuntimePlugin {
     const page = await this.host.call("host.session.history.read", { session_id: sessionID, start_seq: start, cursor, limit, snapshot_seq: snapshot, end_seq: input.end_seq === undefined ? undefined : number(input, "end_seq") });
     return { ...page, first_seq: start ?? page.records?.[0]?.seq ?? 1, has_earlier: (start ?? page.records?.[0]?.seq ?? 1) > 1 };
   }
-  private async request(method: string, input: Record<string, unknown>, clientHost?: RuntimeHost): Promise<unknown> {
+  private async request(method: string, input: Record<string, unknown>, clientHost?: RuntimeHost, execution?: RuntimeExecutionContext): Promise<unknown> {
     this.assertActive();
     switch (method) {
       case "agents.list": return { agents: (await this.list<NamedAgent>("agent")).filter(a => a.agent_id === this.mainID()), default_agent_id: this.mainID() };
@@ -1031,7 +1047,9 @@ export class PersonalPlugin implements RuntimePlugin {
           params.evidence = "explicit"; params.sources = [{ kind: "user_edit", ref: `personal-ui:${text(input, "request_id", true)}`, occurred_at: now() }];
         }
         delete params.request_id;
-        return this.host.call("host.service.call", { service: "memory.records", method: method.slice(7), params });
+        if (!execution) throw new Error("Personal memory requires a host-bound execution context");
+        const { session_id, ...memoryInput } = params;
+        return this.memory.invoke(method.slice(7), memoryInput, String(session_id), clientHost ?? this.host, execution);
       }
       default: throw new Error(`unknown Personal client method ${method}`);
     }

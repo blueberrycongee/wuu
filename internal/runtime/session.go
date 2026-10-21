@@ -523,6 +523,10 @@ func NewSession(opts Options) (*Session, error) {
 		}
 		activePlugins = activationPlan.Plugins
 	}
+	storageTransfers, err := resolveStorageTransfers(cfg, discoveredPlugins, activePlugins, binding)
+	if err != nil {
+		return nil, err
+	}
 	activePlugins, initialSnapshotRoots, err := snapshotMutableExecutionPackages(activePlugins)
 	if err != nil {
 		return nil, err
@@ -548,7 +552,7 @@ func NewSession(opts Options) (*Session, error) {
 	if !opts.NonInteractive {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
-	pluginHost, pluginKernel := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions, binding)
+	pluginHost, pluginKernel := startPluginHostWithTransfers(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions, binding, storageTransfers)
 	activePlugins = availablePluginPackages(activePlugins, pluginHost)
 	systemPrompts, compactions, capabilityErr := buildPluginAgentCapabilities(context.Background(), pluginHost, resolvedName, providerCfg.Model, rootDir)
 	if capabilityErr != nil {

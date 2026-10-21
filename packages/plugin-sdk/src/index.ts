@@ -2665,6 +2665,20 @@ export function validateManifest(manifest: Record<string, unknown>): string[] {
   return errors;
 }
 
+/** A reciprocal, host-executed one-time private storage ownership transfer. */
+export interface StorageTransferDeclaration {
+  id: string;
+  plugin: string;
+  scope: "user";
+  domain: string;
+  keyPrefix: string;
+}
+
+export interface StorageTransfers {
+  exports?: StorageTransferDeclaration[];
+  imports?: StorageTransferDeclaration[];
+}
+
 export function createManifest(options: {
   id: string;
   name?: string;
@@ -2673,6 +2687,7 @@ export function createManifest(options: {
   icon?: PluginManifestIcon;
   requires?: string[];
   dependencies?: PluginDependency[];
+  storageTransfers?: StorageTransfers;
 }): Record<string, unknown> {
   return {
     schema_version: 1,
@@ -2681,6 +2696,7 @@ export function createManifest(options: {
     version: options.version ?? "0.1.0",
     description: options.description ?? `A Wuu plugin: ${options.id}`,
     ...(options.icon ? { icon: options.icon } : {}),
+    ...(options.storageTransfers ? { storageTransfers: options.storageTransfers } : {}),
     ...(options.requires ? { requires: options.requires } : {}),
     ...(options.dependencies ? { dependencies: options.dependencies } : {}),
   };

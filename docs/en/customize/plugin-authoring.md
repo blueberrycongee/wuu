@@ -540,3 +540,39 @@ Use `validate` for package structure, `test` for executable initialization and n
 The current install/update CLI stages packages and uses a separate approval step before code activation. Development-directory authorization does not become trust for a distributed package. See [plugin management](plugins.md) for the commands and [security](../reference/security-model.md) for the trust boundary.
 
 Exact authoring types live in [`packages/plugin-sdk/src/index.ts`](../../../packages/plugin-sdk/src/index.ts). The Go host and its internal application-embedding facade are host implementation code, not additional plugin authoring SDKs. Check these against the Wuu version you target. Product CalVer, package schema, capability protocol, service versions, and desktop snapshot versions are distinct compatibility checks.
+
+## Private storage ownership transfers
+
+A package can move a user-scoped storage prefix to another package with reciprocal
+`storageTransfers.exports` and `storageTransfers.imports` manifest declarations.
+Each declaration contains `id` (stable transfer identifier), `plugin` (the peer's
+package ID), `scope` (`user`), `domain` (the host-selected product domain), and
+`keyPrefix` (a nonempty valid storage-key prefix). The exporter names the importer;
+the importer names the exporter. Every other field must match exactly.
+
+The host resolves exact discovered package identities and requires independent
+trust for both packages. A disabled exporter may declare the transfer without
+running. The importer must be selected for activation. Missing exporters do not
+trigger a search of old identities or other user/product roots. These declarations
+are fingerprinted package inputs, not cross-plugin storage RPC permissions.
+
+Importers must defer reading the imported prefix until their effectful activation
+callback, not cache its contents during initialization. Preparation does not mutate
+storage. At accepted startup or generation activation,
+the host validates the complete target document before fencing the source prefix,
+then atomically persists the raw copied values and an import receipt. Conflicts or
+storage quota overflow fail closed without overwriting target state. Transfer
+failures block the importing runtime. Pending transfers recover on the next
+accepted activation; a completed receipt prevents replay after target deletion.
+The existing per-plugin entry and byte quotas still apply to the combined target.
+
+Source bytes remain as an inactive backup. Ordinary reads and writes cannot access
+that prefix after its durable fence, including from retained older generations.
+Other source prefixes and other product/user roots remain unchanged. The host does
+not parse plugin business records. Returning to an older plugin version does not
+undo ownership or restore access to the backup.
+
+Transferred documents use storage schema 2 so older host binaries fail closed
+rather than ignore ownership metadata. Untransferred documents remain schema 1.
+Host downgrades cannot use transferred state; recovery requires a migration-aware
+host and retained raw backups, not automatic restoration of the previous owner.

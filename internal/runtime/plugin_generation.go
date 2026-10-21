@@ -36,6 +36,7 @@ import (
 // Close retires the remaining resources in reverse ownership order and records
 // a structured revocation report.
 type PluginGeneration struct {
+	storageTransfers  []pluginStorageTransfer
 	id                string
 	settings          config.Config
 	plugins           []pluginpkg.Plugin
@@ -292,6 +293,10 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		}
 		active = activationPlan.Plugins
 	}
+	storageTransfers, err := resolveStorageTransfers(cfg, discovered, active, s.UserBinding())
+	if err != nil {
+		return nil, err
+	}
 	var snapshotRoots []string
 	var snapshotErr error
 	active, snapshotRoots, snapshotErr = snapshotMutableExecutionPackages(active)
@@ -336,6 +341,9 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		}
 	}
 	active = availablePluginPackages(active, host)
+	// A runtime rejected during preparation cannot receive ownership merely
+	// because its package appeared in the initial activation plan.
+	storageTransfers = availableStorageTransfers(storageTransfers, host)
 	systemPrompts, compactions, err := buildPluginAgentCapabilities(context.Background(), host, s.ProviderName, s.Model, s.RootDir)
 	if err != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -353,6 +361,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 	}
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
+		storageTransfers:  storageTransfers,
 		id:                generationID,
 		settings:          cfg,
 		plugins:           append([]pluginpkg.Plugin(nil), discovered...),
@@ -436,7 +445,8 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	old.host.StopBackground()
 	// Activation may synchronously call host services. Keep old bindings
 	// available until activation settles, without holding their lookup mutex.
-	activationErr := activatePluginHost(context.Background(), candidate.host)
+	activationErr := executeStorageTransfers(s.WuuHome, s.RootDir, s.UserBinding(), candidate.storageTransfers, candidate.host)
+	activationErr = errors.Join(activationErr, activatePluginHost(context.Background(), candidate.host))
 	available := availablePluginPackages(candidate.active, candidate.host)
 	if len(available) != len(candidate.active) {
 		activeIDs := make(map[string]bool, len(available))

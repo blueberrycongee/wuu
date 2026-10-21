@@ -24,7 +24,15 @@ func startPluginClient(ctx context.Context, cfg pluginhost.ProcessConfig) (plugi
 }
 
 func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, bindings ...userspace.Binding) (*pluginhost.Host, *kernelHostServices) {
-	host, kernel, err := buildPluginHost(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, turnRouter, userQuestions, bindings...)
+	binding := userspace.Binding{}
+	if len(bindings) > 0 {
+		binding = bindings[0]
+	}
+	return startPluginHostWithTransfers(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, turnRouter, userQuestions, binding, nil)
+}
+
+func startPluginHostWithTransfers(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, binding userspace.Binding, transfers []pluginStorageTransfer) (*pluginhost.Host, *kernelHostServices) {
+	host, kernel, err := buildPluginHost(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, turnRouter, userQuestions, binding)
 	if err != nil {
 		// A fatal negotiation closes the entire prepared generation. Preserve
 		// each unavailable runtime and the graph so initial-session consumers
@@ -37,6 +45,10 @@ func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		}
 		failed.BlockFailedPackageDependencies(context.Background())
 		return failed, nil
+	}
+	transfers = availableStorageTransfers(transfers, host)
+	if err := executeStorageTransfers(wuuHome, projectRoot, binding, transfers, host); err != nil {
+		providers.DebugLogf("initial plugin storage transfer: %v", err)
 	}
 	if err := activatePluginHost(context.Background(), host); err != nil {
 		providers.DebugLogf("activate initial plugin generation: %v", err)
