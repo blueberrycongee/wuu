@@ -86,6 +86,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep website headers clickable in the embedded browser when a page declares native window drag regions, including ChatGPT's transparent top bar.
+
 - Draw the selected sidebar row with an even edge on every side instead of a shadow that faded at the top.
 
 - Keep running conversations in a stable order in the Recent sidebar when switching sessions or refreshing live output.
