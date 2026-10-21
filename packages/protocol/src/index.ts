@@ -3226,12 +3226,16 @@ export type WuuDesktopApi = {
   // on <html> before first paint (window-chrome CSS keys off it) and
   // mirrors the value here for renderer logic (shortcut hints, OS labels).
   platform?: DesktopPlatform;
-  // Renderer-owned macOS and Linux window controls; Windows uses its native overlay.
+  // Desktop window actions and native macOS controls; Windows uses its native overlay.
   windowMinimize?: () => Promise<void>;
   windowToggleMaximize?: () => Promise<boolean>;
   windowToggleFullScreen?: () => Promise<void>;
   windowClose?: () => Promise<void>;
   windowIsMaximized?: () => Promise<boolean>;
+  /** Cursor position in window content CSS pixels; null when the window is unfocused. */
+  windowPointerPosition?: () => Promise<{ x: number; y: number } | null>;
+  /** Show native macOS buttons at a position in window content CSS pixels. */
+  windowSetControls?: (state: { visible: boolean; x: number; y: number }) => Promise<void>;
   onWindowMaximizedChange?: (handler: (maximized: boolean) => void) => () => void;
   // Desktop-only presentation preference. Does not enable or disable extensions.
   getActivityPreviewAutoShow?: () => Promise<boolean>;

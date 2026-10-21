@@ -1,77 +1,57 @@
 .mac-window-chrome {
-  --mac-chrome-height: calc(30px / var(--desktop-page-zoom, 1));
   position: fixed;
   inset: 0 0 auto;
   height: calc(12px / var(--desktop-page-zoom, 1));
   z-index: 160;
-  -webkit-app-region: no-drag;
-}
-
-.mac-window-chrome[data-revealed] {
-  height: var(--mac-chrome-height);
+  -webkit-app-region: drag;
 }
 
 .mac-window-controls {
   position: absolute;
-  inset: 0 0 auto;
-  height: var(--mac-chrome-height);
-  display: flex;
-  align-items: center;
-  padding: 0 calc(10px / var(--desktop-page-zoom, 1));
-  background: var(--sidebar-material-fill);
-  border-bottom: 1px solid var(--hairline-soft);
-  box-shadow: 0 2px 8px var(--ink-overlay-4);
-  transform: translateY(-100%);
-  transition: transform var(--motion-fast) var(--ease-out);
+  top: calc(8px / var(--desktop-page-zoom, 1));
+  left: calc(8px / var(--desktop-page-zoom, 1));
+  right: calc(8px / var(--desktop-page-zoom, 1));
+  box-sizing: border-box;
+  height: calc(36px / var(--desktop-page-zoom, 1));
+  padding: calc(11px / var(--desktop-page-zoom, 1)) calc(12px / var(--desktop-page-zoom, 1));
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 5px 12px -3px rgba(0, 0, 0, 0.22), 0 2px 4px rgba(0, 0, 0, 0.08);
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(calc(-6px / var(--desktop-page-zoom, 1)));
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 140ms ease-out, visibility 0s linear 180ms;
   pointer-events: none;
-  /* Native drag regions swallow the pointer events that keep this strip open. */
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag;
 }
 
 .mac-window-chrome[data-revealed] .mac-window-controls {
+  visibility: visible;
+  opacity: 1;
   transform: translateY(0);
+  transition-delay: 0s;
   pointer-events: auto;
 }
 
-.mac-window-control {
-  display: grid;
-  width: calc(20px / var(--desktop-page-zoom, 1));
-  height: calc(24px / var(--desktop-page-zoom, 1));
-  place-items: center;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  -webkit-app-region: no-drag;
-}
-
-.mac-window-control svg {
-  width: calc(10px / var(--desktop-page-zoom, 1));
-  height: calc(10px / var(--desktop-page-zoom, 1));
-  border: 1px solid color-mix(in srgb, var(--traffic-light-color) 80%, black);
-  border-radius: 50%;
-  background: var(--traffic-light-color);
-  fill: none;
-  stroke: #352a20;
-  stroke-width: 1.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  -webkit-app-region: no-drag;
-}
-
-.mac-window-close { --traffic-light-color: #ff5f57; }
-.mac-window-minimize { --traffic-light-color: #febc2e; }
-.mac-window-fullscreen { --traffic-light-color: #28c840; }
-
-.mac-window-control path { opacity: 0; }
-.mac-window-controls:hover path,
-.mac-window-control:focus-visible path { opacity: 1; }
-.mac-window-control:active svg { filter: brightness(0.85); }
-.mac-window-control:focus-visible {
-  border-radius: var(--radius-xs);
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -1px;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .mac-window-controls { transition: none; }
+  .mac-window-controls {
+    transition: none;
+    transform: none;
+  }
+}
+
+.mac-window-title {
+  position: absolute;
+  inset: 0 calc(96px / var(--desktop-page-zoom, 1));
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: center;
+  line-height: calc(36px / var(--desktop-page-zoom, 1));
+  font-size: var(--font-ui);
+  font-weight: 500;
+  color: #262626;
+  pointer-events: none;
 }

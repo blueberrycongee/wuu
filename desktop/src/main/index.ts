@@ -1001,11 +1001,15 @@ function windowTitlebarHeight(win: BrowserWindow): number {
     : DEFAULT_TITLEBAR_HEIGHT;
 }
 
-// AppKit can restore native buttons after a fullscreen transition. Keep the
-// renderer-owned controls as the only visible set throughout the lifecycle.
+const macWindowControls = new WeakMap<BrowserWindow, { visible: boolean; x: number; y: number }>();
+
+// AppKit can reset button visibility and placement during fullscreen transitions.
 function applyMacWindowControls(win: BrowserWindow): void {
   if (process.platform !== "darwin" || win.isDestroyed()) return;
-  win.setWindowButtonVisibility(false);
+  const state = macWindowControls.get(win);
+  win.setWindowButtonVisibility(state?.visible ?? false);
+  // Showing the native button container can reset its frame; position it last.
+  if (state?.visible) win.setWindowButtonPosition({ x: state.x, y: state.y });
 }
 
 function attachMacWindowControls(win: BrowserWindow): void {
@@ -1017,7 +1021,7 @@ function attachMacWindowControls(win: BrowserWindow): void {
   win.on("restore", apply);
   win.on("enter-full-screen", apply);
   win.on("leave-full-screen", apply);
-  win.webContents.on("did-finish-load", apply);
+  win.webContents.on("did-finish-load", () => { macWindowControls.delete(win); apply(); });
 }
 
 function windowFrameOptions(height = DEFAULT_TITLEBAR_HEIGHT): Pick<
@@ -2460,6 +2464,24 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:window-is-maximized", (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     return Boolean(win && !win.isDestroyed() && win.isMaximized());
+  });
+  ipcMain.handle("wuu:window-pointer-position", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed() || !win.isFocused()) return null;
+    const cursor = screen.getCursorScreenPoint();
+    const bounds = win.getContentBounds();
+    const zoom = event.sender.getZoomFactor();
+    return { x: (cursor.x - bounds.x) / zoom, y: (cursor.y - bounds.y) / zoom };
+  });
+  ipcMain.handle("wuu:window-set-controls", (event, state: { visible: boolean; x: number; y: number }) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (process.platform !== "darwin" || !win || win.isDestroyed()) return;
+    if (!state || typeof state.visible !== "boolean" || !Number.isFinite(state.x) || !Number.isFinite(state.y)) {
+      throw new Error("Invalid window controls state");
+    }
+    const zoom = event.sender.getZoomFactor();
+    macWindowControls.set(win, { visible: state.visible, x: Math.round(state.x * zoom), y: Math.round(state.y * zoom) });
+    applyMacWindowControls(win);
   });
   ipcMain.handle("wuu:activity-preview-auto-show-get", () => getActivityPreviewAutoShow());
   ipcMain.handle("wuu:activity-preview-auto-show-set", (_event, enabled: unknown) => {

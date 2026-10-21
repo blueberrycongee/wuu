@@ -2322,12 +2322,14 @@ export function App(): JSX.Element {
         resolveLocalizedText(activeThread?.preview?.trim() ?? "") ||
         t("tabs.newConversation")
       : t("tabs.newConversation");
+  const windowTitle = poppedOutMode ? popOutWindowTitle
+    : settingsOpen ? t("settings.navigation")
+    : accountOpen ? "Wuu"
+    : showingWebsite ? activeWebsite?.title || activeWebsite?.url || "Wuu"
+    : activeTitle;
   useEffect(() => {
-    if (!poppedOutMode) {
-      return;
-    }
-    document.title = `wuu · ${popOutWindowTitle}`;
-  }, [poppedOutMode, popOutWindowTitle]);
+    document.title = windowTitle;
+  }, [windowTitle]);
   const currentHour = useCurrentHour();
   const greetingContext: GreetingContext =
     state.activeContext?.kind === "project"
