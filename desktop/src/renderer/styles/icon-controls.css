@@ -8,6 +8,7 @@
 }
 
 :root {
+  --control-icon-ink: color-mix(in srgb, var(--ink-soft) 75%, var(--paper));
   --control-size-inline: max(28px, round(nearest, calc(var(--font-ui) * 1.4 + 8px), 2px));
   /* Icon-only actions follow their glyphs, not text-field height. */
   --control-size-toolbar: calc(var(--icon-size) + 12px);
@@ -19,6 +20,30 @@
   /* Toolbars align glyph ink, not button boxes, to the pane inset. */
   --control-toolbar-glyph-offset: calc((var(--control-size-toolbar) - var(--icon-size)) / 2);
   --control-toolbar-inset: calc(var(--pane-inset) - var(--control-toolbar-glyph-offset));
+}
+
+/* Quiet utility glyphs independently of labels; status and brand artwork keep
+ * their semantic colors. Ribbon selection is expressed by its row background. */
+:is(.sidebar-ribbon-button, .sidebar-section-item, .nav-item,
+    .settings-nav-item, .sidebar-settings-button, .sidebar-notifications-button,
+    .sidebar-row-icon-button, .sidebar-functional-action, .composer-tool-button,
+    .titlebar .icon-button, .settings-titlebar .icon-button,
+    .workspace-panel-tabbar .icon-button, .shell-right-sidebar-toggle) > :is(svg.wuu-icon, svg.lucide),
+.sidebar-ribbon-website-icon,
+.project-row .project-row-icon {
+  color: var(--control-icon-ink);
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+:is(.sidebar-section-item, .nav-item,
+    .settings-nav-item, .sidebar-settings-button, .sidebar-notifications-button,
+    .sidebar-row-icon-button, .sidebar-functional-action, .composer-tool-button,
+    .titlebar .icon-button, .settings-titlebar .icon-button,
+    .workspace-panel-tabbar .icon-button, .shell-right-sidebar-toggle):is(:hover, :focus-visible, .active,
+    [aria-current="page"], [aria-pressed="true"], [aria-expanded="true"])
+    > :is(svg.wuu-icon, svg.lucide),
+.project-row:is(:hover, :focus-visible, .active) .project-row-icon {
+  color: inherit;
 }
 
 :is(.icon-button, .settings-icon-button, .composer-tool-button,

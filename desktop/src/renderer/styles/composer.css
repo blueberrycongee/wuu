@@ -1944,7 +1944,7 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   width: var(--icon-size-sm);
   height: var(--icon-size-sm);
   color: var(--ink-soft);
-  stroke-width: 1.75;
+  stroke-width: var(--icon-stroke);
 }
 
 .composer-plus-menu button .composer-plus-menu-item-title {

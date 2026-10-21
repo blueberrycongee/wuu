@@ -8,10 +8,10 @@ export { Github } from "lucide-react";
 export type IconProps = SVGProps<SVGSVGElement> & { size?: string | number };
 export type IconComponent = ReturnType<typeof createIcon>;
 
-function createIcon(name: IconName, defaultStrokeWidth = 1.75) {
+function createIcon(name: IconName) {
   const slug = name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
   const Icon = forwardRef<SVGSVGElement, IconProps>(function WuuIcon({
-    size = 24, color = "currentColor", strokeWidth = defaultStrokeWidth, className = "", children, ...props
+    size = 24, color = "currentColor", strokeWidth = "var(--icon-stroke)", className = "", children, ...props
   }, ref) {
     return (
       <svg ref={ref} xmlns="http://www.w3.org/2000/svg" width={size} height={size}
@@ -145,7 +145,7 @@ export const Plug = createIcon("Plug");
 export const PlugZap = createIcon("PlugZap");
 export const Plus = createIcon("Plus");
 export const Quote = createIcon("Quote");
-export const Project = createIcon("Project", 1.9);
+export const Project = createIcon("Project");
 export const Presentation = createIcon("Presentation");
 export const Puzzle = createIcon("Puzzle");
 export const RefreshCw = createIcon("RefreshCw");

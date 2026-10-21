@@ -1000,10 +1000,10 @@ export function WorkspaceRightPanel({
                 aria-hidden="true"
               >
                 <span className="workspace-file-tree-drag-preview-icon">
-                  <FolderOpen size={17} strokeWidth={1.8} />
+                  <FolderOpen size={17} />
                 </span>
                 <span>{t("workspace.fileTree")}</span>
-                <GripHorizontal size={14} strokeWidth={1.7} />
+                <GripHorizontal size={14} />
               </div>,
               document.body,
             )}
