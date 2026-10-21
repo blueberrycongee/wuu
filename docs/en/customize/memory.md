@@ -81,3 +81,54 @@ context: current instructions and evidence take precedence. Personalized draftin
 completion, or task handoff extensions can read relevant topics on demand; these
 are possible consumers, not bundled integrations. Workspace/session memory remains
 the separate `memory.session` service.
+
+## Personal memory
+
+Personal uses a separate source-backed record store, not the Coding notebook.
+Each model step receives a small projection: an explicitly selected core profile,
+recent context whose source is within 14 days, and relevant details. The three
+fact budgets are 2,000, 1,500 and 2,500 UTF-8 bytes, with at most eight facts each;
+oversized facts remain available on demand. Provenance and contribution history
+are fetched with `personal_memory_query/read`, not repeated in every prompt.
+Existing records default to detail and are not automatically promoted to core.
+Expiry, corrections and forget tombstones apply to every projection, including
+new workers. The store is unchanged; projections do not duplicate records.
+
+The bound main conversation can publish, correct and forget. Background tasks
+and Personal Dream can create and revise candidates, but cannot edit accepted
+records, select core, correct or forget. Candidates stay out of ordinary recall;
+`include_inactive: true` exposes them for review. The main conversation receives
+at most eight pending candidate IDs (not their facts) on its next normal model
+step. It uses `personal_memory_evidence` to inspect exact original user text,
+checks support and conflicts, then calls `personal_memory_accept` with the
+reviewed revision. No new user statement or per-fact approval is needed for
+supported nonconflicting candidates. Acceptance preserves content, inferred or
+explicit grade, original source/effective/expiry times and does not promote core.
+It does not add a separate model run or background schedule. Ambiguous candidates
+remain pending; ask only when a meaningful conflict matters. Explicit new user
+corrections still use `correct`. No per-session permission dialog is required.
+
+Automatic admission currently supports only canonical
+`personal-message:<encodeURIComponent(session_id)>:<positive seq>` sources from
+owned Personal main/task history. The provider checks exact visible original user
+authorship, rejects hidden/generated/truncated content, and supplies the persisted
+timestamp. Workers receive timestamp metadata only; source text review is main-only.
+Programmatic verification proves provenance, not semantic entailment: the main
+model must decide whether the original text supports the unchanged candidate.
+Missing, future-dated or unsupported sources fail closed; arbitrary older refs,
+files and user-edit refs remain manual-only. Do not invent original sequence IDs
+or substitute a Dream fork's sequence. Existing source dedup and forget protection
+mean one canonical message currently supports one memory record. Source splitting
+and broader automatic admission are not implemented.
+
+Authority comes from the host-provided tool session and the Personal provider's
+stored current main-session binding, not a session name, prompt or missing
+parent. If that provider is unavailable, writes fail closed. Service calls retain
+the trusted-extension boundary: this is not isolation against installed trusted
+extensions impersonating a session. Reads remain shared across the Personal user
+space, not restricted to one task. Coding and Project do not gain Personal access.
+
+Queries return `next_cursor` when more records remain. Continue with the same
+filters; if records change or the cursor is rejected, restart the query. The
+underlying host storage quotas still apply. Forgetting removes record content
+and blocks known source references, not source chats, files, exports or backups.

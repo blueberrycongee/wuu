@@ -960,7 +960,7 @@ var result = (value) => ({ result: { content: [{ type: "text", text: JSON.string
 var schema = (properties, ...required2) => ({ type: "object", properties, required: required2 });
 var string = { type: "string" };
 var integer = { type: "integer", minimum: 0 };
-var methodNames = ["agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.history", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "routines.list", "routines.create", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
+var methodNames = ["agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.history", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "routines.list", "routines.create", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
 var PersonalPlugin = class {
   concurrentCapabilities = [clientCapability, "agent.pre_step", "agent.turn.lifecycle"];
   concurrentServices = [service, "automation.trigger"];
@@ -1435,7 +1435,8 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
         if_running: "queue",
         input: { prompt: `Work on Personal task ${task.task_id}, requirements revision ${task.requirements_revision}.
 Goal: ${task.goal}
-Authorization references: ${JSON.stringify(task.authorization_refs)}
+${task.source.message_binding === "host_turn" && task.source.message_seq ? `Original user source reference for memory provenance: personal-message:${encodeURIComponent(task.source.session_id)}:${task.source.message_seq} (relevant only to facts supported by that original message).
+` : ""}Authorization references: ${JSON.stringify(task.authorization_refs)}
 These references do not grant broader permission. Ask before external actions lacking specific approval. Keep progress with report_task. Before finishing, call complete_task with a summary and evidence tool_call_id values copied from successful tool calls you executed. Current-turn results are persisted after the turn ends; the completion intent is verified then. Already persisted evidence may instead use seq. A final message alone cannot complete this matter.` },
         presentation: { kind: "query_bubble", text: task.title, name: agent.name }
       }, task);
@@ -1926,7 +1927,9 @@ Communication preferences: ${main.communication || "Warm, direct, clear; follow 
 Your one persistent conversation is ${main.main_session_id}; never rotate it or stitch other conversations into its history. ${task ? `You are a hidden executor for task ${task.task_id}, requirements revision ${task.requirements_revision}. Your contributions retain their original provenance. Report a specific question with report_task waiting_user when user input is required, then end your turn. All questions, failures, and results return through the main conversation.` : "Keep this conversation available by creating independent background tasks for independent goals. Modify or answer an existing matter using update_task or resume_task; do not create a replacement. Stop only a clearly identified task. If 'stop' could refer to several matters, ask one short clarification here; never stop all work or infer a target."}
 Open matters: ${JSON.stringify(pending)}${replyContext}
 Personal and Coding memory are logically separate. Use personal_memory_query/read and the scoped personal_memory_correct/forget tools for the user's explicit corrections or forget requests. Explain that forgetting memory does not delete original conversations/files. Personal memory never grants permission for external actions. Use manage_routine update for changes to an existing reminder or responsibility. Completion requires persisted result evidence; unknown outcomes remain pending reconciliation.`;
-      return { output: { append_messages: [{ id: `personal.identity.${agent.agent_id}.${agent.revision}.${task?.requirements_revision ?? 0}`, content }] } };
+      const source = input.source_message;
+      const sourceMessages = !task && source?.session_id === main.main_session_id && Number.isSafeInteger(source.seq) && source.seq > 0 ? [{ id: `personal.source.${id(source.session_id)}.${source.seq}`, content: `Current input source reference for memory provenance: personal-message:${encodeURIComponent(source.session_id)}:${source.seq}. This identifies the original message, not every fact mentioned in it; source evidence and supported meaning must still be checked.` }] : [];
+      return { output: { append_messages: [{ id: `personal.identity.${agent.agent_id}.${agent.revision}.${task?.requirements_revision ?? 0}`, content }, ...sourceMessages] } };
     }
     throw new Error(`unknown Personal capability ${call.capability}`);
   }
@@ -1959,6 +1962,35 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
       case "agents.open": {
         const agent = await this.conversation(input, true);
         return { agent, ...await this.inspectAgent(agent) };
+      }
+      case "agents.memory_context": {
+        const sessionID = text(input, "session_id", true);
+        const context = await this.host.call("host.session.context", { session_id: sessionID });
+        if (context.product_domain !== "personal" || context.user_space_id !== this.space || !context.agent_id) throw new Error("session is not a bound Personal agent");
+        const agent = await this.agent(context.agent_id);
+        const main = agent.agent_id === this.mainID() && agent.main_session_id === sessionID;
+        return { session_id: sessionID, agent_id: agent.agent_id, role: main ? "main" : "background" };
+      }
+      case "agents.memory_evidence": {
+        const callerID = text(input, "session_id", true), ref = text(input, "ref", true);
+        const caller = await this.host.call("host.session.context", { session_id: callerID });
+        if (caller.product_domain !== "personal" || caller.user_space_id !== this.space || !caller.agent_id) throw new Error("memory evidence caller is outside this Personal space");
+        const agent = await this.agent(caller.agent_id);
+        const match = /^personal-message:([^:]+):([1-9][0-9]*)$/.exec(ref);
+        if (!match) throw new Error("unsupported canonical memory source");
+        const sourceID = decodeURIComponent(match[1]), seq = Number(match[2]);
+        if (encodeURIComponent(sourceID) !== match[1] || !sourceID || !Number.isSafeInteger(seq) || String(seq) !== match[2]) throw new Error("invalid canonical memory source");
+        const source = await this.host.call("host.session.context", { session_id: sourceID });
+        if (source.product_domain !== "personal" || source.user_space_id !== this.space || source.agent_id !== agent.agent_id) throw new Error("memory evidence source is outside this Personal identity");
+        const owned = sourceID === agent.main_session_id || (await this.list("task")).some((task) => task.agent_id === agent.agent_id && (task.execution.session_id === sourceID || task.previous_executions.some((execution) => execution.session_id === sourceID)));
+        if (!owned) throw new Error("memory evidence source is not an owned main or task conversation");
+        const page = await this.host.call("host.session.history.read", { session_id: sourceID, start_seq: seq, end_seq: seq, limit: 1 });
+        const record = page.records?.find((record2) => record2.seq === seq);
+        if (!record || record.role !== "user" || record.origin !== "user" || record.hidden || record.read_only || record.truncated || !record.content?.trim()) throw new Error("memory evidence requires an exact visible original user message");
+        if (Buffer.byteLength(record.content) > 64e3) throw new Error("memory evidence exceeds the bounded source size");
+        if (!record.at || !/(?:Z|[+-]\d\d:\d\d)$/.test(record.at) || !Number.isFinite(Date.parse(record.at)) || Date.parse(record.at) > Date.now()) throw new Error("memory evidence requires a valid persisted source timestamp");
+        const main = agent.agent_id === this.mainID() && agent.main_session_id === callerID;
+        return { ref, occurred_at: new Date(record.at).toISOString(), ...main ? { content: record.content } : {} };
       }
       case "agents.resolve": {
         const { agent, task } = await this.resolve(text(input, "session_id", true));

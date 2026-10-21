@@ -24,6 +24,7 @@ class Host {
     ["foreign", { session_id: "foreign", agent_id: "foreign-agent", product_domain: "personal", user_space_id: "another-user" }],
     ["coding", { session_id: "coding", product_domain: "coding" }],
   ]);
+  evidence = new Map();
   locks = new Map();
   releases = new Map();
   counter = 0;
@@ -43,6 +44,17 @@ class Host {
         return { swapped: true, value: params.value };
       }
       case "host.service.call": {
+        if (params.service === "personal.agents") {
+          if (params.method === "agents.memory-evidence") {
+            const evidence = this.evidence.get(params.params.ref);
+            if (!evidence) throw new Error("unsupported or unavailable memory evidence");
+            return structuredClone(evidence);
+          }
+          assert.equal(params.method, "agents.memory-context");
+          const context = this.contexts.get(params.params.session_id);
+          if (!context?.agent_id) throw new Error("unknown Personal identity");
+          return { session_id: context.session_id, agent_id: context.agent_id, role: ["a-main", "b-main"].includes(context.session_id) ? "main" : "background" };
+        }
         assert.equal(params.service, "host.file-lock");
         if (params.method === "release") {
           this.releases.get(params.params.lock_id)?.();
@@ -91,7 +103,8 @@ test("Personal records are shared, host-attributed and survive plugin restart wi
   const worker = (await f.tool("create", createArgs("travel"), "a-worker")).record;
   assert.equal(worker.contributor_agent_id, "agent-a");
   assert.equal(worker.contributions[0].executor_session_id, "a-worker");
-  assert.equal((await f.service("query", {}, "b-main")).records.length, 3);
+  assert.equal(worker.status, "candidate");
+  assert.equal((await f.service("query", {}, "b-main")).records.length, 2);
   const fresh = createMemoryPlugin();
   await fresh.initialize(f.params, f.host, { signal: execution.signal });
   await fresh.activate(f.host, { signal: execution.signal });
@@ -207,4 +220,153 @@ test("the same source reference cannot produce duplicate independently forgettab
   assert.equal((await f.service("query", {})).records.length, 1);
   await f.service("forget", { id: first.id, expected_revision: 1 });
   assert.equal((await f.service("query", {})).records.length, 0);
+});
+
+
+test("background identities cannot publish, correct, forget or mutate authoritative records", async t => {
+  const f = await fixture(t);
+  const accepted = (await f.tool("create", { ...createArgs("language"), tier: "core" })).record;
+  const update = { id: accepted.id, expected_revision: 1, content: "Different preference", evidence: "explicit", sources: source("worker-change", 20) };
+  for (const method of ["revise", "correct"]) await assert.rejects(f.tool(method, update, "a-worker"), /main|authoritative/);
+  await assert.rejects(f.tool("forget", { id: accepted.id, expected_revision: 1 }, "a-worker"), /main/);
+  await assert.rejects(f.tool("create", { ...createArgs("worker-core"), tier: "core" }, "a-worker"), /core|main/);
+  const candidate = (await f.tool("create", { ...createArgs("candidate"), evidence: "inferred" }, "a-worker")).record;
+  assert.equal(candidate.status, "candidate");
+  assert.equal(candidate.evidence, "inferred");
+  assert(!(await f.tool("query", {})).records.some(r => r.id === candidate.id));
+  const revised = (await f.tool("revise", { ...update, id: candidate.id, sources: source("candidate-new", 20), evidence: "inferred" }, "a-worker")).record;
+  assert.equal(revised.status, "candidate");
+  const promoted = (await f.tool("correct", { ...update, id: candidate.id, expected_revision: 2, sources: source("user-confirmed", 40), tier: "core" })).record;
+  assert.equal(promoted.status, "active");
+  assert.equal(promoted.tier, "core");
+  f.host.contexts.set("unbound-root", { session_id: "unbound-root", agent_id: "agent-a", product_domain: "personal", user_space_id: "local" });
+  await assert.rejects(f.tool("forget", { id: accepted.id, expected_revision: 1 }, "unbound-root"), /main/);
+  const originalCall = f.host.call.bind(f.host);
+  f.host.call = (service, params) => { if (service === "host.service.call" && params.service === "personal.agents") throw new Error("authority unavailable"); return originalCall(service, params); };
+  await assert.rejects(f.tool("create", createArgs("no-authority")), /authority unavailable/);
+  assert.equal((await f.tool("read", { id: accepted.id })).record.revision, 1);
+});
+
+test("bounded core and recent projections need no keyword and invalidate on forget for fresh workers", async t => {
+  const f = await fixture(t);
+  const core = (await f.tool("create", { ...createArgs("language"), content: "Use Mandarin", tier: "core" })).record;
+  await f.tool("create", { ...createArgs("current-trip"), content: "Visiting Kyoto", tier: "recent" });
+  await f.tool("create", { ...createArgs("legacy-detail"), content: "Not automatically core" });
+  const step = async (session_id = "a-main") => (await f.plugin.invokeCapability({ capability: "agent.pre_step", input: { session_id, messages: [{ role: "user", content: "Hello" }] } }, f.host, execution)).output;
+  let output = await step();
+  assert.match(JSON.stringify(output), /Use Mandarin/);
+  assert.match(JSON.stringify(output), /Visiting Kyoto/);
+  assert(!JSON.stringify(output).includes("Not automatically core"));
+  assert(!JSON.stringify(output).includes("contributions"));
+  await f.tool("forget", { id: core.id, expected_revision: 1 });
+  output = await step("a-worker");
+  assert(!JSON.stringify(output).includes("Use Mandarin"));
+  const snapshot = JSON.parse(output.append_messages[0].content.split("\n").at(-1));
+  assert(Buffer.byteLength(JSON.stringify(snapshot.records)) <= 6000);
+});
+
+test("query pagination is exhaustive and rejects reuse after change or changed filters", async t => {
+  const f = await fixture(t);
+  for (let i = 0; i < 105; i++) await f.tool("create", createArgs(`record-${i}`));
+  const first = await f.tool("query", { limit: 100 });
+  assert.equal(first.records.length, 100);
+  assert(first.next_cursor);
+  const last = await f.tool("query", { limit: 100, cursor: first.next_cursor });
+  assert.equal(last.records.length, 5);
+  assert.equal(last.next_cursor, undefined);
+  assert.equal(new Set([...first.records, ...last.records].map(r => r.id)).size, 105);
+  await assert.rejects(f.tool("query", { limit: 100, query: "tea", cursor: first.next_cursor }), /cursor/);
+  await f.tool("forget", { id: last.records[0].id, expected_revision: 1 });
+  await assert.rejects(f.tool("query", { limit: 100, cursor: first.next_cursor }), /cursor/);
+});
+
+
+test("oversized and stale recent facts stay queryable without overflowing automatic projection", async t => {
+  const f = await fixture(t);
+  const large = (await f.tool("create", { ...createArgs("oversized"), tier: "core", content: "长".repeat(3000) })).record;
+  await f.tool("create", { ...createArgs("old-context"), tier: "recent", content: "Old travel context", sources: [{ kind: "message", ref: "old-context", occurred_at: new Date(Date.now() - 15 * 86_400_000).toISOString() }] });
+  const expiring = (await f.tool("create", { ...createArgs("expired-core"), tier: "core", content: "Expired profile", expires_at: new Date(Date.now() - 1000).toISOString() })).record;
+  for (let i = 0; i < 20; i++) await f.tool("create", { ...createArgs(`core-${i}`), tier: "core", content: "档".repeat(200) });
+  const output = (await f.plugin.invokeCapability({ capability: "agent.pre_step", input: { session_id: "a-worker", messages: [{ role: "user", content: "Hello" }] } }, f.host, execution)).output;
+  const snapshot = JSON.parse(output.append_messages[0].content.split("\n").at(-1));
+  assert(!snapshot.records.some(r => [large.id, expiring.id].includes(r.id)));
+  assert(!JSON.stringify(snapshot).includes("Old travel context"));
+  assert(Buffer.byteLength(JSON.stringify(snapshot.records)) <= 6000);
+  assert.equal((await f.tool("read", { id: large.id })).record.content.length, 3000);
+  assert.equal((await f.tool("read", { id: expiring.id })).record.availability, "expired");
+});
+
+
+test("main accepts a verified candidate without new user evidence or changing its evidence grade", async t => {
+  const f = await fixture(t);
+  const ref = "personal-message:a-main:1", occurred_at = day();
+  f.host.evidence.set(ref, { ref, content: "I usually arrange meetings before lunch", occurred_at });
+  const candidate = (await f.tool("create", { ...createArgs("morning-meetings"), evidence: "inferred", sources: [{ kind: "message", ref, occurred_at: day(50) }] }, "a-worker")).record;
+  assert.equal(candidate.sources[0].occurred_at, occurred_at);
+  const projection = (await f.plugin.invokeCapability({ capability: "agent.pre_step", input: { session_id: "a-main", messages: [{ role: "user", content: "Hi" }] } }, f.host, execution)).output;
+  const snapshot = JSON.parse(projection.append_messages[0].content.split("\n").at(-1));
+  assert(snapshot.candidates.some(item => item.id === candidate.id));
+  assert(!snapshot.records.some(item => item.id === candidate.id));
+  const evidence = await f.tool("evidence", { id: candidate.id });
+  assert.equal(evidence.sources[0].content, "I usually arrange meetings before lunch");
+  await assert.rejects(f.tool("accept", { id: candidate.id, expected_revision: 1 }, "a-worker"), /main/);
+  await assert.rejects(f.tool("evidence", { id: candidate.id }, "a-worker"), /main/);
+  const accepted = (await f.tool("accept", { id: candidate.id, expected_revision: 1 })).record;
+  assert.equal(accepted.status, "active"); assert.equal(accepted.evidence, "inferred"); assert.equal(accepted.tier, "detail");
+  for (const field of ["content", "sources", "source_at", "effective_at", "expires_at"]) assert.deepEqual(accepted[field], candidate[field]);
+  assert.equal(accepted.contributions.at(-1).operation, "accept");
+  await assert.rejects(f.tool("accept", { id: candidate.id, expected_revision: 1 }), /revision_conflict/);
+  await f.tool("forget", { id: candidate.id, expected_revision: 2 });
+  await assert.rejects(f.tool("create", { ...createArgs("renamed"), sources: [{ kind: "message", ref, occurred_at }] }, "a-worker"), /forgotten_source/);
+});
+
+test("candidate admission fails closed for unsupported evidence, unavailable source, expiry and forged changes", async t => {
+  const f = await fixture(t);
+  const unsupported = (await f.tool("create", createArgs("legacy-candidate"), "a-worker")).record;
+  await assert.rejects(f.tool("accept", { id: unsupported.id, expected_revision: 1 }), /source|evidence/);
+  const ref = "personal-message:a-main:2";
+  f.host.evidence.set(ref, { ref, content: "Temporary context", occurred_at: day() });
+  const candidate = (await f.tool("create", { ...createArgs("expires"), sources: [{ kind: "message", ref, occurred_at: day() }], expires_at: new Date(Date.now() - 1000).toISOString() }, "a-worker")).record;
+  await assert.rejects(f.tool("accept", { id: candidate.id, expected_revision: 1 }), /expired|effective/);
+  await assert.rejects(f.tool("accept", { id: candidate.id, expected_revision: 1, content: "replacement" }), /unexpected/);
+  const ref2 = "personal-message:a-main:3";
+  f.host.evidence.set(ref2, { ref: ref2, content: "Another context", occurred_at: day() });
+  const lost = (await f.tool("create", { ...createArgs("lost"), sources: [{ kind: "message", ref: ref2, occurred_at: day() }] }, "a-worker")).record;
+  f.host.evidence.delete(ref2);
+  await assert.rejects(f.tool("accept", { id: lost.id, expected_revision: 1 }), /evidence/);
+  assert.equal((await f.tool("read", { id: lost.id })).record.status, "candidate");
+});
+
+
+test("accept uses the reviewed revision and never admits a candidate changed or forgotten after review", async t => {
+  const f = await fixture(t);
+  const firstRef = "personal-message:a-main:11", nextRef = "personal-message:a-main:12";
+  f.host.evidence.set(firstRef, { ref: firstRef, content: "First source", occurred_at: day() });
+  f.host.evidence.set(nextRef, { ref: nextRef, content: "Newer source", occurred_at: day(30) });
+  const candidate = (await f.tool("create", { ...createArgs("revision-candidate"), sources: [{ kind: "message", ref: firstRef }] }, "a-worker")).record;
+  const reviewed = await f.tool("evidence", { id: candidate.id });
+  await f.tool("revise", { id: candidate.id, expected_revision: 1, content: "Revised candidate", evidence: "inferred", sources: [{ kind: "message", ref: nextRef }] }, "a-worker");
+  await assert.rejects(f.tool("accept", { id: candidate.id, expected_revision: reviewed.record.revision }), /revision_conflict/);
+  await f.tool("forget", { id: candidate.id, expected_revision: 2 });
+  await assert.rejects(f.tool("accept", { id: candidate.id, expected_revision: 3 }), /forgotten/);
+});
+
+
+test("source review cannot return a forgotten candidate after an in-flight evidence read", async t => {
+  const f = await fixture(t), ref = "personal-message:a-main:21";
+  f.host.evidence.set(ref, { ref, content: "User fact", occurred_at: day() });
+  const candidate = (await f.tool("create", { ...createArgs("forget-in-review"), sources: [{ kind: "message", ref }] }, "a-worker")).record;
+  const originalCall = f.host.call.bind(f.host);
+  let entered, release;
+  const reading = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  f.host.call = async (service, params) => {
+    if (service === "host.service.call" && params.method === "agents.memory-evidence") { entered(); await gate; }
+    return originalCall(service, params);
+  };
+  const pending = f.tool("evidence", { id: candidate.id });
+  await reading;
+  await f.tool("forget", { id: candidate.id, expected_revision: 1 });
+  release();
+  await assert.rejects(pending, /changed|revision/);
 });

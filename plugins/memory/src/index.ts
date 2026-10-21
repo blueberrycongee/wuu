@@ -77,6 +77,7 @@ class MemoryPlugin implements RuntimePlugin {
         required_services: [
           ...(["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.context"] as const).map(requireKernelService),
           { name: FILE_LOCK_SERVICE, major_version: 1, required: true },
+          { name: "personal.agents", major_version: 1, required: false },
         ],
         provided_services: [{ name: PERSONAL_MEMORY_SERVICE, version: "1.0.0", methods: PERSONAL_MEMORY_METHODS.map(name => ({ name, input_schema: `memory.records.${name}.request.v1`, output_schema: `memory.records.${name}.response.v1` })) }],
       };

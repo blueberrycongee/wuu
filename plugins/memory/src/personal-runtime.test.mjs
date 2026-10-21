@@ -29,6 +29,7 @@ test("Personal memory shipped runtime persists shared corrections and forget acr
     const { service, method, params } = frame.params;
     const key = `${params?.scope}:${params?.key}`;
     switch (service) {
+      case "personal.agents": return { session_id: params.session_id, agent_id: contexts[params.session_id]?.agent_id, role: "main" };
       case "host.session.context": return contexts[params.session_id] ?? { session_id: params.session_id, product_domain: "coding" };
       case "host.storage.keys": return { keys: [...storage.keys()].map(key => key.slice("user:".length)) };
       case "host.storage.get": return { value: storage.get(key) ?? null };

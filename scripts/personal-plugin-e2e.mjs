@@ -201,6 +201,73 @@ try {
     const results = await Promise.all([runtime.client('agents.ensure_default'), runtime.client('agents.ensure_default')]);
     main = results[0].agent; assert.equal(main.main_session_id, results[1].agent.main_session_id); assert.equal(host.sessions.size, 1); assert.equal(main.kind, 'main');
   });
+  await scenario('memory authority follows stored main binding, not names or parent absence', async () => {
+    const authority = session_id => runtime.call('service.invoke', { service: 'personal.agents', method: 'agents.memory-context', caller: 'memory', params: { session_id } });
+    assert.equal((await authority(main.main_session_id)).role, 'main');
+    const original = host.sessions.get(main.main_session_id);
+    host.sessions.set('unbound-root', { ...original, session_id: 'unbound-root', parent_session_id: undefined });
+    host.sessions.set('worker', { ...original, session_id: 'worker', parent_session_id: main.main_session_id });
+    host.sessions.set('unknown-agent', { ...original, session_id: 'unknown-agent', agent_id: 'unknown' });
+    host.sessions.set('foreign-memory', { ...original, session_id: 'foreign-memory', user_space_id: 'foreign' });
+    assert.equal((await authority('unbound-root')).role, 'background');
+    assert.equal((await authority('worker')).role, 'background');
+    await assert.rejects(authority('unknown-agent'), /agent|found/);
+    await assert.rejects(authority('foreign-memory'), /bound|Personal/);
+    await assert.rejects(authority('missing-session'), /found/);
+    for (const id of ['unbound-root', 'worker', 'unknown-agent', 'foreign-memory']) host.sessions.delete(id);
+  });
+  await scenario('shipped Memory writes resolve authority through real Personal service dispatch', async () => {
+    const h = new Host(), p = await new Runtime(h).start();
+    const agent = (await p.client('agents.ensure_default')).agent;
+    const memory = await new Runtime(h, join(root, 'internal/plugin/bundled/memory/runtime.mjs'), 'memory').start();
+    const originalCall = h.call.bind(h);
+    h.call = frame => {
+      const { service, method, params } = frame.params;
+      if (service === 'personal.agents') return p.call('service.invoke', { service, method, caller: 'memory', params });
+      if (service === 'memory.records') return memory.call('service.invoke', { service, method, caller: 'personal', params });
+      if (service === 'host.file-lock') return Promise.resolve(method === 'acquire' ? { lock_id: 'memory-fixture-lock' } : { released: true });
+      return originalCall(frame);
+    };
+    const sources = [{ kind: 'message', ref: 'integration-source', occurred_at: new Date(Date.now() - 60000).toISOString() }];
+    const accepted = (await memory.tool('personal_memory_create', { key: 'integration-core', expected_revision: 0, content: 'Prefers concise replies', evidence: 'explicit', sources, tier: 'core' }, agent.main_session_id)).record;
+    assert.equal(accepted.status, 'active'); assert.equal(accepted.tier, 'core');
+    const sourceTime = new Date(Date.now() - 120000).toISOString();
+    h.histories.set(agent.main_session_id, [{ seq: 1, role: 'user', origin: 'user', content: 'I usually schedule meetings before lunch', at: sourceTime }]);
+    const task = (await p.tool('create_task', { request_id: 'memory-worker', title: 'Research', goal: 'Find relevant context' }, agent.main_session_id, { source_message: { session_id: agent.main_session_id, seq: 1 } })).task;
+    assert.equal(task.source.message_binding, 'host_turn');
+    const worker = task.execution.session_id;
+    const ref = `personal-message:${encodeURIComponent(task.source.session_id)}:${task.source.message_seq}`;
+    const mainStep = await p.call('capability.invoke', { capability: 'agent.pre_step', input: { session_id: agent.main_session_id, source_message: { session_id: agent.main_session_id, seq: 1 }, messages: [] } });
+    const exposed = mainStep.output.append_messages.flatMap(message => message.content.match(/personal-message:[^\s]+:[1-9][0-9]*/g) ?? []);
+    assert(exposed.includes(ref), 'ordinary main input must expose usable host-bound source identity without a reply relation');
+    const candidate = (await memory.tool('personal_memory_create', { key: 'integration-candidate', expected_revision: 0, content: 'May prefer morning meetings', evidence: 'inferred', sources: [{ ...sources[0], ref }] }, worker)).record;
+    assert.equal(candidate.status, 'candidate'); assert.equal(candidate.sources[0].occurred_at, sourceTime);
+    const reviewed = await memory.tool('personal_memory_evidence', { id: candidate.id }, agent.main_session_id);
+    assert.equal(reviewed.sources[0].content, 'I usually schedule meetings before lunch');
+    const admitted = (await memory.tool('personal_memory_accept', { id: candidate.id, expected_revision: reviewed.record.revision }, agent.main_session_id)).record;
+    assert.equal(admitted.status, 'active'); assert.equal(admitted.evidence, 'inferred');
+    assert.deepEqual(admitted.sources, candidate.sources); assert.equal(admitted.source_at, sourceTime);
+    const resolve = (sourceRef, session_id = agent.main_session_id) => p.call('service.invoke', { service: 'personal.agents', method: 'agents.memory-evidence', caller: 'memory', params: { session_id, ref: sourceRef } });
+    assert.equal((await resolve(ref, worker)).content, undefined, 'workers receive provenance metadata, not source text');
+    for (const [i, override] of [{ role: 'assistant' }, { origin: 'plugin' }, { hidden: true }, { read_only: true }, { truncated: true }, { at: 'not-a-date' }, { at: new Date(Date.now() + 3600000).toISOString() }].entries()) {
+      const seq = i + 2;
+      h.histories.get(agent.main_session_id).push({ seq, role: 'user', origin: 'user', content: 'Not valid evidence', at: sourceTime, ...override });
+      await assert.rejects(resolve(`personal-message:${encodeURIComponent(agent.main_session_id)}:${seq}`), /evidence|timestamp/);
+    }
+    for (const bad of [`personal-message:${encodeURIComponent(agent.main_session_id)}:01`, `personal-message:${encodeURIComponent(agent.main_session_id)}:9007199254740992`, 'personal-message:%73ource:1', 'personal-message:%ZZ:1']) await assert.rejects(resolve(bad), /source|URI/);
+    const mainContext = h.sessions.get(agent.main_session_id);
+    h.sessions.set('unowned-source', { ...mainContext, session_id: 'unowned-source' });
+    h.sessions.set('foreign-source', { ...mainContext, session_id: 'foreign-source', user_space_id: 'other' });
+    h.sessions.set('other-identity', { ...mainContext, session_id: 'other-identity', agent_id: 'another-agent' });
+    for (const session of ['unowned-source', 'foreign-source', 'other-identity']) await assert.rejects(resolve(`personal-message:${session}:1`), /owned|outside/);
+    h.histories.set(worker, [{ seq: 1, role: 'user', origin: 'user', content: 'Original task reply', at: sourceTime }]);
+    assert.equal((await resolve(`personal-message:${encodeURIComponent(worker)}:1`)).content, 'Original task reply');
+
+    await assert.rejects(memory.tool('personal_memory_forget', { id: accepted.id, expected_revision: 1 }, worker), /main/);
+    const forgotten = await p.client('memory.forget', { agent_id: agent.agent_id, id: accepted.id, expected_revision: 1 });
+    assert.equal(forgotten.record.status, 'forgotten');
+    await memory.close(); await p.close();
+  });
   await scenario('restart, persona edit, and history retain immutable main binding', async () => {
     await runtime.close(); runtime = await new Runtime(host).start();
     const restored = (await runtime.client('agents.ensure_default')).agent; assert.equal(restored.main_session_id, main.main_session_id);
