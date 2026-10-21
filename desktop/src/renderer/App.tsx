@@ -5684,7 +5684,8 @@ export function App(): JSX.Element {
 
   const contextCapsule = !poppedOutMode && onboardingComplete && state.initialized && state.activeContext
     ? (
-    <ContextChatCapsule context={state.activeContext} visible={!environmentDialog && !pendingFork && !conversationSearch.open}
+    // Restore visibility when the workbench experiment re-enables the floating context chat.
+    <ContextChatCapsule context={state.activeContext} visible={false}
       source={showingWebsite && activeWebsite && !settingsOpen && !accountOpen
         ? { kind: "website", id: WEB_WORKSPACE_RIBBON_ID, tabId: activeWebsite.id, title: activeWebsite.title || activeWebsite.url }
         : { kind: "app", id: `wuu:${accountOpen ? "account" : settingsOpen ? "settings" : showingPrimaryPluginView ? "plugin" : nativeSection}`,
