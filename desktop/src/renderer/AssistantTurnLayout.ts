@@ -66,12 +66,33 @@ export function layoutAssistantTurn(
     }
   }
   ordered.sort((a, b) => a.order - b.order);
+  const firstAnswerOrder = display.entries
+    .filter((entry) => entry.position === "answer")
+    .reduce(
+      (first, entry) => Math.min(first, positions.get(entry.item.id) ?? first),
+      Number.POSITIVE_INFINITY,
+    );
   const processEntries: TurnEntry[] = [];
   const output: Output[] = [];
   let published = false;
   for (const item of ordered) {
     if (item.artifacts) published = true;
-    if (!published && item.entry?.position === "process") {
+    // Tool work after a published image stays inline so live activity remains
+    // visible next to its output. A settled reasoning record that precedes the
+    // final answer is different: leaving it in the answer body produces a
+    // collapsed "思考过程" row between the artifact and the answer, which reads
+    // as if the answer belongs to that fold. Keep that record in the process
+    // region; live reasoning still stays next to its output.
+    const foldedReasoning =
+      item.entry?.position === "process" &&
+      item.entry.item.type === "reasoning" &&
+      item.entry.settled &&
+      turn.status !== "in_progress" &&
+      item.order < firstAnswerOrder;
+    if (
+      item.entry?.position === "process" &&
+      (!published || foldedReasoning)
+    ) {
       processEntries.push(item.entry);
     } else {
       output.push(item);
