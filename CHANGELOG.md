@@ -86,6 +86,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Draw the selected sidebar row with an even edge on every side instead of a shadow that faded at the top.
+
 - Keep opening sidebar content clipped so the moving resize divider remains clickable.
 
 - Prevent a queued native ribbon blur from opening an error dialog when its window closes.

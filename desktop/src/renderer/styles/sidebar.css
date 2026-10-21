@@ -18,13 +18,15 @@
    * on the opaque rail. */
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, transparent);
   --sidebar-nav-item-focus-shadow: var(--focus-ring);
-  /* Selection sits above the navigation surface; hover remains a flat tint. */
+  /* Selection is a lighter fill in the rail; hover remains a flat tint.
+   * The row stays in flow, so its edge is one even divider-tier ring. Drop
+   * shadows weighted the lower edge and let the upper edge vanish against
+   * the rail. Themes reach the ring through --wuu-border-subtle. */
   --sidebar-row-selected-bg: var(
     --wuu-nav-item-active-background,
     #fff
   );
-  --sidebar-row-selected-shadow: inset 0 0 0 0.5px rgba(19, 19, 20, 0.07),
-    0 1px 2px rgba(19, 19, 20, 0.08), 0 2px 5px -2px rgba(19, 19, 20, 0.08);
+  --sidebar-row-selected-shadow: inset 0 0 0 1px var(--hairline-soft);
   --sidebar-project-row-pending-bg: var(--ink-overlay-4);
   --sidebar-project-loading-notch: rgba(19, 19, 20, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);

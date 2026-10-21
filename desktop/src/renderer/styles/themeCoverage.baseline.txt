@@ -55,10 +55,8 @@ image-preview.css .image-preview-zoom-readout color --image-preview-zoom-text
 model-services.css .connection-auth-methods [aria-pressed="true"] background --ink-overlay-6
 model-services.css .model-service-tile:hover:not(:disabled) background --ink-overlay-4
 navigation-ribbon.css .sidebar-ribbon-audio:hover background --ink-overlay-8
-navigation-ribbon.css .sidebar-ribbon-button:is([aria-current="page"], [aria-pressed="true"], [aria-expanded="true"]), .sidebar-ribbon-tab-row.active .sidebar-ribbon-button, .sidebar-ribbon .sidebar-account-trigger[aria-expanded="true"] box-shadow --sidebar-row-selected-shadow
 navigation-ribbon.css .sidebar-ribbon-close:hover background --ink-overlay-8
 navigation-ribbon.css .sidebar-ribbon-tab-row:hover .sidebar-ribbon-button, .sidebar-ribbon-button:hover, .sidebar-ribbon .sidebar-account-trigger:hover background --ink-overlay-6
-navigation-ribbon.css .sidebar-section-item[aria-current="page"] box-shadow --sidebar-row-selected-shadow
 onboarding.css .equipment-binding fill --equipment-binding
 onboarding.css .equipment-bookmark fill --equipment-accent
 onboarding.css .equipment-edge fill --equipment-edge
@@ -87,7 +85,6 @@ settings.css .settings-button-ghost:hover:not(:disabled) background --ink-overla
 settings.css .settings-button-primary background --gray-900
 settings.css .settings-button-primary:hover:not(:disabled) background --gray-900
 settings.css .settings-engine-row-toggle:hover > .settings-engine-expand background --ink-overlay-6
-settings.css .settings-nav-item.active box-shadow --sidebar-row-selected-shadow
 settings.css .settings-remote-qr background --settings-remote-qr-quiet-zone
 settings.css .settings-skill-usage-bar span background --settings-heatmap-level-3
 settings.css .settings-theme-preview-window-dark background --settings-preview-dark-canvas
@@ -107,7 +104,6 @@ sidebar.css :is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-res
 sidebar.css :is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::after box-shadow --sidebar-resizer-hover-ring
 sidebar.css :is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::before background --sidebar-resizer-hover-bg
 sidebar.css :is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::before box-shadow --sidebar-resizer-hover-bg
-sidebar.css .nav-item[aria-current="page"] box-shadow --sidebar-row-selected-shadow
 sidebar.css .project-row .project-row-loading border-top-color --sidebar-project-loading-notch
 sidebar.css .project-row.pending-switch background --sidebar-project-row-pending-bg
 sidebar.css .sidebar-collapsed.sidebar-drawer-open :is(.sidebar, .settings-sidebar), .sidebar-collapsed.sidebar-drawer-closing :is(.sidebar, .settings-sidebar), .sidebar-drawer-docking :is(.sidebar, .settings-sidebar), .sidebar-collapsed:not(.resizing-sidebar) :is(.sidebar, .settings-sidebar):focus-within border-right-color --sidebar-drawer-edge
@@ -133,9 +129,7 @@ sidebar.css .thread-row-action.archive.confirm background --sidebar-row-action-a
 sidebar.css .thread-row-spinner border-top-color --sidebar-thread-spinner-notch
 sidebar.css .thread-row::before background --sidebar-session-status-bg
 sidebar.css .thread-row:hover::before background --sidebar-session-status-bg
-sidebar.css .thread-row.active box-shadow --sidebar-row-selected-shadow
 sidebar.css .thread-row.active::before background --sidebar-session-status-bg
-sidebar.css .thread-row.active:hover box-shadow --sidebar-row-selected-shadow
 sidebar.css .workspace-right-panel-resizer:hover::before, .workspace-right-panel-resizer:focus-visible::before, .resizing-right-panel .workspace-right-panel-resizer::before background --sidebar-resizer-hover-bg
 sidebar.css .workspace-right-panel-resizer:hover::before, .workspace-right-panel-resizer:focus-visible::before, .resizing-right-panel .workspace-right-panel-resizer::before box-shadow --sidebar-resizer-hover-ring
 system-permissions.css .system-permission-row[data-permission="screen"] .system-permission-symbol background --danger-soft
