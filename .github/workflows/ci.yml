@@ -1102,6 +1102,21 @@ jobs:
           npm --prefix desktop run test:release-packaging
           node --test desktop/scripts/test-notarization.cjs desktop/scripts/test-release-checkpoint.cjs desktop/scripts/test-update-metadata.cjs
 
+      - name: Test desktop update download end to end
+        if: github.event_name != 'push'
+        run: npm --prefix desktop run test:e2e:desktop-update
+
+      - name: Upload desktop update evidence
+        if: always() && github.event_name != 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-update-e2e
+          path: |
+            desktop/out/e2e/desktop-update/result.json
+            desktop/out/e2e/desktop-update/failure.json
+            desktop/out/e2e/desktop-update/*.png
+          if-no-files-found: ignore
+
       - name: Build read-only app snapshot helper
         if: github.event_name != 'push'
         run: |

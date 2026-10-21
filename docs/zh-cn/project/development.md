@@ -149,6 +149,13 @@ open -n -W -a "$PWD/desktop/node_modules/electron/dist/Electron.app" \
 不验证上游登录与推理。可向 `open` 添加 `--env WUU_ENGINE_DISCOVERY_OUTPUT=/absolute/output`
 以保留独立证据目录。
 
+在 macOS 上运行 `npm --prefix desktop run test:e2e:desktop-update`，可用真实
+MacUpdater 和本地 HTTP 更新源验证生产更新按钮、preload、菜单和轮询回调。
+覆盖新版本、检查失败、版本撤回、串行下载和确认期间版本变化，并校验下载 ZIP 的哈希。
+确认操作由脚本控制，不会请求安装。测试使用临时配置和缓存，截图、请求与状态证据保存在
+`desktop/out/e2e/desktop-update/`，可用 `WUU_UPDATE_E2E_OUTPUT` 覆盖。
+macOS CI 会执行并上传证据。这不验证 GitHub 可用性、发布签名或已安装应用的替换。
+
 ## 选择相关检查
 
 | 命令 | 检查或构建内容 |
