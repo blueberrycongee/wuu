@@ -235,13 +235,14 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 }
 
 .sidebar-ribbon {
-  --ribbon-header-height: calc(var(--workbench-top) + var(--web-workspace-toolbar-height));
+  --ribbon-brand-size: calc(var(--sidebar-ribbon-compact-width, 52px) - var(--ribbon-inline-inset) * 2);
+  --ribbon-header-height: calc(var(--workbench-top) + max(var(--web-workspace-toolbar-height), calc(var(--ribbon-brand-size) + var(--ribbon-row-gap) * 2)));
   --ribbon-motion-duration: 220ms;
   /* Every destination shares one row gap; the footer owns the wider break. */
-  --ribbon-row-gap: var(--space-1);
+  --ribbon-row-gap: var(--space-2);
   --ribbon-group-gap: var(--space-3);
   --ribbon-inline-inset: var(--space-2);
-  --sidebar-ribbon-icon-size: var(--icon-size-xl);
+  --sidebar-ribbon-icon-size: calc(var(--icon-size-xl) + 2px);
   --sidebar-ribbon-expanded-width: min(248px, calc(100vw - var(--space-4)));
   position: absolute;
   inset: 0 auto 0 0;
@@ -269,7 +270,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   left: 0;
   display: grid;
   width: var(--sidebar-ribbon-compact-width, 52px);
-  height: var(--web-workspace-toolbar-height);
+  height: calc(var(--ribbon-header-height) - var(--workbench-top));
   place-items: center;
   pointer-events: none;
 }
@@ -277,7 +278,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 .sidebar-ribbon-brand > img {
   display: block;
   /* Match the destination's outer frame using artwork without launcher padding. */
-  width: calc(100% - var(--ribbon-inline-inset) * 2);
+  width: var(--ribbon-brand-size);
   height: auto;
   aspect-ratio: 1;
   /* Preserve the app icon's authored corner ratio. */
