@@ -275,7 +275,13 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   width: var(--sidebar-ribbon-compact-width, 52px);
   height: calc(var(--ribbon-header-height) - var(--workbench-top));
   place-items: center;
-  pointer-events: none;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-ribbon-brand:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .sidebar-ribbon-brand > img {

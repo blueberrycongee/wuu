@@ -334,9 +334,15 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setKeyboardFocusWithin(false);
       }}
       onKeyDownCapture={event => { rememberFocus(event.target); setKeyboardFocusWithin(true); }}>
-      <div className="sidebar-ribbon-brand">
-        <img src={mascotIcon} alt="Wuu" draggable={false} />
-      </div>
+      <a className="sidebar-ribbon-brand"
+        href="https://github.com/blueberrycongee/wuu" target="_blank" rel="noreferrer"
+        aria-label={t("ribbon.github")} title={t("ribbon.github")}
+        onClick={event => {
+          event.preventDefault();
+          void window.wuu.openExternal(event.currentTarget.href).catch(error => showActionErrorToast(error));
+        }}>
+        <img src={mascotIcon} alt="" draggable={false} />
+      </a>
       <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis]}
         accessibility={{ screenReaderInstructions: { draggable: t("ribbon.reorderHint") } }}
         onDragStart={() => setDragging(true)}
