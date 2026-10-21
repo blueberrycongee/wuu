@@ -651,8 +651,14 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if len(params.Input.Attachments) > 0 && params.UserInputRequestID == "" {
 		return pluginhost.SessionSendResult{}, errors.New("attachments require an explicit client user input")
 	}
+	if err := s.validateMessageRelation(pluginID, params.SessionID, params.Relation); err != nil {
+		return pluginhost.SessionSendResult{}, err
+	}
 	var clientAttachments []runtime.ClientInputAttachment
 	if params.UserInputRequestID != "" {
+		if err := runtime.AuthorizeClientUserInputRelation(ctx, pluginID, params.UserInputRequestID, params.Relation); err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
 		var err error
 		clientAttachments, err = runtime.ClientUserInputAttachments(ctx, pluginID, params.UserInputRequestID, params.Input.Attachments)
 		if err != nil {
@@ -763,6 +769,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 			return pluginhost.SessionSendResult{}, err
 		}
 	}
+	msg.Relation = providers.CloneMessageRelation(params.Relation)
 	msg.ClientID = clientID
 	msg.Origin = pluginhost.SessionInputPlugin
 	msg.OriginID = pluginID

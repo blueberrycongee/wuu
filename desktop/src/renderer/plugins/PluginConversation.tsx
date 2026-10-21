@@ -14,7 +14,7 @@ import { useAutoFollowScrollContainer } from "../AutoFollowScroll";
 import { captureReadingAnchor, readingAnchorScrollTop, type ConversationReadingAnchor } from "../ConversationReadingAnchor";
 import { JumpToLatestPill } from "../JumpToLatestPill";
 import { Modal } from "../Modal";
-import { Download, FileText, LoaderCircle, Search } from "../WuuIcons";
+import { CornerUpLeft, Download, FileText, LoaderCircle, Search } from "../WuuIcons";
 import { formatByteSize } from "../AttachmentFormat";
 import { useI18n } from "../i18n";
 import { ConversationBubbleContext, useConversationBubbleGesture } from "./ConversationBubbles";
@@ -63,7 +63,7 @@ class ConversationReadingBoundary extends Component<ReadingBoundaryProps> {
   render(): React.ReactNode { return this.props.children; }
 }
 
-export function PluginConversationView({ presentation = "standard", conversationId, sessionId, sessionScope, onQuestionReply, actions, title, subtitle, avatar, status, loading = false, searchLabel, searchContent, showHistorySearch = true, children, composer }: PluginUIConversationViewProps): JSX.Element {
+export function PluginConversationView({ presentation = "standard", conversationId, sessionId, sessionScope, onQuestionReply, actions, title, subtitle, avatar, status, loading = false, searchLabel, searchContent, showHistorySearch = true, showJumpToLatest = true, children, composer }: PluginUIConversationViewProps): JSX.Element {
   const { t } = useI18n();
   const controller = useAutoFollowScrollContainer({ observeKey: conversationId });
   const rootRef = useRef<HTMLElement>(null);
@@ -101,7 +101,7 @@ export function PluginConversationView({ presentation = "standard", conversation
       </div>
     </ConversationReadingBoundary>
     <div className="plugin-conversation-composer" ref={setComposerNode}>{composer}</div>
-    <JumpToLatestPill containerRef={controller.scrollRef} bottomAnchor={composerNode} scopeKey={conversationId} onJump={() => controller.scrollToBottom({ force: true, animate: true })} />
+    {showJumpToLatest && <JumpToLatestPill containerRef={controller.scrollRef} bottomAnchor={composerNode} scopeKey={conversationId} onJump={() => controller.scrollToBottom({ force: true, animate: true })} />}
     {searchOpen && <Modal ariaLabel={searchLabel} title={searchLabel} onClose={closeSearch} panelClassName="plugin-conversation-search" footer={<button type="button" className="settings-button settings-button-ghost" data-action="close-history-search" onClick={closeSearch}>{t("common.close")}</button>}>{searchContent}</Modal>}
   </section>;
 }
@@ -140,7 +140,7 @@ function PluginConversationQuestions({ sessionId, scope, onReply }: { sessionId:
     if (!onReply) throw new Error("This conversation cannot submit an offer reply");
     // Admit the reply before resolving the non-blocking offer. The question ID
     // lets the transport retry a lost acknowledgement without sending twice.
-    await onReply(question.request_id, prompt);
+    await onReply(question.request_id, prompt, question.relation);
     await cancel(question.request_id);
   };
   if (!questions.length && !error) return null;
@@ -165,7 +165,7 @@ function PluginConversationQuestions({ sessionId, scope, onReply }: { sessionId:
   </div>;
 }
 
-export function PluginConversationMessage({ id: suppliedId, role, content, timestamp, latest = false, streaming = false, turnId, turnStatus = streaming ? "in_progress" : "completed", process, messageActions = "copy-only", attachments, className, linkPolicy }: PluginUIConversationMessageProps): JSX.Element {
+export function PluginConversationMessage({ id: suppliedId, role, content, timestamp, latest = false, streaming = false, turnId, turnStatus = streaming ? "in_progress" : "completed", process, messageActions = "copy-only", onReply, replyLabel, replyPreview, attachments, className, linkPolicy }: PluginUIConversationMessageProps): JSX.Element {
   const bubble = useContext(ConversationBubbleContext);
   const { formatDate } = useI18n();
   const validTime = timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : undefined;
@@ -191,7 +191,8 @@ export function PluginConversationMessage({ id: suppliedId, role, content, times
     <div className={["plugin-conversation-message", className].filter(Boolean).join(" ")} data-wuu-component="plugin-ui-conversation-message" data-role={role}
       data-turn-id={role === "assistant" ? messageTurnId : undefined} data-bubble={bubble.enabled || undefined}>
       {bubble.enabled && validTime && <time className="bubble-message-time" dateTime={validTime} aria-hidden={!bubble.revealed} title={formatDate(validTime, { dateStyle: "medium", timeStyle: "short" })}>{formatDate(validTime, { hour: "2-digit", minute: "2-digit" })}</time>}
-      {bubble.enabled ? <>{attachmentContent}{(content.trim() || process) && <div className="bubble-message-content">{messageContent}</div>}</> : messageContent}
+      {replyPreview}
+      {bubble.enabled ? <div className="bubble-message-body">{attachmentContent}{(content.trim() || process) && <div className="bubble-message-content">{messageContent}</div>}{onReply && <button type="button" className="plugin-message-reply" data-action="reply-message" aria-label={replyLabel} title={replyLabel} onClick={event => { event.currentTarget.focus({ preventScroll: true }); onReply(); }}><CornerUpLeft aria-hidden="true" /></button>}</div> : <>{messageContent}{onReply && <button type="button" className="plugin-message-reply" data-action="reply-message" aria-label={replyLabel} title={replyLabel} onClick={event => { event.currentTarget.focus({ preventScroll: true }); onReply(); }}><CornerUpLeft aria-hidden="true" /></button>}</>}
     </div>
   </SideConversationAvailableContext.Provider></ArtifactThreadContext.Provider>;
 }
@@ -341,10 +342,11 @@ export function PluginConversationAttachment({ resourceId, onOpen, onRead, name,
 }
 
 
-export function PluginConversationComposer({ conversationId, prompt, placeholder, running, submitting, queuedCount, pendingCount, stopState, disabled = false, sendDisabled, attachments, onChangePrompt, onAddAttachments, onRemoveAttachment, onSend, onStop }: PluginUIConversationComposerProps): JSX.Element {
+export function PluginConversationComposer({ replyContext, conversationId, prompt, placeholder, running, submitting, queuedCount, pendingCount, stopState, disabled = false, sendDisabled, attachments, onChangePrompt, onAddAttachments, onRemoveAttachment, onSend, onStop }: PluginUIConversationComposerProps): JSX.Element {
   const images = attachments.filter(file => ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"].includes(file.media_type)).map(file => ({ ...file }));
   const files = attachments.filter(file => !images.some(image => image.id === file.id)).map(file => ({ ...file }));
   return <FileSelectionProvider disabled getPrompt={() => prompt} setPrompt={noop} onEdit={async () => false} onOpenFile={noop}>
+    {replyContext && <div className="plugin-composer-reply-context" data-reply-context="" role="group" aria-label={replyContext.label}><div><span>{replyContext.label}</span><p>{replyContext.preview}</p></div><button type="button" className="settings-button settings-button-ghost" data-action="cancel-reply" aria-label={replyContext.cancelLabel} onClick={replyContext.onCancel}>{replyContext.cancelLabel}</button></div>}
     <SplitPaneComposer key={conversationId} pluginHost={conversationHost} allowWorkspaceReferences={false}
       placeholder={placeholder} prompt={prompt} setPrompt={onChangePrompt} images={images} files={files}
       running={running} submitting={submitting} queuedCount={queuedCount} pendingCount={pendingCount} stopState={stopState} readOnly={disabled} sendDisabled={sendDisabled} queryHistorySessionID={`plugin:${conversationId}`}

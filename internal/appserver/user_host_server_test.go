@@ -153,7 +153,8 @@ func TestUserHostOmittedRequestIDDoesNotBlockPeersOrRetainUserProof(t *testing.T
 	firstOutput := &lockedBuffer{}
 	firstDone := make(chan error, 1)
 	go func() { firstDone <- host.Serve(ctx, firstIn, firstOutput, nil) }()
-	params := PluginClientRequestParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, Method: "hold", UserInput: &runtime.ClientUserInput{RequestID: "business-message", Prompt: "literal submission"}}
+	relation := &providers.MessageRelation{ReplyTo: &providers.MessageRef{SessionID: "main", Seq: 7}, Metadata: map[string]json.RawMessage{"task_links": json.RawMessage(`[{"task_id":"task","requirements_revision":2}]`)}}
+	params := PluginClientRequestParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, Method: "hold", UserInput: &runtime.ClientUserInput{RequestID: "business-message", Prompt: "literal submission", Relation: relation}}
 	frame, _ := json.Marshal(map[string]any{"id": "held", "method": MethodPluginClientRequest, "params": params})
 	fmt.Fprintln(firstWrite, string(frame))
 	var proof context.Context
@@ -164,6 +165,12 @@ func TestUserHostOmittedRequestIDDoesNotBlockPeersOrRetainUserProof(t *testing.T
 	}
 	if err := runtime.AuthorizeClientUserInput(proof, item.ID, "business-message", "main", "literal submission"); err != nil {
 		t.Fatal(err)
+	}
+	if err := runtime.AuthorizeClientUserInputRelation(proof, item.ID, "business-message", relation); err != nil {
+		t.Fatalf("wire envelope lost relation: %v", err)
+	}
+	if err := runtime.AuthorizeClientUserInputRelation(proof, item.ID, "business-message", nil); err == nil {
+		t.Fatal("wire envelope accepted relation omission")
 	}
 	secondIn, secondWrite := io.Pipe()
 	secondOutput := &lockedBuffer{}

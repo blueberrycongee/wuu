@@ -1,3 +1,6 @@
+export interface MessageRef { session_id: string; seq: number; }
+export interface MessageRelation { reply_to?: MessageRef; metadata?: Record<string, unknown>; }
+
 import type { AppContextSettings, AppContextState } from "./appContext";
 import type { SystemPermission, SystemPermissionsState, SystemPermissionPresentation, SystemPermissionGuideState } from "./systemPermissions";
 export type { SystemPermission, SystemPermissionsState, SystemPermissionPresentation, SystemPermissionGuideState } from "./systemPermissions";
@@ -48,6 +51,7 @@ export type UserQuestion = {
 };
 
 export type UserQuestionRequest = {
+  relation?: MessageRelation;
   request_id: string;
   plugin_id: string;
   execution_id: string;
@@ -777,7 +781,7 @@ export interface PluginStorageResult {
 }
 export interface PluginClientRequestParams extends PluginIdentityParams {
   /** Exact client-authored message, bound to this live plugin invocation by the host. */
-  user_input?: { request_id: string; prompt: string; attachments?: Array<{ sha256: string; filename: string; media_type: string; data: string }> };
+  user_input?: { request_id: string; prompt: string; relation?: MessageRelation; attachments?: Array<{ sha256: string; filename: string; media_type: string; data: string }> };
   user_space_id?: string;
   product_domain?: "personal" | "coding";
   /** Optional opaque ID enabling cancellation of this request. */

@@ -259,6 +259,9 @@ export interface PluginUIConversationMessageProps {
   /** Read-only work summary; its explicit status does not imply execution timing. */
   process?: { label: string; content?: string; details?: React.ReactNode };
   messageActions?: "copy-only" | "none";
+  replyPreview?: React.ReactNode;
+  onReply?(): void;
+  replyLabel?: string;
   attachments?: React.ReactNode;
 }
 
@@ -268,7 +271,7 @@ export interface PluginUIConversationViewProps {
   conversationId: string;
   sessionId?: string;
   sessionScope?: { userSpaceId: string; productDomain: "personal" | "coding" };
-  onQuestionReply?: (requestId: string, prompt: string) => Promise<void>;
+  onQuestionReply?: (requestId: string, prompt: string, relation?: import("./protocol").MessageRelation) => Promise<void>;
   actions?: React.ReactNode;
   title: string;
   subtitle?: string;
@@ -277,6 +280,8 @@ export interface PluginUIConversationViewProps {
   loading?: boolean;
   /** Hide only this conversation’s history trigger; defaults to true. */
   showHistorySearch?: boolean;
+  /** Suppress the floating control when another conversation overlays this view. */
+  showJumpToLatest?: boolean;
   searchLabel: string;
   searchContent: React.ReactNode;
   children: React.ReactNode;
@@ -300,6 +305,7 @@ export interface PluginUIConversationAttachmentProps {
 }
 
 export interface PluginUIConversationComposerProps {
+  replyContext?: { label: string; preview: string; cancelLabel: string; onCancel(): void };
   conversationId: string;
   prompt: string;
   placeholder?: string;

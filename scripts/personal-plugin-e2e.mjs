@@ -60,6 +60,7 @@ class Host {
           assert.equal(proof?.prompt, p.input.prompt, 'trusted client input proof missing or mismatched');
           assert.equal(frame.params.execution_id, proof?.execution_id, 'trusted client execution context missing or mismatched');
           assert.deepEqual(proof?.attachments, p.input.attachments, 'trusted client attachments missing or mismatched');
+          assert.deepEqual(proof?.relation, p.relation, 'trusted client relation missing or mismatched');
         }
         if (p.presentation?.kind === 'session_message') assert(p.presentation.text && p.presentation.related_session_id && p.presentation.related_session_id !== p.session_id, 'session_message requires a distinct source session');
         if (!this.turns.has(p.request_id)) this.turns.set(p.request_id, { request_id: p.request_id, session_id: p.session_id, turn_id: `t-${p.request_id}`, state: 'running' });
@@ -121,10 +122,10 @@ class Runtime {
     });
   }
   client(method, input = {}) {
-    if (method === 'agents.send') this.host.userInputs.set(input.request_id, { prompt: input.prompt, attachments: input.attachments, execution_id: `x-${this.seq}` });
+    if (method === 'agents.send') this.host.userInputs.set(input.request_id, { prompt: input.prompt, attachments: input.attachments, relation: input.relation, execution_id: `x-${this.seq}` });
     return this.call('capability.invoke', { capability: 'plugin.client.request', input: { method, input }, execution_id: `x-${this.seq}` }).then(r => r.output.result).finally(() => { if (method === 'agents.send') this.host.userInputs.delete(input.request_id); });
   }
-  tool(tool_id, args, session_id) { return this.call('tool.execute', { tool_id, arguments: args, session_id, thread_id: session_id, cwd: scratch, call_id: `c-${this.seq}`, execution_id: `e-${this.seq}` }).then(r => JSON.parse(r.result.content[0].text)); }
+  tool(tool_id, args, session_id, context = {}) { return this.call('tool.execute', { tool_id, arguments: args, session_id, thread_id: session_id, cwd: scratch, call_id: `c-${this.seq}`, execution_id: `e-${this.seq}`, ...context }).then(r => JSON.parse(r.result.content[0].text)); }
   lifecycle(task, state, final_output = 'unverified final output') { return this.call('capability.invoke', { capability: 'agent.turn.lifecycle', input: { thread_id: task.execution.session_id, request_id: task.execution.request_id, state, final_output }, execution_id: `l-${this.seq}` }); }
   async start(domain = 'personal') {
     this.definition = await this.call('initialize', { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 1, plugin_id: this.pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, product_domain: domain, user_space_id: 'local', supported_host_services: ['host.service.call', 'host.storage.get', 'host.storage.keys', 'host.storage.compare_exchange', 'host.session.create', 'host.session.send', 'host.session.inspect', 'host.session.context', 'host.session.cancel', 'host.session.history.read', 'host.session.history.search', 'host.session.attachment.read'] });
@@ -141,6 +142,57 @@ try {
   await build({ stdin: { contents: `import plugin from '${join(root, 'plugins/personal/src/index.ts')}'; import {runJSONLRuntime} from '@wuu/plugin-sdk'; await runJSONLRuntime(plugin,{input:process.stdin,output:process.stdout});`, resolveDir: root, loader: 'ts' }, alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', target: 'node22.7', format: 'esm', outfile: runtimePath });
   await build({ stdin: { contents: `import {PersonalCalendarPlugin} from '${join(root, 'plugins/personal-calendar/src/index.ts')}'; import {runJSONLRuntime} from '@wuu/plugin-sdk'; let host; class CalendarFixture extends PersonalCalendarPlugin { initialize(params,value,lifecycle){host=value;return super.initialize(params,value,lifecycle)} } const plugin=new CalendarFixture({reader:{async read(space,query){const {value}=await host.call('host.storage.get',{scope:'user',key:'fixture.calendar.snapshot'});const data=JSON.parse(value);return {source:{...query,provider:'google-calendar',account_id:'integration-account',user_space_id:space,fetched_at:new Date().toISOString(),read_only:true},events:data.events,cancelled_events:data.cancelled_events||[]}}}}); await runJSONLRuntime(plugin,{input:process.stdin,output:process.stdout});`, resolveDir: root, loader: 'ts' }, alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', target: 'node22.7', format: 'esm', outfile: calendarRuntimePath });
   const host = new Host(); let runtime = await new Runtime(host).start(); let main, specialist, task;
+  await scenario('trusted message sources, quoted output, task selection and mutation retries retain one matter', async () => {
+    const h = new Host(), r = await new Runtime(h).start();
+    const a = (await r.client('agents.ensure_default')).agent, sid = a.main_session_id;
+    h.histories.set(sid, [{ seq: 1, role: 'user', origin: 'user', content: 'Task A and task B' }, { seq: 2, role: 'user', origin: 'user', content: 'Later unrelated input' }]);
+    const source = { session_id: sid, seq: 1 };
+    let aTask = (await r.tool('create_task', { request_id: 'bound-a', title: 'A', goal: 'Original A', message_seq: 2 }, sid, { source_message: source })).task;
+    const bTask = (await r.tool('create_task', { request_id: 'bound-b', title: 'B', goal: 'Original B' }, sid, { source_message: source })).task;
+    assert.equal(aTask.source.message_seq, 1); assert.equal(bTask.source.message_seq, 1);
+    const forgedSource = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'unbound-client', title: 'Unbound', goal: 'Must not claim another message', message_seq: 2 })).task;
+    assert.equal(forgedSource.source.message_seq, undefined);
+    assert.equal((await r.client('agents.history', { agent_id: a.agent_id })).records[1].relation, undefined);
+    const projected = await r.client('agents.history', { agent_id: a.agent_id });
+    assert.deepEqual(projected.records[0].relation.metadata.task_links.map(link => link.task_id).sort(), [aTask.task_id, bTask.task_id].sort());
+    const link = { task_id: aTask.task_id, requirements_revision: 1, execution_session_id: aTask.execution.session_id };
+    const relation = { reply_to: source, metadata: { task_links: [link] } };
+    await r.client('agents.send', { agent_id: a.agent_id, request_id: 'quote-a', prompt: '  Explain this result\n', relation });
+    assert.deepEqual(h.calls.filter(call => call.service === 'host.session.send').at(-1).params.relation, relation);
+    assert.equal((await r.client('tasks.get', { task_id: aTask.task_id })).task.requirements_revision, 1, 'quoting never automatically reruns a task');
+    h.histories.get(sid).push({ seq: 4, role: 'tool', attachments: [{ kind: 'artifact', index: 0, sha256: 'a'.repeat(64), name: 'result.pdf' }] });
+    await r.client('agents.send', { agent_id: a.agent_id, request_id: 'quote-artifact', prompt: 'Explain this file', relation: { reply_to: { session_id: sid, seq: 4 } } });
+    h.histories.get(sid).pop();
+    await assert.rejects(r.client('agents.send', { agent_id: a.agent_id, request_id: 'quote-a', prompt: 'Different text', relation }), /request_id_conflict/);
+    await assert.rejects(r.client('agents.send', { agent_id: a.agent_id, request_id: 'cross-session', prompt: 'Reply', relation: { reply_to: { session_id: bTask.execution.session_id, seq: 1 } } }), /reply|conversation/);
+    await assert.rejects(r.client('agents.send', { agent_id: a.agent_id, request_id: 'forged-task', prompt: 'Reply', relation: { metadata: { task_links: [{ task_id: 'task-not-owned', requirements_revision: 1 }] } } }), /task/);
+    const edit = { task_id: aTask.task_id, expected_revision: aTask.revision, goal: 'Revised A' };
+    aTask = (await r.tool('update_task', edit, sid, { source_message: { session_id: sid, seq: 2 }, message_relation: relation })).task;
+    const repeated = (await r.tool('update_task', edit, sid, { source_message: { session_id: sid, seq: 2 }, message_relation: relation })).task;
+    assert.equal(repeated.task_id, aTask.task_id); assert.equal(repeated.requirements_revision, 2);
+    assert.equal((await r.client('tasks.get', { task_id: bTask.task_id })).task.requirements_revision, 1);
+    const context = { source_message: { session_id: sid, seq: 2 }, message_relation: relation };
+    await assert.rejects(r.tool('update_task', { task_id: bTask.task_id, expected_revision: bTask.revision, goal: 'Wrong sibling' }, sid, context), /target|relation/);
+    let waiting = (await r.tool('report_task', { task_id: aTask.task_id, requirements_revision: 2, state: 'waiting_user', progress: 'Which date?' }, aTask.execution.session_id)).task;
+    const delivered = h.calls.filter(call => call.service === 'host.session.send' && call.params.cause === 'personal.task.question').at(-1).params;
+    assert.equal(delivered.relation.metadata.task_links[0].question_request_id, waiting.question.request_id);
+    assert.deepEqual(delivered.relation.reply_to, source);
+    h.histories.get(sid).push({ seq: 3, role: 'assistant', content: 'Which date?', relation: delivered.relation });
+    const history = await r.client('agents.history', { agent_id: a.agent_id });
+    assert.deepEqual(history.records.at(-1).relation, delivered.relation);
+    const answerRelation = { reply_to: { session_id: sid, seq: 3 }, metadata: delivered.relation.metadata };
+    await r.client('agents.send', { agent_id: a.agent_id, request_id: 'answer-a', prompt: 'Sunday', relation: answerRelation });
+    waiting = (await r.tool('resume_task', { task_id: waiting.task_id, expected_revision: waiting.revision, answer: 'Sunday' }, sid, { source_message: { session_id: sid, seq: 2 }, message_relation: answerRelation })).task;
+    assert.equal(waiting.requirements_revision, 3);
+    await assert.rejects(r.client('agents.send', { agent_id: a.agent_id, request_id: 'stale-question', prompt: 'Monday', relation: answerRelation }), /question|stale/);
+    await assert.rejects(r.client('agents.send', { agent_id: a.agent_id, request_id: 'stripped-question', prompt: 'Monday', relation: { reply_to: answerRelation.reply_to, metadata: { task_links: [{ task_id: waiting.task_id, requirements_revision: 2 }] } } }), /question|relation|stale/);
+    await assert.rejects(r.tool('update_task', { task_id: bTask.task_id, expected_revision: bTask.revision, goal: 'Bypass target' }, sid, { source_message: { session_id: sid, seq: 2 }, message_relation: { reply_to: { session_id: sid, seq: 3 }, metadata: { task_links: [] } } }), /question|target|relation/);
+    await r.close();
+    const restarted = await new Runtime(h).start();
+    const restored = await restarted.client('agents.history', { agent_id: a.agent_id });
+    assert.deepEqual(restored.records.at(-1).relation, delivered.relation);
+    await restarted.close();
+  });
   await scenario('Coding initialization has no Personal tools, services, or writes', async () => {
     const codingHost = new Host(), coding = await new Runtime(codingHost).start('coding');
     assert.equal(coding.definition.tools?.length ?? 0, 0); assert.equal(coding.definition.provided_services?.length ?? 0, 0); assert.equal(codingHost.calls.length, 0); await coding.close();

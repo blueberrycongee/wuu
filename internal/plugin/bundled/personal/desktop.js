@@ -71,6 +71,8 @@ export async function activate(api) {
       "outcome": "Result",
       "stopTask": "Stop this task",
       "openMainChat": "Open chat",
+      "replies": "Replies", "replyUnavailable": "Original message unavailable", "replyLoading": "Loading original message…", "earlierReplies": "Load earlier conversation", "replyTaskContext": "Task context",
+      "replyMessage": "Reply", "replyTask": "Reply to this task", "replyingMessage": "Replying to message", "replyingTask": "Replying to task", "cancelReply": "Cancel reply",
       "close": "Close",
       "back": "Back",
       "save": "Save changes",
@@ -167,6 +169,8 @@ export async function activate(api) {
       "outcome": "结果",
       "stopTask": "停止这件事",
       "openMainChat": "打开聊天",
+      "replies": "回复", "replyUnavailable": "原消息不可用", "replyLoading": "正在加载原消息…", "earlierReplies": "加载更早的对话", "replyTaskContext": "事项上下文",
+      "replyMessage": "引用", "replyTask": "回复这件事", "replyingMessage": "引用消息", "replyingTask": "回复事项", "cancelReply": "取消引用",
       "close": "关闭",
       "back": "返回",
       "save": "保存修改",
@@ -220,6 +224,29 @@ export async function activate(api) {
     .mosaic[data-panel-open="true"] .mosaic-identity-label { visibility:hidden;opacity:0;pointer-events:none; }
     .mosaic-profile-name-button { border:0;background:transparent;padding:0;text-align:left;color:inherit;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
     .mosaic-name-backdrop { position:absolute;inset:0;z-index:60;display:grid;place-items:center;background:#00000026;padding:16px; }
+    .mosaic-replies { display:flex;flex-direction:column;position:absolute;z-index:40;left:50%;bottom:12px;transform:translateX(-50%);box-sizing:border-box;width:calc(100% - 48px);max-width:calc(100% - 24px);max-height:calc(100% - 48px);border:1px solid var(--hairline);border-radius:36px;background:var(--paper);box-shadow:0 16px 32px -8px rgb(0 0 0 / .19);overflow:hidden; }
+    .mosaic .mosaic-replies .plugin-conversation { display:flex;flex-direction:column;height:auto;min-height:0;flex:1 1 auto;max-height:none;overflow:hidden; }
+    .mosaic .mosaic-replies .plugin-conversation-titlebar { min-height:52px;height:52px;flex:none;padding:16px 20px 0 24px;display:flex;justify-content:flex-end; }
+    .mosaic-replies .title-block { display:none; }
+    .mosaic-replies-close { display:flex;align-items:center;justify-content:center;flex:none;width:36px;height:36px;border:1px solid var(--hairline);border-radius:50%;background:var(--paper);box-shadow:0 2px 8px rgb(0 0 0 / .06);color:var(--ink);cursor:pointer; }
+    .mosaic-replies-close svg { width:20px;height:20px; }
+    .mosaic-replies-close:hover { background:var(--surface-2);color:var(--ink); }
+    .mosaic-replies .plugin-conversation-scroll { flex:1 1 auto;min-height:0;max-height:none;margin:0;overflow:auto;padding:4px 24px 12px; }
+    .mosaic-replies .plugin-conversation-flow { padding:0;--conversation-flow-bottom-space:0px; }
+    .mosaic-replies .plugin-conversation-composer { flex:none;width:100%;padding:0 24px 16px;box-sizing:border-box; }
+    .mosaic-replies .composer-wrap { margin:0;padding:0; }
+    .mosaic-replies .composer-stack { width:100%; }
+    .mosaic-replies .composer textarea:placeholder-shown { white-space:nowrap;text-overflow:ellipsis;overflow:hidden; }
+    .mosaic-replies .plugin-conversation-attachment:has(> img) > .conversation-file-card { display:none; }
+    .mosaic-replies .plugin-conversation-attachment > img { max-height:none;height:auto;margin-top:0;border-radius:16px; }
+    .mosaic-replies .bubble-time-toggle { display:none; }
+    .mosaic-replies .plugin-conversation-message:first-of-type > .bubble-message-time { position:static;align-self:center;opacity:1;transform:none;width:auto;padding:0;margin:0 0 12px;text-align:center; }
+    .mosaic-replies .plugin-conversation-message:first-of-type > .bubble-message-time[aria-hidden="true"] { visibility:visible; }
+    .mosaic-reply-status { color:var(--ink-muted);margin:8px 0; }
+    .mosaic-reply-task-context { margin:0 0 16px;overflow-wrap:anywhere; }
+    .mosaic-reply-task-context > span { color:var(--ink-muted);font-size:var(--font-sm); }
+    .mosaic-reply-task-context > p { margin:8px 0 0; }
+    @media(max-width:720px) { .mosaic-replies { width:calc(100% - 24px);border-radius:28px; } .mosaic-replies .plugin-conversation-scroll, .mosaic-replies .plugin-conversation-composer { padding-inline:16px; } }
     .mosaic-name-dialog { position:relative;width:min(360px,100%);max-height:100%;overflow:auto;min-height:450px;display:flex;flex-direction:column;align-items:center;gap:20px;padding:48px 32px 24px;border-radius:24px;background:var(--paper);box-shadow:0 12px 48px #00000026; }
     .mosaic-name-close { position:absolute;right:16px;top:12px;border:0;background:transparent;font-size:24px;color:var(--ink-muted);cursor:pointer; }
     .mosaic-name-input { width:100%;min-width:0;border:0;border-radius:12px;background:var(--surface-1);color:var(--ink);padding:12px 8px;text-align:center;font-size:32px;font-weight:600; }
@@ -318,33 +345,33 @@ export async function activate(api) {
   const decodeBytes = data => Uint8Array.from(atob(data), character => character.charCodeAt(0));
   const readFile = file => new Promise((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(reader.error || new Error("File read failed")); reader.onabort = () => reject(new Error("File read cancelled")); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.readAsDataURL(file); });
   const AttachmentOpenContext = React.createContext(() => {});
-  function Attachment({ agentId, taskId, requirementsRevision, seq, attachment, t }) {
+  function Attachment({ agentId, taskId, requirementsRevision, seq, attachment, t, autoLoad = false }) {
     const onOpen = React.useContext(AttachmentOpenContext);
     const [url, setURL] = React.useState(""), [loading, setLoading] = React.useState(false), [error, setError] = React.useState("");
     const live = React.useRef(true), blobURL = React.useRef(""), pendingRead = React.useRef(null);
     React.useEffect(() => { live.current = true; return () => { live.current = false; if (blobURL.current) URL.revokeObjectURL(blobURL.current); }; }, []);
     const raster = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"].includes(attachment.mime_type);
-    const readVerifiedBlob = async () => {
+    const readVerifiedBlob = async (cancelled = () => api.signal.aborted) => {
       if (attachment.size > fileLimit) throw new Error(t("oversizedAttachment"));
       if (!Number.isSafeInteger(attachment.size) || attachment.size <= 0 || !safeFilename(attachment.name) || !safeMime(attachment.mime_type) || !/^[a-f0-9]{64}$/.test(attachment.sha256)) throw new Error(t("invalidAttachment"));
       const total = Math.ceil(attachment.size / 3) * 4, chunks = [];
       let offset = 0;
       while (offset < total) {
-        if (api.signal.aborted) throw new Error("Attachment read cancelled");
+        if (cancelled()) throw new Error("Attachment read cancelled");
         const part = await call(taskId ? "tasks.attachments.read" : "agents.attachments.read", { ...(taskId ? { task_id: taskId, requirements_revision: requirementsRevision } : { agent_id: agentId }), seq, kind: attachment.kind, index: attachment.index, sha256: attachment.sha256, offset });
         if (part.offset !== offset || part.total !== total || part.sha256 !== attachment.sha256 || part.name !== attachment.name || part.content_type !== attachment.mime_type || typeof part.data !== "string" || !part.data.length || part.data.length > 128 * 1024 || part.data.length % 4 || part.data.length + offset > total || !/^[A-Za-z0-9+/]*={0,2}$/.test(part.data)) throw new Error(t("invalidAttachment"));
         chunks.push(part.data); offset += part.data.length;
       }
       const bytes = decodeBytes(chunks.join(""));
       if (bytes.length !== attachment.size || await digestBytes(bytes) !== attachment.sha256) throw new Error(t("invalidAttachment"));
-      if (api.signal.aborted) throw new Error("Attachment read cancelled");
+      if (cancelled()) throw new Error("Attachment read cancelled");
       return new Blob([bytes], { type: raster ? attachment.mime_type : "application/octet-stream" });
     };
     const read = async () => {
       if (blobURL.current) return blobURL.current;
       setLoading(true); setError("");
       try {
-        const blob = await readVerifiedBlob();
+        const blob = await readVerifiedBlob(() => !live.current || api.signal.aborted);
         if (!live.current || api.signal.aborted) return;
         blobURL.current = URL.createObjectURL(blob); setURL(blobURL.current); return blobURL.current;
       } catch (cause) { if (live.current) setError(cause instanceof Error ? cause.message : String(cause)); }
@@ -354,6 +381,7 @@ export async function activate(api) {
       if (!pendingRead.current) pendingRead.current = read().finally(() => { pendingRead.current = null; });
       return pendingRead.current;
     };
+    React.useEffect(() => { if (autoLoad && raster) void load(); }, [autoLoad, raster]);
     return h(ConversationAttachment, { onOpen, resourceId: JSON.stringify([taskId ? "task" : "agent", taskId || agentId, requirementsRevision, seq, attachment.kind, attachment.index, attachment.sha256]), name: attachment.name, mediaType: attachment.mime_type, size: attachment.size, url, loading, error, loadLabel: t(loading ? "verifying" : "readFile"), downloadLabel: t("download"), onLoad: load, onRead: readVerifiedBlob });
   }
   function TaskTrace({ taskId, taskRevision, requirementsRevision, requirements, t }) {
@@ -426,7 +454,7 @@ export async function activate(api) {
   // They remain in memory across route changes and are discarded on plugin unload.
   const conversations = new Map(), draftListeners = new Set();
   const draftFor = id => { if (!conversations.has(id)) conversations.set(id, { prompt: "", files: [], pending: null, submitting: false, queueIds: new Set(), dequeuedIds: new Set() }); return conversations.get(id); };
-  const updateDraft = (id, update) => { Object.assign(draftFor(id), update); draftListeners.forEach(listener => listener()); };
+  const updateDraft = (id, update) => { const draft = draftFor(id); if (["prompt", "files", "replyTarget"].some(key => Object.hasOwn(update, key))) draft.editVersion = (draft.editVersion || 0) + 1; if (Object.hasOwn(update, "replyTarget")) draft.pending = null; Object.assign(draft, update); draftListeners.forEach(listener => listener()); };
   const streams = new Map();
   let mainSessionID = "";
   const streamFor = id => { if (!streams.has(id)) streams.set(id, { items: new Map(), completedItems: new Set(), completedTurns: new Set(), version: 0, running: false }); return streams.get(id); };
@@ -456,7 +484,7 @@ export async function activate(api) {
         if (item.type !== "agent_message") continue;
         const key = `${turnID}:${item.id}`, previous = stream.items.get(key);
         if (!previous) continue;
-        stream.items.set(key, { ...previous, seq: item.seq, source_id: item.source_id, content: item.text ?? previous.content, streaming: false });
+        stream.items.set(key, { ...previous, seq: item.seq, relation: item.relation, source_id: item.source_id, content: item.text ?? previous.content, streaming: false });
         stream.completedItems.add(key);
       }
       for (const message of stream.items.values()) if (message.turn_id === turnID) message.streaming = false;
@@ -475,7 +503,7 @@ export async function activate(api) {
       if (stream.completedItems.has(itemKey) && method === "item/started") return;
       const previous = stream.items.get(itemKey);
       if (method === "item/completed") stream.completedItems.add(itemKey);
-      stream.items.set(itemKey, { id: itemID, turn_id: params.turn_id, seq: item.seq, source_id: item.source_id, content: method === "item/started" && previous ? previous.content : item.text ?? previous?.content ?? "", streaming: method !== "item/completed" });
+      stream.items.set(itemKey, { id: itemID, turn_id: params.turn_id, seq: item.seq, relation: item.relation, source_id: item.source_id, content: method === "item/started" && previous ? previous.content : item.text ?? previous?.content ?? "", streaming: method !== "item/completed" });
     }
     draftListeners.forEach(listener => listener());
   });
@@ -518,6 +546,30 @@ export async function activate(api) {
       if (event.key === "Tab") { const controls = [...dialog.current.querySelectorAll("button:not(:disabled),input:not(:disabled)")]; const first = controls[0], last = controls[controls.length - 1]; if (!controls.length) { event.preventDefault(); dialog.current.focus(); return; } if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } }
     } }, h("button", { type: "button", className: "mosaic-name-close", disabled: saving, "aria-label": t("close"), onClick: onClose }, "×"), h("input", { ref: input, className: "mosaic-name-input", value: name, disabled: saving, "aria-label": t("nameLabel"), "aria-invalid": !valid, onChange: event => { setName(event.target.value); setError(""); } }), h(Avatar, { size: 160, motion: "ambient" }), !valid && h("p", { className: "mosaic-name-error", role: "status" }, t("invalidName")), error && h("p", { className: "mosaic-name-error", role: "alert" }, error), h("button", { type: "submit", className: "mosaic-name-save", disabled: saving || !valid || !changed }, saving ? t("savingName") : t("saveName"))));
   }
+  const replySources = new Map();
+  function useReplySource({ reference, records, sessionID, agentID }) {
+    const key = `${agentID}:${reference?.session_id}:${reference?.seq}`;
+    const valid = reference?.session_id === sessionID && Number.isSafeInteger(reference?.seq) && reference.seq > 0;
+    const visible = valid ? records.find(record => record.seq === reference.seq && ["user", "assistant"].includes(record.role)) : undefined;
+    const [resolved, setResolved] = React.useState(null);
+    React.useEffect(() => {
+      if (!valid || visible) return;
+      let current = true;
+      if (!replySources.has(key)) replySources.set(key, call("agents.history", { agent_id: agentID, start_seq: reference.seq, end_seq: reference.seq }).then(result => result.records?.find(record => record.seq === reference.seq && ["user", "assistant"].includes(record.role)) ?? null).catch(() => null));
+      void replySources.get(key).then(record => { if (current) setResolved({ key, record }); });
+      return () => { current = false; };
+    }, [key, valid, visible]);
+    return { record: visible || (resolved?.key === key ? resolved.record : undefined), loading: valid && !visible && resolved?.key !== key };
+  }
+  function ReplyReference({ reference, records, sessionID, agentID, t, onOpen }) {
+    const { record, loading } = useReplySource({ reference, records, sessionID, agentID });
+    const excerpt = record ? record.display_content || record.content || record.attachments?.map(item => item.name).join(", ") || t("message") : t(loading ? "replyLoading" : "replyUnavailable");
+    return h("button", { type: "button", className: "plugin-reply-reference", "data-reply-reference": true, "data-unavailable": !record && !loading, disabled: !record, title: record ? t("viewOriginal") : excerpt, onClick: event => { event.currentTarget.focus({ preventScroll: true }); onOpen(record); } }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "M4 5v5a3 3 0 0 0 3 3h13m-5-5 5 5-5 5" })), h("span", null, excerpt));
+  }
+  function ReplyOriginal({ reference, records, sessionID, agentID, t, renderMessage }) {
+    const { record, loading } = useReplySource({ reference, records, sessionID, agentID });
+    return record ? renderMessage(record, true) : h("p", { className: "mosaic-reply-status", role: "status" }, t(loading ? "replyLoading" : "replyUnavailable"));
+  }
   function PersonalHome({ locale, host }) {
     const t = key => (locale?.startsWith("zh") ? words.zh : words.en)[key] || key;
     const [agent, setAgent] = React.useState(null), [records, setRecords] = React.useState([]), [historyInfo, setHistoryInfo] = React.useState(null);
@@ -526,6 +578,8 @@ export async function activate(api) {
     const [loading, setLoading] = React.useState(true), [error, setError] = React.useState("");
     const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
     const [nameOpen, setNameOpen] = React.useState(false);
+    const [replySelection, setReplySelection] = React.useState(null);
+    const replyPanelRef = React.useRef(null), replyTrigger = React.useRef(null);
     const [panelOpen, setPanelOpen] = React.useState(false), [showAll, setShowAll] = React.useState(false), [showAllOutputs, setShowAllOutputs] = React.useState(false);
     const [panelPresent, setPanelPresent] = React.useState(false), [panelPhase, setPanelPhase] = React.useState("closed"), [panelVisible, setPanelVisible] = React.useState(false);
     const [, setDraftVersion] = React.useState(0);
@@ -668,9 +722,9 @@ export async function activate(api) {
       return () => { clearInterval(timer); subscription.dispose(); };
     }, []);
     const mutate = async action => { if (controlRef.current) return; controlRef.current = true; setBusy(true); setError(""); try { await action(); } catch (cause) { report(cause); } finally { controlRef.current = false; if (mounted.current) setBusy(false); } };
-    const selectFiles = async selected => {
+    const selectFiles = async (selected, draftID = conversationID) => {
       if (!selected.length || readingRef.current || !agent) return;
-      const id = conversationID; readingRef.current = true; setReadingFiles(true); setError("");
+      const id = draftID; readingRef.current = true; setReadingFiles(true); updateDraft(id, { error: "" }); if (id === conversationID) setError("");
       try {
         const existing = draftFor(id).files;
         if (existing.length + selected.length > fileCountLimit || selected.some(file => !file.size) || existing.reduce((total, file) => total + file.size, 0) + selected.reduce((total, file) => total + file.size, 0) > fileLimit) throw new Error(t("attachmentLimit"));
@@ -682,25 +736,39 @@ export async function activate(api) {
           next.push({ sha256: await digestBytes(bytes), filename: file.name, media_type: mime, data, size: bytes.length });
         }
         updateDraft(id, { files: [...draftFor(id).files, ...next] });
-      } catch (cause) { report(cause); }
+      } catch (cause) { updateDraft(id, { error: cause instanceof Error ? cause.message : String(cause) }); if (id === conversationID) report(cause); }
       finally { readingRef.current = false; if (mounted.current) setReadingFiles(false); }
     };
-    const send = async submitted => {
-      const id = conversationID, state = draftFor(id), text = submitted ?? state.prompt, sentFiles = state.files;
+    const setReply = (target, source, taskContext) => {
+      const reference = target.relation.reply_to;
+      const key = reference ? `${conversationID}:reply:${reference.seq}` : `${conversationID}:task:${JSON.stringify(target.relation.metadata.task_links)}`;
+      if (!draftFor(key).replyTarget) updateDraft(key, { replyTarget: target });
+      replyTrigger.current = document.activeElement;
+      closePanel(false);
+      setReplySelection({ key, source, taskContext });
+    };
+    const closeReplies = () => {
+      setReplySelection(null);
+      requestAnimationFrame(() => { const trigger = replyTrigger.current; if (trigger?.isConnected && !trigger.closest('[inert],[hidden]')) trigger.focus({ preventScroll: true }); else rootRef.current?.querySelector('.mosaic-main textarea')?.focus({ preventScroll: true }); });
+    };
+    React.useEffect(() => { if (replySelection) replyPanelRef.current?.querySelector("textarea")?.focus({ preventScroll: true }); }, [replySelection?.key]);
+    const replyMessage = message => setReply({ label: t("replyingMessage"), preview: message.display_content || message.content || message.attachments?.map(item => item.name).join(", ") || "", relation: { reply_to: { session_id: conversationID, seq: message.seq }, ...(message.relation?.metadata?.task_links ? { metadata: { task_links: message.relation.metadata.task_links } } : {}) } }, message);
+    const send = async (submitted, draftID = conversationID) => {
+      const id = draftID, state = draftFor(id), text = submitted ?? state.prompt, sentFiles = state.files, sentTarget = state.replyTarget;
       if (!agent || state.submitting || readingRef.current || (!text.trim() && !sentFiles.length)) return;
-      const references = sentFiles.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type })), fileKey = JSON.stringify(references);
-      if (!state.pending || state.pending.prompt !== text || state.pending.fileKey !== fileKey) state.pending = { prompt: text, fileKey, requestID: crypto.randomUUID() };
-      const requestID = state.pending.requestID;
-      const stream = streamFor(id), version = stream.version;
-      updateDraft(id, { submitting: true }); setError("");
+      const references = sentFiles.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type })), fileKey = JSON.stringify(references), relationKey = JSON.stringify(sentTarget?.relation);
+      if (!state.pending || state.pending.prompt !== text || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey) state.pending = { prompt: text, fileKey, relationKey, requestID: crypto.randomUUID() };
+      const requestID = state.pending.requestID, editVersion = state.editVersion;
+      const stream = streamFor(conversationID), version = stream.version;
+      updateDraft(id, { submitting: true, error: "" }); if (id === conversationID) setError("");
       try {
-        const result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text, ...(sentFiles.length ? { attachments: references } : {}) }, { ...route, userInput: { requestId: requestID, prompt: text, ...(sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {}) } });
+        const result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text, ...(sentTarget ? { relation: sentTarget.relation } : {}), ...(sentFiles.length ? { attachments: references } : {}) }, { ...route, userInput: { requestId: requestID, prompt: text, ...(sentTarget ? { relation: sentTarget.relation } : {}), ...(sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {}) } });
         const latest = draftFor(id);
-        updateDraft(id, { pending: null, ...(latest.prompt === text ? { prompt: "" } : {}), ...(latest.files === sentFiles ? { files: [] } : {}) });
-        if (result?.state === "queued" && result.queue_id && !state.dequeuedIds.has(result.queue_id)) { state.queueIds.add(result.queue_id); updateDraft(id, {}); }
+        updateDraft(id, { pending: null, ...(latest.editVersion === editVersion ? { prompt: "", files: [] } : {}) });
+        if (result?.state === "queued" && result.queue_id && !draftFor(conversationID).dequeuedIds.has(result.queue_id)) { draftFor(conversationID).queueIds.add(result.queue_id); updateDraft(conversationID, {}); }
         if (result?.state === "running" && result.turn_id && version === stream.version && !stream.completedTurns.has(result.turn_id)) { stream.activeTurnID = result.turn_id; stream.running = true; stream.version++; updateDraft(id, {}); }
         if (mounted.current) await loadConversation(agent);
-      } catch (cause) { report(cause); }
+      } catch (cause) { updateDraft(id, { error: cause instanceof Error ? cause.message : String(cause) }); if (id === conversationID) report(cause); }
       finally { updateDraft(id, { submitting: false }); }
     };
     const stopReply = async () => {
@@ -715,9 +783,9 @@ export async function activate(api) {
       // Refresh failure does not undo a successful (or idempotent no-op) stop.
       try { await loadConversation(agent); } catch (cause) { report(cause); }
     };
-    const replyToQuestion = async (questionID, prompt) => {
+    const replyToQuestion = async (questionID, prompt, relation) => {
       const requestID = `question-${questionID}`;
-      const result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt }, { ...route, userInput: { requestId: requestID, prompt } });
+      const result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt, ...(relation ? { relation } : {}) }, { ...route, userInput: { requestId: requestID, prompt, ...(relation ? { relation } : {}) } });
       if (result?.state === "queued" && result.queue_id && !draftFor(conversationID).dequeuedIds.has(result.queue_id)) { draftFor(conversationID).queueIds.add(result.queue_id); updateDraft(conversationID, {}); }
       // Offer replies have their own admission and never consume a composer draft.
       try { await loadConversation(agent); } catch (cause) { report(cause); }
@@ -783,28 +851,49 @@ export async function activate(api) {
           task.reconciliation_required && h("p", { role: "status" }, t("reconciliation"))),
         h("div", { className: "mosaic-detail-actions" },
           aliveTask(task) && h(Button, { disabled: busy || task.state === "stopping", "data-action": "stop-task", onClick: () => mutate(async () => { await call("tasks.stop", { task_id: task.task_id, expected_revision: task.revision }); await loadTasks(); }) }, t("stopTask")),
+          h(Button, { "data-action": "reply-task", onClick: () => setReply({ label: t("replyingTask"), preview: task.title, relation: { metadata: { task_links: [{ task_id: task.task_id, requirements_revision: task.question?.requirements_revision ?? task.requirements_revision, ...(task.execution?.session_id ? { execution_session_id: task.execution.session_id } : {}), ...(task.question?.request_id ? { question_request_id: task.question.request_id } : {}) }] } } }, undefined, task) }, t("replyTask")),
           h(Button, { "data-action": "open-main-chat", variant: "ghost", onClick: () => { closePanel(false); rootRef.current?.querySelector(".mosaic-main textarea")?.focus({ preventScroll: true }); } }, t("openMainChat"))))  : h(React.Fragment, null,
         h("header", { className: "mosaic-profile-head" }, avatar(true), h("div", { className: "mosaic-profile-copy" }, h("button", { type: "button", className: "mosaic-profile-name mosaic-profile-name-button", "data-action": "rename-personal", "aria-label": `${t("rename")} · ${displayName}`, onClick: openRename }, displayName), h("div", { className: "mosaic-status", role: "status" }, statusText))),
         h("section", { className: "mosaic-section", "data-panel-section": "recent" }, h("h2", null, t("activity")), activity.length ? (showAll ? activity : activity.slice(0, 5)).map(item => item.routine ? routineRow(item.routine) : taskRows([item.task])) : h("p", { className: "mosaic-eyebrow" }, t("quiet")), activity.length > 5 && h(Button, { variant: "ghost", "data-action": "show-more-activity", onClick: () => setShowAll(value => !value) }, t(showAll ? "showLess" : "showMore"))),
         h("section", { className: "mosaic-section", "data-panel-section": "outputs" }, h("h2", null, t("outputs")), artifactOutputs.slice(0, showAllOutputs ? undefined : 3).map(output => h("button", { key: `${output.seq}:${output.attachment.sha256}`, className: "mosaic-task", "data-output-sha256": output.attachment.sha256, onClick: () => { detailTrigger.current = `[data-output-sha256="${output.attachment.sha256}"]`; setSelection({ kind: "artifact", seq: output.seq, sha256: output.attachment.sha256 }); } }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("output")), h("span", { className: "mosaic-task-copy" }, h("span", { className: "mosaic-task-title" }, output.attachment.name), h("span", { className: "mosaic-task-meta" }, date(output.at))))), outputs.length ? outputs.slice(0, showAllOutputs ? undefined : Math.max(0, 3 - artifactOutputs.length)).map(item => h("button", { key: item.task_id, className: "mosaic-task", "data-output-task-id": item.task_id, onClick: event => openDetail(event, item, "output") }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("output")), h("span", { className: "mosaic-task-copy" }, h("span", { className: "mosaic-task-title" }, item.title), h("span", { className: "mosaic-task-meta" }, date(item.updated_at))))) : !artifactOutputs.length && h("p", { className: "mosaic-eyebrow" }, t("noOutputs")), artifactOutputs.length + outputs.length > 3 && h(Button, { variant: "ghost", "data-action": "show-more-outputs", onClick: () => setShowAllOutputs(value => !value) }, t(showAllOutputs ? "showLess" : "showMore"))),
         null)));
-    return h(AttachmentOpenContext.Provider, { value: () => closePanel(false) }, h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h("main", { className: "mosaic-main", inert: nameOpen, "aria-hidden": nameOpen || undefined },
+    const renderReplyMessage = (record, original = false) => h(ConversationMessage, { key: `reply:${record.seq ?? record.id}`, id: `reply:${conversationID}:${record.seq ?? record.id}`, streaming: record.streaming, role: record.role, content: record.display_content || record.content || "", timestamp: record.at, linkPolicy: "external-only", onReply: original || !Number.isSafeInteger(record.seq) ? undefined : () => replyMessage(record), replyLabel: t("replyMessage"), attachments: record.attachments?.length ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t, autoLoad: true }))) : undefined });
+    const replyDraft = replySelection ? draftFor(replySelection.key) : undefined;
+    const rootSeq = replyDraft?.replyTarget?.relation.reply_to?.seq;
+    const replyMessages = [...records, ...liveMessages.filter(message => !records.some(record => record.seq === message.seq || (message.source_id && record.provider_item_id === message.source_id))).map(message => ({ ...message, role: "assistant" }))];
+    const relatedSeqs = new Set(rootSeq ? [rootSeq] : []);
+    for (let changed = true; changed;) { changed = false; for (const record of replyMessages) if (Number.isSafeInteger(record.seq) && !relatedSeqs.has(record.seq) && record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq)) { relatedSeqs.add(record.seq); changed = true; } }
+    const taskSource = replySelection?.taskContext?.source;
+    const taskSourceRef = taskSource?.message_binding === "host_turn" && taskSource.session_id === conversationID && taskSource.message_seq ? { session_id: conversationID, seq: taskSource.message_seq } : undefined;
+    const replyRecords = replySelection ? replyMessages.filter(record => ["user", "assistant"].includes(record.role) && (replySelection.taskContext ? record.seq !== taskSourceRef?.seq && record.relation?.metadata?.task_links?.some(link => link.task_id === replySelection.taskContext.task_id) : record.seq !== rootSeq && record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq))) : [];
+    const replyPanel = replySelection && h("section", { ref: replyPanelRef, className: "mosaic-replies", role: "dialog", "aria-modal": true, "aria-label": t("replies"), "data-reply-panel": replySelection.key, onKeyDown: event => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeReplies(); }
+      if (event.key === "Tab") { const controls = [...replyPanelRef.current.querySelectorAll('button:not(:disabled),textarea:not(:disabled),input:not(:disabled),a[href]')].filter(node => node.tabIndex >= 0 && !node.closest('[hidden]')); const first = controls[0], last = controls[controls.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } }
+    } }, h(ConversationView, { presentation: "bubbles", conversationId: replySelection.key, title: "", showHistorySearch: false, showJumpToLatest: false, searchLabel: "", searchContent: null,
+      actions: h("button", { type: "button", className: "mosaic-replies-close", "data-action": "close-replies", "aria-label": t("close"), onClick: closeReplies }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "m6 6 12 12M18 6 6 18" }))),
+      composer: h(ConversationComposer, { conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: files => selectFiles(files, replySelection.key), onRemoveAttachment: id => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: text => send(text, replySelection.key), onStop: stopReply }) },
+      replyDraft.error && h("p", { role: "alert", className: "mosaic-reply-status" }, replyDraft.error),
+      replySelection.taskContext ? h("div", { className: "mosaic-reply-task-context" }, h("span", null, t("replyTaskContext")), h("p", null, replySelection.taskContext.title), !taskSourceRef && replySelection.taskContext.goal && h("p", null, replySelection.taskContext.goal)) : replySelection.source ? renderReplyMessage(replySelection.source, true) : h(ReplyOriginal, { reference: replyDraft.replyTarget.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, renderMessage: renderReplyMessage }),
+      taskSourceRef ? h(ReplyOriginal, { reference: taskSourceRef, records, sessionID: conversationID, agentID: agent.agent_id, t, renderMessage: renderReplyMessage }) : null,
+      replyRecords.map(record => renderReplyMessage(record)),
+      historyInfo?.has_earlier && h(Button, { variant: "ghost", disabled: busy, onClick: () => mutate(async () => { const history = await call("agents.history", { agent_id: agent.agent_id, end_seq: historyInfo.first_seq - 1 }); if (!mounted.current) return; setRecords(current => [...new Map([...(history.records || []), ...current].map(record => [record.seq, record])).values()].sort((a, b) => a.seq - b.seq)); setHistoryInfo({ first_seq: history.first_seq, has_earlier: history.has_earlier }); }) }, t("earlierReplies"))));
+    return h(AttachmentOpenContext.Provider, { value: () => closePanel(false) }, h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h("main", { className: "mosaic-main", inert: nameOpen || Boolean(replySelection), "aria-hidden": nameOpen || Boolean(replySelection) || undefined },
       error && h("div", { className: "mosaic-error", role: "alert" }, h("span", null, error), h(Button, { onClick: agent ? () => { setError(""); Promise.all([loadConversation(agent), loadTasks(), loadRoutines()]).catch(report); } : initialize }, t("retry"))),
       !agent ? loading ? h(LoadingState, { label: "twin" }) : h(EmptyState, { title: t("hostUnavailable") }) : h(ConversationView, {
         presentation: "bubbles", conversationId: conversationID, sessionId: conversationID, sessionScope: route, onQuestionReply: replyToQuestion, title: "twin", loading,
         actions: h("div", { className: "mosaic-identity" }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} · ${displayName} · ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => { if (panelOpen) closePanel(); else openPanel(); } }, avatar()), h("button", { type: "button", className: "mosaic-identity-label", "data-action": "rename-personal", "aria-label": `${t("rename")} · ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openRename }, h("strong", null, displayName), h("small", null, statusText))),
-        showHistorySearch: false, searchLabel: t("historySearch"), searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
-        composer: h(ConversationComposer, { conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles,
+        showHistorySearch: false, showJumpToLatest: !replySelection, searchLabel: t("historySearch"), searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
+        composer: h("div", { hidden: Boolean(replySelection) }, h(ConversationComposer, { conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles,
           attachments: files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(conversationID, { prompt: value }), onAddAttachments: selectFiles,
-          onRemoveAttachment: id => updateDraft(conversationID, { files: files.filter((_, index) => String(index) !== id) }), onSend: send, onStop: stopReply })
+          onRemoveAttachment: id => updateDraft(conversationID, { files: files.filter((_, index) => String(index) !== id) }), onSend: send, onStop: stopReply }))
       }, historyInfo?.has_earlier && h(Button, { disabled: busy, onClick: () => mutate(async () => { const history = await call("agents.history", { agent_id: agent.agent_id, end_seq: historyInfo.first_seq - 1 }); if (!mounted.current) return; setRecords(current => [...new Map([...(history.records || []), ...current].map(record => [record.seq, record])).values()].sort((a, b) => a.seq - b.seq)); setHistoryInfo({ first_seq: history.first_seq, has_earlier: history.has_earlier }); }) }, t("older")),
         records.filter(record => !liveMessages.some(message => message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id)) && ["user", "assistant"].includes(record.role) && (record.display_content || record.content || record.attachments?.length)).map(record => h(ConversationMessage, {
-          key: record.seq, id: `${conversationID}:${record.seq}`, timestamp: record.at, role: record.role, latest: record === records.findLast(item => item.role === "assistant"), content: record.display_content || record.content || "", linkPolicy: "external-only",
+          replyPreview: record.relation?.reply_to ? h(ReplyReference, { reference: record.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : undefined, onReply: Number.isSafeInteger(record.seq) && record.seq > 0 ? () => replyMessage(record) : undefined, replyLabel: t("replyMessage"), key: record.seq, id: `${conversationID}:${record.seq}`, timestamp: record.at, role: record.role, latest: record === records.findLast(item => item.role === "assistant"), content: record.display_content || record.content || "", linkPolicy: "external-only",
           attachments: record.attachments?.length > 0 ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.kind}:${attachment.index}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t }))) : null
-        })), liveMessages.map(message => h(ConversationMessage, { key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })), !loading && !records.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
+        })), liveMessages.map(message => h(ConversationMessage, { replyPreview: message.relation?.reply_to ? h(ReplyReference, { reference: message.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : undefined, onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : undefined, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })), !loading && !records.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
         pendingCalendarOperations.length > 0 && h("section", { className: "mosaic-calendar-proposals", "data-calendar-proposals": true },
           pendingCalendarOperations.map(item => h(Button, { key: item.operation_id, variant: "ghost", "data-calendar-operation": item.operation_id, disabled: calendarBusy, onClick: () => openCalendar(item.operation_id) }, `${item.fields?.summary || t("calendarReview")} · ${t(item.status === "proposed" ? "calendarProposed" : item.status === "uncertain" ? "calendarUncertain" : item.status)}`)),
-          calendarError && h("p", { role: "alert" }, calendarError)))), h("div", { className: "mosaic-panel-layer", "data-panel-phase": panelPhase }, sidebar), nameOpen && h(RenameDialog, { agent, t, onSave: saveName, onClose: closeRename })));
+          calendarError && h("p", { role: "alert" }, calendarError)))), h("div", { className: "mosaic-panel-layer", "data-panel-phase": panelPhase }, sidebar), replyPanel, nameOpen && h(RenameDialog, { agent, t, onSave: saveName, onClose: closeRename })));
   }
   // A cold/offline host keeps the manifest title until the normal view initialization succeeds.
   call("agents.list").then(result => { if (!api.signal.aborted) publishIdentity(result.agents?.find(value => value.kind === "main")); }).catch(() => {});

@@ -2,7 +2,7 @@ import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ExtensionInventoryRecord, WuuDesktopApi } from "../../shared/protocol";
-import { DesktopPluginRuntime } from "./DesktopPluginRuntime";
+import { DesktopPluginRuntime, desktopPluginHost } from "./DesktopPluginRuntime";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 
 const originalWuu = window.wuu;
@@ -13,6 +13,17 @@ afterEach(() => {
 });
 
 describe("DesktopPluginRuntime", () => {
+  it("preserves message relations in the authenticated renderer input receipt", async () => {
+    const request = vi.fn().mockResolvedValue({ result: { state: "accepted" } });
+    window.wuu = { ...originalWuu, requestPluginRuntime: request, cancelPluginRuntime: vi.fn().mockResolvedValue({}) };
+    const relation = { reply_to: { session_id: "main", seq: 7 }, metadata: { task_links: [{ task_id: "task-a", requirements_revision: 2 }] } };
+    try {
+      let api!: PluginGenerationApi;
+      await desktopPluginHost.activateGeneration({ pluginId: "test:reply-receipt", generation: "one", register: value => { api = value; } });
+      await api.invokeRuntime("agents.send", { prompt: "Change this", relation }, { userSpaceId: "local", productDomain: "personal", userInput: { requestId: "reply-one", prompt: "Change this", relation } });
+      expect(request).toHaveBeenCalledWith(expect.objectContaining({ input: { prompt: "Change this", relation }, user_input: { request_id: "reply-one", prompt: "Change this", relation } }));
+    } finally { desktopPluginHost.unload("test:reply-receipt"); }
+  });
   it.each([false, true])("activates independent plugins while another is pending, then safe mode=%s", async (safeMode) => {
     let release!: () => void;
     let signalStarted!: () => void;

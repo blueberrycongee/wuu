@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"maps"
 	"strings"
@@ -308,8 +309,41 @@ func CloneMessageContentParts(parts []MessageContentPart) []MessageContentPart {
 	return out
 }
 
+// MessageRef identifies a durable message by its session and sequence.
+type MessageRef struct {
+	SessionID string `json:"session_id"`
+	Seq       int    `json:"seq"`
+}
+
+// MessageRelation carries host reply linkage and opaque extension metadata.
+// It is not provider wire data.
+type MessageRelation struct {
+	ReplyTo  *MessageRef                `json:"reply_to,omitempty"`
+	Metadata map[string]json.RawMessage `json:"metadata,omitempty"`
+}
+
+// CloneMessageRelation returns an independent snapshot of the relation and its metadata.
+func CloneMessageRelation(r *MessageRelation) *MessageRelation {
+	if r == nil {
+		return nil
+	}
+	clone := *r
+	if r.ReplyTo != nil {
+		ref := *r.ReplyTo
+		clone.ReplyTo = &ref
+	}
+	if r.Metadata != nil {
+		clone.Metadata = make(map[string]json.RawMessage, len(r.Metadata))
+		for key, value := range r.Metadata {
+			clone.Metadata[key] = append(json.RawMessage(nil), value...)
+		}
+	}
+	return &clone
+}
+
 // ChatMessage is a generic multi-provider chat message.
 type ChatMessage struct {
+	Relation       *MessageRelation `json:"relation,omitempty"`
 	Role           string
 	Name           string
 	ClientID       string

@@ -140,3 +140,28 @@ Recent and backward `agents.history` reads recover through at most four physical
 Memory details include contributor, updating agent, contribution revisions, executor provenance and source/effective/write times where available. A source reference is shown as evidence, not presented as a resolved link unless a matching message locator exists.
 
 Notification settings also expose off/1/5/15-minute coalescing per responsible agent. Grouping changes notifications, not individual conversation history or message availability; it remains distinct from OS push permission and provider delivery.
+
+## Desktop message references and task context
+
+Desktop Personal can reply to an addressed conversation message or select **Reply
+to this task** from task details. This opens a floating Replies view with the
+original message or task context, related main-conversation messages, and an
+independent reply composer. Closing it restores the main draft. The reply remains
+part of the same persistent main conversation; this view does not create a new
+execution session. A reference identifies a target, not authorization to perform
+new work. The main assistant still interprets the user's request.
+
+A message address is `{session_id, seq}`, not a transient rendered item ID.
+`agents.send.relation` is carried separately from the exact user text and matches
+the authenticated `user_input.relation` envelope. Personal task links live in
+`relation.metadata.task_links`, with `task_id`, `requirements_revision`, optional
+`execution_session_id`, and optional `question_request_id`. History and live
+assistant output retain the relation. Task creation uses the host's current-turn
+source message rather than a model-supplied sequence or the newest history row.
+
+Reply targets must be visible messages in the main conversation. Task and execution
+ownership, known requirement versions, and pending question identities are checked.
+A stale question must be reselected rather than answered against another version.
+Retrying the same input cannot silently change its target or apply a task revision
+twice. Ordinary unreferenced chat remains ordinary chat. Detailed tools and worker
+history stay in the execution view, not the main conversation.

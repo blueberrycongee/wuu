@@ -15,7 +15,7 @@ const activate = Function(source.replace("export async function activate(api)", 
 const main = { agent_id: "a-main", user_space_id: "local", name: "Mosaic", kind: "main", main_session_id: "s-private", status: "active", revision: 2 };
 const cleanups: Array<() => void> = [];
 afterEach(() => { cleanups.splice(0).forEach(fn => fn()); });
-async function mount(mutate?: (method: string, input: any) => Promise<unknown>, mainAgent: typeof main & Record<string, unknown> = main, historyRecords?: unknown[], fixtures: { calendarView?: boolean; tasks?: unknown[]; memories?: unknown[]; open?: () => Promise<unknown>; history?: (input: any) => Promise<unknown> } = {}) {
+async function mount(mutate?: (method: string, input: any) => Promise<unknown>, mainAgent: typeof main & Record<string, unknown> = main, historyRecords?: unknown[], fixtures: { calendarView?: boolean; tasks?: unknown[]; memories?: unknown[]; open?: () => Promise<unknown>; history?: (input: any) => Promise<unknown>; historySearch?: boolean } = {}) {
   const invoke = vi.fn<NonNullable<PluginHostOptions["invokeRuntime"]>>(async ({ method, input }) => {
     if (method === "agents.ensure_default") return { agent: mainAgent };
     if (method === "agents.list") return { agents: [mainAgent], default_agent_id: mainAgent.agent_id };
@@ -27,7 +27,8 @@ async function mount(mutate?: (method: string, input: any) => Promise<unknown>, 
     if (method === "settings.get") return { settings: { revision: 1, notifications: true, quiet_hours: { enabled: false, start: "22:00", end: "08:00", timezone: "UTC" } } };
     return (await mutate?.(method, input)) ?? {};
   });
-  const host = new PluginHost({ react: React, invokeRuntime: invoke, conversationComponents: { Composer: PluginConversationComposer, Message: PluginConversationMessage, View: PluginConversationView, Attachment: PluginConversationAttachment } });
+  // Personal hides search; search-contract fixtures opt into the shared surface without changing product defaults.
+  const host = new PluginHost({ react: React, invokeRuntime: invoke, conversationComponents: { Composer: PluginConversationComposer, Message: PluginConversationMessage, View: fixtures.historySearch ? props => <PluginConversationView {...props} showHistorySearch /> : PluginConversationView, Attachment: PluginConversationAttachment } });
   await host.activateGeneration({ pluginId: "personal", generation: "one", register: activate });
   if (fixtures.calendarView) await host.activateGeneration({ pluginId: "personal-calendar", generation: "one", register: api => { api.registerViewType({ id: "personal-calendar.confirmation", title: "Calendar confirmation", defaultRegion: "overlay", persistence: "session", render: () => null }); } });
   const controller = new WorkbenchController(host);
@@ -35,8 +36,8 @@ async function mount(mutate?: (method: string, input: any) => Promise<unknown>, 
   const root = createRoot(container);
   cleanups.push(() => { act(() => root.unmount()); controller.dispose(); host.unload("personal"); host.unload("personal-calendar"); container.remove(); });
   await act(async () => root.render(<PluginViewContent controller={controller} pluginId="personal" viewTypeId="personal.home" />));
-  const click = async (selector: string, scope: ParentNode = container) => { const button = scope.querySelector<HTMLButtonElement>(selector); expect(button).not.toBeNull(); await act(async () => button!.click()); };
-  const edit = async (value: string) => { const node = container.querySelector("textarea")!; await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(node, value); node.dispatchEvent(new Event("input", { bubbles: true })); }); };
+  const click = async (selector: string, scope: ParentNode = container) => { const button = (scope === container && selector.startsWith(".composer-") ? container.querySelector(".mosaic-replies") ?? scope : scope).querySelector<HTMLButtonElement>(selector); expect(button).not.toBeNull(); await act(async () => button!.click()); };
+  const edit = async (value: string) => { const node = container.querySelector<HTMLTextAreaElement>(".mosaic-replies textarea") ?? container.querySelector("textarea")!; await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(node, value); node.dispatchEvent(new Event("input", { bubbles: true })); }); };
   return { container, invoke, click, edit, controller, publish: (event: unknown = { type: "routine-state-changed" }) => host.publishHostEvent(event), remount: async (between?: () => void) => { await act(async () => root.render(null)); await act(async () => between?.()); await act(async () => root.render(<PluginViewContent controller={controller} pluginId="personal" viewTypeId="personal.home" />)); }, settings: async () => { await act(async () => root.render(<PluginViewContent controller={controller} pluginId="personal" viewTypeId="personal.preferences" />)); }, activateEntry: () => controller.openPluginView("personal", "personal.home") };
 }
 it("preserves unsent text when sending fails and never substitutes a session ID for an agent", async () => {
@@ -46,6 +47,165 @@ it("preserves unsent text when sending fails and never substitutes a session ID 
   expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("Host offline");
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ agent_id: "a-main", prompt: "Remember this", request_id: expect.any(String) }) }));
 });
+it("shows sent reply excerpts from the exact visible source without treating quoted text as message content", async () => {
+  const ui = await mount(undefined, main, [{ seq: 1, role: "assistant", content: "Original source" }, { seq: 2, role: "user", content: "My follow-up", relation: { reply_to: { session_id: "s-private", seq: 1 } } }]);
+  expect(ui.container.querySelector('[data-reply-reference]')?.textContent).toBe("Original source");
+  expect(ui.container.querySelector('[data-reply-reference]')?.closest('[data-role="user"]')?.querySelector('.user-message')?.textContent).toContain("My follow-up");
+  expect(ui.container.querySelector('[data-reply-reference]')?.closest('.bubble-message-content')).toBeNull();
+  const reply = ui.container.querySelector<HTMLButtonElement>('[data-action="reply-message"]')!;
+  expect(reply.getAttribute('aria-label')).toBeTruthy();
+});
+it("loads missing quoted sources once by exact scoped sequence and never renders foreign or tool sources", async () => {
+  const relation = (session: string, seq: number) => ({ reply_to: { session_id: session, seq } });
+  const rows = [{ seq: 20, role: "user", content: "First", relation: relation("s-private", 3) }, { seq: 21, role: "assistant", content: "Second", relation: relation("s-private", 3) }, { seq: 22, role: "user", content: "Foreign", relation: relation("other-session", 4) }, { seq: 23, role: "user", content: "Unavailable", relation: relation("s-private", 5) }];
+  const history = vi.fn(async input => input.start_seq === 3 ? { records: [{ seq: 3, role: "assistant", content: "Older verified source" }] } : input.start_seq === 5 ? { records: [{ seq: 5, role: "tool", content: "Private tool body" }, { seq: 6, role: "assistant", content: "Wrong message" }] } : { records: rows });
+  const ui = await mount(undefined, main, undefined, { history });
+  await vi.waitFor(() => expect([...ui.container.querySelectorAll('[data-reply-reference]')].filter(node => node.textContent === "Older verified source")).toHaveLength(2));
+  expect(history.mock.calls.filter(([input]) => input.start_seq === 3)).toHaveLength(1);
+  expect(history).toHaveBeenCalledWith({ agent_id: "a-main", start_seq: 3, end_seq: 3 });
+  expect(history.mock.calls.some(([input]) => input.start_seq === 4)).toBe(false);
+  expect(ui.container.textContent).not.toContain("Private tool body"); expect(ui.container.textContent).not.toContain("Wrong message");
+  expect(ui.container.querySelectorAll('[data-reply-reference][data-unavailable="true"]')).toHaveLength(2);
+});
+it("ignores an older source lookup after the displayed reply reference changes", async () => {
+  let finish!: (value: unknown) => void;
+  const pending = new Promise(resolve => { finish = resolve; });
+  let source = 3;
+  const ui = await mount(undefined, main, undefined, { history: async input => input.start_seq === 3 ? pending : input.start_seq === 4 ? { records: [{ seq: 4, role: "assistant", content: "Current source" }] } : { records: [{ seq: 20, role: "user", content: "Follow-up", relation: { reply_to: { session_id: "s-private", seq: source } } }] } });
+  source = 4; await act(async () => ui.publish());
+  await vi.waitFor(() => expect(ui.container.querySelector('[data-reply-reference]')?.textContent).toBe("Current source"));
+  await act(async () => { finish({ records: [{ seq: 3, role: "assistant", content: "Stale source" }] }); await pending; });
+  expect(ui.container.querySelector('[data-reply-reference]')?.textContent).toBe("Current source");
+  expect(ui.container.textContent).not.toContain("Stale source");
+});
+it("keeps independent reply targets retryable with their drafts and files across close and reopen", async () => {
+  attachmentBrowser();
+  const link = { task_id: "t1", requirements_revision: 1, execution_session_id: "execution-one" };
+  const ui = await mount(async method => { if (method === "agents.send") throw new Error("Lost admission response"); }, main,
+    [{ seq: 7, role: "assistant", content: "First result", relation: { metadata: { task_links: [link] } } }, { seq: 8, role: "assistant", content: "Second result" }]);
+  await ui.edit("Unrelated main draft");
+  await chooseFiles(ui.container, [new File(["hello"], "main.txt", { type: "text/plain" })]);
+  await vi.waitFor(() => expect(ui.container.querySelector(".composer-attachment-tray")).not.toBeNull());
+  await ui.click('[data-action="reply-message"]'); await ui.edit("Please adjust this");
+  expect(ui.container.querySelector('.mosaic-replies .composer-attachment-tray')).toBeNull();
+  await chooseFiles(ui.container, [new File(["hello"], "reply.txt", { type: "text/plain" })]);
+  await vi.waitFor(() => expect(ui.container.querySelector(".mosaic-replies .composer-attachment-tray")).not.toBeNull());
+  await ui.click('.composer-send-button'); await ui.click('[data-action="close-replies"]'); await ui.remount(); await ui.click('[data-action="reply-message"]'); await ui.click('.composer-send-button');
+  let sends = ui.invoke.mock.calls.filter(([request]) => request.method === "agents.send");
+  expect(sends[0][0].input).toEqual(expect.objectContaining({ relation: { reply_to: { session_id: "s-private", seq: 7 }, metadata: { task_links: [link] } } }));
+  expect(sends[1][0].input).toEqual(sends[0][0].input);
+  expect(sends[0][0].userInput).toEqual(expect.objectContaining({ relation: (sends[0][0].input as any).relation }));
+  await ui.click('[data-action="close-replies"]');
+  await act(async () => (ui.container.querySelectorAll<HTMLButtonElement>('.mosaic-main [data-action="reply-message"]')[1]).click());
+  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("");
+  await ui.edit("Second follow-up"); await ui.click('.composer-send-button');
+  sends = ui.invoke.mock.calls.filter(([request]) => request.method === "agents.send");
+  expect((sends[2][0].input as any).request_id).not.toBe((sends[0][0].input as any).request_id);
+  expect((sends[2][0].input as any).relation).toEqual({ reply_to: { session_id: "s-private", seq: 8 } });
+  await ui.click('[data-action="close-replies"]');
+  expect(ui.container.querySelector('textarea')!.value).toBe("Unrelated main draft");
+  expect(ui.container.querySelector(".composer-attachment-tray")?.textContent).toContain("main.txt");
+  await ui.click('[data-action="reply-message"]');
+  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Please adjust this");
+  expect(ui.container.querySelector('.mosaic-replies .composer-attachment-tray')?.textContent).toContain("reply.txt");
+});
+it("keeps a newer task reply draft isolated when an earlier message reply settles", async () => {
+  let finish!: (value: unknown) => void;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const ui = await mount(async method => method === "agents.send" ? pending : {});
+  await ui.edit("Main draft");
+  await ui.click('[data-action="reply-message"]'); await ui.edit("First request"); await ui.click('.composer-send-button');
+  await ui.click('[data-action="close-replies"]'); await ui.click('[data-task-id="t1"]'); await ui.click('[data-action="reply-task"]'); await ui.edit("New task draft");
+  await act(async () => { finish({ state: "accepted" }); await pending; });
+  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("New task draft");
+  expect(ui.container.querySelector('.mosaic-replies')?.textContent).toContain("Plan a trip");
+  await ui.click('.composer-send-button');
+  const sends = ui.invoke.mock.calls.filter(([request]) => request.method === "agents.send");
+  expect((sends[1][0].input as any).relation).toEqual({ metadata: { task_links: [{ task_id: "t1", requirements_revision: 1 }] } });
+  await ui.click('[data-action="close-replies"]'); expect(ui.container.querySelector('textarea')!.value).toBe("Main draft");
+});
+it("shows a verified task source once while replying to the current task revision", async () => {
+  const task = { task_id: "t1", title: "Task A", goal: "Current requirements", state: "running", revision: 4, requirements_revision: 2, source: { session_id: "s-private", message_seq: 1, message_binding: "host_turn" }, execution: { session_id: "execution-two" } };
+  const ui = await mount(undefined, main, [{ seq: 1, role: "user", content: "Original request", relation: { metadata: { task_links: [{ task_id: "t1", requirements_revision: 1 }] } } }], { tasks: [task] });
+  await ui.click('[data-task-id="t1"]'); await ui.click('[data-action="reply-task"]');
+  expect(ui.container.querySelectorAll('.mosaic-replies [data-role="user"]')).toHaveLength(1);
+  await ui.edit("Update the task"); await ui.click('.composer-send-button');
+  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ relation: { metadata: { task_links: [{ task_id: "t1", requirements_revision: 2, execution_session_id: "execution-two" }] } } }) }));
+});
+it("does not surface an earlier reply failure in a different target's panel", async () => {
+  let rejectSend!: (error: Error) => void;
+  const pending = new Promise((_resolve, reject) => { rejectSend = reject; });
+  const ui = await mount(async method => method === "agents.send" ? pending : {});
+  await ui.click('[data-action="reply-message"]'); await ui.edit("First request"); await ui.click('.composer-send-button');
+  await ui.click('[data-action="close-replies"]'); await ui.click('[data-task-id="t1"]'); await ui.click('[data-action="reply-task"]'); await ui.edit("Task draft");
+  await act(async () => { rejectSend(new Error("Only first reply failed")); await pending.catch(() => {}); });
+  expect(ui.container.querySelector('.mosaic-replies [role="alert"]')).toBeNull();
+  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Task draft");
+  await ui.click('[data-action="close-replies"]'); await ui.click('[data-action="reply-message"]');
+  expect(ui.container.querySelector('.mosaic-replies [role="alert"]')?.textContent).toContain("Only first reply failed");
+});
+it("shows reply attachment failures only in the captured target, including late read failures", async () => {
+  attachmentBrowser();
+  const ui = await mount(undefined, main, [{ seq: 1, role: "assistant", content: "Target A" }, { seq: 2, role: "assistant", content: "Target B" }]);
+  await ui.click('[data-action="reply-message"]');
+  await chooseFiles(ui.container, [new File([], "empty.txt", { type: "text/plain" })]);
+  expect(ui.container.querySelector('.mosaic-replies [role="alert"]')).not.toBeNull();
+  let reader!: FileReader;
+  const read = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader) { reader = this; });
+  cleanups.push(() => read.mockRestore());
+  await chooseFiles(ui.container, [new File(["hello"], "notes.txt", { type: "text/plain" })]);
+  expect(ui.container.querySelector('.mosaic-replies [role="alert"]')).toBeNull();
+  await ui.click('[data-action="close-replies"]');
+  await act(async () => ui.container.querySelectorAll<HTMLButtonElement>('.mosaic-main [data-action="reply-message"]')[1].click());
+  await act(async () => reader.onerror?.(new ProgressEvent("error") as ProgressEvent<FileReader>));
+  expect(ui.container.querySelector('.mosaic-replies [role="alert"]')).toBeNull();
+  expect(ui.container.querySelector('.mosaic-main [role="alert"]')).toBeNull();
+  await ui.click('[data-action="close-replies"]'); await ui.click('[data-action="reply-message"]');
+  expect(ui.container.querySelector('.mosaic-replies [role="alert"]')?.textContent).toContain("File read failed");
+});
+it("removes the background floating jump control while the Replies dialog is open", async () => {
+  const ui = await mount();
+  const viewport = ui.container.querySelector<HTMLElement>('.plugin-conversation-scroll')!;
+  Object.defineProperties(viewport, { clientHeight: { configurable: true, value: 300 }, scrollHeight: { configurable: true, value: 2000 } });
+  await act(async () => { viewport.scrollTop = 0; viewport.dispatchEvent(new Event("scroll")); });
+  await vi.waitFor(() => expect(document.querySelector('[data-wuu-component="jump-to-latest"]')).not.toBeNull());
+  await ui.click('[data-action="reply-message"]');
+  expect(document.querySelector('[data-wuu-component="jump-to-latest"]')).toBeNull();
+});
+it("opens a quoted reply chain, focuses its composer and restores the trigger on Escape", async () => {
+  const ref = (seq: number) => ({ reply_to: { session_id: "s-private", seq } });
+  const ui = await mount(undefined, main, [{ seq: 1, role: "assistant", content: "Root" }, { seq: 2, role: "user", content: "First reply", relation: ref(1) }, { seq: 3, role: "assistant", content: "Nested reply", relation: ref(2) }, { seq: 4, role: "assistant", content: "Unrelated" }]);
+  const trigger = ui.container.querySelector<HTMLButtonElement>('[data-reply-reference]')!;
+  await ui.click('[data-reply-reference]');
+  const panel = ui.container.querySelector('.mosaic-replies')!;
+  expect(panel.textContent).toContain("Root"); expect(panel.textContent).toContain("First reply"); expect(panel.textContent).toContain("Nested reply"); expect(panel.textContent).not.toContain("Unrelated");
+  await act(async () => ui.publish({ kind: "notification", message: { method: "item/started", params: { thread_id: "s-private", turn_id: "reply-live", item: { id: "answer", type: "agent_message", text: "Related live answer", relation: ref(1) } } } }));
+  expect(panel.textContent).toContain("Related live answer");
+  expect(document.activeElement).toBe(panel.querySelector('textarea'));
+  expect(ui.container.querySelector('.mosaic-main')?.hasAttribute('inert')).toBe(true);
+  await act(async () => panel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(ui.container.querySelector('.mosaic-replies')).toBeNull(); await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+});
+it("does not clear a re-edited draft even when its text matches the pending send", async () => {
+  let finish!: (value: unknown) => void;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const ui = await mount(async method => method === "agents.send" ? pending : {});
+  await ui.edit("Same text"); await ui.click('.composer-send-button');
+  await ui.edit("Changed draft"); await ui.edit("Same text");
+  await act(async () => { finish({ state: "accepted" }); await pending; });
+  expect(ui.container.querySelector('textarea')!.value).toBe("Same text");
+});
+it("offers live replies only after durable identity and carries terminal task relations", async () => {
+  const ui = await mount(async method => { if (method === "agents.send") throw new Error("Keep draft"); }, main, []);
+  await act(async () => ui.publish({ kind: "notification", message: { method: "item/agentMessage/delta", params: { thread_id: "s-private", turn_id: "live", item_id: "answer", delta: "Live result" } } }));
+  expect(ui.container.querySelector('[data-action="reply-message"]')).toBeNull();
+  const relation = { metadata: { task_links: [{ task_id: "t1", requirements_revision: 2 }] } };
+  await act(async () => ui.publish({ kind: "notification", message: { method: "turn/completed", params: { thread_id: "s-private", turn: { id: "live", items_view: "full", items: [{ id: "answer", type: "agent_message", seq: 9, text: "Live result", relation }] } } } }));
+  await ui.click('[data-action="reply-message"]');
+  expect(ui.container.querySelector('.mosaic-replies [data-role="assistant"]')?.textContent).toContain("Live result");
+  await ui.edit("Follow up"); await ui.click('.composer-send-button');
+  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ relation: { reply_to: { session_id: "s-private", seq: 9 }, ...relation } }) }));
+});
 it("stops a task with its reviewed revision without stopping the agent's current reply", async () => {
   const ui = await mount(); await ui.click('[data-task-id="t1"]'); await ui.click('[data-action="stop-task"]');
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "tasks.stop", input: { task_id: "t1", expected_revision: 3 } }));
@@ -54,7 +214,7 @@ it("stops a task with its reviewed revision without stopping the agent's current
 
 const fileDigest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
 async function chooseFiles(container: HTMLElement, files: File[]) {
-  const input = container.querySelector<HTMLInputElement>('input[type="file"]'); expect(input).not.toBeNull();
+  const input = (container.querySelector('.mosaic-replies') ?? container).querySelector<HTMLInputElement>('input[type="file"]'); expect(input).not.toBeNull();
   await act(async () => { Object.defineProperty(input!, "files", { configurable: true, value: files }); input!.dispatchEvent(new Event("change", { bubbles: true })); });
 }
 function attachmentBrowser() {
@@ -81,20 +241,41 @@ it("rejects oversized or too-many file selections before admitting attachment by
   await chooseFiles(ui.container, Array.from({ length: 17 }, (_, i) => new File(["x"], `file${i}.txt`)));
   expect(ui.container.querySelector('.composer-attachment-tray')).toBeNull(); expect(ui.invoke.mock.calls.some(([request]) => request.method === "agents.send")).toBe(false);
 });
-it("downloads artifacts only through agent-scoped verified chunks and revokes the Blob on navigation", async () => {
+it("loads raster reply attachments through verified scoped bytes and revokes the inline preview on close", async () => {
+  const browser = attachmentBrowser();
+  const attachment = { kind: "artifact", index: 0, name: "image.png", mime_type: "image/png", size: 5, sha256: fileDigest };
+  const ui = await mount(async (method, input) => method === "agents.attachments.read" ? { data: "aGVsbG8=", offset: input.offset, total: 8, content_type: "image/png", name: "image.png", sha256: fileDigest } : {}, main, [{ seq: 7, role: "assistant", content: "Image result", attachments: [attachment] }]);
+  expect(ui.invoke.mock.calls.some(([request]) => request.method === "agents.attachments.read")).toBe(false);
+  await ui.click('[data-action="reply-message"]');
+  await vi.waitFor(() => expect(ui.container.querySelector('.mosaic-replies img')?.getAttribute('src')).toBe("blob:verified-scoped-file"));
+  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.attachments.read", input: { agent_id: "a-main", seq: 7, kind: "artifact", index: 0, sha256: fileDigest, offset: 0 } }));
+  await ui.click('[data-action="close-replies"]'); expect(browser.revoke).toHaveBeenCalledWith("blob:verified-scoped-file");
+});
+it.each(["corrupt", "closed"])("never exposes an unverified or late inline reply image (%s)", async mode => {
+  const browser = attachmentBrowser();
+  let finish!: (value: unknown) => void;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const ui = await mount(async method => method === "agents.attachments.read" ? pending : {}, main, [{ seq: 7, role: "assistant", content: "Image result", attachments: [{ kind: "artifact", index: 0, name: "image.png", mime_type: "image/png", size: 5, sha256: fileDigest }] }]);
+  await ui.click('[data-action="reply-message"]');
+  if (mode === "closed") await ui.click('[data-action="close-replies"]');
+  await act(async () => { finish({ data: mode === "corrupt" ? "d29ybGQ=" : "aGVsbG8=", offset: 0, total: 8, content_type: "image/png", name: "image.png", sha256: fileDigest }); await pending; });
+  if (mode === "corrupt") await vi.waitFor(() => expect(ui.container.querySelector('.mosaic-replies [role="alert"]')).not.toBeNull());
+  expect(browser.create).not.toHaveBeenCalled(); expect(ui.container.querySelector('.mosaic-replies img')).toBeNull();
+});
+it("opens artifacts only through agent-scoped verified chunks and revokes the Blob on navigation", async () => {
   const browser = attachmentBrowser();
   const ui = await mount(async (method, input) => method === "agents.attachments.read" ? { data: input.offset === 0 ? "aGVs" : "bG8=", offset: input.offset, total: 8, content_type: "image/svg+xml", name: "diagram.svg", sha256: fileDigest } : {}, main,
     [{ seq: 7, role: "assistant", content: "Result", attachments: [{ kind: "artifact", index: 0, name: "diagram.svg", mime_type: "image/svg+xml", size: 5, sha256: fileDigest }] }]);
-  await ui.click('[data-action="load-attachment"]');
+  await ui.click('[data-action="open-attachment"]');
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.attachments.read", input: { agent_id: "a-main", seq: 7, kind: "artifact", index: 0, sha256: fileDigest, offset: 4 } }));
-  await vi.waitFor(async () => { await act(async () => {}); expect(ui.container.querySelector<HTMLAnchorElement>('a[download]')?.getAttribute("href")).toBe("blob:verified-scoped-file"); }); expect(ui.container.querySelector("img")).toBeNull();
+  await vi.waitFor(async () => { await act(async () => {}); expect(browser.create).toHaveBeenCalledWith(expect.any(Blob)); }); expect(ui.container.querySelector("img")).toBeNull();
   await ui.remount(); expect(browser.revoke).toHaveBeenCalledWith("blob:verified-scoped-file");
 });
 it("does not expose a Blob URL for corrupt attachment chunks", async () => {
   const browser = attachmentBrowser();
   const ui = await mount(async method => method === "agents.attachments.read" ? { data: "YmFk", offset: 0, total: 4, content_type: "text/plain", name: "notes.txt", sha256: fileDigest } : {}, main,
     [{ seq: 7, role: "user", attachments: [{ kind: "file", index: 0, name: "notes.txt", mime_type: "text/plain", size: 3, sha256: fileDigest }] }]);
-  await ui.click('[data-action="load-attachment"]'); await vi.waitFor(async () => { await act(async () => {}); expect(ui.container.querySelector('[role="alert"]')).not.toBeNull(); }); expect(browser.create).not.toHaveBeenCalled(); expect(ui.container.querySelector('a[download]')).toBeNull(); expect(ui.container.querySelector('[role="alert"]')).not.toBeNull();
+  await ui.click('[data-action="open-attachment"]'); await vi.waitFor(async () => { await act(async () => {}); expect(ui.container.querySelector('[role="alert"]')).not.toBeNull(); }); expect(browser.create).not.toHaveBeenCalled(); expect(ui.container.querySelector('a[download]')).toBeNull(); expect(ui.container.querySelector('[role="alert"]')).not.toBeNull();
 });
 
 it("reads task result artifacts through the reviewed task execution rather than an agent session", async () => {
@@ -129,7 +310,7 @@ async function changeField(container: ParentNode, selector: string, value: strin
   await act(async () => { Object.getOwnPropertyDescriptor(node!.tagName === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype,"value")!.set!.call(node,value); node!.dispatchEvent(new Event("input",{bubbles:true})); node!.dispatchEvent(new Event("change",{bubbles:true})); });
 }
 it("searches only the main conversation and marks partial history results without exposing session controls", async () => {
-  const ui=await mount(async method=>method==="agents.search"?{session_id:"private-search-session",matches:[{seq:20,role:"assistant",excerpt:"Remembered Kyoto"},{seq:21,role:"tool",excerpt:"Hidden process data"}],has_more:true,budget_exhausted:true,next_cursor:"cursor"}:{});
+  const ui=await mount(async method=>method==="agents.search"?{session_id:"private-search-session",matches:[{seq:20,role:"assistant",excerpt:"Remembered Kyoto"},{seq:21,role:"tool",excerpt:"Hidden process data"}],has_more:true,budget_exhausted:true,next_cursor:"cursor"}:{}, main, undefined, { historySearch: true });
   await ui.click('[data-action="search-history"]'); await changeField(document, '[data-agent-history-query]',"Kyoto"); await ui.click('[data-action="search-agent-history"]', document);
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({method:"agents.search",input:expect.objectContaining({agent_id:"a-main",query:"Kyoto"})}));
   expect(document.querySelector('[data-history-search-results]')?.textContent).toContain("Remembered Kyoto");
@@ -144,7 +325,7 @@ it("saves reversible notification grouping without altering reply or quiet-hours
 });
 it("pages timestamp-bounded agent history and reads the original hit by exact owned sequence", async () => {
   const ui = await mount(async (method, input) => method === "agents.search" ? input.cursor ? { matches: [{ seq: 21, role: "user", excerpt: "Kyoto legacy" }], has_more: false } : { matches: [{ seq: 20, role: "assistant", excerpt: "Kyoto excerpt", at: "2026-10-18T09:00:00Z" }], has_more: true, next_cursor: "page-two" } : {}, main,
-    [{ seq: 20, role: "assistant", content: "The original Kyoto message", at: "2026-10-18T09:00:00Z" }]);
+    [{ seq: 20, role: "assistant", content: "The original Kyoto message", at: "2026-10-18T09:00:00Z" }], { historySearch: true });
   await ui.click('[data-action="search-history"]');
   await changeField(document, '[data-agent-history-query]', "Kyoto");
   await changeField(document, '[data-history-date="from"]', "2026-10-18");
@@ -164,7 +345,7 @@ it("pages timestamp-bounded agent history and reads the original hit by exact ow
   expect(document.querySelector<HTMLButtonElement>('[data-action="search-agent-history"]')!.disabled).toBe(true);
 });
 it("does not pass off a different history record as the searched original", async () => {
-  const ui = await mount(async method => method === "agents.search" ? { matches: [{ seq: 80, role: "assistant", excerpt: "Old match" }] } : {});
+  const ui = await mount(async method => method === "agents.search" ? { matches: [{ seq: 80, role: "assistant", excerpt: "Old match" }] } : {}, main, undefined, { historySearch: true });
   await ui.click('[data-action="search-history"]');
   await changeField(document, '[data-agent-history-query]', "Old"); await ui.click('[data-action="search-agent-history"]', document); await ui.click('[data-history-hit="80"]', document);
   expect(document.querySelector('[data-history-original]')).toBeNull();
@@ -250,7 +431,7 @@ it.each(["2026-10-18T09:00:00Z", undefined])("reveals only persisted message tim
 // the underlying conversation draft or its digest-bound attachments.
 it("opens history from the header and restores focus and draft attachments after Escape or close", async () => {
   attachmentBrowser();
-  const ui = await mount(async method => { if (method === "agents.send") throw new Error("Keep draft for retry"); return {}; });
+  const ui = await mount(async method => { if (method === "agents.send") throw new Error("Keep draft for retry"); return {}; }, main, undefined, { historySearch: true });
   const prompt = "  Keep this draft\n ";
   await ui.edit(prompt);
   await chooseFiles(ui.container, [new File(["hello"], "notes.txt", { type: "text/plain" })]);
@@ -283,7 +464,7 @@ it("opens history from the header and restores focus and draft attachments after
 it("discards a late history response after closing and reopening search", async () => {
   let resolveSearch!: (value: unknown) => void;
   const pending = new Promise(resolve => { resolveSearch = resolve; });
-  const ui = await mount(async method => method === "agents.search" ? pending : {});
+  const ui = await mount(async method => method === "agents.search" ? pending : {}, main, undefined, { historySearch: true });
   await ui.click('[data-action="search-history"]');
   await changeField(document, '[data-agent-history-query]', "Old query");
   await ui.click('[data-action="search-agent-history"]', document);
@@ -645,7 +826,8 @@ it("does not cancel an unknown current turn while send admission is unresolved",
 
 it.each([true, false])("holds and submits a custom Personal offer (reply_to_tool=%s) without consuming the composer draft", async replyToTool => {
   const prior = window.wuu;
-  const question = { request_id: "offer-one", plugin_id: "personal", execution_id: "exec", thread_id: "hidden-task", turn_id: "turn-offer", created_at: "2026-10-19T08:00:00Z", mode: "offer", reply_to_tool: replyToTool, expires_at: new Date(Date.now() + 60_000).toISOString(), questions: [{ id: "destination", header: "Choose a destination", question: "Which folder?", allow_custom: true, options: [{ label: "Travel", description: "Travel folder" }] }] };
+  const relation = { metadata: { task_links: [{ task_id: "t1", requirements_revision: 1, question_request_id: "offer-one" }] } };
+  const question = { relation, request_id: "offer-one", plugin_id: "personal", execution_id: "exec", thread_id: "hidden-task", turn_id: "turn-offer", created_at: "2026-10-19T08:00:00Z", mode: "offer", reply_to_tool: replyToTool, expires_at: new Date(Date.now() + 60_000).toISOString(), questions: [{ id: "destination", header: "Choose a destination", question: "Which folder?", allow_custom: true, options: [{ label: "Travel", description: "Travel folder" }] }] };
   const hold = vi.fn().mockResolvedValue({ request_id: question.request_id, resolved: false });
   const answer = vi.fn().mockResolvedValue({ request_id: question.request_id, resolved: true });
   const cancel = vi.fn().mockResolvedValue({ request_id: question.request_id, resolved: true });
@@ -667,8 +849,8 @@ it.each([true, false])("holds and submits a custom Personal offer (reply_to_tool
   } else {
     expect(cancel).toHaveBeenCalledWith("offer-one", context);
     const admission = ui.invoke.mock.calls.find(([request]) => request.method === "agents.send")![0];
-    expect(admission.input).toEqual({ agent_id: "a-main", request_id: "question-offer-one", prompt: "Projects" });
-    expect(admission).toEqual(expect.objectContaining({ userInput: { requestId: "question-offer-one", prompt: "Projects" } }));
+    expect(admission.input).toEqual({ agent_id: "a-main", request_id: "question-offer-one", prompt: "Projects", relation });
+    expect(admission).toEqual(expect.objectContaining({ userInput: { requestId: "question-offer-one", prompt: "Projects", relation } }));
   }
   expect(ui.container.querySelector('.user-question-card')).toBeNull();
   expect(ui.container.querySelector('textarea')!.value).toBe("Preserve unrelated draft");

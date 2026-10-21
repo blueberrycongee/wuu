@@ -1699,6 +1699,7 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 					ID:           nextItemID(current.ID),
 					Seq:          msg.Seq,
 					SourceID:     msg.ProviderItemID,
+					Relation:     providers.CloneMessageRelation(msg.Relation),
 					Type:         ThreadItemAgentMessage,
 					Status:       ThreadItemStatusCompleted,
 					Terminal:     assistantMessageTerminal(msg),
@@ -1846,6 +1847,7 @@ func chatMessageItem(id string, msg providers.ChatMessage) ThreadItem {
 			Cause:            strings.TrimSpace(msg.Cause),
 			PresentationKind: strings.TrimSpace(msg.PresentationKind),
 			RelatedSessionID: strings.TrimSpace(msg.RelatedSessionID),
+			Relation:         providers.CloneMessageRelation(msg.Relation),
 		}
 	case "assistant":
 		if strings.TrimSpace(msg.Content) != "" || len(msg.Images) > 0 {
@@ -1853,6 +1855,7 @@ func chatMessageItem(id string, msg providers.ChatMessage) ThreadItem {
 				ID:           id,
 				Seq:          msg.Seq,
 				SourceID:     msg.ProviderItemID,
+				Relation:     providers.CloneMessageRelation(msg.Relation),
 				Type:         ThreadItemAgentMessage,
 				Status:       ThreadItemStatusCompleted,
 				Terminal:     assistantMessageTerminal(msg),
@@ -1900,6 +1903,7 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 		OriginID:             rec.OriginID,
 		Cause:                rec.Cause,
 		PresentationKind:     rec.PresentationKind,
+		Relation:             providers.CloneMessageRelation(rec.Relation),
 		RelatedSessionID:     rec.RelatedSessionID,
 		ReadOnly:             rec.ReadOnly,
 		Phase:                providers.NormalizeMessagePhase(rec.Phase),
@@ -2124,6 +2128,7 @@ func filePreview(file providers.InputFile, index int) string {
 }
 
 func cloneThreadItem(item ThreadItem) ThreadItem {
+	item.Relation = providers.CloneMessageRelation(item.Relation)
 	item.Images = append([]ThreadItemImage(nil), item.Images...)
 	item.Files = append([]ThreadItemFile(nil), item.Files...)
 	item.ContentParts = providers.CloneMessageContentParts(item.ContentParts)

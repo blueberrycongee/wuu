@@ -119,6 +119,8 @@ type turnAdmissionHooks struct {
 }
 
 type turnRuntimeSnapshot struct {
+	SourceMessage   *providers.MessageRef
+	MessageRelation *providers.MessageRelation
 	// CWD and permissions are captured at admission. Later metadata changes
 	// must not retarget an already-admitted external-engine turn.
 	CWD                string
@@ -2482,7 +2484,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	browserTurn := &browserTurnState{threadID: th.ID, turnID: turnID, executionID: rand.Text(), bridges: make(map[string]*browserBridge)}
 	ctx = context.WithValue(ctx, browserTurnContextKey{}, browserTurn)
 	ctx = s.rt.ActivityRegistry.BeginExecution(ctx, th.ID, browserTurn.executionID)
-	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: th.ID, ExecutionID: turnID})
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: th.ID, ExecutionID: turnID, SourceMessage: turnRuntime.SourceMessage, MessageRelation: providers.CloneMessageRelation(turnRuntime.MessageRelation)})
 	turnKit := s.rt.Toolkit
 	if threadRuntime != nil {
 		turnKit = threadRuntime.Toolkit
@@ -2670,6 +2672,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			if th == nil || !th.PersistHistory {
 				return nil, head, errors.New("durable session history is unavailable")
 			}
+			inheritMessageRelation(messages, turnRuntime.MessageRelation)
 			records := historyRecordsFromChatMessages(messages)
 			checkpoint, err := session.StoreContextWindow(s.rt.SessionDir, th.ID, records, head, session.CompactionNote{
 				ProviderKey: key, Markdown: note.Markdown, CoveredMessages: note.CoveredMessages, CoveredHash: note.CoveredHash,
@@ -2700,6 +2703,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		runner.ArchiveHistory = nil
 		if th != nil && th.PersistHistory {
 			runner.ArchiveHistory = func(archiveCtx context.Context, messages []providers.ChatMessage) (agent.HistoryArchive, error) {
+				inheritMessageRelation(messages, turnRuntime.MessageRelation)
 				seqs, endSeq, err := appendChatMessagesReturningSeqs(s.rt.SessionDir, th.ID, messages)
 				if err != nil {
 					// These messages left the live steer queue but were not sent.
@@ -3053,7 +3057,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 			th.mu.Unlock()
 			return
 		}
-		batch := th.applyStreamEventLocked(turnID, ev, time.Now().UTC())
+		batch := th.applyStreamEventWithRelationLocked(turnID, ev, time.Now().UTC(), turnRuntime.MessageRelation)
 		th.mu.Unlock()
 		if ev.Type == providers.EventUsage && ev.Usage != nil {
 			usagePushMu.Lock()
@@ -3077,6 +3081,8 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	// RunTurn returns the engine outcome; the built-in wuu engine's result is
 	// the native loop result the rest of the turn accounting consumes.
 	res := turnResult.Result
+	inheritMessageRelation(res.NewMessages, turnRuntime.MessageRelation)
+	inheritMessageRelation(res.DurableNewMessages, turnRuntime.MessageRelation)
 	if s.rt != nil && s.rt.HookDispatcher != nil {
 		th.mu.Lock()
 		title := th.Title
@@ -4278,6 +4284,10 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		turnID = turn.ID
 	}
 	turnRuntime := turnRuntimeSnapshotLocked(th).withPermissions(permissions)
+	turnRuntime.MessageRelation = providers.CloneMessageRelation(userMsg.Relation)
+	if isHumanUserMessage(userMsg) && userMsg.Seq > 0 {
+		turnRuntime.SourceMessage = &providers.MessageRef{SessionID: th.ID, Seq: userMsg.Seq}
+	}
 	turnRuntime.PermissionExplicit = snapshot.PermissionExplicit
 	turnRuntime.ForceCompact = snapshot.ForceCompact
 	turnRuntime.CompactOnly = snapshot.CompactOnly

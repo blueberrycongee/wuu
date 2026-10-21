@@ -45,6 +45,7 @@ type persistedFile struct {
 }
 
 type persistedMessage struct {
+	Relation *providers.MessageRelation `json:"relation,omitempty"`
 	// Seq is the message's stable per-thread address. It is not serialized to
 	// the store's message columns because seq is the row's own key.
 	Seq                 int                                `json:"seq,omitempty"`
@@ -145,6 +146,7 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 			OriginID:             rec.OriginID,
 			Cause:                rec.Cause,
 			PresentationKind:     rec.PresentationKind,
+			Relation:             providers.CloneMessageRelation(rec.Relation),
 			RelatedSessionID:     rec.RelatedSessionID,
 			ReadOnly:             rec.ReadOnly,
 			Phase:                providers.NormalizeMessagePhase(rec.Phase),
@@ -386,6 +388,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 		OriginID:          msg.OriginID,
 		Cause:             msg.Cause,
 		PresentationKind:  msg.PresentationKind,
+		Relation:          providers.CloneMessageRelation(msg.Relation),
 		RelatedSessionID:  msg.RelatedSessionID,
 		ReadOnly:          msg.ReadOnly,
 		Phase:             string(msg.Phase),
@@ -530,6 +533,7 @@ func historyRecordFromPersistedMessage(rec persistedMessage) sessionstore.Histor
 		OriginID:            rec.OriginID,
 		Cause:               rec.Cause,
 		PresentationKind:    rec.PresentationKind,
+		Relation:            providers.CloneMessageRelation(rec.Relation),
 		RelatedSessionID:    rec.RelatedSessionID,
 		ReadOnly:            rec.ReadOnly,
 		Phase:               rec.Phase,
@@ -581,6 +585,7 @@ func persistedMessageFromHistoryRecord(rec sessionstore.HistoryRecord) (persiste
 		OriginID:            rec.OriginID,
 		Cause:               rec.Cause,
 		PresentationKind:    rec.PresentationKind,
+		Relation:            providers.CloneMessageRelation(rec.Relation),
 		RelatedSessionID:    rec.RelatedSessionID,
 		ReadOnly:            rec.ReadOnly,
 		Phase:               rec.Phase,

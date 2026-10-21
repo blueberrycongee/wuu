@@ -18,8 +18,11 @@ type Descriptor struct {
 }
 
 type ExecutionContext struct {
-	SessionID   string
-	ExecutionID string
+	// SourceMessage is captured when the human input is admitted, not inferred from history.
+	SourceMessage   *providers.MessageRef
+	MessageRelation *providers.MessageRelation
+	SessionID       string
+	ExecutionID     string
 }
 
 type PersistedInput struct {

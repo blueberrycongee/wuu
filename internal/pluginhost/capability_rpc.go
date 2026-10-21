@@ -359,6 +359,7 @@ type SessionInputPresentation struct {
 }
 
 type SessionSendParams struct {
+	Relation *providers.MessageRelation `json:"relation,omitempty"`
 	// UserInputRequestID requires an exact live client submission proof in the host context.
 	UserInputRequestID string `json:"user_input_request_id,omitempty"`
 	ControlRevision    int64  `json:"control_revision,omitempty"`
@@ -830,13 +831,15 @@ type RequestTransformOutput struct {
 // Messages include durable plugin contributions so a plugin can own its own
 // emit-on-change policy without host-managed state.
 type AgentPreStepInput struct {
-	SessionID string               `json:"session_id,omitempty"`
-	ThreadID  string               `json:"thread_id,omitempty"`
-	CWD       string               `json:"cwd,omitempty"`
-	Provider  string               `json:"provider,omitempty"`
-	Model     string               `json:"model,omitempty"`
-	StepIndex int                  `json:"step_index"`
-	Messages  []ModelMessageViewV1 `json:"messages"`
+	SourceMessage   *providers.MessageRef      `json:"source_message,omitempty"`
+	MessageRelation *providers.MessageRelation `json:"message_relation,omitempty"`
+	SessionID       string                     `json:"session_id,omitempty"`
+	ThreadID        string                     `json:"thread_id,omitempty"`
+	CWD             string                     `json:"cwd,omitempty"`
+	Provider        string                     `json:"provider,omitempty"`
+	Model           string                     `json:"model,omitempty"`
+	StepIndex       int                        `json:"step_index"`
+	Messages        []ModelMessageViewV1       `json:"messages"`
 }
 
 // AgentPreStepMessage is appended after the current transcript and persisted

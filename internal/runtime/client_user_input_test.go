@@ -2,8 +2,11 @@ package runtime
 
 import (
 	"context"
-	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"encoding/json"
 	"testing"
+
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 // User provenance comes from an explicit authenticated client submission, not
@@ -85,5 +88,20 @@ func TestClientUserInputAttachmentsRequireExactAdmittedReferences(t *testing.T) 
 	cancel()
 	if _, err := ClientUserInputAttachments(context.WithoutCancel(ctx), "personal", "r", []pluginhost.SessionInputAttachment{ref}); err == nil {
 		t.Fatal("expired attachment authority survived")
+	}
+}
+
+func TestClientUserInputRelationCannotBeChangedOrOmitted(t *testing.T) {
+	relation := &providers.MessageRelation{ReplyTo: &providers.MessageRef{SessionID: "main", Seq: 3}, Metadata: map[string]json.RawMessage{"task_links": json.RawMessage(`[{"task_id":"one","requirements_revision":2}]`)}}
+	ctx := WithClientUserInput(context.Background(), "personal", ClientUserInput{RequestID: "r", Prompt: " exact ", Relation: relation})
+	relation.ReplyTo.Seq = 99
+	original := &providers.MessageRelation{ReplyTo: &providers.MessageRef{SessionID: "main", Seq: 3}, Metadata: map[string]json.RawMessage{"task_links": json.RawMessage(`[{"task_id":"one","requirements_revision":2}]`)}}
+	if err := AuthorizeClientUserInputRelation(ctx, "personal", "r", original); err != nil {
+		t.Fatal(err)
+	}
+	for _, altered := range []*providers.MessageRelation{nil, relation, {ReplyTo: original.ReplyTo}} {
+		if err := AuthorizeClientUserInputRelation(ctx, "personal", "r", altered); err == nil {
+			t.Fatal("accepted changed routing relation")
+		}
 	}
 }

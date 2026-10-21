@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
@@ -42,12 +43,13 @@ func readPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, par
 		Records: make([]pluginhost.SessionHistoryRecord, 0, len(page.Records)),
 	}
 	for _, record := range page.Records {
-		attachments := historyAttachmentMetadata(record)
+		attachments := HistoryAttachmentMetadata(record)
 		content := record.Content
 		if record.Origin == "user" && len(attachments) > 0 {
 			content = record.DisplayContent
 		}
 		result.Records = append(result.Records, pluginhost.SessionHistoryRecord{
+			Relation:    providers.CloneMessageRelation(record.Relation),
 			Attachments: attachments, At: historyRecordTime(record.At),
 			ProviderItemID: record.ProviderItemID, EngineTurnID: record.EngineTurnID,
 			Seq: record.Seq, Role: record.Role, Name: record.Name, Content: content, DisplayContent: record.DisplayContent,
@@ -100,7 +102,7 @@ func searchPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, p
 		if params.View == "conversation" && record.DisplayContent != "" {
 			excerpt = record.DisplayContent
 		}
-		attachments := historyAttachmentMetadata(record)
+		attachments := HistoryAttachmentMetadata(record)
 		if record.Origin == "user" && len(attachments) > 0 {
 			excerpt = record.DisplayContent
 			for _, attachment := range attachments {

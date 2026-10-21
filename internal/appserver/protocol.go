@@ -2602,7 +2602,8 @@ const (
 )
 
 type ThreadItem struct {
-	Activity *ConversationActivity `json:"activity,omitempty"`
+	Relation *providers.MessageRelation `json:"relation,omitempty"`
+	Activity *ConversationActivity      `json:"activity,omitempty"`
 	// steered preserves input identity from live messages and the durable display
 	// transcript, independently of compactable provider history. It is host-only.
 	steered          bool

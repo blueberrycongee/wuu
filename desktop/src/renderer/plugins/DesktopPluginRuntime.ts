@@ -48,7 +48,7 @@ export const desktopPluginHost = new PluginHost({
       ...(workspaceRoot ? { workspace_root: workspaceRoot } : {}),
       ...(userSpaceId ? { user_space_id: userSpaceId } : {}),
       ...(productDomain ? { product_domain: productDomain } : {}),
-      ...(userInput ? { user_input: { request_id: userInput.requestId, prompt: userInput.prompt, ...(userInput.attachments ? { attachments: [...userInput.attachments] } : {}) } } : {}),
+      ...(userInput ? { user_input: { request_id: userInput.requestId, prompt: userInput.prompt, ...(userInput.relation ? { relation: userInput.relation } : {}), ...(userInput.attachments ? { attachments: [...userInput.attachments] } : {}) } } : {}),
     });
     const cancel = () => {
       void bridge.cancelPluginRuntime(identity).catch((error: unknown) => {

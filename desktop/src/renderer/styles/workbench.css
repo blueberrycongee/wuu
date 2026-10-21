@@ -682,12 +682,12 @@
 
 /* Bubble attachments form their own compact row above the prose, never a card
    inside a second grey bubble. Standard conversation layout stays unchanged. */
-.plugin-conversation-message[data-bubble] > .plugin-conversation-attachments {
+.plugin-conversation-message[data-bubble] > .bubble-message-body > .plugin-conversation-attachments {
   display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px;
   width: fit-content; max-width: calc(100% - 73px); align-self: flex-start;
 }
-.plugin-conversation-message[data-bubble] > .plugin-conversation-attachments:has(+ .bubble-message-content) { margin-bottom: 7px; }
-.plugin-conversation-message[data-bubble][data-role="user"] > .plugin-conversation-attachments {
+.plugin-conversation-message[data-bubble] > .bubble-message-body > .plugin-conversation-attachments:has(+ .bubble-message-content) { margin-bottom: 7px; }
+.plugin-conversation-message[data-bubble][data-role="user"] > .bubble-message-body > .plugin-conversation-attachments {
   align-self: flex-end; justify-content: flex-end; max-width: calc(100% - 80px);
   transform: translateX(calc(-1 * var(--bubble-time-offset, 0px)));
   transition: transform 300ms cubic-bezier(.19, 1, .22, 1);
@@ -705,7 +705,31 @@
 }
 .plugin-conversation-message[data-bubble] .conversation-file-card-main > svg { width: 20px; height: 20px; flex: 0 0 20px; color: currentColor; }
 .plugin-conversation-message[data-bubble] .conversation-file-card-copy strong { font-weight: 400; }
-[data-times-dragging="true"] .plugin-conversation-message[data-bubble][data-role="user"] > .plugin-conversation-attachments { transition: none; }
+[data-times-dragging="true"] .plugin-conversation-message[data-bubble][data-role="user"] > .bubble-message-body > .plugin-conversation-attachments { transition: none; }
 @media (prefers-reduced-motion: reduce) {
-  .plugin-conversation-message[data-bubble][data-role="user"] > .plugin-conversation-attachments { transition: none; }
+  .plugin-conversation-message[data-bubble][data-role="user"] > .bubble-message-body > .plugin-conversation-attachments { transition: none; }
 }
+
+/* Bubble reply affordances mirror the quiet inline action, never a second row. */
+.bubble-message-body { position: relative; display: flex; flex-direction: column; align-self: flex-start; width: fit-content; max-width: min(88%, calc(100% - 73px)); min-width: 0; }
+.plugin-conversation-message[data-bubble][data-role="user"] > .bubble-message-body { align-self: flex-end; max-width: min(88%, calc(100% - 80px)); }
+.plugin-conversation-message[data-bubble][data-role] .bubble-message-body > .bubble-message-content { max-width: 100%; }
+.plugin-conversation-message[data-bubble][data-role] .bubble-message-body > .plugin-conversation-attachments { max-width: 100%; }
+.plugin-message-reply { position: absolute; left: calc(100% + 9px); top: calc(50% - 14px); display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ink-muted); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 120ms; }
+.plugin-message-reply svg { width: 16px; height: 16px; }
+.plugin-conversation-message[data-role="user"] .plugin-message-reply { left: auto; right: calc(100% + 9px); }
+.plugin-conversation-message:hover .plugin-message-reply, .plugin-conversation-message:focus-within .plugin-message-reply { opacity: 1; pointer-events: auto; }
+.plugin-message-reply:hover, .plugin-message-reply:focus-visible { background: var(--surface-2); color: var(--ink); }
+.plugin-message-reply:focus-visible, .plugin-reply-reference:focus-visible { outline: 2px solid var(--focus-ring, var(--ink)); outline-offset: 2px; }
+.plugin-reply-reference { display: flex; align-items: center; align-self: flex-start; gap: 2px; max-width: min(456px, 100%); margin: 6px 0 5px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--ink-muted); font: inherit; font-size: max(12px, calc(var(--conversation-message-font-size) * .75)); line-height: 1.5; text-align: start; cursor: pointer; }
+.plugin-conversation-message[data-role="user"] > .plugin-reply-reference { align-self: flex-end; }
+.plugin-reply-reference svg { width: 20px; height: 20px; flex: none; }
+.plugin-reply-reference span { min-width: 0; margin-inline-end: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plugin-reply-reference:disabled { cursor: default; }
+.plugin-composer-reply-context { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-left: 2px solid var(--ink-muted); margin-bottom: var(--space-2); }
+.plugin-composer-reply-context > div { min-width: 0; flex: 1; }
+.plugin-composer-reply-context span { color: var(--ink-muted); }
+.plugin-composer-reply-context p { margin: var(--space-1) 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-composer-reply-context > button { flex: none; }
+@media (hover: none), (pointer: coarse) { .plugin-message-reply { opacity: 1; pointer-events: auto; } }
+@media (prefers-reduced-motion: reduce) { .plugin-message-reply { transition: none; } }

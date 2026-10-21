@@ -61,7 +61,8 @@ func recordAttachments(record session.HistoryRecord) []historyAttachment {
 	return result
 }
 
-func historyAttachmentMetadata(record session.HistoryRecord) []pluginhost.SessionHistoryAttachment {
+// HistoryAttachmentMetadata returns the same visible attachment references exposed by session history.
+func HistoryAttachmentMetadata(record session.HistoryRecord) []pluginhost.SessionHistoryAttachment {
 	var result []pluginhost.SessionHistoryAttachment
 	for _, attachment := range recordAttachments(record) {
 		result = append(result, attachment.metadata)

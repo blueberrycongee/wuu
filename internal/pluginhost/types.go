@@ -25,9 +25,9 @@ var toolLabelLocalePattern = regexp.MustCompile(`^[a-zA-Z]{2,8}(-[a-zA-Z0-9]{1,8
 
 // InitializeParams describes the runtime instance offered to a plugin.
 type InitializeParams struct {
- UserSpaceID string `json:"user_space_id,omitempty"`
- ProductDomain string `json:"product_domain,omitempty"`
- DataRoot string `json:"data_root,omitempty"`
+	UserSpaceID       string `json:"user_space_id,omitempty"`
+	ProductDomain     string `json:"product_domain,omitempty"`
+	DataRoot          string `json:"data_root,omitempty"`
 	ProtocolVersion   int    `json:"protocol_version"`
 	PluginID          string `json:"plugin_id"`
 	PluginRoot        string `json:"plugin_root"`
@@ -186,8 +186,10 @@ func validateBoundedMetadata(field, value string) error {
 }
 
 type ToolExecuteInput struct {
-	SessionID string `json:"session_id,omitempty"`
-	ThreadID  string `json:"thread_id,omitempty"`
+	SourceMessage   *providers.MessageRef      `json:"source_message,omitempty"`
+	MessageRelation *providers.MessageRelation `json:"message_relation,omitempty"`
+	SessionID       string                     `json:"session_id,omitempty"`
+	ThreadID        string                     `json:"thread_id,omitempty"`
 	// TurnID identifies the exact model turn that owns this tool invocation.
 	// Plugins may use it as a key when deciding how to propagate cancellation.
 	TurnID string `json:"turn_id,omitempty"`

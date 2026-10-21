@@ -1,3 +1,8 @@
+/** Stable durable message address; seq is not a provider item or turn ID. */
+export interface MessageRef { session_id: string; seq: number; }
+/** Host-validated quote target plus extension-owned context. Never encode routing in prompt text. */
+export interface MessageRelation { reply_to?: MessageRef; metadata?: Record<string, unknown>; }
+
 /**
  * @wuu/plugin-sdk
  *
@@ -259,12 +264,12 @@ export interface PluginUIComposerDrawerProps extends PluginUIContainerProps {
 }
 
 /** Stable host-owned primitives for plugin views. */
-export interface PluginUIConversationMessageProps { role: "user" | "assistant"; content: string; className?: string; linkPolicy?: "external-only"; timestamp?: string; id?: string; latest?: boolean; attachments?: unknown; streaming?: boolean; turnId?: string; turnStatus?: "in_progress" | "completed" | "failed" | "interrupted"; process?: { label: string; content?: string; details?: unknown }; messageActions?: "copy-only" | "none" }
+export interface PluginUIConversationMessageProps { replyPreview?: unknown; onReply?(): void; replyLabel?: string; role: "user" | "assistant"; content: string; className?: string; linkPolicy?: "external-only"; timestamp?: string; id?: string; latest?: boolean; attachments?: unknown; streaming?: boolean; turnId?: string; turnStatus?: "in_progress" | "completed" | "failed" | "interrupted"; process?: { label: string; content?: string; details?: unknown }; messageActions?: "copy-only" | "none" }
 
 export interface PluginUIConversationViewProps {
   presentation?: "standard" | "bubbles";
   /** Submit an offer reply to this conversation with stable admission identity. */
-  onQuestionReply?: (requestId: string, prompt: string) => Promise<void>;
+  onQuestionReply?: (requestId: string, prompt: string, relation?: MessageRelation) => Promise<void>;
   conversationId: string;
   sessionId?: string;
   sessionScope?: { userSpaceId: string; productDomain: "personal" | "coding" };
@@ -276,6 +281,8 @@ export interface PluginUIConversationViewProps {
   loading?: boolean;
   /** Hide only this conversation’s history trigger; defaults to true. */
   showHistorySearch?: boolean;
+  /** Suppress the floating control when another conversation overlays this view. */
+  showJumpToLatest?: boolean;
   searchLabel: string;
   searchContent: unknown;
   children: unknown;
@@ -299,6 +306,7 @@ export interface PluginUIConversationAttachmentProps {
 }
 
 export interface PluginUIConversationComposerProps {
+ replyContext?: { label: string; preview: string; cancelLabel: string; onCancel(): void };
   conversationId: string;
   submitting?: boolean;
   queuedCount?: number;
@@ -620,7 +628,7 @@ export interface SessionInputAttachment { sha256: string; filename: string; medi
 export interface SessionHistoryAttachment { kind: "image" | "file" | "artifact"; index: number; name: string; mime_type: string; size: number; sha256: string }
 
 export interface PluginRuntimeInvokeOptions {
- readonly userInput?: { readonly requestId: string; readonly prompt: string; readonly attachments?: readonly ClientInputAttachment[] };
+ readonly userInput?: { readonly requestId: string; readonly prompt: string; readonly relation?: MessageRelation; readonly attachments?: readonly ClientInputAttachment[] };
   readonly userSpaceId?: string;
   readonly productDomain?: "personal" | "coding";
   readonly workspaceId?: string;
@@ -1046,6 +1054,8 @@ export interface RequestTransformOutput {
 }
 
 export interface AgentPreStepInput {
+ source_message?: MessageRef;
+ message_relation?: MessageRelation;
   session_id?: string;
   thread_id?: string;
   cwd?: string;
@@ -1122,6 +1132,9 @@ export interface CompactionOutput<TMessage extends CompactionMessage = Compactio
 }
 
 export interface ToolExecuteParams<TArguments = unknown> {
+  /** Host-attested originating human input for this turn; absent for generated wakeups. */
+  source_message?: MessageRef;
+  message_relation?: MessageRelation;
   tool_id: string;
   session_id?: string;
   thread_id?: string;
@@ -1256,6 +1269,7 @@ export interface HostServiceContracts {
   "host.session.send": {
     params: {
       user_input_request_id?: string;
+ relation?: MessageRelation;
       request_id: string;
       session_id: string;
       input: {
@@ -1357,6 +1371,7 @@ export interface HostServiceContracts {
       head_seq: number;
       snapshot_seq: number;
       records?: Array<{
+        relation?: MessageRelation;
         at?: string;
         seq: number;
         attachments?: SessionHistoryAttachment[];

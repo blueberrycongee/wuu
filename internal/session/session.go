@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
@@ -116,6 +117,7 @@ type ManagedMetadata struct {
 // HistoryRecord is the durable session message shape. App-server remains
 // responsible for provider-specific ChatMessage conversion.
 type HistoryRecord struct {
+	Relation *providers.MessageRelation `json:"relation,omitempty"`
 	// ExpectedHeldMessage is an admission-only compare-and-swap fence for an
 	// accepted steer. It is never serialized into conversation history.
 	ExpectedHeldMessage json.RawMessage `json:"-"`
@@ -1320,6 +1322,7 @@ func migrateSchema(db *sql.DB) error {
 				cause TEXT NOT NULL DEFAULT '',
 				presentation_kind TEXT NOT NULL DEFAULT '',
 				related_session_id TEXT NOT NULL DEFAULT '',
+				relation_json TEXT NOT NULL DEFAULT '',
 				read_only INTEGER NOT NULL DEFAULT 0,
 				phase TEXT NOT NULL DEFAULT '',
 				provider_item_id TEXT NOT NULL DEFAULT '',
@@ -1852,6 +1855,9 @@ WHERE workflow_id = ''`); err != nil {
 	if err := migration.addColumnIfMissing("session_messages", "related_session_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+	if err := migration.addColumnIfMissing("session_messages", "relation_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if err := migration.addColumnIfMissing("session_messages", "read_only", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
@@ -2365,23 +2371,31 @@ func appendHistoryRecordTx(tx *sql.Tx, id string, rec HistoryRecord) (int, error
 
 func insertHistoryRecordTx(tx *sql.Tx, id string, seq int, rec HistoryRecord) error {
 	storedRec := compactHistoryRecordForStorage(rec)
+	var relationJSON string
+	if storedRec.Relation != nil {
+		encoded, err := json.Marshal(storedRec.Relation)
+		if err != nil {
+			return fmt.Errorf("encode message relation: %w", err)
+		}
+		relationJSON = string(encoded)
+	}
 	_, err := tx.Exec(`
 			INSERT INTO session_messages (
 				session_id, seq, role, content, display_content, origin, origin_id, cause, presentation_kind, related_session_id, read_only, phase, provider_item_id, engine_turn_id, engine_turn_pending, provider_item_model, client_id, hidden, steered, reasoning_content,
 				reasoning_blocks_json, provider_items_json, content_parts_json, images_json, files_json, tool_calls_json, discovered_tools_json,
 				tool_call_id, tool_invocation_id, tool_result_kind, tool_result_json, finish_reason, stop_reason, truncated, name, at, input_tokens, output_tokens, context_tokens, cache_creation_tokens, cache_read_tokens, retry_count, max_retries,
-				provider, model
+				provider, model, relation_json
 			) VALUES (
 				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 				?, ?, ?, ?, ?, ?, ?,
-				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 			)`,
 		id, seq, strings.ToLower(strings.TrimSpace(storedRec.Role)), storedRec.Content, storedRec.DisplayContent,
 		strings.TrimSpace(storedRec.Origin), strings.TrimSpace(storedRec.OriginID), strings.TrimSpace(storedRec.Cause), strings.TrimSpace(storedRec.PresentationKind), strings.TrimSpace(storedRec.RelatedSessionID), boolInt(storedRec.ReadOnly),
 		strings.TrimSpace(storedRec.Phase), strings.TrimSpace(storedRec.ProviderItemID), strings.TrimSpace(storedRec.EngineTurnID), boolInt(storedRec.EngineTurnPending), strings.TrimSpace(storedRec.ProviderItemModel), storedRec.ClientID, boolInt(storedRec.Hidden), boolInt(storedRec.Steered), storedRec.ReasoningContent,
 		rawJSONText(storedRec.ReasoningBlocks), rawJSONText(storedRec.ProviderItems), rawJSONText(storedRec.ContentParts), rawJSONText(storedRec.Images), rawJSONText(storedRec.Files), rawJSONText(storedRec.ToolCalls), rawJSONText(storedRec.DiscoveredTools),
 		storedRec.ToolCallID, storedRec.ToolInvocationID, storedRec.ToolResultKind, rawJSONText(storedRec.ToolResult), storedRec.FinishReason, storedRec.StopReason, boolInt(storedRec.Truncated), storedRec.Name, nullableValueTimeText(storedRec.At), storedRec.InputTokens, storedRec.OutputTokens, storedRec.ContextTokens, storedRec.CacheCreationTokens, storedRec.CacheReadTokens, storedRec.RetryCount, storedRec.MaxRetries,
-		strings.TrimSpace(storedRec.Provider), strings.TrimSpace(storedRec.Model),
+		strings.TrimSpace(storedRec.Provider), strings.TrimSpace(storedRec.Model), relationJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("insert history record: %w", err)
@@ -2427,7 +2441,7 @@ const historyRecordsSelect = `
 	       provider_item_id, engine_turn_id, engine_turn_pending, provider_item_model,
 	       reasoning_blocks_json, provider_items_json, content_parts_json, images_json, files_json, tool_calls_json, discovered_tools_json,
 	       tool_call_id, tool_invocation_id, tool_result_kind, tool_result_json, finish_reason, stop_reason, truncated, name, at, input_tokens, output_tokens, context_tokens, cache_creation_tokens, cache_read_tokens, retry_count, max_retries,
-	       provider, model
+	       provider, model, relation_json
 	FROM session_messages`
 
 func loadHistoryRecordsDB(db *sql.DB, id string, includeMeta, activeOnly bool) ([]HistoryRecord, error) {
@@ -2459,7 +2473,7 @@ func scanHistoryRecords(rows *sql.Rows) ([]HistoryRecord, error) {
 	for rows.Next() {
 		var rec HistoryRecord
 		var hidden, steered, truncated, readOnly, engineTurnPending int
-		var reasoningBlocks, providerItems, contentParts, images, files, toolCalls, discoveredTools, toolResult string
+		var reasoningBlocks, providerItems, contentParts, images, files, toolCalls, discoveredTools, toolResult, relationJSON string
 		var at sql.NullString
 		if err := rows.Scan(
 			&rec.Seq,
@@ -2467,9 +2481,14 @@ func scanHistoryRecords(rows *sql.Rows) ([]HistoryRecord, error) {
 			&rec.ProviderItemID, &rec.EngineTurnID, &engineTurnPending, &rec.ProviderItemModel,
 			&reasoningBlocks, &providerItems, &contentParts, &images, &files, &toolCalls, &discoveredTools,
 			&rec.ToolCallID, &rec.ToolInvocationID, &rec.ToolResultKind, &toolResult, &rec.FinishReason, &rec.StopReason, &truncated, &rec.Name, &at, &rec.InputTokens, &rec.OutputTokens, &rec.ContextTokens, &rec.CacheCreationTokens, &rec.CacheReadTokens, &rec.RetryCount, &rec.MaxRetries,
-			&rec.Provider, &rec.Model,
+			&rec.Provider, &rec.Model, &relationJSON,
 		); err != nil {
 			return nil, fmt.Errorf("scan session history: %w", err)
+		}
+		if relationJSON != "" {
+			if err := json.Unmarshal([]byte(relationJSON), &rec.Relation); err != nil {
+				return nil, fmt.Errorf("decode message relation: %w", err)
+			}
 		}
 		rec.EngineTurnPending = engineTurnPending != 0
 		rec.Hidden = hidden != 0

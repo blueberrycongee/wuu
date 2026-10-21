@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -177,13 +178,15 @@ func pluginPreStepInjector(host *pluginhost.Host, provider, model, threadID, cwd
 		for _, capability := range host.Capabilities(pluginhost.CapabilityAgentPreStep) {
 			output := pluginhost.AgentPreStepOutput{}
 			if err := host.InvokeCapability(ctx, capability, pluginhost.AgentPreStepInput{
-				SessionID: threadID,
-				ThreadID:  threadID,
-				CWD:       cwd,
-				Provider:  provider,
-				Model:     model,
-				StepIndex: stepIndex,
-				Messages:  modelMessageViewsV1(currentHistory),
+				SourceMessage:   loopdriver.ExecutionContextFromContext(ctx).SourceMessage,
+				MessageRelation: providers.CloneMessageRelation(loopdriver.ExecutionContextFromContext(ctx).MessageRelation),
+				SessionID:       threadID,
+				ThreadID:        threadID,
+				CWD:             cwd,
+				Provider:        provider,
+				Model:           model,
+				StepIndex:       stepIndex,
+				Messages:        modelMessageViewsV1(currentHistory),
 			}, &output); err != nil {
 				if policyErr := host.HandleCapabilityError(capability, err); policyErr != nil {
 					return nil, policyErr
