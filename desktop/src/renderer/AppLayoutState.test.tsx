@@ -187,6 +187,50 @@ describe("independent panel preferences", () => {
   });
 });
 
+it.each([
+  { side: "left", preference: 264 },
+  { side: "right", preference: 400 },
+  { side: "right", preference: 800 },
+])("settles the $side panel after returning to the drag origin before the next frame ($preference)", ({ side, preference }) => {
+  const preferenceKey = side === "left" ? "wuu.desktop.sidebarWidth" : "wuu.desktop.workspaceRightPanelWidth";
+  window.localStorage.setItem(preferenceKey, String(preference));
+  window.localStorage.setItem("wuu.desktop.workspaceRightPanelOpen", "true");
+  const frames = new Map<number, FrameRequestCallback>();
+  let frameID = 0;
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    frames.set(++frameID, callback);
+    return frameID;
+  });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => { frames.delete(id); });
+  let layout!: ReturnType<typeof useAppLayoutState>;
+  const layoutRootRef = { current: container };
+  function LiveLayout() {
+    layout = useAppLayoutState({ layoutRootRef, onCloseWorkspaceMenu: () => {} });
+    return null;
+  }
+  act(() => { root = createRoot(container); root.render(<LiveLayout />); });
+  const displayedWidth = side === "left" ? layout.sidebarWidth : layout.clampedWorkspaceRightPanelWidth;
+  const property = side === "left" ? "--sidebar-width" : "--workspace-right-panel-width";
+  container.style.setProperty(property, `${displayedWidth}px`);
+  act(() => {
+    (side === "left" ? layout.startSidebarResize : layout.startRightPanelResize)(makePointerDownEvent(500));
+  });
+  act(() => {
+    window.dispatchEvent(Object.assign(new Event("pointermove"), { clientX: 600, clientY: 0 }));
+    const ready = [...frames.values()];
+    frames.clear();
+    ready.forEach((callback) => callback(0));
+  });
+  expect(container.style.getPropertyValue(property)).not.toBe(`${displayedWidth}px`);
+  act(() => {
+    window.dispatchEvent(Object.assign(new Event("pointermove"), { clientX: 500, clientY: 0 }));
+    window.dispatchEvent(new Event("pointerup"));
+  });
+  expect(container.style.getPropertyValue(property)).toBe(`${displayedWidth}px`);
+  expect(side === "left" ? layout.sidebarWidth : layout.workspaceRightPanelWidth).toBe(preference);
+  expect(window.localStorage.getItem(preferenceKey)).toBe(String(preference));
+});
+
 it("lets a direct resize interrupt a panel toggle without animated drag lag", () => {
   renderHookHarness();
   act(() => latest!.setRightPanelOpenWithMotion(true));

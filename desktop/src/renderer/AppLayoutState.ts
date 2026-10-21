@@ -619,7 +619,8 @@ export function useAppLayoutState({
           applySidebarWidth(target);
           sidebarLive.schedule(target);
         } else if (session.currentWidth === session.startWidth) {
-          sidebarLive.cancel();
+          // The last move can return to the origin before its frame is painted.
+          sidebarLive.flush();
         } else {
           if (!sidebarShouldCollapse(session.currentWidth)) {
             sidebarLive.flush();
@@ -663,9 +664,13 @@ export function useAppLayoutState({
   );
 
   const handleRightPanelResizeEnd = useCallback((session: RightPanelResizeSession | null): void => {
-    if (session && session.currentWidth !== session.startWidth) {
+    if (session) {
       rightPanelLive.flush();
-      applyWorkspaceRightPanelWidth(session.currentWidth);
+      // A round trip must settle the live width without replacing a preferred
+      // width that is currently clamped by the viewport.
+      if (session.currentWidth !== session.startWidth) {
+        applyWorkspaceRightPanelWidth(session.currentWidth);
+      }
     } else {
       rightPanelLive.cancel();
     }

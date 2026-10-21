@@ -15,6 +15,7 @@ import {
 } from "react";
 import type { ActivitySession, BrowserDockTarget, BrowserSurfaceSnapshot, RuntimeContext } from "../shared/protocol";
 import { useI18n } from "./i18n";
+import { normalizeWebsiteURL } from "./NavigationRibbonPreferences";
 import { browserTabIDForActivity, displayedBrowserTabID, observeBrowserPanelBounds } from "./BrowserVisibility";
 import { openExternalURL, workspaceBrowserOpenTarget } from "./WorkspaceBrowserOpen";
 import {
@@ -37,15 +38,15 @@ function looksLikeUrl(input: string): boolean {
     return true;
   }
   // loopback host with optional port
-  if (/^localhost(:\d+)?(\/.*)?$/i.test(value)) {
+  if (/^localhost(:\d+)?([/#?].*)?$/i.test(value)) {
     return true;
   }
   // IPv4 loopback / unspecified address with optional port
-  if (/^(?:127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?(?:\/.*)?$/.test(value)) {
+  if (/^(?:127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?(?:[/#?].*)?$/.test(value)) {
     return true;
   }
   // bare host with optional port and path/query
-  if (/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+(:\d+)?(\/.*)?$/.test(value)) {
+  if (/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+(:\d+)?([/#?].*)?$/.test(value)) {
     return true;
   }
   return false;
@@ -62,7 +63,7 @@ function resolveNavigationInput(input: string): string {
   if (looksLikeUrl(value)) {
     return /^https?:\/\//i.test(value) || /^file:\/\//i.test(value)
       ? value
-      : `https://${value}`;
+      : normalizeWebsiteURL(value) ?? `${SEARCH_FALLBACK_URL}${encodeURIComponent(value)}`;
   }
   return `${SEARCH_FALLBACK_URL}${encodeURIComponent(value)}`;
 }

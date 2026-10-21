@@ -161,6 +161,28 @@ describe("WorkspaceBrowserPanel", () => {
     });
   });
 
+  it.each([
+    ["localhost:3000", "http://localhost:3000/"],
+    ["127.0.0.1:3000", "http://127.0.0.1:3000/"],
+    ["localhost:3000?view=preview", "http://localhost:3000/?view=preview"],
+    ["example.com?foo=bar", "https://example.com/?foo=bar"],
+    ["example.com#section", "https://example.com/#section"],
+    ["find example", "https://www.google.com/search?igu=1&q=find%20example"],
+  ])("navigates submitted address %s without changing its intent", async (address, expectedURL) => {
+    const { input } = render({});
+    const form = container.querySelector<HTMLFormElement>(".workspace-browser-url-form");
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, address);
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(browserCommand).toHaveBeenCalledWith(expect.objectContaining({
+      command: "navigate", url: expectedURL,
+    }));
+  });
+
   it("keeps page actions off before a URL is submitted", () => {
     render({});
     expect(
