@@ -14,7 +14,7 @@ const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-ribbon-chrome-'));
 fs.mkdirSync(output, { recursive: true });
 app.setPath('userData', path.join(temporary, 'profile'));
 const extension = path.join(temporary, 'extension.cjs');
-fs.writeFileSync(extension, `module.exports = api => ({ ...api, platform: ${JSON.stringify(platform)}, windowToggleFullScreen: async () => {}, windowMinimize: async () => {}, windowClose: async () => {}, windowToggleMaximize: async () => {}, windowIsMaximized: async () => false, windowPointerPosition: () => require("electron").ipcRenderer.invoke("test:pointer"), windowSetControls: state => require("electron").ipcRenderer.invoke("test:controls", state) });`);
+fs.writeFileSync(extension, `module.exports = api => ({ ...api, platform: ${JSON.stringify(platform)}, windowToggleFullScreen: async () => {}, windowMinimize: async () => {}, windowClose: async () => {}, windowToggleMaximize: async () => {}, windowIsMaximized: async () => false, windowIsFullScreen: () => require("electron").ipcRenderer.invoke("test:is-fullscreen"), onWindowFullScreenChange: handler => { const listener = (_event, value) => handler(value); require("electron").ipcRenderer.on("test:fullscreen", listener); return () => require("electron").ipcRenderer.removeListener("test:fullscreen", listener); }, windowPointerPosition: () => require("electron").ipcRenderer.invoke("test:pointer"), windowSetControls: state => require("electron").ipcRenderer.invoke("test:controls", state) });`);
 process.env.WUU_RENDERER_E2E_EXTENSION = extension;
 const report = { status: 'running', platform, scope: `Shipping renderer with synthetic backend on ${process.platform}`, cases: [] };
 const save = () => fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
@@ -23,6 +23,7 @@ let pointer = { x: 500, y: 300 };
 let nativeControls;
 ipcMain.handle('test:pointer', () => pointer);
 ipcMain.handle('test:controls', (_event, state) => { nativeControls = state; });
+ipcMain.handle('test:is-fullscreen', () => Boolean(win && !win.isDestroyed() && win.isFullScreen()));
 const evaluate = (fn, argument) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(argument)})`);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn, label) {
@@ -65,9 +66,16 @@ const read = (probe) => {
   return { expanded: rail.dataset.expanded === 'true', toggleHit: toggle.contains(hit), railHit: rail.contains(hit), rect: rect.toJSON(), railRect: rail.getBoundingClientRect().toJSON(), caption, collapsed: document.querySelector('.app-shell').classList.contains('sidebar-collapsed') };
 };
 async function run() {
-  win = new BrowserWindow({ width: 1280, height: 820, frame: false, show: process.env.WUU_CHROME_HEADLESS !== 'true', webPreferences: {
+  // macOS fullscreen requires a real titlebar host; the layout cases keep the
+  // frameless fixture they were written against.
+  const windowChrome = process.env.WUU_TRAFFIC_LIGHTS_E2E === 'true' && process.platform === 'darwin'
+    ? { titleBarStyle: 'hidden' }
+    : { frame: false };
+  win = new BrowserWindow({ width: 1280, height: 820, ...windowChrome, show: process.env.WUU_CHROME_HEADLESS !== 'true', webPreferences: {
     preload: path.join(__dirname, 'resize-e2e-preload.cjs'), sandbox: false, contextIsolation: true, nodeIntegration: false,
   } });
+  win.on('enter-full-screen', () => win.webContents.send('test:fullscreen', true));
+  win.on('leave-full-screen', () => win.webContents.send('test:fullscreen', false));
   if (process.env.WUU_E2E_URL) await win.loadURL(process.env.WUU_E2E_URL);
   else await win.loadFile(path.join(desktop, 'out/renderer/index.html'));
   await until(() => !!document.querySelector('.turn') && !!document.querySelector('.section-sidebar-toggle'), 'conversation ready');
@@ -91,6 +99,20 @@ async function run() {
         const pill = await evaluate(()=>document.querySelector('.mac-window-controls').getBoundingClientRect().toJSON());
         assert.ok(nativeControls.x > pill.left && nativeControls.x < pill.right);
         assert.ok(nativeControls.y > pill.top && nativeControls.y < pill.bottom);
+        const virtualControls = await evaluate(()=>document.querySelectorAll('.mac-window-control').length);
+        if (fullScreen) {
+          await until(()=>document.querySelectorAll('.mac-window-control').length === 3, 'fullscreen traffic lights render');
+          const hit = await evaluate(()=>[...document.querySelectorAll('.mac-window-control')].every(button => {
+            const rect = button.getBoundingClientRect();
+            return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+          }));
+          assert.equal(hit, true, 'Fullscreen traffic lights are hit-testable');
+          if (entry === 0) {
+            fs.writeFileSync(path.join(output, `traffic-lights-${theme}-fullscreen.png`), (await win.webContents.capturePage()).toPNG());
+          }
+        } else {
+          assert.equal(virtualControls, 0, 'Windowed mode leaves the traffic lights to AppKit');
+        }
         pointer = {x:pill.right-5,y:pill.bottom-5};
         await delay(300);
         assert.equal(await evaluate(controlsVisible), true, 'Capsule stays open over its drag area');
@@ -100,9 +122,10 @@ async function run() {
         await settle();
         assert.equal(nativeControls.visible, false);
       }
-      report.cases.push({theme,fullScreen:win.isFullScreen(),repeatHover:3,dragAreaRemainsOpen:true,layoutStable:true}); save();
+      report.cases.push({theme,fullScreen:win.isFullScreen(),repeatHover:3,dragAreaRemainsOpen:true,layoutStable:true,virtualControls:win.isFullScreen()?3:0}); save();
     }
     if (win.isFullScreen()) await new Promise(resolve=>{win.once('leave-full-screen',resolve);win.setFullScreen(false)});
+    await until(()=>document.querySelectorAll('.mac-window-control').length === 0, 'fullscreen controls leave with native chrome');
     report.status='passed'; save(); win.destroy(); app.quit(); return;
   }
   for (const [theme, size, width] of [['light', 15, 1280], ['dark', 20, 1280], ['light', 20, 600], ['dark', 15, 600]]) {

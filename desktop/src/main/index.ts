@@ -1003,25 +1003,30 @@ function windowTitlebarHeight(win: BrowserWindow): number {
 
 const macWindowControls = new WeakMap<BrowserWindow, { visible: boolean; x: number; y: number }>();
 
-// AppKit can reset button visibility and placement during fullscreen transitions.
+// AppKit owns fullscreen chrome and will not show buttons at a custom position
+// inside the content area. Hide them there and let the renderer draw its own.
 function applyMacWindowControls(win: BrowserWindow): void {
   if (process.platform !== "darwin" || win.isDestroyed()) return;
   const state = macWindowControls.get(win);
-  win.setWindowButtonVisibility(state?.visible ?? false);
+  const visible = state?.visible === true && !win.isFullScreen();
+  win.setWindowButtonVisibility(visible);
   // Showing the native button container can reset its frame; position it last.
-  if (state?.visible) win.setWindowButtonPosition({ x: state.x, y: state.y });
+  if (visible && state) win.setWindowButtonPosition({ x: state.x, y: state.y });
 }
 
 function attachMacWindowControls(win: BrowserWindow): void {
   if (process.platform !== "darwin") return;
   const apply = (): void => applyMacWindowControls(win);
+  const sendFullScreen = (): void => {
+    if (!win.isDestroyed()) sendToWindow(win, "wuu:window-full-screen-changed", win.isFullScreen());
+  };
   apply();
   win.on("ready-to-show", apply);
-  win.on("show", apply);
+  win.on("show", () => { apply(); sendFullScreen(); });
   win.on("restore", apply);
-  win.on("enter-full-screen", apply);
-  win.on("leave-full-screen", apply);
-  win.webContents.on("did-finish-load", () => { macWindowControls.delete(win); apply(); });
+  win.on("enter-full-screen", () => { apply(); sendFullScreen(); });
+  win.on("leave-full-screen", () => { apply(); sendFullScreen(); });
+  win.webContents.on("did-finish-load", () => { macWindowControls.delete(win); apply(); sendFullScreen(); });
 }
 
 function windowFrameOptions(height = DEFAULT_TITLEBAR_HEIGHT): Pick<
@@ -2464,6 +2469,10 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:window-is-maximized", (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     return Boolean(win && !win.isDestroyed() && win.isMaximized());
+  });
+  ipcMain.handle("wuu:window-is-full-screen", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return Boolean(win && !win.isDestroyed() && win.isFullScreen());
   });
   ipcMain.handle("wuu:window-pointer-position", (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);

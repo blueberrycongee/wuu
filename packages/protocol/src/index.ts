@@ -3232,11 +3232,13 @@ export type WuuDesktopApi = {
   windowToggleFullScreen?: () => Promise<void>;
   windowClose?: () => Promise<void>;
   windowIsMaximized?: () => Promise<boolean>;
+  windowIsFullScreen?: () => Promise<boolean>;
   /** Cursor position in window content CSS pixels; null when the window is unfocused. */
   windowPointerPosition?: () => Promise<{ x: number; y: number } | null>;
   /** Show native macOS buttons at a position in window content CSS pixels. */
   windowSetControls?: (state: { visible: boolean; x: number; y: number }) => Promise<void>;
   onWindowMaximizedChange?: (handler: (maximized: boolean) => void) => () => void;
+  onWindowFullScreenChange?: (handler: (fullscreen: boolean) => void) => () => void;
   // Desktop-only presentation preference. Does not enable or disable extensions.
   getActivityPreviewAutoShow?: () => Promise<boolean>;
   setActivityPreviewAutoShow?: (enabled: boolean) => Promise<void>;

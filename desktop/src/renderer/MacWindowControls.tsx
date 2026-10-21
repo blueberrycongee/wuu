@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import { useI18n } from "./i18n";
 import { desktopPlatform } from "./platform";
 import "./styles/mac-window-controls.css";
 
-/** Hover capsule behind the native AppKit window buttons. */
+/** Hover capsule for the macOS window controls. */
 export function MacWindowControls(): JSX.Element | null {
+  const { t } = useI18n();
   const [revealed, setRevealed] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [title, setTitle] = useState(document.title);
   const chrome = useRef<HTMLDivElement>(null);
   const capsule = useRef<HTMLDivElement>(null);
@@ -30,6 +33,16 @@ export function MacWindowControls(): JSX.Element | null {
     window.addEventListener("blur", hide);
     return () => { clearLeave(); window.removeEventListener("blur", hide); };
   }, []);
+  useEffect(() => {
+    if (!enabled) return;
+    let disposed = false;
+    void window.wuu?.windowIsFullScreen?.().then(
+      value => { if (!disposed) setFullscreen(value); },
+      () => {},
+    );
+    const dispose = window.wuu?.onWindowFullScreenChange?.(setFullscreen);
+    return () => { disposed = true; dispose?.(); };
+  }, [enabled]);
   useEffect(() => {
     if (!enabled) return;
     visible.current = revealed;
@@ -95,6 +108,25 @@ export function MacWindowControls(): JSX.Element | null {
   return (
     <div ref={chrome} className="mac-window-chrome" data-revealed={revealed || undefined}>
       <div ref={capsule} className="mac-window-controls">
+        {fullscreen && (
+          <div className="mac-window-control-group" role="group" aria-label={t("shell.windowControls")}>
+            <button type="button" className="mac-window-control mac-window-close"
+              aria-label={t("shell.closeWindow")} title={t("shell.closeWindow")}
+              onClick={() => { void window.wuu.windowClose?.(); }}>
+              <svg viewBox="0 0 10 10" aria-hidden="true"><path d="m3 3 4 4m0-4L3 7" /></svg>
+            </button>
+            <button type="button" className="mac-window-control mac-window-minimize"
+              aria-label={t("shell.minimizeWindow")} title={t("shell.minimizeWindow")}
+              onClick={() => { void window.wuu.windowMinimize?.(); }}>
+              <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 5h5" /></svg>
+            </button>
+            <button type="button" className="mac-window-control mac-window-fullscreen"
+              aria-label={t("shell.exitFullScreen")} title={t("shell.exitFullScreen")}
+              onClick={() => { void window.wuu.windowToggleFullScreen?.(); }}>
+              <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 5V2.5H5m0 5h2.5V5" /></svg>
+            </button>
+          </div>
+        )}
         <span className="mac-window-title">{title}</span>
       </div>
     </div>

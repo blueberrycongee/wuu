@@ -1768,6 +1768,7 @@ export const enUS = {
   "shell.windowControls": "Window controls",
   "shell.minimizeWindow": "Minimize",
   "shell.toggleFullScreen": "Toggle full screen",
+  "shell.exitFullScreen": "Exit full screen",
   "shell.maximizeWindow": "Maximize",
   "shell.restoreWindow": "Restore",
   "shell.closeWindow": "Close",

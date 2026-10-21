@@ -586,6 +586,8 @@ const api: WuuDesktopApi = {
   windowClose: () => ipcRenderer.invoke("wuu:window-close"),
   windowIsMaximized: () =>
     ipcRenderer.invoke("wuu:window-is-maximized") as Promise<boolean>,
+  windowIsFullScreen: () =>
+    ipcRenderer.invoke("wuu:window-is-full-screen") as Promise<boolean>,
   windowPointerPosition: () =>
     ipcRenderer.invoke("wuu:window-pointer-position") as Promise<{ x: number; y: number } | null>,
   windowSetControls: (state) => ipcRenderer.invoke("wuu:window-set-controls", state),
@@ -597,6 +599,15 @@ const api: WuuDesktopApi = {
     ipcRenderer.on("wuu:window-maximized-changed", listener);
     return () =>
       ipcRenderer.removeListener("wuu:window-maximized-changed", listener);
+  },
+  onWindowFullScreenChange: (handler: (fullscreen: boolean) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      fullscreen: boolean,
+    ) => handler(fullscreen);
+    ipcRenderer.on("wuu:window-full-screen-changed", listener);
+    return () =>
+      ipcRenderer.removeListener("wuu:window-full-screen-changed", listener);
   },
   popOutSession: (params) =>
     ipcRenderer.invoke("wuu:pop-out-session", params),
