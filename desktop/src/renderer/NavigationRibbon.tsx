@@ -100,6 +100,18 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => { clearTimeout(enterTimer.current); clearTimeout(leaveTimer.current); }, []);
   const [keyboardFocusWithin, setKeyboardFocusWithin] = useState(false);
+  const nativeReturnFocus = useRef<Element | null>(null);
+  useEffect(() => {
+    // A real new input starts a new focus journey. Restoring WebContents focus
+    // after dismissing native chrome must not count as another keyboard entry.
+    const reset = () => { nativeReturnFocus.current = null; };
+    document.addEventListener("keydown", reset, true);
+    document.addEventListener("pointerdown", reset, true);
+    return () => {
+      document.removeEventListener("keydown", reset, true);
+      document.removeEventListener("pointerdown", reset, true);
+    };
+  }, []);
   const [nativeFocusTarget, setNativeFocusTarget] = useState<ChromeRibbonFocus>();
   const rememberFocus = (target: EventTarget | null) => {
     if (!(target instanceof Element)) return;
@@ -255,6 +267,11 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     else if (command.type === "account-open") accountOpen.current?.(command.anchor);
     else if (command.type === "scroll") { scrollTop.current = command.top; const main = navRef.current?.querySelector(".sidebar-ribbon-main"); if (main) main.scrollTop = command.top; }
   }, closeNative, keyboardFocusWithin, navRef.current);
+  useLayoutEffect(() => {
+    if (nativePresented && navRef.current?.contains(document.activeElement)) {
+      nativeReturnFocus.current = document.activeElement;
+    }
+  }, [nativePresented]);
   const enterRibbon = () => {
     clearTimeout(leaveTimer.current);
     leaveTimer.current = undefined;
@@ -305,8 +322,15 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
         }
       }}
       onPointerDownCapture={() => setKeyboardFocusWithin(false)}
-      onFocus={event => { rememberFocus(event.target); setKeyboardFocusWithin(readFocusModality() === "keyboard"); }}
+      onFocus={event => {
+        if (!event.relatedTarget && nativeReturnFocus.current === event.target) return;
+        rememberFocus(event.target);
+        setKeyboardFocusWithin(readFocusModality() === "keyboard");
+      }}
       onBlur={(event) => {
+        // Paint can trail keyboard traversal: remember the element actually
+        // handed to native chrome, not only the one focused when opening began.
+        if (nativePresented && !event.relatedTarget) nativeReturnFocus.current = event.target;
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setKeyboardFocusWithin(false);
       }}
       onKeyDownCapture={event => { rememberFocus(event.target); setKeyboardFocusWithin(true); }}>
