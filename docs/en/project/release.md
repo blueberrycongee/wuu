@@ -29,13 +29,32 @@ The dated changelog section becomes the GitHub Release notes verbatim, so keep i
 
 List the GitHub logins of authors of PRs merged since the previous tag (`gh pr list --state merged --search "merged:>=<previous tag date>"`), maintainer first. Group changes by user-visible theme instead of listing commits, name the most important fixes in one bullet, and omit test, CI, and refactor-only work. Leave out features hidden from production builds.
 
-`make tag-release` does not push anything and rejects a dirty tree or an existing local tag. The workflow independently requires the tag commit to be an ancestor of `origin/main`, all generated product versions to match the tag, and a nonempty matching changelog section. A successful local build does not bypass these checks.
+`make tag-release` does not push anything and rejects a dirty tree or an existing local tag. The workflow independently requires final and `-rc.N` tag commits to be ancestors of `origin/main`, nightly tag commits to be on an `origin` branch, all generated product versions to match the tag, and a nonempty matching changelog section. A successful local build does not bypass these checks.
+
+### Nightly prereleases
+
+Nightly builds exercise work that has not landed on `main`. They use
+`YYYY.M.D-nightly.N`, are always GitHub prereleases, and are never offered to
+stable automatic-update clients. A nightly tag must point to a commit that is
+already on an `origin` branch; final and `-rc.N` releases still must be ancestors
+of `origin/main`.
+
+Create a short-lived release branch from the branch under test, then:
+
+1. Run `make release-prepare-nightly RELEASE_VERSION=2026.10.21-nightly.1 NIGHTLY_NOTES="Nightly build from experiment/workbench."`. This updates `VERSION` and generated version files and inserts a short dated changelog section. It leaves `[Unreleased]` intact for the eventual stable release.
+2. Commit the release files and run `make tag-release`.
+3. Push the release branch, then the tag. Pushing only the tag fails because the nightly source must already be reachable from an `origin` branch. Keep the release branch until the workflow finishes so a failed run can be retried.
+4. Watch the Release workflow. A successful run publishes a prerelease with signed, notarized, stapled macOS artifacts.
+
+Increment `N` for another nightly on the same UTC date. Do not reuse a nightly
+version or move its tag. Nightly tags carry the same signing authority as release
+tags, so restrict tag creation to maintainers.
 
 ## Product versions and compatibility
 
-Product releases use `YYYY.M.D`: the UTC release year, month, and day, without leading zeros. There is at most one final release per UTC day; published tags are never reused. A prerelease can use a suffix such as `2026.9.21-rc.1`; the workflow marks suffix-bearing tags as GitHub prereleases.
+Product releases use `YYYY.M.D`: the UTC release year, month, and day, without leading zeros. There is at most one final release per UTC day; published tags are never reused. A prerelease can use a suffix such as `2026.9.21-rc.1` or `2026.10.21-nightly.1`; the workflow marks suffix-bearing tags as GitHub prereleases.
 
-Use `make version-sync` to synchronize metadata from `VERSION`, and `make version-check` to verify it. Do not hand-edit generated desktop or native version fields. Preparing a final release from its matching prerelease carries forward the candidate's notes together with new unreleased notes.
+Use `make version-sync` to synchronize metadata from `VERSION`, and `make version-check` to verify it. Do not hand-edit generated desktop or native version fields. Preparing a final release from its matching `-rc.N` prerelease carries forward the candidate's notes together with new unreleased notes.
 
 CalVer describes release recency, not Extension API, service, remote protocol, or storage compatibility. Review those contracts and migration requirements separately. Calendar tags are also not Go module major versions: the supported source installation command for the CLI is `make install` from a checkout, not a release-tagged `go install ...@latest` promise.
 

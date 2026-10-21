@@ -168,6 +168,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Guide next-message predictions toward concrete follow-ups instead of polite
   acknowledgments, and allow no suggestion when the next intent is unclear.
 
+## [2026.10.21-nightly.3] - 2026.10.21
+
+Nightly build from experiment/workbench at 044af374594d15fe85f4e5ed206a5fff678c6f39 for testing the current Workbench, native browser, navigation, and composer interactions. Experimental prerelease, not a stable update.
+
 ## [2026.10.19] - 2026-10-18
 
 ### Contributors

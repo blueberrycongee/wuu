@@ -1,7 +1,7 @@
 .PHONY: setup dev docs-dev check repository-check repository-metadata-check version-check eval-check docs-policy-check test-policy-check theme-contract-check generate-theme-contract theme-surface-matrix-check generate-theme-surface-matrix check-go check-desktop check-clients check-docs test test-go \
 	build-plugins check-plugins test-plugins test-go-uncached test-desktop test-clients test-native build build-go build-desktop \
 	build-clients build-docs build-macos build-linux ci install vet clean release-check \
-	print-version tag-release version-check version-sync release-prepare
+	print-version tag-release version-check version-sync release-prepare release-prepare-nightly
 
 VERSION_FILE := VERSION
 BASE_VERSION := $(shell cat $(VERSION_FILE) 2>/dev/null || echo "2026.1.1")
@@ -157,6 +157,9 @@ version-sync:
 
 release-prepare:
 	node scripts/release-version.mjs prepare "$(RELEASE_VERSION)"
+
+release-prepare-nightly:
+	node scripts/release-version.mjs prepare-nightly "$(RELEASE_VERSION)" "$(NIGHTLY_NOTES)"
 
 print-version:
 	@echo v$(BASE_VERSION)
