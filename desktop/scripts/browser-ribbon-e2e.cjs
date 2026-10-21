@@ -266,6 +266,19 @@ function key(keyCode) {
   await run(`window.emitRibbon({token:${JSON.stringify(pending.token)},generation:${pending.generation},command:{type:"dismiss",reason:"escape"}});
     delete window.wuu.chromeOverlay;document.querySelector("[data-ribbon-audio-id=tab-0]").click();document.querySelector("input").focus()`);
   checks.push("Pending native paint leaves toolbar hit targets and collapsed audio status intact; measured full-width native rail opens and its expanded row receives real clicks");
+  // Reduced motion completes synchronously, before the first-paint handshake.
+  // It must still expand the native view and report the final reveal to the shell.
+  const reduced = { ...request, token: "reduced-motion-opening", appearance: { ...appearance,
+    variables: { ...appearance.variables, "--motion-reduced": "1" } } };
+  const reducedEventStart = nativeEvents.length;
+  nativeHost.show(win, reduced);
+  await until(() => openingView.getVisible() && openingView.getBounds().width === Math.ceil(reduced.bounds.width), "complete reduced-motion native opening");
+  assert.equal(await openingView.webContents.executeJavaScript('getComputedStyle(document.querySelector(".sidebar-ribbon")).getPropertyValue("--ribbon-motion-duration").trim()'), "0ms");
+  assert.ok(nativeEvents.slice(reducedEventStart).some(event => event.command?.type === "reveal" && event.command.fraction === 1), "Reduced-motion opening delivers its completed reveal");
+  nativeHost.hide(win, reduced.token, reduced.generation);
+  assert.equal(openingView.getVisible(), false);
+  assert.equal(openingView.webContents.getBackgroundThrottling(), true);
+  checks.push("Reduced-motion native opening completes its paint handshake at full width and restores throttling when hidden");
   win.focus();
   page.webContents.focus();
   await delay(0);
@@ -441,8 +454,11 @@ function key(keyCode) {
   if (win && !win.isDestroyed()) {
     const surfaces = await Promise.all(win.contentView.children.filter(view => view.webContents && !view.webContents.isDestroyed()).map(async view => ({
       url: view.webContents.getURL(), visible: view.getVisible(), focused: view.webContents.isFocused(), bounds: view.getBounds(),
-      renderer: await view.webContents.executeJavaScript(`({active:document.activeElement?.outerHTML?.slice(0,400),
-        animations:document.getAnimations().map(a=>({state:a.playState,end:a.effect?.getComputedTiming().endTime}))})`).catch(reason => ({ error: String(reason) })),
+      renderer: await view.webContents.executeJavaScript(`(()=>{const ribbon=document.querySelector(".sidebar-ribbon");return {
+        visibility:document.visibilityState,reducedMotion:matchMedia("(prefers-reduced-motion: reduce)").matches,
+        reveal:ribbon?.style.getPropertyValue("--ribbon-reveal"),duration:ribbon?getComputedStyle(ribbon).getPropertyValue("--ribbon-motion-duration"):null,
+        active:document.activeElement?.outerHTML?.slice(0,400),
+        animations:document.getAnimations().map(a=>({state:a.playState,end:a.effect?.getComputedTiming().endTime}))}})()`).catch(reason => ({ error: String(reason) })),
     })));
     fs.writeFileSync(path.join(output, "failure-surfaces.json"), JSON.stringify(surfaces, null, 2));
     fs.writeFileSync(path.join(output, "failure.png"), (await win.webContents.capturePage()).toPNG());

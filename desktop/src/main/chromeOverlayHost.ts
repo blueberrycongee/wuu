@@ -188,7 +188,12 @@ export class ChromeOverlayHost {
     if (!request || request.token !== token || request.generation !== generation || !surface.owner.isVisible() || surface.owner.isMinimized() || this.fullscreen) return;
     this.layout(surface);
     const opening = !surface.view.getVisible();
-    if (opening) surface.view.setVisible(true);
+    if (opening) {
+      surface.view.setVisible(true);
+      // A zero-duration reveal can finish before the first painted frame.
+      // Publish that progress only once the native surface is actually visible.
+      if (surface.kind === "ribbon") this.emitCurrent(surface, { type: "reveal", fraction: surface.reveal ?? 0 });
+    }
     surface.view.webContents.setBackgroundThrottling(true);
     // Model and viewport updates keep the existing native stacking. Newly
     // attached website views already raise chrome through prepare().
@@ -201,9 +206,12 @@ export class ChromeOverlayHost {
     const surface = this.trusted(event);
     if (!surface) return;
     const request = surface.request;
-    if (!request || !message || request.token !== message.token || !surface.view.getVisible()) return;
+    if (!request || !message || request.token !== message.token) return;
     const command = message.command;
     if (!command || typeof command.type !== "string") return;
+    // Only reveal progress may arrive before paint; interaction still requires
+    // a visible native view. Token and generation checks below apply to both.
+    if (!surface.view.getVisible() && !(surface.kind === "ribbon" && command.type === "reveal")) return;
     // Pointer/focus ownership, reveal progress and opening a menu belong to this
     // opening, not a title/progress revision. A menu is rebuilt from the current
     // validated tab below; actual Pin/Close commands use the current generation.
@@ -213,6 +221,7 @@ export class ChromeOverlayHost {
     if (command.type === "reveal" && surface.kind === "ribbon") {
       if (!Number.isFinite(command.fraction) || command.fraction < 0 || command.fraction > 1) return;
       surface.reveal = command.fraction;
+      if (!surface.view.getVisible()) return;
       this.emitCurrent(surface, command);
       if (surface.closing && command.fraction === 0) this.dismiss(surface, "leave", false, true);
       else this.layout(surface);
