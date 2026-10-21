@@ -5865,3 +5865,98 @@ button.turn-edit-summary-overview:focus-visible {
     grid-template-columns: 1fr;
   }
 }
+
+/* IM presentation shares the message flow and its editing/attachment contracts. */
+:root[data-message-style="im"] {
+  --user-message-bg-color: color-mix(in srgb, var(--paper) 96%, var(--ink));
+  --user-message-radius: var(--wuu-message-user-radius, var(--radius-sm));
+  --user-message-inline-outset: var(--space-2);
+}
+
+:root[data-message-style="im"] .user-message-block {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  align-self: stretch;
+  justify-items: stretch;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* The frame includes metadata and actions; its text stays on the reply's axis. */
+:root[data-message-style="im"] :is(.user-message-block:not(:has(.user-message-edit)), .user-message-edit) {
+  width: calc(100% + 2 * var(--user-message-inline-outset));
+  max-width: none;
+  margin-inline: calc(-1 * var(--user-message-inline-outset));
+  box-sizing: border-box;
+}
+
+:root[data-message-style="im"] .user-message-block:not(:has(.user-message-edit)) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: var(--conversation-framed-text-inset-block) var(--user-message-inline-outset);
+  background: var(--wuu-message-user-background, var(--user-message-bg-color));
+  border-radius: var(--user-message-radius);
+  outline: var(--wuu-message-user-border, 0);
+  box-shadow: var(--wuu-message-user-shadow, none);
+}
+
+:root[data-message-style="im"] .user-message {
+  width: 100%;
+  align-self: start;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-message-style="im"] .user-message-edit {
+  padding-inline: calc(var(--user-message-inline-outset) - 1px);
+}
+
+:root[data-message-style="im"] .user-message-edit-input {
+  padding-inline: 0;
+}
+
+:root[data-message-style="im"] .user-message-motion {
+  flex: 1 1 auto;
+  width: auto;
+  max-width: 100%;
+  justify-items: stretch;
+}
+
+:root[data-message-style="im"] .user-message-block:has(.user-message-edit) .user-message-motion {
+  width: 100%;
+}
+
+:root[data-message-style="im"] .user-message-actions {
+  position: static;
+  flex: 0 0 auto;
+  width: auto;
+  margin-inline-start: auto;
+  padding-top: 0;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  transform: none;
+}
+
+:root[data-message-style="im"] .user-message-time {
+  font-weight: var(--weight-regular);
+}
+
+:root[data-message-style="im"] .user-message-block-with-actions + .user-message-block {
+  margin-top: 0;
+}
+
+:root[data-message-style="im"] .session-message-source {
+  justify-self: start;
+}
+
+:root[data-message-style="im"] .user-message-attachments {
+  justify-items: start;
+}
+
+:root[data-message-style="im"] .user-message-block :is(.message-images, .message-files) {
+  justify-content: flex-start;
+}

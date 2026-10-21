@@ -34,7 +34,7 @@ it("loads installed families on demand, deduplicates faces and persists a select
   vi.stubGlobal("queryLocalFonts", query);
   await mount();
   expect(query).not.toHaveBeenCalled();
-  await click(container.querySelector(".select-menu-trigger")!);
+  await click(container.querySelector(".appearance-font-picker .select-menu-trigger")!);
   const options = [...document.querySelectorAll(".select-menu-item")];
   const sans = options.filter((item) => item.textContent?.includes("Example Sans"));
   expect(sans).toHaveLength(1);
@@ -47,7 +47,7 @@ it("preserves the selected font after access fails and retries when reopened", a
   const query = vi.fn().mockRejectedValueOnce(new Error("denied")).mockResolvedValue([{ family: "New Font" }]);
   vi.stubGlobal("queryLocalFonts", query);
   await mount();
-  const trigger = container.querySelector(".select-menu-trigger")!;
+  const trigger = container.querySelector(".appearance-font-picker .select-menu-trigger")!;
   await click(trigger);
   expect(readAppearance().uiFont).toBe("Existing Font");
   await click(trigger);

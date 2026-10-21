@@ -77,6 +77,12 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
       onClick={() => update({ uiFont: appearanceDefaults.uiFont, contentFont: appearanceDefaults.contentFont, codeFont: appearanceDefaults.codeFont })}>{t("settings.resetFonts")}</button>}
   >
     <SettingsGroup>
+      <SettingsRow title={t("settings.messageStyle")}>
+        <SelectMenu ariaLabel={t("settings.messageStyle")} value={preferences.messageStyle}
+          onChange={(value) => update({ messageStyle: value as AppearancePreferences["messageStyle"] })}
+          options={[{ value: "bubble", label: t("settings.messageStyleBubble") }, { value: "im", label: t("settings.messageStyleIM") }]}
+          triggerClassName="settings-select-trigger" />
+      </SettingsRow>
       <SettingsRow title={t("settings.textInterface")}>
         {fontPicker("uiFont")}
         <MessageFlowFontSizeControl />
