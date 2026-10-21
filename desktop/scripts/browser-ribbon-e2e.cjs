@@ -27,15 +27,30 @@ const checks = [], screenshots = [], limitations = [];
 const nativeEvents = [];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let win, nativeHost, devServer;
+let phase = "startup";
+const phases = [{ phase, at: performance.now() }];
+const surfacesNow = () => win && !win.isDestroyed() ? win.contentView.children.filter(view => view.webContents && !view.webContents.isDestroyed()).map(view => ({
+  url: view.webContents.getURL(), visible: view.getVisible(), focused: view.webContents.isFocused(), bounds: view.getBounds(),
+})) : [];
+async function bounded(promise, label, timeout = 3000) {
+  if (phase !== label) phases.push({ phase: label, at: performance.now() });
+  phase = label;
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("Timed out awaiting: " + label)), timeout);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 require("esbuild").buildSync({ entryPoints: [path.join(root, "src/main/chromeOverlayHost.ts")], outfile: path.join(output, "native-host.cjs"),
   bundle: true, platform: "node", format: "cjs", external: ["electron"] });
 const { ChromeOverlayHost, chromeOverlayScheme } = require(path.join(output, "native-host.cjs"));
 protocol.registerSchemesAsPrivileged([chromeOverlayScheme]);
 async function until(fn, label) {
-  for (let i = 0; i < 150; i++) { if (await fn()) return; await delay(20); }
+  for (let i = 0; i < 150; i++) { if (await bounded(Promise.resolve().then(fn), label)) return; await delay(20); }
   throw new Error("Timed out: " + label);
 }
-const run = code => win.webContents.executeJavaScript(code, true);
+const run = code => bounded(win.webContents.executeJavaScript(code, true), "shell: " + code.slice(0, 160));
 function key(keyCode) {
   win.webContents.sendInputEvent({ type: "keyDown", keyCode });
   win.webContents.sendInputEvent({ type: "keyUp", keyCode });
@@ -285,7 +300,7 @@ function key(keyCode) {
   nativeHost.show(win, request);
   let ribbon;
   await until(() => { ribbon = win.contentView.children.find(view => view.webContents?.getURL().includes("surface=ribbon")); return ribbon?.getVisible(); }, "native ribbon painted");
-  const nativeRun = code => ribbon.webContents.executeJavaScript(code, true);
+  const nativeRun = code => bounded(ribbon.webContents.executeJavaScript(code, true), "ribbon: " + code.slice(0, 160));
   await until(() => nativeRun('document.querySelectorAll("[data-ribbon-id]").length===48&&!!document.querySelector("[data-ribbon-id=native-0]")'), "native tab rows");
   await nativeRun('window.wuuChromeOverlay.ready().then(request=>window.wuuChromeOverlay.command({token:request.token,generation:request.generation,command:{type:"retain",active:true}}))');
   assert.equal(await nativeRun('document.querySelector(".sidebar-ribbon-main").scrollTop'), 600, "Opening the native ribbon preserves the user's saved scroll");
@@ -360,7 +375,7 @@ function key(keyCode) {
     capsule = win.contentView.children.find(view => view.webContents?.getURL().includes("surface=capsule"));
     return capsule?.getVisible() && capsule.webContents.isFocused();
   }, "native capsule editor visible and focused");
-  const capsuleRun = code => capsule.webContents.executeJavaScript(code, true);
+  const capsuleRun = code => bounded(capsule.webContents.executeJavaScript(code, true), "capsule: " + code.slice(0, 160));
   // The native paint handshake precedes the finite clip-path unfold. A click
   // on the still-clipped editor hits its background and legitimately blurs it.
   // Wait for the actual hit target, not an arbitrary delay or forced DOM focus.
@@ -392,7 +407,7 @@ function key(keyCode) {
   for (const [width, height] of [[940, 720], [1080, 800], [820, 660], [1140, 820], [900, 700], [1000, 760]]) {
     const resized = new Promise(resolve => win.once("resize", resolve));
     win.setSize(width, height);
-    await resized;
+    await bounded(resized, `owner resize event ${width}x${height}`);
     const editor = await capsuleRun(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
       const input=document.querySelector("[data-context-capsule] input");
       resolve({value:input.value,start:input.selectionStart,end:input.selectionEnd,active:document.activeElement===input});
@@ -432,7 +447,7 @@ function key(keyCode) {
         ipcMain.on("wuu:chrome-overlay-painted", observe);
       });
       nativeHost.show(win, update);
-      await painted;
+      await bounded(painted, `capsule painted generation ${update.generation}`);
       const editor = await capsuleRun(`(()=>{const input=document.querySelector("[data-context-capsule] input");
         return input?{value:input.value,start:input.selectionStart,end:input.selectionEnd,active:document.activeElement===input}:null})()`);
       paintEvidence.samples.push({ focusOwner, generation: update.generation, visible: capsule.getVisible(),
@@ -447,23 +462,29 @@ function key(keyCode) {
   }
   checks.push("Visible capsule model and bounds updates preserve page or editor focus without disturbing the draft and selection");
   fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ status: "passed", versions: process.versions, checks, screenshots, limitations,
-    nativeEvents, devServer: Boolean(devURL), scope: "Shipping React/CSS and native ChromeOverlayHost over a live webpage. Synthetic tab models; complete app navigation is covered by workspace acceptance." }, null, 2));
+    nativeEvents, phases, devServer: Boolean(devURL), scope: "Shipping React/CSS and native ChromeOverlayHost over a live webpage. Synthetic tab models; complete app navigation is covered by workspace acceptance." }, null, 2));
   console.log(checks.join("\n"));
   console.log("Evidence:", output);
 })().catch(async error => {
+  fs.writeFileSync(path.join(output, "failure-progress.json"), JSON.stringify({ phase, phases, surfaces: surfacesNow(), checks, nativeEvents }, null, 2));
   if (win && !win.isDestroyed()) {
     const surfaces = await Promise.all(win.contentView.children.filter(view => view.webContents && !view.webContents.isDestroyed()).map(async view => ({
       url: view.webContents.getURL(), visible: view.getVisible(), focused: view.webContents.isFocused(), bounds: view.getBounds(),
-      renderer: await view.webContents.executeJavaScript(`(()=>{const ribbon=document.querySelector(".sidebar-ribbon");return {
+      renderer: await bounded(view.webContents.executeJavaScript(`(()=>{const ribbon=document.querySelector(".sidebar-ribbon");return {
         visibility:document.visibilityState,reducedMotion:matchMedia("(prefers-reduced-motion: reduce)").matches,
         reveal:ribbon?.style.getPropertyValue("--ribbon-reveal"),duration:ribbon?getComputedStyle(ribbon).getPropertyValue("--ribbon-motion-duration"):null,
         active:document.activeElement?.outerHTML?.slice(0,400),
-        animations:document.getAnimations().map(a=>({state:a.playState,end:a.effect?.getComputedTiming().endTime}))}})()`).catch(reason => ({ error: String(reason) })),
+        animations:document.getAnimations().map(a=>({state:a.playState,end:a.effect?.getComputedTiming().endTime}))}})()`), "failure renderer diagnostics").catch(reason => ({ error: String(reason) })),
     })));
     fs.writeFileSync(path.join(output, "failure-surfaces.json"), JSON.stringify(surfaces, null, 2));
-    fs.writeFileSync(path.join(output, "failure.png"), (await win.webContents.capturePage()).toPNG());
+    const screenshot = await bounded(win.webContents.capturePage(), "failure screenshot").catch(() => null);
+    if (screenshot) fs.writeFileSync(path.join(output, "failure.png"), screenshot.toPNG());
   }
   fs.writeFileSync(path.join(output, "failure-events.json"), JSON.stringify(nativeEvents, null, 2));
   console.error(error); fs.writeFileSync(path.join(output, "failure.txt"), String(error.stack)); process.exitCode = 1;
 }).finally(async () => { if (win) nativeHost?.close(win); win?.destroy(); await devServer?.close(); app.exit(process.exitCode || 0); });
-setTimeout(() => app.exit(1), 60000).unref();
+setTimeout(() => {
+  fs.writeFileSync(path.join(output, "failure-progress.json"), JSON.stringify({ phase, phases, surfaces: surfacesNow(), checks, nativeEvents, watchdog: true }, null, 2));
+  console.error("Ribbon watchdog expired during:", phase);
+  app.exit(1);
+}, 60000).unref();
