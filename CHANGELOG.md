@@ -34,6 +34,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Continue checking for newer desktop releases while an update is available,
+  and refresh the latest version before downloading from either update entry point.
+
 - Reduce desktop sidebar group gaps and conversation title emphasis, and align
   the account control's bottom edge with the message composer.
 - Fix macOS background pointer events landing outside the intended control. Pace key presses, text input, and repeated clicks, and retain the observed window for background input after AX-only observations.
