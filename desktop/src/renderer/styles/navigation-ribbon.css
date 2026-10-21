@@ -10,7 +10,10 @@
     0 8px 20px -10px var(--shadow-color-medium)
   );
   --web-workspace-address-height: max(var(--control-size-toolbar), calc(var(--font-ui) * 1.4 + var(--space-1) * 2));
-  --web-workspace-toolbar-height: calc(var(--web-workspace-address-height) + var(--space-2) * 2 + 1px);
+  /* The browser and native ribbon meet at one header boundary. Reserve the
+     mascot's compact-rail footprint here too, so the page cannot start above
+     the native overlay when address controls are shorter than the mascot. */
+  --web-workspace-toolbar-height: max(var(--sidebar-ribbon-compact-width, 52px), calc(var(--web-workspace-address-height) + var(--space-2) * 2 + 1px));
 }
 
 :root:has(.app-shell.navigation-ribbon-layout:not(.popped-out-shell)) {
@@ -236,7 +239,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 
 .sidebar-ribbon {
   --ribbon-brand-size: calc(var(--sidebar-ribbon-compact-width, 52px) - var(--ribbon-inline-inset) * 2);
-  --ribbon-header-height: calc(var(--workbench-top) + max(var(--web-workspace-toolbar-height), calc(var(--ribbon-brand-size) + var(--ribbon-row-gap) * 2)));
+  --ribbon-header-height: calc(var(--workbench-top) + var(--web-workspace-toolbar-height));
   --ribbon-motion-duration: 220ms;
   /* Every destination shares one row gap; the footer owns the wider break. */
   --ribbon-row-gap: var(--space-2);

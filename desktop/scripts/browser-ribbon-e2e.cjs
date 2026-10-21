@@ -79,7 +79,7 @@ function key(keyCode) {
         onCloseTab={id=>setTabs(tabs.filter(tab=>tab.id!==id))} onMuteTab={(id,muted)=>setTabs(tabs.map(tab=>tab.id===id?{...tab,muted}:tab))}
         onPinTab={(id,pinned)=>setTabs(tabs.map(tab=>tab.id===id?{...tab,pinned}:tab))} onNewTab={()=>{}}
         footer={<button className="sidebar-ribbon-button" aria-label="Settings"><Settings/><span className="sidebar-ribbon-label">Settings</span></button>}/></aside>
-        <div style={{position:"absolute",top:0,left:64,right:0,height:"var(--web-workspace-toolbar-height)",background:"var(--workbench-canvas-bg)",display:"flex",alignItems:"center",gap:20,paddingLeft:40}}>
+        <div role="toolbar" style={{position:"absolute",top:0,left:64,right:0,height:"var(--web-workspace-toolbar-height)",background:"var(--workbench-canvas-bg)",display:"flex",alignItems:"center",gap:20,paddingLeft:40}}>
           <button aria-label="Browser back">Back</button><span>Search or enter address</span>
         </div><main style={{marginLeft:280,padding:80}}><h1>Browser ribbon acceptance</h1>
         <p>The production ribbon with 48 fixture tabs.</p><input aria-label="Page editor" placeholder="Page input keeps focus when a background tab closes"/></main></>}
@@ -121,6 +121,9 @@ function key(keyCode) {
     await until(() => run('document.querySelector("nav").dataset.expanded==="true"'), "expanded keyboard rail");
     await run('document.querySelector(".sidebar-ribbon-footer button").focus()');
     await delay(250);
+    const seam = await run(`(()=>{const nav=document.querySelector("nav"),toolbar=document.querySelector("[role=toolbar]");
+      return {ribbonTop:nav.getBoundingClientRect().top+parseFloat(getComputedStyle(nav).paddingTop),pageTop:toolbar.getBoundingClientRect().bottom}})()`);
+    assert.equal(seam.ribbonTop, seam.pageTop, `${theme}/${size}: shell header and browser viewport must meet without a gap`);
     const layout = await run(`(()=>{const row=document.querySelector(".sidebar-ribbon-tab-row");const label=row.querySelector(".sidebar-ribbon-label").getBoundingClientRect();
       return [...row.querySelectorAll(".sidebar-ribbon-audio,.sidebar-ribbon-close")].every(button=>label.right<=button.getBoundingClientRect().left)})()`);
     assert.equal(layout, true, `${theme}/${size}: title must not overlap audio or close`);
@@ -128,6 +131,7 @@ function key(keyCode) {
     fs.writeFileSync(path.join(output, file), (await win.webContents.capturePage()).toPNG()); screenshots.push(file);
   }
   checks.push("Long titles do not overlap mute and close controls in light/dark at 15/20px");
+  checks.push("Browser viewport and ribbon header share one boundary in light/dark at 15/20px");
   await run('document.querySelector("input").focus();document.querySelector("[data-ribbon-id=tab-2]").dispatchEvent(new MouseEvent("auxclick",{button:1,bubbles:true}))');
   win.webContents.sendInputEvent({ type: "mouseMove", x: 500, y: 400 });
   await until(() => run('!document.querySelector("[data-ribbon-id=tab-2]")'), "background close");
@@ -157,7 +161,8 @@ function key(keyCode) {
     bundle: true, platform: "node", format: "cjs", external: ["electron"] });
   fs.writeFileSync(path.join(output, "chrome-overlay.html"), '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="wuu-chrome://ui/assets/native-ribbon.css"><div id="root"></div><script src="wuu-chrome://ui/assets/native-ribbon.js"></script>');
   const page = new WebContentsView({ webPreferences: { sandbox: true } });
-  const pageTop = await run('Math.ceil(parseFloat(getComputedStyle(document.querySelector("nav")).paddingTop))');
+  await run('document.documentElement.style.setProperty("--conversation-message-font-size","15px")');
+  const pageTop = await run('Math.ceil(document.querySelector("[role=toolbar]").getBoundingClientRect().bottom)');
   const pageBounds = { x: 64, y: pageTop, width: 936, height: 720 - pageTop };
   page.setBounds(pageBounds);
   win.contentView.addChildView(page);
@@ -225,6 +230,7 @@ function key(keyCode) {
   key("HOME");
   await until(() => run('Boolean(window.pendingRibbon)'), "shell native opening request");
   const pending = await run("window.pendingRibbon");
+  assert.equal(Math.round(pending.bounds.y), pageTop, "Native ribbon must meet the actual browser viewport without an exposed page strip");
   const shellOpening = await run(`(()=>{
     const nav=document.querySelector("nav"),row=document.querySelector("[data-ribbon-id=tab-0]").closest(".sidebar-ribbon-tab-row");
     const collapsed=parseFloat(getComputedStyle(nav).getPropertyValue("--sidebar-ribbon-width"));
