@@ -306,15 +306,20 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setKeyboardFocusWithin(false);
       }}
       onKeyDownCapture={event => { rememberFocus(event.target); setKeyboardFocusWithin(true); }}>
-      <a className="sidebar-ribbon-brand"
-        href="https://github.com/blueberrycongee/wuu" target="_blank" rel="noreferrer"
-        aria-label={t("ribbon.github")} title={t("ribbon.github")}
-        onClick={event => {
-          event.preventDefault();
-          void window.wuu.openExternal(event.currentTarget.href).catch(error => showActionErrorToast(error));
-        }}>
-        <img src={mascotIcon} alt="" draggable={false} />
-      </a>
+      {/* The brand hint must not retain or expand the navigation ribbon. */}
+      <HoverRevealScopeContext.Provider value={null}>
+        <Tooltip content={t("ribbon.github")} side="bottom" native={Boolean(activeWebsiteId)}>
+          <a className="sidebar-ribbon-brand"
+            href="https://github.com/blueberrycongee/wuu" target="_blank" rel="noreferrer"
+            aria-label={t("ribbon.github")}
+            onClick={event => {
+              event.preventDefault();
+              void window.wuu.openExternal(event.currentTarget.href).catch(error => showActionErrorToast(error));
+            }}>
+            <img src={mascotIcon} alt="" draggable={false} />
+          </a>
+        </Tooltip>
+      </HoverRevealScopeContext.Provider>
       <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis]}
         accessibility={{ screenReaderInstructions: { draggable: t("ribbon.reorderHint") } }}
         onDragStart={() => setDragging(true)}
