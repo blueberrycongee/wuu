@@ -60,6 +60,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Use the same user-message background in IM list and bubble presentation modes, and keep IM frame backgrounds visible during window resizing.
+
 - Keep the experimental navigation ribbon at its saved width on pointer hover.
 
 - Keep IM user-message timestamps beside the text when space permits, with stable hover actions and a separate metadata row for narrow panes and complex content.

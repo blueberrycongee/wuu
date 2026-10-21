@@ -5869,9 +5869,14 @@ button.turn-edit-summary-overview:focus-visible {
 /* IM presentation shares the message flow and its editing/attachment contracts.
    The frame spans the reading row; its text stays on the reply's axis. */
 :root[data-message-style="im"] {
-  --user-message-bg-color: var(--wuu-message-user-background, var(--surface-1));
   --user-message-frame-border: var(--wuu-message-user-border, 1px solid var(--hairline-soft));
   --user-message-radius: var(--wuu-message-user-radius, 12px);
+}
+
+/* Resize-time paint containment must include the frame's reading-column overhang. */
+:root[data-message-style="im"] .turn {
+  margin-inline: calc(-1 * var(--session-im-inline-outset));
+  padding-inline: var(--session-im-inline-outset);
 }
 
 :root[data-message-style="im"] .user-message-block {
