@@ -172,6 +172,16 @@ requires no system-wide Codex installation; it does not test upstream login or
 inference. Use `open --env WUU_ENGINE_DISCOVERY_OUTPUT=/absolute/output` to keep
 separate evidence folders.
 
+On macOS, `npm --prefix desktop run test:e2e:desktop-update` exercises the production
+update button, preload, menu and polling callbacks with the real MacUpdater and
+a local HTTP release feed. It checks newer releases, failed checks, withdrawal,
+serialized downloads and version changes during consent, verifying downloaded
+ZIP hashes. Consent is scripted and installation is never requested. It uses
+temporary profiles and caches; screenshots and request/state evidence are saved
+under `desktop/out/e2e/desktop-update/` (`WUU_UPDATE_E2E_OUTPUT` overrides this).
+The macOS CI job runs it and uploads the evidence. It does not validate GitHub
+availability, release signing, or installed-app replacement.
+
 ## Choose the relevant checks
 
 | Command | What it checks or builds |
