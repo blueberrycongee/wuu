@@ -218,6 +218,9 @@
      so extension canvases keep the relationship. Opaque fill prevents
      native wallpaper and browser backing surfaces from changing contrast. */
   --sidebar-material-fill: color-mix(in oklab, var(--paper) 90%, black);
+  --sidebar-row-selected-bg: var(--wuu-nav-item-active-background, var(--surface-3));
+  --sidebar-row-selected-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.1),
+    0 1px 2px rgba(0, 0, 0, 0.2), 0 2px 5px -2px rgba(0, 0, 0, 0.2);
   --sidebar-material-edge: rgba(255, 255, 255, 0.16);
   --sidebar-material-inner-edge: rgba(255, 255, 255, 0.055);
   --sidebar-drawer-edge: rgba(255, 255, 255, 0.42);

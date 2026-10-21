@@ -213,8 +213,7 @@
   color: var(--ink);
 }
 
-/* Selection is the fill alone, as in the main rail: a heavier weight would
- * widen the label and shift it while switching pages. */
+/* Share the navigation selection surface without changing label metrics. */
 .settings-nav-item.active {
   background: var(--sidebar-row-selected-bg);
   box-shadow: var(--sidebar-row-selected-shadow);

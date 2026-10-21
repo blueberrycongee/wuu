@@ -2,7 +2,7 @@
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
   /* A quiet opaque rail separates navigation without outweighing the canvas. */
-  --sidebar-material-fill: #f7f7f7;
+  --sidebar-material-fill: #f3f3f4;
   /* Rail/content boundary: a crisp dark hairline instead of the old white
    * edge + white inset pair, which were invisible against the white content
    * column and left the boundary to be read from the gray brightness step.
@@ -18,13 +18,13 @@
    * on the opaque rail. */
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, transparent);
   --sidebar-nav-item-focus-shadow: var(--focus-ring);
-  /* A quiet tone step identifies the current row without lifting it into a
-   * separate card. Derive it from ink so the same treatment works in both themes. */
+  /* Selection sits above the navigation surface; hover remains a flat tint. */
   --sidebar-row-selected-bg: var(
     --wuu-nav-item-active-background,
-    color-mix(in srgb, var(--ink) 8%, transparent)
+    #fff
   );
-  --sidebar-row-selected-shadow: none;
+  --sidebar-row-selected-shadow: inset 0 0 0 0.5px rgba(19, 19, 20, 0.07),
+    0 1px 2px rgba(19, 19, 20, 0.08), 0 2px 5px -2px rgba(19, 19, 20, 0.08);
   --sidebar-project-row-pending-bg: var(--ink-overlay-4);
   --sidebar-project-loading-notch: rgba(19, 19, 20, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);

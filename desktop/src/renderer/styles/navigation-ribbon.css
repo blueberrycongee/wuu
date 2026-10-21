@@ -4,6 +4,11 @@
 :root {
   /* Keep the reading canvas distinct from white controls and floating surfaces. */
   --workbench-canvas-bg: var(--wuu-color-canvas, #fcfcfd);
+  --workbench-frame-shadow: var(
+    --wuu-elevation-panel,
+    0 3px 8px -3px color-mix(in srgb, var(--shadow-color-medium) 55%, transparent),
+    0 8px 20px -10px var(--shadow-color-medium)
+  );
   --web-workspace-address-height: max(var(--control-size-toolbar), calc(var(--font-ui) * 1.4 + var(--space-1) * 2));
   --web-workspace-toolbar-height: calc(var(--web-workspace-address-height) + var(--space-2) * 2 + 1px);
 }
@@ -71,7 +76,7 @@
   border: 1px solid var(--hairline-soft);
   border-radius: var(--conversation-canvas-radius);
   background: var(--workbench-canvas-bg);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--workbench-frame-shadow);
   content: "";
   pointer-events: none;
 }
@@ -355,7 +360,8 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 .sidebar-ribbon-button:is([aria-current="page"], [aria-pressed="true"], [aria-expanded="true"]),
 .sidebar-ribbon-tab-row.active .sidebar-ribbon-button,
 .sidebar-ribbon .sidebar-account-trigger[aria-expanded="true"] {
-  background: var(--wuu-nav-item-active-background, var(--ink-overlay-8));
+  background: var(--sidebar-row-selected-bg);
+  box-shadow: var(--sidebar-row-selected-shadow);
   color: var(--ink-strong);
 }
 
@@ -669,6 +675,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 
 .sidebar-section-item[aria-current="page"] {
   background: var(--sidebar-row-selected-bg);
+  box-shadow: var(--sidebar-row-selected-shadow);
   color: var(--ink-strong);
 }
 
