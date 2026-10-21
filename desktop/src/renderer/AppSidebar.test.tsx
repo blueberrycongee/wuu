@@ -85,6 +85,7 @@ interface RenderOptions {
   collapsedSidebarSectionIDs?: Set<string>;
   onCreateProject?: (workspaceID?: string) => void;
   onAdoptIntoProject?: (projectID: string, threadID: string) => void;
+  onStartNewThread?: () => void;
 }
 
 // The bell view is driven by App-owned state (it has to survive faces that
@@ -114,6 +115,7 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
     onAdoptIntoProject,
     pinnedThreads = [],
     onTogglePinned = () => {},
+    onStartNewThread = () => {},
   } = options;
   return (
     <AppSidebar
@@ -132,7 +134,7 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       workspaceMenuRef={createRef<HTMLDivElement>()}
       searchOpen={false}
       sectionOrder={sectionOrder}
-      onStartNewThread={() => {}}
+      onStartNewThread={onStartNewThread}
       onOpenSkillsTab={() => {}}
       onMarkThreadsViewed={() => {}}
       unreadViewOpen={unreadViewOpen}
@@ -185,8 +187,10 @@ describe("AppSidebar layout", () => {
     const older = thread("older", 11);
     const newer = thread("newer", 12);
     const select = vi.fn();
+    const startNew = vi.fn();
     const options: RenderOptions = {
       onSelectThread: select,
+      onStartNewThread: startNew,
       activeThreadID: newer.id,
       workspaceThreadsByWorkspaceID: {
         "project-1": [older, thread("archived", 14, { archived: true })],
@@ -200,6 +204,10 @@ describe("AppSidebar layout", () => {
     expect(recent().querySelector('.thread-row.active')?.textContent).toContain("newer");
     act(() => recent().querySelector<HTMLButtonElement>('.thread-row-main')!.click());
     expect(select).toHaveBeenCalledWith(newer.id);
+    const startConversation = recent().querySelector<HTMLButtonElement>('.sidebar-recents-new-thread')!;
+    expect(startConversation).not.toBeNull();
+    act(() => startConversation.click());
+    expect(startNew).toHaveBeenCalledTimes(1);
     renderSidebar({ ...options, workspaceThreadsByWorkspaceID: {
       "project-1": [older], "project-2": [{ ...newer, archived: true }],
     } });

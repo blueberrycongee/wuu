@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Start a conversation from the Recent sidebar heading, using the scratch workspace when no project is selected.
+
 - Show the Wuu mascot icon at the top of the desktop navigation ribbon.
 
 - Resize the workbench ribbon between compact icons and persistent titled tabs, independently of the conversation list, with saved width and keyboard controls.

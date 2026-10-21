@@ -15,6 +15,7 @@ import {
   Search,
   Settings,
   Sparkles,
+  SquarePen,
   Project,
 } from "./WuuIcons";
 import {
@@ -2347,8 +2348,20 @@ export function AppSidebar({
             </SortableContext>
             {recentConversations.length > 0 ? (
               <section className="sidebar-functional-group" data-sidebar-recents="" aria-labelledby="sidebar-recents-heading">
-                <div className="sidebar-functional-heading">
+                <div className="sidebar-functional-heading sidebar-recents-heading">
                   <span className="sidebar-functional-heading-label" id="sidebar-recents-heading">{t("sidebar.recentActivity")}</span>
+                  <div className="sidebar-functional-heading-action">
+                    <button
+                      className="sidebar-row-icon-button sidebar-recents-new-thread"
+                      type="button"
+                      aria-label={t("sidebar.newConversation")}
+                      title={t("sidebar.newConversation")}
+                      disabled={!hasRuntimeContext}
+                      onClick={() => activateNative(onStartNewThread)}
+                    >
+                      <SquarePen className="icon" aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
                 <div className="sidebar-functional-group-collapse sidebar-functional-group-body">
                   <OrganizationThreadList

@@ -1334,6 +1334,30 @@ html[data-focus-modality="keyboard"] :is(
   padding: 0 var(--sidebar-row-pad-x);
 }
 
+/* Recent has no fold toggle, so its label does not grow like a toggle. Keep
+ * the compose action on the same trailing axis as the other group actions. */
+.sidebar-recents-heading {
+  justify-content: space-between;
+}
+
+/* Match the new-conversation button inside a workspace row: a row-sized hit
+ * target, the primary icon size, and no hover box. */
+.sidebar-recents-heading .sidebar-recents-new-thread {
+  --sidebar-row-icon-hover-bg: transparent;
+  --sidebar-row-icon-focus-shadow: inset 0 0 0 2px var(--sidebar-nav-item-focus-shadow);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .sidebar-recents-heading:not(:hover, :focus-within) .sidebar-recents-new-thread {
+    opacity: 0;
+  }
+}
+
 .sidebar-functional-heading-label,
 .sidebar-unread-heading-label {
   min-width: 0;
