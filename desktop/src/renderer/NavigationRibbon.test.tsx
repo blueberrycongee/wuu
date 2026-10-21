@@ -5,7 +5,7 @@ import type { ChromeOverlayApi, ChromeOverlayCommand, ChromeOverlayEvent, Chrome
 import { NavigationRibbon } from "./NavigationRibbon";
 
 // A website selection can replace the shell's pointer target with native chrome.
-// Navigating back to an app page must not end that hover session. Only an actual
+// Navigating back to an app page must not end that reveal session. Only an actual
 // leave or explicit dismissal may release it; keyboard retention must survive too.
 let root: Root;
 let container: HTMLDivElement;
@@ -67,12 +67,16 @@ function open() {
   act(() => root.render(<Journey />));
   act(() => rail().dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
   act(() => vi.advanceTimersByTime(120));
+  expect(rail().dataset.expanded).toBeUndefined();
+  expect(show).not.toHaveBeenCalled();
+  document.documentElement.dataset.focusModality = "keyboard";
+  act(() => container.querySelector<HTMLButtonElement>('[data-ribbon-id="alpha"]')!.focus());
   // The OS now delivers input to the native ribbon instead of the shell.
   act(() => rail().dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: null })));
   expect(rail().dataset.expanded).toBe("true");
 }
 
-describe("NavigationRibbon hover navigation", () => {
+describe("NavigationRibbon reveal navigation", () => {
   it("keeps the same open ribbon through website and app selections until pointer leave", () => {
     open();
     const opening = request.token;
@@ -153,7 +157,7 @@ describe("NavigationRibbon hover navigation", () => {
     act(() => rail().dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: null })));
     act(() => rail().dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
     act(() => vi.advanceTimersByTime(120));
-    expect(rail().dataset.expanded).toBe("true");
+    expect(rail().dataset.expanded).toBeUndefined();
   });
 });
 

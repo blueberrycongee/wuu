@@ -72,7 +72,6 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   const navRef = useRef<HTMLElement | null>(null);
   const width = preferences.width ?? SIDEBAR_RIBBON_WIDTH;
   const docked = width > SIDEBAR_RIBBON_WIDTH;
-  const resizing = useRef(false);
   const [nativeOpen, setNativeOpen] = useState(false);
   const [nativeClosing, setNativeClosing] = useState(false);
   const [nativeBounds, setNativeBounds] = useState<ChromeOverlayRect | null>(null);
@@ -81,8 +80,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   const [updateModel, setUpdateModel] = useState<ChromeDesktopUpdate>();
   const updateActivate = useRef<(() => void) | undefined>(undefined);
   const scrollTop = useRef(0);
-  const dismissedUnderPointer = useRef(false);
-  // One desktop surface owns hover motion across every destination. Switching
+  // One desktop surface owns reveal motion across every destination. Switching
   // from a shell page to a website must not replace it or restart its reveal.
   const nativeAvailable = Boolean(chromeOverlayApi());
   const accountContext = useMemo(() => ({ publishAccount: (trigger: ChromeAccountTrigger | undefined, open?: (bounds: ChromeOverlayRect) => void) => {
@@ -94,10 +92,6 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   } }), []);
   const [announcement, setAnnouncement] = useState("");
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
-  const [pointerInside, setPointerInside] = useState(false);
-  const enterTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const leaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => { clearTimeout(enterTimer.current); clearTimeout(leaveTimer.current); }, []);
   const [keyboardFocusWithin, setKeyboardFocusWithin] = useState(false);
   const nativeReturnFocus = useRef<Element | null>(null);
   useEffect(() => {
@@ -125,6 +119,8 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   const [dragging, setDragging] = useState(false);
   const [retainedLayers, setRetainedLayers] = useState(0);
   const retainLayer = useCallback(() => {
+    // Hover hints may retain an open ribbon, but must not expand a compact one.
+    if (navRef.current?.dataset.expanded !== "true") return () => {};
     setRetainedLayers((count) => count + 1);
     return () => setRetainedLayers((count) => count - 1);
   }, []);
@@ -207,7 +203,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   }
 
   const menuWebsite = menu && websites.find((website) => website.id === menu.id);
-  const expanded = docked || nativeOpen || pointerInside || keyboardFocusWithin || dragging || Boolean(menuWebsite) || retainedLayers > 0;
+  const expanded = docked || nativeOpen || keyboardFocusWithin || dragging || Boolean(menuWebsite) || retainedLayers > 0;
   useRibbonReveal(nativeAvailable ? undefined : "shell", expanded, () => navRef.current, () => {});
   useLayoutEffect(() => {
     onExpandedChange?.(expanded && !docked);
@@ -243,14 +239,13 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     scrollTop: scrollTop.current, focusTarget: nativeFocusTarget,
     footer: footer ? { account: accountTrigger, update: updateModel } : undefined,
   };
-  const closeNative = () => { navRef.current?.style.removeProperty("--ribbon-native-reveal"); clearTimeout(enterTimer.current); enterTimer.current = undefined; setNativeClosing(false); setNativeOpen(false); setPointerInside(false); setKeyboardFocusWithin(false); setDragging(false); };
+  const closeNative = () => { navRef.current?.style.removeProperty("--ribbon-native-reveal"); setNativeClosing(false); setNativeOpen(false); setKeyboardFocusWithin(false); setDragging(false); };
   const nativePresented = useChromeOverlay(nativeAvailable && nativeOpen, nativeBounds, nativeModel, command => {
     if (command.type === "reveal") navRef.current?.style.setProperty("--ribbon-native-reveal", String(command.fraction));
     else if (command.type === "pointer") {
       setNativeClosing(!command.inside);
-      if (command.inside) { setPointerInside(true); setNativeOpen(true); }
+      if (command.inside) setNativeOpen(true);
     }
-    else if (command.type === "dismiss") dismissedUnderPointer.current = command.reason === "escape" || command.reason === "tab";
     else if (command.type === "resize-ribbon") resizeRibbon(command.width, command.finished);
     else if (command.type === "select") destinationByID.get(command.id)?.onSelect();
     // The native ribbon owns its focus; focusing its duplicate shell button
@@ -269,25 +264,15 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
       nativeReturnFocus.current = document.activeElement;
     }
   }, [nativePresented]);
-  const enterRibbon = () => {
-    clearTimeout(leaveTimer.current);
-    leaveTimer.current = undefined;
-    if (docked || resizing.current || dismissedUnderPointer.current || pointerInside || enterTimer.current) return;
-    enterTimer.current = setTimeout(() => { enterTimer.current = undefined; setPointerInside(true); }, 120);
-  };
   const resizeRibbon = (next: number, finished: boolean) => {
     const nav = navRef.current;
     if (!nav) return;
     const shell = nav.closest<HTMLElement>(".app-shell") ?? nav.parentElement!;
-    resizing.current = !finished;
     shell.toggleAttribute("data-ribbon-resizing", !finished);
     shell.style.setProperty("--sidebar-ribbon-width", `${next}px`);
     shell.style.setProperty("--sidebar-ribbon-extra", `${next - SIDEBAR_RIBBON_WIDTH}px`);
     nav.style.width = `${next}px`;
     nav.style.setProperty("--ribbon-reveal", next > 80 ? "1" : "0");
-    clearTimeout(enterTimer.current); enterTimer.current = undefined;
-    clearTimeout(leaveTimer.current); leaveTimer.current = undefined;
-    setPointerInside(false);
     if (finished) {
       try { saveNavigationRibbonPreferences({ ...readNavigationRibbonPreferences(), width: next }); }
       catch (error) {
@@ -308,16 +293,6 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
       data-docked={docked || undefined}
       data-wuu-layer={expanded && !nativeAvailable ? "popover" : undefined}
       data-native-overlay={nativePresented || undefined}
-      onPointerOver={enterRibbon}
-      onPointerMove={enterRibbon}
-      onPointerOut={(event) => {
-        if (event.currentTarget.contains(event.target as Node)
-          && (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget))) {
-          clearTimeout(enterTimer.current); enterTimer.current = undefined;
-          if (!leaveTimer.current) leaveTimer.current = setTimeout(() => { leaveTimer.current = undefined; setPointerInside(false); }, 120);
-          dismissedUnderPointer.current = false;
-        }
-      }}
       onPointerDownCapture={() => setKeyboardFocusWithin(false)}
       onFocus={event => {
         if (!event.relatedTarget && nativeReturnFocus.current === event.target) return;
