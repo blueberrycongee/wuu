@@ -4,3 +4,5 @@ html, body, #root, .chrome-overlay-surface, [data-wuu-ui-root] { width: 100%; he
 .chrome-overlay-surface .sidebar-ribbon { position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box; box-shadow: none; transition: none; }
 .chrome-overlay-surface .sidebar-ribbon[data-shell-header] { border-top-right-radius: 0; }
 .chrome-overlay-surface .sidebar-account-menu { width: 100%; max-height: 100%; height: 100%; box-shadow: none; --floating-menu-available-width: 100%; --floating-menu-available-height: 100%; animation: none; }
+
+.chrome-overlay-surface .ribbon-resizer { left: auto; right: 0; top: 0; }

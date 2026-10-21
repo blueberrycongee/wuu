@@ -150,7 +150,7 @@ function key(keyCode) {
   page.webContents.focus();
   const appearance = await run(`(()=>{const c=getComputedStyle(document.querySelector("nav"));return{theme:"dark",locale:"en-US",fontFamily:c.fontFamily,variables:Object.fromEntries([...c].filter(k=>k.startsWith("--")).map(k=>[k,c.getPropertyValue(k)]))}})()`);
   let request = { version: 1, token: "native-ribbon-fixture", generation: 1, bounds: { x: 0, y: 0, width: 248, height: 720 }, focus: true, appearance,
-    model: { kind: "ribbon", collapsedWidth: 64, label: "Browser tabs", newTabLabel: "New tab", canCreateTab: true,
+    model: { kind: "ribbon", resizeLabel: "Resize navigation ribbon", collapsedWidth: 52, label: "Browser tabs", newTabLabel: "New tab", canCreateTab: true,
       closeTabLabel: "Close tab", pinTabLabel: "Pin tab", unpinTabLabel: "Unpin tab", muteTabLabel: "Mute tab", unmuteTabLabel: "Unmute tab", reorderHint: "Move tabs",
       paddingTop: 0, paddingBottom: 8, scrollTop: 600, focusTarget: { kind: "settings" }, footer: { settings: { id: "settings", title: "Settings", icon: { kind: "settings" } } },
       items: Array.from({ length: 48 }, (_, i) => ({ id: "native-" + i, title: "Native page " + i, active: i === 0, website: true, closable: true, canMute: true, audible: i === 0,
@@ -159,6 +159,10 @@ function key(keyCode) {
     nativeEvents.push({ type: "command", command: event.command, at: performance.now() });
     if (event.command.type === "reveal") void run(`window.emitRibbon?.(${JSON.stringify(event)})`);
     const command = event.command;
+    if (command.type === "resize-ribbon") {
+      request = { ...request, generation: request.generation + 1, bounds: { ...request.bounds, width: command.width } };
+      nativeHost.show(win, request);
+    }
     if (command.type === "mute-tab" || command.type === "pin-tab") {
       if (command.type === "mute-tab") page.webContents.setAudioMuted(command.muted);
       request = { ...request, generation: request.generation + 1, model: { ...request.model, items: request.model.items.map(item => item.id !== command.id ? item
@@ -279,6 +283,7 @@ function key(keyCode) {
     await nativeRun(`(()=>{const state=window.wuuChromeOverlay.ready();state.then(request=>window.wuuChromeOverlay.command({token:request.token,generation:request.generation,command:{type:"pin-tab",id:"native-0",pinned:${pinned}}}))})()`);
     await until(() => request.model.items[0].pinned === pinned, "native pin update");
     const muted = !request.model.items[0].muted;
+    await until(() => nativeRun('!!document.querySelector("[data-ribbon-audio-id=native-0]")'), "native audio control rendered after pin update");
     await nativeRun('document.querySelector("[data-ribbon-audio-id=native-0]").click()');
     await until(() => request.model.items[0].muted === muted, "native mute update");
     await until(() => nativeRun('document.querySelector("[data-ribbon-audio-id=native-0]").getAttribute("aria-pressed")===' + JSON.stringify(String(Boolean(request.model.items[0].muted)))), "native mute paint");
@@ -309,6 +314,20 @@ function key(keyCode) {
   nativeHost.show(win, request);
   await until(() => nativeRun('document.activeElement.dataset.ribbonId==="native-20"'), "selected row focus");
   assert(await nativeRun('document.querySelector(".sidebar-ribbon-main").scrollTop>0'));
+  const resizePoint = await nativeRun(`(() => {const rect=document.querySelector('.ribbon-resizer').getBoundingClientRect();return {x:Math.round(rect.right-3),y:360}})()`);
+  ribbon.webContents.sendInputEvent({type:'mouseMove',...resizePoint});
+  ribbon.webContents.sendInputEvent({type:'mouseDown',...resizePoint,button:'left',clickCount:1});
+  await until(() => nativeEvents.some(event=>event.command?.type==='resize-ribbon'), 'native ribbon starts resize');
+  ribbon.webContents.sendInputEvent({type:'mouseMove',x:resizePoint.x+52,y:resizePoint.y,modifiers:['leftButtonDown']});
+  await until(() => request.bounds.width===300 && ribbon.getBounds().width===300,'native ribbon follows dragged width');
+  ribbon.webContents.sendInputEvent({type:'mouseUp',x:resizePoint.x+52,y:resizePoint.y,button:'left',clickCount:1});
+  await until(() => nativeEvents.some(event=>event.command?.type==='resize-ribbon' && event.command.finished),'native ribbon commits resize');
+  const accepted = nativeEvents.filter(event=>event.command?.type==='resize-ribbon').length;
+  await nativeRun(`window.wuuChromeOverlay.ready().then(request=>{for(const width of [-1,Infinity,10000]) window.wuuChromeOverlay.command({token:request.token,generation:request.generation,command:{type:'resize-ribbon',width,finished:true}})})`);
+  await nativeRun('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+  assert.equal(nativeEvents.filter(event=>event.command?.type==='resize-ribbon').length,accepted,'Host rejects invalid ribbon widths');
+  checks.push('Native ribbon edge supports captured drag and rejects out-of-range widths');
+  await nativeRun('document.querySelector("[data-ribbon-id=native-20]").focus()');
   ribbon.webContents.sendInputEvent({ type: "keyDown", keyCode: "Tab", modifiers: ["shift"] });
   ribbon.webContents.sendInputEvent({ type: "keyUp", keyCode: "Tab", modifiers: ["shift"] });
   await until(() => nativeEvents.some(event => event.command?.type === "dismiss" && event.command.reason === "tab"), "Shift+Tab leaves the first tabbable row");

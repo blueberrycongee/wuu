@@ -14,13 +14,15 @@ import { Plus } from "./WuuIcons";
 import { I18nProvider } from "./i18n";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { startFocusModality } from "./FocusModality";
+import { RibbonResizeHandle } from "./RibbonResizeHandle";
+import { useRibbonReveal } from "./useRibbonReveal";
 import "./styles.css";
 import "./styles/chrome-overlay.css";
 
 const api = (window as unknown as Window & { wuuChromeOverlay: ChromeOverlayRendererApi }).wuuChromeOverlay;
 startFocusModality();
 
-function RibbonSurface({ model, send }: { model: ChromeRibbonModel; send: (command: ChromeOverlayCommand) => void }): JSX.Element {
+function RibbonSurface({ model, width, send }: { model: ChromeRibbonModel; width: number; send: (command: ChromeOverlayCommand) => void }): JSX.Element {
   const main = useRef<HTMLDivElement>(null);
   const sensors = useSensors(useSensor(SidebarPointerSensor, { activationConstraint: { distance: 6 } }));
   const ids = model.items.map(item => item.id);
@@ -70,6 +72,10 @@ function RibbonSurface({ model, send }: { model: ChromeRibbonModel; send: (comma
         </button>
       </div>
     </DndContext>
+    {model.resizeLabel && <RibbonResizeHandle width={width} label={model.resizeLabel} onResize={(width, finished) => {
+      send({ type: "retain", active: !finished });
+      send({ type: "resize-ribbon", width, finished });
+    }} />}
     {model.footer && <div className="sidebar-ribbon-footer">
       <button className="sidebar-ribbon-button" type="button" aria-label={model.footer.settings.title} aria-current={model.footer.settings.active ? "page" : undefined}
         disabled={model.footer.settings.disabled} onClick={() => send({ type: "settings" })}>
@@ -86,8 +92,6 @@ function RibbonSurface({ model, send }: { model: ChromeRibbonModel; send: (comma
 function Overlay(): JSX.Element | null {
   const [request, setRequest] = useState<ChromeOverlayRequest | null>(null);
   const [revealed, setRevealed] = useState(true);
-  const progress = useRef(0);
-  const motionToken = useRef<string | undefined>(undefined);
   const latestRequest = useRef(request);
   latestRequest.current = request;
   useEffect(() => api.onVisibility(setRevealed), []);
@@ -126,24 +130,13 @@ function Overlay(): JSX.Element | null {
     return () => cancelAnimationFrame(frame);
   }, [request]);
   useLayoutEffect(() => {
-    if (!request || request.model.kind !== "ribbon") { progress.current = 0; motionToken.current = undefined; setRevealed(true); return; }
-    if (motionToken.current !== request.token) { motionToken.current = request.token; progress.current = 0; }
-    // Production CSS can minify 220ms to .22s; preserve the unit when sampling.
-    const rawDuration = getComputedStyle(document.querySelector(".sidebar-ribbon")!).getPropertyValue("--ribbon-motion-duration").trim();
-    const duration = Number.parseFloat(rawDuration) * (rawDuration.endsWith("ms") ? 1 : 1000) || 0;
-    const from = progress.current, to = revealed ? 1 : 0, start = performance.now();
-    let frame = 0;
-    const tick = (now: number): void => {
-      const elapsed = duration ? Math.max(0, Math.min(1, (now - start) / duration)) : 1;
-      const eased = 1 - Math.pow(1 - elapsed, 3);
-      progress.current = elapsed === 1 ? to : from + (to - from) * eased;
+    if (!request || request.model.kind !== "ribbon") setRevealed(true);
+  }, [request?.token]);
+  useRibbonReveal(request?.model.kind === "ribbon" ? request.token : undefined, revealed,
+    () => document.querySelector<HTMLElement>(".sidebar-ribbon"), fraction => {
       const current = latestRequest.current;
-      if (current) api.command({ token: current.token, generation: current.generation, command: { type: "reveal", fraction: progress.current } });
-      if (elapsed < 1) frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [request?.token, revealed]);
+      if (current) api.command({ token: current.token, generation: current.generation, command: { type: "reveal", fraction } });
+    });
   if (!request) return null;
   const language = request.appearance.locale;
   return <I18nProvider key={language} preferenceStore={{ get: () => language, set: async () => {}, subscribe: () => () => {} }}>
@@ -160,7 +153,7 @@ function Overlay(): JSX.Element | null {
         event.preventDefault(); event.stopPropagation(); send({ type: "dismiss", reason: event.key === "Escape" ? "escape" : "tab" });
       }
     }}>
-      {request.model.kind === "ribbon" ? <RibbonSurface model={request.model} send={send} />
+      {request.model.kind === "ribbon" ? <RibbonSurface model={request.model} width={request.bounds.width} send={send} />
         : request.model.kind === "capsule" ? <ContextChatCapsuleSurface key={request.token} model={request.model} send={send} />
         : <SidebarAccountPanel model={request.model.panel} onAction={action => send({ type: "account-action", action })} onClose={() => send({ type: "dismiss", reason: "escape" })} />}
     </div></WuuUIRoot>

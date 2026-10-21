@@ -1,3 +1,4 @@
+import { RIBBON_COMPACT_WIDTH, RIBBON_MAX_WIDTH } from "../shared/navigationRibbon";
 import { useMemo, useSyncExternalStore } from "react";
 
 export interface RibbonWebsite {
@@ -17,6 +18,7 @@ export interface NavigationRibbonPreferences {
   websites: RibbonWebsite[];
   order: string[];
   browserTabsMigrated?: true;
+  width?: number;
 }
 
 const storageKey = "wuu.navigation-ribbon.v1";
@@ -55,6 +57,7 @@ function normalizePreferences(value: unknown): NavigationRibbonPreferences {
   }
   return {
     websites,
+    ...(typeof input.width === "number" && Number.isFinite(input.width) ? { width: Math.max(RIBBON_COMPACT_WIDTH, Math.min(RIBBON_MAX_WIDTH, input.width)) } : {}),
     ...(input.browserTabsMigrated === true ? { browserTabsMigrated: true as const } : {}),
     order: Array.isArray(input.order)
       ? [...new Set(input.order.filter((id): id is string => typeof id === "string" && id.length > 0))]

@@ -32,6 +32,7 @@ export type ChromeAccountPanel = {
 export type ChromeRibbonFocus = { kind: "item" | "close"; id: string } | { kind: "account" | "settings" | "new-tab" | "desktop-update" };
 export type ChromeRibbonModel = {
   collapsedWidth: number;
+  resizeLabel?: string;
   /** Shell-painted header immediately above the native surface, in CSS pixels. */
   headerHeight?: number;
   kind: "ribbon";
@@ -57,6 +58,7 @@ export type ChromeOverlayRequest = {
 };
 export type ChromeOverlayCommand =
   | { type: "reveal"; fraction: number }
+  | { type: "resize-ribbon"; width: number; finished: boolean }
   | { type: "capsule-expand" | "capsule-open" | "capsule-menu" }
   | { type: "capsule-collapse" | "capsule-draft" | "capsule-send"; text: string }
   | { type: "select" | "close-tab"; id: string }

@@ -23,7 +23,7 @@ export const sidebarDrawerExitMs = (): number =>
   motionDurationMs("--sidebar-drawer-exit-duration", 220);
 export const rightPanelMotionMs = (): number =>
   motionDurationMs("--workspace-panel-motion-duration", 180);
-export const SIDEBAR_RIBBON_WIDTH = 52;
+export { RIBBON_COMPACT_WIDTH as SIDEBAR_RIBBON_WIDTH } from "../shared/navigationRibbon";
 export const SIDEBAR_DEFAULT_WIDTH = 264;
 // Keep enough horizontal room for one-line navigation labels and useful
 // conversation titles. The rail becomes an overlay drawer below the compact
@@ -293,6 +293,7 @@ export function useAppLayoutState({
   settingsLayoutRootRef,
   viewportWidth,
   collapsedSidebarWidth = 0,
+  additionalNavigationWidth = 0,
   onCloseWorkspaceMenu
 }: {
   layoutRootRef?: RefObject<HTMLElement | null>;
@@ -304,6 +305,7 @@ export function useAppLayoutState({
   // owns layout decisions instead of the outer browser window.
   viewportWidth?: number;
   collapsedSidebarWidth?: number;
+  additionalNavigationWidth?: number;
   onCloseWorkspaceMenu: () => void;
 }): {
   sidebarWidth: number;
@@ -371,7 +373,7 @@ export function useAppLayoutState({
   // tip the layout over the threshold and auto-globalize the panel.)
   const workspaceRightPanelAutoGlobalized = workspacePanelNeedsFocus(
     windowWidth,
-    collapsedSidebarWidth,
+    collapsedSidebarWidth + additionalNavigationWidth,
   );
   // Complement of the above by construction: if the panel can't dock without
   // the sidebar it auto-globalizes, and vice versa.
@@ -379,7 +381,7 @@ export function useAppLayoutState({
     !workspaceRightPanelAutoGlobalized;
   const clampedWorkspaceRightPanelWidth = clampWorkspaceRightPanelWidth(
     workspaceRightPanelWidth,
-    effectiveSidebarWidth,
+    effectiveSidebarWidth + additionalNavigationWidth,
     windowWidth,
   );
   const startSidebarMotion = useCallback((): void => {
@@ -454,12 +456,12 @@ export function useAppLayoutState({
       }
       const clampedWidth = clampWorkspaceRightPanelWidth(
         nextWidth,
-        effectiveSidebarWidth,
+        effectiveSidebarWidth + additionalNavigationWidth,
         windowWidth,
       );
       root.style.setProperty("--workspace-right-panel-width", `${clampedWidth}px`);
     },
-    [effectiveSidebarWidth, layoutRootRef, windowWidth]
+    [additionalNavigationWidth, effectiveSidebarWidth, layoutRootRef, windowWidth]
   );
 
   const writeLiveSplitPercent = useCallback(
@@ -510,9 +512,9 @@ export function useAppLayoutState({
 
   const applyWorkspaceRightPanelWidth = useCallback(
     (nextWidth: number): void => {
-      setWorkspaceRightPanelWidth(clampWorkspaceRightPanelWidth(nextWidth, effectiveSidebarWidth, windowWidth));
+      setWorkspaceRightPanelWidth(clampWorkspaceRightPanelWidth(nextWidth, effectiveSidebarWidth + additionalNavigationWidth, windowWidth));
     },
-    [effectiveSidebarWidth, windowWidth]
+    [additionalNavigationWidth, effectiveSidebarWidth, windowWidth]
   );
 
   const applySplitPercent = useCallback((nextPercent: number): void => {
@@ -794,7 +796,8 @@ export function useAppLayoutState({
       `${clamp(event.clientX - bounds.left - bounds.width / 2, -3, 3)}px`
     );
     const sidebar = resizer.parentElement?.querySelector<HTMLElement>(":scope > .sidebar, :scope > .settings-sidebar");
-    const measuredWidth = sidebarAnimating ? sidebar?.getBoundingClientRect().width : undefined;
+    const measuredWidth = sidebarAnimating && sidebar
+      ? sidebar.getBoundingClientRect().width - additionalNavigationWidth : undefined;
     const interrupted = measuredWidth !== undefined && measuredWidth > 0 && !sidebarCollapsed;
     const startWidth = interrupted ? measuredWidth : sidebarCollapsed ? 0 : sidebarWidth;
     if (interrupted) {

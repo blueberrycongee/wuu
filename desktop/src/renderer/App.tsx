@@ -275,7 +275,7 @@ import { DesktopWorkbench } from "./plugins";
 import { WebWorkspacePanel } from "./WebWorkspace";
 import { ContextChatCapsule } from "./ContextChatCapsule";
 import { formatPageContext, type PageContextSnapshot } from "../shared/pageContext";
-import type { RibbonWebsite } from "./NavigationRibbonPreferences";
+import { useNavigationRibbonPreferences, type RibbonWebsite } from "./NavigationRibbonPreferences";
 import { useRibbonBrowserTabs } from "./RibbonBrowserState";
 import { WEB_WORKSPACE_RIBBON_ID, WEB_WORKSPACE_TAB_LIMIT, type WebWorkspaceApi } from "../shared/webWorkspace";
 import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
@@ -566,6 +566,7 @@ export function App(): JSX.Element {
   const appShellRef = useRef<HTMLDivElement>(null);
   const settingsShellRef = useRef<HTMLDivElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const ribbonWidth = useNavigationRibbonPreferences().width ?? SIDEBAR_RIBBON_WIDTH;
   const [nativeRibbonPresent, setNativeRibbonPresent] = useState(false);
   const [nativeRibbonExpanded, setNativeRibbonExpanded] = useState(false);
   const handleRibbonExpandedChange = useCallback((expanded: boolean) => {
@@ -613,6 +614,7 @@ export function App(): JSX.Element {
     layoutRootRef: appShellRef,
     settingsLayoutRootRef: settingsShellRef,
     collapsedSidebarWidth: SIDEBAR_RIBBON_WIDTH,
+    additionalNavigationWidth: ribbonWidth - SIDEBAR_RIBBON_WIDTH,
     onCloseWorkspaceMenu: closeWorkspaceMenu,
   });
   const [rightPanelManualGlobalized, setRightPanelManualGlobalized] =
@@ -804,7 +806,7 @@ export function App(): JSX.Element {
     useState(false);
   // Everything the window gives to other columns before the conversation.
   const environmentPanelPaneOffset =
-    effectiveSidebarWidth +
+    effectiveSidebarWidth + ribbonWidth - SIDEBAR_RIBBON_WIDTH +
     (rightPanelOpen && !rightPanelGlobalized ? clampedWorkspaceRightPanelWidth : 0);
   const [environmentPanelHasRoom, setEnvironmentPanelHasRoom] = useState(() =>
     typeof window === "undefined"
@@ -3137,7 +3139,8 @@ export function App(): JSX.Element {
   }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${workspaceConversationActive ? " workspace-conversation-active" : ""}${resizingSplit ? " resizing-split" : ""}`;
   const shellStyle = {
     "--sidebar-width": `${effectiveSidebarWidth}px`,
-    "--sidebar-ribbon-width": `${SIDEBAR_RIBBON_WIDTH}px`,
+    "--sidebar-ribbon-width": `${ribbonWidth}px`,
+    "--sidebar-ribbon-extra": `${ribbonWidth - SIDEBAR_RIBBON_WIDTH}px`,
     "--sidebar-open-width": `${sidebarWidth}px`,
     "--workspace-sheet-left": `${effectiveSidebarWidth}px`,
     "--workspace-right-panel-width": `${clampedWorkspaceRightPanelWidth}px`,

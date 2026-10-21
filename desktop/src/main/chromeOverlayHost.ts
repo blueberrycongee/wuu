@@ -1,3 +1,4 @@
+import { RIBBON_COMPACT_WIDTH, RIBBON_MAX_WIDTH } from "../shared/navigationRibbon";
 import { BrowserWindow, Menu, WebContentsView, net, screen, session, type Event, type IpcMainEvent, type IpcMainInvokeEvent, type MouseInputEvent, type View, type WebContents } from "electron";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -206,7 +207,7 @@ export class ChromeOverlayHost {
     // Pointer/focus ownership, reveal progress and opening a menu belong to this
     // opening, not a title/progress revision. A menu is rebuilt from the current
     // validated tab below; actual Pin/Close commands use the current generation.
-    const presentation = command.type === "pointer" || command.type === "retain" || command.type === "dismiss" || command.type === "reveal" || command.type === "tab-menu";
+    const presentation = command.type === "pointer" || command.type === "retain" || command.type === "dismiss" || command.type === "reveal" || command.type === "tab-menu" || command.type === "resize-ribbon";
     if (!Number.isSafeInteger(message.generation) || message.generation < 1
       || (presentation ? message.generation > request.generation : message.generation !== request.generation)) return;
     if (command.type === "reveal" && surface.kind === "ribbon") {
@@ -271,6 +272,8 @@ export class ChromeOverlayHost {
         if (!model.footer?.account || model.footer.account.disabled || !anchor || ![anchor.x, anchor.y, anchor.width, anchor.height].every(Number.isFinite)
           || anchor.x < 0 || anchor.y < 0 || anchor.width <= 0 || anchor.height <= 0 || anchor.x + anchor.width > request.bounds.width + 1 || anchor.y + anchor.height > request.bounds.height + 1) return;
         command.anchor = { ...anchor, x: request.bounds.x + anchor.x, y: request.bounds.y + anchor.y };
+      } else if (command.type === "resize-ribbon") {
+        if (!model.resizeLabel || !Number.isFinite(command.width) || command.width < RIBBON_COMPACT_WIDTH || command.width > RIBBON_MAX_WIDTH || typeof command.finished !== "boolean") return;
       } else if (command.type === "scroll") { if (!Number.isFinite(command.top) || command.top < 0) return; }
       else return;
     }

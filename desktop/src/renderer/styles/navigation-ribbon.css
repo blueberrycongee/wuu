@@ -105,8 +105,8 @@ html[data-app-background] .app-shell.navigation-ribbon-layout:has(.sidebar-ribbo
 .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-content {
   --sidebar-content-pad-x: var(--space-2);
   --sidebar-row-pad-x: var(--space-2);
-  width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-width));
-  min-width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-width));
+  width: calc(var(--sidebar-open-width) - 52px);
+  min-width: calc(var(--sidebar-open-width) - 52px);
   height: calc(100% - var(--workbench-top) - var(--conversation-pane-inset));
   margin-top: var(--workbench-top);
   margin-left: var(--sidebar-ribbon-width);
@@ -181,7 +181,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 
 .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon)
   .workspace-right-panel:is([data-sheet="arming"], [data-sheet="open"], [data-sheet="parked"]) {
-  inset: var(--workbench-top) var(--conversation-pane-inset) var(--conversation-pane-inset) var(--workspace-sheet-left);
+  inset: var(--workbench-top) var(--conversation-pane-inset) var(--conversation-pane-inset) calc(var(--workspace-sheet-left) + var(--sidebar-ribbon-extra, 0px));
   margin: 0;
 }
 
@@ -238,7 +238,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   inset: 0 auto 0 0;
   z-index: 126;
   display: flex;
-  width: var(--sidebar-ribbon-width);
+  width: calc(var(--sidebar-ribbon-width) + (var(--sidebar-ribbon-expanded-width) - var(--sidebar-ribbon-width)) * var(--ribbon-reveal, 0));
   min-height: 0;
   flex-direction: column;
   align-items: center;
@@ -248,17 +248,12 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   background: transparent;
   overflow: hidden;
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
-  transition: width var(--ribbon-motion-duration) cubic-bezier(0.2, 0.8, 0.2, 1);
   pointer-events: auto;
   -webkit-app-region: no-drag;
 }
 
 /* The layout track and icon axis stay fixed. Only this floating surface opens;
    the native overlay covers the page without changing its viewport. */
-.sidebar-ribbon[data-expanded="true"] {
-  width: var(--sidebar-ribbon-expanded-width);
-}
-
 .sidebar-ribbon::before {
   position: absolute;
   inset: 0;
@@ -267,12 +262,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   background: var(--sidebar-material-fill);
   border-right: 1px solid var(--hairline-soft);
   content: "";
-  opacity: 0;
-  transition: opacity 160ms ease;
-}
-
-.sidebar-ribbon[data-expanded="true"]::before {
-  opacity: 1;
+  opacity: var(--ribbon-reveal, 0);
 }
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) > .sidebar {
@@ -281,7 +271,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 
 .sidebar-ribbon-main,
 .sidebar-ribbon-footer {
-  --sidebar-row-pad-x: max(0px, calc((var(--sidebar-ribbon-width) - var(--sidebar-ribbon-icon-size)) / 2 - var(--space-2)));
+  --sidebar-row-pad-x: max(0px, calc((52px - var(--sidebar-ribbon-icon-size)) / 2 - var(--space-2)));
   --sidebar-nav-column-gap: var(--space-2);
   display: flex;
   width: 100%;
@@ -346,17 +336,8 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 }
 
 .sidebar-ribbon :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {
-  opacity: 0;
-  visibility: hidden;
-  transform: translateX(-4px);
-  transition: opacity 100ms ease, transform 160ms ease, visibility 160ms;
-}
-
-.sidebar-ribbon[data-expanded="true"] :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(0);
-  transition-delay: 50ms;
+  opacity: var(--ribbon-reveal, 0);
+  transform: translateX(calc(-4px * (1 - var(--ribbon-reveal, 0))));
 }
 
 .sidebar-ribbon-tab-row.closable .sidebar-ribbon-button {
@@ -767,7 +748,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 }
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) {
   --app-history-width: calc(var(--workbench-control-size) * 2 + var(--control-toolbar-gap));
-  --app-history-origin: var(--sidebar-width);
+  --app-history-origin: calc(var(--sidebar-width) + var(--sidebar-ribbon-extra, 0px));
   --app-history-inset: var(--control-toolbar-inset);
   --app-history-end: calc(var(--app-history-origin) + var(--app-history-inset) + var(--app-history-width) + var(--control-toolbar-gap));
 }
@@ -782,14 +763,14 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 }
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .titlebar,
 :root:has(.mac-window-controls) .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) .settings-embedded .settings-titlebar {
-  padding-left: calc(var(--app-history-end) - var(--sidebar-width));
+  padding-left: calc(var(--app-history-end) - var(--sidebar-width) - var(--sidebar-ribbon-extra, 0px));
 }
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon).right-panel-globalized .workspace-panel-tabbar {
   padding-left: calc(var(--app-history-end) - var(--workspace-sheet-left));
 }
 /* The native surface owns browser reveal geometry. Closing shell chrome follows
    the same duration while the live native rail completes its exit. */
-.sidebar-ribbon[data-native-supported="true"][data-expanded="true"] { transition: none; }
+.sidebar-ribbon[data-native-supported="true"][data-expanded="true"] { width: var(--sidebar-ribbon-expanded-width); }
 .sidebar-ribbon[data-native-supported="true"][data-native-overlay="true"] {
   width: var(--sidebar-ribbon-expanded-width);
   transition: none;
@@ -822,4 +803,42 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 
 .sidebar-ribbon[data-native-supported="true"] .sidebar-ribbon-audio-badge {
   visibility: visible;
+}
+
+/* A docked ribbon takes layout space independently of the conversation list. */
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) {
+  grid-template-columns: calc(var(--sidebar-width) + var(--sidebar-ribbon-extra, 0px)) minmax(0, 1fr) var(--workspace-right-panel-reserved-width, 0px);
+}
+.sidebar-ribbon[data-docked="true"] {
+  width: var(--sidebar-ribbon-width);
+  --ribbon-reveal: 1;
+  border-radius: 0;
+}
+.sidebar-ribbon[data-docked="true"]::before,
+[data-ribbon-resizing] .sidebar-ribbon::before {
+  border-right: 0;
+}
+.sidebar-ribbon[data-docked="true"] :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+.ribbon-resizer {
+  position: absolute;
+  top: var(--window-titlebar-height, 44px);
+  bottom: 0;
+  left: calc(var(--sidebar-ribbon-width, 52px) - 4px);
+  width: 8px;
+  container-type: size;
+  z-index: 154;
+  cursor: col-resize;
+  touch-action: none;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+[data-ribbon-resizing], [data-ribbon-resizing] * { cursor: col-resize !important; user-select: none; }
+[data-ribbon-resizing] .sidebar-ribbon { clip-path: none; }
+[data-ribbon-resizing] .sidebar-ribbon :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {
+  visibility: visible;
+  opacity: var(--ribbon-reveal, 0);
 }

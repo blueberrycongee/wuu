@@ -555,6 +555,7 @@ export const enUS = {
   "ribbon.moveNamedDown": "Move {name} down",
   "ribbon.moved": "{name}, position {position} of {count}",
   "ribbon.reorderHint": "Press Alt and the Up or Down arrow to reorder. Press Enter to open.",
+  "ribbon.resize": "Resize navigation ribbon",
   "ribbon.saveFailed": "Could not save navigation changes.",
   "ribbon.removed": "{name} shortcut removed. Website data is kept.",
   "ribbon.undo": "Undo",

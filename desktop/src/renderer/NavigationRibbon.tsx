@@ -22,6 +22,8 @@ import { showActionErrorToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { useI18n } from "./i18n";
 import { WebsiteIcon } from "./WebsiteIcon";
+import { RibbonResizeHandle } from "./RibbonResizeHandle";
+import { useRibbonReveal } from "./useRibbonReveal";
 
 export interface NavigationRibbonItem {
   id: string;
@@ -68,6 +70,9 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   const { t } = useI18n();
   const preferences = useNavigationRibbonPreferences();
   const navRef = useRef<HTMLElement | null>(null);
+  const width = preferences.width ?? SIDEBAR_RIBBON_WIDTH;
+  const docked = width > SIDEBAR_RIBBON_WIDTH;
+  const resizing = useRef(false);
   const [nativeOpen, setNativeOpen] = useState(false);
   const [nativeClosing, setNativeClosing] = useState(false);
   const [nativeBounds, setNativeBounds] = useState<ChromeOverlayRect | null>(null);
@@ -91,7 +96,8 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [pointerInside, setPointerInside] = useState(false);
   const enterTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(enterTimer.current), []);
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => { clearTimeout(enterTimer.current); clearTimeout(leaveTimer.current); }, []);
   const [keyboardFocusWithin, setKeyboardFocusWithin] = useState(false);
   const [nativeFocusTarget, setNativeFocusTarget] = useState<ChromeRibbonFocus>();
   const rememberFocus = (target: EventTarget | null) => {
@@ -190,13 +196,14 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   }
 
   const menuWebsite = menu && websites.find((website) => website.id === menu.id);
-  const expanded = nativeOpen || pointerInside || keyboardFocusWithin || dragging || Boolean(menuWebsite) || retainedLayers > 0;
+  const expanded = docked || nativeOpen || pointerInside || keyboardFocusWithin || dragging || Boolean(menuWebsite) || retainedLayers > 0;
+  useRibbonReveal(nativeAvailable ? undefined : "shell", expanded, () => navRef.current, () => {});
   useLayoutEffect(() => {
-    onExpandedChange?.(expanded);
-  }, [expanded, onExpandedChange]);
+    onExpandedChange?.(expanded && !docked);
+  }, [expanded, docked, onExpandedChange]);
   useLayoutEffect(() => () => onExpandedChange?.(false), [onExpandedChange]);
   useLayoutEffect(() => {
-    if (!nativeAvailable || !expanded || !navRef.current) { setNativeOpen(false); return; }
+    if (!nativeAvailable || docked || !expanded || !navRef.current) { setNativeOpen(false); return; }
     if (nativeClosing) return;
     const nav = navRef.current;
     scrollTop.current = nav.querySelector(".sidebar-ribbon-main")?.scrollTop ?? 0;
@@ -213,8 +220,8 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     observer.observe(nav);
     setNativeOpen(true);
     return () => observer.disconnect();
-  }, [nativeAvailable, expanded, nativeClosing]);
-  const nativeModel: ChromeRibbonModel = { kind: "ribbon", collapsedWidth: SIDEBAR_RIBBON_WIDTH, items: ordered.map(item => ({ id: item.id, title: item.title, icon: item.nativeIcon,
+  }, [nativeAvailable, docked, expanded, nativeClosing]);
+  const nativeModel: ChromeRibbonModel = { kind: "ribbon", resizeLabel: t("ribbon.resize"), collapsedWidth: SIDEBAR_RIBBON_WIDTH, items: ordered.map(item => ({ id: item.id, title: item.title, icon: item.nativeIcon,
     active: item.active, disabled: item.disabled, pinned: item.pinned, audible: item.audible, muted: item.muted, canMute: Boolean(item.onMute), closable: Boolean(item.onClose), website: websiteIDs.has(item.id), component: item.component, pluginId: item.pluginId })),
     label: t("sidebar.mainNavigation"), newTabLabel: t("webWorkspace.newTab"), canCreateTab: Boolean(onNewTab), closeTabLabel: t("webWorkspace.closeCurrentTab"),
     pinTabLabel: t("webWorkspace.pinTab"), unpinTabLabel: t("webWorkspace.unpinTab"), reorderHint: t("ribbon.reorderHint"),
@@ -233,6 +240,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
       if (command.inside) { setPointerInside(true); setNativeOpen(true); }
     }
     else if (command.type === "dismiss") dismissedUnderPointer.current = command.reason === "escape" || command.reason === "tab";
+    else if (command.type === "resize-ribbon") resizeRibbon(command.width, command.finished);
     else if (command.type === "select") destinationByID.get(command.id)?.onSelect();
     // The native ribbon owns its focus; focusing its duplicate shell button
     // would steal keyboard input while the native surface is still open.
@@ -247,22 +255,53 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     else if (command.type === "scroll") { scrollTop.current = command.top; const main = navRef.current?.querySelector(".sidebar-ribbon-main"); if (main) main.scrollTop = command.top; }
   }, closeNative, keyboardFocusWithin, navRef.current);
   const enterRibbon = () => {
-    if (dismissedUnderPointer.current || pointerInside || enterTimer.current) return;
+    clearTimeout(leaveTimer.current);
+    leaveTimer.current = undefined;
+    if (docked || resizing.current || dismissedUnderPointer.current || pointerInside || enterTimer.current) return;
     enterTimer.current = setTimeout(() => { enterTimer.current = undefined; setPointerInside(true); }, 120);
+  };
+  const resizeRibbon = (next: number, finished: boolean) => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const shell = nav.closest<HTMLElement>(".app-shell") ?? nav.parentElement!;
+    resizing.current = !finished;
+    shell.toggleAttribute("data-ribbon-resizing", !finished);
+    shell.style.setProperty("--sidebar-ribbon-width", `${next}px`);
+    shell.style.setProperty("--sidebar-ribbon-extra", `${next - SIDEBAR_RIBBON_WIDTH}px`);
+    nav.style.width = `${next}px`;
+    nav.style.setProperty("--ribbon-reveal", next > 80 ? "1" : "0");
+    clearTimeout(enterTimer.current); enterTimer.current = undefined;
+    clearTimeout(leaveTimer.current); leaveTimer.current = undefined;
+    setPointerInside(false);
+    if (finished) {
+      try { saveNavigationRibbonPreferences({ ...readNavigationRibbonPreferences(), width: next }); }
+      catch (error) {
+        shell.style.setProperty("--sidebar-ribbon-width", `${width}px`);
+        shell.style.setProperty("--sidebar-ribbon-extra", `${width - SIDEBAR_RIBBON_WIDTH}px`);
+        showActionErrorToast(error, t("ribbon.saveFailed"));
+      }
+      closeNative();
+      nav.style.removeProperty("width");
+    }
   };
   return <>
     <NativeRibbonFooterContext.Provider value={accountContext}>
     <HoverRevealScopeContext.Provider value={{ disabled: false, retain: retainLayer }}>
     <nav ref={node => { navRef.current = node; if (typeof ribbonRef === "function") ribbonRef(node); else if (ribbonRef) ribbonRef.current = node; }} className="sidebar-ribbon" aria-label={t("sidebar.mainNavigation")}
       data-expanded={(expanded && !nativeClosing) || undefined}
-      data-native-supported={nativeAvailable || undefined}
+      data-native-supported={(nativeAvailable && !docked) || undefined}
+      data-docked={docked || undefined}
       data-wuu-layer={expanded && !nativeAvailable ? "popover" : undefined}
       data-native-overlay={nativePresented || undefined}
       onPointerOver={enterRibbon}
       onPointerMove={enterRibbon}
       onPointerOut={(event) => {
         if (event.currentTarget.contains(event.target as Node)
-          && (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget))) { clearTimeout(enterTimer.current); enterTimer.current = undefined; setPointerInside(false); dismissedUnderPointer.current = false; }
+          && (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget))) {
+          clearTimeout(enterTimer.current); enterTimer.current = undefined;
+          if (!leaveTimer.current) leaveTimer.current = setTimeout(() => { leaveTimer.current = undefined; setPointerInside(false); }, 120);
+          dismissedUnderPointer.current = false;
+        }
       }}
       onPointerDownCapture={() => setKeyboardFocusWithin(false)}
       onFocus={event => { rememberFocus(event.target); setKeyboardFocusWithin(readFocusModality() === "keyboard"); }}
@@ -292,6 +331,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
       {footer ? <div className="sidebar-ribbon-footer">{footer}</div> : null}
       <span className="sr-only" role="status" aria-live="polite">{announcement}</span>
     </nav>
+    <RibbonResizeHandle width={width} label={t("ribbon.resize")} onResize={resizeRibbon} />
     </HoverRevealScopeContext.Provider>
     </NativeRibbonFooterContext.Provider>
     {menu && menuWebsite ? <ThreadContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={[
