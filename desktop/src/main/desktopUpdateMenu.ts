@@ -49,7 +49,7 @@ export function installDesktopUpdates(shutdown: () => Promise<void>, changed: (s
     id: "check-for-updates", label: t("updateCheck"), click: () => { void controller.check(true); },
   })));
   const initial = setTimeout(() => { void controller.check(false); }, 30_000);
-  const periodic = setInterval(() => { void controller.check(false); }, 6 * 60 * 60_000);
+  const periodic = setInterval(() => { void controller.check(false); }, 30 * 60_000);
   initial.unref();
   periodic.unref();
   return {
