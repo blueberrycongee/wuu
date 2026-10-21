@@ -24,6 +24,7 @@ import { useI18n } from "./i18n";
 import { WebsiteIcon } from "./WebsiteIcon";
 import { RibbonResizeHandle } from "./RibbonResizeHandle";
 import { useRibbonReveal } from "./useRibbonReveal";
+import mascotIcon from "../../../assets/app-icon-source.svg";
 
 export interface NavigationRibbonItem {
   id: string;
@@ -309,6 +310,9 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setKeyboardFocusWithin(false);
       }}
       onKeyDownCapture={event => { rememberFocus(event.target); setKeyboardFocusWithin(true); }}>
+      <div className="sidebar-ribbon-brand">
+        <img src={mascotIcon} alt="Wuu" draggable={false} />
+      </div>
       <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis]}
         accessibility={{ screenReaderInstructions: { draggable: t("ribbon.reorderHint") } }}
         onDragStart={() => setDragging(true)}
