@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_MESSAGE_FLOW_FONT_SIZE,
+  getPersistentStoragePermission,
+  setPersistentStoragePermission,
   getCodexPetScale,
   getCodexPetSettings,
   getCodexPetSize,
@@ -26,6 +28,27 @@ import {
 
 let dir: string;
 let file: string;
+
+it("persists allow and deny by origin and resets without changing other settings", () => {
+  setThemePreference("dark", file);
+  setPersistentStoragePermission("https://example.com", true, file);
+  setPersistentStoragePermission("https://other.example", false, file);
+  expect(getPersistentStoragePermission("https://example.com", file)).toBe(true);
+  expect(getPersistentStoragePermission("https://other.example", file)).toBe(false);
+  expect(getPersistentStoragePermission("https://unknown.example", file)).toBeUndefined();
+  setPersistentStoragePermission("https://example.com", undefined, file);
+  expect(getPersistentStoragePermission("https://example.com", file)).toBeUndefined();
+  expect(getPersistentStoragePermission("https://other.example", file)).toBe(false);
+  expect(getThemePreference(file)).toBe("dark");
+});
+
+it("ignores malformed stored permission decisions", async () => {
+  await writeFile(file, JSON.stringify({ persistent_storage_permissions: {
+    "https://example.com": "true", "https://other.example": false,
+  } }));
+  expect(getPersistentStoragePermission("https://example.com", file)).toBeUndefined();
+  expect(getPersistentStoragePermission("https://other.example", file)).toBe(false);
+});
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "wuu-desktop-settings-"));

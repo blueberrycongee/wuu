@@ -1,5 +1,6 @@
 import { BrowserWindow, Menu, clipboard, dialog, shell, webContents, type DisplayMediaRequestHandlerHandlerRequest, type Streams, type DownloadItem, type WebContents, type WebContentsView } from "electron";
 import { chooseBrowserDisplaySource } from "./browserDisplayCapture";
+import { getPersistentStoragePermission, setPersistentStoragePermission } from "./desktopSettings";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { NavigationEntry } from "electron";
@@ -57,7 +58,7 @@ type PermissionOwner = { page: WorkspacePage; grants: Set<string>; navigationGen
 // microphone grants are separate and scoped to this tab and both page origins.
 // Notifications are unsupported: Electron may check them without a contents
 // owner, and this shared profile cannot safely grant unattributed access.
-const TAB_PERMISSIONS = new Set(["geolocation", "geolocation-approximate", "fullscreen", "screen-wake-lock", "persistent-storage"]);
+const TAB_PERMISSIONS = new Set(["geolocation", "geolocation-approximate", "fullscreen", "screen-wake-lock"]);
 
 function permissionGrantKeys(permission: string, mediaTypes: readonly string[] = []): string[] {
   if (permission === "media") {
@@ -364,10 +365,11 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     if (![request.x, request.y].every(Number.isFinite)) throw new Error("Menu coordinates must be finite numbers.");
     const state = this.tabState(tab), labels = request.labels;
     const blank = state.url === "about:blank" && state.startPage !== false;
-    return new Promise(resolve => {
+    const origin = requestOrigin(state.url);
+    return new Promise((resolve, reject) => {
       let selected: WebWorkspaceMenuAction | null = null;
       const item = (action: WebWorkspaceMenuAction, enabled = true) => ({
-        label: action === "resetZoom" ? `${labels[action]} (${Math.round(tab.zoomFactor * 100)}%)` : labels[action],
+        label: action === "resetZoom" ? `${labels[action]} (${Math.round(tab.zoomFactor * 100)}%)` : labels[action] ?? "Reset saved storage permission",
         enabled, click: () => { selected = action; },
       });
       const menu = Menu.buildFromTemplate([
@@ -379,11 +381,18 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
         { type: "separator" },
         ...(group.tabbed ? [item("reopenTab", group.closedTabs.length > 0 && group.tabs.length < WEB_WORKSPACE_TAB_LIMIT)] : []),
         item("openExternal", !blank),
+        item("resetStoragePermission", Boolean(origin && getPersistentStoragePermission(origin) !== undefined)),
       ]);
       const zoom = owner.webContents.getZoomFactor();
       // Menu coordinates are relative to the owner's content view, in DIPs.
       menu.popup({ window: owner, x: Math.round(request.x * zoom), y: Math.round(request.y * zoom),
-        callback: () => resolve(this.groups.get(id) === group && this.activeTab(group) === tab ? selected : null) });
+        callback: () => {
+          if (this.groups.get(id) !== group || this.activeTab(group) !== tab || requestOrigin(tab.url) !== origin) { resolve(null); return; }
+          try {
+            if (selected === "resetStoragePermission" && origin) setPersistentStoragePermission(origin, undefined);
+            resolve(selected);
+          } catch (error) { reject(error); }
+        } });
     });
   }
 
@@ -697,6 +706,10 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     const origin = requestOrigin(requestingOrigin);
     const topOrigin = requestOrigin(contents.getURL());
     const owned = this.contentsOwners.get(contents.id);
+    if (permission === "persistent-storage") {
+      return Boolean(origin && origin === topOrigin && owned && !this.automationRestricted(owned.page)
+        && getPersistentStoragePermission(origin) === true);
+    }
     const keys = permissionGrantKeys(permission, mediaType ? [mediaType] : []);
     return Boolean(origin && topOrigin && owned && !this.automationRestricted(owned.page) && keys.length
       && keys.every(key => owned.grants.has(`${topOrigin}\n${origin}\n${key}`)));
@@ -717,6 +730,13 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     const mediaTypes = "mediaTypes" in details ? details.mediaTypes : undefined;
     const grantKeys = permissionGrantKeys(permission, mediaTypes);
     const pageOrigin = requestOrigin(contents.getURL());
+    const persistentStorage = permission === "persistent-storage";
+    if (persistentStorage) {
+      // Embedded origins cannot acquire durable privileges under another site.
+      if (origin !== pageOrigin) { callback(false); return; }
+      const decision = getPersistentStoragePermission(origin);
+      if (decision !== undefined) { callback(decision); return; }
+    }
     if (pageOrigin && grantKeys.length && grantKeys.every(key => owned.grants.has(`${pageOrigin}\n${origin}\n${key}`))) {
       callback(true);
       return;
@@ -729,20 +749,32 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     void dialog.showMessageBox(parent, {
       type: "question",
       title: "Website permission",
-      message: `${origin} wants to use ${permission}.`,
+      message: persistentStorage ? `${origin} wants to keep website data on this device.` : `${origin} wants to use ${permission}.`,
       detail: [
         ...(mediaTypes?.length ? [`Requested media: ${mediaTypes.join(", ")}.`] : []),
         ...("filePath" in details ? [`File: ${details.filePath} (${details.fileAccessType}).`] : []),
         ...("externalURL" in details ? [`Application link: ${details.externalURL}`] : []),
         ...(pageOrigin && pageOrigin !== origin ? [`Embedded in ${pageOrigin}.`] : []),
-        grantKeys.length ? "Allow for this website tab until it is closed?" : "Allow this request?",
+        persistentStorage
+          ? "This protects the site's local data from automatic cleanup. Your Allow or Deny choice will be remembered. Reset it from this website's menu."
+          : grantKeys.length ? "Allow for this website tab until it is closed?" : "Allow this request?",
       ].join("\n"),
       buttons: ["Deny", "Allow"], defaultId: 0, cancelId: 0, noLink: true,
     }).then(({ response }) => {
-      const allowed = response === 1 && !this.automationRestricted(owned.page) && !contents.isDestroyed()
+      const current = !this.automationRestricted(owned.page) && !contents.isDestroyed()
         && this.contentsOwners.get(contents.id) === owned && owned.navigationGeneration === navigationGeneration
         && requestOrigin(contents.getURL()) === pageOrigin;
-      if (allowed) owned.page.discardProtected = true;
+      const allowed = response === 1 && current;
+      if (persistentStorage && current) {
+        try { setPersistentStoragePermission(origin, allowed); }
+        catch (error) {
+          console.warn("[web-workspace] Could not save storage permission", error);
+          this.permissionPrompts.delete(contents.id);
+          callback(false);
+          return;
+        }
+      }
+      if (allowed && !persistentStorage) owned.page.discardProtected = true;
       if (allowed) for (const key of grantKeys) owned.grants.add(`${pageOrigin}\n${origin}\n${key}`);
       if (allowed && permission === "fullscreen" && !parent.isDestroyed() && parent.isVisible() && !parent.isMinimized()
         && (contents !== owned.page.contents || (owned.page.bounds && owned.page.view.getVisible()

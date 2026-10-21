@@ -46,6 +46,7 @@ export type DesktopSettings = {
   // renderer resolves it to a concrete data-theme on <html>.
   theme?: ThemePreference;
   language?: LanguagePreference;
+  persistent_storage_permissions?: Record<string, boolean>;
   phone_access_enabled?: boolean;
   activity_preview_auto_show?: boolean;
   // User-facing reading size for the message stream, in pixels. The
@@ -85,6 +86,11 @@ export function readDesktopSettings(filePath: string = desktopSettingsPath()): D
     }
     const record = parsed as Record<string, unknown>;
     const settings: DesktopSettings = {};
+    if (record.persistent_storage_permissions && typeof record.persistent_storage_permissions === "object") {
+      settings.persistent_storage_permissions = Object.fromEntries(
+        Object.entries(record.persistent_storage_permissions).filter(([, decision]) => typeof decision === "boolean"),
+      ) as Record<string, boolean>;
+    }
     if (typeof record.phone_access_enabled === "boolean") {
       settings.phone_access_enabled = record.phone_access_enabled;
     }
@@ -183,6 +189,18 @@ export function writeDesktopSettings(
 
 export function getActivityPreviewAutoShow(filePath?: string): boolean {
   return readDesktopSettings(filePath).activity_preview_auto_show ?? true;
+}
+
+export function getPersistentStoragePermission(origin: string, filePath?: string): boolean | undefined {
+  return readDesktopSettings(filePath).persistent_storage_permissions?.[origin];
+}
+
+export function setPersistentStoragePermission(origin: string, decision: boolean | undefined, filePath?: string): void {
+  const settings = readDesktopSettings(filePath);
+  const decisions = { ...settings.persistent_storage_permissions };
+  if (decision === undefined) delete decisions[origin];
+  else decisions[origin] = decision;
+  writeDesktopSettings({ ...settings, persistent_storage_permissions: decisions }, filePath);
 }
 
 export function setActivityPreviewAutoShow(enabled: boolean, filePath?: string): void {

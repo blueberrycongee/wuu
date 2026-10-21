@@ -23,7 +23,7 @@ if (!process.versions.electron) {
   }
   return;
 }
-const { app, BrowserWindow, dialog, session } = require("electron");
+const { app, BrowserWindow, dialog, session, Menu } = require("electron");
 const { buildSync } = require("esbuild");
 
 const root = path.resolve(__dirname, "..");
@@ -33,6 +33,7 @@ assert(profile, "Use the Node launcher so the temporary browser profile is clean
 fs.mkdirSync(output, { recursive: true });
 fs.rmSync(path.join(output, "failure.json"), { force: true });
 app.setPath("userData", profile);
+process.env.WUU_HOME = path.join(profile, "wuu-home");
 app.commandLine.appendSwitch("use-fake-device-for-media-stream");
 const checks = [];
 const prompts = [];
@@ -67,11 +68,11 @@ const fixture = `<!doctype html><title>Browser media permission acceptance</titl
   await app.whenReady();
   const entry = path.join(output, "host.cjs");
   buildSync({
-    stdin: { contents: `export { WebWorkspaceHost } from "./src/main/webWorkspaceHost"; export { installBrowserSessionHandlers, BROWSER_PARTITION } from "./src/main/browserHostWindows";`, resolveDir: root },
+    stdin: { contents: `export { WebWorkspaceHost } from "./src/main/webWorkspaceHost"; export { setPersistentStoragePermission } from "./src/main/desktopSettings"; export { installBrowserSessionHandlers, BROWSER_PARTITION } from "./src/main/browserHostWindows";`, resolveDir: root },
     outfile: entry, bundle: true, platform: "node", format: "cjs", external: ["electron"],
     define: { __dirname: JSON.stringify(path.join(root, "out/main")) },
   });
-  const { WebWorkspaceHost, installBrowserSessionHandlers, BROWSER_PARTITION } = require(entry);
+  const { WebWorkspaceHost, installBrowserSessionHandlers, BROWSER_PARTITION, setPersistentStoragePermission } = require(entry);
   server = http.createServer((_req, res) => { res.writeHead(200, { "Content-Type": "text/html" }); res.end(fixture); });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -164,6 +165,46 @@ const fixture = `<!doctype html><title>Browser media permission acceptance</titl
   await wc.executeJavaScript("audioContext.close()", true);
   await until(() => !states.at(-1)?.tabs.find(tab => tab.id === tabID)?.audible, "audio status cleared");
   check("Stopping playback clears the audio indicator", wc.isCurrentlyAudible(), false);
+  // Storage decisions survive tab recreation, including denial, without
+  // weakening embedded-origin or Agent permission boundaries.
+  const persist = contents => contents.executeJavaScript("navigator.storage.persist()");
+  const beforeStorage = prompts.length;
+  reply = 0;
+  check("Storage denial returns false", await persist(wc), false);
+  check("Storage denial prompts once", prompts.length, beforeStorage + 1);
+  check("Repeated storage denial is remembered", await persist(wc), false);
+  check("Storage denial is shared with same-origin tabs", await persist(siblingContents), false);
+  check("Remembered denial does not prompt", prompts.length, beforeStorage + 1);
+  setPersistentStoragePermission(origin, undefined);
+  reply = 1;
+  check("Reset permits a fresh storage decision", await persist(wc), true);
+  check("Reset requests explicit approval again", prompts.length, beforeStorage + 2);
+  check("Storage approval is shared with same-origin tabs", await persist(siblingContents), true);
+  check("Storage approval does not prompt again", prompts.length, beforeStorage + 2);
+  check("Embedded origins cannot borrow storage permission", host.checkPermission(wc, "persistent-storage", otherOrigin), false);
+  const storageLease = source.attach("workspace:" + tabID, () => {}, () => {}, () => false);
+  check("Agent cannot borrow persistent storage approval", host.checkPermission(wc, "persistent-storage", origin), false);
+  storageLease.release();
+  const buildMenu = Menu.buildFromTemplate;
+  Menu.buildFromTemplate = items => ({ popup: ({callback}) => {
+    const reset = items.find(item => item.label === "Reset storage");
+    check("The website menu enables reset for a saved decision", reset.enabled, true);
+    reset.click(); callback();
+  } });
+  try {
+    check("The website menu resets the saved choice", await host.showOptions(win, group, {x:10,y:10,labels:{
+      find:"Find",zoomOut:"Out",resetZoom:"Reset zoom",zoomIn:"In",reopenTab:"Reopen",openExternal:"External",resetStoragePermission:"Reset storage"
+    }}), "resetStoragePermission");
+  } finally { Menu.buildFromTemplate = buildMenu; }
+  check("Reset removes storage approval from permission checks", host.checkPermission(wc, "persistent-storage", origin), false);
+  reply = "hold"; heldPrompt = undefined;
+  const staleStorageRequest = new Promise(resolve => host.requestPermission(wc,"persistent-storage",resolve,{requestingUrl:origin}));
+  await until(()=>heldPrompt,"pending storage decision");
+  await wc.loadURL(otherOrigin + "/storage-navigation");
+  heldPrompt({response:1,checkboxChecked:false});
+  check("Storage approval after navigation is rejected", await staleStorageRequest, false);
+  await wc.loadURL(origin + "/storage-returned");
+  check("Stale storage approval is not saved", host.checkPermission(wc,"persistent-storage",origin), false);
   await wc.executeJavaScript(`document.querySelector("#results").innerHTML=${JSON.stringify(checks.map(name => `<li>PASS: ${name}</li>`).join(""))}`);
   fs.writeFileSync(path.join(output, "media-permissions.png"), (await wc.capturePage()).toPNG());
   fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({

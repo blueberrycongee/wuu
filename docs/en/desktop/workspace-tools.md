@@ -142,6 +142,8 @@ The history and bookmarks panel can remove individual history entries and rename
 
 Camera and microphone requests are granted separately for the requesting tab and origin. Screen sharing requires a foreground user page, explicit source selection, and confirmation. The picker shows screens and windows with previews; it shares video only. Agent-controlled pages and embedded frames cannot initiate this flow. Operating-system recording permission is still required.
 
+Persistent-storage requests protect a website's local data from automatic cleanup. Wuu remembers both Allow and Deny for that origin across tabs and restarts. To ask again, choose **Reset storage permission for this site** in the website's **…** menu. Resetting the choice does not delete website data. Embedded cross-origin frames and Agent-controlled pages cannot use this permission.
+
 Ordinary background tabs become eligible for memory reclamation after 30 minutes without selection; Wuu checks once a minute. Selecting a reclaimed tab reloads its page, restoring navigation history, zoom, and the saved scroll offset. Cookies and the shared browser profile remain intact. Page scripts start again, so pin a tab if its background work must remain running.
 
 The selected tab is kept even when Wuu is hidden. Pinned tabs, edited forms, playing media, captured pages, active downloads, automation, and pages that refuse to unload are protected. Pages with embedded frames, session storage, editors, live opener connections, or changed background titles/icons also stay resident because Electron cannot restore all their live state. This conservative policy does not promise a particular memory reduction or replace macOS visual acceptance.

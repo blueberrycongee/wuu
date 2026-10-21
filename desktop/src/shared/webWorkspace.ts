@@ -50,12 +50,12 @@ export type WebWorkspaceLegacyDestination = { id: string; url: string; title?: s
 export type WebWorkspaceInitializationState = WebWorkspaceState & { migratedTabGroups?: Record<string, string[]> };
 export type WebWorkspaceCommand = "back" | "forward" | "reload" | "reloadIgnoringCache" | "stop" | "navigate" | "focus" | "takeOver";
 
-export type WebWorkspaceMenuAction = "find" | "zoomOut" | "resetZoom" | "zoomIn" | "reopenTab" | "openExternal";
+export type WebWorkspaceMenuAction = "find" | "zoomOut" | "resetZoom" | "zoomIn" | "reopenTab" | "openExternal" | "resetStoragePermission";
 export type WebWorkspaceMenuRequest = {
   /** Anchor in shell CSS pixels. */
   x: number;
   y: number;
-  labels: Record<WebWorkspaceMenuAction, string>;
+  labels: Record<Exclude<WebWorkspaceMenuAction, "resetStoragePermission">, string> & { resetStoragePermission?: string };
 };
 
 export type WebWorkspaceTooltip = {

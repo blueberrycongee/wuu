@@ -624,6 +624,7 @@ export const zhCN = {
   "webWorkspace.reload": "重新加载",
   "webWorkspace.stop": "停止加载",
   "webWorkspace.openExternal": "在默认浏览器中打开",
+  "webWorkspace.resetStoragePermission": "重置此网站的存储权限",
   "webWorkspace.loading": "正在加载网站…",
   "webWorkspace.downloads.historyReadFailed": "无法读取下载历史。这些下载仍可操作，但记录无法保存；原始历史文件已保留。",
   "webWorkspace.downloads.historyWriteFailed": "无法保存下载记录。下载可继续进行，请检查可用磁盘空间和文件夹权限。",
