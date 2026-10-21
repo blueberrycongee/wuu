@@ -5920,13 +5920,22 @@ button.turn-edit-summary-overview:focus-visible {
 }
 
 :root[data-message-style="im"] .user-message-motion {
-  flex: 1 1 auto;
+  /* Let prose wrap beside its metadata instead of claiming the entire row.
+     Below a readable text width, flex wrapping moves the metadata underneath. */
+  flex: 1 1 16em;
   width: auto;
+  min-width: min(100%, 16em);
   max-width: 100%;
   justify-items: stretch;
 }
 
-:root[data-message-style="im"] .user-message-block:has(.user-message-edit) .user-message-motion {
+:root[data-message-style="im"] .user-message-motion:has(
+  .user-message-edit,
+  .user-message-attachments,
+  .user-message-long-card,
+  .rich-content > :not(.rich-paragraph)
+) {
+  flex-basis: 100%;
   width: 100%;
 }
 
@@ -5938,7 +5947,28 @@ button.turn-edit-summary-overview:focus-visible {
   padding-top: 0;
   justify-content: flex-end;
   flex-wrap: wrap;
+  opacity: 1;
+  pointer-events: auto;
   transform: none;
+}
+
+:root[data-message-style="im"] .user-message-actions > :not(.message-time) {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+
+:root[data-message-style="im"] .user-message-block:is(:hover, :focus-within) .user-message-actions > :not(.message-time),
+:root[data-message-style="im"] .user-message-actions > :is(.copied, .failed) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none), (pointer: coarse) {
+  :root[data-message-style="im"] .user-message-actions > :not(.message-time) {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 :root[data-message-style="im"] .user-message-time {
