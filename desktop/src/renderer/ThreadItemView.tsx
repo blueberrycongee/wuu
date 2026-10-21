@@ -111,6 +111,58 @@ interface ThreadItemViewProps {
   pluginHost?: PluginHost;
 }
 
+/* IM query frames span the reading row, so only the rendered last line can
+   tell whether the hover row fits after it or must hang under the frame. */
+function placeUserMessageActions(actions: HTMLDivElement | null): (() => void) | undefined {
+  const block = actions?.parentElement;
+  // Layout-less renderers (jsdom) cannot measure lines; the CSS default hangs the row.
+  if (!actions || !block || typeof ResizeObserver === "undefined" || typeof Range.prototype.getBoundingClientRect !== "function") {
+    return undefined;
+  }
+  const place = (): void => {
+    const message = block.querySelector<HTMLElement>(".user-message");
+    const paragraphs = message?.querySelectorAll<HTMLElement>(".rich-paragraph");
+    const last = paragraphs?.[paragraphs.length - 1];
+    let inline = false;
+    if (message && last) {
+      const walker = document.createTreeWalker(last, NodeFilter.SHOW_TEXT);
+      let tail: Text | null = null;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if ((node as Text).data.trim()) tail = node as Text;
+      }
+      if (tail) {
+        // The final glyph's box marks where the last line ends.
+        const end = tail.data.trimEnd().length;
+        const range = document.createRange();
+        range.setStart(tail, end - 1);
+        range.setEnd(tail, end);
+        const glyph = range.getBoundingClientRect();
+        const frame = message.getBoundingClientRect();
+        const lineHeight = parseFloat(getComputedStyle(last).lineHeight) || 0;
+        // Only the final line of the frame can host the row; a code block,
+        // expand toggle or later paragraph below it sends the row underneath.
+        inline = frame.bottom - glyph.bottom < lineHeight / 2 && glyph.right + actions.offsetWidth <= frame.right;
+      }
+    }
+    actions.dataset.placement = inline ? "inline" : "below";
+  };
+  place();
+  // Text or font changes can move the last line without resizing the block;
+  // measuring again just before the row is revealed covers them.
+  const observer = new ResizeObserver(place);
+  observer.observe(block);
+  block.addEventListener("pointerenter", place);
+  block.addEventListener("focusin", place);
+  void document.fonts?.ready.then(() => {
+    if (block.isConnected) place();
+  });
+  return () => {
+    observer.disconnect();
+    block.removeEventListener("pointerenter", place);
+    block.removeEventListener("focusin", place);
+  };
+}
+
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps): JSX.Element | null {
   const { item, onEditMessage, turnID, editing } = props;
   const { t } = useI18n();
@@ -362,6 +414,7 @@ function BuiltInThreadItemView({
           </div>
           {!editing && (copyable || editActionVisible || relatedSessionAvailable || hasPluginActions) ? (
             <div
+              ref={placeUserMessageActions}
               className="message-actions user-message-actions"
               data-wuu-component="message-actions"
               data-wuu-placement="overlay"

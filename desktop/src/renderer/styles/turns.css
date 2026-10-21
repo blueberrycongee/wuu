@@ -5866,11 +5866,18 @@ button.turn-edit-summary-overview:focus-visible {
   }
 }
 
-/* IM presentation shares the message flow and its editing/attachment contracts. */
+/* IM presentation shares the message flow and its editing/attachment contracts.
+   The frame spans the reading row; its text stays on the reply's axis. */
 :root[data-message-style="im"] {
-  --user-message-bg-color: color-mix(in srgb, var(--paper) 96%, var(--ink));
-  --user-message-radius: var(--wuu-message-user-radius, var(--radius-sm));
-  --user-message-inline-outset: var(--space-2);
+  --user-message-bg-color: var(--wuu-message-user-background, var(--surface-1));
+  --user-message-frame-border: var(--wuu-message-user-border, 1px solid var(--hairline-soft));
+  --user-message-radius: var(--wuu-message-user-radius, 12px);
+  /* Narrow panes keep the frame clear of the window edge. */
+  --user-message-inline-outset: clamp(
+    var(--space-2),
+    calc(var(--session-outer-padding-inline) - var(--space-2)),
+    var(--space-3)
+  );
 }
 
 :root[data-message-style="im"] .user-message-block {
@@ -5882,22 +5889,20 @@ button.turn-edit-summary-overview:focus-visible {
   grid-template-columns: minmax(0, 1fr);
 }
 
-/* The frame includes metadata and actions; its text stays on the reply's axis. */
-:root[data-message-style="im"] :is(.user-message-block:not(:has(.user-message-edit)), .user-message-edit) {
+:root[data-message-style="im"] :is(.user-message-motion:not(:has(.user-message-edit)), .user-message-edit) {
   width: calc(100% + 2 * var(--user-message-inline-outset));
   max-width: none;
   margin-inline: calc(-1 * var(--user-message-inline-outset));
   box-sizing: border-box;
 }
 
-:root[data-message-style="im"] .user-message-block:not(:has(.user-message-edit)) {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
+:root[data-message-style="im"] .user-message-motion:not(:has(.user-message-edit)) {
+  justify-items: stretch;
   padding: var(--conversation-framed-text-inset-block) var(--user-message-inline-outset);
-  background: var(--wuu-message-user-background, var(--user-message-bg-color));
+  background: var(--user-message-bg-color);
   border-radius: var(--user-message-radius);
-  outline: var(--wuu-message-user-border, 0);
+  outline: var(--user-message-frame-border);
+  outline-offset: -1px;
   box-shadow: var(--wuu-message-user-shadow, none);
 }
 
@@ -5919,56 +5924,33 @@ button.turn-edit-summary-overview:focus-visible {
   padding-inline: 0;
 }
 
-:root[data-message-style="im"] .user-message-motion {
-  /* Let prose wrap beside its metadata instead of claiming the entire row.
-     Below a readable text width, flex wrapping moves the metadata underneath. */
-  flex: 1 1 16em;
-  width: auto;
-  min-width: min(100%, 16em);
-  max-width: 100%;
-  justify-items: stretch;
+:root[data-message-style="im"] .user-message-block.user-message-jump-flash > .user-message-motion {
+  animation: user-message-jump-flash 800ms var(--ease-out);
 }
 
-:root[data-message-style="im"] .user-message-motion:has(
-  .user-message-edit,
-  .user-message-attachments,
-  .user-message-long-card,
-  .rich-content > :not(.rich-paragraph)
-) {
-  flex-basis: 100%;
-  width: 100%;
+:root[data-message-style="im"] .user-message-block.user-message-jump-flash > .user-message-motion > .user-message {
+  animation: none;
 }
 
-:root[data-message-style="im"] .user-message-actions {
-  position: static;
-  flex: 0 0 auto;
-  width: auto;
-  margin-inline-start: auto;
-  padding-top: 0;
+/* Metadata and actions reveal together at the end of the last line when it
+   has room, otherwise under the frame's trailing corner in the gap before the
+   next item. Neither placement reserves space or moves text when revealed. */
+/* The top padding bridges hover across the hanging gap. */
+:root[data-message-style="im"] .message-actions.user-message-actions {
+  top: 100%;
+  right: 0;
+  bottom: auto;
+  width: max-content;
+  max-width: none;
+  padding: 2px 0 0;
   justify-content: flex-end;
-  flex-wrap: wrap;
-  opacity: 1;
-  pointer-events: auto;
-  transform: none;
+  flex-wrap: nowrap;
 }
 
-:root[data-message-style="im"] .user-message-actions > :not(.message-time) {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity var(--motion-fast) var(--ease-out);
-}
-
-:root[data-message-style="im"] .user-message-block:is(:hover, :focus-within) .user-message-actions > :not(.message-time),
-:root[data-message-style="im"] .user-message-actions > :is(.copied, .failed) {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-@media (hover: none), (pointer: coarse) {
-  :root[data-message-style="im"] .user-message-actions > :not(.message-time) {
-    opacity: 1;
-    pointer-events: auto;
-  }
+:root[data-message-style="im"] .message-actions.user-message-actions[data-placement="inline"] {
+  top: auto;
+  bottom: calc(var(--conversation-framed-text-inset-block) + (var(--conversation-reading-line-height) - var(--conversation-user-action-size)) / 2);
+  padding: 0 0 0 var(--space-3);
 }
 
 :root[data-message-style="im"] .user-message-time {
@@ -5977,6 +5959,11 @@ button.turn-edit-summary-overview:focus-visible {
 
 :root[data-message-style="im"] .user-message-block-with-actions + .user-message-block {
   margin-top: 0;
+}
+
+/* A queued query leaves room for a hanging action row above it. */
+:root[data-message-style="im"] .user-message-block:has(> .user-message-actions:not([data-placement="inline"])) + .user-message-block {
+  margin-top: calc(var(--conversation-user-action-size) + 2px - var(--conversation-turn-item-gap));
 }
 
 :root[data-message-style="im"] .session-message-source {
