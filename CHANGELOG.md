@@ -156,6 +156,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Guide next-message predictions toward concrete follow-ups instead of polite
   acknowledgments, and allow no suggestion when the next intent is unclear.
 
+## [2026.10.21-nightly.2] - 2026.10.21
+
+Nightly build from experiment/workbench for testing the workbench navigation, composer, IM message layout, browser lifecycle, and recent-conversation changes before the next stable release.
+
 ## [2026.10.21-nightly.1] - 2026.10.21
 
 Nightly build from experiment/workbench for testing the workbench navigation, composer, IM message layout, browser lifecycle, and recent-conversation changes before the next stable release.
