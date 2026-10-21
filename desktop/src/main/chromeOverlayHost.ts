@@ -275,7 +275,6 @@ export class ChromeOverlayHost {
         }
       } else if (command.type === "new-tab") { if (!model.canCreateTab) return; }
       else if (command.type === "desktop-update") { if (!model.footer?.update || model.footer.update.busy) return; }
-      else if (command.type === "settings") { if (!model.footer || model.footer.settings.disabled) return; }
       else if (command.type === "account-open") {
         const anchor = command.anchor;
         if (!model.footer?.account || model.footer.account.disabled || !anchor || ![anchor.x, anchor.y, anchor.width, anchor.height].every(Number.isFinite)

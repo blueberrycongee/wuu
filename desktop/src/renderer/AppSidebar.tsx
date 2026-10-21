@@ -1,5 +1,6 @@
 import { hostSupports } from "./HostCapabilities";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
+import { DesktopUpdateButton } from "./DesktopUpdateButton";
 import { NavigationRibbon, type RibbonBrowserActions } from "./NavigationRibbon";
 import type { RibbonWebsite } from "./NavigationRibbonPreferences";
 import {
@@ -13,7 +14,6 @@ import {
   MessagesSquare,
   Plus,
   Search,
-  Settings,
   Sparkles,
   SquarePen,
   Project,
@@ -1860,7 +1860,6 @@ export function AppSidebar({
       <NavigationRibbon
         ribbonRef={ribbonRef}
         onExpandedChange={onRibbonExpandedChange}
-        footerSettings={{ title: t("sidebar.settings"), active: settingsActive, disabled: !state.initialized, onSelect: () => activateNative(onOpenSettings) }}
         websites={websites}
         onNewTab={onNewTab ? () => activateNative(onNewTab) : undefined}
         onCloseTab={onCloseTab}
@@ -1900,19 +1899,7 @@ export function AppSidebar({
           })),
         ]}
         footer={<>
-          <Tooltip content={t("sidebar.settings")}>
-            <button
-              className="sidebar-ribbon-button"
-              type="button"
-              aria-label={t("sidebar.settings")}
-              aria-current={settingsActive ? "page" : undefined}
-              disabled={!state.initialized}
-              onClick={() => activateNative(onOpenSettings)}
-            >
-              <Settings aria-hidden="true" />
-              <span className="sidebar-ribbon-label">{t("sidebar.settings")}</span>
-            </button>
-          </Tooltip>
+          <DesktopUpdateButton />
           <SidebarAccountMenu
             key={sidebarCollapsed ? "collapsed" : "docked"}
             matchTriggerWidth={false}

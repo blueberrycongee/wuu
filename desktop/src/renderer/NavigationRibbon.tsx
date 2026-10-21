@@ -59,14 +59,13 @@ function restoreReopenedOrder(order: readonly string[], tabs: readonly Pick<Ribb
   return order.map(id => replacements.get(id) ?? id);
 }
 
-export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSelectWebsite, onNewTab, onCloseTab, onPinTab, onMuteTab, onReorderTabs, footer, ribbonRef, footerSettings, onExpandedChange }: {
+export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSelectWebsite, onNewTab, onCloseTab, onPinTab, onMuteTab, onReorderTabs, footer, ribbonRef, onExpandedChange }: {
   items: NavigationRibbonItem[];
   activeWebsiteId?: string | null;
   onSelectWebsite?: (website: RibbonWebsite) => void;
   footer?: ReactNode;
   ribbonRef?: Ref<HTMLElement>;
   onExpandedChange?: (expanded: boolean) => void;
-  footerSettings?: { title: string; disabled: boolean; active: boolean; onSelect: () => void };
 } & RibbonBrowserActions): JSX.Element {
   const { t } = useI18n();
   const preferences = useNavigationRibbonPreferences();
@@ -120,8 +119,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
       : button?.dataset.ribbonCloseId ? { kind: "close", id: button.dataset.ribbonCloseId }
       : button?.matches(".desktop-update-button") ? { kind: "desktop-update" }
       : button?.matches(".sidebar-account-trigger") ? { kind: "account" }
-      : button?.matches(".sidebar-ribbon-add") ? { kind: "new-tab" }
-      : button?.closest(".sidebar-ribbon-footer") && button.matches(".sidebar-ribbon-button") ? { kind: "settings" } : undefined;
+      : button?.matches(".sidebar-ribbon-add") ? { kind: "new-tab" } : undefined;
     setNativeFocusTarget(current => JSON.stringify(current) === JSON.stringify(next) ? current : next);
   };
   const [dragging, setDragging] = useState(false);
@@ -243,7 +241,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     headerHeight: navRef.current ? Number.parseFloat(getComputedStyle(navRef.current).paddingTop) : 0,
     paddingBottom: navRef.current ? Number.parseFloat(getComputedStyle(navRef.current).paddingBottom) : 8,
     scrollTop: scrollTop.current, focusTarget: nativeFocusTarget,
-    footer: footerSettings ? { settings: { id: "settings", title: footerSettings.title, icon: { kind: "settings" }, active: footerSettings.active, disabled: footerSettings.disabled }, account: accountTrigger, update: updateModel } : undefined,
+    footer: footer ? { account: accountTrigger, update: updateModel } : undefined,
   };
   const closeNative = () => { navRef.current?.style.removeProperty("--ribbon-native-reveal"); clearTimeout(enterTimer.current); enterTimer.current = undefined; setNativeClosing(false); setNativeOpen(false); setPointerInside(false); setKeyboardFocusWithin(false); setDragging(false); };
   const nativePresented = useChromeOverlay(nativeAvailable && nativeOpen, nativeBounds, nativeModel, command => {
@@ -263,7 +261,6 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     else if (command.type === "reorder") reorder(command.id, command.target);
     else if (command.type === "new-tab") onNewTab?.();
     else if (command.type === "desktop-update") updateActivate.current?.();
-    else if (command.type === "settings") footerSettings?.onSelect();
     else if (command.type === "account-open") accountOpen.current?.(command.anchor);
     else if (command.type === "scroll") { scrollTop.current = command.top; const main = navRef.current?.querySelector(".sidebar-ribbon-main"); if (main) main.scrollTop = command.top; }
   }, closeNative, keyboardFocusWithin, navRef.current);

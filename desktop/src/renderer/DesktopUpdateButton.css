@@ -1,13 +1,8 @@
 .desktop-update {
-  position: absolute;
-  inset-inline-end: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-nav-column-gap, 8px));
-  top: 50%;
-  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  min-height: max(36px, 2.4em);
   font-size: var(--sidebar-label-size, var(--font-ui));
-}
-
-.sidebar-account:has(.desktop-update) .sidebar-account-name {
-  padding-inline-end: calc(2em + var(--sidebar-nav-column-gap, 8px));
 }
 
 .desktop-update-button {
@@ -15,6 +10,8 @@
   place-items: center;
   width: 2em;
   height: 2em;
+  flex-shrink: 0;
+  margin-inline-start: calc(var(--sidebar-row-pad-x) + var(--sidebar-ribbon-icon-size) / 2 - 1em);
   padding: 0;
   border: 0;
   border-radius: 50%;

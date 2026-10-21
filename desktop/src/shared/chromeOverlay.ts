@@ -11,7 +11,6 @@ export type ChromeOverlayAppearance = {
 export type RibbonIconModel =
   | { kind: "conversations" }
   | { kind: "catalog" }
-  | { kind: "settings" }
   | { kind: "public"; name?: string }
   | { kind: "image"; light: string; dark?: string }
   | { kind: "website"; url: string; title: string; favicon?: string; loading?: boolean; startPage?: boolean };
@@ -29,7 +28,7 @@ export type ChromeAccountPanel = {
   rows: { action: ChromeAccountAction; label: string; disabled?: boolean }[];
   error?: string; notice?: string;
 };
-export type ChromeRibbonFocus = { kind: "item" | "close"; id: string } | { kind: "account" | "settings" | "new-tab" | "desktop-update" };
+export type ChromeRibbonFocus = { kind: "item" | "close"; id: string } | { kind: "account" | "new-tab" | "desktop-update" };
 export type ChromeRibbonModel = {
   collapsedWidth: number;
   resizeLabel?: string;
@@ -42,7 +41,7 @@ export type ChromeRibbonModel = {
   muteTabLabel: string; unmuteTabLabel: string;
   paddingTop: number; paddingBottom: number; scrollTop: number;
   focusTarget?: ChromeRibbonFocus;
-  footer?: { settings: ChromeRibbonItem; account?: ChromeAccountTrigger; update?: ChromeDesktopUpdate };
+  footer?: { account?: ChromeAccountTrigger; update?: ChromeDesktopUpdate };
 };
 export type ChromeCapsuleModel = { kind: "capsule"; draft: string; expanded: boolean; menuOpen: boolean; busy: boolean; sessionId?: string; error?: string;
   sourceTitle: string; label: string; placeholder: string; sendLabel: string; openLabel: string; collapseLabel: string };
@@ -65,7 +64,7 @@ export type ChromeOverlayCommand =
   | { type: "pin-tab"; id: string; pinned: boolean }
   | { type: "mute-tab"; id: string; muted: boolean }
   | { type: "reorder"; id: string; target: string }
-  | { type: "new-tab" | "settings" | "desktop-update" }
+  | { type: "new-tab" | "desktop-update" }
   | { type: "account-open"; anchor: ChromeOverlayRect }
   | { type: "account-action"; action: ChromeAccountAction }
   | { type: "dismiss"; reason: "escape" | "tab" | "outside" | "leave" | "owner" | "failed" }

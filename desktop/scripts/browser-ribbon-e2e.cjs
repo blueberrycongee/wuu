@@ -172,7 +172,7 @@ function key(keyCode) {
   let request = { version: 1, token: "native-ribbon-fixture", generation: 1, bounds: { x: 0, y: 0, width: 248, height: 720 }, focus: true, appearance,
     model: { kind: "ribbon", resizeLabel: "Resize navigation ribbon", collapsedWidth: 52, label: "Browser tabs", newTabLabel: "New tab", canCreateTab: true,
       closeTabLabel: "Close tab", pinTabLabel: "Pin tab", unpinTabLabel: "Unpin tab", muteTabLabel: "Mute tab", unmuteTabLabel: "Unmute tab", reorderHint: "Move tabs",
-      paddingTop: 0, paddingBottom: 8, scrollTop: 600, focusTarget: { kind: "settings" }, footer: { settings: { id: "settings", title: "Settings", icon: { kind: "settings" } } },
+      paddingTop: 0, paddingBottom: 8, scrollTop: 600, focusTarget: { kind: "account" }, footer: { account: { title: "Local use", label: "Account menu", disabled: false, open: false } },
       items: Array.from({ length: 48 }, (_, i) => ({ id: "native-" + i, title: "Native page " + i, active: i === 0, website: true, closable: true, canMute: true, audible: i === 0,
         icon: { kind: "website", url: "https://example.com/" + i, title: "Native page " + i } })) } };
   nativeHost = new ChromeOverlayHost((_owner, event) => {

@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Show desktop update progress above the navigation ribbon avatar in compact and expanded layouts; keep Settings in the avatar menu instead of a separate ribbon button.
+
 - Start a conversation from the Recent sidebar heading, using the scratch workspace when no project is selected.
 
 - Show the Wuu mascot icon at the top of the desktop navigation ribbon.
