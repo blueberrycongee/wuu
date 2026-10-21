@@ -282,6 +282,11 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   aspect-ratio: 1;
   /* Preserve the app icon's authored corner ratio. */
   border-radius: 22%;
+  /* Give the opaque mark a readable edge and a little lift off the rail. */
+  border: 1px solid var(--hairline);
+  box-shadow:
+    0 1px 2px var(--shadow-color-medium),
+    0 5px 12px -6px var(--shadow-color-strong);
 }
 
 /* The layout track and icon axis stay fixed. Only this floating surface opens;
