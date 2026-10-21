@@ -528,8 +528,11 @@ describe("session tab switch latency", () => {
     const history = container.querySelector<HTMLElement>('[data-wuu-component="page-history-controls"]')!;
     const ribbon = container.querySelector<HTMLElement>(".sidebar-ribbon")!;
     const toggle = container.querySelector<HTMLButtonElement>(".section-sidebar-toggle")!;
-    expect(history.hidden).toBe(false);
-    await act(async () => pageHistoryButton("back").focus());
+    // Browser mode owns its navigation controls; app history remains mounted
+    // but hidden, independently of ribbon expansion.
+    expect(history.hidden).toBe(true);
+    expect(history.hasAttribute("inert")).toBe(true);
+    await act(async () => toggle.focus());
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
     await vi.waitFor(async () => {
       await act(async () => {});
@@ -558,9 +561,12 @@ describe("session tab switch latency", () => {
         token: request.token, generation: request.generation, command: { type: "dismiss", reason: "leave" },
       })));
     }
-    expect(ribbon.dataset.expanded).toBeUndefined();
-    expect(history.hidden).toBe(false);
-    expect(history.hasAttribute("inert")).toBe(false);
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      expect(ribbon.dataset.expanded).toBeUndefined();
+    });
+    expect(history.hidden).toBe(true);
+    expect(history.hasAttribute("inert")).toBe(true);
     expect(toggle.hidden).toBe(false);
     expect(toggle.hasAttribute("inert")).toBe(false);
     expect(document.activeElement).toBe(container.querySelector(".app-shell"));
@@ -570,8 +576,12 @@ describe("session tab switch latency", () => {
         tabs: nativeState.tabs?.map(tab => ({ ...tab, url: "https://example.com/previous", canGoBack: false })) };
       listeners.forEach(listener => listener(nativeState));
     });
+    // Invoke the mounted app-history action to test route replay separately
+    // from browser-mode control visibility and webpage navigation.
     await clickPageHistoryTarget(pageHistoryButton("back"));
     expect(container.querySelector('[data-wuu-component="app-shell"]')?.hasAttribute("data-web-workspace-open")).toBe(false);
+    expect(history.hidden).toBe(false);
+    expect(history.hasAttribute("inert")).toBe(false);
     expect(mainComposerTextarea().value).toBe("retained behind website");
     await clickPageHistoryTarget(pageHistoryButton("forward"));
     expect(container.querySelector('[data-wuu-component="app-shell"]')?.hasAttribute("data-web-workspace-open")).toBe(true);
@@ -1412,7 +1422,13 @@ describe("session tab switch latency", () => {
     // The creation notification may arrive while persisting the draft name.
     // It must not put a second row beside the still-pending first send.
     await act(async () => { emitNotification("thread/started", { thread: created }); });
-    expect(container.querySelectorAll('.thread-row-main')).toHaveLength(2);
+    // Recent activity mirrors workspace rows; neither list may duplicate a
+    // pending conversation when its server identity arrives.
+    for (const selector of [".project-section", "[data-sidebar-recents]"]) {
+      const rows = container.querySelectorAll(`${selector} .thread-row-main`);
+      expect(rows).toHaveLength(2);
+      expect(new Set(Array.from(rows, row => row.getAttribute("aria-label"))).size).toBe(2);
+    }
     expect(threadRowButton("Named conversation A")).toBeDefined();
     expect(activeSessionTabLabel()).toBe("Named conversation A");
     expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
@@ -1431,7 +1447,13 @@ describe("session tab switch latency", () => {
     });
     expect(startTurn).toHaveBeenCalledTimes(entry === "workspace" ? 1 : 2);
     if (entry === "top") expect(startTurn.mock.calls[1].slice(0, 2)).toEqual([threadAID, "pending A"]);
-    expect(container.querySelectorAll('.thread-row-main')).toHaveLength(2);
+    // Recent activity mirrors workspace rows; neither list may duplicate a
+    // pending conversation when its server identity arrives.
+    for (const selector of [".project-section", "[data-sidebar-recents]"]) {
+      const rows = container.querySelectorAll(`${selector} .thread-row-main`);
+      expect(rows).toHaveLength(2);
+      expect(new Set(Array.from(rows, row => row.getAttribute("aria-label"))).size).toBe(2);
+    }
     expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
     expect(threadRowButton(entry === "workspace" ? "pending A" : "Newer conversation name")).toBeDefined();
     expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");

@@ -168,7 +168,10 @@ export function useSidebarDrawerState({
   const blurSidebarFocus = useCallback((): void => {
     const sidebar = appShellRef.current?.querySelector(sidebarSelector);
     const active = document.activeElement;
-    if (sidebar && active instanceof HTMLElement && sidebar.contains(active)) {
+    // The persistent ribbon owns its keyboard focus independently of the
+    // drawer, including when a leave arrives after the drawer already closed.
+    if (sidebar && active instanceof HTMLElement && sidebar.contains(active)
+      && !active.closest(".sidebar-ribbon")) {
       active.blur();
     }
   }, [appShellRef, sidebarSelector]);

@@ -47,9 +47,11 @@ import {
 } from "./WindowResizeState";
 import { PhoneNavigationContext } from "./PhoneNavigationContext";
 import { HOVER_REVEAL_OPEN_DELAY_MS } from "./HoverReveal";
+import { startFocusModality } from "./FocusModality";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
+let stopFocusModality: () => void;
 let serverEventHandlers: Array<(event: ServerEvent) => void> = [];
 let elementFromPointTarget: Element | null = null;
 const originalInnerWidth = window.innerWidth;
@@ -331,6 +333,7 @@ describe("collapsed sidebar hover drawer", () => {
     window.innerWidth = 1280;
     delete document.documentElement.dataset.hostKind;
     vi.useFakeTimers();
+    stopFocusModality = startFocusModality();
     installWindowStubs();
     serverEventHandlers = [];
     elementFromPointTarget = null;
@@ -347,6 +350,7 @@ describe("collapsed sidebar hover drawer", () => {
       root?.unmount();
     });
     root = null;
+    stopFocusModality();
     container.remove();
     document.documentElement.classList.remove(WINDOW_RESIZING_CLASS);
     Reflect.deleteProperty(globalThis, "ResizeObserver");
@@ -449,6 +453,8 @@ describe("collapsed sidebar hover drawer", () => {
     expect(history.hasAttribute("inert")).toBe(collapsed);
     expect(document.activeElement).toBe(collapsed ? appShell() : back);
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
+    expect(ribbon.dataset.expanded).toBe("true");
+    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
     expect(ribbon.dataset.expanded).toBeUndefined();
     expect(history.hidden).toBe(false);
     expect(history.hasAttribute("inert")).toBe(false);
@@ -467,6 +473,8 @@ describe("collapsed sidebar hover drawer", () => {
     expect(toggle.hasAttribute("inert")).toBe(platform === "darwin");
     expect(document.activeElement).toBe(platform === "darwin" ? appShell() : toggle);
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
+    expect(ribbon.dataset.expanded).toBe("true");
+    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
     expect(ribbon.dataset.expanded).toBeUndefined();
     expect(toggle.hidden).toBe(false);
     expect(toggle.hasAttribute("inert")).toBe(false);
@@ -477,7 +485,8 @@ describe("collapsed sidebar hover drawer", () => {
     Object.defineProperty(window.wuu, "platform", { configurable: true, value: "darwin" });
     await renderCollapsedApp();
     const ribbon = container.querySelector<HTMLElement>(".sidebar-ribbon")!;
-    const destination = ribbon.querySelector<HTMLButtonElement>("button")!;
+    const destinations = ribbon.querySelectorAll<HTMLButtonElement>('[data-ribbon-id]:not([aria-disabled="true"])');
+    const destination = destinations[0];
     await act(async () => {
       destination.focus();
       destination.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
@@ -485,7 +494,9 @@ describe("collapsed sidebar hover drawer", () => {
     });
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
     expect(ribbon.dataset.expanded).toBe("true");
-    expect(document.activeElement).toBe(destination);
+    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
+    expect(ribbon.dataset.expanded).toBe("true");
+    expect(document.activeElement).toBe(destinations[1]);
     await act(async () => appShell()!.focus());
     expect(ribbon.dataset.expanded).toBeUndefined();
   });
@@ -1044,5 +1055,7 @@ describe("collapsed sidebar hover drawer", () => {
       false,
     );
     expect(sidebarContainsFocus()).toBe(false);
+    expect(selectedButton.closest(".sidebar-content")?.hasAttribute("inert")).toBe(true);
+    expect(container.querySelector(".sidebar-ribbon")?.closest("[inert]")).toBeNull();
   });
 });

@@ -57,6 +57,7 @@ vi.mock("./FileSelectionSurface", () => ({
   },
 }));
 import { rightPanelMotionMs } from "./AppLayoutState";
+import { motionDurationMs } from "./motion";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -386,10 +387,20 @@ describe("workspace file tabs", () => {
     await flushAsync();
     await select("Project Beta");
     expect(container.querySelector(".workspace-tool-tab.active")?.textContent).toContain("README.md");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await select("artifact conversation");
     expect(container.querySelector(".project-panel")).toBeNull();
     expect(container.querySelector(".workspace-tool-tab.active")?.textContent).toContain("README.md");
+    // The removed overview retains only an inaccessible closing ghost while
+    // its neighbours slide over; it must not remain an actionable project tab.
+    const closingProject = container.querySelector('.workspace-tool-tab.closing');
+    expect(closingProject?.textContent).toBe("Project Beta");
+    expect(closingProject?.getAttribute("aria-hidden")).toBe("true");
+    expect(closingProject?.querySelector("button, [tabindex]")).toBeNull();
+    expect(container.querySelector('[data-wuu-tab-kind="project"]')).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(motionDurationMs("--motion-fast", 120)); });
     expect(container.querySelector(".workspace-right-panel")?.textContent).not.toContain("Project Beta");
+    expect(container.querySelector(".workspace-tool-tab.active")?.textContent).toContain("README.md");
   });
 
   it("returns focus after closing the browser without scrolling back to its historical link", async () => {
