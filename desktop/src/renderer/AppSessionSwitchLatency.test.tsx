@@ -972,9 +972,10 @@ describe("session tab switch latency", () => {
     await act(async () => { first.resolve({ thread: created }); });
     expect(window.wuu.renameThread).toHaveBeenCalledWith(threadAID, "Named conversation A");
     // The creation notification may arrive while persisting the draft name.
-    // It must not put a second row beside the still-pending first send.
+    // It must not put a second row beside the still-pending first send in
+    // the workspace. Recent conversations also provide an entry for each thread.
     await act(async () => { emitNotification("thread/started", { thread: created }); });
-    expect(container.querySelectorAll('.thread-row-main')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-functional-group-id="workspace"] .thread-row-main')).toHaveLength(2);
     expect(threadRowButton("Named conversation A")).toBeDefined();
     expect(activeSessionTabLabel()).toBe("Named conversation A");
     expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
@@ -993,7 +994,7 @@ describe("session tab switch latency", () => {
     });
     expect(startTurn).toHaveBeenCalledTimes(entry === "workspace" ? 1 : 2);
     if (entry === "top") expect(startTurn.mock.calls[1].slice(0, 2)).toEqual([threadAID, "pending A"]);
-    expect(container.querySelectorAll('.thread-row-main')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-functional-group-id="workspace"] .thread-row-main')).toHaveLength(2);
     expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
     expect(threadRowButton(entry === "workspace" ? "pending A" : "Newer conversation name")).toBeDefined();
     expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");

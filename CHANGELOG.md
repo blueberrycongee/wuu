@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add a Recent sidebar group across workspaces, with stable user-activity ordering, progressive expansion, and a saved project-conversation filter.
+
 - Show Computer Use calls as readable action titles, with original calls, outputs, and errors available in expandable records.
 
 - Show external connections as compact two-line rows with account plans, remaining quota bars and local reset times; omit unavailable quota details.

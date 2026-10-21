@@ -176,9 +176,9 @@ function renderSidebar(options: RenderOptions = {}): void {
 
 describe("AppSidebar layout", () => {
   it.each([
-    { saved: ["workspace", "pinned"], expected: ["projects", "folders", "workspace", "pinned"] },
+    { saved: ["workspace", "pinned"], expected: ["projects", "folders", "workspace", "pinned", "recents"] },
     // Projects take the place a saved order gave Collaboration.
-    { saved: ["folders", "collaboration", "workspace", "pinned"], expected: ["folders", "projects", "workspace", "pinned"] },
+    { saved: ["folders", "collaboration", "workspace", "pinned"], expected: ["folders", "projects", "workspace", "pinned", "recents"] },
   ])("restores group order without resetting existing preferences: $saved", ({ saved, expected }) => {
     window.localStorage.setItem("wuu.desktop.sidebarFunctionalGroupOrder", JSON.stringify(saved));
     const order = () => [...container.querySelectorAll<HTMLElement>(".sidebar-main > .sidebar-functional-group")]
@@ -208,8 +208,8 @@ describe("AppSidebar layout", () => {
       workspaceThreadsByWorkspaceID: { "project-1": threads },
       onSelectThread,
     };
-    const currentTitles = () => [...container.querySelectorAll('[aria-current="page"] .thread-row-title')]
-      .map((element) => element.textContent);
+    const currentTitles = () => [...new Set([...container.querySelectorAll('[aria-current="page"] .thread-row-title')]
+      .map((element) => element.textContent))];
     renderSidebar(options);
     expect(currentTitles()).toEqual([threads[0].title]);
 
@@ -377,6 +377,7 @@ describe("AppSidebar layout", () => {
       `project:${SCRATCH_PSEUDO_PROJECT_ID}`,
       "project:project-1",
       "project:project-2",
+      "section:recents",
       "command:settings",
     ]);
   });
@@ -399,7 +400,7 @@ describe("AppSidebar layout", () => {
       onSelectWorkspaceThread: select,
     });
     const rows = [...container.querySelectorAll<HTMLButtonElement>(".thread-row-main")]
-      .filter((row) => row.textContent?.includes(fork.title!));
+      .filter((row) => !row.closest("[data-sidebar-recents]") && row.textContent?.includes(fork.title!));
     expect(rows).toHaveLength(1);
     act(() => rows[0].click());
     expect(select).toHaveBeenCalledWith("project-1", fork.id);

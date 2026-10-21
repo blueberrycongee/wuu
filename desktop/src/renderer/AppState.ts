@@ -784,6 +784,8 @@ function reduceNotification(
           const turns = mergeThreadUpdatedTurns(thread.turns, current.turns);
           return {
             ...thread,
+            recency_at: current.recency_at
+              ? laterTimestamp(thread.recency_at ?? thread.created_at, current.recency_at) : thread.recency_at,
             status: reconciledThreadStatus(thread, current, turns),
             turns,
             child_agents: thread.child_agents ?? current.child_agents,
@@ -1368,6 +1370,9 @@ export function reconcileResumedThreadTurns(
   resumed: Thread,
   local: Thread | undefined,
 ): Thread {
+  if (local?.recency_at) {
+    resumed = { ...resumed, recency_at: laterTimestamp(resumed.recency_at ?? resumed.created_at, local.recency_at) };
+  }
   const localTurns = local ? reconcileOptimisticTurns(local.turns, resumed.turns) : undefined;
   if (localTurns) {
     const turns = preserveTurnCompletions(resumed.turns, localTurns);
@@ -1632,6 +1637,7 @@ function summarizeThreadForSidebar(
     worktree: thread.worktree,
     created_at: thread.created_at,
     updated_at: thread.updated_at,
+    recency_at: thread.recency_at,
     latest_completed_turn_id: thread.latest_completed_turn_id,
     turns: thread.turns.map(summarizeTurnForSidebar),
     turn_count: thread.turns.length,
@@ -1787,6 +1793,8 @@ function mergeListedThread(existing: Thread, listed: Thread): Thread {
     ),
     title: listed.title?.trim() ? listed.title : existing.title,
     preview: listed.preview?.trim() ? listed.preview : existing.preview,
+    recency_at: existing.recency_at
+      ? laterTimestamp(listed.recency_at ?? listed.created_at, existing.recency_at) : listed.recency_at,
     status: reconciledThreadStatus(listed, existing, turns),
     turns,
     child_agents:
@@ -3059,6 +3067,9 @@ function threadWithTurnSummary(thread: Thread, turn: Turn): Thread {
       turn.status === "in_progress"
         ? thread.latest_completed_turn_id
         : turn.id,
+    recency_at: turn.items.some((item) => item.type === "user_message")
+      ? laterTimestamp(thread.recency_at ?? thread.created_at, turn.started_at)
+      : thread.recency_at,
     updated_at: laterTimestamp(
       thread.updated_at,
       turn.completed_at ?? turn.started_at,

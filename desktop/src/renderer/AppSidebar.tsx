@@ -2,6 +2,7 @@ import { hostSupports } from "./HostCapabilities";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import {
   ChevronRight,
+  MoreHorizontal,
   Folder,
   FolderMinus,
   FolderOpen,
@@ -116,6 +117,19 @@ import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
  *   can be reordered with real projects.
  */
 export const SIDEBAR_SECTION_PINNED = "__wuu_pinned__";
+const RECENT_CONVERSATIONS_PAGE_SIZE = 10;
+
+/** Activity order is independent of execution priority and project placement. */
+export function recentSidebarThreads(threads: readonly ThreadSummary[]): ThreadSummary[] {
+  const byID = new Map(threads.map((thread) => [thread.id, thread]));
+  const activityTime = (thread: ThreadSummary): number =>
+    Date.parse(thread.recency_at ?? thread.updated_at) || Date.parse(thread.created_at) || 0;
+  return [...byID.values()]
+    .filter((thread) => !thread.archived && !thread.pinned && !thread.folder_id
+      && !thread.ephemeral && !thread.read_only && !thread.parent_id && !thread.agent_path
+      && thread.source !== "project")
+    .sort((left, right) => activityTime(right) - activityTime(left) || left.id.localeCompare(right.id));
+}
 
 type AttentionRow = {
   thread: ThreadSummary;
@@ -209,7 +223,7 @@ const SIDEBAR_FUNCTIONAL_GROUP_ORDER_KEY = "wuu.desktop.sidebarFunctionalGroupOr
 const SIDEBAR_COLLAPSED_FUNCTIONAL_GROUPS_KEY = "wuu.desktop.sidebarCollapsedFunctionalGroups";
 const SIDEBAR_PINNED_ITEMS_KEY = "wuu.desktop.sidebarPinnedItems";
 const LEGACY_SIDEBAR_PINNED_CONTAINERS_KEY = "wuu.desktop.sidebarPinnedContainers";
-const SIDEBAR_FUNCTIONAL_GROUP_IDS = ["projects", "pinned", "folders", "workspace"] as const;
+const SIDEBAR_FUNCTIONAL_GROUP_IDS = ["projects", "pinned", "folders", "workspace", "recents"] as const;
 type SidebarFunctionalGroupID = (typeof SIDEBAR_FUNCTIONAL_GROUP_IDS)[number];
 type SidebarPinnedItem = {
   kind: "thread" | "folder" | "workspace";
@@ -277,7 +291,11 @@ function loadSidebarFunctionalGroupOrder(): SidebarFunctionalGroupID[] {
         && SIDEBAR_FUNCTIONAL_GROUP_IDS.includes(id as SidebarFunctionalGroupID),
     ))];
     // Keep saved relative positions when adding groups.
-    return [...SIDEBAR_FUNCTIONAL_GROUP_IDS.filter((id) => !order.includes(id)), ...order];
+    return [
+      ...SIDEBAR_FUNCTIONAL_GROUP_IDS.filter((id) => id !== "recents" && !order.includes(id)),
+      ...order,
+      ...(!order.includes("recents") ? ["recents" as const] : []),
+    ];
   } catch {
     return [...SIDEBAR_FUNCTIONAL_GROUP_IDS];
   }
@@ -548,6 +566,16 @@ export function AppSidebar({
     return [...byID.values()];
   }, [pinnedThreads, workspaceThreadsByWorkspaceID]);
   const organization = useSessionOrganization(organizationSourceThreads);
+  const [recentLimit, setRecentLimit] = useState(RECENT_CONVERSATIONS_PAGE_SIZE);
+  const [includeProjectRecents, setIncludeProjectRecents] = useState(() => {
+    try { return window.localStorage.getItem("wuu.desktop.recentsIncludeProjects") !== "false"; }
+    catch { return true; }
+  });
+  const [recentMenu, setRecentMenu] = useState<{ x: number; y: number }>();
+  useEffect(() => {
+    try { window.localStorage.setItem("wuu.desktop.recentsIncludeProjects", String(includeProjectRecents)); }
+    catch (error) { console.warn("recent conversations preference persistence failed", error); }
+  }, [includeProjectRecents]);
   const [pinnedItems, setPinnedItems] = useState<SidebarPinnedItem[]>(
     loadSidebarPinnedItems,
   );
@@ -1088,6 +1116,13 @@ export function AppSidebar({
     (id) => (id !== "projects" || onCreateProject || projectIndex.projects.length > 0)
       && (id !== "pinned" || pinnedGroupShown),
   ), [functionalGroupOrder, onCreateProject, pinnedGroupShown, projectIndex]);
+  const recentConversationRows = useMemo(() => recentSidebarThreads(allSidebarThreads)
+    .filter((thread) => !organization.folderByThreadID[thread.id]
+      && (includeProjectRecents || (!thread.project_id && isScratchThread(thread, sidebarWorkspaces)))),
+  [allSidebarThreads, includeProjectRecents, organization.folderByThreadID, sidebarWorkspaces]);
+  const recentVisibleCount = Math.max(recentLimit,
+    recentConversationRows.findIndex((thread) => thread.id === activeThreadID) + 1,
+    recentConversationRows.findIndex((thread) => thread.id === pendingThreadID) + 1);
   // Projects list apart from workspaces unless the user pinned or filed them.
   const projectRows = useMemo(() => projectIndex.projects
     .filter((thread) => !thread.pinned && !organization.folderByThreadID[thread.id])
@@ -1550,7 +1585,20 @@ export function AppSidebar({
       pinned: [],
       folders: [],
       workspace: [],
+      recents: [{
+        id: "section:recents", kind: "section", label: t("sidebar.recentActivity"), depth: 0,
+      }],
     };
+    for (const thread of recentConversationRows) {
+      functionalGroupNodes.recents.push({
+        ...threadNavigationNode(
+          thread, "section:recents", activeThreadID, state.lastViewedTurnByThreadID,
+          () => onSelectThread(thread.id), () => toggleThreadPinned(thread), 1,
+        ),
+        // One conversation can have a project row and a recent row.
+        id: `recent-thread:${thread.id}`,
+      });
+    }
     if (projectRows.length > 0) {
       functionalGroupNodes.projects.push({ id: "section:projects", kind: "section", label: t("sidebar.projects"), depth: 0 });
       for (const thread of projectRows) {
@@ -1747,7 +1795,7 @@ export function AppSidebar({
     onSelectWorkspaceThread, onFocusWorkspace, onSelectThread,
     onTogglePinned, pendingThreadID, pinnedHasRunning,
     pinnedHasUnread, pinnedRows, validPinnedItems,
-    projectRows, projectIndex, visibleWorkspaceThreadsByWorkspaceID,
+    projectRows, projectIndex, recentConversationRows, visibleWorkspaceThreadsByWorkspaceID,
     folderThreadsByID, visibleFunctionalGroupOrder, organization.folders, pinnedFolderIDs,
     sidebarWorkspaces, sidebarScratchPseudoActive, visibleWorkspaceSectionOrder,
     state.activeProjectId, state.initialized, state.lastViewedTurnByThreadID, t,
@@ -1902,6 +1950,13 @@ export function AppSidebar({
           })}
         </nav>
 
+        {recentMenu ? (
+          <ThreadContextMenu x={recentMenu.x} y={recentMenu.y} onClose={() => setRecentMenu(undefined)}
+            items={[{
+              label: t(includeProjectRecents ? "sidebar.recentsHideProjects" : "sidebar.recentsShowProjects"),
+              onSelect: () => { setIncludeProjectRecents((current) => !current); setRecentLimit(RECENT_CONVERSATIONS_PAGE_SIZE); },
+            }]} />
+        ) : null}
         <div className="sidebar-main scrollbar-hidden" data-scroll-fade="">
           <DndContext
             sensors={sensors}
@@ -1916,7 +1971,49 @@ export function AppSidebar({
               items={visibleFunctionalGroupOrder}
               strategy={verticalListSortingStrategy}
             >
-              {visibleFunctionalGroupOrder.map((groupID) => groupID === "projects" ? (
+              {visibleFunctionalGroupOrder.map((groupID) => groupID === "recents" ? (
+                <SortableFunctionalGroup
+                  key={groupID}
+                  id={groupID}
+                  ariaLabel={t("sidebar.recentActivity")}
+                  headingLabel={t("sidebar.recentActivity")}
+                  collapsed={collapsedFunctionalGroupIDs.has(groupID)}
+                  collapseLabel={t(collapsedFunctionalGroupIDs.has(groupID)
+                    ? "sidebar.expandSection" : "sidebar.collapseSection", { section: t("sidebar.recentActivity") })}
+                  onToggleCollapsed={() => toggleFunctionalGroupCollapsed(groupID)}
+                  action={(
+                    <button type="button" className="sidebar-functional-action"
+                      aria-label={t("sidebar.recentOptions")} aria-haspopup="menu" aria-expanded={recentMenu !== undefined}
+                      onClick={(event) => {
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        setRecentMenu({ x: rect.left, y: rect.bottom });
+                      }}>
+                      <MoreHorizontal aria-hidden="true" />
+                    </button>
+                  )}
+                >
+                  <div className="sidebar-functional-group-body" data-sidebar-recents="">
+                    <OrganizationThreadList
+                      threads={recentConversationRows.slice(0, recentVisibleCount)}
+                      activeID={activeThreadID} pendingThreadID={pendingThreadID}
+                      lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
+                      onSelect={onSelectThread} onTogglePinned={onTogglePinned}
+                      onArchive={onArchiveThread} onDelete={onDeleteThread} onRename={onRenameThread}
+                    />
+                    {recentConversationRows.length === 0 ? (
+                      <p className="sidebar-unread-empty" role="status">{t("sidebar.recentsEmpty")}</p>
+                    ) : null}
+                    {recentVisibleCount < recentConversationRows.length ? (
+                      <button type="button" className="sidebar-heading-text-action"
+                        onClick={() => setRecentLimit(recentVisibleCount + RECENT_CONVERSATIONS_PAGE_SIZE)}>{t("sidebar.recentsMore")}</button>
+                    ) : null}
+                    {recentLimit > RECENT_CONVERSATIONS_PAGE_SIZE ? (
+                      <button type="button" className="sidebar-heading-text-action"
+                        onClick={() => setRecentLimit(RECENT_CONVERSATIONS_PAGE_SIZE)}>{t("sources.showLess")}</button>
+                    ) : null}
+                  </div>
+                </SortableFunctionalGroup>
+              ) : groupID === "projects" ? (
                 <SortableFunctionalGroup
                   key={groupID}
                   id={groupID}

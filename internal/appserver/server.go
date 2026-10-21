@@ -62,6 +62,7 @@ type threadState struct {
 	historyHeadSeq int
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	RecencyAt      time.Time
 	LastAccessedAt time.Time
 	Title          string
 	ModelProvider  string
