@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, type RefObject } from "react";
 
 // Measure the live textarea, not the deferred draft in the surrounding composer.
 // This also counts soft wraps and preserves the browser's IME/selection state.
-export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, expanded: boolean, value: string): void {
+export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, value: string): void {
   const resize = useCallback(() => {
     const input = ref.current;
     const composer = input?.closest<HTMLElement>(".composer");
@@ -17,16 +17,13 @@ export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, ex
     }
 
     const scrollTop = input.scrollTop;
-    if (stack.dataset.documentComposer) {
-      delete stack.dataset.multiline;
-    }
+    // Measure at the collapsed layout before deciding whether the draft wraps.
+    // Measuring the taller layout instead alternates between the two whenever
+    // text fits one but not the other. Deleting back to one line restores the
+    // capsule without clearing the draft.
+    delete stack.dataset.multiline;
     input.style.height = "0px";
-    // Measure each document draft at its compact width before deciding whether
-    // it wraps. Using the wider stacked editor would alternate layouts; this
-    // also lets deleting back to one line collapse without clearing the draft.
-    // Placeholder text must fit too, even before the user enters a draft.
-    if (stack.dataset.documentComposer
-      && input.scrollHeight > input.offsetHeight + 1) {
+    if (input.scrollHeight > input.offsetHeight + 1) {
       stack.dataset.multiline = "true";
     }
     const baseInputHeight = input.offsetHeight;
@@ -36,15 +33,16 @@ export function useComposerHeight(ref: RefObject<HTMLTextAreaElement | null>, ex
     const style = getComputedStyle(input);
     const borderHeight = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
     const maximum = Math.max(baseInputHeight, parseFloat(style.maxHeight));
-    const desired = expanded ? maximum
-      : input.value || stack.dataset.documentComposer ? input.scrollHeight + borderHeight : baseInputHeight;
+    const desired = input.value || stack.dataset.documentComposer
+      ? input.scrollHeight + borderHeight
+      : baseInputHeight;
     input.style.height = `${Math.max(baseInputHeight, Math.min(maximum, desired))}px`;
     input.scrollTop = scrollTop;
 
     // Grow upward without moving the send controls or the conversation's scroll
     // anchor. Put the offset on the common ancestor of the frame and queue tray.
     stack.style.setProperty("--composer-input-growth", `${Math.max(0, composer.offsetHeight - baseComposerHeight)}px`);
-  }, [expanded, ref]);
+  }, [ref]);
 
   // Run after every local value commit, including history, paste, and send-clear.
   useLayoutEffect(resize, [resize, value]);

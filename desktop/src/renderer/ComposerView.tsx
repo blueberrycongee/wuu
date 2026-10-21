@@ -6,9 +6,7 @@ import {
   ChevronDown,
   Folder,
   FolderOpen,
-  Maximize2,
   MessageSquare,
-  Minimize2,
   ArrowUp,
   ShieldCheck,
   Split,
@@ -247,7 +245,6 @@ export function Composer({
   queryHistory = [],
   requestedHandoffIntent,
   hideRuntimeControls = false,
-  hideExpandButton = false,
   placeholder,
   textOnly = false,
   slashCommandsOverride,
@@ -374,12 +371,10 @@ export function Composer({
   // Suppress the model/context/token runtime chrome on the bar's right edge.
   // Side-thread composers reuse this input without a separate runtime picker.
   hideRuntimeControls?: boolean;
-  hideExpandButton?: boolean;
   // A shared composer can be embedded in a conversation surface whose
-  // transport accepts text only. The editor, keyboard handling, expansion,
-  // context menu, and send/stop controls remain the canonical Composer; only
-  // unsupported attachment, slash-command, and permission affordances
-  // are removed.
+  // transport accepts text only. The editor, keyboard handling, context menu,
+  // and send/stop controls remain the canonical Composer; only unsupported
+  // attachment, slash-command, and permission affordances are removed.
   textOnly?: boolean;
   placeholder?: string;
   // Replaces the built-in main-conversation command list with a
@@ -492,7 +487,6 @@ export function Composer({
   const photosInputRef = useRef<HTMLInputElement>(null);
   const submitAfterCompositionRef = useRef(false);
   const documentDrawer = useContext(WorkspaceDocumentDrawerContext);
-  const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const showComposerStopAction = showComposerStop;
   const sendDisabledReason = !showComposerStopAction && (readOnly || effectiveSendDisabled)
     ? disabledReason
@@ -735,12 +729,6 @@ export function Composer({
     }
   }, [readOnly, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, slashSkillInventory, textOnly, skillThreadID]);
 
-  useEffect(() => {
-    if (readOnly) {
-      setIsComposerExpanded(false);
-    }
-  }, [readOnly]);
-
   function focusComposerSoon(): void {
     focusComposerTextarea(textareaRef.current);
   }
@@ -751,7 +739,6 @@ export function Composer({
 
   function openCamera(): void {
     textareaRef.current?.blur();
-    setIsComposerExpanded(false);
     setExpandedDrawer(null);
     setCameraOpen(true);
   }
@@ -764,14 +751,6 @@ export function Composer({
   function captureCamera(file: File): void {
     setCameraOpen(false);
     onPasteAttachmentFiles([file]);
-    focusComposerSoon();
-  }
-
-  function toggleComposerExpansion(): void {
-    if (readOnly) {
-      return;
-    }
-    setIsComposerExpanded((expanded) => !expanded);
     focusComposerSoon();
   }
 
@@ -1154,7 +1133,7 @@ export function Composer({
 
   const content = (
     <div
-      className={`composer-stack${isComposerExpanded ? " is-expanded" : ""}`}
+      className="composer-stack"
       data-wuu-component="composer"
       data-document-composer={variant === "document" || undefined}
       data-has-attachments={hasAttachments || hasCollapsedPromptBlocks || Boolean(inlineSelection) || undefined}
@@ -1360,7 +1339,6 @@ export function Composer({
           <div className="composer" hidden={Boolean(topAccessory)}>
             <ComposerTextarea
               ref={textareaRef}
-              expanded={isComposerExpanded}
               value={visiblePromptValue}
               valueRevision={promptRevision}
               submissionClearRevision={submissionClearRevision}
@@ -1400,19 +1378,6 @@ export function Composer({
               onKeyDown={handleComposerKeyDown}
               onContextMenu={handleComposerContextMenu}
             />
-            {!hideExpandButton ? (
-              <button
-                className="composer-expand-button"
-                type="button"
-                aria-label={isComposerExpanded ? t("composer.collapseInput") : t("composer.expandInput")}
-                aria-pressed={isComposerExpanded}
-                title={readOnly ? t("composer.readOnlyCannotExpand") : isComposerExpanded ? t("composer.collapseInput") : t("composer.expandInput")}
-                disabled={readOnly}
-                onClick={toggleComposerExpansion}
-              >
-                {isComposerExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
-              </button>
-            ) : null}
             <div
               className="composer-bar"
               data-wuu-component="composer-toolbar"
@@ -1696,7 +1661,6 @@ export function Composer({
 }
 
 type ComposerTextareaProps = {
-  expanded: boolean;
   value: string;
   valueRevision: number;
   submissionClearRevision: number;
@@ -1732,7 +1696,6 @@ type ComposerTextareaProps = {
 // and the surrounding chrome update in an interruptible transition.
 const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
   function ComposerTextarea({
-    expanded,
     value: committedValue,
     valueRevision,
     submissionClearRevision,
@@ -1762,7 +1725,7 @@ const ComposerTextarea = forwardRef<HTMLTextAreaElement, ComposerTextareaProps>(
     const inputRef = useRef<HTMLTextAreaElement>(null);
     useImperativeHandle(ref, () => inputRef.current!, []);
     const [value, setValue] = useState(committedValue);
-    useComposerHeight(inputRef, expanded, value);
+    useComposerHeight(inputRef, value);
     const [lastCommittedValue, setLastCommittedValue] = useState(committedValue);
     const [externalResetRevision, setExternalResetRevision] = useState(0);
     const [lastValueRevision, setLastValueRevision] = useState(valueRevision);

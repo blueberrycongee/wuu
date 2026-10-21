@@ -389,6 +389,10 @@
   background: var(--paper);
 }
 
+:is(.dock-composer-wrap:not(.document-composer-wrap), .hero-composer-wrap) {
+  container: conversation-composer / inline-size;
+}
+
 .dock-composer-wrap {
   --composer-dock-bottom-space: max(
     clamp(var(--space-1), calc(2dvh - var(--space-1)), var(--space-2)),
@@ -660,86 +664,6 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
   width: 100%;
 }
 
-.composer-expand-button {
-  position: absolute;
-  /* Centered on the first text line, never closer to the corner than the
-   * send circle; the text's own leading sets the axis at every size. */
-  top: max(
-    var(--composer-corner-inset),
-    calc(var(--composer-text-padding-top) + var(--conversation-reading-line-height) / 2 - 14px)
-  );
-  right: var(--composer-corner-inset);
-  width: 28px;
-  height: 28px;
-  z-index: 3;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  /*
-   * Quiet icon button, unified with the queued-message row actions
-   * (.composer-input-header-action): transparent by default, revealing an
-   * --ink-overlay-8 hover fill, 28x28 with a 14px glyph. Right-aligned to
-   * the header rows' inline padding (right:8px) and matched in size so the
-   * expand affordance stacks into the same right-edge control column as the
-   * row actions above it — instead of floating as its own smaller,
-   * always-filled corner tab. The textarea reserves a 44px right gutter
-   * (52px in hero) so the transparent glyph never overlaps input text.
-   */
-  color: var(--ink-muted);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  opacity: 0;
-  transition:
-    color var(--motion-fast) var(--ease-out),
-    background-color var(--motion-fast) var(--ease-out),
-    transform var(--motion-fast) var(--ease-out);
-}
-
-.composer-expand-button::before {
-  content: "";
-  position: absolute;
-  inset: -3px;
-}
-
-.composer-frame:hover .composer-expand-button,
-.composer-expand-button:hover,
-.composer-expand-button:focus-visible,
-.composer-expand-button[aria-pressed="true"] {
-  opacity: 1;
-  color: var(--ink-muted);
-}
-
-.composer-expand-button:hover:not(:disabled),
-.composer-expand-button[aria-pressed="true"] {
-  background-color: var(--ink-overlay-8);
-}
-
-.composer-expand-button:active:not(:disabled) {
-  color: var(--ink);
-  transform: scale(0.96);
-}
-
-.composer-expand-button:disabled {
-  cursor: not-allowed;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.composer-expand-button svg {
-  display: block;
-  width: 14px;
-  height: 14px;
-  pointer-events: none;
-}
-
-@container style(--motion-reduced: 1) {
-  .composer-expand-button {
-    transition: none;
-  }
-
-}
-
 .composer {
   /* Text and toolbar glyphs share the card inset used by code blocks and
    * bubbles; the toolbar subtracts its 32px buttons' glyph offset. */
@@ -748,8 +672,7 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
    * text sit the same distance from their frames. */
   --composer-text-padding-top: var(--conversation-framed-text-inset-block);
   --composer-control-icon-inset: calc((32px - var(--icon-size)) / 2);
-  /* Filled corner controls keep their visible edge this far from the frame
-   * on both sides, so the send circle and the expand button share an axis. */
+  /* Filled corner controls keep their visible edge this far from the frame. */
   --composer-corner-inset: var(--space-2);
   position: relative;
   width: 100%;
@@ -1117,7 +1040,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   border: 0;
   outline: 0;
   background: transparent;
-  padding: var(--composer-text-padding-top) calc(32px + var(--space-3)) var(--space-2) var(--composer-text-start);
+  padding: var(--composer-text-padding-top) var(--composer-text-start) var(--space-2) var(--composer-text-start);
   color: var(--ink);
   font-size: var(--font-body);
   /* Drafts read at the message rhythm: typed text keeps its leading once
@@ -1125,12 +1048,10 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   line-height: var(--conversation-reading-line-height);
 }
 
-/* The hero keeps a roomier top inset than the dock composer; its expand
-   control follows the first line through --composer-text-padding-top. */
+/* The hero keeps a roomier top inset than the dock composer. */
 .hero-composer-wrap .composer textarea {
   height: 78px;
   min-height: 78px;
-  padding-right: 52px;
 }
 
 .document-composer-wrap {
@@ -1186,12 +1107,12 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   padding-bottom: 2px;
 }
 
-/* Short document drafts share one row with the existing controls. Focus only
-   reveals the document title; attachments, wrapping, or explicit expansion
-   restore the full editor without replacing its DOM or input state. */
+/* Short document drafts share one row with the existing controls. Wrapping,
+   attachments, or larger text restore the full editor without replacing its
+   DOM or input state. */
 /* Keep a full-width input row when runtime controls would crowd the draft. */
 @container document-composer (min-width: 560px) {
-  .document-composer-wrap .composer-stack:not(.is-expanded):not([data-multiline]):not([data-has-attachments]) {
+  .document-composer-wrap .composer-stack:not([data-multiline]):not([data-has-attachments]) {
     --composer-collapsed-min-height: 44px;
 
     .composer:not([hidden]) {
@@ -1199,15 +1120,15 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
          the full editor's real inline size instead. */
       container: composer-toolbar / inline-size;
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto auto;
+      grid-template-columns: auto minmax(0, 1fr) auto;
       align-items: center;
       gap: 4px;
       padding: 6px;
     }
 
     /* One row reads as a capsule while reading beside it: the plus and send
-       circles at its ends sit concentric with the round caps. Wrapping,
-       attachments or explicit expansion return to the panel radius. */
+       circles at its ends sit concentric with the round caps. Wrapping or
+       attachments return to the panel radius. */
     .composer-frame {
       border-radius: var(--radius-pill);
     }
@@ -1232,17 +1153,9 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
     }
 
     .composer-bar-right {
-      grid-column: 4;
-      grid-row: 1;
-      gap: 4px;
-    }
-
-    .composer-expand-button {
-      position: relative;
-      inset: auto;
       grid-column: 3;
       grid-row: 1;
-      opacity: 1;
+      gap: 4px;
     }
 
     .permission-chip {
@@ -1268,6 +1181,125 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
     @container document-composer (max-width: 680px) {
       .codex-runtime-effort { display: none; }
       .codex-runtime-label { max-width: 6em; }
+    }
+  }
+}
+
+/* A short conversation draft keeps the capsule itself to the draft, Plus, and
+ * Send. Secondary controls move to a quiet row below, so the first glyph
+ * shares the message flow's left edge; the capsule surface extends into the
+ * gutter symmetrically and only appears where that overhang still leaves
+ * breathing room. Wrapped drafts and attachments restore the stacked editor. */
+/* 760px measure + two 42px cap overhangs + 2 × 14px breathing room. */
+@container conversation-composer (min-width: 872px) {
+  :is(.dock-composer-wrap:not(.document-composer-wrap), .hero-composer-wrap)
+    .composer-stack:not([data-multiline]):not([data-has-attachments]):not(:has(.composer-cover-accessory)) {
+    --composer-collapsed-min-height: 80px;
+    --composer-pill-height: 44px;
+    --composer-pill-overhang: 42px;
+    --composer-pill-input-height: max(32px, var(--conversation-reading-line-height));
+    --composer-pill-input-inset: max(
+      0px,
+      calc((var(--composer-pill-input-height) - var(--conversation-reading-line-height)) / 2)
+    );
+
+    .composer-frame {
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+      contain: none;
+      overflow: visible;
+    }
+
+    /* Keep the capsule surface and its hairline on the draft row only; the
+       control row below sits directly on the conversation paper. */
+    .composer-frame::before {
+      position: absolute;
+      inset: 0 calc(-1 * var(--composer-pill-overhang)) auto;
+      height: var(--composer-pill-height);
+      border-radius: var(--radius-pill);
+      background: var(--composer-surface-bg);
+      box-shadow: var(--composer-frame-shadow);
+      content: "";
+      pointer-events: none;
+    }
+
+    .composer-frame::after {
+      inset: 0 calc(-1 * var(--composer-pill-overhang)) auto;
+      height: var(--composer-pill-height);
+      border-radius: var(--radius-pill);
+    }
+
+    .composer:not([hidden]) {
+      /* The toolbar has no box in this layout, so its responsive controls use
+         the editor's real inline size instead. */
+      container: composer-toolbar / inline-size;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr) max-content;
+      grid-template-rows: var(--composer-pill-height) auto;
+      align-items: center;
+      column-gap: 0;
+      row-gap: 4px;
+      padding: 0;
+    }
+
+    .composer textarea {
+      grid-column: 1 / -1;
+      grid-row: 1;
+      min-width: 0;
+      height: var(--composer-pill-input-height);
+      min-height: var(--composer-pill-input-height);
+      max-height: var(--composer-pill-input-height);
+      padding: var(--composer-pill-input-inset) 12px var(--composer-pill-input-inset) 0;
+    }
+
+    .composer-bar {
+      container: normal;
+      display: contents;
+    }
+
+    .composer-bar-left {
+      grid-column: 1;
+      grid-row: 2;
+      gap: 2px;
+      overflow: visible;
+    }
+
+    /* The Plus shares the draft row and sits concentric with the left cap;
+       the text column still starts on the message flow's left edge. */
+    .composer-bar-left .composer-plus-menu-anchor {
+      position: absolute;
+      top: calc((var(--composer-pill-height) - 32px) / 2);
+      left: calc(6px - var(--composer-pill-overhang));
+      z-index: 1;
+    }
+
+    .composer-bar-right {
+      grid-column: 3;
+      grid-row: 2;
+      gap: 4px;
+      margin-left: 0;
+      /* The primary action is lifted into the capsule row. */
+      overflow: visible;
+    }
+
+    .composer-bar-right .composer-action-button {
+      position: absolute;
+      top: calc((var(--composer-pill-height) - 32px) / 2);
+      right: calc(6px - var(--composer-pill-overhang));
+      z-index: 1;
+    }
+
+    /* The readout is status, not a control, so it recedes beside the toolbar. */
+    .composer-context-meter {
+      color: var(--ink-soft);
+    }
+
+    @container composer-toolbar (max-width: 680px) {
+      .codex-runtime-effort {
+        display: none;
+      }
     }
   }
 }
