@@ -56,8 +56,9 @@ export function useConversationBubbleGesture(enabled: boolean, conversationId: s
       if (node.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId);
     };
     const wheel = (event: WheelEvent) => {
-      if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) { update(0); return; }
-      if (event.ctrlKey || event.shiftKey || excluded(event.target) || nestedHorizontalScroll(event.target) || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+      const horizontalIntent = Math.abs(event.deltaX) >= Math.abs(event.deltaY) * 1.5;
+      if (!horizontalIntent) { update(0); return; }
+      if (event.ctrlKey || event.shiftKey || excluded(event.target) || nestedHorizontalScroll(event.target) || event.deltaX === 0) return;
       event.preventDefault();
       wheelDistance += event.deltaX;
       if (Math.abs(wheelDistance) >= 24) { update(wheelDistance > 0 ? GUTTER : 0); wheelDistance = 0; }

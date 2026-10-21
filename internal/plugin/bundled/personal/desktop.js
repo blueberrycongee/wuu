@@ -42,7 +42,7 @@ export async function activate(api) {
       "oversizedAttachment": "This attachment exceeds the 20 MB download limit.",
       "today": "Today",
       "settings": "Settings",
-      "placeholder": "What's on your mind?",
+      "placeholder": "Message",
       "stopped": "Stopped",
       "stopping": "Stopping · waiting for confirmation",
       "running": "Working",
@@ -71,7 +71,7 @@ export async function activate(api) {
       "outcome": "Result",
       "stopTask": "Stop this task",
       "openMainChat": "Open chat",
-      "replies": "Replies", "replyUnavailable": "Original message unavailable", "replyLoading": "Loading original message…", "earlierReplies": "Load earlier conversation", "replyTaskContext": "Task context",
+      "replies": "Replies", "replyUnavailable": "Original message unavailable", "replyLoading": "Loading original message…", "replyTaskContext": "Task context",
       "replyMessage": "Reply", "replyTask": "Reply to this task", "replyingMessage": "Replying to message", "replyingTask": "Replying to task", "cancelReply": "Cancel reply",
       "close": "Close",
       "back": "Back",
@@ -80,7 +80,6 @@ export async function activate(api) {
       "memoryHint": "Personal and Coding memory are logically separate. Shell and file access are not isolated by this setting.",
       "retry": "Try again",
       "process": "Task details",
-      "older": "Earlier messages",
       "trace": "View work history",
       "routines": "Routines",
       "nextRun": "Next",
@@ -140,7 +139,7 @@ export async function activate(api) {
       "oversizedAttachment": "附件超过 20 MB 下载上限。",
       "today": "今天",
       "settings": "设置",
-      "placeholder": "想聊点什么，或交给我一件事…",
+      "placeholder": "发送消息",
       "stopped": "已停止",
       "stopping": "正在停止 · 等待宿主确认",
       "running": "处理中",
@@ -169,7 +168,7 @@ export async function activate(api) {
       "outcome": "结果",
       "stopTask": "停止这件事",
       "openMainChat": "打开聊天",
-      "replies": "回复", "replyUnavailable": "原消息不可用", "replyLoading": "正在加载原消息…", "earlierReplies": "加载更早的对话", "replyTaskContext": "事项上下文",
+      "replies": "回复", "replyUnavailable": "原消息不可用", "replyLoading": "正在加载原消息…", "replyTaskContext": "事项上下文",
       "replyMessage": "引用", "replyTask": "回复这件事", "replyingMessage": "引用消息", "replyingTask": "回复事项", "cancelReply": "取消引用",
       "close": "关闭",
       "back": "返回",
@@ -178,7 +177,6 @@ export async function activate(api) {
       "memoryHint": "Personal 与 Coding 的记忆逻辑隔离。此设置不提供 Shell 和文件访问的强隔离。",
       "retry": "重试",
       "process": "事项详情",
-      "older": "更早的消息",
       "trace": "查看处理过程",
       "routines": "例行安排",
       "nextRun": "下次",
@@ -256,18 +254,24 @@ export async function activate(api) {
     .mosaic-name-error { margin:0;color:var(--danger,var(--ink));font-size:var(--font-ui-small); }
     .mosaic .plugin-conversation-titlebar { position:relative;overflow:visible;z-index:10;min-height:116px;height:116px;border:0;background:transparent;box-shadow:none; }
     .mosaic .plugin-conversation-titlebar .title-block { visibility:hidden; }
-    .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:100%;--session-outer-width:100%;--session-composer-radius:30px; }
+    .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:100%;--session-outer-width:100%;--session-composer-radius:26px; }
     .mosaic .plugin-conversation-message[data-bubble][data-role="user"] .bubble-message-content { --wuu-message-user-background:var(--mosaic-message-accent); }
-    .mosaic .composer-stack { --composer-collapsed-min-height:60px; }
-    .mosaic .composer { min-height:60px; }
-    .mosaic .composer textarea { height:60px;min-height:60px;padding:calc((60px - var(--conversation-reading-line-height)) / 2) 56px; }
-    .mosaic .composer-bar { position:absolute;inset:0;height:60px;padding:0 10px;pointer-events:none; }
+    .mosaic .composer-stack { --composer-collapsed-min-height:52px; }
+    .mosaic .composer { min-height:52px; }
+    .mosaic .composer textarea { --placeholder-ink:var(--ink-muted);height:52px;min-height:52px;padding:calc((52px - var(--conversation-reading-line-height)) / 2) 56px; }
+    .mosaic .composer-bar { position:absolute;inset:0;height:52px;padding:0 10px;pointer-events:none; }
     .mosaic .composer-bar button { pointer-events:auto; }
+    .mosaic .composer-attach-button { color:var(--ink); }
     .mosaic .composer-attach-button svg { display:none; }
-    .mosaic .composer-attach-button::before { content:"+";font-size:28px;font-weight:300;line-height:1; }
-    .mosaic .composer-send-button { background:var(--mosaic-message-accent); }
-    .mosaic .composer-send-button:hover { background:color-mix(in srgb,var(--mosaic-message-accent) 88%,#000); }
-    .mosaic .composer-send-button:disabled { background:color-mix(in srgb,var(--mosaic-message-accent) 48%,var(--paper));color:var(--paper); }
+    .mosaic .composer-attach-button::before { content:"+";inset:2px;display:grid;place-items:center;border-radius:var(--radius-pill);font-size:22px;font-weight:300;line-height:1; }
+    .mosaic .composer-send-button { background:transparent;color:var(--paper); }
+    .mosaic .composer-send-button::before { background:#111; }
+    .mosaic .composer-send-button:hover:not(:disabled) { background:transparent;color:#fff; }
+    .mosaic .composer-send-button:hover:not(:disabled)::before { background:#000; }
+    .mosaic .composer-send-button:disabled,
+    .mosaic .composer-send-button:disabled:hover { background:transparent;color:var(--ink-muted); }
+    .mosaic .composer-send-button:disabled::before,
+    .mosaic .composer-send-button:disabled:hover::before { background:var(--surface-3); }
     .mosaic-profile-trigger[aria-expanded="true"] { visibility:hidden; }
     .mosaic-profile-trigger:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
     .mosaic-profile-trigger .mosaic-avatar { width:56px;height:56px; }
@@ -579,11 +583,13 @@ export async function activate(api) {
     const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
     const [nameOpen, setNameOpen] = React.useState(false);
     const [replySelection, setReplySelection] = React.useState(null);
+    const [replyHistory, setReplyHistory] = React.useState(null);
+    const replyLoadVersion = React.useRef(0), replyPaging = React.useRef(false);
     const replyPanelRef = React.useRef(null), replyTrigger = React.useRef(null);
     const [panelOpen, setPanelOpen] = React.useState(false), [showAll, setShowAll] = React.useState(false), [showAllOutputs, setShowAllOutputs] = React.useState(false);
     const [panelPresent, setPanelPresent] = React.useState(false), [panelPhase, setPanelPhase] = React.useState("closed"), [panelVisible, setPanelVisible] = React.useState(false);
     const [, setDraftVersion] = React.useState(0);
-    const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), controlRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
+    const mounted = React.useRef(true), currentAgent = React.useRef(null), sequence = React.useRef(0), readingRef = React.useRef(false), controlRef = React.useRef(false), historyFillRef = React.useRef(false), detailTrigger = React.useRef(null), rootRef = React.useRef(null);
     const panelRef = React.useRef(null), profileTrigger = React.useRef(null), focusVersion = React.useRef(0), panelID = React.useId();
     const reducePanelMotion = () => document.documentElement.dataset.appearanceMotion === "reduce" || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const openPanel = () => { focusVersion.current++; if (panelPresent) setPanelVisible(true); setPanelPresent(true); setPanelPhase("opening"); setPanelOpen(true); };
@@ -631,6 +637,18 @@ export async function activate(api) {
     const selectedArtifact = artifactOutputs.find(output => output.seq === selection?.seq && output.attachment.sha256 === selection?.sha256);
     const pendingCalendarOperations = calendar.operations.filter(item => !["completed", "cancelled"].includes(item.status));
     const report = cause => { if (mounted.current && !api.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause)); };
+    const loadEarlierHistory = async () => {
+      const identity = agent, boundary = historyInfo;
+      if (!identity || !boundary?.has_earlier || historyFillRef.current) return;
+      historyFillRef.current = true;
+      try {
+        const history = await call("agents.history", { agent_id: identity.agent_id, end_seq: boundary.first_seq - 1 });
+        if (!mounted.current || currentAgent.current?.agent_id !== identity.agent_id) return;
+        if (history.first_seq >= boundary.first_seq) throw new Error("history pagination did not advance");
+        setRecords(current => [...new Map([...(history.records || []), ...current].map(record => [record.seq, record])).values()].sort((a, b) => a.seq - b.seq));
+        setHistoryInfo(current => current?.first_seq === boundary.first_seq ? { first_seq: history.first_seq, has_earlier: history.has_earlier } : current);
+      } finally { historyFillRef.current = false; }
+    };
     const loadTasks = async () => { const result = await call("tasks.list"); if (mounted.current) setTasks(current => (result.tasks || []).map(item => { const previous = current.find(value => value.task_id === item.task_id); return previous?.revision > item.revision ? previous : item; })); };
     const loadRoutines = async () => { const result = await call("routines.list"); if (mounted.current) setRoutines(current => (result.routines || []).map(item => { const previous = current.find(value => value.routine_id === item.routine_id); return previous?.revision > item.revision ? previous : item; })); };
     const loadCalendar = async identity => {
@@ -722,6 +740,22 @@ export async function activate(api) {
       return () => { clearInterval(timer); subscription.dispose(); };
     }, []);
     const mutate = async action => { if (controlRef.current) return; controlRef.current = true; setBusy(true); setError(""); try { await action(); } catch (cause) { report(cause); } finally { controlRef.current = false; if (mounted.current) setBusy(false); } };
+    React.useLayoutEffect(() => {
+      if (!agent || loading || replySelection || !historyInfo?.has_earlier) return;
+      const viewport = rootRef.current?.querySelector(".mosaic-main > .plugin-conversation .plugin-conversation-scroll");
+      if (!viewport) return;
+      let frame;
+      const fill = () => {
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(() => {
+          if (viewport.clientHeight > 0 && viewport.scrollHeight <= viewport.clientHeight + 1) void loadEarlierHistory().catch(report);
+        });
+      };
+      fill();
+      const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fill);
+      observer?.observe(viewport);
+      return () => { cancelAnimationFrame(frame); observer?.disconnect(); };
+    }, [agent?.agent_id, loading, replySelection, historyInfo?.first_seq, historyInfo?.has_earlier, records.length, liveMessages.length]);
     const selectFiles = async (selected, draftID = conversationID) => {
       if (!selected.length || readingRef.current || !agent) return;
       const id = draftID; readingRef.current = true; setReadingFiles(true); updateDraft(id, { error: "" }); if (id === conversationID) setError("");
@@ -739,20 +773,51 @@ export async function activate(api) {
       } catch (cause) { updateDraft(id, { error: cause instanceof Error ? cause.message : String(cause) }); if (id === conversationID) report(cause); }
       finally { readingRef.current = false; if (mounted.current) setReadingFiles(false); }
     };
-    const setReply = (target, source, taskContext) => {
-      const reference = target.relation.reply_to;
-      const key = reference ? `${conversationID}:reply:${reference.seq}` : `${conversationID}:task:${JSON.stringify(target.relation.metadata.task_links)}`;
-      if (!draftFor(key).replyTarget) updateDraft(key, { replyTarget: target });
+    const setReply = async (target, source, taskContext) => {
+      const version = ++replyLoadVersion.current;
       replyTrigger.current = document.activeElement;
-      closePanel(false);
-      setReplySelection({ key, source, taskContext });
+      const reference = target.relation.reply_to;
+      try {
+        const history = taskContext ? null : await call("agents.history", { agent_id: agent.agent_id, reply_seq: reference.seq });
+        if (!mounted.current || version !== replyLoadVersion.current) return;
+        const key = taskContext ? `${conversationID}:task:${JSON.stringify(target.relation.metadata.task_links)}` : `${conversationID}:reply:${history.reply_root_seq}`;
+        if (JSON.stringify(draftFor(key).replyTarget?.relation) !== JSON.stringify(target.relation)) updateDraft(key, { replyTarget: target });
+        setReplyHistory(history);
+        closePanel(false);
+        setReplySelection({ key, source, taskContext, rootSeq: history?.reply_root_seq });
+      } catch (cause) { if (version === replyLoadVersion.current) report(cause); }
     };
     const closeReplies = () => {
+      replyLoadVersion.current++;
       setReplySelection(null);
       requestAnimationFrame(() => { const trigger = replyTrigger.current; if (trigger?.isConnected && !trigger.closest('[inert],[hidden]')) trigger.focus({ preventScroll: true }); else rootRef.current?.querySelector('.mosaic-main textarea')?.focus({ preventScroll: true }); });
     };
     React.useEffect(() => { if (replySelection) replyPanelRef.current?.querySelector("textarea")?.focus({ preventScroll: true }); }, [replySelection?.key]);
-    const replyMessage = message => setReply({ label: t("replyingMessage"), preview: message.display_content || message.content || message.attachments?.map(item => item.name).join(", ") || "", relation: { reply_to: { session_id: conversationID, seq: message.seq }, ...(message.relation?.metadata?.task_links ? { metadata: { task_links: message.relation.metadata.task_links } } : {}) } }, message);
+    const replyMessage = message => {
+      if (message.role !== "assistant") return;
+      setReply({ label: t("replyingMessage"), preview: message.display_content || message.content || message.attachments?.map(item => item.name).join(", ") || "", relation: { reply_to: { session_id: conversationID, seq: message.seq }, ...(message.relation?.metadata?.task_links ? { metadata: { task_links: message.relation.metadata.task_links } } : {}) } }, message);
+    };
+    const loadReplyHistory = async (earlier = false) => {
+      if (!replySelection || replySelection.taskContext || replyPaging.current || (earlier && !replyHistory?.has_earlier)) return;
+      const version = replyLoadVersion.current;
+      replyPaging.current = true;
+      try {
+        const page = await call("agents.history", { agent_id: agent.agent_id, reply_seq: replySelection.rootSeq, ...(earlier ? { end_seq: replyHistory.first_seq - 1 } : {}) });
+        if (!mounted.current || version !== replyLoadVersion.current) return;
+        setReplyHistory(current => ({ ...page, ...(!earlier && current?.records.length ? { first_seq: current.first_seq, has_earlier: current.has_earlier } : {}), records: [...new Map([...(current?.records || []), ...page.records].map(record => [record.seq, record])).values()].sort((a, b) => a.seq - b.seq) }));
+      } catch (cause) { if (version === replyLoadVersion.current) updateDraft(replySelection.key, { error: String(cause.message || cause) }); }
+      finally { replyPaging.current = false; }
+    };
+    React.useEffect(() => { void loadReplyHistory(); }, [records.at(-1)?.seq, running]);
+    React.useEffect(() => {
+      if (!replyHistory?.has_earlier || !replySelection || replySelection.taskContext) return;
+      const viewport = replyPanelRef.current?.querySelector('.plugin-conversation-scroll');
+      if (!viewport) return;
+      const load = () => { if (viewport.clientHeight > 0 && (viewport.scrollTop < 80 || viewport.scrollHeight <= viewport.clientHeight + 1)) void loadReplyHistory(true); };
+      viewport.addEventListener('scroll', load, { passive: true });
+      const frame = requestAnimationFrame(load);
+      return () => { viewport.removeEventListener('scroll', load); cancelAnimationFrame(frame); };
+    }, [replySelection?.key, replyHistory]);
     const send = async (submitted, draftID = conversationID) => {
       const id = draftID, state = draftFor(id), text = submitted ?? state.prompt, sentFiles = state.files, sentTarget = state.replyTarget;
       if (!agent || state.submitting || readingRef.current || (!text.trim() && !sentFiles.length)) return;
@@ -857,15 +922,16 @@ export async function activate(api) {
         h("section", { className: "mosaic-section", "data-panel-section": "recent" }, h("h2", null, t("activity")), activity.length ? (showAll ? activity : activity.slice(0, 5)).map(item => item.routine ? routineRow(item.routine) : taskRows([item.task])) : h("p", { className: "mosaic-eyebrow" }, t("quiet")), activity.length > 5 && h(Button, { variant: "ghost", "data-action": "show-more-activity", onClick: () => setShowAll(value => !value) }, t(showAll ? "showLess" : "showMore"))),
         h("section", { className: "mosaic-section", "data-panel-section": "outputs" }, h("h2", null, t("outputs")), artifactOutputs.slice(0, showAllOutputs ? undefined : 3).map(output => h("button", { key: `${output.seq}:${output.attachment.sha256}`, className: "mosaic-task", "data-output-sha256": output.attachment.sha256, onClick: () => { detailTrigger.current = `[data-output-sha256="${output.attachment.sha256}"]`; setSelection({ kind: "artifact", seq: output.seq, sha256: output.attachment.sha256 }); } }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("output")), h("span", { className: "mosaic-task-copy" }, h("span", { className: "mosaic-task-title" }, output.attachment.name), h("span", { className: "mosaic-task-meta" }, date(output.at))))), outputs.length ? outputs.slice(0, showAllOutputs ? undefined : Math.max(0, 3 - artifactOutputs.length)).map(item => h("button", { key: item.task_id, className: "mosaic-task", "data-output-task-id": item.task_id, onClick: event => openDetail(event, item, "output") }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("output")), h("span", { className: "mosaic-task-copy" }, h("span", { className: "mosaic-task-title" }, item.title), h("span", { className: "mosaic-task-meta" }, date(item.updated_at))))) : !artifactOutputs.length && h("p", { className: "mosaic-eyebrow" }, t("noOutputs")), artifactOutputs.length + outputs.length > 3 && h(Button, { variant: "ghost", "data-action": "show-more-outputs", onClick: () => setShowAllOutputs(value => !value) }, t(showAllOutputs ? "showLess" : "showMore"))),
         null)));
-    const renderReplyMessage = (record, original = false) => h(ConversationMessage, { key: `reply:${record.seq ?? record.id}`, id: `reply:${conversationID}:${record.seq ?? record.id}`, streaming: record.streaming, role: record.role, content: record.display_content || record.content || "", timestamp: record.at, linkPolicy: "external-only", onReply: original || !Number.isSafeInteger(record.seq) ? undefined : () => replyMessage(record), replyLabel: t("replyMessage"), attachments: record.attachments?.length ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t, autoLoad: true }))) : undefined });
+    const renderReplyMessage = record => h(ConversationMessage, { key: `reply:${record.seq ?? record.id}`, id: `reply:${conversationID}:${record.seq ?? record.id}`, streaming: record.streaming, role: record.role, content: record.display_content || record.content || "", timestamp: record.at, linkPolicy: "external-only", attachments: record.attachments?.length ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t, autoLoad: true }))) : undefined });
     const replyDraft = replySelection ? draftFor(replySelection.key) : undefined;
-    const rootSeq = replyDraft?.replyTarget?.relation.reply_to?.seq;
-    const replyMessages = [...records, ...liveMessages.filter(message => !records.some(record => record.seq === message.seq || (message.source_id && record.provider_item_id === message.source_id))).map(message => ({ ...message, role: "assistant" }))];
-    const relatedSeqs = new Set(rootSeq ? [rootSeq] : []);
+    const rootSeq = replySelection?.rootSeq;
+    const replyPersisted = replySelection?.taskContext ? records : replyHistory?.records || [];
+    const replyMessages = [...replyPersisted, ...liveMessages.filter(message => !replyPersisted.some(record => record.seq === message.seq || (message.source_id && record.provider_item_id === message.source_id))).map(message => ({ ...message, role: "assistant" }))];
+    const relatedSeqs = new Set(rootSeq ? [rootSeq, ...replyPersisted.map(record => record.seq)] : []);
     for (let changed = true; changed;) { changed = false; for (const record of replyMessages) if (Number.isSafeInteger(record.seq) && !relatedSeqs.has(record.seq) && record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq)) { relatedSeqs.add(record.seq); changed = true; } }
     const taskSource = replySelection?.taskContext?.source;
     const taskSourceRef = taskSource?.message_binding === "host_turn" && taskSource.session_id === conversationID && taskSource.message_seq ? { session_id: conversationID, seq: taskSource.message_seq } : undefined;
-    const replyRecords = replySelection ? replyMessages.filter(record => ["user", "assistant"].includes(record.role) && (replySelection.taskContext ? record.seq !== taskSourceRef?.seq && record.relation?.metadata?.task_links?.some(link => link.task_id === replySelection.taskContext.task_id) : record.seq !== rootSeq && record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq))) : [];
+    const replyRecords = replySelection ? replyMessages.filter(record => ["user", "assistant"].includes(record.role) && (replySelection.taskContext ? record.seq !== taskSourceRef?.seq && record.relation?.metadata?.task_links?.some(link => link.task_id === replySelection.taskContext.task_id) : relatedSeqs.has(record.seq) || record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq))) : [];
     const replyPanel = replySelection && h("section", { ref: replyPanelRef, className: "mosaic-replies", role: "dialog", "aria-modal": true, "aria-label": t("replies"), "data-reply-panel": replySelection.key, onKeyDown: event => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeReplies(); }
       if (event.key === "Tab") { const controls = [...replyPanelRef.current.querySelectorAll('button:not(:disabled),textarea:not(:disabled),input:not(:disabled),a[href]')].filter(node => node.tabIndex >= 0 && !node.closest('[hidden]')); const first = controls[0], last = controls[controls.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } }
@@ -873,10 +939,9 @@ export async function activate(api) {
       actions: h("button", { type: "button", className: "mosaic-replies-close", "data-action": "close-replies", "aria-label": t("close"), onClick: closeReplies }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "m6 6 12 12M18 6 6 18" }))),
       composer: h(ConversationComposer, { conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: files => selectFiles(files, replySelection.key), onRemoveAttachment: id => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: text => send(text, replySelection.key), onStop: stopReply }) },
       replyDraft.error && h("p", { role: "alert", className: "mosaic-reply-status" }, replyDraft.error),
-      replySelection.taskContext ? h("div", { className: "mosaic-reply-task-context" }, h("span", null, t("replyTaskContext")), h("p", null, replySelection.taskContext.title), !taskSourceRef && replySelection.taskContext.goal && h("p", null, replySelection.taskContext.goal)) : replySelection.source ? renderReplyMessage(replySelection.source, true) : h(ReplyOriginal, { reference: replyDraft.replyTarget.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, renderMessage: renderReplyMessage }),
+      replySelection.taskContext ? h("div", { className: "mosaic-reply-task-context" }, h("span", null, t("replyTaskContext")), h("p", null, replySelection.taskContext.title), !taskSourceRef && replySelection.taskContext.goal && h("p", null, replySelection.taskContext.goal)) : null,
       taskSourceRef ? h(ReplyOriginal, { reference: taskSourceRef, records, sessionID: conversationID, agentID: agent.agent_id, t, renderMessage: renderReplyMessage }) : null,
-      replyRecords.map(record => renderReplyMessage(record)),
-      historyInfo?.has_earlier && h(Button, { variant: "ghost", disabled: busy, onClick: () => mutate(async () => { const history = await call("agents.history", { agent_id: agent.agent_id, end_seq: historyInfo.first_seq - 1 }); if (!mounted.current) return; setRecords(current => [...new Map([...(history.records || []), ...current].map(record => [record.seq, record])).values()].sort((a, b) => a.seq - b.seq)); setHistoryInfo({ first_seq: history.first_seq, has_earlier: history.has_earlier }); }) }, t("earlierReplies"))));
+      replyRecords.map(record => renderReplyMessage(record))));
     return h(AttachmentOpenContext.Provider, { value: () => closePanel(false) }, h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h("main", { className: "mosaic-main", inert: nameOpen || Boolean(replySelection), "aria-hidden": nameOpen || Boolean(replySelection) || undefined },
       error && h("div", { className: "mosaic-error", role: "alert" }, h("span", null, error), h(Button, { onClick: agent ? () => { setError(""); Promise.all([loadConversation(agent), loadTasks(), loadRoutines()]).catch(report); } : initialize }, t("retry"))),
       !agent ? loading ? h(LoadingState, { label: "twin" }) : h(EmptyState, { title: t("hostUnavailable") }) : h(ConversationView, {
@@ -886,11 +951,10 @@ export async function activate(api) {
         composer: h("div", { hidden: Boolean(replySelection) }, h(ConversationComposer, { conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles,
           attachments: files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(conversationID, { prompt: value }), onAddAttachments: selectFiles,
           onRemoveAttachment: id => updateDraft(conversationID, { files: files.filter((_, index) => String(index) !== id) }), onSend: send, onStop: stopReply }))
-      }, historyInfo?.has_earlier && h(Button, { disabled: busy, onClick: () => mutate(async () => { const history = await call("agents.history", { agent_id: agent.agent_id, end_seq: historyInfo.first_seq - 1 }); if (!mounted.current) return; setRecords(current => [...new Map([...(history.records || []), ...current].map(record => [record.seq, record])).values()].sort((a, b) => a.seq - b.seq)); setHistoryInfo({ first_seq: history.first_seq, has_earlier: history.has_earlier }); }) }, t("older")),
-        records.filter(record => !liveMessages.some(message => message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id)) && ["user", "assistant"].includes(record.role) && (record.display_content || record.content || record.attachments?.length)).map(record => h(ConversationMessage, {
-          replyPreview: record.relation?.reply_to ? h(ReplyReference, { reference: record.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : undefined, onReply: Number.isSafeInteger(record.seq) && record.seq > 0 ? () => replyMessage(record) : undefined, replyLabel: t("replyMessage"), key: record.seq, id: `${conversationID}:${record.seq}`, timestamp: record.at, role: record.role, latest: record === records.findLast(item => item.role === "assistant"), content: record.display_content || record.content || "", linkPolicy: "external-only",
+      }, records.filter(record => !liveMessages.some(message => message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id)) && ["user", "assistant"].includes(record.role) && (record.display_content || record.content || record.attachments?.length)).map(record => h(ConversationMessage, {
+          replyPreview: record.role === "user" && record.relation?.reply_to ? h(ReplyReference, { reference: record.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : undefined, onReply: record.role === "assistant" && Number.isSafeInteger(record.seq) && record.seq > 0 ? () => replyMessage(record) : undefined, replyLabel: t("replyMessage"), key: record.seq, id: `${conversationID}:${record.seq}`, timestamp: record.at, role: record.role, latest: record === records.findLast(item => item.role === "assistant"), content: record.display_content || record.content || "", linkPolicy: "external-only",
           attachments: record.attachments?.length > 0 ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.kind}:${attachment.index}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t }))) : null
-        })), liveMessages.map(message => h(ConversationMessage, { replyPreview: message.relation?.reply_to ? h(ReplyReference, { reference: message.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : undefined, onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : undefined, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })), !loading && !records.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
+        })), liveMessages.map(message => h(ConversationMessage, { onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : undefined, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })), !loading && !records.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
         pendingCalendarOperations.length > 0 && h("section", { className: "mosaic-calendar-proposals", "data-calendar-proposals": true },
           pendingCalendarOperations.map(item => h(Button, { key: item.operation_id, variant: "ghost", "data-calendar-operation": item.operation_id, disabled: calendarBusy, onClick: () => openCalendar(item.operation_id) }, `${item.fields?.summary || t("calendarReview")} · ${t(item.status === "proposed" ? "calendarProposed" : item.status === "uncertain" ? "calendarUncertain" : item.status)}`)),
           calendarError && h("p", { role: "alert" }, calendarError)))), h("div", { className: "mosaic-panel-layer", "data-panel-phase": panelPhase }, sidebar), replyPanel, nameOpen && h(RenameDialog, { agent, t, onSave: saveName, onClose: closeRename })));

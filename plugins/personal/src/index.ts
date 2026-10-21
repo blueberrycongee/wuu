@@ -966,11 +966,36 @@ export class PersonalPlugin implements RuntimePlugin {
       }
       case "agents.history": {
         const agent = await this.conversation(input, true); await this.inspectAgent(agent);
-        let history = await this.history(agent.main_session_id, input);
+        let history = await this.history(agent.main_session_id, input.reply_seq === undefined ? input : { start_seq: 1, limit: 50 });
+        let replyRoot: number | undefined;
+        if (input.reply_seq !== undefined) {
+          const selected = number(input, "reply_seq"), roots = new Map<number, number>();
+          const all = [...(history.records ?? [])];
+          // Resolve against durable history, never the renderer's loaded window.
+          // The snapshot keeps ancestors and descendants consistent during paging.
+          while (history.has_more) {
+            const last = history.records?.at(-1);
+            if (!last) throw new Error("reply history pagination did not advance");
+            history = await this.history(agent.main_session_id, { start_seq: last.seq + 1, limit: 50 }, history.snapshot_seq);
+            all.push(...(history.records ?? []));
+          }
+          for (const record of all) {
+            if (record.hidden || (record.role === "user" && (record.read_only || (record.origin && record.origin !== "user"))) || !((["user", "assistant"].includes(record.role) && (record.display_content || record.content)) || record.attachments?.length)) continue;
+            const parent = record.relation?.reply_to;
+            roots.set(record.seq, parent?.session_id === agent.main_session_id ? roots.get(parent.seq) ?? record.seq : record.seq);
+          }
+          replyRoot = roots.get(selected);
+          if (replyRoot === undefined) throw new Error("reply message not found");
+          const end = input.end_seq === undefined ? history.snapshot_seq : number(input, "end_seq");
+          const matching = all.filter(record => roots.get(record.seq) === replyRoot && record.seq <= end);
+          const limit = input.limit === undefined ? 50 : Math.max(1, Math.min(50, number(input, "limit")));
+          const page = matching.slice(-limit);
+          history = { ...history, records: page, first_seq: page[0]?.seq ?? replyRoot, has_earlier: matching.length > page.length, has_more: false };
+        }
         const tasks = await this.list<PersonalTask>("task");
         for (let pagesRead = 1; ; pagesRead++) {
           const records = await Promise.all((history.records?.filter(r => !r.hidden && (r.role !== "user" || (!r.read_only && (!r.origin || r.origin === "user"))) && ((["user", "assistant"].includes(r.role) && (r.display_content || r.content)) || r.attachments?.length)).map(async r => ({ seq: r.seq, relation: await this.messageRelation(agent.main_session_id, r.seq, r.relation, tasks), ...(r.provider_item_id ? { provider_item_id: r.provider_item_id } : {}), ...(r.engine_turn_id ? { engine_turn_id: r.engine_turn_id } : {}), role: r.role === "user" ? "user" : "assistant", content: ["user", "assistant"].includes(r.role) ? r.display_content || r.content || "" : "", ...("at" in r && typeof r.at === "string" ? { at: r.at } : {}), ...(r.attachments?.length ? { attachments: r.attachments } : {}), ...(["user", "assistant"].includes(r.role) && r.name ? { name: r.name } : {}) })) ?? []));
-          if (records.length || !history.has_earlier || pagesRead >= historyRecoveryPageLimit || input.start_seq !== undefined || text(input, "cursor")) return { ...history, records };
+          if (replyRoot !== undefined || records.length || !history.has_earlier || pagesRead >= historyRecoveryPageLimit || input.start_seq !== undefined || text(input, "cursor")) return { ...history, ...(replyRoot === undefined ? {} : { reply_root_seq: replyRoot }), records };
           // Model context can occupy an entire physical page. Walk older pages
           // within this snapshot, bounded for periodic polling. If exhausted,
           // first_seq/has_earlier let the client continue without skipping rows.

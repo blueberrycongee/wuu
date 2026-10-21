@@ -20,7 +20,17 @@ async function mount(mutate?: (method: string, input: any) => Promise<unknown>, 
     if (method === "agents.ensure_default") return { agent: mainAgent };
     if (method === "agents.list") return { agents: [mainAgent], default_agent_id: mainAgent.agent_id };
     if (method === "agents.open") return fixtures.open?.() ?? { agent: mainAgent, session: { state: "completed" } };
-    if (method === "agents.history") return fixtures.history?.(input) ?? { records: historyRecords ?? [{ seq: 1, role: "assistant", content: `Hello ${(input as any).agent_id}` }] };
+    if (method === "agents.history") {
+      if (fixtures.history) return fixtures.history(input);
+      const records = historyRecords ?? [{ seq: 1, role: "assistant", content: `Hello ${(input as any).agent_id}` }];
+      if (input && typeof input === "object" && "reply_seq" in input) {
+        const roots = new Map<number, number>();
+        for (const row of records as Array<{ seq: number; relation?: { reply_to?: { seq: number } } }>) roots.set(row.seq, roots.get(row.relation?.reply_to?.seq ?? 0) ?? row.seq);
+        const root = roots.get(Number(input.reply_seq));
+        return { reply_root_seq: root, records: records.filter(row => roots.get((row as { seq: number }).seq) === root), has_earlier: false };
+      }
+      return { records };
+    }
     if (method === "agents.proposals") return { proposals: [] };
     if (method === "tasks.list") return { tasks: fixtures.tasks ?? [{ task_id: "t1", agent_id: "a-travel", title: "Plan a trip", goal: "Find a route", state: "running", revision: 3, requirements_revision: 1 }] };
     if (method === "memory.query") return { records: fixtures.memories ?? [] };
@@ -47,11 +57,16 @@ it("preserves unsent text when sending fails and never substitutes a session ID 
   expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("Host offline");
   expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ agent_id: "a-main", prompt: "Remember this", request_id: expect.any(String) }) }));
 });
-it("shows sent reply excerpts from the exact visible source without treating quoted text as message content", async () => {
-  const ui = await mount(undefined, main, [{ seq: 1, role: "assistant", content: "Original source" }, { seq: 2, role: "user", content: "My follow-up", relation: { reply_to: { session_id: "s-private", seq: 1 } } }]);
+it("shows a sent reply excerpt on the user message without repeating it on the assistant response", async () => {
+  const relation = { reply_to: { session_id: "s-private", seq: 1 } };
+  const ui = await mount(undefined, main, [{ seq: 1, role: "assistant", content: "Original source" }, { seq: 2, role: "user", content: "My follow-up", relation }, { seq: 3, role: "assistant", content: "Answer", relation }]);
   expect(ui.container.querySelector('[data-reply-reference]')?.textContent).toBe("Original source");
+  expect(ui.container.querySelectorAll('[data-reply-reference]')).toHaveLength(1);
   expect(ui.container.querySelector('[data-reply-reference]')?.closest('[data-role="user"]')?.querySelector('.user-message')?.textContent).toContain("My follow-up");
+  expect(ui.container.querySelector('[data-role="assistant"] [data-reply-reference]')).toBeNull();
   expect(ui.container.querySelector('[data-reply-reference]')?.closest('.bubble-message-content')).toBeNull();
+  expect(ui.container.querySelector('[data-role="user"] [data-action="reply-message"]')).toBeNull();
+  expect(ui.container.querySelectorAll('[data-role="assistant"] [data-action="reply-message"]')).toHaveLength(2);
   const reply = ui.container.querySelector<HTMLButtonElement>('[data-action="reply-message"]')!;
   expect(reply.getAttribute('aria-label')).toBeTruthy();
 });
@@ -60,7 +75,7 @@ it("loads missing quoted sources once by exact scoped sequence and never renders
   const rows = [{ seq: 20, role: "user", content: "First", relation: relation("s-private", 3) }, { seq: 21, role: "assistant", content: "Second", relation: relation("s-private", 3) }, { seq: 22, role: "user", content: "Foreign", relation: relation("other-session", 4) }, { seq: 23, role: "user", content: "Unavailable", relation: relation("s-private", 5) }];
   const history = vi.fn(async input => input.start_seq === 3 ? { records: [{ seq: 3, role: "assistant", content: "Older verified source" }] } : input.start_seq === 5 ? { records: [{ seq: 5, role: "tool", content: "Private tool body" }, { seq: 6, role: "assistant", content: "Wrong message" }] } : { records: rows });
   const ui = await mount(undefined, main, undefined, { history });
-  await vi.waitFor(() => expect([...ui.container.querySelectorAll('[data-reply-reference]')].filter(node => node.textContent === "Older verified source")).toHaveLength(2));
+  await vi.waitFor(() => expect([...ui.container.querySelectorAll('[data-reply-reference]')].filter(node => node.textContent === "Older verified source")).toHaveLength(1));
   expect(history.mock.calls.filter(([input]) => input.start_seq === 3)).toHaveLength(1);
   expect(history).toHaveBeenCalledWith({ agent_id: "a-main", start_seq: 3, end_seq: 3 });
   expect(history.mock.calls.some(([input]) => input.start_seq === 4)).toBe(false);
@@ -179,12 +194,28 @@ it("opens a quoted reply chain, focuses its composer and restores the trigger on
   await ui.click('[data-reply-reference]');
   const panel = ui.container.querySelector('.mosaic-replies')!;
   expect(panel.textContent).toContain("Root"); expect(panel.textContent).toContain("First reply"); expect(panel.textContent).toContain("Nested reply"); expect(panel.textContent).not.toContain("Unrelated");
+  expect(panel.querySelector('[data-role="user"] [data-action="reply-message"]')).toBeNull();
+  expect(panel.querySelector('[data-action="reply-message"]')).toBeNull();
   await act(async () => ui.publish({ kind: "notification", message: { method: "item/started", params: { thread_id: "s-private", turn_id: "reply-live", item: { id: "answer", type: "agent_message", text: "Related live answer", relation: ref(1) } } } }));
   expect(panel.textContent).toContain("Related live answer");
   expect(document.activeElement).toBe(panel.querySelector('textarea'));
   expect(ui.container.querySelector('.mosaic-main')?.hasAttribute('inert')).toBe(true);
   await act(async () => panel.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
   expect(ui.container.querySelector('.mosaic-replies')).toBeNull(); await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+});
+it("opens later messages into the canonical discussion even when its ancestors are outside main history", async () => {
+  const root = { seq: 1, role: "assistant", content: "Older discussion root" };
+  const later = { seq: 120, role: "assistant", content: "Later discussion answer", relation: { reply_to: { session_id: "s-private", seq: 50 } } };
+  const ui = await mount(undefined, main, undefined, { history: async input => input.reply_seq !== undefined
+    ? { reply_root_seq: 1, records: [root, later], has_earlier: false }
+    : { records: [later] } });
+  await ui.click('[data-action="reply-message"]');
+  expect(ui.container.querySelector('.mosaic-replies')?.textContent).toContain(root.content);
+  expect(ui.container.querySelector('.mosaic-replies')?.textContent).toContain(later.content);
+  expect(ui.container.querySelector('.mosaic-replies [data-action="reply-message"]')).toBeNull();
+  await ui.edit("Keep my discussion draft");
+  await ui.click('[data-action="close-replies"]'); await ui.click('[data-action="reply-message"]');
+  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')?.value).toBe("Keep my discussion draft");
 });
 it("does not clear a re-edited draft even when its text matches the pending send", async () => {
   let finish!: (value: unknown) => void;
@@ -196,7 +227,7 @@ it("does not clear a re-edited draft even when its text matches the pending send
   expect(ui.container.querySelector('textarea')!.value).toBe("Same text");
 });
 it("offers live replies only after durable identity and carries terminal task relations", async () => {
-  const ui = await mount(async method => { if (method === "agents.send") throw new Error("Keep draft"); }, main, []);
+  const ui = await mount(async method => { if (method === "agents.send") throw new Error("Keep draft"); }, main, [], { history: async input => input.reply_seq === 9 ? { reply_root_seq: 9, records: [{ seq: 9, role: "assistant", content: "Live result" }], has_earlier: false } : { records: [] } });
   await act(async () => ui.publish({ kind: "notification", message: { method: "item/agentMessage/delta", params: { thread_id: "s-private", turn_id: "live", item_id: "answer", delta: "Live result" } } }));
   expect(ui.container.querySelector('[data-action="reply-message"]')).toBeNull();
   const relation = { metadata: { task_links: [{ task_id: "t1", requirements_revision: 2 }] } };
@@ -600,6 +631,41 @@ it("restores the same main conversation draft after leaving and reopening its vi
   expect(ui.container.querySelector("textarea")!.value).toBe("A durable route draft");
   expect(ui.container.querySelector(".plugin-conversation")?.getAttribute("data-conversation-id")).toBe("s-private");
   expect(ui.invoke.mock.calls.filter(([request]) => request.method === "agents.ensure_default")).toHaveLength(2);
+});
+
+it("loads earlier messages until the Personal conversation can scroll", async () => {
+  const clientHeight = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains("plugin-conversation-scroll") ? 700 : 0;
+  });
+  const scrollHeight = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains("plugin-conversation-scroll") ? Math.max(700, this.querySelectorAll(".plugin-conversation-message").length * 240) : 0;
+  });
+  cleanups.push(() => { clientHeight.mockRestore(); scrollHeight.mockRestore(); });
+  const history = vi.fn(async input => input.end_seq === undefined
+    ? { records: [{ seq: 5, role: "user", content: "Recent question" }], first_seq: 5, has_earlier: true }
+    : { records: [
+        { seq: 1, role: "user", content: "Older question" },
+        { seq: 2, role: "assistant", content: "Older answer" },
+        { seq: 3, role: "user", content: "Another older question" },
+      ], first_seq: 1, has_earlier: false });
+  const ui = await mount(undefined, main, undefined, { history });
+  await vi.waitFor(() => expect(ui.container.textContent).toContain("Older answer"));
+  expect(history).toHaveBeenCalledWith({ agent_id: "a-main", end_seq: 4 });
+  expect(ui.container.querySelector('[data-action="load-earlier-messages"]')).toBeNull();
+});
+
+it("keeps earlier Personal history automatic instead of showing a control behind the identity header", async () => {
+  const clientHeight = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains("plugin-conversation-scroll") ? 700 : 0;
+  });
+  const scrollHeight = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains("plugin-conversation-scroll") ? 1200 : 0;
+  });
+  cleanups.push(() => { clientHeight.mockRestore(); scrollHeight.mockRestore(); });
+  const ui = await mount(undefined, main, [{ seq: 5, role: "assistant", content: "Recent answer" }], { history: async () => ({ records: [{ seq: 5, role: "assistant", content: "Recent answer" }], first_seq: 5, has_earlier: true }) });
+  expect(ui.container.querySelector('[data-action="load-earlier-messages"]')).toBeNull();
+  await ui.click('[data-action="reply-message"]');
+  expect(ui.container.querySelector('.mosaic-replies .plugin-conversation-flow > .plugin-ui-button')).toBeNull();
 });
 
 it("recovers the first visible conversation through empty bounded history pages without repeating recovery on refresh", async () => {

@@ -55,7 +55,7 @@ const report = { started_at: new Date().toISOString(), binary, scratch, status: 
 const providerEvents = new EventEmitter(), providerCalls = [], active = new Set(), held = new Map();
 const heldTags = new Set();
 const toolPlans = new Map(), planCalls = new Map();
-let personal, coding, main, memoryRecord, task, codingThread, duplicateTurnID, attachmentSubmission, firstReplySeq;
+let personal, coding, main, memoryRecord, task, codingThread, duplicateTurnID, attachmentSubmission, firstReplySeq, replyChainSeq;
 
 function waitFor(events, event, history, predicate, label, timeout = 30_000) {
   const previous = history.find(predicate);
@@ -207,7 +207,7 @@ class Host {
     const item = this.package(name);
     return (await this.rpc("plugin/client/request", { id: item.id, fingerprint: item.fingerprint, method, input,
       request_id: `${this.label}-client-${this.sequence + 1}`,
-      ...(method === "agents.send" ? { user_input: { request_id: input.request_id, prompt: input.prompt } } : {}), ...overrides })).result;
+      ...(method === "agents.send" ? { user_input: { request_id: input.request_id, prompt: input.prompt, ...(input.relation ? { relation: input.relation } : {}) } } : {}), ...overrides })).result;
   }
   async enable(name) {
     const item = this.package(name);
@@ -460,6 +460,21 @@ try {
     assert(user, "missing visible user message"); assert.equal(user.origin, "user"); assert.notEqual(user.read_only, true);
     return { provider_calls: calls.length, history_records: history.records.length };
   });
+  await scenario("Reply discussion keeps its ancestors and assistant output across nested targets and pagination", async () => {
+    let target = firstReplySeq;
+    for (const tag of ["reply-chain-one", "reply-chain-two"]) {
+      await personal.settled(await personal.client("agents.send", { agent_id: main.agent_id, request_id: tag, prompt: `MOSAIC_E2E_CASE:${tag}`, relation: { reply_to: { session_id: main.main_session_id, seq: target } } }));
+      const history = await personal.client("agents.history", { agent_id: main.agent_id });
+      target = history.records.find(record => record.content?.includes(`MOSAIC_REPLY:${tag}`))?.seq;
+      assert(target, "assistant reply must be durably addressable");
+    }
+    replyChainSeq = target;
+    const latest = await personal.client("agents.history", { agent_id: main.agent_id, reply_seq: target, limit: 2 });
+    assert.equal(latest.reply_root_seq, firstReplySeq); assert.equal(latest.records.length, 2); assert(latest.has_earlier);
+    const earlier = await personal.client("agents.history", { agent_id: main.agent_id, reply_seq: target, end_seq: latest.first_seq - 1 });
+    assert.equal(earlier.records[0].seq, firstReplySeq); assert.equal(earlier.records.length, 3); assert.equal(earlier.has_earlier, false);
+    return { root: firstReplySeq, later_target: target, records: [...earlier.records, ...latest.records].map(row => row.seq) };
+  });
   await scenario("Personal history hides durable model context but preserves identical exact user text", async () => {
     const communication = main.communication, marker = "MOSAIC_IDENTITY_CONTEXT_271fe";
     main = (await personal.client("agents.update", { agent_id: main.agent_id, expected_revision: main.revision, communication: marker })).agent;
@@ -632,6 +647,8 @@ try {
   });
   await scenario("Process restart and project switch preserve main binding and history", async () => {
     await personal.close(); personal = await new Host("personal-restarted", "personal", otherProject).start();
+    const discussion = await personal.client("agents.history", { agent_id: main.agent_id, reply_seq: replyChainSeq });
+    assert.equal(discussion.reply_root_seq, firstReplySeq); assert.equal(discussion.records.length, 5);
     const restored = (await personal.client("agents.ensure_default")).agent; assert.equal(restored.main_session_id, main.main_session_id);
     const history = await personal.client("agents.history", { agent_id: restored.agent_id, start_seq: firstReplySeq, end_seq: firstReplySeq });
     assert(history.records.some(record => record.content?.includes("MOSAIC_REPLY:personal-first")));

@@ -2437,11 +2437,34 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
       case "agents.history": {
         const agent = await this.conversation(input, true);
         await this.inspectAgent(agent);
-        let history = await this.history(agent.main_session_id, input);
+        let history = await this.history(agent.main_session_id, input.reply_seq === void 0 ? input : { start_seq: 1, limit: 50 });
+        let replyRoot;
+        if (input.reply_seq !== void 0) {
+          const selected = number(input, "reply_seq"), roots = /* @__PURE__ */ new Map();
+          const all = [...history.records ?? []];
+          while (history.has_more) {
+            const last = history.records?.at(-1);
+            if (!last) throw new Error("reply history pagination did not advance");
+            history = await this.history(agent.main_session_id, { start_seq: last.seq + 1, limit: 50 }, history.snapshot_seq);
+            all.push(...history.records ?? []);
+          }
+          for (const record of all) {
+            if (record.hidden || record.role === "user" && (record.read_only || record.origin && record.origin !== "user") || !(["user", "assistant"].includes(record.role) && (record.display_content || record.content) || record.attachments?.length)) continue;
+            const parent = record.relation?.reply_to;
+            roots.set(record.seq, parent?.session_id === agent.main_session_id ? roots.get(parent.seq) ?? record.seq : record.seq);
+          }
+          replyRoot = roots.get(selected);
+          if (replyRoot === void 0) throw new Error("reply message not found");
+          const end = input.end_seq === void 0 ? history.snapshot_seq : number(input, "end_seq");
+          const matching = all.filter((record) => roots.get(record.seq) === replyRoot && record.seq <= end);
+          const limit = input.limit === void 0 ? 50 : Math.max(1, Math.min(50, number(input, "limit")));
+          const page = matching.slice(-limit);
+          history = { ...history, records: page, first_seq: page[0]?.seq ?? replyRoot, has_earlier: matching.length > page.length, has_more: false };
+        }
         const tasks = await this.list("task");
         for (let pagesRead = 1; ; pagesRead++) {
           const records = await Promise.all(history.records?.filter((r) => !r.hidden && (r.role !== "user" || !r.read_only && (!r.origin || r.origin === "user")) && (["user", "assistant"].includes(r.role) && (r.display_content || r.content) || r.attachments?.length)).map(async (r) => ({ seq: r.seq, relation: await this.messageRelation(agent.main_session_id, r.seq, r.relation, tasks), ...r.provider_item_id ? { provider_item_id: r.provider_item_id } : {}, ...r.engine_turn_id ? { engine_turn_id: r.engine_turn_id } : {}, role: r.role === "user" ? "user" : "assistant", content: ["user", "assistant"].includes(r.role) ? r.display_content || r.content || "" : "", ..."at" in r && typeof r.at === "string" ? { at: r.at } : {}, ...r.attachments?.length ? { attachments: r.attachments } : {}, ...["user", "assistant"].includes(r.role) && r.name ? { name: r.name } : {} })) ?? []);
-          if (records.length || !history.has_earlier || pagesRead >= historyRecoveryPageLimit || input.start_seq !== void 0 || text2(input, "cursor")) return { ...history, records };
+          if (replyRoot !== void 0 || records.length || !history.has_earlier || pagesRead >= historyRecoveryPageLimit || input.start_seq !== void 0 || text2(input, "cursor")) return { ...history, ...replyRoot === void 0 ? {} : { reply_root_seq: replyRoot }, records };
           history = await this.history(agent.main_session_id, { ...input, end_seq: history.first_seq - 1 }, history.snapshot_seq);
         }
       }

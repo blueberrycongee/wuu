@@ -405,6 +405,30 @@ try {
     assert.deepEqual(narrow.records, []); assert.equal(narrow.first_seq, 249); assert.equal(narrow.has_earlier, true);
     if (previous) host.histories.set(main.main_session_id, previous); else host.histories.delete(main.main_session_id);
   });
+  await scenario('reply history resolves ancestors outside the main page and paginates the whole discussion', async () => {
+    const previous = host.histories.get(main.main_session_id);
+    const ref = seq => ({ reply_to: { session_id: main.main_session_id, seq } });
+    const rows = [{ seq: 1, role: 'assistant', content: 'discussion root' },
+      ...Array.from({ length: 120 }, (_, i) => ({ seq: i + 2, role: 'assistant', content: 'unrelated' })),
+      { seq: 122, role: 'user', content: 'follow up', relation: ref(1) },
+      { seq: 123, role: 'assistant', content: 'answer', relation: ref(1) },
+      { seq: 124, role: 'user', content: 'later question', relation: ref(123) },
+      { seq: 125, role: 'assistant', content: 'later answer', relation: ref(123) }];
+    host.histories.set(main.main_session_id, rows);
+    try {
+      const latest = await runtime.client('agents.history', { agent_id: main.agent_id, reply_seq: 125, limit: 2 });
+      assert.equal(latest.reply_root_seq, 1);
+      assert.deepEqual(latest.records.map(r => r.seq), [124, 125]);
+      assert.equal(latest.has_earlier, true);
+      const earlier = await runtime.client('agents.history', { agent_id: main.agent_id, reply_seq: 1, end_seq: latest.first_seq - 1, limit: 2 });
+      assert.deepEqual(earlier.records.map(r => r.seq), [122, 123]);
+      const oldest = await runtime.client('agents.history', { agent_id: main.agent_id, reply_seq: 123, end_seq: earlier.first_seq - 1, limit: 2 });
+      assert.deepEqual(oldest.records.map(r => r.seq), [1]);
+      assert.equal(oldest.has_earlier, false);
+      await assert.rejects(runtime.client('agents.history', { agent_id: main.agent_id, reply_seq: 999 }), /reply.*not found/i);
+      assert.deepEqual(host.histories.get(main.main_session_id), rows);
+    } finally { if (previous) host.histories.set(main.main_session_id, previous); else host.histories.delete(main.main_session_id); }
+  });
   await scenario('background dispatch is durable, hidden, and leaves main chat available', async () => {
     task = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'task-one', title: 'Plan supper', goal: 'Research a supper plan' })).task;
     const retry = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'task-one', title: 'Plan supper', goal: 'Research a supper plan' })).task;

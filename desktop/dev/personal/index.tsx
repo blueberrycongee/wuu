@@ -31,7 +31,7 @@ const memories = [
   {id:"m2",revision:1,status:"active",content:"约朋友吃饭时，更喜欢安静、方便聊天的地方。",contributor_agent_id:"mosaic",updated_by_agent_id:"mosaic",effective_at:now,evidence:"explicit",source_at:now,sources:[{kind:"message",ref:"synthetic:2",occurred_at:now}]},
   {id:"m3",revision:1,status:"active",content:"周末可能更愿意把时间留给户外活动。",contributor_agent_id:"mosaic",updated_by_agent_id:"mosaic",effective_at:now,evidence:"inferred",source_at:now,sources:[{kind:"message",ref:"synthetic:3",occurred_at:now}]},
 ];
-const histories:Record<string,Array<{seq:number;role:string;content:string;at?:string;attachments?:Array<Record<string,unknown>>}>> = {
+const histories:Record<string,Array<{seq:number;role:string;content:string;at?:string;relation?:{reply_to?:{session_id:string;seq:number}};attachments?:Array<Record<string,unknown>>}>> = {
   mosaic:[{seq:1,role:"user",content:"最近事情有点多，帮我看看还有什么需要我决定？"},{seq:2,role:"assistant",at:now,content:"现在有一件事需要你决定：**周五晚餐的地点**。我已经把选择缩小到三家安静、方便聊天的餐厅，等你挑一个再预订。\n\n京都行程还在整理，今天不用操心。这个月的阅读清单也已经准备好了。"},{seq:3,role:"user",content:"好，京都那边记得每天留一点休息时间。"},{seq:4,role:"assistant",at:now,content:"记住了。每天都会留一段空白，下午可以歇一会儿。我会按这个偏好继续安排。\n\n我们先看周五晚餐吧：你更想在公司附近，还是离家近一些？"}],
 };
 for (const history of Object.values(histories)) for (const record of history) record.at ??= now;
@@ -75,10 +75,21 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
       agent.name = name; agent.revision++; return { agent: { ...agent } };
     }
     case "agents.open":return {agent:agents.find(a=>a.agent_id===data.agent_id),session:{state:fixtureActivity === "idle" ? "completed" : "running"}};
-    case "agents.history":return {records:(histories[data.agent_id]||[]).filter(record=>(!data.start_seq||record.seq>=data.start_seq)&&(!data.end_seq||record.seq<=data.end_seq))};
+    case "agents.history": {
+      const all = histories[data.agent_id] || [];
+      if (data.reply_seq !== undefined) {
+        const roots = new Map<number, number>();
+        for (const row of all) roots.set(row.seq, roots.get(row.relation?.reply_to?.seq ?? 0) ?? row.seq);
+        const root = roots.get(data.reply_seq);
+        const matching = all.filter(row => roots.get(row.seq) === root && (!data.end_seq || row.seq <= data.end_seq));
+        const records = matching.slice(-10);
+        return { records, reply_root_seq: root, first_seq: records[0]?.seq, has_earlier: matching.length > records.length };
+      }
+      return {records:all.filter(record=>(!data.start_seq||record.seq>=data.start_seq)&&(!data.end_seq||record.seq<=data.end_seq)).slice(params.get("replies") === "1" ? -2 : 0)};
+    }
     case "agents.search":{const matches=(histories[data.agent_id]||[]).filter(record=>record.content.includes(data.query)&&(!data.time_min||(record.at&&record.at>=data.time_min))&&(!data.time_max||(record.at&&record.at<data.time_max))).map(record=>({seq:record.seq,role:record.role,excerpt:record.content.slice(0,120),at:record.at}));return {matches,has_more:false};}
     case "agents.proposals":return {proposals:[]};
-    case "agents.send":{const list=histories[data.agent_id],seq=list.length+1; const attachments = userInput?.attachments?.map((file,index)=>{files.set(`${data.agent_id}:${seq}:${file.sha256}`,{data:file.data,name:file.filename,mime:file.media_type});return {kind:file.media_type.startsWith("image/")?"image":"file",index,name:file.filename,mime_type:file.media_type,size:atob(file.data).length,sha256:file.sha256};});list.push({seq,role:"user",at:now,content:data.prompt,attachments},{seq:list.length+2,role:"assistant",at:now,content:"这是合成演示回复。主对话保持不变，后台事项仍会继续。"});return {state:"accepted"};}
+    case "agents.send":{const list=histories[data.agent_id],seq=(list.at(-1)?.seq ?? 0)+1; const attachments = userInput?.attachments?.map((file,index)=>{files.set(`${data.agent_id}:${seq}:${file.sha256}`,{data:file.data,name:file.filename,mime:file.media_type});return {kind:file.media_type.startsWith("image/")?"image":"file",index,name:file.filename,mime_type:file.media_type,size:atob(file.data).length,sha256:file.sha256};});list.push({seq,role:"user",at:now,content:data.prompt,attachments,relation:data.relation},{seq:seq+1,role:"assistant",at:now,content:"这是合成演示回复。主对话保持不变，后台事项仍会继续。",relation:data.relation});return {state:"accepted"};}
     case "agents.attachments.read":{const file=files.get(`${data.agent_id}:${data.seq}:${data.sha256}`);if(!file)throw new Error("Synthetic file missing");if(file.name === "合成读取失败.txt")throw new Error("合成读取失败：用于展示错误与重试，不涉及真实文件。");const offset=data.offset||0;return {data:file.data.slice(offset,offset+128*1024),offset,total:file.data.length,content_type:file.mime,name:file.name,sha256:data.sha256};}
     case "calendar.status":case "calendar.agenda":return {state:"unconnected",read_only:!calendarWriteDemo,freshness:"empty",events:[]};
     case "calendar.operations.list":return {operations:calendarWriteDemo?[calendarOperation]:[]};
@@ -132,6 +143,11 @@ if (params.get("attachments") === "reference") {
   for (const file of [html, archive]) files.set(`mosaic:3:${file.sha256}`,files.get(`mosaic:4:${file.sha256}`)!);
 }
 const motionScale = Math.min(8, Math.max(1, Number(params.get("motionScale")) || 1));
+if (params.get("replies") === "1") histories.mosaic = [
+  {seq:1,role:"assistant",at:now,content:"DISCUSSION ROOT: original authorization"},
+  ...Array.from({length:24}, (_, index) => ({seq:index+2,role:index%2 ? "assistant" : "user",at:now,content:`Discussion message ${index+2}: ${"Historical context remains readable. ".repeat(5)}`,relation:{reply_to:{session_id:"synthetic-main",seq:index+1}}})),
+  {seq:26,role:"assistant",at:now,content:"UNRELATED DISCUSSION"},
+];
 if (motionScale > 1) document.documentElement.style.setProperty("--mosaic-profile-motion-duration", `${300 * motionScale}ms`);
 if (params.get("grouping") === "1") histories.mosaic.push(
   {seq:5,role:"assistant",at:now,content:"也可以先不做决定。等你忙完，我们再慢慢选。"},
