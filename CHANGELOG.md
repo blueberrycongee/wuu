@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Show up to 50 recently updated conversations across workspaces in the normal desktop sidebar.
+
 - Add per-tab audio controls, keyboard navigation for long vertical tab lists, persistent download history, bookmark renaming, and individual history deletion.
 - Open browser extension options in isolated windows and provide an explicit screen/window sharing picker.
 

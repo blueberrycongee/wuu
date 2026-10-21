@@ -123,6 +123,7 @@ import { HoverRevealScopeContext } from "./HoverReveal";
  *   can be reordered with real projects.
  */
 export const SIDEBAR_SECTION_PINNED = "__wuu_pinned__";
+const RECENT_THREAD_LIMIT = 50;
 
 type AttentionRow = {
   thread: ThreadSummary;
@@ -1129,6 +1130,14 @@ export function AppSidebar({
     .filter((thread) => !thread.pinned && !organization.folderByThreadID[thread.id])
     .sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0) || a.id.localeCompare(b.id)),
   [organization.folderByThreadID, projectIndex]);
+  const recentConversations = useMemo(() => allSidebarThreads
+    .filter((thread) => !thread.archived && !thread.pinned
+      && !projectIndex.summaries.has(thread.id) && !projectIndex.managedSessionIDs.has(thread.id))
+    .sort((left, right) => (Date.parse(right.updated_at) || Date.parse(right.created_at) || 0)
+      - (Date.parse(left.updated_at) || Date.parse(left.created_at) || 0)
+      || left.id.localeCompare(right.id))
+    .slice(0, RECENT_THREAD_LIMIT),
+  [allSidebarThreads, projectIndex]);
   const visibleWorkspaceThreadsByWorkspaceID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
     const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
@@ -1766,6 +1775,16 @@ export function AppSidebar({
     for (const groupID of visibleFunctionalGroupOrder) {
       nodes.push(...functionalGroupNodes[groupID]);
     }
+    if (recentConversations.length > 0) {
+      nodes.push({ id: "section:recent", kind: "section", label: t("sidebar.recentActivity"), depth: 0 });
+      for (const thread of recentConversations) {
+        nodes.push({
+          ...threadNavigationNode(thread, "section:recent", activeThreadID, state.lastViewedTurnByThreadID,
+            () => onSelectThread(thread.id), () => toggleThreadPinned(thread), 1),
+          id: `recent-thread:${thread.id}`,
+        });
+      }
+    }
     nodes.push(...pluginNavigationNodes);
     nodes.push({
       id: "command:settings",
@@ -1784,7 +1803,7 @@ export function AppSidebar({
     onSelectWorkspaceThread, onFocusWorkspace, onSelectThread,
     onTogglePinned, pendingThreadID, pinnedHasRunning,
     pinnedHasUnread, pinnedRows, validPinnedItems,
-    projectRows, projectIndex, visibleWorkspaceThreadsByWorkspaceID,
+    projectRows, projectIndex, recentConversations, visibleWorkspaceThreadsByWorkspaceID,
     folderThreadsByID, visibleFunctionalGroupOrder, organization.folders, pinnedFolderIDs,
     sidebarWorkspaces, sidebarScratchPseudoActive, visibleWorkspaceSectionOrder,
     state.activeProjectId, state.initialized, state.lastViewedTurnByThreadID, t,
@@ -2326,6 +2345,26 @@ export function AppSidebar({
                 </SortableFunctionalGroup>
               ))}
             </SortableContext>
+            {recentConversations.length > 0 ? (
+              <section className="sidebar-functional-group" data-sidebar-recents="" aria-labelledby="sidebar-recents-heading">
+                <div className="sidebar-functional-heading">
+                  <span className="sidebar-functional-heading-label" id="sidebar-recents-heading">{t("sidebar.recentActivity")}</span>
+                </div>
+                <div className="sidebar-functional-group-collapse sidebar-functional-group-body">
+                  <OrganizationThreadList
+                    threads={recentConversations}
+                    activeID={activeThreadID}
+                    pendingThreadID={pendingThreadID}
+                    lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
+                    onSelect={onSelectThread}
+                    onTogglePinned={onTogglePinned}
+                    onArchive={onArchiveThread}
+                    onDelete={onDeleteThread}
+                    onRename={onRenameThread}
+                  />
+                </div>
+              </section>
+            ) : null}
             <DragOverlay dropAnimation={dropAnimation}>
               {draggingFunctionalGroupID ? (
                 <div className="sidebar-functional-group-drag-overlay">

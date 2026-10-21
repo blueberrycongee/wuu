@@ -176,6 +176,36 @@ function renderSidebar(options: RenderOptions = {}): void {
 }
 
 describe("AppSidebar layout", () => {
+  it("opens a recent conversation across workspaces and removes archived or pinned entries", () => {
+    const thread = (id: string, day: number, extra: Partial<ThreadSummary> = {}): ThreadSummary => ({
+      id, title: id, cwd: "/repo/wuu", status: "idle", source: "desktop", pinned: false, archived: false,
+      created_at: "2026-09-01T00:00:00Z", updated_at: `2026-09-${day}T00:00:00Z`,
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0, ...extra,
+    });
+    const older = thread("older", 11);
+    const newer = thread("newer", 12);
+    const select = vi.fn();
+    const options: RenderOptions = {
+      onSelectThread: select,
+      activeThreadID: newer.id,
+      workspaceThreadsByWorkspaceID: {
+        "project-1": [older, thread("archived", 14, { archived: true })],
+        "project-2": [newer, older, thread("pinned", 15, { pinned: true })],
+      },
+    };
+    renderSidebar(options);
+    const recent = () => container.querySelector('[data-sidebar-recents]')!;
+    const titles = () => [...recent().querySelectorAll('.thread-row-title')].map(row => row.textContent);
+    expect(titles()).toEqual(["newer", "older"]);
+    expect(recent().querySelector('.thread-row.active')?.textContent).toContain("newer");
+    act(() => recent().querySelector<HTMLButtonElement>('.thread-row-main')!.click());
+    expect(select).toHaveBeenCalledWith(newer.id);
+    renderSidebar({ ...options, workspaceThreadsByWorkspaceID: {
+      "project-1": [older], "project-2": [{ ...newer, archived: true }],
+    } });
+    expect(titles()).toEqual(["older"]);
+  });
+
   it.each([
     { saved: ["workspace", "pinned"], expected: ["projects", "folders", "workspace", "pinned"] },
     // Projects take the place a saved order gave Collaboration.
@@ -221,7 +251,7 @@ describe("AppSidebar layout", () => {
     const currentTitles = () => [...container.querySelectorAll('[aria-current="page"] .thread-row-title')]
       .map((element) => element.textContent);
     renderSidebar(options);
-    expect(currentTitles()).toEqual([threads[0].title]);
+    expect(currentTitles()).toEqual([threads[0].title, threads[0].title]);
 
     const bell = container.querySelector<HTMLButtonElement>(".sidebar-notifications-button")!;
     act(() => bell.click());
@@ -237,7 +267,7 @@ describe("AppSidebar layout", () => {
     expect(currentTitles()).toEqual([threads[1].title]);
     expect(target.getAttribute("aria-busy")).toBe("true");
     act(() => bell.click());
-    expect(currentTitles()).toEqual([threads[1].title]);
+    expect(currentTitles()).toEqual([threads[1].title, threads[1].title]);
   });
 
   it("keeps an opened unread session in the attention view after it is marked read", () => {
@@ -409,7 +439,7 @@ describe("AppSidebar layout", () => {
       },
       onSelectWorkspaceThread: select,
     });
-    const rows = [...container.querySelectorAll<HTMLButtonElement>(".thread-row-main")]
+    const rows = [...container.querySelectorAll<HTMLButtonElement>('[data-functional-group-id="workspace"] .thread-row-main')]
       .filter((row) => row.textContent?.includes(fork.title!));
     expect(rows).toHaveLength(1);
     act(() => rows[0].click());
