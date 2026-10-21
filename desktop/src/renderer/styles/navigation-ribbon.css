@@ -345,7 +345,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   transform: translateX(calc(-4px * (1 - var(--ribbon-reveal, 0))));
 }
 
-.sidebar-ribbon-tab-row.closable .sidebar-ribbon-button {
+.sidebar-ribbon[data-expanded="true"] .sidebar-ribbon-tab-row.closable .sidebar-ribbon-button {
   /* Keep the title and pin stable when the close action appears. */
   padding-inline-end: calc(var(--sidebar-row-action-size) + var(--space-1) * 2);
 }
@@ -446,8 +446,8 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
 .sidebar-ribbon-audio:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .sidebar-ribbon[data-expanded="true"] .sidebar-ribbon-tab-row:not([data-dragging="true"]) .sidebar-ribbon-audio { visibility: visible; }
 .sidebar-ribbon-tab-row.closable .sidebar-ribbon-audio { inset-inline-end: calc(var(--sidebar-row-action-size) + var(--space-1) * 2); }
-.sidebar-ribbon-tab-row.has-audio .sidebar-ribbon-button { padding-inline-end: calc(var(--sidebar-row-action-size) + var(--space-1) * 2); }
-.sidebar-ribbon-tab-row.has-audio.closable .sidebar-ribbon-button { padding-inline-end: calc(var(--sidebar-row-action-size) * 2 + var(--space-1) * 3); }
+.sidebar-ribbon[data-expanded="true"] .sidebar-ribbon-tab-row.has-audio .sidebar-ribbon-button { padding-inline-end: calc(var(--sidebar-row-action-size) + var(--space-1) * 2); }
+.sidebar-ribbon[data-expanded="true"] .sidebar-ribbon-tab-row.has-audio.closable .sidebar-ribbon-button { padding-inline-end: calc(var(--sidebar-row-action-size) * 2 + var(--space-1) * 3); }
 .sidebar-ribbon-audio-badge {
   position: absolute;
   inset-inline-start: calc(var(--sidebar-row-pad-x) + var(--sidebar-ribbon-icon-size) - 8px);
