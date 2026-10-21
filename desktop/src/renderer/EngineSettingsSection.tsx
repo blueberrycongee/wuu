@@ -327,25 +327,27 @@ export function EngineSettingsSection({
       {error || loadError ? <p className="settings-error" role="alert">{error || loadError}</p> : null}
       {result === undefined ? <div className="settings-engine-skeleton" role="status" aria-label={t("settings.engineDetecting")} aria-busy="true">
         <div className="settings-engine-row" aria-hidden="true"><span className="settings-engine-skeleton-line settings-engine-skeleton-title" /></div>
-      </div> : visible.length ? <div className="connection-summary-list">
+      </div> : visible.length ? <div className="connection-summary-list" role="list" aria-label={t("provider.connectionEngines")}>
         {visible.map(engine => {
           const quota = quotaFor(engine);
-          return <button key={engine.id} type="button"
-            className="connection-summary-row"
-            data-testid={`settings-engine-${engine.id}-status`}
-            aria-label={`${display.label(`engine:${engine.id}`, engineLabel(engine.id, engine))} · ${status(engine)}`}
-            aria-describedby={`${usageID}-${engine.id} ${usageID}-${engine.id}-quota`}
-            onClick={() => { setError(""); onSelectEngine(engine.id); }}>
-            <span className="connection-summary-icon" aria-hidden="true"><EngineIcon engine={engine.id} /></span>
-            <span className="connection-summary-copy" id={`${usageID}-${engine.id}`}>
-              <span className="connection-summary-name">{display.label(`engine:${engine.id}`, engineLabel(engine.id, engine))}</span>
-              <span className="connection-summary-meta"><span>{quota?.plan?.trim() || t("provider.localEngine")}</span><span aria-hidden="true"> · </span>
-                <span className="connection-summary-status">{status(engine)}</span>
+          return <div role="listitem" key={engine.id}>
+            <button type="button"
+              className="connection-summary-row"
+              data-testid={`settings-engine-${engine.id}-status`}
+              aria-label={`${display.label(`engine:${engine.id}`, engineLabel(engine.id, engine))} · ${status(engine)}`}
+              aria-describedby={`${usageID}-${engine.id} ${usageID}-${engine.id}-quota`}
+              onClick={() => { setError(""); onSelectEngine(engine.id); }}>
+              <span className="connection-summary-icon" aria-hidden="true"><EngineIcon engine={engine.id} /></span>
+              <span className="connection-summary-copy" id={`${usageID}-${engine.id}`}>
+                <span className="connection-summary-name">{display.label(`engine:${engine.id}`, engineLabel(engine.id, engine))}</span>
+                <span className="connection-summary-meta"><span>{quota?.plan?.trim() || t("provider.localEngine")}</span><span aria-hidden="true"> · </span>
+                  <span className="connection-summary-status">{status(engine)}</span>
+                </span>
               </span>
-            </span>
-            <ConnectionUsageSummary id={`${usageID}-${engine.id}-quota`} quota={quota} loading={quotaLoading || refreshing} now={quotaNow} />
-            <ChevronRight className="icon" aria-hidden="true" />
-          </button>;
+              <ConnectionUsageSummary id={`${usageID}-${engine.id}-quota`} quota={quota} loading={quotaLoading || refreshing} now={quotaNow} />
+              <ChevronRight className="icon" aria-hidden="true" />
+            </button>
+          </div>;
         })}
       </div> : <p className="settings-muted-line">{t("provider.engineConnectionsEmpty")}</p>}
     </SettingsSection>
