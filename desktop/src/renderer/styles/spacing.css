@@ -13,6 +13,11 @@
   --space-5: calc(var(--space-1) * 5);
   --space-6: calc(var(--space-1) * 6);
   --space-8: calc(var(--space-1) * 8);
+  /* Shared by the dock and sidebar footer to align their bottom edges. */
+  --composer-dock-bottom-space: max(
+    clamp(var(--space-1), calc(2dvh - var(--space-1)), var(--space-2)),
+    env(safe-area-inset-bottom, 0px)
+  );
 
   /* Two text widths separate groups; one frames related content. */
   --page-padding: var(--space-8);

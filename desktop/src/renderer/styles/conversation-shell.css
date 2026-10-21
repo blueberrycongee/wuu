@@ -517,7 +517,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--font-body);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   margin: 0;
 }
 

@@ -372,7 +372,7 @@
    * Include each row's own leading when judging the visible whitespace. */
   --sidebar-functional-row-gap: var(--sidebar-row-gap);
   --sidebar-functional-heading-gap: var(--space-2);
-  --sidebar-functional-group-gap: var(--space-6);
+  --sidebar-functional-group-gap: var(--space-4);
   /* Parent and child rows belong to one tree: use the same separation as
    * sibling rows. The collapse body owns this gap; lists add no outer inset. */
   --sidebar-section-body-gap: var(--sidebar-row-gap);
@@ -398,6 +398,10 @@
     opacity var(--sidebar-motion-duration) var(--sidebar-motion-ease),
     transform var(--sidebar-motion-duration) var(--sidebar-motion-ease);
   will-change: opacity, transform;
+}
+
+.sidebar > .sidebar-content {
+  padding-bottom: calc(var(--conversation-pane-inset) + var(--composer-dock-bottom-space));
 }
 
 .sidebar-collapsed .sidebar-content {
@@ -1291,6 +1295,12 @@ html[data-focus-modality="keyboard"] :is(
 .sidebar-functional-group + .sidebar-functional-group {
   margin-top: var(--sidebar-functional-group-gap);
   transition: margin-top var(--section-fold-ms) var(--section-fold-ease);
+}
+
+/* An empty folder group still exposes creation and drop targets, but does
+ * not need the full separation of two populated lists. */
+.sidebar-functional-group:has(> .sidebar-folder-heading[data-empty="true"]:not([data-folder-remove-drop])) + .sidebar-functional-group {
+  margin-top: var(--sidebar-functional-heading-gap);
 }
 
 .sidebar-functional-group-body {
