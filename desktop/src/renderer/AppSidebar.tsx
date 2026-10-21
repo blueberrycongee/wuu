@@ -217,6 +217,7 @@ const PINNED_SESSION_DROP_TARGET = "__wuu_pinned_session_drop__";
 const WORKSPACE_SESSION_DROP_TARGET = "__wuu_workspace_session_drop__";
 const SIDEBAR_FUNCTIONAL_GROUP_ORDER_KEY = "wuu.desktop.sidebarFunctionalGroupOrder";
 const SIDEBAR_COLLAPSED_FUNCTIONAL_GROUPS_KEY = "wuu.desktop.sidebarCollapsedFunctionalGroups";
+const SIDEBAR_RECENTS_COLLAPSED_KEY = "wuu.desktop.sidebarRecentsCollapsed";
 const SIDEBAR_PINNED_ITEMS_KEY = "wuu.desktop.sidebarPinnedItems";
 const LEGACY_SIDEBAR_PINNED_CONTAINERS_KEY = "wuu.desktop.sidebarPinnedContainers";
 const SIDEBAR_FUNCTIONAL_GROUP_IDS = ["projects", "pinned", "folders", "workspace"] as const;
@@ -327,6 +328,22 @@ function persistCollapsedSidebarFunctionalGroups(
     );
   } catch (reason) {
     console.warn("collapsed sidebar functional groups persistence failed", reason);
+  }
+}
+
+function loadSidebarRecentsCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_RECENTS_COLLAPSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function persistSidebarRecentsCollapsed(collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(SIDEBAR_RECENTS_COLLAPSED_KEY, String(collapsed));
+  } catch (reason) {
+    console.warn("sidebar recents collapse persistence failed", reason);
   }
 }
 
@@ -593,6 +610,7 @@ export function AppSidebar({
   );
   const [collapsedFunctionalGroupIDs, setCollapsedFunctionalGroupIDs] =
     useState<Set<SidebarFunctionalGroupID>>(loadCollapsedSidebarFunctionalGroups);
+  const [recentsCollapsed, setRecentsCollapsed] = useState(loadSidebarRecentsCollapsed);
   const [draggingFunctionalGroupID, setDraggingFunctionalGroupID] =
     useState<SidebarFunctionalGroupID>();
   const [groupContextMenu, setGroupContextMenu] = useState<{
@@ -1056,6 +1074,13 @@ export function AppSidebar({
       const next = new Set(current);
       if (next.has(groupID)) next.delete(groupID); else next.add(groupID);
       persistCollapsedSidebarFunctionalGroups(next);
+      return next;
+    });
+  }
+  function toggleRecentsCollapsed(): void {
+    setRecentsCollapsed((current) => {
+      const next = !current;
+      persistSidebarRecentsCollapsed(next);
       return next;
     });
   }
@@ -2350,9 +2375,37 @@ export function AppSidebar({
               ))}
             </SortableContext>
             {recentConversations.length > 0 ? (
-              <section className="sidebar-functional-group" data-sidebar-recents="" aria-labelledby="sidebar-recents-heading">
+              <section
+                className="sidebar-functional-group"
+                data-sidebar-recents=""
+                data-collapsed={recentsCollapsed || undefined}
+                aria-labelledby="sidebar-recents-heading"
+              >
                 <div className="sidebar-functional-heading sidebar-recents-heading">
-                  <span className="sidebar-functional-heading-label" id="sidebar-recents-heading">{t("sidebar.recentActivity")}</span>
+                  <button
+                    className="sidebar-functional-heading-toggle"
+                    type="button"
+                    aria-expanded={!recentsCollapsed}
+                    aria-label={t(
+                      recentsCollapsed ? "sidebar.expandSection" : "sidebar.collapseSection",
+                      { section: t("sidebar.recentActivity") },
+                    )}
+                    title={t(
+                      recentsCollapsed ? "sidebar.expandSection" : "sidebar.collapseSection",
+                      { section: t("sidebar.recentActivity") },
+                    )}
+                    onClick={toggleRecentsCollapsed}
+                  >
+                    <span className="sidebar-functional-heading-label" id="sidebar-recents-heading">{t("sidebar.recentActivity")}</span>
+                    {recentsCollapsed ? (
+                      <span className="sidebar-recents-count" aria-hidden="true">{recentConversations.length}</span>
+                    ) : null}
+                    <ChevronRight
+                      className="sidebar-functional-heading-chevron"
+                      data-expanded={!recentsCollapsed || undefined}
+                      aria-hidden="true"
+                    />
+                  </button>
                   <div className="sidebar-functional-heading-action">
                     <button
                       className="sidebar-row-icon-button sidebar-recents-new-thread"
@@ -2366,19 +2419,21 @@ export function AppSidebar({
                     </button>
                   </div>
                 </div>
-                <div className="sidebar-functional-group-collapse sidebar-functional-group-body">
-                  <OrganizationThreadList
-                    threads={recentConversations}
-                    activeID={activeThreadID}
-                    pendingThreadID={pendingThreadID}
-                    lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
-                    onSelect={onSelectThread}
-                    onTogglePinned={onTogglePinned}
-                    onArchive={onArchiveThread}
-                    onDelete={onDeleteThread}
-                    onRename={onRenameThread}
-                  />
-                </div>
+                <SidebarCollapseBody className="sidebar-functional-group-collapse" expanded={!recentsCollapsed}>
+                  <div className="sidebar-functional-group-body">
+                    <OrganizationThreadList
+                      threads={recentConversations}
+                      activeID={activeThreadID}
+                      pendingThreadID={pendingThreadID}
+                      lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
+                      onSelect={onSelectThread}
+                      onTogglePinned={onTogglePinned}
+                      onArchive={onArchiveThread}
+                      onDelete={onDeleteThread}
+                      onRename={onRenameThread}
+                    />
+                  </div>
+                </SidebarCollapseBody>
               </section>
             ) : null}
             <DragOverlay dropAnimation={dropAnimation}>

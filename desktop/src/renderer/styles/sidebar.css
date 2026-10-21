@@ -1336,10 +1336,18 @@ html[data-focus-modality="keyboard"] :is(
   padding: 0 var(--sidebar-row-pad-x);
 }
 
-/* Recent has no fold toggle, so its label does not grow like a toggle. Keep
- * the compose action on the same trailing axis as the other group actions. */
+/* Recent uses the shared section fold control; keep its compose action on the
+ * same trailing axis as the other group actions. */
 .sidebar-recents-heading {
   justify-content: space-between;
+}
+
+.sidebar-recents-count {
+  flex: none;
+  color: var(--sidebar-heading-ink);
+  font-size: var(--sidebar-heading-size, var(--font-sm));
+  font-variant-numeric: tabular-nums;
+  line-height: var(--line-ui);
 }
 
 /* Match the new-conversation button inside a workspace row: a row-sized hit
