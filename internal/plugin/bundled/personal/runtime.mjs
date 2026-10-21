@@ -2101,7 +2101,11 @@ User answered the task question (${old.question?.text || old.progress || "additi
     }
     if (!current.delivery?.session_id) current = await this.change("task", task.task_id, (latest) => latest?.delivery?.request_id === current.delivery.request_id ? { ...latest, delivery: { ...latest.delivery, session_id: main.main_session_id } } : latest);
     if (current.delivery?.session_id !== main.main_session_id) throw new Error("delivery requires main conversation reconciliation");
-    const receipt = await this.host.call("host.session.inspect", { session_id: main.main_session_id, request_id: current.delivery.request_id });
+    let receipt = await this.host.call("host.session.inspect", { session_id: main.main_session_id, request_id: current.delivery.request_id });
+    if (receipt.turn && terminal.has(receipt.turn.state)) {
+      receipt = await this.host.call("host.session.inspect", { session_id: main.main_session_id, request_id: current.delivery.request_id, wait: "terminal", timeout_ms: 1e3 });
+      if (receipt.timed_out) return;
+    }
     if (receipt.turn && !(receipt.turn.state === "discarded" && receipt.turn.retryable)) {
       await this.recordDelivery(current, receipt.turn);
       return;
@@ -2136,7 +2140,7 @@ Evidence: ${JSON.stringify(current.result.evidence)}`;
       if (!current) throw new Error("task_not_found");
       if (current.delivery?.request_id !== task.delivery?.request_id || ["delivered", "suppressed"].includes(current.delivery.status)) return current;
       if (current.delivery.status === status && current.delivery.error === error) return current;
-      return { ...current, delivery: { ...current.delivery, status, error }, ...error && current.state !== "failed" ? { error } : {} };
+      return { ...current, delivery: { ...current.delivery, status, error }, ...current.state !== "failed" ? { error: error ?? (current.error === current.delivery?.error ? void 0 : current.error) } : {} };
     });
     if (status === "delivered" && (updated.delivery?.kind ?? "result") === "result" && updated.delivery?.request_id === task.delivery?.request_id) await this.routines.rememberResult(updated);
   }

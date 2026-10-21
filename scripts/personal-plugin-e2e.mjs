@@ -514,6 +514,34 @@ try {
     assert.equal((await runtime.client('tasks.get', { task_id: sibling.task_id })).task.state, 'running');
     assert.equal(host.turns.get(sibling.execution.request_id).state, 'running');
   });
+  await scenario('question delivery waits for durable output and recovers without a stale error', async () => {
+    let task = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'question-receipt-race', title: 'Receipt race', goal: 'Ask before proceeding' })).task;
+    task = (await runtime.tool('report_task', { task_id: task.task_id, requirements_revision: 1, state: 'waiting_user', progress: 'Which date?' }, task.execution.session_id)).task;
+    const receipt = host.turns.get(task.delivery.request_id);
+    receipt.state = 'completed';
+    let durable = false;
+    host.intercept = (service, params) => {
+      if (service !== 'host.session.inspect' || params.request_id !== receipt.request_id) return;
+      return { session: host.sessions.get(main.main_session_id), turn: { ...receipt, ...(durable ? { final_output: 'Which date?' } : {}) }, ...(params.wait === 'terminal' && !durable ? { timed_out: true } : {}) };
+    };
+    try {
+      task = (await runtime.client('tasks.reconcile', { task_id: task.task_id })).task;
+      assert.equal(task.delivery.status, 'submitted', 'live completed snapshot is not proof of empty output');
+      assert.equal(task.error, undefined);
+      durable = true;
+      task = (await runtime.client('tasks.reconcile', { task_id: task.task_id })).task;
+      assert.equal(task.delivery.status, 'delivered'); assert.equal(task.error, undefined);
+    } finally { host.intercept = undefined; }
+    let recovered = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'question-receipt-recovery', title: 'Recover receipt', goal: 'Ask once' })).task;
+    recovered = (await runtime.tool('report_task', { task_id: recovered.task_id, requirements_revision: 1, state: 'waiting_user', progress: 'Which date?' }, recovered.execution.session_id)).task;
+    const input = { thread_id: main.main_session_id, request_id: recovered.delivery.request_id, state: 'completed' };
+    await runtime.call('capability.invoke', { capability: 'agent.turn.lifecycle', input });
+    recovered = (await runtime.client('tasks.get', { task_id: recovered.task_id })).task;
+    assert.equal(recovered.delivery.status, 'failed'); assert.match(recovered.error, /no visible response/);
+    await runtime.call('capability.invoke', { capability: 'agent.turn.lifecycle', input: { ...input, final_output: 'Which date?' } });
+    recovered = (await runtime.client('tasks.get', { task_id: recovered.task_id })).task;
+    assert.equal(recovered.delivery.status, 'delivered'); assert.equal(recovered.error, undefined);
+  });
   await scenario('failed question delivery retries explicitly without repeating execution and stop cancels only its question', async () => {
     let task = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'question-retry', title: 'Retry question', goal: 'Ask before proceeding' })).task;
     task = (await runtime.tool('report_task', { task_id: task.task_id, requirements_revision: 1, state: 'waiting_user', progress: 'Which city?' }, task.execution.session_id)).task;
