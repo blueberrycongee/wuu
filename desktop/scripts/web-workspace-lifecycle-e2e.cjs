@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, webContents } = require('electron');
 const { buildSync } = require('esbuild');
 assert.equal(process.platform, 'linux');
 app.disableHardwareAcceleration();
@@ -55,7 +55,7 @@ async function until(fn, label) { for (let i = 0; i < 300; i++) { if (await fn()
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const win = new BrowserWindow({ width: 900, height: 700, webPreferences: { sandbox: true } });
-  await win.loadURL('data:text/html,<title>Lifecycle fixture</title>');
+  await win.loadURL('data:text/html,' + encodeURIComponent('<title>Lifecycle fixture</title><input id="address">'));
   const changes = [], host = new WebWorkspaceHost((_owner, state) => changes.push(state), () => {}, {downloads});
   diagnosticState = () => ({ ownerDestroyed: win.isDestroyed(), discarding: host.discarding,
     pages: [...host.pages.values()].map(page => ({ id: page.contents.id, tabId: page.tab.id,
@@ -204,7 +204,37 @@ async function until(fn, label) { for (let i = 0; i < 300; i++) { if (await fn()
   diagnostic('veto-cleanup-start');
   await vetoRace.target.wc.executeJavaScript('window.onbeforeunload=null;void 0');
   diagnostic('veto-cleanup-finished');
-  const races = { selectedRestored: true, explicitClose: true, vetoedCloseSettled: true, agentClosingPageHidden: true,
+  const closeFocus = [];
+  for (const newerShellFocus of [false, true]) {
+    const remaining = await create('keyboard-remaining-' + newerShellFocus);
+    await remaining.wc.executeJavaScript('document.querySelector("#draft").focus()');
+    const closing = await create('keyboard-closing-' + newerShellFocus);
+    await closing.wc.executeJavaScript('window.onbeforeunload=()=>{const start=performance.now();while(performance.now()-start<150){}};void 0', true);
+    await win.webContents.executeJavaScript('document.querySelector("#address").focus();document.querySelector("#address").value="new-address"');
+    win.focus();
+    closing.wc.focus();
+    await until(() => closing.wc.isFocused(), 'keyboard close starts in the webpage');
+    let overlapped = false;
+    const close = closing.wc.close.bind(closing.wc);
+    closing.wc.close = options => {
+      close(options);
+      if (newerShellFocus && !overlapped) {
+        assert.equal(closing.wc.isDestroyed(), false, 'New address focus overlaps native close');
+        overlapped = true;
+        win.webContents.focus();
+      }
+    };
+    closing.wc.sendInputEvent({ type: 'keyDown', keyCode: 'W', modifiers: ['control'] });
+    await until(() => !changes.at(-1).tabs.some(tab => tab.id === closing.id), 'keyboard tab closes');
+    await delay(0);
+    const expected = newerShellFocus ? win.webContents : remaining.wc;
+    assert.equal(webContents.getFocusedWebContents()?.id, expected.id, 'Close restores unowned focus without replacing a newer focus owner');
+    await expected.insertText('-AFTER');
+    const value = await expected.executeJavaScript(`document.querySelector(${JSON.stringify(newerShellFocus ? '#address' : '#draft')}).value`);
+    assert.equal(value, newerShellFocus ? 'new-address-AFTER' : '-AFTER');
+    closeFocus.push({ newerShellFocus, overlapped, focusedId: expected.id, value });
+  }
+  const races = { selectedRestored: true, explicitClose: true, vetoedCloseSettled: true, agentClosingPageHidden: true, closeFocus,
     focusDiagnostics: { focusedBeforeDiscardCompletion, focusedAfterRestore, shellFocusedAfterRestore } };
   fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', sourceCommit: process.env.GITHUB_SHA ?? null, runtime: { platform: process.platform, electron: process.versions.electron, chrome: process.versions.chrome, hardwareAcceleration: false }, first, result, races, before, after: app.getAppMetrics(), restoredHistory: restored.webContents.navigationHistory.getAllEntries().map(entry => ({url:entry.url,title:entry.title})), protectedCount: 9, cycles }, null, 2));
   await veto.wc.executeJavaScript('window.onbeforeunload=null;void 0');

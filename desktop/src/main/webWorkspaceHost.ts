@@ -1197,7 +1197,10 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     } else if (key === "w" && !input.shift && group.tabbed) {
       event.preventDefault();
       void this.closeTab(page.owner, group.id, group.activeTabId).then(() => {
-        this.activeTab(group)?.page?.contents.focus();
+        // Closing may finish after a newer address, overlay or window focus.
+        // Restore keyboard navigation only if destruction left focus unowned.
+        const next = this.activeTab(group)?.page;
+        if (!webContents.getFocusedWebContents() && !page.owner.isDestroyed() && page.owner.isFocused() && next?.view.getVisible()) next.contents.focus();
       }).catch(error => console.warn("[web-workspace] Could not close tab", error));
     } else if (key === "+" || key === "=" || key === "-" || key === "0") {
       event.preventDefault();

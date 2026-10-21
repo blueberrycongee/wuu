@@ -39,6 +39,7 @@ export function WebWorkspacePanel({
   const startInputRef = useRef<HTMLInputElement>(null);
   const [focusNewTab, setFocusNewTab] = useState<string>();
   const findInputRef = useRef<HTMLInputElement>(null);
+  const composingFind = useRef(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [page, setPage] = useState<WebWorkspaceState>();
   const [failure, setFailure] = useState<{ id: string; message: string }>();
@@ -164,6 +165,7 @@ export function WebWorkspacePanel({
   useEffect(() => {
     setMenuOpen(false);
     setFindOpen(false);
+    composingFind.current = false;
     setFindText("");
   }, [site?.id, current?.activeTabId, active]);
 
@@ -211,6 +213,7 @@ export function WebWorkspacePanel({
 
   const closeFind = useCallback(() => {
     setFindOpen(false);
+    composingFind.current = false;
     setFindText("");
     void update(async (browser, id) => { await browser.stopFind(id); return browser.command(id, "focus"); });
   }, [update]);
@@ -446,7 +449,10 @@ export function WebWorkspacePanel({
       </div>
       {findOpen ? <div className="web-workspace-findbar" role="search" aria-label={t("webWorkspace.find")}>
         <Search className="icon" aria-hidden="true" />
-        <input ref={findInputRef} value={findText} type="text" aria-label={t("webWorkspace.find")} placeholder={t("webWorkspace.find")} onChange={(event) => { setFindText(event.target.value); find(event.target.value); }} onKeyDown={(event) => {
+        <input ref={findInputRef} value={findText} type="text" aria-label={t("webWorkspace.find")} placeholder={t("webWorkspace.find")}
+          onCompositionStart={() => { composingFind.current = true; }} onCompositionEnd={() => { composingFind.current = false; }}
+          onBlur={() => { composingFind.current = false; }} onChange={(event) => { setFindText(event.target.value); find(event.target.value); }} onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || composingFind.current) return;
           if (event.key === "Escape") { event.preventDefault(); closeFind(); }
           if (event.key === "Enter") { event.preventDefault(); find(findText, !event.shiftKey, true); }
         }} />
