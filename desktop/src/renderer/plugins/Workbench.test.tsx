@@ -125,6 +125,38 @@ describe("WorkbenchController", () => {
     restored.dispose();
   });
 
+  it.each(["session", "durable"] as const)("preserves an instance's %s override across host changes and restart", async (persistence) => {
+    const host = new PluginHost({ react: React });
+    const register = (api: PluginGenerationApi): void => {
+      api.registerViewType({
+        id: "panel",
+        title: "Panel",
+        persistence: persistence === "durable" ? "session" : "durable",
+        render: () => null,
+      });
+    };
+    await host.activateGeneration({ pluginId: "owner", generation: "one", register });
+    const controller = new WorkbenchController(host);
+    let restored: WorkbenchController | undefined;
+    try {
+      const id = await controller.openPluginView("owner", "panel", { persistence });
+      await host.activateGeneration({ pluginId: "unrelated", generation: "one", register(api) {
+        api.registerViewType({ id: "other", title: "Other", render: () => null });
+      } });
+      expect(controller.getSnapshot().views.find((view) => view.id === id)?.persistence).toBe(persistence);
+      await host.activateGeneration({ pluginId: "owner", generation: "two", register });
+      expect(controller.getSnapshot().views.find((view) => view.id === id)).toMatchObject({
+        generation: "two", persistence,
+      });
+      controller.dispose();
+      restored = new WorkbenchController(host);
+      expect(restored.getSnapshot().views.map((view) => view.id)).toEqual(persistence === "durable" ? [id] : []);
+    } finally {
+      controller.dispose();
+      restored?.dispose();
+    }
+  });
+
   it("asks the shell to reveal the placement region when opening a view", async () => {
     const host = new PluginHost({ react: React });
     await host.activateGeneration({

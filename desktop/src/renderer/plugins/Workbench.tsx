@@ -318,10 +318,10 @@ export class WorkbenchController {
       }
       this.pendingRestoredViewIds.delete(view.id);
       if (!definition) return [];
+      // Persistence is resolved per instance when opened, including explicit overrides.
       return [{
         ...view,
         generation: definition.generation,
-        persistence: definition.persistence ?? view.persistence,
       }];
     });
 

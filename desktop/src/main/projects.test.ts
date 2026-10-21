@@ -343,6 +343,27 @@ describe("ProjectManager runtime context availability", () => {
   expect(saved.projects[0]).toMatchObject({id, path: third, previous_paths: [first, second]});
 });
 
+describe("workspace relocation", () => {
+  it("rejects another registered workspace's path without changing either identity or the active context", async () => {
+    const first = await createProjectDir("first");
+    const second = await createProjectDir("second");
+    const manager = new ProjectManager();
+    const firstID = manager.add(first).projects[0].id;
+    manager.add(second);
+    const before = manager.select(firstID);
+    const saved = await readFile(canonicalStorePath(), "utf8");
+
+    expect(() => manager.relocate(firstID, join(second, "."))).toThrow("already registered");
+    expect(await readFile(canonicalStorePath(), "utf8")).toBe(saved);
+    expect(new ProjectManager().list()).toEqual(before);
+
+    const unchanged = manager.relocate(firstID, first);
+    expect(unchanged.projects.map(({ id, path }) => ({ id, path })))
+      .toEqual(before.projects.map(({ id, path }) => ({ id, path })));
+    expect(unchanged.active_context).toEqual(before.active_context);
+  });
+});
+
 describe("workspace batch import", () => {
   it("validates the entire selection before persisting and preserves identities on retries", async () => {
     const first = await createProjectDir("first");

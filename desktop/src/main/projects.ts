@@ -200,6 +200,11 @@ export class ProjectManager {
     if (index < 0) {
       throw new Error("workspace not found");
     }
+    if (this.store.projects.some((project) =>
+      project.id !== projectIDToRelocate && resolve(project.path) === resolvedPath,
+    )) {
+      throw new Error(`Workspace folder is already registered: ${resolvedPath}`);
+    }
     // Keep the stable id; only the path (and derived name) move. Because the
     // workspace state dir and its sessions are keyed by the id, everything
     // reconnects at the new location — this is the remedy for a moved folder.
