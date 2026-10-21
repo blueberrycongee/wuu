@@ -1,16 +1,42 @@
-.mac-window-controls {
+.mac-window-chrome {
+  --mac-chrome-height: calc(30px / var(--desktop-page-zoom, 1));
   position: fixed;
-  top: calc((var(--window-titlebar-height) - 20px) / 2);
-  left: calc(14px / var(--desktop-page-zoom, 1));
-  z-index: 152;
-  display: flex;
+  inset: 0 0 auto;
+  height: calc(12px / var(--desktop-page-zoom, 1));
+  z-index: 160;
   -webkit-app-region: no-drag;
+}
+
+.mac-window-chrome[data-revealed] {
+  height: var(--mac-chrome-height);
+}
+
+.mac-window-controls {
+  position: absolute;
+  inset: 0 0 auto;
+  height: var(--mac-chrome-height);
+  display: flex;
+  align-items: center;
+  padding: 0 calc(10px / var(--desktop-page-zoom, 1));
+  background: var(--sidebar-material-fill);
+  border-bottom: 1px solid var(--hairline-soft);
+  box-shadow: 0 2px 8px var(--ink-overlay-4);
+  transform: translateY(-100%);
+  transition: transform var(--motion-fast) var(--ease-out);
+  pointer-events: none;
+  /* Native drag regions swallow the pointer events that keep this strip open. */
+  -webkit-app-region: no-drag;
+}
+
+.mac-window-chrome[data-revealed] .mac-window-controls {
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
 .mac-window-control {
   display: grid;
-  width: 20px;
-  height: 20px;
+  width: calc(20px / var(--desktop-page-zoom, 1));
+  height: calc(24px / var(--desktop-page-zoom, 1));
   place-items: center;
   border: 0;
   padding: 0;
@@ -19,8 +45,8 @@
 }
 
 .mac-window-control svg {
-  width: 10px;
-  height: 10px;
+  width: calc(10px / var(--desktop-page-zoom, 1));
+  height: calc(10px / var(--desktop-page-zoom, 1));
   border: 1px solid color-mix(in srgb, var(--traffic-light-color) 80%, black);
   border-radius: 50%;
   background: var(--traffic-light-color);
@@ -46,14 +72,6 @@
   outline-offset: -1px;
 }
 
-/* Keep all three controls inside the existing ribbon, without widening it. */
-:root:has(.app-shell .sidebar-ribbon) .mac-window-controls {
-  top: var(--space-2);
-  left: 0;
-  width: var(--mac-ribbon-width);
-}
-
-:root:has(.app-shell .sidebar-ribbon) .mac-window-control {
-  width: calc(var(--mac-ribbon-width) / 3);
-  height: 24px;
+@media (prefers-reduced-motion: reduce) {
+  .mac-window-controls { transition: none; }
 }

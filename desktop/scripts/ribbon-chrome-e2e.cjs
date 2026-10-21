@@ -6,8 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { app, BrowserWindow } = require('electron');
 
-assert.equal(process.platform, 'linux', 'Use the isolated Linux display');
-assert.ok(process.env.DISPLAY, 'Xvfb display required');
+if (process.platform === 'linux') assert.ok(process.env.DISPLAY, 'Xvfb display required');
 const desktop = path.resolve(__dirname, '..');
 const output = path.resolve(process.env.WUU_RIBBON_CHROME_OUTPUT || path.join(desktop, 'out/e2e/ribbon-chrome'));
 const platform = process.env.WUU_RIBBON_CHROME_PLATFORM || 'darwin';
@@ -17,7 +16,7 @@ app.setPath('userData', path.join(temporary, 'profile'));
 const extension = path.join(temporary, 'extension.cjs');
 fs.writeFileSync(extension, `module.exports = api => ({ ...api, platform: ${JSON.stringify(platform)}, windowToggleFullScreen: async () => {}, windowMinimize: async () => {}, windowClose: async () => {}, windowToggleMaximize: async () => {}, windowIsMaximized: async () => false });`);
 process.env.WUU_RENDERER_E2E_EXTENSION = extension;
-const report = { status: 'running', platform, scope: 'Shipping renderer with synthetic backend under Linux/Xvfb', cases: [] };
+const report = { status: 'running', platform, scope: `Shipping renderer with synthetic backend on ${process.platform}`, cases: [] };
 const save = () => fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
 let win;
 const evaluate = (fn, argument) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(argument)})`);
@@ -64,8 +63,38 @@ async function run() {
   win = new BrowserWindow({ width: 1280, height: 820, frame: false, show: true, webPreferences: {
     preload: path.join(__dirname, 'resize-e2e-preload.cjs'), sandbox: false, contextIsolation: true, nodeIntegration: false,
   } });
-  await win.loadFile(path.join(desktop, 'out/renderer/index.html'));
+  if (process.env.WUU_E2E_URL) await win.loadURL(process.env.WUU_E2E_URL);
+  else await win.loadFile(path.join(desktop, 'out/renderer/index.html'));
   await until(() => !!document.querySelector('.turn') && !!document.querySelector('.section-sidebar-toggle'), 'conversation ready');
+  if (process.env.WUU_TRAFFIC_LIGHTS_E2E === 'true') {
+    const controlsVisible = () => [...document.querySelectorAll('.mac-window-control')].every(button => {
+      const r=button.getBoundingClientRect(); return r.top>=0 && button.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));
+    });
+    for (const fullScreen of (process.platform === 'darwin' ? [false, true] : [false])) for (const theme of ['light','dark']) {
+      if (win.isFullScreen() !== fullScreen) {
+        await new Promise(resolve => { win.once(fullScreen ? 'enter-full-screen' : 'leave-full-screen', resolve); win.setFullScreen(fullScreen); });
+      }
+      await evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
+      move({x:500,y:300});
+      await until(()=>document.querySelector('.mac-window-controls').getBoundingClientRect().bottom<=0,'traffic lights initially hidden');
+      const initial=await evaluate(()=>document.querySelector('.conversation-pane').getBoundingClientRect().toJSON());
+      move({x:400,y:9});
+      await until(controlsVisible,'top edge reveals traffic lights');
+      await settle();
+      assert.deepEqual(await evaluate(()=>document.querySelector('.conversation-pane').getBoundingClientRect().toJSON()),initial,'Revealing chrome must not move content');
+      fs.writeFileSync(path.join(output,theme+(fullScreen?'-fullscreen':'')+'-traffic-lights-open.png'),(await win.webContents.capturePage()).toPNG());
+      move({x:500,y:300});
+      await until(()=>document.querySelector('.mac-window-controls').getBoundingClientRect().bottom<=0,'leaving hides traffic lights');
+      await evaluate(()=>document.querySelector('.mac-window-close').focus());
+      await until(controlsVisible,'keyboard focus reveals window controls');
+      win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});
+      win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+      await until(()=>document.querySelector('.mac-window-controls').getBoundingClientRect().bottom<=0,'Escape dismisses window controls');
+      report.cases.push({theme,fullScreen:win.isFullScreen(),hover:true,keyboard:true,layoutStable:true}); save();
+    }
+    if (win.isFullScreen()) await new Promise(resolve=>{win.once('leave-full-screen',resolve);win.setFullScreen(false)});
+    report.status='passed'; save(); win.destroy(); app.quit(); return;
+  }
   for (const [theme, size, width] of [['light', 15, 1280], ['dark', 20, 1280], ['light', 20, 600], ['dark', 15, 600]]) {
     win.setContentSize(width, 820);
     await evaluate(({ theme, size }) => { document.documentElement.dataset.theme = theme; document.documentElement.style.setProperty('--conversation-message-font-size', size + 'px'); }, { theme, size });
@@ -90,7 +119,8 @@ async function run() {
         report.cases.push(result); save();
         fs.writeFileSync(path.join(output, label + '-open.png'), (await win.webContents.capturePage()).toPNG());
         assert.equal(during.caption.length, 3, 'All renderer caption controls are present');
-        assert.ok(during.caption.every(control => control.hit), 'Caption controls remain above the expanded rail');
+        if (platform === 'darwin') assert.ok(during.caption.every(control => !control.hit), 'Traffic lights stay hidden while using the ribbon');
+        else assert.ok(during.caption.every(control => control.hit), 'Caption controls remain above the expanded rail');
         if (platform === 'darwin') {
           assert.equal(during.toggleHit, false, 'Expanded rail must cover the contextual toggle');
           assert.equal(during.railHit, true, 'The covered toggle position belongs to the rail');
