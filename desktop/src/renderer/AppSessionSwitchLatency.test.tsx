@@ -528,8 +528,9 @@ describe("session tab switch latency", () => {
     const history = container.querySelector<HTMLElement>('[data-wuu-component="page-history-controls"]')!;
     const ribbon = container.querySelector<HTMLElement>(".sidebar-ribbon")!;
     const toggle = container.querySelector<HTMLButtonElement>(".section-sidebar-toggle")!;
-    expect(history.hidden).toBe(false);
-    await act(async () => pageHistoryButton("back").focus());
+    // Website pages use their own navigation toolbar; app history is occluded.
+    expect(history.hidden).toBe(true);
+    expect(history.hasAttribute("inert")).toBe(true);
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
     await vi.waitFor(async () => {
       await act(async () => {});
@@ -539,7 +540,6 @@ describe("session tab switch latency", () => {
     expect(history.hasAttribute("inert")).toBe(true);
     expect(toggle.hidden).toBe(true);
     expect(toggle.hasAttribute("inert")).toBe(true);
-    expect(document.activeElement).toBe(container.querySelector(".app-shell"));
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
     if (nativePresenter) {
       expect(history.hidden).toBe(true);
@@ -558,12 +558,11 @@ describe("session tab switch latency", () => {
         token: request.token, generation: request.generation, command: { type: "dismiss", reason: "leave" },
       })));
     }
-    expect(ribbon.dataset.expanded).toBeUndefined();
-    expect(history.hidden).toBe(false);
-    expect(history.hasAttribute("inert")).toBe(false);
+    await vi.waitFor(() => expect(ribbon.dataset.expanded).toBeUndefined());
+    expect(history.hidden).toBe(true);
+    expect(history.hasAttribute("inert")).toBe(true);
     expect(toggle.hidden).toBe(false);
     expect(toggle.hasAttribute("inert")).toBe(false);
-    expect(document.activeElement).toBe(container.querySelector(".app-shell"));
     // Native webpage navigation changes URL/history state, not the app route.
     await act(async () => {
       nativeState = { ...nativeState, url: "https://example.com/previous", canGoBack: false,
@@ -572,10 +571,16 @@ describe("session tab switch latency", () => {
     });
     await clickPageHistoryTarget(pageHistoryButton("back"));
     expect(container.querySelector('[data-wuu-component="app-shell"]')?.hasAttribute("data-web-workspace-open")).toBe(false);
+    expect(history.hidden).toBe(false);
+    expect(history.hasAttribute("inert")).toBe(false);
     expect(mainComposerTextarea().value).toBe("retained behind website");
     await clickPageHistoryTarget(pageHistoryButton("forward"));
     expect(container.querySelector('[data-wuu-component="app-shell"]')?.hasAttribute("data-web-workspace-open")).toBe(true);
+    expect(history.hidden).toBe(true);
+    expect(history.hasAttribute("inert")).toBe(true);
     await clickPageHistoryTarget(pageHistoryButton("back"));
+    expect(history.hidden).toBe(false);
+    expect(history.hasAttribute("inert")).toBe(false);
     expect(selectTab).toHaveBeenCalledWith(WEB_WORKSPACE_RIBBON_ID, "website:history");
     expect(command).not.toHaveBeenCalled();
     await act(async () => { nativeState = { ...nativeState, tabs: [], activeTabId: undefined }; listeners.forEach(listener => listener(nativeState)); });
@@ -1412,7 +1417,12 @@ describe("session tab switch latency", () => {
     // The creation notification may arrive while persisting the draft name.
     // It must not put a second row beside the still-pending first send.
     await act(async () => { emitNotification("thread/started", { thread: created }); });
-    expect(container.querySelectorAll('.thread-row-main')).toHaveLength(2);
+    // Each conversation appears once under Recent and once in its workspace.
+    const rowsAfterCreate = Array.from(container.querySelectorAll('.thread-row-main'));
+    expect(rowsAfterCreate).toHaveLength(4);
+    for (const title of ["Named conversation A", "pending B"]) {
+      expect(rowsAfterCreate.filter((row) => row.getAttribute("aria-label")?.includes(title))).toHaveLength(2);
+    }
     expect(threadRowButton("Named conversation A")).toBeDefined();
     expect(activeSessionTabLabel()).toBe("Named conversation A");
     expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
@@ -1431,7 +1441,10 @@ describe("session tab switch latency", () => {
     });
     expect(startTurn).toHaveBeenCalledTimes(entry === "workspace" ? 1 : 2);
     if (entry === "top") expect(startTurn.mock.calls[1].slice(0, 2)).toEqual([threadAID, "pending A"]);
-    expect(container.querySelectorAll('.thread-row-main')).toHaveLength(2);
+    const rowsAfterRename = Array.from(container.querySelectorAll('.thread-row-main'));
+    expect(rowsAfterRename).toHaveLength(4);
+    expect(rowsAfterRename.filter((row) => row.getAttribute("aria-label")?.includes("pending B"))).toHaveLength(2);
+    expect(rowsAfterRename.filter((row) => row.getAttribute("aria-label")?.includes(entry === "workspace" ? "pending A" : "Newer conversation name"))).toHaveLength(2);
     expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
     expect(threadRowButton(entry === "workspace" ? "pending A" : "Newer conversation name")).toBeDefined();
     expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");

@@ -389,7 +389,7 @@ describe("workspace file tabs", () => {
     await select("artifact conversation");
     expect(container.querySelector(".project-panel")).toBeNull();
     expect(container.querySelector(".workspace-tool-tab.active")?.textContent).toContain("README.md");
-    expect(container.querySelector(".workspace-right-panel")?.textContent).not.toContain("Project Beta");
+    expect(container.querySelector('[data-wuu-component="workspace-file-content"]')?.textContent).not.toContain("Project Beta");
   });
 
   it("returns focus after closing the browser without scrolling back to its historical link", async () => {
