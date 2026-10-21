@@ -34,6 +34,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Check for desktop updates every 30 minutes instead of every six hours.
+
 - Continue checking for newer desktop releases while an update is available,
   and refresh the latest version before downloading from either update entry point.
 

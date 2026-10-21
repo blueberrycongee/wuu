@@ -80,7 +80,7 @@ function start() {
     return timeout(() => {}, delay, ...args);
   };
   global.setInterval = (callback, delay, ...args) => {
-    assert.equal(delay, 6 * 60 * 60_000);
+    assert.equal(delay, 30 * 60_000);
     periodic = callback;
     return interval(() => {}, delay, ...args);
   };
