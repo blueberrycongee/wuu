@@ -1281,3 +1281,97 @@ func TestRequestContextCheckpointKeepsOnlyLatestState(t *testing.T) {
 		t.Fatalf("missing session: %v", err)
 	}
 }
+
+// The snapshot and role selection are one durable create-time record. Failed
+// initialization cannot leave a partially locked session; runtime mutations and
+// adoption must respect the same rule even outside the app server.
+func TestProjectPresetPersistenceAndMembership(t *testing.T) {
+	dir := t.TempDir()
+	var initial Session
+	if err := json.Unmarshal([]byte(`{"id":"lead","source":"project","provider":"p","model":"lead","project_preset":{"mode":"low","coordinator":{"provider":"p","model":"lead"},"technical_lead":{"provider":"p","model":"side"},"executor":{"provider":"p","model":"worker","effort":"high"}}}`), &initial); err != nil {
+		t.Fatal(err)
+	}
+	if initial.ProjectPreset == nil {
+		t.Fatal("snapshot was not decoded")
+	}
+	if _, err := CreateInitializedWithInbox(dir, initial, nil, ContextSeed{}, SessionLaunchRecord{}, InboxMessage{ClientID: "invalid", Content: "brief"}); err == nil {
+		t.Fatal("creation with no dispatch manager succeeded")
+	}
+	if _, found, err := Find(dir, initial.ID); err != nil || found {
+		t.Fatalf("failed create left a snapshot/session: %v %v", found, err)
+	}
+	if _, err := CreateInitialized(dir, initial, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SetRuntimeSelection(dir, initial.ID, RuntimeSelection{Provider: "p", Model: "changed"}); err == nil {
+		t.Fatal("locked lead model changed")
+	}
+	if _, err := SetModelSelection(dir, initial.ID, "p", "changed", ""); err == nil {
+		t.Fatal("legacy setter bypassed lock")
+	}
+	if _, err := SetRuntimeSelection(dir, initial.ID, RuntimeSelection{Provider: "p", Model: "lead", PermissionMode: "read_only"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"matching", "mismatch"} {
+		model := "worker"
+		if id == "mismatch" {
+			model = "different"
+		}
+		if _, err := CreateInitialized(dir, Session{ID: id, Provider: "p", Model: model, Effort: "high"}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := SetProjectMembership(dir, "mismatch", "project-session", "lead", ""); err == nil {
+		t.Fatal("adopted mismatched worker")
+	}
+	mismatch, _, _ := Find(dir, "mismatch")
+	if mismatch.ParentID != "" || mismatch.ProjectPreset != nil {
+		t.Fatalf("failed adoption mutated session: %+v", mismatch)
+	}
+	adopted, err := SetProjectMembership(dir, "matching", "project-session", "lead", "")
+	if err != nil || adopted.ProjectPreset == nil || *adopted.ProjectPreset != *initial.ProjectPreset {
+		t.Fatalf("adoption lost snapshot: %+v %v", adopted, err)
+	}
+	if _, err := UpdateArchived(dir, "lead", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SetRuntimeSelection(dir, "matching", RuntimeSelection{Provider: "p", Model: "changed"}); err == nil {
+		t.Fatal("archiving lead unlocked child")
+	}
+	released, err := SetProjectMembership(dir, "matching", "", "", "")
+	if err != nil || released.ProjectPreset != nil {
+		t.Fatalf("release retained lock: %+v %v", released, err)
+	}
+	if _, err := SetRuntimeSelection(dir, "matching", RuntimeSelection{Provider: "p", Model: "changed"}); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := List(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stored := range listed {
+		if stored.ID == "lead" && (stored.ProjectPreset == nil || *stored.ProjectPreset != *initial.ProjectPreset) {
+			t.Fatalf("list lost snapshot: %+v", stored)
+		}
+	}
+}
+
+// The ordinary composer mirrors a supported effort into both fields. Adopting
+// that already-equivalent selection must not require switching models first.
+func TestProjectPresetAdoptionAcceptsMirroredEffort(t *testing.T) {
+	dir := t.TempDir()
+	var lead Session
+	if err := json.Unmarshal([]byte(`{"id":"lead","source":"project","provider":"p","model":"m","variant":"high","project_preset":{"mode":"high","coordinator":{"provider":"p","model":"m","variant":"high"},"technical_lead":{"provider":"p","model":"m","variant":"high"},"executor":{"provider":"p","model":"m","variant":"high"}}}`), &lead); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateInitialized(dir, lead, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateInitialized(dir, Session{ID: "ordinary", Provider: "p", Model: "m", Variant: "high", Effort: "high"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	adopted, err := SetProjectMembership(dir, "ordinary", "project-session", "lead", "")
+	if err != nil || adopted.ProjectPreset == nil || adopted.Variant != "high" || adopted.Effort != "" {
+		t.Fatalf("equivalent ordinary selection could not join: %+v %v", adopted, err)
+	}
+}

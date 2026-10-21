@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -104,11 +106,53 @@ func (s *Server) startProjectThread(selection session.RuntimeSelection, engineID
 	if workspaceID == "" {
 		return nil, errors.New("a project needs a registered workspace")
 	}
+	var preset *session.ProjectPresetSnapshot
+	if mode := strings.TrimSpace(params.Project.Preset); mode != "" {
+		if params.Provider != "" || params.Model != "" || params.Effort != "" || params.Speed != "" || len(params.ModelOptions) != 0 {
+			return nil, errors.New("a project preset owns its role models; omit provider, model, effort and speed")
+		}
+		if !config.ValidProjectPresetMode(mode) {
+			return nil, fmt.Errorf("unknown project preset %q", mode)
+		}
+		cfg, _, err := s.rt.LoadEffectiveConfig()
+		if err != nil {
+			return nil, err
+		}
+		configured, found := cfg.Agent.ProjectPresets[mode]
+		if !found {
+			return nil, fmt.Errorf("project preset %q is not configured", mode)
+		}
+		preset = &session.ProjectPresetSnapshot{Mode: mode}
+		// Preset roles are explicit selections like aliases: no ambient lead
+		// inheritance. Resolve once using the existing effort/variant rules.
+		cfg.Agent.ModelAliases = map[string]config.ModelRoleConfig{"coordinator": configured.Coordinator, "technical_lead": configured.TechnicalLead, "executor": configured.Executor}
+		for _, role := range []string{"coordinator", "technical_lead", "executor"} {
+			choice, err := modelroles.ResolveAlias(cfg, role)
+			if err != nil {
+				return nil, fmt.Errorf("project preset %q %s: %w", mode, role, err)
+			}
+			if choice.ProviderConfig.Models[choice.Model].Disabled {
+				return nil, fmt.Errorf("project preset %q %s model %q is disabled", mode, role, choice.Model)
+			}
+			resolved := config.ModelRoleConfig{Provider: choice.Provider, Model: choice.Model, Variant: choice.Variant, Effort: choice.LegacyEffort}
+			switch role {
+			case "coordinator":
+				preset.Coordinator = resolved
+			case "technical_lead":
+				preset.TechnicalLead = resolved
+			case "executor":
+				preset.Executor = resolved
+			}
+		}
+		selection.Provider, selection.Model = preset.Coordinator.Provider, preset.Coordinator.Model
+		selection.Variant, selection.Effort = preset.Coordinator.Variant, preset.Coordinator.Effort
+		selection.Speed = ""
+	}
 	return s.createHostSessionThread(projectSessionOwner, projectSource, "", hostSessionCreateParams{
 		Name: name, Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh,
 		Workspace: "shared", WorkspaceID: workspaceID, WorkspaceRoot: strings.TrimSpace(params.CWD),
 		Provider: selection.Provider, Model: selection.Model, Variant: selection.Variant, Effort: selection.Effort,
-		PermissionMode: selection.PermissionMode,
+		PermissionMode: selection.PermissionMode, ProjectPreset: preset,
 	})
 }
 

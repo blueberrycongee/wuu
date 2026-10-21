@@ -30,7 +30,7 @@ Normal startup removes these fields from every project layer, including `setting
 |---|---|
 | `default_provider`, `providers` | Select model services, endpoints, credentials, and connection options |
 | `instructions`, legacy `memory` | Control instruction discovery, including user paths |
-| `agent.model_roles`, `agent.model_aliases`, `agent.project_models` | Route model work |
+| `agent.model_roles`, `agent.model_aliases`, `agent.project_models`, `agent.project_presets` | Route model work |
 | `agent.permission_mode` | Set local execution authority |
 
 Case changes in JSON keys do not bypass the restriction. Other allowed project fields can still affect prompts, tools, hooks, and services, so this filtering does not make an unfamiliar repository safe to execute.
@@ -86,6 +86,29 @@ discovery with `false` while keeping client discovery. Only enable it when the e
 protocol; accepting unknown fields is not sufficient.
 
 ## Project Agent model choices
+
+In builds with Project Agent enabled, configure `low`, `medium`, `high`, and
+`ultra` in **Settings → Built-in agent → Project Agent modes**. These names identify
+editable team presets, not model reasoning levels or measured quality tiers.
+Each preset selects a coordinator, technical lead, and persistent executor.
+
+```json
+{ "agent": { "project_presets": { "low": {
+  "coordinator": { "provider": "openai", "model": "your-coordinator-model" },
+  "technical_lead": { "provider": "anthropic", "model": "your-lead-model", "effort": "high" },
+  "executor": { "provider": "openai", "model": "your-execution-model" }
+} } } }
+```
+
+All three roles need an explicit configured provider and model before creation.
+Each accepts supported `effort` or model `variant`. Partial presets can be saved
+while editing. Creating a project saves the resolved choices once; changes to
+settings affect only new projects. Existing projects and later work sessions use
+their own snapshot across restart. Model aliases and model/effort updates cannot
+bypass that lock. Supported speed and permission controls remain available.
+A removed provider or unavailable selection fails visibly instead of changing models.
+
+For projects created without a preset, the following defaults remain supported.
 
 In builds with Project Agent enabled, the coordinator uses the conversation model. Set
 technical lead and persistent executor defaults independently in Settings → Runtime, or in the user

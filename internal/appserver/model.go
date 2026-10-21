@@ -69,6 +69,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		Source:          th.Source,
 		ProjectID:       th.ProjectID,
 		ProjectRole:     th.ProjectRole,
+		ProjectPreset:   th.ProjectPreset,
 		ParentID:        th.ParentID,
 		AgentPath:       th.AgentPath,
 		Preview:         firstNonEmpty(th.Title, threadPreview(th.History)),

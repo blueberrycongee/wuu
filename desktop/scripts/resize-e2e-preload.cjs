@@ -1,7 +1,24 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const cwd = process.env.WUU_RESIZE_E2E_CWD || process.cwd();
-const runtimeContext = { kind: "no_project", cwd };
+const projectPresetE2E = process.argv.includes("--project-agent-e2e-enabled");
+const runtimeContext = projectPresetE2E ? { kind: "project", project_id: "preset-workspace", cwd } : { kind: "no_project", cwd };
+const presetProviders = [{ name: "e2e", type: "mock", model: "mock-resize", api_key_configured: true, models: [
+  { id: "mock-resize", display_name: "Reasoning model", supported_efforts: ["low", "high"] },
+  { id: "custom-model", display_name: "Long custom model name for project worker configuration", variants: [{ id: "deliberate" }] },
+] }];
+let projectPresets = { low: {
+  coordinator: { provider: "e2e", model: "mock-resize", effort: "low" },
+  technical_lead: { provider: "e2e", model: "mock-resize", variant: "high" },
+  executor: { provider: "e2e", model: "custom-model", variant: "deliberate" },
+}, medium: { coordinator: { provider: "e2e", model: "mock-resize", effort: "high" } } };
+let failPresetSave = false;
+let createdProject;
+let lastProjectStart;
+if (projectPresetE2E) contextBridge.exposeInMainWorld("projectPresetE2E", {
+  state: () => ({ projectPresets, createdProject, lastProjectStart }),
+  failNextSave: () => { failPresetSave = true; },
+});
 const liveLayout = process.env.WUU_RESIZE_LIVE_E2E === "1";
 let generalSettings = { git_attribution_enabled: true, ptc: { enabled: true } };
 const now = new Date().toISOString();
@@ -101,7 +118,7 @@ const sideSummary = {
 
 function projectList() {
   return {
-    projects: [],
+    projects: projectPresetE2E ? [{ id: "preset-workspace", name: "Preset workspace", path: cwd, created_at: now, updated_at: now }] : [],
     active_context: runtimeContext
   };
 }
@@ -275,20 +292,19 @@ const desktopAPI = {
     provider: "e2e",
     model: "mock-resize",
     workspace_root: cwd,
-    providers: [{ name: "e2e", type: "mock", model: "mock-resize" }],
-    // Layout journeys open /side through the same public contribution gate.
-    extension_inventory: [{
-      id: "user:e2e-attached-chat", kind: "plugin", name: "Attached chat fixture",
-      state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
-      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "e2e-attached-chat" },
-      contributions: { commands: [{ id: "side", title: "Side chat", kind: "side_conversation", template: "Use the fixture side conversation." }] },
-    }],
+    providers: projectPresetE2E ? presetProviders : [{ name: "e2e", type: "mock", model: "mock-resize" }],
+    project_presets: projectPresetE2E ? projectPresets : undefined,
   }),
   updateGeneralSettings: async settings => {
     generalSettings = { ...generalSettings, ...settings };
     return { general_settings: generalSettings };
   },
   listEngines: async () => ({ engines: [] }),
+  updateAdvancedSettings: async settings => {
+    if (failPresetSave) { failPresetSave = false; throw new Error("Synthetic preset save failure"); }
+    projectPresets = settings.project_presets ?? projectPresets;
+    return { project_presets: projectPresets };
+  },
   getBuildInfo: async () => ({
     core: undefined,
     desktop: { version: "resize-e2e", date: "1970-01-01T00:00:00Z" }
@@ -302,13 +318,21 @@ const desktopAPI = {
     provider,
     models: [{ id: "mock-resize", name: "mock-resize" }]
   }),
-  startThread: async () => ({ thread: resizeThread }),
+  startThread: async params => {
+    if (!params?.project) return { thread: resizeThread };
+    lastProjectStart = params;
+    createdProject = { ...resizeThread, id: "preset-project", turns: [],
+      project_id: "preset-project", workspace_id: "preset-workspace", source: "project",
+      project_preset: { mode: params.project.preset, ...structuredClone(projectPresets[params.project.preset]) },
+    };
+    return { thread: createdProject };
+  },
   resumeThread: async (id) => ({
-    thread: id === "resize-related-thread"
+    thread: id === createdProject?.id ? createdProject : id === "resize-related-thread"
       ? { ...resizeThread, id, turns: turns.slice(-2) }
       : resizeThread
   }),
-  listThreads: async () => ({ threads: [resizeThread] }),
+  listThreads: async () => ({ threads: createdProject ? [resizeThread, createdProject] : [resizeThread] }),
   listArchivedThreads: async () => ({ threads: [] }),
   openSideThread: async () => ({ summary: sideSummary }),
   getSideThreadHistory: async () => ({
@@ -329,6 +353,11 @@ const desktopAPI = {
   pinThread: async (_id, pinned) => ({ pinned }),
   archiveThread: async () => ({ ok: true }),
   startTurn: async (_threadID, text, images = [], _files, _permission, _document, _parts, _context, clientID) => {
+    if (_threadID === createdProject?.id) {
+      const turn = { id: "preset-turn", status: "completed", items: [{ id: "preset-user", type: "user_message", status: "completed", text, source_id: clientID }] };
+      createdProject.turns.push(turn);
+      return { turn };
+    }
     if (!liveLayout) return { turn: null };
     submittedTurns += 1;
     const turn = {

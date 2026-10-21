@@ -116,6 +116,7 @@ function handoffInitialized(): InitializeResult {
 }
 
 function renderComposer(props: {
+  runtimeSelection?: React.ReactNode;
   queryHistorySessionID?: string;
   accessMenuOpen?: boolean;
   activeEngine?: string;
@@ -199,6 +200,7 @@ function renderComposer(props: {
           disabledReason={props.disabledReason}
           readOnly={props.readOnly ?? false}
           initialized={props.initialized ?? initialized(props.permissions)}
+          runtimeSelection={props.runtimeSelection}
           activeEngine={props.activeEngine}
           engineModel={props.engineModel}
           engineSpeed={props.engineSpeed}
@@ -460,6 +462,16 @@ describe("attachment picker focus recovery", () => {
     await settlePicker(input, "cancel");
     expect(focus).not.toHaveBeenCalled();
   });
+});
+
+it("replaces mutable model controls with the project selection while retaining ordinary controls by default", () => {
+  renderComposer({ runtimeSelection: <span aria-label="Project mode">high</span> });
+  expect(container.querySelector('[aria-label="Project mode"]')?.textContent).toBe("high");
+  expect(container.querySelector('button[aria-label="Wuu · fake-model"]')).toBeNull();
+  act(() => root?.unmount());
+  root = null;
+  renderComposer({});
+  expect(container.querySelector('button[aria-label="Wuu · fake-model"]')).not.toBeNull();
 });
 
 describe("mobile composer attachments", () => {
@@ -2700,11 +2712,12 @@ describe("Composer send control", () => {
     { speed: "", defaultSpeed: "fast", next: "standard" },
     { speed: "", defaultSpeed: "standard", next: "fast" },
     { speed: "standard", defaultSpeed: "fast", next: "fast" },
-  ])("/fast toggles the effective engine speed for $speed / $defaultSpeed", async ({ speed, defaultSpeed, next }) => {
+  ].flatMap((selection) => [false, true].map((frozen) => ({ ...selection, frozen }))))("/fast toggles the effective engine speed for $speed / $defaultSpeed (preset=$frozen)", async ({ speed, defaultSpeed, next, frozen }) => {
     const onSelectSpeed = vi.fn().mockResolvedValue(true);
     const onSend = vi.fn();
     renderComposer({
       prompt: "/fast", activeEngine: "codex", engineModel: "gpt-6-astra", engineSpeed: speed,
+      runtimeSelection: frozen ? <span>high</span> : undefined,
       engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, default_speed: defaultSpeed }] }],
       onSelectSpeed, onSend,
       activeContext: { kind: "project", project_id: "repo", cwd: "/repo" },
@@ -2712,6 +2725,49 @@ describe("Composer send control", () => {
     await act(async () => { container.querySelector("textarea")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); });
     expect(onSelectSpeed).toHaveBeenCalledWith(next);
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("lets a frozen preset change speed without exposing model selection", async () => {
+    const onSelectSpeed = vi.fn().mockResolvedValue(true);
+    renderComposer({
+      activeEngine: "codex", engineModel: "gpt-6-astra", engineSpeed: "fast",
+      runtimeSelection: <span>high</span>, onSelectSpeed,
+      engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, default_speed: "standard" }] }],
+    });
+    const fast = container.querySelector<HTMLButtonElement>(`button[aria-label="${translateCurrent("runtime.fastMode")}"]`);
+    expect(fast?.disabled).toBe(false);
+    await act(async () => { fast?.click(); });
+    expect(onSelectSpeed).toHaveBeenCalledWith("standard");
+    expect(container.querySelector('button[aria-haspopup="menu"][aria-label*="gpt-6-astra"]')).toBeNull();
+  });
+
+  it("keeps a pending preset speed edit with its original session when switching to the same model", async () => {
+    let finishFirst!: (result: boolean) => void;
+    const firstSave = vi.fn(() => new Promise<boolean>((resolve) => { finishFirst = resolve; }));
+    const secondSave = vi.fn().mockResolvedValue(true);
+    const runtime = {
+      ...initialized(), speed: "standard",
+      providers: [{ name: "fake", type: "openai-compatible", model: "fake-model", models: [{ id: "fake-model", fast_mode: true, default_speed: "standard" }] }],
+    };
+    const fastButton = () => container.querySelector<HTMLButtonElement>(`button[aria-label="${translateCurrent("runtime.fastMode")}"]`)!;
+    renderComposer({ initialized: runtime, runtimeSelection: <span>high</span>, queryHistorySessionID: "project-a", onSelectSpeed: firstSave });
+    const textarea = container.querySelector("textarea");
+    await act(async () => { fastButton().click(); });
+    expect(firstSave).toHaveBeenCalledWith("fast");
+    expect(fastButton().getAttribute("aria-busy")).toBe("true");
+
+    renderComposer({ initialized: runtime, runtimeSelection: <span>high</span>, queryHistorySessionID: "project-b", onSelectSpeed: secondSave });
+    try {
+      expect(container.querySelector("textarea")).toBe(textarea);
+      expect(fastButton().getAttribute("aria-pressed")).toBe("false");
+      expect(fastButton().hasAttribute("aria-busy")).toBe(false);
+    } finally {
+      await act(async () => { finishFirst(true); });
+    }
+    expect(fastButton().getAttribute("aria-pressed")).toBe("false");
+    await act(async () => { fastButton().click(); });
+    expect(secondSave).toHaveBeenCalledWith("fast");
+    expect(firstSave).toHaveBeenCalledTimes(1);
   });
 
   it("sends an exact slash command with arguments on Enter", () => {

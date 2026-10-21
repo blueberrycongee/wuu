@@ -30,7 +30,7 @@ Provider 凭据优先使用环境变量引用。工具输出可能遮蔽密钥�
 |---|---|
 | `default_provider`、`providers` | 选择模型服务、端点、凭据和连接选项 |
 | `instructions`、旧字段 `memory` | 控制指令发现，包括用户路径 |
-| `agent.model_roles`、`agent.model_aliases`、`agent.project_models` | 路由模型工作 |
+| `agent.model_roles`、`agent.model_aliases`、`agent.project_models`、`agent.project_presets` | 路由模型工作 |
 | `agent.permission_mode` | 设置本地执行权限 |
 
 改变 JSON 字段大小写不能绕过限制。其他允许的项目字段仍可能影响提示、工具、Hook 和服务，因此这种过滤不代表陌生仓库可以安全执行。
@@ -82,6 +82,26 @@ Kimi 使用独立的消息级工具声明协议；这条规则不启用其 Respo
 时才启用；仅接受未知字段并不够。
 
 ## Project Agent 模型选择
+
+在启用 Project Agent 的构建中，可在 **设置 → 内置 Agent → Project Agent 模式**
+配置 `low`、`medium`、`high`、`ultra`。这些名称代表可编辑的团队预设，不代表模型
+推理等级或经过评测的质量档位。每个预设分别选择协调者、技术负责人和持久执行者。
+
+```json
+{ "agent": { "project_presets": { "low": {
+  "coordinator": { "provider": "openai", "model": "your-coordinator-model" },
+  "technical_lead": { "provider": "anthropic", "model": "your-lead-model", "effort": "high" },
+  "executor": { "provider": "openai", "model": "your-execution-model" }
+} } } }
+```
+
+创建前，三个角色均须明确选择已配置的模型服务和模型，也可选择受支持的 `effort`
+或模型 `variant`。编辑时允许保存未完成的预设。创建项目会一次性解析并保存选择；
+之后修改设置只影响新项目。已有项目及后来创建的工作成员在重启后仍使用自己的
+快照。模型别名和模型、推理配置更新不能绕过锁定；支持的速度和权限控制仍可使用。
+服务被移除或原选择不可用时会明确报错，不会自动切换模型。
+
+未选择预设创建的项目仍支持下面的默认配置。
 
 在启用 Project Agent 的构建中，协调者使用主对话模型。可以在设置 → 运行时中
 分别选择技术负责人和持久执行者的默认模型，也可以修改用户配置：

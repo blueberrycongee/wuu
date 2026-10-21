@@ -73,6 +73,9 @@ func (s *Server) projectWork(ctx context.Context, actorID, callID string, r tool
 	if err != nil {
 		return nil, err
 	}
+	if project.ProjectPreset != nil && strings.TrimSpace(r.ModelAlias) != "" {
+		return nil, errors.New("project preset role models are locked; model_alias is not allowed")
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -104,13 +107,18 @@ func (s *Server) projectWork(ctx context.Context, actorID, callID string, r tool
 		if strings.TrimSpace(r.Brief) == "" || strings.TrimSpace(r.Acceptance) == "" || strings.TrimSpace(r.Authority) == "" {
 			return nil, errors.New("create requires brief, acceptance and actual user authority")
 		}
-		leadModel, err := s.projectWorkModel(project, s.rt.ProjectModels.TechnicalLead, r.ModelAlias)
-		if err != nil {
-			return nil, err
-		}
+		leadDefault := s.rt.ProjectModels.TechnicalLead
 		executorDefault := s.rt.ProjectModels.Executor
 		if executorDefault.Provider == "" {
 			executorDefault = s.rt.ProjectModels.Worker
+		}
+		if project.ProjectPreset != nil {
+			leadDefault = project.ProjectPreset.TechnicalLead
+			executorDefault = project.ProjectPreset.Executor
+		}
+		leadModel, err := s.projectWorkModel(project, leadDefault, r.ModelAlias)
+		if err != nil {
+			return nil, err
 		}
 		executorModel, err := s.projectWorkModel(project, executorDefault, "")
 		if err != nil {
@@ -528,7 +536,7 @@ func (s *Server) ensureWorkMember(w session.ProjectWork, id, role string, model 
 	_, err := s.createHostSessionThread(projectSessionOwner, projectSessionSource, id, hostSessionCreateParams{
 		RequestID: "project-work-member:" + id, Name: w.Title + " · " + role, Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh,
 		ParentSessionID: w.ProjectID, Workspace: workspace, WorkspaceID: project.WorkspaceID, SharedWorkspaceSessionID: sharedWith,
-		Provider: model.Provider, Model: model.Model, Variant: model.Variant, Effort: model.Effort, PermissionMode: project.PermissionMode, ProjectRole: role, InitialInput: &initial,
+		Provider: model.Provider, Model: model.Model, Variant: model.Variant, Effort: model.Effort, PermissionMode: project.PermissionMode, ProjectRole: role, ProjectPreset: project.ProjectPreset, InitialInput: &initial,
 	})
 	return err
 }
