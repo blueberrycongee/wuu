@@ -88,6 +88,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Draw the selected sidebar row with an even edge on every side instead of a shadow that faded at the top.
 
+- Keep running conversations in a stable order in the Recent sidebar when switching sessions or refreshing live output.
+
 - Keep opening sidebar content clipped so the moving resize divider remains clickable.
 
 - Prevent a queued native ribbon blur from opening an error dialog when its window closes.

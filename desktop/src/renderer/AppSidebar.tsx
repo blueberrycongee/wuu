@@ -61,6 +61,7 @@ import {
   isScratchThread,
   threadBelongsToWorkspace,
   isThreadExecuting,
+  isThreadRunning,
   isThreadUnread,
   sidebarThreadSortTime,
   type AppState,
@@ -1134,8 +1135,10 @@ export function AppSidebar({
   const recentConversations = useMemo(() => allSidebarThreads
     .filter((thread) => !thread.archived && !thread.pinned
       && !projectIndex.summaries.has(thread.id) && !projectIndex.managedSessionIDs.has(thread.id))
-    .sort((left, right) => (Date.parse(right.updated_at) || Date.parse(right.created_at) || 0)
-      - (Date.parse(left.updated_at) || Date.parse(left.created_at) || 0)
+    // Resuming a running session refreshes updated_at from its live output.
+    // Use the same stable key as the other sidebar lists so opening it cannot move it.
+    .sort((left, right) => sidebarThreadSortTime(right, isThreadRunning(right))
+      - sidebarThreadSortTime(left, isThreadRunning(left))
       || left.id.localeCompare(right.id))
     .slice(0, RECENT_THREAD_LIMIT),
   [allSidebarThreads, projectIndex]);
