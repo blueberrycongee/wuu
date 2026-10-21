@@ -382,6 +382,24 @@ describe("BrowserHostCoordinator CDP routing", () => {
     });
   });
 
+  it.each([["a", "a"], ["Enter", "\r"]])("dispatches %s text exactly once", async (key, text) => {
+    const harness = makeHarness();
+    await openTab(harness, "/repo", "t1");
+    const view = harness.views[0];
+
+    await harness.coordinator.handleServerRequest(
+      serverRequest(
+        "browser/cdp",
+        { workdir: "/repo", tab_id: "t1", method: "key", params: { keys: [key] } },
+        "key-1",
+      ),
+    );
+
+    const keyEvents = view.sentCommands.filter((command) => command.method === "Input.dispatchKeyEvent");
+    expect(keyEvents.map((command) => command.params?.type)).toEqual(["keyDown", "keyUp"]);
+    expect(keyEvents[0]?.params).toMatchObject({ key, text });
+  });
+
   it("assigns node_ids on observe and resolves click(node_id) through the map", async () => {
     const harness = makeHarness();
     await openTab(harness, "/repo", "t1");

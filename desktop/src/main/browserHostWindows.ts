@@ -1187,11 +1187,9 @@ export class BrowserHostCoordinator {
       for (const stroke of chord) {
         const event = keyDispatch(stroke);
         assertCurrent();
-        await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", ...event });
-        if (event.text) {
-          assertCurrent();
-          await dbg.sendCommand("Input.dispatchKeyEvent", { type: "char", text: event.text, key: event.key });
-        }
+        // A text-bearing keyDown already generates the char event in Chromium.
+        // rawKeyDown keeps non-text keys from acquiring layout-dependent text.
+        await dbg.sendCommand("Input.dispatchKeyEvent", { type: event.text ? "keyDown" : "rawKeyDown", ...event });
         assertCurrent();
         await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...event });
       }
