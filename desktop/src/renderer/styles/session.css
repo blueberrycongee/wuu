@@ -22,6 +22,13 @@
     env(safe-area-inset-right, 0px)
   );
   --session-composer-width: 760px;
+  /* IM message frames overhang the reading column on both sides. The composer
+   * mirrors that inset so the sent query and the draft share one width. */
+  --session-im-inline-outset: clamp(
+    var(--space-2),
+    calc(var(--session-outer-padding-inline) - var(--space-2)),
+    var(--space-3)
+  );
   --session-outer-width: calc(
     var(--session-composer-width) + var(--session-outer-padding-inline) +
       var(--session-outer-padding-inline)

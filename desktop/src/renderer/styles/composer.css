@@ -468,6 +468,26 @@
   margin: 0 auto;
 }
 
+/* IM message frames overhang the reading column. Extend the draft by the same
+ * inset on both sides so the sent query and the input keep identical edges. */
+:root[data-message-style="im"] .dock-composer-wrap:not(.document-composer-wrap) .composer-stack {
+  --composer-im-stack-outset: var(--session-im-inline-outset);
+  width: min(
+    calc(var(--session-composer-width) + 2 * var(--composer-im-stack-outset)),
+    calc(
+      100% - var(--session-outer-padding-inline) - var(--session-outer-padding-inline) +
+        2 * var(--composer-im-stack-outset)
+    )
+  );
+}
+
+/* The empty state already sits in the padded session-flow column, so extend
+ * its full-width draft rather than subtracting those gutters twice. */
+:root[data-message-style="im"] .hero-composer-wrap .composer-stack {
+  --composer-im-stack-outset: var(--session-im-inline-outset);
+  width: calc(100% + 2 * var(--composer-im-stack-outset));
+}
+
 .composer-top-accessory {
   display: flex;
   justify-content: flex-end;
@@ -1301,6 +1321,26 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
         display: none;
       }
     }
+  }
+
+  /* In IM mode the message frame is the reference surface. Keep the capsule
+     itself at that width instead of extending past it by the usual overhang. */
+  :root[data-message-style="im"]
+    :is(.dock-composer-wrap:not(.document-composer-wrap), .hero-composer-wrap)
+    .composer-stack:not([data-multiline]):not([data-has-attachments]):not(:has(.composer-cover-accessory)) {
+    --composer-im-stack-outset: 0px;
+    --composer-pill-overhang: var(--session-im-inline-outset);
+  }
+
+  /* The reduced overhang moves Plus and Send inside the capsule. Keep the
+     draft clear of both 32px controls and their breathing room. */
+  :root[data-message-style="im"]
+    :is(.dock-composer-wrap:not(.document-composer-wrap), .hero-composer-wrap)
+    .composer-stack:not([data-multiline]):not([data-has-attachments]):not(:has(.composer-cover-accessory))
+    .composer textarea {
+    padding-inline: calc(
+      38px - var(--composer-pill-overhang) + var(--space-2)
+    );
   }
 }
 

@@ -5872,12 +5872,6 @@ button.turn-edit-summary-overview:focus-visible {
   --user-message-bg-color: var(--wuu-message-user-background, var(--surface-1));
   --user-message-frame-border: var(--wuu-message-user-border, 1px solid var(--hairline-soft));
   --user-message-radius: var(--wuu-message-user-radius, 12px);
-  /* Narrow panes keep the frame clear of the window edge. */
-  --user-message-inline-outset: clamp(
-    var(--space-2),
-    calc(var(--session-outer-padding-inline) - var(--space-2)),
-    var(--space-3)
-  );
 }
 
 :root[data-message-style="im"] .user-message-block {
@@ -5890,15 +5884,15 @@ button.turn-edit-summary-overview:focus-visible {
 }
 
 :root[data-message-style="im"] :is(.user-message-motion:not(:has(.user-message-edit)), .user-message-edit) {
-  width: calc(100% + 2 * var(--user-message-inline-outset));
+  width: calc(100% + 2 * var(--session-im-inline-outset));
   max-width: none;
-  margin-inline: calc(-1 * var(--user-message-inline-outset));
+  margin-inline: calc(-1 * var(--session-im-inline-outset));
   box-sizing: border-box;
 }
 
 :root[data-message-style="im"] .user-message-motion:not(:has(.user-message-edit)) {
   justify-items: stretch;
-  padding: var(--conversation-framed-text-inset-block) var(--user-message-inline-outset);
+  padding: var(--conversation-framed-text-inset-block) var(--session-im-inline-outset);
   background: var(--user-message-bg-color);
   border-radius: var(--user-message-radius);
   outline: var(--user-message-frame-border);
@@ -5917,7 +5911,7 @@ button.turn-edit-summary-overview:focus-visible {
 }
 
 :root[data-message-style="im"] .user-message-edit {
-  padding-inline: calc(var(--user-message-inline-outset) - 1px);
+  padding-inline: calc(var(--session-im-inline-outset) - 1px);
 }
 
 :root[data-message-style="im"] .user-message-edit-input {
