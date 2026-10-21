@@ -27,10 +27,21 @@ export function createUpdateController(options: {
     await options.install();
   }
   async function download(version: string) {
-    set({ kind: "downloading", version, percent: 0 });
+    set({ kind: "checking" });
     try {
+      // Refresh cached metadata after consent, including time spent in a dialog.
+      const result = await options.updater.checkForUpdates();
+      if (stopped) return;
+      if (!result?.isUpdateAvailable) {
+        set({ kind: "idle" });
+        return;
+      }
+      version = result.updateInfo.version;
+      set({ kind: "downloading", version, percent: 0 });
       await options.updater.downloadUpdate();
-      if (!stopped) set({ kind: "ready", version });
+      if (stopped) return;
+      set({ kind: "ready", version });
+      return version;
     } catch (error) {
       if (!stopped) set({ kind: "error", version });
       throw error;
@@ -64,7 +75,7 @@ export function createUpdateController(options: {
     },
     async check(manual: boolean) {
       if (busy || stopped || state.kind === "installing") return;
-      if (!manual && state.kind !== "idle") return;
+      if (!manual && state.kind !== "idle" && state.kind !== "available" && state.kind !== "error") return;
       busy = true;
       const previous = state;
       let showFailure = manual;
@@ -89,8 +100,8 @@ export function createUpdateController(options: {
         if (stopped) return;
         if (response !== 0) { set({ kind: "available", version }); return; }
         showFailure = true;
-        await download(version);
-        if (!stopped) await offerRestart(version);
+        const downloadedVersion = await download(version);
+        if (!stopped && downloadedVersion) await offerRestart(downloadedVersion);
       } catch (error) {
         console.error("Desktop update failed", { error });
         if (state.kind !== "error") {
