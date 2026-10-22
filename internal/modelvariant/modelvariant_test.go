@@ -438,6 +438,51 @@ func TestSummariesMatchProviderCompatForMiniMaxM3(t *testing.T) {
 	}
 }
 
+func TestMiniMaxM31FlashUsesAlwaysOnEffortTiers(t *testing.T) {
+	reasoning := true
+	for _, tc := range []struct {
+		name      string
+		npm       string
+		effortKey string
+	}{
+		{name: "anthropic", npm: "@ai-sdk/anthropic", effortKey: "effort"},
+		{name: "openai compatible", npm: "@ai-sdk/openai-compatible", effortKey: "reasoningEffort"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := config.ProviderConfig{
+				Type:  "anthropic",
+				NPM:   tc.npm,
+				Model: "MiniMax-M3.1-Flash",
+				Models: map[string]config.ProviderModelConfig{
+					"MiniMax-M3.1-Flash": {
+						Reasoning:        &reasoning,
+						ReasoningOptions: []map[string]any{{"type": "effort", "values": []string{"low", "medium", "high", "xhigh", "max"}}},
+						DefaultVariant:   "max",
+						Options:          map[string]any{"thinking": map[string]any{"type": "disabled"}},
+					},
+				},
+			}
+
+			if got := strings.Join(variantIDs(Summaries(provider, provider.Model)), ","); got != "low,medium,high,xhigh,max" {
+				t.Fatalf("variants = %q, want low,medium,high,xhigh,max", got)
+			}
+			selection := Resolve(provider, provider.Model, "", "")
+			if selection.Variant != "max" || selection.ProviderOptions[tc.effortKey] != "max" {
+				t.Fatalf("default selection = %#v", selection)
+			}
+			thinking, ok := selection.ProviderOptions["thinking"].(map[string]any)
+			if !ok || thinking["type"] != "adaptive" {
+				t.Fatalf("thinking = %#v; options=%#v", selection.ProviderOptions["thinking"], selection.ProviderOptions)
+			}
+
+			migrated := Resolve(provider, provider.Model, "none", "")
+			if migrated.Variant != "low" || migrated.ProviderOptions[tc.effortKey] != "low" {
+				t.Fatalf("legacy none was not migrated to low: %#v", migrated)
+			}
+		})
+	}
+}
+
 func TestResolveKeepsExplicitMiniMaxThinkingOption(t *testing.T) {
 	reasoning := true
 	provider := config.ProviderConfig{
@@ -1349,6 +1394,26 @@ func TestResolveMergesOpenRouterUsageOptions(t *testing.T) {
 	reasoning, ok := selection.ProviderOptions["reasoning"].(map[string]any)
 	if !ok || reasoning["effort"] != "high" {
 		t.Fatalf("reasoning = %#v", selection.ProviderOptions)
+	}
+}
+
+func TestMiniMaxM31FlashCustomConnectionWithoutCatalogMetadata(t *testing.T) {
+	for _, providerType := range []string{"anthropic", "openai-compatible"} {
+		t.Run(providerType, func(t *testing.T) {
+			provider := config.ProviderConfig{Type: providerType, BaseURL: "https://example.test/v1", Model: "MiniMax-M3.1-Flash"}
+			selection := Resolve(provider, provider.Model, "none", "")
+			key := "effort"
+			if providerType == "openai-compatible" {
+				key = "reasoningEffort"
+			}
+			if selection.Variant != "low" || selection.ProviderOptions[key] != "low" {
+				t.Fatalf("none migration lost the low effort: %+v", selection)
+			}
+			selection = Resolve(provider, provider.Model, "xhigh", "")
+			if selection.Variant != "xhigh" || selection.ProviderOptions[key] != "xhigh" {
+				t.Fatalf("explicit effort lost: %+v", selection)
+			}
+		})
 	}
 }
 

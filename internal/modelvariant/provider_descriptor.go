@@ -109,6 +109,9 @@ func compatReasoningEnabled(desc compatModelDescriptor, configured *bool) bool {
 	if configured != nil {
 		return *configured
 	}
+	if isMiniMaxM31Flash(desc.APIID) {
+		return true
+	}
 	if compatExcludedReasoningModel(desc.ModelID) {
 		return false
 	}

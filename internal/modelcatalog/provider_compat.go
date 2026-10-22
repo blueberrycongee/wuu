@@ -21,6 +21,15 @@ func isKimiCodingProviderID(providerID string) bool {
 	}
 }
 
+func isMiniMaxProviderID(providerID string) bool {
+	switch normalizeID(providerID) {
+	case "minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan":
+		return true
+	default:
+		return false
+	}
+}
+
 // applyProviderCompatibilityDefaults adds request-transport defaults that
 // models.dev does not describe. These are deliberately kept separate from
 // catalog facts such as modalities, limits, and reasoning efforts. Explicit
@@ -55,7 +64,7 @@ func applyProviderCompatibilityDefaults(providerID string, provider config.Provi
 			}, model.Options)
 			provider.Models["k3"] = model
 		}
-	case providerID == "minimax" || providerID == "minimax-cn" || providerID == "minimax-coding-plan" || providerID == "minimax-cn-coding-plan":
+	case isMiniMaxProviderID(providerID):
 		provider = applyModelCompatibilityDefaults(provider, map[string]any{
 			"anthropic_default_betas": false,
 		})
@@ -179,6 +188,8 @@ func applyOfficialCatalogCorrections(data *catalogData) {
 			applyAnthropicLatestCatalog(provider)
 		case "deepseek":
 			applyDeepSeekOfficialCatalog(provider)
+		case "minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan":
+			applyMiniMaxLatestCatalog(provider)
 		case kimiForCodingProviderID, kimiCodePlanCNProviderID, kimiCodePlanGlobalProviderID:
 			applyKimiCodingOfficialCatalog(provider)
 		case "zai", "zai-coding-plan":
@@ -246,6 +257,61 @@ func applyOfficialCatalogCorrections(data *catalogData) {
 				DefaultVariant:   "high",
 			})
 		}
+	}
+}
+
+// https://platform.minimax.io/docs/faq/models
+// https://platform.minimax.io/docs/api-reference/text-chat-anthropic
+func applyMiniMaxLatestCatalog(provider *Provider) {
+	if provider == nil {
+		return
+	}
+	cost := map[string]any{"cache_read": 0.015, "input": 0.15, "output": 0.6}
+	switch normalizeID(provider.ID) {
+	case "minimax-cn":
+		cost = map[string]any{"cache_read": 0.0149, "input": 0.1494, "output": 0.5976}
+	case "minimax-coding-plan", "minimax-cn-coding-plan":
+		cost = map[string]any{"cache_read": 0.0, "input": 0.0, "output": 0.0}
+	}
+	upsertOfficialModel(provider, Model{
+		ID:               "MiniMax-M3.1-Flash",
+		Name:             "MiniMax-M3.1-Flash",
+		Family:           "minimax",
+		ReleaseDate:      "2026-10-19",
+		Reasoning:        true,
+		ReasoningOptions: officialEffortOptions(false, "low", "medium", "high", "xhigh", "max"),
+		Attachment:       officialBool(true),
+		ToolCall:         officialBool(true),
+		StructuredOutput: officialBool(false),
+		Temperature:      officialBool(false),
+		Modalities:       &Modalities{Input: []string{"text", "image", "video"}, Output: []string{"text"}},
+		Cost:             cost,
+		Limit:            &Limit{Context: 1_000_000, Output: 524_288},
+		SupportedEfforts: []string{"low", "medium", "high", "xhigh", "max"},
+		DefaultVariant:   "max",
+	})
+	current := make([]Model, 0, len(provider.Models))
+	for _, model := range provider.Models {
+		if isLegacyMiniMaxModel(model.ID) {
+			provider.legacyModels = append(provider.legacyModels, model)
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(model.ID)) {
+		case "minimax-m3", "minimax-m3.1-flash":
+			model.Limit = &Limit{Context: 1_000_000, Output: 524_288}
+			model.Temperature = officialBool(false)
+		}
+		current = append(current, model)
+	}
+	provider.Models = current
+}
+
+func isLegacyMiniMaxModel(id string) bool {
+	switch strings.ToLower(strings.TrimSpace(id)) {
+	case "minimax-m2", "minimax-m2.1", "minimax-m2.1-highspeed", "minimax-m2.5", "minimax-m2.5-highspeed", "minimax-m2.7", "minimax-m2.7-highspeed", "m2-her":
+		return true
+	default:
+		return false
 	}
 }
 

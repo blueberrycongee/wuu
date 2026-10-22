@@ -125,8 +125,15 @@ func BaseOptionsForProvider(providerName string, provider config.ProviderConfig,
 			setOptionDefault(result, "thinkingConfig", thinking)
 		}
 	}
-	if strings.Contains(desc.APIID, "minimax-m3") && desc.APINPM == compatNPMAnthropic {
-		setOptionDefault(result, "thinking", map[string]any{"type": "adaptive"})
+	if strings.Contains(desc.APIID, "minimax-m3") {
+		if isMiniMaxM31Flash(desc.APIID) && (desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMOpenAICompatible) {
+			result["thinking"] = map[string]any{"type": "adaptive"}
+		} else if desc.APINPM == compatNPMAnthropic {
+			setOptionDefault(result, "thinking", map[string]any{"type": "adaptive"})
+		}
+		if desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMOpenAICompatible {
+			setOptionDefault(result, "toolChoiceAutoOnly", true)
+		}
 	}
 	if (desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMVertexAnthropic) &&
 		(strings.Contains(desc.APIID, "k2p") || strings.Contains(desc.APIID, "kimi-k2.") || strings.Contains(desc.APIID, "kimi-k2p")) {
@@ -231,6 +238,23 @@ func inferredOptionsForProvider(providerName string, provider config.ProviderCon
 		return compatVariantsFromEfforts(efforts, func(effort string) map[string]any {
 			return map[string]any{
 				"thinking": map[string]any{"type": "adaptive", "display": "summarized"},
+				effortKey:  effort,
+			}
+		})
+	}
+	if isMiniMaxM31Flash(desc.APIID) &&
+		(desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMOpenAICompatible) {
+		efforts := modelReasoningEfforts(provider.Models[model])
+		if len(efforts) == 0 {
+			efforts = []string{"low", "medium", "high", "xhigh", "max"}
+		}
+		effortKey := "effort"
+		if desc.APINPM == compatNPMOpenAICompatible {
+			effortKey = "reasoningEffort"
+		}
+		return compatVariantsFromEfforts(efforts, func(effort string) map[string]any {
+			return map[string]any{
+				"thinking": map[string]any{"type": "adaptive"},
 				effortKey:  effort,
 			}
 		})
@@ -407,6 +431,10 @@ func stringOption(value any) string {
 func isGLM52(id string) bool {
 	id = strings.ToLower(strings.TrimSpace(id))
 	return strings.Contains(id, "glm-5.2") || strings.Contains(id, "glm5.2")
+}
+
+func isMiniMaxM31Flash(id string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(id)), "minimax-m3.1-flash")
 }
 
 func isGLM53(id string) bool {

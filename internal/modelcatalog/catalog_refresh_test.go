@@ -2,11 +2,14 @@ package modelcatalog
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/blueberrycongee/wuu/internal/config"
 )
 
 const testModelsDevCatalog = `{
@@ -119,5 +122,62 @@ func TestLoadCacheRejectsInvalidDataWithoutReplacingCatalog(t *testing.T) {
 	}
 	if _, ok := ProviderByID("existing"); !ok {
 		t.Fatal("invalid cache replaced the previously loaded catalog")
+	}
+}
+
+func TestMiniMaxRefreshPreservesSavedModelsAndNewDiscovery(t *testing.T) {
+	t.Cleanup(func() { _ = UseEmbedded() })
+	raw := modelsDevCatalog{}
+	for _, id := range []string{"minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan"} {
+		raw[id] = modelsDevProvider{ID: id, NPM: "@ai-sdk/anthropic", Models: map[string]modelsDevModel{
+			"MiniMax-M3":         {ID: "MiniMax-M3", ToolCall: officialBool(true)},
+			"MiniMax-M3.1-Flash": {ID: "MiniMax-M3.1-Flash", Cost: map[string]any{"input": 0.123}},
+			"MiniMax-future":     {ID: "MiniMax-future", ToolCall: officialBool(true)},
+		}}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(raw)
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "catalog.json")
+	if _, err := Refresh(context.Background(), RefreshOptions{URL: server.URL, CachePath: path, Client: server.Client()}); err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []string{"refreshed", "reloaded"} {
+		if phase == "reloaded" {
+			if err := UseEmbedded(); err != nil {
+				t.Fatal(err)
+			}
+			if err := LoadCache(path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for id := range raw {
+			t.Run(phase+"/"+id, func(t *testing.T) {
+				p, _ := ProviderByID(id)
+				if _, ok := modelByID(p, "MiniMax-future"); !ok {
+					t.Error("refresh hid a newly published model")
+				}
+				if _, ok := modelByID(p, "MiniMax-M2.7"); ok {
+					t.Error("legacy model leaked into discovery")
+				}
+				_, enriched := EnrichProvider(id, config.ProviderConfig{Type: "anthropic", Model: "MiniMax-M2.7"}, "MiniMax-M2.7")
+				old := enriched.Models["MiniMax-M2.7"]
+				if old.Limit == nil || old.Limit.Context != 204800 || old.Reasoning == nil || !*old.Reasoning || len(old.Cost) == 0 {
+					t.Errorf("saved model lost metadata after %s: %+v", phase, old)
+				}
+				_, overridden := EnrichProvider(id, config.ProviderConfig{Type: "anthropic", Model: "MiniMax-M2.7", Models: map[string]config.ProviderModelConfig{
+					"MiniMax-M2.7": {Limit: &config.ProviderModelLimitConfig{Context: 100000}, Options: map[string]any{"anthropic_default_betas": true}},
+				}}, "MiniMax-M2.7")
+				saved := overridden.Models["MiniMax-M2.7"]
+				if saved.Limit.Context != 100000 || saved.Options["anthropic_default_betas"] != true || len(saved.Cost) == 0 {
+					t.Errorf("saved overrides or fallback lost: %+v", saved)
+				}
+				current, _ := modelByID(p, "MiniMax-M3.1-Flash")
+				if current.Cost["input"] != 0.123 {
+					t.Errorf("fresh upstream pricing lost: %+v", current.Cost)
+				}
+			})
+		}
 	}
 }
