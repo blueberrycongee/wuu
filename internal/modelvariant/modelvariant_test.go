@@ -1397,6 +1397,26 @@ func TestResolveMergesOpenRouterUsageOptions(t *testing.T) {
 	}
 }
 
+func TestMiniMaxM31FlashCustomConnectionWithoutCatalogMetadata(t *testing.T) {
+	for _, providerType := range []string{"anthropic", "openai-compatible"} {
+		t.Run(providerType, func(t *testing.T) {
+			provider := config.ProviderConfig{Type: providerType, BaseURL: "https://example.test/v1", Model: "MiniMax-M3.1-Flash"}
+			selection := Resolve(provider, provider.Model, "none", "")
+			key := "effort"
+			if providerType == "openai-compatible" {
+				key = "reasoningEffort"
+			}
+			if selection.Variant != "low" || selection.ProviderOptions[key] != "low" {
+				t.Fatalf("none migration lost the low effort: %+v", selection)
+			}
+			selection = Resolve(provider, provider.Model, "xhigh", "")
+			if selection.Variant != "xhigh" || selection.ProviderOptions[key] != "xhigh" {
+				t.Fatalf("explicit effort lost: %+v", selection)
+			}
+		})
+	}
+}
+
 func variantIDs(variants []Variant) []string {
 	out := make([]string, 0, len(variants))
 	for _, variant := range variants {

@@ -10,7 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
-- Add MiniMax M3.1 Flash with multimodal input, five reasoning-effort levels, and always-on thinking behavior for Anthropic- and OpenAI-compatible connections. Preserve saved model metadata across catalog refreshes, keep newly published models discoverable, recognize the current China API hostname, and mark temperature as fixed for M3/M3.1 Flash.
+- Add MiniMax M3.1 Flash with multimodal input, five reasoning-effort levels, and always-on thinking behavior for Anthropic- and OpenAI-compatible connections. Preserve saved model metadata across catalog refreshes, keep newly published models discoverable, recognize the current China API hostname, and mark temperature as fixed for M3/M3.1 Flash. Infer M3.1 Flash effort options for custom connections without catalog metadata.
 
 - Show Computer Use calls as readable action titles, with original calls, outputs, and errors available in expandable records.
 
