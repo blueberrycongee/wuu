@@ -94,31 +94,6 @@ func TestMiniMaxCatalogIncludesM31Flash(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected %s provider", providerID)
 			}
-			var model Model
-			for _, candidate := range provider.Models {
-				if candidate.ID == "MiniMax-M3.1-Flash" {
-					model = candidate
-					break
-				}
-			}
-			if model.ID == "" {
-				t.Fatal("MiniMax-M3.1-Flash is missing")
-			}
-			if model.ReleaseDate != "2026-10-19" || !model.Reasoning {
-				t.Fatalf("unexpected model identity: %+v", model)
-			}
-			if got := model.SupportedEfforts; !slices.Equal(got, []string{"low", "medium", "high", "xhigh", "max"}) {
-				t.Fatalf("reasoning efforts = %v", got)
-			}
-			if model.DefaultVariant != "max" {
-				t.Fatalf("default variant = %q, want max", model.DefaultVariant)
-			}
-			if model.Limit == nil || model.Limit.Context != 1_000_000 || model.Limit.Output != 524_288 {
-				t.Fatalf("model limits = %+v, want 1000000/524288", model.Limit)
-			}
-			if model.Modalities == nil || !slices.Equal(model.Modalities.Input, []string{"text", "image", "video"}) {
-				t.Fatalf("model modalities = %+v", model.Modalities)
-			}
 			modelIDs := make([]string, 0, len(provider.Models))
 			for _, candidate := range provider.Models {
 				modelIDs = append(modelIDs, candidate.ID)

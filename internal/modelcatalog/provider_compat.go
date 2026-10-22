@@ -283,28 +283,35 @@ func applyMiniMaxLatestCatalog(provider *Provider) {
 		Attachment:       officialBool(true),
 		ToolCall:         officialBool(true),
 		StructuredOutput: officialBool(false),
-		Temperature:      officialBool(true),
+		Temperature:      officialBool(false),
 		Modalities:       &Modalities{Input: []string{"text", "image", "video"}, Output: []string{"text"}},
 		Cost:             cost,
 		Limit:            &Limit{Context: 1_000_000, Output: 524_288},
 		SupportedEfforts: []string{"low", "medium", "high", "xhigh", "max"},
 		DefaultVariant:   "max",
 	})
-	current := make(map[string]Model, 2)
+	current := make([]Model, 0, len(provider.Models))
 	for _, model := range provider.Models {
+		if isLegacyMiniMaxModel(model.ID) {
+			provider.legacyModels = append(provider.legacyModels, model)
+			continue
+		}
 		switch strings.ToLower(strings.TrimSpace(model.ID)) {
 		case "minimax-m3", "minimax-m3.1-flash":
 			model.Limit = &Limit{Context: 1_000_000, Output: 524_288}
-			current[strings.ToLower(strings.TrimSpace(model.ID))] = model
-		default:
-			provider.legacyModels = append(provider.legacyModels, model)
+			model.Temperature = officialBool(false)
 		}
+		current = append(current, model)
 	}
-	provider.Models = provider.Models[:0]
-	for _, id := range []string{"minimax-m3", "minimax-m3.1-flash"} {
-		if model, ok := current[id]; ok {
-			provider.Models = append(provider.Models, model)
-		}
+	provider.Models = current
+}
+
+func isLegacyMiniMaxModel(id string) bool {
+	switch strings.ToLower(strings.TrimSpace(id)) {
+	case "minimax-m2", "minimax-m2.1", "minimax-m2.1-highspeed", "minimax-m2.5", "minimax-m2.5-highspeed", "minimax-m2.7", "minimax-m2.7-highspeed", "m2-her":
+		return true
+	default:
+		return false
 	}
 }
 
