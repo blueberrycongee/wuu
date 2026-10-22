@@ -74,6 +74,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   const width = preferences.width ?? SIDEBAR_RIBBON_WIDTH;
   const docked = width > SIDEBAR_RIBBON_WIDTH;
   const resizing = useRef(false);
+  const [isResizing, setIsResizing] = useState(false);
   const [nativeOpen, setNativeOpen] = useState(false);
   const [nativeClosing, setNativeClosing] = useState(false);
   const [nativeBounds, setNativeBounds] = useState<ChromeOverlayRect | null>(null);
@@ -198,12 +199,13 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
 
   const menuWebsite = menu && websites.find((website) => website.id === menu.id);
   const expanded = docked || nativeOpen || pointerInside || keyboardFocusWithin || dragging || Boolean(menuWebsite) || retainedLayers > 0;
-  useRibbonReveal(nativeAvailable ? undefined : "shell", expanded, () => navRef.current, () => {});
+  useRibbonReveal(nativeAvailable || isResizing ? undefined : "shell", expanded, () => navRef.current, () => {});
   useLayoutEffect(() => {
     onExpandedChange?.(expanded && !docked);
   }, [expanded, docked, onExpandedChange]);
   useLayoutEffect(() => () => onExpandedChange?.(false), [onExpandedChange]);
   useLayoutEffect(() => {
+    if (isResizing && !nativeOpen) return;
     if (!nativeAvailable || docked || !expanded || !navRef.current) { setNativeOpen(false); return; }
     if (nativeClosing) return;
     const nav = navRef.current;
@@ -221,7 +223,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     observer.observe(nav);
     setNativeOpen(true);
     return () => observer.disconnect();
-  }, [nativeAvailable, docked, expanded, nativeClosing]);
+  }, [nativeAvailable, docked, expanded, nativeClosing, isResizing]);
   const nativeModel: ChromeRibbonModel = { kind: "ribbon", resizeLabel: t("ribbon.resize"), collapsedWidth: SIDEBAR_RIBBON_WIDTH, items: ordered.map(item => ({ id: item.id, title: item.title, icon: item.nativeIcon,
     active: item.active, disabled: item.disabled, pinned: item.pinned, audible: item.audible, muted: item.muted, canMute: Boolean(item.onMute), closable: Boolean(item.onClose), website: websiteIDs.has(item.id), component: item.component, pluginId: item.pluginId })),
     label: t("sidebar.mainNavigation"), newTabLabel: t("webWorkspace.newTab"), canCreateTab: Boolean(onNewTab), closeTabLabel: t("webWorkspace.closeCurrentTab"),
@@ -237,6 +239,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   const nativePresented = useChromeOverlay(nativeAvailable && nativeOpen, nativeBounds, nativeModel, command => {
     if (command.type === "reveal") navRef.current?.style.setProperty("--ribbon-native-reveal", String(command.fraction));
     else if (command.type === "pointer") {
+      if (resizing.current) return;
       setNativeClosing(!command.inside);
       if (command.inside) { setPointerInside(true); setNativeOpen(true); }
     }
@@ -255,7 +258,8 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     else if (command.type === "account-open") accountOpen.current?.(command.anchor);
     else if (command.type === "scroll") { scrollTop.current = command.top; const main = navRef.current?.querySelector(".sidebar-ribbon-main"); if (main) main.scrollTop = command.top; }
   }, closeNative, keyboardFocusWithin, navRef.current);
-  const enterRibbon = () => {
+  const enterRibbon = (event: React.PointerEvent<HTMLElement>) => {
+    if (event.buttons !== 0 || dragging) return;
     clearTimeout(leaveTimer.current);
     leaveTimer.current = undefined;
     if (docked || resizing.current || dismissedUnderPointer.current || pointerInside || enterTimer.current) return;
@@ -266,6 +270,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
     if (!nav) return;
     const shell = nav.closest<HTMLElement>(".app-shell") ?? nav.parentElement!;
     resizing.current = !finished;
+    setIsResizing(!finished);
     shell.toggleAttribute("data-ribbon-resizing", !finished);
     shell.style.setProperty("--sidebar-ribbon-width", `${next}px`);
     shell.style.setProperty("--sidebar-ribbon-extra", `${next - SIDEBAR_RIBBON_WIDTH}px`);
@@ -287,7 +292,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   };
   return <>
     <NativeRibbonFooterContext.Provider value={accountContext}>
-    <HoverRevealScopeContext.Provider value={{ disabled: false, retain: retainLayer }}>
+    <HoverRevealScopeContext.Provider value={{ disabled: dragging || isResizing, retain: retainLayer }}>
     <nav ref={node => { navRef.current = node; if (typeof ribbonRef === "function") ribbonRef(node); else if (ribbonRef) ribbonRef.current = node; }} className="sidebar-ribbon" aria-label={t("sidebar.mainNavigation")}
       data-expanded={(expanded && !nativeClosing) || undefined}
       data-native-supported={(nativeAvailable && !docked) || undefined}
@@ -315,7 +320,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
       </div>
       <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis]}
         accessibility={{ screenReaderInstructions: { draggable: t("ribbon.reorderHint") } }}
-        onDragStart={() => setDragging(true)}
+        onDragStart={() => { clearTimeout(enterTimer.current); enterTimer.current = undefined; setDragging(true); }}
         onDragCancel={() => setDragging(false)}
         onDragEnd={({ active, over }) => { setDragging(false); if (over) reorder(String(active.id), String(over.id)); }}>
         <div className="sidebar-ribbon-main scrollbar-hidden">

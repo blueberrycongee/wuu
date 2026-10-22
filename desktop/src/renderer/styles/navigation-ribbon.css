@@ -387,9 +387,9 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   padding-inline-end: calc(var(--sidebar-row-action-size) + var(--space-1) * 2);
 }
 
-.sidebar-ribbon-tab-row:hover .sidebar-ribbon-button,
-.sidebar-ribbon-button:hover,
-.sidebar-ribbon .sidebar-account-trigger:hover {
+:where(.sidebar-ribbon:not(:has([data-dragging="true"], [data-resizing])):not([data-ribbon-resizing] *)) .sidebar-ribbon-tab-row:hover .sidebar-ribbon-button,
+:where(.sidebar-ribbon:not(:has([data-dragging="true"], [data-resizing])):not([data-ribbon-resizing] *)) .sidebar-ribbon-button:hover,
+.sidebar-ribbon:where(:not(:has([data-dragging="true"], [data-resizing])):not([data-ribbon-resizing] *)) .sidebar-account-trigger:hover {
   background: var(--wuu-nav-item-hover-background, var(--ink-overlay-6));
   color: var(--ink);
 }
@@ -451,7 +451,7 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   height: var(--icon-size-sm);
 }
 
-.sidebar-ribbon[data-expanded="true"] .sidebar-ribbon-tab-row:is(:hover, :focus-within, .active):not([data-dragging="true"]) .sidebar-ribbon-close {
+.sidebar-ribbon[data-expanded="true"]:where(:not(:has([data-dragging="true"], [data-resizing])):not([data-ribbon-resizing] *)) .sidebar-ribbon-tab-row:is(:hover, :focus-within, .active):not([data-dragging="true"]) .sidebar-ribbon-close {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;

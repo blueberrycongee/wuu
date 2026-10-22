@@ -26,7 +26,7 @@ export function RibbonDestination({ item, onMove, onMenu, nativeTooltip, bounded
   onMenu?: (x: number, y: number) => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging, active } = useSortable({
     id: item.id,
     transition: useSortableTransition(),
   });
@@ -37,7 +37,7 @@ export function RibbonDestination({ item, onMove, onMenu, nativeTooltip, bounded
     <div ref={setNodeRef} style={style}
       className={`sidebar-ribbon-tab-row${item.active ? " active" : ""}${item.onClose && !item.pinned ? " closable" : ""}${hasAudio ? " has-audio" : ""}`}
       data-dragging={isDragging || undefined}>
-      <Tooltip content={item.title} disabled={isDragging || boundedNative} native={nativeTooltip}>
+      <Tooltip content={item.title} disabled={Boolean(active) || boundedNative} native={nativeTooltip}>
         <button
           {...attributes}
           {...listeners}
@@ -46,7 +46,7 @@ export function RibbonDestination({ item, onMove, onMenu, nativeTooltip, bounded
           tabIndex={tabStop && !item.disabled ? 0 : -1}
           className={`sidebar-ribbon-button${item.pluginId ? " plugin-navigation-item" : ""}${item.active ? " active" : ""}`}
           aria-label={item.title}
-          title={boundedNative && !isDragging ? item.title : undefined}
+          title={boundedNative && !active ? item.title : undefined}
           aria-current={item.active ? "page" : undefined}
           aria-disabled={item.disabled || undefined}
           aria-keyshortcuts="ArrowUp ArrowDown Home End Alt+ArrowUp Alt+ArrowDown"
@@ -98,7 +98,7 @@ export function RibbonDestination({ item, onMove, onMenu, nativeTooltip, bounded
       </Tooltip>
       {hasAudio ? <>
         <span className="sidebar-ribbon-audio-badge" aria-hidden="true">{item.muted ? <VolumeX /> : <Volume2 />}</span>
-        <Tooltip content={audioLabel} disabled={isDragging || boundedNative} native={nativeTooltip}>
+        <Tooltip content={audioLabel} disabled={Boolean(active) || boundedNative} native={nativeTooltip}>
           <button type="button" tabIndex={-1} className="sidebar-ribbon-audio" data-ribbon-audio-id={item.id}
             aria-label={audioLabel} aria-pressed={Boolean(item.muted)} disabled={!item.onMute}
             title={boundedNative ? audioLabel : undefined}
@@ -108,7 +108,7 @@ export function RibbonDestination({ item, onMove, onMenu, nativeTooltip, bounded
           </button>
         </Tooltip>
       </> : null}
-      {item.onClose && !item.pinned ? <Tooltip content={t("webWorkspace.closeTab", { title: item.title })} disabled={isDragging || boundedNative} native={nativeTooltip}>
+      {item.onClose && !item.pinned ? <Tooltip content={t("webWorkspace.closeTab", { title: item.title })} disabled={Boolean(active) || boundedNative} native={nativeTooltip}>
         <button type="button" tabIndex={-1} className="sidebar-ribbon-close" data-ribbon-close-id={item.id}
           aria-label={t("webWorkspace.closeTab", { title: item.title })}
           title={boundedNative ? t("webWorkspace.closeTab", { title: item.title }) : undefined}
