@@ -667,6 +667,7 @@ func RunToolLoop(
 		operation.ParentOperationID = nextOperationParentID
 		nextOperationParentID = ""
 		req := providers.ChatRequest{
+			ResumeSampling:              cfg.ResumeSampling && stepIdx == 0,
 			TurnRouting:                 turnRouting,
 			Provider:                    cfg.ProviderName,
 			Model:                       cfg.Model,
@@ -972,14 +973,22 @@ func RunToolLoop(
 					continue
 				}
 			}
+			fragment := result.Content
+			for _, completed := range result.CompletedMessages {
+				appendMessage(providers.CloneChatMessage(completed))
+				if completed.Content != "" {
+					fragment = strings.TrimPrefix(fragment, completed.Content)
+				}
+			}
 			// A streaming step can fail after content deltas were already shown to
 			// the user. Keep that visible text in durable history, but deliberately
 			// drop provider-native identity, reasoning, and tool calls because the
 			// failed stream may have left those structures incomplete.
-			if strings.TrimSpace(result.Content) != "" || len(result.Images) > 0 {
+			if strings.TrimSpace(fragment) != "" || len(result.Images) > 0 {
 				appendMessage(providers.ChatMessage{
 					Role:    "assistant",
-					Content: result.Content,
+					Cause:   providers.IncompleteStreamFragment,
+					Content: fragment,
 					Images:  result.Images,
 					Phase:   result.Phase,
 				})

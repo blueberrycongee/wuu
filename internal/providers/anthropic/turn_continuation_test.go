@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -93,6 +94,31 @@ func TestMessagesTurnContinuation(t *testing.T) {
 					t.Fatalf("requests=%d result=%+v err=%v", requests.Load(), result, err)
 				}
 			})
+		}
+	}
+}
+
+func TestExplicitResumeDoesNotUseAssistantPrefill(t *testing.T) {
+	for _, thinking := range []bool{false, true} {
+		history := []providers.ChatMessage{{Role: "user", Content: "original"}, {Role: "assistant", Content: "completed progress"}, {Role: "assistant", Content: "unsafe partial", Cause: providers.IncompleteStreamFragment}}
+		options := map[string]any{}
+		if thinking {
+			options["thinking"] = map[string]any{"type": "enabled", "budget_tokens": 1024}
+		}
+		req := providers.ChatRequest{Model: "claude-test", Messages: history, ResumeSampling: true, ProviderOptions: options}
+		payload, err := buildAnthropicRequest(req, 4096, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.Messages) != 3 || payload.Messages[1].Role != "assistant" || payload.Messages[2].Role != "user" {
+			t.Fatalf("resume used assistant prefill: %+v", payload.Messages)
+		}
+		encoded, _ := json.Marshal(payload)
+		if strings.Contains(string(encoded), "unsafe partial") {
+			t.Fatal("partial leaked to model")
+		}
+		if len(history) != 3 || history[2].Content != "unsafe partial" {
+			t.Fatal("adapter mutated durable input")
 		}
 	}
 }

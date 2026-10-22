@@ -23,12 +23,12 @@ export type OpenSettingsDetail = { page: SettingsPage };
 
 /**
  * Window event a failure notice sends to continue an interrupted reply. The
- * thread already holds the partial reply, so the text is an ordinary
- * follow-up in that conversation. A handler calls preventDefault to claim
+ * request identifies the terminal source turn and adds no user input.
+ * A handler calls preventDefault to claim
  * the request and reports through done once the message was sent or not.
  */
 export const CONTINUE_TURN_EVENT = "wuu:continue-turn";
-export type ContinueTurnDetail = { threadID: string; text: string; done: (sent: boolean) => void };
+export type ContinueTurnDetail = { threadID: string; turnID: string; text?: string; done: (sent: boolean) => void };
 
 export type SystemEventDisplay = {
   label: string;
@@ -292,7 +292,15 @@ export function TurnFailureNotice({
   const classified = failureKind(error, reconnect ? reconnectReason(reconnect) : undefined, display, message);
   const kind = !online && OFFLINE_EXPLAINS.has(classified) ? "offline" : classified;
   const status = failureStatusCode(error, message);
-  const title = kind
+  const recoveryState = retrying
+    ? reconnect?.reason === "waiting_network" ? "waiting_network" : "retrying"
+    : error?.recovery?.stop_reason === "replay_unsafe" ? "unsafe_replay"
+      : !["auth", "quota", "model", "context"].includes(kind ?? "") && ["retry_limit", "workflow_budget_exceeded", "workflow_cost_indeterminate"].includes(error?.recovery?.stop_reason ?? "") ? "exhausted" : "failed";
+  const title = recoveryState === "waiting_network" ? t("turnFailure.waitingNetwork")
+    : recoveryState === "retrying" ? t("turnFailure.retrying")
+    : recoveryState === "unsafe_replay" ? t("turnFailure.unsafeReplay")
+    : recoveryState === "exhausted" ? t("turnFailure.exhausted")
+    : kind
     ? t(FAILURE_COPY[kind].title)
     : reconnect && (retrying || !error)
       ? reconnectFallbackTitle(reconnect)
@@ -330,6 +338,7 @@ export function TurnFailureNotice({
   const Icon = retrying ? TriangleAlert : CircleAlert;
   return (
     <aside
+      data-recovery-state={recoveryState}
       className={`turn-notice turn-failure${retrying ? " is-retrying" : ""}${arriving ? " is-arriving" : ""}`}
       role={retrying ? "status" : "alert"}
       aria-label={title}

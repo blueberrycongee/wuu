@@ -102,6 +102,7 @@ export type ConversationSplitPaneRendererProps = {
     promptOverride?: string,
     contentParts?: MessageContentPart[],
   ) => boolean | void;
+  onContinue?: (thread: Thread) => Promise<void>;
   onInterrupt: (pane: ConversationPaneID) => void;
   onForkMessage: (thread: Thread, turnID: string, itemID: string) => void;
   onOpenFile?: (thread: Thread, path: string) => void;
@@ -153,6 +154,7 @@ export function ConversationSplitPaneRenderer({
   onChangeSelection,
   onRemoveSelection,
   onSend,
+  onContinue,
   onInterrupt,
   onForkMessage,
   onOpenFile,
@@ -206,6 +208,9 @@ export function ConversationSplitPaneRenderer({
       onChangeSelection={(selection) => onChangeSelection?.(pane, selection)}
       onRemoveSelection={(id) => onRemoveSelection?.(pane, id)}
       onSend={(promptOverride, contentParts) => onSend(pane, promptOverride, contentParts)}
+      onContinue={onContinue && (!thread.engine_id || thread.engine_id === "wuu")
+        && ["failed", "interrupted"].includes(thread.turns.at(-1)?.status ?? "")
+        ? () => onContinue(thread) : undefined}
       onInterrupt={() => onInterrupt(pane)}
       onForkMessage={(turnID, itemID) => onForkMessage(thread, turnID, itemID)}
       onOpenFile={(path) => onOpenFile?.(thread, path)}

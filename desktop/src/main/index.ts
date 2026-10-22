@@ -2652,10 +2652,12 @@ app.whenReady().then(async () => {
       contentParts?: import("../shared/protocol").MessageContentPart[],
       targetContext?: RuntimeContext,
       clientId?: string,
+      resumeAfterTurnId?: string,
     ) =>
       appServerRequest<{ turn: Turn }>(event, "turn/start", {
         thread_id: threadId,
         ...(clientId === undefined ? {} : { client_id: clientId }),
+        ...(resumeAfterTurnId === undefined ? {} : { resume_after_turn_id: resumeAfterTurnId }),
         prompt,
         images: images ?? [],
         files: files ?? [],

@@ -315,8 +315,22 @@ func rewriteChatHistory(sessDir, id string, msgs []providers.ChatMessage) error 
 	if err != nil {
 		return fmt.Errorf("load preserved session history: %w", err)
 	}
-	records := historyRecordsFromChatMessages(msgs)
-	for _, rec := range preserved {
+	// Keep display-only turn boundaries beside their surviving sequence
+	// addresses. Moving every meta row to the tail would regroup a resumed
+	// answer into the preceding turn and change later turn identities.
+	records := make([]sessionstore.HistoryRecord, 0, len(msgs)+len(preserved))
+	metaIndex := 0
+	for _, msg := range msgs {
+		if !shouldPersistMessage(msg) {
+			continue
+		}
+		for metaIndex < len(preserved) && msg.Seq > 0 && preserved[metaIndex].Seq < msg.Seq {
+			records = append(records, historyRecordFromPersistedMessage(preserved[metaIndex]))
+			metaIndex++
+		}
+		records = append(records, historyRecordFromPersistedMessage(persistedMessageFromChatMessage(msg)))
+	}
+	for _, rec := range preserved[metaIndex:] {
 		records = append(records, historyRecordFromPersistedMessage(rec))
 	}
 	return sessionstore.RewriteHistoryRecords(sessDir, id, records)

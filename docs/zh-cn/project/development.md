@@ -607,3 +607,10 @@ CI 会记录虚拟显示、CPU、Electron 版本和软件渲染环境。
 持久化。`full-app.json` 记录这些检查和 10 秒应用响应采样；`full-app-live.png` 与
 `full-app-desktop.png` 展示真实应用。全程不使用凭据或真实模型推理。该源码构建验收
 不验证安装包、物理 Linux 硬件、真实模型行为，或与 Mac 的性能等价性。
+
+
+### 中断恢复故障夹具
+
+运行 `go test -race ./internal/appserver ./internal/agent ./internal/providers/... -run 'TestTurnContinue|TestRecoveryFaultMatrix|TestFailedStepKeeps|TestExplicitResume' -count=1 -v`，模拟验证接纳、重启、工具结果和 provider 协议恢复。
+
+安装锁定的 desktop 与 `clients/mobile-web` 依赖后，运行 `node desktop/scripts/continuation-recovery-e2e.mjs`。它通过 Chromium headless 渲染生产 Composer/提示组件，使用合成回调。需要时用 `WUU_HEADLESS_CHROMIUM` 指向已有的无界面 Chromium 可执行文件；脚本不会安装浏览器。截图和 `report.json` 写入忽略的 `artifacts/issue-903/ui/`（可用 `WUU_RECOVERY_OUTPUT` 指定目录）。矩阵覆盖浅色 15px/宽窗口、深色 20px/窄窗口的恢复状态及重复点击抑制。这是组件夹具，补充公开 RPC/HTTP Go 测试，不代表原生 Electron、真实模型或实际断网验收。

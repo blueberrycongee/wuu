@@ -2797,3 +2797,24 @@ func TestRunToolLoop_ReturnsInvalidToolArgumentsToModel(t *testing.T) {
 		t.Fatalf("retry should include paired invalid tool call and error result, got %+v", retryMessages)
 	}
 }
+
+func TestFailedStepKeepsCompletedItemsAndIsolatesFragment(t *testing.T) {
+	step := &fakeStep{results: []StepResult{{
+		CompletedMessages: []providers.ChatMessage{{Role: "assistant", ReasoningBlocks: []providers.ReasoningBlock{{Type: "thinking", Thinking: "done reasoning", Signature: "signed"}}}, {Role: "assistant", Content: "completed item", ProviderItemID: "msg_done", ProviderItemProvider: "test", ProviderItemModel: "test"}},
+		Content:           "completed itemincomplete tail", ReasoningContent: "unfinished thinking", ProviderItemID: "msg_partial",
+	}}, errs: []error{errors.New("injected disconnect")}}
+	result, err := RunToolLoop(context.Background(), []providers.ChatMessage{{Role: "user", Content: "task"}}, LoopConfig{Model: "test"}, step)
+	if err == nil {
+		t.Fatal("fault not injected")
+	}
+	prepared, err := providers.PrepareMessagesForProviderRequest("test", "test", result.NewMessages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prepared) != 2 || prepared[1].Content != "completed item" || prepared[1].ProviderItemID != "msg_done" || len(prepared[0].ReasoningBlocks) != 1 {
+		t.Fatalf("completed progress lost: %+v", prepared)
+	}
+	if len(result.NewMessages) != 3 || result.NewMessages[2].Cause != providers.IncompleteStreamFragment || result.NewMessages[2].Content != "incomplete tail" {
+		t.Fatalf("fragment not isolated: %+v", result.NewMessages)
+	}
+}

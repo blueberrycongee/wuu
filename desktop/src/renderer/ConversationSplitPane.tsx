@@ -51,6 +51,7 @@ export function ConversationSplitPane({
   onChangeSelection,
   onRemoveSelection,
   onSend,
+  onContinue,
   onInterrupt,
   onForkMessage,
   onOpenFile,
@@ -92,6 +93,7 @@ export function ConversationSplitPane({
   onChangeSelection?: (selection: ResponseSelection) => void;
   onRemoveSelection?: (id: string) => void;
   onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
+  onContinue?: () => Promise<void>;
   onInterrupt: () => void;
   onForkMessage: (turnID: string, itemID: string) => void;
   onOpenFile?: (path: string) => void;
@@ -251,6 +253,7 @@ export function ConversationSplitPane({
           onRemoveFile={onRemoveFile}
           onRemoveImage={onRemoveImage}
           onSend={onSend}
+          onContinue={onContinue}
           onInterrupt={onInterrupt}
           queryHistorySessionID={thread.id}
           workspaceId={workspaceId}

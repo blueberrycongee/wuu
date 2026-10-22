@@ -1040,6 +1040,7 @@ func (c *Client) readResponsesSSE(ctx context.Context, resp *http.Response, leas
 			pending.setArguments(event)
 
 		case "response.output_item.done":
+			emitResponsesCompletedMessage(emit, event.Item)
 			if item, ok := responsesOutputItemReplayInput(event.Item); ok {
 				responseItems = append(responseItems, item)
 			}
@@ -1986,4 +1987,24 @@ func responsesOrderedReplay(msg providers.ChatMessage, provider, scope, model st
 		return nil, false
 	}
 	return ordered, true
+}
+
+func emitResponsesCompletedMessage(emit *providers.StreamEmitter, item responsesOutputItem) {
+	if item.Type != "message" {
+		return
+	}
+	native, ok := responsesOutputItemReplayInput(item)
+	if !ok {
+		return
+	}
+	data, err := json.Marshal(native)
+	if err != nil {
+		return
+	}
+	message := providers.ChatMessage{
+		Role: "assistant", Content: responsesInputItemText(native),
+		Phase: providers.NormalizeMessagePhase(item.Phase), ProviderItemID: native.ID,
+		ProviderItems: []providers.ProviderItem{{Type: "message", Data: string(data)}},
+	}
+	emit.Send(providers.StreamEvent{Type: providers.EventAssistantItemDone, Message: &message})
 }

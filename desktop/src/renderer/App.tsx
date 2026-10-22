@@ -3537,6 +3537,9 @@ export function App(): JSX.Element {
         }}
         onEditQueuedMessage={(id) => void editQueuedMessage(id)}
         onEditGuideMessage={(id) => void editGuideMessage(id)}
+        onContinue={activeThread && !activeThreadIsRunning && (!activeThread.engine_id || activeThread.engine_id === "wuu")
+          && ["failed", "interrupted"].includes(activeThread.turns.at(-1)?.status ?? "")
+          ? async () => { await resumeThreadSampling(activeThread.id, activeThread.turns.at(-1)!.id); } : undefined}
         onSend={(promptOverride, contentParts) => sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)}
         onSteer={
           activeThreadIsRunning && activeThread && activeThreadCanSteer
@@ -3923,11 +3926,12 @@ export function App(): JSX.Element {
     return api.onCodexPetCommand((command) => codexPetCommandHandlerRef.current(command));
   }, [codexPetCommandsReady]);
 
-  // A failure notice continues an interrupted reply in its own conversation,
-  // the same way the pet sends text: without touching the composer draft.
+  // Continue Wuu from its latest terminal turn without touching the draft.
+  // External engines retain their existing explicit follow-up compatibility.
+  const continueRequestsRef = useRef(new Set<string>());
   const continueTurnHandlerRef = useRef<(detail: ContinueTurnDetail) => void>(() => undefined);
-  continueTurnHandlerRef.current = ({ threadID, text, done }) => {
-    void submitCodexPetText(text, { thread_id: threadID })
+  continueTurnHandlerRef.current = ({ threadID, turnID, text, done }) => {
+    void (text ? submitCodexPetText(text, {thread_id: threadID}) : resumeThreadSampling(threadID, turnID))
       .catch((error: unknown) => {
         showErrorToast(error);
         return false;
@@ -4382,6 +4386,26 @@ export function App(): JSX.Element {
     const preserve = (state: AppState) => updateThreadByID(state, threadID, (thread) => upsertTurn(thread, failedTurn));
     appStateRef.current = preserve(appStateRef.current);
     setState(preserve);
+  }
+
+  async function resumeThreadSampling(threadID: string, sourceTurnID: string): Promise<boolean> {
+    const current = appStateRef.current;
+    const thread = threadForTab(current, threadID);
+    if (!thread || !current.activeContext || thread.read_only || isThreadRunning(thread)
+      || stopRequestsRef.current[threadID] || continueRequestsRef.current.has(threadID)
+      || thread.turns.at(-1)?.id !== sourceTurnID || (thread.engine_id && thread.engine_id !== "wuu")) return false;
+    continueRequestsRef.current.add(threadID);
+    try {
+      const result = await window.wuu.startTurn(threadID, "", undefined, undefined,
+        thread.permission_mode, undefined, undefined, current.activeContext, undefined, sourceTurnID);
+      const accept = (state: AppState) => updateThreadByID(state, threadID,
+        (value) => upsertTurn(value, result.turn));
+      appStateRef.current = accept(appStateRef.current);
+      setState(accept);
+      return true;
+    } finally {
+      continueRequestsRef.current.delete(threadID);
+    }
   }
 
   function sendPrompt(
@@ -5899,6 +5923,7 @@ export function App(): JSX.Element {
                     onClosePane={closeConversationPane}
                     onConversationScroll={handleConversationScroll}
                     onSetPrompt={setSplitComposerPrompt}
+                    onContinue={async (thread) => { await resumeThreadSampling(thread.id, thread.turns.at(-1)!.id); }}
                     onPasteAttachmentFiles={(pane, files) =>
                       void attachSplitComposerAttachmentFiles(pane, files)
                     }
