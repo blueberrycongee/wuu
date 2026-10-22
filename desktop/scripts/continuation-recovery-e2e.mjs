@@ -32,7 +32,7 @@ window.renderRecovery=(state)=>{
  const reconnect={id:'recovery',type:'stream_reconnect',status:progress?'in_progress':'failed',reason:state==='waiting_network'?'waiting_network':'incomplete_stream',retry_count:2,max_retries:10,retry_at_ms:Date.now()+5000};
  const error=progress?undefined:{message:'Simulated network interruption; no live model request.',recovery:{attempt_count:3,retry_count:2,max_attempts:11,submission_count:2,stop_reason:state==='unsafe_replay'?'replay_unsafe':'retry_limit',failure_category:state==='unsafe_replay'?'replay_unsafe':'incomplete_stream'}};
  root.render(<I18nProvider><ImagePreviewProvider><WorkbenchConnectionContext.Provider value={true}>
- <main className="conversation-pane" style={{width:'min(900px, calc(100% - 48px))',margin:'48px auto'}}>
+ <main className="conversation-pane" style={{display:'block',width:'min(900px, calc(100% - 48px))',margin:'48px auto'}}>
  <p style={{color:'var(--text-secondary)',marginBottom:32}}>Simulated recovery · no live provider</p>
  <div className="turn"><div className="message-user">Complete the task</div><p>Completed progress and confirmed tool results are preserved.</p>
  <TurnFailureNotice reconnect={reconnect} error={error} onContinue={progress?undefined:()=>new Promise(resolve=>{window.continueCalls++;window.finishContinue=resolve;})}/></div>
