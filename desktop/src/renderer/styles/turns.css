@@ -5940,6 +5940,9 @@ button.turn-edit-summary-overview:focus-visible {
 }
 
 :root[data-message-style="im"] .user-message-time {
+  /* Match the prose metrics so centering this row also aligns its baseline. */
+  font-family: var(--appearance-content-font, var(--appearance-ui-font, system-ui, sans-serif));
+  font-size: var(--conversation-message-font-size);
   font-weight: var(--weight-regular);
 }
 
