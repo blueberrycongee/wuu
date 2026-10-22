@@ -42,6 +42,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Check for desktop updates every 30 minutes instead of every six hours.
+
 - Reserve a font-scaled timestamp column in Personal conversations so revealing times does not overlap message bubbles; attachments and reactions move with their message.
 
 - Keep Personal pages and their composer visible when a retained Coding conversation is open underneath them; hidden Coding content no longer occupies grid rows or paints through the page.

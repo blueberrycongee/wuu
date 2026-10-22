@@ -470,7 +470,8 @@ jobs:
 
       - name: Guard titlebar alignment and sidebar hit targets
         if: ${{ matrix.suite == 'shell' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
-        timeout-minutes: 3
+        # The complete theme/font/zoom matrix can exceed three minutes on shared runners.
+        timeout-minutes: 5
         shell: bash
         run: |
           mkdir -p desktop/out/e2e/settings-titlebar
