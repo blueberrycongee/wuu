@@ -125,6 +125,10 @@ Kernel services cover storage, settings, sessions, history, workspaces, artifact
 
 Tool and capability dispatch create bounded execution scopes. Progress, child-tool calls, questions, and artifacts attach to a live execution. Cancellation closes that scope without waiting for plugin acknowledgement, and late updates cannot revive it. Plugins receive an abort signal and must propagate it to cancellable work. Service-registry shutdown rejects new work, drains existing calls, and cancels what remains when its shutdown context expires.
 
+Native and process service providers use the same declarations, method checks, and callback scopes. `service.invoke.execution_id` belongs to the provider callback. When the consumer calls from a live invocation, `caller_scope` supplies its authenticated identity, kind (`tool` or `callback`), and session/workspace attribution. The SDK exposes this as `execution.caller`, including a separate `signal`. That signal survives individual service responses and aborts when the caller ends or the provider stops. Use it for resources such as a model stream that spans start/read/cancel calls. Use `execution.signal` for work bounded to the current callback. A nested call uses the provider's own execution ID; caller attribution never grants permission to impersonate the caller or its tool authority.
+
+A method may declare `cleanup: true` to release resources after autonomous admission stops. Cleanup must not acquire resources or start work, and receives no caller scope. Registry snapshots identify implementations by provider ID and binding source; the former `kernel` flag has been removed. These contract changes do not change product CalVer or stored user data.
+
 Capabilities compose at defined points, such as adding prompt context or observing turn completion. They are not unrestricted interception of the agent loop or provider request. The [authoring reference](plugin-authoring.md) lists supported capabilities and error policies.
 
 ## Desktop generations and composition

@@ -62,7 +62,16 @@ type serviceProvider struct {
 	descriptor ServiceDescriptor
 	pluginID   string
 	invoker    ServiceInvoker
-	kernel     bool
+}
+
+type callerScopeKey struct {
+	provider  string
+	execution string
+}
+
+type callerScopeResource struct {
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 type serviceExecution struct {
@@ -88,24 +97,12 @@ type ServiceRegistry struct {
 	executionChanged     chan struct{}
 	nextExecution        uint64
 	scopeTracker         *ExecutionTracker
+	callerScopes         map[callerScopeKey]*callerScopeResource
 	backgroundStopped    bool
 	cleanupOwners        map[string]int
 	preparing            map[string]bool
 	retiringProviders    map[string]bool
 	rootExecutionContext func(string, string) (context.Context, bool, *HostServiceError)
-}
-
-// ServiceRegistration is the common provider entry consumed by the registry.
-// Kernel and plugin providers both become these entries before routing starts.
-type ServiceRegistration struct {
-	Descriptor ServiceDescriptor
-	Invoker    ServiceInvoker
-	Kernel     bool
-}
-
-type kernelServiceClient interface {
-	ServiceClient
-	KernelServiceRegistrations() []ServiceRegistration
 }
 
 func NewServiceRegistry() *ServiceRegistry {
@@ -182,17 +179,8 @@ func (registry *ServiceRegistry) RegisterClients(clients ...Client) []ServiceCon
 		if notifier, ok := client.(ServiceChangedNotifier); ok {
 			registry.notifiers[declared.ID()] = notifier
 		}
-		kernelClient, kernel := declared.(kernelServiceClient)
-		registrations := make([]ServiceRegistration, 0, len(declared.ProvidedServices()))
-		if kernel {
-			registrations = append(registrations, kernelClient.KernelServiceRegistrations()...)
-		} else if invoker, ok := client.(ServiceInvoker); ok {
-			for _, descriptor := range declared.ProvidedServices() {
-				registrations = append(registrations, ServiceRegistration{Descriptor: descriptor, Invoker: invoker})
-			}
-		}
-		for _, registration := range registrations {
-			descriptor := registration.Descriptor
+		invoker, _ := client.(ServiceInvoker)
+		for _, descriptor := range declared.ProvidedServices() {
 			major, ok := ServiceVersionMajor(descriptor.Version)
 			if !ok {
 				continue
@@ -211,7 +199,7 @@ func (registry *ServiceRegistry) RegisterClients(clients ...Client) []ServiceCon
 				conflicts = append(conflicts, ServiceConflict{PluginID: declared.ID(), Service: key.name, Major: key.major, Message: message})
 				continue
 			}
-			if registration.Invoker == nil {
+			if invoker == nil {
 				conflicts = append(conflicts, ServiceConflict{
 					PluginID: declared.ID(),
 					Service:  key.name,
@@ -220,7 +208,7 @@ func (registry *ServiceRegistry) RegisterClients(clients ...Client) []ServiceCon
 				})
 				continue
 			}
-			registry.providers[key] = serviceProvider{descriptor: descriptor, pluginID: declared.ID(), invoker: registration.Invoker, kernel: kernel || registration.Kernel}
+			registry.providers[key] = serviceProvider{descriptor: descriptor, pluginID: declared.ID(), invoker: invoker}
 		}
 		registry.consumers[declared.ID()] = make(map[serviceKey]struct{})
 		registry.requirements[declared.ID()] = append([]ServiceRequirement(nil), declared.RequiredServices()...)
@@ -294,6 +282,7 @@ func (r *ServiceRegistry) Close(ctx context.Context) {
 	r.mu.Unlock()
 
 drained:
+	r.cancelCallerScopes("")
 	for _, key := range keys {
 		r.notifyConsumers(ctx, key, "provider_closed")
 	}
@@ -326,6 +315,7 @@ func (r *ServiceRegistry) RevokePlugin(ctx context.Context, pluginID string) {
 		}
 	}
 	r.mu.Unlock()
+	r.cancelCallerScopes(pluginID)
 	for _, key := range revoked {
 		r.notifyConsumers(ctx, key, "provider_closed")
 	}
@@ -518,14 +508,24 @@ func (r *ServiceRegistry) releaseExecution(id string) func() {
 
 // invokeProvider gives each plugin callback its own generic execution scope.
 // The caller's scope supplies cancellation and attribution, never tool authority
-// or an execution ID owned by a different plugin. Kernel calls keep the incoming
-// scope because their scoped services validate the original plugin caller.
+// or an execution ID owned by a different plugin. Native and process providers
+// receive the same caller metadata and independently owned callback scope.
 func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider serviceProvider, params ServiceInvokeParams) (json.RawMessage, error) {
 	r.mu.RLock()
 	tracker := r.scopeTracker
 	r.mu.RUnlock()
 	cleanup := InShutdownCleanup(ctx)
-	if provider.kernel || tracker == nil || cleanup {
+	if tracker != nil && params.Caller != "kernel" && strings.HasPrefix(params.ExecutionID, "exec-") && !cleanup {
+		scope, err := tracker.Resolve(params.Caller, params.ExecutionID)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.bindCallerScope(provider.pluginID, &scope); err != nil {
+			return nil, err
+		}
+		params.CallerScope = &scope
+	}
+	if tracker == nil || cleanup {
 		return provider.invoker.InvokeService(ctx, params)
 	}
 	callbackParent, cancel := context.WithCancel(ctx)
@@ -555,6 +555,49 @@ func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider servicePr
 	}()
 	params.ExecutionID = executionID
 	return provider.invoker.InvokeService(callbackCtx, params)
+}
+
+// Caller resources are effects owned by the provider lifecycle, bounded also
+// by their originating invocation. Repeated callbacks share one lifetime.
+func (r *ServiceRegistry) bindCallerScope(provider string, scope *ExecutionScope) *HostServiceError {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.retiringProviders[provider] {
+		return &HostServiceError{Code: "generation_closed", Message: "service provider is retiring"}
+	}
+	key := callerScopeKey{provider: provider, execution: scope.ID}
+	resource := r.callerScopes[key]
+	if resource == nil {
+		ctx, cancel := context.WithCancel(scope.Context)
+		resource = &callerScopeResource{ctx: ctx, cancel: cancel}
+		if r.callerScopes == nil {
+			r.callerScopes = make(map[callerScopeKey]*callerScopeResource)
+		}
+		r.callerScopes[key] = resource
+		context.AfterFunc(ctx, func() {
+			r.mu.Lock()
+			if r.callerScopes[key] == resource {
+				delete(r.callerScopes, key)
+			}
+			r.mu.Unlock()
+		})
+	}
+	scope.Context = resource.ctx
+	return nil
+}
+
+func (r *ServiceRegistry) cancelCallerScopes(provider string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key, resource := range r.callerScopes {
+		if provider == "" || key.provider == provider {
+			delete(r.callerScopes, key)
+			resource.cancel()
+		}
+	}
 }
 
 // HasProvider reports whether a provider exists for (name, major).
@@ -675,10 +718,10 @@ func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, par
 	if preparing {
 		ctx = context.WithValue(ctx, servicePreparationKey{}, true)
 	}
-	methodDeclared, preparationMethod := false, false
+	methodDeclared, preparationMethod, cleanupMethod := false, false, false
 	for _, declared := range provider.descriptor.Methods {
 		if declared.Name == method {
-			methodDeclared, preparationMethod = true, declared.Preparation
+			methodDeclared, preparationMethod, cleanupMethod = true, declared.Preparation, declared.Cleanup
 			break
 		}
 	}
@@ -692,10 +735,9 @@ func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, par
 		go r.notifyConsumers(context.Background(), key, "provider_unavailable")
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s provider %q is %s", service, provider.pluginID, state)}
 	}
-	// A cancelled foreground or background callback must still be able to
-	// release its generation-owned lock through its unscoped lifecycle host.
-	// This grants cleanup only, never another acquisition or execution scope.
-	if provider.kernel && service == KernelFileLockService && method == "release" {
+	// Providers declare resource-release methods independently of transport.
+	// Cleanup grants no new execution or tool authority.
+	if cleanupMethod {
 		ctx = context.WithValue(ctx, serviceCleanupKey{}, true)
 	}
 	execCtx, executionID, release, executionErr := r.acquireExecution(ctx, params.ExecutionID, consumerPluginID, key, provider.pluginID, active || preparing)
@@ -751,7 +793,7 @@ func (r *ServiceRegistry) CallProvider(ctx context.Context, service string, majo
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("no provider for service %s major version %d (provided majors: %v)", service, major, r.ProviderMajors(service))}
 	}
 	continuation := r.executionContinuation(executionID, "kernel")
-	if !active && !provider.kernel && !continuation {
+	if !active && !continuation {
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s is unavailable during generation prepare", service)}
 	}
 	methodDeclared := false
@@ -764,10 +806,10 @@ func (r *ServiceRegistry) CallProvider(ctx context.Context, service string, majo
 	if !methodDeclared {
 		return nil, &HostServiceError{Code: "method_not_found", Message: fmt.Sprintf("service %s does not declare method %q", service, method)}
 	}
-	if state := provider.invoker.Status().State; state != StateActive && !(provider.kernel && !active) {
+	if state := provider.invoker.Status().State; state != StateActive {
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s provider %q is %s", service, provider.pluginID, state)}
 	}
-	execCtx, executionID, release, executionErr := r.acquireExecution(ctx, executionID, "kernel", key, provider.pluginID, active || provider.kernel)
+	execCtx, executionID, release, executionErr := r.acquireExecution(ctx, executionID, "kernel", key, provider.pluginID, active)
 	if executionErr != nil {
 		return nil, executionErr
 	}
@@ -801,7 +843,6 @@ type ServiceRegistryEntry struct {
 	Service       string   `json:"service"`
 	Version       string   `json:"version"`
 	Provider      string   `json:"provider"`
-	Kernel        bool     `json:"kernel,omitempty"`
 	Methods       []string `json:"methods"`
 	BindingSource string   `json:"binding_source"`
 }
@@ -837,7 +878,6 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 			Service:       provider.descriptor.Name,
 			Version:       provider.descriptor.Version,
 			Provider:      provider.pluginID,
-			Kernel:        provider.kernel,
 			Methods:       methods,
 			BindingSource: source,
 		})

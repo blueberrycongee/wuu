@@ -167,7 +167,9 @@ class Runtime extends EventEmitter {
   }
   fail(error) { for (const pending of this.pending.values()) pending.reject(error); this.pending.clear(); }
   send(frame) {
-    if (this.exited || this.process.stdin.destroyed) return;
+    // Accepted host effects can settle after the plugin has closed its input.
+    // Their late replies cannot be delivered to a replacement transport.
+    if (this.exited || this.process.stdin.destroyed || this.process.stdin.writableEnded) return;
     this.frames.push({ direction: 'host', frame }); this.process.stdin.write(`${JSON.stringify(frame)}\n`);
   }
   request(method, params) {

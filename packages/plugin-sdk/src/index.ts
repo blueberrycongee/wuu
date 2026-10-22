@@ -721,6 +721,8 @@ export interface ServiceMethodDescriptor {
   output_schema: string;
   /** Safe during candidate validation: no durable writes or external effects. */
   preparation?: boolean;
+  /** Releases owned resources after admission stops; cannot start new work. */
+  cleanup?: boolean;
 }
 
 /** A versioned service a plugin provides; consumers resolve by name and major version. */
@@ -783,6 +785,8 @@ export interface ServiceInvokeParams<TParams = unknown> {
   method: string;
   caller: string;
   execution_id?: string;
+  /** Authenticated caller attribution; never use its ID to issue host calls. */
+  caller_scope?: CallerExecutionScope;
   params?: TParams;
 }
 
@@ -1390,8 +1394,25 @@ export interface RuntimeLifecycleContext {
   readonly signal: AbortSignal;
 }
 
+/** Host-authenticated owner of resources created by a service callback. */
+export interface CallerExecutionScope {
+  readonly id: string;
+  readonly plugin_id: string;
+  readonly kind: "tool" | "callback";
+  readonly session_id?: string;
+  readonly thread_id?: string;
+  readonly turn_id?: string;
+  readonly actor_id?: string;
+  readonly call_id?: string;
+  readonly tool?: string;
+  readonly cwd?: string;
+}
+
 export interface RuntimeExecutionContext {
   readonly executionId: string;
+  /** Survives this callback; aborts when the caller ends or this provider stops.
+   * Attribution and lifetime do not grant the caller's tool authority. */
+  readonly caller?: CallerExecutionScope & { readonly signal: AbortSignal };
   /** Aborts when this execution ends, is cancelled, or its runtime transport closes. */
   readonly signal: AbortSignal;
 }
@@ -1867,6 +1888,11 @@ export async function runJSONLRuntime(
   const host = new JSONLRuntimeHost(send);
   const lifetime = new AbortController();
   const executions = new Map<string, Set<AbortController>>();
+  const callerScopes = new Map<string, AbortController>();
+  lifetime.signal.addEventListener("abort", () => {
+    for (const controller of callerScopes.values()) controller.abort();
+    callerScopes.clear();
+  }, { once: true });
   const active = new Set<Promise<void>>();
   const concurrentServices = new Set(plugin.concurrentServices ?? []);
   const concurrentCapabilities = new Set(["model.adapter", "model.middleware", ...plugin.concurrentCapabilities ?? []]);
@@ -1920,6 +1946,8 @@ export async function runJSONLRuntime(
     if (host.route(parsed)) return;
     if (isExecutionCancelRequest(parsed)) {
       for (const controller of executions.get(parsed.params.execution_id) ?? []) controller.abort();
+      callerScopes.get(parsed.params.execution_id)?.abort();
+      callerScopes.delete(parsed.params.execution_id);
       return;
     }
     if (!isRuntimeRequest(parsed)) {
@@ -1944,7 +1972,14 @@ export async function runJSONLRuntime(
     let controllers = executions.get(executionId);
     if (!controllers) executions.set(executionId, controllers = new Set());
     controllers.add(controller);
-    const execution = { executionId, signal: controller.signal } satisfies RuntimeExecutionContext;
+    let caller: RuntimeExecutionContext["caller"];
+    if (parsed.method === "service.invoke" && parsed.params.caller_scope) {
+      const scope = parsed.params.caller_scope;
+      let owner = callerScopes.get(scope.id);
+      if (!owner) callerScopes.set(scope.id, owner = new AbortController());
+      caller = { ...scope, signal: owner.signal };
+    }
+    const execution = { executionId, signal: controller.signal, caller } satisfies RuntimeExecutionContext;
     // A lifecycle frame waits for everything already admitted. Opted-in
     // handlers may bypass ordinary work, but never an earlier lifecycle
     // frame. Capture the barrier now so later frames cannot create a cycle.

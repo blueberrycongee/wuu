@@ -62,7 +62,7 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 	if !active || session == nil || host == nil {
 		return nil, serviceError("service_unavailable", "model service is unavailable")
 	}
-	scope, scopeErr := host.ResolveExecution(params.Caller, params.ExecutionID)
+	scope, scopeErr := params.CallerExecution(false)
 	if scopeErr != nil {
 		return nil, scopeErr
 	}

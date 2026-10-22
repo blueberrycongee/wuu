@@ -169,7 +169,7 @@ func KernelFileLockDescriptor() ServiceDescriptor {
 		Name: KernelFileLockService, Version: "1.0.0",
 		Methods: []ServiceMethodDescriptor{
 			{Name: "acquire", InputSchema: "host.file-lock.acquire.input.v1", OutputSchema: "host.file-lock.acquire.output.v1"},
-			{Name: "release", InputSchema: "host.file-lock.release.input.v1", OutputSchema: "host.file-lock.release.output.v1"},
+			{Name: "release", InputSchema: "host.file-lock.release.input.v1", OutputSchema: "host.file-lock.release.output.v1", Cleanup: true},
 		},
 	}
 }
@@ -208,6 +208,9 @@ type ServiceMethodDescriptor struct {
 	// Preparation permits this method during dependency-ordered candidate
 	// validation. It must not mutate durable state or publish external effects.
 	Preparation bool `json:"preparation,omitempty"`
+	// Cleanup admits resource release after autonomous admission stops. It must
+	// not start new work or acquire resources; it receives no caller scope.
+	Cleanup bool `json:"cleanup,omitempty"`
 }
 
 // ServiceDescriptor declares a versioned service a plugin provides. The name
@@ -245,6 +248,26 @@ type ServiceInvokeParams struct {
 	// ExecutionID, when set, binds the invoke to one execution scope so
 	// cross-process cancellation propagates through the execution plane.
 	ExecutionID string `json:"execution_id,omitempty"`
+	// CallerScope identifies the authenticated caller invocation, when present.
+	// It may outlive this callback. It grants attribution and resource lifetime,
+	// not authority to issue calls using the caller's execution ID.
+	CallerScope *ExecutionScope `json:"caller_scope,omitempty"`
+}
+
+// CallerExecution validates the native view of the authenticated caller scope.
+// External providers receive the same metadata and an independent cancel signal.
+func (p ServiceInvokeParams) CallerExecution(requireTool bool) (ExecutionScope, *HostServiceError) {
+	scope := p.CallerScope
+	if scope == nil || scope.ID == "" || scope.PluginID != p.Caller || scope.Context == nil {
+		return ExecutionScope{}, &HostServiceError{Code: "invalid_execution_scope", Message: "service requires an authenticated caller execution"}
+	}
+	if requireTool && (scope.Kind != "tool" || scope.ThreadID == "" || scope.TurnID == "" || scope.CallID == "") {
+		return ExecutionScope{}, &HostServiceError{Code: "invalid_execution_scope", Message: "service requires a live scoped tool execution"}
+	}
+	if scope.Context.Err() != nil {
+		return ExecutionScope{}, &HostServiceError{Code: "request_cancelled", Message: "caller execution has ended"}
+	}
+	return *scope, nil
 }
 
 // ServiceChangedParams notifies a consumer that a service resolution changed.

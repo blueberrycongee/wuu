@@ -340,6 +340,11 @@ async function runJSONLRuntime(plugin2, streams) {
   const host = new JSONLRuntimeHost(send);
   const lifetime = new AbortController();
   const executions = /* @__PURE__ */ new Map();
+  const callerScopes = /* @__PURE__ */ new Map();
+  lifetime.signal.addEventListener("abort", () => {
+    for (const controller of callerScopes.values()) controller.abort();
+    callerScopes.clear();
+  }, { once: true });
   const active = /* @__PURE__ */ new Set();
   const concurrentServices = new Set(plugin2.concurrentServices ?? []);
   const concurrentCapabilities = /* @__PURE__ */ new Set(["model.adapter", "model.middleware", ...plugin2.concurrentCapabilities ?? []]);
@@ -391,6 +396,8 @@ async function runJSONLRuntime(plugin2, streams) {
     if (host.route(parsed)) return;
     if (isExecutionCancelRequest(parsed)) {
       for (const controller2 of executions.get(parsed.params.execution_id) ?? []) controller2.abort();
+      callerScopes.get(parsed.params.execution_id)?.abort();
+      callerScopes.delete(parsed.params.execution_id);
       return;
     }
     if (!isRuntimeRequest(parsed)) {
@@ -412,7 +419,14 @@ async function runJSONLRuntime(plugin2, streams) {
     let controllers = executions.get(executionId);
     if (!controllers) executions.set(executionId, controllers = /* @__PURE__ */ new Set());
     controllers.add(controller);
-    const execution = { executionId, signal: controller.signal };
+    let caller;
+    if (parsed.method === "service.invoke" && parsed.params.caller_scope) {
+      const scope = parsed.params.caller_scope;
+      let owner = callerScopes.get(scope.id);
+      if (!owner) callerScopes.set(scope.id, owner = new AbortController());
+      caller = { ...scope, signal: owner.signal };
+    }
+    const execution = { executionId, signal: controller.signal, caller };
     const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
     const run = async () => {
       await ready;

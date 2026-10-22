@@ -105,6 +105,8 @@ type ProcessClient struct {
 	stopMu             sync.Mutex
 	stopped            bool
 	stopErr            error
+	callerScopeMu      sync.Mutex
+	callerScopes       map[string]struct{}
 }
 
 func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
@@ -490,7 +492,11 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	c.pending[id] = responseCh
 	c.pendingMu.Unlock()
 	defer c.removePending(id)
-	if err := c.writeLine(ctx, payload); err != nil {
+	if input, ok := params.(ServiceInvokeParams); ok && input.CallerScope != nil {
+		if err := c.writeScopedInvocation(ctx, payload, input.CallerScope); err != nil {
+			return fmt.Errorf("write scoped request: %w", err)
+		}
+	} else if err := c.writeLine(ctx, payload); err != nil {
 		return fmt.Errorf("write request: %w", err)
 	}
 	// The invoke frame must be written before cancellation can be signalled.
@@ -532,6 +538,40 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	case <-c.readerDone:
 		return c.readFailure()
 	}
+}
+
+// Serialize caller-scope admission with its terminal signal. A signal cannot
+// precede a queued invocation and then accidentally reopen that scope in the SDK.
+// One observer per live caller survives individual callback responses.
+func (c *ProcessClient) writeScopedInvocation(ctx context.Context, payload []byte, scope *ExecutionScope) error {
+	c.callerScopeMu.Lock()
+	defer c.callerScopeMu.Unlock()
+	if err := scope.Context.Err(); err != nil {
+		return err
+	}
+	if err := c.writeLine(ctx, payload); err != nil {
+		return err
+	}
+	if _, watching := c.callerScopes[scope.ID]; watching {
+		return nil
+	}
+	if c.callerScopes == nil {
+		c.callerScopes = make(map[string]struct{})
+	}
+	c.callerScopes[scope.ID] = struct{}{}
+	go func() {
+		select {
+		case <-scope.Context.Done():
+		case <-c.processCtx.Done():
+		}
+		c.callerScopeMu.Lock()
+		defer c.callerScopeMu.Unlock()
+		delete(c.callerScopes, scope.ID)
+		if c.processCtx.Err() == nil {
+			c.notifyExecutionCancel(scope.ID)
+		}
+	}()
+	return nil
 }
 
 func (c *ProcessClient) readLoop() {

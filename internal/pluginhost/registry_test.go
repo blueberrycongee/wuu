@@ -254,21 +254,16 @@ func TestServiceRegistryCall(t *testing.T) {
 	}
 	releaseNested()
 	releaseRoot()
-	// Updates stop autonomous work through both plugin and kernel providers,
-	// while a retained foreground owner keeps its declared services.
+	// Updates stop autonomous work while a retained foreground owner keeps
+	// its declared services, independently of provider transport.
 	host.StopBackground()
-	for _, kernel := range []bool{false, true} {
-		entry := registry.providers[key]
-		entry.kernel = kernel
-		registry.providers[key] = entry
-		if _, err := registry.Call(context.Background(), "notes", call); err == nil || err.Code != "generation_closed" {
-			t.Fatalf("retired autonomous call (kernel=%v) = %v", kernel, err)
-		}
-		scopedCall := call
-		scopedCall.ExecutionID = rootID
-		if _, err := registry.Call(context.Background(), "notes", scopedCall); err != nil {
-			t.Fatalf("retained foreground call (kernel=%v) failed: %v", kernel, err)
-		}
+	if _, err := registry.Call(context.Background(), "notes", call); err == nil || err.Code != "generation_closed" {
+		t.Fatalf("retired autonomous call = %v", err)
+	}
+	scopedCall := call
+	scopedCall.ExecutionID = rootID
+	if _, err := registry.Call(context.Background(), "notes", scopedCall); err != nil {
+		t.Fatalf("retained foreground call failed: %v", err)
 	}
 	finishCleanup := registry.allowShutdownCleanup("notes")
 	finishCleanup()
@@ -277,6 +272,100 @@ func TestServiceRegistryCall(t *testing.T) {
 	finishCleanup()
 	if _, err := registry.Call(context.Background(), "notes", call); err != nil {
 		t.Fatalf("old disposer revoked newer shutdown cleanup: %v", err)
+	}
+}
+
+func TestServiceProviderCallerScope(t *testing.T) {
+	provider := &fakeServiceProcess{id: "search", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}}
+	consumer := &fakeServiceProcess{id: "notes", state: StateActive, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}
+	stranger := &fakeServiceProcess{id: "stranger", state: StateActive, required: consumer.required}
+	registry, _ := BuildServiceRegistry(provider, consumer, stranger)
+	host := New(provider, consumer, stranger)
+	host.AttachServiceRegistry(registry, nil)
+	registry.Activate()
+	root := host.executions.BeginTool("notes", context.Background(), ToolExecuteInput{ThreadID: "thread", TurnID: "turn", CallID: "call", CWD: "/project"})
+	defer host.executions.End(root)
+	var callbackContext, ownerContext context.Context
+	provider.invoke = func(ctx context.Context, params ServiceInvokeParams) (json.RawMessage, error) {
+		scope, scopeErr := params.CallerExecution(true)
+		if scopeErr != nil {
+			t.Fatal(scopeErr)
+		}
+		callbackContext, ownerContext = ctx, scope.Context
+		if params.ExecutionID == root {
+			t.Fatal("provider callback reused the caller's execution identity")
+		}
+		wire, err := json.Marshal(params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded struct {
+			CallerScope *struct {
+				ID       string `json:"id"`
+				PluginID string `json:"plugin_id"`
+				Kind     string `json:"kind"`
+				CWD      string `json:"cwd"`
+			} `json:"caller_scope"`
+		}
+		if err := json.Unmarshal(wire, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded.CallerScope == nil || decoded.CallerScope.ID != root || decoded.CallerScope.PluginID != "notes" || decoded.CallerScope.Kind != "tool" || decoded.CallerScope.CWD != "/project" {
+			t.Fatalf("missing authenticated caller scope: %s", wire)
+		}
+		if _, err := host.ResolveToolExecution("search", params.ExecutionID); err == nil || err.Code != "invalid_execution_scope" {
+			t.Fatalf("provider callback acquired tool authority: %v", err)
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	call := ServiceCallParams{Service: "search.provider", Method: "query", ExecutionID: root}
+	if _, err := registry.Call(context.Background(), "notes", call); err != nil {
+		t.Fatal(err)
+	}
+	if callbackContext.Err() == nil || ownerContext.Err() != nil {
+		t.Fatal("callback and caller did not retain separate lifetimes")
+	}
+	if _, err := registry.Call(context.Background(), "stranger", call); err == nil || err.Code != "service_not_authorized" {
+		t.Fatalf("forged caller scope was accepted: %v", err)
+	}
+	if _, err := host.ResolveExecution("notes", root); err != nil {
+		t.Fatalf("callback ended its caller: %v", err)
+	}
+	host.executions.End(root)
+	if ownerContext.Err() == nil {
+		t.Fatal("caller resources survived their owner")
+	}
+	if _, err := registry.Call(context.Background(), "notes", call); err == nil || err.Code != "execution_not_found" {
+		t.Fatalf("late call reopened ended caller: %v", err)
+	}
+}
+
+func TestServiceCallerResourcesEndWhenProviderStops(t *testing.T) {
+	provider := &fakeServiceProcess{id: "search", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}}
+	consumer := &fakeServiceProcess{id: "notes", state: StateActive, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1}}}
+	registry, _ := BuildServiceRegistry(provider, consumer)
+	host := New(provider, consumer)
+	host.AttachServiceRegistry(registry, nil)
+	registry.Activate()
+	root := host.executions.BeginTool("notes", context.Background(), ToolExecuteInput{})
+	defer host.executions.End(root)
+	var resourceContext context.Context
+	provider.invoke = func(_ context.Context, params ServiceInvokeParams) (json.RawMessage, error) {
+		resourceContext = params.CallerScope.Context
+		return json.RawMessage(`{}`), nil
+	}
+	if _, err := registry.Call(context.Background(), "notes", ServiceCallParams{Service: "search.provider", Method: "query", ExecutionID: root}); err != nil {
+		t.Fatal(err)
+	}
+	if _, retired := host.RetirePlugin(context.Background(), "search", errors.New("provider stopped")); !retired {
+		t.Fatal("provider did not retire")
+	}
+	if resourceContext.Err() == nil {
+		t.Fatal("native provider retained resources after retirement")
+	}
+	owner, err := host.ResolveExecution("notes", root)
+	if err != nil || owner.Context.Err() != nil {
+		t.Fatalf("retiring optional provider cancelled independent consumer: %+v, %v", owner, err)
 	}
 }
 
@@ -447,7 +536,7 @@ func TestServiceRegistrySnapshot(t *testing.T) {
 		t.Fatalf("services = %+v", snapshot.Services)
 	}
 	first, second := snapshot.Services[0], snapshot.Services[1]
-	if first.Service != "agent.factory" || first.Provider != "alpha" || first.Version != "2.0.0" || first.Kernel {
+	if first.Service != "agent.factory" || first.Provider != "alpha" || first.Version != "2.0.0" {
 		t.Fatalf("first entry = %+v", first)
 	}
 	if strings.Join(first.Methods, ",") != "list,spawn" {

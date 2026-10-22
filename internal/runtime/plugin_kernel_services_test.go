@@ -358,7 +358,7 @@ func TestKernelRegistryIntrospectRoutesThroughRegistry(t *testing.T) {
 	}
 	foundStorage, foundIntrospect := false, false
 	for _, entry := range snapshot.Services {
-		if entry.Provider != "kernel" || !entry.Kernel {
+		if entry.Provider != "kernel" {
 			t.Fatalf("unexpected non-kernel entry: %+v", entry)
 		}
 		switch entry.Service {
@@ -458,7 +458,7 @@ func TestKernelUserQuestionUsesTrustedToolExecutionScope(t *testing.T) {
 	defer cancel(nil)
 	recorder := &fakeExecutionRecorder{scope: pluginhost.ToolExecutionScope{
 		ExecutionSnapshot: pluginhost.ExecutionSnapshot{
-			ID: "exec-trusted", PluginID: "ask-user", ThreadID: "thread-trusted",
+			ID: "exec-trusted", PluginID: "ask-user", Kind: "tool", ThreadID: "thread-trusted",
 			TurnID: "turn-trusted", ActorID: "actor-trusted", CallID: "call-trusted",
 		},
 		Context: executionCtx,
@@ -476,7 +476,7 @@ func TestKernelUserQuestionUsesTrustedToolExecutionScope(t *testing.T) {
 	done := make(chan invokeResult, 1)
 	go func() {
 		result, err := (&userQuestionOfferInvoker{parent: kernel}).InvokeService(context.Background(), pluginhost.ServiceInvokeParams{
-			Method: pluginhost.KernelServiceMethod, Caller: "ask-user", ExecutionID: "exec-trusted",
+			Method: pluginhost.KernelServiceMethod, Caller: "ask-user", ExecutionID: "exec-callback", CallerScope: &recorder.scope,
 			Params: json.RawMessage(`{"questions":[{"id":"choice","question":"Choose","options":[{"label":"A"}]}]}`),
 		})
 		done <- invokeResult{result: result, err: err}
@@ -508,13 +508,13 @@ func TestKernelUserQuestionUsesTrustedToolExecutionScope(t *testing.T) {
 
 func TestKernelUserQuestionRejectsSpoofedOwnershipPayload(t *testing.T) {
 	recorder := &fakeExecutionRecorder{scope: pluginhost.ToolExecutionScope{
-		ExecutionSnapshot: pluginhost.ExecutionSnapshot{ID: "exec-1", PluginID: "ask-user", ThreadID: "trusted", TurnID: "trusted", CallID: "trusted"},
+		ExecutionSnapshot: pluginhost.ExecutionSnapshot{ID: "exec-1", PluginID: "ask-user", Kind: "tool", ThreadID: "trusted", TurnID: "trusted", CallID: "trusted"},
 		Context:           context.Background(),
 	}}
 	kernel := newKernelHostServices(nil, recorder)
 	kernel.bindUserQuestions(pluginhost.NewUserQuestionBroker())
 	_, err := (&userQuestionAskInvoker{parent: kernel}).InvokeService(context.Background(), pluginhost.ServiceInvokeParams{
-		Method: pluginhost.KernelServiceMethod, Caller: "ask-user", ExecutionID: "exec-1",
+		Method: pluginhost.KernelServiceMethod, Caller: "ask-user", ExecutionID: "exec-callback", CallerScope: &recorder.scope,
 		Params: json.RawMessage(`{"thread_id":"spoofed","turn_id":"spoofed","questions":[{"id":"q","question":"Q","options":[{"label":"A"}]}]}`),
 	})
 	var serviceErr *pluginhost.HostServiceError
@@ -526,7 +526,7 @@ func TestKernelUserQuestionRejectsSpoofedOwnershipPayload(t *testing.T) {
 func TestKernelUserQuestionEndsWithOwningExecution(t *testing.T) {
 	executionCtx, cancelExecution := context.WithCancelCause(context.Background())
 	recorder := &fakeExecutionRecorder{scope: pluginhost.ToolExecutionScope{
-		ExecutionSnapshot: pluginhost.ExecutionSnapshot{ID: "exec-1", PluginID: "ask-user", ThreadID: "thread-1", TurnID: "turn-1", CallID: "call-1"},
+		ExecutionSnapshot: pluginhost.ExecutionSnapshot{ID: "exec-1", PluginID: "ask-user", Kind: "tool", ThreadID: "thread-1", TurnID: "turn-1", CallID: "call-1"},
 		Context:           executionCtx,
 	}}
 	broker := pluginhost.NewUserQuestionBroker()
@@ -537,7 +537,7 @@ func TestKernelUserQuestionEndsWithOwningExecution(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		_, err := (&userQuestionAskInvoker{parent: kernel}).InvokeService(context.Background(), pluginhost.ServiceInvokeParams{
-			Method: pluginhost.KernelServiceMethod, Caller: "ask-user", ExecutionID: "exec-1",
+			Method: pluginhost.KernelServiceMethod, Caller: "ask-user", ExecutionID: "exec-callback", CallerScope: &recorder.scope,
 			Params: json.RawMessage(`{"questions":[{"id":"q","question":"Q","options":[{"label":"A"}]}]}`),
 		})
 		done <- err

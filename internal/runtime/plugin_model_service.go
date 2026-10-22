@@ -54,7 +54,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	// Registry routing alone is not authority to start inference. Bind it to the
 	// caller's live host-owned execution (tool, capability, service callback or
 	// background job), so ending or revoking it cancels outstanding provider work.
-	scope, scopeErr := host.ResolveExecution(params.Caller, params.ExecutionID)
+	scope, scopeErr := params.CallerExecution(false)
 	if scopeErr != nil {
 		return nil, scopeErr
 	}

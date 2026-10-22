@@ -34,6 +34,7 @@ func (h *Host) ownClients(clients []Client) error {
 		lifetime := &clientLifetime{}
 		owner := cordis.Define[struct{}](client.ID(), func(scope *cordis.Context, _ struct{}) error {
 			scope.OnDispose(func() {
+				h.serviceRegistry.cancelCallerScopes(client.ID())
 				finishCleanup := h.serviceRegistry.allowShutdownCleanup(client.ID())
 				defer finishCleanup()
 				defer func() {
