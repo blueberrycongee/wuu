@@ -382,6 +382,8 @@ type executionUpdateRecorder interface {
 	ResolveToolExecution(callerPluginID, executionID string) (pluginhost.ToolExecutionScope, *pluginhost.HostServiceError)
 }
 
+const kernelHostModule = "kernel"
+
 type kernelHostServices struct {
 	mu                sync.RWMutex
 	active            bool
@@ -446,7 +448,7 @@ func (k *kernelHostServices) bindRegistry(registry *pluginhost.ServiceRegistry) 
 	k.mu.Unlock()
 }
 
-func (k *kernelHostServices) ID() string { return "kernel" }
+func (k *kernelHostServices) ID() string { return kernelHostModule }
 
 func (k *kernelHostServices) Status() pluginhost.Status {
 	k.mu.RLock()

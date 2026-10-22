@@ -48,14 +48,11 @@ func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
 }
 
 func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string) (*pluginhost.Host, *kernelHostServices, error) {
-	var bindings []composition.Binding
-	if selection != nil {
-		if err := selection.Validate(); err != nil {
-			return nil, nil, err
-		}
-		bindings = selection.Services
+	plugins, resolved, err := selectCompositionPlugins(selection, plugins)
+	if err != nil {
+		return nil, nil, err
 	}
-	registry, err := pluginhost.NewServiceRegistryWithBindings(bindings)
+	registry, err := pluginhost.NewServiceRegistryWithBindings(resolved.Services)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -73,17 +70,33 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	if required == nil {
 		required = make(map[string]bool)
 	}
-	host.Add(kernel)
-	for _, consumer := range nativeConsumers {
-		host.Add(consumer)
-		required[consumer.ID()] = true
+	var nativeModules []pluginhost.Client
+	if resolved.Includes(kernel.ID()) {
+		nativeModules = append(nativeModules, kernel)
+		kernel.bindUserQuestions(userQuestions)
+		kernel.bindWorkspaceStateDir(workspaceStateDir)
+		kernel.bindWuuHome(wuuHome)
+		host.SetToolResultMaterializer(kernel.materializeToolResult)
+		kernel.bindRegistry(registry)
 	}
-	kernel.bindUserQuestions(userQuestions)
-	kernel.bindWorkspaceStateDir(workspaceStateDir)
-	kernel.bindWuuHome(wuuHome)
-	host.SetToolResultMaterializer(kernel.materializeToolResult)
-	conflicts := registry.RegisterClients(append([]pluginhost.Client{kernel}, nativeConsumers...)...)
-	kernel.bindRegistry(registry)
+	for _, consumer := range nativeConsumers {
+		if resolved.Includes(consumer.ID()) {
+			nativeModules = append(nativeModules, consumer)
+			required[consumer.ID()] = true
+		}
+	}
+	for _, module := range nativeModules {
+		host.Add(module)
+	}
+	diagnostic := pluginhost.CompositionSnapshot{Profile: resolved.Profile, ModuleSource: resolved.ModuleSource}
+	for _, module := range nativeModules {
+		diagnostic.Modules = append(diagnostic.Modules, pluginhost.CompositionModuleSnapshot{ID: module.ID(), Version: currentWuuVersion()})
+	}
+	for _, item := range plugins {
+		diagnostic.Modules = append(diagnostic.Modules, pluginhost.CompositionModuleSnapshot{ID: item.ID, Version: item.Version})
+	}
+	registry.SetComposition(diagnostic)
+	conflicts := registry.RegisterClients(nativeModules...)
 	closeStarted := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -91,17 +104,10 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		registry.Close(ctx)
 		return err
 	}
-	identities := map[string]bool{kernel.ID(): true}
-	for _, consumer := range nativeConsumers {
-		identities[consumer.ID()] = true
-	}
 	for _, item := range plugins {
-		if identities[item.ID] {
-			return nil, nil, errors.Join(fmt.Errorf("duplicate runtime identity %q in composition", item.ID), closeStarted())
+		if resolved.Modules != nil {
+			required[item.ID] = true
 		}
-		identities[item.ID] = true
-	}
-	for _, item := range plugins {
 		if dependencyErr := host.DependencyFailures()[item.ID]; dependencyErr != nil {
 			host.Add(pluginhost.Failed(item.ID, dependencyErr))
 			if required[item.ID] {
@@ -113,8 +119,12 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			continue
 		}
 		timeout := time.Duration(item.Runtime.Timeout) * time.Second
-		handler := newPluginHostServices(item, projectRoot, wuuHome, turnRouter)
-		kernel.add(item.ID, handler)
+		var onClose func()
+		if resolved.Includes(kernel.ID()) {
+			handler := newPluginHostServices(item, projectRoot, wuuHome, turnRouter)
+			kernel.add(item.ID, handler)
+			onClose = handler.close
+		}
 		client, err := start(context.Background(), pluginhost.ProcessConfig{
 			ID:                item.ID,
 			Command:           item.Runtime.Command,
@@ -127,7 +137,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			WorkspaceStateDir: workspaceStateDir,
 			Timeout:           timeout,
 			ServiceRouter:     registry,
-			OnClose:           handler.close,
+			OnClose:           onClose,
 			PrepareOnly:       true,
 		})
 		if err != nil {
@@ -170,6 +180,45 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		return nil, nil, errors.Join(err, closeStarted())
 	}
 	return host, kernel, nil
+}
+
+// Recovery admits no module or service binding, including unavailable choices
+// in the user's composition. Discovery remains available for diagnostics.
+func runtimeComposition(selection *composition.Config, safeMode bool) *composition.Config {
+	if !safeMode {
+		return selection
+	}
+	modules := []string{}
+	return &composition.Config{Version: composition.Version, Modules: &modules}
+}
+
+// Apply the same module selection before package capabilities and runtime
+// processes are materialized. An explicit list never enables an untrusted package.
+func selectCompositionPlugins(selection *composition.Config, candidates []pluginpkg.Plugin) ([]pluginpkg.Plugin, composition.Resolved, error) {
+	resolved, err := selection.Resolve()
+	if err != nil {
+		return nil, resolved, err
+	}
+	available := []string{kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer}
+	identities := map[string]bool{}
+	for _, id := range available {
+		identities[id] = true
+	}
+	var selected []pluginpkg.Plugin
+	for _, item := range candidates {
+		if identities[item.ID] {
+			return nil, resolved, fmt.Errorf("duplicate runtime identity %q in composition", item.ID)
+		}
+		identities[item.ID] = true
+		available = append(available, item.ID)
+		if resolved.Includes(item.ID) {
+			selected = append(selected, item)
+		}
+	}
+	if err := resolved.ValidateAvailable(available); err != nil {
+		return nil, resolved, err
+	}
+	return selected, resolved, nil
 }
 
 func pluginActivationError(id string, startErr, closeErr error) error {

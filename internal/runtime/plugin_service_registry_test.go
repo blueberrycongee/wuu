@@ -159,6 +159,7 @@ func TestCompositionReplacesNativeStorageWithExternalProcess(t *testing.T) {
 	root := t.TempDir()
 	provider := testRuntimePlugin("file-storage")
 	provider.Root = root
+	provider.Version = "2.3.4"
 	provider.Runtime.Command = node
 	provider.Runtime.Args = []string{"provider.mjs"}
 	// This independent implementation reads the caller's file on every call;
@@ -183,20 +184,58 @@ createInterface({ input: process.stdin }).on('line', line => {
 		t.Fatal(err)
 	}
 	reader := testRuntimePlugin("reader")
-	selection := &composition.Config{Version: 1, Services: []composition.Binding{{Service: "host.storage.get", Major: 1, Provider: "file-storage"}}}
+	var selection composition.Config
+	if err := json.Unmarshal([]byte(`{"version":1,"profile":"external","profiles":{"external":{"modules":["reader","file-storage"],"services":[{"service":"host.storage.get","major":1,"provider":"file-storage"}]}}}`), &selection); err != nil {
+		t.Fatal(err)
+	}
 	host, _, err := buildPluginHost([]pluginpkg.Plugin{reader, provider}, root, "workspace", t.TempDir(), t.TempDir(), nil,
 		func(ctx context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 			if cfg.ID == "file-storage" {
 				return pluginhost.Start(ctx, cfg)
 			}
 			return &fakeServicePluginClient{id: cfg.ID, required: pluginhost.KernelServiceRequirements("host.storage.get")}, nil
-		}, nil, nil, selection, "")
+		}, nil, nil, &selection, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	for _, status := range host.Statuses() {
+		if status.ID != "reader" && status.ID != "file-storage" {
+			t.Fatalf("unselected runtime was loaded: %+v", status)
+		}
+	}
+	snapshot := host.ServiceRegistry().Snapshot(1)
+	if len(snapshot.Services) != 1 || snapshot.Services[0].Provider != "file-storage" || snapshot.Services[0].BindingSource != "profile:external" {
+		t.Fatalf("external-only composition = %+v", snapshot)
+	}
 	if err := activatePluginHost(context.Background(), host); err != nil {
 		t.Fatal(err)
+	}
+	diagnostic, err := json.Marshal(host.ServiceRegistry().Snapshot(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inspected struct {
+		Composition struct {
+			Profile      string `json:"profile"`
+			ModuleSource string `json:"module_source"`
+			Modules      []struct {
+				ID      string `json:"id"`
+				Version string `json:"version"`
+				State   string `json:"state"`
+			} `json:"modules"`
+		} `json:"composition"`
+	}
+	if err := json.Unmarshal(diagnostic, &inspected); err != nil {
+		t.Fatal(err)
+	}
+	if inspected.Composition.Profile != "external" || inspected.Composition.ModuleSource != "profile:external" || len(inspected.Composition.Modules) != 2 {
+		t.Fatalf("composition diagnostics = %s", diagnostic)
+	}
+	for _, module := range inspected.Composition.Modules {
+		if module.ID == "file-storage" && (module.Version != "2.3.4" || module.State != "active") {
+			t.Fatalf("running module version/state = %+v", module)
+		}
 	}
 	call := pluginhost.ServiceCallParams{Service: "host.storage.get", Method: "call", Params: json.RawMessage(`{"scope":"workspace","key":"note"}`)}
 	for _, value := range []string{"first", "changed-on-disk"} {
@@ -332,14 +371,116 @@ createInterface({ input: process.stdin }).on('line', async line => {
 }
 
 func TestCompositionPreparationFailurePreservesRunningGeneration(t *testing.T) {
-	oldClient := &generationClient{id: "old"}
-	old := testPluginGeneration("old", oldClient)
-	session := testGenerationSession(old)
+	for _, input := range []string{
+		`{"version":1,"services":[{"service":"search.provider","major":1,"provider":"missing"}]}`,
+		`{"version":1,"profile":"missing"}`,
+		`{"version":1,"modules":["missing"]}`,
+		`{"version":1,"modules":["kernel","kernel"]}`,
+		`{"version":1,"modules":[],"services":[{"service":"host.storage.get","major":1,"provider":"kernel"}]}`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			oldClient := &generationClient{id: "old"}
+			old := testPluginGeneration("old", oldClient)
+			session := testGenerationSession(old)
+			session.RootDir, session.HomeDir, session.WuuHome, session.StateDir = t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+			defer session.Cleanup()
+			var selection composition.Config
+			if err := json.Unmarshal([]byte(input), &selection); err != nil {
+				t.Fatal(err)
+			}
+			cfg := config.Config{Composition: &selection}
+			candidate, err := session.buildPluginGeneration(cfg, nil, nil, nil, startPluginClient)
+			if candidate != nil {
+				defer candidate.close()
+			}
+			if err == nil || candidate != nil || oldClient.closed || !session.IsCurrentPluginGeneration(old) {
+				t.Fatalf("failed selection changed active generation: has candidate=%t, error=%v, old closed=%v", candidate != nil, err, oldClient.closed)
+			}
+		})
+	}
+}
+
+func TestCompositionModuleSelectionPrecedesExecutableSurfaces(t *testing.T) {
+	selected, excluded := testRuntimePlugin("selected"), testRuntimePlugin("excluded")
+	selected.Official, excluded.Official = true, true
+	var selection composition.Config
+	if err := json.Unmarshal([]byte(`{"version":1,"profile":"minimal","profiles":{"minimal":{"modules":["selected"]}}}`), &selection); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Composition: &selection}
+	plan, err := ResolvePluginActivationPlan(cfg, []pluginpkg.Plugin{excluded, selected})
+	if err != nil || len(plan.Plugins) != 1 || plan.Plugins[0].ID != "selected" {
+		t.Fatalf("composition did not filter hooks, skills and runtimes together: %+v, %v", plan, err)
+	}
+	selected.Official = false
+	if _, err := ResolvePluginActivationPlan(cfg, []pluginpkg.Plugin{excluded, selected}); err == nil {
+		t.Fatal("composition bypassed package trust")
+	}
+}
+
+func TestCompositionSafeModeRecoversUnavailableModules(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WUU_HOME", filepath.Join(root, "state"))
+	var cfg config.Config
+	if err := json.Unmarshal([]byte(`{"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key":"synthetic","model":"test"}},"composition":{"version":1,"modules":["unavailable"],"services":[{"service":"search.provider","major":1,"provider":"unavailable"}]}}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	session, err := NewSession(Options{RootDir: root, HomeDir: root, SafeMode: true, NonInteractive: true, Config: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer session.Cleanup()
-	cfg := config.Config{Composition: &composition.Config{Version: 1, Services: []composition.Binding{{Service: "search.provider", Major: 1, Provider: "missing"}}}}
-	candidate, err := session.buildPluginGeneration(cfg, nil, nil, nil, startPluginClient)
-	if err == nil || candidate != nil || oldClient.closed || !session.IsCurrentPluginGeneration(old) {
-		t.Fatalf("failed selection changed active generation: candidate=%v, error=%v, old closed=%v", candidate, err, oldClient.closed)
+	if len(session.PluginHost.Statuses()) != 0 {
+		t.Fatalf("safe mode activated product modules: %+v", session.PluginHost.Statuses())
+	}
+	if err := session.RefreshExtensions(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(session.PluginHost.Statuses()) != 0 {
+		t.Fatalf("safe-mode refresh activated product modules: %+v", session.PluginHost.Statuses())
+	}
+}
+
+func TestCompositionOverridesProfileBeforeStartingModules(t *testing.T) {
+	var selection composition.Config
+	if err := json.Unmarshal([]byte(`{"version":1,"profile":"base","profiles":{"base":{"modules":["a","reader"],"services":[{"service":"search.provider","major":1,"provider":"a"}]}},"modules":["b","reader"],"services":[{"service":"search.provider","major":1,"provider":"b"}]}`), &selection); err != nil {
+		t.Fatal(err)
+	}
+	var started []string
+	host, _, err := buildPluginHost([]pluginpkg.Plugin{testRuntimePlugin("a"), testRuntimePlugin("b"), testRuntimePlugin("reader")}, "", "", "", "", nil,
+		func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+			started = append(started, cfg.ID)
+			if cfg.ID == "reader" {
+				return &fakeServicePluginClient{id: cfg.ID, required: []pluginhost.ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}, nil
+			}
+			return &fakeServicePluginClient{id: cfg.ID, provided: []pluginhost.ServiceDescriptor{searchServiceDescriptor("1.0.0")}}, nil
+		}, nil, nil, &selection, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close(context.Background())
+	if strings.Join(started, ",") != "b,reader" {
+		t.Fatalf("overridden module still executed: %v", started)
+	}
+	snapshot := host.ServiceRegistry().Snapshot(1)
+	if len(snapshot.Services) != 1 || snapshot.Services[0].Provider != "b" || snapshot.Services[0].BindingSource != "composition" {
+		t.Fatalf("profile override was not resolved before registration: %+v", snapshot)
+	}
+}
+
+func TestCompositionExplicitModuleFailureRejectsCandidate(t *testing.T) {
+	var selection composition.Config
+	if err := json.Unmarshal([]byte(`{"version":1,"modules":["reader"]}`), &selection); err != nil {
+		t.Fatal(err)
+	}
+	consumer := &fakeServicePluginClient{id: "reader", required: pluginhost.KernelServiceRequirements("host.storage.get")}
+	host, _, err := buildPluginHost([]pluginpkg.Plugin{testRuntimePlugin("reader")}, "", "", "", "", nil,
+		func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) { return consumer, nil }, nil, nil, &selection, "")
+	if host != nil {
+		defer host.Close(context.Background())
+	}
+	if err == nil || host != nil || !consumer.closed {
+		t.Fatalf("explicit module lost its required provider without rejecting preparation: %v, %v, closed=%t", host, err, consumer.closed)
 	}
 }
 
@@ -401,6 +542,57 @@ func TestNativeProviderRetirementDrainsConsumers(t *testing.T) {
 				t.Fatalf("native retirement did not finish: flush=%t, consumer closed=%t, native=%s", flushed, consumer.closed, native.Status().State)
 			}
 		})
+	}
+}
+
+func TestCompositionRemovalRetiresNativeProviderInPinnedGeneration(t *testing.T) {
+	reader := testRuntimePlugin("reader")
+	reader.SubjectID, reader.Fingerprint = "plugin:user:reader", "profile-retirement"
+	consumer := &nativeLifecycleConsumer{fakeServicePluginClient: &fakeServicePluginClient{id: reader.ID,
+		required: pluginhost.KernelServiceRequirements(pluginhost.KernelStorageSetService)}}
+	root, home, state := t.TempDir(), t.TempDir(), t.TempDir()
+	host, native, err := buildPluginHost([]pluginpkg.Plugin{reader}, root, "workspace", home, state, nil,
+		func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) { return consumer, nil }, nil, nil, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	old := &PluginGeneration{id: "old", active: []pluginpkg.Plugin{reader}, host: host, hooks: buildHookDispatcher(config.Config{}, nil, nil, "", nil)}
+	session := testGenerationSession(old)
+	session.RootDir, session.HomeDir, session.WuuHome, session.StateDir = root, t.TempDir(), home, state
+	defer session.Cleanup()
+	pin := session.RetainPluginGeneration()
+	defer session.ReleasePluginGeneration(pin)
+	flushed := false
+	consumer.flush = func(ctx context.Context) error {
+		if native.Status().State != pluginhost.StateActive {
+			return errors.New("provider stopped before final flush")
+		}
+		_, err := host.ServiceRegistry().Call(ctx, reader.ID, pluginhost.ServiceCallParams{
+			Service: pluginhost.KernelStorageSetService, Method: "call",
+			Params: json.RawMessage(`{"scope":"workspace","key":"final","value":"flushed"}`),
+		})
+		flushed = err == nil
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	var selection composition.Config
+	if err := json.Unmarshal([]byte(`{"version":1,"modules":[]}`), &selection); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := session.buildPluginGeneration(config.Config{Composition: &selection}, nil, nil, nil, startPluginClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !flushed || !consumer.closed || native.Status().State != pluginhost.StateStopped || len(candidate.host.Statuses()) != 0 {
+		t.Fatalf("profile removal left a pinned module alive: flushed=%t, consumer closed=%t, native=%s, candidate runtimes=%d", flushed, consumer.closed, native.Status().State, len(candidate.host.Statuses()))
 	}
 }
 

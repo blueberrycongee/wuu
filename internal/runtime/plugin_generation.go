@@ -150,13 +150,11 @@ func (s *Session) RevokeFailedPluginDependencies() bool {
 	}
 	changed := false
 	for _, generation := range generations {
-		failures := generation.host.DependencyFailures()
-		activeIDs := make(map[string]bool, len(generation.active))
+		activeIDs := generation.availableModuleIDs()
 		invalidated := false
 		generation.revokedMu.Lock()
-		for _, item := range generation.active {
-			activeIDs[item.ID] = failures[item.ID] == nil
-			if failures[item.ID] != nil && !generation.revokedPlugins[item.ID] {
+		for id, available := range activeIDs {
+			if !available && !generation.revokedPlugins[id] {
 				invalidated = true
 			}
 		}
@@ -313,7 +311,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 			}
 		}
 	}
-	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, cfg.Composition, s.DriverProfile)
+	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(cfg.Composition, s.SafeMode), s.DriverProfile)
 	if err != nil {
 		for _, root := range ownedRoots {
 			_ = os.RemoveAll(root)
@@ -432,11 +430,7 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	activationErr := activatePluginHost(context.Background(), candidate.host)
 	available := availablePluginPackages(candidate.active, candidate.host)
 	if len(available) != len(candidate.active) {
-		activeIDs := make(map[string]bool, len(available))
-		for _, item := range available {
-			activeIDs[item.ID] = true
-		}
-		candidate.revokeMissingPlugins(activeIDs, s.TitleClient, s.Model)
+		candidate.revokeMissingPlugins(candidate.availableModuleIDs(), s.TitleClient, s.Model)
 		candidate.active = available
 		candidate.pluginSkills = discoverPluginSkills(available)
 		candidate.skills = discoverSkillsWithPlugins(s.RootDir, s.HomeDir, s.WuuHome, candidate.pluginSkills, candidate.settings.Skills)
@@ -471,10 +465,7 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		s.retiredPluginGenerations = make(map[*PluginGeneration]struct{})
 	}
 	s.retiredPluginGenerations[old] = struct{}{}
-	activeIDs := make(map[string]bool, len(candidate.active))
-	for _, item := range candidate.active {
-		activeIDs[item.ID] = true
-	}
+	activeIDs := candidate.availableModuleIDs()
 	var retired []*PluginGeneration
 	for generation := range s.retiredPluginGenerations {
 		// A thread-model shadow can release its final reference independently
@@ -504,6 +495,38 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	return nil
 }
 
+// moduleIDs includes native lifecycle participants and declarative-only packages.
+// Both belong to the generation even when they provide no runtime services.
+func (g *PluginGeneration) moduleIDs() []string {
+	ids := make(map[string]bool)
+	for _, item := range g.active {
+		ids[item.ID] = true
+	}
+	for _, status := range g.host.Statuses() {
+		ids[status.ID] = true
+	}
+	out := make([]string, 0, len(ids))
+	for id := range ids {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (g *PluginGeneration) availableModuleIDs() map[string]bool {
+	failures := g.host.DependencyFailures()
+	available := make(map[string]bool)
+	for _, id := range g.moduleIDs() {
+		available[id] = failures[id] == nil
+	}
+	for _, status := range g.host.Statuses() {
+		if status.State == pluginhost.StateFailed || status.State == pluginhost.StateStopped {
+			available[status.ID] = false
+		}
+	}
+	return available
+}
+
 // revokeMissingPlugins stops removed or disabled implementations even when a
 // conversation still pins this generation. Updates with the same ID retain
 // their old implementation until outstanding work releases it.
@@ -511,7 +534,7 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 	g.revocationMu.Lock()
 	defer g.revocationMu.Unlock()
 	var dependencies map[string][]pluginhost.Dependency
-	ordered := append([]pluginpkg.Plugin(nil), g.active...)
+	ordered := g.moduleIDs()
 	if g.host != nil {
 		dependencies = g.host.Dependencies()
 		order, _ := g.host.DependencyOrder()
@@ -519,25 +542,25 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 		for index, id := range order {
 			rank[id] = index
 		}
-		sort.SliceStable(ordered, func(i, j int) bool { return rank[ordered[i].ID] < rank[ordered[j].ID] })
+		sort.SliceStable(ordered, func(i, j int) bool { return rank[ordered[i]] < rank[ordered[j]] })
 	}
 	g.revokedMu.Lock()
 	// Same-ID replacements can change their requirements. A pinned generation
 	// still needs its own providers; never apply the replacement's graph to it.
-	retainedIDs := make(map[string]bool, len(g.active))
-	for _, item := range g.active {
-		retainedIDs[item.ID] = activeIDs[item.ID] && !g.revokedPlugins[item.ID]
+	retainedIDs := make(map[string]bool, len(ordered))
+	for _, id := range ordered {
+		retainedIDs[id] = activeIDs[id] && !g.revokedPlugins[id]
 	}
 	for changed := true; changed; {
 		changed = false
-		for _, item := range g.active {
-			if !retainedIDs[item.ID] {
+		for _, id := range ordered {
+			if !retainedIDs[id] {
 				continue
 			}
-			for _, dependency := range dependencies[item.ID] {
+			for _, dependency := range dependencies[id] {
 				retained, tracked := retainedIDs[dependency.Provider]
 				if dependency.Required && tracked && !retained {
-					retainedIDs[item.ID] = false
+					retainedIDs[id] = false
 					changed = true
 					break
 				}
@@ -551,22 +574,22 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 			remaining = append(remaining, item)
 		}
 	}
-	var retiring []pluginpkg.Plugin
+	var retiring []string
 	// The retained generation owns the selected service and package graph.
 	// Consumers release their resources while their providers remain alive.
 	for index := len(ordered) - 1; index >= 0; index-- {
-		item := ordered[index]
-		if activeIDs[item.ID] && !g.revokedPlugins[item.ID] {
+		id := ordered[index]
+		if activeIDs[id] && !g.revokedPlugins[id] {
 			continue
 		}
-		if g.revokedPlugins[item.ID] {
+		if g.revokedPlugins[id] {
 			continue
 		}
 		if g.revokedPlugins == nil {
 			g.revokedPlugins = make(map[string]bool)
 		}
-		g.revokedPlugins[item.ID] = true
-		retiring = append(retiring, item)
+		g.revokedPlugins[id] = true
+		retiring = append(retiring, id)
 	}
 	// Publish the entire mask before any shutdown callback. Such callbacks may
 	// read skills or inventory, so no mask lock may span an external effect.
@@ -575,41 +598,53 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 		return
 	}
 	dependencyFailures := make(map[string]error)
+	failedStatuses := make(map[string]pluginhost.Status)
 	if g.host != nil {
 		dependencyFailures = g.host.DependencyFailures()
+		for _, status := range g.host.Statuses() {
+			if status.State == pluginhost.StateFailed {
+				failedStatuses[status.ID] = status
+			}
+		}
 	}
 	if g.hooks != nil {
 		g.hooks.Replace(buildHookDispatcher(g.settings, remaining, client, model, nil))
 	}
-	for _, item := range retiring {
-		g.revokeActivities(item.ID)
+	packages := make(map[string]pluginpkg.Plugin, len(g.active))
+	for _, item := range g.active {
+		packages[item.ID] = item
+	}
+	for _, id := range retiring {
+		g.revokeActivities(id)
 		if g.host != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			outcome, _ := g.host.RetirePlugin(ctx, item.ID, &pluginhost.UserQuestionError{Code: "plugin_disabled", Message: "plugin was removed or disabled"})
+			outcome, _ := g.host.RetirePlugin(ctx, id, &pluginhost.UserQuestionError{Code: "plugin_disabled", Message: "module was removed or disabled"})
 			cancel()
-			if failure := dependencyFailures[item.ID]; failure != nil {
-				g.host.Add(pluginhost.Failed(item.ID, failure))
+			if status, failed := failedStatuses[id]; failed {
+				g.host.Add(pluginhost.FailedWithStatus(status))
+			} else if failure := dependencyFailures[id]; failure != nil {
+				g.host.Add(pluginhost.Failed(id, failure))
 			}
 			if outcome.Err != nil {
-				providers.DebugLogf("retire disabled plugin %q: %v", item.ID, outcome.Err)
+				providers.DebugLogf("retire disabled module %q: %v", id, outcome.Err)
 			}
 		}
 		if g.mcp != nil {
-			for localName := range item.MCPServers {
-				name := PluginMCPServerName(item.ID, localName)
+			for localName := range packages[id].MCPServers {
+				name := PluginMCPServerName(id, localName)
 				if err := g.mcp.Revoke(name); err != nil {
 					providers.DebugLogf("revoke disabled plugin MCP server %q: %v", name, err)
 				}
 			}
 		}
 		if g.systemPrompts != nil {
-			g.systemPrompts.RemoveByPlugin(item.ID)
+			g.systemPrompts.RemoveByPlugin(id)
 		}
 		if g.compactions != nil {
-			g.compactions.RemoveByPlugin(item.ID)
+			g.compactions.RemoveByPlugin(id)
 		}
 		if g.requestTransforms != nil {
-			g.requestTransforms.RemoveByPlugin(item.ID)
+			g.requestTransforms.RemoveByPlugin(id)
 		}
 	}
 

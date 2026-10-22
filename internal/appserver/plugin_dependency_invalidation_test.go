@@ -16,7 +16,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/skills"
 )
 
-// A failed rebuild must not republish the consumer's last-good UI and skills.
+// A failed rebuild must not republish the provider's or consumer's last-good UI
+// and skills, and must retain the original crash for recovery diagnostics.
 func TestFailedPluginRecoveryPublishesRevokedConsumerState(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = t.TempDir()
@@ -50,16 +51,16 @@ func TestFailedPluginRecoveryPublishesRevokedConsumerState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog) != 2 {
+	if len(catalog) != 1 {
 		t.Fatalf("revoked skill remains in catalog: %+v", catalog)
 	}
 	for _, item := range catalog {
-		if item.Source == "plugin:consumer" {
-			t.Fatal("consumer skill remains visible")
+		if item.Source == "plugin:consumer" || item.Source == "plugin:provider" {
+			t.Fatal("failed provider or dependent skill remains visible")
 		}
 	}
 	trust := srv.currentExtensionTrustSummary().MainSession
-	if trust.Skills.Count != 2 || trust.Plugins.Count != 1 {
+	if trust.Skills.Count != 1 || trust.Plugins.Count != 0 {
 		t.Fatalf("stale trust summary: %+v", trust)
 	}
 	if _, err := srv.requireActiveDesktopPlugin(consumer.SubjectID, consumer.Fingerprint); err == nil {
@@ -76,7 +77,7 @@ func TestFailedPluginRecoveryPublishesRevokedConsumerState(t *testing.T) {
 		}
 		notified = true
 		notice := remarshal[PluginInventoryChangedNotification](t, message["params"])
-		if len(notice.Skills) != 2 {
+		if len(notice.Skills) != 1 {
 			t.Fatalf("failure notification leaked skills: %+v", notice.Skills)
 		}
 		record := findPluginExtensionRecord(t, notice.ExtensionInventory, "consumer")
@@ -86,6 +87,9 @@ func TestFailedPluginRecoveryPublishesRevokedConsumerState(t *testing.T) {
 	}
 	if !notified {
 		t.Fatal("failed recovery did not publish inventory invalidation")
+	}
+	if !rt.PluginGenerationNeedsRecovery() {
+		t.Fatal("cleanup erased the crash that still requires recovery")
 	}
 }
 

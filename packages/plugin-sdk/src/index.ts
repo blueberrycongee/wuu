@@ -701,10 +701,45 @@ export function requireModelRequestService(): ServiceRequirement {
   return { name: MODEL_REQUEST_SERVICE, major_version: 1, required: true };
 }
 
-/** Bootstrap service choices; independent of runtime protocol and product version. */
+/** Bootstrap choices; independent of runtime protocol and product version. */
 export interface ProductComposition {
   version: 1;
+  profile?: string;
+  profiles?: Record<string, CompositionProfile>;
+  /** Replaces the profile's complete module set. [] starts no modules. */
+  modules?: string[];
+  /** Overrides profile bindings by service name and major version. */
   services?: ServiceBinding[];
+}
+
+/** Named module and service choices. Inclusion never grants package trust. */
+export interface CompositionProfile {
+  modules: string[];
+  services?: ServiceBinding[];
+}
+
+/** Public registry diagnostics; no provider configuration or private data. */
+export interface ServiceRegistrySnapshot {
+  generation: number;
+  services: {
+    service: string;
+    version: string;
+    provider: string;
+    methods: string[];
+    binding_source: "composition" | "unique-provider" | `profile:${string}`;
+  }[];
+  composition?: {
+    profile?: string;
+    module_source: "composition" | "discovery-default" | `profile:${string}`;
+    modules: {
+      id: string;
+      /** Package version, or product build for a native module. */
+      version?: string;
+      /** Omitted for a package without a runtime. */
+      state?: "starting" | "initialized" | "prepared" | "active" | "failed" | "stopped";
+      error?: string;
+    }[];
+  };
 }
 
 /** Selects a provider without fallback when it fails or is removed. */

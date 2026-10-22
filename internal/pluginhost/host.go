@@ -119,7 +119,14 @@ func Failed(id string, err error) Client {
 	if err != nil {
 		message = err.Error()
 	}
-	return &failedClient{status: Status{ID: id, State: StateFailed, Error: message}}
+	return FailedWithStatus(Status{ID: id, Error: message})
+}
+
+// FailedWithStatus retains the original process identity and start time after
+// cleanup. Recovery must distinguish a crashed active module from a load failure.
+func FailedWithStatus(status Status) Client {
+	status.State = StateFailed
+	return &failedClient{status: status}
 }
 
 func (h *Host) Add(client Client) {
@@ -144,6 +151,7 @@ func (h *Host) AttachServiceRegistry(registry *ServiceRegistry, conflicts []Serv
 		registry.bindRootExecutionContext(h.ResolveExecutionContext)
 		registry.mu.Lock()
 		registry.scopeTracker = h.executions
+		registry.moduleStatuses = h.Statuses
 		registry.mu.Unlock()
 	}
 	for _, conflict := range conflicts {

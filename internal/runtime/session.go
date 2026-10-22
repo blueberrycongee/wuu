@@ -511,7 +511,7 @@ func NewSession(opts Options) (*Session, error) {
 	if !opts.NonInteractive {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
-	pluginHost, pluginKernel, err := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions, cfg.Composition, opts.DriverProfile)
+	pluginHost, pluginKernel, err := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions, runtimeComposition(cfg.Composition, safeMode), opts.DriverProfile)
 	if err != nil {
 		return nil, fmt.Errorf("prepare plugin composition: %w", err)
 	}
@@ -2322,7 +2322,11 @@ func activatedPlugins(cfg config.Config, discovered []pluginpkg.Plugin) []plugin
 // ResolvePluginActivationPlan applies package relationships after trust,
 // explicit disablement, and host compatibility have selected candidates.
 func ResolvePluginActivationPlan(cfg config.Config, discovered []pluginpkg.Plugin) (pluginpkg.ActivationPlan, error) {
-	return pluginpkg.BuildActivationPlan(activatedPlugins(cfg, discovered))
+	selected, _, err := selectCompositionPlugins(cfg.Composition, activatedPlugins(cfg, discovered))
+	if err != nil {
+		return pluginpkg.ActivationPlan{}, err
+	}
+	return pluginpkg.BuildActivationPlan(selected)
 }
 
 func permissionSetContains(granted, required []string) bool {

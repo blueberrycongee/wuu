@@ -89,6 +89,7 @@ type ServiceRegistry struct {
 	open                 bool
 	providers            map[serviceKey]serviceProvider
 	bindings             map[serviceKey]string
+	bindingSources       map[serviceKey]string
 	ambiguous            map[serviceKey]string
 	consumers            map[string]map[serviceKey]struct{}
 	requirements         map[string][]ServiceRequirement
@@ -103,12 +104,14 @@ type ServiceRegistry struct {
 	preparing            map[string]bool
 	retiringProviders    map[string]bool
 	rootExecutionContext func(string, string) (context.Context, bool, *HostServiceError)
+	composition          *CompositionSnapshot
+	moduleStatuses       func() []Status
 }
 
 func NewServiceRegistry() *ServiceRegistry {
 	return &ServiceRegistry{
 		open: true, providers: make(map[serviceKey]serviceProvider),
-		bindings: make(map[serviceKey]string), ambiguous: make(map[serviceKey]string),
+		bindings: make(map[serviceKey]string), bindingSources: make(map[serviceKey]string), ambiguous: make(map[serviceKey]string),
 		consumers:    make(map[string]map[serviceKey]struct{}),
 		requirements: make(map[string][]ServiceRequirement),
 		notifiers:    make(map[string]ServiceChangedNotifier),
@@ -124,7 +127,13 @@ func NewServiceRegistryWithBindings(bindings []composition.Binding) (*ServiceReg
 	}
 	registry := NewServiceRegistry()
 	for _, binding := range bindings {
-		registry.bindings[serviceKey{name: binding.Service, major: binding.Major}] = binding.Provider
+		key := serviceKey{name: binding.Service, major: binding.Major}
+		registry.bindings[key] = binding.Provider
+		source := binding.Source
+		if source == "" {
+			source = "composition"
+		}
+		registry.bindingSources[key] = source
 	}
 	return registry, nil
 }
@@ -776,8 +785,35 @@ type ServiceRegistryEntry struct {
 // registration metadata only — never configuration values, credentials, or
 // another plugin's private data.
 type ServiceRegistrySnapshot struct {
-	Generation uint64                 `json:"generation"`
-	Services   []ServiceRegistryEntry `json:"services"`
+	Generation  uint64                 `json:"generation"`
+	Services    []ServiceRegistryEntry `json:"services"`
+	Composition *CompositionSnapshot   `json:"composition,omitempty"`
+}
+
+// CompositionSnapshot records selected modules without exposing configuration
+// values. Version is the package version, or product build for native modules.
+// Declarative-only packages have no runtime State.
+type CompositionSnapshot struct {
+	Profile      string                      `json:"profile,omitempty"`
+	ModuleSource string                      `json:"module_source"`
+	Modules      []CompositionModuleSnapshot `json:"modules"`
+}
+
+type CompositionModuleSnapshot struct {
+	ID      string `json:"id"`
+	Version string `json:"version,omitempty"`
+	State   State  `json:"state,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// SetComposition binds diagnostic metadata before candidate preparation.
+// Runtime states come from the owning Host's authoritative lifecycle graph.
+func (r *ServiceRegistry) SetComposition(snapshot CompositionSnapshot) {
+	snapshot.Modules = append([]CompositionModuleSnapshot{}, snapshot.Modules...)
+	sort.Slice(snapshot.Modules, func(i, j int) bool { return snapshot.Modules[i].ID < snapshot.Modules[j].ID })
+	r.mu.Lock()
+	r.composition = &snapshot
+	r.mu.Unlock()
 }
 
 // Snapshot returns a deterministic view of the currently registered
@@ -785,7 +821,13 @@ type ServiceRegistrySnapshot struct {
 // registry itself is generation-scoped but does not own the durable epoch.
 func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	var composition *CompositionSnapshot
+	if r.composition != nil {
+		copy := *r.composition
+		copy.Modules = append([]CompositionModuleSnapshot{}, copy.Modules...)
+		composition = &copy
+	}
+	moduleStatuses := r.moduleStatuses
 	entries := make([]ServiceRegistryEntry, 0, len(r.providers))
 	for _, provider := range r.providers {
 		methods := make([]string, 0, len(provider.descriptor.Methods))
@@ -795,8 +837,8 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 		sort.Strings(methods)
 		source := "unique-provider"
 		major, _ := ServiceVersionMajor(provider.descriptor.Version)
-		if r.bindings[serviceKey{name: provider.descriptor.Name, major: major}] != "" {
-			source = "composition"
+		if selectedSource := r.bindingSources[serviceKey{name: provider.descriptor.Name, major: major}]; selectedSource != "" {
+			source = selectedSource
 		}
 		entries = append(entries, ServiceRegistryEntry{
 			Service:       provider.descriptor.Name,
@@ -806,13 +848,25 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 			BindingSource: source,
 		})
 	}
+	r.mu.RUnlock()
+	if composition != nil && moduleStatuses != nil {
+		statuses := make(map[string]Status)
+		for _, status := range moduleStatuses() {
+			statuses[status.ID] = status
+		}
+		for index := range composition.Modules {
+			module := &composition.Modules[index]
+			status := statuses[module.ID]
+			module.State, module.Error = status.State, status.Error
+		}
+	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].Service != entries[j].Service {
 			return entries[i].Service < entries[j].Service
 		}
 		return entries[i].Version < entries[j].Version
 	})
-	return ServiceRegistrySnapshot{Generation: generation, Services: entries}
+	return ServiceRegistrySnapshot{Generation: generation, Services: entries, Composition: composition}
 }
 
 // notifyConsumers delivers service.changed to every consumer of (name,

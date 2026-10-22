@@ -109,9 +109,34 @@ Generation 拥有的 `host.background` 任务与会话工作者的生命周期�
 }
 ```
 
-所选包须已启用、受信任，并声明指定服务主版本。绑定不会安装或启用包。重复绑定、指定提供者不可用或服务有歧义时，准备失败，之前运行的 generation 保持不变。所选提供者崩溃或移除后，调用失败，不会回退到其他已注册实现。没有显式绑定时，服务必须恰好有一个提供者。注册表检查会同时返回版本、提供者 ID 和 `binding_source`（`composition` 或 `unique-provider`）。
+所选包须已启用、受信任，并声明指定服务主版本。绑定不会安装或启用包。重复绑定、指定提供者不可用或服务有歧义时，准备失败，之前运行的 generation 保持不变。所选提供者崩溃或移除后，调用失败，不会回退到其他已注册实现。没有显式绑定时，服务必须恰好有一个提供者。注册表检查会同时返回版本、提供者 ID 和 `binding_source`（`composition`、`profile:<名称>` 或 `unique-provider`）。
 
 组合版本 1 与产品 CalVer、服务版本相互独立。未添加此配置的已有用户继续使用唯一提供者发现；以前依赖先注册者胜出的配置须补充显式选择。由于绑定能选择执行和凭据策略，正常启动忽略项目中的 `composition` 覆盖，包括大小写变体。配置变更在 generation 准备时应用，仍在执行的工作保留原注册表。恢复之前的选择会创建新的 generation，不会撤销已完成效果，也不会自动迁移提供者数据。
+
+具名运行时组合也可以选择完整的模块集合。例如，安装并启用两个[服务组合示例包](../../../examples/plugins/service-composition/README.md)后：
+
+```json
+{
+  "composition": {
+    "version": 1,
+    "profile": "writing",
+    "profiles": {
+      "writing": {
+        "modules": ["text-analysis-example", "writing-report-example"],
+        "services": [
+          { "service": "example.text.analysis", "major": 1, "provider": "text-analysis-example" }
+        ]
+      }
+    }
+  }
+}
+```
+
+`profile` 选择 `profiles` 中的一项。每个 profile 必须提供包含依赖的完整 `modules` 数组。顶层 `modules` 替换整个集合；顶层 `services` 按服务名和主版本逐项覆盖 profile 的绑定。模块顺序不决定服务选择或生命周期顺序。显式空数组不启动任何模块；同时省略 profile 和 `modules` 时，保留已启用、受信任的默认发现结果。未知 profile、重复模块、被模块集合排除的绑定目标、不可用的指定模块或指定运行时启动失败都会拒绝准备。模块选择不能安装、启用或授予包信任。筛选发生在运行时、hook、技能和 MCP 贡献加载之前。
+
+当前原生运行时模块包括 `kernel`（原生服务集合）、`wuu.tool-execution`（工具安全服务的声明式消费者）和 `wuu.session-execution`（已配置驱动的声明式消费者）。显式模块集合只在需要时包含它们。排除 `kernel` 会移除其服务和工具结果物化功能，不会自动选择替代实现。这些运行时选择尚不替换应用 shell 或完整会话持久化实现。安全模式不启动任何组合模块，即使配置指定了不可用的包；发现功能仍可用于恢复。
+
+`plugin/registry/introspect` 返回 `composition.profile`、`module_source`，以及所选模块的 ID、包版本和当前运行时状态。原生模块版本标识产品构建，服务版本另行记录。没有运行时的包不带运行时状态。即使排除了原生注册表检查提供者，此诊断仍然可用。同 ID 更新保留正在执行的工作；移除模块会撤销所有保留 generation 中的对应模块，并让消费者先完成清理，再停止提供者。
 
 包依赖与所选服务依赖使用同一张 generation 生命周期图。提供者先于消费者激活，清理按相反顺序进行，期间提供者资源保持可用。必需服务缺失、主版本不兼容或提供者失败会阻止依赖链上的消费者运行。可选服务缺失不会阻止激活；存在时仍参与生命周期排序。跨越包与服务的依赖循环会在激活前导致准备失败。新版本改变依赖时，仍被保留的 generation 使用自己的解析结果。移除提供者会停止必需消费者，独立插件继续运行。
 
