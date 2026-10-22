@@ -30,6 +30,8 @@ it("reads Markdown attachments with the shared document presentation", async () 
   expect(container.querySelector(".rich-heading")?.textContent).toBe("Report");
   expect(container.querySelector("strong")?.textContent).toBe("Ready");
   expect(container.querySelector("pre")).toBeNull();
+  expect(container.querySelector("header, a[download]")).toBeNull();
+  expect(container.textContent).not.toContain("text/plain");
 });
 it("shows pending reads and errors without an external navigation fallback", async () => {
   let reject!: (error: Error) => void;
@@ -39,11 +41,12 @@ it("shows pending reads and errors without an external navigation fallback", asy
   expect(container.querySelector('[role="alert"]')?.textContent).toContain("Verified read failed");
   expect(container.querySelector("a")).toBeNull();
 });
-it("offers download only for unsupported files", async () => {
+it("explains unsupported files without offering a download or embedded fallback", async () => {
   vi.stubGlobal("URL", { createObjectURL: () => "blob:test", revokeObjectURL: vi.fn() });
   cleanups.push(() => vi.unstubAllGlobals());
   const container = await mount("application/zip", async () => new Blob(["hello"]));
-  await vi.waitFor(() => expect(container.querySelector("a[download]")).not.toBeNull());
+  expect(container.querySelector('[role="status"]')?.textContent).toBeTruthy();
+  expect(container.querySelector("header, a[download], button")).toBeNull();
   expect(container.querySelector("iframe,object,embed,img,pre")).toBeNull();
 });
 

@@ -1,8 +1,7 @@
 import { createContext, useEffect, useState } from "react";
 import { useI18n } from "./i18n";
-import { formatByteSize } from "./AttachmentFormat";
 import { isMarkdownDocument, MarkdownDocumentReading } from "./MarkdownDocumentReading";
-import { Download, LoaderCircle } from "./WuuIcons";
+import { LoaderCircle } from "./WuuIcons";
 
 export type ConversationAttachmentRequest = {
   resourceId: string;
@@ -18,8 +17,8 @@ const textTypes = new Set(["application/json", "application/xml", "application/j
 // These are remote verified byte snapshots, never workspace paths or artifact URIs.
 // HTML, SVG and scripts are deliberately rendered as text, not embedded documents.
 export function ConversationAttachmentPreview({ name, mediaType, size, read }: ConversationAttachmentRequest): JSX.Element {
-  const { t, formatNumber } = useI18n();
-  const [result, setResult] = useState<{ url: string; text?: string }>();
+  const { t } = useI18n();
+  const [result, setResult] = useState<{ url?: string; text?: string }>();
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const raster = rasterTypes.has(mediaType);
@@ -36,17 +35,19 @@ export function ConversationAttachmentPreview({ name, mediaType, size, read }: C
         if (blob.size > 20 * 1024 * 1024) throw new Error(tooLarge);
         const content = text ? await blob.slice(0, 512 * 1024).text() : undefined;
         if (!live) return;
-        // Re-type only allowlisted raster bytes. All downloads remain inert.
-        url = URL.createObjectURL(raster ? new Blob([blob], { type: mediaType }) : blob);
+        // Only allowlisted raster bytes need an object URL; other content stays inert.
+        if (raster) url = URL.createObjectURL(new Blob([blob], { type: mediaType }));
         setResult({ url, text: content });
       } catch (cause) { if (live) setError(cause instanceof Error ? cause.message : String(cause)); }
     })();
     return () => { live = false; if (url) URL.revokeObjectURL(url); };
   }, [read, mediaType, raster, text, attempt, tooLarge]);
-  return <section className="conversation-attachment-preview" aria-label={name}>
-    <header><span>{mediaType} · {formatByteSize(size, formatNumber)}</span>{result && <a className="settings-button" href={result.url} download={name}><Download />{t("conversationAttachment.download")}</a>}</header>
-    {!result && !error && <p role="status"><LoaderCircle className="is-spinning" />{t("conversationAttachment.loading")}</p>}
-    {error && <div role="alert"><p>{error}</p><button type="button" className="settings-button" onClick={() => setAttempt(value => value + 1)}>{t("conversationAttachment.retry")}</button></div>}
-    {result && (raster ? <img src={result.url} alt={name} /> : text ? <>{size > 512 * 1024 && <p>{t("workspace.files.previewTruncated")}</p>}{markdown ? <div className="workspace-file-editor-scroll markdown-reading"><MarkdownDocumentReading text={result.text ?? ""} /></div> : <pre>{result.text}</pre>}</> : <p>{t("conversationAttachment.unsupported")}</p>)}
-  </section>;
+  return <article className="conversation-attachment-preview workspace-file-preview readonly" aria-label={name}>
+    {!result && !error && <div className="workspace-panel-empty" role="status"><LoaderCircle className="is-spinning" /><span>{t("conversationAttachment.loading")}</span></div>}
+    {error && <div className="workspace-panel-empty" role="alert"><p>{error}</p><button type="button" className="settings-button" onClick={() => setAttempt(value => value + 1)}>{t("conversationAttachment.retry")}</button></div>}
+    {result && text && size > 512 * 1024 && <p className="workspace-file-preview-notice" role="status">{t("workspace.files.previewTruncated")}</p>}
+    {result && (raster ? <div className="workspace-file-image-preview"><img src={result.url} alt={name} /></div> : text ? (
+      markdown ? <div className="workspace-file-editor-scroll markdown-reading"><MarkdownDocumentReading text={result.text ?? ""} /></div> : <div className="workspace-file-code-scroll"><pre className="workspace-file-code">{result.text}</pre></div>
+    ) : <div className="workspace-panel-empty" role="status"><span>{t("conversationAttachment.unsupported")}</span></div>)}
+  </article>;
 }

@@ -666,10 +666,6 @@
 .conversation-file-card-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .conversation-file-card-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .conversation-file-card-copy > span { font-size: var(--font-sm); color: var(--ink-muted); overflow-wrap: anywhere; }
-.conversation-attachment-preview { height: 100%; min-height: 0; padding: var(--space-4); overflow: auto; }
-.conversation-attachment-preview header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); color: var(--ink-muted); margin-bottom: var(--space-4); overflow-wrap: anywhere; }
-.conversation-attachment-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--font-mono-size, 13px); user-select: text; }
-.conversation-attachment-preview img { display: block; max-width: 100%; max-height: 80vh; object-fit: contain; }
 .conversation-attachment-preview [role="alert"] { color: var(--danger); }
 
 /* Bubble attachments form their own compact row above the prose, never a card

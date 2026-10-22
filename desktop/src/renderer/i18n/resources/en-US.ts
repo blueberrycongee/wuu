@@ -6,7 +6,7 @@ export const enUS = {
   "conversationAttachment.download": "Download",
   "conversationAttachment.loading": "Reading verified attachment…",
   "conversationAttachment.retry": "Retry",
-  "conversationAttachment.unsupported": "This file type cannot be previewed here. Download it to open in a compatible app.",
+  "conversationAttachment.unsupported": "This file type cannot be previewed here.",
   "conversationAttachment.tooLarge": "This attachment is too large to preview.",
   "settings.engineRuntime": "Runtime configuration",
   "settings.engineUpdateGuide": "Update guide",

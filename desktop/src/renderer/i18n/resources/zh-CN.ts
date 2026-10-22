@@ -4,7 +4,7 @@ export const zhCN = {
   "conversationAttachment.download": "下载",
   "conversationAttachment.loading": "正在读取已验证的附件…",
   "conversationAttachment.retry": "重试",
-  "conversationAttachment.unsupported": "暂不支持预览此文件类型。可以下载后在兼容的应用中打开。",
+  "conversationAttachment.unsupported": "暂不支持预览此文件类型。",
   "conversationAttachment.tooLarge": "附件过大，无法预览。",
   "settings.engineRuntime": "运行配置",
   "settings.engineUpdateGuide": "更新说明",
