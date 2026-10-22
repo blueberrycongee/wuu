@@ -2,8 +2,8 @@
    surface on the shell so menus can leave either pane without being clipped
    by an extra wrapper, and replacement presenters retain their own layout. */
 :root {
-  /* Keep the reading canvas distinct from white controls and floating surfaces. */
-  --workbench-canvas-bg: var(--wuu-color-canvas, #fcfcfd);
+  /* One clean reading sheet contains navigation, conversation and workspace. */
+  --workbench-canvas-bg: var(--paper);
   --workbench-frame-shadow: var(
     --wuu-elevation-panel,
     0 3px 8px -3px color-mix(in srgb, var(--shadow-color-medium) 55%, transparent),

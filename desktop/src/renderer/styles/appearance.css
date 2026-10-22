@@ -12,7 +12,7 @@
    * device pixels. Icons snap to even sizes so they center in even boxes. */
   --font-xs: max(12px, round(nearest, calc(var(--font-ui) * 12 / 14), 1px));
   --font-sm: round(nearest, calc(var(--font-ui) * 13 / 14), 1px);
-  --font-menu: var(--font-sm);
+  --font-menu: var(--font-ui);
   --font-body: var(--font-ui);
   --font-content: var(--font-ui);
   --font-title: round(nearest, calc(var(--font-ui) * 16 / 14), 1px);
@@ -31,10 +31,8 @@
   --icon-size-xl: round(nearest, clamp(20px, calc(var(--font-ui) * 20 / 14), 24px), 2px);
   --sidebar-content-icon-size: round(nearest, clamp(16px, calc(var(--font-ui) + 2px), 20px), 2px);
 }
-/* Click-open overlay cards sit one step below reading text: short labels
- * in a small panel, not body copy. Composer chips use the same step, so
- * a closed trigger and its open card match. Question cards above the
- * composer stay on --font-ui; they are reading surfaces. */
+/* Menus keep the same reading size as their triggers. Secondary hierarchy
+ * comes from color and spacing, without making frequent actions smaller. */
 [data-wuu-layer="menu"],
 .project-add-menu,
 .environment-side-menu,
@@ -47,7 +45,7 @@
 .select-menu-panel,
 .codex-runtime-menu {
   font-size: var(--font-menu);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
 }
 [data-wuu-layer="menu"] :where(button, [role="menuitem"]) > :is(svg.lucide, svg[data-icon]) {
   width: var(--icon-size-sm);

@@ -8,7 +8,7 @@
 }
 
 :root {
-  --control-icon-ink: color-mix(in srgb, var(--ink-soft) 75%, var(--paper));
+  --control-icon-ink: var(--ink-soft);
   --control-size-inline: max(28px, round(nearest, calc(var(--font-ui) * 1.4 + 8px), 2px));
   /* Icon-only actions follow their glyphs, not text-field height. */
   --control-size-toolbar: calc(var(--icon-size) + 12px);

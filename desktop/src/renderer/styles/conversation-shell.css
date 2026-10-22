@@ -159,7 +159,7 @@
   --conversation-pane-inset: clamp(0px, calc(2vw - var(--space-2)), var(--space-2));
   /* One window-chrome row across navigation, conversation and workspace. */
   --canvas-titlebar-height: var(--window-titlebar-height);
-  --conversation-canvas-radius: min(var(--radius-lg), calc(var(--conversation-pane-inset) * 2));
+  --conversation-canvas-radius: min(var(--radius-lg), calc(var(--conversation-pane-inset) * 2.5));
 }
 
 .conversation-pane {

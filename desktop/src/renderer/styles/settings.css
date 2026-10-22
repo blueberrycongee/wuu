@@ -2,12 +2,12 @@
  * distinguish editable controls; selection uses fill, never a border. */
 
 :root {
-  --settings-canvas: var(--paper);
+  --settings-canvas: var(--surface-1);
   --settings-card: var(--wuu-color-surface, var(--gray-0));
   /* A group is a sheet lifted off the canvas: a large corner, a faint edge
    * and a soft shadow, so grouping reads without a gray frame. */
   --settings-group-radius: var(--radius-md);
-  --settings-group-shadow: var(--shadow-soft);
+  --settings-group-shadow: var(--shadow-card);
   /* Row breathing room; empty lines and list rows share it. */
   --settings-row-pad-block: var(--space-4);
   --subscription-meter: var(--wuu-accent);
@@ -24,11 +24,11 @@
   /* Theme preview swatches render miniature copies of each theme, so
      their values are content: they must not follow the active theme. */
   --settings-preview-light-canvas: #ffffff;
-  --settings-preview-light-sidebar: #f1f1f4;
-  --settings-preview-light-line: #dfdfe2;
-  --settings-preview-dark-canvas: #1c1c1d;
-  --settings-preview-dark-sidebar: #151516;
-  --settings-preview-dark-line: #3e3e40;
+  --settings-preview-light-sidebar: #f7f7f7;
+  --settings-preview-light-line: #dddddd;
+  --settings-preview-dark-canvas: #191a1c;
+  --settings-preview-dark-sidebar: #0d0e10;
+  --settings-preview-dark-line: #414247;
   /* The remote-control QR keeps a white quiet zone so phones can scan
      it in dark theme too. */
   --settings-remote-qr-quiet-zone: #ffffff;
@@ -136,8 +136,9 @@
   width: 100%;
   min-height: var(--sidebar-row-height);
   border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--field-bg);
+  box-shadow: var(--shadow-soft);
   color: var(--ink);
   font: inherit;
   font-size: var(--font-ui);
@@ -146,7 +147,7 @@
 }
 
 .settings-search input:hover {
-  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  background: var(--field-hover-bg);
 }
 
 .settings-search input::placeholder {
@@ -512,8 +513,8 @@
 
 .settings-section-title {
   margin: 0;
-  color: var(--ink-soft);
-  font-size: var(--font-ui);
+  color: var(--ink-strong);
+  font-size: var(--font-title);
   font-weight: var(--weight-medium);
   line-height: 1.4;
 }
@@ -535,7 +536,7 @@
   align-self: flex-start;
   align-items: center;
   gap: var(--space-2);
-  margin-block: calc((var(--font-ui) * 1.4 - var(--control-field-height)) / 2);
+  margin-block: calc((var(--font-title) * 1.4 - var(--control-field-height)) / 2);
 }
 
 /* An inline form: its rows, then the actions that commit or discard them,
@@ -578,7 +579,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-soft);
   border-radius: var(--settings-group-radius);
   background: var(--settings-card);
   box-shadow: var(--settings-group-shadow);
@@ -646,7 +647,7 @@
 .settings-row-label-title {
   color: var(--ink-strong);
   font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   line-height: 1.4;
 }
 
@@ -1232,7 +1233,7 @@ button.settings-engine-expand:hover {
   align-content: start;
   gap: var(--space-4);
   padding: var(--card-padding);
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-soft);
   border-radius: var(--settings-group-radius);
   background: var(--settings-card);
   box-shadow: var(--settings-group-shadow);
@@ -2797,7 +2798,7 @@ button.settings-engine-expand:hover {
 .app-shell.navigation-ribbon-layout .settings-embedded .settings-main {
   margin: 0;
   border-radius: 0;
-  background: transparent;
+  background: var(--settings-canvas);
 }
 
 .app-shell .settings-embedded .settings-main::before {

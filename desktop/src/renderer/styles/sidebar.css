@@ -2,7 +2,7 @@
    Light-theme values; the dark theme overrides these in base.css theme blocks. */
 :root {
   /* A quiet opaque rail separates navigation without outweighing the canvas. */
-  --sidebar-material-fill: #f3f3f4;
+  --sidebar-material-fill: #f7f7f7;
   /* Rail/content boundary: a crisp dark hairline instead of the old white
    * edge + white inset pair, which were invisible against the white content
    * column and left the boundary to be read from the gray brightness step.
@@ -23,7 +23,7 @@
     --wuu-nav-item-active-background,
     var(--selection-surface)
   );
-  --sidebar-row-selected-shadow: none;
+  --sidebar-row-selected-shadow: var(--shadow-soft);
   --sidebar-project-row-pending-bg: var(--ink-overlay-4);
   --sidebar-project-loading-notch: rgba(19, 19, 20, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
@@ -333,12 +333,11 @@
   --sidebar-label-weight: 400;
   --sidebar-label-size: var(--font-ui);
   --sidebar-heading-size: max(12px, round(nearest, calc(var(--sidebar-label-size) - 2px), 1px));
-  /* Dense rows, clear groups: rows sit two label heights tall, and the
-   * separation between functional groups carries the structure. */
-  --sidebar-row-height: max(28px, round(nearest, calc(var(--sidebar-label-size) * 2), 4px));
-  /* Regular labels recede from the current location; selected labels retain
-   * full ink. Keep group headings on their separate tertiary-text role. */
-  --sidebar-label-ink: color-mix(in srgb, var(--ink) 82%, var(--paper));
+  /* Comfortable rows remain distinct from the larger gaps between groups. */
+  --sidebar-row-height: max(36px, round(up, calc(var(--sidebar-label-size) * 2.25), 4px));
+  /* Labels keep readable ink; the filled row identifies the current location.
+   * Group headings use their separate tertiary-text role. */
+  --sidebar-label-ink: var(--ink);
   --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, color-mix(in srgb, var(--ink) 6%, transparent));
   /* Group labels and heading actions: quieter than labels, still 4.5:1. */
   --sidebar-heading-ink: var(--ink-tertiary);
@@ -359,7 +358,7 @@
    * Include each row's own leading when judging the visible whitespace. */
   --sidebar-functional-row-gap: var(--sidebar-row-gap);
   --sidebar-functional-heading-gap: var(--space-2);
-  --sidebar-functional-group-gap: var(--space-4);
+  --sidebar-functional-group-gap: var(--space-6);
   /* Parent and child rows belong to one tree: use the same separation as
    * sibling rows. The collapse body owns this gap; lists add no outer inset. */
   --sidebar-section-body-gap: var(--sidebar-row-gap);

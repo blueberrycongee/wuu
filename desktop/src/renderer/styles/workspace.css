@@ -58,8 +58,8 @@
   --hljs-literal: var(--wuu-syntax-literal, #6f5ca7);
   --hljs-meta: var(--wuu-syntax-meta, #5f6870);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #707579);
-  /* One quiet step off the paper: the title's weight carries selection. */
-  --workspace-tab-active-bg: var(--surface-2);
+  /* Location uses the same filled selection as navigation and menus. */
+  --workspace-tab-active-bg: var(--selection-surface);
 }
 
 .workspace-right-panel {
