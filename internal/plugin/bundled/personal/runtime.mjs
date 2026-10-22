@@ -2077,7 +2077,7 @@ These references do not grant broader permission. Ask before external actions la
     const previousMutation = old.input_mutations?.find((item) => item.key === mutationKey);
     if (mutationKey && previousMutation) {
       if (previousMutation.fingerprint !== fingerprint) throw new Error("request_id_conflict: task input already applied differently");
-      return { task: await this.reconcile(old) };
+      return { task: old, replay: true };
     }
     const destination = await this.deliverySession(old, main);
     const answer = text2(input, "answer");
@@ -2722,9 +2722,10 @@ ${t.result?.summary ?? ""}`.toLocaleLowerCase().includes(query))).sort((a, b) =>
       case "tasks.create":
         return this.createTask(input, await this.conversation(input));
       case "tasks.update":
-        return this.transition(text2(input, "task_id", true), () => this.reviseTask(input));
-      case "tasks.resume":
-        return this.transition(text2(input, "task_id", true), () => this.reviseTask(input, true));
+      case "tasks.resume": {
+        const { task, replay } = await this.transition(text2(input, "task_id", true), () => this.reviseTask(input, method === "tasks.resume"));
+        return { task: replay ? await this.reconcile(task) : task };
+      }
       case "tasks.stop":
         number(input, "expected_revision");
         return this.transition(text2(input, "task_id", true), () => this.stopTask(input));

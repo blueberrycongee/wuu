@@ -678,7 +678,7 @@ export class PersonalPlugin implements RuntimePlugin {
     const previousMutation = old.input_mutations?.find(item => item.key === mutationKey);
     if (mutationKey && previousMutation) {
       if (previousMutation.fingerprint !== fingerprint) throw new Error("request_id_conflict: task input already applied differently");
-      return { task: await this.reconcile(old) };
+      return { task: old, replay: true };
     }
     const destination = await this.deliverySession(old, main);
     const answer = text(input, "answer");
@@ -1215,8 +1215,12 @@ export class PersonalPlugin implements RuntimePlugin {
       }
       case "tasks.get": return { task: await this.task(text(input, "task_id", true)) };
       case "tasks.create": return this.createTask(input, await this.conversation(input));
-      case "tasks.update": return this.transition(text(input, "task_id", true), () => this.reviseTask(input));
-      case "tasks.resume": return this.transition(text(input, "task_id", true), () => this.reviseTask(input, true));
+      case "tasks.update": case "tasks.resume": {
+        const { task, replay } = await this.transition(text(input, "task_id", true), () => this.reviseTask(input, method === "tasks.resume"));
+        // Reconciliation may acquire the same task transition for delivery or
+        // lifecycle recovery. Release mutation serialization before replaying it.
+        return { task: replay ? await this.reconcile(task) : task };
+      }
       case "tasks.stop": number(input, "expected_revision"); return this.transition(text(input, "task_id", true), () => this.stopTask(input));
       case "tasks.reconcile": {
         const taskID = text(input, "task_id", true);

@@ -196,6 +196,40 @@ try {
     assert.deepEqual(restored.records.at(-1).relation, delivered.relation);
     await restarted.close();
   });
+  await scenario('idempotent update and resume retries release task serialization before delivery reconciliation', async () => {
+    for (const tool of ['update_task', 'resume_task']) for (const state of ['waiting_user', 'completed']) {
+      const h = new Host(), r = await new Runtime(h).start();
+      const a = (await r.client('agents.ensure_default')).agent, sid = a.main_session_id;
+      h.histories.set(sid, [{ seq: 1, role: 'user', origin: 'user', content: 'Continue with the changed requirements' }]);
+      let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'retry', title: 'Retry contract', goal: 'Original' })).task;
+      const args = { task_id: task.task_id, expected_revision: task.revision, goal: 'Changed requirements' };
+      const context = { source_message: { session_id: sid, seq: 1 } };
+      task = (await r.tool(tool, args, sid, context)).task;
+      if (state === 'waiting_user') {
+        await r.tool('report_task', { task_id: task.task_id, requirements_revision: 2, state, progress: 'Which date?' }, task.execution.session_id);
+      } else {
+        h.histories.set(task.execution.session_id, [{ seq: 1, role: 'tool', tool_result: 'Verified result' }]);
+        await r.tool('complete_task', { task_id: task.task_id, requirements_revision: 2, summary: 'Verified result', evidence: [{ seq: 1, description: 'Result evidence' }] }, task.execution.session_id);
+        h.turns.get(task.execution.request_id).state = 'completed';
+        await r.lifecycle(task, 'completed');
+      }
+      const before = (await r.client('tasks.get', { task_id: task.task_id })).task;
+      assert.equal(before.delivery.status, 'submitted');
+      const sends = h.calls.filter(call => call.service === 'host.session.send').length;
+      const repeated = (await r.tool(tool, args, sid, context)).task;
+      assert.equal(repeated.requirements_revision, 2); assert.equal(repeated.state, state);
+      assert.equal(repeated.delivery.request_id, before.delivery.request_id);
+      assert.equal(h.calls.filter(call => call.service === 'host.session.send').length, sends);
+      // A replay racing a stop must not monopolize the task's transition queue.
+      const [replay, stopped] = await Promise.all([
+        r.tool(tool, args, sid, context),
+        r.client('tasks.stop', { task_id: task.task_id, expected_revision: repeated.revision }),
+      ]);
+      assert.equal(replay.task.requirements_revision, 2);
+      assert.equal(stopped.task.state, state === 'completed' ? 'completed' : 'stopped');
+      await r.close();
+    }
+  });
   await scenario('Coding initialization has no Personal tools, services, or writes', async () => {
     const codingHost = new Host(), coding = await new Runtime(codingHost).start('coding');
     assert.equal(coding.definition.tools?.length ?? 0, 0); assert.equal(coding.definition.provided_services?.length ?? 0, 0); assert.equal(codingHost.calls.length, 0); await coding.close();

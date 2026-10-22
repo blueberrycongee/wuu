@@ -45,6 +45,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Reserve a font-scaled timestamp column in Personal conversations so revealing times does not overlap message bubbles; attachments and reactions move with their message.
 
 - Keep Personal pages and their composer visible when a retained Coding conversation is open underneath them; hidden Coding content no longer occupies grid rows or paints through the page.
+- Keep retried Personal task updates and resumes responsive while question or result delivery is being reconciled.
 
 - Restore twin conversation history automatically when recent background context fills the first history pages, including tab reentry and interrupted reads.
 - Hide successfully settled one-time routines from twin’s default activity list and count while retaining history, repeating schedules, and unresolved or failed work.
