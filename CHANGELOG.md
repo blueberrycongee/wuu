@@ -24,7 +24,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Resize the workbench ribbon between compact icons and persistent titled tabs, independently of the conversation list, with saved width and keyboard controls.
 
-- Show up to 50 recently updated conversations across workspaces in the normal desktop sidebar.
+- Group cross-workspace conversations in the normal desktop sidebar by Running, Unread, then Recent. Keep all running and unread conversations visible and up to 50 recent ones; hold row positions during pointer, keyboard, and drag interaction.
 
 - Add per-tab audio controls, keyboard navigation for long vertical tab lists, persistent download history, bookmark renaming, and individual history deletion.
 - Open browser extension options in isolated windows and provide an explicit screen/window sharing picker.
@@ -102,6 +102,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   gutters to the reading pane.
 
 ### Fixed
+
+- Keep TODO hover cards and expanded activity lists visible and scrollable in narrow or short windows, and reposition file context menus when the window or text size changes.
 
 - Keep the workspace add menu fully visible outside the sidebar, including its icons and padding, at narrow widths and larger text sizes.
 

@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { TodoUpdate } from "../shared/protocol";
 import type {
   ComposerStatusContext,
@@ -9,6 +9,8 @@ import type {
 } from "./plugins/PluginHost";
 import { useI18n } from "./i18n";
 import { externalAgentActivityStatusSource } from "./ExternalAgentActivityStore";
+import { composerMenuWidth, FloatingMenuPortal, handleFloatingMenuKeyDown } from "./ComposerFloatingMenu";
+import { useHoverReveal } from "./HoverReveal";
 
 const EMPTY_ITEMS: readonly ResolvedStatusItem[] = Object.freeze([]);
 const MAX_VISIBLE_ITEMS = 3;
@@ -48,8 +50,7 @@ export function ConversationStatusCluster({
   todoUpdate,
   onOpenSession,
 }: ConversationStatusClusterProps) {
-  const { t, formatNumber } = useI18n();
-  const overflowRef = useRef<HTMLDetailsElement>(null);
+  const { t } = useI18n();
   const sources = useSyncExternalStore(
     (listener) => host.subscribeComposerStatusSources(listener),
     () => host.getComposerStatusSources(),
@@ -71,18 +72,6 @@ export function ConversationStatusCluster({
       && todoUpdate.todos.some((item) => item.status !== "completed"),
   );
 
-  useEffect(() => {
-    const dismissOverflow = (event: PointerEvent): void => {
-      const overflow = overflowRef.current;
-      const target = event.target;
-      if (overflow?.open && target instanceof Node && !overflow.contains(target)) {
-        overflow.open = false;
-      }
-    };
-    document.addEventListener("pointerdown", dismissOverflow);
-    return () => document.removeEventListener("pointerdown", dismissOverflow);
-  }, []);
-
   const statusVisible = Boolean(hostStatus) || todoVisible || items.length > 0;
   if (!visible || (!navigation && !statusVisible)) return null;
 
@@ -97,31 +86,79 @@ export function ConversationStatusCluster({
     >
       {navigation}
       {hostStatus}
-      {todoVisible && todoUpdate ? <TodoStatusCapsule todoUpdate={todoUpdate} /> : null}
+      {todoVisible && todoUpdate ? <TodoStatusCapsule key={`todo:${threadId}`} todoUpdate={todoUpdate} /> : null}
       {visibleItems.map((item) => (
         <ComposerStatusCapsule key={item.key} item={item} onOpenSession={onOpenSession} />
       ))}
       {hiddenItems.length > 0 ? (
-        <details ref={overflowRef} className="conversation-status-overflow">
-          <summary
-            className="conversation-status-capsule conversation-status-overflow-trigger"
-            aria-label={t("common.showMore")}
-          >
-            +{formatNumber(hiddenItems.length)}
-          </summary>
-          <div className="conversation-status-overflow-menu">
-            {hiddenItems.map((item) => (
-              <ComposerStatusCapsule key={item.key} item={item} onOpenSession={onOpenSession} overflow />
-            ))}
-          </div>
-        </details>
+        <StatusOverflow key={`overflow:${threadId}`} items={hiddenItems} onOpenSession={onOpenSession} />
       ) : null}
     </div>
   );
 }
 
+function StatusOverflow({ items, onOpenSession }: {
+  items: readonly ResolvedStatusItem[];
+  onOpenSession: (sessionId: string) => void;
+}) {
+  const { t, formatNumber } = useI18n();
+  const [open, setOpen] = useState(false);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const triggerRef = useRef<HTMLElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  function close(): void {
+    setOpen(false);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => {
+      // Read-only statuses still need a focusable scroller when no action exists.
+      (menuRef.current?.querySelector<HTMLButtonElement>("button") ?? menuRef.current)?.focus({ preventScroll: true });
+    });
+    const dismiss = (event: PointerEvent): void => {
+      const target = event.target;
+      if (target instanceof Node && !detailsRef.current?.contains(target) && !menuRef.current?.contains(target)) close();
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", dismiss);
+    };
+  }, [open]);
+
+  return (
+    <details ref={detailsRef} className="conversation-status-overflow" open={open}>
+      <summary ref={triggerRef} className="conversation-status-capsule conversation-status-overflow-trigger"
+        aria-label={t("common.showMore")}
+        onKeyDown={event => { if (open) handleFloatingMenuKeyDown(event, close, triggerRef.current); }}
+        onClick={event => { event.preventDefault(); setOpen(value => !value); }}>
+        +{formatNumber(items.length)}
+      </summary>
+      {open ? (
+        <FloatingMenuPortal anchorRef={triggerRef} owner="conversation-status" placement="above" align="right"
+          width={320} boundarySelector=".conversation-pane" flip>
+          <div ref={menuRef} className="conversation-status-overflow-menu" tabIndex={-1}
+            role="region" aria-label={t("common.status")}
+            onKeyDown={event => handleFloatingMenuKeyDown(event, close, triggerRef.current)}>
+            {items.map(item => (
+              <ComposerStatusCapsule key={item.key} item={item} overflow
+                onOpenSession={sessionId => { close(); onOpenSession(sessionId); }} />
+            ))}
+          </div>
+        </FloatingMenuPortal>
+      ) : null}
+    </details>
+  );
+}
+
 function TodoStatusCapsule({ todoUpdate }: { todoUpdate: TodoUpdate }) {
   const { t, formatNumber } = useI18n();
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLOListElement>(null);
+  const cardId = useId();
+  const { revealed, anchorHandlers, layerProps } = useHoverReveal<true>({ interactive: true });
   const completed = todoUpdate.todos.filter((item) => item.status === "completed").length;
   const total = todoUpdate.todos.length;
   const progressLabel = t("app.todoProgressLabel", {
@@ -131,9 +168,18 @@ function TodoStatusCapsule({ todoUpdate }: { todoUpdate: TodoUpdate }) {
   return (
     <div className="conversation-status-todo">
       <div
+        ref={triggerRef}
         className="conversation-status-capsule conversation-status-todo-trigger"
         tabIndex={0}
         aria-label={progressLabel}
+        aria-describedby={revealed ? cardId : undefined}
+        {...anchorHandlers(true)}
+        onKeyDown={event => {
+          if (event.key === "Tab" && !event.shiftKey && revealed) {
+            event.preventDefault();
+            cardRef.current?.focus();
+          }
+        }}
       >
         <svg className="conversation-status-todo-progress" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
           <circle className="todo-progress-track" cx="10" cy="10" r="7" />
@@ -149,19 +195,32 @@ function TodoStatusCapsule({ todoUpdate }: { todoUpdate: TodoUpdate }) {
           {formatNumber(completed)}/{formatNumber(total)}
         </span>
       </div>
-      <ol className="conversation-status-todo-card" role="tooltip">
-        {todoUpdate.todos.map((item, index) => (
-          <li className={`is-${item.status}`} key={`${index}:${item.content}`}>
-            <span className="conversation-status-todo-marker" aria-hidden="true">
-              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" focusable="false">
-                <circle className="todo-step-ring" cx="10" cy="10" r="7" pathLength="100" />
-                <path className="todo-step-check" d="m5 10 3.2 3.2L15 6.5" pathLength="1" />
-              </svg>
-            </span>
-            <span>{item.content}</span>
-          </li>
-        ))}
-      </ol>
+      {revealed ? (
+        <FloatingMenuPortal anchorRef={triggerRef} owner="conversation-todo" layer="tooltip"
+          placement="above" align="center" width={composerMenuWidth(390)} boundarySelector=".conversation-pane" flip>
+          <div {...layerProps}>
+            <ol ref={cardRef} id={cardId} className="conversation-status-todo-card" role="tooltip" tabIndex={0}
+              onKeyDown={event => {
+                if (event.key === "Escape" || event.key === "Tab") {
+                  triggerRef.current?.focus();
+                  if (event.key === "Tab" && event.shiftKey) event.preventDefault();
+                }
+              }}>
+              {todoUpdate.todos.map((item, index) => (
+                <li className={`is-${item.status}`} key={`${index}:${item.content}`}>
+                  <span className="conversation-status-todo-marker" aria-hidden="true">
+                    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" focusable="false">
+                      <circle className="todo-step-ring" cx="10" cy="10" r="7" pathLength="100" />
+                      <path className="todo-step-check" d="m5 10 3.2 3.2L15 6.5" pathLength="1" />
+                    </svg>
+                  </span>
+                  <span>{item.content}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </FloatingMenuPortal>
+      ) : null}
     </div>
   );
 }

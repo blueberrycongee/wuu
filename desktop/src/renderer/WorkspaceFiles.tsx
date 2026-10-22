@@ -469,21 +469,22 @@ function WorkspaceTreeContextMenu({
     if (!menuElement) {
       return;
     }
-    const rect = menuElement.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const margin = 8;
-    const clampedX = Math.max(
-      margin,
-      Math.min(viewportWidth - rect.width - margin, x),
-    );
-    const clampedY = Math.max(
-      margin,
-      Math.min(viewportHeight - rect.height - margin, y),
-    );
-    if (clampedX !== x || clampedY !== y) {
-      setPosition({ x: clampedX, y: clampedY });
-    }
+    const updatePosition = (): void => {
+      const margin = 8;
+      // Use layout dimensions; the entrance animation temporarily scales the box.
+      const nextX = Math.max(margin, Math.min(window.innerWidth - menuElement.offsetWidth - margin, x));
+      const nextY = Math.max(margin, Math.min(window.innerHeight - menuElement.offsetHeight - margin, y));
+      setPosition(current => current.x === nextX && current.y === nextY ? current : { x: nextX, y: nextY });
+    };
+    updatePosition();
+    // Resizing the window or the menu's text can invalidate the initial clamp.
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(updatePosition);
+    observer?.observe(menuElement);
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updatePosition);
+    };
   }, [x, y]);
 
   // Outside click + Escape dismiss. Listener attach is deferred to a
