@@ -459,6 +459,132 @@ func TestResolveKeepsExplicitMiniMaxThinkingOption(t *testing.T) {
 	}
 }
 
+func TestMiniMaxM31UsesEffortTiers(t *testing.T) {
+	providerName, provider := modelcatalog.EnrichProvider("minimax", config.ProviderConfig{
+		Type:  "anthropic",
+		Model: "MiniMax-M3.1-Flash",
+	}, "MiniMax-M3.1-Flash")
+
+	variants := SummariesForProvider(providerName, provider, "MiniMax-M3.1-Flash")
+	if got := strings.Join(variantIDs(variants), ","); got != "low,medium,high,xhigh,max" {
+		t.Fatalf("variants = %v", got)
+	}
+	selection := ResolveForProvider(providerName, provider, "MiniMax-M3.1-Flash", "", "")
+	if selection.Variant != "max" {
+		t.Fatalf("default variant = %q, want max", selection.Variant)
+	}
+	thinking, ok := selection.ProviderOptions["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "adaptive" || selection.ProviderOptions["effort"] != "max" {
+		t.Fatalf("unexpected default options: %+v", selection.ProviderOptions)
+	}
+
+	legacy := ResolveForProvider(providerName, provider, "MiniMax-M3.1-Flash", "none", "")
+	if legacy.Variant != "low" || legacy.ProviderOptions["effort"] != "low" {
+		t.Fatalf("none should migrate to low: %+v", legacy)
+	}
+}
+
+func TestMiniMaxM31MapsEffortForEachWire(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		providerID  string
+		typeName    string
+		npm         string
+		checkOption func(t *testing.T, options map[string]any)
+	}{
+		{
+			name: "anthropic", typeName: "anthropic", npm: "@ai-sdk/anthropic",
+			checkOption: func(t *testing.T, options map[string]any) {
+				t.Helper()
+				thinking, ok := options["thinking"].(map[string]any)
+				if !ok || thinking["type"] != "adaptive" || options["effort"] != "xhigh" {
+					t.Fatalf("options = %#v", options)
+				}
+			},
+		},
+		{
+			name: "openai compatible", typeName: "openai-compatible", npm: "@ai-sdk/openai-compatible",
+			checkOption: func(t *testing.T, options map[string]any) {
+				t.Helper()
+				if options["reasoningEffort"] != "xhigh" {
+					t.Fatalf("options = %#v", options)
+				}
+			},
+		},
+		{
+			name: "openrouter", providerID: "openrouter", typeName: "openai-compatible", npm: "@openrouter/ai-sdk-provider",
+			checkOption: func(t *testing.T, options map[string]any) {
+				t.Helper()
+				reasoning, ok := options["reasoning"].(map[string]any)
+				if !ok || reasoning["effort"] != "xhigh" {
+					t.Fatalf("options = %#v", options)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := config.ProviderConfig{Type: tc.typeName, NPM: tc.npm, Model: "MiniMax-M3.1-Flash"}
+			options, ok := OptionsForProvider(tc.providerID, provider, provider.Model, "xhigh")
+			if !ok {
+				t.Fatal("expected xhigh variant")
+			}
+			tc.checkOption(t, options)
+		})
+	}
+}
+
+func TestOpenRouterNewModelsUseCatalogDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		model       string
+		wantVariant string
+		wantEffort  string
+	}{
+		{model: "google/gemini-4-argon", wantVariant: "medium", wantEffort: "medium"},
+		{model: "minimax/minimax-m3.1-flash:free", wantVariant: "max", wantEffort: "max"},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			providerName, provider := modelcatalog.EnrichProvider("openrouter", config.ProviderConfig{
+				Type:  "openai-compatible",
+				Model: tc.model,
+			}, tc.model)
+			selection := ResolveForProvider(providerName, provider, tc.model, "", "")
+			if selection.Variant != tc.wantVariant {
+				t.Fatalf("variant = %q, want %q", selection.Variant, tc.wantVariant)
+			}
+			reasoning, ok := selection.ProviderOptions["reasoning"].(map[string]any)
+			if !ok || reasoning["effort"] != tc.wantEffort {
+				t.Fatalf("reasoning options = %#v", selection.ProviderOptions)
+			}
+		})
+	}
+}
+
+func TestGemini4UsesThreeThinkingLevels(t *testing.T) {
+	provider := config.ProviderConfig{
+		Type:  "openai-compatible",
+		NPM:   "@ai-sdk/google",
+		Model: "gemini-4-argon",
+	}
+	variants := Summaries(provider, provider.Model)
+	if got := strings.Join(variantIDs(variants), ","); got != "low,medium,high" {
+		t.Fatalf("variants = %v", got)
+	}
+	options, ok := Options(provider, provider.Model, "medium")
+	if !ok {
+		t.Fatal("expected medium variant")
+	}
+	thinking, ok := options["thinkingConfig"].(map[string]any)
+	if !ok || thinking["thinkingLevel"] != "medium" || thinking["includeThoughts"] != true {
+		t.Fatalf("thinkingConfig = %#v", options)
+	}
+
+	base := Resolve(provider, provider.Model, "", "")
+	thinking, ok = base.ProviderOptions["thinkingConfig"].(map[string]any)
+	if !ok || thinking["thinkingLevel"] != "medium" {
+		t.Fatalf("default thinkingConfig = %#v", base.ProviderOptions)
+	}
+}
+
 func TestResolveMatchesProviderCompatForZAIAndZhipuThinking(t *testing.T) {
 	for _, providerID := range []string{"zai-coding-plan", "zai", "zhipuai-coding-plan", "zhipuai"} {
 		t.Run(providerID, func(t *testing.T) {

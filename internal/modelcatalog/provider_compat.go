@@ -177,6 +177,12 @@ func applyOfficialCatalogCorrections(data *catalogData) {
 			applyOpenAIGPT6SolLunaCatalog(provider)
 		case "anthropic":
 			applyAnthropicLatestCatalog(provider)
+		case "google", "google-vertex":
+			applyGoogleGemini4Catalog(provider)
+		case "openrouter":
+			applyOpenRouterLatestCatalog(provider)
+		case "minimax", "minimax-cn", "minimax-coding-plan", "minimax-cn-coding-plan":
+			applyMiniMaxM31Catalog(provider)
 		case "deepseek":
 			applyDeepSeekOfficialCatalog(provider)
 		case kimiForCodingProviderID, kimiCodePlanCNProviderID, kimiCodePlanGlobalProviderID:
@@ -246,6 +252,78 @@ func applyOfficialCatalogCorrections(data *catalogData) {
 				DefaultVariant:   "high",
 			})
 		}
+	}
+}
+
+// https://ai.google.dev/gemini-api/docs/models/gemini-4-argon
+// https://cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/4-argon
+// https://ai.google.dev/gemini-api/docs/pricing
+func applyGoogleGemini4Catalog(provider *Provider) {
+	upsertOfficialModel(provider, gemini4ArgonModel("gemini-4-argon", 65_536, map[string]any{
+		"input": 2, "output": 10, "cache_read": 0.1,
+	}))
+}
+
+// OpenRouter publishes its own model IDs and completion limits. Keep these
+// corrections alongside the direct vendors so an OpenRouter connection exposes
+// the same new models before the next embedded models.dev refresh.
+func applyOpenRouterLatestCatalog(provider *Provider) {
+	upsertOfficialModel(provider, gemini4ArgonModel("google/gemini-4-argon", 943_718, map[string]any{
+		"input": 2, "output": 10, "reasoning": 10, "cache_read": 0.1, "cache_write": 0.1875,
+	}))
+	upsertOfficialModel(provider, miniMaxM31Model("minimax/minimax-m3.1-flash:free", "MiniMax M3.1 Flash (free)", map[string]any{
+		"input": 0, "output": 0, "cache_read": 0,
+	}))
+}
+
+func gemini4ArgonModel(id string, outputLimit int, cost map[string]any) Model {
+	return Model{
+		ID:               id,
+		Name:             "Gemini 4 Argon",
+		Family:           "gemini",
+		ReleaseDate:      "2026-10-13",
+		Reasoning:        true,
+		ReasoningOptions: officialEffortOptions(false, "low", "medium", "high"),
+		Attachment:       officialBool(true),
+		ToolCall:         officialBool(true),
+		StructuredOutput: officialBool(true),
+		Temperature:      officialBool(false),
+		Modalities:       &Modalities{Input: []string{"text", "image", "video", "audio", "pdf"}, Output: []string{"text"}},
+		Limit:            &Limit{Context: 1_048_576, Output: outputLimit},
+		SupportedEfforts: []string{"low", "medium", "high"},
+		DefaultVariant:   "medium",
+		Cost:             cost,
+	}
+}
+
+// https://platform.minimax.io/docs/guides/text-generation
+// https://platform.minimax.io/docs/guides/pricing
+// https://platform.minimax.io/docs/api-reference/text-chat-anthropic
+func applyMiniMaxM31Catalog(provider *Provider) {
+	cost := map[string]any{"input": 0.15, "output": 0.6, "cache_read": 0.015}
+	if strings.Contains(normalizeID(provider.ID), "coding-plan") {
+		cost = map[string]any{"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write": 0.0}
+	}
+	upsertOfficialModel(provider, miniMaxM31Model("MiniMax-M3.1-Flash", "MiniMax-M3.1-Flash", cost))
+}
+
+func miniMaxM31Model(id, name string, cost map[string]any) Model {
+	return Model{
+		ID:               id,
+		Name:             name,
+		Family:           "minimax",
+		ReleaseDate:      "2026-10-19",
+		Reasoning:        true,
+		ReasoningOptions: officialEffortOptions(false, "low", "medium", "high", "xhigh", "max"),
+		Attachment:       officialBool(true),
+		ToolCall:         officialBool(true),
+		StructuredOutput: officialBool(false),
+		Temperature:      officialBool(true),
+		Modalities:       &Modalities{Input: []string{"text", "image", "video"}, Output: []string{"text"}},
+		Limit:            &Limit{Context: 1_000_000, Output: 524_288},
+		SupportedEfforts: []string{"low", "medium", "high", "xhigh", "max"},
+		DefaultVariant:   "max",
+		Cost:             cost,
 	}
 }
 

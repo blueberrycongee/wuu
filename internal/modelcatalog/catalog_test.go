@@ -1,6 +1,7 @@
 package modelcatalog
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -86,6 +87,97 @@ func TestMatchProviderTreatsTerminalV1AsOptional(t *testing.T) {
 	}, "MiniMax-M3")
 	if got := overridden.Models["MiniMax-M3"].Options["anthropic_default_betas"]; got != true {
 		t.Fatalf("explicit MiniMax anthropic_default_betas = %#v, want true", got)
+	}
+}
+
+func TestMiniMaxM31CatalogCorrection(t *testing.T) {
+	provider, ok := ProviderByID("minimax")
+	if !ok {
+		t.Fatal("expected MiniMax provider")
+	}
+	model, ok := modelByID(provider, "MiniMax-M3.1-Flash")
+	if !ok {
+		t.Fatal("MiniMax-M3.1-Flash missing from catalog")
+	}
+	if model.ReleaseDate != "2026-10-19" || model.Family != "minimax" {
+		t.Fatalf("unexpected model identity: %+v", model)
+	}
+	if model.Limit == nil || model.Limit.Context != 1_000_000 || model.Limit.Output != 524_288 {
+		t.Fatalf("unexpected model limits: %+v", model.Limit)
+	}
+	if got := strings.Join(model.SupportedEfforts, ","); got != "low,medium,high,xhigh,max" {
+		t.Fatalf("supported efforts = %q", got)
+	}
+	if model.DefaultVariant != "max" {
+		t.Fatalf("default variant = %q, want max", model.DefaultVariant)
+	}
+	if model.Modalities == nil || strings.Join(model.Modalities.Input, ",") != "text,image,video" {
+		t.Fatalf("unexpected modalities: %+v", model.Modalities)
+	}
+	if inputCost, _ := model.Cost["input"].(float64); inputCost != 0.15 {
+		t.Fatalf("input cost = %#v, want 0.15", model.Cost["input"])
+	}
+
+	codingPlan, ok := ProviderByID("minimax-coding-plan")
+	if !ok {
+		t.Fatal("expected MiniMax coding plan provider")
+	}
+	codingModel, ok := modelByID(codingPlan, "MiniMax-M3.1-Flash")
+	if !ok || codingModel.Cost["input"] != float64(0) {
+		t.Fatalf("coding plan model = %+v, ok=%v", codingModel, ok)
+	}
+}
+
+func TestGemini4CatalogCorrection(t *testing.T) {
+	for _, tc := range []struct {
+		providerID string
+		modelID    string
+		output     int
+	}{
+		{providerID: "google", modelID: "gemini-4-argon", output: 65_536},
+		{providerID: "openrouter", modelID: "google/gemini-4-argon", output: 943_718},
+	} {
+		t.Run(tc.providerID, func(t *testing.T) {
+			provider, ok := ProviderByID(tc.providerID)
+			if !ok {
+				t.Fatalf("expected %s provider", tc.providerID)
+			}
+			model, ok := modelByID(provider, tc.modelID)
+			if !ok {
+				t.Fatalf("%s missing from %s catalog", tc.modelID, tc.providerID)
+			}
+			if model.Limit == nil || model.Limit.Context != 1_048_576 || model.Limit.Output != tc.output {
+				t.Fatalf("unexpected model limits: %+v", model.Limit)
+			}
+			if got := strings.Join(model.SupportedEfforts, ","); got != "low,medium,high" {
+				t.Fatalf("supported efforts = %q", got)
+			}
+			if model.DefaultVariant != "medium" {
+				t.Fatalf("default variant = %q, want medium", model.DefaultVariant)
+			}
+		})
+	}
+
+	openRouter, ok := ProviderByID("openrouter")
+	if !ok {
+		t.Fatal("expected OpenRouter provider")
+	}
+	if _, ok := modelByID(openRouter, "minimax/minimax-m3.1-flash:free"); !ok {
+		t.Fatal("MiniMax M3.1 free gateway model missing from OpenRouter catalog")
+	}
+}
+
+func TestSuggestedModelSkipsFreeTierWhenPaidModelsExist(t *testing.T) {
+	models := []Model{
+		{ID: "free-model:free", Family: "alpha", ReleaseDate: "2026-10-19", ToolCall: officialBool(true)},
+		{ID: "paid-model", Family: "beta", ReleaseDate: "2026-10-13", ToolCall: officialBool(true)},
+	}
+	if got := suggestedModel(models); got != "paid-model" {
+		t.Fatalf("suggested model = %q, want paid-model", got)
+	}
+
+	if got := suggestedModel(models[:1]); got != "free-model:free" {
+		t.Fatalf("free-only suggested model = %q", got)
 	}
 }
 

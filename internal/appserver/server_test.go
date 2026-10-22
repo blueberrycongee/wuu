@@ -1096,6 +1096,67 @@ func TestProviderSummariesExposeGPT56CatalogForCompatibleGateway(t *testing.T) {
 	}
 }
 
+func TestProviderSummariesExposeMiniMaxM31AndGemini4(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		provider       config.ProviderConfig
+		modelID        string
+		contextWindow  int
+		outputLimit    int
+		efforts        string
+		defaultVariant string
+	}{
+		{
+			name: "minimax",
+			provider: config.ProviderConfig{
+				Type:    "anthropic",
+				BaseURL: "https://api.minimax.io/anthropic",
+				Model:   "MiniMax-M3.1-Flash",
+			},
+			modelID:        "MiniMax-M3.1-Flash",
+			contextWindow:  1_000_000,
+			outputLimit:    524_288,
+			efforts:        "low,medium,high,xhigh,max",
+			defaultVariant: "max",
+		},
+		{
+			name: "openrouter",
+			provider: config.ProviderConfig{
+				Type:    "openai-compatible",
+				BaseURL: "https://openrouter.ai/api/v1",
+				Model:   "google/gemini-4-argon",
+			},
+			modelID:        "google/gemini-4-argon",
+			contextWindow:  1_048_576,
+			outputLimit:    943_718,
+			efforts:        "low,medium,high",
+			defaultVariant: "medium",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Config{
+				DefaultProvider: "service",
+				Providers:       map[string]config.ProviderConfig{"service": tc.provider},
+			}
+			summaries := providerSummariesFromConfig(cfg, t.TempDir())
+			if len(summaries) != 1 {
+				t.Fatalf("unexpected summaries: %+v", summaries)
+			}
+			model := providerModelByID(t, summaries[0], tc.modelID)
+			if got := strings.Join(model.SupportedEfforts, ","); got != tc.efforts {
+				t.Fatalf("supported efforts = %q, want %q", got, tc.efforts)
+			}
+			if model.DefaultVariant != tc.defaultVariant {
+				t.Fatalf("default variant = %q, want %q", model.DefaultVariant, tc.defaultVariant)
+			}
+			if model.Capabilities.ContextWindow != tc.contextWindow ||
+				model.Capabilities.OutputLimit != tc.outputLimit || !model.Capabilities.Reasoning {
+				t.Fatalf("capabilities = %+v", model.Capabilities)
+			}
+		})
+	}
+}
+
 func TestProviderSummariesEnrichPartialGPT56ConfigForCompatibleGateway(t *testing.T) {
 	cfg := config.Config{
 		DefaultProvider: "gateway",

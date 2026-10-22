@@ -121,6 +121,8 @@ func BaseOptionsForProvider(providerName string, provider config.ProviderConfig,
 			thinking := map[string]any{"includeThoughts": true}
 			if strings.Contains(desc.APIID, "gemini-3") {
 				thinking["thinkingLevel"] = "high"
+			} else if isGemini4(desc.APIID) {
+				thinking["thinkingLevel"] = "medium"
 			}
 			setOptionDefault(result, "thinkingConfig", thinking)
 		}
@@ -234,6 +236,27 @@ func inferredOptionsForProvider(providerName string, provider config.ProviderCon
 				effortKey:  effort,
 			}
 		})
+	}
+	if isMiniMaxM31(desc.APIID) || isMiniMaxM31(desc.ModelID) {
+		efforts := modelReasoningEfforts(provider.Models[model])
+		if len(efforts) == 0 {
+			efforts = []string{"low", "medium", "high", "xhigh", "max"}
+		}
+		switch desc.APINPM {
+		case compatNPMAnthropic, compatNPMVertexAnthropic:
+			return compatVariantsFromEfforts(efforts, func(effort string) map[string]any {
+				return map[string]any{
+					"thinking": map[string]any{"type": "adaptive"},
+					"effort":   effort,
+				}
+			})
+		case compatNPMOpenRouter:
+			return compatVariantsFromEfforts(efforts, func(effort string) map[string]any {
+				return map[string]any{"reasoning": map[string]any{"effort": effort}}
+			})
+		case compatNPMOpenAI, compatNPMOpenAICompatible:
+			return compatReasoningEffortVariants(efforts)
+		}
 	}
 	if strings.Contains(desc.APIID, "minimax-m3") &&
 		(desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMOpenAICompatible) {

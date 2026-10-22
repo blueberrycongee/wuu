@@ -40,6 +40,14 @@ func compatExcludedReasoningModel(id string) bool {
 	return false
 }
 
+// isMiniMaxM31 recognizes the M3.1 family across the vendor's documented ID
+// and gateway aliases. M3.1 always thinks, so its effort tiers replace the
+// binary thinking switch used by M3.
+func isMiniMaxM31(id string) bool {
+	id = strings.ToLower(strings.TrimSpace(id))
+	return strings.Contains(id, "minimax-m3.1") || strings.Contains(id, "minimax-m3-1")
+}
+
 func compatWidelySupportedEfforts() []string {
 	return []string{"low", "medium", "high"}
 }
