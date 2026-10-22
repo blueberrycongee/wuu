@@ -254,7 +254,8 @@ import WuuCore
 struct PersonalView: View {
     @Bindable var model: AppModel
     @Bindable var personal: PersonalModel
-    @State private var section = 0
+    @State private var activityPresented = false
+    @State private var activityPath: [Int] = []
     @State private var discard = false
     @State private var editingTask: JSONValue?
     @State private var taskGoal = ""
@@ -271,28 +272,21 @@ struct PersonalView: View {
                         Button("重新连接") { Task { await model.connect(); await personal.reload() } }.disabled(model.connecting)
                     }
                 } else {
-                    if !personal.available { Text("连接已断开，显示上次读取的内容。重新连接后才能发送或读取附件。").foregroundStyle(.secondary).padding(.horizontal) }
-                    if !personal.agents.isEmpty {
-                        Menu {
-                            ForEach(personal.agents, id: \.agentIdentity) { item in
-                                Button(agentLabel(item)) { Task { await personal.choose(item["agent_id"].string ?? "") } }
-                            }
-                        } label: { Label(agentLabel(personal.agent), systemImage: "person.crop.circle").frame(maxWidth: .infinity, alignment: .leading).padding() }
-                        .disabled(personal.busy)
-                    }
-                    Picker("Personal 内容", selection: $section) { Text("对话").tag(0); Text("事项").tag(1); Text("今天").tag(2); Text("记忆").tag(3); Text("设置").tag(4); Text("日历").tag(5); Text("查找历史").tag(6) }
-                        .pickerStyle(.menu).padding(.horizontal)
-                    if let error = personal.error { Text(error).foregroundStyle(.red).padding(.horizontal).accessibilityLabel("错误：" + error) }
-                    if let notice = personal.notice { Text(notice).foregroundStyle(.secondary).padding(.horizontal) }
-                    if section == 0 { conversation } else if section == 1 { matters } else { PersonalToolsView(personal: personal, section: section, selectSection: { section = $0 }).id(personal.contextID) }
-                    if personal.busy || personal.controlBusy { ProgressView().padding(8) }
+                    PersonalConversationHeader(
+                        agents: personal.agents.compactMap { value in
+                            guard let id = value["agent_id"].string else { return nil }
+                            return PersonalAgentOption(id: id, name: agentLabel(value))
+                        },
+                        name: agentLabel(personal.agent), status: statusText,
+                        activity: personal.busy || personal.controlBusy ? "thinking" : "idle",
+                        activityCount: activeTaskCount,
+                        chooseAgent: { id in Task { await personal.choose(id) } },
+                        showComputers: { model.perform { await model.leaveHost(); model.foreground() } },
+                        showActivity: { activityPresented = true })
+                    conversation
                 }
             }
-            .navigationTitle("Personal").navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("电脑") { model.perform { await model.leaveHost(); model.foreground() } } }
-                ToolbarItem(placement: .topBarTrailing) { Button("刷新", systemImage: "arrow.clockwise") { Task { await personal.reload() } }.disabled(personal.busy || !personal.available) }
-            }
+            .toolbar(.hidden, for: .navigationBar)
         }
         .task(id: personal.active && personal.available) {
             guard personal.active, personal.available else { return }
@@ -301,8 +295,11 @@ struct PersonalView: View {
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
             }
         }
-        .onChange(of: personal.detail["task_id"].string) { _, value in if value != nil { section = 1 } }
+        .onChange(of: personal.detail["task_id"].string) { _, value in
+            if value != nil { activityPresented = true; activityPath = [1] }
+        }
         .onChange(of: personal.contextID) { _, _ in editingTask = nil }
+        .sheet(isPresented: $activityPresented, onDismiss: { activityPath = [] }) { activitySheet }
         .sheet(isPresented: Binding(get: { editingTask != nil }, set: { if !$0 { editingTask = nil } })) {
             NavigationStack {
                 Form {
@@ -322,46 +319,104 @@ struct PersonalView: View {
         } message: { Text("原请求可能已被宿主接收。请先查看历史，避免重新输入相同请求。") }
     }
     private func agentLabel(_ value: JSONValue) -> String {
-        let name = value["name"].string ?? "助理"
+        let name = value["name"].string ?? "twin"
         guard value["kind"].string == "specialist", let tag = value["responsibility"].string, !tag.isEmpty else { return name }
         return name + " · " + tag
+    }
+    private var statusText: String {
+        if !personal.available { return "离线" }
+        if personal.busy || personal.controlBusy { return "正在处理" }
+        return personal.hasPending ? "等待重试" : "已就绪"
+    }
+    private var activeTaskCount: Int {
+        personal.tasks.filter { ["running", "queued", "waiting_user", "waiting_external"].contains($0["state"].string ?? "") }.count
+    }
+    @ViewBuilder private var notices: some View {
+        if !personal.available {
+            PersonalNotice(text: "连接已断开，显示上次读取的内容。重新连接后才能发送或读取附件。", error: false)
+        }
+        if let error = personal.error { PersonalNotice(text: error, error: true) }
+        if let notice = personal.notice { PersonalNotice(text: notice, error: false) }
     }
     private var conversation: some View {
         let composer = personal.composerID
         return VStack(spacing: 0) {
+            notices
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        if personal.hasEarlier { Button("更早的消息") { Task { await personal.earlier() } }.disabled(personal.busy) }
-                        if personal.messageSequence != nil { Button("返回最新消息") { Task { await personal.latest() } } }
-                        if personal.records.isEmpty && !personal.busy { Text("直接发消息，助理会在这里继续与你交流。").foregroundStyle(.secondary) }
-                        ForEach(personal.records, id: \.recordIdentity) { record in
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(record["role"].string == "user" ? "你" : (personal.agent["name"].string ?? "助理")).font(.body).foregroundStyle(.secondary)
-                                MessageText(text: record["content"].string ?? "", markdown: record["role"].string != "user")
-                                attachmentButtons(record)
-                            }.id(Int(record["seq"].number ?? 0)).frame(maxWidth: .infinity, alignment: .leading)
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        if personal.hasEarlier {
+                            Button("更早的消息", systemImage: "arrow.up") { Task { await personal.earlier() } }
+                                .buttonStyle(.bordered).controlSize(.small).disabled(personal.busy)
+                                .frame(maxWidth: .infinity)
                         }
-                    }.padding()
+                        if personal.messageSequence != nil {
+                            Button("返回最新消息", systemImage: "arrow.down") { Task { await personal.latest() } }
+                                .buttonStyle(.bordered).controlSize(.small).frame(maxWidth: .infinity)
+                        }
+                        if personal.records.isEmpty && !personal.busy { PersonalEmptyConversation() }
+                        ForEach(personal.records, id: \.recordIdentity) { record in
+                            PersonalMessageRow(record: record, agentName: agentLabel(personal.agent),
+                                attachmentsEnabled: personal.available && !personal.loadingAttachment) { attachment in
+                                    Task { await personal.loadAttachment(attachment, sequence: Int(record["seq"].number ?? 0)) }
+                                }
+                                .id(Int(record["seq"].number ?? 0))
+                        }
+                    }.padding(.horizontal, 16).padding(.top, 18).padding(.bottom, 12)
                 }
+                .scrollDismissesKeyboard(.interactively)
                 .onChange(of: personal.records) { _, _ in if let seq = personal.messageSequence { proxy.scrollTo(seq, anchor: .center) } }
             }
-            Divider()
-            ForEach(personal.attachments) { file in
-                HStack { Text(file.filename).lineLimit(1); Spacer(); Button("移除") { personal.attachments.removeAll { $0.id == file.id } }.disabled(personal.hasPending) }.padding(.horizontal)
-            }
-            HStack(alignment: .bottom) {
-                AttachmentPicker(attachments: Binding(get: { personal.attachments }, set: { if personal.composerID == composer { personal.attachments = $0 } }), model: model)
-                    .id(composer).disabled(!personal.canSend || personal.hasPending)
-                TextField("发消息", text: $personal.text, axis: .vertical).lineLimit(1...6).disabled(personal.hasPending)
-                Button(!personal.hasPending ? "发送" : "重试") { Task { await personal.send() } }
-                    .disabled(!personal.canSend || (!personal.hasPending && personal.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && personal.attachments.isEmpty))
-            }.padding()
-            HStack {
-                Button("停止当前回复") { Task { await personal.stopReply() } }.disabled(!personal.canSend)
-                if personal.hasPending { Button("放下重试") { discard = true }.disabled(personal.busy) }
-            }.font(.footnote).padding(.bottom, 8)
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            PersonalComposer(text: $personal.text,
+                attachments: Binding(get: { personal.attachments }, set: { if personal.composerID == composer { personal.attachments = $0 } }),
+                model: model, composerID: composer, available: personal.available,
+                enabled: personal.canSend, sending: personal.busy,
+                pending: personal.hasPending, onSend: { Task { await personal.send() } }, onDiscard: { discard = true })
+        }
+    }
+
+    private var activitySheet: some View {
+        NavigationStack(path: $activityPath) {
+            List {
+                Section("活动") {
+                    ForEach(1..<personalSectionNames.count, id: \.self) { section in
+                        NavigationLink(value: section) {
+                            Label(personalSectionNames[section], systemImage: personalSectionIcons[section])
+                        }
+                    }
+                }
+                Section {
+                    Button("停止当前回复", systemImage: "stop.circle") { Task { await personal.stopReply() } }
+                        .disabled(!personal.canSend)
+                }
+            }
+            .navigationTitle("twin")
+            .navigationDestination(for: Int.self) { section in activityDestination(section) }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("关闭") { activityPresented = false } }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("刷新", systemImage: "arrow.clockwise") { Task { await personal.reload() } }
+                        .disabled(personal.busy || !personal.available)
+                }
+            }
+        }
+        .presentationDragIndicator(.visible)
+    }
+
+    @ViewBuilder private func activityDestination(_ section: Int) -> some View {
+        VStack(spacing: 0) {
+            notices
+            if section == 1 {
+                matters
+            } else {
+                PersonalToolsView(personal: personal, section: section, selectSection: { activityPath = [$0] })
+                    .id(personal.contextID)
+            }
+            if personal.busy || personal.controlBusy { ProgressView().padding(8) }
+        }
+        .navigationTitle(personalSectionNames[section]).navigationBarTitleDisplayMode(.inline)
     }
     private func attachmentButtons(_ record: JSONValue, task: JSONValue? = nil) -> some View {
         ForEach(Array(record["attachments"].array.enumerated()), id: \.offset) { _, attachment in
@@ -387,7 +442,10 @@ struct PersonalView: View {
                     }.disabled(!personal.available || personal.busy || personal.controlBusy)
                     if let summary = personal.detail["result"]["summary"].string { MessageText(text: summary, markdown: true) }
                     if let seq = personal.detail["source"]["message_seq"].number {
-                        Button("查看来源消息") { section = 0; Task { await personal.showSource(Int(seq)) } }
+                        Button("查看来源消息") {
+                            activityPresented = false
+                            Task { await personal.showSource(Int(seq)) }
+                        }
                     }
                 }
                 Section("结果依据") {
