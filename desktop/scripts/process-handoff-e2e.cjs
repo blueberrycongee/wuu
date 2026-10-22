@@ -199,8 +199,108 @@ async function run() {
   );
   await capture(win, "process-handoff-completed.png");
 
+  await verifyArtifactHandoff(win, threadID);
   console.log("process handoff e2e passed");
   app.exit(0);
+}
+
+async function verifyArtifactHandoff(win, threadID) {
+  const results = [];
+  const imageData = fs.readFileSync(path.join(desktopRoot, "dev/message-flow-reading/media-portrait.svg")).toString("base64");
+  for (const [theme, width, fontSize, earlyTerminal] of [
+    ["light", 1100, 15, true], ["dark", 1100, 20, false],
+    ["light", 480, 20, false], ["dark", 480, 15, true],
+  ]) {
+    win.setSize(width, 900);
+    await win.webContents.executeJavaScript(`
+      document.documentElement.dataset.theme = ${JSON.stringify(theme)};
+      document.documentElement.style.setProperty('--font-ui', '${fontSize}px');
+      document.documentElement.style.setProperty('--conversation-message-font-size', '${fontSize}px');
+      window.dispatchEvent(new Event('wuu-content-size-change'));
+      if (${width < 600} && !document.querySelector('.app-shell').classList.contains('sidebar-collapsed')) {
+        document.querySelector('[data-wuu-component="sidebar-toggle"]').click();
+      }
+    `);
+    const id = `artifact-handoff-${results.length}`;
+    const processText = "Published the image; verification is still in progress.";
+    const items = [
+      { id: `${id}-user`, type: "user_message", status: "completed", text: "Publish the image, verify it, then explain the result." },
+      { id: `${id}-image`, type: "tool_call", name: "present_artifact", status: "completed", result_detail: { content: [
+        { type: "image", mime_type: "image/svg+xml", data: imageData, artifact: { placement: "inline" } },
+      ] } },
+      { id: `${id}-commentary`, type: "agent_message", terminal: false, status: "completed", text: processText },
+      { id: `${id}-tool`, type: "tool_call", name: "read_file", arguments: '{"path":"verification.json"}', result: "Verified", status: "completed" },
+      { id: `${id}-reasoning`, type: "reasoning", status: "completed", text: "Compare the verification results." },
+      { id: `${id}-commentary-2`, type: "agent_message", terminal: false, status: "completed", text: "Verification complete; preparing the final answer." },
+      { id: `${id}-tool-2`, type: "tool_call", name: "run_shell", arguments: '{"command":"check"}', result: "Passed", status: "completed" },
+      { id: `${id}-reasoning-2`, type: "reasoning", status: "completed", text: "Ready to report." },
+    ];
+    const turn = { id, items, status: "in_progress", items_view: "full", started_at: new Date().toISOString() };
+    emitNotification(win, "turn/started", { thread_id: threadID, turn });
+    await waitFor(win, () => {
+      const shell = Array.from(document.querySelectorAll(".assistant-turn-shell")).at(-1);
+      const image = shell?.querySelector(".turn-answer-body img");
+      if (!image?.complete || !image.naturalWidth || !shell?.querySelector(".turn-answer-body")?.textContent.includes("Published the image")) return false;
+      window.handoffImage = image;
+      return true;
+    }, 5000);
+    const before = await evaluate(win, artifactHandoffState);
+    assert.equal(before.expanded, true);
+    assert.equal(before.outputHasProcess, true, "Work following a publication must stay visible before the answer");
+    const answer = { id: `${id}-answer`, type: "agent_message", terminal: earlyTerminal, status: "in_progress", text: "" };
+    emitNotification(win, "item/started", { thread_id: threadID, turn_id: id, item: answer });
+    await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal((await evaluate(win, artifactHandoffState)).expanded, true, "An empty final-answer placeholder must not collapse work");
+    const finalText = "The image and verification are ready.";
+    emitNotification(win, "item/agentMessage/delta", { thread_id: threadID, turn_id: id, item_id: answer.id, delta: finalText });
+    await waitFor(win, () => Array.from(document.querySelectorAll(".assistant-turn-shell")).at(-1)?.textContent.includes("The image and verification are ready."), 5000);
+    if (!earlyTerminal) {
+      assert.equal((await evaluate(win, artifactHandoffState)).outputHasProcess, true);
+      answer.terminal = true;
+      answer.text = finalText;
+      emitNotification(win, "item/completed", { thread_id: threadID, turn_id: id, item: { ...answer, status: "completed" } });
+    }
+    await waitFor(win, processFoldCollapsed, 5000);
+    const handoff = await evaluate(win, artifactHandoffState);
+    assert.equal(handoff.outputHasProcess, false, "All commentary and grouped tool/reasoning records must leave the answer body at handoff");
+    assert.equal(handoff.foldHasProcess, true, "Process content must remain available in the fold");
+    assert.equal(handoff.imagePreserved, true, "Handoff must preserve the published image node");
+    assert.equal(handoff.answerVisible, true);
+    answer.text = finalText;
+    answer.terminal = true;
+    answer.status = "completed";
+    turn.items = [...items, answer];
+    turn.status = "completed";
+    emitNotification(win, "turn/completed", { thread_id: threadID, turn: { ...turn, completed_at: new Date().toISOString(), duration_ms: 1000 } });
+    await waitFor(win, () => {
+      const shell = Array.from(document.querySelectorAll(".assistant-turn-shell")).at(-1);
+      return shell?.querySelector(".turn-process-fold .collapsible-details")?.getBoundingClientRect().height < 1;
+    }, 5000);
+    const completed = await evaluate(win, artifactHandoffState);
+    assert.equal(completed.outputHasProcess, false);
+    assert.equal(completed.imagePreserved, true);
+    await capture(win, `artifact-handoff-${theme}-${width}-${fontSize}.png`);
+    await evaluate(win, () => Array.from(document.querySelectorAll(".turn-process-toggle")).at(-1).click());
+    const reopened = await evaluate(win, artifactHandoffState);
+    assert.equal(reopened.expanded, true, "Readers must be able to reopen the complete process");
+    assert.equal(reopened.foldHasProcess, true);
+    assert.equal(reopened.outputHasProcess, false);
+    results.push({ theme, width, fontSize, earlyTerminal, before, handoff, completed, reopened });
+  }
+  fs.writeFileSync(path.join(evidenceDir, "artifact-handoff-results.json"), JSON.stringify(results, null, 2));
+}
+
+function artifactHandoffState() {
+  const shell = Array.from(document.querySelectorAll(".assistant-turn-shell")).at(-1);
+  const fold = shell.querySelector(".turn-process-fold");
+  const output = shell.querySelector(".turn-answer-body");
+  return {
+    expanded: fold.classList.contains("expanded"),
+    outputHasProcess: output.textContent.includes("Published the image") || output.textContent.includes("Verification complete") || Boolean(output.querySelector(".process-surface")),
+    foldHasProcess: fold.textContent.includes("Published the image") && fold.textContent.includes("Verification complete") && Boolean(fold.querySelector(".process-surface")),
+    imagePreserved: output.querySelector("img") === window.handoffImage,
+    answerVisible: output.textContent.includes("The image and verification are ready."),
+  };
 }
 
 async function startActiveThread(win) {

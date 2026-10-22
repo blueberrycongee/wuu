@@ -92,6 +92,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Fold progress messages and tool/reasoning groups after published images into the process section when the final answer appears, keeping delivered images and the answer visible.
+
 - Keep the input width and toolbar layout stable when attachment drawers open in conversation and document composers, and when conversation drafts grow to multiple lines.
 
 - Align the browser toolbar and native navigation ribbon at one header boundary so hovered sidebars fully cover the page without an exposed strip.

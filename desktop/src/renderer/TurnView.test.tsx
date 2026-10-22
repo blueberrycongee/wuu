@@ -547,7 +547,7 @@ describe("TurnView", () => {
     expect(card?.textContent).not.toContain("video/mp4");
   });
 
-  it("keeps text after published images in place through streaming, more output, and completion", () => {
+  it("keeps published images and streamed answers stable while folding commentary at handoff", () => {
     vi.useFakeTimers();
     const image = (id: string): ThreadItem => ({
       id, type: "tool_call", name: "present_artifact", status: "completed",
@@ -594,12 +594,13 @@ describe("TurnView", () => {
     expect(before(message, secondImage)).toBe(true);
     expect(before(secondImage, finalMessage)).toBe(true);
 
-    // Confirming terminal status must preserve both the image and text nodes.
+    // Handoff folds commentary while preserving published images and the answer.
     update(makeTurn("completed", [first, settledText, second, { ...final, terminal: true, status: "completed" }]));
     expect(container.querySelectorAll("img")[0]).toBe(firstImage);
     expect(container.querySelectorAll("img")[1]).toBe(secondImage);
-    expect(container.querySelectorAll(".agent-block")[0]).toBe(message);
-    expect(container.querySelectorAll(".agent-block")[1]).toBe(finalMessage);
+    expect(container.querySelector(".turn-process-fold")?.textContent).toContain("Reading the chart with streamed details");
+    expect(container.querySelectorAll(".turn-answer-body .agent-block")).toHaveLength(1);
+    expect(container.querySelector(".turn-answer-body .agent-block")).toBe(finalMessage);
     expect(before(secondImage, finalMessage)).toBe(true);
   });
 
