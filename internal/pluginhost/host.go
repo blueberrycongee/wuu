@@ -15,6 +15,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
+	cordis "github.com/tr1v3r/cordis-go"
 )
 
 // Client is one initialized plugin runtime. Implementations may host plugins
@@ -62,6 +63,10 @@ type RegisteredTool struct {
 
 // Host owns the active plugin clients and their negotiated contributions.
 type Host struct {
+	lifecycleMu         sync.Mutex
+	lifecycleRoot       *cordis.Context
+	lifetimes           map[string]*clientLifetime
+	closed              bool
 	mu                  sync.RWMutex
 	clients             []Client
 	tools               map[string]RegisteredTool
@@ -517,6 +522,12 @@ func (h *Host) RetirePlugin(ctx context.Context, pluginID string, cause error) (
 	if h == nil {
 		return ClientShutdownOutcome{}, false
 	}
+	h.lifecycleMu.Lock()
+	defer h.lifecycleMu.Unlock()
+	return h.retirePluginAndConsumers(ctx, pluginID, cause)
+}
+
+func (h *Host) retirePluginAndConsumers(ctx context.Context, pluginID string, cause error) (ClientShutdownOutcome, bool) {
 	pluginID = strings.TrimSpace(pluginID)
 	retiring := map[string]bool{pluginID: true}
 	dependencies := h.Dependencies()
@@ -568,6 +579,9 @@ func (h *Host) retirePlugin(ctx context.Context, pluginID string, cause error) (
 	if pluginID == "" {
 		return ClientShutdownOutcome{}, false
 	}
+	if err := h.ownClients(h.orderedClients()); err != nil {
+		return ClientShutdownOutcome{PluginID: pluginID, Err: err}, false
+	}
 	h.mu.Lock()
 	var client Client
 	keptClients := h.clients[:0]
@@ -615,9 +629,7 @@ func (h *Host) retirePlugin(ctx context.Context, pluginID string, cause error) (
 	}
 	// Contributions and executions are already detached. Keep declared host
 	// services available while the plugin persists state and cancels its work.
-	finishCleanup := registry.allowShutdownCleanup(pluginID)
-	closeErr := client.Close(ctx)
-	finishCleanup()
+	closeErr := h.closeClient(ctx, client)
 	if registry != nil {
 		registry.RevokePlugin(ctx, pluginID)
 	}
@@ -639,31 +651,36 @@ func (h *Host) Activate(ctx context.Context) error {
 	if h == nil {
 		return nil
 	}
+	h.lifecycleMu.Lock()
+	defer h.lifecycleMu.Unlock()
+	if h.closed {
+		return errors.New("plugin generation is closed")
+	}
 	if _, err := h.DependencyOrder(); err != nil {
 		return err
 	}
-	h.BlockFailedDependencies(ctx)
+	h.blockFailedDependencies(ctx)
 	clients := h.orderedClients()
+	if err := h.ownClients(clients); err != nil {
+		return err
+	}
+	dependencies := h.Dependencies()
 	var err error
 	blocked := h.DependencyFailures()
 	for _, client := range clients {
-		if blocked[client.ID()] != nil {
+		if blocked[client.ID()] != nil || client.Status().State == StateFailed || client.Status().State == StateStopped {
 			continue
 		}
-		lifecycle, ok := client.(lifecycleClient)
-		if !ok || client.Status().State != StatePrepared {
-			continue
-		}
-		if activateErr := lifecycle.Activate(ctx); activateErr != nil {
+		if activateErr := h.activateClient(ctx, client, dependencies[client.ID()]); activateErr != nil {
 			err = errors.Join(err, fmt.Errorf("activate plugin %q: %w", client.ID(), activateErr))
-			outcome, _ := h.RetirePlugin(ctx, client.ID(), activateErr)
+			outcome, _ := h.retirePluginAndConsumers(ctx, client.ID(), activateErr)
 			err = errors.Join(err, outcome.Err)
 			h.Add(Failed(client.ID(), activateErr))
-			h.BlockFailedDependencies(ctx)
+			h.blockFailedDependencies(ctx)
 			blocked = h.DependencyFailures()
 		}
 	}
-	h.BlockFailedDependencies(ctx)
+	h.blockFailedDependencies(ctx)
 	return err
 }
 
@@ -705,7 +722,16 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 	if h == nil {
 		return nil
 	}
+	h.lifecycleMu.Lock()
+	defer h.lifecycleMu.Unlock()
+	if h.closed {
+		return nil
+	}
 	h.StopBackground()
+	if err := h.ownClients(h.orderedClients()); err != nil {
+		return []ClientShutdownOutcome{{Err: err}}
+	}
+	h.closed = true
 	h.mu.Lock()
 	clients := h.orderedClientsLocked()
 	registry := h.serviceRegistry
@@ -724,10 +750,9 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 
 	outcomes := make([]ClientShutdownOutcome, 0, len(clients))
 	for i := len(clients) - 1; i >= 0; i-- {
-		finishCleanup := registry.allowShutdownCleanup(clients[i].ID())
-		outcomes = append(outcomes, ClientShutdownOutcome{PluginID: clients[i].ID(), Err: clients[i].Close(ctx)})
-		finishCleanup()
+		outcomes = append(outcomes, ClientShutdownOutcome{PluginID: clients[i].ID(), Err: h.closeClient(ctx, clients[i])})
 	}
+	h.lifecycleRoot.Fiber().Dispose()
 	return outcomes
 }
 

@@ -202,6 +202,12 @@ func (h *Host) DependencyFailures() map[string]error {
 // BlockFailedDependencies closes consumers before providers and detaches every
 // executable registration, retaining attributable failure records.
 func (h *Host) BlockFailedDependencies(ctx context.Context) {
+	h.lifecycleMu.Lock()
+	defer h.lifecycleMu.Unlock()
+	h.blockFailedDependencies(ctx)
+}
+
+func (h *Host) blockFailedDependencies(ctx context.Context) {
 	failures := h.DependencyFailures()
 	clients := h.orderedClients()
 	for i := len(clients) - 1; i >= 0; i-- {

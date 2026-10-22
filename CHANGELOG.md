@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Own runtime client activation and cleanup through generation-local cordis-go scopes, with serialized shutdown barriers and attributable provider panic errors. Building from source now requires Go 1.27.0; build and CI version selection follows `go.mod`.
+
 - Select runtime service providers through versioned `composition.services` configuration. Ambiguous or unavailable bindings reject preparation; failed or removed providers never fall back to another implementation.
 
 - Add MiniMax-M3.1-Flash and Gemini 4 Argon to the model catalog, with their documented context and output limits, reasoning effort levels, and OpenRouter model entries.

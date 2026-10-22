@@ -92,6 +92,8 @@ Reload preserves conversation history and the conversation-scoped `prompt_cache_
 
 Dependent packages retire before their providers, including revocation of retained generations after a disable or removal. Optional dependency failures do not cascade into consumers. Retirement closes MCP connections, clears prompt and compaction registrations, cancels plugin executions, shuts down processes, revokes service routing, and removes owned snapshots. Shutdown retains access to the host services needed to release plugin-owned work before routing is closed. Plugins must still stop their own timers, subscriptions, and background work; the host cannot infer arbitrary resources created by extension code.
 
+Runtime clients are owned by a generation-local [cordis-go](https://github.com/tr1v3r/cordis-go) scope. The resolved dependency graph supplies its activation injections. Client resources remain owned outside the activation scope so a prepared or failed client can still shut down, and providers remain available until consumer cleanup returns. Wuu serializes lifecycle transitions and waits for cleanup before returning from retirement. Activation and cleanup panics become attributable errors. A closed generation cannot reactivate. Executions and generation leases keep the version-retention rules above; Cordis does not independently reload a retained generation.
+
 Cleanup produces structured revocation records, persisted in `plugin-generation-revocations.jsonl` under Wuu's home directory. These distinguish publication success from retirement failures and help diagnose resources that did not close normally.
 
 ## Services and executions
