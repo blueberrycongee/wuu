@@ -16,12 +16,20 @@
 }
 
 .web-research-sources {
+  --source-card-angle: 1;
+  --source-deal-x: -18px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 2px;
   isolation: isolate;
 }
+
+/* Alternating lean gives a dealt row of source cards a little shuffle. The
+ * first card has no predecessor to slide out from, so it mostly turns in. */
+.web-research-sources > .tooltip-trigger:first-child { --source-deal-x: -4px; }
+.web-research-sources > .tooltip-trigger:nth-child(odd) { --source-card-angle: -1; }
+.web-research-sources > .tooltip-trigger:nth-child(even) { --source-card-angle: 1; }
 
 .web-source-link {
   display: inline-flex;
@@ -39,13 +47,36 @@
   cursor: pointer;
 }
 
-.web-source-circle { position: relative; width: 32px; }
-.web-research-sources > .tooltip-trigger + .tooltip-trigger .web-source-circle {
-  margin-inline-start: -16px;
+.web-source-card { position: relative; width: 32px; height: 40px; padding-block: 3px; pointer-events: none; }
+.web-research-sources > .tooltip-trigger + .tooltip-trigger .web-source-card {
+  margin-inline-start: calc(var(--source-card-step, 5px) - 32px);
 }
-.web-source-circle .web-source-avatar { box-shadow: 0 0 0 2px var(--paper); }
-.web-source-circle:hover,
-.web-source-circle:focus-visible { z-index: 1; }
+.web-source-card .web-source-avatar {
+  /* A 16x34 portrait card keeps the hand within roughly two card widths
+   * while leaving its full height clear of the process row baseline. */
+  width: 16px;
+  height: 34px;
+  flex-basis: 34px;
+  padding: 2px;
+  place-items: start;
+  border-radius: 4px;
+  transform: rotate(var(--source-fan-angle, 0deg));
+  transform-origin: 50% 100%;
+  pointer-events: auto;
+  box-shadow:
+    0 0 0 2px var(--paper),
+    0 1px 2px -1px var(--shadow-color-medium);
+}
+.web-source-card .web-source-avatar img {
+  width: 12px;
+  height: 12px;
+  inset-block-start: 2px;
+  inset-inline-start: 2px;
+  border-radius: 2px;
+}
+.web-source-card .web-source-fallback { font-size: 12px; line-height: 1; }
+.web-source-card:hover,
+.web-source-card:focus-visible { z-index: 1; }
 
 .web-source-avatar {
   position: relative;
@@ -59,7 +90,10 @@
   background: var(--paper);
   color: var(--ink-soft);
   font-size: var(--font-ui);
-  transition: transform var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
+  transition:
+    transform var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .web-source-avatar img {
@@ -74,15 +108,24 @@
 .web-source-fallback { transition: opacity var(--motion-fast) var(--ease-out); }
 .web-source-fallback[data-loaded="true"] { opacity: 0; }
 
-.web-source-circle:hover .web-source-avatar {
-  transform: translateY(-2px);
+/* The hovered card rises in place; the hand keeps its gathered base. */
+.web-source-card:hover .web-source-avatar,
+.web-source-card:focus-visible .web-source-avatar {
+  z-index: 1;
+  transform: rotate(var(--source-fan-angle, 0deg)) scale(1.065);
   border-color: var(--hairline-strong);
+  box-shadow:
+    0 0 0 2px var(--paper),
+    0 6px 11px -5px var(--shadow-color-strong);
 }
 .web-source-link:focus-visible { outline: 2px solid var(--ink-soft); outline-offset: 1px; }
+.web-source-card:focus-visible { z-index: 3; outline: none; }
+.web-source-card:focus-visible .web-source-avatar { outline: 2px solid var(--ink-soft); outline-offset: 1px; }
 
 .web-source-avatar.is-arriving {
-  animation: web-source-arrive var(--motion-slow) var(--ease-out) backwards;
-  animation-delay: calc(50ms + var(--source-order) * 35ms);
+  z-index: 2;
+  animation: web-source-deal var(--motion-slower) cubic-bezier(0.22, 0.68, 0.28, 1) backwards;
+  animation-delay: calc(50ms + var(--source-order) * 55ms);
 }
 
 .web-research-expanded { margin: 0 0 10px; max-width: 100%; }
@@ -117,17 +160,34 @@
   .web-source-detail, .web-research-reveal { min-height: 44px; }
 }
 
-@keyframes web-source-arrive {
-  from { opacity: 0; transform: translate(-6px, 3px) scale(0.78); }
-  70% { opacity: 1; transform: translate(0, 0) scale(1.045); }
-  to { opacity: 1; transform: none; }
+@keyframes web-source-deal {
+  0% {
+    opacity: 0;
+    transform: translate3d(var(--source-deal-x), 0, 0) rotate(calc(var(--source-fan-angle, 0deg) + var(--source-card-angle) * 13deg)) scale(0.76);
+    box-shadow: 0 0 0 2px var(--paper), 0 3px 7px -6px var(--shadow-color-medium);
+  }
+  20% { opacity: 1; }
+  52% {
+    transform: translate3d(2px, calc(var(--source-card-angle) * -2px), 0) rotate(calc(var(--source-fan-angle, 0deg) + var(--source-card-angle) * -5deg)) scale(1.075);
+    box-shadow: 0 0 0 2px var(--paper), 0 7px 14px -6px var(--shadow-color-strong);
+  }
+  76% {
+    transform: translate3d(-1px, 0, 0) rotate(calc(var(--source-fan-angle, 0deg) + var(--source-card-angle) * 1.5deg)) scale(0.985);
+    box-shadow: 0 0 0 2px var(--paper), 0 3px 7px -4px var(--shadow-color-medium);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) rotate(var(--source-fan-angle, 0deg));
+    box-shadow: 0 0 0 2px var(--paper);
+  }
 }
 
 .conversation-render-activity.is-reveal-snap .turn-web-research { transition: none; }
 
 @container style(--motion-reduced: 1) {
   .web-source-avatar.is-arriving { animation: none; }
-  .web-source-circle:hover .web-source-avatar { transform: none; }
+  .web-source-card:hover .web-source-avatar,
+  .web-source-card:focus-visible .web-source-avatar { transform: rotate(var(--source-fan-angle, 0deg)); }
 }
 
 /* Source actions share the process header without nesting buttons in summary. */
@@ -135,7 +195,7 @@
 .process-surface-inline-controls:has(.turn-web-research) > .process-surface-fold > .process-surface-row {
   width: max-content;
   max-width: calc(100% - var(--process-accessory-width, 0px) - 8px);
-  min-height: 32px;
+  min-height: 40px;
 }
 .process-surface-summary-accessory { width: max-content; position: absolute; inset-block-start: 0; inset-inline-start: calc(var(--process-summary-width, 0px) + 8px); }
 .turn-web-research.is-inline { margin: 0; overflow: visible; height: auto; transition: none; }

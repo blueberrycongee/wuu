@@ -28,8 +28,8 @@ export function TurnSourcesRow({ sources, running = false, onOpen, inline = fals
     const owner = rowRef.current?.closest<HTMLElement>(".process-surface-inline-controls");
     if (!owner) return;
     const measure = () => {
-      // The first target is 32px wide; each overlapping source adds 18px.
-      if (owner.clientWidth > 0) setVisibleLimit(Math.max(1, Math.min(6, 1 + Math.floor((owner.clientWidth * 0.48 - 32) / 18))));
+      // The first target is 32px wide; each overlapping card adds 8px.
+      if (owner.clientWidth > 0) setVisibleLimit(Math.max(1, Math.min(3, 1 + Math.floor((owner.clientWidth * 0.48 - 32) / 8))));
     };
     measure();
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
@@ -46,11 +46,15 @@ export function TurnSourcesRow({ sources, running = false, onOpen, inline = fals
   });
   if (sources.length === 0) return null;
   const label = sources.length === 1 ? t("sources.label") : t("sources.labelCount", { count: sources.length });
+  const visibleSources = sources.slice(0, visibleLimit);
+  const fanStep = visibleSources.length <= 1 ? 0 : Math.min(7, 14 / (visibleSources.length - 1));
+  const cardStep = visibleSources.length <= 1 ? 8 : Math.min(8, 10 / (visibleSources.length - 1));
   return <div ref={rowRef} className={`turn-web-research${inline ? " is-inline" : ""}`} role="group" aria-label={label}>
-    <div className="web-research-sources">
-      {sources.slice(0, visibleLimit).map(source => <SourceLink key={source.url} source={source} onOpen={openURL}
+    <div className="web-research-sources" style={{ "--source-card-step": `${cardStep}px` } as CSSProperties}>
+      {visibleSources.map((source, position) => <SourceLink key={source.url} source={source} onOpen={openURL}
         arrive={mayAnimate && !seenURLs.current.has(source.url)} motionAllowed={mayAnimate}
-        index={newURLs.findIndex(item => item.url === source.url)} />)}
+        index={newURLs.findIndex(item => item.url === source.url)}
+        fanAngle={(position - (visibleSources.length - 1) / 2) * fanStep} />)}
     </div>
   </div>;
 }
@@ -87,12 +91,13 @@ export function TurnSourceChips({ sources, onOpen }: SourceProps): JSX.Element |
   </div>;
 }
 
-function SourceLink({ source, onOpen, arrive, motionAllowed, index, detail = false }: {
+function SourceLink({ source, onOpen, arrive, motionAllowed, index, fanAngle = 0, detail = false }: {
   source: TurnSource;
   onOpen: (url: string, modifiers?: WorkspaceBrowserOpenModifiers) => void;
   arrive: boolean;
   motionAllowed: boolean;
   index: number;
+  fanAngle?: number;
   detail?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
@@ -109,8 +114,11 @@ function SourceLink({ source, onOpen, arrive, motionAllowed, index, detail = fal
   return (
     <Tooltip content={tooltip} propagateEscape>
       <button type="button"
-        className={`web-source-link ${detail ? "web-source-detail" : "web-source-circle"}`}
-        style={{ "--source-order": Math.max(0, Math.min(arrivalOrder, 3)) } as CSSProperties}
+        className={`web-source-link ${detail ? "web-source-detail" : "web-source-card"}`}
+        style={{
+          "--source-order": Math.max(0, Math.min(arrivalOrder, 3)),
+          "--source-fan-angle": `${fanAngle}deg`,
+        } as CSSProperties}
         aria-label={t("sources.openNamed", { name: tooltip })}
         onClick={event => {
           event.preventDefault();
