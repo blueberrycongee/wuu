@@ -251,7 +251,10 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	if driver == nil {
 		driver = loopdriver.DefaultDriver{}
 	}
-	descriptor := driver.Descriptor()
+	descriptor, err := driver.Descriptor(ctx)
+	if err != nil {
+		return LoopResult{}, fmt.Errorf("resolve loop driver: %w", err)
+	}
 	input := loopdriver.PersistedInput{Messages: providers.CloneChatMessages(history)}
 	execution := loopdriver.ExecutionContextFromContext(ctx)
 
@@ -273,7 +276,7 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 					loopdriver.ContractVersion,
 				)
 			}
-			instance, err = driver.Resume(execution, input, checkpoint)
+			instance, err = driver.Resume(ctx, execution, input, checkpoint)
 			if err != nil {
 				return LoopResult{}, fmt.Errorf("resume loop driver: %w", err)
 			}
@@ -281,7 +284,7 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	}
 	if instance == nil {
 		var err error
-		instance, err = driver.Create(execution, input)
+		instance, err = driver.Create(ctx, execution, input)
 		if err != nil {
 			return LoopResult{}, fmt.Errorf("create loop driver: %w", err)
 		}

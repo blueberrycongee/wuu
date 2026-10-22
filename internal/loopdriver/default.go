@@ -14,7 +14,10 @@ const (
 
 type DefaultDriver struct{}
 
-func (DefaultDriver) Descriptor() Descriptor {
+func (DefaultDriver) Descriptor(ctx context.Context) (Descriptor, error) {
+	if err := ctx.Err(); err != nil {
+		return Descriptor{}, err
+	}
 	return Descriptor{
 		ID:      DefaultDriverID,
 		Version: DefaultDriverVersion,
@@ -23,18 +26,26 @@ func (DefaultDriver) Descriptor() Descriptor {
 			"tool_use",
 			"compaction",
 		},
-	}
+	}, nil
 }
 
-func (driver DefaultDriver) Create(execution ExecutionContext, input PersistedInput) (Instance, error) {
-	return newDefaultInstance(driver.Descriptor(), execution, input, nil)
-}
-
-func (driver DefaultDriver) Resume(execution ExecutionContext, input PersistedInput, checkpoint Checkpoint) (Instance, error) {
-	if err := validateCheckpoint(driver.Descriptor(), checkpoint); err != nil {
+func (driver DefaultDriver) Create(ctx context.Context, execution ExecutionContext, input PersistedInput) (Instance, error) {
+	descriptor, err := driver.Descriptor(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return newDefaultInstance(driver.Descriptor(), execution, input, checkpoint.State)
+	return newDefaultInstance(descriptor, execution, input, nil)
+}
+
+func (driver DefaultDriver) Resume(ctx context.Context, execution ExecutionContext, input PersistedInput, checkpoint Checkpoint) (Instance, error) {
+	descriptor, err := driver.Descriptor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCheckpoint(descriptor, checkpoint); err != nil {
+		return nil, err
+	}
+	return newDefaultInstance(descriptor, execution, input, checkpoint.State)
 }
 
 type defaultInstance struct {

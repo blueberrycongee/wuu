@@ -913,7 +913,7 @@ func NewSession(opts Options) (*Session, error) {
 	}
 	// Bind the session-selected loop driver: an installed profile resolves to
 	// a remote driver behind the registry; a missing one fails closed.
-	if driver := resolveLoopDriver(opts.DriverProfile, pluginHost, runtimeSession.currentDriverGatewayTable); driver != nil {
+	if driver := resolveLoopDriver(opts.DriverProfile, pluginHost, runtimeSession.currentDriverGatewayTable()); driver != nil {
 		streamRunner.LoopDriver = driver
 		runtimeSession.DriverProfile = strings.TrimSpace(opts.DriverProfile)
 	}
@@ -1581,9 +1581,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			runner.CompactionRegistry = generation.compactions
 		}
 		if profile := strings.TrimSpace(s.DriverProfile); profile != "" {
-			runner.LoopDriver = resolveLoopDriver(profile, generation.host, func() *driverGatewayTable {
-				return generation.driverGateways
-			})
+			runner.LoopDriver = resolveLoopDriver(profile, generation.host, generation.driverGateways)
 		}
 	}
 	runner.BeforeModelStep = pluginPreStepInjector(pluginHost, s.ProviderName, s.Model, id, threadRoot)

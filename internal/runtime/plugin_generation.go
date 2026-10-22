@@ -805,9 +805,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.StreamRunner.WrapModelClient = pluginModelClientWrapper(generation.host, "")
 		s.StreamRunner.CompactionRegistry = generation.compactions
 		if profile := strings.TrimSpace(s.DriverProfile); profile != "" {
-			s.StreamRunner.LoopDriver = resolveLoopDriver(profile, generation.host, func() *driverGatewayTable {
-				return generation.driverGateways
-			})
+			s.StreamRunner.LoopDriver = resolveLoopDriver(profile, generation.host, generation.driverGateways)
 		}
 	}
 	s.HookDispatcher = generation.hooks

@@ -59,17 +59,19 @@ func TestResolveLoopDriverFailsClosedWithoutProvider(t *testing.T) {
 	if !ok {
 		t.Fatalf("driver = %#v, want FailClosedDriver", driver)
 	}
-	_, err := failClosed.Create(loopdriver.ExecutionContext{SessionID: "s", ExecutionID: "e"}, loopdriver.PersistedInput{})
+	_, err := failClosed.Create(context.Background(), loopdriver.ExecutionContext{SessionID: "s", ExecutionID: "e"}, loopdriver.PersistedInput{})
 	if err == nil || !strings.Contains(err.Error(), "ghost") || !strings.Contains(err.Error(), "driver.ghost") {
 		t.Fatalf("create error = %v, want fail-closed diagnostic naming the profile and service", err)
 	}
-	if _, err := failClosed.Resume(loopdriver.ExecutionContext{SessionID: "s", ExecutionID: "e"}, loopdriver.PersistedInput{}, loopdriver.Checkpoint{}); err == nil {
+	if _, err := failClosed.Resume(context.Background(), loopdriver.ExecutionContext{SessionID: "s", ExecutionID: "e"}, loopdriver.PersistedInput{}, loopdriver.Checkpoint{}); err == nil {
 		t.Fatalf("resume must fail closed")
 	}
 }
 
 func TestResolveLoopDriverRemoteRoutesThroughRegistry(t *testing.T) {
 	var gotExecutionID, gotMethod, gotService string
+	table := newDriverGatewayTable()
+	selectedTable := table
 	provider := &driverProviderClient{
 		id: "driver-demo",
 		descriptor: pluginhost.ServiceDescriptor{
@@ -83,17 +85,22 @@ func TestResolveLoopDriverRemoteRoutesThroughRegistry(t *testing.T) {
 			case loopdriver.RemoteMethodDescriptor:
 				return json.Marshal(map[string]any{"id": "demo", "version": "1.0.0"})
 			case loopdriver.RemoteMethodCreate:
-				return json.Marshal(map[string]any{"instance_id": "inst-1"})
+				return json.Marshal(map[string]any{"instance_id": "inst-1", "checkpoint": loopdriver.Checkpoint{ContractVersion: loopdriver.ContractVersion, DriverID: "demo", DriverVersion: "1.0.0"}})
 			case loopdriver.RemoteMethodRun:
-				return json.Marshal(map[string]any{"status": string(loopdriver.TerminalSucceeded)})
+				if _, ok := table.lookup("exec-1"); !ok {
+					return nil, fmt.Errorf("driver callback moved to another generation")
+				}
+				if _, ok := selectedTable.lookup("exec-1"); ok {
+					return nil, fmt.Errorf("old execution registered in the new generation")
+				}
+				return json.Marshal(map[string]any{"status": string(loopdriver.TerminalSucceeded), "checkpoint": loopdriver.Checkpoint{ContractVersion: loopdriver.ContractVersion, DriverID: "demo", DriverVersion: "1.0.0"}})
 			}
 			return nil, fmt.Errorf("unexpected method %q", params.Method)
 		},
 	}
 	host := newDriverTestHost(t, "demo", provider)
-	table := newDriverGatewayTable()
-
-	driver := resolveLoopDriver("demo", host, func() *driverGatewayTable { return table })
+	driver := resolveLoopDriver("demo", host, selectedTable)
+	selectedTable = newDriverGatewayTable()
 	remote, ok := driver.(*loopdriver.RemoteDriver)
 	if !ok {
 		t.Fatalf("driver = %#v, want *RemoteDriver", driver)
@@ -101,10 +108,10 @@ func TestResolveLoopDriverRemoteRoutesThroughRegistry(t *testing.T) {
 	if remote.ServiceID != "driver.demo" {
 		t.Fatalf("ServiceID = %q", remote.ServiceID)
 	}
-	if got := remote.Descriptor().ID; got != "demo" {
-		t.Fatalf("Descriptor().ID = %q", got)
+	if got, err := remote.Descriptor(context.Background()); err != nil || got.ID != "demo" {
+		t.Fatalf("Descriptor() = %+v, %v", got, err)
 	}
-	instance, err := remote.Create(loopdriver.ExecutionContext{SessionID: "s", ExecutionID: "exec-1"}, loopdriver.PersistedInput{})
+	instance, err := remote.Create(context.Background(), loopdriver.ExecutionContext{SessionID: "s", ExecutionID: "exec-1"}, loopdriver.PersistedInput{})
 	if err != nil {
 		t.Fatalf("Create() = %v", err)
 	}
@@ -118,9 +125,8 @@ func TestResolveLoopDriverRemoteRoutesThroughRegistry(t *testing.T) {
 	if gotService != "driver.demo" || gotMethod != "run" || gotExecutionID == "" {
 		t.Fatalf("invoke = (%q, %q, %q)", gotService, gotMethod, gotExecutionID)
 	}
-	// The resolved driver must register its gateway into the current
-	// generation's table so kernel gateway invokers can route back, and must
-	// unregister when the run completes.
+	// The resolved driver registers into its original provider generation and
+	// unregisters there when the run completes.
 	if _, ok := table.lookup("exec-1"); ok {
 		t.Fatalf("gateway must be unregistered after the run completes")
 	}

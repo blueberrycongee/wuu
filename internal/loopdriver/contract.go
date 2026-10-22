@@ -12,9 +12,9 @@ import (
 const ContractVersion = 1
 
 type Descriptor struct {
-	ID           string
-	Version      string
-	Capabilities []string
+	ID           string   `json:"id"`
+	Version      string   `json:"version"`
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 type ExecutionContext struct {
@@ -63,9 +63,9 @@ type KernelGateway interface {
 }
 
 type Driver interface {
-	Descriptor() Descriptor
-	Create(ExecutionContext, PersistedInput) (Instance, error)
-	Resume(ExecutionContext, PersistedInput, Checkpoint) (Instance, error)
+	Descriptor(context.Context) (Descriptor, error)
+	Create(context.Context, ExecutionContext, PersistedInput) (Instance, error)
+	Resume(context.Context, ExecutionContext, PersistedInput, Checkpoint) (Instance, error)
 }
 
 type Instance interface {

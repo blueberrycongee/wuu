@@ -29,24 +29,18 @@ func (i registryDriverInvoker) InvokeDriver(ctx context.Context, method string, 
 	return result, nil
 }
 
-// dynamicGatewayRegistrar resolves the current generation's gateway table at
-// registration time, so a driver bound before a generation swap still lands
-// in the table the live kernel services consult.
-type dynamicGatewayRegistrar struct {
-	tableFn       func() *driverGatewayTable
+// generationGatewayRegistrar retains the same callback table as the selected
+// provider. Publishing a new generation must not redirect an old execution.
+type generationGatewayRegistrar struct {
+	table         *driverGatewayTable
 	ownerPluginID string
 }
 
-func (r dynamicGatewayRegistrar) RegisterGateway(executionID string, gateway loopdriver.KernelGateway) (func(), error) {
-	table := r.tableFn()
-	if table == nil {
-		return nil, fmt.Errorf("driver gateway table is unavailable")
-	}
-	return table.register(executionID, gateway, r.ownerPluginID)
+func (r generationGatewayRegistrar) RegisterGateway(executionID string, gateway loopdriver.KernelGateway) (func(), error) {
+	return r.table.register(executionID, gateway, r.ownerPluginID)
 }
 
-// currentDriverGatewayTable resolves the live generation's gateway table; it
-// runs only at remote-run start, so the mutex cost is negligible.
+// currentDriverGatewayTable captures the table when a driver binding is made.
 func (s *Session) currentDriverGatewayTable() *driverGatewayTable {
 	if s == nil {
 		return nil
@@ -64,7 +58,7 @@ func (s *Session) currentDriverGatewayTable() *driverGatewayTable {
 // provider becomes a RemoteDriver routed through the registry; anything else
 // fails closed so history stays readable but new runs are rejected with a
 // diagnostic error.
-func resolveLoopDriver(profile string, host *pluginhost.Host, tableFn func() *driverGatewayTable) loopdriver.Driver {
+func resolveLoopDriver(profile string, host *pluginhost.Host, table *driverGatewayTable) loopdriver.Driver {
 	profile = strings.TrimSpace(profile)
 	if profile == "" {
 		return nil
@@ -81,10 +75,13 @@ func resolveLoopDriver(profile string, host *pluginhost.Host, tableFn func() *dr
 	if !found {
 		return loopdriver.FailClosedDriver{Profile: profile, Reason: fmt.Sprintf("no provider for service %s major version 1", service)}
 	}
+	if table == nil {
+		return loopdriver.FailClosedDriver{Profile: profile, Reason: "driver gateway table is unavailable"}
+	}
 	return &loopdriver.RemoteDriver{
 		Profile:   profile,
 		ServiceID: service,
 		Invoker:   registryDriverInvoker{host: host, service: service},
-		Gateways:  dynamicGatewayRegistrar{tableFn: tableFn, ownerPluginID: ownerPluginID},
+		Gateways:  generationGatewayRegistrar{table: table, ownerPluginID: ownerPluginID},
 	}
 }
