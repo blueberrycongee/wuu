@@ -131,6 +131,8 @@ async function geometry() {
       composer: document.querySelector(".plugin-conversation-composer") && rect(document.querySelector(".plugin-conversation-composer")),
       messages: [...document.querySelectorAll(".plugin-conversation-message")].map(node => ({ role: node.dataset.role, ...rect(node),
         content: node.querySelector(".bubble-message-content") && rect(node.querySelector(".bubble-message-content")),
+        attachments: [...node.querySelectorAll(".plugin-conversation-attachment")].map(rect),
+        reaction: node.querySelector(".conversation-reaction-badge") && rect(node.querySelector(".conversation-reaction-badge")),
         time: node.querySelector(".bubble-message-time") && { ...rect(node.querySelector(".bubble-message-time")), opacity: getComputedStyle(node.querySelector(".bubble-message-time")).opacity },
       })),
       attachments: [...document.querySelectorAll(".plugin-conversation-attachment")].map(rect),
@@ -208,7 +210,11 @@ async function assertContained() {
     assert.ok(message.left >= layout.conversation.left - 1 && message.right <= layout.conversation.right + 1, `Message leaves conversation: ${JSON.stringify(message)}`);
     assert.ok(message.content.left >= message.left - 1 && message.content.right <= message.right + 1, `Bubble leaves row: ${JSON.stringify(message)}`);
     assert.ok(message.content.scrollWidth <= message.content.clientWidth + 1, `Bubble content overflows: ${JSON.stringify(message)}`);
-    if (message.time.opacity === "1") assert.ok(message.content.right <= message.time.left + 1, `Timestamp overlaps bubble: ${JSON.stringify(message)}`);
+    if (message.time.opacity === "1") {
+      assert.ok(message.content.right + 8 <= message.time.left + 1, `Timestamp lacks a reading gap: ${JSON.stringify(message)}`);
+      assert.ok(message.time.scrollWidth <= message.time.clientWidth + 1, `Timestamp text overflows: ${JSON.stringify(message)}`);
+      for (const attachment of message.attachments) assert.ok(attachment.right + 8 <= message.time.left + 1, `Timestamp overlaps attachment: ${JSON.stringify({ attachment, time: message.time })}`);
+    }
   }
   for (const attachment of layout.attachments) assert.ok(attachment.right <= layout.conversation.right + 1 && attachment.scrollWidth <= attachment.clientWidth + 1, `Attachment overflows: ${JSON.stringify(attachment)}`);
   return layout;
@@ -220,8 +226,13 @@ function assertRevealGeometry(before, after) {
     const previous = before.messages[index];
     assert.equal(message.role, previous.role);
     const shift = message.content.left - previous.content.left;
-    const expectedShift = message.role === "user" ? -64 : 0;
-    assert.ok(Math.abs(shift - expectedShift) <= 1, `Unexpected ${message.role} translation: ${JSON.stringify({ shift, expectedShift, previous, message })}`);
+    if (message.role === "user") {
+      assert.ok(-shift >= message.time.width + 8 - 1, `User bubble does not reserve the time column: ${JSON.stringify({ shift, message })}`);
+    } else {
+      assert.ok(Math.abs(shift) <= 1, `Assistant bubble moved: ${JSON.stringify({ shift, message })}`);
+    }
+    if (message.reaction && previous.reaction) assert.ok(Math.abs(message.reaction.left - previous.reaction.left - shift) <= 1, `Reaction detached from bubble: ${JSON.stringify({ previous, message })}`);
+    for (let i = 0; i < message.attachments.length; i++) assert.ok(Math.abs(message.attachments[i].left - previous.attachments[i].left - shift) <= 1, `Attachment detached from bubble: ${JSON.stringify({ previous, message })}`);
     for (const dimension of ["width", "height"]) {
       assert.ok(Math.abs(message.content[dimension] - previous.content[dimension]) <= 1, `Timestamp reveal reflows ${message.role} bubble ${dimension}: ${JSON.stringify({ previous, message })}`);
       assert.ok(Math.abs(message[dimension] - previous[dimension]) <= 1, `Timestamp reveal changes ${message.role} row ${dimension}: ${JSON.stringify({ previous, message })}`);
@@ -399,6 +410,14 @@ async function run() {
     await revealed(false);
     return { retainedForMs: wheelRetentionMs, changes };
   });
+  await check("partially revealed timestamps keep their gap during a drag", async () => {
+    const from = await backgroundPoint();
+    await drag(from, { x: from.x - 40, y: from.y }, "mouse", async () => {
+      await revealed(true);
+      await assertContained();
+    });
+    await setReveal(false);
+  });
   await check("native blank-column click hides time while clicking bubble prose preserves it", async () => {
     await setReveal(true);
     await clickPoint(await textPoint());
@@ -415,7 +434,8 @@ async function run() {
   });
   for (const role of ["assistant", "user"]) await check(`native ${role} prose left drag preserves text selection instead of revealing time`, async () => {
     const points = await evaluate(role => {
-      const element = document.querySelector(role === "user" ? '.plugin-conversation-message[data-role="user"] .user-message' : '.plugin-conversation-message[data-role="assistant"] .agent-text p');
+      // The first message can sit behind the fixed Personal titlebar.
+      const element = [...document.querySelectorAll(role === "user" ? '.plugin-conversation-message[data-role="user"] .user-message' : '.plugin-conversation-message[data-role="assistant"] .agent-text p')].at(-1);
       element.scrollIntoView({ block: "center", behavior: "instant" });
       const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
       let node; while ((node = walker.nextNode()) && node.length < 8) {}
@@ -423,6 +443,7 @@ async function run() {
       const first = document.createRange(), last = document.createRange();
       first.setStart(node, 0); first.collapse(true); last.setStart(node, 8); last.collapse(true);
       const a = first.getBoundingClientRect(), b = last.getBoundingClientRect();
+      if (!element.contains(document.elementFromPoint(b.left, b.top + b.height / 2))) throw new Error("Selection target is obscured");
       window.getSelection().removeAllRanges();
       return { text: node.textContent.slice(0, 8), from: { x: b.left, y: b.top + b.height / 2 }, to: { x: a.left, y: a.top + a.height / 2 } };
     }, role);

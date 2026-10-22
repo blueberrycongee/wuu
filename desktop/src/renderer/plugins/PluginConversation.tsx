@@ -94,7 +94,7 @@ export function PluginConversationView({ presentation = "standard", conversation
       <div className="scroll-region plugin-conversation-scroll" ref={controller.scrollRef} onScroll={controller.handleScrollFrame} data-scroll-fade=""
         data-times-revealed={bubbles ? gesture.revealed : undefined}
         data-times-dragging={bubbles ? gesture.dragging : undefined}
-        style={bubbles ? { "--bubble-time-offset": `${gesture.offset}px` } as React.CSSProperties : undefined}>
+        style={bubbles ? { "--bubble-time-progress": gesture.progress } as React.CSSProperties : undefined}>
         {bubbles && <button type="button" className="bubble-time-toggle" aria-pressed={gesture.revealed} aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" onClick={gesture.toggle}>{t(gesture.revealed ? "message.hideTimes" : "message.showTimes")}</button>}
         <ConversationBubbleContext.Provider value={{ enabled: bubbles, revealed: gesture.revealed }}>
         <ConversationFlow className="plugin-conversation-flow" role="log" aria-live="polite" aria-busy={loading}>{children}{sessionId && sessionScope && <PluginConversationQuestions sessionId={sessionId} scope={sessionScope} onReply={onQuestionReply} />}</ConversationFlow>

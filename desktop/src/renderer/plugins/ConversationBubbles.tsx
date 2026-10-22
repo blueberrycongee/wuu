@@ -1,7 +1,7 @@
 import { createContext, useEffect, useRef, useState, type RefObject } from "react";
 
 export const ConversationBubbleContext = createContext<{ enabled: boolean; revealed: boolean }>({ enabled: false, revealed: false });
-const GUTTER = 64;
+const REVEAL_DISTANCE = 64;
 const interactive = "a, button, input, textarea, select, summary, [role=button], [contenteditable=true]";
 
 /** Horizontal intent must win before a gesture takes ownership from scrolling. */
@@ -44,7 +44,7 @@ export function useConversationBubbleGesture(enabled: boolean, conversationId: s
         node.setPointerCapture(event.pointerId);
       }
       event.preventDefault();
-      update(Math.max(0, Math.min(GUTTER, drag.start + dx)));
+      update(Math.max(0, Math.min(REVEAL_DISTANCE, drag.start + dx)));
     };
     const end = (event: PointerEvent) => {
       if (!drag || drag.id !== event.pointerId) return;
@@ -52,7 +52,7 @@ export function useConversationBubbleGesture(enabled: boolean, conversationId: s
       drag = undefined;
       setDragging(false);
       suppressClick = previous.active;
-      update(event.type === "pointercancel" ? previous.start : current.current >= GUTTER / 2 ? GUTTER : 0);
+      update(event.type === "pointercancel" ? previous.start : current.current >= REVEAL_DISTANCE / 2 ? REVEAL_DISTANCE : 0);
       if (node.hasPointerCapture(event.pointerId)) node.releasePointerCapture(event.pointerId);
     };
     const wheel = (event: WheelEvent) => {
@@ -61,7 +61,7 @@ export function useConversationBubbleGesture(enabled: boolean, conversationId: s
       if (event.ctrlKey || event.shiftKey || excluded(event.target) || nestedHorizontalScroll(event.target) || event.deltaX === 0) return;
       event.preventDefault();
       wheelDistance += event.deltaX;
-      if (Math.abs(wheelDistance) >= 24) { update(wheelDistance > 0 ? GUTTER : 0); wheelDistance = 0; }
+      if (Math.abs(wheelDistance) >= 24) { update(wheelDistance > 0 ? REVEAL_DISTANCE : 0); wheelDistance = 0; }
       clearTimeout(wheelTimer);
       wheelTimer = setTimeout(() => { wheelDistance = 0; }, 180);
     };
@@ -73,7 +73,7 @@ export function useConversationBubbleGesture(enabled: boolean, conversationId: s
     const key = (event: KeyboardEvent) => {
       if (!enabled || (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true]"))) return;
       if (event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-        event.preventDefault(); update(event.key === "ArrowLeft" ? GUTTER : 0);
+        event.preventDefault(); update(event.key === "ArrowLeft" ? REVEAL_DISTANCE : 0);
       } else if (event.key === "Escape" && current.current) { event.preventDefault(); update(0); }
     };
     node.addEventListener("keydown", key);
@@ -91,5 +91,5 @@ export function useConversationBubbleGesture(enabled: boolean, conversationId: s
       node.removeEventListener("pointerup", end); node.removeEventListener("pointercancel", end); node.removeEventListener("wheel", wheel);
     };
   }, [enabled, conversationId, scrollRef]);
-  return { offset, dragging, revealed: offset >= GUTTER / 2, toggle: () => update(current.current ? 0 : GUTTER) };
+  return { progress: offset / REVEAL_DISTANCE, dragging, revealed: offset >= REVEAL_DISTANCE / 2, toggle: () => update(current.current ? 0 : REVEAL_DISTANCE) };
 }
