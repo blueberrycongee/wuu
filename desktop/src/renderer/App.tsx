@@ -5197,7 +5197,7 @@ export function App(): JSX.Element {
       ]);
       if (!attachments || admission.stopRequested) {
         const settle = (current: AppState) => updateThreadByID(current, thread.id,
-          (value) => dropOptimisticTurn(value, optimisticTurn.id),
+          (value) => interruptOptimisticTurn(value, optimisticTurn.id, Date.now()),
           activeThreadIDForState(current) === thread.id ? { running: false } : {});
         appStateRef.current = settle(appStateRef.current);
         setState(settle);

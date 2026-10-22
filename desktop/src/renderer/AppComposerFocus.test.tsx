@@ -960,6 +960,7 @@ describe("main composer focus continuity", () => {
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
     expect(window.wuu.interruptTurn).not.toHaveBeenCalled();
     expect(mainComposer("dock").value).toBe("cancel before admission");
+    expect(container.querySelector('[data-user-message-id^="optimistic-turn-"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="continue-probe"]')).toBeNull();
     expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-send-disabled")).toBe("false");
     await act(async () => { finishEncoding([]); });
