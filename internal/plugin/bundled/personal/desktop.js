@@ -8,6 +8,8 @@ export async function activate(api) {
       "profile": "About twin",
       "rename": "Name your twin", "saveName": "Save", "savingName": "Saving…", "nameLabel": "Name", "invalidName": "Use 1–64 characters.", "nameSaveFailed": "Could not save the name. Please try again.",
       "ready": "Ready",
+      "sendRefreshFailed": "Message accepted, but conversation history could not refresh. Refresh history instead of sending again.",
+      "refreshHistory": "Refresh history",
       "thinking": "Thinking",
       "responding": "Replying",
       "reaction": "React", "agentReaction": "twin reacted",
@@ -106,6 +108,8 @@ export async function activate(api) {
       "profile": "关于 twin",
       "rename": "给 twin 取名字", "saveName": "保存", "savingName": "保存中…", "nameLabel": "名字", "invalidName": "请输入 1–64 个字符。", "nameSaveFailed": "名字未保存，请重试。",
       "ready": "已就绪",
+      "sendRefreshFailed": "消息已被接收，但记录暂时未刷新。刷新记录即可，无需重新发送。",
+      "refreshHistory": "刷新记录",
       "thinking": "正在思考",
       "responding": "正在回复",
       "reaction": "表态", "agentReaction": "twin 的表态",
@@ -582,6 +586,7 @@ export async function activate(api) {
     const [tasks, setTasks] = React.useState([]), [routines, setRoutines] = React.useState([]), [selection, setSelection] = React.useState(null);
     const [calendar, setCalendar] = React.useState({ operations: [] }), [calendarError, setCalendarError] = React.useState(""), [calendarBusy, setCalendarBusy] = React.useState(false);
     const [loading, setLoading] = React.useState(true), [error, setError] = React.useState("");
+    const [sendRefreshError, setSendRefreshError] = React.useState("");
     const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
     const [nameOpen, setNameOpen] = React.useState(false);
     const [replySelection, setReplySelection] = React.useState(null);
@@ -754,6 +759,11 @@ export async function activate(api) {
       } catch (cause) { if (current()) throw cause; }
       finally { if (current()) setLoading(false); }
     };
+    const refreshAcceptedSend = async () => {
+      const refresh = loadConversation(agent), epoch = sequence.current;
+      try { await refresh; if (mounted.current && epoch === sequence.current) setSendRefreshError(""); }
+      catch (cause) { if (mounted.current && epoch === sequence.current) setSendRefreshError(String(cause.message || cause)); }
+    };
     const initialize = async () => {
       setError(""); setLoading(true);
       try {
@@ -889,9 +899,11 @@ export async function activate(api) {
         updateDraft(id, { pending: null, ...(latest.editVersion === editVersion ? { prompt: "", files: [] } : {}) });
         if (result?.state === "queued" && result.queue_id && !draftFor(conversationID).dequeuedIds.has(result.queue_id)) { draftFor(conversationID).queueIds.add(result.queue_id); updateDraft(conversationID, {}); }
         if (result?.state === "running" && result.turn_id && version === stream.version && !stream.completedTurns.has(result.turn_id)) { stream.activeTurnID = result.turn_id; stream.running = true; stream.version++; updateDraft(id, {}); }
-        if (mounted.current) await loadConversation(agent);
-      } catch (cause) { updateDraft(id, { error: cause instanceof Error ? cause.message : String(cause) }); if (id === conversationID) report(cause); }
+      } catch (cause) { updateDraft(id, { error: cause instanceof Error ? cause.message : String(cause) }); if (id === conversationID) report(cause); return; }
       finally { updateDraft(id, { submitting: false }); }
+      // A successful admission is not undone by a failed read. Never turn a
+      // history refresh into a retry of the accepted message or its attachments.
+      if (mounted.current) await refreshAcceptedSend();
     };
     const stopReply = async () => {
       const id = conversationID, pending = draftFor(id), target = pending.stopTarget || activeTurnID;
@@ -989,10 +1001,11 @@ export async function activate(api) {
     const taskSource = replySelection?.taskContext?.source;
     const taskSourceRef = taskSource?.message_binding === "host_turn" && taskSource.session_id === conversationID && taskSource.message_seq ? { session_id: conversationID, seq: taskSource.message_seq } : undefined;
     const replyRecords = replySelection ? replyMessages.filter(record => ["user", "assistant"].includes(record.role) && (replySelection.taskContext ? record.seq !== taskSourceRef?.seq && record.relation?.metadata?.task_links?.some(link => link.task_id === replySelection.taskContext.task_id) : relatedSeqs.has(record.seq) || record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq))) : [];
+    const sendRefreshNotice = sendRefreshError && h("div", { className: "mosaic-error", role: "alert", "data-send-refresh-error": true }, h("span", null, t("sendRefreshFailed"), " ", sendRefreshError), h(Button, { onClick: refreshAcceptedSend }, t("refreshHistory")));
     const replyPanel = replySelection && h("section", { ref: replyPanelRef, className: "mosaic-replies", role: "dialog", "aria-modal": true, "aria-label": t("replies"), "data-reply-panel": replySelection.key, onKeyDown: event => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeReplies(); }
       if (event.key === "Tab") { const controls = [...replyPanelRef.current.querySelectorAll('button:not(:disabled),textarea:not(:disabled),input:not(:disabled),a[href]')].filter(node => node.tabIndex >= 0 && !node.closest('[hidden]')); const first = controls[0], last = controls[controls.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } }
-    } }, h(ConversationView, { presentation: "bubbles", conversationId: replySelection.key, title: "", showHistorySearch: false, showJumpToLatest: false, searchLabel: "", searchContent: null,
+    } }, sendRefreshNotice, h(ConversationView, { presentation: "bubbles", conversationId: replySelection.key, title: "", showHistorySearch: false, showJumpToLatest: false, searchLabel: "", searchContent: null,
       actions: h("button", { type: "button", className: "mosaic-replies-close", "data-action": "close-replies", "aria-label": t("close"), onClick: closeReplies }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: "m6 6 12 12M18 6 6 18" }))),
       composer: h(ConversationComposer, { conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: files => selectFiles(files, replySelection.key), onRemoveAttachment: id => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: text => send(text, replySelection.key), onStop: stopReply }) },
       replyDraft.error && h("p", { role: "alert", className: "mosaic-reply-status" }, replyDraft.error),
@@ -1000,6 +1013,7 @@ export async function activate(api) {
       taskSourceRef ? h(ReplyOriginal, { reference: taskSourceRef, records, sessionID: conversationID, agentID: agent.agent_id, t, renderMessage: renderReplyMessage }) : null,
       replyRecords.map(record => renderReplyMessage(record))));
     return h(AttachmentOpenContext.Provider, { value: () => closePanel(false) }, h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h("main", { className: "mosaic-main", inert: nameOpen || Boolean(replySelection), "aria-hidden": nameOpen || Boolean(replySelection) || undefined },
+      !replySelection && sendRefreshNotice,
       error && h("div", { className: "mosaic-error", role: "alert" }, h("span", null, error), h(Button, { onClick: agent ? () => { setError(""); Promise.all([loadConversation(agent), loadTasks(), loadRoutines()]).catch(report); } : initialize }, t("retry"))),
       !agent ? loading ? h(LoadingState, { label: "twin" }) : h(EmptyState, { title: t("hostUnavailable") }) : h(ConversationView, {
         presentation: "bubbles", conversationId: conversationID, sessionId: conversationID, sessionScope: route, onQuestionReply: replyToQuestion, title: "twin", loading,

@@ -16,6 +16,8 @@ import { activate } from "../../../internal/plugin/bundled/personal/desktop.js";
 // @ts-expect-error Bundled desktop contributions are runtime JavaScript.
 import { activate as activateCalendar } from "../../../internal/plugin/bundled/personal-calendar/desktop.js";
 const now = "2026-10-18T10:00:00Z";
+const sendRecoveryFixture = { accepted: 0, refreshFailures: 0, failNextRefresh: false, requests: [] as unknown[] };
+Object.assign(window, { __sendRecoveryFixture: sendRecoveryFixture });
 const agents = [
   { agent_id:"mosaic",user_space_id:"local",kind:"main",name:"twin",responsibility:"",communication:"简洁、自然，重要的事情说清楚。",main_session_id:"synthetic-main",status:"active",revision:1 },
 ];
@@ -80,6 +82,10 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
     }
     case "agents.open":return {agent:agents.find(a=>a.agent_id===data.agent_id),session:{state:fixtureActivity === "idle" ? "completed" : "running"}};
     case "agents.history": {
+      if (data.reply_seq === undefined && sendRecoveryFixture.failNextRefresh) {
+        sendRecoveryFixture.failNextRefresh = false; sendRecoveryFixture.refreshFailures++;
+        throw new Error("合成记录刷新失败：发送已被接收，可安全刷新记录。");
+      }
       const all = (histories[data.agent_id] || []).map(record => ({ ...record, reactions: reactionsFor(record.seq), reaction_eligible:true }));
       if (data.reply_seq !== undefined) {
         const roots = new Map<number, number>();
@@ -104,7 +110,7 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
     }
     case "agents.search":{const matches=(histories[data.agent_id]||[]).filter(record=>record.content.includes(data.query)&&(!data.time_min||(record.at&&record.at>=data.time_min))&&(!data.time_max||(record.at&&record.at<data.time_max))).map(record=>({seq:record.seq,role:record.role,excerpt:record.content.slice(0,120),at:record.at}));return {matches,has_more:false};}
     case "agents.proposals":return {proposals:[]};
-    case "agents.send":{const list=histories[data.agent_id],seq=(list.at(-1)?.seq ?? 0)+1; const attachments = userInput?.attachments?.map((file,index)=>{files.set(`${data.agent_id}:${seq}:${file.sha256}`,{data:file.data,name:file.filename,mime:file.media_type});return {kind:file.media_type.startsWith("image/")?"image":"file",index,name:file.filename,mime_type:file.media_type,size:atob(file.data).length,sha256:file.sha256};});list.push({seq,role:"user",at:now,content:data.prompt,attachments,relation:data.relation},{seq:seq+1,role:"assistant",at:now,content:"这是合成演示回复。主对话保持不变，后台事项仍会继续。",relation:data.relation});return {state:"accepted"};}
+    case "agents.send":{sendRecoveryFixture.requests.push(structuredClone(data)); const list=histories[data.agent_id],seq=(list.at(-1)?.seq ?? 0)+1; const attachments = userInput?.attachments?.map((file,index)=>{files.set(`${data.agent_id}:${seq}:${file.sha256}`,{data:file.data,name:file.filename,mime:file.media_type});return {kind:file.media_type.startsWith("image/")?"image":"file",index,name:file.filename,mime_type:file.media_type,size:atob(file.data).length,sha256:file.sha256};});list.push({seq,role:"user",at:now,content:data.prompt,attachments,relation:data.relation},{seq:seq+1,role:"assistant",at:now,content:"这是合成演示回复。主对话保持不变，后台事项仍会继续。",relation:data.relation});sendRecoveryFixture.accepted++; const delay = Math.min(10000, Math.max(0, Number(params.get("sendDelay")) || 0)); if (delay) await new Promise(resolve => setTimeout(resolve, delay)); sendRecoveryFixture.failNextRefresh = params.get("sendRefresh") === "error"; return {state:"accepted"};}
     case "agents.attachments.read":{const file=files.get(`${data.agent_id}:${data.seq}:${data.sha256}`);if(!file)throw new Error("Synthetic file missing");if(file.name === "合成读取失败.txt")throw new Error("合成读取失败：用于展示错误与重试，不涉及真实文件。");const offset=data.offset||0;return {data:file.data.slice(offset,offset+128*1024),offset,total:file.data.length,content_type:file.mime,name:file.name,sha256:data.sha256};}
     case "calendar.status":case "calendar.agenda":return {state:"unconnected",read_only:!calendarWriteDemo,freshness:"empty",events:[]};
     case "calendar.operations.list":return {operations:calendarWriteDemo?[calendarOperation]:[]};

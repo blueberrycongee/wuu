@@ -16,3 +16,12 @@ wide/narrow windows, real native input, history search, and scroll continuity.
 A separate production Electron/main/preload/Go-host harness is required to prove
 real runtime lifecycle, streaming, cancellation and persistent recovery. A fixture
 pass alone does not prove those contracts or natural-language model quality.
+
+### Accepted send / history refresh recovery
+
+Use `?sendRefresh=error` to fail one main-history read after each synthetic
+send has been accepted. The refresh action must only read history, never send
+again. Add `&sendDelay=5000` to delay the synthetic acknowledgement while editing
+a newer draft or changing reply targets. `window.__sendRecoveryFixture` exposes
+accepted count, refresh-failure count and captured request inputs for QA.
+These fixtures do not establish delivery or read receipts from a real agent.

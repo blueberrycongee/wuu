@@ -1024,3 +1024,37 @@ it("never offers mutation controls for ineligible or unverified persisted record
   const ui = await mount(undefined, main, [{seq:1,role:"assistant",content:"Truncated",reaction_eligible:false},{seq:2,role:"assistant",content:"Unverified"}]);
   expect(ui.container.querySelector('[data-action="react-message"]')).toBeNull();
 });
+it("refreshes history without resending an accepted attachment-only message", async () => {
+  attachmentBrowser(); let accepted = false, failHistory = true;
+  const ui = await mount(async method => { if (method === "agents.send") { accepted = true; return { state: "accepted" }; } }, main, undefined, { history: async () => { if (accepted && failHistory) throw new Error("History unavailable"); return { records: [] }; } });
+  await chooseFiles(ui.container, [new File(["hello"], "notes.txt", { type: "text/plain" })]);
+  await vi.waitFor(() => expect(ui.container.querySelector('.composer-attachment-tray')).not.toBeNull());
+  await ui.click('.composer-send-button');
+  expect(ui.container.querySelector('.composer-attachment-tray')).toBeNull();
+  expect(ui.container.querySelector('textarea')!.value).toBe("");
+  expect(ui.container.querySelector('[data-send-refresh-error]')).not.toBeNull();
+  failHistory = false; await ui.click('[data-send-refresh-error] button');
+  expect(ui.invoke.mock.calls.filter(([request]) => request.method === "agents.send")).toHaveLength(1);
+  expect(ui.container.querySelector('[data-send-refresh-error]')).toBeNull();
+});
+it("keeps newer quoted drafts and files separate from accepted sends when refresh fails", async () => {
+  attachmentBrowser(); let finish!: (value: unknown) => void, accepted = false;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const records = [{ seq: 1, role: "assistant", content: "Quoted source" }];
+  const ui = await mount(async method => method === "agents.send" ? pending : {}, main, records, { history: async input => { if (accepted && input.reply_seq === undefined) throw new Error("History unavailable"); return { records, reply_root_seq: 1, has_earlier: false }; } });
+  await ui.edit("Independent main draft"); await ui.click('[data-action="reply-message"]'); await ui.edit("Accepted reply");
+  await ui.click('.composer-send-button'); await ui.edit("Newer reply draft");
+  await chooseFiles(ui.container.querySelector('.mosaic-replies')!, [new File(["hello"], "new.txt", { type: "text/plain" })]);
+  await vi.waitFor(() => expect(ui.container.querySelector('.mosaic-replies .composer-attachment-tray')).not.toBeNull());
+  await act(async () => { accepted = true; finish({ state: "accepted" }); await pending; });
+  expect(ui.container.querySelector('.mosaic-replies .mosaic-reply-status[role="alert"]')).toBeNull();
+  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Newer reply draft");
+  expect(ui.container.querySelector('.mosaic-replies .composer-attachment-tray')?.textContent).toContain("new.txt");
+  expect(ui.container.querySelector('[data-send-refresh-error]')?.closest('[inert]')).toBeNull();
+  const sends = ui.invoke.mock.calls.filter(([request]) => request.method === "agents.send");
+  expect(sends).toHaveLength(1); expect(sends[0][0].input).toEqual(expect.objectContaining({ prompt: "Accepted reply", relation: { reply_to: { session_id: "s-private", seq: 1 } } }));
+  await ui.click('[data-action="close-replies"]');
+  expect(ui.container.querySelector('textarea')!.value).toBe("Independent main draft");
+  await ui.click('[data-action="reply-message"]');
+  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Newer reply draft");
+});
