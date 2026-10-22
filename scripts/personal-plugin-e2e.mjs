@@ -117,7 +117,12 @@ class Runtime {
       else { const p = this.pending.get(frame.id); if (p) { this.pending.delete(frame.id); if (frame.error) p.reject(new Error(frame.error.message)); else p.resolve(frame.result); } }
     });
   }
-  send(frame) { this.process.stdin.write(`${JSON.stringify(frame)}\n`); }
+  send(frame) {
+    // Shutdown can finish before an in-flight recovery host reply settles.
+    // The closed fixture transport no longer accepts those response frames.
+    if (this.process.stdin.writableEnded && !frame.method) return;
+    this.process.stdin.write(`${JSON.stringify(frame)}\n`);
+  }
   call(method, params) {
     const id = `r-${++this.seq}`;
     return new Promise((resolve, reject) => {
