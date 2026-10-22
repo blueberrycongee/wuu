@@ -1314,7 +1314,7 @@ export const enUS = {
   "composer.branchDirtyFiles": "{count} uncommitted files",
   "composer.findOrCreateBranch": "Find or create a branch",
   "composer.createNamedBranch": "Create branch {branch}",
-  "composer.worktree": "Worktree",
+  "composer.worktree": "worktree",
   "composer.worktreeHint": "Start in a separate Git worktree. Your workspace’s files stay untouched, and uncommitted changes are not carried over.",
   "composer.worktreeStartBranch": "Start from",
   "composer.worktreeStartBranchLabel": "Start from branch: {branch}",

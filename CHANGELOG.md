@@ -99,6 +99,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Use lowercase `worktree` for the English composer toggle label.
+
 - Place user attachments above the text frame in IM-style conversations, keeping images aligned with the message text and hover actions aligned with the final line.
 
 - Fold progress messages and tool/reasoning groups after published images into the process section when the final answer appears, keeping delivered images and the answer visible.
