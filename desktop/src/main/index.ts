@@ -217,6 +217,7 @@ import {
 import {
   cachePluginDesktopModule,
   cachePluginIcon,
+  cacheImageAsset,
   registerPluginModuleProtocol,
   pluginModuleScheme,
 } from "./pluginModuleProtocol";
@@ -2123,6 +2124,16 @@ app.whenReady().then(async () => {
       return cachePluginIcon(icon);
     },
   );
+  ipcMain.handle("wuu:plugin-skin-image-load", async (event, params: PluginIconReadParams): Promise<PluginIconLoadResult> => {
+    return cachePluginIcon(await appServerRequest<PluginIconReadResult>(event, "plugin/skin-image/read", params));
+  });
+  ipcMain.handle("wuu:shell-image-cache", (event, data: ArrayBuffer): string => {
+    if (event.senderFrame !== event.sender.mainFrame || !windowRegistry.allWindows().some(window => window.webContents === event.sender)) {
+      throw new Error("Shell images are available from Wuu windows only");
+    }
+    if (!(data instanceof ArrayBuffer)) throw new Error("Invalid shell image");
+    return cacheImageAsset(new Uint8Array(data), "image/png");
+  });
   ipcMain.handle("wuu:plugin-setting-get", (event, params: PluginSettingGetParams) =>
     appServerRequest<PluginSettingResult>(event, "plugin/setting/get", params));
   ipcMain.handle("wuu:plugin-setting-set", (event, params: PluginSettingSetParams) =>

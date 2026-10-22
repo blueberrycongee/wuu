@@ -1,7 +1,38 @@
 import { useEffect, useState } from "react";
-import type { ThemePreference } from "../shared/protocol";
-import { applyThemePreference } from "./Theme";
+import type { ExtensionInventoryRecord, ThemePreference } from "../shared/protocol";
+import { applyThemePreference, availableExtensionThemes, currentAppliedTheme, observeAppliedTheme, selectExtensionTheme, selectedExtensionThemeKey } from "./Theme";
+import { SettingsRow } from "./SettingsRow";
+import { SettingsGroup } from "./SettingsSection";
+import { SelectMenu } from "./SelectMenu";
 import { useI18n } from "./i18n";
+
+export function ContentThemeControl({ inventory }: { inventory?: readonly ExtensionInventoryRecord[] }): JSX.Element | null {
+  const { t } = useI18n();
+  const [mode, setMode] = useState(currentAppliedTheme);
+  const [, refresh] = useState(0);
+  useEffect(() => {
+    setMode(currentAppliedTheme());
+    return observeAppliedTheme(setMode);
+  }, []);
+  useEffect(() => {
+    const changed = () => refresh(value => value + 1);
+    window.addEventListener("wuu-theme-selection", changed);
+    window.addEventListener("storage", changed);
+    return () => {
+      window.removeEventListener("wuu-theme-selection", changed);
+      window.removeEventListener("storage", changed);
+    };
+  }, []);
+  const themes = availableExtensionThemes(inventory).filter(theme => theme.base === mode);
+  if (themes.length === 0) return null;
+  const saved = selectedExtensionThemeKey(mode);
+  const selected = themes.find(theme => theme.key === saved || theme.legacyKeys.includes(saved));
+  return <SettingsGroup><SettingsRow title={t("settings.contentTheme")}>
+    <SelectMenu ariaLabel={t("settings.contentTheme")} value={selected?.key ?? ""}
+      options={[{ value: "", label: t("settings.skinDefault") }, ...themes.map(theme => ({ value: theme.key, label: theme.name }))]}
+      onChange={key => selectExtensionTheme(mode, key)} triggerClassName="settings-select-trigger" />
+  </SettingsRow></SettingsGroup>;
+}
 
 function ThemePreviewWindow({ theme }: { theme: "light" | "dark" }): JSX.Element {
   return (

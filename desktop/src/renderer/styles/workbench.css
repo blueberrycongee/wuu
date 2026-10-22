@@ -285,7 +285,8 @@
   border-radius: var(--wuu-radius-control, var(--radius-sm));
   padding: var(--control-padding-block) var(--control-padding-inline);
   color: var(--wuu-color-text, var(--ink));
-  background: var(--wuu-control-secondary-background, var(--surface-2));
+  background: var(--control-secondary-bg);
+  box-shadow: var(--shadow-soft);
   cursor: pointer;
   font: inherit;
   font-size: var(--font-ui);
@@ -303,17 +304,19 @@
 }
 
 .plugin-ui-button[data-wuu-variant="ghost"] {
+  box-shadow: none;
   color: var(--wuu-color-text-muted, var(--ink-soft));
   background: transparent;
 }
 
 .plugin-ui-button[data-wuu-variant="danger"] {
+  box-shadow: none;
   color: var(--wuu-color-danger, var(--danger));
   background: transparent;
 }
 
 .plugin-ui-button:not(:disabled):hover {
-  background: var(--wuu-control-secondary-background, var(--surface-3));
+  background: var(--control-secondary-hover-bg);
 }
 
 .plugin-ui-button[data-wuu-variant="primary"]:not(:disabled):hover {

@@ -18,15 +18,12 @@
    * on the opaque rail. */
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, transparent);
   --sidebar-nav-item-focus-shadow: var(--focus-ring);
-  /* Selection is a lighter fill in the rail; hover remains a flat tint.
-   * The row stays in flow, so its edge is one even divider-tier ring. Drop
-   * shadows weighted the lower edge and let the upper edge vanish against
-   * the rail. Themes reach the ring through --wuu-border-subtle. */
+  /* A neutral filled row carries location; regular-weight labels stay stable. */
   --sidebar-row-selected-bg: var(
     --wuu-nav-item-active-background,
-    #fff
+    var(--selection-surface)
   );
-  --sidebar-row-selected-shadow: inset 0 0 0 1px var(--hairline-soft);
+  --sidebar-row-selected-shadow: none;
   --sidebar-project-row-pending-bg: var(--ink-overlay-4);
   --sidebar-project-loading-notch: rgba(19, 19, 20, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
@@ -1713,6 +1710,7 @@ html[data-focus-modality="keyboard"] :is(
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
   box-shadow: var(--menu-shadow);
   padding: var(--menu-inset);
   transform-origin: top left;
@@ -2574,6 +2572,7 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
   box-shadow: var(--menu-shadow);
   padding: var(--menu-inset);
 }
@@ -2776,6 +2775,7 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
   border: 1px solid var(--menu-border);
   border-radius: var(--radius-sm);
   background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
   box-shadow: var(--menu-shadow);
   color: var(--ink-soft);
   font-size: var(--font-sm);

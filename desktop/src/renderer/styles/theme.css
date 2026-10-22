@@ -80,9 +80,9 @@
   --shadow-color-medium: rgba(0, 0, 0, 0.2);
   --shadow-color-strong: rgba(0, 0, 0, 0.24);
   --shadow-color-heavy: rgba(0, 0, 0, 0.3);
-  --shadow-soft: var(--wuu-elevation-panel, inset 0 0 0 0.5px var(--shadow-inset-color));
+  --shadow-soft: var(--wuu-elevation-panel, inset 0 1px 0 var(--shadow-inset-color), 0 1px 3px var(--shadow-color-medium));
   --shadow-card: var(--wuu-elevation-panel, var(--shadow-inset));
-  --shadow-composer: var(--wuu-elevation-panel, var(--shadow-inset));
+  --shadow-composer: var(--wuu-elevation-panel, inset 0 1px 0 var(--shadow-inset-color), 0 4px 12px -4px var(--shadow-color-medium));
   --shadow-tray: var(--wuu-elevation-panel, var(--shadow-inset));
   --shadow-pop: var(
     --wuu-elevation-overlay,
@@ -113,7 +113,8 @@
   --danger-border: #562f29;
   --info: var(--wuu-color-info, #419cff);
 
-  --menu-bg: var(--wuu-color-surface-elevated, var(--surface-1));
+  --surface-floating: color-mix(in srgb, var(--surface-1) 96%, transparent);
+  --menu-bg: var(--wuu-color-surface-elevated, var(--surface-floating));
   --menu-hover: var(--surface-2);
   --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
 
@@ -213,11 +214,9 @@
   --plugin-ui-card-bg: var(--wuu-color-surface-elevated, var(--surface-3));
 
   /* sidebar.css */
-  /* The rail sits below the canvas, as the light rail does, so
-     navigation recedes behind the reading surface. Derived from the canvas
-     so extension canvases keep the relationship. Opaque fill prevents
-     native wallpaper and browser backing surfaces from changing contrast. */
-  --sidebar-material-fill: color-mix(in oklab, var(--paper) 90%, black);
+  /* Keep the default frame independent of content themes. Opaque fill
+     prevents native wallpaper and browser backing surfaces from changing contrast. */
+  --sidebar-material-fill: #181819;
   --sidebar-row-selected-bg: var(--wuu-nav-item-active-background, var(--surface-3));
   --sidebar-material-edge: rgba(255, 255, 255, 0.16);
   --sidebar-material-inner-edge: rgba(255, 255, 255, 0.055);

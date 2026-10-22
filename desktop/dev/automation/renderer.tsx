@@ -77,7 +77,7 @@ function Preview() {
   </div> : null}{portalRegion ? <>
     <main className="conversation-pane" style={{ flex: 1 }} data-primary-plugin-view={pluginPageVisible ? "" : undefined}><Titlebar /></main>
     <DesktopWorkbench host={host} controller={controller} />
-  </> : region === "settings" ? <div className="settings-main" style={{ flex: 1 }}><div className="settings-page" style={{ height: "100%" }}>{content}</div></div>
+  </> : region === "settings" ? <div className="settings-shell" style={{ flex: 1, gridTemplateColumns: "0 minmax(0, 1fr)" }}><div className="settings-main"><div className="settings-page" style={{ gridRow: 2, height: "100%" }}>{content}</div></div></div>
     : <div className="workspace-panel-body" style={{ minHeight: 0, flex: 1 }}>{content}</div>}</>;
 }
 style.textContent += "#root {display:flex; flex-direction:column;}";

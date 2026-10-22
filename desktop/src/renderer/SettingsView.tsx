@@ -31,6 +31,7 @@ import {
 import type {
   CodexPetSettingsUpdate,
   EngineListResult,
+  ExtensionInventoryRecord,
   EngineUpdateParams,
   ProjectModelsConfig,
   RuntimeAdvancedSettingsUpdate,
@@ -79,7 +80,7 @@ export type ArchivedSessionView = {
   archive_project_name?: string;
 };
 import { AppearanceTypography } from "./AppearanceTypography";
-import { BackgroundSettings } from "./background/BackgroundSettings";
+import { ShellSkinSettings } from "./background/ShellSkinSettings";
 import { DefaultEnvironmentRow, ExecutionEnvironmentSettings } from "./ExecutionEnvironmentSettings";
 import { SettingsInputUnit, SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot, type SettingsStatusTone } from "./SettingsSection";
@@ -93,7 +94,7 @@ import type { ArchiveDeletionState } from "./useArchiveDeletion";
 import { DefaultEngineRow } from "./EngineSettingsSection";
 import { DefaultModelRows, ModelServicesPage } from "./ModelServicesPage";
 import { SettingsRemotePage } from "./SettingsRemotePage";
-import { ThemePreferenceControl } from "./ThemePreferenceSection";
+import { ContentThemeControl, ThemePreferenceControl } from "./ThemePreferenceSection";
 import { LanguagePreferenceControl } from "./LanguagePreferenceSection";
 import { formatCurrentNumber, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
@@ -975,6 +976,7 @@ export function SettingsView({
                 <BrowserSettingsSection />
               ) : activePage === "appearance" ? (
                 <SettingsAppearancePage
+                  inventory={initialized?.extension_inventory}
                   codexPets={codexPets}
                   codexPetsLoading={codexPetsLoading}
                   codexPetsError={codexPetsError}
@@ -1451,20 +1453,20 @@ type CodexPetSettingsProps = {
   onCodexPetsUpdate: (settings: CodexPetSettingsUpdate) => Promise<CodexPetsSnapshot>;
 };
 
-function SettingsAppearancePage(petProps: CodexPetSettingsProps): JSX.Element {
+function SettingsAppearancePage({ inventory, ...petProps }: CodexPetSettingsProps & { inventory?: readonly ExtensionInventoryRecord[] }): JSX.Element {
   const { t } = useI18n();
   return (
     <>
       <SettingsPageHeader title={t("settings.appearance")} />
-      {/* The background image is part of the look the theme sets. */}
       <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
         <ThemePreferenceControl />
-        {isTouchWebShell() ? null : (
-          <div data-testid="settings-background">
-            <SettingsGroup><BackgroundSettings /></SettingsGroup>
-          </div>
-        )}
+        <ContentThemeControl inventory={inventory} />
       </SettingsSection>
+      {isTouchWebShell() ? null : (
+        <SettingsSection title={t("settings.shellSkin")} description={t("settings.shellSkinDescription")} testID="settings-background">
+          <ShellSkinSettings />
+        </SettingsSection>
+      )}
       <AppearanceTypography section="text" />
       <AppearanceTypography section="motion" />
       {hostSupports("listCodexPets") ? <CodexPetSection {...petProps} /> : null}

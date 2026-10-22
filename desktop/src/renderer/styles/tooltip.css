@@ -23,6 +23,7 @@
   border: 1px solid var(--menu-border);
   border-radius: var(--radius-xs);
   background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
   box-shadow: var(--menu-shadow);
   color: var(--ink);
   font-size: var(--font-sm);

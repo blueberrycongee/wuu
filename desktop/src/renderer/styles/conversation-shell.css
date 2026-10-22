@@ -907,6 +907,7 @@
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
   background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
   box-shadow: var(--shadow-modal);
   color: var(--ink);
   text-align: left;

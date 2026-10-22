@@ -24,6 +24,7 @@
   padding: 10px 12px 10px 14px;
   /* Transient layers share the menu material and shell corner. */
   background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
   color: var(--ink);
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);

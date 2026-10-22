@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <defs>
+    <linearGradient id="clay" x1="0" y1="1" x2="1" y2="0">
+      <stop stop-color="#633729"/><stop offset=".55" stop-color="#8b503d"/><stop offset="1" stop-color="#b27b5d"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#clay)" d="M0 0h1600v1000H0z"/>
+</svg>

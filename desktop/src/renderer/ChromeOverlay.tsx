@@ -28,7 +28,7 @@ export function useChromeOverlay(enabled: boolean, bounds: ChromeOverlayRect | n
     if (!active) return;
     const changed = () => setAppearanceRevision(value => value + 1);
     const observer = new MutationObserver(changed);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-appearance-motion", "style", "class"] });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-appearance-motion", "data-shell-skin", "data-shell-image", "style", "class"] });
     return () => observer.disconnect();
   }, [active]);
   useLayoutEffect(() => {
@@ -66,7 +66,9 @@ export function useChromeOverlay(enabled: boolean, bounds: ChromeOverlayRect | n
     }
     const current = ++generation.current;
     const request: ChromeOverlayRequest = { version: CHROME_OVERLAY_VERSION, token: currentToken, generation: current,
-      bounds, model, focus, appearance: { theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light", locale, fontFamily: computed.fontFamily, variables } };
+      bounds, model, focus, appearance: { theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light", locale, fontFamily: computed.fontFamily, variables,
+        shellSkin: model.kind === "ribbon" && document.documentElement.hasAttribute("data-shell-skin"),
+        shellImage: model.kind === "ribbon" ? document.documentElement.dataset.shellImage : undefined } };
     void api.show(request).catch(() => { if (token.current === currentToken && generation.current === current) callbacks.current.onDismiss(); });
   }, [api, active, modelKey, boundsKey, locale, appearanceRevision, focus, appearanceElement]);
   return active;

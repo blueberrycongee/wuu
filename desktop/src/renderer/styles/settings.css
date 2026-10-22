@@ -884,7 +884,8 @@
   gap: var(--space-2);
   min-width: 0;
   border-radius: var(--radius-sm);
-  background: var(--wuu-control-secondary-background, var(--surface-2));
+  background: var(--control-secondary-bg);
+  box-shadow: var(--shadow-soft);
   color: var(--ink);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
@@ -903,7 +904,7 @@
 }
 
 .settings-button:hover:not(:disabled) {
-  background: var(--wuu-control-secondary-background, var(--surface-3));
+  background: var(--control-secondary-hover-bg);
 }
 
 .settings-button:active:not(:disabled) {
@@ -927,6 +928,7 @@
 }
 
 .settings-button-ghost {
+  box-shadow: none;
   background: transparent;
   color: var(--ink-soft);
 }

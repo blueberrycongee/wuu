@@ -105,6 +105,7 @@ type Manifest struct {
 	CommandPaths         []string                          `json:"-"`
 	Desktop              *DesktopSpec                      `json:"desktop,omitempty"`
 	Themes               []ThemeSpec                       `json:"themes,omitempty"`
+	Skins                []SkinSpec                        `json:"skins,omitempty"`
 	Settings             map[string]SettingDefinition      `json:"settings,omitempty"`
 	Slots                []SlotContributionSpec            `json:"slots,omitempty"`
 	Surfaces             []SurfaceContributionSpec         `json:"surfaces,omitempty"`
@@ -282,6 +283,10 @@ func normalizeIconValue(root, field string, icon *IconSpec) (*IconSpec, error) {
 }
 
 func normalizeIconAssetPath(root, field, value string) (string, error) {
+	return normalizeImageAssetPath(root, field, value, maxPluginIconSize, false)
+}
+
+func normalizeImageAssetPath(root, field, value string, maxSize int64, allowJPEG bool) (string, error) {
 	if strings.Contains(value, `\`) {
 		return "", fmt.Errorf("%s path %q must use package-relative slash separators", field, value)
 	}
@@ -291,6 +296,10 @@ func normalizeIconAssetPath(root, field, value string) (string, error) {
 	}
 	switch strings.ToLower(filepath.Ext(rel)) {
 	case ".svg", ".png", ".webp":
+	case ".jpg", ".jpeg":
+		if !allowJPEG {
+			return "", fmt.Errorf("%s %q must be an SVG, PNG, or WebP image", field, value)
+		}
 	default:
 		return "", fmt.Errorf("%s %q must be an SVG, PNG, or WebP image", field, value)
 	}
@@ -309,8 +318,8 @@ func normalizeIconAssetPath(root, field, value string) (string, error) {
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("%s %s must be a regular file", field, rel)
 	}
-	if info.Size() > maxPluginIconSize {
-		return "", fmt.Errorf("%s %s exceeds %d bytes", field, rel, maxPluginIconSize)
+	if info.Size() > maxSize {
+		return "", fmt.Errorf("%s %s exceeds %d bytes", field, rel, maxSize)
 	}
 	if strings.EqualFold(filepath.Ext(rel), ".svg") {
 		data, err := os.ReadFile(path)
@@ -468,6 +477,7 @@ type rawManifest struct {
 type rawContributes struct {
 	Commands       json.RawMessage `json:"commands"`
 	Themes         json.RawMessage `json:"themes"`
+	Skins          json.RawMessage `json:"skins"`
 	Settings       json.RawMessage `json:"settings"`
 	Slots          json.RawMessage `json:"slots"`
 	Surfaces       json.RawMessage `json:"surfaces"`
@@ -536,7 +546,7 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 		return Manifest{}, err
 	}
 	if contributes, ok := fields["contributes"]; ok {
-		if err := validateObjectFields("contributes", contributes, "commands", "themes", "settings", "slots", "surfaces", "presenters", "navigation", "workspaceTools", "settingsPages"); err != nil {
+		if err := validateObjectFields("contributes", contributes, "commands", "themes", "skins", "settings", "slots", "surfaces", "presenters", "navigation", "workspaceTools", "settingsPages"); err != nil {
 			return Manifest{}, err
 		}
 	}
@@ -597,6 +607,10 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 	if err != nil {
 		return Manifest{}, err
 	}
+	skins, err := normalizeSkins(root, raw.Contributes.Skins)
+	if err != nil {
+		return Manifest{}, err
+	}
 	settings, err := normalizeSettings(id, raw.Contributes.Settings)
 	if err != nil {
 		return Manifest{}, err
@@ -647,6 +661,7 @@ func normalizeManifest(data []byte, root string, official bool) (Manifest, error
 		CommandPaths:         commandPaths,
 		Desktop:              desktop,
 		Themes:               themes,
+		Skins:                skins,
 		Settings:             settings,
 		Slots:                ui.slots,
 		Surfaces:             ui.surfaces,
