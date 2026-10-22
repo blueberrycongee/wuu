@@ -18,8 +18,9 @@ import (
 // consumer emits one host-mediated frame (service.call) and the registry
 // resolves the provider by (service name, required major version), enforces
 // the consumer's explicit declaration, and routes the call. The registry is
-// built from one generation's initialize results and only accepts calls while
-// that generation is active; closing it revokes every address and notifies
+// built from one generation's initialize results. Preparation permits only
+// explicitly marked methods; active generations admit other calls. Closing it
+// revokes every address and notifies
 // consumers so stale resolutions cannot leak across generations.
 
 // ServiceInvoker is the provider-side surface the registry routes calls to.
@@ -90,6 +91,7 @@ type ServiceRegistry struct {
 	scopeTracker         *ExecutionTracker
 	backgroundStopped    bool
 	cleanupOwners        map[string]int
+	preparing            map[string]bool
 	retiringProviders    map[string]bool
 	rootExecutionContext func(string, string) (context.Context, bool, *HostServiceError)
 }
@@ -239,15 +241,25 @@ func (registry *ServiceRegistry) RegisterClients(clients ...Client) []ServiceCon
 	return conflicts
 }
 
-// AllowPreflight grants only read-phase kernel calls while initialize runs.
-func (r *ServiceRegistry) AllowPreflight(pluginID string, requirements []ServiceRequirement) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	allowed := make(map[serviceKey]struct{}, len(requirements))
-	for _, requirement := range requirements {
-		allowed[serviceKey{name: strings.TrimSpace(requirement.Name), major: requirement.MajorVersion}] = struct{}{}
+type servicePreparationKey struct{}
+
+// Preparation authority belongs to one lifecycle callback and its admitted
+// descendants. Initialize cannot call services before declarations are bound.
+func (r *ServiceRegistry) allowPreparation(pluginID string) func() {
+	if r == nil {
+		return func() {}
 	}
-	r.consumers[pluginID] = allowed
+	r.mu.Lock()
+	if r.preparing == nil {
+		r.preparing = make(map[string]bool)
+	}
+	r.preparing[pluginID] = true
+	r.mu.Unlock()
+	return func() {
+		r.mu.Lock()
+		delete(r.preparing, pluginID)
+		r.mu.Unlock()
+	}
 }
 
 // Activate opens the registry for calls. The runtime activates the registry
@@ -666,20 +678,32 @@ func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, par
 		}
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("no provider for service %s major version %d (provided majors: %v)", service, key.major, r.ProviderMajors(service))}
 	}
-	if !active && !provider.kernel && !continuation {
-		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s is unavailable during generation prepare", service)}
+	r.mu.RLock()
+	preparing := r.preparing[consumerPluginID]
+	if execution := r.executions[params.ExecutionID]; execution != nil {
+		if _, participant := execution.participants[consumerPluginID]; participant {
+			inherited, _ := execution.ctx.Value(servicePreparationKey{}).(bool)
+			preparing = preparing || inherited
+		}
 	}
-	methodDeclared := false
+	r.mu.RUnlock()
+	if preparing {
+		ctx = context.WithValue(ctx, servicePreparationKey{}, true)
+	}
+	methodDeclared, preparationMethod := false, false
 	for _, declared := range provider.descriptor.Methods {
 		if declared.Name == method {
-			methodDeclared = true
+			methodDeclared, preparationMethod = true, declared.Preparation
 			break
 		}
 	}
 	if !methodDeclared {
 		return nil, &HostServiceError{Code: "method_not_found", Message: fmt.Sprintf("service %s does not declare method %q", service, method)}
 	}
-	if state := provider.invoker.Status().State; state != StateActive && !(provider.kernel && !active) {
+	if preparing && !preparationMethod || !active && !preparing && !continuation {
+		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s method %q is unavailable during generation prepare", service, method)}
+	}
+	if state := provider.invoker.Status().State; state != StateActive && !(preparing && state == StatePrepared) {
 		go r.notifyConsumers(context.Background(), key, "provider_unavailable")
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s provider %q is %s", service, provider.pluginID, state)}
 	}
@@ -689,7 +713,7 @@ func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, par
 	if provider.kernel && service == KernelFileLockService && method == "release" {
 		ctx = context.WithValue(ctx, serviceCleanupKey{}, true)
 	}
-	execCtx, executionID, release, executionErr := r.acquireExecution(ctx, params.ExecutionID, consumerPluginID, key, provider.pluginID, active || provider.kernel)
+	execCtx, executionID, release, executionErr := r.acquireExecution(ctx, params.ExecutionID, consumerPluginID, key, provider.pluginID, active || preparing)
 	if executionErr != nil {
 		return nil, executionErr
 	}

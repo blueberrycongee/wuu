@@ -719,6 +719,8 @@ export interface ServiceMethodDescriptor {
   name: string;
   input_schema: string;
   output_schema: string;
+  /** Safe during candidate validation: no durable writes or external effects. */
+  preparation?: boolean;
 }
 
 /** A versioned service a plugin provides; consumers resolve by name and major version. */
@@ -800,7 +802,7 @@ export interface RuntimeInitializeParams {
   workspace_state_dir?: string;
   capability_protocol_version?: number;
   supported_host_services?: HostServiceMethod[];
-  lifecycle_version?: 1;
+  lifecycle_version?: 2;
 }
 
 export interface RuntimeInitializeResult {
@@ -810,7 +812,7 @@ export interface RuntimeInitializeResult {
   capabilities?: CapabilityDescriptor[];
   provided_services?: ServiceDescriptor[];
   required_services?: ServiceRequirement[];
-  lifecycle_version?: 1;
+  lifecycle_version?: 2;
 }
 
 export interface JSONSchemaObject {
@@ -1601,6 +1603,8 @@ export interface RuntimePlugin {
    */
   concurrentServices?: readonly string[];
   initialize(params: RuntimeInitializeParams, host: RuntimeHost, lifecycle: RuntimeLifecycleContext): RuntimeInitializeResult | Promise<RuntimeInitializeResult>;
+  /** Read and validate state through declared, prepared service dependencies. */
+  prepare?(host: RuntimeHost, lifecycle: RuntimeLifecycleContext): void | Promise<void>;
   activate?(host: RuntimeHost, lifecycle: RuntimeLifecycleContext): void | Promise<void>;
   invokeCapability?(params: CapabilityInvokeParams, host: RuntimeHost, execution: RuntimeExecutionContext): CapabilityInvokeResult | Promise<CapabilityInvokeResult>;
   invokeService?(params: ServiceInvokeParams, host: RuntimeHost, execution: RuntimeExecutionContext): unknown | Promise<unknown>;
@@ -1633,6 +1637,12 @@ export interface RuntimeServiceChangedRequest {
   params: ServiceChangedParams;
 }
 
+export interface RuntimePrepareRequest {
+  id: string;
+  method: "prepare";
+  params?: undefined;
+}
+
 export interface RuntimeActivateRequest {
   id: string;
   method: "activate";
@@ -1659,6 +1669,7 @@ export interface RuntimeExecutionCancelRequest {
 
 export type RuntimeRequest =
   | RuntimeInitializeRequest
+  | RuntimePrepareRequest
   | RuntimeActivateRequest
   | RuntimeCapabilityRequest
   | RuntimeServiceInvokeRequest
@@ -1686,9 +1697,12 @@ export async function handleRuntimeRequest(
           ...result,
           protocol_version: result.required_services?.length || result.provided_services?.length
             ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
-          lifecycle_version: 1,
+          lifecycle_version: 2,
         } };
       }
+      case "prepare":
+        await plugin.prepare?.(host, lifecycle);
+        return { id: request.id, result: null };
       case "activate":
         await plugin.activate?.(host, lifecycle);
         return { id: request.id, result: null };
@@ -1916,7 +1930,7 @@ export async function runJSONLRuntime(
       track(send({ id: parsed.id, error: { message: "runtime is shutting down" } }));
       return;
     }
-    const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
+    const isLifecycle = parsed.method === "initialize" || parsed.method === "prepare" || parsed.method === "activate" || parsed.method === "shutdown";
     if (parsed.method === "shutdown") {
       shuttingDown = true;
       // Background work may hold an active handler; stop it before waiting for the barrier.
@@ -2007,7 +2021,7 @@ function isRuntimeRequest(value: unknown): value is RuntimeRequest {
   if (typeof value !== "object" || value === null) return false;
   const request = value as { id?: unknown; method?: unknown; params?: unknown };
   if (typeof request.id !== "string" || typeof request.method !== "string") return false;
-  if (request.method === "activate" || request.method === "shutdown") return true;
+  if (request.method === "prepare" || request.method === "activate" || request.method === "shutdown") return true;
   return ["initialize", "capability.invoke", "service.invoke", "service.changed", "tool.execute"].includes(request.method)
     && typeof request.params === "object" && request.params !== null;
 }

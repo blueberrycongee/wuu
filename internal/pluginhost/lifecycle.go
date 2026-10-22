@@ -15,10 +15,11 @@ import (
 // it survives until the consumer's shutdown calls have finished, including for
 // prepared transports whose activation never ran.
 type clientLifetime struct {
-	owner      *cordis.Fiber
-	activation *cordis.Fiber
-	closeCtx   context.Context
-	closeErr   error
+	owner       *cordis.Fiber
+	preparation *cordis.Fiber
+	activation  *cordis.Fiber
+	closeCtx    context.Context
+	closeErr    error
 }
 
 func (h *Host) ownClients(clients []Client) error {
@@ -50,6 +51,39 @@ func (h *Host) ownClients(clients []Client) error {
 		}
 		lifetime.owner = fiber
 		h.lifetimes[client.ID()] = lifetime
+	}
+	return nil
+}
+
+func (h *Host) prepareClient(ctx context.Context, client Client, dependencies []Dependency) error {
+	lifetime := h.lifetimes[client.ID()]
+	if lifetime.preparation != nil {
+		return lifetime.preparation.Error()
+	}
+	var inject []string
+	for _, dependency := range dependencies {
+		if dependency.Required && h.lifetimes[dependency.Provider] != nil {
+			inject = append(inject, "prepared:"+dependency.Provider)
+		}
+	}
+	preparation := cordis.Define[struct{}](client.ID()+":preparation", func(scope *cordis.Context, _ struct{}) error {
+		finish := h.serviceRegistry.allowPreparation(client.ID())
+		defer finish()
+		if lifecycle, ok := client.(preparationClient); ok {
+			if err := lifecycle.Prepare(ctx); err != nil {
+				return err
+			}
+		}
+		_, err := scope.Provide("prepared:"+client.ID(), client)
+		return err
+	}).WithInject(inject...)
+	fiber, err := lifetime.owner.Ctx.Load(preparation, struct{}{})
+	lifetime.preparation = fiber
+	if err != nil {
+		return err
+	}
+	if fiber.State() != cordis.StateActive {
+		return fmt.Errorf("plugin %q preparation is %s: required provider is unavailable", client.ID(), fiber.State())
 	}
 	return nil
 }

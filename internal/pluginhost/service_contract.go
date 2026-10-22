@@ -13,8 +13,8 @@ import (
 // versioned service under a stable name, other plugins consume it by name and
 // major version, and every call is routed and validated by the host. Service
 // declarations ride the same initialize handshake as capabilities and are
-// collected during the prepare phase; calls only flow once both generations
-// are active.
+// collected before preparation. Preparation callbacks may read explicitly
+// marked methods; effectful calls require an active generation.
 const (
 	// ServiceCallMethod is the plugin -> host gateway frame for consuming a
 	// registered service. It is advertised alongside host services but is
@@ -93,7 +93,7 @@ func KernelServiceDescriptors() []ServiceDescriptor {
 		schema := strings.ReplaceAll(name, "-", ".")
 		descriptors = append(descriptors, ServiceDescriptor{
 			Name: name, Version: "1.0.0",
-			Methods: []ServiceMethodDescriptor{{Name: KernelServiceMethod, InputSchema: schema + ".input.v1", OutputSchema: schema + ".output.v1"}},
+			Methods: []ServiceMethodDescriptor{{Name: KernelServiceMethod, InputSchema: schema + ".input.v1", OutputSchema: schema + ".output.v1", Preparation: preparationService(name)}},
 		})
 	}
 	return descriptors
@@ -107,13 +107,16 @@ func KernelServiceRequirements(names ...string) []ServiceRequirement {
 	return requirements
 }
 
-func KernelPreflightRequirements() []ServiceRequirement {
-	return KernelServiceRequirements(
-		KernelStorageGetService, KernelStorageKeysService,
+func preparationService(name string) bool {
+	switch name {
+	case KernelStorageGetService, KernelStorageKeysService,
 		KernelSettingsGetService, KernelSettingsListService,
 		KernelSessionListService, KernelSessionInspectService,
-		KernelSessionHistoryReadService, KernelSessionHistorySearchService, KernelWorkspaceStatusService,
-	)
+		KernelSessionHistoryReadService, KernelSessionHistorySearchService, KernelWorkspaceStatusService:
+		return true
+	default:
+		return false
+	}
 }
 
 // KernelRegistryIntrospectDescriptor is the descriptor the kernel registers
@@ -202,6 +205,9 @@ type ServiceMethodDescriptor struct {
 	Name         string `json:"name"`
 	InputSchema  string `json:"input_schema"`
 	OutputSchema string `json:"output_schema"`
+	// Preparation permits this method during dependency-ordered candidate
+	// validation. It must not mutate durable state or publish external effects.
+	Preparation bool `json:"preparation,omitempty"`
 }
 
 // ServiceDescriptor declares a versioned service a plugin provides. The name

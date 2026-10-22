@@ -184,15 +184,17 @@ class Runtime extends EventEmitter {
   client(method, input = {}) { return this.capability('plugin.client.request', { method, input }).then(value => value.output.result); }
   async initialize(activate = true) {
     const start = this.host.calls.length;
-    this.definition = await this.request('initialize', { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 1,
+    this.definition = await this.request('initialize', { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 2,
       plugin_id: this.id, plugin_root: join(root, 'internal/plugin/bundled', this.id), project_root: scratch,
       workspace_id: 'fixture-workspace', workspace_state_dir: join(scratch, 'workspace-state'), wuu_home: join(scratch, 'home'), supported_host_services: services });
-    assert.equal(this.definition.lifecycle_version, 1);
+    assert.equal(this.definition.lifecycle_version, 2);
+    assert.deepEqual(this.host.calls.slice(start), [], `${this.id} must only declare contracts during initialize`);
+    await this.request('prepare');
     if (this.definition.required_services?.length || this.definition.provided_services?.length) {
       assert.equal(this.definition.protocol_version, 3, `${this.id} registry declarations require capability protocol v3`);
     }
     const effects = this.host.calls.slice(start).filter(call => !['host.storage.get', 'host.storage.keys'].includes(call.service));
-    assert.deepEqual(effects, [], `${this.id} must not start business effects during initialize`);
+    assert.deepEqual(effects, [], `${this.id} must not start business effects during prepare`);
     if (activate) await this.request('activate');
     return this;
   }

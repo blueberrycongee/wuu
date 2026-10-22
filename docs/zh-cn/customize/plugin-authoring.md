@@ -117,11 +117,12 @@ headers, body }, { signal })`。凭据键只能指向本插件声明的秘密设
 
 宿主启动 manifest 中的命令，通过 stdin/stdout 交换每行一个 JSON 对象。stdout 专用于协议帧，诊断信息写入 stderr。manifest 的传输名称 `wuu-plugin-v1` 与协商的能力协议编号是不同字段；使用服务的新运行时应协商 `protocol_version: 3`。
 
-官方插件编写 SDK 是 TypeScript 的 `@wuu/plugin-sdk`。实现 `RuntimePlugin` 并传给 `runJSONLRuntime`，SDK 负责消息分帧、请求 ID、取消信号和 lifecycle-v1 握手。其他语言的进程也可实现相同的 JSONL 契约，但 Wuu 不提供另一套编写 SDK。
+官方插件编写 SDK 是 TypeScript 的 `@wuu/plugin-sdk`。实现 `RuntimePlugin` 并传给 `runJSONLRuntime`，SDK 负责消息分帧、请求 ID、取消信号和 lifecycle-v2 握手。其他语言的进程也可实现相同的 JSONL 契约，但 Wuu 不提供另一套编写 SDK。
 
 | 回调 | 职责 |
 | --- | --- |
 | `initialize(params, host, lifecycle)` | 返回工具、能力、提供的服务和需要的服务 |
+| `prepare(host, lifecycle)` | 服务绑定完成后读取并验证状态，不写入或启动后台工作 |
 | `activate(host, lifecycle)` | 运行时变更提交后，启动定时器、订阅或其他行为 |
 | `executeTool(params, host, execution)` | 执行已注册工具，返回结果 |
 | `invokeCapability(params, host, execution)` | 处理已声明能力 |
@@ -129,7 +130,7 @@ headers, body }, { signal })`。凭据键只能指向本插件声明的秘密设
 | `serviceChanged(params, host)` | 响应服务解析变化 |
 | `shutdown()` | 停止插件拥有的工作并释放资源 |
 
-初始化是准备阶段，不代表可以开始产品行为。原生预检查期间，宿主只允许调用读取阶段的服务。写入和后台任务应推迟到 `activate`，shutdown 也应能安全处理部分初始化或部分激活。准备和持久化失败时保留旧运行时，不调用候选的 `activate`。变更提交后，激活失败会留下带失败诊断的降级新 generation，不恢复旧代，也不撤销外部效果。明确重试激活时，应避免重复产生效果。可信初始化代码和 MCP 准备仍可能在宿主服务边界之外产生外部效果。提交边界见[运行时 generation](plugin-system.md#运行时-generation)。
+`initialize` 只声明契约。Lifecycle v2 在全部声明绑定后增加独立的 `prepare` 请求。请将持久状态的读取和验证从 `initialize` 移到 `prepare`，使用配套 SDK 重新构建；手写适配器需返回 `lifecycle_version: 2`。旧生命周期适配器会在提交前被拒绝。provider 先于消费者准备；准备阶段只能调用已声明且标记 `preparation: true` 的方法，嵌套调用也遵守此约束。该标记承诺不进行持久化写入或产生外部效果；省略时仅可在激活后调用。写入和后台任务应推迟到 `activate`，shutdown 也应能安全处理部分初始化或部分激活。准备和持久化失败时保留旧运行时，不调用候选的 `activate`。变更提交后，激活失败会留下带失败诊断的降级新 generation，不恢复旧代，也不撤销外部效果。明确重试激活时，应避免重复产生效果。可信初始化代码和 MCP 准备仍可能在宿主服务边界之外产生外部效果。提交边界见[运行时 generation](plugin-system.md#运行时-generation)。
 
 请求关闭或连接结束时，`lifecycle.signal` 会中止。激活后启动的后台工作应
 使用此信号，并在 shutdown 中停止定时器。清理仍可使用不绑定执行作用域的
@@ -139,7 +140,7 @@ headers, body }, { signal })`。凭据键只能指向本插件声明的秘密设
 
 模型工具注册在初始化结果的 `tools` 数组中，每个工具需要 `id`、`description` 和对象类型的 `input_schema`，宿主会生成带命名空间的公开名称。`execution_scopes` 可限制工具在 `root` 或 `child` 中可用；`activity` 描述只读性、并发安全、风险和是否编排子工具。应如实声明副作用，不要把写入工具标成只读来绕过调度或权限检查。这些声明属于可信扩展契约，不是沙箱。
 
-TypeScript 运行时适配器按 `activity.concurrency_safe: true` 调度工具。相邻的显式安全工具可以重叠运行，每个运行时最多同时执行八个工具处理函数。省略或设为 false 的工具、未知工具 ID，以及普通能力和服务回调，仍按 FIFO 顺序独占执行；仅声明 `read_only` 不会启用并发。这些屏障同时适用于共享或不同的 execution ID。initialize、activate 和 shutdown 还会等待此前已接收的可重入回调结束。
+TypeScript 运行时适配器按 `activity.concurrency_safe: true` 调度工具。相邻的显式安全工具可以重叠运行，每个运行时最多同时执行八个工具处理函数。省略或设为 false 的工具、未知工具 ID，以及普通能力和服务回调，仍按 FIFO 顺序独占执行；仅声明 `read_only` 不会启用并发。这些屏障同时适用于共享或不同的 execution ID。initialize、prepare、activate 和 shutdown 还会等待此前已接收的可重入回调结束。
 
 启用前应保护共享可变状态。每次调用的 execution context 与带执行归属的 host，都应随该次调用传递，不要保存为共享的“当前调用”变量。取消在读取帧时注册，并在真正进入处理函数前再次检查，包括等待工具空位之后。取消某个 execution 会中止其所有仍活跃的回调，不影响独立 execution；已运行的代码仍需协作响应取消。显式可重入的能力和服务保留独立通道，使工具空位用尽时嵌套宿主回调仍能完成。该上限不限制这些回调或排队帧数量；TypeScript 并发也不会将同步 CPU 工作移至工作线程。
 
@@ -417,7 +418,7 @@ App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
 
 ## 开发和分发
 
-`wuu plugin dev ./extension.ts` 直接运行默认导出实现 `RuntimePlugin` 的单文件。Wuu 提供匹配的 SDK 并在内部生成进程适配器；此开发路径不要求 manifest、安装、打包或构建。需要支持 `--experimental-transform-types` 的 Node.js 22.7 或更高版本，仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。每次发布前保存候选快照，检查语法、导入和默认导出；加载失败则保留上次发布的源码。导入验证会执行模块顶层代码，不是无副作用的检查。`initialize` 仅在实际宿主中调用，使用其读取阶段服务。准备失败保留旧运行时；激活发生在提交之后，失败时可能留下新运行时的失败状态，契约见上文。完整示例见 [Agent 插件快速上手](plugin-quickstart.md)。
+`wuu plugin dev ./extension.ts` 直接运行默认导出实现 `RuntimePlugin` 的单文件。Wuu 提供匹配的 SDK 并在内部生成进程适配器；此开发路径不要求 manifest、安装、打包或构建。需要支持 `--experimental-transform-types` 的 Node.js 22.7 或更高版本，仅支持 Node 内置模块和 `@wuu/plugin-sdk` 导入。每次发布前保存候选快照，检查语法、导入和默认导出；加载失败则保留上次发布的源码。导入验证会执行模块顶层代码，不是无副作用的检查。`initialize` 在实际宿主中声明契约；随后由 `prepare` 通过所选服务验证状态。准备失败保留旧运行时；激活发生在提交之后，失败时可能留下新运行时的失败状态，契约见上文。完整示例见 [Agent 插件快速上手](plugin-quickstart.md)。
 
 `wuu plugin create` 生成 `agent`、`desktop` 或 `full` 包骨架。对于目录，`wuu plugin dev` 使用其中的 `plugin.json` 和 `package.json` 构建脚本，再发布构建后的开发 generation。两条路径在构建或加载失败后都会继续监听，修复并保存即可恢复，不需要重启。文件事件经过防抖，并定期核对以补偿遗漏；`--poll` 必须为正数。
 

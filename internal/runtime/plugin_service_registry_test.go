@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,7 +170,7 @@ createInterface({ input: process.stdin }).on('line', line => {
   if (!q.id) return;
   try {
     let result = null;
-    if (q.method === 'initialize') result = { protocol_version: 3, lifecycle_version: 1, provided_services: [{ name: 'host.storage.get', version: '1.0.0', methods: [{ name: 'call', input_schema: 'host.storage.get.input.v1', output_schema: 'host.storage.get.output.v1' }] }] };
+    if (q.method === 'initialize') result = { protocol_version: 3, lifecycle_version: 2, provided_services: [{ name: 'host.storage.get', version: '1.0.0', methods: [{ name: 'call', input_schema: 'host.storage.get.input.v1', output_schema: 'host.storage.get.output.v1' }] }] };
     else if (q.method === 'service.invoke') {
       const state = JSON.parse(readFileSync(q.params.caller + '.json', 'utf8'));
       result = { value: state[q.params.params.key] ?? null };
@@ -216,6 +217,116 @@ createInterface({ input: process.stdin }).on('line', line => {
 	host.RetirePlugin(context.Background(), "file-storage", errors.New("provider removed"))
 	if _, err := host.ServiceRegistry().Call(context.Background(), "reader", call); err == nil {
 		t.Fatal("removed external storage fell back to native storage")
+	}
+}
+
+// Preparation must resolve the selected provider before reading persisted state.
+// Initialize has no call authority; prepare cannot mutate state or run activation.
+func TestCompositionPreparationUsesSelectedProvider(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node.js is required for external provider verification")
+	}
+	for _, external := range []bool{false, true} {
+		for _, corrupt := range []bool{false, true} {
+			t.Run(fmt.Sprintf("external=%t/corrupt=%t", external, corrupt), func(t *testing.T) {
+				root := t.TempDir()
+				source := `import { createInterface } from 'node:readline';
+import { appendFileSync, readFileSync } from 'node:fs';
+const role = process.argv[2], pending = new Map(); let sequence = 0;
+const send = x => process.stdout.write(JSON.stringify(x) + '\n');
+const call = (service, params) => new Promise(resolve => { const id = 'host-' + ++sequence; pending.set(id, resolve); send({ id, method: 'host.service.call', params: { service, method: 'call', params } }); });
+createInterface({ input: process.stdin }).on('line', async line => {
+  const q = JSON.parse(line);
+  if (pending.has(q.id)) { pending.get(q.id)(q); pending.delete(q.id); return; }
+  if (!q.method) return;
+  try {
+    let result = null;
+    if (q.method === 'initialize') {
+      const early = await call('host.storage.get', { scope: 'workspace', key: 'state' });
+      if (early.error?.code !== 'service_not_authorized') throw new Error('initialize gained undeclared authority');
+      result = { protocol_version: 3, lifecycle_version: 2 };
+      if (role === 'provider') result.provided_services = [{ name: 'host.storage.get', version: '1.0.0', methods: [{ name: 'call', input_schema: 'host.storage.get.input.v1', output_schema: 'host.storage.get.output.v1', preparation: true }] }];
+      else result.required_services = ['host.storage.get', 'host.storage.set'].map(name => ({ name, major_version: 1, required: true }));
+    } else if (q.method === 'prepare') {
+      appendFileSync('events', role + ':prepare\n');
+      if (role === 'reader') {
+        const write = await call('host.storage.set', { scope: 'workspace', key: 'state', value: 'forbidden' });
+        if (write.error?.code !== 'service_unavailable') throw new Error('prepare admitted a write: ' + JSON.stringify(write));
+        const read = await call('host.storage.get', { scope: 'workspace', key: 'state' });
+        if (read.error) throw new Error(read.error.message);
+        if (read.result.value !== (process.argv[3] === 'external' ? 'external-state' : null)) throw new Error('wrong storage selected');
+        if (process.argv[4] === 'corrupt') throw new Error('invalid persisted state');
+      }
+    } else if (q.method === 'service.invoke') result = { value: readFileSync('state', 'utf8') };
+    else if (q.method === 'activate' || q.method === 'shutdown') appendFileSync('events', role + ':' + q.method + '\n');
+    send({ id: q.id, result });
+  } catch (error) { send({ id: q.id, error: { message: error.message } }); }
+});`
+				if err := os.WriteFile(filepath.Join(root, "runtime.mjs"), []byte(source), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, "state"), []byte("external-state"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				reader := testRuntimePlugin("reader")
+				reader.Root, reader.Runtime.Command = root, node
+				reader.SubjectID, reader.Fingerprint = "plugin:user:reader", "prepare-test"
+				reader.Runtime.Args = []string{"runtime.mjs", "reader", "native", "valid"}
+				if external {
+					reader.Runtime.Args[2] = "external"
+				}
+				if corrupt {
+					reader.Runtime.Args[3] = "corrupt"
+				}
+				plugins := []pluginpkg.Plugin{reader}
+				var selection *composition.Config
+				if external {
+					provider := testRuntimePlugin("file-storage")
+					provider.Root, provider.Runtime.Command = root, node
+					provider.Runtime.Args = []string{"runtime.mjs", "provider"}
+					plugins = append(plugins, provider)
+					selection = &composition.Config{Version: 1, Services: []composition.Binding{{Service: "host.storage.get", Major: 1, Provider: provider.ID}}}
+				}
+				oldClient := &generationClient{id: "old"}
+				old := testPluginGeneration("old", oldClient)
+				session := testGenerationSession(old)
+				session.RootDir, session.WorkspaceID = root, "workspace"
+				session.WuuHome, session.StateDir = t.TempDir(), t.TempDir()
+				defer session.Cleanup()
+				candidate, err := session.buildPluginGeneration(config.Config{Composition: selection}, plugins, map[string]bool{"reader": true}, nil, startPluginClient)
+				var host *pluginhost.Host
+				if candidate != nil {
+					host = candidate.host
+				}
+				if oldClient.closed || !session.IsCurrentPluginGeneration(old) {
+					t.Fatal("candidate preparation replaced the running generation")
+				}
+				if corrupt {
+					if host != nil || err == nil || !strings.Contains(err.Error(), "invalid persisted state") {
+						t.Fatalf("corrupt state candidate = %v, %v", host, err)
+					}
+				} else {
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer host.Close(context.Background())
+				}
+				events, err := os.ReadFile(filepath.Join(root, "events"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(events), ":activate") || !strings.Contains(string(events), "reader:prepare") {
+					t.Fatalf("preparation ran effects or skipped validation: %s", events)
+				}
+				if external && !strings.HasPrefix(string(events), "provider:prepare\nreader:prepare\n") {
+					t.Fatalf("provider was not ready before its consumer: %s", events)
+				}
+				if corrupt && (!strings.Contains(string(events), "reader:shutdown") || external && !strings.HasSuffix(string(events), "provider:shutdown\n")) {
+					t.Fatalf("failed candidate did not drain consumers before provider: %s", events)
+				}
+			})
+		}
 	}
 }
 

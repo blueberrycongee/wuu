@@ -195,9 +195,12 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
         return { id: request.id, result: {
           ...result,
           protocol_version: result.required_services?.length || result.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
-          lifecycle_version: 1
+          lifecycle_version: 2
         } };
       }
+      case "prepare":
+        await plugin.prepare?.(host, lifecycle);
+        return { id: request.id, result: null };
       case "activate":
         await plugin.activate?.(host, lifecycle);
         return { id: request.id, result: null };
@@ -396,7 +399,7 @@ async function runJSONLRuntime(plugin, streams) {
       track(send({ id: parsed.id, error: { message: "runtime is shutting down" } }));
       return;
     }
-    const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
+    const isLifecycle = parsed.method === "initialize" || parsed.method === "prepare" || parsed.method === "activate" || parsed.method === "shutdown";
     if (parsed.method === "shutdown") {
       shuttingDown = true;
       lifetime.abort();
@@ -476,7 +479,7 @@ function isRuntimeRequest(value) {
   if (typeof value !== "object" || value === null) return false;
   const request = value;
   if (typeof request.id !== "string" || typeof request.method !== "string") return false;
-  if (request.method === "activate" || request.method === "shutdown") return true;
+  if (request.method === "prepare" || request.method === "activate" || request.method === "shutdown") return true;
   return ["initialize", "capability.invoke", "service.invoke", "service.changed", "tool.execute"].includes(request.method) && typeof request.params === "object" && request.params !== null;
 }
 
@@ -642,11 +645,20 @@ function createDreamPlugin() {
     }
   }
   return {
-    async initialize(_params, runtimeHost) {
+    initialize(_params, runtimeHost) {
       host = runtimeHost;
       state = initialState();
       running = false;
       stopped = false;
+      return {
+        capabilities: [...["agent.turn.completed", "agent.turn.lifecycle"].map((id) => ({ id, kind: "observe", version: 1, error_policy: "isolate" })), { id: "plugin.client.request", kind: "decision", version: 1 }],
+        required_services: [
+          ...["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"].map(requireKernelService),
+          { name: "memory.session", major_version: 1 }
+        ]
+      };
+    },
+    async prepare() {
       const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
       if (result.value !== null) {
         let loaded;
@@ -685,13 +697,6 @@ function createDreamPlugin() {
           delete state.active_session_id;
         }
       }
-      return {
-        capabilities: [...["agent.turn.completed", "agent.turn.lifecycle"].map((id) => ({ id, kind: "observe", version: 1, error_policy: "isolate" })), { id: "plugin.client.request", kind: "decision", version: 1 }],
-        required_services: [
-          ...["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"].map(requireKernelService),
-          { name: "memory.session", major_version: 1 }
-        ]
-      };
     },
     async activate(_runtimeHost, lifecycle) {
       if (lifecycle.signal.aborted) {

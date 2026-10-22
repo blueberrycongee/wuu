@@ -192,9 +192,12 @@ async function handleRuntimeRequest(plugin2, request2, host = unavailableRuntime
         return { id: request2.id, result: {
           ...result,
           protocol_version: result.required_services?.length || result.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
-          lifecycle_version: 1
+          lifecycle_version: 2
         } };
       }
+      case "prepare":
+        await plugin2.prepare?.(host, lifecycle);
+        return { id: request2.id, result: null };
       case "activate":
         await plugin2.activate?.(host, lifecycle);
         return { id: request2.id, result: null };
@@ -393,7 +396,7 @@ async function runJSONLRuntime(plugin2, streams) {
       track(send({ id: parsed.id, error: { message: "runtime is shutting down" } }));
       return;
     }
-    const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
+    const isLifecycle = parsed.method === "initialize" || parsed.method === "prepare" || parsed.method === "activate" || parsed.method === "shutdown";
     if (parsed.method === "shutdown") {
       shuttingDown = true;
       lifetime.abort();
@@ -473,7 +476,7 @@ function isRuntimeRequest(value) {
   if (typeof value !== "object" || value === null) return false;
   const request2 = value;
   if (typeof request2.id !== "string" || typeof request2.method !== "string") return false;
-  if (request2.method === "activate" || request2.method === "shutdown") return true;
+  if (request2.method === "prepare" || request2.method === "activate" || request2.method === "shutdown") return true;
   return ["initialize", "capability.invoke", "service.invoke", "service.changed", "tool.execute"].includes(request2.method) && typeof request2.params === "object" && request2.params !== null;
 }
 

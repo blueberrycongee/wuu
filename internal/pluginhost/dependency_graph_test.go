@@ -13,8 +13,19 @@ import (
 // across service edges, including edges combined with package dependencies.
 type dependencyClient struct {
 	*fakeServiceProcess
+	prepare  func(context.Context) error
 	activate func(context.Context) error
 	close    func(context.Context) error
+}
+
+func (c *dependencyClient) Prepare(ctx context.Context) error {
+	if c.prepare != nil {
+		if err := c.prepare(ctx); err != nil {
+			c.state = StateFailed
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *dependencyClient) Activate(ctx context.Context) error {

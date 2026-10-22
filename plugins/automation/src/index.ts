@@ -279,9 +279,16 @@ export function createAutomationPlugin(): RuntimePlugin {
     });
   }
   return {
-    async initialize(params: RuntimeInitializeParams, runtimeHost: RuntimeHost) {
+    initialize(params: RuntimeInitializeParams, runtimeHost: RuntimeHost) {
       host = runtimeHost; workspaceID = params.workspace_id?.trim() || ""; workspaceRoot = params.project_root.trim();
       tasks = new Map(); runs = []; stopped = false;
+      return {
+        tools: [{ id: "cron", description: "Manage scheduled Agent prompts. action=list returns tasks; action=add creates a one-shot or recurring task from a five-field cron expression; action=remove deletes a task. Use new_thread for an independent visible conversation and thread_heartbeat to wake an existing conversation. Set workspace=worktree so each triggered session runs in its own git worktree instead of the shared project directory.", input_schema: cronSchema, execution_scopes: ["root" as const] }],
+        capabilities: [{ id: "plugin.client.request", kind: "decision" as const, version: 1 }, { id: "agent.turn.lifecycle", kind: "observe" as const, version: 1, error_policy: "isolate" as const }],
+        required_services: (["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService),
+      };
+    },
+    async prepare() {
       const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
       if (result.value != null) {
         try {
@@ -295,11 +302,6 @@ export function createAutomationPlugin(): RuntimePlugin {
           runs = ((state.runs || []) as unknown[]).map(restoreRun);
         } catch (error) { throw new Error(`decode automation plugin state: ${String(error)}`); }
       }
-      return {
-        tools: [{ id: "cron", description: "Manage scheduled Agent prompts. action=list returns tasks; action=add creates a one-shot or recurring task from a five-field cron expression; action=remove deletes a task. Use new_thread for an independent visible conversation and thread_heartbeat to wake an existing conversation. Set workspace=worktree so each triggered session runs in its own git worktree instead of the shared project directory.", input_schema: cronSchema, execution_scopes: ["root" as const] }],
-        capabilities: [{ id: "plugin.client.request", kind: "decision" as const, version: 1 }, { id: "agent.turn.lifecycle", kind: "observe" as const, version: 1, error_policy: "isolate" as const }],
-        required_services: (["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService),
-      };
     },
     activate(_runtimeHost, lifecycle) {
       if (lifecycle.signal.aborted) { stop(); return; }

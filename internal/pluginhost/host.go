@@ -42,6 +42,10 @@ type CapabilityClient interface {
 	InvokeCapability(context.Context, CapabilityInvokeParams) (CapabilityInvokeResult, error)
 }
 
+type preparationClient interface {
+	Prepare(context.Context) error
+}
+
 type lifecycleClient interface {
 	Activate(context.Context) error
 }
@@ -67,6 +71,7 @@ type Host struct {
 	lifecycleRoot       *cordis.Context
 	lifetimes           map[string]*clientLifetime
 	closed              bool
+	preparationErr      error
 	mu                  sync.RWMutex
 	clients             []Client
 	tools               map[string]RegisteredTool
@@ -474,7 +479,7 @@ func (h *Host) ExecuteTool(ctx context.Context, name string, input ToolExecuteIn
 }
 
 func capabilityStateReady(state State) bool {
-	return state == StatePrepared || state == StateActive
+	return state == StateInitialized || state == StatePrepared || state == StateActive
 }
 
 // RecordExecutionUpdate is the kernel-side entry for execution.update: the
@@ -644,6 +649,47 @@ func (h *Host) ExecutionSnapshots() []ExecutionSnapshot {
 	return h.executions.Snapshot()
 }
 
+// Prepare validates a candidate in dependency order before durable commit.
+// Preparation methods may read selected providers but must not publish effects.
+func (h *Host) Prepare(ctx context.Context) error {
+	h.lifecycleMu.Lock()
+	defer h.lifecycleMu.Unlock()
+	return h.prepare(ctx)
+}
+
+func (h *Host) prepare(ctx context.Context) (err error) {
+	if h.closed {
+		return errors.New("plugin generation is closed")
+	}
+	if h.preparationErr != nil {
+		return h.preparationErr
+	}
+	defer func() {
+		if err != nil {
+			h.preparationErr = err
+		}
+	}()
+	if _, err := h.DependencyOrder(); err != nil {
+		return err
+	}
+	h.blockFailedDependencies(ctx)
+	clients := h.orderedClients()
+	if err := h.ownClients(clients); err != nil {
+		return err
+	}
+	dependencies := h.Dependencies()
+	blocked := h.DependencyFailures()
+	for _, client := range clients {
+		if blocked[client.ID()] != nil || client.Status().State == StateFailed || client.Status().State == StateStopped {
+			continue
+		}
+		if err := h.prepareClient(ctx, client, dependencies[client.ID()]); err != nil {
+			return fmt.Errorf("prepare plugin %q: %w", client.ID(), err)
+		}
+	}
+	return nil
+}
+
 // Activate opens the effectful lifecycle of prepared runtimes. The caller owns
 // the durable commit and publication boundary; activation effects cannot be
 // rolled back. Failures remain visible through status inventory.
@@ -653,17 +699,13 @@ func (h *Host) Activate(ctx context.Context) error {
 	}
 	h.lifecycleMu.Lock()
 	defer h.lifecycleMu.Unlock()
-	if h.closed {
-		return errors.New("plugin generation is closed")
-	}
-	if _, err := h.DependencyOrder(); err != nil {
+	if err := h.prepare(ctx); err != nil {
 		return err
 	}
-	h.blockFailedDependencies(ctx)
+	if h.serviceRegistry != nil {
+		h.serviceRegistry.Activate()
+	}
 	clients := h.orderedClients()
-	if err := h.ownClients(clients); err != nil {
-		return err
-	}
 	dependencies := h.Dependencies()
 	var err error
 	blocked := h.DependencyFailures()

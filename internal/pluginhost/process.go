@@ -149,8 +149,8 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 		readerDone: make(chan struct{}),
 	}
 	client.processCtx, client.processCancel = context.WithCancel(context.Background())
-	// Initialization is a prepare phase. Only read-only services are available
-	// until the generation and its durable policy commit.
+	// The transport negotiates routing only. Initialize has no consumer
+	// declarations yet; the registry admits calls during explicit preparation.
 	client.negotiated = map[HostServiceMethod]struct{}{ServiceCallMethod: {}}
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 4096), maxResponseLineSize)
@@ -200,7 +200,7 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 		return nil, fmt.Errorf("initialize plugin %q: %w", config.ID, err)
 	}
 	client.mu.Lock()
-	client.status.State = StatePrepared
+	client.status.State = StateInitialized
 	client.tools = make([]ToolRegistration, len(initialized.Tools))
 	for index, registration := range initialized.Tools {
 		client.tools[index] = cloneToolRegistration(registration)
@@ -214,10 +214,14 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 	client.providedServices = cloneServiceDescriptors(initialized.ProvidedServices)
 	client.requiredServices = cloneServiceRequirements(initialized.RequiredServices)
 	client.activationServices = map[HostServiceMethod]struct{}{ServiceCallMethod: {}}
-	client.negotiated = preflightNegotiatedHostServices(client.activationServices)
+	client.negotiated = cloneHostServiceSet(client.activationServices)
 	client.lifecycleVersion = initialized.LifecycleVersion
 	client.mu.Unlock()
 	if !config.PrepareOnly {
+		if err := client.Prepare(ctx); err != nil {
+			_ = client.Close(context.Background())
+			return nil, fmt.Errorf("prepare plugin %q: %w", config.ID, err)
+		}
 		if err := client.Activate(ctx); err != nil {
 			return nil, fmt.Errorf("activate plugin %q: %w", config.ID, err)
 		}
@@ -310,6 +314,32 @@ func (c *ProcessClient) Status() Status {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.status
+}
+
+// Prepare validates state after declarations and dependency binding are complete.
+// A failure leaves the transport alive for ordered candidate cleanup.
+func (c *ProcessClient) Prepare(ctx context.Context) error {
+	c.mu.RLock()
+	state, version := c.status.State, c.lifecycleVersion
+	c.mu.RUnlock()
+	if state == StatePrepared || state == StateActive {
+		return nil
+	}
+	if state != StateInitialized {
+		return fmt.Errorf("plugin process cannot prepare from state %q", state)
+	}
+	if version == RuntimeLifecycleVersion {
+		prepareCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
+		defer cancel()
+		if err := c.call(prepareCtx, "prepare", nil, nil); err != nil {
+			c.setFailure(err)
+			return err
+		}
+	}
+	c.mu.Lock()
+	c.status.State = StatePrepared
+	c.mu.Unlock()
+	return nil
 }
 
 // Activate opens the negotiated service set and starts lifecycle-aware
@@ -618,16 +648,6 @@ const (
 	pluginMessageResponse pluginMessageKind = iota
 	pluginMessageHostCall
 )
-
-func preflightNegotiatedHostServices(negotiated map[HostServiceMethod]struct{}) map[HostServiceMethod]struct{} {
-	out := make(map[HostServiceMethod]struct{})
-	for service := range negotiated {
-		if service == ServiceCallMethod {
-			out[service] = struct{}{}
-		}
-	}
-	return out
-}
 
 func cloneHostServiceSet(source map[HostServiceMethod]struct{}) map[HostServiceMethod]struct{} {
 	out := make(map[HostServiceMethod]struct{}, len(source))

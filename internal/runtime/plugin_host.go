@@ -43,9 +43,6 @@ func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 }
 
 func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
-	if registry := host.ServiceRegistry(); registry != nil {
-		registry.Activate()
-	}
 	return host.Activate(ctx)
 }
 
@@ -97,7 +94,6 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		timeout := time.Duration(item.Runtime.Timeout) * time.Second
 		handler := newPluginHostServices(item, projectRoot, wuuHome, turnRouter)
 		kernel.add(item.ID, handler)
-		registry.AllowPreflight(item.ID, pluginhost.KernelPreflightRequirements())
 		client, err := start(context.Background(), pluginhost.ProcessConfig{
 			ID:                item.ID,
 			Command:           item.Runtime.Command,
@@ -148,6 +144,9 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		closeErr := host.Close(ctx)
 		cancel()
 		return nil, nil, errors.Join(err, closeErr)
+	}
+	if err := host.Prepare(context.Background()); err != nil {
+		return nil, nil, errors.Join(err, closeStarted())
 	}
 	return host, kernel, nil
 }

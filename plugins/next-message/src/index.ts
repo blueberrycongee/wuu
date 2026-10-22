@@ -82,10 +82,16 @@ export function createNextMessagePlugin(): RuntimePlugin {
   const attempted = new Set<string>();
   return {
     concurrentCapabilities: ["plugin.client.request"],
-    async initialize(_params, host) {
+    initialize() {
       settings = {};
       settingsWrites = Promise.resolve();
       attempted.clear();
+      return {
+        capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }],
+        required_services: [requireKernelService("host.storage.get"), requireKernelService("host.storage.set"), requireModelRequestService()],
+      };
+    },
+    async prepare(host) {
       const stored = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
       if (stored.value !== null) {
         let value: unknown;
@@ -93,10 +99,6 @@ export function createNextMessagePlugin(): RuntimePlugin {
         catch { throw new Error("Invalid stored next-message settings"); }
         settings = parseSettings(value);
       }
-      return {
-        capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }],
-        required_services: [requireKernelService("host.storage.get"), requireKernelService("host.storage.set"), requireModelRequestService()],
-      };
     },
     async invokeCapability(call, host, execution) {
       if (call.capability !== "plugin.client.request") throw new Error("Unknown next-message capability");

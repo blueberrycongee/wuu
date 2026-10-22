@@ -196,9 +196,12 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
         return { id: request.id, result: {
           ...result,
           protocol_version: result.required_services?.length || result.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
-          lifecycle_version: 1
+          lifecycle_version: 2
         } };
       }
+      case "prepare":
+        await plugin.prepare?.(host, lifecycle);
+        return { id: request.id, result: null };
       case "activate":
         await plugin.activate?.(host, lifecycle);
         return { id: request.id, result: null };
@@ -397,7 +400,7 @@ async function runJSONLRuntime(plugin, streams) {
       track(send({ id: parsed.id, error: { message: "runtime is shutting down" } }));
       return;
     }
-    const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
+    const isLifecycle = parsed.method === "initialize" || parsed.method === "prepare" || parsed.method === "activate" || parsed.method === "shutdown";
     if (parsed.method === "shutdown") {
       shuttingDown = true;
       lifetime.abort();
@@ -477,7 +480,7 @@ function isRuntimeRequest(value) {
   if (typeof value !== "object" || value === null) return false;
   const request = value;
   if (typeof request.id !== "string" || typeof request.method !== "string") return false;
-  if (request.method === "activate" || request.method === "shutdown") return true;
+  if (request.method === "prepare" || request.method === "activate" || request.method === "shutdown") return true;
   return ["initialize", "capability.invoke", "service.invoke", "service.changed", "tool.execute"].includes(request.method) && typeof request.params === "object" && request.params !== null;
 }
 
@@ -912,13 +915,20 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
     });
   }
   return {
-    async initialize(params, runtimeHost) {
+    initialize(params, runtimeHost) {
       host = runtimeHost;
       workspaceID = params.workspace_id?.trim() || "";
       workspaceRoot = params.project_root.trim();
       tasks = /* @__PURE__ */ new Map();
       runs = [];
       stopped = false;
+      return {
+        tools: [{ id: "cron", description: "Manage scheduled Agent prompts. action=list returns tasks; action=add creates a one-shot or recurring task from a five-field cron expression; action=remove deletes a task. Use new_thread for an independent visible conversation and thread_heartbeat to wake an existing conversation. Set workspace=worktree so each triggered session runs in its own git worktree instead of the shared project directory.", input_schema: cronSchema, execution_scopes: ["root"] }],
+        capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }, { id: "agent.turn.lifecycle", kind: "observe", version: 1, error_policy: "isolate" }],
+        required_services: ["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"].map(requireKernelService)
+      };
+    },
+    async prepare() {
       const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
       if (result.value != null) {
         try {
@@ -934,11 +944,6 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
           throw new Error(`decode automation plugin state: ${String(error)}`);
         }
       }
-      return {
-        tools: [{ id: "cron", description: "Manage scheduled Agent prompts. action=list returns tasks; action=add creates a one-shot or recurring task from a five-field cron expression; action=remove deletes a task. Use new_thread for an independent visible conversation and thread_heartbeat to wake an existing conversation. Set workspace=worktree so each triggered session runs in its own git worktree instead of the shared project directory.", input_schema: cronSchema, execution_scopes: ["root"] }],
-        capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }, { id: "agent.turn.lifecycle", kind: "observe", version: 1, error_policy: "isolate" }],
-        required_services: ["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"].map(requireKernelService)
-      };
     },
     activate(_runtimeHost, lifecycle) {
       if (lifecycle.signal.aborted) {

@@ -48,7 +48,6 @@ func TestKernelHostServicesRouteThroughRegistryAndPreserveStorageScope(t *testin
 			t.Fatalf("kernel service %q was not registered", descriptor.Name)
 		}
 	}
-	registry.AllowPreflight(item.ID, pluginhost.KernelPreflightRequirements())
 
 	if _, serviceErr := registry.Call(context.Background(), item.ID, pluginhost.ServiceCallParams{
 		Service: pluginhost.KernelStorageSetService, Method: pluginhost.KernelServiceMethod,
@@ -190,8 +189,8 @@ func TestKernelHostServicesRouteThroughRegistryAndPreserveStorageScope(t *testin
 const send=x=>process.stdout.write(JSON.stringify(x)+'\n');let seq=0;const pending=new Map();
 const tool=(id)=>({id,description:id,input_schema:{type:'object',properties:{content:{type:'string'}},additionalProperties:false}});
 createInterface({input:process.stdin}).on('line',line=>{const q=JSON.parse(line);if(!q.method){const f=pending.get(q.id);if(f){pending.delete(q.id);f(q)}return}if(q.method==='execution.cancel')return;
-if(q.method==='initialize'){send({id:q.id,result:{protocol_version:3,lifecycle_version:1,tools:['append','hold','crash'].map(tool),required_services:[{name:'memory.session',major_version:1,required:true},{name:'host.file-lock',major_version:1,required:true}]}});return}
-if(q.method==='activate'||q.method==='shutdown'||q.method==='service.changed'){send({id:q.id,result:null});return}
+if(q.method==='initialize'){send({id:q.id,result:{protocol_version:3,lifecycle_version:2,tools:['append','hold','crash'].map(tool),required_services:[{name:'memory.session',major_version:1,required:true},{name:'host.file-lock',major_version:1,required:true}]}});return}
+if(q.method==='prepare'||q.method==='activate'||q.method==='shutdown'||q.method==='service.changed'){send({id:q.id,result:null});return}
 if(q.method==='tool.execute'){if(q.params.tool_id==='crash'){process.exit(3)}const id='fixture-'+(++seq);pending.set(id,r=>send(r.error?{id:q.id,error:r.error}:{id:q.id,result:{result:{content:[{type:'text',text:JSON.stringify(r.result)}]}}}));const hold=q.params.tool_id==='hold';send({id,method:'host.service.call',params:{service:hold?'host.file-lock':'memory.session',method:hold?'acquire':'append',execution_id:q.params.execution_id,params:hold?{root:'workspace_state',path:'held.lock'}:{thread_id:'shared',target:'notes',content:q.params.arguments.content,source:'nested'}}});}});`
 		if err := os.WriteFile(filepath.Join(fixtureRoot, "runtime.mjs"), []byte(fixture), 0o600); err != nil {
 			t.Fatal(err)

@@ -12,7 +12,7 @@ import (
 // Generation retirement must await cleanup, retain its error, and never release
 // the same transport twice, including when activation or disposal panics.
 func TestHostLifecycleContainsProviderPanics(t *testing.T) {
-	for _, phase := range []string{"activate", "close"} {
+	for _, phase := range []string{"prepare", "activate", "close"} {
 		t.Run(phase, func(t *testing.T) {
 			defer func() {
 				if value := recover(); value != nil {
@@ -21,6 +21,12 @@ func TestHostLifecycleContainsProviderPanics(t *testing.T) {
 			}()
 			var closed int
 			client := &dependencyClient{fakeServiceProcess: &fakeServiceProcess{id: "provider", state: StatePrepared}}
+			client.prepare = func(context.Context) error {
+				if phase == "prepare" {
+					panic("preparation exploded")
+				}
+				return nil
+			}
 			client.activate = func(context.Context) error {
 				if phase == "activate" {
 					panic("activation exploded")
@@ -90,6 +96,19 @@ func TestHostConcurrentShutdownWaitsForConsumerFlush(t *testing.T) {
 	}
 	if !providerClosed.Load() {
 		t.Fatal("shutdown did not release provider")
+	}
+}
+
+func TestFailedPreparationCannotActivateOnRetry(t *testing.T) {
+	client := &dependencyClient{fakeServiceProcess: &fakeServiceProcess{id: "provider", state: StateInitialized}}
+	client.prepare = func(context.Context) error { return errors.New("invalid persisted state") }
+	host := New(client)
+	defer host.Close(context.Background())
+	if err := host.Prepare(context.Background()); err == nil {
+		t.Fatal("corrupt state passed preparation")
+	}
+	if err := host.Activate(context.Background()); err == nil || !strings.Contains(err.Error(), "invalid persisted state") {
+		t.Fatalf("activation forgot preparation failure: %v", err)
 	}
 }
 

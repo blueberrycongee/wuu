@@ -66,13 +66,11 @@ func TestServiceRegistryRoutesBetweenProcessesAndConvergesAfterClose(t *testing.
 		t.Fatalf("service conflicts = %+v", conflicts)
 	}
 	router.set(registry)
-	if err := provider.Activate(context.Background()); err != nil {
-		t.Fatalf("activate provider: %v", err)
+	host := New(consumer, provider)
+	host.AttachServiceRegistry(registry, conflicts)
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatalf("prepare and activate generation: %v", err)
 	}
-	if err := consumer.Activate(context.Background()); err != nil {
-		t.Fatalf("activate consumer: %v", err)
-	}
-	registry.Activate()
 
 	first := invokeServiceConsumer(t, consumer)
 	if first.Code != "" || first.Caller != "search-consumer" || first.Query != "wuu" {
@@ -139,7 +137,7 @@ func runServiceProcessHelper(role string) {
 				result.RequiredServices = []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}
 			}
 			writeServiceHelperResult(encoder, request.ID, result)
-		case "activate":
+		case "prepare", "activate":
 			writeServiceHelperResult(encoder, request.ID, struct{}{})
 		case ServiceInvokeMethod:
 			var params ServiceInvokeParams
