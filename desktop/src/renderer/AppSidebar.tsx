@@ -1171,9 +1171,10 @@ export function AppSidebar({
     .filter((thread) => !thread.archived && !thread.pinned
       && !projectIndex.summaries.has(thread.id) && !projectIndex.managedSessionIDs.has(thread.id)),
   [allSidebarThreads, projectIndex]);
-  const { sections: conversationSections, interactionProps: conversationInteractionProps } = useSidebarConversationActivity(
-    conversationCandidates, activeThreadID, pendingThreadID, state.lastViewedTurnByThreadID,
-  );
+  const { threads: recentConversations, interactionProps: conversationInteractionProps } =
+    useSidebarConversationActivity(
+      conversationCandidates, activeThreadID, pendingThreadID, state.lastViewedTurnByThreadID,
+    );
   const visibleWorkspaceThreadsByWorkspaceID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
     const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
@@ -1811,14 +1812,13 @@ export function AppSidebar({
     for (const groupID of visibleFunctionalGroupOrder) {
       nodes.push(...functionalGroupNodes[groupID]);
     }
-    for (const section of conversationSections) {
-      if (section.threads.length === 0) continue;
-      const label = t(section.id === "running" ? "sidebar.runningConversations"
-        : section.id === "unread" ? "sidebar.unreadConversations" : "sidebar.recentActivity");
-      nodes.push({ id: `section:${section.id}`, kind: "section", label, depth: 0 });
-      for (const thread of section.threads) {
+    if (recentConversations.length > 0) {
+      nodes.push({
+        id: "section:recent", kind: "section", label: t("sidebar.recentActivity"), depth: 0,
+      });
+      for (const thread of recentConversations) {
         nodes.push({
-          ...threadNavigationNode(thread, `section:${section.id}`, activeThreadID, state.lastViewedTurnByThreadID,
+          ...threadNavigationNode(thread, "section:recent", activeThreadID, state.lastViewedTurnByThreadID,
             () => onSelectThread(thread.id), () => toggleThreadPinned(thread), 1),
           id: `recent-thread:${thread.id}`,
         });
@@ -1842,7 +1842,7 @@ export function AppSidebar({
     onSelectWorkspaceThread, onFocusWorkspace, onSelectThread,
     onTogglePinned, pendingThreadID, pinnedHasRunning,
     pinnedHasUnread, pinnedRows, validPinnedItems,
-    projectRows, projectIndex, conversationSections, visibleWorkspaceThreadsByWorkspaceID,
+    projectRows, projectIndex, recentConversations, visibleWorkspaceThreadsByWorkspaceID,
     folderThreadsByID, visibleFunctionalGroupOrder, organization.folders, pinnedFolderIDs,
     sidebarWorkspaces, sidebarScratchPseudoActive, visibleWorkspaceSectionOrder,
     state.activeProjectId, state.initialized, state.lastViewedTurnByThreadID, t,
@@ -2419,87 +2419,79 @@ export function AppSidebar({
                 </SortableFunctionalGroup>
               ))}
             </SortableContext>
-            {conversationSections.some((section) => section.threads.length > 0) ? (
+            {recentConversations.length > 0 ? (
               <div className="sidebar-conversation-activity" {...conversationInteractionProps}>
-                {conversationSections.map(({ id, threads }) => {
-                  if (threads.length === 0) return null;
-                  const recent = id === "recent";
-                  const title = t(id === "running" ? "sidebar.runningConversations"
-                    : id === "unread" ? "sidebar.unreadConversations" : "sidebar.recentActivity");
-                  const headingID = `sidebar-activity-${id}-heading`;
-                  return (
-                    <section
-                      key={id}
-                      className="sidebar-functional-group"
-                      data-conversation-section={id}
-                      data-sidebar-recents={recent ? "" : undefined}
-                      data-collapsed={recent && recentsCollapsed || undefined}
-                      aria-labelledby={headingID}
+                <section
+                  className="sidebar-functional-group"
+                  data-conversation-section="recent"
+                  data-sidebar-recents=""
+                  data-collapsed={recentsCollapsed || undefined}
+                  aria-labelledby="sidebar-activity-recent-heading"
+                >
+                  <div className="sidebar-functional-heading sidebar-recents-heading">
+                    <button
+                      className="sidebar-functional-heading-toggle"
+                      type="button"
+                      aria-expanded={!recentsCollapsed}
+                      aria-label={t(
+                        recentsCollapsed ? "sidebar.expandSection" : "sidebar.collapseSection",
+                        { section: t("sidebar.recentActivity") },
+                      )}
+                      title={t(
+                        recentsCollapsed ? "sidebar.expandSection" : "sidebar.collapseSection",
+                        { section: t("sidebar.recentActivity") },
+                      )}
+                      onClick={toggleRecentsCollapsed}
                     >
-                      <div className="sidebar-functional-heading sidebar-recents-heading">
-                        {recent ? (
-                          <button
-                            className="sidebar-functional-heading-toggle"
-                            type="button"
-                            aria-expanded={!recentsCollapsed}
-                            aria-label={t(
-                              recentsCollapsed ? "sidebar.expandSection" : "sidebar.collapseSection",
-                              { section: title },
-                            )}
-                            title={t(
-                              recentsCollapsed ? "sidebar.expandSection" : "sidebar.collapseSection",
-                              { section: title },
-                            )}
-                            onClick={toggleRecentsCollapsed}
-                          >
-                            <span className="sidebar-functional-heading-label" id={headingID}>{title}</span>
-                            {recentsCollapsed ? (
-                              <span className="sidebar-recents-count" aria-hidden="true">{threads.length}</span>
-                            ) : null}
-                            <ChevronRight
-                              className="sidebar-functional-heading-chevron"
-                              data-expanded={!recentsCollapsed || undefined}
-                              aria-hidden="true"
-                            />
-                          </button>
-                        ) : (
-                          <h2 className="sidebar-unread-heading-label" id={headingID}>
-                            {title}<span className="sidebar-unread-count">{threads.length}</span>
-                          </h2>
-                        )}
-                        {recent ? (
-                          <div className="sidebar-functional-heading-action">
-                            <button
-                              className="sidebar-row-icon-button sidebar-recents-new-thread"
-                              type="button"
-                              aria-label={t("sidebar.newConversation")}
-                              title={t("sidebar.newConversation")}
-                              disabled={!hasRuntimeContext}
-                              onClick={() => activateNative(onStartNewThread)}
-                            >
-                              <SquarePen className="icon" aria-hidden="true" />
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                      <SidebarCollapseBody className="sidebar-functional-group-collapse" expanded={!recent || !recentsCollapsed}>
-                        <div className="sidebar-functional-group-body">
-                          <OrganizationThreadList
-                            threads={threads}
-                            activeID={activeThreadID}
-                            pendingThreadID={pendingThreadID}
-                            lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
-                            onSelect={onSelectThread}
-                            onTogglePinned={onTogglePinned}
-                            onArchive={onArchiveThread}
-                            onDelete={onDeleteThread}
-                            onRename={onRenameThread}
-                          />
-                        </div>
-                      </SidebarCollapseBody>
-                    </section>
-                  );
-                })}
+                      <span
+                        className="sidebar-functional-heading-label"
+                        id="sidebar-activity-recent-heading"
+                      >
+                        {t("sidebar.recentActivity")}
+                      </span>
+                      {recentsCollapsed ? (
+                        <span className="sidebar-recents-count" aria-hidden="true">
+                          {recentConversations.length}
+                        </span>
+                      ) : null}
+                      <ChevronRight
+                        className="sidebar-functional-heading-chevron"
+                        data-expanded={!recentsCollapsed || undefined}
+                        aria-hidden="true"
+                      />
+                    </button>
+                    <div className="sidebar-functional-heading-action">
+                      <button
+                        className="sidebar-row-icon-button sidebar-recents-new-thread"
+                        type="button"
+                        aria-label={t("sidebar.newConversation")}
+                        title={t("sidebar.newConversation")}
+                        disabled={!hasRuntimeContext}
+                        onClick={() => activateNative(onStartNewThread)}
+                      >
+                        <SquarePen className="icon" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                  <SidebarCollapseBody
+                    className="sidebar-functional-group-collapse"
+                    expanded={!recentsCollapsed}
+                  >
+                    <div className="sidebar-functional-group-body">
+                      <OrganizationThreadList
+                        threads={recentConversations}
+                        activeID={activeThreadID}
+                        pendingThreadID={pendingThreadID}
+                        lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
+                        onSelect={onSelectThread}
+                        onTogglePinned={onTogglePinned}
+                        onArchive={onArchiveThread}
+                        onDelete={onDeleteThread}
+                        onRename={onRenameThread}
+                      />
+                    </div>
+                  </SidebarCollapseBody>
+                </section>
               </div>
             ) : null}
             <DragOverlay dropAnimation={dropAnimation}>

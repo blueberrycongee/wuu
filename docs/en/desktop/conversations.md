@@ -10,9 +10,9 @@ Delete is permanent: it removes saved history and cleans up associated artifacts
 
 After the first send, the workspace sidebar immediately shows the pending conversation. You can switch away and return while it is being created. Stop cancels this wait and retains your input; a late creation response does not send the cancelled message or keep an unused empty conversation. Starting another conversation uses a separate draft.
 
-The normal sidebar groups cross-workspace conversations into **Running**, **Unread**, then **Recent**, hiding empty groups. Running conversations are ordered by the current turn's start time, so live output does not move them. Unread and recent conversations are ordered by their latest update. Running and unread groups show all eligible conversations; Recent shows up to 50 and can be collapsed. Older entries remain accessible through their workspace or search. While the pointer is over the list, keyboard focus is in it, or a row is being dragged, positions stay fixed while status indicators update; the groups refresh when the interaction ends.
+The normal sidebar includes cross-workspace **Recent**, ordered with running conversations first, then unread conversations, then the remaining conversations by latest update. Running conversations use the current turn's start time, so live output does not move them. Recent shows up to 50 conversations and can be collapsed, and unread status stays visible on each row. Older entries remain accessible through their workspace or search. While the pointer is over the list, keyboard focus is in it, or a row is being dragged, positions stay fixed while status indicators update; the list refreshes when the interaction ends.
 
-These conversations remain in their workspace lists too. Pinned and archived conversations, project agents, and their managed sessions are excluded from these groups. The compose button in the Recent heading starts a conversation in the active workspace, or in 对话 when no project is selected.
+These conversations remain in their workspace lists too. Pinned and archived conversations, project agents, and their managed sessions are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, or in 对话 when no project is selected.
 
 ## Recover unsent text
 

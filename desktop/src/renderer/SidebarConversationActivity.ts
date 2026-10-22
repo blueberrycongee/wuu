@@ -1,24 +1,32 @@
 import { useEffect, useMemo, useRef, useState, type ComponentPropsWithRef } from "react";
-import { isThreadExecuting, isThreadUnread, sidebarThreadSortTime, type ThreadSummary } from "./AppState";
+import {
+  isThreadExecuting,
+  isThreadUnread,
+  sidebarThreadSortTime,
+  type ThreadSummary,
+} from "./AppState";
 import { readFocusModality } from "./FocusModality";
 
 const RECENT_THREAD_LIMIT = 50;
-const SECTION_IDS = ["running", "unread", "recent"] as const;
+// Running work stays visible at the top, followed by unread replies and then
+// the rest of the recent history. Unread is a row state, not a separate group.
+const ACTIVITY_RANK = { running: 0, unread: 1, settled: 2 } as const;
 
-type ConversationSection = {
-  id: (typeof SECTION_IDS)[number];
-  threads: ThreadSummary[];
+type RecentRow = {
+  thread: ThreadSummary;
+  rank: number;
+  time: number;
 };
 
-/** Keep activity groups current without moving targets during sidebar interaction. */
+/** Keep the Recent list prioritized without moving targets during sidebar interaction. */
 export function useSidebarConversationActivity(
   threads: ThreadSummary[],
   activeThreadID: string | undefined,
   pendingThreadID: string | undefined,
   lastViewedTurnByThreadID: Readonly<Record<string, string>>,
-): { sections: ConversationSection[]; interactionProps: ComponentPropsWithRef<"div"> } {
+): { threads: ThreadSummary[]; interactionProps: ComponentPropsWithRef<"div"> } {
   const ordered = useMemo(() => {
-    const rows = threads.map((thread) => {
+    const rows = threads.map((thread): RecentRow => {
       const running = isThreadExecuting(thread);
       const unread = !running
         && thread.id !== activeThreadID && thread.id !== pendingThreadID
@@ -30,16 +38,16 @@ export function useSidebarConversationActivity(
         : undefined;
       const time = (startedAt ? Date.parse(startedAt) : 0)
         || sidebarThreadSortTime(thread, running);
-      return { thread, section: running ? "running" : unread ? "unread" : "recent", time };
-    }).sort((left, right) => right.time - left.time || left.thread.id.localeCompare(right.thread.id));
-    return SECTION_IDS.map((id) => ({
-      id,
-      threads: rows.filter((row) => row.section === id)
-        .slice(0, id === "recent" ? RECENT_THREAD_LIMIT : undefined)
-        .map((row) => row.thread),
-    }));
-  }, [threads, activeThreadID, pendingThreadID, lastViewedTurnByThreadID]);
-  const [heldOrder, setHeldOrder] = useState<ConversationSection[]>();
+      const rank = running
+        ? ACTIVITY_RANK.running
+        : unread ? ACTIVITY_RANK.unread : ACTIVITY_RANK.settled;
+      return { thread, rank, time };
+    }).sort((left, right) => left.rank - right.rank
+      || right.time - left.time
+      || left.thread.id.localeCompare(right.thread.id));
+    return rows.slice(0, RECENT_THREAD_LIMIT).map((row) => row.thread);
+  }, [activeThreadID, lastViewedTurnByThreadID, pendingThreadID, threads]);
+  const [heldOrder, setHeldOrder] = useState<ThreadSummary[]>();
   const interaction = useRef({ pointer: false, keyboard: false, dragging: false });
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -63,20 +71,17 @@ export function useSidebarConversationActivity(
 
   // Hold membership and positions, not row data: read receipts and execution
   // indicators still update immediately. Removed/archived/pinned rows disappear.
-  const sections = useMemo(() => {
+  const visibleThreads = useMemo(() => {
     if (!heldOrder) return ordered;
     const byID = new Map(threads.map((thread) => [thread.id, thread]));
-    return heldOrder.map((section) => ({
-      ...section,
-      threads: section.threads.flatMap((thread) => {
-        const current = byID.get(thread.id);
-        return current ? [current] : [];
-      }),
-    }));
+    return heldOrder.flatMap((thread) => {
+      const current = byID.get(thread.id);
+      return current ? [current] : [];
+    });
   }, [heldOrder, ordered, threads]);
 
   return {
-    sections,
+    threads: visibleThreads,
     interactionProps: {
       ref: listRef,
       onPointerEnter: (event) => {
