@@ -99,6 +99,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the workspace add menu fully visible outside the sidebar, including its icons and padding, at narrow widths and larger text sizes.
+
 - Prevent sent messages from flickering or jumping when server events confirm them before the send request returns.
 - Use lowercase `worktree` for the English composer toggle label.
 

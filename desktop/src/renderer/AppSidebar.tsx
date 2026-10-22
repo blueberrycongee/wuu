@@ -99,6 +99,7 @@ import { PluginIcon, loadPluginIconURL } from "./PublicIcon";
 import type { RibbonIconModel } from "../shared/chromeOverlay";
 import { SidebarBrand } from "./SidebarBrand";
 import { moveMenuFocus } from "./MenuKeyboardNavigation";
+import { composerMenuWidth, FloatingMenuPortal, useFloatingMenuFocus } from "./ComposerFloatingMenu";
 import { useI18n } from "./i18n";
 import {
   NavigationPresentation,
@@ -114,7 +115,7 @@ import type { SkillsCatalogSection } from "./SkillsCatalog";
 import { primaryViewNavigation } from "./plugins/PrimaryViewNavigation";
 import { PluginSlot } from "./plugins/PluginSlot";
 import { Tooltip } from "./Tooltip";
-import { HoverRevealScopeContext } from "./HoverReveal";
+import { HoverRevealScopeContext, useRetainHoverOwner } from "./HoverReveal";
 
 /**
  * Stable section identity keys for the new sidebar tree.
@@ -711,12 +712,8 @@ export function AppSidebar({
   const dropAnimation = useDropAnimation();
   const addWorkspaceTriggerRef = useRef<HTMLButtonElement>(null);
   const addWorkspaceMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!workspaceMenuOpen) return;
-    addWorkspaceMenuRef.current
-      ?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')
-      ?.focus({ preventScroll: true });
-  }, [workspaceMenuOpen]);
+  useFloatingMenuFocus(addWorkspaceMenuRef, "workspace", workspaceMenuOpen);
+  useRetainHoverOwner(workspaceMenuOpen);
   const [draggingSectionID, setDraggingSectionID] = useState<string | undefined>();
   const [sidebarSortIndicator, setSidebarSortIndicator] = useState<{
     id: string;
@@ -2379,20 +2376,30 @@ export function AppSidebar({
                         <Plus aria-hidden="true" />
                       </button>
                       {workspaceMenuOpen ? (
-                        <div className="project-add-menu" role="menu" ref={addWorkspaceMenuRef}>
-                          <button role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onCreateWorkspace}>
-                            <FolderPlus className="icon-xl" />
-                            <span>{t("sidebar.newBlankWorkspace")}</span>
-                          </button>
-                          <button role="menuitem" disabled={!hostSupports("chooseProjectFolder")} onClick={onOpenWorkspaceFolder}>
-                            <FolderOpen className="icon-xl" />
-                            <span>{t("sidebar.useExistingFolder")}</span>
-                          </button>
-                          <button role="menuitem" onClick={() => { onToggleWorkspaceMenu(); createFolder(); }}>
-                            <FolderPlus className="icon-xl" />
-                            <span>{t("sidebar.newFolder")}</span>
-                          </button>
-                        </div>
+                        <FloatingMenuPortal
+                          anchorRef={addWorkspaceTriggerRef}
+                          owner="sidebar-workspace"
+                          placement="below"
+                          align="right"
+                          offset={4}
+                          width={composerMenuWidth(240)}
+                          flip
+                        >
+                          <div className="project-add-menu" role="menu" ref={addWorkspaceMenuRef}>
+                            <button role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onCreateWorkspace}>
+                              <FolderPlus className="icon-xl" />
+                              <span>{t("sidebar.newBlankWorkspace")}</span>
+                            </button>
+                            <button role="menuitem" disabled={!hostSupports("chooseProjectFolder")} onClick={onOpenWorkspaceFolder}>
+                              <FolderOpen className="icon-xl" />
+                              <span>{t("sidebar.useExistingFolder")}</span>
+                            </button>
+                            <button role="menuitem" onClick={() => { onToggleWorkspaceMenu(); createFolder(); }}>
+                              <FolderPlus className="icon-xl" />
+                              <span>{t("sidebar.newFolder")}</span>
+                            </button>
+                          </div>
+                        </FloatingMenuPortal>
                       ) : null}
                     </div>
                   )}

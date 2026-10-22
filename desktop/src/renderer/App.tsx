@@ -2230,7 +2230,11 @@ export function App(): JSX.Element {
       if (!(target instanceof Node)) {
         return;
       }
-      if (workspaceMenuOpen && !workspaceMenuRef.current?.contains(target)) {
+      if (
+        workspaceMenuOpen &&
+        !workspaceMenuRef.current?.contains(target) &&
+        !isInsideFloatingMenu(target, "sidebar-workspace")
+      ) {
         setWorkspaceMenuOpen(false);
       }
       if (

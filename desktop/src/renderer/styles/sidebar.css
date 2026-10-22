@@ -1705,13 +1705,10 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 .project-add-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  left: 0;
-  z-index: 30;
   display: grid;
-  width: auto;
+  width: var(--floating-menu-available-width);
+  max-height: var(--floating-menu-available-height);
+  overflow-y: auto;
   gap: 1px;
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
@@ -2519,13 +2516,6 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
 .sidebar-functional-heading .sidebar-add-workspace {
   width: auto;
   flex: 0 0 auto;
-}
-
-.sidebar-functional-heading .project-add-menu {
-  right: calc(-1 * var(--sidebar-row-pad-x));
-  left: auto;
-  min-width: 208px;
-  box-shadow: var(--shadow-card);
 }
 
 .sidebar-settings-button {

@@ -24,6 +24,7 @@ export type FloatingMenuOwner =
   | "web-workspace-downloads"
   | "web-workspace-options"
   | "sidebar-account"
+  | "sidebar-workspace"
   | "conversation-actions"
   | "conversation-triggers"
   | "composer-handoff"
