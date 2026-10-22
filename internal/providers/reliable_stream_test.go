@@ -544,3 +544,36 @@ func TestReliableStreamClientReplayGuardBlocksUnsafeRetry(t *testing.T) {
 		t.Fatalf("typed failed lifecycle = %+v", failed)
 	}
 }
+
+// A pre-connect fault, mid-output interruption and exhaustion must consume the
+// existing shared budget; a user continuation is a separate product workflow.
+func TestRecoveryFaultMatrixKeepsWorkflowBudgets(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		op := NewInferenceOperation(InferenceOperationAgentRound, InferenceProfileInteractive)
+		op.AttemptLimit = 2
+		first := reliableStreamAttempt{err: errors.New("connection refused")}
+		if partial {
+			first = reliableStreamAttempt{events: []StreamEvent{{Type: EventContentDelta, Content: "discard"}, {Type: EventError, Error: NewIncompleteStreamError("injected drop")}}}
+		}
+		inner := &reliableStreamMockClient{attempts: []reliableStreamAttempt{first, {events: []StreamEvent{{Type: EventError, Error: NewIncompleteStreamError("injected budget exhaustion")}}}}}
+		client := newReliableTestClient(inner, nil)
+		ch, err := client.StreamChat(context.Background(), ChatRequest{Operation: op, Model: "fake", Messages: []ChatMessage{{Role: "user", Content: "original"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		events := collectReliableEvents(t, ch)
+		var terminal *StreamRecoveryError
+		reset := false
+		for _, event := range events {
+			if event.Type == EventError {
+				errors.As(event.Error, &terminal)
+			}
+			if event.Lifecycle != nil && event.Lifecycle.Phase == StreamPhaseReconnecting {
+				reset = event.Lifecycle.ResetPartial
+			}
+		}
+		if terminal == nil || terminal.Recovery.StopReason != "retry_limit" || inner.callCount != 2 || reset != partial {
+			t.Fatalf("partial=%v terminal=%+v attempts=%d reset=%v", partial, terminal, inner.callCount, reset)
+		}
+	}
+}

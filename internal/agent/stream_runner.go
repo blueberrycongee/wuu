@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/compact"
@@ -29,12 +30,13 @@ const maxConsecutiveProactiveCompactFailures = 3
 // so the actual loop logic — step counting, finish handling,
 // context-overflow auto-compact — comes from the same code as Runner.
 type StreamRunner struct {
-	Client       providers.StreamClient
-	ProviderName string
-	Tools        ToolExecutor
-	ToolLedger   *toolledger.Ledger
-	Model        string
-	APIModel     string
+	ResumeSampling bool
+	Client         providers.StreamClient
+	ProviderName   string
+	Tools          ToolExecutor
+	ToolLedger     *toolledger.Ledger
+	Model          string
+	APIModel       string
 	// ProviderObservationKey is an opaque identity for the configured provider
 	// instance and its endpoint/protocol. Runtime construction fills it so an
 	// in-place provider reconfiguration cannot reuse stale context observations.
@@ -367,7 +369,7 @@ func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers
 		requestModel = r.Model
 	}
 	runUsageContract := usageContractKey(providerObservationKey, r.ProviderName, requestModel, r.Variant, r.Effort, r.ProviderOptions)
-	history = filterDurableHistory(history)
+	history = providers.ResolveProviderHistory(filterDurableHistory(history), r.ProviderName, "")
 	recoveredToolMessages, err := r.pendingToolResultMessages(ctx, history)
 	if err != nil {
 		return LoopResult{}, fmt.Errorf("recover pending tool results: %w", err)
@@ -435,6 +437,7 @@ func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers
 		forceToolFirstStep = ""
 	}
 	cfg := LoopConfig{
+		ResumeSampling:           r.ResumeSampling,
 		Tools:                    tools,
 		Model:                    requestModel,
 		ProviderName:             r.ProviderName,
@@ -1367,6 +1370,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		thinkingBuf       strings.Builder
 		images            []providers.InputImage
 		reasoningBlocks   []providers.ReasoningBlock
+		completedMessages []providers.ChatMessage
 		providerItems     []providers.ProviderItem
 		pendingTools      = map[int]*providers.ToolCall{}
 		usage             *providers.TokenUsage
@@ -1400,7 +1404,12 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		toolRuntime = newToolRuntime()
 	}
 
+	var completedCheckpoint atomic.Bool
 	observeEvent := func(eventCtx context.Context, ev providers.StreamEvent) error {
+		if (ev.Type == providers.EventAssistantItemDone && ev.Message != nil) ||
+			(ev.Type == providers.EventThinkingDone && ev.ReasoningBlock != nil) {
+			completedCheckpoint.Store(true)
+		}
 		rt := currentToolRuntime()
 		if rt == nil || !s.enableStreamingToolExec {
 			return nil
@@ -1417,6 +1426,11 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		}
 	}
 	replayGuard := func(_ providers.StreamRetryContext) error {
+		// Replaying the old payload would discard protocol-complete progress.
+		// Preserve it for a new, explicitly admitted sampling turn instead.
+		if completedCheckpoint.Load() {
+			return errors.New("completed assistant items require explicit continuation from saved history")
+		}
 		rt := currentToolRuntime()
 		if rt == nil {
 			return nil
@@ -1438,7 +1452,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		}
 		return nil
 	}
-	if err := s.runReliableStream(ctx, req, &contentBuf, &thinkingBuf, &reasoningBlocks, &providerItems, &images, pendingTools, &messagePhase, &providerItemID, &providerItemModel, &usage, &stopReason, &finishReason, &truncated, resetRuntime, replayGuard, observeEvent); err != nil {
+	if err := s.runReliableStream(ctx, req, &contentBuf, &thinkingBuf, &completedMessages, &reasoningBlocks, &providerItems, &images, pendingTools, &messagePhase, &providerItemID, &providerItemModel, &usage, &stopReason, &finishReason, &truncated, resetRuntime, replayGuard, observeEvent); err != nil {
 		if rt := currentToolRuntime(); rt != nil {
 			rt.Cancel()
 		}
@@ -1464,15 +1478,16 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 			partialToolRuntime = nil
 		}
 		partial := StepResult{
-			ProviderItems:    providerItems,
-			Images:           images,
-			Content:          contentBuf.String(),
-			Phase:            messagePhase,
-			ProviderItemID:   providerItemID,
-			ReasoningContent: thinkingBuf.String(),
-			ReasoningBlocks:  cloneReasoningBlocks(reasoningBlocks),
-			ToolCalls:        partialToolCalls,
-			ToolRuntime:      partialToolRuntime,
+			CompletedMessages: providers.CloneChatMessages(completedMessages),
+			ProviderItems:     providerItems,
+			Images:            images,
+			Content:           contentBuf.String(),
+			Phase:             messagePhase,
+			ProviderItemID:    providerItemID,
+			ReasoningContent:  thinkingBuf.String(),
+			ReasoningBlocks:   cloneReasoningBlocks(reasoningBlocks),
+			ToolCalls:         partialToolCalls,
+			ToolRuntime:       partialToolRuntime,
 		}
 		if journalErr := req.Execution.Complete(outcome, failure); journalErr != nil {
 			return partial, errors.Join(fmt.Errorf("stream request failed: %w", err), fmt.Errorf("complete failed inference operation: %w", journalErr))
@@ -1699,6 +1714,7 @@ func (s *streamStep) runReliableStream(
 	req providers.ChatRequest,
 	contentBuf *strings.Builder,
 	thinkingBuf *strings.Builder,
+	completedMessages *[]providers.ChatMessage,
 	reasoningBlocks *[]providers.ReasoningBlock,
 	providerItems *[]providers.ProviderItem,
 	images *[]providers.InputImage,
@@ -1719,11 +1735,12 @@ func (s *streamStep) runReliableStream(
 	resetPartialOutput := func() {
 		hadContent := contentBuf.Len() > 0
 		hadThinking := thinkingBuf.Len() > 0
-		if !hadContent && !hadThinking && len(*reasoningBlocks) == 0 && len(*images) == 0 && len(*providerItems) == 0 {
+		if !hadContent && !hadThinking && len(*reasoningBlocks) == 0 && len(*images) == 0 && len(*providerItems) == 0 && len(*completedMessages) == 0 {
 			return
 		}
 		contentBuf.Reset()
 		thinkingBuf.Reset()
+		*completedMessages = nil
 		*reasoningBlocks = nil
 		*providerItems = nil
 		*images = nil
@@ -1804,6 +1821,17 @@ func (s *streamStep) runReliableStream(
 
 		for event := range ch {
 			switch event.Type {
+			case providers.EventAssistantItemDone:
+				if event.Message != nil && event.Message.Role == "assistant" && len(event.Message.ToolCalls) == 0 {
+					message := providers.CloneChatMessage(*event.Message)
+					message.ProviderItemProvider = req.Provider
+					message.ProviderItemModel = req.Model
+					for i := range message.ProviderItems {
+						message.ProviderItems[i].Provider = req.Provider
+						message.ProviderItems[i].Scope = req.ProviderStateScope
+					}
+					*completedMessages = append(*completedMessages, message)
+				}
 			case providers.EventProviderItem:
 				if event.ProviderItem != nil {
 					item := *event.ProviderItem
@@ -1845,6 +1873,10 @@ func (s *streamStep) runReliableStream(
 			case providers.EventThinkingDone:
 				if event.ReasoningBlock != nil {
 					*reasoningBlocks = append(*reasoningBlocks, *event.ReasoningBlock)
+					*completedMessages = append(*completedMessages, providers.ChatMessage{
+						Role: "assistant", ProviderItemProvider: req.Provider, ProviderItemModel: req.Model,
+						ReasoningBlocks: []providers.ReasoningBlock{*event.ReasoningBlock},
+					})
 				}
 
 			case providers.EventToolUseStart:

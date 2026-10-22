@@ -1,3 +1,4 @@
+import { showErrorToast } from "./Toast";
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion, type ComposerInlineCompletionActions } from "./ComposerInlineCompletion";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
@@ -231,6 +232,7 @@ export function Composer({
   onEditQueuedMessage,
   onEditGuideMessage,
   onSend,
+  onContinue,
   onSteer,
   onQueue,
   onInterrupt,
@@ -351,6 +353,7 @@ export function Composer({
   onEditQueuedMessage: (id: string) => void;
   onEditGuideMessage: (id: string) => void;
   onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
+  onContinue?: () => Promise<void>;
   onSteer?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
   onQueue?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
   onInterrupt: () => void;
@@ -453,6 +456,9 @@ export function Composer({
   }`;
   const hasAttachments = images.length > 0 || files.length > 0 || selections.length > 0;
   const hasDraft = prompt.trim().length > 0 || hasAttachments;
+  const [continuePending, setContinuePending] = useState(false);
+  const continuePendingRef = useRef(false);
+  const canContinue = Boolean(onContinue) && !running && !submitting && parseComposerSlashDraft(prompt)?.query !== "handoff";
   const pluginTranslate = useMemo(() => t, [locale]);
   const pluginSlotContext = useMemo(() => Object.freeze({
     threadId: queryHistorySessionID,
@@ -483,7 +489,7 @@ export function Composer({
     ? t("composer.steerSend")
     : running
       ? t("composer.queueSend")
-      : t("composer.send");
+      : !hasDraft && canContinue ? t("turnFailure.continue") : t("composer.send");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerFrameRef = useRef<HTMLDivElement>(null);
   const workspacePillRef = useRef<HTMLButtonElement>(null);
@@ -861,6 +867,16 @@ export function Composer({
       return;
     }
     const submittingHasDraft = promptOverride.trim().length > 0 || hasAttachments;
+    if (!submittingHasDraft && canContinue && onContinue && !readOnly && !effectiveSendDisabled) {
+      if (continuePendingRef.current) return;
+      continuePendingRef.current = true;
+      setContinuePending(true);
+      void onContinue().catch((error) => showErrorToast(error)).finally(() => {
+        continuePendingRef.current = false;
+        setContinuePending(false);
+      });
+      return;
+    }
     submitComposerWith(
       running && submittingHasDraft && onSteer ? onSteer : onSend,
       promptOverride,
@@ -1529,7 +1545,7 @@ export function Composer({
                     className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
                     data-wuu-component="composer-send"
                     data-wuu-state={stopState ?? (showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
-                    aria-busy={stopState === "pending" || (showComposerStopAction && submitting) || undefined}
+                    aria-busy={continuePending || stopState === "pending" || (showComposerStopAction && submitting) || undefined}
                     type="button"
                     onPointerDown={(event) => {
                       if (!showComposerStopAction && event.button === 0 && document.activeElement === textareaRef.current) {
@@ -1543,8 +1559,8 @@ export function Composer({
                     aria-description={sendDisabledReason}
                     title={sendDisabledReason ? undefined : stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel}
                     disabled={
-                      stopState === "pending" || (!showComposerStopAction &&
-                      (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff)))
+                      continuePending || stopState === "pending" || (!showComposerStopAction &&
+                      (effectiveSendDisabled || readOnly || (!hasDraft && !canContinue) || (handoffMode && !canConfirmHandoff)))
                     }
                   >
                     {showComposerStopAction ? <ComposerStopIcon state={stopState} submitting={submitting} /> : <ArrowUp aria-hidden="true" />}

@@ -750,10 +750,11 @@ export class RemoteDesktopBridge {
       takeOverManagedSession: (params) => this.call("thread/control/take", params),
       projectSession: (params) => this.call("project/session", params),
 
-      startTurn: (threadId, prompt, images, files, permissionMode, activeDocument, contentParts, _targetContext, clientId) =>
+      startTurn: (threadId, prompt, images, files, permissionMode, activeDocument, contentParts, _targetContext, clientId, resumeAfterTurnId) =>
         this.call("turn/start", {
           thread_id: threadId,
           ...(clientId === undefined ? {} : { client_id: clientId }),
+          ...(resumeAfterTurnId === undefined ? {} : { resume_after_turn_id: resumeAfterTurnId }),
           prompt,
           images: images ?? [],
           files: files ?? [],

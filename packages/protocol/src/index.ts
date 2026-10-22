@@ -3308,6 +3308,7 @@ export type WuuDesktopApi = {
     // Capture the destination before attachment preparation or a workspace switch.
     targetContext?: RuntimeContext,
     clientId?: string,
+    resumeAfterTurnId?: string,
   ) => Promise<{ turn: Turn }>;
   queueTurn: (
     threadId: string,

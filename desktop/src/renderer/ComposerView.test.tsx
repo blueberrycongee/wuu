@@ -142,6 +142,7 @@ function renderComposer(props: {
   initialized?: InitializeResult;
   readOnly?: boolean;
   onInterrupt?: () => void;
+  onContinue?: () => Promise<void>;
   onSend?: (promptOverride?: string) => void;
   onSteer?: (promptOverride?: string) => void;
   onPasteAttachmentFiles?: (files: File[]) => void;
@@ -248,6 +249,7 @@ function renderComposer(props: {
           onGuideQueuedMessage={props.onGuideQueuedMessage ?? (() => {})}
           onEditQueuedMessage={props.onEditQueuedMessage ?? (() => {})}
           onEditGuideMessage={props.onEditGuideMessage ?? (() => {})}
+          onContinue={props.onContinue}
           onSend={props.onSend ?? (() => {})}
           onSteer={props.onSteer}
           onQueue={props.onQueue}
@@ -4200,4 +4202,24 @@ describe("composer drag and drop", () => {
     expect(onPasteAttachmentFiles.mock.calls[0][0]).toEqual([image]);
     expect(container.querySelector(".split-composer-shell-drop-active")).toBeNull();
   });
+});
+
+
+it("continues empty idle input once without sending or clearing a draft", async () => {
+  let finish!: () => void;
+  const onContinue = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+  const onSend = vi.fn();
+  const setPrompt = vi.fn();
+  renderComposer({ onContinue, onSend, setPrompt });
+  const button = container.querySelector<HTMLButtonElement>('[data-wuu-component="composer-send"]')!;
+  expect(button.disabled).toBe(false);
+  await act(async () => { button.click(); button.click(); });
+  expect(onContinue).toHaveBeenCalledOnce();
+  expect(onSend).not.toHaveBeenCalled();
+  expect(setPrompt).not.toHaveBeenCalled();
+  expect(button.disabled).toBe(true);
+  await act(async () => { finish(); });
+  renderComposer({ prompt: "new instruction", onContinue, onSend, setPrompt });
+  act(() => { button.click(); });
+  expect(onSend).toHaveBeenCalledWith("new instruction");
 });

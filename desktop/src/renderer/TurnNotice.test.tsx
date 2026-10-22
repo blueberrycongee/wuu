@@ -330,7 +330,7 @@ describe("TurnNotice process row", () => {
 
     const notice = host.querySelector("aside.turn-failure.is-retrying");
     expect(notice?.querySelector("[role=progressbar]")?.getAttribute("aria-valuenow")).toBe("0");
-    expect(notice?.textContent).toContain(t("turnFailure.rateLimit"));
+    expect(notice?.getAttribute("data-recovery-state")).toBe("retrying");
     expect(notice?.textContent).toContain(t("appState.retrySeconds", { count: "2" }));
     // The redacted provider cause stays out of the row; the structured
     // category maps to a localized title instead.
@@ -422,7 +422,7 @@ describe("TurnFailureNotice", () => {
 
   it("keeps the status and the automatic retries with the technical record", () => {
     const host = mount(<TurnFailureNotice display={userFacingErrorForMessage(serverError, "turn")} error={serverError} onRetry={vi.fn()} />);
-    expect(host.querySelector(".turn-failure-title")?.textContent).toBe(t("turnFailure.unavailable"));
+    expect(host.querySelector("aside")?.getAttribute("data-recovery-state")).toBe("exhausted");
     expect(host.querySelector(".turn-failure-message")?.textContent).not.toContain("500");
     expect(buttons(host).map((button) => button.textContent)).toEqual([t("appState.retryAction")]);
     act(() => { host.querySelector<HTMLButtonElement>(".turn-failure-details-toggle")!.click(); });
@@ -533,4 +533,17 @@ describe("TurnFailureNotice", () => {
       }
     },
   );
+});
+
+it.each([
+  ["waiting_network", "in_progress", undefined],
+  ["retrying", "in_progress", undefined],
+  ["exhausted", "failed", "retry_limit"],
+  ["unsafe_replay", "failed", "replay_unsafe"],
+] as const)("exposes distinct recovery state %s", (state, status, stop) => {
+  const host = mount(<TurnFailureNotice reconnect={{id: "reconnect", type: "stream_reconnect", status,
+    reason: state === "waiting_network" ? "waiting_network" : "incomplete_stream"}}
+    error={stop ? {message:"injected failure", recovery:{attempt_count:2, retry_count:1, max_attempts:2, submission_count:1, stop_reason:stop,
+      failure_category:stop === "replay_unsafe" ? "replay_unsafe" : "incomplete_stream"}} : undefined} />);
+  expect(host.querySelector("aside")?.getAttribute("data-recovery-state")).toBe(state);
 });

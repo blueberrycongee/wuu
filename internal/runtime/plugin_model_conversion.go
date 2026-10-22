@@ -504,7 +504,7 @@ func logicalModelStreamEvent(in providers.StreamEvent) pluginhost.ModelStreamEve
 func modelStreamEventFromLogical(in pluginhost.ModelStreamEventV1) (providers.StreamEvent, error) {
 	out := providers.StreamEvent{Type: providers.StreamEventType(in.Type), Content: in.Content, Phase: providers.MessagePhase(in.Phase), ProviderItemID: in.ProviderItemID, ProviderEventType: in.ProviderEventType, StopReason: in.StopReason, FinishReason: providers.FinishReason(in.FinishReason), Truncated: in.Truncated}
 	switch out.Type {
-	case providers.EventContentDelta, providers.EventContentReplace, providers.EventThinkingDelta, providers.EventThinkingReplace, providers.EventThinkingDone, providers.EventImage, providers.EventToolUseStart, providers.EventToolUseDelta, providers.EventToolUseEnd, providers.EventProviderItem, providers.EventUsage, providers.EventDone, providers.EventError, providers.EventLifecycle, providers.EventProviderState, providers.EventReconnect:
+	case providers.EventAssistantItemDone, providers.EventContentDelta, providers.EventContentReplace, providers.EventThinkingDelta, providers.EventThinkingReplace, providers.EventThinkingDone, providers.EventImage, providers.EventToolUseStart, providers.EventToolUseDelta, providers.EventToolUseEnd, providers.EventProviderItem, providers.EventUsage, providers.EventDone, providers.EventError, providers.EventLifecycle, providers.EventProviderState, providers.EventReconnect:
 	default:
 		return out, errors.New("unsupported model stream event")
 	}
@@ -562,6 +562,10 @@ func modelStreamEventFromLogical(in pluginhost.ModelStreamEventV1) (providers.St
 		out.Error = serviceError(in.Error.Code, in.Error.Message)
 	}
 	switch out.Type {
+	case providers.EventAssistantItemDone:
+		if out.Message == nil || out.Message.Role != "assistant" {
+			return out, errors.New("assistant_item_done event requires an assistant message")
+		}
 	case providers.EventImage:
 		if out.Image == nil {
 			return out, errors.New("image event requires image")

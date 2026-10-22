@@ -1,3 +1,4 @@
+import { showErrorToast } from "./Toast";
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion } from "./ComposerInlineCompletion";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
@@ -118,6 +119,7 @@ export function SplitPaneComposer({
   onRemoveFile,
   onRemoveImage,
   onSend,
+  onContinue,
   onInterrupt,
 }: {
   prompt: string;
@@ -146,6 +148,7 @@ export function SplitPaneComposer({
   onRemoveFile: (id: string) => void;
   onRemoveImage: (id: string) => void;
   onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
+  onContinue?: () => Promise<void>;
   onInterrupt: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -177,6 +180,9 @@ export function SplitPaneComposer({
   }, [readOnly, queryHistorySessionID]);
   const hasAttachments = images.length > 0 || files.length > 0 || selections.length > 0;
   const hasDraft = prompt.trim().length > 0 || hasAttachments;
+  const [continuePending, setContinuePending] = useState(false);
+  const continuePendingRef = useRef(false);
+  const canContinue = Boolean(onContinue) && !running && !submitting;
   const draftSignature = JSON.stringify([prompt, images.map(image => image.id), files.map(file => file.id), selections]);
   const submittedDraftRef = useRef<string | undefined>(undefined);
   useEffect(() => { submittedDraftRef.current = undefined; }, [draftSignature, queryHistorySessionID]);
@@ -184,7 +190,7 @@ export function SplitPaneComposer({
   // with an empty input. Once there is a draft, it flips to send (queuing
   // mid-turn) so a typed follow-up is never blocked by the stop state.
   const showStop = Boolean(stopState) || ((running || submitting) && !sendDisabled && !hasDraft);
-  const sendLabel = running ? t("composer.queueSend") : t("composer.send");
+  const sendLabel = running ? t("composer.queueSend") : !hasDraft && canContinue ? t("turnFailure.continue") : t("composer.send");
 
   function focusComposerSoon(): void {
     focusComposerTextarea(textareaRef.current);
@@ -315,6 +321,16 @@ export function SplitPaneComposer({
   function submitComposer(): void {
     const visiblePrompt = textareaRef.current?.value ?? visiblePromptValue;
     const currentPrompt = hasCollapsedPromptBlocks ? `${collapsedPromptPrefix}${visiblePrompt}` : visiblePrompt;
+    if (!currentPrompt.trim() && !hasAttachments && canContinue && onContinue && !readOnly && !sendDisabled) {
+      if (continuePendingRef.current) return;
+      continuePendingRef.current = true;
+      setContinuePending(true);
+      void onContinue().catch((error) => showErrorToast(error)).finally(() => {
+        continuePendingRef.current = false;
+        setContinuePending(false);
+      });
+      return;
+    }
     const currentSignature = JSON.stringify([currentPrompt, images.map(image => image.id), files.map(file => file.id), selections]);
     if (readOnly || sendDisabled || submittedDraftRef.current === currentSignature) return;
     resetQueryHistoryNavigation();
@@ -511,7 +527,8 @@ export function SplitPaneComposer({
                         onClick={submitComposer}
                         aria-label={sendLabel}
                         title={sendLabel}
-                        disabled={readOnly || sendDisabled || !hasDraft}
+                        aria-busy={continuePending || undefined}
+                        disabled={continuePending || readOnly || sendDisabled || (!hasDraft && !canContinue)}
                       >
                         <ArrowUp aria-hidden="true" />
                       </button>

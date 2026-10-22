@@ -63,6 +63,20 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 未传入 `conversation_history` 的客户端继续使用原来的历史格式。
 旧版主机会忽略此选项，返回常规历史页。
 
+## 不增加用户消息的显式继续
+
+空闲的 Wuu 引擎会话可以用服务器返回的最新轮次 ID 调用：
+
+```json
+{"id":"continue-1","method":"turn/start","params":{"thread_id":"thread-id","resume_after_turn_id":"thread-id-turn-0001"}}
+```
+
+省略 prompt 和附件。核心先获得线程执行租约、刷新持久历史，再比较源轮次。源 ID 过期、正在执行、只读、没有历史、非 Wuu 引擎或至多一次工具的结果未知时，会拒绝接纳。成功返回新的空轮次，不插入用户消息；即使新轮次已经结束或服务器重启，重复源 ID 仍会被拒绝。响应结果不明确时先重新读取会话，不要自动换成新的最新轮次 ID 重发。
+
+持久化的 `meta/turn_continue` 只划分显示轮次，不进入模型输入。采样前从账本恢复已完成工具结果；带 `incomplete_stream_fragment` cause 的显示片段被排除。接纳后进程崩溃会留下独立的中断轮次，用户可以再次明确继续。
+
+Responses 和 Chat Completions 使用经过规范化的客户端历史，保留配对工具结果及兼容推理；失败响应身份不会复用，Responses 原生状态仍检查 provider、model 和 scope。Anthropic Messages 的历史若以 assistant 结束，会仅在本次请求加入 user 兼容引导，避免使用不受支持的 assistant prefill；工具结果结尾本来就映射为 user。兼容引导不会成为持久用户消息。参考 [Anthropic prefill 限制](https://platform.claude.com/docs/en/api/errors#prefill-not-supported)和 [Responses 会话状态](https://developers.openai.com/api/docs/guides/conversation-state)。
+
 ## 排队输入与崩溃恢复
 
 持久对话中的 `turn/queue`、`turn/steer` 接收输入，以及编辑和取消操作，都会先提交本地存储，

@@ -2021,6 +2021,9 @@ type GitCommitMessageResult struct {
 }
 
 type TurnStartParams struct {
+	// ResumeAfterTurnID starts a new turn without adding user input. The latest
+	// durable turn must still match, fencing stale and duplicate submissions.
+	ResumeAfterTurnID string `json:"resume_after_turn_id,omitempty"`
 	// ClientID correlates renderer intent with the persisted user item.
 	ClientID       string                         `json:"client_id,omitempty"`
 	ThreadID       string                         `json:"thread_id"`

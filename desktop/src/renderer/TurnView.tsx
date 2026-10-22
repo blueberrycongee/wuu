@@ -8,6 +8,7 @@ import type {
   ThreadItem,
   Turn,
 } from "../shared/protocol";
+import { OPTIMISTIC_TURN_ID_PREFIX } from "./ComposerMessages";
 import { buildAssistantTurnDisplay } from "./AssistantTurnDisplay";
 import { useAssistantTurnPresentation } from "./AssistantTurnPresentation";
 import { AssistantTurnShell } from "./AssistantTurnShell";
@@ -109,9 +110,9 @@ function openModelServices(): void {
 
 // Resolves once the app sent the follow-up, or at once when nothing claimed
 // the request.
-function continueTurn(threadID: string): Promise<void> {
+function continueTurn(threadID: string, turnID: string, engineID?: string): Promise<void> {
   return new Promise((resolve) => {
-    const detail: ContinueTurnDetail = { threadID, text: t("turnFailure.continuePrompt"), done: () => resolve() };
+    const detail: ContinueTurnDetail = { threadID, turnID, ...(engineID && engineID !== "wuu" ? {text: t("turnFailure.continuePrompt")} : {}), done: () => resolve() };
     if (window.dispatchEvent(new CustomEvent(CONTINUE_TURN_EVENT, { detail, cancelable: true }))) resolve();
   });
 }
@@ -272,9 +273,10 @@ function TurnContent({
   // continue their native session, just as we do when a turn left partial work.
   const recoverable = isLatestTurn && turnEndedInFailure(turn) && onEditMessage && onSubmitEditMessage;
   const canRewindHistory = !engineID || engineID === "wuu" || engineID === "codex";
-  const shouldContinue = !canRewindHistory || turnLeftPartialWork(turn);
+  const shouldContinue = !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)
+    && ((Boolean(threadID) && (!engineID || engineID === "wuu")) || !canRewindHistory || turnLeftPartialWork(turn));
   const continueFailedTurn = recoverable && shouldContinue && threadID
-    ? () => continueTurn(threadID)
+    ? () => continueTurn(threadID, turn.id, engineID)
     : undefined;
   const retryFailedTurn = recoverable && !shouldContinue && retryMessage
     ? () => onSubmitEditMessage(

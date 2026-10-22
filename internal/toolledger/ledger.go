@@ -593,3 +593,29 @@ func newID(prefix string) string {
 	}
 	return prefix + "-" + hex.EncodeToString(raw[:])
 }
+
+// ValidateContinuation blocks fresh sampling when a previous at-most-once
+// effect has no confirmed result. The caller must first reconcile under its
+// execution lease; starting a fresh operation cannot make that ambiguity safe.
+func (l *Ledger) ValidateContinuation(ctx context.Context) error {
+	if l == nil {
+		return nil
+	}
+	db, err := session.OpenStore(l.sessDir)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var id string
+	err = db.QueryRowContext(ctx, `SELECT i.id FROM tool_invocations i
+JOIN tool_batches b ON b.id = i.batch_id
+WHERE b.owner_id = ? AND i.replay_policy = ? AND i.state IN (?, ?) LIMIT 1`,
+		l.ownerID, ReplayAtMostOnce, InvocationRunning, InvocationInterruptedUnknown).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return &ReplayBlockedError{Decision: ReplayDecision{Action: ReplayBlock, Reason: ReplayReasonInvocationUnknown, BlockingInvocationIDs: []string{id}}}
+}

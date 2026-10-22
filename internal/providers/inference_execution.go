@@ -647,7 +647,7 @@ func isProviderResponseEvidence(eventType StreamEventType) bool {
 	switch eventType {
 	case EventContentDelta, EventContentReplace, EventThinkingDelta, EventThinkingReplace,
 		EventThinkingDone, EventToolUseStart, EventToolUseDelta, EventToolUseEnd,
-		EventUsage, EventMessage, EventImage, EventDone:
+		EventUsage, EventMessage, EventAssistantItemDone, EventImage, EventDone:
 		return true
 	default:
 		return false

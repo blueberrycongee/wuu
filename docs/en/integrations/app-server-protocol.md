@@ -265,6 +265,20 @@ Only one active execution can own a thread. Handle admission errors such as
 `thread_busy` without starting a duplicate task. `run/start` rejects manual compact
 commands; use the dedicated session compaction interface instead.
 
+### Explicit continuation without new input
+
+For an idle Wuu engine thread, use the latest turn ID returned by the server:
+
+```json
+{"id":"continue-1","method":"turn/start","params":{"thread_id":"thread-id","resume_after_turn_id":"thread-id-turn-0001"}}
+```
+
+Omit prompt and attachments. The core acquires the thread execution lease, refreshes durable history, then compares `resume_after_turn_id` with the latest turn. A stale ID, competing execution, read-only thread, missing history, non-Wuu engine or unknown at-most-once tool outcome rejects admission. A successful response contains a new empty turn; no user message is inserted. Repeating the source ID is rejected even after the new turn completes or the server restarts. After an uncertain response, refresh the thread instead of substituting its new latest ID and replaying the request automatically.
+
+The durable `meta/turn_continue` boundary belongs to display history and never enters provider input. Completed tool results are recovered from the ledger before sampling. Display-only messages with cause `incomplete_stream_fragment` do not enter executable history. A process crash after admission leaves a distinct interrupted turn which the user can explicitly continue.
+
+Responses and Chat Completions use normalized client history, including ordered tool calls/results and compatible reasoning. Failed response identity is not reused. Responses provider-native state keeps its existing provider/model/scope checks. For Anthropic Messages, an assistant-ending explicit continuation adds a request-only user instruction to start a fresh response rather than assistant prefill; tool-result-ending history already maps to the required user role. This compatibility instruction is not a durable user message. See [Anthropic prefill restrictions](https://platform.claude.com/docs/en/api/errors#prefill-not-supported) and [Responses conversation state](https://developers.openai.com/api/docs/guides/conversation-state).
+
 ### Attachments
 
 Both turn and run requests accept `images` and `files` arrays. Each image has

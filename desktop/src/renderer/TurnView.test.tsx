@@ -975,7 +975,7 @@ it("continues a turn that already wrote part of its reply instead of resending i
     expect(labels).toEqual([t("turnFailure.continue")]);
     await act(async () => { container!.querySelector<HTMLButtonElement>(".turn-failure-recovery button")!.click(); });
     expect(continued).toHaveBeenCalledOnce();
-    expect((continued.mock.calls[0][0] as CustomEvent<ContinueTurnDetail>).detail).toMatchObject({ threadID: "thread-1", text: t("turnFailure.continuePrompt") });
+    expect((continued.mock.calls[0][0] as CustomEvent<ContinueTurnDetail>).detail).toMatchObject({ threadID: "thread-1", turnID: turn.id });
     expect(onSubmitEditMessage).not.toHaveBeenCalled();
   } finally {
     window.removeEventListener(CONTINUE_TURN_EVENT, continued);
