@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/composition"
 )
 
 type fakeServiceProcess struct {
@@ -68,11 +70,71 @@ func TestBuildServiceRegistry(t *testing.T) {
 	if len(conflicts) != 1 || conflicts[0].PluginID != "search-b" {
 		t.Fatalf("conflicts = %+v, want one conflict for search-b", conflicts)
 	}
-	if !registry.HasProvider("search.provider", 1) || !registry.HasProvider("search.provider", 2) {
-		t.Fatal("expected providers for majors 1 and 2")
+	if registry.HasProvider("search.provider", 1) || !registry.HasProvider("search.provider", 2) {
+		t.Fatal("ambiguous major 1 must be unavailable; unique major 2 must remain available")
 	}
 	if err := registry.CheckSatisfaction(consumer.RequiredServices()); err != nil {
 		t.Fatalf("CheckSatisfaction() = %v, want nil", err)
+	}
+}
+
+func TestServiceRegistryConfiguredProvider(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		registry, err := NewServiceRegistryWithBindings([]composition.Binding{{Service: "search.provider", Major: 1, Provider: "chosen"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		chosen := &fakeServiceProcess{id: "chosen", state: StateActive, provided: []ServiceDescriptor{searchService("1.1.0")}}
+		other := &fakeServiceProcess{id: "other", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}}
+		consumer := &fakeServiceProcess{id: "reader", state: StateActive, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}
+		clients := []Client{chosen, other, consumer}
+		if reverse {
+			clients[0], clients[1] = clients[1], clients[0]
+		}
+		if conflicts := registry.RegisterClients(clients...); len(conflicts) != 0 {
+			t.Fatalf("explicit selection should resolve ambiguity: %+v", conflicts)
+		}
+		if err := registry.ValidateBindings(); err != nil {
+			t.Fatal(err)
+		}
+		registry.Activate()
+		call := ServiceCallParams{Service: "search.provider", Method: "query"}
+		if _, err := registry.Call(context.Background(), "reader", call); err != nil {
+			t.Fatal(err)
+		}
+		if len(chosen.invokeCalls) != 1 || len(other.invokeCalls) != 0 {
+			t.Fatal("call did not use the configured provider")
+		}
+		snapshot := registry.Snapshot(7)
+		if len(snapshot.Services) != 1 || snapshot.Services[0].BindingSource != "composition" {
+			t.Fatalf("binding provenance missing: %+v", snapshot)
+		}
+		chosen.state = StateFailed
+		if _, err := registry.Call(context.Background(), "reader", call); err == nil {
+			t.Fatal("a crashed selected provider must fail the call")
+		}
+		registry.RevokePlugin(context.Background(), "chosen")
+		if _, err := registry.Call(context.Background(), "reader", call); err == nil || len(other.invokeCalls) != 0 {
+			t.Fatal("revocation must not fall back to an unselected provider")
+		}
+	}
+}
+
+func TestServiceRegistryMissingSelectionAndDuplicateBinding(t *testing.T) {
+	binding := composition.Binding{Service: "search.provider", Major: 1, Provider: "missing"}
+	if _, err := NewServiceRegistryWithBindings([]composition.Binding{binding, binding}); err == nil {
+		t.Fatal("duplicate binding must fail before loading providers")
+	}
+	registry, err := NewServiceRegistryWithBindings([]composition.Binding{binding})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry.RegisterClients(&fakeServiceProcess{id: "other", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}})
+	if err := registry.ValidateBindings(); err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("missing selected provider diagnostic = %v", err)
+	}
+	if registry.HasProvider("search.provider", 1) {
+		t.Fatal("another provider cannot satisfy an explicit selection")
 	}
 }
 

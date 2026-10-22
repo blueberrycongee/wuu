@@ -98,7 +98,24 @@ Cleanup produces structured revocation records, persisted in `plugin-generation-
 
 Runtime process writes honor cancellation and a bounded transport deadline. If a frame is interrupted during delivery or an execution cancellation cannot be delivered, the host retires that transport. Canceling an invocation before it is sent leaves other running work intact. Shutdown terminates the runtime process group on macOS/Linux and requests process-tree termination on Windows, with a bounded pipe drain. Windows tree cleanup is best-effort if the runtime has already exited. Unexpected nonzero shutdown exits remain visible in retirement reports. Runtime stderr keeps the most recent 64 KiB and marks omitted earlier output; verbose logs cannot grow this buffer indefinitely. These limits do not shorten a running tool’s execution deadline or replace the generation-retention rules above.
 
-Runtime plugins communicate over JSONL. Versioned services use the `host.service.call` gateway: providers declare names, versions, and methods; consumers declare service names and major versions. The registry binds consumers to providers and supplies caller identity. A missing required provider prevents the consumer from becoming usable. Duplicate providers for the same name and major version are diagnosed, not combined.
+Runtime plugins communicate over JSONL. Versioned services use the `host.service.call` gateway: providers declare names, versions, and methods; consumers declare service names and major versions. The registry binds consumers to providers and supplies caller identity. A missing required provider prevents the consumer from becoming usable. Duplicate providers for the same name and major version require an explicit choice; an ambiguous candidate is rejected before activation.
+
+Select a runtime service provider in the trusted user configuration:
+
+```json
+{
+  "composition": {
+    "version": 1,
+    "services": [
+      { "service": "search.provider", "major": 1, "provider": "my-search" }
+    ]
+  }
+}
+```
+
+The selected package must already be enabled and trusted and must declare the requested service major. Bindings do not install or enable packages. Duplicate bindings, an unavailable selected provider, and an ambiguous service reject preparation and preserve the previous running generation. A selected provider that crashes or is removed causes calls to fail; another registered implementation is never used as a fallback. With no explicit binding, a service must have exactly one provider. Registry inspection reports `binding_source` as `composition` or `unique-provider` alongside its version and provider ID.
+
+Composition version 1 is independent of product CalVer and service versions. Existing configurations without this section retain unique-provider discovery. A configuration that previously depended on first-registration precedence must add explicit selections. Normal startup ignores project overrides of `composition`, including case variants, because bindings can select execution and credential policies. Apply a changed configuration at generation preparation; retained executions keep their existing registry. Restoring a previous selection creates a new generation and does not undo completed effects or migrate provider data.
 
 Kernel services cover storage, settings, sessions, history, workspaces, artifacts, and execution operations. Feature services use the same routing mechanism. A service method's schema identifiers describe its contract; they are not permission to call another plugin's private process or read its private storage.
 

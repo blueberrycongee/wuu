@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/composition"
 )
 
 // The service registry is the only addressable layer for plugin-provided
@@ -41,8 +43,8 @@ type ServiceClient interface {
 	RequiredServices() []ServiceRequirement
 }
 
-// ServiceConflict describes a rejected provider registration. The first
-// provider of a (name, major) wins; later duplicates surface as diagnostics.
+// ServiceConflict describes a rejected provider registration. An ambiguous
+// service stays unavailable unless the composition explicitly selects a provider.
 type ServiceConflict struct {
 	PluginID string
 	Service  string
@@ -76,6 +78,8 @@ type ServiceRegistry struct {
 	active               bool
 	open                 bool
 	providers            map[serviceKey]serviceProvider
+	bindings             map[serviceKey]string
+	ambiguous            map[serviceKey]string
 	consumers            map[string]map[serviceKey]struct{}
 	notifiers            map[string]ServiceChangedNotifier
 	kernelLifecycles     []kernelServiceLifecycle
@@ -110,10 +114,46 @@ type kernelServiceLifecycle interface {
 func NewServiceRegistry() *ServiceRegistry {
 	return &ServiceRegistry{
 		open: true, providers: make(map[serviceKey]serviceProvider),
+		bindings: make(map[serviceKey]string), ambiguous: make(map[serviceKey]string),
 		consumers:  make(map[string]map[serviceKey]struct{}),
 		notifiers:  make(map[string]ServiceChangedNotifier),
 		executions: make(map[string]*serviceExecution), executionChanged: make(chan struct{}),
 	}
+}
+
+// NewServiceRegistryWithBindings prepares explicit provider selections before
+// any initialization calls can resolve a service.
+func NewServiceRegistryWithBindings(bindings []composition.Binding) (*ServiceRegistry, error) {
+	if err := (composition.Config{Version: composition.Version, Services: bindings}).Validate(); err != nil {
+		return nil, err
+	}
+	registry := NewServiceRegistry()
+	for _, binding := range bindings {
+		registry.bindings[serviceKey{name: binding.Service, major: binding.Major}] = binding.Provider
+	}
+	return registry, nil
+}
+
+// ValidateBindings refuses a candidate whose explicit choices cannot be met.
+// Call after all providers have initialized and before committing configuration.
+func (r *ServiceRegistry) ValidateBindings() error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var failures []string
+	for key, selected := range r.bindings {
+		provider, ok := r.providers[key]
+		if !ok || provider.pluginID != selected {
+			failures = append(failures, fmt.Sprintf("composition selects unavailable provider %q for %s@%d", selected, key.name, key.major))
+		}
+	}
+	for _, diagnostic := range r.ambiguous {
+		failures = append(failures, diagnostic)
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	sort.Strings(failures)
+	return errors.New(strings.Join(failures, "; "))
 }
 
 // bindRootExecutionContext connects a new plugin-initiated service chain to
@@ -163,13 +203,17 @@ func (registry *ServiceRegistry) RegisterClients(clients ...Client) []ServiceCon
 				continue
 			}
 			key := serviceKey{name: strings.TrimSpace(descriptor.Name), major: major}
-			if existing, duplicate := registry.providers[key]; duplicate {
-				conflicts = append(conflicts, ServiceConflict{
-					PluginID: declared.ID(),
-					Service:  key.name,
-					Major:    key.major,
-					Message:  fmt.Sprintf("service %s@%d is already provided by plugin %q; keeping the first registration", key.name, key.major, existing.pluginID),
-				})
+			if selected := registry.bindings[key]; selected != "" && selected != declared.ID() {
+				continue
+			}
+			if existing, duplicate := registry.providers[key]; duplicate || registry.ambiguous[key] != "" {
+				message := registry.ambiguous[key]
+				if message == "" {
+					message = fmt.Sprintf("service %s@%d is provided by both %q and %q; select a provider in composition.services", key.name, key.major, existing.pluginID, declared.ID())
+				}
+				registry.ambiguous[key] = message
+				delete(registry.providers, key)
+				conflicts = append(conflicts, ServiceConflict{PluginID: declared.ID(), Service: key.name, Major: key.major, Message: message})
 				continue
 			}
 			if registration.Invoker == nil {
@@ -736,11 +780,12 @@ func (r *ServiceRegistry) CallProvider(ctx context.Context, service string, majo
 
 // ServiceRegistryEntry describes one provided service in a registry snapshot.
 type ServiceRegistryEntry struct {
-	Service  string   `json:"service"`
-	Version  string   `json:"version"`
-	Provider string   `json:"provider"`
-	Kernel   bool     `json:"kernel,omitempty"`
-	Methods  []string `json:"methods"`
+	Service       string   `json:"service"`
+	Version       string   `json:"version"`
+	Provider      string   `json:"provider"`
+	Kernel        bool     `json:"kernel,omitempty"`
+	Methods       []string `json:"methods"`
+	BindingSource string   `json:"binding_source"`
 }
 
 // ServiceRegistrySnapshot is the machine-readable answer to "which services
@@ -765,12 +810,18 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 			methods = append(methods, method.Name)
 		}
 		sort.Strings(methods)
+		source := "unique-provider"
+		major, _ := ServiceVersionMajor(provider.descriptor.Version)
+		if r.bindings[serviceKey{name: provider.descriptor.Name, major: major}] != "" {
+			source = "composition"
+		}
 		entries = append(entries, ServiceRegistryEntry{
-			Service:  provider.descriptor.Name,
-			Version:  provider.descriptor.Version,
-			Provider: provider.pluginID,
-			Kernel:   provider.kernel,
-			Methods:  methods,
+			Service:       provider.descriptor.Name,
+			Version:       provider.descriptor.Version,
+			Provider:      provider.pluginID,
+			Kernel:        provider.kernel,
+			Methods:       methods,
+			BindingSource: source,
 		})
 	}
 	sort.Slice(entries, func(i, j int) bool {

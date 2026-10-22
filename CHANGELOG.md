@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Select runtime service providers through versioned `composition.services` configuration. Ambiguous or unavailable bindings reject preparation; failed or removed providers never fall back to another implementation.
+
 - Add MiniMax-M3.1-Flash and Gemini 4 Argon to the model catalog, with their documented context and output limits, reasoning effort levels, and OpenRouter model entries.
 
 - Save images and links from website context menus, including Blob/data resources and popup pages, through the browser download manager; copy images or their addresses and open image URLs in new tabs.

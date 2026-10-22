@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/capability"
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/grokbuildspec"
@@ -102,6 +103,7 @@ type MCPToolOverride struct {
 
 // Config holds CLI runtime settings.
 type Config struct {
+	Composition           *composition.Config       `json:"composition,omitempty"`
 	ExecutionEnvironments executionenv.Config       `json:"execution_environments,omitempty"`
 	DefaultProvider       string                    `json:"default_provider"`
 	Providers             map[string]ProviderConfig `json:"providers"`
@@ -730,6 +732,11 @@ func (c Config) ResolveProvider(name string) (ProviderConfig, string, error) {
 
 // Validate performs semantic checks.
 func (c Config) Validate() error {
+	if c.Composition != nil {
+		if err := c.Composition.Validate(); err != nil {
+			return err
+		}
+	}
 	for name, server := range c.MCPServers {
 		if _, err := server.ToolTimeoutMS.Duration(); err != nil {
 			return fmt.Errorf("mcp_servers.%s: %w", name, err)

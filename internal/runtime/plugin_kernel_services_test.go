@@ -210,7 +210,7 @@ if(q.method==='tool.execute'){if(q.params.tool_id==='crash'){process.exit(3)}con
 			}
 			host, services, err := buildPluginHost(items, project, "workspace", userHome, stateDir, nil, func(ctx context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 				return pluginhost.Start(ctx, cfg)
-			}, nil, nil)
+			}, nil, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

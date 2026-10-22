@@ -701,6 +701,19 @@ export function requireModelRequestService(): ServiceRequirement {
   return { name: MODEL_REQUEST_SERVICE, major_version: 1, required: true };
 }
 
+/** Bootstrap service choices; independent of runtime protocol and product version. */
+export interface ProductComposition {
+  version: 1;
+  services?: ServiceBinding[];
+}
+
+/** Selects a provider without fallback when it fails or is removed. */
+export interface ServiceBinding {
+  service: string;
+  major: number;
+  provider: string;
+}
+
 /** One typed method of a provided service. */
 export interface ServiceMethodDescriptor {
   name: string;

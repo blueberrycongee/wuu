@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/composition"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -20,8 +21,8 @@ func startPluginClient(ctx context.Context, cfg pluginhost.ProcessConfig) (plugi
 	return pluginhost.Start(ctx, cfg)
 }
 
-func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker) (*pluginhost.Host, *kernelHostServices) {
-	host, kernel, err := buildPluginHost(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, turnRouter, userQuestions)
+func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config) (*pluginhost.Host, *kernelHostServices, error) {
+	host, kernel, err := buildPluginHost(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, turnRouter, userQuestions, selection)
 	if err != nil {
 		// A fatal negotiation closes the entire prepared generation. Preserve
 		// each unavailable runtime and the graph so initial-session consumers
@@ -33,12 +34,12 @@ func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			}
 		}
 		failed.BlockFailedPackageDependencies(context.Background())
-		return failed, nil
+		return failed, nil, err
 	}
 	if err := activatePluginHost(context.Background(), host); err != nil {
 		providers.DebugLogf("activate initial plugin generation: %v", err)
 	}
-	return host, kernel
+	return host, kernel, nil
 }
 
 func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
@@ -48,7 +49,18 @@ func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
 	return host.Activate(ctx)
 }
 
-func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker) (*pluginhost.Host, *kernelHostServices, error) {
+func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config) (*pluginhost.Host, *kernelHostServices, error) {
+	var bindings []composition.Binding
+	if selection != nil {
+		if err := selection.Validate(); err != nil {
+			return nil, nil, err
+		}
+		bindings = selection.Services
+	}
+	registry, err := pluginhost.NewServiceRegistryWithBindings(bindings)
+	if err != nil {
+		return nil, nil, err
+	}
 	host := newPluginHostWithRequirements(plugins)
 	var started []pluginhost.Client
 	kernel := newKernelHostServices(func() uint64 {
@@ -62,7 +74,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	kernel.bindWorkspaceStateDir(workspaceStateDir)
 	kernel.bindWuuHome(wuuHome)
 	host.SetToolResultMaterializer(kernel.materializeToolResult)
-	registry, conflicts := pluginhost.BuildServiceRegistry(kernel)
+	conflicts := registry.RegisterClients(kernel)
 	kernel.bindRegistry(registry)
 	closeStarted := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -71,6 +83,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		for index := len(started) - 1; index >= 0; index-- {
 			err = errors.Join(err, started[index].Close(ctx))
 		}
+		registry.Close(ctx)
 		return err
 	}
 	for _, item := range plugins {
@@ -119,6 +132,9 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	// There is no dependency solver; failures are deterministic diagnostics.
 	conflicts = append(conflicts, registry.RegisterClients(started...)...)
 	host.AttachServiceRegistry(registry, conflicts)
+	if err := registry.ValidateBindings(); err != nil {
+		return nil, nil, errors.Join(err, closeStarted())
+	}
 	for _, client := range started {
 		if serviceClient, ok := client.(pluginhost.ServiceClient); ok {
 			if err := registry.CheckSatisfaction(serviceClient.RequiredServices()); err != nil {

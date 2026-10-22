@@ -3,9 +3,15 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/config"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
@@ -51,7 +57,7 @@ func buildServiceTestHost(t *testing.T, clients map[string]pluginhost.Client, pl
 	start := func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 		return clients[cfg.ID], nil
 	}
-	host, _, err := buildPluginHost(plugins, "", "", "", "", nil, start, nil, nil)
+	host, _, err := buildPluginHost(plugins, "", "", "", "", nil, start, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildPluginHost() = %v", err)
 	}
@@ -116,16 +122,100 @@ func TestBuildPluginHostOptionalServiceRequirementDoesNotBlock(t *testing.T) {
 	}
 }
 
-func TestBuildPluginHostDuplicateProviderSurfacesDiagnostic(t *testing.T) {
+func TestCompositionReplacesNativeStorageWithExternalProcess(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node.js is required for external provider verification")
+	}
+	root := t.TempDir()
+	provider := testRuntimePlugin("file-storage")
+	provider.Root = root
+	provider.Runtime.Command = node
+	provider.Runtime.Args = []string{"provider.mjs"}
+	// This independent implementation reads the caller's file on every call;
+	// the selected process owns storage semantics and sees external writes.
+	source := `import { createInterface } from 'node:readline';
+import { readFileSync } from 'node:fs';
+const send = x => process.stdout.write(JSON.stringify(x) + '\n');
+createInterface({ input: process.stdin }).on('line', line => {
+  const q = JSON.parse(line);
+  if (!q.id) return;
+  try {
+    let result = null;
+    if (q.method === 'initialize') result = { protocol_version: 3, lifecycle_version: 1, provided_services: [{ name: 'host.storage.get', version: '1.0.0', methods: [{ name: 'call', input_schema: 'host.storage.get.input.v1', output_schema: 'host.storage.get.output.v1' }] }] };
+    else if (q.method === 'service.invoke') {
+      const state = JSON.parse(readFileSync(q.params.caller + '.json', 'utf8'));
+      result = { value: state[q.params.params.key] ?? null };
+    }
+    send({ id: q.id, result });
+  } catch (e) { send({ id: q.id, error: { code: 'storage_read_failed', message: e.message } }); }
+});`
+	if err := os.WriteFile(filepath.Join(root, "provider.mjs"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reader := testRuntimePlugin("reader")
+	selection := &composition.Config{Version: 1, Services: []composition.Binding{{Service: "host.storage.get", Major: 1, Provider: "file-storage"}}}
+	host, _, err := buildPluginHost([]pluginpkg.Plugin{reader, provider}, root, "workspace", t.TempDir(), t.TempDir(), nil,
+		func(ctx context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+			if cfg.ID == "file-storage" {
+				return pluginhost.Start(ctx, cfg)
+			}
+			return &fakeServicePluginClient{id: cfg.ID, required: pluginhost.KernelServiceRequirements("host.storage.get")}, nil
+		}, nil, nil, selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	if err := activatePluginHost(context.Background(), host); err != nil {
+		t.Fatal(err)
+	}
+	call := pluginhost.ServiceCallParams{Service: "host.storage.get", Method: "call", Params: json.RawMessage(`{"scope":"workspace","key":"note"}`)}
+	for _, value := range []string{"first", "changed-on-disk"} {
+		data, _ := json.Marshal(map[string]string{"note": value})
+		if err := os.WriteFile(filepath.Join(root, "reader.json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := host.ServiceRegistry().Call(context.Background(), "reader", call)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result struct {
+			Value string `json:"value"`
+		}
+		if err := json.Unmarshal(raw, &result); err != nil || result.Value != value {
+			t.Fatalf("external storage read = %s, %v", raw, err)
+		}
+	}
+	host.RetirePlugin(context.Background(), "file-storage", errors.New("provider removed"))
+	if _, err := host.ServiceRegistry().Call(context.Background(), "reader", call); err == nil {
+		t.Fatal("removed external storage fell back to native storage")
+	}
+}
+
+func TestCompositionPreparationFailurePreservesRunningGeneration(t *testing.T) {
+	oldClient := &generationClient{id: "old"}
+	old := testPluginGeneration("old", oldClient)
+	session := testGenerationSession(old)
+	defer session.Cleanup()
+	cfg := config.Config{Composition: &composition.Config{Version: 1, Services: []composition.Binding{{Service: "search.provider", Major: 1, Provider: "missing"}}}}
+	candidate, err := session.buildPluginGeneration(cfg, nil, nil, nil, startPluginClient)
+	if err == nil || candidate != nil || oldClient.closed || !session.IsCurrentPluginGeneration(old) {
+		t.Fatalf("failed selection changed active generation: candidate=%v, error=%v, old closed=%v", candidate, err, oldClient.closed)
+	}
+}
+
+func TestBuildPluginHostDuplicateProviderRejectsCandidate(t *testing.T) {
 	first := &fakeServicePluginClient{id: "search-a", provided: []pluginhost.ServiceDescriptor{searchServiceDescriptor("1.0.0")}}
 	second := &fakeServicePluginClient{id: "search-b", provided: []pluginhost.ServiceDescriptor{searchServiceDescriptor("1.1.0")}}
-	host := buildServiceTestHost(t, map[string]pluginhost.Client{"search-a": first, "search-b": second}, "search-a", "search-b")
-
-	diagnostics := host.ContributionDiagnostics("search-b")
-	if len(diagnostics) != 1 || !strings.Contains(diagnostics[0].Message, "already provided by plugin \"search-a\"") {
-		t.Fatalf("conflict diagnostics = %+v", diagnostics)
+	clients := map[string]pluginhost.Client{"search-a": first, "search-b": second}
+	host, _, err := buildPluginHost([]pluginpkg.Plugin{testRuntimePlugin("search-a"), testRuntimePlugin("search-b")}, "", "", "", "", nil,
+		func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+			return clients[cfg.ID], nil
+		}, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "select a provider") || host != nil {
+		t.Fatalf("ambiguous candidate = %v, %v", host, err)
 	}
-	if !host.ServiceRegistry().HasProvider("search.provider", 1) {
-		t.Fatal("first registration must win")
+	if !first.closed || !second.closed {
+		t.Fatal("rejected candidate must close all prepared providers")
 	}
 }

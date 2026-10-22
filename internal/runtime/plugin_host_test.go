@@ -188,13 +188,13 @@ func TestPluginCapabilityRejectsInvalidRequestPatch(t *testing.T) {
 }
 
 func TestStartPluginHostPreservesRuntimeFailure(t *testing.T) {
-	host, _ := startPluginHost([]pluginpkg.Plugin{{
+	host, _, _ := startPluginHost([]pluginpkg.Plugin{{
 		Manifest: pluginpkg.Manifest{ID: "broken", Runtime: &pluginpkg.RuntimeSpec{
 			Protocol: pluginhost.ProtocolName,
 			Command:  "/definitely/not/a/wuu-plugin",
 		}},
 		Root: t.TempDir(),
-	}}, t.TempDir(), "workspace-one", t.TempDir(), t.TempDir(), nil, nil)
+	}}, t.TempDir(), "workspace-one", t.TempDir(), t.TempDir(), nil, nil, nil)
 	statuses := host.Statuses()
 	if len(statuses) != 1 || statuses[0].State != pluginhost.StateFailed || !strings.Contains(statuses[0].Error, "start plugin") {
 		t.Fatalf("statuses = %+v", statuses)
