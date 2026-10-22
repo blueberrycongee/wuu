@@ -29,7 +29,9 @@
   --icon-size-xs: round(nearest, clamp(12px, calc(var(--font-ui) * 12 / 14), 16px), 2px);
   --icon-size-lg: round(nearest, clamp(18px, calc(var(--font-ui) * 18 / 14), 22px), 2px);
   --icon-size-xl: round(nearest, clamp(20px, calc(var(--font-ui) * 20 / 14), 24px), 2px);
-  --sidebar-content-icon-size: round(nearest, clamp(16px, calc(var(--font-ui) + 2px), 20px), 2px);
+  /* The 24-unit artwork has inset strokes. Match its visible size to the
+   * label, rather than treating the SVG viewport as the visible icon. */
+  --sidebar-content-icon-size: round(nearest, clamp(18px, calc(var(--font-ui) * 4 / 3), 26px), 2px);
 }
 /* Menus keep the same reading size as their triggers. Secondary hierarchy
  * comes from color and spacing, without making frequent actions smaller. */
@@ -88,6 +90,7 @@
  * Keep composite labels here once, rather than shifting their children too. */
 :where(
   .nav-item > span:not([aria-hidden], .plugin-icon-themed, .plugin-icon-asset),
+  .sidebar-section-label,
   .settings-nav-label,
   .sidebar-functional-heading-label,
   .project-row-name,

@@ -1990,7 +1990,7 @@ export function AppSidebar({
                 onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
               >
                 <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />
-                <span>{entry.title}</span>
+                <span className="sidebar-section-label">{entry.title}</span>
               </button>
             ))}
           </nav>
