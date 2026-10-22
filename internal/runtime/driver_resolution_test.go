@@ -43,8 +43,7 @@ func newDriverTestRegistry(t *testing.T, clients ...pluginhost.Client) *pluginho
 			t.Fatalf("registration conflicts = %+v", registrationConflicts)
 		}
 	}
-	registry.Activate()
-	t.Cleanup(func() { registry.Close(context.Background()) })
+	activateServiceTestHost(t, kernel, registry, clients...)
 	return registry
 }
 

@@ -39,6 +39,9 @@ func startBundledPluginTestProcess(t *testing.T, id string, router pluginhost.Se
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close(context.Background()) })
+	if err := client.Prepare(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	return client
 }
 

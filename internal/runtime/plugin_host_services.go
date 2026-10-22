@@ -385,6 +385,7 @@ type executionUpdateRecorder interface {
 type kernelHostServices struct {
 	mu                sync.RWMutex
 	active            bool
+	closed            bool
 	services          map[string]*pluginHostServices
 	registry          *pluginhost.ServiceRegistry
 	generation        func() uint64
@@ -444,10 +445,12 @@ func (k *kernelHostServices) Status() pluginhost.Status {
 	if k.active {
 		state = pluginhost.StateActive
 	}
+	if k.closed {
+		state = pluginhost.StateStopped
+	}
 	return pluginhost.Status{ID: k.ID(), State: state}
 }
 
-func (k *kernelHostServices) Close(context.Context) error { return nil }
 func (k *kernelHostServices) ProvidedServices() []pluginhost.ServiceDescriptor {
 	return pluginhost.KernelServiceDescriptors()
 }
@@ -537,8 +540,15 @@ func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRe
 	return registrations
 }
 
-func (k *kernelHostServices) ActivateKernelServices() {
+func (k *kernelHostServices) Activate(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	k.mu.Lock()
+	if k.closed {
+		k.mu.Unlock()
+		return errors.New("native host services are closed")
+	}
 	k.active = true
 	services := make([]*pluginHostServices, 0, len(k.services))
 	for _, service := range k.services {
@@ -548,11 +558,14 @@ func (k *kernelHostServices) ActivateKernelServices() {
 	for _, service := range services {
 		service.activate()
 	}
+	return nil
 }
 
-func (k *kernelHostServices) CloseKernelServices() {
+// Close completes resource cleanup even when the generation's context is cancelled.
+func (k *kernelHostServices) Close(context.Context) error {
 	k.mu.Lock()
 	k.active = false
+	k.closed = true
 	services := make([]*pluginHostServices, 0, len(k.services))
 	for _, service := range k.services {
 		services = append(services, service)
@@ -561,6 +574,7 @@ func (k *kernelHostServices) CloseKernelServices() {
 	for _, service := range services {
 		service.close()
 	}
+	return nil
 }
 
 type kernelServiceInvoker struct {

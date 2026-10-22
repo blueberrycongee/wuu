@@ -469,9 +469,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 	if len(oldHost.Statuses()) != 0 || len(oldHost.ToolDefinitions()) != 0 {
 		t.Fatal("quiescent background generation retained its host registrations")
 	}
-	if statuses := rt.PluginHost.Statuses(); len(statuses) != 1 || statuses[0].State != pluginhost.StateActive {
-		t.Fatalf("background retirement affected the live generation: %+v", statuses)
-	}
+	requireActiveRuntime(t, rt.PluginHost, "reload-fixture")
 }
 
 // The public mutation transaction must retire idle consumers immediately;
@@ -517,9 +515,10 @@ func TestPluginReloadRetiresIdleGenerationOnMutationCommit(t *testing.T) {
 	th.mu.Lock()
 	retained := th.execRuntime
 	th.mu.Unlock()
-	if retained != oldRuntime || len(oldHost.Statuses()) != 1 {
+	if retained != oldRuntime {
 		t.Fatal("catalog-only commit retired the still-current generation")
 	}
+	requireActiveRuntime(t, oldHost, "reload-fixture")
 	if _, err := os.Stat(shutdownPath); !os.IsNotExist(err) {
 		t.Fatalf("old process shutdown before replacement: %v", err)
 	}
@@ -555,9 +554,7 @@ func TestPluginReloadRetiresIdleGenerationOnMutationCommit(t *testing.T) {
 	if !reflect.DeepEqual(persistedBefore, persistedAfter) {
 		t.Fatal("idle retirement rewrote persisted conversation history")
 	}
-	if len(rt.PluginHost.Statuses()) != 1 || rt.PluginHost.Statuses()[0].State != pluginhost.StateActive {
-		t.Fatal("idle retirement closed the newly published process")
-	}
+	requireActiveRuntime(t, rt.PluginHost, "reload-fixture")
 }
 
 func TestPluginGrantActivationFailurePublishesCommittedInventory(t *testing.T) {
@@ -682,12 +679,20 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 			if result.State != pluginhost.TurnLifecycleQueued {
 				t.Fatalf("activation callback state=%+v", result)
 			}
-			if statuses := rt.PluginHost.Statuses(); len(statuses) != 1 || statuses[0].State != pluginhost.StateActive {
-				t.Fatalf("activation failed: %+v", statuses)
-			}
+			requireActiveRuntime(t, rt.PluginHost, "reload-callback")
 			waitForTurnCompletedForThread(t, out, threadID)
 		})
 	}
+}
+
+func requireActiveRuntime(t *testing.T, host *pluginhost.Host, id string) {
+	t.Helper()
+	for _, status := range host.Statuses() {
+		if status.ID == id && status.State == pluginhost.StateActive {
+			return
+		}
+	}
+	t.Fatalf("runtime %q is not active: %+v", id, host.Statuses())
 }
 
 // A finalizer can release the execution lease before the background release

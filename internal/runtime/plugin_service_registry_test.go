@@ -118,7 +118,8 @@ func TestBuildPluginHostMissingTransitiveServiceRevokesProvider(t *testing.T) {
 	if !provider.closed || !consumer.closed || host.ServiceRegistry().HasProvider("search.provider", 1) {
 		t.Fatal("transitive missing service left a closed provider or live consumer registered")
 	}
-	for _, status := range host.Statuses() {
+	for _, id := range []string{"search", "notes"} {
+		status := requireRuntimeStatus(t, host, id)
 		if status.State != pluginhost.StateFailed {
 			t.Fatalf("unavailable dependency state: %+v", status)
 		}
@@ -339,6 +340,91 @@ func TestCompositionPreparationFailurePreservesRunningGeneration(t *testing.T) {
 	candidate, err := session.buildPluginGeneration(cfg, nil, nil, nil, startPluginClient)
 	if err == nil || candidate != nil || oldClient.closed || !session.IsCurrentPluginGeneration(old) {
 		t.Fatalf("failed selection changed active generation: candidate=%v, error=%v, old closed=%v", candidate, err, oldClient.closed)
+	}
+}
+
+type nativeLifecycleConsumer struct {
+	*fakeServicePluginClient
+	flush func(context.Context) error
+}
+
+func (c *nativeLifecycleConsumer) Close(ctx context.Context) error {
+	c.closed = true
+	return c.flush(ctx)
+}
+
+func TestNativeProviderRetirementDrainsConsumers(t *testing.T) {
+	for _, entireGeneration := range []bool{false, true} {
+		t.Run(fmt.Sprintf("generation=%t", entireGeneration), func(t *testing.T) {
+			reader := testRuntimePlugin("reader")
+			reader.SubjectID, reader.Fingerprint = "plugin:user:reader", "native-lifecycle"
+			consumer := &nativeLifecycleConsumer{fakeServicePluginClient: &fakeServicePluginClient{id: reader.ID,
+				required: pluginhost.KernelServiceRequirements(pluginhost.KernelStorageSetService)}}
+			host, native, err := buildPluginHost([]pluginpkg.Plugin{reader}, t.TempDir(), "workspace", t.TempDir(), t.TempDir(), nil,
+				func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) { return consumer, nil }, nil, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer host.Close(context.Background())
+			if err := host.Activate(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			flushed := false
+			consumer.flush = func(ctx context.Context) error {
+				if native.Status().State != pluginhost.StateActive {
+					return errors.New("native provider stopped before consumer cleanup")
+				}
+				_, err := host.ServiceRegistry().Call(ctx, reader.ID, pluginhost.ServiceCallParams{
+					Service: pluginhost.KernelStorageSetService, Method: "call",
+					Params: json.RawMessage(`{"scope":"workspace","key":"final","value":"flushed"}`),
+				})
+				flushed = err == nil
+				if err != nil {
+					return err
+				}
+				return nil
+			}
+			if entireGeneration {
+				if err := host.Close(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				outcome, found := host.RetirePlugin(context.Background(), native.ID(), errors.New("provider disabled"))
+				if !found || outcome.Err != nil {
+					t.Fatalf("native retirement = %+v, found=%t", outcome, found)
+				}
+				if host.ServiceRegistry().HasProvider(pluginhost.KernelStorageSetService, 1) {
+					t.Fatal("retired native provider remained routable")
+				}
+			}
+			if !flushed || !consumer.closed || native.Status().State != pluginhost.StateStopped {
+				t.Fatalf("native retirement did not finish: flush=%t, consumer closed=%t, native=%s", flushed, consumer.closed, native.Status().State)
+			}
+		})
+	}
+}
+
+func TestCompositionRejectsDuplicateRuntimeIdentity(t *testing.T) {
+	nativeID := newKernelHostServices(nil, nil).ID()
+	for _, ids := range [][]string{{nativeID}, {"repeated", "repeated"}} {
+		t.Run(strings.Join(ids, "+"), func(t *testing.T) {
+			var plugins []pluginpkg.Plugin
+			for _, id := range ids {
+				plugins = append(plugins, testRuntimePlugin(id))
+			}
+			started := false
+			host, _, err := buildPluginHost(plugins, "", "", "", "", nil,
+				func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+					started = true
+					return &fakeServicePluginClient{id: cfg.ID}, nil
+				}, nil, nil, nil)
+			if host != nil {
+				defer host.Close(context.Background())
+			}
+			if err == nil || !strings.Contains(err.Error(), "duplicate runtime identity") || started {
+				t.Fatalf("duplicate identity candidate = %v, error=%v, started=%t", host, err, started)
+			}
+		})
 	}
 }
 

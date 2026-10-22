@@ -83,12 +83,19 @@ func (c *activationOrderClient) Activate(context.Context) error {
 	return nil
 }
 
+func (c *activationOrderClient) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
+func (c *activationOrderClient) RequiredServices() []pluginhost.ServiceRequirement {
+	return pluginhost.KernelServiceRequirements(pluginhost.KernelStorageGetService)
+}
+
 func TestActivatePluginHostOpensKernelServicesBeforePluginCallbacks(t *testing.T) {
 	kernel := newKernelHostServices(nil, nil)
 	registry, conflicts := pluginhost.BuildServiceRegistry(kernel)
 	client := &activationOrderClient{kernel: kernel, state: pluginhost.StatePrepared}
-	host := pluginhost.New(client)
+	registry.RegisterClients(client)
+	host := pluginhost.New(client, kernel)
 	host.AttachServiceRegistry(registry, conflicts)
+	defer host.Close(context.Background())
 
 	if err := activatePluginHost(context.Background(), host); err != nil {
 		t.Fatal(err)
@@ -195,8 +202,20 @@ func TestStartPluginHostPreservesRuntimeFailure(t *testing.T) {
 		}},
 		Root: t.TempDir(),
 	}}, t.TempDir(), "workspace-one", t.TempDir(), t.TempDir(), nil, nil, nil)
-	statuses := host.Statuses()
-	if len(statuses) != 1 || statuses[0].State != pluginhost.StateFailed || !strings.Contains(statuses[0].Error, "start plugin") {
-		t.Fatalf("statuses = %+v", statuses)
+	defer host.Close(context.Background())
+	status := requireRuntimeStatus(t, host, "broken")
+	if status.State != pluginhost.StateFailed || !strings.Contains(status.Error, "start plugin") {
+		t.Fatalf("status = %+v", status)
 	}
+}
+
+func requireRuntimeStatus(t *testing.T, host *pluginhost.Host, id string) pluginhost.Status {
+	t.Helper()
+	for _, status := range host.Statuses() {
+		if status.ID == id {
+			return status
+		}
+	}
+	t.Fatalf("runtime %q is missing from status inventory", id)
+	return pluginhost.Status{}
 }

@@ -20,6 +20,21 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
 
+func activateServiceTestHost(t *testing.T, native pluginhost.Client, registry *pluginhost.ServiceRegistry, clients ...pluginhost.Client) {
+	t.Helper()
+	host := pluginhost.New(append([]pluginhost.Client{native}, clients...)...)
+	host.AttachServiceRegistry(registry, nil)
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := host.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+		registry.Close(context.Background())
+	})
+}
+
 func TestKernelHostServicesRouteThroughRegistryAndPreserveStorageScope(t *testing.T) {
 	if root := os.Getenv("WUU_FILE_LOCK_E2E_HELPER"); root != "" {
 		handler := newPluginHostServices(serviceTestPlugin("helper", "plugin:user:helper", "one"), root, root, nil)
@@ -59,7 +74,7 @@ func TestKernelHostServicesRouteThroughRegistryAndPreserveStorageScope(t *testin
 	registry.RegisterClients(&kernelConsumer{id: item.ID, requirements: pluginhost.KernelServiceRequirements(
 		pluginhost.KernelStorageGetService, pluginhost.KernelStorageSetService,
 	)})
-	registry.Activate()
+	activateServiceTestHost(t, kernel, registry)
 	if _, serviceErr := registry.Call(context.Background(), item.ID, pluginhost.ServiceCallParams{
 		Service: pluginhost.KernelStorageSetService, Method: pluginhost.KernelServiceMethod,
 		Params: json.RawMessage(`{"scope":"workspace","key":"state","value":"active"}`),
@@ -326,7 +341,7 @@ func TestKernelRegistryIntrospectRoutesThroughRegistry(t *testing.T) {
 	registry.RegisterClients(&kernelConsumer{id: item.ID, requirements: pluginhost.KernelServiceRequirements(
 		pluginhost.KernelRegistryIntrospectService,
 	)})
-	registry.Activate()
+	activateServiceTestHost(t, kernel, registry)
 
 	result, serviceErr := registry.Call(context.Background(), item.ID, pluginhost.ServiceCallParams{
 		Service: pluginhost.KernelRegistryIntrospectService, Method: pluginhost.KernelServiceMethod,
@@ -379,7 +394,7 @@ func TestKernelExecutionUpdateRoutesToExecutionTable(t *testing.T) {
 	registry.RegisterClients(&kernelConsumer{id: item.ID, requirements: pluginhost.KernelServiceRequirements(
 		pluginhost.KernelExecutionUpdateService,
 	)})
-	registry.Activate()
+	activateServiceTestHost(t, kernel, registry)
 
 	result, serviceErr := registry.Call(context.Background(), item.ID, pluginhost.ServiceCallParams{
 		Service: pluginhost.KernelExecutionUpdateService, Method: pluginhost.KernelServiceMethod,

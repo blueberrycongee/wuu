@@ -67,6 +67,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		}
 		return epoch
 	}, host)
+	host.Add(kernel)
 	kernel.bindUserQuestions(userQuestions)
 	kernel.bindWorkspaceStateDir(workspaceStateDir)
 	kernel.bindWuuHome(wuuHome)
@@ -79,6 +80,13 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		err := host.Close(ctx)
 		registry.Close(ctx)
 		return err
+	}
+	identities := map[string]bool{kernel.ID(): true}
+	for _, item := range plugins {
+		if identities[item.ID] {
+			return nil, nil, errors.Join(fmt.Errorf("duplicate runtime identity %q in composition", item.ID), closeStarted())
+		}
+		identities[item.ID] = true
 	}
 	for _, item := range plugins {
 		if dependencyErr := host.DependencyFailures()[item.ID]; dependencyErr != nil {

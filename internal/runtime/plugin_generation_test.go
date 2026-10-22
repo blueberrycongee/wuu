@@ -267,9 +267,9 @@ func TestRefreshCandidateAllowsRemovalAndIsolatesNewOptionalFailure(t *testing.T
 	if !oldClient.closed {
 		t.Fatal("removed runtime was not retired")
 	}
-	statuses := session.PluginHost.Statuses()
-	if len(statuses) != 1 || statuses[0].ID != "new" || statuses[0].State != pluginhost.StateFailed {
-		t.Fatalf("optional failure diagnostics = %+v", statuses)
+	status := requireRuntimeStatus(t, session.PluginHost, "new")
+	if status.State != pluginhost.StateFailed {
+		t.Fatalf("optional failure diagnostics = %+v", status)
 	}
 }
 

@@ -84,7 +84,6 @@ type ServiceRegistry struct {
 	consumers            map[string]map[serviceKey]struct{}
 	requirements         map[string][]ServiceRequirement
 	notifiers            map[string]ServiceChangedNotifier
-	kernelLifecycles     []kernelServiceLifecycle
 	executions           map[string]*serviceExecution
 	executionChanged     chan struct{}
 	nextExecution        uint64
@@ -107,11 +106,6 @@ type ServiceRegistration struct {
 type kernelServiceClient interface {
 	ServiceClient
 	KernelServiceRegistrations() []ServiceRegistration
-}
-
-type kernelServiceLifecycle interface {
-	ActivateKernelServices()
-	CloseKernelServices()
 }
 
 func NewServiceRegistry() *ServiceRegistry {
@@ -197,9 +191,6 @@ func (registry *ServiceRegistry) RegisterClients(clients ...Client) []ServiceCon
 				registrations = append(registrations, ServiceRegistration{Descriptor: descriptor, Invoker: invoker})
 			}
 		}
-		if lifecycle, ok := client.(kernelServiceLifecycle); kernel && ok {
-			registry.kernelLifecycles = append(registry.kernelLifecycles, lifecycle)
-		}
 		for _, registration := range registrations {
 			descriptor := registration.Descriptor
 			major, ok := ServiceVersionMajor(descriptor.Version)
@@ -268,9 +259,6 @@ func (r *ServiceRegistry) Activate() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.active = true
-	for _, lifecycle := range r.kernelLifecycles {
-		lifecycle.ActivateKernelServices()
-	}
 }
 
 // Close rejects new executions, drains calls already admitted by this
@@ -306,9 +294,6 @@ func (r *ServiceRegistry) Close(ctx context.Context) {
 	r.mu.Unlock()
 
 drained:
-	for _, lifecycle := range r.kernelLifecycles {
-		lifecycle.CloseKernelServices()
-	}
 	for _, key := range keys {
 		r.notifyConsumers(ctx, key, "provider_closed")
 	}
@@ -328,7 +313,7 @@ func (r *ServiceRegistry) RevokePlugin(ctx context.Context, pluginID string) {
 	r.mu.Lock()
 	var revoked []serviceKey
 	for key, provider := range r.providers {
-		if provider.pluginID == pluginID && !provider.kernel {
+		if provider.pluginID == pluginID {
 			delete(r.providers, key)
 			revoked = append(revoked, key)
 		}
