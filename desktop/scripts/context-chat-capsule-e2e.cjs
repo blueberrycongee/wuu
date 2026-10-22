@@ -1,5 +1,8 @@
 // Shipping main/preload/renderer/Go. An authored loopback provider is the only
 // configured model; this never calls a paid service or reads a real profile.
+// Workbench intentionally disables the floating chat (5c83a1a3). Verify that
+// shipping contract here; enabled native capsule mechanics remain covered by
+// browser-ribbon-e2e.cjs, without turning the feature back on for this test.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -55,7 +58,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     return res.end('<!doctype html><title>Capsule fixture</title><h1>Visible capsule fixture</h1><p>Visible page reference.</p><input id="page-input" aria-label="Page field"><input type="password" value="secret-password"><textarea>secret-draft</textarea><p hidden>secret-hidden</p><p id="api-token">secret-token</p><p style="display:none">secret-display</p>');
   }
-  if (req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ data: [{ id: 'fixture', object: 'model' }] })); }
+  if (req.method === 'GET') { if (req.url.startsWith('/v1/')) requests.push({ method: req.method, url: req.url }); res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ data: [{ id: 'fixture', object: 'model' }] })); }
   let raw = '';
   req.on('data', chunk => raw += chunk); req.on('end', () => {
     const body = JSON.parse(raw); requests.push(body);
@@ -119,36 +122,8 @@ async function shot(name) {
 }
 const capsuleView = () => main.contentView.children.find(view => view.webContents && !view.webContents.isDestroyed()
   && view.webContents.getURL().endsWith('/chrome-overlay.html?surface=capsule'));
-function movePointer(x, y) {
-  const moved = spawnSync('xdotool', ['mousemove', '--sync', String(Math.round(x)), String(Math.round(y))], { encoding: 'utf8', timeout: 5000 });
-  assert.equal(moved.status, 0, moved.stderr || String(moved.error));
-}
-async function hoverCapsule() {
-  const view = await until(() => { const value = capsuleView(); return value?.getVisible() ? value : null; }, 'Native capsule completes its paint handshake');
-  const target = view.webContents;
-  await until(() => evaluate(target, () => {
-    const ball = document.querySelector('.context-chat-capsule-ball'), bounds = ball?.getBoundingClientRect();
-    return Boolean(ball && bounds.width > 0 && bounds.height > 0);
-  }), 'Native capsule ball is rendered');
-  const origin = main.getContentBounds(), bounds = view.getBounds();
-  if (process.platform === 'darwin') target.sendInputEvent({ type: 'mouseLeave', x: -1, y: -1 });
-  else movePointer(origin.x + bounds.x - 30, origin.y + bounds.y + 24);
-  await until(() => evaluate(target, () => !document.querySelector('[data-context-capsule]')?.matches(':hover')), 'Pointer leaves capsule before hover');
-  const point = await evaluate(target, () => { const rect = document.querySelector('.context-chat-capsule-ball').getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }; });
-  const zoom = target.getZoomFactor(), current = view.getBounds();
-  if (process.platform === 'darwin') target.sendInputEvent({ type: 'mouseMove', x: Math.round(point.x), y: Math.round(point.y) });
-  else movePointer(origin.x + current.x + point.x * zoom, origin.y + current.y + point.y * zoom);
-  await until(() => evaluate(target, () => document.querySelector('.context-chat-capsule-ball').matches(':hover')), 'Pointer reaches mascot');
-  assert.equal(await evaluate(target, () => Boolean(document.querySelector('.context-chat-capsule input'))), false, 'Hover keeps the page unobstructed');
-  return target;
-}
-async function clickCapsule(target, button = 'left') {
-  const point = await evaluate(target, () => { const r = document.querySelector('.context-chat-capsule-ball').getBoundingClientRect(); return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }; });
-  target.sendInputEvent({ type: 'mouseDown', ...point, button, clickCount: 1 });
-  target.sendInputEvent({ type: 'mouseUp', ...point, button, clickCount: 1 });
-}
 function report(passed) { fs.writeFileSync(path.join(output, 'capsule-protocol.json'), JSON.stringify(capsuleProtocol, null, 2)); fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed, platform: process.platform, executable: process.execPath, desktop, phase, checks, errors, screenshots, diagnostics,
-  boundary: 'Shipping Electron main/preload/renderer and Go core; disposable profile and local synthetic HTTP model provider. Chromium input on macOS and native pointer hover on X11 exercise the isolated capsule surface. Screenshots capture the composed native window on the recorded platform.', requests: requests.length }, null, 2));
+  boundary: 'Shipping Electron main/preload/renderer and Go core; disposable profile and local synthetic HTTP model provider. Real Electron text input verifies the disabled floating-chat contract, including navigation and resize. Enabled capsule mechanics are covered separately by browser-ribbon-e2e.cjs. Screenshots capture the composed native window on the recorded platform.', requests: requests.length }, null, 2));
   fs.writeFileSync(path.join(output, 'provider-requests.json'), JSON.stringify(requests, null, 2)); }
 const timeout = setTimeout(() => fail(new Error('Capsule acceptance timed out')), 150000);
 app.on('browser-window-created', (_event, window) => { main ||= window; });
@@ -164,17 +139,26 @@ module.exports = (async () => {
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
   void run(port).catch(fail);
 })().catch(fail);
+async function assertDisabled(label) {
+  assert.equal(await evaluate(main.webContents, () => Boolean(document.querySelector('[data-context-capsule]'))), false, `${label}: no shell capsule`);
+  assert.equal(Boolean(capsuleView()?.getVisible()), false, `${label}: no native capsule`);
+  assert.equal(capsuleProtocol.length, 0, `${label}: disabled feature must not publish native models, paints or commands`);
+  assert.equal(requests.length, 0, `${label}: disabled feature must not contact the provider`);
+}
 async function run(port) {
   await until(() => main);
-  // Resizing preserves the startup window's position, which can put its lower
-  // and right edges outside Xvfb. Place the entire window before native input.
   const workArea = screen.getPrimaryDisplay().workArea;
   const width = Math.min(1280, workArea.width), height = Math.min(900, workArea.height);
   const bounds = { x: workArea.x + Math.floor((workArea.width - width) / 2), y: workArea.y + Math.floor((workArea.height - height) / 2), width, height };
   main.setBounds(bounds); main.show(); main.focus(); if (process.platform === 'darwin') app.focus({ steal: true });
   await until(() => { const actual = main.getBounds(); return Object.keys(bounds).every(key => actual[key] === bounds[key]); }, 'Native window fits the display work area');
-  await until(() => evaluate(main.webContents, () => Boolean(document.querySelector('[data-context-capsule]'))));
-  await shot('01-internal-ball'); checks.push('Internal Wuu view has compact capsule without opening a new conversation.');
+  // Positive readiness must precede an absence assertion; an unloaded shell is
+  // not evidence that the disabled feature respects the product contract.
+  await until(() => evaluate(main.webContents, () => Boolean(window.wuu?.webWorkspace && document.querySelector('.sidebar-ribbon'))), 'Shipping shell is ready');
+  phase = 'disabled internal capsule';
+  await assertDisabled(phase);
+  await shot('01-disabled-internal');
+  checks.push('Ready internal Wuu view has no floating context chat or capsule IPC.');
   phase = 'hidden-page context boundary';
   const plugin = await evaluate(main.webContents, url => window.wuu.webWorkspace.open({ id: 'capsule-plugin-fixture', url }), `http://127.0.0.1:${port}/page`);
   assert.equal(typeof plugin.activeTabId, 'string', 'Non-tabbed plugin pages expose their stable browser target.');
@@ -184,123 +168,46 @@ async function run(port) {
   assert.equal(hiddenRead, false, 'Hidden pages cannot be included by the capsule.');
   await evaluate(main.webContents, () => window.wuu.webWorkspace.close('capsule-plugin-fixture'));
   checks.push('Plugin website snapshots expose a stable page ID and hidden page context is denied.');
-  phase = 'native website and capsule readiness';
-  const state = await evaluate(main.webContents, url => window.wuu.webWorkspace.createTab('ribbon-browser', url), `http://127.0.0.1:${port}/page?token=secret-url#secret-fragment`);
+  const state = await evaluate(main.webContents, url => window.wuu.webWorkspace.createTab('ribbon-browser', url), `http://127.0.0.1:${port}/page`);
   const tabId = state.activeTabId;
-  await until(() => evaluate(main.webContents, id => Boolean(document.querySelector(`[data-ribbon-id="${id}"]`)), tabId));
+  await until(() => evaluate(main.webContents, id => Boolean(document.querySelector(`[data-ribbon-id="${id}"]`)), tabId), 'Website destination exists');
   await evaluate(main.webContents, id => document.querySelector(`[data-ribbon-id="${id}"]`).click(), tabId);
-  const page = await until(() => webContents.getAllWebContents().find(contents => contents.getURL().startsWith(`http://127.0.0.1:${port}/page`)));
-  await until(() => evaluate(page, () => Boolean(document.querySelector('#page-input'))));
+  const page = await until(() => webContents.getAllWebContents().find(contents => contents.getURL() === `http://127.0.0.1:${port}/page`), 'Native website exists');
+  await until(() => evaluate(page, () => Boolean(document.querySelector('#page-input'))), 'Fixture page is ready');
   await until(() => main.contentView.children.some(view => view.webContents === page && view.getVisible()), 'Fixture page has visible native ownership');
-  await until(() => capsuleView()?.getVisible(), 'Capsule paints before the focus scenario');
-  main.focus(); if (process.platform === 'darwin') app.focus({ steal: true });
+  main.focus();
   await until(() => main.isFocused(), 'Test window is foreground');
   await evaluate(page, () => document.querySelector('#page-input').focus()); page.focus();
-  await until(() => page.isFocused(), 'Fixture page owns keyboard focus before hover');
-  const focusedBefore = page.isFocused();
-  const native = await hoverCapsule();
-  assert.equal(page.isFocused(), focusedBefore, 'hover must not steal keyboard focus');
-  await shot('02-native-hover');
-  const anchorBefore = capsuleView().getBounds();
-  await clickCapsule(native);
-  await until(() => evaluate(native, () => document.activeElement === document.querySelector('input')), 'Click transfers focus to editor');
-  assert.equal(native.isFocused(), true);
-  await native.insertText('Explain this page');
-  native.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); native.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
-  await until(() => evaluate(native, () => !document.querySelector('input')));
-  await until(() => page.isFocused(), 'Escape returns focus to the live page');
-  await hoverCapsule();
-  await clickCapsule(native, 'right');
-  await until(() => evaluate(native, () => document.activeElement?.getAttribute('role') === 'menuitem'), 'Right click focuses a menu action');
-  await shot('02-native-context-menu');
-  native.sendInputEvent({ type: 'keyDown', keyCode: 'Return' }); native.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
-  await until(() => evaluate(native, () => document.activeElement === document.querySelector('input')), 'Menu action opens editor');
-  assert.equal(await evaluate(native, () => document.querySelector('input').value), 'Explain this page');
-  assert.equal(requests.length, 0, 'Opening the editor from a menu never sends its draft');
-  const anchorAfter = await evaluate(native, () => { const r = document.querySelector('.context-chat-capsule-ball').getBoundingClientRect(); return { right: r.right, bottom: r.bottom }; });
-  const expandedBounds = capsuleView().getBounds();
-  assert.equal(expandedBounds.x + anchorAfter.right, anchorBefore.x + anchorBefore.width - 8, 'Mascot stays anchored horizontally');
-  assert.equal(expandedBounds.y + anchorAfter.bottom, anchorBefore.y + anchorBefore.height - 8, 'Mascot stays anchored vertically');
-  // Native focus changes cross WebContents; Chromium input alone does not focus a macOS sibling view.
-  const field = await evaluate(page, () => { const r = document.querySelector('#page-input').getBoundingClientRect(); return { x: r.x + 10, y: r.y + 10 }; });
-  page.focus();
-  page.sendInputEvent({ type: 'mouseDown', ...field, button: 'left', clickCount: 1 });
-  page.sendInputEvent({ type: 'mouseUp', ...field, button: 'left', clickCount: 1 });
-  await until(() => evaluate(native, () => !document.querySelector('input')), 'Leaving for page collapses editor');
-  assert.equal(await evaluate(page, () => document.activeElement.id), 'page-input');
-  // Accessibility activation does not necessarily send pointer-enter first.
-  await evaluate(native, () => document.querySelector('.context-chat-capsule-ball').click());
-  await until(() => evaluate(native, () => document.activeElement === document.querySelector('input')));
-  native.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' }); native.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
-  await until(() => page.isFocused(), 'Escape restores page focus without a preceding hover');
-  await hoverCapsule(); await clickCapsule(native);
-  await until(() => evaluate(native, () => document.querySelector('input')?.value === 'Explain this page'));
-  checks.push('Hover preserves page focus; click focuses the editor; right click and keyboard menu activation preserve drafts; Escape restores page focus; moving focus back to the page collapses the editor.');
-  const context = await evaluate(main.webContents, id => window.wuu.readPageContext('ribbon-browser', id), tabId);
-  assert.match(context.text, /Visible page reference/); assert.ok(!JSON.stringify(context).includes('secret-'));
-  assert.ok(context.pageId.endsWith(tabId)); assert.ok(!context.url.includes('?') && !context.url.includes('#'));
-  await shot('03-native-draft');
-  phase = 'appearance matrix';
-  for (const [theme, fontSize, width, reduced] of [['light', 15, 1280, false], ['dark', 15, 1280, false], ['light', 20, 720, false], ['dark', 20, 720, true]]) {
-    main.setSize(width, 900);
-    await evaluate(main.webContents, ({ theme, fontSize, reduced }) => {
-      document.documentElement.dataset.theme = theme;
-      document.documentElement.style.setProperty('--font-ui', fontSize + 'px');
-      document.documentElement.style.setProperty('--motion-reduced', reduced ? '1' : '0');
-    }, { theme, fontSize, reduced });
-    await until(() => evaluate(native, ({ theme, fontSize }) => document.documentElement.dataset.theme === theme
-      && getComputedStyle(document.querySelector('input')).fontSize === fontSize + 'px', { theme, fontSize }), 'Native appearance follows owner');
-    await until(() => capsuleView().getBounds().x + capsuleView().getBounds().width <= width, 'Native bounds follow resize');
-    const layout = await evaluate(native, () => {
-      const input = document.querySelector('input'), ball = document.querySelector('.context-chat-capsule-ball');
-      const ir = input.getBoundingClientRect(), br = ball.getBoundingClientRect();
-      return { inputWidth: ir.width, overlap: ir.right > br.left, clipped: br.right > innerWidth || br.bottom > innerHeight,
-        reduced: getComputedStyle(document.querySelector('.context-chat-capsule-body')).animationName };
-    });
-    assert.ok(layout.inputWidth >= 150 && !layout.overlap && !layout.clipped, JSON.stringify(layout));
-    if (reduced) assert.equal(layout.reduced, 'none');
-    await shot(`matrix-${theme}-${fontSize}-${width}`);
+  await until(() => page.isFocused(), 'Fixture page owns keyboard focus');
+  await page.insertText('before');
+  phase = 'disabled capsule during website resize';
+  for (const offset of [32, 0]) {
+    main.setBounds({ ...bounds, width: width - offset, height: height - offset });
+    await until(() => main.getBounds().width === width - offset, 'Window resize applied');
+    // Observe a bounded quiet period, rather than passing on a transient absence.
+    for (let sample = 0; sample < 10; sample++) {
+      await delay(30); await assertDisabled(phase);
+      assert.equal(page.isFocused(), true, 'Disabled capsule must not steal native page focus');
+    }
   }
-  checks.push('Light/dark, 15/20px UI, 1280/720px window and reduced motion render without clipped controls or overlapping editor.');
-  await evaluate(main.webContents, () => { document.documentElement.dataset.theme = 'light'; document.documentElement.style.removeProperty('--font-ui'); document.documentElement.style.removeProperty('--motion-reduced'); });
-  main.setSize(1280, 900);
-  phase = 'send normal chat';
-  main.focus(); if (process.platform === 'darwin') app.focus({ steal: true });
-  await until(() => main.isFocused() && capsuleView()?.getVisible(), 'Foreground capsule is ready to send');
-  await until(() => evaluate(native, () => document.documentElement.dataset.theme === 'light' && innerWidth === 416), 'Final appearance has painted');
-  // Theme restoration and window resize can publish another generation after
-  // the viewport already matches. Let the owner commit those updates, then
-  // require the same generation's native paint before issuing one Send.
-  await evaluate(main.webContents, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await until(() => capsuleModel && capsulePaint?.token === capsuleModel.token
-    && capsulePaint.generation === capsuleModel.generation, 'Final capsule generation has painted');
-  native.focus();
-  await evaluate(native, () => document.querySelector('form').requestSubmit());
-  const thread = await until(() => evaluate(main.webContents, async () => (await window.wuu.listThreads()).threads.find(thread => !thread.ephemeral)), 'Single capsule Send creates a normal thread');
-  await until(() => requests.some(body => body.tools?.length && JSON.stringify(body.messages).includes('Explain this page')));
-  await until(() => evaluate(main.webContents, async id => (await window.wuu.resumeThread(id)).thread.turns.some(turn => turn.status === 'completed'), thread.id));
-  assert.equal(await evaluate(main.webContents, () => document.querySelector('.web-workspace-stage')?.hidden), false);
-  const request = requests.find(body => body.tools?.length && JSON.stringify(body.messages).includes('Explain this page'));
-  assert.ok(JSON.stringify(request.messages).includes(context.pageId));
-  assert.ok(JSON.stringify(request.messages).includes('Visible page reference.'));
-  assert.ok(JSON.stringify(request.messages).includes('untrusted page content'));
-  assert.ok(!JSON.stringify(request.messages).includes('secret-'));
-  checks.push('Send uses production startThread/startTurn and exact bounded page reference; the normal Chat session persists while the source website remains visible.');
-  await until(() => evaluate(native, () => Boolean(document.querySelector('.context-chat-capsule-status button'))));
-  await shot('04-chat-created');
-  await evaluate(native, () => document.querySelector('input').focus()); await native.insertText('Continue this same page');
-  await evaluate(native, () => document.querySelector('form').requestSubmit());
-  await until(() => evaluate(main.webContents, async id => (await window.wuu.resumeThread(id)).thread.turns.filter(turn => turn.status === 'completed').length >= 2, thread.id));
-  assert.equal((await evaluate(main.webContents, async () => (await window.wuu.listThreads()).threads)).length, 1);
-  checks.push('Second send reuses the ordinary conversation, without creating a parallel chat backend.');
-  await evaluate(native, () => document.querySelector('.context-chat-capsule-status button').click());
-  await until(() => evaluate(main.webContents, () => document.querySelector('.web-workspace-stage')?.hidden));
-  await shot('05-open-chat'); checks.push('Open chat navigates explicitly to the conversation.');
+  await page.insertText('-after');
+  assert.equal(await evaluate(page, () => document.querySelector('#page-input').value), 'before-after', 'Page typing remains continuous through resize');
+  checks.push('Visible website retains native input focus and draft through repeated resize, without capsule surfaces or IPC.');
+  phase = 'disabled capsule after navigation';
+  await evaluate(main.webContents, url => window.wuu.webWorkspace.command('ribbon-browser', 'navigate', url), `http://127.0.0.1:${port}/page-next`);
+  await until(() => page.getURL().endsWith('/page-next') && !page.isLoadingMainFrame(), 'Navigation completes');
+  await until(() => evaluate(page, () => Boolean(document.querySelector('#page-input'))), 'Navigated fixture ready');
+  await evaluate(page, () => document.querySelector('#page-input').focus()); page.focus();
+  for (let sample = 0; sample < 10; sample++) {
+    await delay(30); await assertDisabled(phase);
+    assert.equal(page.isFocused(), true, 'Navigation must not expose or focus a capsule');
+  }
+  await page.insertText('after-navigation');
+  assert.equal(await evaluate(page, () => document.querySelector('#page-input').value), 'after-navigation');
+  assert.deepEqual(await evaluate(main.webContents, async () => (await window.wuu.listThreads()).threads), [], 'Disabled chat must not create conversations');
+  await shot('02-disabled-website');
+  checks.push('Navigation preserves disabled capsule contract, page input works, and no conversations or provider requests are created.');
   phase = 'complete'; report(true); clearTimeout(timeout);
-  if (process.env.WUU_CAPSULE_KEEP_OPEN === '1') {
-    await evaluate(main.webContents, id => document.querySelector(`[data-ribbon-id="${id}"]`).click(), tabId);
-    return;
-  }
   server.close(); app.quit();
 }
 async function fail(error) {

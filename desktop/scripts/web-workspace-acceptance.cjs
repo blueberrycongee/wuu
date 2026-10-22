@@ -570,6 +570,17 @@ async function runWebsiteAcceptance(h, fixture) {
     await until(() => expanded
       ? chromeView('ribbon')?.getVisible() && Math.abs(chromeView('ribbon').getBounds().width - expectedWidth * win.webContents.getZoomFactor()) <= 1
       : !chromeView('ribbon')?.getVisible(), 'Native ribbon finishes its reveal or dismissal');
+    if (expanded) {
+      // Host bounds acknowledge the reveal before Chromium consumes its resize.
+      // Wait for the viewport, not the bar geometry asserted independently below.
+      await until(async () => {
+        const view = chromeView('ribbon');
+        if (!view?.getVisible()) return false;
+        return evaluateContents(view.webContents, ({ hostWidth, expectedWidth }) =>
+          Math.abs(innerWidth - hostWidth) <= 1 && Math.abs(innerWidth - expectedWidth) <= 1,
+        { hostWidth: view.getBounds().width / view.webContents.getZoomFactor(), expectedWidth }, 'verticalTabGeometry native reveal readiness');
+      }, 'Native ribbon renderer consumes its revealed viewport');
+    }
     const geometry = await evaluateRibbon(() => {
       const bar = document.querySelector('.sidebar-ribbon'), r = bar.getBoundingClientRect();
       const rows = [...bar.querySelectorAll('.sidebar-ribbon-tab-row')].map(row => {
@@ -583,7 +594,7 @@ async function runWebsiteAcceptance(h, fixture) {
       return { width: r.width, expanded: bar.dataset.expanded === 'true', viewportWidth: innerWidth, rows };
     });
     assert.equal(geometry.expanded, expanded, `Rail expansion follows the current interaction: ${JSON.stringify(geometry)}`);
-    assert.ok(Math.abs(geometry.width - expectedWidth) <= 1, `Native ribbon matches the shell interaction bounds: ${JSON.stringify(geometry)}`);
+    assert.ok(Math.abs(geometry.width - expectedWidth) <= 1, `Native ribbon matches the shell interaction bounds (expected ${expectedWidth}, host ${JSON.stringify(chromeView('ribbon')?.getBounds())}): ${JSON.stringify(geometry)}`);
     assert.ok(geometry.rows.every(row => row.title && (expanded ? row.titleVisible && row.titleWidth >= 20 : !row.titleVisible)), 'Destination labels appear only in the expanded overlay');
     assert.ok(geometry.rows.some(row => row.id === 'conversations' && !row.close), 'Built-in Chat has no close button');
     assert.ok(geometry.rows.every(row => row.close === (row.web && !row.pinned)), 'Only unpinned website tabs have direct close controls');

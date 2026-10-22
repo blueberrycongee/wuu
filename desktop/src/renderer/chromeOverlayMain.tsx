@@ -77,14 +77,11 @@ function RibbonSurface({ model, width, send }: { model: ChromeRibbonModel; width
       send({ type: "resize-ribbon", width, finished });
     }} />}
     {model.footer && <div className="sidebar-ribbon-footer">
-      <button className="sidebar-ribbon-button" type="button" aria-label={model.footer.settings.title} aria-current={model.footer.settings.active ? "page" : undefined}
-        disabled={model.footer.settings.disabled} onClick={() => send({ type: "settings" })}>
-        <ChromeRibbonIcon icon={model.footer.settings.icon} /><span className="sidebar-ribbon-label">{model.footer.settings.title}</span>
-      </button>
+      {model.footer.update && <DesktopUpdateButtonSurface model={model.footer.update} boundedNative onActivate={() => send({ type: "desktop-update" })} />}
       {model.footer.account && <div className="sidebar-account"><SidebarAccountTrigger model={model.footer.account} onOpen={button => {
         const rect = button.getBoundingClientRect();
         send({ type: "account-open", anchor: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } });
-      }} />{model.footer.update && <DesktopUpdateButtonSurface model={model.footer.update} boundedNative onActivate={() => send({ type: "desktop-update" })} />}</div>}
+      }} /></div>}
     </div>}
   </nav>;
 }
@@ -122,7 +119,6 @@ function Overlay(): JSX.Element | null {
         : target?.kind === "close" ? [...document.querySelectorAll<HTMLElement>("[data-ribbon-close-id]")].find(element => element.dataset.ribbonCloseId === target.id)
         : target?.kind === "desktop-update" ? document.querySelector<HTMLElement>(".desktop-update-button")
         : target?.kind === "account" ? document.querySelector<HTMLElement>(".sidebar-account-trigger")
-        : target?.kind === "settings" ? document.querySelector<HTMLElement>(".sidebar-ribbon-footer > .sidebar-ribbon-button")
         : target?.kind === "new-tab" ? document.querySelector<HTMLElement>(".sidebar-ribbon-add") : undefined;
       (focused ?? document.querySelector<HTMLElement>("button:not(:disabled), input, textarea"))?.focus();
     }

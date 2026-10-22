@@ -1,6 +1,5 @@
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { PhoneNavigationContext } from './PhoneNavigationContext';
-import { DesktopUpdateButton } from "./DesktopUpdateButton";
 import { SidebarAccountPanel, SidebarAccountTrigger } from "./SidebarAccountParts";
 import { chromeOverlayApi, NativeRibbonFooterContext, useChromeOverlay } from "./ChromeOverlay";
 import type { ChromeAccountAction, ChromeAccountPanel, ChromeAccountTrigger, ChromeOverlayRect } from "../shared/chromeOverlay";
@@ -131,7 +130,6 @@ export function SidebarAccountMenu({ disabled, localOnly = false, matchTriggerWi
     onBlur={event => { if (!useNative && event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node) && event.relatedTarget !== anchor.current) setOpen(false); }} />;
   return <div className="sidebar-account">
     <SidebarAccountTrigger model={triggerModel} anchorRef={anchor} controls={open ? id : undefined} onOpen={() => { setNativeAnchor(null); setOpen(!open); }} />
-    <DesktopUpdateButton />
     {open && (useNative ? <div aria-hidden="true" style={{ position: "fixed", visibility: "hidden", pointerEvents: "none", width: composerMenuWidth(240),
       "--floating-menu-available-width": `${composerMenuWidth(240)}px`, "--floating-menu-available-height": "400px" } as React.CSSProperties}>{content}</div>
       : <FloatingMenuPortal anchorRef={anchor} owner="sidebar-account" placement="above" align="left"

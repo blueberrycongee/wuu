@@ -5,7 +5,7 @@ import type { ChromeOverlayApi, ChromeOverlayCommand, ChromeOverlayEvent, Chrome
 import { NavigationRibbon } from "./NavigationRibbon";
 
 // A website selection can replace the shell's pointer target with native chrome.
-// Navigating back to an app page must not end that hover session. Only an actual
+// Navigating back to an app page must not end that reveal session. Only an actual
 // leave or explicit dismissal may release it; keyboard retention must survive too.
 let root: Root;
 let container: HTMLDivElement;
@@ -15,18 +15,20 @@ const original = window.wuu;
 const originalScroll = Object.getOwnPropertyDescriptor(Element.prototype, "scrollIntoView");
 const originalIterator = Object.getOwnPropertyDescriptor(CSSStyleDeclaration.prototype, Symbol.iterator);
 const hide = vi.fn(async () => {});
+const show = vi.fn(async (value: ChromeOverlayRequest) => { request = value; });
 
 beforeEach(() => {
   vi.useFakeTimers();
   localStorage.clear();
   hide.mockClear();
+  show.mockClear();
   Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: () => {} });
   Object.defineProperty(CSSStyleDeclaration.prototype, Symbol.iterator, {
     configurable: true,
     value: function* (this: CSSStyleDeclaration) { for (let i = 0; i < this.length; i++) yield this.item(i); },
   });
   const api: ChromeOverlayApi = {
-    show: vi.fn(async value => { request = value; }),
+    show,
     hide,
     onEvent: callback => { emit = callback; return () => {}; },
   };
@@ -65,12 +67,16 @@ function open() {
   act(() => root.render(<Journey />));
   act(() => rail().dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
   act(() => vi.advanceTimersByTime(120));
+  expect(rail().dataset.expanded).toBeUndefined();
+  expect(show).not.toHaveBeenCalled();
+  document.documentElement.dataset.focusModality = "keyboard";
+  act(() => container.querySelector<HTMLButtonElement>('[data-ribbon-id="alpha"]')!.focus());
   // The OS now delivers input to the native ribbon instead of the shell.
   act(() => rail().dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: null })));
   expect(rail().dataset.expanded).toBe("true");
 }
 
-describe("NavigationRibbon hover navigation", () => {
+describe("NavigationRibbon reveal navigation", () => {
   it("keeps the same open ribbon through website and app selections until pointer leave", () => {
     open();
     const opening = request.token;
@@ -86,6 +92,61 @@ describe("NavigationRibbon hover navigation", () => {
     expect(hide).toHaveBeenCalled();
   });
 
+  it.each([
+    ["leave", false, "Home"], ["leave", true, "Tab"],
+    ["escape", false, "Tab"], ["escape", true, "Home"],
+  ] as const)("does not reopen on native %s focus restoration (before dismissal=%s), but accepts %s", (reason, restoreFirst, nextKey) => {
+    act(() => root.render(<Journey />));
+    const target = container.querySelector<HTMLButtonElement>('[data-ribbon-id="alpha"]')!;
+    document.documentElement.dataset.focusModality = "keyboard";
+    act(() => target.focus());
+    expect(rail().dataset.expanded).toBe("true");
+    // WebContents focus handoff preserves the shell's activeElement. Its
+    // focusin on return has no relatedTarget and is not a fresh keyboard act.
+    act(() => target.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null })));
+    if (restoreFirst) {
+      act(() => target.dispatchEvent(new FocusEvent("focusin", { bubbles: true, relatedTarget: null })));
+      expect(request.focus).toBe(false);
+    }
+    command({ type: "dismiss", reason });
+    expect(rail().dataset.expanded).toBeUndefined();
+    const shows = show.mock.calls.length;
+    act(() => target.dispatchEvent(new FocusEvent("focusin", { bubbles: true, relatedTarget: null })));
+    expect(rail().dataset.expanded).toBeUndefined();
+    expect(show).toHaveBeenCalledTimes(shows);
+    if (nextKey === "Tab") {
+      const outside = document.createElement("input");
+      container.appendChild(outside);
+      act(() => outside.focus());
+      act(() => outside.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Tab" })));
+      act(() => target.focus());
+    } else {
+      act(() => target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: nextKey })));
+    }
+    expect(rail().dataset.expanded).toBe("true");
+    expect(show).toHaveBeenCalledTimes(shows + 1);
+  });
+
+  it("remembers the actual shell focus handed off after native presentation begins", () => {
+    act(() => root.render(<Journey />));
+    document.documentElement.dataset.focusModality = "keyboard";
+    const first = container.querySelector<HTMLButtonElement>('[data-ribbon-id="alpha"]')!;
+    const next = container.querySelector<HTMLButtonElement>('[data-ribbon-id="beta"]')!;
+    act(() => first.focus());
+    const opening = request.token;
+    // Keyboard traversal can move the shell target while native paint is still
+    // pending. The eventual WebContents handoff owns this newer target.
+    act(() => first.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Tab" })));
+    act(() => next.focus());
+    expect(request.token).toBe(opening);
+    act(() => next.dispatchEvent(new FocusEvent("focusout", { bubbles: true, relatedTarget: null })));
+    command({ type: "dismiss", reason: "leave" });
+    const shows = show.mock.calls.length;
+    act(() => next.dispatchEvent(new FocusEvent("focusin", { bubbles: true, relatedTarget: null })));
+    expect(rail().dataset.expanded).toBeUndefined();
+    expect(show).toHaveBeenCalledTimes(shows);
+  });
+
   it("allows Escape after switching to an app page without reopening under a stationary pointer", () => {
     open();
     command({ type: "select", id: "conversations" });
@@ -96,7 +157,7 @@ describe("NavigationRibbon hover navigation", () => {
     act(() => rail().dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: null })));
     act(() => rail().dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
     act(() => vi.advanceTimersByTime(120));
-    expect(rail().dataset.expanded).toBe("true");
+    expect(rail().dataset.expanded).toBeUndefined();
   });
 });
 

@@ -77,7 +77,7 @@ module.exports = async function acceptRibbon(h) {
     };
     const website = await evaluate(() => document.querySelector('[data-wuu-component="website-navigation-item"][aria-current="page"]').dataset.ribbonId);
     const websiteSelector = `[data-ribbon-id="${website}"]`;
-    for (const selector of ['[data-wuu-component="conversations-section"]', '.sidebar-ribbon-footer .sidebar-ribbon-button']) {
+    for (const selector of ['[data-wuu-component="conversations-section"]', '[data-ribbon-id="catalog"]']) {
       const anchor = await evaluate(() => { const r = document.querySelector('.sidebar-ribbon [data-ribbon-id]').getBoundingClientRect(); return { x: r.x + 12, y: r.y + r.height / 2 }; });
       await moveTo(anchor.x, anchor.y);
       await until(() => surface.getVisible() && surface.getBounds().width >= 240 * zoom, 'browser ribbon expanded');

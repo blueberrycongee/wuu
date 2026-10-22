@@ -1127,12 +1127,12 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   padding-bottom: 2px;
 }
 
-/* Short document drafts share one row with the existing controls. Wrapping,
-   attachments, or larger text restore the full editor without replacing its
-   DOM or input state. */
+/* Short document drafts share one row with the existing controls. Wrapping
+   or larger text restores the full editor without replacing its DOM or input
+   state. Attachment drawers do not change the input layout. */
 /* Keep a full-width input row when runtime controls would crowd the draft. */
 @container document-composer (min-width: 560px) {
-  .document-composer-wrap .composer-stack:not([data-multiline]):not([data-has-attachments]) {
+  .document-composer-wrap .composer-stack:not([data-multiline]) {
     --composer-collapsed-min-height: 44px;
 
     .composer:not([hidden]) {
@@ -1147,8 +1147,8 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
     }
 
     /* One row reads as a capsule while reading beside it: the plus and send
-       circles at its ends sit concentric with the round caps. Wrapping or
-       attachments return to the panel radius. */
+       circles at its ends sit concentric with the round caps. Wrapping
+       returns to the panel radius. */
     .composer-frame {
       border-radius: var(--radius-pill);
     }
@@ -1205,17 +1205,20 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   }
 }
 
-/* A short conversation draft keeps the capsule itself to the draft, Plus, and
+/* The conversation draft keeps its surface to the draft, Plus, and
  * Send. Secondary controls move to a quiet row below, so the first glyph
  * shares the message flow's left edge; the capsule surface extends into the
  * gutter symmetrically and only appears where that overhang still leaves
- * breathing room. Wrapped drafts and attachments restore the stacked editor. */
+ * breathing room. Wrapped drafts grow upward inside the same surface;
+ * attachment drawers leave the input and its toolbar in place. */
 /* 760px measure + two 42px cap overhangs + 2 × 14px breathing room. */
 @container conversation-composer (min-width: 872px) {
   :is(.dock-composer-wrap:not(.document-composer-wrap), .hero-composer-wrap)
-    .composer-stack:not([data-multiline]):not([data-has-attachments]):not(:has(.composer-cover-accessory)) {
+    .composer-stack:not(:has(.composer-cover-accessory)) {
     --composer-collapsed-min-height: 80px;
     --composer-pill-height: 44px;
+    --composer-pill-radius: 22px;
+    --composer-pill-footer-height: 36px;
     --composer-pill-overhang: 42px;
     --composer-pill-input-height: max(32px, var(--conversation-reading-line-height));
     --composer-pill-input-inset: max(
@@ -1235,9 +1238,8 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
        control row below sits directly on the conversation paper. */
     .composer-frame::before {
       position: absolute;
-      inset: 0 calc(-1 * var(--composer-pill-overhang)) auto;
-      height: var(--composer-pill-height);
-      border-radius: var(--radius-pill);
+      inset: 0 calc(-1 * var(--composer-pill-overhang)) var(--composer-pill-footer-height);
+      border-radius: var(--composer-pill-radius);
       background: var(--composer-surface-bg);
       box-shadow: var(--composer-frame-shadow);
       content: "";
@@ -1245,9 +1247,8 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
     }
 
     .composer-frame::after {
-      inset: 0 calc(-1 * var(--composer-pill-overhang)) auto;
-      height: var(--composer-pill-height);
-      border-radius: var(--radius-pill);
+      inset: 0 calc(-1 * var(--composer-pill-overhang)) var(--composer-pill-footer-height);
+      border-radius: var(--composer-pill-radius);
     }
 
     .composer:not([hidden]) {
@@ -1257,7 +1258,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
       z-index: 1;
       display: grid;
       grid-template-columns: max-content minmax(0, 1fr) max-content;
-      grid-template-rows: var(--composer-pill-height) auto;
+      grid-template-rows: minmax(var(--composer-pill-height), auto) 32px;
       align-items: center;
       column-gap: 0;
       row-gap: 4px;
@@ -1270,7 +1271,8 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
       min-width: 0;
       height: var(--composer-pill-input-height);
       min-height: var(--composer-pill-input-height);
-      max-height: var(--composer-pill-input-height);
+      max-height: calc(var(--composer-expanded-min-height) - var(--composer-chrome-height, 48px));
+      margin-block: 6px;
       padding: var(--composer-pill-input-inset) 12px var(--composer-pill-input-inset) 0;
     }
 
@@ -1290,7 +1292,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
        the text column still starts on the message flow's left edge. */
     .composer-bar-left .composer-plus-menu-anchor {
       position: absolute;
-      top: calc((var(--composer-pill-height) - 32px) / 2);
+      bottom: calc(var(--composer-pill-footer-height) + 6px);
       left: calc(6px - var(--composer-pill-overhang));
       z-index: 1;
     }
@@ -1306,9 +1308,13 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 
     .composer-bar-right .composer-action-button {
       position: absolute;
-      top: calc((var(--composer-pill-height) - 32px) / 2);
+      bottom: calc(var(--composer-pill-footer-height) + 6px);
       right: calc(6px - var(--composer-pill-overhang));
       z-index: 1;
+    }
+
+    &[data-multiline] {
+      --composer-pill-radius: var(--session-composer-radius);
     }
 
     /* The readout is status, not a control, so it recedes beside the toolbar. */
@@ -1327,7 +1333,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
      itself at that width instead of extending past it by the usual overhang. */
   :root[data-message-style="im"]
     :is(.dock-composer-wrap:not(.document-composer-wrap), .hero-composer-wrap)
-    .composer-stack:not([data-multiline]):not([data-has-attachments]):not(:has(.composer-cover-accessory)) {
+    .composer-stack:not(:has(.composer-cover-accessory)) {
     --composer-im-stack-outset: 0px;
     --composer-pill-overhang: var(--session-im-inline-outset);
   }
@@ -1336,7 +1342,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
      draft clear of both 32px controls and their breathing room. */
   :root[data-message-style="im"]
     :is(.dock-composer-wrap:not(.document-composer-wrap), .hero-composer-wrap)
-    .composer-stack:not([data-multiline]):not([data-has-attachments]):not(:has(.composer-cover-accessory))
+    .composer-stack:not(:has(.composer-cover-accessory))
     .composer textarea {
     padding-inline: calc(
       38px - var(--composer-pill-overhang) + var(--space-2)

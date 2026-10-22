@@ -10,6 +10,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Save images and links from website context menus, including Blob/data resources and popup pages, through the browser download manager; copy images or their addresses and open image URLs in new tabs.
+
+- Show desktop update progress above the navigation ribbon avatar in compact and expanded layouts; keep Settings in the avatar menu instead of a separate ribbon button.
+
 - Start a conversation from the Recent sidebar heading, using the scratch workspace when no project is selected.
 
 - Show the Wuu mascot icon at the top of the desktop navigation ribbon.
@@ -58,6 +62,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Use the same user-message background in IM list and bubble presentation modes, and keep IM frame backgrounds visible during window resizing.
+
+- Keep the experimental navigation ribbon at its saved width on pointer hover.
+
 - Keep IM user-message timestamps beside the text when space permits, with stable hover actions and a separate metadata row for narrow panes and complex content.
 
 - Replace the page chat shortcut with Wuu's mascot, with click-to-compose, a keyboard-accessible context menu, and draft-preserving focus return to the page.
@@ -85,6 +93,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   gutters to the reading pane.
 
 ### Fixed
+
+- Fold progress messages and tool/reasoning groups after published images into the process section when the final answer appears, keeping delivered images and the answer visible.
+
+- Keep the input width and toolbar layout stable when attachment drawers open in conversation and document composers, and when conversation drafts grow to multiple lines.
 
 - Align the browser toolbar and native navigation ribbon at one header boundary so hovered sidebars fully cover the page without an exposed strip.
 

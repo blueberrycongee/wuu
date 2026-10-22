@@ -172,7 +172,7 @@ function key(keyCode) {
   let request = { version: 1, token: "native-ribbon-fixture", generation: 1, bounds: { x: 0, y: 0, width: 248, height: 720 }, focus: true, appearance,
     model: { kind: "ribbon", resizeLabel: "Resize navigation ribbon", collapsedWidth: 52, label: "Browser tabs", newTabLabel: "New tab", canCreateTab: true,
       closeTabLabel: "Close tab", pinTabLabel: "Pin tab", unpinTabLabel: "Unpin tab", muteTabLabel: "Mute tab", unmuteTabLabel: "Unmute tab", reorderHint: "Move tabs",
-      paddingTop: 0, paddingBottom: 8, scrollTop: 600, focusTarget: { kind: "settings" }, footer: { settings: { id: "settings", title: "Settings", icon: { kind: "settings" } } },
+      paddingTop: 0, paddingBottom: 8, scrollTop: 600, focusTarget: { kind: "account" }, footer: { account: { title: "Local use", label: "Account menu", disabled: false, open: false } },
       items: Array.from({ length: 48 }, (_, i) => ({ id: "native-" + i, title: "Native page " + i, active: i === 0, website: true, closable: true, canMute: true, audible: i === 0,
         icon: { kind: "website", url: "https://example.com/" + i, title: "Native page " + i } })) } };
   nativeHost = new ChromeOverlayHost((_owner, event) => {
@@ -356,9 +356,16 @@ function key(keyCode) {
   await until(() => request.bounds.width===300 && ribbon.getBounds().width===300,'native ribbon follows dragged width');
   ribbon.webContents.sendInputEvent({type:'mouseUp',x:resizePoint.x+52,y:resizePoint.y,button:'left',clickCount:1});
   await until(() => nativeEvents.some(event=>event.command?.type==='resize-ribbon' && event.command.finished),'native ribbon commits resize');
+  // sendInputEvent does not move the OS cursor used by the host's leave check.
+  // Releasing synthetic capture may therefore legitimately dismiss the rail.
+  // Start a separate keyboard opening for validation and focus traversal.
+  nativeHost.hide(win, request.token, request.generation);
+  await until(() => nativeRun('!document.querySelector(".sidebar-ribbon")'), "previous ribbon opening has unmounted");
+  request = { ...request, token: "native-ribbon-keyboard", generation: 1, focus: true };
+  nativeHost.show(win, request);
+  await until(() => ribbon.getVisible() && ribbon.webContents.isFocused() && ribbon.getBounds().width === 300, "keyboard ribbon reopens at committed width");
   const accepted = nativeEvents.filter(event=>event.command?.type==='resize-ribbon').length;
-  await nativeRun(`window.wuuChromeOverlay.ready().then(request=>{for(const width of [-1,Infinity,10000]) window.wuuChromeOverlay.command({token:request.token,generation:request.generation,command:{type:'resize-ribbon',width,finished:true}})})`);
-  await nativeRun('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+  await nativeRun(`window.wuuChromeOverlay.ready().then(request=>{for(const width of [-1,Infinity,10000]) window.wuuChromeOverlay.command({token:request.token,generation:request.generation,command:{type:'resize-ribbon',width,finished:true}});return window.wuuChromeOverlay.ready()})`);
   assert.equal(nativeEvents.filter(event=>event.command?.type==='resize-ribbon').length,accepted,'Host rejects invalid ribbon widths');
   checks.push('Native ribbon edge supports captured drag and rejects out-of-range widths');
   await nativeRun('document.querySelector("[data-ribbon-id=native-20]").focus()');

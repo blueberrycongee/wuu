@@ -88,6 +88,30 @@ function requestOrigin(value: string): string | undefined {
   } catch { return undefined; }
 }
 
+function contextDownloadReferrer(params: Electron.ContextMenuParams, target: string): string {
+  const source = new URL(params.frameURL || params.pageURL);
+  const destination = new URL(target);
+  if (!/^https?:$/.test(source.protocol) || !/^https?:$/.test(destination.protocol)) return "";
+  source.username = "";
+  source.password = "";
+  source.hash = "";
+  const downgrade = source.protocol === "https:" && destination.protocol === "http:";
+  const origin = `${source.origin}/`;
+  // downloadURL cannot propagate the frame's policy across redirects. Omit
+  // same-origin-only referrers and trim paths for origin/strict policies so a
+  // redirect cannot disclose more than the original document permits.
+  // Electron 44 emits a string here; remove String() when its ContextMenuParams type is corrected.
+  switch (String(params.referrerPolicy)) {
+    case "no-referrer":
+    case "same-origin": return "";
+    case "unsafe-url": return source.href;
+    case "no-referrer-when-downgrade": return downgrade ? "" : source.href;
+    case "origin":
+    case "origin-when-cross-origin": return origin;
+    default: return downgrade ? "" : origin;
+  }
+}
+
 export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
   private shortcutTargets = new Map<number, string>();
   private groups = new Map<string, WorkspaceGroup>();
@@ -959,7 +983,6 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
       this.emit(group);
     });
     page.contents.on("zoom-changed", (_event, direction) => this.stepZoom(page, direction === "in" ? 1 : -1));
-    page.contents.on("context-menu", (_event, params) => this.contextMenu(page, params));
     page.contents.once("destroyed", () => {
       if (page.discarding) return;
       if (this.pages.get(page.id) !== page || this.groups.get(group.id) !== group) return;
@@ -1214,29 +1237,62 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     if (next) this.setZoom(page.owner, page.group.id, next);
   }
 
-  private contextMenu(page: WorkspacePage, params: Electron.ContextMenuParams): void {
+  private contextMenu(page: WorkspacePage, contents: WebContents, params: Electron.ContextMenuParams): void {
+    const available = () => !contents.isDestroyed() && !this.automationRestricted(page);
+    if (!available()) return;
+    const downloadable = (url: string) => /^(https?:|blob:|data:)/i.test(url);
+    const download = (url: string) => {
+      // Native downloads retain the browser session and reach the shared download
+      // manager without requiring the website to read cross-origin image bytes.
+      if (!available()) return;
+      const referrer = contextDownloadReferrer(params, url);
+      contents.downloadURL(url, referrer ? { headers: { Referer: referrer } } : undefined);
+    };
     const template: Electron.MenuItemConstructorOptions[] = [];
     let link: string | undefined;
     try { if (params.linkURL) link = websiteURL(params.linkURL); } catch { /* Internal and executable URLs are not browser destinations. */ }
-    if (link) {
-      const url = link;
-      if (page.group.tabbed) template.push({ label: "Open Link in New Tab", enabled: page.group.tabs.length < WEB_WORKSPACE_TAB_LIMIT, click: () => this.createTab(page.owner, page.group.id, url, { background: true }) });
-      template.push({ label: "Copy Link Address", click: () => clipboard.writeText(url) }, { type: "separator" });
+    if (link || downloadable(params.linkURL)) {
+      const url = link ?? params.linkURL;
+      if (link && page.group.tabbed) template.push({ label: "Open Link in New Tab", enabled: page.group.tabs.length < WEB_WORKSPACE_TAB_LIMIT, click: () => { if (available()) this.createTab(page.owner, page.group.id, url, { background: true }); } });
+      template.push(
+        { label: "Save Link As…", click: () => download(url) },
+        { label: "Copy Link Address", click: () => { if (available()) clipboard.writeText(url); } },
+        { type: "separator" },
+      );
+    }
+    if (params.mediaType === "image" && downloadable(params.srcURL)) {
+      let imageURL: string | undefined;
+      try { imageURL = websiteURL(params.srcURL); } catch { /* Blob and data images can be saved without becoming persistent tabs. */ }
+      if (imageURL && page.group.tabbed) {
+        const url = imageURL;
+        template.push({ label: "Open Image in New Tab", enabled: page.group.tabs.length < WEB_WORKSPACE_TAB_LIMIT, click: () => { if (available()) this.createTab(page.owner, page.group.id, url, { background: true }); } });
+      }
+      template.push(
+        { label: "Save Image As…", enabled: params.hasImageContents, click: () => download(params.srcURL) },
+        { label: "Copy Image", enabled: params.hasImageContents, click: () => { if (available()) contents.copyImageAt(params.x, params.y); } },
+        { label: "Copy Image Address", click: () => { if (available()) clipboard.writeText(params.srcURL); } },
+        { type: "separator" },
+      );
     }
     if (params.isEditable) template.push({ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" });
     else if (params.selectionText) template.push({ role: "copy" }, { role: "selectAll" });
     else template.push(
-      { label: "Back", enabled: page.contents.navigationHistory.canGoBack(), click: () => this.command(page.owner, page.group.id, "back") },
-      { label: "Forward", enabled: page.contents.navigationHistory.canGoForward(), click: () => this.command(page.owner, page.group.id, "forward") },
-      { label: "Reload", click: () => this.command(page.owner, page.group.id, "reload") },
+      { label: "Back", enabled: contents.navigationHistory.canGoBack(), click: () => { if (available()) contents.navigationHistory.goBack(); } },
+      { label: "Forward", enabled: contents.navigationHistory.canGoForward(), click: () => { if (available()) contents.navigationHistory.goForward(); } },
+      { label: "Reload", click: () => {
+        if (!available()) return;
+        if (contents === page.contents) this.command(page.owner, page.group.id, "reload");
+        else contents.reload();
+      } },
     );
-    Menu.buildFromTemplate(template).popup({ window: page.owner });
+    Menu.buildFromTemplate(template).popup({ window: BrowserWindow.fromWebContents(contents) ?? page.owner });
   }
 
   private secureContents(page: WorkspacePage, contents: WebContents, detached = false): void {
     const contentsID = contents.id;
     const owned: PermissionOwner = { page, grants: new Set(), navigationGeneration: 0 };
     this.contentsOwners.set(contentsID, owned);
+    contents.on("context-menu", (_event, params) => this.contextMenu(page, contents, params));
     contents.once("destroyed", () => this.contentsOwners.delete(contentsID));
     contents.on("did-start-navigation", details => { if (details.isMainFrame && !details.isSameDocument) owned.navigationGeneration++; });
     contents.on("will-attach-webview", event => event.preventDefault());
