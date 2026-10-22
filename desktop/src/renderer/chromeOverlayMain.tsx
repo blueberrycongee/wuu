@@ -109,6 +109,13 @@ function Overlay(): JSX.Element | null {
     root.style.fontFamily = request.appearance.fontFamily;
     for (const [name, value] of Object.entries(request.appearance.variables)) if (/^--[a-zA-Z\d_-]+$/.test(name) && !/url\s*\(/i.test(value)) root.style.setProperty(name, value);
     root.dataset.chromeSurface = request.model.kind;
+    root.toggleAttribute("data-shell-skin", Boolean(request.appearance.shellSkin));
+    const shellImage = request.appearance.shellImage;
+    if (shellImage && /^wuu-plugin:\/\/asset\/[a-f0-9]{64}$/.test(shellImage)) {
+      root.style.setProperty("--shell-image", `url("wuu-chrome://ui/plugin-icon/${shellImage.split("/").pop()}")`);
+    }
+    root.style.setProperty("--shell-offset-x", `${request.bounds.x}px`);
+    root.style.setProperty("--shell-offset-y", `${request.bounds.y}px`);
     const target = request.model.kind === "ribbon" ? request.model.focusTarget : undefined;
     const targetKey = JSON.stringify(target);
     const takeFocus = request.focus && (previous.current?.token !== request.token || !previous.current.focus || previous.current.target !== targetKey);

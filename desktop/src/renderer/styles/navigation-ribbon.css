@@ -84,10 +84,6 @@
   pointer-events: none;
 }
 
-html[data-app-background] .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon)::before {
-  background: transparent;
-}
-
 .workbench-window-chrome {
   display: none;
 }
@@ -140,8 +136,8 @@ html[data-app-background] .app-shell.navigation-ribbon-layout:has(.sidebar-ribbo
   content: none;
 }
 
-html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) .dock-composer-wrap::before,
-html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :is(
+.navigation-ribbon-layout:has(.sidebar-ribbon) .dock-composer-wrap::before,
+.navigation-ribbon-layout:has(.sidebar-ribbon) :is(
   .conversation-split-pane,
   .empty-home,
   .project-empty-pane,

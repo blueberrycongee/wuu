@@ -747,6 +747,23 @@ type ExtensionThemeDescriptor struct {
 	Syntax map[string]string `json:"syntax,omitempty"`
 }
 
+type ExtensionSkinDescriptor struct {
+	ID    string               `json:"id"`
+	Name  string               `json:"name"`
+	Light ExtensionSkinVariant `json:"light"`
+	Dark  ExtensionSkinVariant `json:"dark"`
+}
+
+type ExtensionSkinVariant struct {
+	Background string `json:"background"`
+	Foreground string `json:"foreground"`
+	Image      string `json:"image,omitempty"`
+	Position   string `json:"position,omitempty"`
+	Overlay    string `json:"overlay,omitempty"`
+	Hover      string `json:"hover,omitempty"`
+	Active     string `json:"active,omitempty"`
+}
+
 type ExtensionSettingType string
 
 const (
@@ -786,6 +803,7 @@ type ExtensionSettingDescriptor struct {
 type ExtensionContributions struct {
 	Commands       []ExtensionCommandDescriptor               `json:"commands,omitempty"`
 	Themes         []ExtensionThemeDescriptor                 `json:"themes,omitempty"`
+	Skins          []ExtensionSkinDescriptor                  `json:"skins,omitempty"`
 	Settings       []ExtensionSettingDescriptor               `json:"settings,omitempty"`
 	Slots          []ExtensionSlotContributionDescriptor      `json:"slots,omitempty"`
 	Surfaces       []ExtensionSurfaceContributionDescriptor   `json:"surfaces,omitempty"`

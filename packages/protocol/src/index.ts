@@ -483,6 +483,23 @@ export interface ExtensionThemeDescriptor {
   syntax?: Record<string, string>;
 }
 
+export interface ExtensionSkinVariant {
+  background: string;
+  foreground: string;
+  image?: string;
+  position?: "center" | "top" | "bottom" | "left" | "right";
+  overlay?: string;
+  hover?: string;
+  active?: string;
+}
+
+export interface ExtensionSkinDescriptor {
+  id: string;
+  name: string;
+  light: ExtensionSkinVariant;
+  dark: ExtensionSkinVariant;
+}
+
 export type ExtensionSettingType = "boolean" | "string" | "number" | "enum" | "secret";
 export type ExtensionSettingScope = "user" | "workspace";
 export type ExtensionSettingApplyMode = "live" | "restart";
@@ -502,6 +519,7 @@ export interface ExtensionSettingDescriptor {
 export type ExtensionContributions = {
   commands?: ExtensionCommandDescriptor[];
   themes?: ExtensionThemeDescriptor[];
+  skins?: ExtensionSkinDescriptor[];
   settings?: ExtensionSettingDescriptor[];
   slots?: ExtensionSlotContributionDescriptor[];
   surfaces?: ExtensionSurfaceContributionDescriptor[];
@@ -716,7 +734,7 @@ export interface PluginIconReadParams {
 }
 
 export interface PluginIconReadResult extends PluginIconReadParams {
-  media_type: "image/svg+xml" | "image/png" | "image/webp";
+  media_type: "image/svg+xml" | "image/png" | "image/webp" | "image/jpeg";
   digest: string;
   data: string;
 }
@@ -3152,6 +3170,8 @@ export type WuuDesktopApi = {
     params: PluginDesktopModuleReadParams,
   ) => Promise<PluginDesktopModuleLoadResult>;
   loadPluginIcon: (params: PluginIconReadParams) => Promise<PluginIconLoadResult>;
+  loadPluginSkinImage?: (params: PluginIconReadParams) => Promise<PluginIconLoadResult>;
+  cacheShellImage?: (data: ArrayBuffer) => Promise<string>;
   getPluginSetting: (params: PluginSettingGetParams) => Promise<PluginSettingResult>;
   setPluginSetting: (params: PluginSettingSetParams) => Promise<PluginSettingResult>;
   getPluginDiagnostics: (params: PluginIdentityParams) => Promise<PluginDiagnosticsResult>;

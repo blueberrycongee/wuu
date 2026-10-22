@@ -119,12 +119,12 @@
   --shadow-color-medium: rgba(0, 0, 0, 0.06);
   --shadow-color-strong: rgba(0, 0, 0, 0.1);
   --shadow-color-heavy: rgba(0, 0, 0, 0.14);
-  --shadow-soft: var(--wuu-elevation-panel, 0 1px 2px var(--shadow-color-subtle));
+  --shadow-soft: var(--wuu-elevation-panel, 0 1px 3px var(--shadow-color-medium));
   --shadow-card: var(--wuu-elevation-panel, 0 2px 8px -2px var(--shadow-color-medium));
   /* Keep the ambient falloff close and light; the fine border defines the edge. */
   --shadow-composer: var(
     --wuu-elevation-panel,
-    0 1px 2px var(--shadow-color-subtle), 0 0 12px -2px var(--shadow-color-subtle)
+    0 2px 6px -2px var(--shadow-color-medium), 0 8px 24px -12px var(--shadow-color-medium)
   );
   --shadow-pop: var(
     --wuu-elevation-overlay,
@@ -176,7 +176,11 @@
      clear 4.5:1. Distinct from entered text (--ink) and from --ink-soft labels. */
   --placeholder-ink: var(--gray-650);
   --field-bg: var(--wuu-control-field-background, var(--paper));
-  --field-hover-bg: var(--wuu-control-field-background, var(--surface-2));
+  --field-hover-bg: var(--wuu-control-field-background, var(--surface-1));
+  --control-secondary-bg: var(--wuu-control-secondary-background, color-mix(in srgb, var(--surface-2) 82%, transparent));
+  --control-secondary-hover-bg: var(--wuu-control-secondary-background, var(--surface-3));
+  --surface-floating: color-mix(in srgb, var(--paper) 94%, transparent);
+  --surface-blur: blur(18px);
   --field-border: var(--hairline-strong);
   --selection-bg: rgba(64, 133, 216, 0.3);
 
@@ -258,7 +262,7 @@
   --line-ui: 1.35;
   --line-body: var(--wuu-line-height-body, 1.55);
   --line-meta: 1.6;
-  --menu-bg: var(--wuu-color-surface-elevated, #fff);
+  --menu-bg: var(--wuu-color-surface-elevated, var(--surface-floating));
   --menu-border: var(--hairline);
   --menu-hover: var(--wuu-color-surface-muted, var(--surface-2));
   --menu-shadow: var(--shadow-pop);

@@ -1,6 +1,6 @@
 # Wuu design system
 
-Wuu prioritizes sustained reading and frequent actions. Paper and ink tones form the foundation; shape and typography establish identity; color communicates status and necessary interaction cues. Establish hierarchy with position, space, type size, and weight before adding borders or shadows.
+Wuu combines a colorful, softly blurred window frame with a clear reading canvas. Wallpaper gives the shell its character; regular typography, moderate rounded corners, translucent controls and soft shadows support frequent actions. Conversation, settings and workspace content retain opaque surfaces and independently selected content themes.
 
 This specification and its visual boards maintain the desktop foundations for designers, developers, and coding agents. They are not a reskin proposal or a claim that every existing screen already conforms. Native phone interfaces share the information and interaction principles, not literal desktop pixel dimensions.
 
@@ -37,21 +37,29 @@ Boards show built-in themes at standard density with current default font settin
 
 These are internal renderer roles, not all public API promises. Extensions use the [public theme contract](../customize/theme-surface-matrix.md), not arbitrary internal variables. Documentation explains purpose, code defines values, and boards are regenerable views of the code. When they disagree, inspect the actual cascade and preferences before updating all affected representations; do not just edit a label on an image.
 
+## Product defaults
+
+Offer complete choices rather than visual tuning controls. Users choose a shell skin or local image, content theme, light/dark mode and readable fonts. Hide the content-theme chooser when no alternative is installed. Blur, image strength, crop position, materials, corners and shadows are product decisions. Existing saved pictures adopt the current treatment. Accessibility preferences remain independent.
+
 ## Color
 
 ### Identity and emphasis
 
 Wuu's identity is monochrome-first, with paper, ink, and neutral surfaces rather than a mandatory signature hue. The black-and-white app icon, consistent shapes, typography, and space provide recognition. Neutral does not mean a flat gray interface: use readable tonal contrast and clear hierarchy, with light and dark themes expressing the same roles.
 
-Built-in light mode separates a white reading canvas from a muted navigation rail. Settings share the reading canvas; each group is a sheet lifted off it by a faint edge and a soft shadow. In light mode a selected rail row is paper lifted off the rail the same way, not a darker fill. Dark mode expresses the same hierarchy on charcoal surfaces: the rail sits one step below the canvas, never above it, so the reading area stays the brightest region in both themes. Custom themes retain their public color and control overrides.
+The outer frame and compact or expanded ribbon share one continuous skin. The rounded inner canvas remains opaque: white in light mode and charcoal in dark mode. Content navigation uses neutral filled selections with regular-weight labels. Skin colors and artwork stay outside the content theme; custom themes retain their public color and control overrides.
 
 The neutral ramp (`--gray-*`) uses one OKLCH hue with near-zero chroma, so every surface reads as the same material at a different depth. Keep the hue neutral rather than cool: on a fill as large as the rail, a slight cyan cast reads as dirt rather than temperature. Regenerate a step from its lightness instead of hand-picking hex; a step that drifts in hue looks like a stain next to its neighbors.
 
-The rail is opaque on every platform. In light mode it is one near-white step below the canvas, divided from it by a hairline; a translucent system material took its gray from the wallpaper and read as dirt beside the white canvas.
+Local wallpaper uses one product treatment: centered cover, Gaussian blur and automatic light/dark contrast correction. Preserve source color wherever it already supports readable shell text. Process the image in a worker and share the raster with native ribbon surfaces. Plugin skins supply their finished artwork and foreground pairs. The default frame works without any image.
 
 Selection in the rail is the only location signal, and the label keeps its regular weight; in dark mode it is a filled row at about 1.25:1 against the rail. Tool-picker rows stay unfilled until hovered or pressed. The user's own message is a quiet neutral bubble, because the reader already knows what they wrote. Code in an answer is an inset one tonal step from the canvas without a frame; a border on top of the fill would draw the same boundary twice. Inline code takes the same step as a small chip in answers and user messages alike, so an identifier stays findable in CJK prose, where a bare monospace run reads as a font fallback. A tool row keeps its verb in `--ink-tertiary` and draws its target (file, query, or command) halfway between that and body ink, so a run of rows scans by what was touched without competing with the answer.
 
 Brand identity, action emphasis, and status are separate concerns. Primary actions can use strong foreground/background contrast without a saturated brand fill. Links, keyboard focus, and selection need recognizable interaction cues; success, warning, and danger need distinct meanings. Color supports these purposes rather than decorating every heading or selected item. Never rely on color alone for an essential distinction.
+
+### Shared materials
+
+Fields keep a stable paper fill. Secondary buttons use `--control-secondary-bg` with a light control shadow; hover uses `--control-secondary-hover-bg`. Menus, tooltips and floating panels share `--menu-bg`, a nearly opaque `--surface-floating` and `--surface-blur`. Content cards and reading surfaces stay opaque. Ghost and icon actions remain unboxed until interaction. Host and extension controls use the same roles.
 
 ### Color roles
 
@@ -72,7 +80,7 @@ Success, warning, and danger tints are `--success-soft`, `--warning-soft`, and `
 
 The renderer defaults to neutral emphasis: `--wuu-accent` follows the theme's strong text color (dark in light mode, light in dark mode), and `--wuu-accent-press` mixes it toward the canvas. Sliders use the same accent through `--interaction-accent`. Extension themes can still override the public accent, pressed, and on-accent tokens.
 
-`--info` and the focus ring share one blue: the macOS link color, which is the platform's own text-safe blue (at least 4.5:1 on the canvas and on the user bubble in both themes). It is the only hue in the default chrome.
+`--info` and the focus ring share one blue: the macOS link color, which is the platform's own text-safe blue (at least 4.5:1 on the canvas and on the user bubble in both themes). It is the interaction hue of the default content interface; shell artwork may carry its own palette.
 
 Links in rendered Markdown (answers, user messages, and file previews) are ink with a thin underline at about a third of the text color; hover takes the strong ink and a full-strength underline. The underline is the link cue, so a reply full of PR, CI, and documentation links still reads as one paragraph. A link's file, site, or favicon mark sits in `--ink-muted` with a small gap before the label, and the underline never runs under it. Themes can still color links through `--wuu-color-link`.
 
@@ -147,7 +155,7 @@ Align peer labels, icon columns, and trailing actions. Indentation expresses hie
 
 Corners stay tight so a control reads as a control: a 32px field or button with an 8px corner is a rectangle, not a pill. Relate nested corners through their inset instead of assigning the same radius to every layer: a 16px panel holds 8px controls at 8px padding, and a menu shell is a 6px row plus its 6px inset. Pills are for switch tracks, badges, and capsules; circles suit avatars, dots, knobs, and icon-only close buttons. Do not round a text field or button into a pill for style.
 
-Choose elevation by purpose: `--shadow-soft` for light controls, `--shadow-card` for cards, `--shadow-composer` for the composer, `--shadow-pop` for popovers, and `--shadow-modal` for dialogs. Attached trays and edge drawers use directional roles. Light mode uses restrained ambient shadows. Dark mode defines surfaces with inset highlights while overlays retain black ambient shadows. Hover, focus, and expansion do not automatically increase elevation; ordinary content does not need shadows everywhere.
+Choose elevation by purpose: `--shadow-soft` for light controls, `--shadow-card` for cards, `--shadow-composer` for the composer, `--shadow-pop` for popovers, and `--shadow-modal` for dialogs. Attached trays and edge drawers use directional roles. Light mode uses restrained ambient shadows. Dark mode combines subtle upper-edge highlights with short black shadows on controls and the composer; overlays retain broader ambient shadows. Hover, focus, and expansion do not automatically increase elevation; ordinary content does not need shadows everywhere.
 
 ### Message-flow cards
 

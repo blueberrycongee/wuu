@@ -48,13 +48,6 @@ async function settle(win) {
   await evaluate(win, `await Promise.all(document.getAnimations().filter(a => a.effect?.target?.classList?.contains('app-background')).map(a => a.finished.catch(() => {})));
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));`);
 }
-async function select(win, index, value) {
-  await waitFor(win, `document.querySelectorAll('.settings-select-trigger')[${index}] && !document.querySelectorAll('.settings-select-trigger')[${index}].disabled`);
-  await evaluate(win, `document.querySelectorAll('.settings-select-trigger')[${index}].click();`);
-  const option = `[role="menuitemradio"][data-value="${value}"]`;
-  await waitFor(win, `document.querySelector(${JSON.stringify(option)})`);
-  await evaluate(win, `document.querySelector(${JSON.stringify(option)}).click();`);
-}
 function average(image, rect, viewportWidth) {
   // capturePage may return physical pixels even when its scale factor is 1.
   const scale = image.getSize().width / viewportWidth;
@@ -73,7 +66,10 @@ app.whenReady().then(async () => {
   assert(workerFile, "Build must emit the image worker");
   const workerURL = pathToFileURL(path.join(built, "assets", workerFile)).href;
   const processed = await evaluate(production, `
-    const canvas = document.createElement('canvas'); canvas.width = 4096; canvas.height = 32;
+    const canvas = document.createElement('canvas'); canvas.width = 4096; canvas.height = 512;
+    const source = canvas.getContext('2d');
+    source.fillStyle = '#f4d4a0'; source.fillRect(0, 0, 2048, 512);
+    source.fillStyle = '#006d77'; source.fillRect(2048, 0, 2048, 512);
     const image = await new Promise(resolve => canvas.toBlob(resolve));
     const worker = new Worker(${JSON.stringify(workerURL)}, { type: 'module' });
     try {
@@ -85,20 +81,34 @@ app.whenReady().then(async () => {
           if (!event.data.image) return reject(new Error('Worker did not return an image'));
           try {
             const bitmap = await createImageBitmap(event.data.image);
-            resolve({ width: bitmap.width, height: bitmap.height }); bitmap.close();
+            const output = document.createElement('canvas'); output.width = bitmap.width; output.height = bitmap.height;
+            const ctx = output.getContext('2d'); ctx.drawImage(bitmap, 0, 0);
+            const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+            const sample = x => [...ctx.getImageData(x, 128, 1, 1).data];
+            let minLuminance = 1, opaque = true;
+            for (let i = 0; i < pixels.length; i += 4) {
+              const rgb = [...pixels.slice(i, i + 3)].map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4);
+              minLuminance = Math.min(minLuminance, rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722);
+              opaque &&= pixels[i + 3] === 255;
+            }
+            resolve({ width: bitmap.width, height: bitmap.height, left: sample(100), middle: sample(1024), right: sample(1900), opaque, minLuminance }); bitmap.close();
           } catch (error) { reject(error); }
         };
-        worker.postMessage({ image, effect: 'dither', light: true });
+        worker.postMessage({ image, purpose: 'light' });
       });
     } finally { worker.terminate(); }
   `);
-  assert.deepEqual(processed, { width: 2048, height: 16 }, "Bundled worker must bound dimensions under the production CSP");
+  assert.equal(processed.width, 2048); assert.equal(processed.height, 256);
+  assert(processed.opaque, "Gaussian padding must keep image edges opaque");
+  assert.notDeepEqual(processed.middle, processed.left);
+  assert.notDeepEqual(processed.middle, processed.right, "Gaussian blur must soften a hard boundary");
+  assert(processed.minLuminance >= 0.235, "Local shell treatment must support readable dark text");
   const win = createWindow();
   await win.loadURL(`${fixture}&theme=light&size=14`);
   await waitFor(win, `document.querySelector('input[type=file]') && !document.querySelector('input[type=file]').disabled`);
   const baseline = await win.webContents.capturePage();
   await installSynthetic(win);
-  await waitFor(win, `document.documentElement.hasAttribute('data-app-background')`);
+  await waitFor(win, `document.documentElement.hasAttribute('data-shell-skin')`);
   await settle(win);
   const rendered = await win.webContents.capturePage();
   const regions = await evaluate(win, `return ['.sidebar', '.conversation-pane', '.workspace-right-panel'].map(selector => {
@@ -107,7 +117,7 @@ app.whenReady().then(async () => {
   });`);
   for (const [i, region] of regions.entries()) {
     const before = average(baseline, region, win.getContentSize()[0]), after = average(rendered, region, win.getContentSize()[0]);
-    assert(before.some((value, c) => Math.abs(value - after[c]) > 3), `Background must be visible in pane ${i}`);
+    assert(before.every((value, c) => Math.abs(value - after[c]) < 1), `Content pane ${i} must retain its own surface`);
   }
   const saved = await evaluate(win, `const { readBackground } = ${preferences}; const p = await readBackground(); return { id: p.imageID, size: p.image.size };`);
   assert(saved.size > 0);
@@ -130,21 +140,14 @@ app.whenReady().then(async () => {
 
   const second = createWindow();
   await second.loadURL(`${fixture}&theme=light`);
-  await waitFor(second, `document.documentElement.hasAttribute('data-app-background')`);
-  for (const effect of ["dither", "halftone", "ascii", "scanlines", "none"]) {
-    const previous = await evaluate(win, `return document.querySelector('.app-background').style.backgroundImage;`);
-    await select(win, 0, effect);
-    await waitFor(win, `document.querySelector('.app-background') && document.querySelector('.app-background').style.backgroundImage !== ${JSON.stringify(previous)}`);
-  }
-  await select(win, 1, '25');
-  await waitFor(second, `document.querySelector('.app-background')?.style.opacity === '0.25'`);
+  await waitFor(second, `document.documentElement.hasAttribute('data-shell-skin')`);
   await win.loadURL(`${fixture}&theme=dark&size=20`);
-  await waitFor(win, `document.querySelector('.app-background')?.style.opacity === '0.25'`);
+  await waitFor(win, `document.documentElement.hasAttribute('data-shell-skin')`);
 
   for (const theme of ["light", "dark"]) for (const size of [14, 20]) for (const width of [1440, 900]) {
     win.setContentSize(width, 960);
     await win.loadURL(`${origin}/dev/three-pane/?theme=${theme}&size=${size}`);
-    await waitFor(win, `document.documentElement.hasAttribute('data-app-background')`);
+    await waitFor(win, `document.documentElement.hasAttribute('data-shell-skin')`);
     await settle(win);
     const bounds = await evaluate(win, `const r = document.querySelector('.app-background').getBoundingClientRect();
       return { width: r.width, height: r.height, viewport: innerWidth, hit: document.elementFromPoint(20, 200)?.className };`);
@@ -152,11 +155,9 @@ app.whenReady().then(async () => {
     assert.equal(bounds.height, 960);
     assert.notEqual(bounds.hit, "app-background");
     fs.writeFileSync(path.join(output, `${theme}-${size}-${width}.png`), (await win.webContents.capturePage()).toPNG());
-    // The empty greeting and the strip under the rounded composer are canvases
-    // too. Hide the image between captures so only a real paint difference can
-    // pass, exactly as the plugin pages do below.
+    // Removing only the shell artwork must not repaint reading surfaces.
     await win.loadURL(`${origin}/dev/three-pane/?empty&theme=${theme}&size=${size}`);
-    await waitFor(win, `document.querySelector('.empty-home') && document.documentElement.hasAttribute('data-app-background')`);
+    await waitFor(win, `document.querySelector('.empty-home') && document.documentElement.hasAttribute('data-shell-skin')`);
     await settle(win);
     const samples = await evaluate(win, `const empty = document.querySelector('.empty-home').getBoundingClientRect();
       const dock = document.querySelector('.dock-composer-wrap').getBoundingClientRect();
@@ -169,30 +170,17 @@ app.whenReady().then(async () => {
     for (const sample of samples) {
       const before = average(hidden, sample, width), after = average(visible, sample, width);
       const difference = Math.max(...before.map((value, c) => Math.abs(value - after[c])));
-      assert(difference > 3, `Wallpaper must be visible behind the ${sample.name} (${theme}, ${size}, ${width}); pixel difference: ${difference}`);
+      assert(difference < 1, `The ${sample.name} must retain its content surface (${theme}, ${size}, ${width}); pixel difference: ${difference}`);
     }
     await evaluate(win, `document.querySelector('.app-background').style.visibility = '';`);
     await settle(win);
     fs.writeFileSync(path.join(output, `${theme}-${size}-${width}-empty.png`), (await win.webContents.capturePage()).toPNG());
   }
-  for (const theme of ["light", "dark"]) {
-    await win.loadURL(`${fixture}&theme=${theme}&size=20`);
-    await waitFor(win, `document.querySelector('.settings-select-trigger') && document.documentElement.hasAttribute('data-app-background')`);
-    await evaluate(win, `document.querySelector('.settings-select-trigger').click();`);
-    await waitFor(win, `document.querySelector('[role=menu]')`);
-    await settle(win);
-    const menu = await evaluate(win, `const r = document.querySelector('[role=menu]').getBoundingClientRect();
-      return { visible: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight,
-        reachable: !!document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('[role=menu]') };`);
-    assert.deepEqual(menu, { visible: true, reachable: true });
-    fs.writeFileSync(path.join(output, `${theme}-settings-menu.png`), (await win.webContents.capturePage()).toPNG());
-  }
   // Render the real plugin through both workbench portals and embedded views.
-  // Only hide the image between captures, so differences prove it is visible
-  // through every nested canvas rather than just checking computed CSS.
+  // Hide only the shell image to verify that nested content stays independent.
   for (const theme of ["light", "dark"]) for (const region of ["primary", "workspace", "settings", "overlay", "auxiliary"]) {
     await win.loadURL(`${origin}/dev/automation/?theme=${theme}&font=20&region=${region}`);
-    await waitFor(win, `document.querySelectorAll('.plugin-automation-list .plugin-automation-item').length === 2 && document.documentElement.hasAttribute('data-app-background')`);
+    await waitFor(win, `document.querySelectorAll('.plugin-automation-list .plugin-automation-item').length === 3 && document.documentElement.hasAttribute('data-shell-skin')`);
     await settle(win);
     const sample = await evaluate(win, `const r = document.querySelector('.plugin-automation-main').getBoundingClientRect();
       return { x: Math.round(r.left + 16), y: Math.round(r.bottom - 24), width: 8, height: 8 };`);
@@ -202,18 +190,17 @@ app.whenReady().then(async () => {
     const hidden = await win.webContents.capturePage();
     const before = average(hidden, sample, win.getContentSize()[0]), after = average(visible, sample, win.getContentSize()[0]);
     const difference = Math.max(...before.map((value, c) => Math.abs(value - after[c])));
-    if (region === "overlay" || region === "auxiliary") assert(difference < 1, `${region} must retain an opaque surface`);
-    else assert(difference > 3, `Wallpaper must be visible inside the ${region} plugin page (${theme}); pixel difference: ${difference}`);
+    assert(difference < 1, `${region} plugin content must retain its own surface (${theme}); pixel difference: ${difference}`);
     await evaluate(win, `document.querySelector('.app-background').style.visibility = '';`);
     await settle(win);
     fs.writeFileSync(path.join(output, `${theme}-plugin-${region}.png`), (await win.webContents.capturePage()).toPNG());
   }
   await evaluate(win, `const { updateBackground } = ${preferences}; await updateBackground(() => null);`);
-  await waitFor(second, `!document.documentElement.hasAttribute('data-app-background')`);
+  await waitFor(second, `!document.documentElement.hasAttribute('data-shell-skin')`);
   await win.loadURL(fixture);
   await waitFor(win, `document.querySelector('input[type=file]') && !document.querySelector('input[type=file]').disabled`);
   assert.equal(await evaluate(win, `const { readBackground } = ${preferences}; return await readBackground();`), null);
-  console.log("PASS: bundled worker/CSP/resizing, import, invalid input, write rollback, effect/strength controls, reload, multi-window sync/removal, three-pane/empty-conversation/dock/plugin pixels, opaque overlays, menu hit tests, 28 render captures");
+  console.log("PASS: bundled worker/CSP/resizing/Gaussian edges/contrast, import, invalid input, write rollback, fixed wallpaper treatment, reload, multi-window sync/removal, independent three-pane/empty-conversation/dock/plugin pixels, opaque content, 26 render captures");
   windows.forEach(window => window.destroy());
   app.exit(0);
 }).catch(error => { console.error(error); app.exit(1); });

@@ -310,6 +310,8 @@ const api: WuuDesktopApi = {
   loadPluginDesktopModule: (params) =>
     ipcRenderer.invoke("wuu:plugin-desktop-module-load", params),
   loadPluginIcon: (params) => ipcRenderer.invoke("wuu:plugin-icon-load", params),
+  loadPluginSkinImage: (params) => ipcRenderer.invoke("wuu:plugin-skin-image-load", params),
+  cacheShellImage: (data) => ipcRenderer.invoke("wuu:shell-image-cache", data),
   getPluginSetting: (params) => ipcRenderer.invoke("wuu:plugin-setting-get", params),
   setPluginSetting: (params) => ipcRenderer.invoke("wuu:plugin-setting-set", params),
   getPluginDiagnostics: (params) => ipcRenderer.invoke("wuu:plugin-diagnostics-list", params),
