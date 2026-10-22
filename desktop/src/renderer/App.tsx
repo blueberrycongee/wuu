@@ -5001,7 +5001,7 @@ export function App(): JSX.Element {
     const optimisticTurn = createOptimisticTurn(message, sendClickedAtMs);
     const previousTurnIDs = admission.previousTurnIDs;
     if (!targetThread || activeThreadIDForState(currentState) === targetThread.id) {
-      if (!prepareThread) requestSubmittedQueryScroll(optimisticTurn.items[0].id);
+      if (!prepareThread) requestSubmittedQueryScroll(optimisticTurn.items[0].id, message.id);
       appStateRef.current = { ...currentState, running: true, status: "" };
       setState((current) => ({ ...current, running: true, status: "" }));
     }
@@ -5118,7 +5118,7 @@ export function App(): JSX.Element {
         setState(adoptThread);
       }
       if (prepareThread && activeThreadIDForState(appStateRef.current) === thread.id) {
-        requestSubmittedQueryScroll(optimisticTurn.items[0].id);
+        requestSubmittedQueryScroll(optimisticTurn.items[0].id, message.id);
       }
       optimisticTurnID = optimisticTurn.id;
       optimisticThreadID = thread.id;

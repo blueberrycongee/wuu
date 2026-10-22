@@ -34,6 +34,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Prevent sent messages from flickering or jumping when server events confirm them before the send request returns.
 - Check for desktop updates every 30 minutes instead of every six hours.
 
 - Continue checking for newer desktop releases while an update is available,

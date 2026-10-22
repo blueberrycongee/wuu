@@ -209,6 +209,7 @@ export type ConversationScrollSnapshot = {
   autoFollow: boolean;
   submissionPhase?: SubmissionScrollPhase;
   submittedMessageID?: string;
+  submittedMessageSourceID?: string;
   readingAnchor?: ConversationReadingAnchor;
 };
 
@@ -262,7 +263,7 @@ export function useConversationScrollState({
   jumpToConversationMessage: (turnID: string, item: ThreadItem, query?: string) => () => void;
   captureConversationScrollIntent: () => () => boolean;
   /** Position this submission once its optimistic bubble has mounted. */
-  requestSubmittedQueryScroll: (messageID: string) => void;
+  requestSubmittedQueryScroll: (messageID: string, sourceID?: string) => void;
   acknowledgeSubmittedMessage: (pendingID: string, messageID: string) => void;
   discardSubmittedMessage: (messageID: string) => void;
   /**
@@ -290,6 +291,7 @@ export function useConversationScrollState({
   const conversationPaneRef = useRef<HTMLElement | null>(null);
   const submissionRef = useRef<{
     messageID: string;
+    sourceID?: string;
     threadID?: string;
     animate: boolean;
     documentTop?: number;
@@ -520,6 +522,7 @@ export function useConversationScrollState({
       autoFollow,
       submissionPhase: submissionPhase(),
       submittedMessageID: submissionRef.current?.messageID,
+      submittedMessageSourceID: submission?.sourceID,
       submittedMessageTop: submission?.documentTop,
     });
   }
@@ -636,8 +639,38 @@ export function useConversationScrollState({
     }
   }
 
+  const acknowledgeSubmittedMessage = useCallback((pendingID: string, messageID: string) => {
+    for (const snapshot of threadScrollSnapshotsRef.current.values()) {
+      if (snapshot.submittedMessageID === pendingID) snapshot.submittedMessageID = messageID;
+    }
+    if (submissionRef.current?.messageID !== pendingID) return;
+    acknowledgeArrival(pendingID, messageID);
+    submissionRef.current.messageID = messageID;
+    submissionRef.current.inThread = false;
+  }, [acknowledgeArrival]);
+
+  useLayoutEffect(() => {
+    // Events and snapshots can replace the optimistic item before startTurn
+    // resolves. Transfer its identity before layout or arrival reconciliation
+    // can mistake that replacement for a removed submission.
+    const submission = submissionRef.current;
+    const snapshot = activeThreadID ? threadScrollSnapshotsRef.current.get(activeThreadID) : undefined;
+    const ownsThread = submission && (!submission.threadID || submission.threadID === activeThreadID);
+    const pendingID = ownsThread ? submission.messageID : snapshot?.submittedMessageID;
+    const sourceID = ownsThread ? submission.sourceID : snapshot?.submittedMessageSourceID;
+    if (!pendingID || !sourceID) return;
+    const turns = splitConversation && activePane === "secondary" ? secondaryTurns : primaryTurns;
+    for (const turn of turns ?? []) {
+      const message = turn.items.find(item => item.type === "user_message" && item.source_id === sourceID);
+      if (!message) continue;
+      if (message.id !== pendingID) acknowledgeSubmittedMessage(pendingID, message.id);
+      return;
+    }
+  });
+
   const adoptingSubmission = Boolean(submissionRef.current && !submissionRef.current.threadID && activeThreadID &&
-    primaryTurns?.some(turn => turn.items.some(item => item.id === submissionRef.current?.messageID)));
+    primaryTurns?.some(turn => turn.items.some(item => item.id === submissionRef.current?.messageID ||
+      (submissionRef.current?.sourceID && item.type === "user_message" && item.source_id === submissionRef.current.sourceID))));
   const submittedMessage = useCallback((messageID = submissionRef.current?.messageID) => {
     const viewport = conversationViewport();
     return Array.from(viewport?.querySelectorAll<HTMLElement>("[data-user-message-id]") ?? [])
@@ -788,21 +821,12 @@ export function useConversationScrollState({
     submissionFrameCallbacks.current = { scrollConversationToBottom, rememberActiveThreadScrollSnapshot };
   });
 
-  const acknowledgeSubmittedMessage = useCallback((pendingID: string, messageID: string) => {
-    for (const snapshot of threadScrollSnapshotsRef.current.values()) {
-      if (snapshot.submittedMessageID === pendingID) snapshot.submittedMessageID = messageID;
-    }
-    if (submissionRef.current?.messageID !== pendingID) return;
-    acknowledgeArrival(pendingID, messageID);
-    submissionRef.current.messageID = messageID;
-    submissionRef.current.inThread = false;
-  }, [acknowledgeArrival]);
-
   const discardSubmittedMessage = useCallback((messageID: string) => {
     for (const [threadID, snapshot] of threadScrollSnapshotsRef.current) {
       if (snapshot.submittedMessageID !== messageID) continue;
       snapshot.submissionPhase = undefined;
       snapshot.submittedMessageID = undefined;
+      snapshot.submittedMessageSourceID = undefined;
       discardTailSpace(threadID);
     }
     if (submissionRef.current?.messageID !== messageID) return;
@@ -909,7 +933,7 @@ export function useConversationScrollState({
 
   useLayoutEffect(() => { positionSubmittedMessageRef.current = positionSubmittedMessage; });
 
-  const requestSubmittedQueryScroll = useCallback((messageID: string): void => {
+  const requestSubmittedQueryScroll = useCallback((messageID: string, sourceID?: string): void => {
     // Split panes keep their existing bottom-follow behavior. Ordinary
     // sessions have a different lifecycle: the submitted message is the
     // reading anchor, even when the user had previously browsed history.
@@ -917,7 +941,7 @@ export function useConversationScrollState({
     pointerScrollGestureRef.current = undefined;
     // A send during the previous placement leaves from what is on screen.
     cancelScrollMotion({ keepVisible: true });
-    submissionRef.current = { messageID, threadID: activeThreadID, animate: true };
+    submissionRef.current = { messageID, sourceID, threadID: activeThreadID, animate: true };
     clearUserScrollIntent();
     cancelBottomOverscroll(conversationViewport());
     selectionPausedAutoFollowRef.current = false;
@@ -1172,6 +1196,7 @@ export function useConversationScrollState({
         autoFollow: isFollowing(),
         submissionPhase: submissionPhase(),
         submittedMessageID: submissionRef.current?.messageID,
+        submittedMessageSourceID: submissionRef.current?.sourceID,
       };
     },
     [activePane, splitConversation],
@@ -1187,7 +1212,7 @@ export function useConversationScrollState({
       writeScrollMode(snapshot.submissionPhase === "placing" ? "pending" :
         snapshot.submissionPhase ?? (snapshot.autoFollow ? "following" : "paused"));
       submissionRef.current = snapshot.submittedMessageID
-        ? { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false }
+        ? { messageID: snapshot.submittedMessageID, sourceID: snapshot.submittedMessageSourceID, threadID: activeThreadID, animate: false }
         : undefined;
       applyProgrammaticScroll(
         node,
@@ -1554,7 +1579,7 @@ export function useConversationScrollState({
       writeScrollMode(snapshot?.submissionPhase === "placing" ? "pending" :
         snapshot?.submissionPhase ?? (snapshot?.autoFollow === false ? "paused" : "following"));
       if (snapshot?.submittedMessageID) {
-        submissionRef.current = { messageID: snapshot.submittedMessageID, threadID: activeThreadID, animate: false };
+        submissionRef.current = { messageID: snapshot.submittedMessageID, sourceID: snapshot.submittedMessageSourceID, threadID: activeThreadID, animate: false };
       }
       if (snapshot && !snapshot.autoFollow) {
         // Prefer the content anchor; submission reservations retain their own
