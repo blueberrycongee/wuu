@@ -14,6 +14,11 @@ The `app-server` and `remote host` commands accept `--user-space` and `--product
 
 ## Identity and storage
 
+For local desktop development, run `make dev-personal` (an alias for `make dev`).
+Personal uses the same default logical-memory policy as ordinary user hosts;
+no `personal_dev` build tag or isolation-bypass flag is needed. To use existing
+data, set an absolute `WUU_HOME` as described in the [development guide](../project/development.md).
+
 The binding is supplied by the host and returned by `initialize` as `user_space_id` and `product_domain`. Clients validate it before calling Personal services. Extension inventory changes do not change this binding.
 
 For a Wuu home, user data is separated as follows:

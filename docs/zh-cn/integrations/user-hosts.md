@@ -14,6 +14,11 @@
 
 ## 身份和存储
 
+本地桌面开发可运行 `make dev-personal`，它是 `make dev` 的别名。
+Personal 与普通用户宿主采用相同的默认逻辑内存隔离，无需 `personal_dev`
+构建标签或跳过隔离检查的参数。若要使用已有数据，请按
+[开发指南](../project/development.md) 设置绝对路径的 `WUU_HOME`。
+
 绑定由宿主提供，并通过 `initialize` 的 `user_space_id` 和 `product_domain` 返回。客户端调用 Personal 服务前应核验绑定。扩展清单变化不会改变绑定。
 
 在 Wuu 数据目录中，用户数据分为：
