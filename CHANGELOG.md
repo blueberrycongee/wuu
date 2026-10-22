@@ -42,6 +42,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep Personal pages and their composer visible when a retained Coding conversation is open underneath them; hidden Coding content no longer occupies grid rows or paints through the page.
+
 - Restore twin conversation history automatically when recent background context fills the first history pages, including tab reentry and interrupted reads.
 - Hide successfully settled one-time routines from twin’s default activity list and count while retaining history, repeating schedules, and unresolved or failed work.
 

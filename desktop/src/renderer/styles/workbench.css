@@ -40,17 +40,15 @@
   height: 100%;
 }
 
-/* Conversation layers share this pane with the primary plugin page. Hide them
-   so the empty-session greeting, dock composer, and environment panel cannot
-   show through or take focus while that page is open. */
+/* Retain Coding state without reserving grid rows or allowing descendants with
+   explicit visibility to paint through the primary plugin page. */
 .conversation-pane[data-primary-plugin-view] > :is(
   .scroll-region,
   .dock-composer-wrap,
   .jump-to-latest-cluster,
   .environment-side-stack
 ) {
-  visibility: hidden;
-  pointer-events: none;
+  display: none;
 }
 
 /* An overlay or side view names its tabs and ends on the shared close

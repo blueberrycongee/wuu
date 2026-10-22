@@ -2,6 +2,7 @@
 // personal fixture transport. No account, provider, or user computer is used.
 // Usage: node desktop/scripts/twin-bubbles-e2e.cjs
 // DOM-only fallback: node desktop/scripts/twin-bubbles-e2e.cjs --dom-only
+// Focused shell regression: node desktop/scripts/twin-bubbles-e2e.cjs --layout-only
 // Output: desktop/out/twin-bubbles-e2e/{result.json,*.png,chromium.log}
 const assert = require("node:assert/strict");
 const { execFileSync, spawn } = require("node:child_process");
@@ -21,7 +22,7 @@ const profile = fs.mkdtempSync(path.join(os.tmpdir(), "wuu-twin-bubbles-"));
 const report = {
   boundary: "Chromium renders the production desktop App, personal contribution and shared conversation components with disclosed synthetic fixture data. This does not test a production account, Electron IPC, Go host, provider, or physical trackpad.",
   cases: [], screenshots: [], measurements: [], runtimeErrors: [], passed: false,
-  command: `node desktop/scripts/twin-bubbles-e2e.cjs${domOnly ? " --dom-only" : ""}`,
+  command: `node desktop/scripts/twin-bubbles-e2e.cjs${domOnly ? " --dom-only" : process.argv.includes("--layout-only") ? " --layout-only" : ""}`,
 };
 fs.mkdirSync(output, { recursive: true });
 let server, browser, socket, sessionId, chromiumLog = "", requestId = 0;
@@ -295,6 +296,50 @@ async function start() {
 
 async function run() {
   await start();
+  for (const configuration of [
+    { name: "shell-light", theme: "light", width: 1440, height: 900, font: 15 },
+    { name: "shell-dark", theme: "dark", width: 1440, height: 900, font: 15 },
+    { name: "shell-light-large", theme: "light", width: 760, height: 800, font: 19 },
+    { name: "shell-dark-large", theme: "dark", width: 760, height: 800, font: 19 },
+  ]) {
+    await load(configuration);
+    await check(`${configuration.name} keeps Personal above retained Coding content`, async () => {
+      // Model a retained active Coding pane, including its explicit visibility.
+      await evaluate(() => {
+        const retained = document.createElement("div");
+        retained.id = "retained-coding-probe";
+        retained.className = "cached-conversation-pane";
+        retained.dataset.active = "true";
+        retained.textContent = "Retained Coding conversation";
+        retained.style.height = "1600px";
+        document.querySelector(".conversation-pane > .scroll-region").append(retained);
+      });
+      for (let visit = 0; visit < 2; visit++) {
+        if (visit) {
+          await evaluate(() => window.mosaicFixture.controller.deactivateRegion("primary"));
+          await settle();
+          assert.equal(await evaluate(() => document.querySelector("#retained-coding-probe").checkVisibility({ visibilityProperty: true })), true);
+          await click('[data-wuu-plugin="personal"]');
+          await settle();
+        }
+        const bounds = await evaluate(() => {
+          const pane = document.querySelector(".conversation-pane").getBoundingClientRect();
+          const view = document.querySelector(".plugin-workbench-view-primary").getBoundingClientRect();
+          const composer = document.querySelector(".plugin-conversation-composer").getBoundingClientRect();
+          const old = document.querySelector("#retained-coding-probe");
+          return { paneHeight: pane.height, viewHeight: view.height, composerHeight: composer.height, composerTop: composer.top,
+            composerBottom: composer.bottom, paneBottom: pane.bottom,
+            codingHidden: !old.checkVisibility({ visibilityProperty: true }) };
+        });
+        assert.ok(bounds.viewHeight >= bounds.paneHeight - 2, JSON.stringify(bounds));
+        assert.ok(bounds.composerHeight > 0 && bounds.composerTop >= 0 && bounds.composerBottom <= bounds.paneBottom + 1, JSON.stringify(bounds));
+        assert.ok(bounds.codingHidden, JSON.stringify(bounds));
+      }
+      await screenshot(configuration.name);
+      await evaluate(() => document.querySelector("#retained-coding-probe").remove());
+    });
+  }
+  if (process.argv.includes("--layout-only")) { report.passed = true; return; }
   await load();
   await check("twin mascot occupies the navigation icon column without growing the row", async () => {
     const alignment = await evaluate(() => {
