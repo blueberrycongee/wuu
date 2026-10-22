@@ -19,8 +19,8 @@ async function mount(emoji?: string, editable = true) {
 it("opens with a tap, replaces or removes exactly one emoji without a text submission", async () => {
   const ui = await mount("❤️"); await ui.click('[data-action="react-message"]');
   await ui.click('[data-emoji="❤️"]'); expect(ui.change).toHaveBeenLastCalledWith(null);
-  await ui.click('[data-action="react-message"]'); await ui.click('[data-emoji="✅"]');
-  expect(ui.change).toHaveBeenLastCalledWith("✅"); expect(document.querySelector('[data-reaction-picker]')).toBeNull();
+  await ui.click('[data-action="react-message"]'); await ui.click('[data-emoji="👎"]');
+  expect(ui.change).toHaveBeenLastCalledWith("👎"); expect(document.querySelector('[data-reaction-picker]')).toBeNull();
 });
 it("handles keyboard focus, Escape and outside dismissal without escaping into a reply dialog", async () => {
   const ui = await mount(); await ui.click('[data-action="react-message"]');

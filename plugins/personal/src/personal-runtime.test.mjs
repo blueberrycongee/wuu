@@ -117,13 +117,14 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
 // Failure cases: cross-space/session spoofing, service/worker actor spoofing,
 // non-user provenance, stale and duplicate mutations, restart loss, oversized
 // input, and reactions accidentally becoming turns, approval, or task dispatch.
-test("Personal reactions persist canonical feedback without dispatching a reply", async t => {
+test("Personal reactions keep ordinary feedback quiet and negative feedback bounded", async t => {
   const scratch = await mkdtemp(join(tmpdir(), "wuu-personal-reactions-runtime-"));
   const output = process.env.WUU_REACTIONS_E2E_OUTPUT ?? join(root, ".tmp/e2e/personal-reactions");
   await mkdir(output, { recursive: true });
   t.after(() => rm(scratch, { recursive: true, force: true }));
   const storage = new Map(), frames = [], active = new Set(), locks = new Set();
-  const contexts = {};
+  const contexts = {}, turns = new Map();
+  let loseFeedbackReply = false;
   let mainSession, mainAgent;
   let failReactionWrite = false;
   const messages = [
@@ -144,7 +145,14 @@ test("Personal reactions persist canonical feedback without dispatching a reply"
         const created = !contexts[session_id]; contexts[session_id] ??= { ...params, session_id, state: "idle" };
         return { session_id, created };
       }
-      case "host.session.inspect": return { session: contexts[params.session_id] };
+      case "host.session.inspect": return { session: contexts[params.session_id], turn: params.request_id ? turns.get(params.request_id) : [...turns.values()].at(-1) };
+      case "host.session.send": {
+        assert.equal(params.cause, "personal.reaction.feedback"); assert.equal(params.if_running, "queue");
+        const turn = turns.get(params.request_id) ?? { request_id: params.request_id, turn_id: `turn-${params.request_id}`, state: "running" };
+        turns.set(params.request_id, turn);
+        if (loseFeedbackReply) { loseFeedbackReply = false; throw new Error("lost feedback send reply"); }
+        return { ...turn, session_id: params.session_id };
+      }
       case "host.session.history.read": return { session_id: params.session_id, records: messages.filter(m => m.seq >= (params.start_seq ?? 1) && m.seq <= (params.end_seq ?? Math.max(...messages.map(m => m.seq)))).slice(0, params.limit ?? 50), head_seq: Math.max(...messages.map(m => m.seq)), snapshot_seq: Math.max(...messages.map(m => m.seq)), has_more: false };
       case "host.session.context": return contexts[params.session_id] ?? { session_id: params.session_id, product_domain: "coding" };
       case "host.storage.keys": return { keys: [...storage.keys()].map(key => key.slice("user:".length)) };
@@ -287,5 +295,48 @@ test("Personal reactions persist canonical feedback without dispatching a reply"
   await assert.rejects(client("agents.reactions", { session_id: mainSession, message_seqs: Array(101).fill(1) }), /100|bounded/);
   await runtime.close();
   assert(!frames.some(f => f.direction === "plugin" && f.frame.params?.service === "host.session.send"), "feedback must never create a turn or dispatch work");
-  await writeFile(join(output, "evidence.json"), JSON.stringify({ passed: true, runtime_sha256: createHash("sha256").update(await readFile(executable)).digest("hex"), scenarios: ["canonical actor ownership", "replace/remove/idempotency", "stale rejection", "restart persistence", "next-step coalesced feedback", "no reaction-triggered execution"] }, null, 2));
+  // Negative feedback is one source-bound opportunity, never permission to rerun.
+  runtime = await start();
+  const fresh = seq => messages.push({ seq, role: "assistant", content: "Here is the interface layout I prepared", at: new Date().toISOString() });
+  const down = (seq, revision = 0, emoji = "👎", suffix = "") => react({ message_seq: seq, emoji, expected_revision: revision, request_id: `negative-${seq}-${revision}${suffix}` });
+  const sends = () => frames.filter(f => f.direction === "plugin" && f.frame.params?.service === "host.session.send");
+  fresh(200); loseFeedbackReply = true;
+  await down(200); assert.equal(turns.size, 1, "committed reaction survives a lost dispatch reply");
+  const event = sends().at(-1).frame.params.params;
+  assert.equal(event.session_id, mainSession); assert(!event.relation, "feedback is not a task reply or resumption");
+  await down(200); assert.equal(sends().length, 1, "retry consults the host receipt, never redispatches an accepted event");
+  const feedbackStep = () => runtime.call("capability.invoke", { capability: "agent.pre_step", input: { session_id: mainSession, step_index: 1, messages: [] }, execution_id: "feedback-step" });
+  let step = await feedbackStep();
+  assert(step.output.append_messages.some(m => m.id.startsWith("personal.negative-feedback.current.")));
+  await assert.rejects(runtime.tool("create_task", {request_id:"feedback-work",title:"Redo it",goal:"Redo it"}), /feedback.*tools/);
+  await assert.rejects(runtime.tool("personal_memory_create", {key:"preference",content:"User dislikes this"}), /feedback.*tools/);
+  await down(200, 1, null);
+  step = await feedbackStep();
+  assert(step.output.append_messages.some(m => m.id.startsWith("personal.negative-feedback.suppressed.")), "removal invalidates an already queued event");
+  await down(200, 2); assert.equal(turns.size, 1, "toggling feedback never creates a wake loop");
+  turns.get(event.request_id).state = "completed";
+  await runtime.close(); runtime = await start(); assert.equal(turns.size, 1, "restart does not replay consumed feedback");
+  // A running conversation holds feedback until idle; newer owner input wins.
+  messages.push({seq:209, role:"user", origin:"user", content:"Prepare another version"});
+  fresh(210); contexts[mainSession].state = "running";
+  await down(210); assert.equal(turns.size, 1);
+  await down(210, 1, "👍"); contexts[mainSession].state = "idle";
+  await runtime.close(); runtime = await start(); assert.equal(turns.size, 1, "replacement suppresses pending feedback on recovery");
+  fresh(220); contexts[mainSession].state = "running"; await down(220);
+  messages.push({seq:221, role:"user", origin:"user", content:"Actually use the other layout"}); contexts[mainSession].state = "idle";
+  await runtime.close(); runtime = await start(); assert.equal(turns.size, 1, "new owner message supersedes pending feedback");
+  messages.push({seq:230, role:"assistant", content:"Old plan", at:new Date(Date.now()-3600000).toISOString()});
+  await down(230); assert.equal(turns.size, 1, "old messages remain quiet");
+  fresh(240); await down(240, 0, "😢"); assert.equal(turns.size, 1, "other emotional reactions remain quiet");
+  fresh(250); contexts[mainSession].state = "running"; await down(250); contexts[mainSession].state = "idle";
+  await runtime.close(); runtime = await start(); assert.equal(turns.size, 2, "pending feedback recovers once when idle");
+  await assert.rejects(down(250, 1, "👎👎"), /emoji/);
+  await assert.rejects(react({session_id:"worker", message_seq:250, emoji:"👎", request_id:"worker-feedback"}), /session/);
+  turns.get(sends().at(-1).frame.params.params.request_id).state = "completed";
+  fresh(251); await down(251); assert.equal(turns.size, 2, "disliking a feedback reply cannot chain another feedback turn");
+  await runtime.close(); runtime = await start(); assert.equal(turns.size, 2, "feedback chain suppression survives restart");
+  messages.push({seq:252, role:"user", origin:"user", content:"Please prepare a different layout"});
+  fresh(253); await down(253); assert.equal(turns.size, 3, "a new original owner request permits fresh feedback");
+  await runtime.close();
+  await writeFile(join(output, "evidence.json"), JSON.stringify({ passed: true, runtime_sha256: createHash("sha256").update(await readFile(executable)).digest("hex"), scenarios: ["canonical actor ownership", "replace/remove/idempotency", "stale rejection", "restart persistence", "next-step coalesced feedback", "ordinary reactions stay quiet", "bounded negative-feedback recovery", "superseded and removed feedback suppression", "feedback cannot invoke Personal tools"] }, null, 2));
 });

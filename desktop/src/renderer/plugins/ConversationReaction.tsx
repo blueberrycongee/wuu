@@ -3,7 +3,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import type { PluginUIConversationMessageProps } from "../../shared/workbench";
 import { UILayerPortal } from "../ui/layers/UILayerHost";
 
-const choices = ["❤️", "😂", "😮", "😢", "👍", "✅"];
+const choices = ["❤️", "😂", "😮", "😢", "👍", "👎", "✅"];
 /** Opt-in, transport-free presentation: choosing an emoji never submits text. */
 export function ConversationReaction({ reaction }: { reaction: NonNullable<PluginUIConversationMessageProps["reaction"]> }): JSX.Element | null {
   const [open, setOpen] = useState(false), [position, setPosition] = useState({ top: 0, left: 0 });
