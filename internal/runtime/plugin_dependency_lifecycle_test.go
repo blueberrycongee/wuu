@@ -91,6 +91,7 @@ func TestRetainedGenerationRetiresConsumersBeforeProviders(t *testing.T) {
 	generation.host.Add(consumer)
 	generation.active = []pluginpkg.Plugin{testRuntimePlugin("provider"), testRuntimePlugin("consumer")}
 	generation.active[1].Requires = []string{"provider"}
+	generation.host.SetPackageRequirements(map[string][]string{"consumer": {"provider"}, "provider": nil})
 	generation.revokeMissingPlugins(map[string]bool{}, nil, "")
 	if !reflect.DeepEqual(order, []string{"consumer", "provider"}) {
 		t.Fatalf("retirement order = %v", order)
@@ -108,6 +109,7 @@ func TestRetainedGenerationUsesItsOwnRequiredGraph(t *testing.T) {
 	generation.active = []pluginpkg.Plugin{testRuntimePlugin("provider"), testRuntimePlugin("consumer"), testRuntimePlugin("dependent")}
 	generation.active[1].Dependencies = []pluginpkg.Dependency{{ID: "provider"}}
 	generation.active[2].Requires = []string{"consumer"}
+	generation.host.SetPackageRequirements(map[string][]string{"dependent": {"consumer"}, "consumer": {"provider"}, "provider": nil})
 	// The replacement consumer no longer requires provider. Its pinned previous
 	// implementation still does, and must stop when that provider is removed.
 	replacementIDs := map[string]bool{"consumer": true, "dependent": true}
@@ -154,7 +156,7 @@ func TestInitialPluginHostFailureBlocksRequiredConsumers(t *testing.T) {
 	if dispatcher := buildHookDispatcher(config.Config{}, available, nil, "", nil); dispatcher.HasHooks(hooks.PreToolUse) {
 		t.Fatal("fatal initial negotiation left a required consumer's hook active")
 	}
-	failures := host.PackageDependencyFailures()
+	failures := host.DependencyFailures()
 	if failures["consumer"] == nil {
 		t.Fatalf("missing initial dependency diagnostic: %v", failures)
 	}

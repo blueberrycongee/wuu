@@ -69,7 +69,8 @@ type Host struct {
 	capabilities        []RegisteredCapability
 	diagnostics         map[string]map[string]string
 	serviceRegistry     *ServiceRegistry
-	packageRequirements map[string][]string
+	dependencies        map[string][]Dependency
+	dependencyErrors    map[string]error
 	executions          *ExecutionTracker
 	background          map[string]*backgroundJob
 	backgroundCompleted []string
@@ -128,7 +129,6 @@ func (h *Host) AttachServiceRegistry(registry *ServiceRegistry, conflicts []Serv
 		return
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.serviceRegistry = registry
 	if registry != nil {
 		registry.bindRootExecutionContext(h.ResolveExecutionContext)
@@ -142,6 +142,8 @@ func (h *Host) AttachServiceRegistry(registry *ServiceRegistry, conflicts []Serv
 		}
 		h.diagnostics[conflict.PluginID][fmt.Sprintf("service:%s@%d", conflict.Service, conflict.Major)] = conflict.Message
 	}
+	h.mu.Unlock()
+	h.resolveServiceDependencies(registry)
 }
 
 // ServiceRegistry returns the registry attached at generation build time, or
@@ -509,10 +511,56 @@ func (h *Host) CancelExecutions(cause error) {
 	}
 }
 
-// RetirePlugin revokes one plugin's executable paths and closes only its
-// client. Unrelated clients and contributions remain active so runtimes can
-// replace plugin generations independently.
+// RetirePlugin stops required consumers before closing their provider. Other
+// clients remain active. Cleanup retains access to providers until it returns.
 func (h *Host) RetirePlugin(ctx context.Context, pluginID string, cause error) (ClientShutdownOutcome, bool) {
+	if h == nil {
+		return ClientShutdownOutcome{}, false
+	}
+	pluginID = strings.TrimSpace(pluginID)
+	retiring := map[string]bool{pluginID: true}
+	dependencies := h.Dependencies()
+	for changed := true; changed; {
+		changed = false
+		for id, edges := range dependencies {
+			if retiring[id] {
+				continue
+			}
+			for _, edge := range edges {
+				if edge.Required && retiring[edge.Provider] {
+					retiring[id], changed = true, true
+					break
+				}
+			}
+		}
+	}
+	clients := h.orderedClients()
+	for _, client := range clients {
+		if retiring[client.ID()] {
+			h.serviceRegistry.stopProviderAdmission(client.ID())
+		}
+	}
+	var result ClientShutdownOutcome
+	var found bool
+	var cleanupErr error
+	for i := len(clients) - 1; i >= 0; i-- {
+		id := clients[i].ID()
+		if !retiring[id] {
+			continue
+		}
+		outcome, retired := h.retirePlugin(ctx, id, cause)
+		cleanupErr = errors.Join(cleanupErr, outcome.Err)
+		if id == pluginID {
+			result, found = outcome, retired
+		} else if retired {
+			h.Add(Failed(id, fmt.Errorf("plugin %q requires retired plugin %q", id, pluginID)))
+		}
+	}
+	result.Err = cleanupErr
+	return result, found
+}
+
+func (h *Host) retirePlugin(ctx context.Context, pluginID string, cause error) (ClientShutdownOutcome, bool) {
 	if h == nil {
 		return ClientShutdownOutcome{}, false
 	}
@@ -591,11 +639,13 @@ func (h *Host) Activate(ctx context.Context) error {
 	if h == nil {
 		return nil
 	}
-	h.mu.RLock()
-	clients := append([]Client(nil), h.clients...)
-	h.mu.RUnlock()
+	if _, err := h.DependencyOrder(); err != nil {
+		return err
+	}
+	h.BlockFailedDependencies(ctx)
+	clients := h.orderedClients()
 	var err error
-	blocked := h.PackageDependencyFailures()
+	blocked := h.DependencyFailures()
 	for _, client := range clients {
 		if blocked[client.ID()] != nil {
 			continue
@@ -606,11 +656,14 @@ func (h *Host) Activate(ctx context.Context) error {
 		}
 		if activateErr := lifecycle.Activate(ctx); activateErr != nil {
 			err = errors.Join(err, fmt.Errorf("activate plugin %q: %w", client.ID(), activateErr))
-			h.BlockFailedPackageDependencies(ctx)
-			blocked = h.PackageDependencyFailures()
+			outcome, _ := h.RetirePlugin(ctx, client.ID(), activateErr)
+			err = errors.Join(err, outcome.Err)
+			h.Add(Failed(client.ID(), activateErr))
+			h.BlockFailedDependencies(ctx)
+			blocked = h.DependencyFailures()
 		}
 	}
-	h.BlockFailedPackageDependencies(ctx)
+	h.BlockFailedDependencies(ctx)
 	return err
 }
 
@@ -645,7 +698,7 @@ func (h *Host) Close(ctx context.Context) error {
 	return firstErr
 }
 
-// CloseWithOutcomes shuts clients down in reverse start order and reports one
+// CloseWithOutcomes shuts clients down in reverse dependency order and reports one
 // structured outcome per client instead of collapsing everything into a
 // single joined error.
 func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
@@ -654,7 +707,7 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 	}
 	h.StopBackground()
 	h.mu.Lock()
-	clients := append([]Client(nil), h.clients...)
+	clients := h.orderedClientsLocked()
 	registry := h.serviceRegistry
 	h.clients = nil
 	h.tools = nil

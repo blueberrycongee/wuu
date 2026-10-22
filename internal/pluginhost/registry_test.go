@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ type fakeServiceProcess struct {
 	required    []ServiceRequirement
 	invoke      func(ctx context.Context, params ServiceInvokeParams) (json.RawMessage, error)
 	notified    []ServiceChangedParams
+	notifyMu    sync.Mutex
 	invokeCalls []ServiceInvokeParams
 }
 
@@ -46,6 +48,8 @@ func (c *fakeServiceProcess) InvokeService(ctx context.Context, params ServiceIn
 	return json.RawMessage(`{"ok":true}`), nil
 }
 func (c *fakeServiceProcess) NotifyServiceChanged(_ context.Context, params ServiceChangedParams) error {
+	c.notifyMu.Lock()
+	defer c.notifyMu.Unlock()
 	c.notified = append(c.notified, params)
 	return nil
 }

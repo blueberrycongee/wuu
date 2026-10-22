@@ -109,6 +109,33 @@ func TestBuildPluginHostUnsatisfiedRequiredServiceBlocksConsumer(t *testing.T) {
 	}
 }
 
+func TestBuildPluginHostMissingTransitiveServiceRevokesProvider(t *testing.T) {
+	provider := &fakeServicePluginClient{id: "search", provided: []pluginhost.ServiceDescriptor{searchServiceDescriptor("1.0.0")}, required: []pluginhost.ServiceRequirement{{Name: "missing.storage", MajorVersion: 1, Required: true}}}
+	consumer := &fakeServicePluginClient{id: "notes", required: []pluginhost.ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}
+	host := buildServiceTestHost(t, map[string]pluginhost.Client{"search": provider, "notes": consumer}, "notes", "search")
+	defer host.Close(context.Background())
+	if !provider.closed || !consumer.closed || host.ServiceRegistry().HasProvider("search.provider", 1) {
+		t.Fatal("transitive missing service left a closed provider or live consumer registered")
+	}
+	for _, status := range host.Statuses() {
+		if status.State != pluginhost.StateFailed {
+			t.Fatalf("unavailable dependency state: %+v", status)
+		}
+	}
+}
+
+func TestRetainedGenerationRevokesSelectedServiceConsumers(t *testing.T) {
+	provider := &fakeServicePluginClient{id: "search", provided: []pluginhost.ServiceDescriptor{searchServiceDescriptor("1.0.0")}}
+	consumer := &fakeServicePluginClient{id: "notes", required: []pluginhost.ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}
+	host := buildServiceTestHost(t, map[string]pluginhost.Client{"search": provider, "notes": consumer}, "notes", "search")
+	defer host.Close(context.Background())
+	generation := &PluginGeneration{host: host, active: []pluginpkg.Plugin{testRuntimePlugin("notes"), testRuntimePlugin("search")}}
+	generation.revokeMissingPlugins(map[string]bool{"notes": true}, nil, "")
+	if !provider.closed || !consumer.closed || generation.PluginAvailable("notes") {
+		t.Fatal("retained service consumer survived the removal of its selected provider")
+	}
+}
+
 func TestBuildPluginHostOptionalServiceRequirementDoesNotBlock(t *testing.T) {
 	consumer := &fakeServicePluginClient{id: "notes", required: []pluginhost.ServiceRequirement{{Name: "memory.index", MajorVersion: 1}}}
 	host := buildServiceTestHost(t, map[string]pluginhost.Client{"notes": consumer}, "notes")

@@ -150,7 +150,7 @@ func (s *Session) RevokeFailedPluginDependencies() bool {
 	}
 	changed := false
 	for _, generation := range generations {
-		failures := generation.host.PackageDependencyFailures()
+		failures := generation.host.DependencyFailures()
 		activeIDs := make(map[string]bool, len(generation.active))
 		invalidated := false
 		generation.revokedMu.Lock()
@@ -510,6 +510,17 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, client providers.Client, model string) {
 	g.revocationMu.Lock()
 	defer g.revocationMu.Unlock()
+	var dependencies map[string][]pluginhost.Dependency
+	ordered := append([]pluginpkg.Plugin(nil), g.active...)
+	if g.host != nil {
+		dependencies = g.host.Dependencies()
+		order, _ := g.host.DependencyOrder()
+		rank := make(map[string]int, len(order))
+		for index, id := range order {
+			rank[id] = index
+		}
+		sort.SliceStable(ordered, func(i, j int) bool { return rank[ordered[i].ID] < rank[ordered[j].ID] })
+	}
 	g.revokedMu.Lock()
 	// Same-ID replacements can change their requirements. A pinned generation
 	// still needs its own providers; never apply the replacement's graph to it.
@@ -523,8 +534,9 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 			if !retainedIDs[item.ID] {
 				continue
 			}
-			for _, required := range item.RequiredPluginIDs() {
-				if !retainedIDs[required] {
+			for _, dependency := range dependencies[item.ID] {
+				retained, tracked := retainedIDs[dependency.Provider]
+				if dependency.Required && tracked && !retained {
 					retainedIDs[item.ID] = false
 					changed = true
 					break
@@ -540,10 +552,10 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 		}
 	}
 	var retiring []pluginpkg.Plugin
-	// g.active is provider-first. Consumers must release their resources while
-	// provider services are still available, including in pinned generations.
-	for index := len(g.active) - 1; index >= 0; index-- {
-		item := g.active[index]
+	// The retained generation owns the selected service and package graph.
+	// Consumers release their resources while their providers remain alive.
+	for index := len(ordered) - 1; index >= 0; index-- {
+		item := ordered[index]
 		if activeIDs[item.ID] && !g.revokedPlugins[item.ID] {
 			continue
 		}
@@ -564,7 +576,7 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 	}
 	dependencyFailures := make(map[string]error)
 	if g.host != nil {
-		dependencyFailures = g.host.PackageDependencyFailures()
+		dependencyFailures = g.host.DependencyFailures()
 	}
 	if g.hooks != nil {
 		g.hooks.Replace(buildHookDispatcher(g.settings, remaining, client, model, nil))

@@ -33,7 +33,7 @@ func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 				failed.Add(pluginhost.Failed(item.ID, err))
 			}
 		}
-		failed.BlockFailedPackageDependencies(context.Background())
+		failed.BlockFailedDependencies(context.Background())
 		return failed, nil, err
 	}
 	if err := activatePluginHost(context.Background(), host); err != nil {
@@ -79,15 +79,12 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	closeStarted := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		var err error
-		for index := len(started) - 1; index >= 0; index-- {
-			err = errors.Join(err, started[index].Close(ctx))
-		}
+		err := host.Close(ctx)
 		registry.Close(ctx)
 		return err
 	}
 	for _, item := range plugins {
-		if dependencyErr := host.PackageDependencyFailures()[item.ID]; dependencyErr != nil {
+		if dependencyErr := host.DependencyFailures()[item.ID]; dependencyErr != nil {
 			host.Add(pluginhost.Failed(item.ID, dependencyErr))
 			if required[item.ID] {
 				return nil, nil, pluginActivationError(item.ID, dependencyErr, closeStarted())
@@ -125,29 +122,27 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			continue
 		}
 		started = append(started, client)
+		host.Add(client)
 	}
-	// The service registry is built from the whole generation's initialize
-	// results before any client is registered, so an unsatisfied required
-	// service blocks that consumer without its capabilities ever going live.
-	// There is no dependency solver; failures are deterministic diagnostics.
+	// Resolve the complete graph before activation. Prepared registrations are
+	// unpublished; missing transitive dependencies cannot expose capabilities.
 	conflicts = append(conflicts, registry.RegisterClients(started...)...)
 	host.AttachServiceRegistry(registry, conflicts)
 	if err := registry.ValidateBindings(); err != nil {
 		return nil, nil, errors.Join(err, closeStarted())
 	}
-	for _, client := range started {
-		if serviceClient, ok := client.(pluginhost.ServiceClient); ok {
-			if err := registry.CheckSatisfaction(serviceClient.RequiredServices()); err != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				_ = client.Close(ctx)
-				cancel()
-				host.Add(pluginhost.Failed(client.ID(), err))
-				continue
-			}
-		}
-		host.Add(client)
+	if _, err := host.DependencyOrder(); err != nil {
+		return nil, nil, errors.Join(err, closeStarted())
 	}
-	host.BlockFailedPackageDependencies(context.Background())
+	host.BlockFailedDependencies(context.Background())
+	if err := registry.ValidateBindings(); err != nil {
+		return nil, nil, errors.Join(err, closeStarted())
+	}
+	for id, failure := range host.DependencyFailures() {
+		if required[id] {
+			return nil, nil, pluginActivationError(id, failure, closeStarted())
+		}
+	}
 	if err := host.ValidateCapabilities(); err != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		closeErr := host.Close(ctx)
@@ -507,7 +502,7 @@ func (p *pluginCompactionProvider) Compact(ctx context.Context, model string, me
 // availablePluginPackages keeps independent declarative features of a failed
 // runtime, but excludes every package whose required runtime is unavailable.
 func availablePluginPackages(plugins []pluginpkg.Plugin, host *pluginhost.Host) []pluginpkg.Plugin {
-	blocked := host.PackageDependencyFailures()
+	blocked := host.DependencyFailures()
 	available := make([]pluginpkg.Plugin, 0, len(plugins))
 	for _, item := range plugins {
 		if blocked[item.ID] == nil {

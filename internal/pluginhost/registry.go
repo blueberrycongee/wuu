@@ -81,6 +81,7 @@ type ServiceRegistry struct {
 	bindings             map[serviceKey]string
 	ambiguous            map[serviceKey]string
 	consumers            map[string]map[serviceKey]struct{}
+	requirements         map[string][]ServiceRequirement
 	notifiers            map[string]ServiceChangedNotifier
 	kernelLifecycles     []kernelServiceLifecycle
 	executions           map[string]*serviceExecution
@@ -115,9 +116,10 @@ func NewServiceRegistry() *ServiceRegistry {
 	return &ServiceRegistry{
 		open: true, providers: make(map[serviceKey]serviceProvider),
 		bindings: make(map[serviceKey]string), ambiguous: make(map[serviceKey]string),
-		consumers:  make(map[string]map[serviceKey]struct{}),
-		notifiers:  make(map[string]ServiceChangedNotifier),
-		executions: make(map[string]*serviceExecution), executionChanged: make(chan struct{}),
+		consumers:    make(map[string]map[serviceKey]struct{}),
+		requirements: make(map[string][]ServiceRequirement),
+		notifiers:    make(map[string]ServiceChangedNotifier),
+		executions:   make(map[string]*serviceExecution), executionChanged: make(chan struct{}),
 	}
 }
 
@@ -228,7 +230,8 @@ func (registry *ServiceRegistry) RegisterClients(clients ...Client) []ServiceCon
 			registry.providers[key] = serviceProvider{descriptor: descriptor, pluginID: declared.ID(), invoker: registration.Invoker, kernel: kernel || registration.Kernel}
 		}
 		registry.consumers[declared.ID()] = make(map[serviceKey]struct{})
-		for _, requirement := range declared.RequiredServices() {
+		registry.requirements[declared.ID()] = append([]ServiceRequirement(nil), declared.RequiredServices()...)
+		for _, requirement := range registry.requirements[declared.ID()] {
 			key := serviceKey{name: strings.TrimSpace(requirement.Name), major: requirement.MajorVersion}
 			registry.consumers[declared.ID()][key] = struct{}{}
 		}
@@ -414,17 +417,23 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		r.mu.Unlock()
 		return nil, "", nil, &HostServiceError{Code: "service_unavailable", Message: "service provider was revoked"}
 	}
-	cleanup := InShutdownCleanup(ctx) || r.cleanupOwners[caller] > 0
-	if r.retiringProviders[provider] && !cleanup {
-		r.mu.Unlock()
-		return nil, "", nil, &HostServiceError{Code: "generation_closed", Message: "service provider is retiring"}
-	}
 	id := strings.TrimSpace(requestedID)
-	if execution := r.executions[id]; id != "" && execution != nil {
+	execution := r.executions[id]
+	cleanup := InShutdownCleanup(ctx) || r.cleanupOwners[caller] > 0
+	if execution != nil {
 		if _, allowed := execution.participants[caller]; caller != "kernel" && !allowed {
 			r.mu.Unlock()
 			return nil, "", nil, &HostServiceError{Code: "service_unavailable", Message: "service execution is unavailable"}
 		}
+		// A process transports the execution ID, not the Go context. Continue
+		// the authenticated cleanup chain across provider callbacks.
+		cleanup = cleanup || InShutdownCleanup(execution.ctx)
+	}
+	if r.retiringProviders[provider] && !cleanup {
+		r.mu.Unlock()
+		return nil, "", nil, &HostServiceError{Code: "generation_closed", Message: "service provider is retiring"}
+	}
+	if execution != nil {
 		if execution.ctx.Err() != nil {
 			r.mu.Unlock()
 			return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "owning execution was cancelled"}
