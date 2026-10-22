@@ -3486,11 +3486,18 @@
   display: inline;
   max-width: 100%;
   min-width: 0;
+  /*
+   * Keep the icon glued to the link text. Without this, a long URL that does
+   * not fit after the icon wraps as a whole word, leaving the icon alone on
+   * the first line. The label re-enables wrapping for its own text below.
+   */
+  white-space: nowrap;
 }
 
 .rich-link-label {
   min-width: 0;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .rich-link-icon {
