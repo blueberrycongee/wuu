@@ -162,6 +162,26 @@
   --conversation-canvas-radius: min(var(--radius-lg), calc(var(--conversation-pane-inset) * 2.5));
 }
 
+:root[data-platform="darwin"][data-host-kind="desktop"] {
+  /* The current macOS development window's native contour is approximately
+   * 16pt (32 device pixels at 2x). This describes the existing OS frame; it
+   * does not change its shape. Recheck when the native window style changes. */
+  --window-corner-radius: 16px;
+}
+
+:root[data-platform="darwin"][data-host-kind="desktop"] :is(.app-shell, .settings-shell) {
+  /* Reserve 30% of the native corner for the gutter and the rest for the
+   * canvas: 16pt / 4.8pt / 11.2pt. Compensate both lengths for page zoom so
+   * text size and narrow layouts do not change the frame.
+   * Concentricity applies where the canvas meets equal window-edge insets;
+   * the navigation rail intentionally gives the left edge a larger offset. */
+  --conversation-pane-inset: calc(var(--window-corner-radius) * 0.3 / var(--desktop-page-zoom, 1));
+  --conversation-canvas-radius: calc(
+    var(--window-corner-radius) / var(--desktop-page-zoom, 1) -
+      var(--conversation-pane-inset)
+  );
+}
+
 .conversation-pane {
   /* The info card is UI text, so it widens with the text size: 280px at the
    * 14.5px default (App.tsx's room check uses the same ratio), with a 44px
