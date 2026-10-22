@@ -448,7 +448,7 @@ export class PersonalPlugin implements RuntimePlugin {
         message_seq: record.message_seq, revision: 0, created_at: current?.created_at ?? now(), updated_at: now(),
       });
       this.assertActive();
-      await this.sendForAgent(agent.agent_id, { request_id: event.request_id, session_id: record.session_id, cause: "personal.reaction.feedback", if_running: "queue",
+      await this.sendForAgent(agent.agent_id, { request_id: event.request_id, session_id: record.session_id, cause: "personal.reaction.feedback", if_running: "queue", disable_tools: true,
         input: { prompt: "An authenticated owner reaction changed. This is a bounded feedback review, not a user request. Use only the current personal.negative-feedback pre-step context to decide whether to remain silent or ask one short contextual clarification about a just-delivered plan or interface. If that context is missing or suppressed, remain silent. Do not run tools, change tasks, redo work, infer durable preferences, or write memory. Do not mechanically acknowledge an emoji." } });
       await this.change<NegativeFeedback>("negative-feedback", key, current => ({ ...current!, status: "submitted" }));
     });

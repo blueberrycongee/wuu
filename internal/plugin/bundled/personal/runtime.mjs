@@ -1810,6 +1810,7 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
         session_id: record.session_id,
         cause: "personal.reaction.feedback",
         if_running: "queue",
+        disable_tools: true,
         input: { prompt: "An authenticated owner reaction changed. This is a bounded feedback review, not a user request. Use only the current personal.negative-feedback pre-step context to decide whether to remain silent or ask one short contextual clarification about a just-delivered plan or interface. If that context is missing or suppressed, remain silent. Do not run tools, change tasks, redo work, infer durable preferences, or write memory. Do not mechanically acknowledge an emoji." }
       });
       await this.change("negative-feedback", key, (current2) => ({ ...current2, status: "submitted" }));

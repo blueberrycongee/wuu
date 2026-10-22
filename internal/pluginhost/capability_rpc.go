@@ -359,7 +359,9 @@ type SessionInputPresentation struct {
 }
 
 type SessionSendParams struct {
-	Relation *providers.MessageRelation `json:"relation,omitempty"`
+	// DisableTools prohibits every tool for this turn. Unsupported with steer or external engines.
+	DisableTools bool                       `json:"disable_tools,omitempty"`
+	Relation     *providers.MessageRelation `json:"relation,omitempty"`
 	// UserInputRequestID requires an exact live client submission proof in the host context.
 	UserInputRequestID string `json:"user_input_request_id,omitempty"`
 	ControlRevision    int64  `json:"control_revision,omitempty"`

@@ -148,6 +148,7 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
       case "host.session.inspect": return { session: contexts[params.session_id], turn: params.request_id ? turns.get(params.request_id) : [...turns.values()].at(-1) };
       case "host.session.send": {
         assert.equal(params.cause, "personal.reaction.feedback"); assert.equal(params.if_running, "queue");
+        assert.equal(params.disable_tools, true);
         const turn = turns.get(params.request_id) ?? { request_id: params.request_id, turn_id: `turn-${params.request_id}`, state: "running" };
         turns.set(params.request_id, turn);
         if (loseFeedbackReply) { loseFeedbackReply = false; throw new Error("lost feedback send reply"); }
@@ -337,6 +338,20 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
   await runtime.close(); runtime = await start(); assert.equal(turns.size, 2, "feedback chain suppression survives restart");
   messages.push({seq:252, role:"user", origin:"user", content:"Please prepare a different layout"});
   fresh(253); await down(253); assert.equal(turns.size, 3, "a new original owner request permits fresh feedback");
+  // Every accepted terminal receipt consumes feedback, including shutdown discard.
+  for (const [index, state] of ["failed", "interrupted", "discarded"].entries()) {
+    const seq = 260 + index * 10;
+    messages.push({seq:seq-1, role:"user", origin:"user", content:"A new explicit request"});
+    fresh(seq); loseFeedbackReply = true;
+    const before = sends().length;
+    await down(seq);
+    const receipt = turns.get(sends().at(-1).frame.params.params.request_id);
+    receipt.state = state;
+    receipt.retryable = state === "discarded";
+    await runtime.close(); runtime = await start();
+    await down(seq);
+    assert.equal(sends().length, before + 1, `${state} feedback must never be replayed`);
+  }
   await runtime.close();
   await writeFile(join(output, "evidence.json"), JSON.stringify({ passed: true, runtime_sha256: createHash("sha256").update(await readFile(executable)).digest("hex"), scenarios: ["canonical actor ownership", "replace/remove/idempotency", "stale rejection", "restart persistence", "next-step coalesced feedback", "ordinary reactions stay quiet", "bounded negative-feedback recovery", "superseded and removed feedback suppression", "feedback cannot invoke Personal tools"] }, null, 2));
 });

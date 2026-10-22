@@ -200,6 +200,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 
 创建会话时提供稳定的 `request_id`、`visibility=user|plugin` 和 `context_source=fresh|fork|seed`。发送也需要稳定的请求 ID 和 `input.prompt`。请求被接纳或排队不代表完成，应检查轮次或处理生命周期事件后再消费结果。模型提示、业务状态和重试策略由插件负责，执行、历史、工作区改动和恢复交给宿主。
 
+`host.session.send` 支持可选的 `disable_tools: true`，仅对本轮禁用所有工具。宿主移除模型可见的工具并拒绝工具执行，包括 code-mode 分发；不会影响后续轮次，也不会授予权限。省略或设为 false 时保持普通行为。禁用工具的轮次不能使用 `if_running: "steer"` 或外部代理引擎，不支持的请求会在接纳前被拒绝。暂不支持按轮次配置通用工具允许／拒绝列表。
+
 `host.session.history.read` 只读返回物理审计记录，包括隐藏的模型上下文和工具记录。记录带有可选的 `hidden`、`read_only` 和 `origin` 元数据；省略的布尔标志视为 false，旧记录省略的来源视为空字符串。仅凭 `user` 角色不能认定内容由用户输入。构建对话视图时应保留并使用这些字段：排除隐藏记录，只有非只读且来源为 `user` 或空字符串的用户角色记录才作为真实用户输入。不要按文字特征判断来源，也不要删改真实输入中的相似文字。对话筛选不删除审计记录，也不改变提供方上下文。
 
 `host.session.history.search` 使用 `view: "conversation"` 时，在分页前对用户和助理记录应用这些可见性与来源规则，搜索显示的对话文字，不搜索推理或工具输出。省略 `view` 时保留默认审计／执行轨迹搜索。序号仍指向物理记录，客户端可以恢复原消息，不应将筛选结果重新编号。

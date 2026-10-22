@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -674,6 +675,9 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if params.IfRunning != pluginhost.SessionIfRunningQueue && params.IfRunning != pluginhost.SessionIfRunningSteer {
 		return pluginhost.SessionSendResult{}, errors.New("if_running must be queue or steer")
 	}
+	if params.DisableTools && params.IfRunning == pluginhost.SessionIfRunningSteer {
+		return pluginhost.SessionSendResult{}, errors.New("disable_tools cannot be used when if_running is steer")
+	}
 	if params.IfRunning == pluginhost.SessionIfRunningSteer && len(params.Input.ContextBlocks) > 0 {
 		return pluginhost.SessionSendResult{}, errors.New("context_blocks cannot be used when if_running is steer")
 	}
@@ -686,6 +690,9 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	}
 	if !ok {
 		return pluginhost.SessionSendResult{}, session.ErrSessionNotFound
+	}
+	if params.DisableTools && agentengine.NormalizeEngineID(metadata.EngineID) != agentengine.EngineWuu {
+		return pluginhost.SessionSendResult{}, errors.New("the selected agent engine cannot enforce disable_tools")
 	}
 	owner := "plugin:" + pluginID
 	processDelivery := pluginhost.HasProcessSessionDelivery(ctx, params.SessionID)
@@ -825,6 +832,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		return pluginhost.SessionSendResult{}, err
 	}
 	snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
+	snapshot.DisableTools = params.DisableTools
 	snapshot.RequestContext = requestContext
 	snapshot.Control = control
 	snapshot.PluginTurn = &pluginTurnReference{PluginID: pluginID, RequestID: params.RequestID}

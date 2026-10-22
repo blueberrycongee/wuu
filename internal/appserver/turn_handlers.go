@@ -119,6 +119,7 @@ type turnAdmissionHooks struct {
 }
 
 type turnRuntimeSnapshot struct {
+	DisableTools    bool
 	SourceMessage   *providers.MessageRef
 	MessageRelation *providers.MessageRelation
 	// CWD and permissions are captured at admission. Later metadata changes
@@ -2515,7 +2516,17 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	if metadata, ok, err := session.Find(s.rt.SessionDir, th.ID); err == nil && ok {
 		sessionInstructions = effectiveSessionInstructions(metadata)
 	}
-	capabilities, capabilityErr := startExternalCapabilities(ctx, threadRuntime)
+	// Restricted turns never start an engine or external capability bridge that
+	// cannot enforce their authority, even if the binding changed after admission.
+	var capabilityErr error
+	if turnRuntime.DisableTools && (runner == nil || agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu ||
+		threadRuntime != nil && agentengine.NormalizeEngineID(string(threadRuntime.EngineID)) != agentengine.EngineWuu) {
+		capabilityErr = errors.New("the selected agent engine cannot enforce disable_tools")
+	}
+	var capabilities *externalCapabilities
+	if capabilityErr == nil {
+		capabilities, capabilityErr = startExternalCapabilities(ctx, threadRuntime)
+	}
 	if capabilities != nil {
 		defer capabilities.Close()
 	}
@@ -2630,6 +2641,9 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 	restoreRunner := func() {}
 	if runner != nil {
 		baseTurnTools = runner.Tools
+		if turnRuntime.DisableTools {
+			runner.Tools = newSessionToolPolicyExecutor(baseTurnTools, pluginhost.SessionToolPolicy{Deny: []string{"*"}})
+		}
 		baseForceInitialCompact = runner.ForceInitialCompact
 		baseCompactOnly = runner.CompactOnly
 		baseToolWaitInterrupt = runner.ToolWaitInterrupt
@@ -4056,6 +4070,11 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		cancel()
 		return startedThreadTurn{}, false, errServerClosed
 	}
+	if snapshot.DisableTools && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+		th.mu.Unlock()
+		cancel()
+		return startedThreadTurn{}, false, errors.New("the selected agent engine cannot enforce disable_tools")
+	}
 	if th.running {
 		th.mu.Unlock()
 		cancel()
@@ -4303,6 +4322,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	}
 	turnRuntime.ExecutionRunID = snapshot.ExecutionRunID
 	turnRuntime.PluginTurn = clonePluginTurnReference(snapshot.PluginTurn)
+	turnRuntime.DisableTools = snapshot.DisableTools
 	th.currentExecutionRunID = turnRuntime.ExecutionRunID
 	turnRuntime.RequestContext = cloneContextSegments(snapshot.RequestContext)
 	th.mu.Unlock()

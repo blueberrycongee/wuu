@@ -1268,6 +1268,8 @@ export interface HostServiceContracts {
   };
   "host.session.send": {
     params: {
+      /** Prohibits all tools for this turn. Unsupported with steer or external engines. */
+      disable_tools?: boolean;
       user_input_request_id?: string;
  relation?: MessageRelation;
       request_id: string;
