@@ -2141,6 +2141,7 @@ export const enUS = {
   "skills.tabSkills": "Skills",
   "skills.groupAttention": "Needs attention",
   "skills.groupEnabled": "On",
+  "skills.sidebarNoEnabled": "No enabled plugins",
   "skills.groupDisabled": "Off",
   "skills.noPlugins": "No plugins yet",
   "skills.pluginAdds": "In Wuu",

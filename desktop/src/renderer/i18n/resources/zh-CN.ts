@@ -2138,6 +2138,7 @@ export const zhCN = {
   "skills.tabSkills": "技能",
   "skills.groupAttention": "需要处理",
   "skills.groupEnabled": "已启用",
+  "skills.sidebarNoEnabled": "还没有已启用的插件",
   "skills.groupDisabled": "未启用",
   "skills.noPlugins": "还没有插件",
   "skills.pluginAdds": "在 Wuu 中",

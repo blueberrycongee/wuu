@@ -29,6 +29,7 @@ import type {
 import { CatalogSearchField } from "./CatalogSearchField";
 import { CapabilityMark, skillCapability } from "./CapabilityMark";
 import { confirmAction } from "./ConfirmDialog";
+import { extensionPackageApproval, pluginToggle } from "./extensionPackageState";
 import { translateCurrent, useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { Modal } from "./Modal";
@@ -87,6 +88,7 @@ export function SkillsCatalog({
   onUpdateExtensionPackage,
   onInstallPluginPackage,
   onRemovePluginPackage,
+  openPluginRequest,
 }: {
   active?: boolean;
   section?: SkillsCatalogSection;
@@ -102,6 +104,7 @@ export function SkillsCatalog({
   onRemovePluginPackage?: (
     id: string,
   ) => Promise<PluginPackageRemoveResult | undefined>;
+  openPluginRequest?: { id: string; request: number };
 }): JSX.Element {
   const { locale, t } = useI18n();
   const [state, setState] = useState<LoadState>(initialLoadState);
@@ -113,6 +116,11 @@ export function SkillsCatalog({
     setSelectedPluginID("");
     setPreviewSkill(null);
   }, [section]);
+  useEffect(() => {
+    if (!openPluginRequest) return;
+    setSelectedPluginID(openPluginRequest.id);
+    setPreviewSkill(null);
+  }, [openPluginRequest]);
   const [packageMutation, setPackageMutation] = useState("");
   // State alone cannot stop a second click that lands before the re-render.
   const mutationInFlight = useRef(false);
@@ -597,13 +605,6 @@ function isRemovableUserPlugin(record: ExtensionInventoryRecord): boolean {
   );
 }
 
-function extensionPackageApproval(record: ExtensionInventoryRecord): NonNullable<ExtensionInventoryRecord["approval_state"]> {
-  if (record.approval_state) {
-    return record.approval_state;
-  }
-  return record.provenance.official ? "official" : "pending";
-}
-
 function extensionPackagePrimaryAction(record: ExtensionInventoryRecord): ExtensionPackageAction {
   if (record.pending_update) {
     return "promote_update";
@@ -627,18 +628,6 @@ function extensionPackageSecondaryAction(record: ExtensionInventoryRecord): Exte
     return "revoke";
   }
   return undefined;
-}
-
-// The switch shows whether a plugin runs. Turning on an unapproved plugin
-// is its approval, reviewed first when it asks for permissions.
-function pluginToggle(record: ExtensionInventoryRecord): { on: boolean; action: ExtensionPackageAction; review: boolean } {
-  const approval = extensionPackageApproval(record);
-  const trusted = approval === "official" || approval === "granted";
-  if (trusted) {
-    const on = record.enabled !== false;
-    return { on, action: on ? "disable" : "enable", review: false };
-  }
-  return { on: false, action: "grant", review: (record.requested_permissions?.length ?? 0) > 0 };
 }
 
 type PluginAttention = { tone: "warning" | "danger"; label: string };

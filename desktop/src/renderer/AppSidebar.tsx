@@ -94,6 +94,7 @@ export { reorderSidebarSections } from "./SortableSidebarSection";
 import { SidebarPointerSensor } from "./SidebarPointerSensor";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
 import { SkillsIcon } from "./SkillsIcon";
+import { pluginToggle } from "./extensionPackageState";
 import { PluginIcon, loadPluginIconURL } from "./PublicIcon";
 import type { RibbonIconModel } from "../shared/chromeOverlay";
 import { SidebarBrand } from "./SidebarBrand";
@@ -484,6 +485,7 @@ export function AppSidebar({
   onRibbonExpandedChange,
   catalogSection = "plugins",
   onSelectCatalogSection,
+  onOpenCatalogPlugin,
   activeWebsiteId,
   onSelectWebsite,
   websites,
@@ -573,10 +575,11 @@ export function AppSidebar({
   onRibbonExpandedChange?: (expanded: boolean) => void;
   catalogSection?: SkillsCatalogSection;
   onSelectCatalogSection?: (section: SkillsCatalogSection) => void;
+  onOpenCatalogPlugin?: (id: string) => void;
   activeWebsiteId?: string | null;
   onSelectWebsite?: (website: RibbonWebsite) => void;
 } & RibbonBrowserActions): JSX.Element {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const ribbonRef = useCallback((element: HTMLElement | null) => {
     onRibbonPresenceChange?.(element !== null);
   }, [onRibbonPresenceChange]);
@@ -663,6 +666,17 @@ export function AppSidebar({
     () => primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot),
     [declaredPluginNavigationEntries, workbenchSnapshot],
   );
+  const extensionCatalog = useMemo(() => {
+    const records = state.initialized?.extension_inventory ?? [];
+    const plugins = records.filter((record) => record.kind === "plugin");
+    return {
+      pluginCount: plugins.length,
+      skillCount: records.filter((record) => record.kind === "skill").length,
+      enabledPlugins: plugins
+        .filter((record) => pluginToggle(record).on)
+        .sort((left, right) => left.name.localeCompare(right.name, locale)),
+    };
+  }, [locale, state.initialized?.extension_inventory]);
   const activateNative = useCallback((action: () => void): void => {
     workbenchController.deactivateRegion("primary");
     action();
@@ -1915,18 +1929,56 @@ export function AppSidebar({
         {pluginCatalogActive ? (
           <nav className="sidebar-section-navigation" aria-label={t("skills.catalogLabel")}>
             <h2 className="sidebar-section-title">{t("skills.title")}</h2>
-            {(["plugins", "skills"] as const).map((section) => (
-              <button
-                key={section}
-                className="sidebar-section-item"
-                type="button"
-                aria-current={catalogSection === section ? "page" : undefined}
-                onClick={() => onSelectCatalogSection?.(section)}
+            {(["plugins", "skills"] as const).map((section) => {
+              const label = t(section === "plugins" ? "skills.tabPlugins" : "skills.tabSkills");
+              const count = section === "plugins" ? extensionCatalog.pluginCount : extensionCatalog.skillCount;
+              return (
+                <button
+                  key={section}
+                  className="sidebar-section-item"
+                  type="button"
+                  aria-label={`${label} (${count})`}
+                  aria-current={catalogSection === section ? "page" : undefined}
+                  onClick={() => onSelectCatalogSection?.(section)}
+                >
+                  {section === "plugins" ? <PluginBlocksIcon aria-hidden="true" /> : <SkillsIcon />}
+                  <span className="sidebar-section-label">{label}</span>
+                  <span className="sidebar-section-count" data-count={count} aria-hidden="true" />
+                </button>
+              );
+            })}
+            {onOpenCatalogPlugin ? (
+              <div
+                className="sidebar-section-group"
+                role="group"
+                aria-labelledby="extensions-enabled-heading"
               >
-                {section === "plugins" ? <PluginBlocksIcon aria-hidden="true" /> : <SkillsIcon />}
-                <span>{t(section === "plugins" ? "skills.tabPlugins" : "skills.tabSkills")}</span>
-              </button>
-            ))}
+                <h3 className="sidebar-subsection-title" id="extensions-enabled-heading">
+                  {t("skills.groupEnabled")}
+                </h3>
+                {extensionCatalog.enabledPlugins.length > 0 ? (
+                  extensionCatalog.enabledPlugins.map((record) => (
+                    <button
+                      key={record.id}
+                      className="sidebar-section-item sidebar-plugin-shortcut"
+                      type="button"
+                      onClick={() => onOpenCatalogPlugin(record.id)}
+                    >
+                      <PluginIcon
+                        icon={record.icon}
+                        pluginId={record.provenance.plugin_id ?? record.id}
+                        fingerprint={record.fingerprint ?? ""}
+                      />
+                      <span className="sidebar-section-label" title={record.name}>
+                        {record.name}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <p className="sidebar-subsection-empty">{t("skills.sidebarNoEnabled")}</p>
+                )}
+              </div>
+            ) : null}
           </nav>
         ) : activePluginMain && !settingsActive && !workbenchSnapshot.webPageViewIds.includes(activePluginMain.view.id) ? (
           <nav className="sidebar-section-navigation" aria-label={activePluginMain.definition.title}>

@@ -707,6 +707,50 @@ html:not([data-app-background]) .navigation-ribbon-layout:has(.sidebar-ribbon) :
   overflow-wrap: anywhere;
 }
 
+.sidebar-section-item > .sidebar-section-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-section-item > .sidebar-section-count {
+  flex: none;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.sidebar-section-item > .sidebar-section-count::after {
+  content: attr(data-count);
+}
+
+.sidebar-section-group {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--sidebar-row-gap);
+  margin-top: var(--space-2);
+}
+
+.sidebar-subsection-title {
+  margin: 0;
+  padding: var(--space-1) var(--sidebar-row-pad-x);
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
+}
+
+.sidebar-subsection-empty {
+  margin: 0;
+  padding: var(--space-1) var(--sidebar-row-pad-x);
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: var(--line-ui);
+}
+
 .sidebar-section-item:hover {
   background: var(--sidebar-row-hover-bg);
   color: var(--ink);

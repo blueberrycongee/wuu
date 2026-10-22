@@ -748,6 +748,7 @@ export function App(): JSX.Element {
     if (ribbonBrowser.state && !ribbonBrowser.state.tabs?.length) setActiveWebsiteID(undefined);
   }, [ribbonBrowser.state]);
   const [catalogSection, setCatalogSection] = useState<SkillsCatalogSection>("plugins");
+  const [catalogPluginRequest, setCatalogPluginRequest] = useState<{ id: string; request: number }>();
   const [catalogVisited, setCatalogVisited] = useState(false);
   const pageWorkbench = useSyncExternalStore(desktopWorkbenchController.subscribe,
     desktopWorkbenchController.getSnapshot, desktopWorkbenchController.getSnapshot);
@@ -4082,6 +4083,15 @@ export function App(): JSX.Element {
     if (rightPanelGlobalized) setRightPanelOpenWithMotion(false);
   }
 
+  function openCatalogPlugin(id: string): void {
+    setCatalogSection("plugins");
+    setCatalogPluginRequest((current) => ({
+      id,
+      request: (current?.request ?? 0) + 1,
+    }));
+    openSkillsTab();
+  }
+
   // The active draft starts a project or an ordinary conversation; the entry
   // the user chose decides which.
   function setDraftProjectMode(project: boolean): void {
@@ -5846,6 +5856,7 @@ export function App(): JSX.Element {
               onRibbonExpandedChange={handleRibbonExpandedChange}
               catalogSection={catalogSection}
               onSelectCatalogSection={setCatalogSection}
+              onOpenCatalogPlugin={openCatalogPlugin}
               sidebarCollapsed={sidebarCollapsed}
               sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
               state={state}
@@ -6111,6 +6122,7 @@ export function App(): JSX.Element {
               onUpdateExtensionPackage={updateExtensionPackage}
               onInstallPluginPackage={installPluginPackage}
               onRemovePluginPackage={removePluginPackage}
+              openPluginRequest={catalogPluginRequest}
             />
           </div>
         ) : null}
