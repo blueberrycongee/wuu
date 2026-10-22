@@ -129,7 +129,7 @@ function SourceLink({ source, onOpen, arrive, motionAllowed, index, fanAngle = 0
           onAnimationEnd={() => setAnimate(false)}>
           <span className="web-source-fallback" data-loaded={loaded}>{source.host[0]?.toUpperCase() ?? "·"}</span>
           {!failed ? <img
-            src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(source.host)}&sz=32`}
+            src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(source.host)}&sz=64`}
             alt="" loading="lazy" data-loaded={loaded}
             onLoad={() => setLoaded(true)} onError={() => { setFailed(true); setLoaded(false); }}
           /> : null}

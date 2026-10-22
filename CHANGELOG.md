@@ -67,6 +67,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Make web search source cards narrower with larger, centered website icons for easier recognition in the compact stack.
+
 - Reorganize plugin details around identity and enablement, prioritize plugin settings, and present descriptions and contributions in clearly separated, responsive sections.
 
 - Redesign desktop surfaces with neutral window chrome, white and charcoal reading canvases, clearer selections, regular UI-sized menus, grouped settings cards, and a consistent two-row composer across window sizes.
