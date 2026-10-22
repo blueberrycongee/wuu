@@ -157,9 +157,12 @@ machine-specific setup in user-level configuration.
 
 ## Extension architecture
 
-- Project Agent coordination and its ordinary managed sessions are core product
-  behavior. Creation, control, result delivery and recovery must work without
-  loading plugins. Keep extension adapters outside host session contracts.
+- Assemble the default product from selected providers through public contracts.
+  Agent loops, engine adapters, persistence, execution, policy, credentials,
+  project coordination, and application UI must allow external replacements.
+  Disabling a selected provider stops its behavior; do not silently substitute
+  a built-in implementation. Preserve existing user data and explicit session
+  bindings when changing the default composition.
 - Wuu is a decentralized trusted-extension system. Installation grants trust and
   enables the extension. Same-source updates retain trust; source changes require
   confirmation. Do not add approval, inspection, restart, or per-update ceremonies
@@ -171,14 +174,22 @@ machine-specific setup in user-level configuration.
   or a TypeScript kernel. Direct execution and reload of one local TypeScript file
   is the development floor; builds, manifests, packaging, installation, and
   validation must remain optional for that path.
-- The kernel owns shared mechanisms and invariants: lifecycle, persistence,
-  execution, recovery, credentials, permissions, windows, and host UI boundaries.
-  Plugins own business state, prompts, tools, background policy, and presentation.
-  Disabling a plugin must stop its product behavior.
+- The bootstrap owns composition loading, identity-aware routing, dependency
+  resolution, scopes, lifecycle, and minimal configuration recovery. Providers
+  own loop algorithms, storage semantics, execution backends, policies,
+  credentials, scheduling, business state, and application presentation. Native
+  Go providers may ship with the product but must be replaceable by external
+  processes using the same observable contracts and configured bindings.
+- Maintain one authoritative service graph across Go, process, and renderer
+  implementations. Keep provider resources alive until dependent consumers finish
+  cleanup. Retain execution bindings across updates; require explicit compatible
+  checkpoints or a stopped writer and migration for stateful replacements.
+  A failed preparation preserves the active composition. An activation failure
+  after a durable commit must report the committed state and its diagnostics.
 - Bundled and community extensions use the same public contracts. Do not introduce
   product-ID checks, privileged APIs, private shortcuts, duplicated plugin state,
-  or silent host fallbacks. Capabilities with legitimate alternative implementations
-  should be replaceable extensions; core mechanisms need not be plugins.
+  or silent host fallbacks. Choose plugin boundaries around complete capabilities;
+  shared protocols, types, and pure utilities can remain ordinary libraries.
 - Add host capabilities or public abstractions only for demonstrated needs shared
   by at least two plausible extensions. Internal machinery is not automatically a
   public compatibility promise.
