@@ -138,10 +138,13 @@ function placeUserMessageActions(actions: HTMLDivElement | null): (() => void) |
         range.setEnd(tail, end);
         const glyph = range.getBoundingClientRect();
         const frame = message.getBoundingClientRect();
+        const style = getComputedStyle(message);
+        const contentBottom = frame.bottom - parseFloat(style.paddingBottom);
+        const contentRight = frame.right - parseFloat(style.paddingRight);
         const lineHeight = parseFloat(getComputedStyle(last).lineHeight) || 0;
         // Only the final line of the frame can host the row; a code block,
         // expand toggle or later paragraph below it sends the row underneath.
-        inline = frame.bottom - glyph.bottom < lineHeight / 2 && glyph.right + actions.offsetWidth <= frame.right;
+        inline = contentBottom - glyph.bottom < lineHeight / 2 && glyph.right + actions.offsetWidth <= contentRight;
       }
     }
     actions.dataset.placement = inline ? "inline" : "below";

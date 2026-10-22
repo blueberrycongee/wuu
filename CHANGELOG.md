@@ -99,6 +99,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Place user attachments above the text frame in IM-style conversations, keeping images aligned with the message text and hover actions aligned with the final line.
+
 - Fold progress messages and tool/reasoning groups after published images into the process section when the final answer appears, keeping delivered images and the answer visible.
 
 - Keep the input width and toolbar layout stable when attachment drawers open in conversation and document composers, and when conversation drafts grow to multiple lines.
