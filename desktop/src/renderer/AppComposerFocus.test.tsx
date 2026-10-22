@@ -41,6 +41,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
             props.mainConversation ? variant : undefined
           }
         >
+          {props.onContinue && <button aria-label="continue-probe" onClick={() => props.onContinue?.()}>continue</button>}
           <button aria-label="stop-probe" onClick={props.onInterrupt}>stop</button>
           <button aria-label="select-wuu-engine-probe" onClick={() => props.onSelectEngine?.("wuu")}>Wuu</button>
           {props.queuedMessages.map((message) => (
@@ -958,6 +959,8 @@ describe("main composer focus continuity", () => {
     await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="stop-probe"]')!.click(); });
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
     expect(window.wuu.interruptTurn).not.toHaveBeenCalled();
+    expect(mainComposer("dock").value).toBe("cancel before admission");
+    expect(container.querySelector('[aria-label="continue-probe"]')).toBeNull();
     expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-send-disabled")).toBe("false");
     await act(async () => { finishEncoding([]); });
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
@@ -983,6 +986,34 @@ describe("main composer focus continuity", () => {
       expect(mainComposer("dock").value).toBe("second retained");
     }
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
+  });
+
+  it("retries an unadmitted history-edit failure without editing a fabricated turn", async () => {
+    await renderApp(true);
+    let rejectSend!: (error: Error) => void;
+    vi.mocked(window.wuu.startTurn).mockImplementationOnce(() => new Promise((_, reject) => { rejectSend = reject; }));
+    window.wuu.editThreadMessage = vi.fn().mockResolvedValue({ thread: { ...persistedThread(), turns: [] } });
+    await act(async () => container.querySelector<HTMLButtonElement>(".message-edit-button")!.click());
+    await enterCommand(container.querySelector<HTMLTextAreaElement>("[data-user-message-id] textarea")!, "replacement retained");
+    const dock = mainComposer("dock");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(dock, "newer draft");
+      dock.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => rejectSend(new Error("send unavailable")));
+    await flushAsync();
+    expect(mainComposer("dock").value).toBe("newer draft");
+    expect(container.querySelector('[aria-label="continue-probe"]')).toBeNull();
+    const retry = container.querySelector<HTMLButtonElement>('[data-recovery-state] .turn-failure-action');
+    expect(retry).not.toBeNull();
+    await act(async () => retry!.click());
+    await flushAsync();
+    expect(window.wuu.editThreadMessage).toHaveBeenCalledTimes(1);
+    expect(window.wuu.startTurn).toHaveBeenCalledTimes(2);
+    const calls = vi.mocked(window.wuu.startTurn).mock.calls;
+    expect(calls[1][1]).toBe("replacement retained");
+    expect(calls[1][8]).toBe(calls[0][8]);
+    expect(calls[1][9]).toBeUndefined();
   });
 
   it.each(["", "newer draft"])("recovers failed thread creation without replacing newer input (%s)", async (newerDraft) => {

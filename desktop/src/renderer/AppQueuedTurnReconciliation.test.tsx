@@ -104,6 +104,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 }));
 
 import { App } from "./App";
+import { CONTINUE_TURN_EVENT } from "./TurnNotice";
 
 const workspace = "/tmp/wuu-queued-turn-reconciliation-test";
 const threadID = "thread-queued-reconciliation";
@@ -324,6 +325,24 @@ describe("queued turn reconciliation", () => {
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
     vi.restoreAllMocks();
+  });
+
+  it("routes continuation using the source thread context and rejects duplicate requests", async () => {
+    const thread: Thread = { ...runningThread(), status: "idle", cwd: "/tmp/wuu-other-runtime", turns: runningThread().turns.map(turn => ({ ...turn, status: "interrupted" as const })) };
+    let accept!: (result: { turn: Thread["turns"][number] }) => void;
+    const startTurn = vi.fn<WuuDesktopApi["startTurn"]>(() => new Promise<{ turn: Thread["turns"][number] }>(resolve => { accept = resolve; }));
+    installWuuApi({ thread, startTurn });
+    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await flushAsync();
+    const done = vi.fn();
+    const request = () => window.dispatchEvent(new CustomEvent(CONTINUE_TURN_EVENT, { detail: { threadID, turnID: "turn-current", done } }));
+    await act(async () => { request(); request(); });
+    expect(startTurn).toHaveBeenCalledTimes(1);
+    expect(startTurn.mock.calls[0]).toEqual([threadID, "", undefined, undefined, thread.permission_mode, undefined, undefined,
+      { kind: "no_project", cwd: thread.cwd }, undefined, "turn-current"]);
+    await act(async () => accept({ turn: { id: "continued", status: "completed", items_view: "full", items: [] } }));
+    await act(async () => { request(); });
+    expect(startTurn).toHaveBeenCalledTimes(1);
   });
 
   it.each(["queue", "steer"])("preserves reading flow when a %s message enters the conversation", async mode => {

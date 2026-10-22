@@ -122,3 +122,52 @@ func TestExplicitResumeDoesNotUseAssistantPrefill(t *testing.T) {
 		}
 	}
 }
+
+func TestExplicitResumeSurvivesContextOverflowWithThinking(t *testing.T) {
+	for _, thinking := range []bool{false, true} {
+		t.Run(fmt.Sprintf("thinking=%v", thinking), func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				var body struct {
+					Messages []struct {
+						Role string `json:"role"`
+					} `json:"messages"`
+					Thinking json.RawMessage `json:"thinking"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if len(body.Messages) == 0 || body.Messages[len(body.Messages)-1].Role != "user" {
+					t.Error("explicit resume used assistant prefill")
+				}
+				if thinking && len(body.Thinking) == 0 {
+					t.Error("thinking mode lost")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if requests == 1 {
+					w.WriteHeader(http.StatusBadRequest)
+					fmt.Fprint(w, `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long"}}`)
+					return
+				}
+				fmt.Fprint(w, `{"content":[{"type":"text","text":"continued"}],"stop_reason":"end_turn"}`)
+			}))
+			defer server.Close()
+			client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := agent.LoopConfig{Model: "claude-test", ResumeSampling: true, Compact: func(_ context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
+				return messages[len(messages)-1:], nil
+			}}
+			if thinking {
+				cfg.ProviderOptions = map[string]any{"thinking": map[string]any{"type": "enabled", "budget_tokens": 1024}}
+			}
+			history := []providers.ChatMessage{{Role: "user", Content: "original"}, {Role: "assistant", Content: "completed progress"}}
+			res, err := agent.RunToolLoop(context.Background(), history, cfg, agent.NewStreamStep(continuationChatOnly{client}))
+			if err != nil || requests != 2 || res.Content != "continued" {
+				t.Fatalf("requests=%d result=%+v err=%v", requests, res, err)
+			}
+		})
+	}
+}

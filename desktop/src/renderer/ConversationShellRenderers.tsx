@@ -54,6 +54,7 @@ import {
 } from "./ComposerView";
 import { ConversationSplitPane } from "./ConversationSplitPane";
 import type { HistoryMessageEditState } from "./ConversationHistoryActions";
+import { OPTIMISTIC_TURN_ID_PREFIX } from "./ComposerMessages";
 import type { ThreadPendingComposerMessages } from "./ComposerPendingMessages";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { Tooltip } from "./Tooltip";
@@ -209,6 +210,7 @@ export function ConversationSplitPaneRenderer({
       onRemoveSelection={(id) => onRemoveSelection?.(pane, id)}
       onSend={(promptOverride, contentParts) => onSend(pane, promptOverride, contentParts)}
       onContinue={onContinue && (!thread.engine_id || thread.engine_id === "wuu")
+        && !thread.turns.at(-1)?.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)
         && ["failed", "interrupted"].includes(thread.turns.at(-1)?.status ?? "")
         ? () => onContinue(thread) : undefined}
       onInterrupt={() => onInterrupt(pane)}

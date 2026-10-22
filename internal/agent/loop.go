@@ -139,6 +139,7 @@ func RunToolLoop(
 	}
 
 	turnRouting := &providers.TurnRouting{}
+	resumeSampling := cfg.ResumeSampling
 	messages := make([]providers.ChatMessage, len(history))
 	copy(messages, history)
 	// Transient context is request-only across runs, but append-only inside
@@ -667,7 +668,7 @@ func RunToolLoop(
 		operation.ParentOperationID = nextOperationParentID
 		nextOperationParentID = ""
 		req := providers.ChatRequest{
-			ResumeSampling:              cfg.ResumeSampling && stepIdx == 0,
+			ResumeSampling:              resumeSampling,
 			TurnRouting:                 turnRouting,
 			Provider:                    cfg.ProviderName,
 			Model:                       cfg.Model,
@@ -1003,6 +1004,7 @@ func RunToolLoop(
 			}, err
 		}
 
+		resumeSampling = false
 		if freshContextEnabled {
 			// Successful progress ends the previous overflow recovery attempt.
 			overflowCompacted = false

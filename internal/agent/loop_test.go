@@ -1078,6 +1078,32 @@ func TestRunToolLoop_KimiMessageSizeOverflowAutoCompactsOnce(t *testing.T) {
 	}
 }
 
+func TestRunToolLoopContinuationSurvivesOverflowCompaction(t *testing.T) {
+	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
+	step := &fakeStep{results: []StepResult{{}, {ToolCalls: []providers.ToolCall{{ID: "call-after-resume", Name: "read_file", Arguments: `{}`}}}, {Content: "continued"}}, errs: []error{overflow, nil, nil}}
+	history := []providers.ChatMessage{userMsg("original"), {Role: "assistant", Content: "completed prefix"}}
+	cfg := LoopConfig{Model: "claude-test", ResumeSampling: true, Tools: &fakeLoopTools{defs: []providers.ToolDefinition{{Name: "read_file"}}}, Compact: func(_ context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
+		return messages[len(messages)-1:], nil
+	}}
+	if _, err := RunToolLoop(context.Background(), history, cfg, step); err != nil {
+		t.Fatal(err)
+	}
+	if len(step.calls) != 3 {
+		t.Fatalf("requests = %d", len(step.calls))
+	}
+	for i, req := range step.calls[:2] {
+		if !req.ResumeSampling {
+			t.Fatalf("request %d lost explicit continuation before successful response", i)
+		}
+		if req.Messages[len(req.Messages)-1].Role != "assistant" {
+			t.Fatalf("request %d lost assistant tail", i)
+		}
+	}
+	if step.calls[2].ResumeSampling {
+		t.Fatal("continuation mode outlived first successful response")
+	}
+}
+
 func TestRunToolLoop_ContextOverflowStopsWhenCompactUnchanged(t *testing.T) {
 	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
 	step := &fakeStep{results: []StepResult{{}}, errs: []error{overflow}}
