@@ -99,6 +99,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Prevent sent messages from flickering or jumping when server events confirm them before the send request returns.
 - Use lowercase `worktree` for the English composer toggle label.
 
 - Place user attachments above the text frame in IM-style conversations, keeping images aligned with the message text and hover actions aligned with the final line.
