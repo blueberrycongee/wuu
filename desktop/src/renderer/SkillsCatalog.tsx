@@ -758,9 +758,8 @@ function pluginContributions(
   ];
 }
 
-// The plugin page answers what it does, whether it runs, and what it adds.
-// Permissions appear only while someone is deciding whether to trust it,
-// right under the notice that asks for that decision.
+// Keep identity and enablement together, then put configuration before reference
+// content. Approval notices and permissions precede both when a decision is due.
 function PluginDetailPage({
   record,
   skills,
@@ -852,9 +851,21 @@ function PluginDetailPage({
 
       <header className="plugin-page-header">
         <PluginMark record={record} className="plugin-page-mark" />
-        <h1 className="plugin-page-title">{record.name}</h1>
+        <div className="plugin-page-identity">
+          <h1 className="plugin-page-title">{record.name}</h1>
+          <div className="plugin-page-meta">
+            {record.developer ? <span>{t("skills.pluginDeveloper", { name: record.developer })}</span> : null}
+            <span>{pluginSourceLabel(record, t)}</span>
+          </div>
+        </div>
         {record.description ? <p className="plugin-page-tagline">{record.description}</p> : null}
-        <div className="settings-detail-actions">
+      </header>
+
+      <div className="plugin-page-controls">
+        <span className="plugin-page-state" aria-live="polite">
+          {mutating ? t("skills.pluginUpdating") : t(toggle.on ? "skills.groupEnabled" : "skills.groupDisabled")}
+        </span>
+        <div className="plugin-page-actions">
           {hasMoreActions ? (
             <button
               type="button"
@@ -890,7 +901,7 @@ function PluginDetailPage({
             </button>
           )}
         </div>
-      </header>
+      </div>
 
       {notices.length > 0 ? (
         <div className="plugin-detail-notices">
@@ -917,33 +928,41 @@ function PluginDetailPage({
         </SettingsSection>
       ) : null}
 
-      {record.long_description ? <p className="plugin-page-about">{record.long_description}</p> : null}
+      <PluginSettingsEditor plugin={record} title={t("skills.pluginSettingsLabel")} />
+
+      {record.long_description ? (
+        <SettingsSection title={t("skills.pluginAbout")}>
+          <p className="plugin-page-about">{record.long_description}</p>
+        </SettingsSection>
+      ) : null}
 
       {contributions.length > 0 ? (
         <SettingsSection title={t("skills.pluginAdds")}>
-          <SettingsGroup>
+          <ul className="plugin-contributions">
             {contributions.map((item) => {
               const content = (
                 <>
                   <span className="catalog-row-mark">{item.icon}</span>
-                  <span className="catalog-row-title">{item.title}</span>
-                  <span className="catalog-row-meta">{item.kind}</span>
+                  <span className="plugin-contribution-copy">
+                    <span className="catalog-row-title">{item.title}</span>
+                    <span className="plugin-contribution-kind">{item.kind}</span>
+                  </span>
                   {item.onOpen ? <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" /> : null}
                 </>
               );
-              return item.onOpen ? (
-                <button key={item.key} type="button" className="catalog-row" onClick={item.onOpen}>{content}</button>
-              ) : (
-                <div key={item.key} className="catalog-row plugin-contribution">{content}</div>
+              return (
+                <li key={item.key}>
+                  {item.onOpen ? (
+                    <button type="button" className="plugin-contribution" onClick={item.onOpen}>{content}</button>
+                  ) : (
+                    <div className="plugin-contribution">{content}</div>
+                  )}
+                </li>
               );
             })}
-          </SettingsGroup>
+          </ul>
         </SettingsSection>
       ) : null}
-
-      <PluginSettingsEditor plugin={record} title={t("skills.pluginSettingsLabel")} />
-
-      {record.developer ? <p className="plugin-page-footnote">{t("skills.pluginDeveloper", { name: record.developer })}</p> : null}
     </>
   );
 }

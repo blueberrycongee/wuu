@@ -2153,6 +2153,7 @@ export const enUS = {
   "skills.addsTheme": "Theme",
   "skills.pluginDeveloper": "By {name}",
   "skills.pluginSettingsLabel": "Plugin settings",
+  "skills.pluginAbout": "About",
   "skills.pluginGrant": "Approve and enable",
   "skills.pluginReauthorize": "Approve changes",
   "skills.pluginReject": "Reject",

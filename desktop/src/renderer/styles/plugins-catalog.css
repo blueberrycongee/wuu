@@ -342,21 +342,39 @@ button.catalog-row,
 
 /* --- Plugin page ------------------------------------------------------------- */
 
-/* The page's title row: the plugin's glyph (the same mark as its catalog
- * row, without a tile), the name, and the switch or the decision on the
- * name's line; the tagline sits under the name. */
+/* Identity, management, and reference content have separate reading rhythms. */
 .plugin-page-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: var(--space-3);
-  margin-top: calc(var(--settings-gap) * -0.5);
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-4);
+}
+
+.plugin-page-identity {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.plugin-page-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.plugin-page-meta > span + span {
+  border-inline-start: 1px solid var(--hairline);
+  padding-inline-start: var(--space-3);
 }
 
 .plugin-page-mark {
   display: grid;
-  width: var(--icon-size-xl);
-  height: var(--icon-size-xl);
+  width: calc(var(--icon-size-xl) * 1.5);
+  height: calc(var(--icon-size-xl) * 1.5);
   grid-column: 1;
   grid-row: 1;
   place-items: center;
@@ -365,8 +383,8 @@ button.catalog-row,
 
 .plugin-page-mark svg,
 .plugin-page-mark .plugin-icon-themed {
-  width: var(--icon-size-xl);
-  height: var(--icon-size-xl);
+  width: 100%;
+  height: 100%;
 }
 
 .plugin-page-mark .plugin-icon-asset {
@@ -376,8 +394,6 @@ button.catalog-row,
 }
 
 .plugin-page-title {
-  grid-column: 2;
-  grid-row: 1;
   min-width: 0;
   margin: 0;
   color: var(--ink-strong);
@@ -388,28 +404,52 @@ button.catalog-row,
 }
 
 .plugin-page-tagline {
-  grid-column: 2 / -1;
-  grid-row: 2;
-  max-width: 60ch;
-  margin: var(--space-1) 0 0;
+  grid-column: 1 / -1;
+  max-width: 65ch;
+  margin: 0;
+  overflow-wrap: anywhere;
   color: var(--ink-soft);
   font-size: var(--font-ui);
   line-height: 1.5;
 }
 
-.plugin-page-header > .settings-detail-actions {
-  grid-column: 3;
-  grid-row: 1;
+.plugin-page-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  border-block: 1px solid var(--hairline-soft);
+  padding-block: var(--space-3);
 }
 
-/* A text decision takes its own line under the tagline in a narrow column
- * (the shared detail-actions rule); the switch and icons stay beside the
- * name. */
-@container settings-page (max-width: 32em) {
-  .plugin-page-header > .settings-detail-actions:has(> .settings-button:not(.settings-icon-button)) {
-    grid-row: 3;
-    margin-top: var(--space-3);
-  }
+.plugin-page-state {
+  color: var(--ink);
+  font-size: var(--font-ui);
+  line-height: 1.5;
+}
+
+.plugin-page-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-inline-start: auto;
+}
+
+.plugin-page-actions > .settings-button:not(.settings-icon-button) {
+  white-space: normal;
+}
+
+.plugin-page .plugin-settings-editor-title {
+  font-size: var(--font-title);
+  font-weight: var(--weight-medium);
+}
+
+.plugin-page .plugin-settings-editor-body {
+  border-color: var(--hairline-soft);
+  border-radius: var(--settings-group-radius);
+  background: var(--settings-card);
+  box-shadow: var(--settings-group-shadow);
 }
 
 .plugin-page-about {
@@ -417,19 +457,84 @@ button.catalog-row,
   margin: 0;
   color: var(--ink);
   font-size: var(--font-ui);
-  line-height: 1.6;
+  line-height: 1.65;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
-.plugin-page-footnote {
+.plugin-contributions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 var(--space-6);
   margin: 0;
-  color: var(--ink-tertiary);
+  padding: 0;
+  list-style: none;
+}
+
+.plugin-contributions > li {
+  min-width: 0;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+
+.plugin-contribution {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: var(--icon-size-lg) minmax(0, 1fr) var(--icon-size);
+  align-items: center;
+  gap: var(--space-3);
+  border: 0;
+  padding: var(--space-3) 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: start;
+}
+
+.plugin-contribution > .catalog-row-mark {
+  align-self: start;
+}
+
+.plugin-contribution-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.plugin-contribution-kind {
+  color: var(--ink-soft);
   font-size: var(--font-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+button.plugin-contribution {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+button.plugin-contribution:hover {
+  background: var(--surface-2);
+}
+
+@container settings-page (max-width: 32em) {
+  .plugin-contributions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .plugin-detail-notice > .settings-button {
+    grid-column: 2;
+    grid-row: auto;
+    justify-self: start;
+    margin-top: var(--space-2);
+  }
 }
 
 /* What the plugin adds and what it asks to do are rows without an open
  * target unless they open something, like the services onboarding lists as
  * connected; they keep the row height. */
-.catalog-row:is(.plugin-contribution, .plugin-permission-row, .onboarding-connection) {
+.catalog-row:is(.plugin-permission-row, .onboarding-connection) {
   min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   padding: var(--settings-row-pad-block) 0;
   cursor: default;

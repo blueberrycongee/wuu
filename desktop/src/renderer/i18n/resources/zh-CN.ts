@@ -2150,6 +2150,7 @@ export const zhCN = {
   "skills.addsTheme": "主题",
   "skills.pluginDeveloper": "由 {name} 开发",
   "skills.pluginSettingsLabel": "插件设置",
+  "skills.pluginAbout": "关于插件",
   "skills.pluginGrant": "授权并启用",
   "skills.pluginReauthorize": "重新授权",
   "skills.pluginReject": "拒绝",

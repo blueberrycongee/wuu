@@ -67,6 +67,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Reorganize plugin details around identity and enablement, prioritize plugin settings, and present descriptions and contributions in clearly separated, responsive sections.
+
 - Redesign desktop surfaces with neutral window chrome, white and charcoal reading canvases, clearer selections, regular UI-sized menus, grouped settings cards, and a consistent two-row composer across window sizes.
 
 - Grant persistent storage to the site loaded directly in a website tab without a permission dialog, matching ordinary browser behavior while keeping embedded and Agent-controlled pages excluded.
