@@ -51,21 +51,29 @@ export class UserRoutineScheduler {
     }
     throw new Error("revision_conflict: routine binding is busy");
   }
+  validate(raw: unknown) {
+    const input = object(raw);
+    for (const key of ["cron", "run_at", "timezone", "missed_policy"] as const) if (input[key] !== undefined && typeof input[key] !== "string") throw new Error(`${key} must be a string`);
+    const cron = input.cron as string | undefined, run_at = input.run_at as string | undefined;
+    const timezone = input.timezone as string || "UTC"; validateTimezone(timezone);
+    if (Boolean(cron) === Boolean(run_at)) throw new Error("provide exactly one cron or run_at schedule");
+    const expression = cron ? parseCronExpression(cron) : undefined;
+    if (run_at && !Number.isFinite(Date.parse(run_at))) throw new Error("invalid run_at timestamp");
+    if (input.missed_policy && !["run_once", "skip"].includes(input.missed_policy as string)) throw new Error("invalid missed policy");
+    return { cron, run_at, timezone, missed_policy: (input.missed_policy || "run_once") as RoutineBinding["missed_policy"],
+      next_run_at: expression ? expression.nextRun(this.clock(), timezone).toISOString() : new Date(run_at!).toISOString() };
+  }
   async upsert(raw: unknown, owner = "fixture"): Promise<RoutineBinding> {
     const input = mutation(raw);
-    const timezone = input.timezone || "UTC"; validateTimezone(timezone);
-    if (Boolean(input.cron) === Boolean(input.run_at)) throw new Error("provide exactly one cron or run_at schedule");
-    const cron = input.cron ? parseCronExpression(input.cron) : undefined;
-    if (input.run_at && !Number.isFinite(Date.parse(input.run_at))) throw new Error("invalid run_at timestamp");
-    if (input.missed_policy && !["run_once", "skip"].includes(input.missed_policy)) throw new Error("invalid missed policy");
-    const configuration = { cron: input.cron, run_at: input.run_at, timezone, missed_policy: (input.missed_policy || "run_once") as RoutineBinding["missed_policy"], payload: input.payload ?? {} };
+    const { next_run_at, ...schedule } = this.validate(input);
+    const configuration = { ...schedule, payload: input.payload ?? {} };
     const hash = digest(JSON.stringify(configuration));
     return (await this.update(input.binding_id, current => {
       if (current && current.owner !== owner) throw new Error("routine binding belongs to another consumer");
       if (current?.request_id === input.request_id) { if (current.request_hash !== hash) throw new Error("request_id_conflict"); return current; }
       if ((current?.revision ?? 0) !== input.expected_revision) throw new Error(`revision_conflict: current revision ${current?.revision ?? 0}`);
       return { binding_id: input.binding_id, owner, revision: (current?.revision ?? 0) + 1, request_id: input.request_id, request_hash: hash, ...configuration,
-        status: "active", next_run_at: cron ? cron.nextRun(this.clock(), timezone).toISOString() : new Date(input.run_at!).toISOString() };
+        status: "active", next_run_at };
     }))!;
   }
   async pause(raw: unknown, owner = "fixture", stop = false): Promise<RoutineBinding> {
@@ -130,7 +138,7 @@ export function createUserAutomationPlugin(): RuntimePlugin {
       scheduler = new UserRoutineScheduler(host, params.user_space_id);
       return { protocol_version: 3, tools: [], capabilities: [],
         required_services: [...(["host.storage.get", "host.storage.keys", "host.storage.compare_exchange"] as const).map(requireKernelService), { name: "automation.trigger", major_version: 1, required: false }],
-        provided_services: [{ name: "automation.routines", version: "1.0.0", methods: ["upsert", "read", "list", "pause", "stop"].map(name => ({ name, input_schema: `automation.routines.${name}.input.v1`, output_schema: `automation.routines.${name}.output.v1` })) }] };
+        provided_services: [{ name: "automation.routines", version: "1.1.0", methods: ["validate", "upsert", "read", "list", "pause", "stop"].map(name => ({ name, input_schema: `automation.routines.${name}.input.v1`, output_schema: `automation.routines.${name}.output.v1` })) }] };
     },
     activate(_host, lifecycle) { lifecycle.signal.addEventListener("abort", () => { clearInterval(timer); scheduler.stop(); }, { once: true }); tick(); timer = setInterval(tick, 15_000); },
     async shutdown() { clearInterval(timer); scheduler.stop(); await running; },
@@ -138,6 +146,7 @@ export function createUserAutomationPlugin(): RuntimePlugin {
       if (call.service !== "automation.routines") throw new Error("unknown routine service");
       const input = object(call.params ?? {});
       switch (call.method) {
+        case "validate": return { schedule: scheduler.validate(input) };
         case "upsert": return { binding: await scheduler.upsert(input, call.caller) };
         case "pause": case "stop": return { binding: await scheduler.pause(input, call.caller, call.method === "stop") };
         case "list": return { bindings: await scheduler.list(call.caller) };

@@ -72,7 +72,8 @@ it("hides settled one-time reminders without changing stored routines or convers
   expect(Array.from(ui.container.querySelectorAll("[data-routine-id]"), element => element.getAttribute("data-routine-id"))).toEqual([...visible.filter(item => item.run_at).map(item => item.routine_id).sort(), ...visible.filter(item => !item.run_at).map(item => item.routine_id).sort()]);
   expect(ui.container.querySelectorAll("[data-routine-id]").length).toBe(visible.length);
   expect(ui.container.textContent).toContain("Delivered one-time reminder");
-  expect(ui.container.querySelector('[data-routine-id="failed-reminder"] [role="alert"]')?.textContent).toContain("not confirmed");
+  await act(async () => (ui.container.querySelector('[data-routine-id="failed-reminder"]') as HTMLButtonElement).click());
+  expect(ui.container.querySelector('[data-routine-detail="failed-reminder"] [role="alert"]')?.textContent).toContain("not confirmed");
   expect(fixtures.routines).toEqual(stored);
   expect(ui.invoke.mock.calls.map(([request]) => request.method).filter(method => method.startsWith("routines."))).toEqual(["routines.list"]);
 });
@@ -157,4 +158,17 @@ it("prioritizes real schedules before the five-row activity limit, deduplicates 
 it("keeps ordinary activity chronological when no schedules exist", async () => {
   const ui = await mount({ routines: [], tasks: [{ task_id: "older", title: "Older", state: "waiting_user", updated_at: "2026-10-19" }, { task_id: "newer", title: "Newer", state: "waiting_user", updated_at: "2026-10-20" }] });
   expect(Array.from(ui.container.querySelectorAll('[data-panel-section="recent"] [data-task-id]'), node => node.getAttribute('data-task-id'))).toEqual(["newer", "older"]);
+});
+
+it("keeps stopped routines inspectable without offering an edit that cannot be saved", async () => {
+  const ui = await mount({ routines: [routine("stopped", { status: "stopped", timezone: "UTC", prompt: "Preserved instruction" })] });
+  await act(async () => ui.container.querySelector<HTMLButtonElement>('[data-action="toggle-personal-panel"]')!.click());
+  await act(async () => ui.container.querySelector<HTMLButtonElement>('[data-routine-id="stopped"]')!.click());
+  expect(ui.container.querySelector('[data-routine-detail]')).not.toBeNull();
+  const edit = ui.container.querySelector<HTMLButtonElement>('[data-action="edit-routine"]')!;
+  expect(edit.disabled).toBe(true);
+  await act(async () => edit.click());
+  expect(ui.container.querySelector('#mosaic-routine-editor')).toBeNull();
+  expect(ui.container.querySelector<HTMLButtonElement>('[data-action="routine-history"]')!.disabled).toBe(false);
+  expect(ui.invoke.mock.calls.some(([request]) => request.method === "routines.update")).toBe(false);
 });

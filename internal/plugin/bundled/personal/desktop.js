@@ -1,6 +1,6 @@
 export async function activate(api) {
   const React = api.react, h = React.createElement;
-  const { Button, TextInput, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
+  const { Button, TextInput, TextArea, ConversationMessage, ConversationComposer, ConversationView, ConversationAttachment, EmptyState, LoadingState, Checkbox, Select, Avatar } = api.ui;
   const route = { userSpaceId: "local", productDomain: "personal" };
   const call = (method, input) => api.invokeRuntime(method, input, route);
   const words = {
@@ -335,6 +335,59 @@ export async function activate(api) {
     .mosaic-detail-content .mosaic-section { margin-top:var(--space-5); }
     .mosaic-memory { padding:var(--space-3) 0;border-bottom:1px solid var(--hairline-soft); }
     .mosaic-memory p { margin:0 0 var(--space-2); }
+
+    .mosaic-routine-backdrop { position:absolute;inset:0;z-index:65;background:var(--modal-backdrop-bg);display:grid;place-items:center;padding:var(--space-5); }
+    .mosaic-routine-dialog { width:min(540px,100%);max-height:100%;min-height:0;display:flex;flex-direction:column;border:1px solid var(--hairline-soft);border-radius:var(--radius-md);background:var(--surface-1);color:var(--ink);box-shadow:var(--shadow-modal);font-size:var(--font-ui);overflow:hidden; }
+    .mosaic-routine-head { display:flex;gap:var(--space-2);align-items:center;padding:var(--space-3) var(--space-4);flex:none; }
+    .mosaic-routine-head h2 { margin:0;font:inherit;font-weight:var(--weight-medium);overflow-wrap:anywhere;min-width:0; }
+    .mosaic-routine-head .plugin-ui-button { display:grid;place-items:center;flex:none;width:var(--control-field-height);min-height:var(--control-field-height);padding:0; }
+    .mosaic-routine-head svg { width:var(--icon-size);height:var(--icon-size); }
+    .mosaic-routine-body { padding:0 var(--space-5) var(--space-4);overflow:auto;min-height:0;overscroll-behavior:contain; }
+    .mosaic-routine-section { margin-top:var(--space-4); }
+    .mosaic-routine-section h3 { font:inherit;color:var(--ink-tertiary);margin:0 0 var(--space-2);font-weight:var(--weight-regular); }
+    .mosaic-routine-card { background:var(--paper);border:1px solid var(--hairline-soft);border-radius:var(--radius-sm);padding:var(--card-padding);margin:0; }
+    .mosaic-routine-active { padding:var(--space-2) var(--card-padding); }
+    .mosaic-routine-active .plugin-ui-checkbox { width:100%; }
+    .mosaic-routine-dialog .plugin-ui-field-label { font-weight:var(--weight-regular); }
+    .mosaic-routine-instruction { white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6; }
+    .mosaic-routine-schedule { padding-block:0; }
+    .mosaic-routine-schedule > div { display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--space-4);padding:var(--space-2) 0;align-items:center;border-bottom:1px solid var(--hairline-soft); }
+    .mosaic-routine-schedule > div:last-child { border:0; }
+    .mosaic-routine-schedule dt { color:var(--ink-soft); }
+    .mosaic-routine-schedule dd { margin:0;text-align:right;overflow-wrap:anywhere; }
+    .mosaic-routine-meta { color:var(--ink-tertiary);font-size:var(--font-sm);line-height:1.5;margin:var(--space-2) 0 0; }
+    .mosaic-routine-link { display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);width:100%;margin-top:var(--space-3);font:inherit;color:var(--ink);cursor:pointer;text-align:left; }
+    .mosaic-routine-link { padding-block:var(--space-3); }
+    .mosaic-routine-link:hover { background:var(--field-hover-bg); }
+    .mosaic-routine-footer { display:flex;justify-content:flex-end;gap:var(--space-2);padding:0 var(--space-5) var(--space-4);flex:none; }
+    .mosaic-routine-link.plugin-ui-button { justify-content:flex-start;background:var(--paper);border:1px solid var(--hairline-soft);padding:var(--space-3) var(--card-padding); }
+    .mosaic-routine-editor-identity { display:grid;gap:var(--space-4);margin-bottom:var(--space-5); }
+    .mosaic-routine-editor-identity .plugin-ui-input,.mosaic-routine-editor-identity .plugin-ui-textarea { background:var(--paper); }
+    .mosaic-routine-editor-identity .plugin-ui-textarea { min-height:8em;max-height:18em;line-height:1.6; }
+    .mosaic-routine-fields { background:var(--paper);border:1px solid var(--hairline-soft);border-radius:var(--radius-sm);padding:0 var(--card-padding); }
+    .mosaic-routine-fields .mosaic-routine-field + .mosaic-routine-field { border-top:1px solid var(--hairline-soft); }
+    .mosaic-routine-fields .plugin-ui-field { display:grid;grid-template-columns:minmax(90px,1fr) minmax(0,1.6fr);gap:var(--space-3);align-items:center;min-height:calc(var(--control-field-height) + var(--space-3)); }
+    .mosaic-routine-fields .plugin-ui-field-label { color:var(--ink-soft); }
+    .mosaic-routine-fields .plugin-ui-input { border-color:transparent;background:transparent;text-align:right;padding-inline:var(--space-2); }
+    .mosaic-routine-fields .plugin-ui-input:hover { background:var(--field-hover-bg); }
+    .mosaic-routine-fields .plugin-ui-select { appearance:none;padding-right:var(--space-5);background-image:linear-gradient(45deg,transparent 50%,var(--ink-tertiary) 50%),linear-gradient(135deg,var(--ink-tertiary) 50%,transparent 50%);background-position:calc(100% - 10px) 50%,calc(100% - 6px) 50%;background-size:4px 4px;background-repeat:no-repeat; }
+    .mosaic-routine-advanced { margin-top:var(--space-4); }
+    .mosaic-routine-advanced > summary { cursor:pointer;color:var(--ink-soft);padding:var(--space-2) 0; }
+    .mosaic-routine-advanced[open] > summary { margin-bottom:var(--space-2); }
+    .mosaic-routine-error { color:var(--danger);overflow-wrap:anywhere; }
+    .mosaic-routine-history { list-style:none;padding:0 var(--card-padding);margin:var(--space-3) 0 0;background:var(--paper);border:1px solid var(--hairline-soft);border-radius:var(--radius-sm); }
+    .mosaic-routine-history li { padding:var(--space-3) 0;border-bottom:1px solid var(--hairline-soft);overflow-wrap:anywhere; }
+    .mosaic-routine-history li:last-child { border:0; }
+    .mosaic-routine-history li p { white-space:pre-wrap;line-height:1.6;margin-bottom:0; }
+    .mosaic-routine-run-head { display:flex;justify-content:space-between;gap:var(--space-3);flex-wrap:wrap;align-items:center;min-height:var(--control-field-height); }
+    button.mosaic-routine-run-head { width:100%;border:0;padding:0;background:transparent;color:var(--ink);font:inherit;text-align:left;cursor:pointer; }
+    button.mosaic-routine-run-head:hover { color:var(--ink-strong);text-decoration:underline; }
+    .mosaic-routine-history small,.mosaic-routine-history summary { color:var(--ink-tertiary);font-size:var(--font-sm); }
+    .mosaic-routine-history summary { cursor:pointer; }
+    .mosaic-routine-history [data-state="completed"] { color:var(--success); }
+    .mosaic-routine-history [data-state="failed"] { color:var(--danger); }
+    .mosaic-routine-dialog :focus-visible { outline:2px solid var(--wuu-accent);outline-offset:2px; }
+    @media(max-width:560px) { .mosaic-routine-backdrop { padding:var(--space-2); } .mosaic-routine-body { padding-inline:var(--space-4); } .mosaic-routine-footer { padding-inline:var(--space-4); } }
     .mosaic-routines summary { display:flex;align-items:center;gap:var(--space-2);cursor:pointer;color:var(--ink-muted); }
     .mosaic-routines summary.mosaic-task { color:var(--ink);list-style:none; }
     .mosaic-routines summary.mosaic-task::-webkit-details-marker { display:none; }
@@ -544,6 +597,86 @@ export async function activate(api) {
     identityListeners.forEach(listener => listener(value));
     return value;
   };
+  const routineStatus = (status, locale, t) => status === "active" ? locale.startsWith("zh") ? "已启用" : "Enabled" : t(status);
+  const routineSchedule = (routine, locale) => {
+    const zh = locale.startsWith("zh"), fields = routine.cron?.trim().split(/\s+/), zone = routine.timezone || "UTC";
+    if (!fields) { const at = new Date(routine.run_at); return Number.isFinite(at.getTime()) ? `${zh ? "仅一次 · " : "Once · "}${new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short", timeZone: zone }).format(at)}` : (zh ? "未设置" : "Not scheduled"); }
+    const [minute, hour, dom, month, dow] = fields;
+    if (fields.length === 5 && /^\d+$/.test(minute) && /^\d+$/.test(hour) && dom === "*" && month === "*") {
+      const time = `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+      if (dow === "*") return `${zh ? "每天" : "Every day"} ${time}`;
+      if (/^[0-6]$/.test(dow)) { const day = new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" }).format(new Date(Date.UTC(2026, 0, 4 + Number(dow)))); return `${zh ? "每周" : "Every "}${day} ${time}`; }
+      if (dow === "1-5") return `${zh ? "工作日" : "Weekdays"} ${time}`;
+    }
+    return `${zh ? "自定义重复规则" : "Custom recurrence"} · ${routine.cron}`;
+  };
+  function RoutineDialog({ routine, locale, t, onClose, onChanged, onOpenTask }) {
+    const [view, setView] = React.useState("details"), [form, setForm] = React.useState(null), [busy, setBusy] = React.useState(false), [error, setError] = React.useState(""), [history, setHistory] = React.useState(null), [historyLoading, setHistoryLoading] = React.useState(false);
+    const dialog = React.useRef(null), pending = React.useRef(false), historyVersion = React.useRef(0), alive = React.useRef(true);
+    const zh = locale.startsWith("zh"), label = (en, cn) => zh ? cn : en;
+    const stamp = value => { const parsed = new Date(value); return Number.isFinite(parsed.getTime()) ? new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short", timeZone: routine.timezone }).format(parsed) : label("Time unknown", "时间未知"); };
+    React.useEffect(() => () => { alive.current = false; historyVersion.current++; }, []);
+    React.useEffect(() => { const body = dialog.current?.querySelector(".mosaic-routine-body"); if (body) body.scrollTop = 0; dialog.current?.querySelector(view === "edit" ? '[name="title"]' : '[data-action="back-routine"]')?.focus({ preventScroll: true }); }, [view]);
+    const beginEdit = () => {
+      const fields = routine.cron?.trim().split(/\s+/), simple = fields?.length === 5 && /^\d+$/.test(fields[0]) && /^\d+$/.test(fields[1]) && fields[2] === "*" && fields[3] === "*";
+      const instant = new Date(routine.run_at || Date.now()), parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: routine.timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZoneName: "longOffset" }).formatToParts(instant).map(part => [part.type, part.value]));
+      const localTime = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`, offset = parts.timeZoneName.replace("GMT", "") || "+00:00";
+      setForm({ title: routine.title, prompt: routine.prompt, timezone: routine.timezone, kind: routine.kind, missed_policy: routine.missed_policy || "run_once", expected_revision: routine.revision, schedule_type: routine.run_at ? "once" : simple && fields[4] === "*" ? "daily" : simple && /^[0-6]$/.test(fields[4]) ? "weekly" : "cron", time: simple ? `${fields[1].padStart(2,"0")}:${fields[0].padStart(2,"0")}` : "09:00", weekday: simple && /^[0-6]$/.test(fields[4]) ? fields[4] : "1", cron: routine.cron || "0 9 * * *", run_at: localTime, utc_offset: offset });
+      setError(""); setView("edit");
+    };
+    const mutateRoutine = async (method, input) => {
+      if (pending.current) return;
+      pending.current = true; setBusy(true); setError("");
+      try { const result = await call(method, { routine_id: routine.routine_id, ...input }); if (!alive.current) return; onChanged(result.routine); setView("details"); setForm(null); }
+      catch (cause) { if (alive.current) setError(String(cause.message || cause)); }
+      finally { pending.current = false; if (alive.current) setBusy(false); }
+    };
+    const save = event => {
+      event.preventDefault(); if (pending.current) return;
+      try {
+        new Intl.DateTimeFormat(locale, { timeZone: form.timezone.trim() });
+        const values = { title: form.title.trim(), prompt: form.prompt.trim(), timezone: form.timezone.trim(), kind: form.kind, missed_policy: form.missed_policy, expected_revision: form.expected_revision };
+        if (!values.title || !values.prompt) throw new Error(label("Title and instruction are required.", "请填写标题和完整指令。"));
+        if (form.schedule_type === "once") { const at = `${form.run_at}:00${form.utc_offset.trim()}`; if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(form.run_at) || !/^[+-](?:0\d|1[0-4]):[0-5]\d$/.test(form.utc_offset.trim()) || !Number.isFinite(Date.parse(at))) throw new Error(label("Choose a date, time and valid UTC offset such as +08:00.", "请选择日期、时间和有效的 UTC 偏移，例如 +08:00。")); values.run_at = new Date(at).toISOString(); }
+        else if (form.schedule_type === "cron") { if (form.cron.trim().split(/\s+/).length !== 5) throw new Error(label("Use a five-field cron expression.", "请填写五段式 cron 表达式。")); values.cron = form.cron.trim(); }
+        else { if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.time)) throw new Error(label("Choose a valid time.", "请选择有效时间。")); const [hour, minute] = form.time.split(":").map(Number); values.cron = `${minute} ${hour} * * ${form.schedule_type === "weekly" ? form.weekday : "*"}`; }
+        void mutateRoutine("routines.update", values);
+      } catch (cause) { setError(String(cause.message || cause)); }
+    };
+    const loadHistory = async (more = false) => {
+      const version = ++historyVersion.current; setHistoryLoading(true); setError(""); setView("history");
+      try { const result = await call("routines.history", { routine_id: routine.routine_id, ...(more && history?.cursor ? { cursor: history.cursor } : {}) }); if (alive.current && version === historyVersion.current) setHistory(current => more && current ? { ...result, events: [...new Map([...current.events, ...result.events].map(item => [item.event_id, item])).values()], tasks: [...new Map([...current.tasks, ...result.tasks].map(item => [item.task_id, item])).values()], skipped_records: (current.skipped_records || 0) + (result.skipped_records || 0) } : result); }
+      catch (cause) { if (alive.current && version === historyVersion.current) setError(String(cause.message || cause)); }
+      finally { if (alive.current && version === historyVersion.current) setHistoryLoading(false); }
+    };
+    const back = () => { if (pending.current) { onClose(); return; } historyVersion.current++; setError(""); if (view === "details") onClose(); else { setView("details"); setForm(null); } };
+    const field = (name, title, props = {}) => h("div", { className: "mosaic-routine-field" }, h(TextInput, { label: title, name, value: form[name], disabled: busy, onChange: e => setForm({ ...form, [name]: e.target.value }), ...props }));
+    const select = (name, title, choices) => h("div", { className: "mosaic-routine-field" }, h(Select, { label: title, name, value: form[name], disabled: busy, onChange: e => setForm({ ...form, [name]: e.target.value }) }, choices.map(([value, text]) => h("option", { key: value, value }, text))));
+    const stateLabel = state => ({ completed: label("Succeeded", "已完成"), failed: label("Failed", "失败"), cancelled: label("Cancelled", "已取消"), interrupted: label("Interrupted", "已中断"), discarded: label("Discarded", "未执行"), dispatched: label("Dispatched", "已派发"), pending: label("Pending", "等待处理"), unknown: label("Unverified", "尚未核实") }[state] || t(state));
+    const rows = history ? [...(history.tasks || []).map(task => ({ id: task.task_id, task, kind: "task", at: task.created_at, state: task.state, error: task.error, output: typeof task.result === "string" ? task.result : task.result?.summary })), ...(history.events || []).filter(event => event.kind === "reminder" || !(history.tasks || []).some(task => task.request_id === event.event_id)).map(event => ({ id: event.event_id, kind: event.kind, at: event.started_at || event.created_at || event.scheduled_at, state: event.state || "unknown", error: event.error, output: event.output }))].sort((a,b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0)) : [];
+    return h("div", { className: "mosaic-routine-backdrop" }, h("section", { ref: dialog, className: "mosaic-routine-dialog", role: "dialog", "aria-modal": true, "aria-label": routine.title, "data-routine-detail": routine.routine_id, tabIndex: -1, onKeyDown: event => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); back(); }
+      if (event.key === "Tab") { const nodes = [...dialog.current.querySelectorAll('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),summary,a[href]')].filter(node => node.tabIndex >= 0 && (!node.closest('details:not([open])') || node.tagName === 'SUMMARY')); const first = nodes[0], last = nodes.at(-1); if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog.current)) { event.preventDefault(); first?.focus(); } }
+    } },
+      h("header", { className: "mosaic-routine-head" }, h(Button, { variant: "ghost", type: "button", "data-action": "back-routine", "aria-label": view === "details" || busy ? t("close") : t("back"), onClick: back }, h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.5, "aria-hidden": true }, h("path", { d: view === "details" || busy ? "M6 6l12 12M18 6 6 18" : "M15 5l-7 7 7 7" }))), h("h2", null, view === "edit" ? label("Edit routine", "编辑例行安排") : view === "history" ? label("Run history", "运行记录") : routine.title)),
+      h("div", { className: "mosaic-routine-body" }, busy && h("p", { role: "status" }, label("Saving… Closing this window will not cancel the request.", "正在保存…关闭此窗口不会取消请求。")), error && h("div", { role: "alert", className: "mosaic-routine-error" }, h("p", null, error), view === "edit" && h(Button, { variant: "ghost", disabled: busy, "data-action": "reload-routine", onClick: async () => { if (pending.current) return; pending.current = true; setBusy(true); try { const result = await call("routines.list"); const latest = result.routines.find(item => item.routine_id === routine.routine_id); if (alive.current && latest) { onChanged(latest); setForm(null); setView("details"); setError(""); } } catch (cause) { if (alive.current) setError(String(cause.message || cause)); } finally { pending.current = false; if (alive.current) setBusy(false); } } }, label("Discard draft and reload latest", "放弃草稿，加载最新版本"))),
+        view === "details" ? h(React.Fragment, null,
+          h("div", { className: "mosaic-routine-card mosaic-routine-active" }, h(Checkbox, { label: routineStatus(routine.status, locale, t), role: "switch", "aria-checked": routine.status === "active", checked: routine.status === "active", "aria-label": label("Enabled", "已启用"), "data-action": "toggle-routine", disabled: busy || routine.cancellation_pending || !["active","paused"].includes(routine.status), onChange: () => mutateRoutine(routine.status === "active" ? "routines.pause" : "routines.resume", { expected_revision: routine.revision }) })),
+          routine.cancellation_pending && h("p", { role: "status" }, t("applyingChanges")), routine.last_error && h("p", { role: "alert" }, routine.last_error),
+          h("section", { className: "mosaic-routine-section" }, h("h3", null, label("Instruction", "完整指令")), h("div", { className: "mosaic-routine-card mosaic-routine-instruction" }, routine.prompt)),
+          h("section", { className: "mosaic-routine-section" }, h("h3", null, label("Schedule", "执行计划")), h("dl", { className: "mosaic-routine-card mosaic-routine-schedule" },
+            h("div", null, h("dt", null, label("Repeats", "重复规则")), h("dd", null, routineSchedule(routine, locale))), h("div", null, h("dt", null, t("timezone")), h("dd", null, routine.timezone)), h("div", null, h("dt", null, label("Next run", "下次执行")), h("dd", null, routine.status === "active" && routine.binding?.next_run_at ? stamp(routine.binding.next_run_at) : routine.status === "active" ? label("Awaiting scheduler", "等待调度确认") : routineStatus(routine.status, locale, t)))), h("p", { className: "mosaic-routine-meta" }, routine.kind === "task" ? label("Task", "任务") : label("Reminder", "提醒"), " · ", routine.missed_policy === "skip" ? label("Skip missed runs", "错过时跳过") : label("Catch up once after a missed run", "错过后补执行一次"))),
+          h("button", { type: "button", className: "mosaic-routine-card mosaic-routine-link", "data-action": "routine-history", onClick: () => loadHistory() }, label("Run history", "运行记录"), h("span", { "aria-hidden": true }, "→")), h(Button, { variant: "ghost", className: "mosaic-routine-card mosaic-routine-link", "data-action": "edit-routine", disabled: busy || routine.cancellation_pending || ["stopping", "stopped"].includes(routine.status), onClick: beginEdit }, label("Edit routine", "编辑例行安排"))) : view === "history" ? h(React.Fragment, null,
+            h("p", { className: "mosaic-eyebrow" }, routine.title, " · ", routine.timezone), h(Button, { variant: "ghost", disabled: historyLoading, "data-action": "refresh-routine-history", onClick: () => loadHistory() }, label("Refresh", "刷新")), historyLoading ? h("p", { role: "status" }, label("Loading run history…", "正在加载运行记录…")) : !error && !rows.length ? h("p", null, history?.has_more ? label("No runs in this page. More history is available.", "当前页没有运行记录，可继续加载。") : label("No runs recorded yet.", "暂无运行记录。")) : null,
+            history?.has_more && h("p", { className: "mosaic-eyebrow" }, label("Loaded records are sorted by time. Load more to see earlier or other records.", "已加载记录按时间排序；加载更多可查看更早或其他记录。")), history?.skipped_records > 0 && h("p", { role: "status" }, label("Some unreadable historical records were skipped.", "部分无法读取的历史记录已跳过。")), history?.has_more && h(Button, { "data-action": "more-routine-history", disabled: historyLoading, onClick: () => loadHistory(true) }, label("Load more history", "加载更多记录")), h("ol", { className: "mosaic-routine-history" }, rows.map(row => h("li", { key: `${row.kind}:${row.id}`, "data-run-state": row.state }, h(row.task ? "button" : "div", { className: "mosaic-routine-run-head", ...(row.task ? { type: "button", "data-routine-task-id": row.id, onClick: () => onOpenTask(row.task), "aria-label": `${stamp(row.at)} · ${stateLabel(row.state)} · ${t("process")}` } : {}) }, h("time", null, stamp(row.at)), h("span", { "data-state": row.state }, stateLabel(row.state))), h("small", null, row.kind === "task" ? label("Task", "任务") : row.kind === "reminder" ? label("Reminder", "提醒") : row.kind === "calendar" ? label("Calendar trigger", "日历触发") : label("Legacy run", "历史运行")), row.output && h("details", null, h("summary", null, label("Result", "查看结果")), h("p", null, row.output)), row.error && h("p", { className: "mosaic-routine-error" }, row.error))))) : h("form", { id: "mosaic-routine-editor", onSubmit: save },
+            h("div", { className: "mosaic-routine-editor-identity" }, field("title", label("Title", "标题"), { required: true }), h(TextArea, { label: label("Instruction", "完整指令"), name: "prompt", required: true, rows: 6, value: form.prompt, disabled: busy, onChange: e => setForm({ ...form, prompt: e.target.value }) })),
+            h("section", { className: "mosaic-routine-section" }, h("h3", null, label("Schedule", "执行计划")), h("div", { className: "mosaic-routine-fields" }, select("schedule_type", label("Repeat", "重复"), [["daily", label("Every day", "每天")],["weekly",label("Every week", "每周")],["cron",label("Custom cron", "自定义 cron")], ...(!routine.source ? [["once",label("Once", "仅一次")]] : [])]),
+            ["daily","weekly"].includes(form.schedule_type) && field("time", label("Time", "时间"), { type: "time", required: true }), form.schedule_type === "weekly" && select("weekday", label("Day", "星期"), Array.from({ length: 7 }, (_, day) => [String(day), new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" }).format(new Date(Date.UTC(2026,0,4+day)))])), form.schedule_type === "cron" && field("cron", label("Cron", "Cron"), { required: true }), form.schedule_type === "once" && h(React.Fragment, null, field("run_at", label("Date and time", "日期和时间"), { type: "datetime-local", required: true }), field("utc_offset", label("UTC offset", "UTC 偏移"), { required: true, placeholder: "+08:00" }))), h("p", { className: "mosaic-routine-meta" }, form.timezone, form.schedule_type === "once" ? label(" · Check the offset if this date crosses a daylight-saving change.", " · 若跨越夏令时切换，请核对偏移。") : "")),
+            h("details", { className: "mosaic-routine-advanced", "data-routine-advanced": true }, h("summary", null, label("Advanced settings", "高级设置")), h("div", { className: "mosaic-routine-fields" }, field("timezone", t("timezone"), { placeholder: "Asia/Shanghai" }), select("kind", label("Type", "类型"), routine.source ? [["task",label("Task", "任务")]] : [["task",label("Task", "任务")],["reminder",label("Reminder", "提醒")]]), select("missed_policy", label("If missed", "错过执行时"), [["run_once",label("Run once when available", "补执行一次")],["skip",label("Skip", "跳过")]]))),
+            h("p", { className: "mosaic-routine-meta" }, label("Saving stops the previous run. Completed actions are not undone.", "保存会停止之前的运行，已完成的操作不会撤销。")))),
+      view === "edit" && h("footer", { className: "mosaic-routine-footer", "data-view": view }, h(React.Fragment, null, h(Button, { variant: "ghost", "data-action": "cancel-routine-edit", disabled: busy, onClick: back }, label("Cancel", "取消")), h(Button, { variant: "primary", type: "submit", form: "mosaic-routine-editor", "data-action": "save-routine", disabled: busy }, busy ? t("savingName") : t("save"))))));
+  }
+
   function RenameDialog({ agent, t, onSave, onClose }) {
     const [name, setName] = React.useState(agent.name || "twin"), [saving, setSaving] = React.useState(false), [error, setError] = React.useState("");
     const input = React.useRef(null), dialog = React.useRef(null), alive = React.useRef(true);
@@ -589,6 +722,10 @@ export async function activate(api) {
     const t = key => (locale?.startsWith("zh") ? words.zh : words.en)[key] || key;
     const [agent, setAgent] = React.useState(null), [records, setRecords] = React.useState([]), [historyInfo, setHistoryInfo] = React.useState(null);
     const [tasks, setTasks] = React.useState([]), [routines, setRoutines] = React.useState([]), [selection, setSelection] = React.useState(null);
+    const [routineID, setRoutineID] = React.useState(null), routineTrigger = React.useRef(null);
+    const selectedRoutine = routines.find(item => item.routine_id === routineID);
+    const closeRoutine = () => { setRoutineID(null); requestAnimationFrame(() => { if (routineTrigger.current?.isConnected) routineTrigger.current.focus({ preventScroll: true }); }); };
+    const changeRoutine = value => setRoutines(current => current.map(item => item.routine_id === value.routine_id && item.revision <= value.revision ? value : item));
     const [calendar, setCalendar] = React.useState({ operations: [] }), [calendarError, setCalendarError] = React.useState(""), [calendarBusy, setCalendarBusy] = React.useState(false);
     const [loading, setLoading] = React.useState(true), [error, setError] = React.useState("");
     const [sendRefreshError, setSendRefreshError] = React.useState("");
@@ -640,6 +777,7 @@ export async function activate(api) {
       if (!panelOpen) return;
       panelRef.current?.focus({ preventScroll: true });
       const outside = event => {
+        if (event.target.closest?.(".mosaic-routine-backdrop")) return;
         if (!panelRef.current?.contains(event.target) && !profileTrigger.current?.contains(event.target)) closePanel(false);
       };
       document.addEventListener("pointerdown", outside, true);
@@ -932,7 +1070,7 @@ export async function activate(api) {
     const openDetail = (event, item, kind = "task") => { focusVersion.current++; detailTrigger.current = `[data-${kind === "output" ? "output-task" : "task"}-id="${item.task_id}"]`; setSelection({ taskId: item.task_id, kind }); };
     React.useEffect(() => { if (selection) rootRef.current?.querySelector('[data-action="close-detail"]')?.focus({ preventScroll: true }); }, [selection]);
     const closeDetail = () => { const version = ++focusVersion.current; setSelection(null); requestAnimationFrame(() => { if (version !== focusVersion.current) return; const target = rootRef.current?.querySelector(detailTrigger.current); const details = target?.closest("details"); if (details) details.open = true; target?.focus({ preventScroll: true }); }); };
-    const date = (value, compact = false) => { const parsed = new Date(value); return Number.isFinite(parsed.getTime()) ? new Intl.DateTimeFormat(locale, { month: compact ? "numeric" : "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(parsed) : ""; };
+    const date = (value, compact = false, timeZone) => { const parsed = new Date(value); return Number.isFinite(parsed.getTime()) ? new Intl.DateTimeFormat(locale, { month: compact ? "numeric" : "short", day: "numeric", hour: "numeric", minute: "2-digit", ...(timeZone ? { timeZone } : {}) }).format(parsed) : ""; };
     const progressText = task => task.progress === "Previous execution is still stopping; replacement dispatch is held until cancellation is confirmed" ? t("applyingChanges") : task.progress;
     const taskRows = items => items.map(item => h("button", { key: item.task_id, className: "mosaic-task", "data-task-id": item.task_id, onClick: event => openDetail(event, item) },
       h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon(["running", "queued"].includes(item.state) ? "progress" : "activity")),
@@ -954,12 +1092,8 @@ export async function activate(api) {
     };
     const scheduled = [...visibleRoutines].sort((a, b) => scheduledTime(a) - scheduledTime(b) || a.routine_id.localeCompare(b.routine_id));
     const activity = [...scheduled.map(item => ({ routine: item })), ...recent.filter(item => !scheduledIDs.has(item.routine_id)).map(item => ({ task: item }))];
-    const routineRow = routine => h("details", { key: `routine:${routine.routine_id}`, className: "mosaic-routines", "data-routine-id": routine.routine_id },
-      h("summary", { className: "mosaic-task" }, h("span", { className: "mosaic-task-mark" }, icon("clock")), h("span", { className: "mosaic-task-copy mosaic-task-title" }, routine.title), h("span", { className: "mosaic-routine-next", title: routine.binding?.next_run_at ? date(routine.binding.next_run_at) : t(routine.status) }, routine.binding?.next_run_at ? date(routine.binding.next_run_at, true) : t(routine.status))),
-      h("div", { className: "mosaic-routine-detail" }, h("p", { className: "mosaic-task-meta" }, t(routine.status), routine.binding?.next_run_at && ` · ${t("nextRun")} ${date(routine.binding.next_run_at)}`),
-        routine.last_error && h("p", { role: "alert" }, routine.last_error),
-        tasks.filter(item => item.routine_id === routine.routine_id).map(item => h("button", { key: item.task_id, className: "mosaic-task", "data-routine-task-id": item.task_id, onClick: event => { detailTrigger.current = `[data-routine-task-id="${item.task_id}"]`; setSelection({ taskId: item.task_id, kind: "task" }); } }, h("span", { className: "mosaic-task-copy" }, item.title), h("span", { className: "mosaic-routine-next" }, t(item.state)))),
-        ["active", "paused"].includes(routine.status) && h(Button, { disabled: busy || routine.cancellation_pending, onClick: () => mutate(async () => { await call(routine.status === "paused" ? "routines.resume" : "routines.pause", { routine_id: routine.routine_id, expected_revision: routine.revision }); await loadRoutines(); }) }, t(routine.status === "paused" ? "resumeRoutine" : "pauseRoutine"))));
+    const routineRow = routine => h("button", { key: `routine:${routine.routine_id}`, type: "button", className: "mosaic-task", "data-routine-id": routine.routine_id, "data-action": "open-routine", onClick: event => { routineTrigger.current = event.currentTarget; setRoutineID(routine.routine_id); } }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("clock")), h("span", { className: "mosaic-task-copy mosaic-task-title" }, routine.title), h("span", { className: "mosaic-routine-next" }, routine.binding?.next_run_at && routine.status === "active" ? date(routine.binding.next_run_at, true, routine.timezone) : routineStatus(routine.status, locale, t)));
+
     const openRename = () => { closePanel(false); setNameOpen(true); };
     const closeRename = () => { const version = ++focusVersion.current; setNameOpen(false); requestAnimationFrame(() => { if (version === focusVersion.current) profileTrigger.current?.focus({ preventScroll: true }); }); };
     const saveName = async name => {
@@ -1017,7 +1151,7 @@ export async function activate(api) {
       replySelection.taskContext ? h("div", { className: "mosaic-reply-task-context" }, h("span", null, t("replyTaskContext")), h("p", null, replySelection.taskContext.title), !taskSourceRef && replySelection.taskContext.goal && h("p", null, replySelection.taskContext.goal)) : null,
       taskSourceRef ? h(ReplyOriginal, { reference: taskSourceRef, records, sessionID: conversationID, agentID: agent.agent_id, t, renderMessage: renderReplyMessage }) : null,
       replyRecords.map(record => renderReplyMessage(record))));
-    return h(AttachmentOpenContext.Provider, { value: () => closePanel(false) }, h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h("main", { className: "mosaic-main", inert: nameOpen || Boolean(replySelection), "aria-hidden": nameOpen || Boolean(replySelection) || undefined },
+    return h(AttachmentOpenContext.Provider, { value: () => closePanel(false) }, h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h("main", { className: "mosaic-main", inert: nameOpen || Boolean(replySelection) || Boolean(selectedRoutine), "aria-hidden": nameOpen || Boolean(replySelection) || Boolean(selectedRoutine) || undefined },
       !replySelection && sendRefreshNotice,
       error && h("div", { className: "mosaic-error", role: "alert" }, h("span", null, error), h(Button, { onClick: agent ? () => { setError(""); Promise.all([loadConversation(agent), loadTasks(), loadRoutines()]).catch(report); } : initialize }, t("retry"))),
       !agent ? loading ? h(LoadingState, { label: "twin" }) : h(EmptyState, { title: t("hostUnavailable") }) : h(ConversationView, {
@@ -1033,7 +1167,7 @@ export async function activate(api) {
         })), liveMessages.map(message => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : undefined, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })), !loading && !records.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
         pendingCalendarOperations.length > 0 && h("section", { className: "mosaic-calendar-proposals", "data-calendar-proposals": true },
           pendingCalendarOperations.map(item => h(Button, { key: item.operation_id, variant: "ghost", "data-calendar-operation": item.operation_id, disabled: calendarBusy, onClick: () => openCalendar(item.operation_id) }, `${item.fields?.summary || t("calendarReview")} · ${t(item.status === "proposed" ? "calendarProposed" : item.status === "uncertain" ? "calendarUncertain" : item.status)}`)),
-          calendarError && h("p", { role: "alert" }, calendarError)))), h("div", { className: "mosaic-panel-layer", "data-panel-phase": panelPhase }, sidebar), replyPanel, nameOpen && h(RenameDialog, { agent, t, onSave: saveName, onClose: closeRename })));
+          calendarError && h("p", { role: "alert" }, calendarError)))), h("div", { className: "mosaic-panel-layer", inert: Boolean(selectedRoutine), "aria-hidden": Boolean(selectedRoutine) || undefined, "data-panel-phase": panelPhase }, sidebar), replyPanel, selectedRoutine && h(RoutineDialog, { key: selectedRoutine.routine_id, routine: selectedRoutine, locale, t, onClose: closeRoutine, onChanged: changeRoutine, onOpenTask: item => { setTasks(current => current.some(value => value.task_id === item.task_id) ? current : [...current, item]); setRoutineID(null); detailTrigger.current = `[data-routine-id="${selectedRoutine.routine_id}"]`; setSelection({ taskId: item.task_id, kind: "task" }); } }), nameOpen && h(RenameDialog, { agent, t, onSave: saveName, onClose: closeRename })));
   }
   // A cold/offline host keeps the manifest title until the normal view initialization succeeds.
   call("agents.list").then(result => { if (!api.signal.aborted) publishIdentity(result.agents?.find(value => value.kind === "main")); }).catch(() => {});

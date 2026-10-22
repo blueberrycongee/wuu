@@ -23,6 +23,7 @@ const evidence = { scenarios: [], frames: [], node: process.version, started_at:
 const runtimePath = join(scratch, 'runtime.mjs');
 const calendarRuntimePath = join(scratch, 'calendar-runtime.mjs');
 const active = new Set();
+let UserRoutineScheduler;
 class Host {
   bindings = new Map(); storage = new Map(); sessions = new Map(); turns = new Map(); histories = new Map(); calls = []; intercept;
   userInputs = new Map();
@@ -36,6 +37,7 @@ class Host {
       case 'host.file-lock': return method === 'acquire' ? { lock_id: 'personal-fixture-lock' } : { released: true };
       case 'calendar.personal': if (this.calendar) return this.calendar.call('service.invoke', { service, method, caller: 'personal', params: p }); throw new Error('calendar service unavailable');
       case 'automation.routines': {
+        if (method === 'validate') return { schedule: new UserRoutineScheduler({ call() { throw new Error('validation must not access storage'); } }, 'validation').validate(p) };
         if (method === 'read') return { binding: this.bindings.get(p.binding_id) };
         const current = this.bindings.get(p.binding_id);
         if (current?.request_id === p.request_id) return { binding: current };
@@ -144,6 +146,9 @@ async function scenario(name, fn) { await fn(); evidence.scenarios.push({ name, 
 try {
   await build({ stdin: { contents: `import plugin from '${join(root, 'plugins/personal/src/index.ts')}'; import {runJSONLRuntime} from '@wuu/plugin-sdk'; await runJSONLRuntime(plugin,{input:process.stdin,output:process.stdout});`, resolveDir: root, loader: 'ts' }, alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', target: 'node22.7', format: 'esm', outfile: runtimePath });
   await build({ stdin: { contents: `import {PersonalCalendarPlugin} from '${join(root, 'plugins/personal-calendar/src/index.ts')}'; import {runJSONLRuntime} from '@wuu/plugin-sdk'; let host; class CalendarFixture extends PersonalCalendarPlugin { initialize(params,value,lifecycle){host=value;return super.initialize(params,value,lifecycle)} } const plugin=new CalendarFixture({reader:{async read(space,query){const {value}=await host.call('host.storage.get',{scope:'user',key:'fixture.calendar.snapshot'});const data=JSON.parse(value);return {source:{...query,provider:'google-calendar',account_id:'integration-account',user_space_id:space,fetched_at:new Date().toISOString(),read_only:true},events:data.events,cancelled_events:data.cancelled_events||[]}}}}); await runJSONLRuntime(plugin,{input:process.stdin,output:process.stdout});`, resolveDir: root, loader: 'ts' }, alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', target: 'node22.7', format: 'esm', outfile: calendarRuntimePath });
+  const schedulerPath = join(scratch, 'scheduler.mjs');
+  await build({ entryPoints: [join(root, 'plugins/automation/src/user-routines.ts')], alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', format: 'esm', outfile: schedulerPath });
+  ({ UserRoutineScheduler } = await import(schedulerPath));
   const host = new Host(); let runtime = await new Runtime(host).start(); let main, specialist, task;
   await scenario('trusted message sources, quoted output, task selection and mutation retries retain one matter', async () => {
     const h = new Host(), r = await new Runtime(h).start();
@@ -264,7 +269,9 @@ try {
   });
   await scenario('Coding initialization has no Personal tools, services, or writes', async () => {
     const codingHost = new Host(), coding = await new Runtime(codingHost).start('coding');
-    assert.equal(coding.definition.tools?.length ?? 0, 0); assert.equal(coding.definition.provided_services?.length ?? 0, 0); assert.equal(codingHost.calls.length, 0); await coding.close();
+    assert.equal(coding.definition.tools?.length ?? 0, 0); assert.equal(coding.definition.provided_services?.length ?? 0, 0);
+    await assert.rejects(coding.client('routines.history', { routine_id: 'foreign' }), /Personal|available|active/i);
+    assert.equal(codingHost.calls.length, 0); await coding.close();
   });
   await scenario('concurrent default requests bind exactly one persistent main session', async () => {
     const results = await Promise.all([runtime.client('agents.ensure_default'), runtime.client('agents.ensure_default')]);
@@ -735,6 +742,69 @@ try {
     routine = (await runtime.tool('manage_routine', { action: 'update', routine_id: routine.routine_id, expected_revision: routine.revision, prompt: 'Still paused' }, main.main_session_id)).routine;
     assert.equal(routine.status, 'paused'); assert.equal(host.bindings.get(bindingID).status, 'paused');
   });
+  await scenario('routine kind changes cancel original queued and running work using persisted event identity', async () => {
+    for (const kind of ['reminder', 'task']) for (const state of ['queued', 'running']) {
+      const h = new Host(), r = await new Runtime(h).start();
+      const a = (await r.client('agents.ensure_default')).agent;
+      let routine = (await r.client('routines.create', { agent_id: a.agent_id, request_id: 'kind-switch', title: 'Switch kind', prompt: 'Old work', kind, cron: '0 12 * * *', timezone: 'UTC' })).routine;
+      const binding = h.bindings.get(routine.binding.binding_id);
+      binding.pending_event = { event_id: 'kind-switch-event', binding_revision: binding.revision };
+      await r.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: binding.binding_id, ...binding.pending_event, payload: binding.payload } });
+      const execution = [...h.turns.values()][0]; execution.state = state;
+      const unrelated = { request_id: 'unrelated', session_id: a.main_session_id, turn_id: 'unrelated-turn', state: 'running' }; h.turns.set(unrelated.request_id, unrelated);
+      // Old persisted events lack a kind; their exact request/session is still authoritative.
+      if (kind === 'reminder' && state === 'queued') for (const [key, value] of h.storage) {
+        const record = JSON.parse(value);
+        if (record.event_id === 'kind-switch-event') { delete record.kind; h.storage.set(key, JSON.stringify(record)); }
+      }
+      routine = (await r.client('routines.list')).routines.find(item => item.routine_id === routine.routine_id);
+      const updated = (await r.client('routines.update', { routine_id: routine.routine_id, expected_revision: routine.revision, kind: kind === 'reminder' ? 'task' : 'reminder' })).routine;
+      assert.equal(execution.state, 'interrupted'); assert.equal(updated.cancellation_pending, false); assert.equal(unrelated.state, 'running');
+      assert(h.calls.some(call => call.service === 'host.session.cancel' && call.params.session_id === execution.session_id));
+      await r.close();
+    }
+  });
+  await scenario('invalid routine schedules and unavailable validation preserve existing configuration and execution', async () => {
+    const h = new Host(), r = await new Runtime(h).start();
+    const a = (await r.client('agents.ensure_default')).agent;
+    const args = { agent_id: a.agent_id, request_id: 'valid-schedule', title: 'Preserved', prompt: 'Keep running', kind: 'reminder', cron: '0 12 * * *', timezone: 'UTC' };
+    let routine = (await r.client('routines.create', args)).routine;
+    const binding = h.bindings.get(routine.binding.binding_id);
+    binding.pending_event = { event_id: 'validation-event', binding_revision: binding.revision };
+    await r.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: binding.binding_id, ...binding.pending_event, payload: binding.payload } });
+    routine = (await r.client('routines.list')).routines.find(item => item.routine_id === routine.routine_id);
+    const before = new Map(h.storage), beforeBindings = JSON.stringify([...h.bindings]);
+    for (const change of [{ cron: '99 9 * * *' }, { timezone: 'Invalid/Zone' }, { run_at: 'not-a-date', cron: undefined }]) {
+      await assert.rejects(r.client('routines.create', { ...args, ...change, request_id: 'invalid-create' }));
+      await assert.rejects(r.client('routines.update', { routine_id: routine.routine_id, expected_revision: routine.revision, ...change }));
+      assert.deepEqual(h.storage, before); assert.equal(JSON.stringify([...h.bindings]), beforeBindings);
+      assert.equal([...h.turns.values()][0].state, 'running');
+    }
+    // A future revision must not let preflight race a newer writer and merge stale config.
+    h.intercept = (service, params) => {
+      if (service === 'automation.routines' && !params.binding_id && params.cron === '0 13 * * *') {
+        const entry = [...h.storage].find(([, value]) => JSON.parse(value).routine_id === routine.routine_id && JSON.parse(value).config_revision);
+        h.storage.set(entry[0], JSON.stringify({ ...routine, revision: routine.revision + 1, title: 'Concurrent writer' }));
+      }
+    };
+    await assert.rejects(r.client('routines.update', { routine_id: routine.routine_id, expected_revision: routine.revision + 1, cron: '0 13 * * *' }), /revision_conflict/);
+    assert.deepEqual(h.storage, before); h.intercept = undefined;
+    // Older/offline providers cannot preflight: reject before changing an active responsibility.
+    h.intercept = service => { if (service === 'automation.routines') throw new Error('unknown routine method'); };
+    await assert.rejects(r.client('routines.update', { routine_id: routine.routine_id, expected_revision: routine.revision, cron: '0 13 * * *' }), /unknown routine method/);
+    assert.deepEqual(h.storage, before); assert.equal([...h.turns.values()][0].state, 'running'); h.intercept = undefined;
+    routine = (await r.client('routines.pause', { routine_id: routine.routine_id, expected_revision: routine.revision })).routine;
+    // Historical invalid schedules must not resume or overwrite the paused binding.
+    for (const change of [{ cron: '99 9 * * *' }, { timezone: 'Invalid/Zone' }, { run_at: 'not-a-date', cron: undefined }]) {
+      const entry = [...h.storage].find(([, value]) => JSON.parse(value).routine_id === routine.routine_id && JSON.parse(value).config_revision);
+      const invalid = { ...routine, ...change }; h.storage.set(entry[0], JSON.stringify(invalid));
+      const pausedStorage = new Map(h.storage), pausedBindings = JSON.stringify([...h.bindings]);
+      await assert.rejects(r.client('routines.resume', { routine_id: routine.routine_id, expected_revision: invalid.revision }));
+      assert.deepEqual(h.storage, pausedStorage); assert.equal(JSON.stringify([...h.bindings]), pausedBindings);
+      h.storage.set(entry[0], JSON.stringify(routine));
+    }
+    await r.close();
+  });
   await scenario('routine creation has one stable scheduler binding and repeated event delivers once', async () => {
     const args = { agent_id: main.agent_id, request_id: 'remind-one', title: 'Drink water', prompt: 'Remind me to drink water', kind: 'reminder', run_at: '2026-10-18T10:00:00Z', timezone: 'UTC' };
     const routine = (await runtime.client('routines.create', args)).routine;
@@ -745,6 +815,83 @@ try {
     const before = host.turns.size; assert((await fire()).defer_until); const reminder = [...host.turns.values()].at(-1); reminder.state = 'completed'; reminder.final_output = 'Time to drink water'; assert.equal((await fire()).accepted, true); await fire(); assert.equal(host.turns.size, before + 1);
     await runtime.client('routines.pause', { routine_id: routine.routine_id, expected_revision: (await runtime.client('routines.list')).routines[0].revision });
     binding.pending_event.event_id = 'late-event'; params.event_id = 'late-event'; await fire(); assert.equal(host.turns.size, before + 1);
+  });
+  // History must distinguish dispatch from completion, survive replacement, retain
+  // failures, avoid invented legacy timestamps, and isolate each routine's runs.
+  await scenario('routine history preserves actual outcomes and task executions across restart', async () => {
+    const routine = (await runtime.client('routines.create', { agent_id: main.agent_id, request_id: 'history-reminder', title: 'History', prompt: 'A reminder', kind: 'reminder', cron: '0 12 * * *', timezone: 'UTC' })).routine;
+    const binding = host.bindings.get(routine.binding.binding_id);
+    const fire = async event_id => {
+      binding.pending_event = { event_id, binding_revision: binding.revision, scheduled_at: '2026-10-18T12:00:00Z' };
+      return runtime.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: binding.binding_id, ...binding.pending_event, payload: binding.payload } });
+    };
+    await assert.rejects(runtime.client('routines.history', { routine_id: 'missing' }), /not found/);
+    assert.deepEqual((await runtime.client('routines.history', { routine_id: routine.routine_id })).events, []);
+    await fire('history-failed');
+    let history = await runtime.client('routines.history', { routine_id: routine.routine_id });
+    assert.equal(history.events.length, 1); assert.equal(history.events[0].state, 'running');
+    assert.equal(history.events[0].kind, 'reminder'); assert.equal(history.events[0].scheduled_at, binding.pending_event.scheduled_at);
+    const turn = host.turns.get(history.events[0].request_id); turn.state = 'failed'; turn.error = 'Synthetic failure'; turn.completed_at = new Date().toISOString();
+    await fire('history-failed');
+    history = await runtime.client('routines.history', { routine_id: routine.routine_id });
+    assert.equal(history.events[0].status, 'accepted'); assert.equal(history.events[0].state, 'failed'); assert.equal(history.events[0].error, turn.error);
+    assert(history.events[0].created_at); assert.equal(history.events[0].completed_at, turn.completed_at);
+    host.turns.delete(turn.request_id);
+    await runtime.close(); runtime = await new Runtime(host).start();
+    assert.deepEqual((await runtime.client('routines.history', { routine_id: routine.routine_id })).events, history.events);
+    const eventKey = [...host.storage.keys()].find(key => JSON.parse(host.storage.get(key)).event_id === 'history-failed');
+    const event = JSON.parse(host.storage.get(eventKey));
+    for (const key of ['state', 'created_at', 'updated_at', 'scheduled_at', 'completed_at', 'error', 'kind']) delete event[key];
+    host.storage.set(eventKey, JSON.stringify(event));
+    history = await runtime.client('routines.history', { routine_id: routine.routine_id });
+    assert.equal(history.events[0].state, 'unknown'); assert.equal(history.events[0].created_at, undefined);
+    const taskRoutine = (await runtime.client('routines.create', { agent_id: main.agent_id, request_id: 'history-task', title: 'Task history', prompt: 'Do work', kind: 'task', run_at: '2026-10-18T12:00:00Z', timezone: 'UTC' })).routine;
+    const taskBinding = host.bindings.get(taskRoutine.binding.binding_id); taskBinding.pending_event = { event_id: 'history-task-event', binding_revision: taskBinding.revision };
+    await runtime.call('service.invoke', { service: 'automation.trigger', method: 'fire', caller: 'automation', params: { binding_id: taskBinding.binding_id, ...taskBinding.pending_event, payload: taskBinding.payload } });
+    const taskHistory = await runtime.client('routines.history', { routine_id: taskRoutine.routine_id });
+    assert.equal(taskHistory.tasks.length, 1); assert.equal(taskHistory.tasks[0].routine_id, taskRoutine.routine_id);
+    assert.equal(taskHistory.tasks[0].state, 'running'); assert.equal(taskHistory.events[0].state, 'dispatched');
+    assert.equal(taskHistory.events[0].kind, 'task'); assert.deepEqual(history.tasks, []);
+  });
+  // Bound reads and inspections even when most records belong to other routines;
+  // malformed rows, forged cursors and foreign session identities must fail safely.
+  await scenario('routine history pages bounded scans and fences malformed or foreign records', async () => {
+    const h = new Host(), r = await new Runtime(h).start();
+    try {
+      const a = (await r.client('agents.ensure_default')).agent;
+      const routine = (await r.client('routines.create', { agent_id: a.agent_id, request_id: 'paged-history', title: 'Paged history', prompt: 'Reminder', cron: '0 12 * * *', timezone: 'UTC' })).routine;
+      await assert.rejects(r.client('routines.history', { routine_id: routine.routine_id, agent_id: 'foreign-agent' }), /main Personal/);
+      const prefix = [...h.storage.keys()].find(key => key.endsWith(`routine.${routine.routine_id}`)).replace(`routine.${routine.routine_id}`, 'event.');
+      for (let i = 0; i < 25; i++) h.storage.set(`${prefix}a${String(i).padStart(3, '0')}`, JSON.stringify({ event_id: `unrelated-${i}`, routine_id: 'other', request_id: 'unused', status: 'accepted' }));
+      h.storage.set(`${prefix}b-broken`, '{broken');
+      const own = { event_id: 'owned', routine_id: routine.routine_id, routine_revision: routine.config_revision, kind: 'reminder', request_id: 'owned-request', session_id: a.main_session_id, status: 'pending' };
+      h.storage.set(`${prefix}c-owned`, JSON.stringify(own));
+      h.turns.set(own.request_id, { request_id: own.request_id, session_id: a.main_session_id, state: 'running' });
+      h.storage.set(`${prefix}d-foreign`, JSON.stringify({ ...own, event_id: 'foreign', request_id: 'foreign-request', session_id: 'foreign-session' }));
+      h.sessions.set('foreign-session', { session_id: 'foreign-session', product_domain: 'personal', user_space_id: 'other-space', agent_id: 'other-agent' });
+      h.turns.set('foreign-request', { request_id: 'foreign-request', session_id: 'foreign-session', state: 'completed', final_output: 'Must not leak' });
+      let cursor, pages = [], skipped = 0;
+      do {
+        const before = h.calls.length;
+        const page = await r.client('routines.history', { routine_id: routine.routine_id, limit: 2, ...(cursor ? { cursor } : {}) });
+        const calls = h.calls.slice(before);
+        assert(page.scanned <= 10); assert(calls.filter(call => call.service === 'host.session.inspect').length <= 2);
+        assert(calls.filter(call => call.service === 'host.storage.get').length <= 14);
+        assert.equal(page.order, 'storage_scan'); assert(page.events.length + page.tasks.length <= 2);
+        if (!pages.length) { assert.equal(page.events.length, 0); assert.equal(page.has_more, true); await assert.rejects(r.client('routines.history', { routine_id: routine.routine_id, cursor: 'garbage' }), /cursor/); }
+        pages.push(page); skipped += page.skipped_records; cursor = page.cursor;
+        assert.equal(Boolean(cursor), page.has_more);
+      } while (cursor);
+      assert.equal(skipped, 1); assert.equal(pages.flatMap(page => page.events).length, 2);
+      const foreign = pages.flatMap(page => page.events).find(event => event.event_id === 'foreign');
+      assert.equal(foreign.state, 'unknown'); assert.equal(foreign.output, undefined);
+      assert(!h.calls.some(call => call.service === 'host.session.inspect' && call.params.session_id === 'foreign-session'));
+      const other = (await r.client('routines.create', { agent_id: a.agent_id, request_id: 'other-history', title: 'Other', prompt: 'Other', cron: '0 12 * * *', timezone: 'UTC' })).routine;
+      await assert.rejects(r.client('routines.history', { routine_id: other.routine_id, cursor: pages[0].cursor }), /cursor/);
+      const session = h.sessions.get(a.main_session_id); session.product_domain = 'coding';
+      const last = await r.client('routines.history', { routine_id: routine.routine_id, cursor: pages.at(-2).cursor, limit: 2 });
+      assert.equal(last.events.find(event => event.event_id === 'owned').state, 'unknown');
+    } finally { await r.close(); }
   });
   await scenario('existing legacy reminder outbox moves to main without creating a new routine', async () => {
     let routine = (await runtime.client('routines.create', { agent_id: main.agent_id, request_id: 'legacy-reminder', title: 'Legacy reminder', prompt: 'Keep this reminder', kind: 'reminder', run_at: '2026-10-19T12:00:00Z', timezone: 'UTC' })).routine;

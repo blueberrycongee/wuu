@@ -83,7 +83,7 @@ interface NegativeFeedback extends Versioned {
 interface FeedbackBarrier extends Versioned { message_seq: number }
 interface ReactionFeed extends Versioned { messages: Array<{ seq: number }> }
 interface Settings extends Versioned { quiet_hours: { enabled: boolean; start: string; end: string; timezone: string }; notifications: boolean; notification_batch_seconds?: number }
-const methodNames = ["agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "routines.list", "routines.create", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
+const methodNames = ["agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "routines.list", "routines.history", "routines.create", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
 
 export class PersonalPlugin implements RuntimePlugin {
   readonly concurrentCapabilities = [clientCapability, "agent.pre_step", "agent.turn.lifecycle"];
@@ -1249,6 +1249,7 @@ export class PersonalPlugin implements RuntimePlugin {
         return { ...(execution.session_id ? await this.history(execution.session_id, input) : { records: [] }), requirements_revision: revision };
       }
       case "tasks.attachments.read": { const { execution } = await this.taskExecution(input); if (!execution.session_id) throw new Error("task execution has no persisted attachment history"); return this.readAttachment(execution.session_id, input); }
+      case "routines.history": return this.routines.history(input, await this.conversation(input, true), this.key("task", ""));
       case "routines.list": return { routines: await this.routines.list(true) };
       case "routines.create": return this.routines.create({ ...input, agent_id: (await this.conversation(input)).agent_id });
       case "routines.update": case "routines.pause": case "routines.resume": case "routines.stop": return this.routines.mutate(method.slice(9), input);

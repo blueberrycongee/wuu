@@ -330,10 +330,10 @@ it("refreshes a stopping routine after host events so settled cancellation can b
   let settled = false;
   const ui = await mount(async method => method === "routines.list" ? { routines: [{ routine_id:"routine-one",agent_id:"a-main",title:"Synthetic routine",status:settled?"paused":"stopping",cancellation_pending:!settled,revision:settled?3:2,binding:{} }] } : {});
 
-  const routine = () => Array.from(ui.container.querySelectorAll("[data-routine-id]")).find(article => article.textContent?.includes("Synthetic routine"))!;
-  expect(routine().querySelector("button")).toBeNull();
+  await ui.click('[data-routine-id="routine-one"]');
+  expect(ui.container.querySelector<HTMLButtonElement>('[data-action="toggle-routine"]')?.disabled).toBe(true);
   settled = true; await act(async () => ui.publish());
-  expect(routine().querySelector<HTMLButtonElement>("button")?.disabled).toBe(false);
+  expect(ui.container.querySelector<HTMLButtonElement>('[data-action="toggle-routine"]')?.disabled).toBe(false);
 });
 
 async function changeField(container: ParentNode, selector: string, value: string) {

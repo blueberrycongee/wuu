@@ -25,3 +25,15 @@ again. Add `&sendDelay=5000` to delay the synthetic acknowledgement while editin
 a newer draft or changing reply targets. `window.__sendRecoveryFixture` exposes
 accepted count, refresh-failure count and captured request inputs for QA.
 These fixtures do not establish delivery or read receipts from a real agent.
+
+`node desktop/scripts/personal-routines-e2e.cjs` exercises the production routine
+dialog against the synthetic transport: revision conflicts, save/cancel/failure,
+repeat submissions, history paging/retry, task-detail navigation, date/zone
+validation, and keyboard focus. Its report is written to
+`desktop/out/routines-e2e/dom-report.json`. This is DOM evidence, not pixel or live
+scheduler verification. Routine fixture mutations affect only the current page.
+Use `?routineHistory=paged|error|pending|empty` or
+`?routineSave=conflict|error|pending` to inspect recovery states.
+
+Use `?routineStopped=1` to inspect a stopped routine: history remains available,
+but editing is disabled because stopped routines cannot accept updates.

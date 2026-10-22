@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { build } from '../../node_modules/esbuild/lib/main.js';
 const temp = await mkdtemp(join(tmpdir(), 'wuu-routines-'));
 await build({ entryPoints: [new URL('../src/user-routines.ts', import.meta.url).pathname], bundle: true, platform: 'node', format: 'esm', outfile: join(temp, 'scheduler.mjs'), alias: { '@wuu/plugin-sdk': new URL('../../../packages/plugin-sdk/src/index.ts', import.meta.url).pathname } });
-const { UserRoutineScheduler } = await import(join(temp, 'scheduler.mjs'));
+const { UserRoutineScheduler, createUserAutomationPlugin } = await import(join(temp, 'scheduler.mjs'));
 after(() => rm(temp, { recursive: true, force: true }));
 class Host {
   values = new Map(); deliveries = new Map(); attempts = 0; failReply = false;
@@ -47,4 +47,26 @@ test('pause revision removes due intent and resume never replays missed ticks', 
   const scheduler = new UserRoutineScheduler(host, 'local', clock); const original = await scheduler.upsert(create({ run_at: undefined, cron: '* * * * *' }));
   const paused = await scheduler.pause({ binding_id: original.binding_id, expected_revision: original.revision, request_id: 'pause-one' }); current = new Date('2026-10-18T12:01:00Z'); await scheduler.tick(); assert.equal(host.deliveries.size, 0);
   const resumed = await scheduler.upsert(create({ request_id: 'resume-one', expected_revision: paused.revision, run_at: undefined, cron: '* * * * *' })); assert.equal(resumed.next_run_at, '2026-10-18T12:02:00.000Z'); await scheduler.tick(); assert.equal(host.deliveries.size, 0);
+});
+
+test('schedule validation is read-only and uses the same schedule contract as upsert', async () => {
+  const host = new Host(), clock = () => new Date('2026-10-18T11:00:00Z');
+  const scheduler = new UserRoutineScheduler(host, 'local', clock);
+  const binding = await scheduler.upsert(create());
+  const before = new Map(host.values);
+  for (const change of [{ cron: '99 9 * * *', run_at: undefined }, { timezone: 'Invalid/Zone' }, { run_at: 'not-a-date' }, { missed_policy: 'unknown' }]) {
+    const input = create(change);
+    assert.throws(() => scheduler.validate(input));
+    await assert.rejects(scheduler.upsert({ ...input, request_id: 'invalid', expected_revision: binding.revision }));
+    assert.deepEqual(host.values, before);
+  }
+  const schedule = scheduler.validate(create({ run_at: undefined, cron: '0 12 * * *' }));
+  assert.equal(schedule.next_run_at, '2026-10-18T12:00:00.000Z');
+  assert.deepEqual(host.values, before); assert.equal(host.attempts, 0);
+  const plugin = createUserAutomationPlugin();
+  const definition = plugin.initialize({ user_space_id: 'local' }, host);
+  assert(definition.provided_services[0].methods.some(method => method.name === 'validate'));
+  const result = await plugin.invokeService({ service: 'automation.routines', method: 'validate', caller: 'personal', params: { run_at: '2026-10-18T12:00:00Z', timezone: 'UTC' } });
+  assert.equal(result.schedule.next_run_at, '2026-10-18T12:00:00.000Z');
+  assert.deepEqual(host.values, before); assert.equal(host.attempts, 0);
 });

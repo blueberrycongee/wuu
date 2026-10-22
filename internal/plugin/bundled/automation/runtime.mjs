@@ -641,15 +641,28 @@ var UserRoutineScheduler = class {
     }
     throw new Error("revision_conflict: routine binding is busy");
   }
-  async upsert(raw, owner = "fixture") {
-    const input = mutation(raw);
+  validate(raw) {
+    const input = object(raw);
+    for (const key of ["cron", "run_at", "timezone", "missed_policy"]) if (input[key] !== void 0 && typeof input[key] !== "string") throw new Error(`${key} must be a string`);
+    const cron = input.cron, run_at = input.run_at;
     const timezone = input.timezone || "UTC";
     validateTimezone(timezone);
-    if (Boolean(input.cron) === Boolean(input.run_at)) throw new Error("provide exactly one cron or run_at schedule");
-    const cron = input.cron ? parseCronExpression(input.cron) : void 0;
-    if (input.run_at && !Number.isFinite(Date.parse(input.run_at))) throw new Error("invalid run_at timestamp");
+    if (Boolean(cron) === Boolean(run_at)) throw new Error("provide exactly one cron or run_at schedule");
+    const expression = cron ? parseCronExpression(cron) : void 0;
+    if (run_at && !Number.isFinite(Date.parse(run_at))) throw new Error("invalid run_at timestamp");
     if (input.missed_policy && !["run_once", "skip"].includes(input.missed_policy)) throw new Error("invalid missed policy");
-    const configuration = { cron: input.cron, run_at: input.run_at, timezone, missed_policy: input.missed_policy || "run_once", payload: input.payload ?? {} };
+    return {
+      cron,
+      run_at,
+      timezone,
+      missed_policy: input.missed_policy || "run_once",
+      next_run_at: expression ? expression.nextRun(this.clock(), timezone).toISOString() : new Date(run_at).toISOString()
+    };
+  }
+  async upsert(raw, owner = "fixture") {
+    const input = mutation(raw);
+    const { next_run_at, ...schedule } = this.validate(input);
+    const configuration = { ...schedule, payload: input.payload ?? {} };
     const hash = digest(JSON.stringify(configuration));
     return await this.update(input.binding_id, (current) => {
       if (current && current.owner !== owner) throw new Error("routine binding belongs to another consumer");
@@ -666,7 +679,7 @@ var UserRoutineScheduler = class {
         request_hash: hash,
         ...configuration,
         status: "active",
-        next_run_at: cron ? cron.nextRun(this.clock(), timezone).toISOString() : new Date(input.run_at).toISOString()
+        next_run_at
       };
     });
   }
@@ -741,7 +754,7 @@ function createUserAutomationPlugin() {
         tools: [],
         capabilities: [],
         required_services: [...["host.storage.get", "host.storage.keys", "host.storage.compare_exchange"].map(requireKernelService), { name: "automation.trigger", major_version: 1, required: false }],
-        provided_services: [{ name: "automation.routines", version: "1.0.0", methods: ["upsert", "read", "list", "pause", "stop"].map((name) => ({ name, input_schema: `automation.routines.${name}.input.v1`, output_schema: `automation.routines.${name}.output.v1` })) }]
+        provided_services: [{ name: "automation.routines", version: "1.1.0", methods: ["validate", "upsert", "read", "list", "pause", "stop"].map((name) => ({ name, input_schema: `automation.routines.${name}.input.v1`, output_schema: `automation.routines.${name}.output.v1` })) }]
       };
     },
     activate(_host, lifecycle) {
@@ -761,6 +774,8 @@ function createUserAutomationPlugin() {
       if (call.service !== "automation.routines") throw new Error("unknown routine service");
       const input = object(call.params ?? {});
       switch (call.method) {
+        case "validate":
+          return { schedule: scheduler.validate(input) };
         case "upsert":
           return { binding: await scheduler.upsert(input, call.caller) };
         case "pause":

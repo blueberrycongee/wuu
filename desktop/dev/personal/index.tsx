@@ -28,6 +28,43 @@ const tasks = [
   {task_id:"dinner",agent_id:"mosaic",title:"周五和朋友吃饭",goal:"在三家安静的餐厅中选一家，确认后再预订。",state:"waiting_user",requirements_revision:1,revision:2,updated_at:now,result:{summary:"找到了三家合适的餐厅，等你选一个更方便的地点。"}},
   {task_id:"reading",agent_id:"mosaic",title:"这个月的阅读清单",goal:"整理最近提到的三本书。",state:"completed",requirements_revision:1,revision:4,updated_at:"2026-10-17T10:00:00Z",result:{summary:"三本书已整理好：先从你最感兴趣的城市生活开始，再读设计和自然。每本都保留了推荐来源。"}},
 ];
+// Synthetic responsibilities never contact a scheduler or run external work.
+const routineFixtureParams = new URLSearchParams(location.search);
+const routineFixtureFaults = {
+  history: routineFixtureParams.get("routineHistory") || "ready",
+  save: routineFixtureParams.get("routineSave") || "ready",
+  delay: Math.min(10000, Math.max(0, Number(routineFixtureParams.get("routineDelay") || 0))),
+};
+const fixtureRoutines: Array<Record<string, any>> = [{
+  routine_id:"weekly", agent_id:"mosaic", title:"每周整理阅读清单", kind:"task", status:"active",
+  prompt:"整理这一周提到的书、文章和播客。\n\n先按主题归类，再挑出最值得读的三篇，保留原始链接与推荐理由。已有条目不要重复加入；没有新内容时保持安静。\n\n输出使用简洁的中文。只整理示例内容，不发送消息，不触发真实任务。",
+  revision:1, config_revision:1, cron:"0 9 * * 1", timezone:"Asia/Shanghai", missed_policy:"run_once",
+  created_at:"2026-10-01T01:00:00Z", updated_at:now,
+  binding:{binding_id:"synthetic-weekly", status:"active", next_run_at:"2026-10-26T01:00:00Z"},
+}, {
+  routine_id:"daily", agent_id:"mosaic", title:"每日灵感速览", kind:"task", status:"paused",
+  prompt:"整理设计与技术领域的新灵感。只使用合成示例，不访问真实来源。", revision:1, config_revision:1,
+  cron:"0 10 * * *", timezone:"Asia/Shanghai", missed_policy:"skip", updated_at:now,
+  binding:{binding_id:"synthetic-daily",status:"paused"},
+}];
+if (routineFixtureParams.get("routineStopped") === "1") fixtureRoutines[0].status = "stopped";
+const routineFixtureControl = { faults:routineFixtureFaults, routines:fixtureRoutines, calls:[] as Array<{method:string,input:unknown}> };
+Object.assign(window, { __routineFixture: routineFixtureControl });
+const fixtureRoutineDelay = async () => { if (routineFixtureFaults.delay) await new Promise(resolve => setTimeout(resolve,routineFixtureFaults.delay)); };
+const routineTaskRecords=new Map<string,Record<string,any>>();
+function fixtureRoutineTasks(routineID:string) {
+  return ["completed","running","failed","waiting_user","stopped"].map((state,index)=>{
+    const task_id=`synthetic-routine-${routineID}-${index}`;
+    if(!routineTaskRecords.has(task_id)) routineTaskRecords.set(task_id,{
+      task_id,routine_id:routineID,agent_id:"mosaic",title:["本周阅读整理","正在整理新条目","来源暂时无法读取","等待选择阅读主题","已停止的整理"][index],
+      goal:"合成运行记录：不执行实际后台任务。",state,requirements_revision:1,revision:1,
+      created_at:`2026-10-${String(20-index).padStart(2,"0")}T01:00:00Z`, updated_at:`2026-10-${String(20-index).padStart(2,"0")}T01:06:00Z`,
+      ...(state==="completed"?{completed_at:"2026-10-20T01:06:00Z",result:{summary:"合成示例：整理了三篇文章，没有发送外部消息。"}}:{}),
+      ...(state==="failed"?{error:"合成来源读取失败"}:{}),
+    });
+    return structuredClone(routineTaskRecords.get(task_id));
+  });
+}
 const memories = [
   {id:"m1",revision:2,status:"active",content:"旅行时喜欢留出空白，不把每天排得太满。下午能有一段休息时间更好。",contributor_agent_id:"lin",updated_by_agent_id:"lin",evidence:"explicit",source_at:now,effective_at:now,contributions:[{revision:2,agent_id:"lin",executor_session_id:"synthetic-travel",operation:"revise",source_at:now,effective_at:now,written_at:now}],sources:[{kind:"message",ref:"synthetic:1",occurred_at:now}]},
   {id:"m2",revision:1,status:"active",content:"约朋友吃饭时，更喜欢安静、方便聊天的地方。",contributor_agent_id:"mosaic",updated_by_agent_id:"mosaic",effective_at:now,evidence:"explicit",source_at:now,sources:[{kind:"message",ref:"synthetic:2",occurred_at:now}]},
@@ -118,17 +155,49 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
     case "calendar.operations.cancel":calendarOperation={...calendarOperation,status:calendarOperation.status==="proposed"?"cancelled":"uncertain",cancel_requested:true,revision:calendarOperation.revision+1};return calendarOperation;
     case "calendar.operations.reconcile":return calendarOperation;
     case "agents.stop_reply":return {cancelled:true};
-    case "routines.list":return {routines:empty?[]:[{routine_id:"weekly",agent_id:"mosaic",title:"每周整理阅读清单",prompt:"整理本周的阅读清单",kind:"task",status:"active",revision:1,config_revision:1,cron:"0 9 * * 1",timezone:"Asia/Shanghai",binding:{binding_id:"synthetic-weekly",status:"active",next_run_at:"2026-10-26T01:00:00Z"}}]};
+    case "routines.list":return {routines:empty?[]:structuredClone(fixtureRoutines)};
+    case "routines.history": {
+      routineFixtureControl.calls.push({method,input:structuredClone(data)});
+      await fixtureRoutineDelay();
+      if(routineFixtureFaults.history === "pending") await new Promise(() => {});
+      if(routineFixtureFaults.history === "error") throw new Error("合成演示：运行记录暂时无法读取，请重试。");
+      if(routineFixtureFaults.history === "empty") return {routine_id:data.routine_id,events:[],tasks:[]};
+      const allTasks=fixtureRoutineTasks(data.routine_id);
+      const paged=routineFixtureFaults.history === "paged";
+      return {routine_id:data.routine_id,events:data.cursor?[]:[
+        {event_id:"synthetic-dispatched",routine_id:data.routine_id,routine_revision:1,kind:"task",status:"accepted",state:"dispatched",created_at:"2026-10-22T01:00:00Z",request_id:"synthetic-dispatched"},
+        {event_id:"synthetic-pending",routine_id:data.routine_id,routine_revision:1,kind:"task",status:"pending",state:"pending",created_at:"2026-10-21T01:00:00Z",request_id:"synthetic-pending"},
+      ],tasks:paged?(data.cursor?allTasks.slice(2):allTasks.slice(0,2)):allTasks,
+      has_more:paged&&!data.cursor, cursor:paged&&!data.cursor?"synthetic-page-2":undefined, order:"storage_scan",skipped_records:0};
+    }
+
+    case "routines.update":case "routines.pause":case "routines.resume": {
+      routineFixtureControl.calls.push({method,input:structuredClone(data)});
+      await fixtureRoutineDelay();
+      if(routineFixtureFaults.save === "pending") await new Promise(() => {});
+      if(routineFixtureFaults.save === "error") throw new Error("合成演示：保存失败，请重试。没有修改真实任务。");
+      const routine=fixtureRoutines.find(value=>value.routine_id===data.routine_id);
+      if(!routine) throw new Error("routine not found");
+      if(routineFixtureFaults.save === "conflict") { routineFixtureFaults.save="ready"; routine.revision++; throw new Error("revision conflict"); }
+      if(routine.revision!==data.expected_revision) throw new Error("revision conflict");
+      if(method === "routines.update") {
+        for(const key of ["title","prompt","cron","run_at","timezone","kind","missed_policy"]) if(key in data) routine[key]=data[key];
+        if(data.cron) delete routine.run_at;
+        if(data.run_at) delete routine.cron;
+        routine.config_revision++;
+      } else { routine.status=method.endsWith("pause")?"paused":"active"; routine.binding.status=routine.status; }
+      routine.revision++; routine.updated_at=new Date().toISOString();
+      return {routine:structuredClone(routine)};
+    }
     case "tasks.history":return {requirements_revision:1,records:[{seq:1,role:"assistant",content: data.task_id === "reading" ? "阅读清单已整理好。" : "合成过程记录：已检查要求版本，并整理出可供选择的方案。",...(data.task_id === "reading"?{attachments:[{kind:"artifact",index:0,name:"合成示例.txt",mime_type:"text/plain",size:5,sha256:syntheticDigest}]}:{})}]};
     case "tasks.attachments.read":return {data:"aGVsbG8=",offset:0,total:8,content_type:"text/plain",name:"合成示例.txt",sha256:syntheticDigest};
-    case "tasks.get":return {task:tasks.find(task=>task.task_id===data.task_id)};
-    case "tasks.reconcile":return {task:tasks.find(task=>task.task_id===data.task_id)};
+    case "tasks.get":return {task:tasks.find(task=>task.task_id===data.task_id)||routineTaskRecords.get(data.task_id)};
+    case "tasks.reconcile":return {task:tasks.find(task=>task.task_id===data.task_id)||routineTaskRecords.get(data.task_id)};
     case "tasks.list":return {tasks:empty?[]:tasks};
-    case "tasks.stop":{const task=tasks.find(t=>t.task_id===data.task_id)!;task.state="stopped";task.revision++;return {task};}
+    case "tasks.stop":{const task=tasks.find(t=>t.task_id===data.task_id)||routineTaskRecords.get(data.task_id)!;task.state="stopped";task.revision++;return {task};}
     case "memory.query":return {records:empty?[]:memories.filter(m=>m.status!=="forgotten")};
     case "memory.correct":{const memory=memories.find(m=>m.id===data.id)!;memory.content=data.content;memory.revision++;return {record:memory};}
     case "memory.forget":{const memory=memories.find(m=>m.id===data.id)!;memory.status="forgotten";return {record:memory};}
-    case "agents.update":{const agent=agents.find(a=>a.agent_id===data.agent_id)!;Object.assign(agent,data,{revision:agent.revision+1});return {agent};}
     case "agents.pause":case "agents.resume":{const agent=agents.find(a=>a.agent_id===data.agent_id)!;agent.status=method.endsWith("pause")?"paused":"active";agent.revision++;return {agent};}
     case "settings.get":return {settings};
     case "settings.update":settings={...settings,...data,revision:settings.revision+1};return {settings};
@@ -180,7 +249,7 @@ applyThemePreference(params.get("theme")==="dark"?"dark":"light");
 document.documentElement.style.setProperty("--conversation-message-font-size",`${params.get("font")==="19"?19:15}px`);
 document.documentElement.dataset.platform="linux";
 function FixtureSurface(){
-  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label"><span>twin · 实际桌面组件 · 合成演示数据 · 非生产账号 · 名称及表态仅存当前浏览器{motionScale > 1 ? ` · 动画轨迹检查 ${motionScale}×慢速` : ""}</span><div><a href="?attachments=reference">参考文件展示</a><a href="?attachments=all">文件类型测试</a><a href="?attachments=layout">附件布局测试</a><button onClick={()=>{const seq=3;const current=reactionsFor(seq);reactionStore[String(seq)]={...current,agent:current.agent=== "✅"?"❤️":"✅",revision:current.revision+1};persistReactions();host.publishHostEvent({kind:"notification",message:{method:"plugin/client/invalidated",params:{plugin_id:"personal",fingerprint:"synthetic-ui-fixture",user_space_id:"local",product_domain:"personal",topic:"reactions"}}});}}>Twin 表态（合成）</button><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div></div><div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView> : <App />}</div></div></WuuUIRoot></I18nProvider>;
+  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label"><span>twin · 实际桌面组件 · 合成演示数据 · 非生产账号 · 不会触发真实定时任务 · 修改仅用于当前预览{motionScale > 1 ? ` · 动画轨迹检查 ${motionScale}×慢速` : ""}</span><div><a href="?attachments=reference">参考文件展示</a><a href="?attachments=all">文件类型测试</a><a href="?attachments=layout">附件布局测试</a><button onClick={()=>{const seq=3;const current=reactionsFor(seq);reactionStore[String(seq)]={...current,agent:current.agent=== "✅"?"❤️":"✅",revision:current.revision+1};persistReactions();host.publishHostEvent({kind:"notification",message:{method:"plugin/client/invalidated",params:{plugin_id:"personal",fingerprint:"synthetic-ui-fixture",user_space_id:"local",product_domain:"personal",topic:"reactions"}}});}}>Twin 表态（合成）</button><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div></div><div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView> : <App />}</div></div></WuuUIRoot></I18nProvider>;
 }
 let fixtureTurn = 0;
 function setActivity(status: "idle" | "thinking" | "responding") {

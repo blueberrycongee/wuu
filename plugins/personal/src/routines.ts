@@ -5,7 +5,7 @@ import type { NamedAgent, PersonalTask } from "./index.js";
 const hash = (...parts: string[]) => createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 28);
 const now = () => new Date().toISOString();
 const required = (input: Record<string, unknown>, key: string) => { if (typeof input[key] !== "string" || !(input[key] as string).trim()) throw new Error(`${key} is required`); return (input[key] as string).trim(); };
-interface Binding { binding_id: string; revision: number; status: string; next_run_at?: string; pending_event?: { event_id: string; binding_revision: number }; payload?: Record<string, unknown> }
+interface Binding { binding_id: string; revision: number; status: string; next_run_at?: string; pending_event?: { event_id: string; binding_revision: number; scheduled_at?: string }; payload?: Record<string, unknown> }
 interface CalendarSource { kind: "calendar"; account_id: string; generation: string; calendar_id: string; time_min: string; time_max: string; timezone: string }
 export interface CalendarChange { event_id: string; calendar_event_id: string; kind: "created" | "updated" | "cancelled" | "removed"; occurred_at: string; before?: unknown; after?: unknown; source: Record<string, unknown> }
 interface CalendarPage { available: boolean; reset_required?: boolean; reason?: string; baseline?: boolean; cursor?: string; changes: CalendarChange[]; source?: Record<string, unknown> }
@@ -16,7 +16,7 @@ export interface Routine {
   created_at: string; updated_at: string; last_event_id?: string; last_result_hash?: string; last_error?: string; cancellation_pending?: boolean;
   source?: CalendarSource; source_cursor?: string; source_blocked?: boolean; source_pending?: { cursor: string; changes: CalendarChange[] };
 }
-interface EventRecord { revision: number; event_id: string; routine_id: string; routine_revision?: number; status: "pending" | "accepted"; request_id: string; session_id?: string; previous_delivery?: { request_id: string; session_id: string } }
+interface EventRecord { kind?: "reminder" | "task" | "calendar"; state?: string; created_at?: string; updated_at?: string; scheduled_at?: string; started_at?: string; completed_at?: string; output?: string; error?: string; revision: number; event_id: string; routine_id: string; routine_revision?: number; status: "pending" | "accepted"; request_id: string; session_id?: string; previous_delivery?: { request_id: string; session_id: string } }
 interface Preferences { quiet_hours: { enabled: boolean; start: string; end: string; timezone: string }; notifications: boolean }
 interface Services {
   active(): void;
@@ -74,10 +74,80 @@ export class PersonalRoutines {
     }
     return values.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   }
+  async history(input: Record<string, unknown>, main: NamedAgent, taskPrefix: string) {
+    const routineID = required(input, "routine_id");
+    const routine = await this.read<Routine>("routine", routineID);
+    if (!routine) throw new Error("routine not found");
+    const agent = await this.services.agent(routine.agent_id, true);
+    const limit = input.limit === undefined ? 20 : Number(input.limit);
+    if (input.limit !== undefined && typeof input.limit !== "number" || !Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error("history limit must be an integer from 1 to 50");
+    const eventPrefix = this.key("event", "");
+    let after = "";
+    if (input.cursor !== undefined) {
+      try {
+        if (typeof input.cursor !== "string" || input.cursor.length > 2048) throw new Error();
+        const cursor = JSON.parse(Buffer.from(input.cursor, "base64url").toString("utf8"));
+        if (cursor.version !== 1 || cursor.routine_id !== routineID || typeof cursor.after !== "string" || ![eventPrefix, taskPrefix].some(prefix => cursor.after.startsWith(prefix))) throw new Error();
+        after = cursor.after;
+      } catch { throw new Error("invalid routine history cursor"); }
+    }
+    // The host exposes key enumeration, not range queries. Bound record reads and
+    // inspections per request, and expose scan order rather than claiming a
+    // globally chronological page from randomly hashed legacy storage keys.
+    const { keys } = await this.host.call("host.storage.keys", { scope: "user" });
+    const candidates = keys.filter(key => (key.startsWith(eventPrefix) || key.startsWith(taskPrefix)) && key > after).sort();
+    const scanLimit = Math.min(100, limit * 5), events = [], tasks: PersonalTask[] = [];
+    let scanned = 0, skipped_records = 0;
+    for (const key of candidates) {
+      if (scanned >= scanLimit || events.length + tasks.length >= limit) break;
+      scanned++; after = key;
+      const { value } = await this.host.call("host.storage.get", { scope: "user", key });
+      if (!value) continue;
+      let parsed;
+      try { parsed = JSON.parse(value); if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(); }
+      catch { skipped_records++; continue; }
+      if (parsed.routine_id !== routineID) continue;
+      if (key.startsWith(taskPrefix)) {
+        const task = parsed as PersonalTask;
+        if (task.user_space_id !== this.space || ![agent.agent_id, main.agent_id].includes(task.agent_id) || typeof task.task_id !== "string" || typeof task.created_at !== "string" || !["queued", "running", "waiting_user", "waiting_external", "completed", "failed", "stopped"].includes(task.state) || !task.execution || !Array.isArray(task.previous_executions)) { skipped_records++; continue; }
+        tasks.push(task); continue;
+      }
+      const record = parsed as EventRecord;
+      if (typeof record.event_id !== "string" || typeof record.request_id !== "string" || !["pending", "accepted"].includes(record.status) || [record.created_at, record.updated_at, record.scheduled_at, record.started_at, record.completed_at, record.session_id, record.state, record.output, record.error].some(value => value !== undefined && typeof value !== "string") || record.kind !== undefined && !["reminder", "task", "calendar"].includes(record.kind)) { skipped_records++; continue; }
+      const kind = record.kind ?? (record.routine_revision === routine.config_revision ? routine.source ? "calendar" : routine.kind : "unknown");
+      const event = { ...record, kind, state: record.state ?? (kind === "reminder" || kind === "unknown" ? "unknown" : record.status === "accepted" ? "dispatched" : "pending") };
+      if (kind === "reminder") {
+        const sessionID = record.session_id || agent.main_session_id;
+        const owner = sessionID === main.main_session_id ? main : sessionID === agent.main_session_id ? agent : undefined;
+        if (!owner) { event.state = "unknown"; event.output = undefined; event.error = "Reminder session is not bound to this Personal identity"; }
+        else if (!["completed", "failed", "interrupted", "discarded"].includes(event.state)) {
+          try {
+            const context = await this.host.call("host.session.context", { session_id: sessionID });
+            if (context.product_domain !== "personal" || context.user_space_id !== this.space || context.agent_id !== owner.agent_id) throw new Error("Reminder session identity does not match");
+            const { turn } = await this.host.call("host.session.inspect", { session_id: sessionID, request_id: record.request_id });
+            if (turn) Object.assign(event, { state: turn.state, started_at: turn.started_at, completed_at: turn.completed_at, output: turn.final_output, error: turn.error });
+            else event.state = "unknown";
+          } catch { event.state = "unknown"; event.output = undefined; }
+        }
+      }
+      events.push(event);
+    }
+    events.sort((a, b) => (b.scheduled_at || b.created_at || "").localeCompare(a.scheduled_at || a.created_at || "") || a.event_id.localeCompare(b.event_id));
+    tasks.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const has_more = scanned < candidates.length;
+    const cursor = has_more ? Buffer.from(JSON.stringify({ version: 1, routine_id: routineID, after })).toString("base64url") : undefined;
+    return { routine_id: routineID, events, tasks, order: "storage_scan", scanned, skipped_records, has_more, cursor };
+  }
   private async scheduler(method: string, params: unknown): Promise<Binding> {
     this.services.active();
     const value = await this.host.call("host.service.call", { service: "automation.routines", method, params }) as { binding: Binding };
     return value.binding;
+  }
+  private async validateSchedule(config: Pick<Routine, "cron" | "run_at" | "timezone" | "missed_policy">): Promise<void> {
+    this.services.active();
+    const { cron, run_at, timezone, missed_policy } = config;
+    const response = await this.host.call("host.service.call", { service: "automation.routines", method: "validate", params: { cron, run_at, timezone, missed_policy } }) as { schedule?: { next_run_at?: string } };
+    if (!response.schedule?.next_run_at || !Number.isFinite(Date.parse(response.schedule.next_run_at))) throw new Error("Automation must support read-only schedule validation before creating or changing routines");
   }
   private validate(input: Record<string, unknown>, previous?: Routine) {
     const title = input.title === undefined && previous ? previous.title : required(input, "title");
@@ -107,6 +177,7 @@ export class PersonalRoutines {
   async create(input: Record<string, unknown>): Promise<{ routine: Routine }> {
     const agent = await this.services.agent(required(input, "agent_id")); const requestID = required(input, "request_id");
     const routineID = `routine-${hash(agent.agent_id, requestID)}`, config = this.validate(input);
+    if (!await this.read<Routine>("routine", routineID)) await this.validateSchedule(config);
     let routine = await this.update<Routine>("routine", routineID, current => {
       if (current) { if (current.config_revision === 1 && Object.entries(config).some(([key, value]) => JSON.stringify(current[key as keyof Routine]) !== JSON.stringify(value))) throw new Error("request_id_conflict"); return current; }
       return { routine_id: routineID, agent_id: agent.agent_id, request_id: requestID, revision: 0, config_revision: 1, ...config, status: "active", binding: { binding_id: `personal-${routineID}`, revision: 0, status: "pending" }, created_at: now(), updated_at: now() };
@@ -119,13 +190,18 @@ export class PersonalRoutines {
   }
   private async changeRoutine(method: string, input: Record<string, unknown>): Promise<{ routine: Routine }> {
     const routineID = required(input, "routine_id"); if (!Number.isSafeInteger(input.expected_revision)) throw new Error("expected_revision is required");
+    const previous = await this.read<Routine>("routine", routineID);
+    if (!previous) throw new Error("routine not found");
+    if (previous.revision !== input.expected_revision) throw new Error(`revision_conflict: current revision ${previous.revision}`);
+    const config = method === "update" ? this.validate(input, previous) : undefined;
+    if (method === "update" || method === "resume") await this.validateSchedule(config ?? previous);
     const routine = await this.update<Routine>("routine", routineID, current => {
       if (!current) throw new Error("routine not found");
       if (current.status === "stopped" && method !== "resume") throw new Error("routine is stopped");
       if ((current.status === "stopping" || current.cancellation_pending) && ["resume", "update"].includes(method)) throw new Error("routine cancellation is still stopping; reconcile before resuming");
       if (!["update", "pause", "resume", "stop"].includes(method)) throw new Error("unknown routine action");
       const stopping = method === "pause" || method === "stop";
-      return { ...current, ...(method === "update" ? this.validate(input, current) : {}), status: stopping ? "stopping" : method === "update" && current.status === "paused" ? "paused" : "active", ...(method === "update" ? { cancellation_pending: true } : {}), ...(stopping ? { stop_target: method === "pause" ? "paused" as const : "stopped" as const, cancellation_pending: true } : {}), config_revision: current.config_revision + 1,
+      return { ...current, ...(config ?? {}), status: stopping ? "stopping" : method === "update" && current.status === "paused" ? "paused" : "active", ...(method === "update" ? { cancellation_pending: true } : {}), ...(stopping ? { stop_target: method === "pause" ? "paused" as const : "stopped" as const, cancellation_pending: true } : {}), config_revision: current.config_revision + 1,
         ...(current.source || input.source ? { source_pending: undefined, ...(method === "resume" || input.source !== undefined ? { source_cursor: undefined, source_blocked: false } : {}) } : {}),
         binding: { ...current.binding, status: "pending" }, updated_at: now(), last_error: undefined };
     }, Number(input.expected_revision));
@@ -139,7 +215,9 @@ export class PersonalRoutines {
     for (const key of keys.filter(k => k.startsWith(this.key("event", "")))) {
       const { value } = await this.host.call("host.storage.get", { scope: "user", key }); if (!value) continue;
       const event = JSON.parse(value) as EventRecord;
-      if (event.routine_id !== routine.routine_id || event.status !== "pending" || routine.kind !== "reminder") continue;
+      // The routine may already have a new kind. Cancel the original event,
+      // including legacy records without kind, only by its exact session/request.
+      if (event.routine_id !== routine.routine_id || event.status !== "pending" || event.kind !== undefined && event.kind !== "reminder") continue;
       try {
         const inspection = await this.host.call("host.session.inspect", { session_id: event.session_id || agent.main_session_id, request_id: event.request_id });
         if (inspection.turn && ["running", "queued"].includes(inspection.turn.state)) {
@@ -288,7 +366,7 @@ export class PersonalRoutines {
     if (deferred) return { defer_until: deferred };
     const eventID = required(input, "event_id");
     const main = await this.services.main();
-    let record = await this.update<EventRecord>("event", hash(eventID), current => current ?? { event_id: eventID, routine_id: routine.routine_id, routine_revision: routine.config_revision, revision: 0, status: "pending", request_id: `personal-reminder-${hash(routine.routine_id, eventID)}`, session_id: main.main_session_id });
+    let record = await this.update<EventRecord>("event", hash(eventID), current => current ?? { kind: routine.source ? "calendar" : routine.kind, created_at: now(), updated_at: now(), scheduled_at: binding.pending_event!.scheduled_at, event_id: eventID, routine_id: routine.routine_id, routine_revision: routine.config_revision, revision: 0, status: "pending", request_id: `personal-reminder-${hash(routine.routine_id, eventID)}`, session_id: main.main_session_id });
     if (record.status === "accepted") return { accepted: true };
     if (routine.kind === "reminder" && (record.session_id || agent.main_session_id) !== main.main_session_id) {
       const previous = { request_id: record.request_id, session_id: record.session_id || agent.main_session_id };
@@ -307,14 +385,16 @@ export class PersonalRoutines {
     if (routine.source) await this.calendarChanges(routine, agent);
     else if (routine.kind === "task") await this.services.task(routine, eventID, agent);
     else {
-      const inspected = await this.host.call("host.session.inspect", { session_id: (await this.services.main()).main_session_id, request_id: record.request_id });
+      let inspected = await this.host.call("host.session.inspect", { session_id: main.main_session_id, request_id: record.request_id });
       let state = inspected.turn?.state;
       if (!inspected.turn || (state === "discarded" && inspected.turn.retryable)) {
-        const sent = await this.services.send(main.agent_id, { request_id: record.request_id, session_id: (await this.services.main()).main_session_id, cause: "personal.reminder", if_running: "queue",
+        await this.services.send(main.agent_id, { request_id: record.request_id, session_id: (await this.services.main()).main_session_id, cause: "personal.reminder", if_running: "queue",
           input: { prompt: `The user's explicit reminder is due: ${routine.prompt}\nRoutine ${routine.routine_id}; event ${eventID}. Give the reminder once. Do not infer permission for additional actions.` },
           presentation: { kind: "query_bubble", text: routine.title, name: main.name } });
-        state = sent.state;
+        inspected = await this.host.call("host.session.inspect", { session_id: main.main_session_id, request_id: record.request_id });
+        state = inspected.turn?.state;
       }
+      await this.update<EventRecord>("event", hash(eventID), previous => ({ ...previous!, state: state || "unknown", updated_at: now(), started_at: inspected.turn?.started_at, completed_at: inspected.turn?.completed_at, output: inspected.turn?.final_output, error: inspected.turn?.error }));
       // A queued input can be discarded by host shutdown. Keep the scheduler's
       // event outbox until the input actually starts, retrying the same identity.
       if (!state || state === "queued" || state === "running") return { defer_until: new Date(Date.now() + 15_000).toISOString() };
@@ -323,7 +403,7 @@ export class PersonalRoutines {
       }
     }
     this.services.active();
-    await this.update<EventRecord>("event", hash(eventID), previous => ({ ...previous!, status: "accepted" }));
+    await this.update<EventRecord>("event", hash(eventID), previous => ({ ...previous!, status: "accepted", updated_at: now(), ...(routine.kind === "task" ? { state: "dispatched" } : {}) }));
     await this.update<Routine>("routine", routine.routine_id, previous => previous?.config_revision === routine.config_revision ? { ...previous, last_event_id: eventID } : previous!);
     return { accepted: true };
   }
