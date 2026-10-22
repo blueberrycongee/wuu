@@ -105,6 +105,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the navigation ribbon at its current width while dragging destinations to reorder them, without opening the native expanded ribbon.
+
 - Keep TODO hover cards and expanded activity lists visible and scrollable in narrow or short windows, and reposition file context menus when the window or text size changes.
 
 - Keep the workspace add menu fully visible outside the sidebar, including its icons and padding, at narrow widths and larger text sizes.
