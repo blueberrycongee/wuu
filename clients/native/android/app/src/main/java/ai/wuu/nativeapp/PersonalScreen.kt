@@ -1,15 +1,32 @@
 package ai.wuu.nativeapp
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.StopCircle
+import androidx.compose.material.icons.filled.Today
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -272,6 +289,7 @@ private fun personalAgentLabel(agent: JSONObject?): String {
     val scope = rememberCoroutineScope()
     var section by remember { mutableIntStateOf(0) }
     var agentsOpen by remember { mutableStateOf(false) }
+    var activityOpen by remember { mutableStateOf(false) }
     var discard by remember { mutableStateOf(false) }
     var editingTask by remember(personal.contextID) { mutableStateOf<JSONObject?>(null) }
     var taskGoal by remember { mutableStateOf("") }
@@ -285,60 +303,69 @@ private fun personalAgentLabel(agent: JSONObject?): String {
         val index = personal.records.indexOfFirst { it.optLong("seq") == personal.messageSequence }
         if (index >= 0) list.scrollToItem(index + (if (personal.hasEarlier) 1 else 0) + (if (personal.messageSequence != null) 1 else 0))
     }
-    Scaffold(topBar = { TopAppBar(title = { Text("Personal") }, navigationIcon = {
+    Scaffold(topBar = { CenterAlignedTopAppBar(title = {
+        Box {
+            TextButton(onClick = { agentsOpen = true }, enabled = !personal.busy && personal.agents.isNotEmpty()) {
+                PersonalIdentityTitle(personalAgentLabel(personal.agent), personalStatusText(personal), personal.busy || personal.controlBusy)
+            }
+            DropdownMenu(expanded = agentsOpen, onDismissRequest = { agentsOpen = false }) {
+                personal.agents.forEach { agent -> DropdownMenuItem(text = { Text(personalAgentLabel(agent)) }, onClick = {
+                    agentsOpen = false; scope.launch { personal.choose(agent.getString("agent_id")) }
+                }) }
+            }
+        }
+    }, navigationIcon = {
         IconButton(onClick = { model.perform { model.leaveHost(); model.foreground() } }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "电脑列表") }
-    }, actions = { IconButton(onClick = { scope.launch { personal.reload() } }, enabled = personal.available && !personal.busy) { Icon(Icons.Default.Refresh, "刷新") } }) }) { padding ->
+    }, actions = {
+        Box {
+            IconButton(onClick = { activityOpen = true }) { Icon(Icons.Default.MoreVert, "活动与设置") }
+            DropdownMenu(expanded = activityOpen, onDismissRequest = { activityOpen = false }) {
+                personalSectionNames.forEachIndexed { index, label ->
+                    DropdownMenuItem(text = { Text(label) }, leadingIcon = { Icon(personalSectionIcons[index], null) }, onClick = { section = index; activityOpen = false })
+                }
+                HorizontalDivider()
+                DropdownMenuItem(text = { Text("刷新") }, leadingIcon = { Icon(Icons.Default.Refresh, null) }, enabled = personal.available && !personal.busy,
+                    onClick = { activityOpen = false; scope.launch { personal.reload() } })
+                DropdownMenuItem(text = { Text("停止当前回复") }, leadingIcon = { Icon(Icons.Default.StopCircle, null) }, enabled = personal.canSend,
+                    onClick = { activityOpen = false; scope.launch { personal.stopReply() } })
+            }
+        }
+    }) }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (!personal.available) {
-                Text(personal.error ?: "Personal 暂不可用。连接可信宿主后可以继续与同一个助理交流，离线时不能提交执行。", Modifier.padding(16.dp))
-                if (personal.selectedID != null) Text("显示上次读取的内容。重新连接后才能发送或读取附件。", Modifier.padding(horizontal = 16.dp))
-                TextButton(onClick = model::reconnect, enabled = !model.connecting) { Text("重新连接") }
+                PersonalNotice(personal.error ?: "Personal 暂不可用。连接可信宿主后可以继续与同一个助理交流，离线时不能提交执行。", personal.error != null)
+                if (personal.selectedID != null) PersonalNotice("显示上次读取的内容。重新连接后才能发送或读取附件。", false)
+                TextButton(onClick = model::reconnect, enabled = !model.connecting, modifier = Modifier.padding(horizontal = 8.dp)) { Text("重新连接") }
             }
             if (personal.available || personal.selectedID != null || personal.hasPending) {
-                Box {
-                    TextButton(onClick = { agentsOpen = true }, enabled = !personal.busy) { Text(personalAgentLabel(personal.agent)) }
-                    DropdownMenu(expanded = agentsOpen, onDismissRequest = { agentsOpen = false }) {
-                        personal.agents.forEach { agent -> DropdownMenuItem(text = { Text(personalAgentLabel(agent)) }, onClick = {
-                            agentsOpen = false; scope.launch { personal.choose(agent.getString("agent_id")) }
-                        }) }
-                    }
-                }
-                ScrollableTabRow(selectedTabIndex = section) {
-                    Tab(selected = section == 0, onClick = { section = 0 }, text = { Text("对话") })
-                    Tab(selected = section == 1, onClick = { section = 1 }, text = { Text("事项") })
-                    listOf("今天", "记忆", "设置", "日历", "查找历史").forEachIndexed { index, label -> Tab(selected = section == index + 2, onClick = { section = index + 2 }, text = { Text(label) }) }
-                }
-                if (personal.available) personal.error?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
-                personal.notice?.let { Text(it, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodyMedium) }
+                if (personal.available) personal.error?.let { PersonalNotice(it, true) }
+                personal.notice?.let { PersonalNotice(it, false) }
                 if (section == 0) {
-                    LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        if (personal.hasEarlier) item { TextButton(onClick = { scope.launch { personal.earlier() } }, enabled = personal.available && !personal.busy) { Text("更早的消息") } }
-                        if (personal.messageSequence != null) item { TextButton(onClick = { scope.launch { personal.latest() } }) { Text("返回最新消息") } }
-                        if (personal.records.isEmpty() && !personal.busy) item { Text("直接发消息，助理会在这里继续与你交流。") }
-                        items(personal.records, key = { it.getLong("seq") }) { record ->
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(if (record.optString("role") == "user") "你" else personal.agent?.optString("name") ?: "助理", style = MaterialTheme.typography.bodyMedium)
-                                MessageText(record.optString("content"), record.optString("role") == "assistant")
-                                PersonalAttachmentButtons(model, record)
+                    LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                        if (personal.hasEarlier) item { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { OutlinedButton(onClick = { scope.launch { personal.earlier() } }, enabled = personal.available && !personal.busy) { Text("更早的消息") } } }
+                        if (personal.messageSequence != null) item { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { OutlinedButton(onClick = { scope.launch { personal.latest() } }) { Text("返回最新消息") } } }
+                        if (personal.records.isEmpty() && !personal.busy) item {
+                            Column(Modifier.fillMaxWidth().padding(top = 72.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                Image(painterResource(R.drawable.login_mascot), null, Modifier.size(72.dp))
+                                Text("直接发消息，twin 会在这里继续与你交流。", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
+                        items(personal.records, key = { it.getLong("seq") }) { record -> PersonalMessageRow(model, record) }
                     }
-                    HorizontalDivider()
-                    personal.attachments.forEach { file -> Row(Modifier.padding(horizontal = 16.dp)) {
-                        Text(file.filename, Modifier.weight(1f), maxLines = 1)
-                        TextButton(onClick = { personal.attachments = personal.attachments.filterNot { it.id == file.id } }, enabled = !personal.hasPending) { Text("移除") }
-                    } }
-                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        val composer = personal.composerID
-                        key(composer) { AttachmentPicker(personal.attachments, { if (personal.composerID == composer) personal.attachments = it }, model, personal.canSend && !personal.hasPending) }
-                        OutlinedTextField(value = personal.text, onValueChange = { personal.text = it }, modifier = Modifier.weight(1f), placeholder = { Text("发消息") }, maxLines = 6, enabled = !personal.hasPending)
-                        TextButton(onClick = { scope.launch { personal.send() } }, enabled = personal.canSend && (personal.hasPending || personal.text.isNotBlank() || personal.attachments.isNotEmpty())) { Text(if (!personal.hasPending) "发送" else "重试") }
-                    }
-                    Row {
-                        TextButton(onClick = { scope.launch { personal.stopReply() } }, enabled = personal.canSend) { Text("停止当前回复") }
-                        if (personal.hasPending) TextButton(onClick = { discard = true }, enabled = !personal.busy) { Text("放下重试") }
+                    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+                        Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                            val composer = personal.composerID
+                            if (!personal.hasPending) {
+                                ComposerRow(personal.text, { personal.text = it }, { scope.launch { personal.send() } }, personal.canSend,
+                                    personal.busy, personal.attachments, { if (personal.composerID == composer) personal.attachments = it }, model, composer,
+                                    placeholder = "给 twin 发消息")
+                            } else PersonalPendingMessage(personal.text, personal.attachments.size,
+                                retry = { scope.launch { personal.send() } }, discard = { discard = true },
+                                retryEnabled = personal.canSend, discardEnabled = !personal.busy)
+                        }
                     }
                 } else if (section == 1) {
+                    PersonalSectionHeader(section) { section = 0 }
                     LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         val detail = personal.detail
                         if (detail == null) {
@@ -375,7 +402,10 @@ private fun personalAgentLabel(agent: JSONObject?): String {
                         }
                     }
                 }
-                if (section >= 2) key(personal.contextID) { PersonalToolsScreen(personal, section, Modifier.weight(1f), selectSection = { section = it }) }
+                if (section >= 2) {
+                    PersonalSectionHeader(section) { section = 0 }
+                    key(personal.contextID) { PersonalToolsScreen(personal, section, Modifier.weight(1f), selectSection = { section = it }) }
+                }
                 if (personal.busy || personal.controlBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
         }
@@ -391,11 +421,98 @@ private fun personalAgentLabel(agent: JSONObject?): String {
         dismissButton = { TextButton(onClick = { discard = false }) { Text("取消") } })
 }
 
-@Composable private fun PersonalAttachmentButtons(model: AppModel, record: JSONObject, task: JSONObject? = null) {
+private val personalAccent = Color(0xFF3566F0)
+private val personalSectionNames = listOf("对话", "事项", "今天", "记忆", "设置", "日历", "查找历史")
+private val personalSectionIcons = listOf(Icons.Default.ChatBubbleOutline, Icons.Default.Checklist, Icons.Default.Today,
+    Icons.Default.Psychology, Icons.Default.Tune, Icons.Default.CalendarMonth, Icons.Default.History)
+
+private fun personalStatusText(personal: PersonalModel): String = when {
+    !personal.available -> "离线"
+    personal.busy || personal.controlBusy -> "正在处理"
+    personal.hasPending -> "等待重试"
+    else -> "就绪"
+}
+
+@Composable internal fun PersonalIdentityTitle(name: String, status: String, busy: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.size(38.dp)) {
+            Image(painterResource(R.drawable.login_mascot), null, Modifier.padding(3.dp))
+        }
+        Column {
+            Text(name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(if (busy) "正在处理" else status, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        }
+    }
+}
+
+@Composable internal fun PersonalNotice(text: String, error: Boolean) {
+    Surface(color = if (error) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f) else MaterialTheme.colorScheme.surfaceContainerLow) {
+        Text(text, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodyMedium,
+            color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable internal fun PersonalPendingMessage(
+    text: String,
+    attachmentCount: Int,
+    retry: () -> Unit,
+    discard: () -> Unit,
+    retryEnabled: Boolean,
+    discardEnabled: Boolean,
+) {
+    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("原消息等待确认", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (text.isNotBlank()) Text(text, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            if (attachmentCount > 0) Text("$attachmentCount 个附件", style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+        TextButton(onClick = retry, enabled = retryEnabled) { Text("重试原消息") }
+        TextButton(onClick = discard, enabled = discardEnabled) { Text("放下本机重试") }
+    }
+}
+
+@Composable private fun PersonalSectionHeader(section: Int, close: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = close) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text("返回对话") }
+        Spacer(Modifier.weight(1f))
+        Icon(personalSectionIcons[section], null, Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(personalSectionNames[section], style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.width(8.dp))
+    }
+    HorizontalDivider()
+}
+
+@Composable private fun PersonalMessageRow(model: AppModel, record: JSONObject) {
+    val user = record.optString("role") == "user"
+    PersonalMessageBubble(record.optString("content"), user) { PersonalAttachmentButtons(model, record, user = user) }
+}
+
+@Composable internal fun PersonalMessageBubble(content: String, user: Boolean, attachments: @Composable () -> Unit = {}) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = if (user) Alignment.CenterEnd else Alignment.CenterStart) {
+        Surface(modifier = Modifier.widthIn(max = 320.dp), shape = RoundedCornerShape(18.dp),
+            color = if (user) personalAccent else Color.Transparent, contentColor = if (user) Color.White else MaterialTheme.colorScheme.onSurface) {
+            Column(Modifier.padding(horizontal = if (user) 14.dp else 0.dp, vertical = if (user) 10.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (content.isNotEmpty()) MessageText(content, !user)
+                attachments()
+            }
+        }
+    }
+}
+
+@Composable private fun PersonalAttachmentButtons(model: AppModel, record: JSONObject, task: JSONObject? = null, user: Boolean = false) {
     val scope = rememberCoroutineScope()
     record.optJSONArray("attachments")?.objects()?.forEach { descriptor ->
-        TextButton(onClick = { scope.launch {
+        FilledTonalButton(onClick = { scope.launch {
             model.personal.loadAttachment(descriptor, record.getLong("seq"), task)?.let { model.attachmentPreview = it }
-        } }, enabled = model.personal.available && !model.personal.loadingAttachment) { Text(descriptor.optString("name", "查看附件")) }
+        } }, enabled = model.personal.available && !model.personal.loadingAttachment,
+            colors = if (user) ButtonDefaults.filledTonalButtonColors(containerColor = Color.White.copy(alpha = 0.16f), contentColor = Color.White)
+            else ButtonDefaults.filledTonalButtonColors()) {
+            Text(descriptor.optString("name", "查看附件"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
