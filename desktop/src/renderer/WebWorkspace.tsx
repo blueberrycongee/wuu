@@ -406,7 +406,6 @@ export function WebWorkspacePanel({
       const action = await api.showOptions(site.id, { x: rect.left, y: rect.bottom, labels: {
         find: t("webWorkspace.find"), zoomOut: t("webWorkspace.zoomOut"), resetZoom: t("webWorkspace.resetZoom"),
         zoomIn: t("webWorkspace.zoomIn"), reopenTab: t("webWorkspace.reopenTab"), openExternal: t("webWorkspace.openExternal"),
-        resetStoragePermission: t("webWorkspace.resetStoragePermission"),
       } });
       if (snapshotKeyRef.current !== key) return;
       if (action === "find") openFind();

@@ -63,6 +63,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Grant persistent storage to the site loaded directly in a website tab without a permission dialog, matching ordinary browser behavior while keeping embedded and Agent-controlled pages excluded.
+
 - Use the same user-message background in IM list and bubble presentation modes, and keep IM frame backgrounds visible during window resizing.
 
 - Keep the experimental navigation ribbon at its saved width on pointer hover.
