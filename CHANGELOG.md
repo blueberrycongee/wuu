@@ -107,7 +107,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Keep the navigation ribbon at its current width while dragging destinations to reorder them, without opening the native expanded ribbon.
 
-- Balance sidebar icons with their labels at default and large text sizes, and apply the shared text alignment to extension navigation.
+- Balance sidebar icons with their labels at default and large text sizes, apply the shared text alignment to extension navigation, and optically center folder artwork beside uppercase labels while preserving shared text baselines.
 
 - Keep TODO hover cards and expanded activity lists visible and scrollable in narrow or short windows, and reposition file context menus when the window or text size changes.
 

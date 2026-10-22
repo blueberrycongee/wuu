@@ -20,6 +20,10 @@ const smallCheck = p('m8 12 2.7 2.8 5.4-5.6');
 const arrow = [p('M12 19V5m-5.1 5.1L12 5l5.1 5.1')];
 const chevron = [p('m9.1 6.5 5.2 5.5-5.2 5.5')];
 const folder = p('M6.7 4.6h2.1c.8 0 1.4.3 1.9.9l1 1.2c.4.5 1 .8 1.7.8h4a2.9 2.9 0 0 1 2.9 2.9v6.2a2.9 2.9 0 0 1-2.9 2.9H6.7a2.9 2.9 0 0 1-2.9-2.9V7.5a2.9 2.9 0 0 1 2.9-2.9Z');
+// The tab raises the bounds, but the broad body carries the visual weight.
+// Lift the whole family, including badges, without moving text or SVG boxes.
+const centerFolder = (nodes: readonly IconNode[]): IconNode[] => nodes.map(([tag, attrs]) =>
+ [tag, {...attrs, transform: 'translate(0 -1)'}]);
 const file = p('M14 3.5H7.8a2.8 2.8 0 0 0-2.8 2.8v11.4a2.8 2.8 0 0 0 2.8 2.8h8.4a2.8 2.8 0 0 0 2.8-2.8V8.5L14 3.5Zm0 .5v3a1.5 1.5 0 0 0 1.5 1.5h3');
 const chat = p('M7.1 4.3h9.8a3.1 3.1 0 0 1 3.1 3.1v6.7a3.1 3.1 0 0 1-3.1 3.1H10l-4.7 2.5V17A3 3 0 0 1 4 14.5V7.4a3.1 3.1 0 0 1 3.1-3.1Z');
 const clock = [ring,p('M12 7v5.2l3.5 2')];
@@ -84,9 +88,9 @@ export const iconArtwork = {
  Film:[r(3.8,4,16.4,16,2.6),p('M7.7 4.5v15m8.6-15v15M4 9h3.5M4 15h3.5m9-6H20m-3.5 6H20')],
  FlaskConical:[p('M8.7 3.5h6.6M10 4v5.2l-5.5 9a1.7 1.7 0 0 0 1.5 2.3h12a1.7 1.7 0 0 0 1.5-2.3l-5.5-9V4M7.9 14h8.2')],
  FoldVertical:[p('M12 3.5V8m-3.5-3.5L12 8l3.5-3.5M12 20.5V16m-3.5 3.5L12 16l3.5 3.5M4.5 12h15')],
- Folder:[folder],FolderMinus:[folder,p('M9 14h6')],
- FolderOpen:[p('M3.8 16.6V7.5a2.9 2.9 0 0 1 2.9-2.9h2.1c.8 0 1.4.3 1.9.9l1 1.2c.4.5 1 .8 1.7.8h4a2.9 2.9 0 0 1 2.9 2.7'),p('m3.8 16.6 1.6-4.4c.3-.8 1.1-1.4 2-1.4h12.1a1.4 1.4 0 0 1 1.3 1.9l-1.6 4.8a2.9 2.9 0 0 1-2.8 2H6.7a2.9 2.9 0 0 1-2.9-2.9Z')],
- FolderPlus:[folder,p('M9 14h6m-3-3v6')],FolderX:[folder,p('m9.8 11.8 4.4 4.4m0-4.4-4.4 4.4')],
+ Folder:centerFolder([folder]),FolderMinus:centerFolder([folder,p('M9 14h6')]),
+ FolderOpen:centerFolder([p('M3.8 16.6V7.5a2.9 2.9 0 0 1 2.9-2.9h2.1c.8 0 1.4.3 1.9.9l1 1.2c.4.5 1 .8 1.7.8h4a2.9 2.9 0 0 1 2.9 2.7'),p('m3.8 16.6 1.6-4.4c.3-.8 1.1-1.4 2-1.4h12.1a1.4 1.4 0 0 1 1.3 1.9l-1.6 4.8a2.9 2.9 0 0 1-2.8 2H6.7a2.9 2.9 0 0 1-2.9-2.9Z')]),
+ FolderPlus:centerFolder([folder,p('M9 14h6m-3-3v6')]),FolderX:centerFolder([folder,p('m9.8 11.8 4.4 4.4m0-4.4-4.4 4.4')]),
  Gauge:[p('M5.7 18.5a8.2 8.2 0 1 1 12.6 0H5.7ZM12 5.8v1.4M5.8 12h1.4m9.6 0h1.4M12 14.5l3-4.7'),dot(12,14.5,1.25)],
  GitBranch:[p('M6.5 7v10m11-10v2.5a4 4 0 0 1-4 4h-7'),c(6.5,4.8,2.2),c(6.5,19.2,2.2),c(17.5,4.8,2.2)],
  GitCommit:commit,GitCommitHorizontal:commit,
