@@ -641,6 +641,35 @@ func (h *Host) retirePlugin(ctx context.Context, pluginID string, cause error) (
 	return ClientShutdownOutcome{PluginID: pluginID, Err: closeErr}, true
 }
 
+// CallService dispatches a native consumer callback through its declared service
+// dependencies. Like tool and capability callbacks, it owns a fresh execution
+// bounded by ctx and retirement of the consumer. Domain IDs belong in params;
+// they never confer execution authority.
+func (h *Host) CallService(ctx context.Context, consumer, service, method string, params json.RawMessage) (json.RawMessage, *HostServiceError) {
+	if h == nil {
+		return nil, &HostServiceError{Code: "service_unavailable", Message: "service host is unavailable"}
+	}
+	h.mu.RLock()
+	var admitted bool
+	for _, client := range h.clients {
+		if client.ID() == consumer && client.Status().State == StateActive {
+			admitted = true
+			break
+		}
+	}
+	registry := h.serviceRegistry
+	if !admitted || registry == nil {
+		h.mu.RUnlock()
+		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service consumer %q is not active", consumer)}
+	}
+	executionID, executionCtx := h.executions.begin(consumer, ctx, ToolExecuteInput{}, false)
+	h.mu.RUnlock()
+	defer h.executions.End(executionID)
+	return registry.Call(executionCtx, consumer, ServiceCallParams{
+		Service: service, Method: method, Params: params, ExecutionID: executionID,
+	})
+}
+
 // ExecutionSnapshots returns the host's live execution table for diagnostics.
 func (h *Host) ExecutionSnapshots() []ExecutionSnapshot {
 	if h == nil || h.executions == nil {

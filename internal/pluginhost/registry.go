@@ -353,7 +353,7 @@ func (r *ServiceRegistry) executionContinuation(executionID, caller string) bool
 		return false
 	}
 	_, allowed := execution.participants[caller]
-	return caller == "kernel" || allowed
+	return allowed
 }
 
 // A shutdown callback may persist through its declared services while normal
@@ -395,7 +395,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	r.mu.Lock()
 	// Call reads declarations before checking provider readiness. Revalidate
 	// identity at admission so revocation cannot leave a stale caller window.
-	if _, registered := r.consumers[caller]; caller != "kernel" && !registered {
+	if _, registered := r.consumers[caller]; !registered {
 		r.mu.Unlock()
 		return nil, "", nil, &HostServiceError{Code: "service_not_authorized", Message: "service caller was revoked"}
 	}
@@ -408,7 +408,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	execution := r.executions[id]
 	cleanup := InShutdownCleanup(ctx) || r.cleanupOwners[caller] > 0
 	if execution != nil {
-		if _, allowed := execution.participants[caller]; caller != "kernel" && !allowed {
+		if _, allowed := execution.participants[caller]; !allowed {
 			r.mu.Unlock()
 			return nil, "", nil, &HostServiceError{Code: "service_unavailable", Message: "service execution is unavailable"}
 		}
@@ -436,7 +436,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		return callContext, id, func() { stopCaller(); cancel(); release() }, nil
 	}
 	scoped := false
-	if r.scopeTracker != nil && id != "" && caller != "kernel" {
+	if r.scopeTracker != nil && id != "" {
 		scope, scopeErr := r.scopeTracker.Resolve(caller, id)
 		if scopeErr != nil {
 			r.mu.Unlock()
@@ -451,7 +451,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	if cleanup {
 		ctx = context.WithValue(ctx, serviceCleanupKey{}, true)
 	}
-	if r.backgroundStopped && !scoped && !cleanup && caller != "kernel" {
+	if r.backgroundStopped && !scoped && !cleanup {
 		r.mu.Unlock()
 		return nil, "", nil, &HostServiceError{Code: "generation_closed", Message: "generation is not accepting autonomous service calls"}
 	}
@@ -464,7 +464,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		id = fmt.Sprintf("service-%d", r.nextExecution)
 	}
 	parentContext := ctx
-	if requestedID != "" && caller != "kernel" && r.rootExecutionContext != nil {
+	if requestedID != "" && r.rootExecutionContext != nil {
 		rootContext, handled, err := r.rootExecutionContext(caller, id)
 		if err != nil {
 			r.mu.Unlock()
@@ -480,7 +480,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	r.executions[id] = &serviceExecution{
 		ctx: execCtx, cancel: cancel, refs: 1,
 		participants: map[string]struct{}{caller: {}, provider: {}},
-		autonomous:   !scoped && !cleanup && caller != "kernel",
+		autonomous:   !scoped && !cleanup,
 	}
 	r.mu.Unlock()
 	return execCtx, id, r.releaseExecution(id), nil
@@ -515,7 +515,7 @@ func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider servicePr
 	tracker := r.scopeTracker
 	r.mu.RUnlock()
 	cleanup := InShutdownCleanup(ctx)
-	if tracker != nil && params.Caller != "kernel" && strings.HasPrefix(params.ExecutionID, "exec-") && !cleanup {
+	if tracker != nil && strings.HasPrefix(params.ExecutionID, "exec-") && !cleanup {
 		scope, err := tracker.Resolve(params.Caller, params.ExecutionID)
 		if err != nil {
 			return nil, err
@@ -529,24 +529,13 @@ func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider servicePr
 		return provider.invoker.InvokeService(ctx, params)
 	}
 	callbackParent, cancel := context.WithCancel(ctx)
-	var executionID string
-	var callbackCtx context.Context
-	for {
-		executionID, callbackCtx = tracker.begin(provider.pluginID, callbackParent, ToolExecuteInput{}, false)
-		r.mu.Lock()
-		// Kernel-originated service IDs can share the tracker prefix. Never
-		// replace an already-live routing record with a callback's new scope.
-		if r.executions[executionID] == nil {
-			r.executions[executionID] = &serviceExecution{
-				ctx: callbackCtx, cancel: cancel, refs: 1,
-				participants: map[string]struct{}{provider.pluginID: {}},
-			}
-			r.mu.Unlock()
-			break
-		}
-		r.mu.Unlock()
-		tracker.End(executionID)
+	executionID, callbackCtx := tracker.begin(provider.pluginID, callbackParent, ToolExecuteInput{}, false)
+	r.mu.Lock()
+	r.executions[executionID] = &serviceExecution{
+		ctx: callbackCtx, cancel: cancel, refs: 1,
+		participants: map[string]struct{}{provider.pluginID: {}},
 	}
+	r.mu.Unlock()
 	release := r.releaseExecution(executionID)
 	defer func() {
 		tracker.End(executionID)
@@ -609,7 +598,7 @@ func (r *ServiceRegistry) HasProvider(name string, major int) bool {
 }
 
 // ProviderPluginID reports which plugin provides one service major, so
-// kernel-side resolution can stamp execution ownership (remote drivers).
+// callers can attribute resources to the selected implementation.
 func (r *ServiceRegistry) ProviderPluginID(name string, major int) (string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -771,71 +760,6 @@ func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, par
 
 func (r *ServiceRegistry) RouteServiceCall(ctx context.Context, pluginID string, params ServiceCallParams) (json.RawMessage, *HostServiceError) {
 	return r.Call(ctx, pluginID, params)
-}
-
-// CallProvider is the kernel-caller entry point: the kernel itself is the
-// authority and needs no consumer declaration, but provider existence,
-// activation state, and the declared method set are still enforced, and the
-// execution id rides the invoke so long-lived kernel-initiated calls (loop
-// drivers) cancel through the execution plane.
-func (r *ServiceRegistry) CallProvider(ctx context.Context, service string, major int, method string, params json.RawMessage, executionID string) (json.RawMessage, *HostServiceError) {
-	service = strings.TrimSpace(service)
-	method = strings.TrimSpace(method)
-	if service == "" || method == "" {
-		return nil, &HostServiceError{Code: "invalid_request", Message: "kernel service call requires non-empty service and method"}
-	}
-	key := serviceKey{name: service, major: major}
-	r.mu.RLock()
-	provider, found := r.providers[key]
-	active := r.active
-	r.mu.RUnlock()
-	if !found {
-		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("no provider for service %s major version %d (provided majors: %v)", service, major, r.ProviderMajors(service))}
-	}
-	continuation := r.executionContinuation(executionID, "kernel")
-	if !active && !continuation {
-		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s is unavailable during generation prepare", service)}
-	}
-	methodDeclared := false
-	for _, declared := range provider.descriptor.Methods {
-		if declared.Name == method {
-			methodDeclared = true
-			break
-		}
-	}
-	if !methodDeclared {
-		return nil, &HostServiceError{Code: "method_not_found", Message: fmt.Sprintf("service %s does not declare method %q", service, method)}
-	}
-	if state := provider.invoker.Status().State; state != StateActive {
-		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s provider %q is %s", service, provider.pluginID, state)}
-	}
-	execCtx, executionID, release, executionErr := r.acquireExecution(ctx, executionID, "kernel", key, provider.pluginID, active)
-	if executionErr != nil {
-		return nil, executionErr
-	}
-	defer release()
-	result, err := r.invokeProvider(execCtx, provider, ServiceInvokeParams{
-		Service:     service,
-		Method:      method,
-		Caller:      "kernel",
-		Params:      params,
-		ExecutionID: executionID,
-	})
-	if err != nil {
-		var hostErr *HostServiceError
-		if errors.As(err, &hostErr) && hostErr.Code != "" {
-			return nil, hostErr
-		}
-		var remoteErr *remoteCallError
-		if errors.As(err, &remoteErr) && remoteErr.code != "" {
-			return nil, &HostServiceError{Code: remoteErr.code, Message: remoteErr.message}
-		}
-		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s call failed: %v", service, err)}
-	}
-	if len(result) == 0 || !json.Valid(result) {
-		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s provider returned an invalid result", service)}
-	}
-	return result, nil
 }
 
 // ServiceRegistryEntry describes one provided service in a registry snapshot.

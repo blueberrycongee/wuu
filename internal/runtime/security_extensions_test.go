@@ -40,14 +40,19 @@ func TestPluginSecurityServicesAreRealCoreConsumers(t *testing.T) {
 	provider := &securityServiceProvider{descriptors: []pluginhost.ServiceDescriptor{
 		pluginhost.SecurityAuthorizeDescriptor(), pluginhost.ProcessSandboxDescriptor(),
 	}}
-	registry, conflicts := pluginhost.BuildServiceRegistry(provider)
+	clients := append([]pluginhost.Client{provider}, runtimeServiceConsumers("")...)
+	host := pluginhost.New(clients...)
+	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
+	host.AttachServiceRegistry(registry, conflicts)
 	if len(conflicts) != 0 {
 		t.Fatalf("conflicts = %+v", conflicts)
 	}
-	registry.Activate()
-	defer registry.Close(context.Background())
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close(context.Background())
 
-	authorizer := &pluginAuthorizer{registry: registry}
+	authorizer := &pluginAuthorizer{host: host}
 	decision, err := authorizer.Authorize(context.Background(), tools.AuthorizationRequest{
 		SessionID: "thread-1", CWD: "/workspace", PermissionMode: "standard",
 		Tool: tools.ToolInfo{Name: "bash", Kind: tools.ToolKindShell}, Arguments: `{"command":"git push"}`,
@@ -56,12 +61,12 @@ func TestPluginSecurityServicesAreRealCoreConsumers(t *testing.T) {
 		t.Fatalf("decision = %+v err = %v", decision, err)
 	}
 
-	sandbox := &pluginSandboxProvider{registry: registry}
+	sandbox := &pluginSandboxProvider{host: host}
 	confined, err := sandbox.Confine(context.Background(), []string{"/bin/echo", "hello"}, processsandbox.Policy{Mode: processsandbox.ModeReadOnly})
 	if err != nil || confined.Enforcement != processsandbox.EnforcementFull || len(confined.Argv) != 2 || len(confined.DenialSignatures) != 1 || len(confined.RunnerFailureSignatures) != 1 {
 		t.Fatalf("confined = %+v err = %v", confined, err)
 	}
-	if len(provider.invocations) != 2 || provider.invocations[0].Caller != "kernel" || provider.invocations[1].ExecutionID == "" {
+	if len(provider.invocations) != 2 || provider.invocations[0].Caller != toolExecutionConsumer || provider.invocations[1].ExecutionID == "" {
 		t.Fatalf("invocations = %+v", provider.invocations)
 	}
 }

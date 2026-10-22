@@ -58,7 +58,7 @@ func buildServiceTestHost(t *testing.T, clients map[string]pluginhost.Client, pl
 	start := func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 		return clients[cfg.ID], nil
 	}
-	host, _, err := buildPluginHost(plugins, "", "", "", "", nil, start, nil, nil, nil)
+	host, _, err := buildPluginHost(plugins, "", "", "", "", nil, start, nil, nil, nil, "")
 	if err != nil {
 		t.Fatalf("buildPluginHost() = %v", err)
 	}
@@ -190,7 +190,7 @@ createInterface({ input: process.stdin }).on('line', line => {
 				return pluginhost.Start(ctx, cfg)
 			}
 			return &fakeServicePluginClient{id: cfg.ID, required: pluginhost.KernelServiceRequirements("host.storage.get")}, nil
-		}, nil, nil, selection)
+		}, nil, nil, selection, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +361,7 @@ func TestNativeProviderRetirementDrainsConsumers(t *testing.T) {
 			consumer := &nativeLifecycleConsumer{fakeServicePluginClient: &fakeServicePluginClient{id: reader.ID,
 				required: pluginhost.KernelServiceRequirements(pluginhost.KernelStorageSetService)}}
 			host, native, err := buildPluginHost([]pluginpkg.Plugin{reader}, t.TempDir(), "workspace", t.TempDir(), t.TempDir(), nil,
-				func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) { return consumer, nil }, nil, nil, nil)
+				func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) { return consumer, nil }, nil, nil, nil, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -417,7 +417,7 @@ func TestCompositionRejectsDuplicateRuntimeIdentity(t *testing.T) {
 				func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 					started = true
 					return &fakeServicePluginClient{id: cfg.ID}, nil
-				}, nil, nil, nil)
+				}, nil, nil, nil, "")
 			if host != nil {
 				defer host.Close(context.Background())
 			}
@@ -435,7 +435,7 @@ func TestBuildPluginHostDuplicateProviderRejectsCandidate(t *testing.T) {
 	host, _, err := buildPluginHost([]pluginpkg.Plugin{testRuntimePlugin("search-a"), testRuntimePlugin("search-b")}, "", "", "", "", nil,
 		func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 			return clients[cfg.ID], nil
-		}, nil, nil, nil)
+		}, nil, nil, nil, "")
 	if err == nil || !strings.Contains(err.Error(), "select a provider") || host != nil {
 		t.Fatalf("ambiguous candidate = %v, %v", host, err)
 	}

@@ -14,21 +14,20 @@ import (
 type fakeRemoteInvoker struct {
 	mu    sync.Mutex
 	calls []remoteCall
-	serve func(ctx context.Context, executionID string, method string, params json.RawMessage) (json.RawMessage, error)
+	serve func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error)
 }
 
 type remoteCall struct {
-	executionID string
-	method      string
-	params      json.RawMessage
+	method string
+	params json.RawMessage
 }
 
-func (f *fakeRemoteInvoker) InvokeDriver(ctx context.Context, executionID string, method string, params json.RawMessage) (json.RawMessage, error) {
+func (f *fakeRemoteInvoker) InvokeDriver(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 	f.mu.Lock()
-	f.calls = append(f.calls, remoteCall{executionID: executionID, method: method, params: params})
+	f.calls = append(f.calls, remoteCall{method: method, params: params})
 	f.mu.Unlock()
 	if f.serve != nil {
-		return f.serve(ctx, executionID, method, params)
+		return f.serve(ctx, method, params)
 	}
 	return json.RawMessage(`{}`), nil
 }
@@ -79,7 +78,7 @@ func TestRemoteDriverCreateRunShutdown(t *testing.T) {
 	gateways := &fakeGatewayRegistry{}
 	driver := &RemoteDriver{Profile: "demo", Invoker: invoker, Gateways: gateways, ServiceID: "driver.demo"}
 
-	invoker.serve = func(_ context.Context, _ string, method string, _ json.RawMessage) (json.RawMessage, error) {
+	invoker.serve = func(_ context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
 		switch method {
 		case RemoteMethodDescriptor:
 			return json.Marshal(Descriptor{ID: "wuu.demo", Version: "0.1.0", Capabilities: []string{"demo_round"}})
@@ -134,8 +133,11 @@ func TestRemoteDriverCreateRunShutdown(t *testing.T) {
 	var methods []string
 	for _, call := range invoker.calls {
 		methods = append(methods, call.method)
-		if call.method != RemoteMethodDescriptor && call.executionID != "exec-1" {
-			t.Fatalf("call %s execution id = %q, want exec-1", call.method, call.executionID)
+		if call.method == RemoteMethodCreate {
+			var input remoteCreateParams
+			if err := json.Unmarshal(call.params, &input); err != nil || input.Execution.ExecutionID != "exec-1" {
+				t.Fatalf("create execution = %+v, err = %v", input.Execution, err)
+			}
 		}
 	}
 	want := []string{RemoteMethodDescriptor, RemoteMethodCreate, RemoteMethodRun, RemoteMethodShutdown}
@@ -155,7 +157,7 @@ func TestRemoteDriverRunRegistersGatewayDuringRun(t *testing.T) {
 	driver := &RemoteDriver{Profile: "demo", Invoker: invoker, Gateways: gateways}
 	gatewayVisible := make(chan KernelGateway, 1)
 
-	invoker.serve = func(ctx context.Context, _ string, method string, _ json.RawMessage) (json.RawMessage, error) {
+	invoker.serve = func(ctx context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
 		switch method {
 		case RemoteMethodCreate:
 			return json.Marshal(remoteInstanceResult{InstanceID: "inst-1", Checkpoint: Checkpoint{ContractVersion: ContractVersion}})
@@ -193,7 +195,7 @@ func TestRemoteDriverCancelPropagatesThroughExecution(t *testing.T) {
 	runStarted := make(chan struct{})
 	runCanceled := make(chan error, 1)
 
-	invoker.serve = func(ctx context.Context, _ string, method string, _ json.RawMessage) (json.RawMessage, error) {
+	invoker.serve = func(ctx context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
 		switch method {
 		case RemoteMethodCreate:
 			return json.Marshal(remoteInstanceResult{InstanceID: "inst-1", Checkpoint: Checkpoint{ContractVersion: ContractVersion}})
@@ -248,7 +250,7 @@ func TestRemoteDriverResumeSendsCheckpoint(t *testing.T) {
 	invoker := &fakeRemoteInvoker{}
 	driver := &RemoteDriver{Profile: "demo", Invoker: invoker}
 	checkpoint := Checkpoint{ContractVersion: ContractVersion, DriverID: "wuu.demo", DriverVersion: "0.1.0", State: json.RawMessage(`{"phase":"running"}`)}
-	invoker.serve = func(_ context.Context, _ string, method string, params json.RawMessage) (json.RawMessage, error) {
+	invoker.serve = func(_ context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 		if method != RemoteMethodResume {
 			return nil, errors.New("unexpected method " + method)
 		}

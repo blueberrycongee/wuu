@@ -22,12 +22,11 @@ const (
 	RemoteMethodShutdown   = "shutdown"
 )
 
-// RemoteInvoker is the kernel-side transport the RemoteDriver delegates to.
-// The runtime adapts the plugin service registry to this interface; the
-// executionID rides the invoke frame so cross-process cancellation works
-// through the execution plane.
+// RemoteInvoker is the transport the RemoteDriver delegates to. The runtime
+// binds each call to a declared consumer and carries ctx cancellation across
+// the service transport. Driver execution IDs remain in the domain payload.
 type RemoteInvoker interface {
-	InvokeDriver(ctx context.Context, executionID string, method string, params json.RawMessage) (json.RawMessage, error)
+	InvokeDriver(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error)
 }
 
 // RemoteGatewayRegistry exposes per-execution kernel gateways so the
@@ -94,7 +93,7 @@ func (d *RemoteDriver) Descriptor() Descriptor {
 	if d.descriptor != nil {
 		return *d.descriptor
 	}
-	result, err := d.Invoker.InvokeDriver(context.Background(), "", RemoteMethodDescriptor, nil)
+	result, err := d.Invoker.InvokeDriver(context.Background(), RemoteMethodDescriptor, nil)
 	if err != nil {
 		// Descriptor must not fail the runner before Create/Resume can
 		// produce a typed error; degrade to the profile identity.
@@ -126,7 +125,7 @@ func (d *RemoteDriver) Create(execution ExecutionContext, input PersistedInput) 
 	if err != nil {
 		return nil, fmt.Errorf("encode remote driver create params: %w", err)
 	}
-	result, err := d.Invoker.InvokeDriver(context.Background(), execution.ExecutionID, RemoteMethodCreate, params)
+	result, err := d.Invoker.InvokeDriver(context.Background(), RemoteMethodCreate, params)
 	if err != nil {
 		return nil, fmt.Errorf("remote driver create: %w", err)
 	}
@@ -145,7 +144,7 @@ func (d *RemoteDriver) Resume(execution ExecutionContext, input PersistedInput, 
 	if err != nil {
 		return nil, fmt.Errorf("encode remote driver resume params: %w", err)
 	}
-	result, err := d.Invoker.InvokeDriver(context.Background(), execution.ExecutionID, RemoteMethodResume, params)
+	result, err := d.Invoker.InvokeDriver(context.Background(), RemoteMethodResume, params)
 	if err != nil {
 		return nil, fmt.Errorf("remote driver resume: %w", err)
 	}
@@ -210,7 +209,7 @@ func (i *RemoteInstance) Run(ctx context.Context, gateway KernelGateway) (Termin
 	if err != nil {
 		return TerminalOutcome{Status: TerminalFailed, Checkpoint: i.Checkpoint()}, fmt.Errorf("encode remote driver run params: %w", err)
 	}
-	result, err := i.driver.Invoker.InvokeDriver(runCtx, i.execution.ExecutionID, RemoteMethodRun, params)
+	result, err := i.driver.Invoker.InvokeDriver(runCtx, RemoteMethodRun, params)
 	if err != nil {
 		status := TerminalFailed
 		if runCtx.Err() != nil {
@@ -251,7 +250,7 @@ func (i *RemoteInstance) Shutdown() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), remoteShutdownTimeout)
 	defer cancel()
-	_, _ = i.driver.Invoker.InvokeDriver(ctx, i.execution.ExecutionID, RemoteMethodShutdown, params)
+	_, _ = i.driver.Invoker.InvokeDriver(ctx, RemoteMethodShutdown, params)
 }
 
 func (i *RemoteInstance) setCheckpoint(checkpoint Checkpoint) {

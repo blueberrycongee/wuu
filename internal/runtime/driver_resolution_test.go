@@ -30,30 +30,30 @@ func (c *driverProviderClient) InvokeService(ctx context.Context, params pluginh
 	return c.invoke(ctx, params)
 }
 
-func newDriverTestRegistry(t *testing.T, clients ...pluginhost.Client) *pluginhost.ServiceRegistry {
+func newDriverTestHost(t *testing.T, profile string, clients ...pluginhost.Client) *pluginhost.Host {
 	t.Helper()
 	kernel := newKernelHostServices(nil, nil)
-	registry, conflicts := pluginhost.BuildServiceRegistry(kernel)
+	clients = append(clients, kernel)
+	clients = append(clients, runtimeServiceConsumers(profile)...)
+	host := pluginhost.New(clients...)
+	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
 	kernel.bindRegistry(registry)
 	if len(conflicts) != 0 {
 		t.Fatalf("conflicts = %+v", conflicts)
 	}
-	if len(clients) > 0 {
-		if registrationConflicts := registry.RegisterClients(clients...); len(registrationConflicts) != 0 {
-			t.Fatalf("registration conflicts = %+v", registrationConflicts)
-		}
+	host.AttachServiceRegistry(registry, conflicts)
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	activateServiceTestHost(t, kernel, registry, clients...)
-	return registry
+	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	return host
 }
 
 func TestResolveLoopDriverFailsClosedWithoutProvider(t *testing.T) {
-	registry := newDriverTestRegistry(t)
+	host := newDriverTestHost(t, "")
 	if _, ok := resolveLoopDriver("ghost", nil, nil).(loopdriver.FailClosedDriver); !ok {
 		t.Fatalf("nil host must fail closed")
 	}
-	host := new(pluginhost.Host)
-	host.AttachServiceRegistry(registry, nil)
 	driver := resolveLoopDriver("ghost", host, nil)
 	failClosed, ok := driver.(loopdriver.FailClosedDriver)
 	if !ok {
@@ -90,9 +90,7 @@ func TestResolveLoopDriverRemoteRoutesThroughRegistry(t *testing.T) {
 			return nil, fmt.Errorf("unexpected method %q", params.Method)
 		},
 	}
-	registry := newDriverTestRegistry(t, provider)
-	host := new(pluginhost.Host)
-	host.AttachServiceRegistry(registry, nil)
+	host := newDriverTestHost(t, "demo", provider)
 	table := newDriverGatewayTable()
 
 	driver := resolveLoopDriver("demo", host, func() *driverGatewayTable { return table })
@@ -117,7 +115,7 @@ func TestResolveLoopDriverRemoteRoutesThroughRegistry(t *testing.T) {
 	if outcome.Status != loopdriver.TerminalSucceeded {
 		t.Fatalf("outcome = %+v", outcome)
 	}
-	if gotService != "driver.demo" || gotMethod != "run" || gotExecutionID != "exec-1" {
+	if gotService != "driver.demo" || gotMethod != "run" || gotExecutionID == "" {
 		t.Fatalf("invoke = (%q, %q, %q)", gotService, gotMethod, gotExecutionID)
 	}
 	// The resolved driver must register its gateway into the current

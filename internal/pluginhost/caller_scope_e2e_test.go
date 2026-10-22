@@ -107,5 +107,29 @@ readline.createInterface({input: process.stdin}).on('line', line => {
 	if _, err := registry.Call(ctx, "consumer", ServiceCallParams{Service: "stream.provider", Method: "start", ExecutionID: owner}); err == nil || err.Code != "execution_not_found" {
 		t.Fatalf("late invocation reopened owner: %v", err)
 	}
-	t.Log("independent Node provider retained one owner across two callback IDs, observed owner cancellation, and rejected late reuse")
+	result, callErr = host.CallService(ctx, "consumer", "stream.provider", "start", nil)
+	if callErr != nil {
+		t.Fatal(callErr)
+	}
+	var native struct {
+		Scope    ExecutionSnapshot `json:"scope"`
+		Callback string            `json:"callback"`
+	}
+	if err := json.Unmarshal(result, &native); err != nil {
+		t.Fatal(err)
+	}
+	if native.Scope.Kind != "callback" || native.Scope.PluginID != "consumer" || native.Scope.ID == native.Callback || native.Scope.SessionID != "" {
+		t.Fatalf("native caller scope: %s", result)
+	}
+	result, callErr = host.CallService(ctx, "consumer", "stream.provider", "wait", nil)
+	if callErr != nil || string(result) != `{"cancelled":true}` {
+		t.Fatalf("native callback terminal signal: %s, %v", result, callErr)
+	}
+	if outcome, found := host.RetirePlugin(ctx, "consumer", nil); !found || outcome.Err != nil {
+		t.Fatalf("native consumer retirement: %+v, found=%v", outcome, found)
+	}
+	if _, err := host.CallService(ctx, "consumer", "stream.provider", "start", nil); err == nil {
+		t.Fatal("retired native caller reached independent process provider")
+	}
+	t.Log("independent Node provider retained one tool owner across callbacks, observed tool and native caller cancellation, and rejected late or retired callers")
 }

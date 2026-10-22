@@ -17,13 +17,12 @@ const DriverServicePrefix = "driver."
 
 // registryDriverInvoker adapts the service registry to loopdriver.RemoteInvoker.
 type registryDriverInvoker struct {
-	registry *pluginhost.ServiceRegistry
-	service  string
-	major    int
+	host    *pluginhost.Host
+	service string
 }
 
-func (i registryDriverInvoker) InvokeDriver(ctx context.Context, executionID string, method string, params json.RawMessage) (json.RawMessage, error) {
-	result, hostErr := i.registry.CallProvider(ctx, i.service, i.major, method, params, executionID)
+func (i registryDriverInvoker) InvokeDriver(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+	result, hostErr := i.host.CallService(ctx, sessionExecutionConsumer, i.service, method, params)
 	if hostErr != nil {
 		return nil, fmt.Errorf("%s: %s", hostErr.Code, hostErr.Message)
 	}
@@ -85,7 +84,7 @@ func resolveLoopDriver(profile string, host *pluginhost.Host, tableFn func() *dr
 	return &loopdriver.RemoteDriver{
 		Profile:   profile,
 		ServiceID: service,
-		Invoker:   registryDriverInvoker{registry: registry, service: service, major: 1},
+		Invoker:   registryDriverInvoker{host: host, service: service},
 		Gateways:  dynamicGatewayRegistrar{tableFn: tableFn, ownerPluginID: ownerPluginID},
 	}
 }

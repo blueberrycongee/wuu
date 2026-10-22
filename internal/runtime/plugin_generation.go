@@ -313,7 +313,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 			}
 		}
 	}
-	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, cfg.Composition)
+	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, cfg.Composition, s.DriverProfile)
 	if err != nil {
 		for _, root := range ownedRoots {
 			_ = os.RemoveAll(root)
@@ -784,7 +784,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.bindLocalSkillRefresh(s.Toolkit, s.RootDir, generation)
 		s.Toolkit.SetMCPActivityBindings(generation.mcpBinding)
 		s.Toolkit.SetMCPManager(generation.mcp)
-		configureToolkitSecurityExtensions(s.Toolkit, generation.host.ServiceRegistry())
+		configureToolkitSecurityExtensions(s.Toolkit, generation.host)
 	}
 	s.refreshSystemPromptWithSkills(s.ProviderName, s.Model, generation.filterSkills(generation.skills))
 }

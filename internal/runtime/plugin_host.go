@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -21,8 +22,8 @@ func startPluginClient(ctx context.Context, cfg pluginhost.ProcessConfig) (plugi
 	return pluginhost.Start(ctx, cfg)
 }
 
-func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config) (*pluginhost.Host, *kernelHostServices, error) {
-	host, kernel, err := buildPluginHost(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, turnRouter, userQuestions, selection)
+func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string) (*pluginhost.Host, *kernelHostServices, error) {
+	host, kernel, err := buildPluginHost(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, turnRouter, userQuestions, selection, driverProfile)
 	if err != nil {
 		// A fatal negotiation closes the entire prepared generation. Preserve
 		// each unavailable runtime and the graph so initial-session consumers
@@ -46,7 +47,7 @@ func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
 	return host.Activate(ctx)
 }
 
-func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config) (*pluginhost.Host, *kernelHostServices, error) {
+func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string) (*pluginhost.Host, *kernelHostServices, error) {
 	var bindings []composition.Binding
 	if selection != nil {
 		if err := selection.Validate(); err != nil {
@@ -67,12 +68,21 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		}
 		return epoch
 	}, host)
+	nativeConsumers := runtimeServiceConsumers(driverProfile)
+	required = maps.Clone(required)
+	if required == nil {
+		required = make(map[string]bool)
+	}
 	host.Add(kernel)
+	for _, consumer := range nativeConsumers {
+		host.Add(consumer)
+		required[consumer.ID()] = true
+	}
 	kernel.bindUserQuestions(userQuestions)
 	kernel.bindWorkspaceStateDir(workspaceStateDir)
 	kernel.bindWuuHome(wuuHome)
 	host.SetToolResultMaterializer(kernel.materializeToolResult)
-	conflicts := registry.RegisterClients(kernel)
+	conflicts := registry.RegisterClients(append([]pluginhost.Client{kernel}, nativeConsumers...)...)
 	kernel.bindRegistry(registry)
 	closeStarted := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -82,6 +92,9 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		return err
 	}
 	identities := map[string]bool{kernel.ID(): true}
+	for _, consumer := range nativeConsumers {
+		identities[consumer.ID()] = true
+	}
 	for _, item := range plugins {
 		if identities[item.ID] {
 			return nil, nil, errors.Join(fmt.Errorf("duplicate runtime identity %q in composition", item.ID), closeStarted())

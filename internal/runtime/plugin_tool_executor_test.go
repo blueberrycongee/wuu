@@ -222,7 +222,7 @@ func TestCodeModeOnlyIncludesPluginToolsInNestedSurface(t *testing.T) {
 	}, nil)
 	home, state := t.TempDir(), t.TempDir()
 	makeHost := func() *pluginhost.Host {
-		host, _, err := buildPluginHost([]pluginpkg.Plugin{item}, root, "workspace", home, state, map[string]bool{item.ID: true}, startPluginClient, router, nil, nil)
+		host, _, err := buildPluginHost([]pluginpkg.Plugin{item}, root, "workspace", home, state, map[string]bool{item.ID: true}, startPluginClient, router, nil, nil, "")
 		if err != nil {
 			t.Fatal(err)
 		}

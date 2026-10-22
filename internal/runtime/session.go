@@ -511,7 +511,7 @@ func NewSession(opts Options) (*Session, error) {
 	if !opts.NonInteractive {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
-	pluginHost, pluginKernel, err := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions, cfg.Composition)
+	pluginHost, pluginKernel, err := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions, cfg.Composition, opts.DriverProfile)
 	if err != nil {
 		return nil, fmt.Errorf("prepare plugin composition: %w", err)
 	}
@@ -557,11 +557,7 @@ func NewSession(opts Options) (*Session, error) {
 		kit.SetProcessManager(processMgr)
 		kit.SetSkills(discoveredSkills)
 		ConfigureToolkitPermissions(kit, permissions)
-		var securityRegistry *pluginhost.ServiceRegistry
-		if pluginKernel != nil {
-			securityRegistry = pluginKernel.registry
-		}
-		configureToolkitSecurityExtensions(kit, securityRegistry)
+		configureToolkitSecurityExtensions(kit, pluginHost)
 		kit.ConfigureSurfaceForProviderModel(ruleProviderName, toolModeModel, true)
 		kit.SetBrowserEnabled(browserEnabledFromEnv())
 		kit.SetToolSearchEnabled(toolSearchEnabled)

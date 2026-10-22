@@ -426,7 +426,8 @@ func TestServiceRegistryCloseDrainsAcceptedExecutionAndAllowsNestedCalls(t *test
 		provided: []ServiceDescriptor{service("outer")},
 		required: []ServiceRequirement{{Name: "inner", MajorVersion: 1}},
 	}
-	registry, conflicts := BuildServiceRegistry(outer, inner)
+	consumer := &fakeServiceProcess{id: "caller", state: StateActive, required: []ServiceRequirement{{Name: "outer", MajorVersion: 1, Required: true}}}
+	registry, conflicts := BuildServiceRegistry(outer, inner, consumer)
 	if len(conflicts) != 0 {
 		t.Fatalf("conflicts = %+v", conflicts)
 	}
@@ -444,7 +445,7 @@ func TestServiceRegistryCloseDrainsAcceptedExecutionAndAllowsNestedCalls(t *test
 	}
 	callDone := make(chan *HostServiceError, 1)
 	go func() {
-		_, serviceErr := registry.CallProvider(context.Background(), "outer", 1, "run", nil, "exec-drain")
+		_, serviceErr := registry.Call(context.Background(), "caller", ServiceCallParams{Service: "outer", Method: "run", ExecutionID: "exec-drain"})
 		callDone <- serviceErr
 	}()
 	<-started
@@ -466,7 +467,7 @@ func TestServiceRegistryCloseDrainsAcceptedExecutionAndAllowsNestedCalls(t *test
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if _, serviceErr := registry.CallProvider(context.Background(), "outer", 1, "run", nil, "exec-new"); serviceErr == nil || serviceErr.Code != "service_unavailable" {
+	if _, serviceErr := registry.Call(context.Background(), "caller", ServiceCallParams{Service: "outer", Method: "run", ExecutionID: "exec-new"}); serviceErr == nil || serviceErr.Code != "service_unavailable" {
 		t.Fatalf("new execution during drain = %v", serviceErr)
 	}
 	select {
@@ -500,9 +501,10 @@ func TestServiceRegistryCloseCancelsExecutionAtDeadline(t *testing.T) {
 		close(cancelled)
 		return nil, ctx.Err()
 	}
-	registry, _ := BuildServiceRegistry(provider)
+	consumer := &fakeServiceProcess{id: "caller", state: StateActive, required: []ServiceRequirement{{Name: "slow", MajorVersion: 1, Required: true}}}
+	registry, _ := BuildServiceRegistry(provider, consumer)
 	registry.Activate()
-	go registry.CallProvider(context.Background(), "slow", 1, "run", nil, "exec-timeout")
+	go registry.Call(context.Background(), "caller", ServiceCallParams{Service: "slow", Method: "run", ExecutionID: "exec-timeout"})
 	<-started
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
@@ -569,43 +571,79 @@ func TestServiceRegistryCallPreservesTypedProviderErrors(t *testing.T) {
 	}
 }
 
-func TestServiceRegistryCallProviderFromKernel(t *testing.T) {
-	provider := &fakeServiceProcess{id: "driver", state: StateActive, provided: []ServiceDescriptor{{
-		Name:    "driver.demo",
-		Version: "1.0.0",
-		Methods: []ServiceMethodDescriptor{{Name: "run", InputSchema: "driver.run.request.v1", OutputSchema: "driver.run.response.v1"}},
-	}}}
-	registry, _ := BuildServiceRegistry(provider)
+func TestServiceRegistryNativeIdentityCannotBorrowAnotherExecution(t *testing.T) {
+	provider := &fakeServiceProcess{id: "provider", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}}
+	native := &fakeServiceProcess{id: "kernel", state: StateActive, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}
+	owner := &fakeServiceProcess{id: "owner", state: StateActive}
+	host := New(provider, native, owner)
+	registry, conflicts := BuildServiceRegistry(provider, native, owner)
+	host.AttachServiceRegistry(registry, conflicts)
+	registry.Activate()
+	id := host.executions.Begin(owner.ID())
+	defer host.executions.End(id)
+	_, err := registry.Call(context.Background(), native.ID(), ServiceCallParams{Service: "search.provider", Method: "query", ExecutionID: id})
+	if err == nil || err.Code != "service_not_authorized" {
+		t.Fatalf("native identity borrowed another caller's execution: %v", err)
+	}
+	if len(provider.invokeCalls) != 0 {
+		t.Fatal("unauthorized call reached the provider")
+	}
+}
 
-	if _, err := registry.CallProvider(context.Background(), "driver.demo", 1, "run", nil, "exec-1"); err == nil || err.Code != "service_unavailable" {
-		t.Fatalf("inactive registry kernel call = %v, want service_unavailable", err)
+func TestServiceRegistryNativeAutonomousWorkStopsWithGeneration(t *testing.T) {
+	provider := &fakeServiceProcess{id: "provider", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}}
+	native := &fakeServiceProcess{id: "kernel", state: StateActive, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}
+	host := New(provider, native)
+	registry, conflicts := BuildServiceRegistry(provider, native)
+	host.AttachServiceRegistry(registry, conflicts)
+	registry.Activate()
+	host.StopBackground()
+	_, err := registry.Call(context.Background(), native.ID(), ServiceCallParams{Service: "search.provider", Method: "query"})
+	if err == nil || err.Code != "generation_closed" {
+		t.Fatalf("native identity started autonomous work after retirement: %v", err)
+	}
+}
+
+func TestHostCallServiceUsesDeclaredConsumer(t *testing.T) {
+	provider := &fakeServiceProcess{id: "driver", state: StateActive, provided: []ServiceDescriptor{{
+		Name: "driver.demo", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "run"}},
+	}}}
+	consumer := &fakeServiceProcess{id: "native-caller", state: StateActive, required: []ServiceRequirement{{Name: "driver.demo", MajorVersion: 1, Required: true}}}
+	undeclared := &fakeServiceProcess{id: "kernel", state: StateActive}
+	host := New(provider, consumer, undeclared)
+	registry, conflicts := BuildServiceRegistry(provider, consumer, undeclared)
+	host.AttachServiceRegistry(registry, conflicts)
+	if _, err := host.CallService(context.Background(), consumer.ID(), "driver.demo", "run", nil); err == nil || err.Code != "service_unavailable" {
+		t.Fatalf("inactive call = %v", err)
 	}
 	registry.Activate()
-
-	if _, err := registry.CallProvider(context.Background(), "driver.demo", 2, "run", nil, "exec-1"); err == nil || err.Code != "service_unavailable" {
-		t.Fatalf("missing major = %v, want service_unavailable", err)
+	if _, err := host.CallService(context.Background(), undeclared.ID(), "driver.demo", "run", nil); err == nil || err.Code != "service_not_authorized" {
+		t.Fatalf("undeclared call = %v", err)
 	}
-	if _, err := registry.CallProvider(context.Background(), "driver.demo", 1, "create", nil, "exec-1"); err == nil || err.Code != "method_not_found" {
-		t.Fatalf("undeclared method = %v, want method_not_found", err)
+	if _, err := host.CallService(context.Background(), consumer.ID(), "driver.demo", "create", nil); err == nil || err.Code != "method_not_found" {
+		t.Fatalf("undeclared method = %v", err)
 	}
-	if _, err := registry.CallProvider(context.Background(), " ", 1, "run", nil, "exec-1"); err == nil || err.Code != "invalid_request" {
-		t.Fatalf("blank service = %v, want invalid_request", err)
+	if _, err := host.CallService(context.Background(), consumer.ID(), " ", "run", nil); err == nil || err.Code != "invalid_request" {
+		t.Fatalf("blank service = %v", err)
 	}
-
-	// The kernel needs no consumer declaration: the call routes with the
-	// kernel caller identity and the execution id intact.
-	result, err := registry.CallProvider(context.Background(), "driver.demo", 1, "run", json.RawMessage(`{"instance_id":"i-1"}`), "exec-1")
-	if err != nil {
-		t.Fatalf("kernel call failed: %v", err)
-	}
-	if string(result) != `{"ok":true}` {
-		t.Fatalf("result = %s", result)
+	result, err := host.CallService(context.Background(), consumer.ID(), "driver.demo", "run", json.RawMessage(`{"instance_id":"i-1"}`))
+	if err != nil || string(result) != `{"ok":true}` {
+		t.Fatalf("native callback result = %s, error = %v", result, err)
 	}
 	if len(provider.invokeCalls) != 1 {
 		t.Fatalf("invoke calls = %+v", provider.invokeCalls)
 	}
 	got := provider.invokeCalls[0]
-	if got.Caller != "kernel" || got.Method != "run" || got.ExecutionID != "exec-1" {
-		t.Fatalf("invoke params = %+v", got)
+	if got.Caller != consumer.ID() || got.CallerScope == nil || got.CallerScope.PluginID != consumer.ID() || got.CallerScope.ID == got.ExecutionID {
+		t.Fatalf("native consumer and provider scopes = %+v", got)
+	}
+	if got.CallerScope.Context.Err() == nil {
+		t.Fatal("native caller scope remained live after callback completion")
+	}
+	if outcome, found := host.RetirePlugin(context.Background(), consumer.ID(), nil); !found || outcome.Err != nil {
+		t.Fatalf("retire native caller: %+v, found=%v", outcome, found)
+	}
+	if _, err := host.CallService(context.Background(), consumer.ID(), "driver.demo", "run", nil); err == nil {
+		t.Fatal("retired native caller dispatched work")
 	}
 }
