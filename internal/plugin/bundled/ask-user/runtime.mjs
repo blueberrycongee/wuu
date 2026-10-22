@@ -120,6 +120,7 @@ var PUBLIC_ICON_NAMES = [
   "inbox",
   "layout-grid",
   "list-todo",
+  "mascot",
   "message-square",
   "moon",
   "plug",
