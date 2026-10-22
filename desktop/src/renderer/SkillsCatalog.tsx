@@ -11,10 +11,10 @@ import {
   PanelRight,
   RefreshCw,
   Settings,
-  Sparkles,
   Terminal,
 } from "./WuuIcons";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
+import { SkillsIcon } from "./SkillsIcon";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   AppLocale,
@@ -755,7 +755,7 @@ function pluginContributions(
     })),
     ...skills.map((skill) => ({
       key: `skill:${skill.name}`,
-      icon: <Sparkles className="icon" aria-hidden="true" />,
+      icon: <SkillsIcon className="icon" />,
       title: skill.name,
       kind: t("skills.addsSkill"),
       onOpen: () => onPreviewSkill(skill),

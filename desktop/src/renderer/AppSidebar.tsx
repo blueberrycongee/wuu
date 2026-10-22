@@ -14,7 +14,6 @@ import {
   MessagesSquare,
   Plus,
   Search,
-  Sparkles,
   SquarePen,
   Project,
 } from "./WuuIcons";
@@ -94,6 +93,7 @@ import {
 export { reorderSidebarSections } from "./SortableSidebarSection";
 import { SidebarPointerSensor } from "./SidebarPointerSensor";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
+import { SkillsIcon } from "./SkillsIcon";
 import { PluginIcon, loadPluginIconURL } from "./PublicIcon";
 import type { RibbonIconModel } from "../shared/chromeOverlay";
 import { SidebarBrand } from "./SidebarBrand";
@@ -1923,7 +1923,7 @@ export function AppSidebar({
                 aria-current={catalogSection === section ? "page" : undefined}
                 onClick={() => onSelectCatalogSection?.(section)}
               >
-                {section === "plugins" ? <PluginBlocksIcon aria-hidden="true" /> : <Sparkles aria-hidden="true" />}
+                {section === "plugins" ? <PluginBlocksIcon aria-hidden="true" /> : <SkillsIcon />}
                 <span>{t(section === "plugins" ? "skills.tabPlugins" : "skills.tabSkills")}</span>
               </button>
             ))}
