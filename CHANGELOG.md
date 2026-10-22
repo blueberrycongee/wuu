@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add MiniMax M3.1 Flash with multimodal input, five reasoning-effort levels, and always-on thinking behavior for Anthropic- and OpenAI-compatible connections. Preserve saved model metadata and recognize the current China API hostname.
+
 - Show Computer Use calls as readable action titles, with original calls, outputs, and errors available in expandable records.
 
 - Show external connections as compact two-line rows with account plans, remaining quota bars and local reset times; omit unavailable quota details.

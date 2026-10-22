@@ -24,6 +24,8 @@ type Provider struct {
 	ModelOptions map[string]any    `json:"model_options,omitempty"`
 	Headers      map[string]string `json:"headers,omitempty"`
 	Models       []Model           `json:"models"`
+	// Retain metadata for saved selections without advertising retired models.
+	legacyModels []Model
 }
 
 type Model struct {
@@ -274,6 +276,12 @@ func mergeProviderModelMetadata(provider config.ProviderConfig, catalogProvider 
 }
 
 func MergeProvider(provider config.ProviderConfig, catalogProvider Provider, modelIDs ...string) config.ProviderConfig {
+	for _, model := range catalogProvider.legacyModels {
+		_, configured := provider.Models[model.ID]
+		if configured || provider.Model == model.ID || providerUsesModel(provider, model.ID, modelIDs...) {
+			catalogProvider.Models = append(append([]Model(nil), catalogProvider.Models...), model)
+		}
+	}
 	if catalogProvider.ID == "deepseek" {
 		// Resolve accepted aliases only for saved/requested selections. Remove
 		// this compatibility path when DeepSeek stops accepting the old IDs.
@@ -801,6 +809,11 @@ func normalizeEndpoint(value string) string {
 	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
 		parsed.Scheme = strings.ToLower(parsed.Scheme)
 		parsed.Host = strings.ToLower(parsed.Host)
+		// MiniMax's China endpoint moved domains; preserve the configured URL
+		// while treating both official hosts as the same catalog identity.
+		if parsed.Host == "api.minimax.cn" {
+			parsed.Host = "api.minimaxi.com"
+		}
 		parsed.RawQuery = ""
 		parsed.Fragment = ""
 		value = parsed.String()

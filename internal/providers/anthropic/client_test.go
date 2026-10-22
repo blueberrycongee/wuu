@@ -2911,6 +2911,51 @@ func TestMiniMaxCatalogPreservesDocumentedFeaturesWithoutAnthropicBetas(t *testi
 	}
 }
 
+func TestMiniMaxM31FlashUsesMaxEffortAndAutoToolChoice(t *testing.T) {
+	providerName, provider := modelcatalog.EnrichProvider("minimax", config.ProviderConfig{
+		Type:  "anthropic",
+		Model: "MiniMax-M3.1-Flash",
+	}, "MiniMax-M3.1-Flash")
+	selection := modelvariant.ResolveForProvider(providerName, provider, "MiniMax-M3.1-Flash", "", "")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body anthropicRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode MiniMax request: %v", err)
+		}
+		if body.Thinking == nil || body.Thinking.Type != "adaptive" {
+			t.Fatalf("thinking = %+v", body.Thinking)
+		}
+		if body.OutputConfig == nil || body.OutputConfig.Effort != "max" {
+			t.Fatalf("output config = %+v", body.OutputConfig)
+		}
+		if body.ToolChoice != nil {
+			choice, ok := body.ToolChoice.(map[string]any)
+			if !ok || choice["type"] != "auto" {
+				t.Fatalf("tool choice = %#v, want omitted or auto", body.ToolChoice)
+			}
+		}
+		w.Header().Set("content-type", "application/json")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"done"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "test-key", MaxTokens: 1024})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = client.Chat(context.Background(), providers.ChatRequest{
+		Model:           "MiniMax-M3.1-Flash",
+		Messages:        []providers.ChatMessage{{Role: "user", Content: "hello"}},
+		Tools:           []providers.ToolDefinition{{Name: "finish", InputSchema: map[string]any{"type": "object"}}},
+		ForceToolName:   "finish",
+		ProviderOptions: selection.ProviderOptions,
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+}
+
 // TestTemperatureGating locks the per-model temperature switch and the
 // thinking mutual exclusion: "temperature": false (arriving as the
 // temperatureSupported option) or an active thinking config must drop the
