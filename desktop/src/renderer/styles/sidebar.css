@@ -1309,7 +1309,8 @@ html[data-focus-modality="keyboard"] :is(
   margin-top: var(--sidebar-functional-heading-gap);
 }
 
-.sidebar-functional-group + .sidebar-functional-group {
+.sidebar-functional-group + .sidebar-functional-group,
+.sidebar-functional-group + .sidebar-conversation-activity {
   margin-top: var(--sidebar-functional-group-gap);
   transition: margin-top var(--section-fold-ms) var(--section-fold-ease);
 }
@@ -1615,7 +1616,7 @@ html[data-focus-modality="keyboard"] :is(
 
 /* The open append target owns the group break. Restore the following margin
  * during the fold, not when retained rows (and the target) are unmounted. */
-.sidebar-functional-group:has(> .sidebar-functional-group-collapse[data-state="open"] .pinned-append-drop-zone) + .sidebar-functional-group {
+.sidebar-functional-group:has(> .sidebar-functional-group-collapse[data-state="open"] .pinned-append-drop-zone) + :is(.sidebar-functional-group, .sidebar-conversation-activity) {
   margin-top: 0;
 }
 
