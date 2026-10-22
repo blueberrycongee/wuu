@@ -68,6 +68,21 @@ export function PluginConversationView({ presentation = "standard", conversation
   const { t } = useI18n();
   const controller = useAutoFollowScrollContainer({ observeKey: conversationId });
   const rootRef = useRef<HTMLElement>(null);
+  const [conversationVisible, setConversationVisible] = useState(true);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    // Portal controls do not inherit the host pane's inert/hidden state.
+    // Keep the conversation mounted for scroll and draft continuity, but remove
+    // its navigation when a full-panel document or dialog covers that pane.
+    const update = () => setConversationVisible(!root.closest('[inert], [hidden], [aria-hidden="true"]'));
+    const observer = new MutationObserver(update);
+    for (let node: HTMLElement | null = root; node; node = node.parentElement) {
+      observer.observe(node, { attributes: true, attributeFilter: ["inert", "hidden", "aria-hidden"] });
+    }
+    update();
+    return () => observer.disconnect();
+  }, []);
   const bubbles = presentation === "bubbles";
   const gesture = useConversationBubbleGesture(bubbles, conversationId, controller.scrollRef);
   const [composerNode, setComposerNode] = useState<HTMLDivElement | null>(null);
@@ -102,7 +117,7 @@ export function PluginConversationView({ presentation = "standard", conversation
       </div>
     </ConversationReadingBoundary>
     <div className="plugin-conversation-composer" ref={setComposerNode}>{composer}</div>
-    {showJumpToLatest && <JumpToLatestPill containerRef={controller.scrollRef} bottomAnchor={composerNode} scopeKey={conversationId} onJump={() => controller.scrollToBottom({ force: true, animate: true })} />}
+    {showJumpToLatest && conversationVisible && <JumpToLatestPill containerRef={controller.scrollRef} bottomAnchor={composerNode} scopeKey={conversationId} onJump={() => controller.scrollToBottom({ force: true, animate: true })} />}
     {searchOpen && <Modal ariaLabel={searchLabel} title={searchLabel} onClose={closeSearch} panelClassName="plugin-conversation-search" footer={<button type="button" className="settings-button settings-button-ghost" data-action="close-history-search" onClick={closeSearch}>{t("common.close")}</button>}>{searchContent}</Modal>}
   </section>;
 }
