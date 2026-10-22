@@ -1,6 +1,13 @@
 # Notion 工作区
 
-可选的 **Notion** 插件提供 Notion 网站 Ribbon 入口，以及直连 Notion 官方 API 的文档工具。默认关闭，可在 **技能与插件** 中启用。无需安装 CLI。
+可选的 **Notion** 插件提供 Notion 网站 Ribbon 入口，以及直连 Notion 官方 API 的文档工具。它作为独立源码包提供，不再随 Wuu 分发。在仓库根目录按需安装：
+
+```sh
+wuu plugin install ./plugins/notion-workspace/package
+wuu plugin approve notion-workspace
+```
+
+随后可在 **技能与插件** 中配置。无需安装 Notion CLI。
 
 ## 打开网站
 

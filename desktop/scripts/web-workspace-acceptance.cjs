@@ -67,6 +67,9 @@ document.querySelector('#camera').onclick=async()=>{document.querySelector('#per
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   const origin = `http://127.0.0.1:${server.address().port}`;
+  // Install the optional package explicitly in this disposable acceptance home.
+  fs.cpSync(path.resolve(__dirname, '../../plugins/notion-workspace/package'),
+    path.join(home, 'plugins/notion-workspace'), { recursive: true });
   const plugin = path.join(home, 'plugins/acceptance-webpage');
   fs.mkdirSync(plugin, { recursive: true });
   fs.writeFileSync(path.join(plugin, 'plugin.json'), JSON.stringify({ schemaVersion: 1, id: 'acceptance-webpage', name: 'Acceptance Webpage', version: '0.1.0',
@@ -961,7 +964,7 @@ async function runWebsiteAcceptance(h, fixture) {
     return layout;
   }
 
-  await testNative('bundled Notion ribbon resolves its setting and creates the native website', async () => {
+  await testNative('optional Notion ribbon resolves its setting and creates the native website', async () => {
     const diagnostic = report.notionPlugin = {
       entry: 'notion-workspace:website', requestedURL: 'https://www.notion.so/',
       externalAccount: false, samples: [], events: [], networkStatus: 'pending',
@@ -1002,15 +1005,16 @@ async function runWebsiteAcceptance(h, fixture) {
     try {
       await click(plugins, 'notion-open-extension-inventory');
       await click(pick('.sidebar-section-item', 'Plugins'), 'notion-plugin-list');
-      await waitFor(selector => document.querySelector(selector), pluginRow);
-      await click(`${pluginRow} [role="switch"]`, 'enable-bundled-notion');
-      await waitFor(() => document.querySelector('.sidebar-ribbon-main button[aria-label="Notion"]'), undefined, 'bundled Notion ribbon activation', 20000);
+      await waitFor(() => document.querySelector('.catalog-row-open[aria-label*="Notion"]'));
+      await click('.catalog-row-open[aria-label*="Notion"]', 'review-optional-notion');
+      await click(pick('.settings-detail-actions button', 'Approve and enable'), 'approve-optional-notion');
+      await waitFor(() => document.querySelector('.sidebar-ribbon-main button[aria-label="Notion"]'), undefined, 'optional Notion ribbon activation', 20000);
       diagnostic.ribbonID = await evaluate(() => document.querySelector('.sidebar-ribbon-main button[aria-label="Notion"]').dataset.ribbonId);
       assert.ok(diagnostic.ribbonID.startsWith('plugin:'), 'Notion is a registered plugin destination, not a website shortcut');
       const [registeredPluginID] = JSON.parse(diagnostic.ribbonID.slice('plugin:'.length));
       diagnostic.registeredPluginID = registeredPluginID;
       const selectedAt = Date.now();
-      await click(ribbon('Notion'), 'actual-bundled-notion-ribbon');
+      await click(ribbon('Notion'), 'actual-optional-notion-ribbon');
       for (const elapsed of [0, 3000, 10000, 20000]) {
         await delay(Math.max(0, selectedAt + elapsed - Date.now()));
         const shell = await evaluate(registeredPluginID => {

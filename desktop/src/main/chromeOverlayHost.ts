@@ -28,12 +28,6 @@ export class ChromeOverlayHost {
     this.devFiles = new Set([
       "packages/protocol/src/index.ts",
       "assets/app-icon-source.json",
-      "internal/plugin/bundled/notion-workspace/icons/notion-light.svg",
-      "internal/plugin/bundled/notion-workspace/icons/notion-dark.svg",
-      "internal/plugin/bundled/feishu-workspace/icon-light.svg",
-      "internal/plugin/bundled/feishu-workspace/icon-dark.svg",
-      "internal/plugin/bundled/chatgpt-workspace/icon-light.svg",
-      "internal/plugin/bundled/chatgpt-workspace/icon-dark.svg",
     ].map(file => resolve(rendererRoot, "../../..", file)));
   }
 

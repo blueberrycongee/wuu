@@ -12,8 +12,8 @@
       "watch": [
         "../../packages/plugin-sdk/src",
         "../../scripts/build-bundled-plugins.mjs",
-        "../../internal/plugin/bundled/notion-workspace/plugin.json",
-        "../../internal/plugin/bundled/notion-workspace/desktop.js"
+        "package/plugin.json",
+        "package/desktop.js"
       ]
     }
   }

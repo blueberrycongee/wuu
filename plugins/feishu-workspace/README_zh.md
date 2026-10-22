@@ -4,7 +4,7 @@
 
 默认关闭的可选插件，通过公开 Extension API 提供飞书网页视图及文档工具。
 运行时代码位于 `src/`；正式清单、网页视图和图标位于
-`internal/plugin/bundled/feishu-workspace/`。无需飞书 CLI，不使用浏览器 Cookie
+`plugins/feishu-workspace/package/`。无需飞书 CLI，不使用浏览器 Cookie
 进行 API 身份验证。
 
 在仓库根目录使用 Node 22.7+：

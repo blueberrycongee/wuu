@@ -1,6 +1,13 @@
 # Notion workspace
 
-The optional **Notion** plugin adds a ribbon entry for the Notion website and document tools that call Notion's official API directly. It is disabled by default. Enable it in **Skills & Plugins**. No CLI is installed.
+The optional **Notion** plugin adds a ribbon entry for the Notion website and document tools that call Notion's official API directly. It is distributed as a separate source package, not bundled with Wuu. From a repository checkout, install it explicitly:
+
+```sh
+wuu plugin install ./plugins/notion-workspace/package
+wuu plugin approve notion-workspace
+```
+
+Then configure it in **Skills & Plugins**. No Notion CLI is installed.
 
 ## Open the website
 

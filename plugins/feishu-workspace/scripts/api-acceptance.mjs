@@ -11,7 +11,7 @@ import { once } from "node:events";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const output = resolve(process.env.WUU_FEISHU_E2E_OUTPUT || join(root, ".tmp/e2e/feishu-workspace"));
 await mkdir(output, { recursive: true });
-const child = spawn(process.execPath, [join(root, "internal/plugin/bundled/feishu-workspace/runtime.mjs")], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
+const child = spawn(process.execPath, [join(root, "plugins/feishu-workspace/package/runtime.mjs")], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
 const closed = once(child, "exit");
 const pending = new Map(), frames = [], cases = [];
 let sequence = 0, identity = "user", stderr = "", calls = [], respond;

@@ -31,6 +31,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Add local history and bookmark suggestions to browser address fields, with keyboard selection and a mascot-centered new-tab search page.
 
+- Feishu, Notion, and ChatGPT workspace plugins are now separate opt-in source packages rather than bundled software; install them explicitly when needed.
 - Optional Feishu and Notion workspace extensions combine native website views with bounded document API tools and host-managed credentials in the OS secure store.
 - An optional ChatGPT website extension joins the reorderable workbench ribbon.
 

@@ -1,10 +1,19 @@
 # Feishu Workspace
 
+This package is not bundled with Wuu. From the repository root:
+
+```sh
+wuu plugin install ./plugins/feishu-workspace/package
+wuu plugin approve feishu-workspace
+```
+
+The checked-in runtime allows installation without a build. Rebuild explicitly after changing its source.
+
 [简体中文](README_zh.md) · [User guide](../../docs/en/customize/feishu-workspace.md)
 
 Optional, disabled-by-default Feishu website view and document tools using the
 public Extension API. Runtime source lives in `src/`; canonical package metadata,
-website view and artwork live in `internal/plugin/bundled/feishu-workspace/`.
+website view and artwork live in `plugins/feishu-workspace/package/`.
 There is no Feishu CLI dependency and no browser-cookie API authentication.
 
 ```sh

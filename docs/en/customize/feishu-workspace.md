@@ -2,7 +2,14 @@
 
 Feishu Workspace adds a Feishu website destination to the desktop ribbon and
 five document tools backed directly by Feishu's official APIs. It is optional and
-disabled by default. Enable it in Plugins, then open Feishu from the ribbon.
+distributed as a separate source package, not bundled with Wuu. From a repository checkout, install it explicitly:
+
+```sh
+wuu plugin install ./plugins/feishu-workspace/package
+wuu plugin approve feishu-workspace
+```
+
+Then configure it in Plugins and open Feishu from the ribbon.
 
 ## Connect explicitly
 

@@ -9,7 +9,7 @@ import { resolve, dirname } from "node:path";
 // No token, Notion connection, HTTP request, or external content write is made.
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const artifact = resolve(root, ".tmp/notion-workspace-e2e/report.json");
-const runtime = resolve(root, "internal/plugin/bundled/notion-workspace/runtime.mjs");
+const runtime = resolve(root, "plugins/notion-workspace/package/runtime.mjs");
 const process = spawn(globalThis.process.execPath, [runtime], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
 const pageID = "11111111111111111111111111111111";
 const childID = "22222222222222222222222222222222";

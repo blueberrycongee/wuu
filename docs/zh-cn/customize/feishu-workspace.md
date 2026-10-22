@@ -1,7 +1,14 @@
 # 飞书工作区
 
 飞书工作区插件在桌面侧栏中提供飞书网页入口，以及五个直接调用飞书官方 API 的
-文档工具。插件默认关闭，可在插件列表中启用，再从侧栏打开飞书。
+文档工具。它作为独立源码包提供，不再随 Wuu 分发。在仓库根目录按需安装：
+
+```sh
+wuu plugin install ./plugins/feishu-workspace/package
+wuu plugin approve feishu-workspace
+```
+
+随后在插件列表中配置，再从侧栏打开飞书。
 
 ## 主动配置连接
 

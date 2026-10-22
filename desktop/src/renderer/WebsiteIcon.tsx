@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from "react";
-import notionLight from "../../../internal/plugin/bundled/notion-workspace/icons/notion-light.svg";
-import notionDark from "../../../internal/plugin/bundled/notion-workspace/icons/notion-dark.svg";
-import feishuLight from "../../../internal/plugin/bundled/feishu-workspace/icon-light.svg";
-import feishuDark from "../../../internal/plugin/bundled/feishu-workspace/icon-dark.svg";
-import chatgptLight from "../../../internal/plugin/bundled/chatgpt-workspace/icon-light.svg";
-import chatgptDark from "../../../internal/plugin/bundled/chatgpt-workspace/icon-dark.svg";
+import notionLight from "./assets/website-marks/notion-light.svg";
+import notionDark from "./assets/website-marks/notion-dark.svg";
+import feishuLight from "./assets/website-marks/feishu-light.svg";
+import feishuDark from "./assets/website-marks/feishu-dark.svg";
+import chatgptLight from "./assets/website-marks/chatgpt-light.svg";
+import chatgptDark from "./assets/website-marks/chatgpt-dark.svg";
 
 const websiteMarks = [
   { name: "notion", domains: ["notion.so", "notion.site"], light: notionLight, dark: notionDark },
@@ -37,7 +37,7 @@ export function WebsiteIcon({ url, favicon, className, fallback }: {
     }
     return <>{fallback}</>;
   }
-  // Reuse the canonical bundled SVGs and their adjacent attribution; importing
+  // Use the desktop-owned SVGs and their adjacent attribution; importing
   // them at build time needs no plugin activation, IPC, or remote favicon request.
   return <span className={`plugin-icon-themed ${className ?? ""}`} data-website-brand={mark.name} aria-hidden="true">
     <img className="plugin-icon-asset plugin-icon-asset-light" src={mark.light} alt="" />
