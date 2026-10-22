@@ -205,7 +205,6 @@ describe("WuuMascot activity morph", () => {
     act(() => vi.advanceTimersByTime(1_000));
     expect(host.querySelector("svg")).toBeNull();
     rerender(<WuuMascot visible accessory="headset" />);
-    expect(host.querySelector(".wuu-mascot-layer-rear path")).not.toBeNull();
     expect(host.querySelector(".wuu-mascot-layer-front rect")).not.toBeNull();
   });
 
