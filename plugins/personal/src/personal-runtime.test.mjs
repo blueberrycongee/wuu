@@ -45,6 +45,7 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
         if (current !== params.expected) return { swapped: false, value: current };
         storage.set(key, params.value); return { swapped: true, value: params.value };
       }
+      case "host.client.invalidate": assert.deepEqual(params, { topic: "reactions" }); return { delivered: true };
       case "host.file-lock":
         if (method === "acquire") { assert.equal(params.root, "workspace_state"); assert.equal(locks.size, 0); locks.add("lock"); return { lock_id: "lock" }; }
         assert.equal(method, "release"); locks.delete(params.lock_id); return { released: true };
@@ -111,4 +112,180 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
   assert(!JSON.stringify([...storage.values()]).includes("Street"));
   assert(!frames.some(({ direction, frame }) => direction === "plugin" && ["personal.agents", "memory.records"].includes(frame.params?.service)), "internal memory must not call external plugin services");
   await writeFile(join(output, "evidence.json"), JSON.stringify({ passed: true, runtime_sha256: createHash("sha256").update(await readFile(executable)).digest("hex"), node: process.version, completed_at: new Date().toISOString(), scenarios: ["Personal-only main binding owns host-attributed records", "correction freshness at next model step", "restart recovery", "forget removes source data and blocks extraction", "Personal rejects legacy Coding tools"] }, null, 2));
+});
+
+// Failure cases: cross-space/session spoofing, service/worker actor spoofing,
+// non-user provenance, stale and duplicate mutations, restart loss, oversized
+// input, and reactions accidentally becoming turns, approval, or task dispatch.
+test("Personal reactions persist canonical feedback without dispatching a reply", async t => {
+  const scratch = await mkdtemp(join(tmpdir(), "wuu-personal-reactions-runtime-"));
+  const output = process.env.WUU_REACTIONS_E2E_OUTPUT ?? join(root, ".tmp/e2e/personal-reactions");
+  await mkdir(output, { recursive: true });
+  t.after(() => rm(scratch, { recursive: true, force: true }));
+  const storage = new Map(), frames = [], active = new Set(), locks = new Set();
+  const contexts = {};
+  let mainSession, mainAgent;
+  let failReactionWrite = false;
+  const messages = [
+    { seq: 1, role: "user", origin: "user", content: "Original owner message" },
+    { seq: 2, role: "assistant", content: "Original assistant response" },
+    { seq: 3, role: "user", origin: "automation", read_only: true, content: "Synthetic input" },
+    { seq: 4, role: "assistant", hidden: true, content: "Hidden context" },
+    { seq: 5, role: "assistant", read_only: true, content: "Read-only assistant" },
+    { seq: 6, role: "assistant", truncated: true, content: "Truncated assistant" },
+  ];
+  const host = async frame => {
+    assert.equal(frame.method, "host.service.call");
+    const { service, method, params } = frame.params;
+    const key = `${params?.scope}:${params?.key}`;
+    switch (service) {
+      case "host.session.create": {
+        const session_id = `session-${params.request_id}`;
+        const created = !contexts[session_id]; contexts[session_id] ??= { ...params, session_id, state: "idle" };
+        return { session_id, created };
+      }
+      case "host.session.inspect": return { session: contexts[params.session_id] };
+      case "host.session.history.read": return { session_id: params.session_id, records: messages.filter(m => m.seq >= (params.start_seq ?? 1) && m.seq <= (params.end_seq ?? Math.max(...messages.map(m => m.seq)))).slice(0, params.limit ?? 50), head_seq: Math.max(...messages.map(m => m.seq)), snapshot_seq: Math.max(...messages.map(m => m.seq)), has_more: false };
+      case "host.session.context": return contexts[params.session_id] ?? { session_id: params.session_id, product_domain: "coding" };
+      case "host.storage.keys": return { keys: [...storage.keys()].map(key => key.slice("user:".length)) };
+      case "host.storage.get": return { value: storage.get(key) ?? null };
+      case "host.storage.compare-exchange": {
+        if (failReactionWrite && params.key.includes(".reaction.")) throw new Error("fixture storage unavailable");
+        const current = storage.get(key) ?? null;
+        if (current !== params.expected) return { swapped: false, value: current };
+        storage.set(key, params.value); return { swapped: true, value: params.value };
+      }
+      case "host.client.invalidate": assert.deepEqual(params, { topic: "reactions" }); return { delivered: true };
+      case "host.file-lock":
+        if (method === "acquire") { assert.equal(params.root, "workspace_state"); assert.equal(locks.size, 0); locks.add("lock"); return { lock_id: "lock" }; }
+        assert.equal(method, "release"); locks.delete(params.lock_id); return { released: true };
+      default: throw new Error(`unexpected service ${service}`);
+    }
+  };
+  async function start(pluginID = "personal") {
+    const child = spawn(process.execPath, [join(root, `internal/plugin/bundled/${pluginID}/runtime.mjs`)], { stdio: ["pipe", "pipe", "pipe"] }); active.add(child);
+    let seq = 0, stderr = ""; const pending = new Map();
+    child.stderr.on("data", buffer => { stderr += buffer; });
+    const send = frame => { frames.push({ direction: "host", frame }); child.stdin.write(`${JSON.stringify(frame)}\n`); };
+    child.on("exit", () => { active.delete(child); for (const entry of pending.values()) entry.reject(new Error(stderr || "runtime closed")); pending.clear(); });
+    createInterface({ input: child.stdout }).on("line", line => {
+      const frame = JSON.parse(line); frames.push({ direction: "plugin", frame });
+      if (frame.method) host(frame).then(result => send({ id: frame.id, result }), error => send({ id: frame.id, error: { code: "fixture_error", message: error.message } }));
+      else {
+        const entry = pending.get(frame.id); if (!entry) return; pending.delete(frame.id);
+        if (frame.error) entry.reject(new Error(frame.error.message)); else entry.resolve(frame.result);
+      }
+    });
+    const call = (method, params) => new Promise((resolve, reject) => {
+      const id = `request-${++seq}`, timer = setTimeout(() => { pending.delete(id); reject(new Error(`timeout ${method}: ${stderr}`)); }, 10_000);
+      pending.set(id, { resolve: result => { clearTimeout(timer); resolve(result); }, reject: error => { clearTimeout(timer); reject(error); } });
+      send({ id, method, params });
+    });
+    const definition = await call("initialize", { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 1, plugin_id: pluginID, plugin_root: scratch, project_root: scratch, wuu_home: scratch, workspace_state_dir: join(scratch, "state"), product_domain: "personal", user_space_id: "local", supported_host_services: ["host.service.call", "host.session.context", "host.storage.keys", "host.storage.get", "host.storage.compare_exchange"] });
+    if (pluginID === "personal") assert.equal(definition.provided_services.filter(service => service.name === "memory.records").length, 1);
+    else { assert.equal(definition.provided_services?.length ?? 0, 0); assert.equal(definition.tools?.length ?? 0, 0); assert.equal(definition.capabilities?.length ?? 0, 0); }
+    assert(!definition.provided_services?.some(service => service.name === "memory.notebook"));
+    await call("activate");
+    return {
+      call,
+      tool: (tool_id, args, session_id = mainSession) => call("tool.execute", { tool_id, arguments: args, session_id, thread_id: session_id, cwd: scratch, call_id: `tool-${seq}`, execution_id: `execution-${seq}` }).then(result => JSON.parse(result.result.content[0].text)),
+      service: (method, params, session_id = mainSession) => call("service.invoke", { service: "memory.records", method, caller: "personal", params: { session_id, ...params }, execution_id: `service-${seq}` }),
+      async close() { await call("shutdown"); const exited = once(child, "exit"); child.stdin.end(); await exited; assert.equal(child.exitCode, 0, stderr); },
+    };
+  }
+  t.after(async () => {
+    for (const child of active) child.kill();
+    await writeFile(join(output, "protocol.jsonl"), frames.map(frame => JSON.stringify(frame)).join("\n") + "\n");
+  });
+  let runtime = await start();
+  const client = (method, input = {}) => runtime.call("capability.invoke", { capability: "plugin.client.request", input: { method, input }, execution_id: `client-${frames.length}` }).then(r => r.output.result);
+  const binding = (await client("agents.ensure_default")).agent;
+  mainSession = binding.main_session_id; mainAgent = binding.agent_id;
+  const react = (extra = {}) => client("agents.react", { agent_id: mainAgent, session_id: mainSession, message_seq: 2, emoji: "👍", expected_revision: 0, request_id: "owner-1", ...extra });
+  const first = await react(); assert.deepEqual(first.reactions, { owner: "👍", revision: 1 });
+  assert.deepEqual(await react(), first, "transport retry returns the same persisted result");
+  await assert.rejects(react({ request_id: "owner-stale", emoji: "❤️" }), /revision_conflict/);
+  await assert.rejects(react({ request_id: "owner-1", emoji: "❤️" }), /request_id/);
+  await assert.rejects(react({ session_id: "foreign" }), /session/);
+  await assert.rejects(react({ message_seq: 1 }), /assistant/);
+  await assert.rejects(react({ message_seq: 4 }), /visible/);
+  await assert.rejects(react({ emoji: "approve payment" }), /emoji/);
+  await assert.rejects(react({ emoji: "👍👍" }), /emoji/);
+  await assert.rejects(react({ actor: "agent" }), /field/);
+  await assert.rejects(runtime.call("service.invoke", { service: "personal.agents", method: "agents.react", params: { agent_id: mainAgent, session_id: mainSession, message_seq: 2, emoji: "❤️", expected_revision: 1, request_id: "forged-owner" }, execution_id: "service-owner" }), /client/);
+  const second = await react({ request_id: "owner-2", emoji: "❤️", expected_revision: 1 });
+  assert.equal(second.reactions.revision, 2);
+  const toolInput = { message_seq: 1, emoji: "✅", expected_revision: 0, request_id: "agent-1" };
+  assert.equal((await runtime.tool("react_to_message", toolInput)).reactions.agent, "✅");
+  await assert.rejects(runtime.tool("react_to_message", { ...toolInput, actor: "owner" }), /field/);
+  await assert.rejects(runtime.tool("react_to_message", { ...toolInput, message_seq: 2 }), /user/);
+  await assert.rejects(runtime.tool("react_to_message", { ...toolInput, message_seq: 3 }), /original|visible/);
+  await assert.rejects(runtime.tool("react_to_message", toolInput, "coding"), /bound Personal/);
+  contexts.foreign = { session_id: "foreign", agent_id: mainAgent, product_domain: "personal", user_space_id: "someone-else" };
+  await assert.rejects(runtime.tool("react_to_message", toolInput, "foreign"), /bound Personal/);
+  contexts.worker = { session_id: "worker", agent_id: mainAgent, parent_session_id: mainSession, product_domain: "personal", user_space_id: "local" };
+  await assert.rejects(runtime.tool("react_to_message", toolInput, "worker"), /executor|main/);
+  const beforeStep = frames.length;
+  const preStep = await runtime.call("capability.invoke", { capability: "agent.pre_step", input: { session_id: mainSession, step_index: 1, messages: [{ role: "user", content: "A natural next message" }] }, execution_id: "natural-step" });
+  // Protect the main/worker context boundary, not literal prompt wording or
+  // untested model behavior. Guidance is available even without a source locator.
+  assert.equal(preStep.output.append_messages.filter(m => m.id.startsWith("personal.reaction-guidance.")).length, 1);
+  const locatedStep = await runtime.call("capability.invoke", { capability: "agent.pre_step", input: { session_id: mainSession, step_index: 2, source_message: { session_id: mainSession, seq: 1 }, messages: [] }, execution_id: "located-step" });
+  assert.equal(locatedStep.output.append_messages.filter(m => m.id.startsWith("personal.reaction-guidance.")).length, 1);
+  const agentKey = [...storage.keys()].find(key => key.includes(".agent.") && JSON.parse(storage.get(key)).agent_id === mainAgent);
+  const workerKey = agentKey.slice(0, agentKey.indexOf(".agent.")) + ".task.guidance-worker";
+  storage.set(workerKey, JSON.stringify({ agent_id: mainAgent, task_id: "guidance-worker", state: "running", execution: { session_id: "worker" }, cancel_requested: false, requirements_revision: 1 }));
+  const workerStep = await runtime.call("capability.invoke", { capability: "agent.pre_step", input: { session_id: "worker", step_index: 1, messages: [] }, execution_id: "worker-step" });
+  assert(!workerStep.output.append_messages.some(m => m.id.startsWith("personal.reaction-guidance.") || m.id.startsWith("personal.reactions.")));
+  await assert.rejects(runtime.tool("react_to_message", toolInput, "worker"), /only the main/);
+  storage.delete(workerKey);
+  const reactionContext = preStep.output.append_messages.filter(m => m.id.startsWith("personal.reactions."));
+  assert.equal(reactionContext.length, 1); assert(reactionContext[0].content.includes("❤️")); assert(!reactionContext[0].content.includes("👍"));
+  assert(!frames.slice(beforeStep).some(f => f.frame.params?.service === "host.session.send"));
+  const history = await client("agents.history", { agent_id: mainAgent });
+  assert.equal(history.records.find(m => m.seq === 1).reactions.agent, "✅");
+  assert.equal(history.records.find(m => m.seq === 2).reactions.owner, "❤️");
+  assert.equal(history.records.find(m => m.seq === 2).reaction_eligible, true);
+  assert.equal(history.records.find(m => m.seq === 5).reaction_eligible, false);
+  assert.equal(history.records.find(m => m.seq === 6).reaction_eligible, false);
+  await runtime.close(); runtime = await start();
+  const restored = await client("agents.reactions", { agent_id: mainAgent, session_id: mainSession, message_seqs: [1, 2] });
+  assert.equal(restored.records[1].reactions.owner, "❤️");
+  const removed = await react({ request_id: "owner-3", expected_revision: 2, emoji: null });
+  assert.deepEqual(removed.reactions, { revision: 3 });
+  assert.deepEqual(await react({ request_id: "owner-3", expected_revision: 2, emoji: null }), removed);
+  const removedStep = await runtime.call("capability.invoke", { capability: "agent.pre_step", input: { session_id: mainSession, step_index: 2, messages: [] }, execution_id: "removed-step" });
+  const removedContext = removedStep.output.append_messages.find(m => m.id.startsWith("personal.reactions.")).content;
+  assert(removedContext.includes('"emoji":null')); assert(!removedContext.includes("❤️"));
+  assert.deepEqual((await react()).reactions, { revision: 3 }, "old transport retry cannot restore overwritten or removed feedback");
+  const race = await Promise.allSettled([react({ request_id: "race-a", expected_revision: 3, emoji: "👍" }), react({ request_id: "race-b", expected_revision: 3, emoji: "❤️" })]);
+  assert.equal(race.filter(result => result.status === "fulfilled").length, 1);
+  assert.match(race.find(result => result.status === "rejected").reason.message, /revision_conflict/);
+  messages.push({ seq: 7, role: "assistant", content: "Must not fabricate feedback" });
+  failReactionWrite = true;
+  await assert.rejects(react({ message_seq: 7, request_id: "failed-write", emoji: "😂" }), /unavailable/);
+  failReactionWrite = false;
+  const failedStep = await runtime.call("capability.invoke", { capability: "agent.pre_step", input: { session_id: mainSession, step_index: 3, messages: [] }, execution_id: "failed-step" });
+  assert(!JSON.stringify(failedStep).includes("😂"), "reserved pointer is not feedback until the canonical state commits");
+  for (let batch = 0; batch < 3; batch++) {
+    const seqs = Array.from({ length: 10 }, (_, offset) => 100 + batch * 10 + offset);
+    messages.push(...seqs.map(seq => ({ seq, role: "assistant", content: `Synthetic reply ${seq}` })));
+    await Promise.all(seqs.map(seq => react({ message_seq: seq, request_id: `many-${seq}` })));
+  }
+  const feedbackFeed = [...storage.entries()].find(([key]) => key.includes(".reaction-feed."));
+  assert.equal(JSON.parse(feedbackFeed[1]).messages.length, 24);
+  const previousFeed = feedbackFeed[1]; await react();
+  assert.equal(storage.get(feedbackFeed[0]), previousFeed, "an old duplicate cannot reorder the current feedback window");
+  const boundedStart = frames.length;
+  const boundedStep = await runtime.call("capability.invoke", { capability: "agent.pre_step", input: { session_id: mainSession, step_index: 4, messages: [] }, execution_id: "bounded-step" });
+  assert.equal(frames.slice(boundedStart).filter(f => f.direction === "plugin" && f.frame.params?.service === "host.storage.get" && f.frame.params?.params?.key?.includes(".reaction.")).length, 24);
+  assert(JSON.stringify(boundedStep).length < 20_000);
+  assert.equal((await client("agents.reactions", { session_id: mainSession, message_seqs: [100] })).records[0].reactions.owner, "👍", "older feedback stays durable outside the bounded model window");
+  for (const message of messages) if (message.seq >= 100) message.hidden = true;
+  const hiddenStep = await runtime.call("capability.invoke", { capability: "agent.pre_step", input: { session_id: mainSession, step_index: 5, messages: [] }, execution_id: "hidden-step" });
+  assert(hiddenStep.output.append_messages.find(m => m.id.startsWith("personal.reactions.")).content.endsWith("[]"), "unavailable targets supersede earlier feedback with an empty current snapshot");
+  await assert.rejects(client("agents.reactions", { session_id: mainSession, message_seqs: Array(101).fill(1) }), /100|bounded/);
+  await runtime.close();
+  assert(!frames.some(f => f.direction === "plugin" && f.frame.params?.service === "host.session.send"), "feedback must never create a turn or dispatch work");
+  await writeFile(join(output, "evidence.json"), JSON.stringify({ passed: true, runtime_sha256: createHash("sha256").update(await readFile(executable)).digest("hex"), scenarios: ["canonical actor ownership", "replace/remove/idempotency", "stale rejection", "restart persistence", "next-step coalesced feedback", "no reaction-triggered execution"] }, null, 2));
 });

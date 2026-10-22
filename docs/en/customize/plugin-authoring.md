@@ -202,6 +202,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.model.invoke` | Independent full logical model calls and streams |
 | `host.model.emit` | Events from a streaming adapter or middleware |
 | `host.background` | Generation-owned calls to a plugin’s own service |
+| `host.client.invalidate` | Content-free hints to refresh plugin-owned client state |
 | `host.process` | Conversation-bound shell processes, output and event delivery |
 | `host.settings.get/list` | Declared setting values |
 | `host.session.create/send/list/inspect/cancel/control` | Create and manage sessions through host lifecycle rules |
@@ -293,6 +294,12 @@ The remote Web client also has an independent 30-second RPC deadline for `api.in
 The result contains `text`, `provider`, `model`, `finish_reason`, and `truncated`. Optional `usage` contains input, output, cache-creation, and cache-read token counts plus `cache_creation_unknown`; missing usage does not mean zero cost. Empty/non-text responses and responses requesting tool calls fail instead of starting a tool loop.
 
 The host reuses configured credentials, provider preparation, capacity coordination, retries, and inference accounting. It adds no conversation history, agent-specific request hooks, or tools and creates no persistent session. Select and limit context in the plugin. The service does not accept credentials, endpoint URLs, or arbitrary provider overrides. Explain what draft/history text will reach the configured provider, bound request frequency and output, and treat cancellation as best effort at avoiding further work: a submitted request may already incur charges.
+
+## Refreshing plugin-owned client state
+
+Declare `requireClientInvalidationService()` to consume `host.client.invalidate` version 1. After persisting a change, call `invalidateClient(host, "reactions")`, or use service method `call` with `{ topic }`. This also fits calendar or other plugin-owned record updates. Topics must match `[a-z][a-z0-9.-]{0,63}`; arbitrary payloads and caller-supplied identities are rejected.
+
+The host emits `plugin/client/invalidated` with `plugin_id` (the package subject ID), `fingerprint`, `user_space_id`, `product_domain`, and `topic`. Identity comes from the active generation. Disabled, closed, or superseded runtimes cannot publish. Desktop consumers receive the notification through `api.onHostEvent`, check its package and context, and re-read through their scoped runtime API. The event is only an invalidation hint: it does not send a message, create a turn, write history, or request user attention. Keep polling or another recovery read for missed notifications; a failed hint does not undo the preceding durable write.
 
 ## Composable model extensions
 

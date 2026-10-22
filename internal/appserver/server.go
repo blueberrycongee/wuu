@@ -445,7 +445,8 @@ func New(rt *runtime.Session, out io.Writer) *Server {
 			s.controlPluginSession,
 		)
 		unbindProcesses := rt.PluginSessionRouter.BindProcessSessions(s.resolvePluginProcessSession)
-		s.pluginTurnUnbind = func() { unbindTurns(); unbindProcesses() }
+		unbindClient := rt.PluginSessionRouter.BindClientInvalidation(s.invalidatePluginClient)
+		s.pluginTurnUnbind = func() { unbindTurns(); unbindProcesses(); unbindClient() }
 		s.startBackground(s.replayPendingPluginTurnLifecycles)
 	}
 	s.startInferenceJournalMaintenance()

@@ -55,6 +55,51 @@ History exposes attachment metadata, not local paths or inline file bytes. `host
 
 twin appears directly below Automations in Wuu's existing navigation. Opening it continues the main conversation. Its right panel lists ongoing work, recent activity and recent outputs continuously, without category tabs. Opening details changes that panel, never the conversation. Routine controls use the existing Automation binding; changing a schedule updates that same routine and binding. Personal notification and quiet-hour preferences live in Wuu's shared settings.
 
+## Message reactions
+
+In the Personal main conversation, the owner can react to a saved assistant
+message, and the main assistant can react to a saved original user message.
+Each actor has one current Unicode emoji per message; a new emoji replaces it,
+and removal clears it. Hidden, truncated, read-only, background, foreign-space,
+and unpersisted stream messages are not reaction targets. Coding is unchanged.
+
+Reactions are plugin-owned metadata keyed by canonical session ID and message
+sequence, not new conversation messages. They survive reconnect and restart and
+are returned with history. Clients use `agents.react` with `session_id`,
+`message_seq`, `emoji` (or null), `expected_revision`, and a bounded `request_id`.
+This mutation is accepted only through the authenticated client capability, not
+the plugin service. The main agent uses `react_to_message`; the host-bound caller
+session fixes the actor and target conversation. Background executors cannot use
+it. Stale revisions fail, and retries of a retained request receipt return current
+state without restoring old feedback. Each message retains 32 request receipts;
+older stale requests still fail revision checking.
+
+`agents.reactions` refreshes at most 100 message sequences per request. History
+also exposes `reaction_eligible` and `reactions: { owner?, agent?, revision }`.
+A successful write emits a content-free `reactions` invalidation through the
+host's generation-scoped client invalidation service. Clients reread durable
+state and ignore older revisions; reconnect and periodic refresh recover lost
+notifications. Invalidation failure does not roll back the saved reaction.
+
+Owner feedback does not start or resume a turn, dispatch a task, answer an
+approval, send a push, or require a text reply. On the next natural main-agent
+step, the plugin supplies a bounded snapshot of up to 24 recently changed target
+messages, each with its latest reaction or removal and a short source excerpt.
+Repeated changes are coalesced into current state. A durable bounded locator is
+reserved before the authoritative message mutation, so a restart cannot lose a
+successful mutation's locator; an unfinished locator never fabricates feedback.
+The snapshot supersedes earlier reaction context. Reactions are expression, not
+consent, new instructions, or an automatically saved preference. An idle agent
+does not immediately run merely to observe an emoji.
+
+Main-agent guidance permits an emoji-only acknowledgment, thanks, or response to
+shared progress when no substantive answer is needed; it does not require a
+reaction to every message. Questions, requests for help, explanations, and
+meaningful action/status updates still need substantive responses. An emoji-only
+acknowledgment should not be followed by a redundant “Got it.” Reactions must not
+imply that unperformed or unverified work succeeded. These are model instructions,
+not a keyword classifier or a guarantee of model behavior.
+
 ## Business contracts and external services
 
 The main assistant and hidden task executions share the Personal Memory service with attribution and versioned corrections. Memory can be queried, corrected or forgotten in conversation; there is no separate desktop memory-management page. Forgetting redacts the memory record and prevents its future synthesis use; it does not claim to erase source conversations, user files or backups. Coding memory remains separate.

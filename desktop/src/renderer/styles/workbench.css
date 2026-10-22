@@ -733,3 +733,18 @@
 .plugin-composer-reply-context > button { flex: none; }
 @media (hover: none), (pointer: coarse) { .plugin-message-reply { opacity: 1; pointer-events: auto; } }
 @media (prefers-reduced-motion: reduce) { .plugin-message-reply { transition: none; } }
+
+/* Explicit reaction props opt messages into this compact messaging treatment. */
+.bubble-message-body[data-has-reaction] { margin-top: 18px; }
+.conversation-reaction-badge { position:absolute;z-index:2;top:-18px;left:-12px;display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;padding:0 3px;box-sizing:border-box;border:1px solid var(--hairline);border-radius:999px;background:var(--paper);font-size:20px;line-height:1;color:var(--ink); }
+button.conversation-reaction-badge { cursor:pointer; }
+.conversation-reaction-trigger { position:absolute;left:calc(100% + 9px);top:calc(50% - 32px);display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--ink-muted);cursor:pointer;opacity:0;pointer-events:none; }
+.bubble-message-body[data-reactable] > .plugin-message-reply { top:calc(50% + 4px); }
+.plugin-conversation-message:hover .conversation-reaction-trigger,.plugin-conversation-message:focus-within .conversation-reaction-trigger { opacity:1;pointer-events:auto; }
+.conversation-reaction-trigger:hover { background:var(--surface-2);color:var(--ink); }
+.conversation-reaction-picker { position:fixed;z-index:1000;display:flex;gap:2px;max-width:calc(100vw - 16px);padding:6px;box-sizing:border-box;border:1px solid var(--hairline);border-radius:999px;background:var(--paper);box-shadow:0 4px 22px rgb(0 0 0 / .14);overflow-x:auto; }
+.conversation-reaction-picker button { display:flex;align-items:center;justify-content:center;flex:0 0 38px;width:38px;height:38px;padding:0;border:0;border-radius:50%;background:transparent;font-size:25px;line-height:1;cursor:pointer; }
+.conversation-reaction-picker button:hover,.conversation-reaction-picker button[aria-pressed="true"] { background:var(--surface-2); }
+.conversation-reaction-picker button:focus-visible,.conversation-reaction-trigger:focus-visible,.conversation-reaction-badge:focus-visible { outline:2px solid var(--focus-ring,var(--ink));outline-offset:2px; }
+.conversation-reaction-error { font-size:var(--font-size-sm, 13px);color:var(--ink-muted);margin-bottom:6px; }
+@media(hover:none),(pointer:coarse) { .conversation-reaction-trigger { opacity:1;pointer-events:auto; } }

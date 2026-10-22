@@ -259,6 +259,8 @@ export interface PluginUIConversationMessageProps {
   /** Read-only work summary; its explicit status does not imply execution timing. */
   process?: { label: string; content?: string; details?: React.ReactNode };
   messageActions?: "copy-only" | "none";
+  /** Explicit opt-in: reaction transport and policy belong to the contribution. */
+  reaction?: { emoji?: string; label: string; pending?: boolean; error?: string; onChange?(emoji: string | null): void };
   replyPreview?: React.ReactNode;
   onReply?(): void;
   replyLabel?: string;

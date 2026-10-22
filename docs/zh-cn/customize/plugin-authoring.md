@@ -185,6 +185,7 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 | `host.model.invoke` | 独立的完整逻辑模型调用与流式响应 |
 | `host.model.emit` | 流式适配器或 middleware 发出的事件 |
 | `host.background` | 调用插件自己服务的 generation 所属后台工作 |
+| `host.client.invalidate` | 提示客户端重新读取插件状态，不携带业务内容 |
 | `host.process` | 绑定会话的 shell 进程、输出读取和事件投递 |
 | `host.settings.get/list` | 声明的设置值 |
 | `host.session.create/send/list/inspect/cancel/control` | 按宿主生命周期规则创建和管理会话 |
@@ -272,6 +273,12 @@ async function requestText(host: RuntimeHost, content: string) {
 结果包含 `text`、`provider`、`model`、`finish_reason` 和 `truncated`。可选的 `usage` 包含输入、输出、缓存创建、缓存读取 token 数及 `cache_creation_unknown`；缺少用量不代表零费用。空或非文本响应，以及请求工具调用的响应都会报错，不会启动工具循环。
 
 宿主复用已配置的凭据、提供商请求准备、容量协调、重试和推理用量记录。不自动加入对话历史、代理专用请求 hook 或工具，也不创建持久会话。上下文由插件自行选择和限制。此服务不接受凭据、端点 URL 或任意提供商覆盖。应说明哪些草稿或历史文本会发送给已配置的提供商，限制请求频率和输出；取消只能尽量避免后续工作，已提交的请求仍可能产生费用。
+
+## 刷新插件拥有的客户端状态
+
+声明 `requireClientInvalidationService()` 以使用 `host.client.invalidate` 版本 1。持久化变更后，调用 `invalidateClient(host, "reactions")`，或使用服务方法 `call`，参数为 `{ topic }`。此机制也适用于日历和其他插件记录的更新。topic 必须匹配 `[a-z][a-z0-9.-]{0,63}`；任意业务内容及调用方提供的身份字段都会被拒绝。
+
+宿主发出 `plugin/client/invalidated`，包含 `plugin_id`（包的 subject ID）、`fingerprint`、`user_space_id`、`product_domain` 和 `topic`。身份来自活动 generation；已禁用、已关闭或已被替换的运行时不能发布。桌面消费者通过 `api.onHostEvent` 接收通知，核对包和上下文后，通过带作用域的运行时 API 重新读取状态。该事件仅提示状态失效，不发送消息、不创建轮次、不写入历史，也不请求用户注意。保留轮询或其他恢复读取路径，以应对通知丢失；提示失败不应撤销此前的持久化写入。
 
 ## 可组合的模型扩展
 

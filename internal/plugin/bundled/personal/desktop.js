@@ -10,6 +10,7 @@ export async function activate(api) {
       "ready": "Ready",
       "thinking": "Thinking",
       "responding": "Replying",
+      "reaction": "React", "agentReaction": "twin reacted",
       "historyFrom": "Sent from (local date)",
       "historyUntil": "Sent through (local date)",
       "historyDateHint": "Searches saved message times. The through date includes that whole local day. Older messages with unknown times are excluded when dates are set.",
@@ -107,6 +108,7 @@ export async function activate(api) {
       "ready": "已就绪",
       "thinking": "正在思考",
       "responding": "正在回复",
+      "reaction": "表态", "agentReaction": "twin 的表态",
       "historyFrom": "发送日期从（本地日期）",
       "historyUntil": "发送日期至（本地日期）",
       "historyDateHint": "按已保存的消息时间搜索，结束日期包含本地当天。设置日期后，不计入时间未知的旧消息。",
@@ -584,6 +586,12 @@ export async function activate(api) {
     const [nameOpen, setNameOpen] = React.useState(false);
     const [replySelection, setReplySelection] = React.useState(null);
     const [replyHistory, setReplyHistory] = React.useState(null);
+    const reactionStates = React.useRef(new Map()), reactionTargets = React.useRef(new Set());
+    const [, redrawReactions] = React.useState(0);
+    // Only rendered history participates in recovery polling. Closing an older
+    // reply thread releases its targets rather than growing a lifetime watchlist.
+    reactionTargets.current = new Set();
+    React.useEffect(() => { for (const [key, value] of reactionStates.current) if (!reactionTargets.current.has(key) && !value.pending) reactionStates.current.delete(key); });
     const replyLoadVersion = React.useRef(0), replyPaging = React.useRef(false);
     const replyPanelRef = React.useRef(null), replyTrigger = React.useRef(null);
     const [panelOpen, setPanelOpen] = React.useState(false), [showAll, setShowAll] = React.useState(false), [showAllOutputs, setShowAllOutputs] = React.useState(false);
@@ -637,6 +645,50 @@ export async function activate(api) {
     const selectedArtifact = artifactOutputs.find(output => output.seq === selection?.seq && output.attachment.sha256 === selection?.sha256);
     const pendingCalendarOperations = calendar.operations.filter(item => !["completed", "cancelled"].includes(item.status));
     const report = cause => { if (mounted.current && !api.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause)); };
+    const reactionKey = (identity, seq) => `${identity.main_session_id}:${seq}`;
+    const acceptReaction = (identity, seq, reactions) => {
+      const key = reactionKey(identity, seq), previous = reactionStates.current.get(key);
+      if (!reactions || (previous && previous.value.revision > reactions.revision)) return;
+      reactionStates.current.set(key, { ...previous, value: reactions });
+    };
+    const refreshReactions = async identity => {
+      if (!identity || !mounted.current) return;
+      const seqs = [...reactionTargets.current].filter(key => key.startsWith(`${identity.main_session_id}:`)).map(key => Number(key.slice(identity.main_session_id.length + 1)));
+      for (let offset = 0; offset < seqs.length; offset += 100) {
+        const result = await call("agents.reactions", { agent_id: identity.agent_id, session_id: identity.main_session_id, message_seqs: seqs.slice(offset, offset + 100) });
+        if (!mounted.current || currentAgent.current?.main_session_id !== identity.main_session_id) return;
+        if (result.session_id !== identity.main_session_id) continue;
+        for (const record of result.records || []) acceptReaction(identity, record.seq, record.reactions);
+      }
+      if (mounted.current) redrawReactions(value => value + 1);
+    };
+    const changeReaction = async (record, emoji) => {
+      const identity = currentAgent.current, key = reactionKey(identity, record.seq);
+      const before = reactionStates.current.get(key) || { value: record.reactions || { revision: 0 } };
+      if (before.pending) return;
+      const request = { agent_id: identity.agent_id, session_id: identity.main_session_id, message_seq: record.seq, emoji, expected_revision: before.value.revision, request_id: crypto.randomUUID() };
+      reactionStates.current.set(key, { value: before.value, pending: true, optimistic: emoji }); redrawReactions(value => value + 1);
+      try {
+        const result = await call("agents.react", request);
+        if (result.session_id !== identity.main_session_id || result.message_seq !== record.seq) throw new Error("Reaction target mismatch");
+        acceptReaction(identity, record.seq, result.reactions);
+        const current = reactionStates.current.get(key);
+        reactionStates.current.set(key, { value: current.value });
+      } catch (cause) {
+        const current = reactionStates.current.get(key);
+        reactionStates.current.set(key, { value: current.value, error: cause instanceof Error ? cause.message : String(cause) });
+        // A lost response may already have committed. Reconcile durable metadata,
+        // without replaying a turn or guessing whether the write succeeded.
+        await refreshReactions(identity).catch(() => {});
+      } finally { if (mounted.current) redrawReactions(value => value + 1); }
+    };
+    const reactionFor = record => {
+      if (!agent || record.streaming || !Number.isSafeInteger(record.seq) || record.seq < 1 || !["user", "assistant"].includes(record.role)) return undefined;
+      const key = reactionKey(agent, record.seq); reactionTargets.current.add(key);
+      acceptReaction(agent, record.seq, record.reactions || { revision: 0 });
+      const state = reactionStates.current.get(key), owner = record.role === "assistant";
+      return { emoji: owner && state.pending ? state.optimistic || undefined : state.value[owner ? "owner" : "agent"], label: t(owner ? "reaction" : "agentReaction"), pending: state.pending, error: state.error, onChange: owner && record.reaction_eligible === true ? emoji => { void changeReaction(record, emoji); } : undefined };
+    };
     const loadEarlierHistory = async () => {
       const identity = agent, boundary = historyInfo;
       if (!identity || !boundary?.has_earlier || historyFillRef.current) return;
@@ -726,12 +778,17 @@ export async function activate(api) {
         if (!mounted.current || !currentAgent.current) return;
         if (checking) { recheck = true; return; }
         checking = true;
-        try { await Promise.all([loadTasks(), loadRoutines(), loadConversation(currentAgent.current), loadCalendar(currentAgent.current)]); } catch (cause) { report(cause); }
+        try { await Promise.all([loadTasks(), loadRoutines(), loadConversation(currentAgent.current), loadCalendar(currentAgent.current), refreshReactions(currentAgent.current)]); } catch (cause) { report(cause); }
         finally { checking = false; if (recheck) { recheck = false; void check(); } }
       };
       const timer = setInterval(check, 5000);
       const subscription = api.onHostEvent(event => {
         if (event.type === "workbench.view.activated" && event.pluginId === api.pluginId && event.viewTypeId === "personal.home") { void check(); return; }
+        const invalidation = event.message?.params;
+        if (event.kind === "notification" && event.message?.method === "plugin/client/invalidated") {
+          if (invalidation?.plugin_id === api.pluginId && invalidation?.fingerprint === api.generation && invalidation?.user_space_id === route.userSpaceId && invalidation?.product_domain === route.productDomain && invalidation?.topic === "reactions") void refreshReactions(currentAgent.current).catch(report);
+          return;
+        }
         const params = event.message?.params, session = params?.thread_id || params?.session_id || params?.message?.thread_id || params?.queued?.thread_id;
         if (event.kind === "notification" && session && session !== currentAgent.current?.main_session_id) return;
         if (event.kind === "notification" && /delta$/.test(event.message?.method || "")) return;
@@ -922,7 +979,7 @@ export async function activate(api) {
         h("section", { className: "mosaic-section", "data-panel-section": "recent" }, h("h2", null, t("activity")), activity.length ? (showAll ? activity : activity.slice(0, 5)).map(item => item.routine ? routineRow(item.routine) : taskRows([item.task])) : h("p", { className: "mosaic-eyebrow" }, t("quiet")), activity.length > 5 && h(Button, { variant: "ghost", "data-action": "show-more-activity", onClick: () => setShowAll(value => !value) }, t(showAll ? "showLess" : "showMore"))),
         h("section", { className: "mosaic-section", "data-panel-section": "outputs" }, h("h2", null, t("outputs")), artifactOutputs.slice(0, showAllOutputs ? undefined : 3).map(output => h("button", { key: `${output.seq}:${output.attachment.sha256}`, className: "mosaic-task", "data-output-sha256": output.attachment.sha256, onClick: () => { detailTrigger.current = `[data-output-sha256="${output.attachment.sha256}"]`; setSelection({ kind: "artifact", seq: output.seq, sha256: output.attachment.sha256 }); } }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("output")), h("span", { className: "mosaic-task-copy" }, h("span", { className: "mosaic-task-title" }, output.attachment.name), h("span", { className: "mosaic-task-meta" }, date(output.at))))), outputs.length ? outputs.slice(0, showAllOutputs ? undefined : Math.max(0, 3 - artifactOutputs.length)).map(item => h("button", { key: item.task_id, className: "mosaic-task", "data-output-task-id": item.task_id, onClick: event => openDetail(event, item, "output") }, h("span", { className: "mosaic-task-mark", "aria-hidden": true }, icon("output")), h("span", { className: "mosaic-task-copy" }, h("span", { className: "mosaic-task-title" }, item.title), h("span", { className: "mosaic-task-meta" }, date(item.updated_at))))) : !artifactOutputs.length && h("p", { className: "mosaic-eyebrow" }, t("noOutputs")), artifactOutputs.length + outputs.length > 3 && h(Button, { variant: "ghost", "data-action": "show-more-outputs", onClick: () => setShowAllOutputs(value => !value) }, t(showAllOutputs ? "showLess" : "showMore"))),
         null)));
-    const renderReplyMessage = record => h(ConversationMessage, { key: `reply:${record.seq ?? record.id}`, id: `reply:${conversationID}:${record.seq ?? record.id}`, streaming: record.streaming, role: record.role, content: record.display_content || record.content || "", timestamp: record.at, linkPolicy: "external-only", attachments: record.attachments?.length ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t, autoLoad: true }))) : undefined });
+    const renderReplyMessage = record => h(ConversationMessage, { reaction: reactionFor(record), key: `reply:${record.seq ?? record.id}`, id: `reply:${conversationID}:${record.seq ?? record.id}`, streaming: record.streaming, role: record.role, content: record.display_content || record.content || "", timestamp: record.at, linkPolicy: "external-only", attachments: record.attachments?.length ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t, autoLoad: true }))) : undefined });
     const replyDraft = replySelection ? draftFor(replySelection.key) : undefined;
     const rootSeq = replySelection?.rootSeq;
     const replyPersisted = replySelection?.taskContext ? records : replyHistory?.records || [];
@@ -952,9 +1009,9 @@ export async function activate(api) {
           attachments: files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(conversationID, { prompt: value }), onAddAttachments: selectFiles,
           onRemoveAttachment: id => updateDraft(conversationID, { files: files.filter((_, index) => String(index) !== id) }), onSend: send, onStop: stopReply }))
       }, records.filter(record => !liveMessages.some(message => message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id)) && ["user", "assistant"].includes(record.role) && (record.display_content || record.content || record.attachments?.length)).map(record => h(ConversationMessage, {
-          replyPreview: record.role === "user" && record.relation?.reply_to ? h(ReplyReference, { reference: record.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : undefined, onReply: record.role === "assistant" && Number.isSafeInteger(record.seq) && record.seq > 0 ? () => replyMessage(record) : undefined, replyLabel: t("replyMessage"), key: record.seq, id: `${conversationID}:${record.seq}`, timestamp: record.at, role: record.role, latest: record === records.findLast(item => item.role === "assistant"), content: record.display_content || record.content || "", linkPolicy: "external-only",
+          reaction: reactionFor(record), replyPreview: record.role === "user" && record.relation?.reply_to ? h(ReplyReference, { reference: record.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : undefined, onReply: record.role === "assistant" && Number.isSafeInteger(record.seq) && record.seq > 0 ? () => replyMessage(record) : undefined, replyLabel: t("replyMessage"), key: record.seq, id: `${conversationID}:${record.seq}`, timestamp: record.at, role: record.role, latest: record === records.findLast(item => item.role === "assistant"), content: record.display_content || record.content || "", linkPolicy: "external-only",
           attachments: record.attachments?.length > 0 ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.kind}:${attachment.index}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t }))) : null
-        })), liveMessages.map(message => h(ConversationMessage, { onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : undefined, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })), !loading && !records.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
+        })), liveMessages.map(message => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : undefined, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })), !loading && !records.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
         pendingCalendarOperations.length > 0 && h("section", { className: "mosaic-calendar-proposals", "data-calendar-proposals": true },
           pendingCalendarOperations.map(item => h(Button, { key: item.operation_id, variant: "ghost", "data-calendar-operation": item.operation_id, disabled: calendarBusy, onClick: () => openCalendar(item.operation_id) }, `${item.fields?.summary || t("calendarReview")} · ${t(item.status === "proposed" ? "calendarProposed" : item.status === "uncertain" ? "calendarUncertain" : item.status)}`)),
           calendarError && h("p", { role: "alert" }, calendarError)))), h("div", { className: "mosaic-panel-layer", "data-panel-phase": panelPhase }, sidebar), replyPanel, nameOpen && h(RenameDialog, { agent, t, onSave: saveName, onClose: closeRename })));

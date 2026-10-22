@@ -109,6 +109,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		}
 		timeout := time.Duration(item.Runtime.Timeout) * time.Second
 		handler := newPluginHostServices(item, projectRoot, wuuHome, turnRouter)
+		handler.ownerHost = host
 		handler.dataRoot = dataRoot
 		handler.binding = binding
 		handler.sessionDir = statepath.SessionsDir(dataRoot)

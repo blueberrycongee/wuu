@@ -1,3 +1,4 @@
+import { ConversationReaction } from "./ConversationReaction";
 import { ConversationAttachmentPreviewContext } from "../ConversationAttachmentPreview";
 import * as React from "react";
 import { Component, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -165,7 +166,7 @@ function PluginConversationQuestions({ sessionId, scope, onReply }: { sessionId:
   </div>;
 }
 
-export function PluginConversationMessage({ id: suppliedId, role, content, timestamp, latest = false, streaming = false, turnId, turnStatus = streaming ? "in_progress" : "completed", process, messageActions = "copy-only", onReply, replyLabel, replyPreview, attachments, className, linkPolicy }: PluginUIConversationMessageProps): JSX.Element {
+export function PluginConversationMessage({ id: suppliedId, role, content, timestamp, latest = false, streaming = false, turnId, turnStatus = streaming ? "in_progress" : "completed", process, messageActions = "copy-only", onReply, replyLabel, replyPreview, reaction, attachments, className, linkPolicy }: PluginUIConversationMessageProps): JSX.Element {
   const bubble = useContext(ConversationBubbleContext);
   const { formatDate } = useI18n();
   const validTime = timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : undefined;
@@ -192,7 +193,7 @@ export function PluginConversationMessage({ id: suppliedId, role, content, times
       data-turn-id={role === "assistant" ? messageTurnId : undefined} data-bubble={bubble.enabled || undefined}>
       {bubble.enabled && validTime && <time className="bubble-message-time" dateTime={validTime} aria-hidden={!bubble.revealed} title={formatDate(validTime, { dateStyle: "medium", timeStyle: "short" })}>{formatDate(validTime, { hour: "2-digit", minute: "2-digit" })}</time>}
       {replyPreview}
-      {bubble.enabled ? <div className="bubble-message-body">{attachmentContent}{(content.trim() || process) && <div className="bubble-message-content">{messageContent}</div>}{onReply && <button type="button" className="plugin-message-reply" data-action="reply-message" aria-label={replyLabel} title={replyLabel} onClick={event => { event.currentTarget.focus({ preventScroll: true }); onReply(); }}><CornerUpLeft aria-hidden="true" /></button>}</div> : <>{messageContent}{onReply && <button type="button" className="plugin-message-reply" data-action="reply-message" aria-label={replyLabel} title={replyLabel} onClick={event => { event.currentTarget.focus({ preventScroll: true }); onReply(); }}><CornerUpLeft aria-hidden="true" /></button>}</>}
+      {bubble.enabled ? <div className="bubble-message-body" data-has-reaction={!!reaction?.emoji || undefined} data-reactable={!!reaction?.onChange || undefined}>{reaction && <ConversationReaction reaction={reaction} />}{attachmentContent}{(content.trim() || process) && <div className="bubble-message-content">{messageContent}</div>}{onReply && <button type="button" className="plugin-message-reply" data-action="reply-message" aria-label={replyLabel} title={replyLabel} onClick={event => { event.currentTarget.focus({ preventScroll: true }); onReply(); }}><CornerUpLeft aria-hidden="true" /></button>}</div> : <>{messageContent}{onReply && <button type="button" className="plugin-message-reply" data-action="reply-message" aria-label={replyLabel} title={replyLabel} onClick={event => { event.currentTarget.focus({ preventScroll: true }); onReply(); }}><CornerUpLeft aria-hidden="true" /></button>}</>}
     </div>
   </SideConversationAvailableContext.Provider></ArtifactThreadContext.Provider>;
 }

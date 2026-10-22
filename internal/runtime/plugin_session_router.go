@@ -24,19 +24,21 @@ type PluginWorkspaceDiscardHandler func(context.Context, string, pluginhost.Work
 // PluginSessionRouter lets plugin processes outlive individual app-server
 // bindings without coupling runtime construction to an app-server package.
 type PluginSessionRouter struct {
-	mu               sync.RWMutex
-	create           PluginSessionCreateHandler
-	send             PluginSessionSendHandler
-	list             PluginSessionListHandler
-	cancel           PluginSessionCancelHandler
-	inspect          PluginSessionInspectHandler
-	control          PluginSessionControlHandler
-	workspaceStatus  PluginWorkspaceStatusHandler
-	workspaceApply   PluginWorkspaceApplyHandler
-	workspaceDiscard PluginWorkspaceDiscardHandler
-	binding          uint64
-	processBinding   uint64
-	processSession   func(context.Context, string, bool) (string, bool, error)
+	clientBinding      uint64
+	clientInvalidation func(context.Context, *pluginhost.Host, pluginhost.ClientInvalidation) error
+	mu                 sync.RWMutex
+	create             PluginSessionCreateHandler
+	send               PluginSessionSendHandler
+	list               PluginSessionListHandler
+	cancel             PluginSessionCancelHandler
+	inspect            PluginSessionInspectHandler
+	control            PluginSessionControlHandler
+	workspaceStatus    PluginWorkspaceStatusHandler
+	workspaceApply     PluginWorkspaceApplyHandler
+	workspaceDiscard   PluginWorkspaceDiscardHandler
+	binding            uint64
+	processBinding     uint64
+	processSession     func(context.Context, string, bool) (string, bool, error)
 }
 
 func NewPluginSessionRouter() *PluginSessionRouter { return &PluginSessionRouter{} }

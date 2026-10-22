@@ -985,3 +985,42 @@ it("presents the known replacement-stop progress consistently while preserving o
   expect(ui.container.querySelector('[data-task-detail] .turn-process-entry .agent-text')?.textContent).toBe(visibleProgress);
   expect(ui.container.textContent).not.toContain(internalProgress);
 });
+
+it("persists reactions without sending text and shares updates/removal with the reply view", async () => {
+  let revision = 0;
+  const ui = await mount(async (method, input) => method === "agents.react" ? { session_id: "s-private", message_seq: input.message_seq, reactions: { owner: input.emoji ?? undefined, revision: ++revision } } : {}, main, [{ seq: 1, role: "user", content: "Done", reactions: { agent: "✅", revision: 1 } }, { seq: 2, role: "assistant", content: "Got it", reaction_eligible: true }]);
+  expect(ui.container.querySelector('[data-role="user"] [data-reaction-badge]')?.textContent).toBe("✅");
+  await ui.click('[data-action="react-message"]'); await ui.click('[data-emoji="❤️"]', document);
+  expect(ui.container.querySelector('[data-role="assistant"] [data-reaction-badge]')?.textContent).toBe("❤️");
+  await ui.click('[data-action="reply-message"]');
+  expect(ui.container.querySelector('.mosaic-replies [data-reaction-badge]')?.textContent).toBe("❤️");
+  await ui.click('.mosaic-replies [data-action="react-message"]'); await ui.click('[data-emoji="❤️"]', document);
+  expect(ui.container.querySelector('[data-role="assistant"] [data-reaction-badge]')).toBeNull();
+  expect(ui.invoke.mock.calls.filter(([request]) => request.method === "agents.react").map(([request]) => request.input)).toEqual([
+    expect.objectContaining({ agent_id: "a-main", session_id: "s-private", message_seq: 2, emoji: "❤️", expected_revision: 0, request_id: expect.any(String) }),
+    expect.objectContaining({ message_seq: 2, emoji: null, expected_revision: 1 })]);
+  expect(ui.invoke.mock.calls.some(([request]) => ["agents.send", "tasks.start", "tasks.revise"].includes(request.method))).toBe(false);
+});
+it("rolls back failed reactions and keeps newer revisions when old history refreshes arrive", async () => {
+  let fail = false;
+  const ui = await mount(async (method, input) => { if (method === "agents.react") { if (fail) throw new Error("Reaction offline"); return { session_id: "s-private", message_seq: 1, reactions: { owner: input.emoji, revision: 2 } }; } return {}; }, main, [{ seq: 1, role: "assistant", content: "Hello", reaction_eligible: true, reactions: { owner: "👍", revision: 1 } }]);
+  await ui.click('[data-action="react-message"]'); await ui.click('[data-emoji="❤️"]', document);
+  await act(async () => ui.publish());
+  expect(ui.container.querySelector('[data-reaction-badge]')?.textContent).toBe("❤️");
+  fail = true; await ui.click('[data-action="react-message"]'); await ui.click('[data-emoji="✅"]', document);
+  expect(ui.container.querySelector('[data-reaction-badge]')?.textContent).toBe("❤️");
+  expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("Reaction offline");
+});
+it("refreshes older loaded reactions from scoped invalidations and rejects other plugin generations", async () => {
+  let state = { agent: "✅", revision: 1 };
+  const ui = await mount(async (method, input) => method === "agents.reactions" ? {session_id: "s-private", records: input.message_seqs.map((seq: number) => ({ seq, reactions: state }))} : {}, main, [{seq: 1, role: "user", content: "Done", reactions: state}]);
+  const event = (fingerprint: string) => ({kind:"notification",message:{method:"plugin/client/invalidated",params:{plugin_id:"personal",fingerprint,user_space_id:"local",product_domain:"personal",topic:"reactions"}}});
+  state = {agent:"❤️",revision:2}; await act(async () => ui.publish(event("wrong")));
+  expect(ui.container.querySelector('[data-reaction-badge]')?.textContent).toBe("✅");
+  await act(async () => ui.publish(event("one")));
+  expect(ui.container.querySelector('[data-reaction-badge]')?.textContent).toBe("❤️");
+});
+it("never offers mutation controls for ineligible or unverified persisted records", async () => {
+  const ui = await mount(undefined, main, [{seq:1,role:"assistant",content:"Truncated",reaction_eligible:false},{seq:2,role:"assistant",content:"Unverified"}]);
+  expect(ui.container.querySelector('[data-action="react-message"]')).toBeNull();
+});

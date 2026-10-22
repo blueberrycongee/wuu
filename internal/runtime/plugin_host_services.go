@@ -23,6 +23,7 @@ import (
 // never accepts a caller-supplied plugin ID or absolute filesystem path:
 // ownership and roots are captured from the validated inventory at activation.
 type pluginHostServices struct {
+	ownerHost   *pluginhost.Host
 	dataRoot    string
 	sessionDir  string
 	binding     userspace.Binding
@@ -505,6 +506,7 @@ func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRe
 		})
 	}
 	registrations = append(registrations,
+		pluginhost.ServiceRegistration{Descriptor: pluginhost.KernelClientInvalidationDescriptor(), Invoker: &clientInvalidationInvoker{parent: k}, Kernel: true},
 		pluginhost.ServiceRegistration{
 			Descriptor: pluginhost.KernelModelInvokeDescriptor(),
 			Invoker:    &modelInvokeInvoker{parent: k, store: newModelInvocationStore()}, Kernel: true,

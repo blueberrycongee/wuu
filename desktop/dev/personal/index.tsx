@@ -31,7 +31,7 @@ const memories = [
   {id:"m2",revision:1,status:"active",content:"约朋友吃饭时，更喜欢安静、方便聊天的地方。",contributor_agent_id:"mosaic",updated_by_agent_id:"mosaic",effective_at:now,evidence:"explicit",source_at:now,sources:[{kind:"message",ref:"synthetic:2",occurred_at:now}]},
   {id:"m3",revision:1,status:"active",content:"周末可能更愿意把时间留给户外活动。",contributor_agent_id:"mosaic",updated_by_agent_id:"mosaic",effective_at:now,evidence:"inferred",source_at:now,sources:[{kind:"message",ref:"synthetic:3",occurred_at:now}]},
 ];
-const histories:Record<string,Array<{seq:number;role:string;content:string;at?:string;relation?:{reply_to?:{session_id:string;seq:number}};attachments?:Array<Record<string,unknown>>}>> = {
+const histories:Record<string,Array<{seq:number;role:string;content:string;at?:string;reactions?:{owner?:string;agent?:string;revision:number};relation?:{reply_to?:{session_id:string;seq:number}};attachments?:Array<Record<string,unknown>>}>> = {
   mosaic:[{seq:1,role:"user",content:"最近事情有点多，帮我看看还有什么需要我决定？"},{seq:2,role:"assistant",at:now,content:"现在有一件事需要你决定：**周五晚餐的地点**。我已经把选择缩小到三家安静、方便聊天的餐厅，等你挑一个再预订。\n\n京都行程还在整理，今天不用操心。这个月的阅读清单也已经准备好了。"},{seq:3,role:"user",content:"好，京都那边记得每天留一点休息时间。"},{seq:4,role:"assistant",at:now,content:"记住了。每天都会留一段空白，下午可以歇一会儿。我会按这个偏好继续安排。\n\n我们先看周五晚餐吧：你更想在公司附近，还是离家近一些？"}],
 };
 for (const history of Object.values(histories)) for (const record of history) record.at ??= now;
@@ -57,6 +57,10 @@ let calendarOperation:any = {
   original_event:{id:"synthetic-event",etag:"synthetic-etag",fields:{summary:"合成原日程",location:"演示地点",start:{date_time:"2026-10-23T11:00:00+08:00",timezone:"Asia/Shanghai"},end:{date_time:"2026-10-23T12:00:00+08:00",timezone:"Asia/Shanghai"},attendees:[{email:"friend@example.test",optional:false}]}},
   availability:{checked_at:now,calendar_id:"synthetic-calendar",scope:"selected_calendar_only",conflicting_event_ids:[]},notification_notice:"合成演示：确认后会向列出的参与者请求发送更新邀请。",reconciliation_required:false,cancel_requested:false,
 };
+const reactionStore: Record<string, {owner?:string;agent?:string;revision:number}> = JSON.parse(localStorage.getItem("wuu.fixture.reactions") || "{}");
+const reactionReceipts = new Map<string, unknown>();
+const reactionsFor = (seq: number) => reactionStore[String(seq)] || { revision: 0 };
+const persistReactions = () => localStorage.setItem("wuu.fixture.reactions", JSON.stringify(reactionStore));
 let offline=false, empty=false;
 let fixtureActivity: "idle" | "thinking" | "responding" = "idle";
 let settings={revision:1,quiet_hours:{enabled:true,start:"22:00",end:"08:00",timezone:"Asia/Shanghai"},notifications:true,notification_batch_seconds:0};
@@ -76,7 +80,7 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
     }
     case "agents.open":return {agent:agents.find(a=>a.agent_id===data.agent_id),session:{state:fixtureActivity === "idle" ? "completed" : "running"}};
     case "agents.history": {
-      const all = histories[data.agent_id] || [];
+      const all = (histories[data.agent_id] || []).map(record => ({ ...record, reactions: reactionsFor(record.seq), reaction_eligible:true }));
       if (data.reply_seq !== undefined) {
         const roots = new Map<number, number>();
         for (const row of all) roots.set(row.seq, roots.get(row.relation?.reply_to?.seq ?? 0) ?? row.seq);
@@ -86,6 +90,17 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
         return { records, reply_root_seq: root, first_seq: records[0]?.seq, has_earlier: matching.length > records.length };
       }
       return {records:all.filter(record=>(!data.start_seq||record.seq>=data.start_seq)&&(!data.end_seq||record.seq<=data.end_seq)).slice(params.get("replies") === "1" ? -2 : 0)};
+    }
+    case "agents.reactions": return { session_id: "synthetic-main", records: data.message_seqs.map((seq:number) => ({seq, reactions: reactionsFor(seq)})) };
+    case "agents.react": {
+      if (reactionReceipts.has(data.request_id)) return reactionReceipts.get(data.request_id);
+      const record = histories[data.agent_id]?.find(record => record.seq === data.message_seq);
+      if (data.session_id !== "synthetic-main" || record?.role !== "assistant") throw new Error("invalid reaction target");
+      const current = reactionsFor(data.message_seq);
+      if (data.expected_revision !== current.revision) throw new Error("reaction revision conflict");
+      reactionStore[String(data.message_seq)] = {...current, owner: data.emoji ?? undefined, revision: current.revision + 1}; persistReactions();
+      const result = {session_id:"synthetic-main", message_seq:data.message_seq, reactions:reactionsFor(data.message_seq)};
+      reactionReceipts.set(data.request_id, result); return result;
     }
     case "agents.search":{const matches=(histories[data.agent_id]||[]).filter(record=>record.content.includes(data.query)&&(!data.time_min||(record.at&&record.at>=data.time_min))&&(!data.time_max||(record.at&&record.at<data.time_max))).map(record=>({seq:record.seq,role:record.role,excerpt:record.content.slice(0,120),at:record.at}));return {matches,has_more:false};}
     case "agents.proposals":return {proposals:[]};
@@ -116,6 +131,7 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
 };
 installFixtureBridge(invokeRuntime);
 const params=new URLSearchParams(location.search);
+if (!localStorage.getItem("wuu.fixture.reactions")) { reactionStore["3"] = {agent:"✅",revision:1}; persistReactions(); }
 // Normal preview stays representative; stress/error files remain opt-in for QA.
 if (!["all", "reference"].includes(params.get("attachments") || "")) histories.mosaic[3].attachments = histories.mosaic[3].attachments!.slice(0, 2);
 if (params.get("attachments") === "layout") {
@@ -158,7 +174,7 @@ applyThemePreference(params.get("theme")==="dark"?"dark":"light");
 document.documentElement.style.setProperty("--conversation-message-font-size",`${params.get("font")==="19"?19:15}px`);
 document.documentElement.dataset.platform="linux";
 function FixtureSurface(){
-  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label"><span>twin · 实际桌面组件 · 合成演示数据 · 非生产账号 · 名称仅存当前浏览器{motionScale > 1 ? ` · 动画轨迹检查 ${motionScale}×慢速` : ""}</span><div><a href="?attachments=reference">参考文件展示</a><a href="?attachments=all">文件类型测试</a><a href="?attachments=layout">附件布局测试</a><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div></div><div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView> : <App />}</div></div></WuuUIRoot></I18nProvider>;
+  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label"><span>twin · 实际桌面组件 · 合成演示数据 · 非生产账号 · 名称及表态仅存当前浏览器{motionScale > 1 ? ` · 动画轨迹检查 ${motionScale}×慢速` : ""}</span><div><a href="?attachments=reference">参考文件展示</a><a href="?attachments=all">文件类型测试</a><a href="?attachments=layout">附件布局测试</a><button onClick={()=>{const seq=3;const current=reactionsFor(seq);reactionStore[String(seq)]={...current,agent:current.agent=== "✅"?"❤️":"✅",revision:current.revision+1};persistReactions();host.publishHostEvent({kind:"notification",message:{method:"plugin/client/invalidated",params:{plugin_id:"personal",fingerprint:"synthetic-ui-fixture",user_space_id:"local",product_domain:"personal",topic:"reactions"}}});}}>Twin 表态（合成）</button><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div></div><div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView> : <App />}</div></div></WuuUIRoot></I18nProvider>;
 }
 let fixtureTurn = 0;
 function setActivity(status: "idle" | "thinking" | "responding") {
