@@ -101,6 +101,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep TODO hover cards and expanded activity lists visible and scrollable in narrow or short windows, and reposition file context menus when the window or text size changes.
+
 - Keep the workspace add menu fully visible outside the sidebar, including its icons and padding, at narrow widths and larger text sizes.
 
 - Prevent sent messages from flickering or jumping when server events confirm them before the send request returns.

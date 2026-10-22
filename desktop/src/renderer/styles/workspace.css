@@ -1181,6 +1181,10 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu :is(button, summary):f
    it shape so it stays in keeping with the rest of the panel — flat
    surface, soft drop shadow, no native chrome. */
 .workspace-tree-context-menu {
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
   position: fixed;
   z-index: 1000;
   min-width: 168px;

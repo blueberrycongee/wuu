@@ -1330,26 +1330,11 @@ button.conversation-status-capsule,
 }
 
 .conversation-status-todo {
-  /* Anchor the card to the centered status row, so sibling capsules cannot
-   * push a wide plan outside a narrow window. */
   flex: 0 1 auto;
   min-width: 0;
   /* The fixed marker and count need their full footprint at large UI sizes;
    * the surrounding flex row still shares space with other status capsules. */
   max-width: min(240px, 100%);
-}
-
-.conversation-status-todo::after {
-  position: absolute;
-  bottom: 100%;
-  left: 0;
-  width: 100%;
-  height: 8px;
-  content: "";
-}
-
-.conversation-status-todo:is(:hover, :focus-within)::after {
-  pointer-events: auto;
 }
 
 .conversation-status-todo-trigger {
@@ -1380,14 +1365,8 @@ button.conversation-status-capsule,
 /* A read-only list using the UI text baseline and the info panel's status marks. */
 .conversation-status-todo-card {
   display: flex;
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  /* In em so the card widens with the UI font instead of wrapping more. */
-  width: max-content;
-  min-width: 16em;
-  max-width: min(26em, calc(100vw - 32px));
-  max-height: min(320px, 50vh);
+  width: var(--floating-menu-available-width);
+  max-height: min(320px, 50vh, var(--floating-menu-available-height));
   flex-direction: column;
   gap: 6px;
   margin: 0;
@@ -1400,23 +1379,6 @@ button.conversation-status-capsule,
   font-size: var(--font-ui);
   line-height: round(nearest, calc(var(--font-ui) * 1.5), 2px);
   list-style: none;
-  opacity: 0;
-  visibility: hidden;
-  transform: translate(-50%, 4px);
-  transform-origin: bottom center;
-  transition:
-    opacity var(--motion-fast) var(--ease-out),
-    transform var(--motion-fast) var(--ease-out),
-    visibility 0s linear var(--motion-fast);
-  pointer-events: none;
-}
-
-.conversation-status-todo:hover .conversation-status-todo-card,
-.conversation-status-todo:focus-within .conversation-status-todo-card {
-  opacity: 1;
-  visibility: visible;
-  transform: translate(-50%, 0);
-  transition-delay: 0s;
   pointer-events: auto;
 }
 
@@ -1477,12 +1439,7 @@ button.conversation-status-capsule,
 
 .conversation-status-todo-card li.is-in_progress .todo-step-ring {
   stroke-dasharray: 72 100;
-  animation: wuu-spin var(--motion-spin) linear infinite paused;
-}
-
-/* An unopened plan does no continuous animation work. */
-.conversation-status-todo:is(:hover, :focus-within) li.is-in_progress .todo-step-ring {
-  animation-play-state: running;
+  animation: wuu-spin var(--motion-spin) linear infinite;
 }
 
 .conversation-status-todo-card li.is-completed .todo-step-ring {
@@ -1494,7 +1451,7 @@ button.conversation-status-capsule,
   opacity: 1;
 }
 
-:root[data-appearance-motion="reduce"] .conversation-status-todo .todo-step-ring {
+:root[data-appearance-motion="reduce"] .conversation-status-todo-card .todo-step-ring {
   animation: none;
 }
 
@@ -1526,19 +1483,19 @@ button.conversation-status-capsule,
 }
 
 .conversation-status-overflow-menu {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
   display: flex;
-  width: max-content;
-  max-width: min(320px, 70vw);
+  width: var(--floating-menu-available-width);
+  max-height: min(420px, var(--floating-menu-available-height));
+  overflow: auto;
+  overscroll-behavior: contain;
   flex-direction: column;
   gap: 4px;
 }
 
 .conversation-status-capsule.is-overflow-item {
+  flex: 0 0 auto;
   width: 100%;
-  max-width: 300px;
+  max-width: 100%;
   justify-content: flex-start;
 }
 
