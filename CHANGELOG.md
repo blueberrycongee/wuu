@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Save images and links from website context menus, including Blob/data resources and popup pages, through the browser download manager; copy images or their addresses and open image URLs in new tabs.
+
 - Show desktop update progress above the navigation ribbon avatar in compact and expanded layouts; keep Settings in the avatar menu instead of a separate ribbon button.
 
 - Start a conversation from the Recent sidebar heading, using the scratch workspace when no project is selected.
