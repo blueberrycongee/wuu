@@ -230,6 +230,38 @@ try {
       await r.close();
     }
   });
+  await scenario('periodic recovery survives a transient host failure and retries on the next tick', async () => {
+    const h = new Host(), r = await new Runtime(h).start();
+    const a = (await r.client('agents.ensure_default')).agent;
+    let failEnumeration, recovered;
+    const failedTick = new Promise(resolve => { failEnumeration = resolve; });
+    const dispatched = new Promise(resolve => { recovered = resolve; });
+    let failSend = true, failKeys = true;
+    h.intercept = (service, params) => {
+      if (service === 'host.session.send' && params.cause === 'personal.task') {
+        if (failSend) { failSend = false; throw new Error('temporary dispatch failure'); }
+        recovered();
+      }
+      if (service === 'host.storage.keys' && failKeys) {
+        failKeys = false; failEnumeration(); throw new Error('temporary recovery storage failure');
+      }
+    };
+    // Creation has no enumeration; its durable outbox waits for recovery.
+    const task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'recover-tick', title: 'Recovery', goal: 'Retry dispatch after the host recovers' })).task;
+    assert.equal(task.reconciliation_required, true);
+    let timeout;
+    const deadline = new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('periodic recovery did not retry within two ticks')), 40_000); });
+    try {
+      const exited = new Promise((_, reject) => r.process.once('exit', code => reject(new Error(`Personal runtime exited during recovery: ${code}; ${r.stderr}`))));
+      await Promise.race([failedTick, deadline, exited]);
+      await Promise.race([dispatched, deadline, exited]);
+      const current = (await r.client('tasks.get', { task_id: task.task_id })).task;
+      assert.equal(current.execution.request_id, task.execution.request_id);
+      assert.equal(r.process.exitCode, null);
+      assert.match(r.stderr, /Personal background recovery failed.*temporary recovery storage failure/);
+    } finally { clearTimeout(timeout); }
+    await r.close();
+  });
   await scenario('Coding initialization has no Personal tools, services, or writes', async () => {
     const codingHost = new Host(), coding = await new Runtime(codingHost).start('coding');
     assert.equal(coding.definition.tools?.length ?? 0, 0); assert.equal(coding.definition.provided_services?.length ?? 0, 0); assert.equal(codingHost.calls.length, 0); await coding.close();

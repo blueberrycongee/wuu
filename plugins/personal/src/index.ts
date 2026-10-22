@@ -95,6 +95,7 @@ export class PersonalPlugin implements RuntimePlugin {
   private active = false;
   private lifetime?: AbortSignal;
   private recoveryTimer?: ReturnType<typeof setInterval>;
+  private recoveryFailure?: string;
   private recovering = false;
   private routines!: PersonalRoutines;
   private memory!: PersonalRecords;
@@ -184,6 +185,13 @@ export class PersonalPlugin implements RuntimePlugin {
       }
       await this.routines.recover();
       await this.recoverFeedback();
+      this.recoveryFailure = undefined;
+    } catch (error) {
+      // A timer has no caller to handle a rejected promise. Keep its durable
+      // work pending and report failures without flooding stderr every tick.
+      const diagnostic = String(error).slice(0, 512);
+      if (diagnostic !== this.recoveryFailure) console.error(`Personal background recovery failed; will retry: ${diagnostic}`);
+      this.recoveryFailure = diagnostic;
     } finally { this.recovering = false; }
   }
   private async transition<T>(taskID: string, action: () => Promise<T>): Promise<T> {

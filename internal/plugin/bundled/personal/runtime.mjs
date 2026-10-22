@@ -1374,6 +1374,7 @@ var PersonalPlugin = class {
   active = false;
   lifetime;
   recoveryTimer;
+  recoveryFailure;
   recovering = false;
   routines;
   memory;
@@ -1485,6 +1486,11 @@ ${JSON.stringify(change)}` : routine.prompt, authorization_refs: [`routine:${rou
       }
       await this.routines.recover();
       await this.recoverFeedback();
+      this.recoveryFailure = void 0;
+    } catch (error) {
+      const diagnostic = String(error).slice(0, 512);
+      if (diagnostic !== this.recoveryFailure) console.error(`Personal background recovery failed; will retry: ${diagnostic}`);
+      this.recoveryFailure = diagnostic;
     } finally {
       this.recovering = false;
     }
