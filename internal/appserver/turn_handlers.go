@@ -2022,7 +2022,13 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	threadID := strings.TrimSpace(params.ThreadID)
+	err := s.interruptThreadForUser(strings.TrimSpace(params.ThreadID))
+	return s.writeResponse(req.ID, OKResult{OK: err == nil}, err)
+}
+
+// User interruption follows accepted execution ownership, including a Run
+// waiting between turns after a replacement provider has been published.
+func (s *Server) interruptThreadForUser(threadID string) error {
 	runID := s.activeExecutionRunID(threadID)
 	var binding *runtime.State
 	if runID != "" {
@@ -2030,7 +2036,7 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 		if err == nil {
 			binding = held
 		} else if !errors.Is(err, errExecutionRunChanged) {
-			return s.writeResponse(req.ID, nil, err)
+			return err
 		}
 	}
 	if binding == nil {
@@ -2048,13 +2054,13 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 		var err error
 		binding, err = s.rt.RetainState()
 		if err != nil {
-			return s.writeResponse(req.ID, nil, err)
+			return err
 		}
 	}
 	defer binding.Close()
 
 	if err := s.takeSessionControl(binding, threadID, session.ControlPaused); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+		return err
 	}
 	if runID != "" {
 		// An accepted Run can be between turns while a schema correction waits
@@ -2065,7 +2071,7 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 	if err == nil && !turnActive && runID != "" {
 		_, err = s.failAndDetachExecutionRun(runID, execution.StatusInterrupted, "interrupted", "cancelled", context.Canceled)
 	}
-	return s.writeResponse(req.ID, OKResult{OK: err == nil}, err)
+	return err
 }
 
 func (s *Server) interruptOwnedThreadExecution(binding *runtime.State, threadID string) error {

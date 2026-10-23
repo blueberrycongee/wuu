@@ -77,9 +77,9 @@ func TestServerResumeUsesSelectedAuthorityInsteadOfCachedTranscript(t *testing.T
 }
 
 // A parked Run retains its original authority after publication. A scheduler
-// for the replacement must ignore it, while both stop protocols can settle it.
+// for the replacement must ignore it, while each user interruption entry can settle it.
 func TestAttachedRunKeepsCapturedStoreAfterRequestCloseAndReplacement(t *testing.T) {
-	for _, method := range []string{MethodRunInterrupt, MethodTurnInterrupt} {
+	for _, method := range []string{MethodRunInterrupt, MethodTurnInterrupt, MethodActivityTakeover, MethodActivityStop} {
 		t.Run(method, func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
 			rt.ActivityRegistry = activity.NewRegistry()
@@ -114,6 +114,9 @@ func TestAttachedRunKeepsCapturedStoreAfterRequestCloseAndReplacement(t *testing
 				t.Fatal(err)
 			}
 			srv.registerExecutionRun(binding, store, run, nil)
+			if _, _, err := rt.ActivityRegistry.Start(activity.StartOptions{ID: "captured-activity", ThreadID: id, Kind: activity.KindBrowser, Workdir: rt.RootDir}); err != nil {
+				t.Fatal(err)
+			}
 			srv.runMu.Lock()
 			srv.runs[run.ID].schemaRetry = &executionSchemaRetry{projectID: "same-project", thread: th, snapshot: turnRuntimeSnapshot{ExecutionRunID: run.ID}, prompt: "correction"}
 			srv.runMu.Unlock()
@@ -136,6 +139,9 @@ func TestAttachedRunKeepsCapturedStoreAfterRequestCloseAndReplacement(t *testing
 			}
 			params := any(TurnInterruptParams{ThreadID: id})
 			want := execution.StatusInterrupted
+			if method == MethodActivityTakeover || method == MethodActivityStop {
+				params = ActivityActionParams{ThreadID: id, ActivityID: "captured-activity"}
+			}
 			if method == MethodRunInterrupt {
 				params = RunInterruptParams{RunID: run.ID, Reason: "timeout"}
 				want = execution.StatusTimedOut
