@@ -6,6 +6,7 @@
   --tracking-ui: normal;
   --tracking-prose: normal;
   letter-spacing: var(--tracking-ui);
+  --wuu-font-size-ui: var(--conversation-message-font-size);
   --font-ui: var(--conversation-message-font-size);
   /* Derived roles snap to whole pixels: the saved UI size may be a half step,
    * and fractional derived sizes put every line box and 1px edge between

@@ -61,6 +61,18 @@
   --gray-800: #252525;
   --gray-900: #151515;
 
+  /* Public semantic colors are also readable defaults for independent UI
+     providers. The gray ramp follows the active theme; inline theme overrides
+     retain precedence over these defaults. */
+  --wuu-color-canvas: var(--gray-0);
+  --wuu-color-surface: var(--gray-50);
+  --wuu-color-surface-muted: var(--gray-100);
+  --wuu-color-surface-elevated: var(--gray-150);
+  --wuu-color-text: var(--gray-900);
+  --wuu-color-text-muted: var(--gray-650);
+  --wuu-color-border-subtle: var(--gray-250);
+  --wuu-color-border-strong: var(--gray-350);
+
   --ink-strong: var(--wuu-color-text, var(--gray-900));
   --ink: var(--wuu-color-text, var(--gray-800));
   --ink-soft: var(--wuu-color-text-muted, var(--gray-650));
