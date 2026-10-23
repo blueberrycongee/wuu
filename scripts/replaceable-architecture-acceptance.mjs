@@ -13,7 +13,7 @@ const { values } = parseArgs({ options: {
   help: { type: "boolean" },
 } });
 if (values.help) {
-  console.log("node scripts/replaceable-architecture-acceptance.mjs --suite domains|legacy|boundaries|sdk|external|all [--candidate SHA] [--output DIR]");
+  console.log("node scripts/replaceable-architecture-acceptance.mjs --suite domains|legacy|boundaries|sdk|external|author|all [--candidate SHA] [--output DIR]");
   console.log("Domains validates real cross-domain document migration. Boundaries runs existing race-tested storage/graph contracts. SDK runs the independent SDK process and CLI journey. Legacy validates the joint converters with a stopped-writer fixture. These checks do not certify production composition or UI acceptance.");
   process.exit(0);
 }
@@ -25,6 +25,7 @@ const suites = {
     ["retained-generations", "go", ["test", "-race", "-count=1", "-json", "./internal/runtime", "-run", "Test(RetainedGeneration|Candidate|FailedCandidate|ActivatePluginGeneration|DisabledRuntime|ThreadModel|BuiltPluginGenerations|PluginSystemPromptFailure|RefreshCandidate|PackageDependency)"]],
   ],
   external: [["external-provider-parity", process.execPath, ["scripts/replaceable-architecture-external.mjs"]]],
+  author: [["independent-shell-packages", process.execPath, ["scripts/replaceable-architecture-author.mjs"]]],
   sdk: [["sdk-process-and-transfer", process.execPath, ["scripts/document-state-e2e.mjs"]]],
 };
 const selection = values.suite === "all" ? Object.values(suites).flat() : suites[values.suite];
