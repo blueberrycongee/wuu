@@ -91,8 +91,10 @@ jobs:
         with:
           node-version-file: .node-version
 
-      - name: Install plugin build dependencies
-        run: npm ci --prefix plugins
+      - name: Install plugin and SDK dependencies
+        run: |
+          npm ci --prefix packages/plugin-sdk
+          npm ci --prefix plugins
 
       - name: Check
         run: make check-go check-plugins
@@ -102,7 +104,6 @@ jobs:
 
       - name: Build plugin model acceptance prerequisites
         run: |
-          npm ci --prefix packages/plugin-sdk
           npm --prefix packages/plugin-sdk run build
           mkdir -p .tmp/bin
           go build -o .tmp/bin/wuu ./cmd/wuu
