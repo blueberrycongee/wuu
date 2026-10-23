@@ -186,6 +186,7 @@ export function Composer({
   menuOpen,
   accessMenuOpen,
   menuRef,
+  menuTriggerRef,
   accessMenuRef,
   workspaceFilter,
   setWorkspaceFilter,
@@ -301,6 +302,7 @@ export function Composer({
   accessMenuOpen: boolean;
   branchMenuOpen: boolean;
   menuRef: RefObject<HTMLDivElement | null>;
+  menuTriggerRef?: RefObject<HTMLElement | null>;
   accessMenuRef: RefObject<HTMLDivElement | null>;
   workspaceFilter: string;
   setWorkspaceFilter: (value: string) => void;
@@ -1269,7 +1271,7 @@ export function Composer({
                       onSelectNoProject={onSelectNoProject}
                       onCreateWorkspace={onCreateWorkspace}
                       onOpenWorkspace={onOpenWorkspace}
-                      onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleMenu, workspacePillRef.current)}
+                      onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleMenu, menuTriggerRef?.current ?? workspacePillRef.current)}
                     />
                   </FloatingMenuPortal>
                 ) : null}

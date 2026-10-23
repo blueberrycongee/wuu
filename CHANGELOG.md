@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Switch workspaces from the underlined workspace name in the new-conversation greeting, using the existing workspace picker.
+
 - Select plugin-provided shell skins independently of content themes, with paired light/dark artwork, ribbon previews, native ribbon continuity and default-frame recovery. Local images use a fixed Gaussian blur with automatic contrast, replacing effect, strength and position controls. Shared controls use soft surfaces and shadows, translucent menus and neutral filled selections.
 
 - Add MiniMax-M3.1-Flash and Gemini 4 Argon to the model catalog, with their documented context and output limits, reasoning effort levels, and OpenRouter model entries.

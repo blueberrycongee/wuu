@@ -4365,6 +4365,28 @@ pre {
   text-wrap: balance;
 }
 
+.empty-home-workspace-link {
+  display: inline;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  text-align: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
+.empty-home-workspace-link:hover,
+.empty-home-workspace-link[aria-expanded="true"] {
+  text-decoration-color: currentColor;
+}
+
+.empty-home-workspace-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
 .empty-home-header {
   /* A centered greeting establishes the main task before the overview. */
   grid-column: 1 / -1;
