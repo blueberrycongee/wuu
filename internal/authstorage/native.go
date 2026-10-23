@@ -62,7 +62,13 @@ func (s *nativeStore) migrate(ctx context.Context, namespace, key string) error 
 	}
 	if !current.LegacyImported {
 		previous, err := New(s.legacyPath).Load()
-		if err != nil && !errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrNotFound) {
+			// Missing legacy state is a read-only result, not a migration to
+			// persist in a shared OS credential backend.
+			s.migrated = true
+			return nil
+		}
+		if err != nil {
 			return errors.New("legacy credential source is invalid or unavailable")
 		}
 		if err = s.Store.Update(ctx, ModelCredentialNamespace, ModelCredentialKey, func(raw []byte) ([]byte, error) {
