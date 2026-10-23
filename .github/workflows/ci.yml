@@ -106,7 +106,8 @@ jobs:
         run: |
           npm --prefix packages/plugin-sdk run build
           mkdir -p .tmp/bin
-          go build -o .tmp/bin/wuu ./cmd/wuu
+          fixture_version="$(make -s print-version)"
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o .tmp/bin/wuu ./cmd/wuu
 
       - name: Guard one-shot plugin model requests
         timeout-minutes: 3
@@ -605,7 +606,9 @@ jobs:
       - name: Build desktop fixture core
         if: ${{ contains(fromJSON('["corpus","session"]'), matrix.suite) }}
         id: build-fixture-core
-        run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
+        run: |
+          fixture_version="$(make -s print-version)"
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
 
       - name: Validate shareable conversation corpus
         if: ${{ matrix.suite == 'corpus' }}
