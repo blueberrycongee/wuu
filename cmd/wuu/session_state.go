@@ -8,6 +8,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
+	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
 // openCommandState uses the same configured composition as inference, without
@@ -21,6 +22,10 @@ func openCommandState(ctx context.Context, workdir string) (*runtime.State, erro
 	cfg, path, mode, err := runtimeconfig.Load(runtimeconfig.LoadOptions{RootDir: root, HomeDir: home})
 	if errors.Is(err, config.ErrConfigNotFound) {
 		cfg = runtimeconfig.StarterConfig()
+		path, err = statepath.ConfigPath(home)
+		if err != nil {
+			return nil, err
+		}
 	} else if err != nil {
 		return nil, err
 	}
