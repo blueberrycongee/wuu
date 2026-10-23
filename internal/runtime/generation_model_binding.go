@@ -29,13 +29,15 @@ func (s *Session) bindGenerationModels(g *PluginGeneration) (err error) {
 		return nil // Explicitly embedded runtimes own their injected clients.
 	}
 	models := &generationModelBindings{}
-	g.models = models
 	defer func() {
 		if err != nil {
 			unavailable := &providers.UnavailableClient{Reason: err.Error()}
 			models.main, models.worker, models.title = unavailable, unavailable, unavailable
 			models.err = err
 		}
+		g.revokedMu.Lock()
+		g.models = models
+		g.revokedMu.Unlock()
 	}()
 	view, err := g.configClient.Read(context.Background())
 	if err != nil {
