@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -137,22 +138,30 @@ func TestForceReleasedTurnCannotPersistLateCompletion(t *testing.T) {
 		t.Fatal("thread execution lease was not acquired")
 	}
 
+	threadRuntime, err := srv.ensureThreadRuntimeAfterAdmission(th)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := sync.OnceFunc(func() { close(client.release) })
+	t.Cleanup(release)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		srv.runTurn(context.Background(), th, nil, turnID, turnRuntimeSnapshot{
+		srv.runTurn(context.Background(), th, threadRuntime, turnID, turnRuntimeSnapshot{
 			ProviderName: rt.ProviderName,
 			Model:        rt.Model,
 		}, []providers.ChatMessage{userMessage})
 	}()
 	select {
 	case <-client.started:
+	case <-done:
+		t.Fatal("turn finished before reaching the model")
 	case <-time.After(2 * time.Second):
 		t.Fatal("turn did not start")
 	}
 
 	forceReleaseAbandonedThreadExecutions([]*threadState{th})
-	close(client.release)
+	release()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
