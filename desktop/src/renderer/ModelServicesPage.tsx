@@ -627,6 +627,7 @@ function ServicesOverview({
 }): JSX.Element {
   const { t } = useI18n();
   const summaryID = useId();
+  const display = useConnectionDisplayPreferences();
 
   return (
     <>
@@ -636,31 +637,36 @@ function ServicesOverview({
           <div className="model-service-grid" role="list" aria-label={t("provider.connectionModels")}>
             {providers.map((provider) => {
               const identity = serviceIdentity(provider, t);
-              const label = identity.label;
+              const label = display.label(`provider:${provider.name}`, identity.label);
               const isDefault = provider.name === initialized?.provider;
               const attention = identity.attention ?? (provider.quota?.status === "sign_in" ? t("settings.subscriptionSignIn") : undefined);
               const status = attention ?? t("settings.engineReady");
-              const plan = provider.quota?.plan?.trim() || (identity.subscription ? t("settings.subscriptionKindSubscription") : "API");
+              const plan = provider.quota?.plan?.trim();
               return (
                 <div role="listitem" key={provider.name}>
                   <button
                     type="button"
-                    className="model-service-card connection-summary-row"
+                    className="connection-summary-row"
                     data-testid="settings-provider-card"
                     data-provider={provider.name}
                     data-default={isDefault ? "" : undefined}
                     aria-label={label}
-                    aria-describedby={`${summaryID}-${encodeURIComponent(provider.name)} ${summaryID}-${encodeURIComponent(provider.name)}-quota`}
+                    title={label}
+                    aria-describedby={`${summaryID}-${encodeURIComponent(provider.name)} ${summaryID}-${encodeURIComponent(provider.name)}-status ${summaryID}-${encodeURIComponent(provider.name)}-quota`}
                     onClick={() => onOpenService(provider.name)}
                   >
                     <span className="connection-summary-icon"><ServiceMark identity={identity} /></span>
-                    <span id={`${summaryID}-${encodeURIComponent(provider.name)}`} className="model-service-card-copy connection-summary-copy">
-                      <span className="model-service-card-title">{label}</span>
-                      <span className="connection-summary-meta"><span>{plan}</span><span aria-hidden="true"> · </span>
-                        <span className="connection-summary-status" data-attention={attention ? "" : undefined}>{status}</span>
+                    <span className="connection-summary-copy">
+                      <span className="connection-summary-heading">
+                        <span className="model-service-card-title connection-summary-name">{label}</span>
+                        <span id={`${summaryID}-${encodeURIComponent(provider.name)}`} className="connection-summary-meta">{plan}</span>
+                      </span>
+                      <span className="connection-summary-secondary">
+                        <span id={`${summaryID}-${encodeURIComponent(provider.name)}-status`} className={attention ? "connection-summary-status" : "sr-only"} data-attention={attention ? "" : undefined}>{status}</span>
+                        {!attention ? <ConnectionUsageSummary compact id={`${summaryID}-${encodeURIComponent(provider.name)}-quota`} quota={provider.quota} loading={quotaLoading && identity.subscription} now={now}
+                          fallback={<span className="connection-summary-status" data-ready>{status}</span>} /> : null}
                       </span>
                     </span>
-                    {!attention ? <ConnectionUsageSummary id={`${summaryID}-${encodeURIComponent(provider.name)}-quota`} quota={provider.quota} loading={quotaLoading} now={now} /> : null}
                     <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
                   </button>
                 </div>

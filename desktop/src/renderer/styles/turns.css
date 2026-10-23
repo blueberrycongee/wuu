@@ -5602,6 +5602,13 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
   margin-bottom: calc(-1 * var(--turn-edit-exit-gap, 0px));
 }
 
+/* Submission placement measures its destination after enabling the glide.
+ * Settle outgoing summaries in that layout so their height animation cannot
+ * keep moving the preview and the new message underneath the scroll motion. */
+:root[data-submit-glide] .turn-edit-presentation.is-exiting {
+  transition: none;
+}
+
 .turn-edit-presentation-body {
   min-height: 0;
   overflow: hidden;

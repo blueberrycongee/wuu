@@ -832,10 +832,15 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 func (e responsesStreamEvent) asWebSocketError() error {
 	err := e.asError()
 	var streamErr *providers.StreamError
-	if errors.As(err, &streamErr) && streamErr.Code == "previous_response_not_found" {
-		// The invalidated connection also drops continuation state, so the
-		// shared recovery loop can replay the retained full request safely.
-		streamErr.Retryable = true
+	if errors.As(err, &streamErr) {
+		switch streamErr.Code {
+		case "previous_response_not_found", responsesWebSocketConnectionLimitCode:
+			// The connection lifetime limit can arrive after response.created.
+			// Both failures invalidate the connection and its continuation state,
+			// so shared recovery can replay the full request on a new connection
+			// while preserving its tool replay guard and retry budget.
+			streamErr.Retryable = true
+		}
 	}
 	return err
 }

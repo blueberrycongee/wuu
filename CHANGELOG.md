@@ -79,6 +79,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Align external connection names, plans and quota readouts in responsive cards, with consistent icon sizing, colored readiness and quota states, and reserved space for loading snapshots.
+
 - Make web search source cards narrower with larger, centered website icons for easier recognition in the compact stack.
 
 - Reorganize plugin details around identity and enablement, prioritize plugin settings, and present descriptions and contributions in clearly separated, responsive sections.
@@ -118,6 +120,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   gutters to the reading pane.
 
 ### Fixed
+
+- Recover automatically when a Responses WebSocket reaches its connection lifetime limit during a reply, reconnecting with the full request while preserving tool replay safeguards and retry limits.
+
+- Prevent conversation previews from jumping when sending a follow-up after a delivered file by settling the outgoing file card before the submission scroll animation.
 
 - Restore composer hints to the same quiet gray as aggregated tool-call summaries in both light and dark themes.
 

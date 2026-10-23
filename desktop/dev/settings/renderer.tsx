@@ -130,6 +130,46 @@ if (!empty && params.get("connections") === "quota") {
   engines.subscription_providers = providers;
 }
 
+// Full-page connection design scenarios, using only synthetic account data.
+const overview = params.get("overview");
+let overviewReady: EngineListResult | undefined;
+if (overview && !empty) {
+  const checked_at = new Date().toISOString();
+  const allowance = (short: number, weekly: number, plan = "Plus") => ({
+    status: "available" as const, plan, checked_at,
+    windows: [{ id: "short", window_minutes: 300, used_percent: 100 - short }, { id: "weekly", window_minutes: 10080, used_percent: 100 - weekly }],
+  });
+  providers.forEach(provider => { provider.api_key_configured = true; provider.quota = undefined; });
+  providers[0].quota = allowance(75, 80);
+  providers[2].quota = { status: "available", checked_at, balances: [{ amount: "28.60", currency: "CNY" }] };
+  engines.engines = [
+    { id: "codex", display_name: "Codex", enabled: true, binary_ok: true, binary_path: "/usr/local/bin/codex", quota: allowance(100, 45) },
+    { id: "claude", display_name: "Claude Code", enabled: true, binary_ok: true, binary_path: "/usr/local/bin/claude", quota: allowance(60, 85, "Pro") },
+    { id: "grok", display_name: "Grok", enabled: true, binary_ok: true, binary_path: "/usr/local/bin/grok" },
+  ];
+  engines.settings = { default_engine: "wuu", claude: { enabled: true }, grok: { enabled: true } };
+  if (overview === "attention") {
+    providers[0].quota = allowance(12, 0);
+    providers[1].api_key_configured = false;
+    providers[2].quota = { status: "stale", checked_at, windows: [{ id: "daily", window_minutes: 1440, used_percent: 42 }] };
+    providers[3].api_key_configured = false;
+    engines.engines[0].quota = allowance(0, 80);
+    engines.engines[1].quota = { status: "unavailable", plan: "Pro", checked_at };
+    engines.engines[2].binary_ok = false;
+  }
+  if (overview === "long") {
+    providers[3].catalog_id = undefined;
+    providers[3].base_url = "https://modelbest-team-shared-inference.example.com/v1";
+    providers[0].quota!.plan = "ChatGPT Enterprise Organization";
+  }
+  engines.subscription_providers = providers;
+  if (overview === "loading") {
+    overviewReady = structuredClone(engines);
+    providers.forEach(provider => { provider.quota = undefined; });
+    engines.engines.forEach(engine => { engine.quota = undefined; });
+  }
+}
+
 // Approved detail review fixture. All values and authentication are synthetic.
 if (params.has("detail")) {
   const now = Date.now();
@@ -242,7 +282,14 @@ window.wuu = {
   connectMCPServer: async (name: string) => ({ status: { ...mcpServers.find((server) => server.name === name)!, state: "connected", connected: true } }),
   disconnectMCPServer: async (name: string) => ({ status: { ...mcpServers.find((server) => server.name === name)!, state: "configured", connected: false } }),
   refreshMCPServer: async (name: string) => ({ status: mcpServers.find((server) => server.name === name)! }),
-  listEngines: async () => structuredClone(engines),
+  listEngines: async () => {
+    if (overviewReady) {
+      const result = structuredClone(overviewReady);
+      await new Promise<void>(resolve => window.addEventListener("connection-preview-ready", () => resolve(), { once: true }));
+      return result;
+    }
+    return structuredClone(engines);
+  },
   listCatalogProviders: async (provider?: string) => {
     // Keep the initial catalog request pending for repeatable skeleton review.
     if (params.get("catalog") === "pending") return new Promise<{ providers: CatalogProviderSummary[] }>(() => {});
