@@ -91,6 +91,33 @@ describe("application shell assembly", () => {
     } })).rejects.toThrow(/conflict/i);
     expect(host.getUIContributions("owner/only").map(item => item.pluginId)).toEqual(["one"]);
   });
+
+  it("remounts a nested contribution when the same module fingerprint is reactivated", async () => {
+    const { host } = fixture();
+    await host.activateGeneration({ pluginId: "shell", generation: "v1", register: api => {
+      api.registerUISlot({ id: "body", cardinality: "many" });
+      api.registerApplicationShell({ id: "ui.shell", render: ({ slots }) => <slots.Slot name="shell/body" /> });
+    } });
+    const mounted = vi.fn();
+    const cleanup = vi.fn();
+    const View = () => {
+      React.useEffect(() => { mounted(); return cleanup; }, []);
+      return <span>Evidence</span>;
+    };
+    const activate = () => host.activateGeneration({ pluginId: "child", generation: "same-code", register: api => {
+      api.registerUIContribution({ id: "evidence", target: "shell/body", render: View });
+    } });
+    await activate();
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      act(() => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "v1", id: "ui.shell" }} />));
+      await act(async () => { await activate(); });
+      expect(container.textContent).toBe("Evidence");
+      expect(cleanup).toHaveBeenCalledTimes(1);
+      expect(mounted).toHaveBeenCalledTimes(2);
+    } finally { act(() => root.unmount()); }
+  });
   it("retains a provider until mounted shell effects finish cleanup", async () => {
     const { host } = fixture();
     const order: string[] = [];

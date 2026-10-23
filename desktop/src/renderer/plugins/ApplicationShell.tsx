@@ -28,7 +28,7 @@ function compositionFor(host: PluginHost): UICompositionV1 {
     const contributions = host.getUIContributions(name);
     return <SlotAncestors.Provider value={[...ancestors, name]}>
       {contributions.length === 0 ? fallback : contributions.map(contribution => {
-        return <ShellBoundary key={`${contribution.pluginId}:${contribution.generation}:${contribution.id}`}
+        return <ShellBoundary key={activationKey(contribution)}
           identity={`${contribution.pluginId}/${contribution.id}`}>
           <Contribution host={host} contribution={contribution} slots={composition} context={context} />
         </ShellBoundary>;
