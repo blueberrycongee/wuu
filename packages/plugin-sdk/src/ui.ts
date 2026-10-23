@@ -7,7 +7,10 @@ import type {
 } from "./index.js";
 
 /** Declare this service in plugin.json desktop.services to offer an application shell. */
-export const APPLICATION_SHELL_SERVICE = { name: "ui.shell", version: "1.0.0" } as const;
+export const APPLICATION_SHELL_SERVICE = {
+  name: "ui.shell", version: "1.0.0",
+  methods: [{ name: "describe", input_schema: "ui.shell.describe.input.v1", output_schema: "ui.shell.describe.output.v1" }],
+} satisfies import("./index.js").ServiceDescriptor;
 
 /** Immutable public application state. Snapshots retain identity until a change. */
 export interface ApplicationSnapshotV1 {
