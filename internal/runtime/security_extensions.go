@@ -81,15 +81,14 @@ func configureToolkitSecurityExtensions(kit *tools.Toolkit, host *pluginhost.Hos
 	if kit == nil {
 		return
 	}
-	kit.SetAuthorizer(nil)
+	// Capture this generation even when its selected authority is unavailable.
+	// Clearing the binding would turn missing or retired policy into local allow.
+	kit.SetAuthorizer(&pluginAuthorizer{host: host})
 	kit.SetProcessSandboxProvider(nil)
 	if host == nil || host.ServiceRegistry() == nil {
 		return
 	}
 	registry := host.ServiceRegistry()
-	if registry.HasProvider(pluginhost.SecurityAuthorizeService, pluginhost.SecurityServiceMajor) {
-		kit.SetAuthorizer(&pluginAuthorizer{host: host})
-	}
 	if registry.HasProvider(pluginhost.ProcessSandboxService, pluginhost.SecurityServiceMajor) {
 		kit.SetProcessSandboxProvider(&pluginSandboxProvider{host: host})
 	}

@@ -122,6 +122,20 @@ func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call provi
 			return err
 		}
 	}
+	// The selected provider makes the policy decision before local enforcement
+	// or contextual review. Neither can turn its denial into an allowed action.
+	if t.authorizer != nil {
+		decision, err := t.authorizer.Authorize(ctx, AuthorizationRequest{
+			SessionID: t.env.SessionID, ActorID: t.env.AgentID, CWD: t.env.RootDir,
+			PermissionMode: t.env.PermissionMode, Tool: info, Arguments: call.Arguments,
+		})
+		if err != nil {
+			return authorizationDenied(info.Name, "authorization provider unavailable")
+		}
+		if strings.TrimSpace(decision.Outcome) != "allow" {
+			return authorizationDenied(info.Name, decision.Reason)
+		}
+	}
 	if err := t.boundary.Check(info, call); err != nil {
 		return err
 	}
@@ -132,19 +146,6 @@ func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call provi
 	}
 	if err := t.reviewToolCall(ctx, info, call); err != nil {
 		return err
-	}
-	if t.authorizer == nil {
-		return nil
-	}
-	decision, err := t.authorizer.Authorize(ctx, AuthorizationRequest{
-		SessionID: t.env.SessionID, ActorID: t.env.AgentID, CWD: t.env.RootDir,
-		PermissionMode: t.env.PermissionMode, Tool: info, Arguments: call.Arguments,
-	})
-	if err != nil {
-		return authorizationDenied(info.Name, "authorization provider unavailable")
-	}
-	if strings.TrimSpace(decision.Outcome) != "allow" {
-		return authorizationDenied(info.Name, decision.Reason)
 	}
 	return nil
 }
