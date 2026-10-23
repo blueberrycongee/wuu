@@ -38,6 +38,25 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 			return nil, err
 		}
 		return marshalServiceResult(pluginprotocol.DriverTurnReadResult{LogicalModelRequestV1: logicalModelRequest(request), Messages: driverMessagesToWire(request.Messages)})
+	case "context":
+		if err := decodeServiceParams(params.Params, &scope); err != nil {
+			return nil, err
+		}
+		current, err := turn.ReadContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(driverContextToWire(current))
+	case "replace_context":
+		var input pluginprotocol.DriverTurnReplaceContextParams
+		if err := decodeServiceParams(params.Params, &input); err != nil {
+			return nil, err
+		}
+		current, err := turn.ReplaceContext(ctx, loopdriver.ContextReplacement{Revision: input.Revision, Messages: driverMessagesFromWire(input.Messages)})
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(driverContextToWire(current))
 	case "model":
 		var input pluginprotocol.DriverTurnModelParams
 		if err := decodeServiceParams(params.Params, &input); err != nil {
@@ -89,6 +108,10 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 	default:
 		return nil, serviceError("method_not_found", "unknown driver.turn method")
 	}
+}
+
+func driverContextToWire(current loopdriver.TurnContext) pluginprotocol.DriverTurnContextResult {
+	return pluginprotocol.DriverTurnContextResult{Messages: driverMessagesToWire(current.Messages), Revision: current.Revision, ArchiveHead: current.ArchiveHead, CanReplace: current.CanReplace}
 }
 
 func driverMessagesToWire(messages []providers.ChatMessage) []pluginprotocol.DriverMessageV1 {

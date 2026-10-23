@@ -23,6 +23,19 @@ type DriverTurnReadResult struct {
 	Messages []DriverMessageV1 `json:"messages"`
 }
 
+type DriverTurnContextResult struct {
+	Messages    []DriverMessageV1 `json:"messages"`
+	Revision    uint64            `json:"revision"`
+	ArchiveHead int               `json:"archive_head"`
+	CanReplace  bool              `json:"can_replace"`
+}
+
+type DriverTurnReplaceContextParams struct {
+	DriverTurnScope
+	Revision uint64            `json:"revision"`
+	Messages []DriverMessageV1 `json:"messages"`
+}
+
 type DriverTurnModelParams struct {
 	DriverTurnScope
 	Request DriverTurnReadResult `json:"request"`

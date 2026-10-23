@@ -16,29 +16,32 @@ import (
 // streamTurnGateway owns execution resources, not the driver's algorithm. The
 // gate also makes close wait for accepted calls before releasing their tools.
 type streamTurnGateway struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	gate            chan struct{}
-	runner          *StreamRunner
-	input           loopdriver.PersistedInput
-	baseHistory     []providers.ChatMessage
-	onEvent         StreamCallback
-	client          providers.StreamClient
-	ready           bool
-	closed          bool
-	complete        bool
-	legacy          bool
-	frozen          ToolSurfaceFreezer
-	step            int
-	batches         map[string]bool
-	toolCalls       map[string]bool
-	produced        []providers.ChatMessage
-	durable         []providers.ChatMessage
-	archiveHead     int
-	usage           providers.TokenUsage
-	contextTokens   int
-	postToolContext []ContextSegment
-	completed       LoopResult
+	ctx              context.Context
+	cancel           context.CancelFunc
+	gate             chan struct{}
+	runner           *StreamRunner
+	input            loopdriver.PersistedInput
+	baseHistory      []providers.ChatMessage
+	activeHistory    []providers.ChatMessage
+	revision         uint64
+	historyRewritten bool
+	onEvent          StreamCallback
+	client           providers.StreamClient
+	ready            bool
+	closed           bool
+	complete         bool
+	legacy           bool
+	frozen           ToolSurfaceFreezer
+	step             int
+	batches          map[string]bool
+	toolCalls        map[string]bool
+	produced         []providers.ChatMessage
+	durable          []providers.ChatMessage
+	archiveHead      int
+	usage            providers.TokenUsage
+	contextTokens    int
+	postToolContext  []ContextSegment
+	completed        LoopResult
 }
 
 func newStreamTurnGateway(ctx context.Context, runner *StreamRunner, input loopdriver.PersistedInput, onEvent StreamCallback) *streamTurnGateway {
@@ -91,9 +94,10 @@ func (g *streamTurnGateway) prepare(ctx context.Context) error {
 		return fmt.Errorf("recover pending tool results: %w", err)
 	}
 	g.baseHistory = filterDurableHistory(providers.CloneChatMessages(g.input.Messages))
-	g.input.Messages = append(providers.CloneChatMessages(g.baseHistory), recovered...)
+	g.activeHistory = providers.CloneChatMessages(g.baseHistory)
+	g.revision = 1
 	g.appendMessages(recovered...)
-	g.contextTokens = estimateMessages(g.input.Messages)
+	g.contextTokens = estimateMessages(g.activeHistory)
 	g.client, _ = g.runner.providerConnectionSnapshot()
 	if freezer, ok := g.runner.Tools.(ToolSurfaceFreezer); ok {
 		freezer.FreezeToolSurface()
@@ -119,7 +123,7 @@ func (g *streamTurnGateway) ReadTurn(ctx context.Context) (providers.ChatRequest
 	}
 	return providers.ChatRequest{
 		Provider: r.ProviderName, Model: model,
-		Messages: providers.CloneChatMessages(g.input.Messages), Tools: toolDefinitions(r.Tools),
+		Messages: providers.CloneChatMessages(g.activeHistory), Tools: toolDefinitions(r.Tools),
 		Temperature: r.Temperature, Effort: r.Effort,
 		ProviderOptions:             providers.CloneRequestObject(r.ProviderOptions),
 		MediaInput:                  providers.ResolveMediaInput(g.client, r.MediaInput, r.ProviderOptions),
@@ -181,18 +185,19 @@ func (g *streamTurnGateway) CallModel(ctx context.Context, request providers.Cha
 	// Accepted user input must be durable before a model can act on it.
 	for _, message := range round.Messages {
 		if isUndispatchedSteeringMessage(message) && g.runner.ArchiveHistory != nil {
-			archived, err := g.runner.ArchiveHistory(ctx, providers.CloneChatMessages(g.durable))
-			if err != nil {
+			if err := g.archivePending(ctx); err != nil {
 				g.produced = slices.DeleteFunc(g.produced, isUndispatchedSteeringMessage)
 				g.durable = slices.DeleteFunc(g.durable, isUndispatchedSteeringMessage)
+				g.activeHistory = slices.DeleteFunc(g.activeHistory, isUndispatchedSteeringMessage)
 				round.Messages = slices.DeleteFunc(round.Messages, isUndispatchedSteeringMessage)
 				return round, err
 			}
-			g.archiveHead = archived.HeadSeq
-			g.produced = applyArchivedHistorySeqs(g.produced, g.durable, archived.Seqs)
-			request.Messages = applyArchivedHistorySeqs(request.Messages, g.durable, archived.Seqs)
-			round.Messages = applyArchivedHistorySeqs(round.Messages, g.durable, archived.Seqs)
-			g.durable = nil
+			seqs := make([]int, len(g.produced))
+			for i, produced := range g.produced {
+				seqs[i] = produced.Seq
+			}
+			request.Messages = applyArchivedHistorySeqs(request.Messages, g.produced, seqs)
+			round.Messages = applyArchivedHistorySeqs(round.Messages, g.produced, seqs)
 			break
 		}
 	}
@@ -327,18 +332,8 @@ func (g *streamTurnGateway) CompleteTurn(ctx context.Context, result loopdriver.
 	if err := g.prepare(ctx); err != nil {
 		return loopdriver.ModelLoopReceipt{}, err
 	}
-	for i, message := range result.Messages {
-		switch message.Role {
-		case "system", "user", "assistant", "tool":
-		default:
-			return loopdriver.ModelLoopReceipt{}, fmt.Errorf("message %d: unsupported role %q", i, message.Role)
-		}
-		if message.Role != "assistant" && len(message.ToolCalls) != 0 {
-			return loopdriver.ModelLoopReceipt{}, fmt.Errorf("message %d: only assistant messages can declare tool calls", i)
-		}
-		if message.Role != "tool" && (message.ToolCallID != "" || message.ToolInvocationID != "" || message.ToolResult != nil) {
-			return loopdriver.ModelLoopReceipt{}, fmt.Errorf("message %d: tool results require the tool role", i)
-		}
+	if err := validateDriverMessages(result.Messages); err != nil {
+		return loopdriver.ModelLoopReceipt{}, err
 	}
 	messages := filterDurableHistory(providers.CloneChatMessages(result.Messages))
 	transcript := append(providers.CloneChatMessages(g.baseHistory), g.produced...)
@@ -351,12 +346,17 @@ func (g *streamTurnGateway) CompleteTurn(ctx context.Context, result loopdriver.
 	g.completed.Content = result.Content
 	g.complete = true
 	if g.runner.AfterTurn != nil {
-		g.runner.AfterTurn(ctx, g.runner, transcript, g.completed)
+		g.runner.AfterTurn(ctx, g.runner, providers.CloneChatMessages(g.activeHistory), g.completed)
 	}
 	return loopdriver.ModelLoopReceipt{ID: "driver-turn"}, nil
 }
 
 func (g *streamTurnGateway) appendMessages(messages ...providers.ChatMessage) {
+	if len(messages) == 0 {
+		return
+	}
+	g.revision++
+	g.activeHistory = append(g.activeHistory, providers.CloneChatMessages(messages)...)
 	g.produced = append(g.produced, providers.CloneChatMessages(messages)...)
 	g.durable = append(g.durable, providers.CloneChatMessages(messages)...)
 	for _, message := range messages {
@@ -375,6 +375,10 @@ func (g *streamTurnGateway) snapshot() LoopResult {
 		InputTokens:            g.usage.InputTokens, OutputTokens: g.usage.OutputTokens,
 		CacheCreationTokens: g.usage.CacheCreationTokens, CacheReadTokens: g.usage.CacheReadTokens,
 		ContextTokens: g.contextTokens,
+	}
+	if g.historyRewritten {
+		result.HistoryRewritten = true
+		result.NewMessages = providers.CloneChatMessages(g.activeHistory)
 	}
 	for i := len(g.produced) - 1; i >= 0; i-- {
 		message := g.produced[i]

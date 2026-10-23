@@ -1,7 +1,7 @@
 import {
   driverServiceDescriptor, driverTurn, requireDriverTurnServices, runJSONLRuntime,
   type DriverCheckpoint, type DriverCreateParams, type DriverExecution,
-  type DriverInstanceParams, type DriverResumeParams, type LogicalModelRequestV1,
+  type DriverInstanceParams, type DriverResumeParams, type DriverTurnInput,
   type ModelMessageV1, type ModelToolCallV1, type RuntimePlugin,
 } from "@wuu/plugin-sdk";
 
@@ -10,7 +10,7 @@ const version = "1.0.0";
 
 type State = {
   phase: "ready" | "planned" | "executing" | "synthesis" | "complete";
-  request?: LogicalModelRequestV1;
+  request?: DriverTurnInput;
   calls?: readonly ModelToolCallV1[];
 };
 type Instance = {
@@ -97,6 +97,24 @@ const plugin: RuntimePlugin = {
         }
         await save({ phase: "synthesis", request, calls: state.calls });
       }
+      // Keep only the current task and its evidence in active model context.
+      // The context service preserves the full transcript before committing this
+      // policy's replacement. Reading the committed context also makes a retry
+      // after a lost commit reply harmless: an already focused window stays put.
+      const context = await turn.context();
+      if (!context.can_replace) throw new Error("workflow requires durable context replacement");
+      const taskIndex = context.messages.findLastIndex(message => message.role === "user" && !message.hidden);
+      if (taskIndex < 0) throw new Error("workflow context has no user task");
+      const expectedTask = request.messages.findLast(message => message.role === "user" && !message.hidden);
+      const task = context.messages[taskIndex];
+      if (!expectedTask || (expectedTask.seq ? task.seq !== expectedTask.seq : expectedTask.client_id ? task.client_id !== expectedTask.client_id : task.content !== expectedTask.content)) {
+        throw new Error("New user input cannot be merged into this interrupted workflow; finish or explicitly restart it.");
+      }
+      const focused = [...context.messages.filter(message => message.role === "system"), ...context.messages.slice(taskIndex)];
+      const active = focused.length < context.messages.length
+        ? await turn.replaceContext(context.revision, focused) : context;
+      request = { ...request, messages: active.messages };
+      await save({ phase: "synthesis", request, calls: state.calls });
       // This workflow has a fixed second stage; it does not hand control to the
       // multi-round loop and does not allow the synthesis model to execute tools.
       const answer = await turn.model({ ...request, tools: [], force_tool_name: "" });

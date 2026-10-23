@@ -152,7 +152,9 @@ Independent drivers can declare `driver.turn` major 1 and `driver.checkpoint` ma
 
 | Operation | Observable behavior |
 | --- | --- |
-| `read()` | Returns bound model defaults, available tools, and initial history with recovered tool receipts. |
+| `read()` | Returns bound model defaults, available tools, and current active history with recovered tool receipts. |
+| `context()` | Returns active model history, an execution-local revision, the durable archive head, and whether durable replacement is available. |
+| `replaceContext(revision, messages)` | Archives accepted originals, then atomically commits the driver's replacement and any concurrent durable tail. Stale revisions fail before writing. |
 | `model(request)` | Executes one streaming model request through the selected model pipeline. Returns admitted input contributions and the assistant response; it never executes tools. |
 | `tools(batchID, messages, calls)` | Executes an explicit batch through the selected executor and durable tool ledger. Duplicate batch and call IDs are rejected within an execution. Calls can be chosen directly; missing assistant declarations are recorded before execution. Pending calls can be submitted in subsets; the reply contains only tool result messages. |
 | `complete(content, messages?)` | Returns a terminal receipt. Model and tool messages are already recorded; optional messages are additional authored output. |
@@ -160,7 +162,9 @@ Independent drivers can declare `driver.turn` major 1 and `driver.checkpoint` ma
 
 Operations belong to the active execution and provider generation, run serially, and reject further effects after cancellation or completion. Model events use the session's event stream. Tool cleanup completes before its execution resources are released. Failed steering persistence prevents the new input from reaching the model. Cancellation does not undo external effects; an interrupted tool batch must be reconciled from durable receipts before it can be resumed safely.
 
-The [evidence workflow example](../../../examples/plugins/workflow-loop/runtime.ts) uses only the public SDK. It plans one tool batch, then runs a synthesis stage with tools disabled. Its checkpoint records the current stage; recovery consumes settled tool receipts instead of replaying their effects. Run `node scripts/workflow-driver-e2e.mjs` from a checkout to install a packed SDK in an independent directory and verify real file evidence, cancellation, resume, and provider removal. Repeatable logs and the installed package remain under `.tmp/e2e/workflow-driver/`.
+The context operations require `driver.turn` 1.1.0 or newer. Replacing active context preserves the original transcript. If archive succeeds but checkpoint commit fails, the archive stays durable and the previous active context remains; read a fresh revision before retrying. Cancellation after commit does not undo the committed context. Missing archive or atomic checkpoint services make replacement unavailable; there is no volatile fallback.
+
+The [evidence workflow example](../../../examples/plugins/workflow-loop/runtime.ts) uses only the public SDK. It plans one tool batch, commits an active context containing the current task and evidence, then runs a synthesis stage with tools disabled. This example requires durable context replacement. Its checkpoint records the current stage; recovery consumes settled tool receipts instead of replaying their effects. Run `node scripts/workflow-driver-e2e.mjs` from a checkout to install a packed SDK in an independent directory and verify real file evidence, original-history preservation, committed-context recovery, interruption before the planned history is flushed, and provider removal. Repeatable logs and the installed package remain under `.tmp/e2e/workflow-driver/`.
 
 The default multi-round driver still uses the legacy `driver.model-loop` gateway. Its compaction and history-rewrite policy has not yet moved onto the independent operations. A single execution cannot combine the two gateways. The workflow example resumes its saved task context; it does not merge a new user task into an interrupted workflow. Driver profiles are currently exposed through the debug app-server `--driver` option, rather than a desktop selection control.
 

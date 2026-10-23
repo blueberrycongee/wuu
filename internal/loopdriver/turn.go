@@ -12,9 +12,32 @@ import (
 // cancellation. Model and tool events use the turn's existing event stream.
 type TurnGateway interface {
 	ReadTurn(context.Context) (providers.ChatRequest, error)
+	ReadContext(context.Context) (TurnContext, error)
+	ReplaceContext(context.Context, ContextReplacement) (TurnContext, error)
 	CallModel(context.Context, providers.ChatRequest) (ModelRound, error)
 	CallTools(context.Context, ToolBatch) ([]providers.ChatMessage, error)
 	CompleteTurn(context.Context, TurnResult) (ModelLoopReceipt, error)
+}
+
+// TurnContext is the active model history, independent of the append-only
+// durable transcript. Revision belongs to this execution and changes whenever
+// messages or their durable addresses change. CanReplace requires both archive
+// and atomic context-checkpoint services; there is no volatile fallback.
+type TurnContext struct {
+	Messages    []providers.ChatMessage
+	Revision    uint64
+	ArchiveHead int
+	CanReplace  bool
+}
+
+// ContextReplacement replaces only active model context. The service archives
+// accepted originals first, then commits the replacement and any concurrent
+// durable tail before returning. Revision must match ReadContext. A failed
+// commit keeps the prior active context; a successful archive remains durable.
+// Cancellation after commit does not undo the committed replacement.
+type ContextReplacement struct {
+	Revision uint64
+	Messages []providers.ChatMessage
 }
 
 // ModelRound includes durable input contributions admitted before the request,

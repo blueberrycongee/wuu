@@ -10,7 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
-- Expose independent model, tool-batch, completion and checkpoint operations for external loop drivers. The public SDK includes a workflow example with evidence collection and synthesis, plus isolated verification of cancellation, durable recovery and provider removal.
+- Expose independent model, tool-batch, context replacement, completion and checkpoint operations for external loop drivers. Context replacement preserves original durable history and survives cancellation after commit. The public SDK includes a workflow example with evidence collection and synthesis, plus isolated verification of cancellation, durable recovery and provider removal.
 
 - Own runtime client activation and cleanup through generation-local cordis-go scopes, with serialized shutdown barriers and attributable provider panic errors. Building from source now requires Go 1.27.0; build and CI version selection follows `go.mod`.
 

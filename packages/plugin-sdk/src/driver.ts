@@ -30,6 +30,14 @@ export interface DriverMessage extends ModelMessageV1 {
 export interface DriverTurnInput extends LogicalModelRequestV1 {
   readonly messages: readonly DriverMessage[];
 }
+export interface DriverTurnContext {
+  readonly messages: readonly DriverMessage[];
+  /** Execution-local revision. Any accepted message or archive changes it. */
+  readonly revision: number;
+  readonly archive_head: number;
+  /** Both durable archive and atomic context checkpoint are available. */
+  readonly can_replace: boolean;
+}
 export interface DriverModelRound {
   /** Admitted durable input contributions followed by the assistant response. */
   readonly messages: readonly DriverMessage[];
@@ -69,8 +77,17 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
     }) as T;
   }
   return {
-    /** Bound model defaults, available tools, and recovered initial history. */
+    /** Bound model defaults, available tools, and current active history. */
     read: () => call<DriverTurnInput>("read", {}),
+    context: () => call<DriverTurnContext>("context", {}),
+    /** Replace active model context at the revision returned by context().
+     * Accepted originals are archived first. The replacement and concurrent
+     * durable tail commit atomically; cancellation cannot undo that commit.
+     * An archive remains durable even if the context commit fails. There is
+     * no volatile fallback when durable context services are unavailable.
+     */
+    replaceContext: (revision: number, messages: readonly DriverMessage[]) =>
+      call<DriverTurnContext>("replace_context", { revision, messages }),
     model: (request: LogicalModelRequestV1) => call<DriverModelRound>("model", { request }),
     /** ID is unique within this execution, including failed calls. Persist
      * intent before submitting effects. An interrupted batch needs explicit

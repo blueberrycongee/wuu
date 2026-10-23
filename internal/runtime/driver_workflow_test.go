@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
@@ -61,7 +62,8 @@ func TestWorkflowDriverProcess(t *testing.T) {
 	defer cancel()
 	model := &workflowEvidenceModel{cancelSynthesis: cancel}
 	runner := &agent.StreamRunner{Client: model, Model: "controlled-evidence", Tools: tools, ToolLedger: ledger, LoopDriver: driver, DriverCheckpointStore: store}
-	history := []providers.ChatMessage{{Role: "user", Content: "Read evidence.txt and report the measured value."}}
+	history := []providers.ChatMessage{{Role: "user", Content: "A previous task"}, {Role: "assistant", Content: "Previous result"}, {Role: "user", Content: "Read evidence.txt and report the measured value."}}
+	attachWorkflowHistory(t, runner, sessDir, "workflow-session", history)
 	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "workflow-session", ExecutionID: "workflow-first"})
 	partial, err := runner.RunWithCallback(ctx, history, nil)
 	if err == nil || tools.calls != 1 {
@@ -73,15 +75,29 @@ func TestWorkflowDriverProcess(t *testing.T) {
 	if err := json.Unmarshal(partial.DriverCheckpoint, &state); err != nil || state.Phase != "synthesis" {
 		t.Fatalf("interruption overwrote the last durable checkpoint: state=%s err=%v", partial.DriverCheckpoint, err)
 	}
-	if len(partial.NewMessages) != 2 || partial.NewMessages[1].ToolInvocationID == "" {
-		t.Fatalf("interruption lost the durable tool receipt: %+v", partial.NewMessages)
+	if !partial.HistoryRewritten || len(partial.NewMessages) != 3 || partial.NewMessages[2].ToolInvocationID == "" || len(partial.DurableNewMessages) != 0 {
+		t.Fatalf("interruption lost the committed focused context: %+v", partial)
+	}
+	originals, err := session.ReadHistoryPage(context.Background(), sessDir, "workflow-session", 1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(originals.Records) != 5 || originals.Records[0].Content != "A previous task" {
+		t.Fatalf("context replacement removed or duplicated durable originals: %+v", originals)
 	}
 	// Match the application finalizer: saving the reported checkpoint must not
 	// overwrite the newer state already saved by a callback before interruption.
 	if err := store.Save(context.Background(), loopdriver.Checkpoint{ContractVersion: partial.DriverContractVersion, DriverID: partial.DriverID, DriverVersion: partial.DriverVersion, State: partial.DriverCheckpoint}); err != nil {
 		t.Fatal(err)
 	}
-	history = append(history, partial.NewMessages...)
+	restored, err := session.LoadProviderHistorySnapshot(sessDir, "workflow-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	history = workflowRecordsToMessages(t, restored.Records)
+	if len(history) != 3 {
+		t.Fatalf("restart did not load the focused context: %+v", history)
+	}
 	resumedModel := &workflowEvidenceModel{synthesisOnly: true}
 	runner.Client = resumedModel
 	resumeCtx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "workflow-session", ExecutionID: "workflow-resume"})
@@ -117,6 +133,7 @@ func TestWorkflowDriverProcess(t *testing.T) {
 		plannedRunner := &agent.StreamRunner{Client: &workflowEvidenceModel{}, Model: "controlled-evidence", Tools: plannedTools, ToolLedger: plannedLedger, LoopDriver: driver,
 			DriverCheckpointStore: workflowCheckpointBarrier{CheckpointStore: plannedStore, phase: "planned", cancel: stopPlanning}}
 		originalHistory := []providers.ChatMessage{{Role: "user", Content: "Read evidence.txt and report the measured value."}}
+		attachWorkflowHistory(t, plannedRunner, plannedDir, "planned-session", originalHistory)
 		planningCtx = loopdriver.WithExecutionContext(planningCtx, loopdriver.ExecutionContext{SessionID: "planned-session", ExecutionID: "planning"})
 		if _, err := plannedRunner.RunWithCallback(planningCtx, originalHistory, nil); err == nil || plannedTools.calls != 0 {
 			t.Fatalf("planned checkpoint barrier did not precede effects: calls=%d err=%v", plannedTools.calls, err)
@@ -144,6 +161,66 @@ func TestWorkflowDriverProcess(t *testing.T) {
 		t.Fatalf("disabled workflow fell back to another loop: effects=%d requests=%d err=%v", tools.calls, len(resumedModel.requests), err)
 	}
 	t.Logf("external driver=%s; file evidence=42; tool effects=%d; first requests=%d; resume requests=%d; output=%q", result.DriverID, tools.calls, len(model.requests), len(resumedModel.requests), result.Content)
+}
+
+func attachWorkflowHistory(t *testing.T, runner *agent.StreamRunner, dir, id string, initial []providers.ChatMessage) {
+	t.Helper()
+	toRecords := func(messages []providers.ChatMessage) []session.HistoryRecord {
+		raw, err := json.Marshal(driverMessagesToWire(messages))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var records []session.HistoryRecord
+		if err := json.Unmarshal(raw, &records); err != nil {
+			t.Fatal(err)
+		}
+		return records
+	}
+	start, _, err := session.AppendHistoryRecordsReturningRange(dir, id, toRecords(initial))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range initial {
+		initial[i].Seq = start + i
+	}
+	runner.ArchiveHistory = func(ctx context.Context, messages []providers.ChatMessage) (agent.HistoryArchive, error) {
+		start, head, err := session.AppendHistoryRecordsReturningRange(dir, id, toRecords(messages))
+		if err != nil {
+			return agent.HistoryArchive{}, err
+		}
+		seqs := make([]int, len(messages))
+		for i := range messages {
+			seqs[i] = start + i
+		}
+		if len(messages) == 0 {
+			snapshot, err := session.LoadProviderHistorySnapshot(dir, id)
+			if err != nil {
+				return agent.HistoryArchive{}, err
+			}
+			head = snapshot.HeadSeq
+		}
+		return agent.HistoryArchive{Seqs: seqs, HeadSeq: head}, nil
+	}
+	runner.CommitFreshContext = func(ctx context.Context, messages []providers.ChatMessage, head int, key string, note agent.CompactionNote) ([]providers.ChatMessage, int, error) {
+		checkpoint, err := session.StoreContextWindow(dir, id, toRecords(messages), head, session.CompactionNote{ProviderKey: key})
+		if err != nil {
+			return nil, head, err
+		}
+		return workflowRecordsToMessages(t, checkpoint.Replacement), checkpoint.ThroughSeq, nil
+	}
+}
+
+func workflowRecordsToMessages(t *testing.T, records []session.HistoryRecord) []providers.ChatMessage {
+	t.Helper()
+	raw, err := json.Marshal(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var messages []pluginprotocol.DriverMessageV1
+	if err := json.Unmarshal(raw, &messages); err != nil {
+		t.Fatal(err)
+	}
+	return driverMessagesFromWire(messages)
 }
 
 type workflowCheckpointBarrier struct {
