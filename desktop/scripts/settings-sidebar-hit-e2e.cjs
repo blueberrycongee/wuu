@@ -351,14 +351,9 @@ async function verifyRibbonHistoryOcclusion(win) {
     await settleChrome(win);
     const before = await snapshot();
     assert.equal(before.history.hidden, false, 'History starts visible with the ribbon closed');
-    const point = await evaluate(win, () => {
-      const ribbon = document.querySelector('.sidebar-ribbon').getBoundingClientRect();
-      const item = document.querySelector('.sidebar-ribbon-main .sidebar-ribbon-button').getBoundingClientRect();
-      return { x: ribbon.left + Math.min(12, ribbon.width / 2), y: item.top + item.height / 2 };
-    });
-    win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(point.x * 2), y: Math.round(point.y * 2) });
-    await waitFor(win, () => !!document.querySelector('.sidebar-ribbon[data-expanded="true"]'), 3000);
-    await settleRibbonMotion(win);
+    await hoverCompactRibbon(win);
+    assert.deepEqual(await snapshot(), before, 'Hover keeps the compact ribbon and history geometry unchanged');
+    await expandRibbonWithKeyboard(win);
     const expanded = await snapshot();
     const a = before.history.bounds, b = expanded.ribbon;
     const overlaps = Math.min(a.right, b.right) > Math.max(a.left, b.left) &&
@@ -371,6 +366,7 @@ async function verifyRibbonHistoryOcclusion(win) {
     results.push({ scenario: `ribbon-history-240-20px-2-${collapsed ? 'collapsed' : 'docked'}`, before, expanded, overlaps });
     saveResults();
     await capture(win, `ribbon-history-240-20px-2-${collapsed ? 'collapsed' : 'docked'}.png`);
+    await evaluate(win, () => document.querySelector('.app-shell').focus());
     await preparePointerInput(win);
     await waitFor(win, () => !document.querySelector('.shell-page-history-controls').hidden, 3000);
     const restored = await snapshot();
@@ -418,26 +414,22 @@ async function verifyRibbonControlFocus(win, page) {
       }, owner);
       assert.ok(focused, `${page}/${layout}/${owner}: the tested control must own focus`);
       const before = await snapshot();
-      const point = await evaluate(win, () => {
-        const rect = document.querySelector('.sidebar-ribbon-main .sidebar-ribbon-button').getBoundingClientRect();
-        return { x: 12, y: rect.top + rect.height / 2 };
-      });
-      const zoom = win.webContents.getZoomFactor();
-      win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) });
-      await waitFor(win, () => !!document.querySelector('.sidebar-ribbon[data-expanded="true"]'), 3000);
-      await settleRibbonMotion(win);
+      await hoverCompactRibbon(win);
+      assert.deepEqual(await snapshot(), before, 'Hover preserves control focus, accessibility and geometry');
+      await expandRibbonWithKeyboard(win);
       const expanded = await snapshot();
       assert.ok(expanded.toggle.hidden && expanded.toggle.inert, 'Expanded Mac ribbon explicitly removes its covered toggle');
       assert.equal(expanded.history.hidden, layout !== 'docked', 'Docked history remains outside the ribbon');
       assert.equal(expanded.history.inert, expanded.history.hidden);
-      if (owner === 'toggle' || layout !== 'docked') assert.ok(expanded.focusOnShell, 'Covered control focus moves outside the ribbon');
-      assert.equal(expanded.focusInRibbon, false, 'Pointer expansion does not manufacture keyboard retention');
+      assert.equal(expanded.focusInRibbon, true, 'Keyboard expansion retains focus in the ribbon');
       assert.deepEqual(expanded.title, before.title);
       assert.deepEqual(expanded.content, before.content);
-      // A genuine pointer exit must collapse naturally, with no blur or focus reset.
+      // Leaving the keyboard-owned ribbon releases its expansion. Pointer
+      // hover no longer expands it or owns its closing transition.
       await armClosingControlOwnership(win);
       let closing;
       try {
+        await evaluate(win, () => document.querySelector('.app-shell').focus());
         await preparePointerInput(win);
       } finally {
         closing = await evaluate(win, () => window.__wuuClosingOwnership.stop());
@@ -453,6 +445,7 @@ async function verifyRibbonControlFocus(win, page) {
       await settleChrome(win);
       const restored = await snapshot();
       assert.ok(!restored.toggle.hidden && !restored.toggle.inert && !restored.ribbonExpanded);
+      assert.ok(restored.focusOnShell, 'Closing returns focus outside the ribbon');
       assert.deepEqual(restored.toggle.rect, before.toggle.rect, 'The same toggle anchor returns');
       assert.deepEqual(restored.title, before.title);
       assert.deepEqual(restored.content, before.content);
@@ -461,11 +454,7 @@ async function verifyRibbonControlFocus(win, page) {
     }
   }
   // Existing keyboard navigation in the ribbon must retain its own expansion.
-  await evaluate(win, () => document.querySelector('.sidebar-ribbon-main .sidebar-ribbon-button').focus());
-  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'ArrowDown' });
-  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'ArrowDown' });
-  await waitFor(win, () => !!document.querySelector('.sidebar-ribbon[data-expanded="true"]'), 3000);
-  await settleRibbonMotion(win);
+  await expandRibbonWithKeyboard(win);
   const away = await evaluate(win, () => ({ x: innerWidth - 30, y: innerHeight - 30 }));
   const zoom = win.webContents.getZoomFactor();
   win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(away.x * zoom), y: Math.round(away.y * zoom) });
@@ -496,16 +485,50 @@ async function notificationRouteState(win) {
 }
 
 async function settleRibbonMotion(win) {
-  // The expanded marker precedes the width transition, and is removed before
-  // its closing transition finishes. Read geometry to flush style, then wait
-  // for the actual renderer animation rather than sampling two early frames.
+  // useRibbonReveal owns a RAF timeline, which getAnimations does not expose.
+  // Wait for its endpoint as well as any browser-owned animation.
   await waitFor(win, () => {
     const ribbon = document.querySelector('.sidebar-ribbon');
     if (!ribbon) throw new Error('Ribbon is required for motion checks');
     ribbon.getBoundingClientRect();
-    return ribbon.getAnimations().every(animation => !animation.pending &&
+    const reveal = Number(getComputedStyle(ribbon).getPropertyValue('--ribbon-reveal'));
+    const target = ribbon.dataset.expanded === 'true' ? 1 : 0;
+    return reveal === target && ribbon.getAnimations().every(animation => !animation.pending &&
       animation.playState !== 'running');
   }, 3000);
+}
+
+async function hoverCompactRibbon(win) {
+  const point = await evaluate(win, () => {
+    const ribbon = document.querySelector('.sidebar-ribbon').getBoundingClientRect();
+    const item = document.querySelector('.sidebar-ribbon-main .sidebar-ribbon-button').getBoundingClientRect();
+    return { x: ribbon.left + Math.min(12, ribbon.width / 2), y: item.top + item.height / 2 };
+  });
+  const zoom = win.webContents.getZoomFactor();
+  const position = { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
+  win.webContents.sendInputEvent({ type: 'mouseMove', ...position });
+  await waitFor(win, () => document.querySelector('.sidebar-ribbon').matches(':hover'), 3000);
+  const hover = await evaluate(win, ({ position, zoom }) => {
+    const ribbon = document.querySelector('.sidebar-ribbon');
+    const hit = document.elementFromPoint(position.x / zoom, position.y / zoom);
+    return { owned: hit === ribbon || ribbon.contains(hit), hit: hit?.getAttribute('class') };
+  }, { position, zoom });
+  assert.ok(hover.owned, `The ribbon owns the actual rounded hover point: ${JSON.stringify(hover)}`);
+  for (let sample = 0; sample < 12; sample++) {
+    await delay(40);
+    assert.equal(await evaluate(win, () => !!document.querySelector('.sidebar-ribbon[data-expanded="true"]')), false,
+      'Pointer hover keeps the ribbon compact');
+  }
+  results.push({ scenario: 'compact-ribbon-hover', zoom, position, hover });
+  saveResults();
+}
+
+async function expandRibbonWithKeyboard(win) {
+  await evaluate(win, () => document.querySelector('.sidebar-ribbon-main .sidebar-ribbon-button').focus());
+  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'ArrowDown' });
+  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'ArrowDown' });
+  await waitFor(win, () => !!document.querySelector('.sidebar-ribbon[data-expanded="true"]'), 3000);
+  await settleRibbonMotion(win);
 }
 
 async function armClosingControlOwnership(win) {
@@ -517,7 +540,9 @@ async function armClosingControlOwnership(win) {
     let stopped = false;
     const sample = () => {
       const bounds = ribbon.getBoundingClientRect().toJSON();
-      const motionActive = ribbon.getAnimations().some(animation => animation.pending || animation.playState === 'running');
+      const reveal = Number(getComputedStyle(ribbon).getPropertyValue('--ribbon-reveal'));
+      const motionActive = (reveal > 0 && reveal < 1) ||
+        ribbon.getAnimations().some(animation => animation.pending || animation.playState === 'running');
       const controls = [...document.querySelectorAll('.section-sidebar-toggle, .shell-page-history-controls button')]
         .filter(element => element.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }))
         .map(element => {
@@ -563,8 +588,12 @@ async function preparePointerInput(win) {
   const started = Date.now();
   while (!win.isFocused() && Date.now() - started < 3000) await delay(40);
   assert.ok(win.isFocused(), "The fixture window must own focus before physical input");
-  const point = await evaluate(win, () => ({ x: innerWidth - 30, y: innerHeight - 30 }));
   const zoom = win.webContents.getZoomFactor();
+  const [width, height] = win.getContentSize();
+  // Native resize/zoom setters can return before Chromium applies its viewport.
+  await waitFor(win, ({ width, height, zoom }) => Math.abs(innerWidth - width / zoom) <= 1 &&
+    Math.abs(innerHeight - height / zoom) <= 1, 3000, { width, height, zoom });
+  const point = await evaluate(win, () => ({ x: innerWidth - 30, y: innerHeight - 30 }));
   win.webContents.sendInputEvent({ type: "mouseMove", x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) });
   await evaluate(win, () => new Promise(requestAnimationFrame));
   const state = await evaluate(win, () => ({
