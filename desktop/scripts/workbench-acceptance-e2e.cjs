@@ -14,7 +14,7 @@ const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { app, ipcMain } = require('electron');
 const { validateCorpus } = require('./conversation-corpus.cjs');
-const { createWebsiteFixture, runWebsiteAcceptance } = require('./web-workspace-acceptance.cjs');
+const { createWebsiteFixture, runWebsiteAcceptance, readRibbonInteraction } = require('./web-workspace-acceptance.cjs');
 
 const desktop = path.resolve(__dirname, '..');
 const output = path.resolve(process.env.WUU_WORKBENCH_OUTPUT || path.join(desktop, 'out/e2e/workbench-acceptance'));
@@ -228,7 +228,8 @@ async function capture(label) {
   report.screenshots.push({ file: name, sha256: createHash('sha256').update(png).digest('hex'), atMs: Date.now() - started, image: screenshot.getSize(), window: win.getBounds(),
     viewport: await evaluate(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, theme: document.documentElement.dataset.theme,
       uiSize: getComputedStyle(document.documentElement).getPropertyValue('--conversation-message-font-size').trim(),
-      activeElement: document.activeElement?.outerHTML.slice(0, 180) })) });
+      activeElement: document.activeElement?.outerHTML.slice(0, 180) })),
+    ribbonInteraction: await readRibbonInteraction(win) });
   save();
   // A short viewing hold makes the real-time recording readable; success is
   // always decided by observable state, never by this pacing delay.
