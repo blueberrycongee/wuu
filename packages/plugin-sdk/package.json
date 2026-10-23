@@ -8,7 +8,7 @@
   "description": "Wuu Plugin SDK \u2014 types and helpers for building Wuu plugins",
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit && tsc --project tsconfig.preview.json",
+    "typecheck": "npm run build && tsc --project tsconfig.preview.json",
     "test": "npm run build && node --test dist/*.test.js test/*.test.mjs",
     "prepack": "npm run build",
     "test:author": "node test/author-loop.mjs"
