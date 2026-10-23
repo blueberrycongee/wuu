@@ -534,6 +534,16 @@
   color: var(--ink);
 }
 
+.environment-branch-list button {
+  height: auto;
+  min-height: var(--control-row-height);
+  padding-block: var(--menu-item-padding-block);
+}
+
+.environment-branch-name {
+  display: grid;
+}
+
 .environment-branch-list {
   display: grid;
   max-height: 210px;

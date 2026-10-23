@@ -37,6 +37,7 @@ export function EnvironmentPanel({
   onSetActiveMenu,
   onClose,
   onSelectBranch,
+  onOpenWorktree,
   onCreateBranch,
   onOpenReview,
   onOpenCommit,
@@ -56,6 +57,7 @@ export function EnvironmentPanel({
   onSetActiveMenu: (menu: EnvironmentPanelMenu) => void;
   onClose: () => void;
   onSelectBranch: (branch: string) => void;
+  onOpenWorktree?: (path: string) => Promise<void>;
   onCreateBranch: (branch: string) => Promise<void>;
   onOpenReview: () => void;
   onOpenCommit: () => void;
@@ -152,7 +154,7 @@ export function EnvironmentPanel({
           />
           <EnvironmentActionRow
             className={activeMenu === "branch" ? "active" : undefined}
-            disabled={!gitStatus?.is_repo || running}
+            disabled={!gitStatus?.is_repo}
             onClick={() => toggleMenu("branch")}
             icon={<GitBranch className="icon-lg" aria-hidden="true" />}
             label={branchLabel}
@@ -188,6 +190,7 @@ export function EnvironmentPanel({
         <EnvironmentBranchMenu
           gitStatus={gitStatus}
           onSelectBranch={onSelectBranch}
+          onOpenWorktree={onOpenWorktree}
           onCreateBranch={onCreateBranch}
         />
       ) : null}
@@ -230,10 +233,12 @@ function EnvironmentActionRow({
 function EnvironmentBranchMenu({
   gitStatus,
   onSelectBranch,
+  onOpenWorktree,
   onCreateBranch
 }: {
   gitStatus: GitStatusResult;
   onSelectBranch: (branch: string) => void;
+  onOpenWorktree?: (path: string) => Promise<void>;
   onCreateBranch: (branch: string) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
@@ -275,10 +280,27 @@ function EnvironmentBranchMenu({
         {branches.length === 0 ? <div className="environment-empty">{t("environment.noMatchingBranches")}</div> : null}
         {branches.map((branch) => {
           const selected = branch === gitStatus.branch;
+          const worktreePath = selected ? undefined : gitStatus.branch_worktrees?.find((worktree) => worktree.branch === branch)?.path;
           return (
-            <button key={branch} role="menuitem" type="button" aria-current={selected || undefined} disabled={selected || !hostSupports("checkoutGitBranch")} onClick={() => onSelectBranch(branch)}>
+            <button key={branch} role="menuitem" type="button" aria-current={selected || undefined}
+              title={worktreePath ? `${branch}\n${worktreePath}` : branch}
+              disabled={selected || submitting || (worktreePath ? !onOpenWorktree : !hostSupports("checkoutGitBranch"))}
+              onClick={async () => {
+                setSubmitting(true);
+                try {
+                  if (worktreePath) await onOpenWorktree?.(worktreePath);
+                  else await onSelectBranch(branch);
+                } catch (error) {
+                  showErrorToast(error, t("git.checkoutFailed"));
+                } finally {
+                  setSubmitting(false);
+                }
+              }}>
               <GitBranch className="icon" />
-              <span>{branch}</span>
+              <span className="environment-branch-name">
+                <span>{branch}</span>
+                {worktreePath ? <span className="branch-worktree-action">{t("git.openExistingWorktree")}</span> : null}
+              </span>
               {selected ? <Check className="icon" /> : null}
             </button>
           );

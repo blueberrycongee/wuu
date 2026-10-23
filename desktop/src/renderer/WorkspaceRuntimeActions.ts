@@ -48,6 +48,7 @@ export type WorkspaceRuntimeActionsDeps = {
 
 export type WorkspaceRuntimeActions = {
   selectWorkspaceForNewThread: (projectId: string) => Promise<void>;
+  openWorktreeForNewThread: (path: string) => Promise<void>;
   startNewThreadInWorkspace: (projectId: string) => Promise<boolean>;
   createBlankProject: () => Promise<void>;
   chooseProjectFolder: () => Promise<void>;
@@ -209,6 +210,24 @@ export function createWorkspaceRuntimeActions(
         projectId === state.activeProjectId &&
         state.activeContext?.kind === "project",
       selectContext: () => window.wuu.selectProject(projectId),
+      failureStatus: translateCurrent("workspace.openFailed"),
+    });
+  }
+
+  async function openWorktreeForNewThread(path: string): Promise<void> {
+    await retargetDraftToContext({
+      switchKind: "workspace",
+      switchTarget: path,
+      isCurrentContext: (state) => state.activeContext?.cwd === path,
+      selectContext: async () => {
+        let project = deps.getAppState().projects.find((candidate) => candidate.path === path || candidate.canonical_path === path);
+        if (!project && window.wuu.importWorkspaces) {
+          const imported = await window.wuu.importWorkspaces([path]);
+          project = imported.projects.find((candidate) => candidate.path === path || candidate.canonical_path === path);
+        }
+        if (!project) throw new Error(translateCurrent("workspace.openFailed"));
+        return window.wuu.selectProject(project.id);
+      },
       failureStatus: translateCurrent("workspace.openFailed"),
     });
   }
@@ -547,6 +566,7 @@ export function createWorkspaceRuntimeActions(
 
   return {
     selectWorkspaceForNewThread,
+    openWorktreeForNewThread,
     startNewThreadInWorkspace,
     createBlankProject,
     chooseProjectFolder,

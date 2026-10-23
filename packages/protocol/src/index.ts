@@ -1482,6 +1482,8 @@ export type DesktopProject = {
   id: string;
   name: string;
   path: string;
+  /** Derived filesystem path, resolving symlinks for workspace identity comparisons. */
+  canonical_path?: string;
   created_at: string;
   updated_at: string;
   // Derived (not persisted): true when the project's path cannot currently be
@@ -1538,6 +1540,8 @@ export type GitStatusResult = {
   is_repo: boolean;
   branch?: string;
   branches?: string[];
+  /** Local branches checked out in worktrees, including the current worktree. */
+  branch_worktrees?: { branch: string; path: string }[];
   dirty_count: number;
   detached?: boolean;
   diff?: GitDiffStats;

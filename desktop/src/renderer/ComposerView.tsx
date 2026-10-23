@@ -175,6 +175,7 @@ export function Composer({
   onToggleBranchMenu,
   onSelectGitBranch,
   onCreateGitBranch,
+  onOpenGitWorktree,
   worktree,
   activeContext,
   inlineCompletionWorkspace = activeContext,
@@ -289,6 +290,7 @@ export function Composer({
   gitStatus?: GitStatusResult;
   branchPickerDisabled?: boolean;
   onCreateGitBranch?: (branch: string) => Promise<void>;
+  onOpenGitWorktree?: (path: string) => Promise<void>;
   worktree?: ComposerWorktreeControl;
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
@@ -1290,6 +1292,7 @@ export function Composer({
                     onToggle={onToggleBranchMenu}
                     onSelect={worktree?.enabled ? worktree.onSelectStartBranch : onSelectGitBranch}
                     onCreate={worktree?.enabled ? undefined : onCreateGitBranch}
+                    onOpenWorktree={onOpenGitWorktree}
                     worktreeStart={worktree?.enabled ? { branch: worktree.startBranch } : undefined}
                   />
                   {worktree ? (

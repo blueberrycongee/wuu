@@ -154,11 +154,11 @@ describe("createEnvironmentActions", () => {
     expect(harness.getAppState().gitStatus?.branch).toBe("feature");
   });
 
-  it("preserves Git conflict details without the Electron wrapper", async () => {
+  it("explains checkout conflicts without the Electron wrapper", async () => {
     const api = installWuuApi();
     api.checkoutGitBranch.mockRejectedValueOnce(new Error("Error invoking remote method 'wuu:git-checkout': Error: Your local changes would be overwritten by checkout"));
     const harness = buildActions();
-    await expect(harness.actions.checkoutBranch("feature")).rejects.toThrow(/^Your local changes would be overwritten by checkout$/);
+    await expect(harness.actions.checkoutBranch("feature")).rejects.toThrow(t("git.checkoutLocalChanges"));
     expect(harness.closeWorkspaceMenus).not.toHaveBeenCalled();
   });
 

@@ -1900,6 +1900,13 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   white-space: nowrap;
 }
 
+.branch-worktree-action {
+  display: block;
+  color: var(--ink-soft);
+  font-size: var(--font-menu);
+  font-weight: var(--weight-regular);
+}
+
 .composer-project-menu button svg {
   width: var(--icon-size-sm);
   height: var(--icon-size-sm);

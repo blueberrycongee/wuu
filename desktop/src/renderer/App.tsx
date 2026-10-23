@@ -3584,6 +3584,7 @@ export function App(): JSX.Element {
         onSelectWorkspace={(id) => void selectWorkspaceForNewThread(id)}
         onSelectNoProject={() => void useNoProject(false)}
         onSelectGitBranch={checkoutBranch}
+        onOpenGitWorktree={(path) => openWorktreeForNewThread(path)}
         onCreateGitBranch={async (branch) => {
           await createAndCheckoutBranch(branch);
           setBranchMenuOpen(false);
@@ -3869,6 +3870,7 @@ export function App(): JSX.Element {
 
   const {
     selectWorkspaceForNewThread,
+    openWorktreeForNewThread,
     startNewThreadInWorkspace,
     createBlankProject,
     chooseProjectFolder,
@@ -6135,7 +6137,10 @@ export function App(): JSX.Element {
           environmentPanelMenu={environmentPanelMenu}
           environmentGitBusy={environmentGitBusy}
           pullRequestDisabledReason={pullRequestDisabledReason}
-          onSetEnvironmentPanelMenu={setEnvironmentPanelMenu}
+          onSetEnvironmentPanelMenu={(menu) => {
+            if (menu === "branch") scheduleGitStatusRefresh(0);
+            setEnvironmentPanelMenu(menu);
+          }}
           onCloseEnvironmentPanel={() =>
             closeEnvironmentPanel({ dismissed: true })
           }
@@ -6147,6 +6152,7 @@ export function App(): JSX.Element {
             }
           }}
           onCreateBranch={(branch) => createAndCheckoutBranch(branch)}
+          onOpenWorktree={(path) => openWorktreeForNewThread(path)}
           onOpenReview={() => {
             openWorkspaceTool("review");
             closeEnvironmentPanel({ dismissed: true });

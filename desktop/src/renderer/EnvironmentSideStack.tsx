@@ -25,6 +25,7 @@ export function EnvironmentSideStack({
   onSetActiveMenu,
   onClose,
   onSelectBranch,
+  onOpenWorktree,
   onCreateBranch,
   onOpenReview,
   onOpenCommit,
@@ -50,6 +51,7 @@ export function EnvironmentSideStack({
   onSetActiveMenu: (menu: EnvironmentPanelMenu) => void;
   onClose: () => void;
   onSelectBranch: (branch: string) => void;
+  onOpenWorktree?: (path: string) => Promise<void>;
   onCreateBranch: (branch: string) => Promise<void>;
   onOpenReview: () => void;
   onOpenCommit: () => void;
@@ -82,6 +84,7 @@ export function EnvironmentSideStack({
         onSetActiveMenu={onSetActiveMenu}
         onClose={onClose}
         onSelectBranch={onSelectBranch}
+        onOpenWorktree={onOpenWorktree}
         onCreateBranch={onCreateBranch}
         onOpenReview={onOpenReview}
         onOpenCommit={onOpenCommit}

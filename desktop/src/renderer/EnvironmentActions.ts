@@ -58,9 +58,27 @@ export function createEnvironmentActions(
 
   function branchError(error: unknown, fallback: string): Error {
     const message = toastErrorMessage(error, fallback);
-    return new Error(message === "cannot run Git actions while a thread is running in this working tree"
-      ? translateCurrent("git.checkoutBlockedByRunningThread")
-      : message);
+    if (message === "cannot run Git actions while a thread is running in this working tree") {
+      return new Error(translateCurrent("git.checkoutBlockedByRunningThread"));
+    }
+    if (/already (?:checked out|used by worktree) at/i.test(message)) {
+      return new Error(translateCurrent("git.checkoutOccupied"));
+    }
+    if (/would be overwritten by checkout|would be removed by checkout/i.test(message)) {
+      return new Error(translateCurrent("git.checkoutLocalChanges"));
+    }
+    if (/resolve your current index|needs merge|unmerged files/i.test(message)) {
+      return new Error(translateCurrent("git.checkoutUnmerged"));
+    }
+    if (/index\.lock.*File exists|another git process/is.test(message)) {
+      return new Error(translateCurrent("git.checkoutLocked"));
+    }
+    if (/not a valid branch name|invalid branch name|branch name is required/i.test(message)) {
+      return new Error(translateCurrent("git.invalidBranchName"));
+    }
+    if (message === "branch not found") return new Error(translateCurrent("git.branchNotFound"));
+    if (message === "branch already exists") return new Error(translateCurrent("git.branchExists"));
+    return new Error(message);
   }
 
   async function checkoutBranch(branch: string): Promise<void> {

@@ -621,6 +621,7 @@ export type ConversationSidePanelsProps = {
   onSetEnvironmentPanelMenu: EnvironmentSideStackProps["onSetActiveMenu"];
   onCloseEnvironmentPanel: () => void;
   onSelectBranch: (branch: string) => void;
+  onOpenWorktree?: (path: string) => Promise<void>;
   onCreateBranch: EnvironmentSideStackProps["onCreateBranch"];
   onOpenReview: () => void;
   onOpenCommit: () => void;
@@ -644,6 +645,7 @@ export function ConversationSidePanels({
   onSetEnvironmentPanelMenu,
   onCloseEnvironmentPanel,
   onSelectBranch,
+  onOpenWorktree,
   onCreateBranch,
   onOpenReview,
   onOpenCommit,
@@ -668,6 +670,7 @@ export function ConversationSidePanels({
         onSetActiveMenu={onSetEnvironmentPanelMenu}
         onClose={onCloseEnvironmentPanel}
         onSelectBranch={onSelectBranch}
+        onOpenWorktree={onOpenWorktree}
         onCreateBranch={onCreateBranch}
         onOpenReview={onOpenReview}
         onOpenCommit={onOpenCommit}
