@@ -1,3 +1,7 @@
+import type {
+  ApplicationActionMapV1, ApplicationGenerationAPI, ApplicationServiceV1,
+  ApplicationShellDefinition, UISlotDefinition, UIContributionDefinition,
+} from "../../../../packages/plugin-sdk/src/ui";
 import type * as React from "react";
 import type { ExtensionIconDescriptor, PluginVisibleHistoryRequest, PluginVisibleHistoryResult } from "../../shared/protocol";
 import { settleOnAbort } from "./activation";
@@ -168,7 +172,7 @@ export interface ComposerStatusSourceRegistration {
   subscribe(context: ComposerStatusContext, listener: () => void): () => void;
 }
 
-export interface PluginGenerationApi {
+export interface PluginGenerationApi extends ApplicationGenerationAPI {
   /** The React runtime owned by the Wuu renderer. Plugin bundles should use this object. */
   readonly react: typeof React;
   /** Host-owned primitives that inherit the active Wuu theme and layout rhythm. */
@@ -387,7 +391,26 @@ export interface PluginGenerationDiagnostic {
   readonly contributionId?: string;
 }
 
+export interface RegisteredApplicationShell extends ApplicationShellDefinition {
+  readonly pluginId: string;
+  readonly generation: string;
+  readonly application: ApplicationServiceV1;
+}
+
+export interface RegisteredUISlot extends UISlotDefinition {
+  readonly pluginId: string;
+  readonly generation: string;
+  readonly name: string;
+}
+
+export interface RegisteredUIContribution extends UIContributionDefinition {
+  readonly pluginId: string;
+  readonly generation: string;
+  readonly application: ApplicationServiceV1;
+}
+
 export interface PluginHostOptions {
+  application?: ApplicationServiceV1;
   /** Inject the renderer's existing React runtime; the host never supplies another copy. */
   react: typeof React;
   /** Internal startup budget override for deterministic host and renderer checks. */
@@ -508,7 +531,14 @@ interface PresenterRecord extends OrderedRecord {
   readonly compatibilityRender?: ToolActivityPresenterDefinition["render"];
 }
 
+interface ApplicationShellRecord extends OrderedRecord { readonly definition: RegisteredApplicationShell }
+interface UISlotRecord extends OrderedRecord { readonly definition: RegisteredUISlot }
+interface UIContributionRecord extends OrderedRecord { readonly definition: RegisteredUIContribution }
+
 interface GenerationState {
+  readonly shells: ApplicationShellRecord[];
+  readonly uiSlots: UISlotRecord[];
+  readonly uiContributions: UIContributionRecord[];
   readonly pluginId: string;
   readonly generation: string;
   readonly declaredContributions?: PluginContributionDeclarations;
@@ -577,6 +607,10 @@ export class PluginGenerationSupersededError extends Error {
 export class PluginHost {
   readonly react: typeof React;
   private readonly ui: Omit<PluginUIKit, "WebPage">;
+  private readonly application?: ApplicationServiceV1;
+  private applicationShells: readonly RegisteredApplicationShell[] = Object.freeze([]);
+  private uiSlotSnapshot: readonly RegisteredUISlot[] = Object.freeze([]);
+  private uiContributionSnapshot: readonly RegisteredUIContribution[] = Object.freeze([]);
 
   private readonly activationTimeoutMs: number;
   private readonly styleContainer?: PluginHostOptions["styleContainer"];
@@ -622,6 +656,7 @@ export class PluginHost {
     if (!Number.isFinite(this.activationTimeoutMs) || this.activationTimeoutMs <= 0) {
       throw new Error("Plugin activation timeout must be a positive finite duration");
     }
+    this.application = options.application;
     this.react = options.react;
     this.ui = createPluginUIKit(options.react);
     this.styleContainer = options.styleContainer;
@@ -660,6 +695,7 @@ export class PluginHost {
       this.assertViewPlacementTargets(state);
       this.assertDeclaredViewEntryTargets(state);
       this.assertToolActivityPresenterOwnership(state);
+      this.assertUIComposition(state);
     } catch (error: unknown) {
       state.acceptingRegistrations = false;
       if (this.pendingActivations.get(pluginId) === pending) {
@@ -729,6 +765,60 @@ export class PluginHost {
     active.active = false;
     this.disposeGeneration(active);
     this.refreshPublicState();
+  }
+
+  getApplicationShells = (): readonly RegisteredApplicationShell[] => this.applicationShells;
+
+  getUISlot(name: string): RegisteredUISlot | undefined {
+    return this.uiSlotSnapshot.find(slot => slot.name === name);
+  }
+
+  getUIContributions(name: string): readonly RegisteredUIContribution[] {
+    return this.uiContributionSnapshot.filter(contribution => contribution.target === name);
+  }
+
+  getUICompositionSnapshot = (): readonly RegisteredUIContribution[] => this.uiContributionSnapshot;
+
+  private assertUIComposition(staging: GenerationState): void {
+    const generations = [...this.activeGenerations.values()].filter(state => state.pluginId !== staging.pluginId);
+    generations.push(staging);
+    for (const state of generations) for (const slot of state.uiSlots) {
+      if (slot.removed || slot.definition.cardinality !== "one") continue;
+      const contributions = generations.flatMap(candidate => candidate.uiContributions)
+        .filter(item => !item.removed && item.definition.target === slot.definition.name);
+      if (contributions.length > 1) throw new Error(`UI slot conflict: ${slot.definition.name}`);
+    }
+  }
+
+  private createApplicationService(state: GenerationState): ApplicationServiceV1 {
+    const service = (): ApplicationServiceV1 => {
+      this.assertActive(state);
+      if (!this.application) throw new Error("Application service is unavailable");
+      return this.application;
+    };
+    return Object.freeze({
+      contractVersion: 1 as const,
+      getSnapshot: () => service().getSnapshot(),
+      subscribe: (listener: () => void) => {
+        const unsubscribe = service().subscribe(() => {
+          if (state.active && !state.disposed) listener();
+        });
+        const disposable = createDisposable(unsubscribe);
+        state.teardown.push(disposable);
+        return () => disposable.dispose();
+      },
+      invoke: async <Action extends keyof ApplicationActionMapV1>(
+        action: Action, input: ApplicationActionMapV1[Action]["input"], options?: { readonly signal?: AbortSignal },
+      ): Promise<ApplicationActionMapV1[Action]["result"]> => {
+        const application = service();
+        const signal = options?.signal ? AbortSignal.any([state.lifetime.signal, options.signal]) : state.lifetime.signal;
+        signal.throwIfAborted();
+        const result = await application.invoke(action, input, { signal });
+        this.assertActive(state);
+        signal.throwIfAborted();
+        return result;
+      },
+    });
   }
 
   /** Resolve host action rows without publishing diagnostics during React rendering. */
@@ -1015,6 +1105,7 @@ export class PluginHost {
   }
 
   private createGenerationApi(state: GenerationState): PluginGenerationApi {
+    const application = this.createApplicationService(state);
     const registerViewPlacement = (
       contribution: {
         id: string;
@@ -1040,6 +1131,41 @@ export class PluginHost {
 
     return Object.freeze({
       react: this.react,
+      application,
+      registerApplicationShell: (definition: ApplicationShellDefinition) => {
+        this.assertAccepting(state);
+        const id = this.claimRegistrationId(state, "application-shell", definition.id);
+        const record: ApplicationShellRecord = {
+          pluginId: state.pluginId, generation: state.generation, id, order: 0, removed: false,
+          definition: Object.freeze({ ...definition, id, pluginId: state.pluginId, generation: state.generation, application }),
+        };
+        state.shells.push(record);
+        return this.ownRecord(state, record);
+      },
+      registerUISlot: (definition: UISlotDefinition) => {
+        this.assertAccepting(state);
+        const id = this.claimRegistrationId(state, "ui-slot", definition.id);
+        if (id.includes("/")) throw new Error("UI slot id must be local to its owner");
+        if (definition.cardinality !== "one" && definition.cardinality !== "many") throw new Error("Invalid UI slot cardinality");
+        const record: UISlotRecord = {
+          pluginId: state.pluginId, generation: state.generation, id, order: 0, removed: false,
+          definition: Object.freeze({ ...definition, id, name: `${state.pluginId}/${id}`, pluginId: state.pluginId, generation: state.generation }),
+        };
+        state.uiSlots.push(record);
+        return this.ownRecord(state, record);
+      },
+      registerUIContribution: (definition: UIContributionDefinition) => {
+        this.assertAccepting(state);
+        const id = this.claimRegistrationId(state, "ui-contribution", definition.id);
+        const target = requireNonEmpty(definition.target, "UI slot target");
+        if (!target.includes("/")) throw new Error("UI slot target must include its owner");
+        const record: UIContributionRecord = {
+          pluginId: state.pluginId, generation: state.generation, id, order: normalizeOrder(definition.order), removed: false,
+          definition: Object.freeze({ ...definition, id, target, pluginId: state.pluginId, generation: state.generation, application }),
+        };
+        state.uiContributions.push(record);
+        return this.ownRecord(state, record);
+      },
       ui: Object.freeze({
         ...this.ui,
         WebPage: createPluginWebPage(this.react, state.lifetime.signal, (error) => {
@@ -1717,6 +1843,20 @@ export class PluginHost {
 
   private refreshPublicState(replaceSnapshots = false): void {
     let changed = false;
+    const live = [...this.activeGenerations.values()];
+    const shells = live.flatMap(state => state.shells.filter(record => !record.removed).map(record => record.definition));
+    const slots = live.flatMap(state => state.uiSlots.filter(record => !record.removed).map(record => record.definition));
+    const contributions = live.flatMap(state => state.uiContributions.filter(record => !record.removed)).sort(compareOrdered).map(record => record.definition);
+    if (shells.length !== this.applicationShells.length || shells.some((value, index) => value !== this.applicationShells[index])) {
+      this.applicationShells = Object.freeze(shells);
+      changed = true;
+    }
+    if (slots.length !== this.uiSlotSnapshot.length || slots.some((value, index) => value !== this.uiSlotSnapshot[index])
+      || contributions.length !== this.uiContributionSnapshot.length || contributions.some((value, index) => value !== this.uiContributionSnapshot[index])) {
+      this.uiSlotSnapshot = Object.freeze(slots);
+      this.uiContributionSnapshot = Object.freeze(contributions);
+      changed = true;
+    }
     const conflicts: PluginContributionConflict[] = [];
     const slotRecords = new Map<PluginSlotId, SlotRecord[]>();
     const surfaceRecords = new Map<PluginSurfaceId, SurfaceRecord[]>();
@@ -2073,6 +2213,9 @@ function createGenerationState(
     pluginId,
     generation,
     declaredContributions,
+    shells: [],
+    uiSlots: [],
+    uiContributions: [],
     slots: [],
     surfaces: [],
     commands: [],
