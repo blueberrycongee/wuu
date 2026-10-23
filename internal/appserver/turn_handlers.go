@@ -32,6 +32,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/imageproc"
 	"github.com/blueberrycongee/wuu/internal/insight"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/modelbudget"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
@@ -160,6 +161,11 @@ func (s *Server) handleTurnStart(ctx context.Context, req Request) error {
 }
 
 func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allowBackgroundWait bool) error {
+	// Adopt published extensions before capturing this new request. A later
+	// publication is still fenced by durable admission, before any user append.
+	if err := s.refreshPluginGenerationIfChanged(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	binding, stateErr := s.rt.RetainState()
 	if stateErr != nil {
 		return s.writeResponse(req.ID, nil, stateErr)
@@ -306,7 +312,7 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 	if metadata, found, err := th.state.Sessions.Find(th.ID); err != nil {
 		return nil, err
 	} else if found {
-		instructions, err := ProjectInstructions(context.Background(), threadRuntime.PluginHost, metadata)
+		instructions, err := ProjectInstructions(s.projectServiceContext(context.Background(), th.state), threadRuntime.PluginHost, metadata)
 		if err != nil {
 			return nil, err
 		}
@@ -1569,17 +1575,32 @@ func (s *Server) subscribeThreadRuntime(binding *runtime.State, threadID string,
 		// this conversation's connection (issue #81 P3). Keep the construction
 		// value; only seed the workspace worker provider when the control never
 		// recorded one (a conversation that follows the workspace default).
+		models, modelsErr := binding.Models()
 		workerProvider := strings.TrimSpace(control.WorkerProviderName())
 		if workerProvider == "" {
-			workerProvider = workerProviderName(s.rt)
+			workerProvider = firstNonEmpty(models.Roles.Worker.Provider, models.Roles.Main.Provider)
 			control.SetWorkerProviderName(workerProvider)
 		}
-		ref := newRuntimeSessionReference(s.rt)
+		services, servicesErr := binding.Services()
+		ref := newRuntimeSessionReference(services)
 		control.SetModelPinClientResolver(func(rawPin string) (string, providers.StreamClient, error) {
 			return resolveParticipantModelOverride(ref, "spawn", rawPin, control.WorkerProviderName())
 		})
-		control.SetModelAliasResolver(s.resolveSubagentModelAlias)
-		control.SetProviderClientResolver(s.resolveSubagentProviderClient)
+		control.SetModelAliasResolver(func(alias string) agentcontrol.AliasResolutionResult {
+			if servicesErr != nil {
+				return agentcontrol.AliasResolutionResult{Err: servicesErr}
+			}
+			if modelsErr != nil {
+				return agentcontrol.AliasResolutionResult{Err: modelsErr}
+			}
+			return s.resolveSubagentModelAliasWithServices(services, models, alias)
+		})
+		control.SetProviderClientResolver(func(provider string) (providers.StreamClient, error) {
+			if servicesErr != nil {
+				return nil, servicesErr
+			}
+			return s.resolveSubagentProviderClientWithServices(services, provider)
+		})
 	}
 	sub := &threadRuntimeSubscription{
 		state:          binding.Retain(),
@@ -2591,7 +2612,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	sessionInstructions := ""
 	metadata, found, instructionsErr := binding.Sessions.Find(th.ID)
 	if instructionsErr == nil && found {
-		sessionInstructions, instructionsErr = ProjectInstructions(ctx, binding.Host, metadata)
+		sessionInstructions, instructionsErr = ProjectInstructions(s.projectServiceContext(ctx, binding), binding.Host, metadata)
 	}
 	capabilities, capabilityErr := startExternalCapabilities(ctx, threadRuntime)
 	if instructionsErr != nil {
@@ -3330,7 +3351,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	th.replaceTurnLocked(turn)
 	th.mu.Unlock()
 
-	tracePath, traceErr := s.persistTurnTrace(threadRuntime, runner, th.ID, turnRuntime, turn, res, err, toolRecordStart, contextRequests, providerStates, compactAttempts, barrierRejections)
+	tracePath, traceErr := s.persistTurnTrace(binding, threadRuntime, runner, th.ID, turnRuntime, turn, res, err, toolRecordStart, contextRequests, providerStates, compactAttempts, barrierRejections)
 	if traceErr != nil {
 		tracePath = ""
 	}
@@ -3584,18 +3605,12 @@ func persistDriverCheckpoint(binding *runtime.State, threadID string, res agent.
 	})
 }
 
-func (s *Server) persistTurnTrace(threadRuntime *runtime.ThreadRuntime, runner *agent.StreamRunner, threadID string, turnRuntime turnRuntimeSnapshot, turn Turn, res agent.LoopResult, runErr error, toolRecordStart int, contextRequests []sessiontrace.RequestContextRecord, providerStates []sessiontrace.ProviderStateRecord, compactAttempts []sessiontrace.CompactRecord, barrierRejectionsArg ...[]sessiontrace.BarrierToolBatchRejectionRecord) (string, error) {
-	if threadRuntime == nil || threadRuntime.Toolkit == nil {
-		return "", nil
-	}
-	tracePath := sessiontrace.Path(threadRuntime.Toolkit.SessionDir())
-	if strings.TrimSpace(tracePath) == "" {
-		return "", nil
+func (s *Server) persistTurnTrace(binding *runtime.State, threadRuntime *runtime.ThreadRuntime, runner *agent.StreamRunner, threadID string, turnRuntime turnRuntimeSnapshot, turn Turn, res agent.LoopResult, runErr error, toolRecordStart int, contextRequests []sessiontrace.RequestContextRecord, providerStates []sessiontrace.ProviderStateRecord, compactAttempts []sessiontrace.CompactRecord, barrierRejectionsArg ...[]sessiontrace.BarrierToolBatchRejectionRecord) (string, error) {
+	services, err := binding.Services()
+	if err != nil {
+		return "", err
 	}
 	providerName := strings.TrimSpace(turnRuntime.ProviderName)
-	if s != nil && s.rt != nil {
-		providerName = firstNonEmpty(providerName, s.rt.ProviderName)
-	}
 	permissions := turnRuntime.permissions()
 	model := ""
 	apiModel := ""
@@ -3603,7 +3618,10 @@ func (s *Server) persistTurnTrace(threadRuntime *runtime.ThreadRuntime, runner *
 		model = runner.Model
 		apiModel = runner.APIModel
 	}
-	modelBudget := threadRuntime.ModelBudget
+	var modelBudget modelbudget.Budget
+	if threadRuntime != nil {
+		modelBudget = threadRuntime.ModelBudget
+	}
 	errorText := ""
 	if runErr != nil {
 		errorText = runErr.Error()
@@ -3651,7 +3669,12 @@ func (s *Server) persistTurnTrace(threadRuntime *runtime.ThreadRuntime, runner *
 		FinalAnswerPreview:  res.Content,
 		Error:               errorText,
 	}
-	records := threadRuntime.Toolkit.ToolTelemetry()
+	var records []tools.ToolExecutionRecord
+	var inventory []tools.ToolInfo
+	if threadRuntime != nil && threadRuntime.Toolkit != nil {
+		records = threadRuntime.Toolkit.ToolTelemetry()
+		inventory = threadRuntime.Toolkit.ToolInfos()
+	}
 	if toolRecordStart > 0 && toolRecordStart < len(records) {
 		records = records[toolRecordStart:]
 	} else if toolRecordStart >= len(records) {
@@ -3661,10 +3684,19 @@ func (s *Server) persistTurnTrace(threadRuntime *runtime.ThreadRuntime, runner *
 	if len(barrierRejectionsArg) > 0 {
 		barrierRejections = barrierRejectionsArg[0]
 	}
-	if err := sessiontrace.AppendTurn(tracePath, turnRecord, finalRecord, threadRuntime.Toolkit.ToolInfos(), records, contextRequests, providerStates, compactAttempts, barrierRejections); err != nil {
+	rawEvents, err := sessiontrace.TurnEvents(turnRecord, finalRecord, inventory, records, contextRequests, providerStates, compactAttempts, barrierRejections)
+	if err != nil {
 		return "", err
 	}
-	return tracePath, nil
+	events := make([]pluginhost.DataEvent, len(rawEvents))
+	for i, event := range rawEvents {
+		events[i] = pluginhost.DataEvent(event)
+	}
+	receipt, err := services.Index.AppendTurn(context.Background(), pluginhost.DataAppendTurnParams{ThreadID: threadID, TurnID: turn.ID, Events: events})
+	if err != nil {
+		return "", err
+	}
+	return receipt.DiagnosticPath, nil
 }
 
 func compactRecord(info agent.CompactAttemptInfo) sessiontrace.CompactRecord {
