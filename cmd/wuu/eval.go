@@ -16,6 +16,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/evalharness"
 	"github.com/blueberrycongee/wuu/internal/harness"
@@ -92,18 +93,26 @@ func runEval(args []string) error {
 			JSONOutput:    *jsonOutput,
 			OutputPath:    *outputPath,
 			KeepWorkdirs:  *keepWorkdirs,
+			Workdir:       *workdir,
 			HomeDir:       homeDir,
 		})
 	}
 
-	configRoot, err := resolveWorkdir(*workdir)
+	binding, err := openCommandState(context.Background(), *workdir)
 	if err != nil {
 		return err
 	}
-	cfg, configPath, err := config.LoadFrom(configRoot, homeDir)
+	defer binding.Close()
+	services, err := binding.Services()
 	if err != nil {
 		return err
 	}
+	selectedConfig, err := services.Config.Read(context.Background())
+	if err != nil {
+		return err
+	}
+	cfg := selectedConfig.Config
+	configPath := "selected:" + services.GenerationID
 	providerCfg, resolvedName, err := cfg.ResolveProvider(*providerName)
 	if err != nil {
 		return err
@@ -124,7 +133,7 @@ func runEval(args []string) error {
 		result := runEvalTask(evalTaskRunConfig{
 			Task:          task,
 			Config:        cfg,
-			ConfigPath:    configPath,
+			ConfigPath:    "",
 			ProviderName:  resolvedName,
 			ModelOverride: *modelOverride,
 			MaxSteps:      *maxSteps,
@@ -208,6 +217,7 @@ func runEvalTraceReplay(tracePath string, jsonOutput bool, outputPath string) er
 }
 
 type liveCodexOAuthEvalConfig struct {
+	Workdir       string
 	ModelOverride string
 	TaskFilter    string
 	MaxSteps      int
@@ -223,7 +233,23 @@ func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
 	if homeDir == "" {
 		homeDir = os.Getenv("HOME")
 	}
-	source, authErr := codex.LocalOAuthStatus(homeDir, true)
+	binding, err := openCommandState(context.Background(), cfg.Workdir)
+	if err != nil {
+		return err
+	}
+	defer binding.Close()
+	services, err := binding.Services()
+	if err != nil {
+		return err
+	}
+	selectedConfig, err := services.Config.Read(context.Background())
+	if err != nil {
+		return err
+	}
+	source, authErr := codex.OAuthStatus(context.Background(), services.Credentials, true)
+	if errors.Is(authErr, authstorage.ErrUnavailable) {
+		return authErr
+	}
 	if authErr != nil {
 		msg := fmt.Sprintf("SKIP live Codex OAuth eval: %v", authErr)
 		if cfg.JSONOutput {
@@ -264,9 +290,17 @@ func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
 		return err
 	}
 
-	runtimeConfig := config.Default()
+	runtimeConfig := selectedConfig.Config
 	runtimeConfig.DefaultProvider = "openai-codex"
-	providerCfg := runtimeConfig.Providers["openai-codex"]
+	providerCfg, exists := runtimeConfig.Providers["openai-codex"]
+	if !exists {
+		providerCfg = config.Default().Providers["openai-codex"]
+	}
+	providerCfg.ReuseCodexCredentials = true
+	if runtimeConfig.Providers == nil {
+		runtimeConfig.Providers = map[string]config.ProviderConfig{}
+	}
+	runtimeConfig.Providers["openai-codex"] = providerCfg
 	if cfg.ModelOverride != "" {
 		providerCfg.Model = cfg.ModelOverride
 		runtimeConfig.Providers["openai-codex"] = providerCfg
@@ -278,7 +312,7 @@ func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
 		result := runEvalTask(evalTaskRunConfig{
 			Task:          task,
 			Config:        runtimeConfig,
-			ConfigPath:    "live-codex-oauth",
+			ConfigPath:    "",
 			ProviderName:  "openai-codex",
 			ModelOverride: cfg.ModelOverride,
 			MaxSteps:      cfg.MaxSteps,
