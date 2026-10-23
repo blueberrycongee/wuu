@@ -3,13 +3,70 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
+
+func TestInitialGenerationActivationFailure(t *testing.T) {
+	for _, required := range []bool{true, false} {
+		name := "optional-plugin"
+		if required {
+			name = "selected-state-provider"
+		}
+		t.Run(name, func(t *testing.T) {
+			modules := append(testStateModules(), kernelHostModule)
+			id := "example.failed-activation"
+			if required {
+				id = "example.documents"
+				for index, module := range modules {
+					if module == persistence.SQLiteModule {
+						modules[index] = id
+					}
+				}
+			} else {
+				modules = append(modules, id)
+			}
+			cfg := config.Default()
+			cfg.Composition = &composition.Config{Version: composition.Version, Modules: &modules}
+			factory := NativeProviderFactory{ID: id, Build: func(NativeProviderContext) (pluginhost.Client, error) {
+				if required {
+					// Preparation can read an empty store; opening an unsupported
+					// backend fails during the real selected provider's activation.
+					return persistence.NewService(id, t.TempDir(), "unsupported"), nil
+				}
+				return &preparedGenerationClient{generationClient: &generationClient{id: id}, activateErr: errors.New("optional activation failed")}, nil
+			}}
+			owner, err := NewSession(Options{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: cfg, NoTools: true, NonInteractive: true, NativeProviders: []NativeProviderFactory{factory}})
+			if owner != nil {
+				t.Cleanup(func() { _, _ = owner.Cleanup() })
+			}
+			if required {
+				if !errors.Is(err, persistence.ErrInvalid) || !strings.Contains(err.Error(), "session state consumer") {
+					t.Fatalf("required provider activation lost its cause: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("optional plugin prevented startup: %v", err)
+			}
+			if _, err := owner.Sessions.Create("independent session state"); err != nil {
+				t.Fatalf("optional plugin blocked session state: %v", err)
+			}
+			for _, status := range owner.PluginHost.Statuses() {
+				if status.ID == id && status.State == pluginhost.StateFailed {
+					return
+				}
+			}
+			t.Fatal("optional activation failure was not diagnosed")
+		})
+	}
+}
 
 type initialStateConsumer struct {
 	fakeServicePluginClient

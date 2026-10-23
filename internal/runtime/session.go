@@ -511,8 +511,9 @@ func NewSession(opts Options) (*Session, error) {
 			initialGeneration.Release()
 		}
 	}()
-	if err := activatePluginHost(context.Background(), pluginHost); err != nil {
-		providers.DebugLogf("activate initial plugin generation: %v", err)
+	activationErr := activatePluginHost(context.Background(), pluginHost)
+	if activationErr != nil {
+		providers.DebugLogf("activate initial plugin generation: %v", activationErr)
 	}
 	var documents persistence.Documents
 	var sessions *session.Store
@@ -521,7 +522,7 @@ func NewSession(opts Options) (*Session, error) {
 		documents, sessions, journalRuntime = pluginKernel.state.documents, pluginKernel.state.sessions, pluginKernel.state.journal
 	}
 	if !safeMode && journalRuntime == nil {
-		return nil, errors.New("selected composition has no active session state consumer")
+		return nil, errors.Join(errors.New("selected composition has no active session state consumer"), activationErr)
 	}
 	var workspaceJournal providers.InferenceJournal
 	if journalRuntime != nil {
@@ -539,7 +540,7 @@ func NewSession(opts Options) (*Session, error) {
 	}
 	if !safeMode {
 		if configClient == nil {
-			return nil, errors.New("selected configuration provider is unavailable")
+			return nil, errors.Join(errors.New("selected configuration provider is unavailable"), activationErr)
 		}
 		view, err := configClient.Read(context.Background())
 		if err != nil {
