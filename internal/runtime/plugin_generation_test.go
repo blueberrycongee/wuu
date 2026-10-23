@@ -974,6 +974,7 @@ func TestRequiredCandidateMCPServerMustBeReady(t *testing.T) {
 func TestNewSessionDoesNotDiscoverPluginsDuringMutation(t *testing.T) {
 	homeDir := t.TempDir()
 	wuuHome := filepath.Join(homeDir, ".wuu")
+	t.Setenv("WUU_HOME", wuuHome)
 	mutation, acquired, err := session.TryAcquirePluginGenerationMutationLease(wuuHome)
 	if err != nil || !acquired {
 		t.Fatalf("acquire mutation generation: acquired=%v err=%v", acquired, err)
