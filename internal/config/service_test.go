@@ -34,8 +34,8 @@ func TestConfigurationServiceCASAndSourcePreservation(t *testing.T) {
 	client := NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
 		return service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: method, Params: raw})
 	})
-	if _, err := client.Read(ctx); err == nil {
-		t.Fatal("prepared config provider read")
+	if _, err := client.CompareExchange(ctx, "", []byte(`{}`)); err == nil {
+		t.Fatal("prepared config provider write")
 	}
 	if err := service.Activate(ctx); err != nil {
 		t.Fatal(err)
@@ -128,8 +128,8 @@ func TestMemoryConfigurationPreservesExplicitValuesAndCAS(t *testing.T) {
 	client := NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
 		return service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: method, Params: raw})
 	})
-	if _, err := client.Read(ctx); err == nil {
-		t.Fatal("prepared memory provider read")
+	if _, err := client.CompareExchange(ctx, "", []byte(`{}`)); err == nil {
+		t.Fatal("prepared memory provider write")
 	}
 	if err := service.Activate(ctx); err != nil {
 		t.Fatal(err)

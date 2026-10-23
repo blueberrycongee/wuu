@@ -23,8 +23,8 @@ func TestSettingsServicePreservesLegacyAndConcurrentUpdates(t *testing.T) {
 	}
 	service := NewService("test.settings", home, project)
 	client := settingsServiceClient(service)
-	if _, err := client.Read(ctx, subject, ScopeWorkspace); err == nil {
-		t.Fatal("prepared provider read")
+	if _, err := client.Update(ctx, subject, ScopeWorkspace, "new", func(map[string]json.RawMessage) error { return nil }); err == nil {
+		t.Fatal("prepared provider write")
 	}
 	if err := service.Activate(ctx); err != nil {
 		t.Fatal(err)

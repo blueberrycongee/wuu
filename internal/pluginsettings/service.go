@@ -64,7 +64,7 @@ func (*Service) RequiredServices() []pluginhost.ServiceRequirement { return nil 
 func (*Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	var methods []pluginhost.ServiceMethodDescriptor
 	for _, method := range []string{"read", "update", "read-state", "update-state"} {
-		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ServiceName + "." + method + ".input.v1", OutputSchema: ServiceName + "." + method + ".output.v1", Cleanup: true})
+		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ServiceName + "." + method + ".input.v1", OutputSchema: ServiceName + "." + method + ".output.v1", Preparation: method == "read" || method == "read-state", Cleanup: true})
 	}
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: methods}}
 }
@@ -92,7 +92,8 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.state != pluginhost.StateActive || params.Service != ServiceName {
+	readOnly := params.Method == "read" || params.Method == "read-state"
+	if (s.state != pluginhost.StateActive && !(s.state == pluginhost.StatePrepared && readOnly)) || params.Service != ServiceName {
 		return nil, settingsError("service_unavailable", "settings provider is unavailable")
 	}
 	var result any
