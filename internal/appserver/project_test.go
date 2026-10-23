@@ -1239,6 +1239,9 @@ func TestProjectRecoversLegacyControlWithoutWaking(t *testing.T) {
 				t.Fatal(err)
 			}
 			otherHost := newProjectProviderTestServer(t, otherRuntime, &lockedBuffer{})
+			// Scheduler readiness precedes recovery; complete the native startup
+			// pass before checking its migration effects in either workspace.
+			projectFixtureProvider(otherHost).startProjectRecovery()
 			otherHost.Close()
 			foreign, _, err := rt.Sessions.ReadControl(memberID)
 			if err != nil || foreign != control {
@@ -1246,6 +1249,7 @@ func TestProjectRecoversLegacyControlWithoutWaking(t *testing.T) {
 			}
 			reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 			t.Cleanup(reopened.Close)
+			projectFixtureProvider(reopened).startProjectRecovery()
 			reopened.projectTestRecoverInbox()
 			for _, resultID := range []string{projectResultClientID(memberID, member.LatestCompletedTurnID), projectResultClientID(memberID, member.LatestCompletedTurnID) + ":" + sideID} {
 				settled, err := rt.Sessions.InboxHas(resultID)
