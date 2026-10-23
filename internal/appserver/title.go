@@ -306,7 +306,7 @@ func (s *Server) generateThreadTitleCore(binding *runtime.State, threadID string
 
 	ctx, cancel := context.WithTimeout(context.Background(), titleGenerationTimeout)
 	defer cancel()
-	ctx = providers.WithInferenceJournal(ctx, s.rt.InferenceJournalForOwner(threadID))
+	ctx = providers.WithInferenceJournal(ctx, binding.InferenceJournalRuntime.ForOwner(threadID))
 
 	// We use a small adapter over streamTitleText so we can capture per-delta
 	// deltas for the probe / regenerate-title result. streamTitleText itself

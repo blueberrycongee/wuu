@@ -83,6 +83,12 @@ func TestAttachedRunKeepsCapturedStoreAfterRequestCloseAndReplacement(t *testing
 		t.Run(method, func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
 			rt.ActivityRegistry = activity.NewRegistry()
+			journal, err := rt.Sessions.NewInferenceJournalRuntime("captured-run-test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer journal.Close()
+			rt.InferenceJournalRuntime = journal
 			const id = "captured-run-thread"
 			if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
 				t.Fatal(err)
@@ -99,7 +105,7 @@ func TestAttachedRunKeepsCapturedStoreAfterRequestCloseAndReplacement(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			run, err := store.Create(context.Background(), execution.CreateParams{RuntimeID: "captured-runtime", ThreadID: id, Request: execution.Request{Mode: execution.ModeStart}, Runtime: execution.RuntimeManifest{Resolved: execution.Selection{Provider: "test", Model: "test"}, ProtocolVersion: ProtocolVersion}, Workspace: execution.WorkspaceRef{Root: rt.RootDir}})
+			run, err := store.Create(context.Background(), execution.CreateParams{RuntimeID: journal.RuntimeID(), ThreadID: id, Request: execution.Request{Mode: execution.ModeStart}, Runtime: execution.RuntimeManifest{Resolved: execution.Selection{Provider: "test", Model: "test"}, ProtocolVersion: ProtocolVersion}, Workspace: execution.WorkspaceRef{Root: rt.RootDir}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -162,6 +168,12 @@ func TestAttachedRunKeepsCapturedStoreAfterRequestCloseAndReplacement(t *testing
 
 func TestServerCloseDetachesRunWhenTerminalPersistenceFails(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
+	journal, err := rt.Sessions.NewInferenceJournalRuntime("failed-store-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	rt.InferenceJournalRuntime = journal
 	srv := New(rt, &lockedBuffer{})
 	defer srv.Close()
 	binding := testRuntimeState(t, rt)
@@ -169,7 +181,7 @@ func TestServerCloseDetachesRunWhenTerminalPersistenceFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := store.Create(context.Background(), execution.CreateParams{RuntimeID: "failed-store", ThreadID: "close-run", Request: execution.Request{Mode: execution.ModeStart}, Runtime: execution.RuntimeManifest{Resolved: execution.Selection{Provider: "test", Model: "test"}, ProtocolVersion: ProtocolVersion}, Workspace: execution.WorkspaceRef{Root: rt.RootDir}})
+	run, err := store.Create(context.Background(), execution.CreateParams{RuntimeID: journal.RuntimeID(), ThreadID: "close-run", Request: execution.Request{Mode: execution.ModeStart}, Runtime: execution.RuntimeManifest{Resolved: execution.Selection{Provider: "test", Model: "test"}, ProtocolVersion: ProtocolVersion}, Workspace: execution.WorkspaceRef{Root: rt.RootDir}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,5 +192,56 @@ func TestServerCloseDetachesRunWhenTerminalPersistenceFails(t *testing.T) {
 	srv.Close()
 	if srv.executionRunAttached(run.ID) {
 		t.Fatal("shutdown retained Run ownership after terminal persistence failed")
+	}
+}
+
+// A delayed title must persist its transcript metadata and inference operation
+// in the same authority, even after another provider has been published.
+func TestTitleGenerationKeepsCapturedJournalAfterReplacement(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.TitleClient = &fakeClient{response: providersResponse("Captured title")}
+	const id = "captured-title"
+	if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	originalJournal, err := rt.Sessions.NewInferenceJournalRuntime("title-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer originalJournal.Close()
+	rt.InferenceJournalRuntime = originalJournal
+	binding := testRuntimeState(t, rt)
+	srv := New(rt, &lockedBuffer{})
+	defer srv.Close()
+
+	replacement, err := persistence.Open(context.Background(), t.TempDir(), "jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Close()
+	selected := session.NewStore(context.Background(), replacement)
+	replacementJournal, err := selected.NewInferenceJournalRuntime("title-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacementJournal.Close()
+	rt.Documents, rt.Sessions, rt.InferenceJournalRuntime = replacement, selected, replacementJournal
+
+	result, err := srv.generateThreadTitleCore(binding, id, []providers.ChatMessage{{Role: "user", Content: "Keep the original provider"}}, true, false, true, nil)
+	if err != nil || result.PersistedTitle != "Captured title" {
+		t.Fatalf("captured title: %+v, %v", result, err)
+	}
+	for _, authority := range []struct {
+		name      string
+		documents persistence.Documents
+		want      int
+	}{{"captured", binding.Documents, 1}, {"replacement", replacement, 0}} {
+		view, err := authority.documents.Read(context.Background(), persistence.Query{Namespace: "wuu.inference_operations.v1", Limit: 2})
+		if err != nil || len(view.Documents) != authority.want {
+			t.Fatalf("%s inference operations = %+v, %v; want %d", authority.name, view.Documents, err, authority.want)
+		}
+	}
+	if _, found, err := selected.Find(id); err != nil || found {
+		t.Fatalf("title leaked into replacement: found=%v, err=%v", found, err)
 	}
 }
