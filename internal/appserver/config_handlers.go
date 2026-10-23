@@ -2502,12 +2502,9 @@ func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
 	for _, th := range s.threads {
 		th.mu.Lock()
 		if strings.TrimSpace(systemPrompt) != "" {
+			// The runtime prompt is ephemeral. Rewriting durable history here
+			// would renumber rows and race an active native turn's admission.
 			th.History = replaceBaseSystemPrompt(th.History, sessionSystemPrompt(systemPrompt, th.Instructions))
-			if th.PersistHistory {
-				if err := rewriteChatHistory(th.state.Sessions, th.ID, th.History); err != nil {
-					providers.DebugLogf("rewrite thread %q system prompt after general settings update: %v", th.ID, err)
-				}
-			}
 		}
 		if th.execRuntime == nil {
 			th.pendingRuntimeReset = false

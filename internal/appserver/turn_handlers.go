@@ -2661,8 +2661,25 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 						continue
 					}
 					if th.PersistHistory {
-						if err := binding.Sessions.SetHistoryEngineTurnID(th.ID, msg.Seq, th.EngineRef, nativeTurnID, pending); err != nil {
+						seq, ref := msg.Seq, th.EngineRef
+						// Native output must keep draining while its boundary is made
+						// durable. Settings can prepend a runtime prompt, so locate
+						// the admitted user row again by its durable identity.
+						th.mu.Unlock()
+						err := binding.Sessions.SetHistoryEngineTurnID(th.ID, seq, ref, nativeTurnID, pending)
+						th.mu.Lock()
+						if err != nil {
 							return err
+						}
+						msg = nil
+						for j := range th.History {
+							if th.History[j].Seq == seq && th.History[j].Role == "user" {
+								msg = &th.History[j]
+								break
+							}
+						}
+						if msg == nil {
+							return errors.New("native turn no longer has its admitted user message")
 						}
 					}
 					msg.EngineTurnID = nativeTurnID
