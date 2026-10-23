@@ -252,6 +252,28 @@ func (s *Server) scheduleThreadExecutionLeaseRetry(binding *runtime.State, retry
 	})
 }
 
+// Retries of new admissions own no old generation while waiting. Completion
+// acknowledgements still use scheduleThreadExecutionLeaseRetry with their
+// original capture because they finish already-admitted work.
+func (s *Server) scheduleThreadAdmissionRetry(retry func(*runtime.State)) {
+	if s == nil || retry == nil || s.closed.Load() {
+		return
+	}
+	time.AfterFunc(threadExecutionLeaseRetryDelay, func() {
+		if s.closed.Load() {
+			return
+		}
+		binding, err := s.rt.RetainState()
+		if err != nil {
+			providers.DebugLogf("capture state for admission retry: %v", err)
+			s.scheduleThreadAdmissionRetry(retry)
+			return
+		}
+		defer binding.Close()
+		retry(binding)
+	})
+}
+
 func (th *threadState) releaseThreadExecutionLeaseLocked() {
 	if th == nil {
 		return

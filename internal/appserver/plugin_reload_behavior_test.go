@@ -413,108 +413,188 @@ func TestPluginReloadAdoptsNextIdleTurnWithoutLosingConversation(t *testing.T) {
 // A background worker can outlive its foreground turn. It retains the runtime
 // and its plugin resources until finalization, even when a newer generation is live.
 func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.WuuHome = t.TempDir()
-	publishReloadBehaviorGeneration(t, rt, "old implementation", "Read the fixture")
-	t.Cleanup(func() { _, _ = rt.Cleanup() })
-	oldHost := rt.PluginHost
-	shutdownPath := rt.Plugins[0].Runtime.Env["WUU_RELOAD_TEST_SHUTDOWN"]
-	srv := New(rt, &lockedBuffer{})
-	t.Cleanup(srv.Close)
-	worker := newBlockingStreamClient("worker finished")
-	var once sync.Once
-	unblock := func() { once.Do(func() { close(worker.release) }) }
-	t.Cleanup(unblock)
-	control, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+	for _, tc := range []struct{ persistent, frozen bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		persistent := tc.persistent
+		t.Run(fmt.Sprintf("persistent_%t_frozen_%t", persistent, tc.frozen), func(t *testing.T) {
+			client := &fakeClient{response: providers.ChatResponse{Content: "handled worker result"}}
+			rt := newTestRuntime(t, client)
+			rt.WuuHome = t.TempDir()
+			publishReloadBehaviorGeneration(t, rt, "old implementation", "Read the fixture")
+			t.Cleanup(func() { _, _ = rt.Cleanup() })
+			oldHost := rt.PluginHost
+			shutdownPath := rt.Plugins[0].Runtime.Env["WUU_RELOAD_TEST_SHUTDOWN"]
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			worker := newBlockingStreamClient("worker finished")
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(worker.release) }) }
+			t.Cleanup(unblock)
+			control, err := agentcontrol.New(agentcontrol.Config{
+				AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
-		Client: worker, DefaultModel: "fake-model", ParentRepo: rt.RootDir,
-		WorktreeRoot: filepath.Join(rt.RootDir, ".wuu", "worktrees"), SessionID: "reload-background",
-		WorkerFactory: func(string, agentcontrol.WorkerType, agentthread.Metadata) (agent.ToolExecutor, error) {
-			return noopToolExecutor{}, nil
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
+				Client: worker, DefaultModel: "fake-model", ParentRepo: rt.RootDir,
+				WorktreeRoot: filepath.Join(rt.RootDir, ".wuu", "worktrees"), SessionID: "reload-background",
+				ThreadDir: filepath.Join(statepath.SessionArtifactDir(rt.StateDir, "reload-background"), "threads"),
+				WorkerFactory: func(string, agentcontrol.WorkerType, agentthread.Metadata) (agent.ToolExecutor, error) {
+					return noopToolExecutor{}, nil
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { unblock(); control.StopAll(); control.Close() })
+			selection := session.RuntimeSelection{Provider: rt.ProviderName, Model: rt.Model, Variant: rt.StreamRunner.Variant, Effort: rt.StreamRunner.Effort}
+			history := []providers.ChatMessage{{Role: "user", Content: "history before reload"}}
+			if persistent {
+				if _, err := rt.Sessions.CreateWithMetadata("reload-background", rt.RootDir); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := rt.Sessions.SetRuntimeSelection("reload-background", selection); err != nil {
+					t.Fatal(err)
+				}
+				if err := rt.Sessions.AppendHistoryRecord("reload-background", session.HistoryRecord{Role: "user", Content: history[0].Content}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			th := newThreadState("reload-background", history, rt.ProviderName, rt.Model, rt.RootDir, persistent, time.Now().UTC())
+			applyThreadRuntimeSelection(th, selection)
+			th.Ephemeral = !persistent
+			srv.mu.Lock()
+			th.state = testRuntimeState(t, rt)
+			originalState := th.state
+			srv.threads[th.ID] = th
+			srv.mu.Unlock()
+			first, err := srv.ensureThreadRuntime(th)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Use a deterministic local worker instead of any network-backed provider.
+			releaseThreadRuntimeSubscription(first, th.runtimeSubscription)
+			first.AgentControl = control
+			th.runtimeSubscription = srv.subscribeThreadRuntime(th.state, th.ID, first)
+			// Drop terminal status fanout while leaving the reliable finalizer attached.
+			// Retirement must be driven by the lease quiescence boundary, not notifications.
+			control.Unsubscribe(th.runtimeSubscription.statusCh)
+			spawned, err := control.Spawn(context.Background(), agentcontrol.SpawnRequest{
+				Type: agentcontrol.DefaultSubagentType, TaskName: "pin_generation", Description: "Retain the plugin runtime until finalization", Prompt: "wait", Isolation: string(agentcontrol.IsolationInplace),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-worker.started:
+			case <-time.After(5 * time.Second):
+				t.Fatal("worker did not start")
+			}
+			th.mu.Lock()
+			acquired, admissionErr := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+			if admissionErr == nil && acquired {
+				th.releaseThreadExecutionLeaseLocked()
+			}
+			loopStarted := th.pluginExecutionLease != nil && th.pluginLeaseReleaseLoop
+			th.mu.Unlock()
+			if admissionErr != nil || !acquired || !loopStarted {
+				t.Fatalf("foreground lease did not wait for its background worker: acquired=%v loop=%v err=%v", acquired, loopStarted, admissionErr)
+			}
+			publishReloadBehaviorGeneration(t, rt, "new implementation", "Read the fixture")
+			srv.retireIdlePluginRuntimes()
+			retained, err := srv.ensureThreadRuntime(th)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if retained != first {
+				t.Fatal("reload replaced a runtime while its background worker was active")
+			}
+			if tc.frozen {
+				th.mu.Lock()
+				th.workerTreeFrozen = true
+				th.mu.Unlock()
+			}
+			unblock()
+			waitForAgentStatus(t, control, spawned.AgentID, subagent.StatusCompleted)
+			waitForWorkerFinalization(t, control)
+			// Retirement must not require another user turn. The reliable worker
+			// finalizer may independently deliver a completion and build a new runtime;
+			// only retaining the old generation is a lifecycle failure.
+			t.Cleanup(func() {
+				if !t.Failed() {
+					return
+				}
+				th.mu.Lock()
+				current := th.execRuntime == nil || rt.IsCurrentPluginGeneration(th.execRuntime.PluginGeneration)
+				t.Logf("retirement state: old_runtime_retained=%v current_generation=%v lease=%v poll=%v running=%v admission=%v outstanding=%v", th.execRuntime == first, current, th.pluginExecutionLease != nil, th.pluginLeaseReleaseLoop, th.running, th.admissionReserved, threadRuntimeHasOutstandingWork(th.ID, th.execRuntime))
+				th.mu.Unlock()
+				raw, err := os.ReadFile(shutdownPath)
+				t.Logf("retired host statuses=%+v shutdown=%q read_error=%v", oldHost.Statuses(), raw, err)
+			})
+			waitPluginGenerationWatchTest(t, func() bool {
+				th.mu.Lock()
+				retired := th.execRuntime != first && th.pluginExecutionLease == nil
+				if th.execRuntime != nil {
+					retired = retired && rt.IsCurrentPluginGeneration(th.execRuntime.PluginGeneration)
+				}
+				th.mu.Unlock()
+				shutdown, err := os.ReadFile(shutdownPath)
+				return retired && err == nil && string(shutdown) == "old implementation"
+			})
+			if len(oldHost.Statuses()) != 0 || len(oldHost.ToolDefinitions()) != 0 {
+				t.Fatal("quiescent background generation retained its host registrations")
+			}
+			requireActiveRuntime(t, rt.PluginHost, "reload-fixture")
+			if tc.frozen {
+				waitPluginGenerationWatchTest(t, func() bool {
+					next := srv.thread(th.ID)
+					srv.agentCompletionMu.Lock()
+					draining := srv.drainingAgentCompletionTurns[th.ID]
+					srv.agentCompletionMu.Unlock()
+					return next != th && !draining && !threadIsRunning(next)
+				})
+				assertFakeClientRequestCount(t, client, 0)
+				dispatchPayload(t, srv, "resume-frozen", MethodTurnStart, TurnStartParams{ThreadID: th.ID, Prompt: "resume after reload", ClientID: "resume-frozen"})
+				if response := responseByID(t, parseOutput(t, out.String()), "resume-frozen"); response["error"] != nil {
+					t.Fatalf("resume frozen: %+v", response)
+				}
+			}
+			waitForReloadTurnCompletions(t, out, th.ID, 1)
+			waitPluginGenerationWatchTest(t, func() bool { return !srv.hasQueuedAgentCompletionWork(th.ID) && !threadIsRunning(srv.thread(th.ID)) })
+			current := srv.thread(th.ID)
+			if current == nil || current == th || th.state != originalState || current.state.Sessions != rt.Sessions {
+				t.Fatal("new admission did not replace the old projection without mutating its binding")
+			}
+			client.mu.Lock()
+			requests := append([]providers.ChatRequest(nil), client.requests...)
+			client.mu.Unlock()
+			if len(requests) != 1 {
+				t.Fatalf("completion inference calls=%d want 1", len(requests))
+			}
+			if !strings.Contains(requestMessagesText(requests[0].Messages), "history before reload") || !strings.Contains(requestMessagesText(requests[0].Messages), "worker finished") {
+				t.Fatalf("completion lost retained history or worker result: %+v", requests[0].Messages)
+			}
+			pending, err := control.PendingRootAgentCompletions()
+			if err != nil || len(pending) != 0 {
+				t.Fatalf("completion acknowledgement missing: %+v %v", pending, err)
+			}
+			var completed subagent.SubAgentSnapshot
+			for _, snap := range control.List() {
+				if snap.ID == spawned.AgentID {
+					completed = snap
+				}
+			}
+			resultID := control.AgentResultDeliveryID(completed)
+			binding := testRuntimeState(t, rt)
+			srv.enqueueAgentCompletionTurn(binding, th.ID, spawned.AgentID, resultID, control.AgentCompletionChatMessage(completed, agentthread.RootPath), &completed)
+			waitPluginGenerationWatchTest(t, func() bool { return !srv.hasQueuedAgentCompletionWork(th.ID) && !threadIsRunning(srv.thread(th.ID)) })
+			assertFakeClientRequestCount(t, client, 1)
+			if !persistent {
+				if _, found, err := rt.Sessions.Find(th.ID); err != nil || found {
+					t.Fatalf("ephemeral completion became durable: %v %v", found, err)
+				}
+			}
+
+		})
 	}
-	t.Cleanup(func() { unblock(); control.StopAll(); control.Close() })
-	th := newThreadState("reload-background", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
-	srv.mu.Lock()
-	th.state = testRuntimeState(t, rt)
-	srv.threads[th.ID] = th
-	srv.mu.Unlock()
-	first, err := srv.ensureThreadRuntime(th)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Use a deterministic local worker instead of any network-backed provider.
-	releaseThreadRuntimeSubscription(first, th.runtimeSubscription)
-	first.AgentControl = control
-	th.runtimeSubscription = srv.subscribeThreadRuntime(th.state, th.ID, first)
-	// Drop terminal status fanout while leaving the reliable finalizer attached.
-	// Retirement must be driven by the lease quiescence boundary, not notifications.
-	control.Unsubscribe(th.runtimeSubscription.statusCh)
-	spawned, err := control.Spawn(context.Background(), agentcontrol.SpawnRequest{
-		Type: agentcontrol.DefaultSubagentType, TaskName: "pin_generation", Description: "Retain the plugin runtime until finalization", Prompt: "wait", Isolation: string(agentcontrol.IsolationInplace),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-worker.started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("worker did not start")
-	}
-	th.mu.Lock()
-	acquired, admissionErr := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
-	if admissionErr == nil && acquired {
-		th.releaseThreadExecutionLeaseLocked()
-	}
-	loopStarted := th.pluginExecutionLease != nil && th.pluginLeaseReleaseLoop
-	th.mu.Unlock()
-	if admissionErr != nil || !acquired || !loopStarted {
-		t.Fatalf("foreground lease did not wait for its background worker: acquired=%v loop=%v err=%v", acquired, loopStarted, admissionErr)
-	}
-	publishReloadBehaviorGeneration(t, rt, "new implementation", "Read the fixture")
-	srv.retireIdlePluginRuntimes()
-	retained, err := srv.ensureThreadRuntime(th)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if retained != first {
-		t.Fatal("reload replaced a runtime while its background worker was active")
-	}
-	unblock()
-	waitForAgentStatus(t, control, spawned.AgentID, subagent.StatusCompleted)
-	waitForWorkerFinalization(t, control)
-	// Retirement must not require another user turn. The reliable worker
-	// finalizer may independently deliver a completion and build a new runtime;
-	// only retaining the old generation is a lifecycle failure.
-	t.Cleanup(func() {
-		if !t.Failed() {
-			return
-		}
-		th.mu.Lock()
-		current := th.execRuntime == nil || rt.IsCurrentPluginGeneration(th.execRuntime.PluginGeneration)
-		t.Logf("retirement state: old_runtime_retained=%v current_generation=%v lease=%v poll=%v running=%v admission=%v outstanding=%v", th.execRuntime == first, current, th.pluginExecutionLease != nil, th.pluginLeaseReleaseLoop, th.running, th.admissionReserved, threadRuntimeHasOutstandingWork(th.ID, th.execRuntime))
-		th.mu.Unlock()
-		raw, err := os.ReadFile(shutdownPath)
-		t.Logf("retired host statuses=%+v shutdown=%q read_error=%v", oldHost.Statuses(), raw, err)
-	})
-	waitPluginGenerationWatchTest(t, func() bool {
-		th.mu.Lock()
-		retired := th.execRuntime != first && th.pluginExecutionLease == nil
-		if th.execRuntime != nil {
-			retired = retired && rt.IsCurrentPluginGeneration(th.execRuntime.PluginGeneration)
-		}
-		th.mu.Unlock()
-		shutdown, err := os.ReadFile(shutdownPath)
-		return retired && err == nil && string(shutdown) == "old implementation"
-	})
-	if len(oldHost.Statuses()) != 0 || len(oldHost.ToolDefinitions()) != 0 {
-		t.Fatal("quiescent background generation retained its host registrations")
-	}
-	requireActiveRuntime(t, rt.PluginHost, "reload-fixture")
+
 }
 
 // The public mutation transaction must retire idle consumers immediately;
@@ -782,4 +862,112 @@ func TestPluginReloadRetiresAfterLeaseReleasedBeforePoll(t *testing.T) {
 		raw, err := os.ReadFile(shutdownPath)
 		return retired && err == nil && string(raw) == "old implementation"
 	})
+}
+
+func TestPluginReloadAdmitsQueuedTurnOnCurrentGeneration(t *testing.T) {
+	for _, ephemeral := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ephemeral_%t", ephemeral), func(t *testing.T) {
+			entered, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(release) }) }
+			t.Cleanup(unblock)
+			client := &fakeClient{onChat: func(call int, _ providers.ChatRequest) {
+				if call == 1 {
+					close(entered)
+					<-release
+				}
+			}}
+			rt := newTestRuntime(t, client)
+			publishReloadBehaviorGeneration(t, rt, "old implementation", "Read fixture")
+			t.Cleanup(func() { _, _ = rt.Cleanup() })
+			toolName := rt.PluginHost.ToolDefinitions()[0].Name
+			client.responses = []providers.ChatResponse{{ToolCalls: []providers.ToolCall{{ID: "old-call", Name: toolName, Arguments: `{}`}}}, {Content: "first answer"}, {ToolCalls: []providers.ToolCall{{ID: "next-call", Name: toolName, Arguments: `{}`}}}, {Content: "queued answer"}}
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(func() { unblock(); srv.Close() })
+			dispatchPayload(t, srv, "create", MethodThreadStart, ThreadStartParams{Ephemeral: ephemeral})
+			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "create")["result"]).Thread.ID
+			dispatchPayload(t, srv, "start", MethodTurnStart, TurnStartParams{ThreadID: threadID, Prompt: "first question"})
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("first provider request missing")
+			}
+			old := srv.thread(threadID)
+			oldState := old.state
+			dispatchPayload(t, srv, "queue", MethodTurnQueue, TurnQueueParams{ThreadID: threadID, Prompt: "queued question", ClientID: "queued-after-reload"})
+			if response := responseByID(t, parseOutput(t, out.String()), "queue"); response["error"] != nil {
+				t.Fatalf("queue: %+v", response)
+			}
+			publishReloadBehaviorGeneration(t, rt, "new implementation", "Read fixture")
+			srv.retireIdlePluginRuntimes()
+			unblock()
+			waitForReloadTurnCompletions(t, out, threadID, 2)
+			waitPluginGenerationWatchTest(t, func() bool { return !srv.hasQueuedUserWork(threadID) && !threadIsRunning(srv.thread(threadID)) })
+			next := srv.thread(threadID)
+			if next == old || old.state != oldState || next.state.Sessions != rt.Sessions {
+				t.Fatal("queue changed old capture or reused superseded projection")
+			}
+			client.mu.Lock()
+			requests := append([]providers.ChatRequest(nil), client.requests...)
+			client.mu.Unlock()
+			if len(requests) != 4 {
+				t.Fatalf("model calls=%d want4", len(requests))
+			}
+			for _, check := range []struct {
+				index      int
+				call, text string
+			}{{1, "old-call", "old implementation"}, {2, "old-call", "old implementation"}, {3, "next-call", "new implementation"}} {
+				found := false
+				for _, message := range requests[check.index].Messages {
+					if message.ToolCallID == check.call && strings.Contains(message.Content, check.text) {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("request %d lost %s: %+v", check.index, check.text, requests[check.index].Messages)
+				}
+			}
+			if ephemeral {
+				if _, found, err := rt.Sessions.Find(threadID); err != nil || found {
+					t.Fatalf("ephemeral queue persisted session: %v %v", found, err)
+				}
+				next.mu.Lock()
+				runner := next.execRuntime.StreamRunner
+				next.mu.Unlock()
+				if _, bound, err := runner.DriverBindingStore.LoadBinding(context.Background()); err != nil || !bound {
+					t.Fatalf("ephemeral binding lost: %v %v", bound, err)
+				}
+			}
+		})
+	}
+}
+
+// Reload cases include real process shutdown/start and may finish multiple
+// turns. Keep the deadline separate from the ordinary single-turn fixture.
+func waitForReloadTurnCompletions(t *testing.T, out *lockedBuffer, threadID string, count int) {
+	t.Helper()
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		completed := 0
+		for _, message := range parseOutput(t, out.String()) {
+			if message["method"] == NotificationTurnCompleted && message["id"] == nil {
+				params := remarshal[TurnCompletedNotification](t, message["params"])
+				if params.ThreadID == threadID {
+					completed++
+				}
+			}
+		}
+		if completed >= count {
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("timed out waiting for %d completed reload turns on %s; output:\n%s", count, threadID, out.String())
+		case <-tick.C:
+		}
+	}
 }

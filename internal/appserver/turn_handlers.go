@@ -4037,7 +4037,17 @@ func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) (capa
 	if s.beforeQueuedTurnThreadLookupForTest != nil {
 		s.beforeQueuedTurnThreadLookupForTest()
 	}
-	th := s.threadForState(binding, threadID)
+	admissionState, th, admissionErr := s.retainThreadAdmissionState(threadID)
+	if admissionErr != nil {
+		s.clearQueuedTurnDrain(threadID)
+		if !errors.Is(admissionErr, errServerClosed) {
+			providers.DebugLogf("prepare next admission for thread %q: %v", threadID, admissionErr)
+			s.scheduleThreadAdmissionRetry(func(current *runtime.State) { s.kickQueuedTurnDrain(current, threadID) })
+		}
+		return
+	}
+	defer admissionState.Close()
+	binding = admissionState
 	if th == nil {
 		discardedEntries := s.discardQueuedTurns(threadID)
 		for _, entry := range discardedEntries {
@@ -4119,7 +4129,7 @@ func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) (capa
 		if capacityFull && s.deferProjectCapacityRetry(binding, threadID, "queued") {
 			return
 		}
-		s.scheduleThreadExecutionLeaseRetry(binding, func(binding *runtime.State) {
+		s.scheduleThreadAdmissionRetry(func(binding *runtime.State) {
 			s.kickQueuedTurnDrain(binding, threadID)
 		})
 		return
@@ -4814,7 +4824,17 @@ func (s *Server) drainAgentCompletionTurns(binding *runtime.State, threadID stri
 		s.clearAgentCompletionDrain(threadID)
 		return
 	}
-	th := s.threadForState(binding, threadID)
+	admissionState, th, admissionErr := s.retainThreadAdmissionState(threadID)
+	if admissionErr != nil {
+		s.clearAgentCompletionDrain(threadID)
+		if !errors.Is(admissionErr, errServerClosed) {
+			providers.DebugLogf("prepare next admission for thread %q: %v", threadID, admissionErr)
+			s.scheduleThreadAdmissionRetry(func(current *runtime.State) { s.kickAgentCompletionDrain(current, threadID) })
+		}
+		return
+	}
+	defer admissionState.Close()
+	binding = admissionState
 	if th == nil || !canResumeAgentCompletionThread(th) {
 		s.discardPendingAgentCompletionTurns(threadID)
 		s.clearAgentCompletionDrain(threadID)
@@ -4877,7 +4897,7 @@ func (s *Server) drainAgentCompletionTurns(binding *runtime.State, threadID stri
 		if capacityFull && s.deferProjectCapacityRetry(binding, threadID, "completion") {
 			return
 		}
-		s.scheduleThreadExecutionLeaseRetry(binding, func(binding *runtime.State) {
+		s.scheduleThreadAdmissionRetry(func(binding *runtime.State) {
 			s.kickAgentCompletionDrain(binding, threadID)
 		})
 		return
