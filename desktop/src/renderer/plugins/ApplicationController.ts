@@ -173,7 +173,7 @@ export class ApplicationController implements ApplicationServiceV1 {
     if (text === this.draft) return;
     this.draft = text;
     this.draftRevision++;
-    this.publish();
+    this.publish({ ...this.snapshot, composer: Object.freeze({ ...this.snapshot.composer, draftText: text }) });
   }
 
   setSettings(open: boolean, pageId = this.settings.pageId): void {
@@ -340,9 +340,9 @@ export class ApplicationController implements ApplicationServiceV1 {
     }
   }
 
-  private publish(): void {
+  private publish(snapshot?: ApplicationSnapshotV1): void {
     this.revision++;
-    this.snapshot = this.project();
+    this.snapshot = snapshot ? Object.freeze({ ...snapshot, revision: this.revision }) : this.project();
     for (const listener of this.listeners) listener();
   }
 
