@@ -13,9 +13,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-// DocumentInferenceRuntime holds one generation's authority for its lifetime.
+// InferenceJournalRuntime holds one generation's authority for its lifetime.
 // Its owner releases the provider only after Close drains admitted journal work.
-type DocumentInferenceRuntime struct {
+type InferenceJournalRuntime struct {
 	store                             *Store
 	workspaceScope, runtimeID         string
 	stop, heartbeatDone, progressDone chan struct{}
@@ -47,11 +47,11 @@ type documentSubmissionProgress struct {
 }
 
 type documentInferenceJournal struct {
-	runtime *DocumentInferenceRuntime
+	runtime *InferenceJournalRuntime
 	ownerID string
 }
 
-func (s *Store) NewInferenceJournalRuntime(workspaceScope string) (*DocumentInferenceRuntime, error) {
+func (s *Store) NewInferenceJournalRuntime(workspaceScope string) (*InferenceJournalRuntime, error) {
 	workspaceScope = journalText(workspaceScope, 512)
 	if workspaceScope == "" {
 		return nil, errors.New("inference journal workspace scope is required")
@@ -64,7 +64,7 @@ func (s *Store) NewInferenceJournalRuntime(workspaceScope string) (*DocumentInfe
 	}); err != nil {
 		return nil, fmt.Errorf("register inference journal runtime: %w", err)
 	}
-	r := &DocumentInferenceRuntime{store: s.WithContext(context.Background()), workspaceScope: workspaceScope, runtimeID: id,
+	r := &InferenceJournalRuntime{store: s.WithContext(context.Background()), workspaceScope: workspaceScope, runtimeID: id,
 		stop: make(chan struct{}), heartbeatDone: make(chan struct{}), progressDone: make(chan struct{})}
 	go func() {
 		defer close(r.heartbeatDone)
@@ -98,14 +98,14 @@ func (s *Store) NewInferenceJournalRuntime(workspaceScope string) (*DocumentInfe
 	return r, nil
 }
 
-func (r *DocumentInferenceRuntime) RuntimeID() string {
+func (r *InferenceJournalRuntime) RuntimeID() string {
 	if r == nil {
 		return ""
 	}
 	return r.runtimeID
 }
 
-func (r *DocumentInferenceRuntime) beginUse() (func(), error) {
+func (r *InferenceJournalRuntime) beginUse() (func(), error) {
 	if r == nil {
 		return nil, errors.New("inference journal runtime is not initialized")
 	}
@@ -118,7 +118,7 @@ func (r *DocumentInferenceRuntime) beginUse() (func(), error) {
 	return r.activeWG.Done, nil
 }
 
-func (r *DocumentInferenceRuntime) heartbeat(tx *persistence.Tx, stamp int64, closing bool) error {
+func (r *InferenceJournalRuntime) heartbeat(tx *persistence.Tx, stamp int64, closing bool) error {
 	var record InferenceRuntimeRecord
 	found, err := tx.Get(documentNamespace("inference_journal_runtimes"), r.runtimeID, &record)
 	if err != nil {
@@ -134,7 +134,7 @@ func (r *DocumentInferenceRuntime) heartbeat(tx *persistence.Tx, stamp int64, cl
 	return tx.Put(documentNamespace("inference_journal_runtimes"), r.runtimeID, record)
 }
 
-func (r *DocumentInferenceRuntime) Close() error {
+func (r *InferenceJournalRuntime) Close() error {
 	if r == nil {
 		return nil
 	}
@@ -152,7 +152,7 @@ func (r *DocumentInferenceRuntime) Close() error {
 	return r.closeErr
 }
 
-func (r *DocumentInferenceRuntime) ForOwner(ownerID string) providers.InferenceJournal {
+func (r *InferenceJournalRuntime) ForOwner(ownerID string) providers.InferenceJournal {
 	if r == nil {
 		return nil
 	}
@@ -211,7 +211,7 @@ func (j *documentInferenceJournal) RecordSubmissionProgress(record providers.Inf
 	r.progressMu.Unlock()
 }
 
-func (r *DocumentInferenceRuntime) flushSubmissionProgress(allowClosing bool) {
+func (r *InferenceJournalRuntime) flushSubmissionProgress(allowClosing bool) {
 	if r == nil {
 		return
 	}
@@ -253,7 +253,7 @@ func (r *DocumentInferenceRuntime) flushSubmissionProgress(allowClosing bool) {
 	}
 }
 
-func (r *DocumentInferenceRuntime) pendingProgressErr() error {
+func (r *InferenceJournalRuntime) pendingProgressErr() error {
 	r.progressMu.Lock()
 	defer r.progressMu.Unlock()
 	return r.progressErr

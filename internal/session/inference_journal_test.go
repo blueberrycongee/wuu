@@ -984,7 +984,7 @@ func TestInferenceJournalCrossProcessBudgetWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer documents.Close()
-	runtime := &DocumentInferenceRuntime{
+	runtime := &InferenceJournalRuntime{
 		store: NewStore(context.Background(), documents), workspaceScope: candidate.Scope, runtimeID: candidate.RuntimeID,
 	}
 	journal := &documentInferenceJournal{runtime: runtime, ownerID: candidate.OwnerID}
@@ -1726,7 +1726,7 @@ func testInferenceHash(value string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func crashInferenceRuntimeForTest(t *testing.T, runtime *DocumentInferenceRuntime, heartbeat time.Time) {
+func crashInferenceRuntimeForTest(t *testing.T, runtime *InferenceJournalRuntime, heartbeat time.Time) {
 	t.Helper()
 	runtime.closeOnce.Do(func() {
 		runtime.lifecycleMu.Lock()

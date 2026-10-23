@@ -3,6 +3,7 @@ package toolledger
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
@@ -74,11 +75,11 @@ func TestLedgerHistoryProjectionOwnershipAndAtomicity(t *testing.T) {
 		if _, err := sessions.CreateInitialized(session.Session{ID: "owner"}, nil); err != nil {
 			t.Fatal(err)
 		}
-		owner, err := NewDocuments(documents, "owner")
+		owner, err := New(documents, "owner")
 		if err != nil {
 			t.Fatal(err)
 		}
-		other, err := NewDocuments(documents, "other")
+		other, err := New(documents, "other")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -134,4 +135,43 @@ func TestLedgerHistoryProjectionOwnershipAndAtomicity(t *testing.T) {
 			t.Fatalf("projection lost replay fence: %+v, %v", decision, err)
 		}
 	})
+}
+
+// A lost commit response must expose the exact transaction, never create a
+// second invocation or authorize a caller to repeat an external side effect.
+func TestLedgerUncertainCommitRetainsIntent(t *testing.T) {
+	forEachLedgerStore(t, func(t *testing.T, documents *ledgerTestDocuments) {
+		ctx := context.Background()
+		uncertain := &lostLedgerResponse{Documents: documents}
+		ledger, err := New(uncertain, "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ledger.BeginBatch(ctx, "operation", 1)
+		var committed *persistence.CommitError
+		if !errors.As(err, &committed) || uncertain.calls != 1 {
+			t.Fatalf("uncertain commit retried: %v calls=%d", err, uncertain.calls)
+		}
+		if _, err := documents.Commit(ctx, committed.Transaction); err != nil {
+			t.Fatal(err)
+		}
+		view, err := documents.Read(ctx, persistence.Query{Namespace: toolstate.Batches})
+		if err != nil || len(view.Documents) != 1 {
+			t.Fatalf("duplicate batch: %+v %v", view, err)
+		}
+	})
+}
+
+type lostLedgerResponse struct {
+	persistence.Documents
+	calls int
+}
+
+func (s *lostLedgerResponse) Commit(ctx context.Context, tx persistence.Transaction) (persistence.Receipt, error) {
+	s.calls++
+	receipt, err := s.Documents.Commit(ctx, tx)
+	if err != nil {
+		return receipt, err
+	}
+	return persistence.Receipt{}, errors.New("response lost after durable commit")
 }

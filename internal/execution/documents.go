@@ -22,23 +22,23 @@ const (
 	turnOwnersNamespace    = "wuu.execution_turn_owners.v1"
 )
 
-// DocumentStore retains the selected authority supplied by its runtime owner.
+// Store retains the selected authority supplied by its runtime owner.
 // Ephemeral runs remain local; durable runs and their admission indexes commit
 // together, including all canonical turn references.
-type DocumentStore struct {
+type Store struct {
 	documents persistence.Documents
 	mu        sync.Mutex
 	memory    map[string]Run
 }
 
-func NewDocumentStore(documents persistence.Documents) (*DocumentStore, error) {
+func NewStore(documents persistence.Documents) (*Store, error) {
 	if documents == nil {
 		return nil, errors.New("execution document authority is required")
 	}
-	return &DocumentStore{documents: documents, memory: make(map[string]Run)}, nil
+	return &Store{documents: documents, memory: make(map[string]Run)}, nil
 }
 
-func (s *DocumentStore) Create(ctx context.Context, params CreateParams) (Run, error) {
+func (s *Store) Create(ctx context.Context, params CreateParams) (Run, error) {
 	if s == nil {
 		return Run{}, errors.New("execution store is required")
 	}
@@ -119,7 +119,7 @@ func persistRunDocument(tx *persistence.Tx, run Run) error {
 	return tx.Put(runsNamespace, run.ID, run)
 }
 
-func (s *DocumentStore) Get(ctx context.Context, id string) (Run, error) {
+func (s *Store) Get(ctx context.Context, id string) (Run, error) {
 	if s == nil {
 		return Run{}, errors.New("execution store is required")
 	}
@@ -157,7 +157,7 @@ func listRunDocuments(tx *persistence.Tx) ([]Run, error) {
 	return runs, nil
 }
 
-func (s *DocumentStore) List(ctx context.Context, opts ListOptions) ([]Run, error) {
+func (s *Store) List(ctx context.Context, opts ListOptions) ([]Run, error) {
 	if s == nil {
 		return nil, errors.New("execution store is required")
 	}
@@ -204,7 +204,7 @@ func (s *DocumentStore) List(ctx context.Context, opts ListOptions) ([]Run, erro
 	return all, nil
 }
 
-func (s *DocumentStore) update(ctx context.Context, id string, mutate func(*Run) error) (Run, error) {
+func (s *Store) update(ctx context.Context, id string, mutate func(*Run) error) (Run, error) {
 	if s == nil {
 		return Run{}, errors.New("execution store is required")
 	}
@@ -233,7 +233,7 @@ func (s *DocumentStore) update(ctx context.Context, id string, mutate func(*Run)
 	return run, err
 }
 
-func (s *DocumentStore) ReconcileOrphans(ctx context.Context, currentRuntimeID string, at time.Time) ([]Run, error) {
+func (s *Store) ReconcileOrphans(ctx context.Context, currentRuntimeID string, at time.Time) ([]Run, error) {
 	if s == nil {
 		return nil, errors.New("execution store is required")
 	}
@@ -279,7 +279,7 @@ func (s *DocumentStore) ReconcileOrphans(ctx context.Context, currentRuntimeID s
 	return recovered, err
 }
 
-func (s *DocumentStore) AttachTurn(ctx context.Context, runID, threadID, turnID string, at time.Time) (Run, error) {
+func (s *Store) AttachTurn(ctx context.Context, runID, threadID, turnID string, at time.Time) (Run, error) {
 	runID = strings.TrimSpace(runID)
 	threadID = strings.TrimSpace(threadID)
 	turnID = strings.TrimSpace(turnID)
@@ -316,7 +316,7 @@ func (s *DocumentStore) AttachTurn(ctx context.Context, runID, threadID, turnID 
 	})
 }
 
-func (s *DocumentStore) Resolve(ctx context.Context, runID string, runtime RuntimeManifest, workspace WorkspaceRef, at time.Time) (Run, error) {
+func (s *Store) Resolve(ctx context.Context, runID string, runtime RuntimeManifest, workspace WorkspaceRef, at time.Time) (Run, error) {
 	runtime = normalizeRuntime(runtime)
 	workspace = normalizeWorkspace(workspace)
 	if runtime.Resolved.Provider == "" || runtime.Resolved.Model == "" || runtime.ProtocolVersion == "" {
@@ -337,7 +337,7 @@ func (s *DocumentStore) Resolve(ctx context.Context, runID string, runtime Runti
 	})
 }
 
-func (s *DocumentStore) FinishTurn(ctx context.Context, runID, turnID string, terminal TurnTerminal) (Run, error) {
+func (s *Store) FinishTurn(ctx context.Context, runID, turnID string, terminal TurnTerminal) (Run, error) {
 	runID = strings.TrimSpace(runID)
 	turnID = strings.TrimSpace(turnID)
 	if runID == "" || turnID == "" {
@@ -364,11 +364,11 @@ func (s *DocumentStore) FinishTurn(ctx context.Context, runID, turnID string, te
 	})
 }
 
-func (s *DocumentStore) Complete(ctx context.Context, runID string, result Result, at time.Time) (Run, error) {
+func (s *Store) Complete(ctx context.Context, runID string, result Result, at time.Time) (Run, error) {
 	return s.finish(ctx, runID, StatusCompleted, result, nil, at)
 }
 
-func (s *DocumentStore) Fail(ctx context.Context, runID string, status Status, result Result, runErr Error, at time.Time) (Run, error) {
+func (s *Store) Fail(ctx context.Context, runID string, status Status, result Result, runErr Error, at time.Time) (Run, error) {
 	if status == StatusCompleted || !status.Terminal() {
 		return Run{}, fmt.Errorf("invalid failure status %q", status)
 	}
@@ -379,7 +379,7 @@ func (s *DocumentStore) Fail(ctx context.Context, runID string, status Status, r
 	return s.finish(ctx, runID, status, result, &runErr, at)
 }
 
-func (s *DocumentStore) finish(ctx context.Context, runID string, status Status, result Result, runErr *Error, at time.Time) (Run, error) {
+func (s *Store) finish(ctx context.Context, runID string, status Status, result Result, runErr *Error, at time.Time) (Run, error) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
 		return Run{}, errors.New("execution run id is required")

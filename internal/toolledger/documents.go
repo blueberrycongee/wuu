@@ -15,29 +15,29 @@ import (
 	"github.com/blueberrycongee/wuu/internal/toolstate"
 )
 
-// DocumentLedger uses the selected authority retained by its execution owner.
+// Ledger uses the selected authority retained by its execution owner.
 // Construction does not reconcile state; recovery requires exclusive ownership.
-type DocumentLedger struct {
+type Ledger struct {
 	documents persistence.Documents
 	ownerID   string
 }
 
-func NewDocuments(documents persistence.Documents, ownerID string) (*DocumentLedger, error) {
+func New(documents persistence.Documents, ownerID string) (*Ledger, error) {
 	ownerID = strings.TrimSpace(ownerID)
 	if documents == nil || ownerID == "" {
 		return nil, errors.New("tool ledger document authority and owner are required")
 	}
-	return &DocumentLedger{documents: documents, ownerID: ownerID}, nil
+	return &Ledger{documents: documents, ownerID: ownerID}, nil
 }
 
-func (l *DocumentLedger) write(ctx context.Context, body func(*persistence.Tx) error) error {
+func (l *Ledger) write(ctx context.Context, body func(*persistence.Tx) error) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	return persistence.Update(ctx, l.documents, body)
 }
 
-func (l *DocumentLedger) batch(tx *persistence.Tx, id string, allowed ...BatchState) (toolstate.Batch, error) {
+func (l *Ledger) batch(tx *persistence.Tx, id string, allowed ...BatchState) (toolstate.Batch, error) {
 	var batch toolstate.Batch
 	found, err := tx.Get(toolstate.Batches, strings.TrimSpace(id), &batch)
 	if err != nil {
@@ -55,7 +55,7 @@ func (l *DocumentLedger) batch(tx *persistence.Tx, id string, allowed ...BatchSt
 	return batch, nil
 }
 
-func (l *DocumentLedger) invocation(tx *persistence.Tx, id string) (toolstate.Invocation, error) {
+func (l *Ledger) invocation(tx *persistence.Tx, id string) (toolstate.Invocation, error) {
 	var invocation toolstate.Invocation
 	found, err := tx.Get(toolstate.Invocations, id, &invocation)
 	if err != nil {
@@ -99,7 +99,7 @@ func batchInvocations(tx *persistence.Tx, batch toolstate.Batch) ([]toolstate.In
 	return out, nil
 }
 
-func (l *DocumentLedger) batches(tx *persistence.Tx) ([]toolstate.Batch, error) {
+func (l *Ledger) batches(tx *persistence.Tx) ([]toolstate.Batch, error) {
 	rows, err := tx.Read(persistence.Query{Namespace: toolstate.Batches})
 	if err != nil {
 		return nil, err
@@ -136,7 +136,7 @@ func publicInvocation(stored toolstate.Invocation) Invocation {
 	return out
 }
 
-func (l *DocumentLedger) BeginBatch(ctx context.Context, operationID string, stepIndex int) (string, error) {
+func (l *Ledger) BeginBatch(ctx context.Context, operationID string, stepIndex int) (string, error) {
 	if l == nil {
 		return "", errors.New("tool ledger is required")
 	}
@@ -152,7 +152,7 @@ func (l *DocumentLedger) BeginBatch(ctx context.Context, operationID string, ste
 	return id, err
 }
 
-func (l *DocumentLedger) FinalizeBatch(ctx context.Context, batchID string) error {
+func (l *Ledger) FinalizeBatch(ctx context.Context, batchID string) error {
 	now := time.Now().UTC().UnixMilli()
 	return l.write(ctx, func(tx *persistence.Tx) error {
 		batch, err := l.batch(tx, batchID, BatchCollecting, BatchFinalized, BatchSettled)
@@ -170,18 +170,18 @@ func (l *DocumentLedger) FinalizeBatch(ctx context.Context, batchID string) erro
 	})
 }
 
-func (l *DocumentLedger) Prepare(ctx context.Context, batchID string, call providers.ToolCall, policy ReplayPolicy) (Invocation, error) {
+func (l *Ledger) Prepare(ctx context.Context, batchID string, call providers.ToolCall, policy ReplayPolicy) (Invocation, error) {
 	return l.prepare(ctx, batchID, "", call, policy)
 }
 
-func (l *DocumentLedger) PrepareNested(ctx context.Context, batchID, parentID string, call providers.ToolCall, policy ReplayPolicy) (Invocation, error) {
+func (l *Ledger) PrepareNested(ctx context.Context, batchID, parentID string, call providers.ToolCall, policy ReplayPolicy) (Invocation, error) {
 	if strings.TrimSpace(parentID) == "" {
 		return Invocation{}, errors.New("nested tool requires a parent invocation")
 	}
 	return l.prepare(ctx, batchID, parentID, call, policy)
 }
 
-func (l *DocumentLedger) prepare(ctx context.Context, batchID, parentID string, call providers.ToolCall, policy ReplayPolicy) (Invocation, error) {
+func (l *Ledger) prepare(ctx context.Context, batchID, parentID string, call providers.ToolCall, policy ReplayPolicy) (Invocation, error) {
 	if l == nil {
 		return Invocation{}, errors.New("tool ledger is required")
 	}
@@ -234,7 +234,7 @@ func (l *DocumentLedger) prepare(ctx context.Context, batchID, parentID string, 
 	return out, err
 }
 
-func (l *DocumentLedger) Start(ctx context.Context, invocationID string) error {
+func (l *Ledger) Start(ctx context.Context, invocationID string) error {
 	invocationID = strings.TrimSpace(invocationID)
 	if invocationID == "" {
 		return errors.New("tool invocation is required")
@@ -256,7 +256,7 @@ func (l *DocumentLedger) Start(ctx context.Context, invocationID string) error {
 	})
 }
 
-func (l *DocumentLedger) Settle(ctx context.Context, invocationID string, result toolresult.Result) error {
+func (l *Ledger) Settle(ctx context.Context, invocationID string, result toolresult.Result) error {
 	invocationID = strings.TrimSpace(invocationID)
 	if invocationID == "" {
 		return errors.New("tool invocation is required")
@@ -324,7 +324,7 @@ func settleDocumentBatch(tx *persistence.Tx, batch toolstate.Batch, now int64) e
 	return tx.Put(toolstate.Batches, batch.ID, batch)
 }
 
-func (l *DocumentLedger) MarkProjected(ctx context.Context, invocationIDs []string) error {
+func (l *Ledger) MarkProjected(ctx context.Context, invocationIDs []string) error {
 	if len(invocationIDs) == 0 {
 		return nil
 	}
@@ -342,7 +342,7 @@ func (l *DocumentLedger) MarkProjected(ctx context.Context, invocationIDs []stri
 	})
 }
 
-func (l *DocumentLedger) PendingProjection(ctx context.Context) ([]Invocation, error) {
+func (l *Ledger) PendingProjection(ctx context.Context) ([]Invocation, error) {
 	if l == nil {
 		return nil, nil
 	}
@@ -372,7 +372,7 @@ func (l *DocumentLedger) PendingProjection(ctx context.Context) ([]Invocation, e
 	return out, err
 }
 
-func (l *DocumentLedger) DecideReplay(ctx context.Context, batchID string) (ReplayDecision, error) {
+func (l *Ledger) DecideReplay(ctx context.Context, batchID string) (ReplayDecision, error) {
 	if l == nil || strings.TrimSpace(batchID) == "" {
 		return ReplayDecision{Action: ReplayAllow, Reason: ReplayReasonNoInvocation}, nil
 	}
@@ -422,7 +422,7 @@ func (l *DocumentLedger) DecideReplay(ctx context.Context, batchID string) (Repl
 	return decision, err
 }
 
-func (l *DocumentLedger) SupersedePreparedBatch(ctx context.Context, batchID string) error {
+func (l *Ledger) SupersedePreparedBatch(ctx context.Context, batchID string) error {
 	if l == nil || strings.TrimSpace(batchID) == "" {
 		return nil
 	}
@@ -452,7 +452,7 @@ func (l *DocumentLedger) SupersedePreparedBatch(ctx context.Context, batchID str
 
 // Reconcile requires the caller's exclusive execution lease, and never retries
 // an external effect whose result was not durably settled.
-func (l *DocumentLedger) Reconcile(ctx context.Context) error {
+func (l *Ledger) Reconcile(ctx context.Context) error {
 	if l == nil {
 		return nil
 	}

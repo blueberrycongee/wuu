@@ -11,7 +11,7 @@ import (
 
 func TestProjectedInvocationDropsRecoveryPayload(t *testing.T) {
 	forEachLedgerStore(t, func(t *testing.T, documents *ledgerTestDocuments) {
-		ledger, err := NewDocuments(documents, "thread-projected-storage")
+		ledger, err := New(documents, "thread-projected-storage")
 		if err != nil {
 			t.Fatal(err)
 		}

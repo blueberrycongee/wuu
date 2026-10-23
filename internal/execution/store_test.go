@@ -225,7 +225,7 @@ func TestStoreReadSnapshotDoesNotMixRunAndTurnVersions(t *testing.T) {
 			t.Fatal(err)
 		}
 		paused := &pausedExecutionDocuments{Documents: store.documents, read: make(chan struct{}), resume: make(chan struct{})}
-		reader, err := NewDocumentStore(paused)
+		reader, err := NewStore(paused)
 		if err != nil {
 			t.Fatal(err)
 		}

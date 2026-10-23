@@ -11,7 +11,7 @@ import (
 
 func TestLedgerPersistsLifecycleAndProjection(t *testing.T) {
 	forEachLedgerStore(t, func(t *testing.T, documents *ledgerTestDocuments) {
-		ledger, err := NewDocuments(documents, "thread-1")
+		ledger, err := New(documents, "thread-1")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -69,7 +69,7 @@ func TestLedgerPersistsLifecycleAndProjection(t *testing.T) {
 
 func TestLedgerReconcileBlocksUnknownRunningInvocation(t *testing.T) {
 	forEachLedgerStore(t, func(t *testing.T, documents *ledgerTestDocuments) {
-		ledger, err := NewDocuments(documents, "thread-crash")
+		ledger, err := New(documents, "thread-crash")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,7 +91,7 @@ func TestLedgerReconcileBlocksUnknownRunningInvocation(t *testing.T) {
 		}
 
 		restartLedgerStore(t, documents)
-		recovered, err := NewDocuments(documents, "thread-crash")
+		recovered, err := New(documents, "thread-crash")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -118,7 +118,7 @@ func TestLedgerReconcileBlocksUnknownRunningInvocation(t *testing.T) {
 
 func TestLedgerLateSettlementAfterReconcileDoesNotOverrideUnknownInvocation(t *testing.T) {
 	forEachLedgerStore(t, func(t *testing.T, documents *ledgerTestDocuments) {
-		owner, err := NewDocuments(documents, "thread-late-settlement")
+		owner, err := New(documents, "thread-late-settlement")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -141,7 +141,7 @@ func TestLedgerLateSettlementAfterReconcileDoesNotOverrideUnknownInvocation(t *t
 		}
 
 		restartLedgerStore(t, documents)
-		recovered, err := NewDocuments(documents, "thread-late-settlement")
+		recovered, err := New(documents, "thread-late-settlement")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -170,7 +170,7 @@ func TestLedgerLateSettlementAfterReconcileDoesNotOverrideUnknownInvocation(t *t
 
 func TestLedgerOpenDoesNotReconcileLiveInvocation(t *testing.T) {
 	forEachLedgerStore(t, func(t *testing.T, documents *ledgerTestDocuments) {
-		owner, err := NewDocuments(documents, "thread-live-owner")
+		owner, err := New(documents, "thread-live-owner")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -192,7 +192,7 @@ func TestLedgerOpenDoesNotReconcileLiveInvocation(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if _, err := NewDocuments(documents, "thread-live-owner"); err != nil {
+		if _, err := New(documents, "thread-live-owner"); err != nil {
 			t.Fatal(err)
 		}
 		if err := owner.Settle(ctx, invocation.ID, toolresult.FromText("written")); err != nil {
@@ -203,7 +203,7 @@ func TestLedgerOpenDoesNotReconcileLiveInvocation(t *testing.T) {
 
 func TestLedgerScopesProviderCallIDsToBatchAndFreezesMetadata(t *testing.T) {
 	forEachLedgerStore(t, func(t *testing.T, documents *ledgerTestDocuments) {
-		ledger, err := NewDocuments(documents, "thread-scope")
+		ledger, err := New(documents, "thread-scope")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -245,7 +245,7 @@ func TestLedgerScopesProviderCallIDsToBatchAndFreezesMetadata(t *testing.T) {
 
 func TestLedgerFinalizationClosesCollectionAndSettlesCompletedBatch(t *testing.T) {
 	forEachLedgerStore(t, func(t *testing.T, documents *ledgerTestDocuments) {
-		ledger, err := NewDocuments(documents, "thread-finalize")
+		ledger, err := New(documents, "thread-finalize")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,7 +281,7 @@ func TestLedgerFinalizationClosesCollectionAndSettlesCompletedBatch(t *testing.T
 
 func TestLedgerReplayDecisionUsesHighestRiskState(t *testing.T) {
 	forEachLedgerStore(t, func(t *testing.T, documents *ledgerTestDocuments) {
-		ledger, err := NewDocuments(documents, "thread-risk")
+		ledger, err := New(documents, "thread-risk")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -319,7 +319,7 @@ func TestLedgerReplayDecisionUsesHighestRiskState(t *testing.T) {
 
 func TestLedgerSupersedesOnlyPreparedBatch(t *testing.T) {
 	forEachLedgerStore(t, func(t *testing.T, documents *ledgerTestDocuments) {
-		ledger, err := NewDocuments(documents, "thread-supersede")
+		ledger, err := New(documents, "thread-supersede")
 		if err != nil {
 			t.Fatal(err)
 		}

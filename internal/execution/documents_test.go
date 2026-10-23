@@ -15,9 +15,9 @@ type executionTestDocuments struct {
 }
 
 type testExecutionStore struct {
-	*DocumentStore
+	*Store
 	documents *executionTestDocuments
-	runtime   *session.DocumentInferenceRuntime
+	runtime   *session.InferenceJournalRuntime
 }
 
 func forEachExecutionStore(t *testing.T, run func(*testing.T, *testExecutionStore)) {
@@ -44,16 +44,16 @@ func forEachExecutionStore(t *testing.T, run func(*testing.T, *testExecutionStor
 					t.Error(err)
 				}
 			})
-			store, err := NewDocumentStore(documents)
+			store, err := NewStore(documents)
 			if err != nil {
 				t.Fatal(err)
 			}
-			run(t, &testExecutionStore{DocumentStore: store, documents: documents, runtime: runtime})
+			run(t, &testExecutionStore{Store: store, documents: documents, runtime: runtime})
 		})
 	}
 }
 
-func restartExecutionStore(t *testing.T, store *testExecutionStore) (*DocumentStore, error) {
+func restartExecutionStore(t *testing.T, store *testExecutionStore) (*Store, error) {
 	t.Helper()
 	if err := store.runtime.Close(); err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func restartExecutionStore(t *testing.T, store *testExecutionStore) (*DocumentSt
 		t.Fatal(err)
 	}
 	store.documents.Store = reopened
-	return NewDocumentStore(store.documents)
+	return NewStore(store.documents)
 }
 
 type pausedExecutionDocuments struct {
