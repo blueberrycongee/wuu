@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { afterEach, expect, it, vi } from "vitest";
 import { RemoteAppServerBridge, type RemoteAppServerEndpoint } from "./remoteAppServerBridge";
+import type { ExtensionInventoryRecord } from "../shared/protocol";
 const bridges: RemoteAppServerBridge[] = [];
 const sockets: Socket[] = [];
 afterEach(() => { for (const socket of sockets.splice(0)) socket.destroy(); for (const bridge of bridges.splice(0)) bridge.stop(); });
@@ -134,4 +135,56 @@ it("routes terminal events only to their attachment and releases its sessions on
   bridge.notifyPeer(ownerA,'desktop/terminal/event',{data:'after close'});
   bridge.notifyPeer(ownerB,'desktop/terminal/event',{data:'still connected'});
   expect((await b.next()).params.data).toBe('still connected');
+});
+
+it("owns remote activation identities and retains graph routes across workspace switches and reconnects", async () => {
+  const inventory = (graph: string) => [{ id: "shell", fingerprint: "source", graph_generation: graph, desktop: {} }] as ExtensionInventoryRecord[];
+  const process = (graph: string) => vi.fn(async (method: string, _params?: unknown): Promise<unknown> => method === "initialize" ? { extension_inventory: inventory(graph) } : {});
+  const first = process("first"), second = process("second");
+  let current = first;
+  const bridge = new RemoteAppServerBridge(async (cwd, method, params, _reply, _peer, activation) => {
+    if (method === "initialize") return activation.initialize(cwd, current as <T>(method: string, params?: unknown) => Promise<T>, params);
+    throw new Error(`Unexpected dispatch: ${method}`);
+  });
+  bridges.push(bridge);
+  const endpoint = await bridge.start("/a");
+  const a = await peer(endpoint), b = await peer(endpoint);
+  await a.next(); await b.next();
+  const initialize = async (phone: typeof a, id: number, workdir: string) => {
+    phone.send({ id, method: "initialize", workdir });
+    expect(await phone.next()).toHaveProperty("result.extension_inventory");
+  };
+  const report = async (phone: typeof a, id: number, graph: string, extra: object = {}) => {
+    phone.send({ id, method: "plugin/desktop-activation", workdir: "/unregistered", params: {
+      id: "shell", fingerprint: "source", graph_generation: graph, activation: 1,
+      phase: "registration", status: "active", renderer_id: "spoof", disconnected: true, ...extra,
+    } });
+    return phone.next();
+  };
+  await initialize(a, 1, "/a"); await initialize(b, 1, "/a");
+  expect(await report(a, 2, "first")).toHaveProperty("result");
+  expect(await report(b, 2, "first")).toHaveProperty("result");
+  const wireA = first.mock.calls[2][1] as Record<string, unknown>;
+  const wireB = first.mock.calls[3][1] as Record<string, unknown>;
+  expect(wireA.renderer_id).toMatch(/^remote:/);
+  expect(wireA.renderer_id).not.toBe(wireB.renderer_id);
+  expect(wireA).not.toHaveProperty("disconnected");
+  current = second;
+  await initialize(a, 3, "/b");
+  await report(a, 4, "first", { phase: "cleanup", status: "disposed" });
+  expect(first.mock.calls.at(-1)?.[1]).toMatchObject({ renderer_id: wireA.renderer_id, phase: "cleanup" });
+  bridge.publish({ kind: "notification", workdir: "/b", message: { method: "plugin/inventory/changed", params: { extension_inventory: inventory("next") } } });
+  await a.next(); await b.next();
+  expect(await report(a, 5, "next")).toHaveProperty("result");
+  expect(second.mock.calls.at(-1)?.[1]).toMatchObject({ graph_generation: "next", renderer_id: wireA.renderer_id });
+  expect(await report(b, 3, "next")).toHaveProperty("error");
+  a.socket.destroy();
+  await vi.waitFor(() => expect(second.mock.calls.at(-1)?.[1]).toEqual({ renderer_id: wireA.renderer_id, disconnected: true }));
+  expect(first.mock.calls.at(-1)?.[1]).toEqual({ renderer_id: wireA.renderer_id, disconnected: true });
+  const replacement = await peer(endpoint);
+  await replacement.next();
+  expect(await report(replacement, 1, "first", { phase: "cleanup", status: "disposed" })).toHaveProperty("error");
+  await initialize(replacement, 2, "/a");
+  expect(await report(replacement, 3, "second")).toHaveProperty("result");
+  expect((second.mock.calls.at(-1)?.[1] as Record<string, unknown>).renderer_id).not.toBe(wireA.renderer_id);
 });

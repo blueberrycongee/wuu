@@ -829,7 +829,7 @@ const pluginRuntimeRequests = new PluginRuntimeRequests(appServerClientPool);
 // paired, exit) fan out to every window; the settings panel re-pulls its
 // snapshot on each one.
 const remoteTerminals = new TerminalSessionManager((owner,event)=>remoteAppServerBridge.notifyPeer(owner,"desktop/terminal/event",event));
-const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply, peerID) => {
+const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply, peerID, activations) => {
   const pluginOwner = `remote:${peerID}`;
   // Existing ownership is enough to cancel; the original workspace may no
   // longer be listed by the time the paired client disconnects or switches.
@@ -838,9 +838,12 @@ const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, 
   // disable browser tools on the shared execution service.
   if (method === "initialize") params = desktopInitializeParams();
   return requestRemoteWorkspace(projectManager, appServerClientPool, remoteTerminals, workdir, method, params, reply, peerID,
-    (context, method, params) => method === "plugin/client/request"
-      ? pluginRuntimeRequests.request(pluginOwner, context, params as PluginClientRequestParams, reply)
-      : appServerClientPool.requestInContext(context, method, params, reply));
+    (context, method, params) => {
+      if (method === "initialize") return activations.initialize(context.cwd, appServerClientPool.bindContextRequest(context), params);
+      return method === "plugin/client/request"
+        ? pluginRuntimeRequests.request(pluginOwner, context, params as PluginClientRequestParams, reply)
+        : appServerClientPool.requestInContext(context, method, params, reply);
+    });
 }, (peerID) => {
   remoteTerminals.stopForOwner(peerID);
   pluginRuntimeRequests.closeOwner(`remote:${peerID}`);

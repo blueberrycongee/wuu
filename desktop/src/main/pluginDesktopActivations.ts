@@ -13,7 +13,7 @@ export class PluginDesktopActivations {
   private disconnected = false;
   private disconnecting?: Promise<void>;
 
-  constructor(windowID: number) { this.rendererID = `${windowID}:${randomUUID()}`; }
+  constructor(owner: number | string) { this.rendererID = `${owner}:${randomUUID()}`; }
 
   async initialize(workdir: string, request: ProcessRequest, params: unknown): Promise<InitializeResult> {
     if (this.disconnected) throw new Error("Renderer document is disconnected");

@@ -2,7 +2,8 @@ import { createServer, type Server, type Socket } from "node:net";
 import { projectRemoteHistory } from "./remoteHistory";
 import { RemoteAttachments, attachmentReadTarget, threadContentParams } from "./remoteAttachments";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import type { AppServerResponse, ServerEvent } from "../shared/protocol";
+import type { AppServerResponse, ExtensionInventoryRecord, PluginDesktopActivationParams, ServerEvent } from "../shared/protocol";
+import { PluginDesktopActivations } from "./pluginDesktopActivations";
 
 export type RemoteAppServerEndpoint = { address: string; token: string };
 type Request = { id: string | number; method: string; params?: unknown; workdir?: string };
@@ -17,10 +18,11 @@ export class RemoteAppServerBridge {
   private sockets = new Set<Socket>();
   private peerSockets = new Map<number,Socket>();
   private nextPeerID = 1;
+  private readonly activationOwners = new Map<number, PluginDesktopActivations>();
   private subscribers = new Set<Socket>();
   private readonly compactSubscribers = new Set<Socket>();
   private readonly attachments = new RemoteAttachments();
-  constructor(private readonly request: (workdir: string, method: string, params: unknown, reply: (response: Pick<AppServerResponse, "result" | "error">) => void, peerID: number) => Promise<unknown>, private readonly onPeerClose?: (peerID:number)=>void) {}
+  constructor(private readonly request: (workdir: string, method: string, params: unknown, reply: (response: Pick<AppServerResponse, "result" | "error">) => void, peerID: number, activations: PluginDesktopActivations) => Promise<unknown>, private readonly onPeerClose?: (peerID:number)=>void) {}
 
   notifyPeer(peerID:number,method:string,params:unknown):void {const socket=this.peerSockets.get(peerID);if(socket)this.send(socket,{method,params});}
 
@@ -49,6 +51,12 @@ export class RemoteAppServerBridge {
       for (const socket of this.subscribers) socket.destroy();
     }
     if (event.kind !== "notification") return;
+    if (event.message.method === "plugin/inventory/changed") {
+      const params = event.message.params as { extension_inventory?: ExtensionInventoryRecord[] } | undefined;
+      if (params?.extension_inventory) {
+        for (const owner of this.activationOwners.values()) owner.observeInventory(event.workdir, params.extension_inventory);
+      }
+    }
     for (const socket of this.subscribers) this.send(socket, { ...event.message, workdir: event.workdir });
   }
 
@@ -72,10 +80,24 @@ export class RemoteAppServerBridge {
   private accept(socket: Socket, token: string, defaultWorkdir: string): void {
     const peerID=this.nextPeerID++;
     this.peerSockets.set(peerID,socket);
-    const request=(cwd:string,method:string,params:unknown,reply:(response:Pick<AppServerResponse,"result"|"error">)=>void)=>this.request(cwd,method,params,reply,peerID);
+    const activations = new PluginDesktopActivations(`remote:${peerID}`);
+    const request = async (cwd: string, method: string, params: unknown, reply: (response: Pick<AppServerResponse, "result" | "error">) => void) => {
+      if (socket.destroyed) throw new Error("Remote connection closed");
+      // ACK ownership comes from this authenticated socket, never browser fields
+      // or a fresh lookup of the currently selected workspace/process.
+      if (method === "plugin/desktop-activation") {
+        await activations.report(params as PluginDesktopActivationParams);
+        return { ok: true };
+      }
+      return this.request(cwd, method, params, reply, peerID, activations);
+    };
     this.sockets.add(socket);
     socket.on("error", () => socket.destroy());
-    socket.once("close", () => { this.peerSockets.delete(peerID);this.onPeerClose?.(peerID);this.sockets.delete(socket); this.subscribers.delete(socket); this.compactSubscribers.delete(socket); });
+    socket.once("close", () => {
+      this.activationOwners.delete(peerID);
+      void activations.disconnect().catch(error => console.error("Remote renderer disconnect failed", error));
+      this.peerSockets.delete(peerID);this.onPeerClose?.(peerID);this.sockets.delete(socket); this.subscribers.delete(socket); this.compactSubscribers.delete(socket);
+    });
     socket.setTimeout(5000, () => socket.destroy());
     socket.setEncoding("utf8");
     let buffer = "", authenticated = false;
@@ -97,6 +119,7 @@ export class RemoteAppServerBridge {
           const expected = Buffer.from(token);
           if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) { socket.destroy(); return; }
           authenticated = true;
+          this.activationOwners.set(peerID, activations);
           socket.setTimeout(0);
           this.subscribers.add(socket);
           this.send(socket, { ready: true });
