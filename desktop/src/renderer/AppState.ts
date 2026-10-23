@@ -2538,7 +2538,9 @@ function bindActiveSessionTabToThread(
   thread: Thread,
   context: RuntimeContext,
 ): SessionTab[] {
-  const threadTab = createThreadSessionTab(thread, context);
+  // Binding the server identity keeps input entered while creation was pending.
+  const sourceTab = tabs.find((tab) => tab.id === activeTabID);
+  const threadTab = createThreadSessionTab(thread, context, sourceTab ? cloneSessionTabDraft(sourceTab) : undefined);
   const existingThreadTab = tabs.find((tab) => tab.id === threadTab.id);
   if (existingThreadTab) {
     return tabs
