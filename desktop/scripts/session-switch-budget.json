@@ -1,4 +1,5 @@
 {
-  "fixture": { "turns": 160, "rounds": 3, "variant": "wide", "safeMode": "1" },
+  "fixture": { "turns": 160, "rounds": 3, "variant": "wide", "safeMode": "0" },
+  "compositionMigration": { "fromSafeMode": "1", "toSafeMode": "0", "comparable": false },
   "ceilings": { "resumeCalls": 1, "layoutCount": 64, "recalcStyleCount": 128 }
 }
