@@ -2247,21 +2247,21 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 }
 
 @container composer-shell (max-width: 480px) {
-  /* Reserve a readable branch prefix as well as the fixed Git controls.
-     Both names may truncate when large text cannot fit on one row. Document
-     composers have their own stacked layout at this breakpoint. */
+  /* Size the controls to their content so short branches stay beside the
+     worktree toggle. The Git column keeps a readable branch prefix when
+     both names truncate. Document composers use their own stacked layout. */
+  .composer-stack:not([data-document-composer]) .composer-workspace-bar {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) minmax(min-content, 1fr);
+  }
+
   .composer-stack:not([data-document-composer]) .composer-git-controls {
-    flex: 1 0 auto;
     max-width: 100%;
   }
 
-  .composer-stack:not([data-document-composer]) .composer-branch-control {
-    flex-grow: 1;
-  }
-
-  .composer-stack:not([data-document-composer]) .composer-branch-control .hero-project-pill-text {
-    width: 4ch;
-    min-width: 4ch;
+  .composer-stack:not([data-document-composer]) .composer-branch-control .hero-project-pill {
+    display: grid;
+    grid-template-columns: auto minmax(4ch, 1fr);
   }
 }
 

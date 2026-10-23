@@ -109,6 +109,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the composer worktree toggle next to the branch name in narrow windows, without stretching short branch labels across the context row.
+
 - Keep the navigation ribbon at its current width while dragging destinations to reorder them, without opening the native expanded ribbon.
 
 - Balance sidebar icons with their labels at default and large text sizes, apply the shared text alignment to extension navigation, and optically center folder artwork beside uppercase labels while preserving shared text baselines.
