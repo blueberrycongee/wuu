@@ -48,9 +48,14 @@ func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 func (s *Service) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 
 func (s *Service) Prepare(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
+	lock, err := lockPreparedStore(ctx, s.dir)
+	if err != nil {
 		return err
 	}
+	if lock == nil {
+		return nil
+	}
+	defer lock.Release()
 	current, err := readBinding(s.dir)
 	if errors.Is(err, os.ErrNotExist) {
 		if err := requireEmptyDirectory(s.dir); err != nil && !errors.Is(err, os.ErrNotExist) {

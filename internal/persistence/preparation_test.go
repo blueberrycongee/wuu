@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/storelock"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 type preparationReader struct {
@@ -135,6 +137,66 @@ func TestPreparedDocumentProviderFollowsLiveSourceWithoutRepair(t *testing.T) {
 				actual, err := client.Export(ctx)
 				if err != nil || !reflect.DeepEqual(snapshot, actual) {
 					t.Fatalf("prepared snapshot: %+v %v", actual, err)
+				}
+			}
+		})
+	}
+}
+
+// Initialization owns the writer lock from generation creation through binding
+// publication. A candidate must wait or cancel, never diagnose that live window
+// as corruption. A genuinely lost binding remains corrupt once the writer exits.
+func TestPreparedDocumentProviderWaitsForAuthorityPublication(t *testing.T) {
+	for _, kind := range []string{"sqlite", "jsonl"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := context.Background()
+			dir := t.TempDir()
+			writer, err := storelock.AcquireContext(ctx, dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer writer.Release()
+			snapshot := Snapshot{Version: 1, Documents: []Document{}, Receipts: []CommitRecord{}}
+			binding, err := createGeneration(ctx, dir, kind, snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider := NewService("candidate", dir, kind)
+			defer provider.Close(ctx)
+			client := NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+				return provider.InvokeService(ctx, pluginhost.ServiceInvokeParams{Method: method, Params: raw})
+			})
+			calls := map[string]func(context.Context) error{
+				"prepare": provider.Prepare,
+				"export": func(ctx context.Context) error {
+					_, err := client.Export(ctx)
+					return err
+				},
+			}
+			for name, call := range calls {
+				waiting, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+				err := call(waiting)
+				cancel()
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("%s observed unpublished generation instead of waiting: %v", name, err)
+				}
+			}
+			if err := publishBinding(dir, binding); err != nil {
+				t.Fatal(err)
+			}
+			writer.Release()
+			if err := provider.Prepare(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if actual, err := client.Export(ctx); err != nil || !reflect.DeepEqual(actual, snapshot) {
+				t.Fatalf("published snapshot: %+v %v", actual, err)
+			}
+			if err := os.Remove(filepath.Join(dir, "authority.json")); err != nil {
+				t.Fatal(err)
+			}
+			for name, call := range calls {
+				if err := call(ctx); !errors.Is(err, ErrCorrupt) {
+					t.Errorf("%s accepted a genuinely missing authority: %v", name, err)
 				}
 			}
 		})

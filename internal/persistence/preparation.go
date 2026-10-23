@@ -10,15 +10,37 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/blueberrycongee/wuu/internal/storelock"
 )
+
+func lockPreparedStore(ctx context.Context, dir string) (*storelock.Lock, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// A missing candidate is empty at this observation; preparation must not
+	// create it. Existing stores share the writer's generation-publication lock.
+	if _, err := os.Stat(dir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return storelock.AcquireContext(ctx, dir)
+}
 
 // Prepared access never creates a provider generation, repairs a journal or
 // writes a logical record. Full snapshots here are admission work, not a normal
 // bounded-read implementation. Every call observes fresh source data for probes.
 func preparedSnapshot(ctx context.Context, dir, kind string) (Snapshot, error) {
-	if err := ctx.Err(); err != nil {
+	lock, err := lockPreparedStore(ctx, dir)
+	if err != nil {
 		return Snapshot{}, err
 	}
+	if lock == nil {
+		return Snapshot{Version: 1, Documents: []Document{}, Receipts: []CommitRecord{}}, nil
+	}
+	defer lock.Release()
 	selected, err := readBinding(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		if err := requireEmptyDirectory(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
