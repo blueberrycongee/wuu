@@ -17,7 +17,7 @@ import (
 func TestRuntimeStateServicesUseSelectedGraph(t *testing.T) {
 	ctx := context.Background()
 	home := t.TempDir()
-	modules := []string{StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, ArtifactModule}
+	modules := []string{StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, ArtifactModule, DataQueryModule}
 	host, _, err := buildPluginHost(nil, t.TempDir(), "", home, filepath.Join(home, "workspaces", "test"), nil, startPluginClient, nil, nil, &composition.Config{Version: composition.Version, Modules: &modules}, "")
 	if err != nil {
 		t.Fatal(err)

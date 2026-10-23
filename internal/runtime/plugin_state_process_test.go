@@ -38,8 +38,12 @@ func TestStateServiceContractsThroughExternalProcess(t *testing.T) {
 	bindings := make([]composition.Binding, 0, len(names))
 	requirements := make([]pluginhost.ServiceRequirement, 0, len(names))
 	for _, name := range names {
-		bindings = append(bindings, composition.Binding{Service: name, Major: 1, Provider: process.ID()})
-		requirements = append(requirements, pluginhost.ServiceRequirement{Name: name, MajorVersion: 1, Required: true})
+		major := 1
+		if name == pluginhost.KernelDataQueryService {
+			major = pluginhost.DataQueryServiceMajor
+		}
+		bindings = append(bindings, composition.Binding{Service: name, Major: major, Provider: process.ID()})
+		requirements = append(requirements, pluginhost.ServiceRequirement{Name: name, MajorVersion: major, Required: true})
 	}
 	consumer := &runtimeServiceConsumer{id: StateServicesConsumer, state: pluginhost.StatePrepared, requirements: requirements}
 	registry, err := pluginhost.NewServiceRegistryWithBindings(bindings)
@@ -112,6 +116,15 @@ func TestStateServiceContractsThroughExternalProcess(t *testing.T) {
 	if err != nil || !strings.Contains(string(events), "external_event") {
 		t.Fatalf("external index: %s %v", events, err)
 	}
+	index := NewIndexClient(call(pluginhost.KernelDataQueryService))
+	receipt, err := index.AppendTurn(ctx, indexBatchFixture(t, "external-turn"))
+	if err != nil || !receipt.Committed {
+		t.Fatalf("external index did not own producer: %+v %v", receipt, err)
+	}
+	indexed, err := index.Query(ctx, pluginhost.DataQueryParams{ThreadID: "thread"})
+	if err != nil || len(indexed.Events) != 2 || indexed.Events[0].TurnID != "external-turn" {
+		t.Fatalf("external index did not own public read: %+v %v", indexed, err)
+	}
 	if _, err := os.Stat(nativePath); !os.IsNotExist(err) {
 		t.Fatalf("native artifact/index files were accessed: %v", err)
 	}
@@ -120,6 +133,9 @@ func TestStateServiceContractsThroughExternalProcess(t *testing.T) {
 	}
 	if _, err := settings.Read(ctx, "plugin:external", pluginsettings.ScopeUser); err == nil {
 		t.Fatal("closed process settings fell back")
+	}
+	if _, err := index.Query(ctx, pluginhost.DataQueryParams{ThreadID: "thread"}); err == nil {
+		t.Fatal("closed process index fell back")
 	}
 	persisted, err := os.ReadFile(path)
 	if err != nil || !strings.Contains(string(persisted), "external") {
@@ -153,10 +169,17 @@ func runStateServiceFixture(path string) {
 		switch request.Method {
 		case "initialize":
 			var descriptors []pluginhost.ServiceDescriptor
-			for name, methods := range map[string][]string{"state.config": {"read", "compare-exchange"}, "state.plugin-settings": {"read", "update", "read-state", "update-state"}, "state.artifacts": {"import", "resolve", "read", "fork"}, "security.authorize": {"authorize"}, "host.data.query": {"call"}} {
+			for name, methods := range map[string][]string{"state.config": {"read", "compare-exchange"}, "state.plugin-settings": {"read", "update", "read-state", "update-state"}, "state.artifacts": {"import", "resolve", "read", "fork"}, "security.authorize": {"authorize"}, "host.data.query": {"call", "append-turn"}} {
 				descriptor := pluginhost.ServiceDescriptor{Name: name, Version: "1.0.0"}
+
 				for _, method := range methods {
 					descriptor.Methods = append(descriptor.Methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: name + "." + method + ".input.v1", OutputSchema: name + "." + method + ".output.v1"})
+				}
+				if name == pluginhost.KernelDataQueryService {
+					descriptor = pluginhost.ServiceDescriptor{Name: name, Version: "2.0.0", Methods: []pluginhost.ServiceMethodDescriptor{
+						{Name: "call", InputSchema: "host.data.query.input.v2", OutputSchema: "host.data.query.output.v2"},
+						{Name: "append-turn", InputSchema: "host.data.query.append-turn.input.v2", OutputSchema: "host.data.query.append-turn.output.v2"},
+					}}
 				}
 				descriptors = append(descriptors, descriptor)
 			}
@@ -219,7 +242,16 @@ func runStateServiceFixture(path string) {
 			case "security.authorize":
 				result = map[string]any{"outcome": "deny", "reason": "external policy"}
 			case "host.data.query":
-				result = map[string]any{"version": "1.0.0", "thread_id": "thread", "events": []any{map[string]any{"type": "external_event"}}}
+				if params.Method == pluginhost.DataAppendTurnMethod {
+					saved["index"] = input["events"]
+					result = map[string]any{"version": pluginhost.DataQueryServiceVersion, "thread_id": input["thread_id"], "turn_id": input["turn_id"], "committed": true}
+				} else {
+					events := saved["index"]
+					if events == nil {
+						events = json.RawMessage(`[{"type":"external_event","thread_id":"thread","data":{}}]`)
+					}
+					result = map[string]any{"version": pluginhost.DataQueryServiceVersion, "thread_id": "thread", "events": events}
+				}
 			default:
 				os.Exit(7)
 			}

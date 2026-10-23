@@ -1,15 +1,15 @@
 package appserver
 
 import (
+	"context"
 	"errors"
 	"math"
-	"os"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
 const contextCompositionModeLatestRequest = "latest_request"
@@ -33,32 +33,26 @@ func (s *Server) handleThreadContextComposition(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 
-	tracePath, err := s.threadContextTracePath(threadID)
+	services, err := binding.Services()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if strings.TrimSpace(tracePath) == "" {
-		return s.writeResponse(req.ID, ThreadContextCompositionResult{
-			ThreadID:  threadID,
-			Available: false,
-			Reason:    "no_trace_path",
-			Mode:      contextCompositionModeLatestRequest,
-		}, nil)
-	}
-	summary, err := sessiontrace.ReplayTrace(tracePath)
+	indexed, err := services.Index.Query(context.Background(), pluginhost.DataQueryParams{ThreadID: threadID})
 	if err != nil {
-		if os.IsNotExist(err) {
-			return s.writeResponse(req.ID, ThreadContextCompositionResult{
-				ThreadID:  threadID,
-				Available: false,
-				Reason:    "no_request_yet",
-				Mode:      contextCompositionModeLatestRequest,
-				TracePath: tracePath,
-			}, nil)
-		}
 		return s.writeResponse(req.ID, nil, err)
 	}
-	result := s.contextCompositionFromTrace(binding, threadID, tracePath, summary)
+	if len(indexed.Events) == 0 {
+		return s.writeResponse(req.ID, ThreadContextCompositionResult{ThreadID: threadID, Available: false, Reason: "no_request_yet", Mode: contextCompositionModeLatestRequest, TracePath: indexed.DiagnosticPath}, nil)
+	}
+	events := make([]sessiontrace.RawEvent, len(indexed.Events))
+	for i, event := range indexed.Events {
+		events[i] = sessiontrace.RawEvent(event)
+	}
+	summary, err := sessiontrace.ReplayEvents(events)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	result := s.contextCompositionFromTrace(binding, threadID, indexed.DiagnosticPath, summary)
 	return s.writeResponse(req.ID, result, nil)
 }
 
@@ -75,27 +69,6 @@ func (s *Server) ensureContextCompositionThreadExists(binding *runtime.State, th
 		return nil
 	}
 	return session.ErrSessionNotFound
-}
-
-func (s *Server) threadContextTracePath(threadID string) (string, error) {
-	if th := s.thread(threadID); th != nil {
-		th.mu.Lock()
-		threadRuntime := th.execRuntime
-		th.mu.Unlock()
-		if threadRuntime != nil && threadRuntime.Toolkit != nil {
-			if path := sessiontrace.Path(threadRuntime.Toolkit.SessionDir()); strings.TrimSpace(path) != "" {
-				return path, nil
-			}
-		}
-	}
-	if s == nil || s.rt == nil {
-		return "", errors.New("runtime session is required")
-	}
-	stateDir, err := s.workspaceStateDir()
-	if err != nil {
-		return "", err
-	}
-	return sessiontrace.Path(statepath.SessionArtifactDir(stateDir, threadID)), nil
 }
 
 func (s *Server) contextCompositionFromTrace(binding *runtime.State, threadID, tracePath string, summary sessiontrace.ReplaySummary) ThreadContextCompositionResult {

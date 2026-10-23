@@ -48,6 +48,7 @@ func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
 		{Name: pluginsettings.ServiceName, MajorVersion: 1, Required: true},
 		{Name: config.ServiceName, MajorVersion: 1, Required: true},
 		{Name: ArtifactServiceName, MajorVersion: 1, Required: true},
+		{Name: pluginhost.KernelDataQueryService, MajorVersion: pluginhost.DataQueryServiceMajor, Required: true},
 	}}
 	return []pluginhost.Client{tool, loop, state}
 }

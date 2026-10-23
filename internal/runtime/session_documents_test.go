@@ -39,7 +39,7 @@ func testSessionStore(t *testing.T, dir string) *session.Store {
 
 func testStateModules() []string {
 	return []string{sessionStateConsumer, persistence.SQLiteModule, StateServicesConsumer,
-		credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, ArtifactModule}
+		credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, ArtifactModule, DataQueryModule}
 }
 
 func testWorkspaceState(t *testing.T, root string) (string, string) {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/siwc"
 
@@ -59,6 +60,7 @@ type StateServices struct {
 	Settings     *pluginsettings.Client
 	Config       *config.Client
 	Artifacts    *ArtifactClient
+	Index        *IndexClient
 	ChatGPT      *siwc.Manager
 }
 
@@ -114,5 +116,5 @@ func stateServicesForGeneration(generation *PluginGeneration) *StateServices {
 			return result, nil
 		}
 	}
-	return &StateServices{GenerationID: generation.id, ChatGPT: generation.chatGPTManager, Snapshot: snapshot, Credentials: credentialstore.NewClient(call(credentialstore.ServiceName)), Settings: pluginsettings.NewClient(call(pluginsettings.ServiceName)), Config: config.NewClient(call(config.ServiceName)), Artifacts: NewArtifactClient(call(ArtifactServiceName))}
+	return &StateServices{GenerationID: generation.id, ChatGPT: generation.chatGPTManager, Snapshot: snapshot, Credentials: credentialstore.NewClient(call(credentialstore.ServiceName)), Settings: pluginsettings.NewClient(call(pluginsettings.ServiceName)), Config: config.NewClient(call(config.ServiceName)), Artifacts: NewArtifactClient(call(ArtifactServiceName)), Index: NewIndexClient(call(pluginhost.KernelDataQueryService))}
 }

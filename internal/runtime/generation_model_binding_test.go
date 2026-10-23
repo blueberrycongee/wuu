@@ -33,7 +33,7 @@ func TestGenerationModelBindingsFollowSelectedConfiguration(t *testing.T) {
 	oldServer, nextServer := server("old"), server("new")
 	defer oldServer.Close()
 	defer nextServer.Close()
-	modules := []string{sessionStateConsumer, persistence.JSONLModule, kernelHostModule, loopdriver.DefaultDriverID, sessionExecutionConsumer, toolExecutionConsumer, StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, ArtifactModule}
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, kernelHostModule, loopdriver.DefaultDriverID, sessionExecutionConsumer, toolExecutionConsumer, StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, ArtifactModule, DataQueryModule}
 	settings := func(url string) config.Config {
 		return config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}, DefaultProvider: "test", Providers: map[string]config.ProviderConfig{"test": {Type: "openai-compatible", BaseURL: url, APIKey: "fixture", Model: "fixture"}}}
 	}
@@ -73,7 +73,7 @@ func TestGenerationModelBindingsKeepSelectedCredentials(t *testing.T) {
 		fmt.Fprintf(w, `{"choices":[{"message":{"role":"assistant","content":%q}}]}`, r.Header.Get("Authorization"))
 	}))
 	defer endpoint.Close()
-	modules := []string{sessionStateConsumer, persistence.JSONLModule, kernelHostModule, loopdriver.DefaultDriverID, sessionExecutionConsumer, toolExecutionConsumer, StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, ArtifactModule}
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, kernelHostModule, loopdriver.DefaultDriverID, sessionExecutionConsumer, toolExecutionConsumer, StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, ArtifactModule, DataQueryModule}
 	cfg := config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}, DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: endpoint.URL, Model: "fixture"}}}
 	builds := 0
 	factory := NativeProviderFactory{ID: credentialstore.FileModule, Build: func(NativeProviderContext) (pluginhost.Client, error) {
@@ -125,7 +125,7 @@ func TestOpenStateUsesSelectedNativeCredentialMigration(t *testing.T) {
 	if err := legacy.Set("fixture", authstorage.Credentials{APIKey: "legacy-secret"}); err != nil {
 		t.Fatal(err)
 	}
-	modules := []string{sessionStateConsumer, persistence.JSONLModule, StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, ArtifactModule}
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, ArtifactModule, DataQueryModule}
 	state, err := OpenState(ctx, StateOptions{RootDir: t.TempDir(), HomeDir: home, Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
 	if err != nil {
 		t.Fatal(err)

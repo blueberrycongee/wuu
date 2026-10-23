@@ -99,7 +99,7 @@ text(await tools.bash({command:"mkdir shell; printf created > shell/new.txt"}));
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			t.Cleanup(unblock)
 			configPath := filepath.Join(root, "config.json")
-			config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.state.sqlite","wuu.state-consumer","wuu.credentials.file","wuu.settings.local","wuu.config.local","wuu.permissions.default","wuu.artifacts.local"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"unconfined"},"skills":{"enabled":false}}`, server.URL)
+			config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.state.sqlite","wuu.state-consumer","wuu.credentials.file","wuu.settings.local","wuu.config.local","wuu.permissions.default","wuu.artifacts.local","wuu.index.trace"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"unconfined"},"skills":{"enabled":false}}`, server.URL)
 			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -253,7 +253,7 @@ func stalledExecProvider(t *testing.T, root string, delta string) (string, <-cha
 	}))
 	t.Cleanup(func() { close(release); server.Close() })
 	configPath := filepath.Join(root, "config.json")
-	config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.state.sqlite","wuu.state-consumer","wuu.credentials.file","wuu.settings.local","wuu.config.local","wuu.permissions.default","wuu.artifacts.local"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"read_only"}}`, server.URL)
+	config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.state.sqlite","wuu.state-consumer","wuu.credentials.file","wuu.settings.local","wuu.config.local","wuu.permissions.default","wuu.artifacts.local","wuu.index.trace"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"read_only"}}`, server.URL)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}

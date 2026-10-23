@@ -60,6 +60,20 @@ func (s *dataQueryService) InvokeService(ctx context.Context, params pluginhost.
 	if s.state != pluginhost.StateActive || params.Service != pluginhost.KernelDataQueryService {
 		return nil, serviceError("service_unavailable", "trace index is unavailable")
 	}
+	if params.Method == pluginhost.DataAppendTurnMethod {
+		var batch pluginhost.DataAppendTurnParams
+		if err := decodeServiceParams(params.Params, &batch); err != nil {
+			return nil, err
+		}
+		if err := pluginhost.ValidateDataAppendTurnParams(batch); err != nil {
+			return nil, err
+		}
+		receipt, err := appendNativeIndexTurn(ctx, s.stateDir, batch)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(receipt)
+	}
 	if params.Method != pluginhost.KernelServiceMethod {
 		return nil, serviceError("method_not_found", "trace query method is unavailable")
 	}
@@ -67,7 +81,10 @@ func (s *dataQueryService) InvokeService(ctx context.Context, params pluginhost.
 	if err := decodeServiceParams(params.Params, &query); err != nil {
 		return nil, err
 	}
-	return querySessionTrace(ctx, s.stateDir, query)
+	if err := pluginhost.ValidateDataQueryParams(query); err != nil {
+		return nil, err
+	}
+	return queryNativeIndex(ctx, s.stateDir, query)
 }
 
 func querySessionTrace(ctx context.Context, stateDir string, query pluginhost.DataQueryParams) (json.RawMessage, error) {
@@ -76,9 +93,6 @@ func querySessionTrace(ctx context.Context, stateDir string, query pluginhost.Da
 	}
 	if err := pluginhost.ValidateDataQueryParams(query); err != nil {
 		return nil, err
-	}
-	if query.ThreadID == "." || query.ThreadID == ".." {
-		return nil, serviceError("invalid_params", "thread id cannot address a directory")
 	}
 	result := pluginhost.DataQueryResult{Version: pluginhost.DataQueryServiceVersion, ThreadID: query.ThreadID, Events: []pluginhost.DataEvent{}}
 	file, err := os.Open(sessiontrace.Path(statepath.SessionArtifactDir(stateDir, query.ThreadID)))
@@ -89,6 +103,7 @@ func querySessionTrace(ctx context.Context, stateDir string, query pluginhost.Da
 		return nil, serviceError("data_unavailable", "session data is unavailable")
 	}
 	defer file.Close()
+	result.DiagnosticPath = sessiontrace.Path(statepath.SessionArtifactDir(stateDir, query.ThreadID))
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	for scanner.Scan() {

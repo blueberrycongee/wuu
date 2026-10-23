@@ -8,13 +8,14 @@ import (
 )
 
 const (
-	// KernelDataQueryService is the kernel's read-only host data service. It
-	// exposes the first-party session data base — turn/step boundaries, model
-	// calls with usage, and tool calls/results — as a stable query snapshot.
+	// KernelDataQueryService owns completed-turn indexing and query snapshots.
+	// One selected provider owns both ingestion and every public read.
 	KernelDataQueryService = "host.data.query"
 
 	// DataQueryServiceVersion is the wire version of the query contract.
-	DataQueryServiceVersion = "1.0.0"
+	DataQueryServiceVersion = "2.0.0"
+	DataQueryServiceMajor   = 2
+	DataAppendTurnMethod    = "append-turn"
 )
 
 // First-party data fact types. These are the stable discriminants the current
@@ -63,22 +64,56 @@ type DataQueryParams struct {
 
 // DataQueryResult is the read-only query response.
 type DataQueryResult struct {
-	Version  string      `json:"version"`
+	DiagnosticPath string      `json:"diagnostic_path,omitempty"`
+	Version        string      `json:"version"`
+	ThreadID       string      `json:"thread_id"`
+	Events         []DataEvent `json:"events"`
+}
+
+// DataAppendTurnParams is one complete, ordered turn batch. The turn key is
+// idempotent: the same events may be acknowledged again; changed events conflict.
+type DataAppendTurnParams struct {
 	ThreadID string      `json:"thread_id"`
+	TurnID   string      `json:"turn_id"`
 	Events   []DataEvent `json:"events"`
 }
 
-// KernelDataQueryDescriptor is the descriptor the kernel registers for the
-// read-only host data service. It rides the same registry contract as the
-// other kernel services.
+// A receipt confirms the entire batch is durable. DiagnosticPath is optional
+// export metadata and must never be used as an authoritative read source.
+type DataAppendTurnResult struct {
+	Version        string `json:"version"`
+	ThreadID       string `json:"thread_id"`
+	TurnID         string `json:"turn_id"`
+	Committed      bool   `json:"committed"`
+	Duplicate      bool   `json:"duplicate,omitempty"`
+	DiagnosticPath string `json:"diagnostic_path,omitempty"`
+}
+
+func ValidateDataAppendTurnParams(params DataAppendTurnParams) error {
+	if err := ValidateDataQueryParams(DataQueryParams{ThreadID: params.ThreadID, TurnID: params.TurnID}); err != nil {
+		return err
+	}
+	if params.TurnID == "" || len(params.Events) < 2 || params.Events[0].Type != DataEventTypeTurn || params.Events[len(params.Events)-1].Type != DataEventTypeFinal {
+		return &HostServiceError{Code: "invalid_params", Message: "index append requires a complete turn batch"}
+	}
+	for _, event := range params.Events {
+		if event.ThreadID != params.ThreadID || event.TurnID != params.TurnID || strings.TrimSpace(event.Type) == "" || !json.Valid(event.Data) {
+			return &HostServiceError{Code: "invalid_params", Message: "index event does not match its batch scope or payload contract"}
+		}
+	}
+	return nil
+}
+
+// KernelDataQueryDescriptor describes the selected turn-index provider.
+// Major 2 explicitly grants ingestion as well as query authority.
 func KernelDataQueryDescriptor() ServiceDescriptor {
 	return ServiceDescriptor{
 		Name: KernelDataQueryService, Version: DataQueryServiceVersion,
 		Methods: []ServiceMethodDescriptor{{
 			Name:         KernelServiceMethod,
-			InputSchema:  "host.data.query.input.v1",
-			OutputSchema: "host.data.query.output.v1",
-		}},
+			InputSchema:  "host.data.query.input.v2",
+			OutputSchema: "host.data.query.output.v2",
+		}, {Name: DataAppendTurnMethod, InputSchema: "host.data.query.append-turn.input.v2", OutputSchema: "host.data.query.append-turn.output.v2"}},
 	}
 }
 
@@ -128,7 +163,7 @@ func validateDataEventTypes(types []string) error {
 
 func validateDataScopeID(field, id string) error {
 	id = strings.TrimSpace(id)
-	if id == "" {
+	if id == "" || id == "." || id == ".." {
 		return &HostServiceError{Code: "invalid_params", Message: fmt.Sprintf("data query %s is required", field)}
 	}
 	if len(id) > 256 {
