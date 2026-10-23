@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -54,12 +55,6 @@ func (r *fakeGatewayRegistry) RegisterGateway(executionID string, gateway Kernel
 type recordingGateway struct {
 	mu          sync.Mutex
 	checkpoints []Checkpoint
-	receipt     ModelLoopReceipt
-	err         error
-}
-
-func (g *recordingGateway) ExecuteModelLoop(context.Context, PersistedInput, LoopPolicy) (ModelLoopReceipt, error) {
-	return g.receipt, g.err
 }
 
 func (g *recordingGateway) WriteCheckpoint(_ context.Context, checkpoint Checkpoint) error {
@@ -151,6 +146,55 @@ func TestRemoteDriverCreateRunShutdown(t *testing.T) {
 	defer gateways.mu.Unlock()
 	if len(gateways.gateways) != 0 {
 		t.Fatalf("gateway registry not unregistered: %v", gateways.gateways)
+	}
+}
+
+// Terminal failures must survive the service boundary without parsing messages.
+// Cancellation, deadlines, summary limits, and recovery budgets drive different
+// caller behavior even when the remote execution has already returned.
+func TestRemoteDriverTerminalFailureEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, failure string
+		check         func(*testing.T, error)
+	}{
+		{"canceled", `{"message":"stopped","origin":"local","category":"canceled"}`, func(t *testing.T, err error) {
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("lost cancellation: %v", err)
+			}
+		}},
+		{"deadline", `{"message":"expired","origin":"local","category":"deadline"}`, func(t *testing.T, err error) {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("lost deadline: %v", err)
+			}
+		}},
+		{"output-limit", `{"message":"summary incomplete","code":"summary_output_limit"}`, func(t *testing.T, err error) {
+			if !compact.IsSummaryOutputLimit(err) {
+				t.Fatalf("lost summary limit: %v", err)
+			}
+		}},
+		{"recovery", `{"message":"request too large","origin":"provider","category":"request_too_large","context_overflow":true,"recovery":{"operation_id":"model-1","attempt_count":2,"retry_count":1,"max_attempts":2,"submission_count":2,"stop_reason":"budget_exhausted","budget_dimension":"submissions"}}`, func(t *testing.T, err error) {
+			var recovery *providers.StreamRecoveryError
+			if !providers.IsContextOverflow(err) || !errors.As(err, &recovery) || recovery.Recovery.OperationID != "model-1" || recovery.Recovery.SubmissionCount != 2 || recovery.Recovery.BudgetDimension != "submissions" {
+				t.Fatalf("lost recovery evidence: %v", err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checkpoint := Checkpoint{ContractVersion: ContractVersion, DriverID: "wuu.demo", DriverVersion: "0.1.0"}
+			driver := &RemoteDriver{Invoker: &fakeRemoteInvoker{serve: func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+				return json.Marshal(struct {
+					Status     TerminalStatus  `json:"status"`
+					Checkpoint Checkpoint      `json:"checkpoint"`
+					Failure    json.RawMessage `json:"failure"`
+				}{TerminalFailed, checkpoint, json.RawMessage(tc.failure)})
+			}}}
+			instance := &RemoteInstance{driver: driver, descriptor: Descriptor{ID: checkpoint.DriverID, Version: checkpoint.DriverVersion}, checkpoint: checkpoint}
+			outcome, err := instance.Run(context.Background(), &recordingGateway{})
+			if outcome.Status != TerminalFailed || err == nil {
+				t.Fatalf("outcome=%+v err=%v", outcome, err)
+			}
+			tc.check(t, err)
+		})
 	}
 }
 

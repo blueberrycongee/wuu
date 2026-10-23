@@ -103,7 +103,7 @@ func (g *streamTurnGateway) TransformRequest(ctx context.Context, request provid
 	if request.Provider != g.runner.ProviderName {
 		return providers.ChatRequest{}, errors.New("model request must use the turn's bound provider")
 	}
-	if err := validateTransformedRequest(request, "", false); err != nil {
+	if err := validateTransformedRequest(request); err != nil {
 		return providers.ChatRequest{}, err
 	}
 	return request, nil

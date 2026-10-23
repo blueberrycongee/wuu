@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/coder/websocket"
 )
@@ -132,8 +131,8 @@ func TestResponsesTurnContinuation(t *testing.T) {
 				if transport == "unary" {
 					api = continuationChatOnly{client}
 				}
-				runner := &agent.Runner{Client: api, Model: "test", MaxSteps: 3}
-				result, err := runner.RunWithUsage(ctx, "hello", nil)
+				runner := &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: providers.AdaptStreamClient(api), Model: "test", MaxSteps: 3}
+				result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "hello"}}, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -167,7 +166,7 @@ func TestChatCompletionsDoesNotInferContinuationFromOtherProtocols(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			runner := &agent.Runner{Client: client, Model: "test", MaxSteps: 2}
+			runner := &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: client, Model: "test", MaxSteps: 2}
 			result, err := runner.Run(context.Background(), "hello")
 			if err != nil || requests.Load() != 1 || result != content {
 				t.Fatalf("requests=%d result=%q err=%v", requests.Load(), result, err)
@@ -292,7 +291,7 @@ func TestResponsesAgentPreservesOutputOrder(t *testing.T) {
 				if transport == "unary" {
 					api = continuationChatOnly{client}
 				}
-				runner := agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: providers.AdaptStreamClient(api), Model: "gpt-test", Tools: &webSocketAgentLoopTools{}, PromptCacheKey: "thread-output-order"}
+				runner := agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: providers.AdaptStreamClient(api), Model: "gpt-test", Tools: &webSocketAgentLoopTools{}, PromptCacheKey: "thread-output-order"}
 				result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "read README"}}, nil)
 				if err != nil || result.Content != "done" || requests.Load() != 2 {
 					t.Fatalf("requests=%d result=%+v err=%v", requests.Load(), result, err)
@@ -421,7 +420,7 @@ func TestResponsesTurnRouting(t *testing.T) {
 			if transport == "unary" {
 				stream = providers.AdaptStreamClient(continuationChatOnly{client})
 			}
-			runner := agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: stream, Model: "test", PromptCacheKey: "same-thread"}
+			runner := agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: stream, Model: "test", PromptCacheKey: "same-thread"}
 			for i := 0; i < 2; i++ {
 				if _, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "continue"}}, nil); err != nil {
 					t.Fatal(err)

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
@@ -86,7 +85,7 @@ func TestCancellationEmitsTurnInterrupted(t *testing.T) {
 		t.Fatalf("NewSession: %v", err)
 	}
 	rt.StreamRunner = &agent.StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: agent.DefaultDriver{},
 
 		Client:       providers.AdaptStreamClient(provider),
 		Model:        "fake-model",

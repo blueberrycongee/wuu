@@ -42,7 +42,7 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	workerClient := newBlockingStreamClient("worker done")
 	artifactDir := statepath.SessionArtifactDir(rt.StateDir, rootID)
 	control, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       workerClient,
 		DefaultModel: "fake-model",
@@ -285,7 +285,7 @@ func TestServerTerminalFinalizationFailureYieldsDurablyAndRecoversOnce(t *testin
 	newControl := func(client *blockingStreamClient) *agentcontrol.AgentControl {
 		t.Helper()
 		control, err := agentcontrol.New(agentcontrol.Config{
-			AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+			AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 			Client:       client,
 			DefaultModel: "fake-model",

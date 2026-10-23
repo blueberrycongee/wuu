@@ -58,12 +58,12 @@ func (f *fakeStreamBackedClient) StreamChat(_ context.Context, _ providers.ChatR
 	return ch, nil
 }
 
-func TestRunner_UsesStreamingStepPath(t *testing.T) {
+func TestSelectedDriver_UsesStreamingStepPath(t *testing.T) {
 	client := &fakeStreamBackedClient{events: []providers.StreamEvent{
 		{Type: providers.EventContentDelta, Content: "streamed"},
 		{Type: providers.EventDone},
 	}}
-	runner := Runner{Client: client, Model: "gpt-test"}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: providers.AdaptStreamClient(client), Model: "gpt-test"}
 
 	answer, err := runner.Run(context.Background(), "hello")
 	if err != nil {
@@ -77,10 +77,10 @@ func TestRunner_UsesStreamingStepPath(t *testing.T) {
 	}
 }
 
-func TestRunnerPreservesExplicitInferenceWorkflow(t *testing.T) {
+func TestSelectedDriverPreservesExplicitInferenceWorkflow(t *testing.T) {
 	client := &fakeClient{responses: []providers.ChatResponse{{Content: "done"}}}
 	journal := &workflowRecordingJournal{}
-	runner := Runner{Client: client, Model: "gpt-test", InferenceJournal: journal}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: providers.AdaptStreamClient(client), Model: "gpt-test", InferenceJournal: journal}
 	workflow := providers.NewInferenceWorkflow(providers.InferenceProfileInteractive)
 	ctx := providers.WithInferenceWorkflow(context.Background(), workflow)
 
@@ -98,10 +98,10 @@ func TestRunnerPreservesExplicitInferenceWorkflow(t *testing.T) {
 	}
 }
 
-func TestRunnerCompletesWorkflowItCreates(t *testing.T) {
+func TestSelectedDriverCompletesWorkflowItCreates(t *testing.T) {
 	client := &fakeClient{responses: []providers.ChatResponse{{Content: "done"}}}
 	journal := &workflowRecordingJournal{}
-	runner := Runner{Client: client, Model: "gpt-test", InferenceJournal: journal}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: providers.AdaptStreamClient(client), Model: "gpt-test", InferenceJournal: journal}
 
 	if _, err := runner.Run(context.Background(), "hello"); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -114,7 +114,7 @@ func TestRunnerCompletesWorkflowItCreates(t *testing.T) {
 	}
 }
 
-func TestRunner_RunWithToolCall(t *testing.T) {
+func TestSelectedDriver_RunWithToolCall(t *testing.T) {
 	client := &fakeClient{responses: []providers.ChatResponse{
 		{
 			ToolCalls: []providers.ToolCall{{ID: "call_1", Name: "run_shell", Arguments: `{"command":"echo hi"}`}},
@@ -122,7 +122,7 @@ func TestRunner_RunWithToolCall(t *testing.T) {
 		{Content: "final answer"},
 	}}
 	tool := &fakeTools{}
-	runner := Runner{Client: client, Tools: tool, Model: "gpt-test", SystemPrompt: "sys", MaxSteps: 4}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: providers.AdaptStreamClient(client), Tools: tool, Model: "gpt-test", SystemPrompt: "sys", MaxSteps: 4}
 
 	answer, err := runner.Run(context.Background(), "task")
 	if err != nil {
@@ -148,13 +148,13 @@ func TestRunner_RunWithToolCall(t *testing.T) {
 	}
 }
 
-func TestRunner_OutputTruncationCompletesRun(t *testing.T) {
+func TestSelectedDriver_OutputTruncationCompletesRun(t *testing.T) {
 	client := &fakeClient{responses: []providers.ChatResponse{
 		{Content: "part one ", Truncated: true, StopReason: "length"},
 	}}
-	runner := Runner{Client: client, Model: "gpt-test"}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: providers.AdaptStreamClient(client), Model: "gpt-test"}
 
-	res, err := runner.RunWithUsage(context.Background(), "write a story", nil)
+	res, err := runner.RunWithCallback(context.Background(), []providers.ChatMessage{{Role: "user", Content: "write a story"}}, nil)
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestRunner_OutputTruncationCompletesRun(t *testing.T) {
 	}
 }
 
-func TestRunner_ContextOverflowFreshPromptPropagates(t *testing.T) {
+func TestSelectedDriver_ContextOverflowFreshPromptPropagates(t *testing.T) {
 	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
 	client := &fakeClient{
 		responses: []providers.ChatResponse{
@@ -177,7 +177,7 @@ func TestRunner_ContextOverflowFreshPromptPropagates(t *testing.T) {
 		},
 		errors: []error{overflow},
 	}
-	runner := Runner{Client: client, Model: "gpt-test", SystemPrompt: "sys"}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: providers.AdaptStreamClient(client), Model: "gpt-test", SystemPrompt: "sys"}
 
 	_, err := runner.Run(context.Background(), "do work")
 	if err == nil || !providers.IsContextOverflow(err) {

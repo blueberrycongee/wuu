@@ -54,7 +54,7 @@ func testAgentControl(t *testing.T) *AgentControl {
 	t.Helper()
 	dir := t.TempDir()
 	c, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "done"}},
 		DefaultModel:  "default-model",
@@ -266,7 +266,7 @@ func TestQueuedModelAliasResolvesAgainAtLaunch(t *testing.T) {
 	dir := t.TempDir()
 	blocker := &blockingStreamClient{started: make(chan struct{}), release: make(chan struct{})}
 	c, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:        blocker,
 		ProviderName:  "default-provider",
@@ -356,7 +356,7 @@ func TestModelAliasRuntimeSurvivesRestartResume(t *testing.T) {
 	harnessDir := filepath.Join(dir, "state", "harness")
 	newControl := func(client providers.StreamClient) *AgentControl {
 		c, err := New(Config{
-			AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+			AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 			Client:        client,
 			ProviderName:  "changed-default-provider",

@@ -16,7 +16,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -65,7 +64,7 @@ func TestWuuEngineOwnedSessionsReleaseTheirGeneration(t *testing.T) {
 	generation := testPluginGeneration("owned", client)
 	s := testGenerationSession(generation)
 	s.RootDir, s.WuuHome, s.StateDir, s.SessionDir = t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
-	s.StreamRunner = &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: cloneGuardStreamClient{}, Model: "fixture"}
+	s.StreamRunner = &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: cloneGuardStreamClient{}, Model: "fixture"}
 	t.Cleanup(func() { _, _ = s.Cleanup(); _ = generation.close() })
 	factory := NewWuuEngine(s)
 	first, err := factory.Open(context.Background(), agentengine.OpenRequest{ThreadID: "first"})
@@ -107,7 +106,7 @@ func TestWuuEngineOwnedSessionsReleaseTheirGeneration(t *testing.T) {
 
 func TestWuuEngineCloseDrainsActiveTurnAndStopsAdmission(t *testing.T) {
 	model := &defaultBindingModel{}
-	engine := &wuuEngineSession{runner: &agent.StreamRunner{Client: model, Model: "fixture", LoopDriver: loopdriver.DefaultDriver{}}}
+	engine := &wuuEngineSession{runner: &agent.StreamRunner{Client: model, Model: "fixture", LoopDriver: agent.DefaultDriver{}}}
 	started, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	defer unblock()
@@ -172,7 +171,7 @@ func TestWuuEngineSessionInterrupt(t *testing.T) {
 func TestEngineSessionForThreadUnavailable(t *testing.T) {
 	s := &Session{engines: agentengine.NewRegistry()}
 	rt := &ThreadRuntime{
-		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}},
+		StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}},
 		EngineID:     agentengine.EngineWuu,
 	}
 	sess := s.EngineSessionForThread(context.Background(), rt, agentengine.ThreadBinding{})

@@ -2094,7 +2094,7 @@ func TestRunningTurnUsesModelSnapshotAfterConfigUpdate(t *testing.T) {
 	}
 	threadRuntime := &runtime.ThreadRuntime{
 		StreamRunner: &agent.StreamRunner{
-			LoopDriver: loopdriver.DefaultDriver{},
+			LoopDriver: agent.DefaultDriver{},
 
 			Client:   streamClient,
 			Model:    "fake-model",
@@ -2242,7 +2242,7 @@ func TestServerConfigGeneralUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 	}
 	oldPrompt := rt.StreamRunner.SystemPrompt
 	th := newThreadState("thread-1", []providers.ChatMessage{{Role: "system", Content: oldPrompt}}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
-	th.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, SystemPrompt: oldPrompt}}
+	th.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, SystemPrompt: oldPrompt}}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	srv.threads[th.ID] = th
@@ -2463,7 +2463,7 @@ func TestServerConfigModelUpdateReconfiguresEditTools(t *testing.T) {
 		t.Fatalf("write thread history: %v", err)
 	}
 	thread.execRuntime = &runtime.ThreadRuntime{
-		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "fake-model", APIModel: "fake-model"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: "fake-model", APIModel: "fake-model"},
 		Toolkit:      threadKit,
 	}
 	srv.threads[thread.ID] = thread
@@ -2681,7 +2681,7 @@ func TestServerConfigModelUpdatePersistsProviderConnection(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	idle := newThreadState("idle-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
-	idle.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: rt.Model}}
+	idle.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: rt.Model}}
 	srv.threads[idle.ID] = idle
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"fake-provider","model":"new-model","base_url":"https://custom.example.test/v1","api_key":"new-key"}}`
@@ -3681,7 +3681,7 @@ func TestServerConfigProviderRemoveRejectsProviderUsedByRunningTurn(t *testing.T
 	now := time.Now().UTC()
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
 	running.execRuntime = &runtime.ThreadRuntime{
-		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "drop-model", APIModel: "drop-model"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: "drop-model", APIModel: "drop-model"},
 	}
 	running.startTurnLocked("running-turn", providers.ChatMessage{Role: "user", Content: "keep running"}, now)
 	srv.threads[running.ID] = running
@@ -3800,7 +3800,7 @@ func TestServerConfigProviderRemoveAllowsUnusedProviderWithRunningThread(t *test
 	now := time.Now().UTC()
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
 	running.execRuntime = &runtime.ThreadRuntime{
-		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "keep-model", APIModel: "keep-model"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: "keep-model", APIModel: "keep-model"},
 	}
 	running.startTurnLocked("running-turn", providers.ChatMessage{Role: "user", Content: "keep running"}, now)
 	srv.threads[running.ID] = running
@@ -4728,7 +4728,7 @@ func TestServerCodexWebSocketReplayAcrossThreadTurns(t *testing.T) {
 		ConfigPath:   filepath.Join(root, ".wuu.json"),
 		SessionDir:   filepath.Join(root, ".wuu-home", "sessions"),
 		StreamRunner: &agent.StreamRunner{
-			LoopDriver: loopdriver.DefaultDriver{},
+			LoopDriver: agent.DefaultDriver{},
 
 			Client:       providers.AdaptStreamClient(client),
 			Model:        "gpt-5.5",
@@ -5969,7 +5969,7 @@ func TestServerGeneratesThreadTitleInheritsPinnedThreadModel(t *testing.T) {
 	threadClient := &fakeClient{response: providers.ChatResponse{Content: "Thread title"}}
 	threadRuntime := &runtime.ThreadRuntime{
 		StreamRunner: &agent.StreamRunner{
-			LoopDriver: loopdriver.DefaultDriver{},
+			LoopDriver: agent.DefaultDriver{},
 
 			Client:   providers.AdaptStreamClient(threadClient),
 			Model:    "session-pinned-model",
@@ -6034,7 +6034,7 @@ func TestServerGeneratesThreadTitleEndToEndWithStreaming(t *testing.T) {
 		ConfigPath:   "/tmp/.wuu.json",
 		SessionDir:   t.TempDir() + "/.wuu-state/sessions",
 		StreamRunner: &agent.StreamRunner{
-			LoopDriver: loopdriver.DefaultDriver{},
+			LoopDriver: agent.DefaultDriver{},
 
 			Client:       providers.AdaptStreamClient(mainClient),
 			Model:        "kimi-k2.6",
@@ -7814,7 +7814,7 @@ func TestServerChildAgentSessionIsLiveWhileRunning(t *testing.T) {
 	artifactDir := statepath.SessionArtifactDir(rt.StateDir, rootID)
 	workerClient := newBlockingStreamClient("child live result")
 	coord, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       workerClient,
 		DefaultModel: "fake-model",
@@ -9571,7 +9571,7 @@ func TestServerForwardsAgentNotifications(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
@@ -9618,7 +9618,7 @@ func TestServerAutoResumesRootAgentOnAgentCompletion(t *testing.T) {
 	rt := newTestRuntime(t, mainClient)
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
@@ -9712,7 +9712,7 @@ func TestServerQueuesAgentCompletionWhileRootTurnIsRunning(t *testing.T) {
 	rt.StreamRunner.Client = mainClient
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
@@ -9785,7 +9785,7 @@ func TestServerSkipsDuplicateAgentCompletionNotificationsAfterAutoResume(t *test
 	rt := newTestRuntime(t, mainClient)
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
@@ -9847,7 +9847,7 @@ func TestServerSkipsAutoResumeWhenAwaitAgentsAlreadyReturnedResult(t *testing.T)
 	rt.StreamRunner.Client = mainClient
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
@@ -9931,7 +9931,7 @@ func newTestRuntime(t *testing.T, client *fakeClient) *runtime.Session {
 		SessionDir:     root + "/.wuu-state/sessions",
 		HookDispatcher: hooks.NewDispatcher(nil),
 		StreamRunner: &agent.StreamRunner{
-			LoopDriver: loopdriver.DefaultDriver{},
+			LoopDriver: agent.DefaultDriver{},
 
 			Client:       providers.AdaptStreamClient(client),
 			Model:        "fake-model",

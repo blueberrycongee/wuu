@@ -385,7 +385,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 	unblock := func() { once.Do(func() { close(worker.release) }) }
 	t.Cleanup(unblock)
 	control, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client: worker, DefaultModel: "fake-model", ParentRepo: rt.RootDir,
 		WorktreeRoot: filepath.Join(rt.RootDir, ".wuu", "worktrees"), SessionID: "reload-background",

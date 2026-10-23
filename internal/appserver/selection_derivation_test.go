@@ -90,7 +90,7 @@ func TestSubscribeThreadRuntimeKeepsForeignPinWorkerProvider(t *testing.T) {
 
 	dir := t.TempDir()
 	control, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       providers.AdaptStreamClient(&fakeClient{}),
 		ProviderName: "alt-provider", // the conversation's own worker provider, set at construction

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
 
@@ -36,7 +37,7 @@ func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
 		profile = "default"
 	}
 	loop := &runtimeServiceConsumer{id: sessionExecutionConsumer, state: pluginhost.StatePrepared,
-		requirements: []pluginhost.ServiceRequirement{{Name: DriverServicePrefix + profile, MajorVersion: 1, Required: true}},
+		requirements: []pluginhost.ServiceRequirement{{Name: DriverServicePrefix + profile, MajorVersion: loopdriver.DriverServiceMajor, Required: true}},
 	}
 	return []pluginhost.Client{tool, loop}
 }

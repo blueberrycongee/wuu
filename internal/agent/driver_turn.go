@@ -15,35 +15,39 @@ import (
 // streamTurnGateway owns execution resources, not the driver's algorithm. The
 // gate also makes close wait for accepted calls before releasing their tools.
 type streamTurnGateway struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	gate             chan struct{}
-	runner           *StreamRunner
-	descriptor       loopdriver.Descriptor
-	input            loopdriver.PersistedInput
-	baseHistory      []providers.ChatMessage
-	activeHistory    []providers.ChatMessage
-	revision         uint64
-	historyRewritten bool
-	onEvent          StreamCallback
-	client           providers.StreamClient
-	ready            bool
-	closed           bool
-	complete         bool
-	legacy           bool
-	frozen           ToolSurfaceFreezer
-	step             int
-	batches          map[string]bool
-	streamedBatches  map[string]driverToolStream
-	toolRuntimes     map[*TurnToolRuntime]bool
-	toolCalls        map[string]bool
-	produced         []providers.ChatMessage
-	durable          []providers.ChatMessage
-	archiveHead      int
-	usage            providers.TokenUsage
-	contextTokens    int
-	postToolContext  []ContextSegment
-	completed        LoopResult
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	gate                    chan struct{}
+	runner                  *StreamRunner
+	descriptor              loopdriver.Descriptor
+	input                   loopdriver.PersistedInput
+	baseHistory             []providers.ChatMessage
+	activeHistory           []providers.ChatMessage
+	revision                uint64
+	historyRewritten        bool
+	onEvent                 StreamCallback
+	client                  providers.StreamClient
+	ready                   bool
+	closed                  bool
+	complete                bool
+	frozen                  ToolSurfaceFreezer
+	step                    int
+	batches                 map[string]bool
+	streamedBatches         map[string]driverToolStream
+	toolRuntimes            map[*TurnToolRuntime]bool
+	toolCalls               map[string]bool
+	produced                []providers.ChatMessage
+	durable                 []providers.ChatMessage
+	archiveHead             int
+	usage                   providers.TokenUsage
+	contextTokens           int
+	turnRouting             providers.TurnRouting
+	lastModelOperationID    string
+	proposedContextParentID string
+	proposedContextHash     string
+	nextModelParentID       string
+	postToolContext         []ContextSegment
+	completed               LoopResult
 }
 
 func newStreamTurnGateway(ctx context.Context, runner *StreamRunner, input loopdriver.PersistedInput, onEvent StreamCallback) *streamTurnGateway {
@@ -58,9 +62,9 @@ func (g *streamTurnGateway) enter(ctx context.Context) (context.Context, func(),
 	if err != nil {
 		return nil, nil, err
 	}
-	if g.complete || g.legacy {
+	if g.complete {
 		leave()
-		return nil, nil, errors.New("driver turn is complete or uses the legacy loop gateway")
+		return nil, nil, errors.New("driver turn is complete")
 	}
 	return ctx, leave, nil
 }
@@ -175,7 +179,7 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	request = cloneDriverRequest(request)
 	request.StepIndex = g.step
 	round := loopdriver.ModelRound{}
-	if err := validateTransformedRequest(request, "", false); err != nil {
+	if err := validateTransformedRequest(request); err != nil {
 		return round, err
 	}
 	if batchID != "" {
@@ -194,6 +198,7 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	if profile == "" {
 		profile = providers.InferenceProfileInteractive
 	}
+	ctx, _ = providers.BeginInferenceOperationLineage(ctx, g.nextModelParentID)
 	request, err = providers.EnsureInferenceExecutionContext(ctx, request, kind, profile)
 	if err != nil {
 		return round, err
@@ -210,7 +215,13 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	if err := ctx.Err(); err != nil {
 		return round, err
 	}
-	step := &streamStep{client: g.client, onEvent: g.onEvent}
+	// Provider routing is execution state, shared by model rounds and owned by
+	// this resource rather than serialized or supplied by a driver.
+	request.TurnRouting = &g.turnRouting
+	// Provider call IDs belong to one assistant declaration. A later model
+	// operation may reuse a provider's ID; batch IDs still fence every effect.
+	g.toolCalls = make(map[string]bool)
+	step := &streamStep{client: g.client, onEvent: g.onEvent, tools: g.runner.Tools}
 	observed := make(map[string]providers.ToolCall)
 	var runtimes []*TurnToolRuntime
 	if batchID != "" {
@@ -242,6 +253,8 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 			return nil
 		}
 	}
+	g.lastModelOperationID = request.Operation.ID
+	g.nextModelParentID = ""
 	g.step++
 	g.contextTokens = estimateOutboundRequestTokens(request)
 	result, err := step.Execute(ctx, request)
@@ -261,7 +274,7 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 				}
 			}
 		}
-		if err == nil {
+		if err == nil && len(result.ToolCalls) > 0 {
 			finalIDs := make(map[string]bool, len(result.ToolCalls))
 			for _, call := range result.ToolCalls {
 				finalIDs[call.ID] = true
@@ -285,7 +298,9 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 			if g.streamedBatches == nil {
 				g.streamedBatches = make(map[string]driverToolStream)
 			}
-			g.streamedBatches[batchID] = driverToolStream{runtime: result.ToolRuntime, calls: append([]providers.ToolCall(nil), result.ToolCalls...)}
+			// streamStep creates local runtimes; the service retains their physical
+			// cleanup handle while drivers receive only a batch receipt.
+			g.streamedBatches[batchID] = driverToolStream{runtime: result.ToolRuntime.(*TurnToolRuntime), calls: append([]providers.ToolCall(nil), result.ToolCalls...)}
 			var retired []*TurnToolRuntime
 			for _, runtime := range runtimes {
 				if runtime != result.ToolRuntime {
@@ -314,8 +329,12 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	} else {
 		g.contextTokens += estimateMessages([]providers.ChatMessage{assistant})
 	}
-	if shouldPersistAssistantMessage(assistant) {
+	// Even an empty completed response carries a finish signal. Return it to
+	// the algorithm without adding an empty page to the durable transcript.
+	if err == nil || shouldPersistAssistantMessage(assistant) {
 		round.Messages = append(round.Messages, assistant)
+	}
+	if shouldPersistAssistantMessage(assistant) {
 		if err == nil {
 			g.appendMessages(assistant)
 		} else if strings.TrimSpace(result.Content) != "" || len(result.Images) > 0 {
@@ -400,6 +419,9 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 		if g.onEvent != nil {
 			call = enrichToolCallDisplay(g.runner.Tools, call)
 			g.onEvent(providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &call, ToolResult: truncateLog(result.TextProjection(), 2000), ToolResultDetail: resultPointer(result)})
+			if update, ok := todoUpdateEventFromToolResult(call, result.TextProjection()); ok {
+				g.onEvent(providers.StreamEvent{Type: providers.EventTodoUpdate, TodoUpdate: update})
+			}
 		}
 	})
 	messages, err := runtime.ExecuteFinalCalls(ctx, batch.Calls, nil, g.runner.OnToolBatchRejected)
@@ -409,35 +431,37 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 	return providers.CloneChatMessages(messages), err
 }
 
-func (g *streamTurnGateway) CompleteTurn(ctx context.Context, result loopdriver.TurnResult) (loopdriver.ModelLoopReceipt, error) {
+func (g *streamTurnGateway) CompleteTurn(ctx context.Context, result loopdriver.TurnResult) (loopdriver.TurnReceipt, error) {
 	ctx, leave, err := g.enter(ctx)
 	if err != nil {
-		return loopdriver.ModelLoopReceipt{}, err
+		return loopdriver.TurnReceipt{}, err
 	}
 	defer leave()
 	if err := g.prepare(ctx); err != nil {
-		return loopdriver.ModelLoopReceipt{}, err
+		return loopdriver.TurnReceipt{}, err
 	}
 	if len(g.streamedBatches) != 0 {
-		return loopdriver.ModelLoopReceipt{}, errors.New("join the pending streaming tool batch before completing the turn")
+		return loopdriver.TurnReceipt{}, errors.New("join the pending streaming tool batch before completing the turn")
 	}
 	if err := validateDriverMessages(result.Messages); err != nil {
-		return loopdriver.ModelLoopReceipt{}, err
+		return loopdriver.TurnReceipt{}, err
 	}
 	messages := filterDurableHistory(providers.CloneChatMessages(result.Messages))
-	transcript := append(providers.CloneChatMessages(g.baseHistory), g.produced...)
-	transcript = append(transcript, messages...)
+	transcript := append(providers.CloneChatMessages(g.activeHistory), messages...)
 	if err := providers.ValidateToolCallHistory(transcript); err != nil {
-		return loopdriver.ModelLoopReceipt{}, err
+		return loopdriver.TurnReceipt{}, err
 	}
 	g.appendMessages(messages...)
 	g.completed = g.snapshot()
 	g.completed.Content = result.Content
+	if result.FinishReason != "" || result.StopReason != "" || result.Truncated {
+		g.completed.FinishReason, g.completed.StopReason, g.completed.Truncated = result.FinishReason, result.StopReason, result.Truncated
+	}
 	g.complete = true
 	if g.runner.AfterTurn != nil {
 		g.runner.AfterTurn(ctx, g.runner, providers.CloneChatMessages(g.activeHistory), g.completed)
 	}
-	return loopdriver.ModelLoopReceipt{ID: "driver-turn"}, nil
+	return loopdriver.TurnReceipt{ID: "driver-turn"}, nil
 }
 
 func (g *streamTurnGateway) appendMessages(messages ...providers.ChatMessage) {

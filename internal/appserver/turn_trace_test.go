@@ -10,7 +10,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
@@ -48,7 +47,7 @@ func TestPersistTurnTraceWritesSessionArtifact(t *testing.T) {
 	completedAt := time.Now().UTC()
 	duration := int64(1000)
 	srv := &Server{rt: &runtime.Session{ProviderName: "global-provider"}}
-	runner := &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "gpt-test", APIModel: "gpt-test-api"}
+	runner := &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: "gpt-test", APIModel: "gpt-test-api"}
 	tracePath, err := srv.persistTurnTrace(&runtime.ThreadRuntime{Toolkit: kit}, runner, "thread-1", turnRuntimeSnapshot{
 		ProviderName:   "openai",
 		PermissionMode: config.PermissionModeUnconfined,

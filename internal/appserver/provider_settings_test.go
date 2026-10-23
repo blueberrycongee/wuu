@@ -15,7 +15,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
@@ -79,7 +78,7 @@ func TestServerKeepSelectionSavesAnotherProviderWithoutSelectingIt(t *testing.T)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	idle := newThreadState("idle-thread", nil, "gateway", "gateway-model", rt.RootDir, false, time.Now().UTC())
-	idle.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "gateway-model"}}
+	idle.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: "gateway-model"}}
 	srv.threads[idle.ID] = idle
 
 	response := requestProviderSettings(t, srv, out, "key", `{"provider":"gateway","base_url":"https://edge.example.test/v1","api_key":"gateway-key","keep_selection":true}`)

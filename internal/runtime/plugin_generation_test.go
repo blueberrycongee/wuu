@@ -18,7 +18,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/hooks"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -68,12 +67,15 @@ func (c *generationClient) InvokeCapability(_ context.Context, params pluginhost
 	return pluginhost.CapabilityInvokeResult{}, nil
 }
 
-type generationCompactionProvider struct{ key string }
+type generationCompactionProvider struct {
+	key string
+	err error
+}
 
 func (p *generationCompactionProvider) CompactionKey() string   { return p.key }
 func (p *generationCompactionProvider) CompactionPriority() int { return 1 }
 func (p *generationCompactionProvider) Compact(_ context.Context, _ string, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
-	return messages, nil
+	return messages, p.err
 }
 
 func promptGenerationClient(id, text string, priority int) *generationClient {
@@ -161,7 +163,7 @@ func TestPluginCompactionInvokesHighestPriorityAndGenerationCleanupReachesClones
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, CompactionRegistry: registry}
+	base := &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, CompactionRegistry: registry}
 	clone := cloneStreamRunnerForThread(base, nil)
 	messages, err := clone.CompactionRegistry.Resolve(nil).Compact(context.Background(), "runtime-model", []providers.ChatMessage{{Role: "user", Content: "history"}})
 	if err != nil {
@@ -312,7 +314,7 @@ func TestSuccessfulCandidateSwapsThenClosesOldGeneration(t *testing.T) {
 	old.compactions.Register(&generationCompactionProvider{key: "old"})
 	session := testGenerationSession(old)
 	session.systemPrompts = old.systemPrompts
-	session.StreamRunner = &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, CompactionRegistry: old.compactions}
+	session.StreamRunner = &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, CompactionRegistry: old.compactions}
 	threadClone := cloneStreamRunnerForThread(session.StreamRunner, nil)
 	candidateClient := &generationClient{id: "candidate"}
 	candidate := testPluginGeneration("candidate", candidateClient)
@@ -632,7 +634,7 @@ func TestThreadModelRuntimeKeepsGenerationUntilReleased(t *testing.T) {
 			session.SessionDir = t.TempDir()
 			session.ProviderName = "fixture"
 			session.Model = "default"
-			session.StreamRunner = &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: cloneGuardStreamClient{}, Model: "default"}
+			session.StreamRunner = &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: cloneGuardStreamClient{}, Model: "default"}
 			session.ConfigLoadMode = ConfigLoadFile
 			session.ConfigPath = filepath.Join(t.TempDir(), "config.json")
 			if err := os.WriteFile(session.ConfigPath, []byte(`{"default_provider":"fixture","providers":{"fixture":{"type":"openai-compatible","base_url":"http://127.0.0.1:9/v1","api_key":"fixture","model":"default"}}}`), 0o600); err != nil {
@@ -1152,7 +1154,7 @@ func TestThreadModelConstructionPinsGenerationDependencies(t *testing.T) {
 	s.WuuHome = t.TempDir()
 	s.StateDir = t.TempDir()
 	s.SessionDir = t.TempDir()
-	s.StreamRunner = &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, CompactionRegistry: old.compactions}
+	s.StreamRunner = &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, CompactionRegistry: old.compactions}
 	var err error
 	s.Toolkit, err = tools.New(s.RootDir)
 	if err != nil {

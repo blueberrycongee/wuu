@@ -13,6 +13,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
@@ -81,8 +82,8 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		kernel.bindRegistry(registry)
 	}
 	if resolved.Includes(loopdriver.DefaultDriverID) {
-		nativeModules = append(nativeModules, loopdriver.NewService(loopdriver.DefaultDriverID, DriverServicePrefix+"default", loopdriver.DefaultDriver{}, registry, []pluginhost.ServiceRequirement{
-			{Name: loopdriver.DriverModelLoopService, MajorVersion: 1, Required: true},
+		nativeModules = append(nativeModules, loopdriver.NewService(loopdriver.DefaultDriverID, DriverServicePrefix+"default", agent.DefaultDriver{}, registry, []pluginhost.ServiceRequirement{
+			{Name: pluginprotocol.DriverTurnService, MajorVersion: pluginprotocol.DriverTurnMajor, Required: true},
 			{Name: loopdriver.DriverCheckpointService, MajorVersion: 1, Required: true},
 		}))
 		if resolved.Modules != nil {

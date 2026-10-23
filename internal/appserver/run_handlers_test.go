@@ -11,7 +11,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/hooks"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/structuredoutput"
@@ -27,7 +26,7 @@ func TestRunStartSettlesManifest(t *testing.T) {
 	rt.InferenceJournalRuntime = runtimeJournal
 	defer runtimeJournal.Close()
 	rt.StreamRunner = &agent.StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: agent.DefaultDriver{},
 
 		Client:       providers.AdaptStreamClient(client),
 		ProviderName: rt.ProviderName,

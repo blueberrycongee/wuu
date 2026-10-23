@@ -21,6 +21,27 @@ func (g *streamTurnGateway) ReadContext(ctx context.Context) (loopdriver.TurnCon
 	return g.contextSnapshot(), nil
 }
 
+func (g *streamTurnGateway) ArchiveContext(ctx context.Context) (loopdriver.ContextArchive, error) {
+	ctx, leave, err := g.enter(ctx)
+	if err != nil {
+		return loopdriver.ContextArchive{}, err
+	}
+	defer leave()
+	if err := g.prepare(ctx); err != nil {
+		return loopdriver.ContextArchive{}, err
+	}
+	if g.runner.ArchiveHistory == nil {
+		return loopdriver.ContextArchive{}, errors.New("history archive is unavailable")
+	}
+	if len(g.streamedBatches) != 0 {
+		return loopdriver.ContextArchive{}, errors.New("join the pending streaming tool batch before archiving context")
+	}
+	if err := g.archivePending(ctx); err != nil {
+		return loopdriver.ContextArchive{}, err
+	}
+	return loopdriver.ContextArchive{Messages: providers.CloneChatMessages(g.produced), Head: g.archiveHead}, nil
+}
+
 func (g *streamTurnGateway) ReplaceContext(ctx context.Context, replacement loopdriver.ContextReplacement) (loopdriver.TurnContext, error) {
 	ctx, leave, err := g.enter(ctx)
 	if err != nil {
@@ -33,7 +54,11 @@ func (g *streamTurnGateway) ReplaceContext(ctx context.Context, replacement loop
 	if len(g.streamedBatches) != 0 {
 		return loopdriver.TurnContext{}, errors.New("join the pending streaming tool batch before replacing context")
 	}
-	if g.runner.ArchiveHistory == nil || g.runner.CommitFreshContext == nil {
+	if replacement.Volatile {
+		if g.runner.CommitFreshContext != nil {
+			return loopdriver.TurnContext{}, errors.New("use durable replacement when a context checkpoint provider is configured")
+		}
+	} else if g.runner.ArchiveHistory == nil || g.runner.CommitFreshContext == nil {
 		return loopdriver.TurnContext{}, errors.New("durable context replacement is unavailable")
 	}
 	if replacement.Revision != g.revision {
@@ -46,8 +71,10 @@ func (g *streamTurnGateway) ReplaceContext(ctx context.Context, replacement loop
 	if err := providers.ValidateToolCallHistory(messages); err != nil {
 		return loopdriver.TurnContext{}, err
 	}
-	if err := g.archivePending(ctx); err != nil {
-		return loopdriver.TurnContext{}, err
+	if g.runner.ArchiveHistory != nil {
+		if err := g.archivePending(ctx); err != nil {
+			return loopdriver.TurnContext{}, err
+		}
 	}
 	// Recover addresses for retained messages before checkpoint insertion, so
 	// the storage provider can distinguish them from newly authored summaries.
@@ -60,12 +87,19 @@ func (g *streamTurnGateway) ReplaceContext(ctx context.Context, replacement loop
 	if provider := g.runner.contextWindowProvider(); provider != nil {
 		key = provider.CompactionKey()
 	}
-	committed, head, err := g.runner.CommitFreshContext(ctx, messages, g.archiveHead, key, CompactionNote{})
-	if err != nil {
-		return loopdriver.TurnContext{}, err
+	committed, head := messages, g.archiveHead
+	if !replacement.Volatile {
+		committed, head, err = g.runner.CommitFreshContext(ctx, messages, g.archiveHead, key, CompactionNote{})
+		if err != nil {
+			return loopdriver.TurnContext{}, err
+		}
 	}
-	// The provider has committed. Do not turn a concurrent cancellation into a
-	// claimed rollback; finalization must report this exact committed context.
+	// Report exactly the accepted context, including a durable commit that
+	// succeeded concurrently with cancellation.
+	if hashMessagesForRequestShape(replacement.Messages) == g.proposedContextHash {
+		g.nextModelParentID = g.proposedContextParentID
+	}
+	g.proposedContextParentID, g.proposedContextHash = "", ""
 	g.activeHistory = providers.CloneChatMessages(committed)
 	g.archiveHead = head
 	g.historyRewritten = true

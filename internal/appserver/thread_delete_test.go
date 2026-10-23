@@ -239,7 +239,7 @@ func TestServerThreadDeleteRejectsActiveBackgroundAgent(t *testing.T) {
 
 	workerClient := newBlockingStreamClient("done")
 	control, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       workerClient,
 		DefaultModel: "fake-model",
@@ -316,7 +316,7 @@ func TestServerThreadDeleteRejectsDurableNestedAgentFromAnotherServer(t *testing
 	artifactDir := statepath.SessionArtifactDir(ownerRuntime.StateDir, rootID)
 	workerClient := newBlockingStreamClient("nested done")
 	control, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       workerClient,
 		DefaultModel: "fake-model",
@@ -410,7 +410,7 @@ func TestServerThreadDeleteRejectsTerminalWorkerUntilExecutionLeaseReleases(t *t
 	}
 	artifactDir := statepath.SessionArtifactDir(rt.StateDir, rootID)
 	control, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       providers.AdaptStreamClient(&fakeClient{response: providers.ChatResponse{Content: "done"}}),
 		DefaultModel: "fake-model",

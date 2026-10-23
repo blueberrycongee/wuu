@@ -11,7 +11,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/hooks"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -49,7 +48,7 @@ func TestServerInterruptSettlesPartialStreamItems(t *testing.T) {
 				ConfigPath: filepath.Join(repo, ".wuu.json"), ConfigLoadMode: runtime.ConfigLoadFile,
 				SessionDir: filepath.Join(repo, "sessions"), HookDispatcher: hooks.NewDispatcher(nil),
 				StreamRunner: &agent.StreamRunner{
-					LoopDriver: loopdriver.DefaultDriver{},
+					LoopDriver: agent.DefaultDriver{},
 
 					Client: client, Model: "test-model", SystemPrompt: "system", Tools: fastToolExecutor{},
 				},
@@ -198,7 +197,7 @@ func TestRepro_InterruptAfterToolCompletes_PersistsMessages(t *testing.T) {
 		ConfigLoadMode: runtime.ConfigLoadFile,
 		HookDispatcher: hooks.NewDispatcher(nil),
 		StreamRunner: &agent.StreamRunner{
-			LoopDriver: loopdriver.DefaultDriver{},
+			LoopDriver: agent.DefaultDriver{},
 
 			Client:       providers.AdaptStreamClient(client),
 			Model:        "fake-model",

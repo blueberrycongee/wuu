@@ -10,7 +10,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -28,7 +27,7 @@ func (sideThreadRuntimeTools) Execute(context.Context, providers.ToolCall) (stri
 func TestNewSideThreadRunnerRemovesMutableMainThreadCallbacks(t *testing.T) {
 	called := false
 	base := &agent.StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: agent.DefaultDriver{},
 
 		Client:               providers.AdaptStreamClient(&staticClient{}),
 		Tools:                sideThreadRuntimeTools{},
@@ -69,7 +68,7 @@ func TestNewSideThreadRunnerUsesReadOnlyMainAgentTools(t *testing.T) {
 		t.Fatalf("tools.New: %v", err)
 	}
 	base := &agent.StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: agent.DefaultDriver{},
 
 		Client:       providers.AdaptStreamClient(&staticClient{}),
 		ProviderName: "test-provider",
@@ -112,7 +111,7 @@ func TestNewSideThreadRunnerUsesReadOnlyMainAgentTools(t *testing.T) {
 // degrades to the workspace model instead of failing the whole side chat.
 func TestNewSideThreadRunnerFallsBackWhenModelUnresolvable(t *testing.T) {
 	base := &agent.StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: agent.DefaultDriver{},
 
 		Client: providers.AdaptStreamClient(&staticClient{}),
 		Model:  "workspace-model",
@@ -167,7 +166,7 @@ func TestNewSideThreadRunnerReDerivesMediaInputForPinnedModel(t *testing.T) {
 	// or is unknown). The pinned model is explicitly configured as text-only,
 	// so the side runner must re-derive a rejecting policy.
 	base := &agent.StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: agent.DefaultDriver{},
 
 		Client: providers.AdaptStreamClient(&staticClient{}),
 		Model:  "workspace-model",

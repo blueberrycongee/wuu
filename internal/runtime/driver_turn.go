@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"errors"
 
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/modelwire"
@@ -40,6 +39,51 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 			return nil, err
 		}
 		return marshalServiceResult(modelwire.DriverRequestToWire(request))
+	case "settings":
+		if err := decodeServiceParams(params.Params, &scope); err != nil {
+			return nil, err
+		}
+		settings, err := turn.ReadSettings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(settings)
+	case "context_state":
+		if err := decodeServiceParams(params.Params, &scope); err != nil {
+			return nil, err
+		}
+		state, err := turn.ReadContextState(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(state)
+	case "save_context_state":
+		var input pluginprotocol.DriverTurnStateParams
+		if err := decodeServiceParams(params.Params, &input); err != nil {
+			return nil, err
+		}
+		if err := turn.SaveContextState(ctx, input.State); err != nil {
+			return nil, err
+		}
+		return json.RawMessage(`{}`), nil
+	case "observe":
+		var input pluginprotocol.DriverTurnObserveParams
+		if err := decodeServiceParams(params.Params, &input); err != nil {
+			return nil, err
+		}
+		if err := turn.ReportTurn(ctx, input.Observation); err != nil {
+			return nil, err
+		}
+		return json.RawMessage(`{}`), nil
+	case "compact":
+		var input pluginprotocol.DriverTurnCompactParams
+		if err := decodeServiceParams(params.Params, &input); err != nil {
+			return nil, err
+		}
+		messages, err := turn.CompactContext(ctx, modelwire.DriverMessagesFromWire(input.Messages), input.Budget)
+		result := pluginprotocol.DriverTurnCompactResult{Messages: modelwire.DriverMessagesToWire(messages)}
+		result.Failure = loopdriver.FailureToWire(err)
+		return marshalServiceResult(result)
 	case "admit_input":
 		if err := decodeServiceParams(params.Params, &scope); err != nil {
 			return nil, err
@@ -81,12 +125,21 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 			return nil, err
 		}
 		return marshalServiceResult(driverContextToWire(current))
+	case "archive_context":
+		if err := decodeServiceParams(params.Params, &scope); err != nil {
+			return nil, err
+		}
+		archive, err := turn.ArchiveContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(pluginprotocol.DriverTurnArchiveResult{Messages: modelwire.DriverMessagesToWire(archive.Messages), Head: archive.Head})
 	case "replace_context":
 		var input pluginprotocol.DriverTurnReplaceContextParams
 		if err := decodeServiceParams(params.Params, &input); err != nil {
 			return nil, err
 		}
-		current, err := turn.ReplaceContext(ctx, loopdriver.ContextReplacement{Revision: input.Revision, Messages: modelwire.DriverMessagesFromWire(input.Messages)})
+		current, err := turn.ReplaceContext(ctx, loopdriver.ContextReplacement{Revision: input.Revision, Messages: modelwire.DriverMessagesFromWire(input.Messages), Volatile: input.Volatile})
 		if err != nil {
 			return nil, err
 		}
@@ -108,23 +161,7 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 			round, runErr = turn.CallModel(ctx, request)
 		}
 		result := pluginprotocol.DriverTurnModelResult{Messages: modelwire.DriverMessagesToWire(round.Messages), ToolBatchID: round.ToolBatchID, ToolWorkStarted: round.ToolWorkStarted}
-		if runErr != nil {
-			failure := providers.NormalizeFailure(runErr)
-			result.Failure = &pluginprotocol.DriverModelFailure{
-				Message: runErr.Error(), Origin: string(failure.Origin), Category: string(failure.Category),
-				ProviderCode: failure.ProviderCode, HTTPStatus: failure.HTTPStatus,
-				RetryAfterMS: failure.RetryAfter.Milliseconds(), ContextOverflow: failure.ContextOverflow,
-			}
-			var recovery *providers.StreamRecoveryError
-			if errors.As(runErr, &recovery) {
-				info := recovery.Recovery
-				result.Failure.Recovery = &pluginprotocol.DriverModelRecovery{
-					OperationID: info.OperationID, AttemptCount: info.AttemptCount, RetryCount: info.RetryCount,
-					MaxAttempts: info.MaxAttempts, SubmissionCount: info.SubmissionCount,
-					StopReason: info.StopReason, BudgetDimension: info.BudgetDimension,
-				}
-			}
-		}
+		result.Failure = loopdriver.FailureToWire(runErr)
 		if round.Usage != nil {
 			usage := modelwire.TokenUsageToWire(*round.Usage)
 			result.Usage = &usage
@@ -149,7 +186,7 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		if err := decodeServiceParams(params.Params, &input); err != nil {
 			return nil, err
 		}
-		receipt, err := turn.CompleteTurn(ctx, loopdriver.TurnResult{Content: input.Content, Messages: modelwire.DriverMessagesFromWire(input.Messages)})
+		receipt, err := turn.CompleteTurn(ctx, loopdriver.TurnResult{Content: input.Content, Messages: modelwire.DriverMessagesFromWire(input.Messages), FinishReason: providers.FinishReason(input.FinishReason), StopReason: input.StopReason, Truncated: input.Truncated})
 		if err != nil {
 			return nil, err
 		}

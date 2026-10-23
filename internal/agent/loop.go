@@ -22,31 +22,6 @@ import (
 // A broken compatible endpoint must not create an unlimited billing loop.
 const maxConsecutiveContinuations = 8
 
-// EmptyAnswerError is returned when the model completes a turn without
-// producing any text content or tool calls. StopReason carries the
-// provider's finish signal (e.g. "stop", "end_turn") when one was
-// received, or "" when the stream ended without a normal stop — the
-// latter usually indicates a proxy/compatibility issue rather than
-// intentional model behaviour.
-type EmptyAnswerError struct {
-	StopReason string
-}
-
-func (e *EmptyAnswerError) Error() string {
-	if e.StopReason != "" {
-		return fmt.Sprintf("model returned empty answer (stop_reason=%s)", e.StopReason)
-	}
-	return "model returned empty answer"
-}
-
-// IsEmptyAnswer reports whether err (or any error in its chain) is an
-// EmptyAnswerError. Callers use this to distinguish empty-content
-// failures from other fatal errors.
-func IsEmptyAnswer(err error) bool {
-	var target *EmptyAnswerError
-	return errors.As(err, &target)
-}
-
 // ToolSurfaceFreezer is implemented by tool executors whose provider-facing
 // definitions can change asynchronously (e.g. MCP catalog updates). RunToolLoop
 // freezes the surface for the duration of one run so req.Tools stays
@@ -284,16 +259,27 @@ func RunToolLoop(
 		usage.SetAdjustment(UsageAdjustmentCompactionRewriteEstimate)
 		usage.RecordPendingMessages(messages)
 	}
+	acceptTranscript := func(rewritten []providers.ChatMessage) error {
+		if cfg.AcceptContext != nil {
+			committed, err := cfg.AcceptContext(ctx, providers.CloneChatMessages(rewritten))
+			if err != nil {
+				return err
+			}
+			rewritten = committed
+		}
+		resetTranscript(rewritten)
+		return nil
+	}
 	// runCompactPass executes one compact attempt. Non-forced passes are
 	// gated on the proactive fill-rate threshold and suppress further
 	// proactive attempts on failure/no-op; forced passes (user-requested
 	// /compact) bypass the gate and never suppress the proactive path.
-	runCompactPass := func(reason CompactReason, force bool) {
+	runCompactPass := func(reason CompactReason, force bool) error {
 		if effectiveCompact == nil {
-			return
+			return nil
 		}
 		if !force && (proactiveSuppressed || threshold <= 0 || usage.EstimateCurrent() < threshold || !canProactivelyCompact(messages, cfg)) {
-			return
+			return nil
 		}
 		usageBefore := usage.Breakdown()
 		before := usageBefore.Total()
@@ -310,7 +296,7 @@ func RunToolLoop(
 					Reason: reason, Status: CompactAttemptFailed, TokensBefore: before,
 					MessagesBefore: msgsBefore, Error: hookErr.Error(),
 				}, usageBefore))
-				return
+				return nil
 			}
 		}
 		compactCtx, lineage := providers.BeginInferenceOperationLineage(ctx, lastAgentOperationID)
@@ -343,7 +329,9 @@ func RunToolLoop(
 			if compactOperationID := lineage.LastOperationID(); compactOperationID != "" && compactOperationID != lastAgentOperationID {
 				nextOperationParentID = compactOperationID
 			}
-			resetTranscript(compacted)
+			if err := acceptTranscript(compacted); err != nil {
+				return err
+			}
 			emitCompactAttempt(cfg, compactAttemptWithUsage(CompactAttemptInfo{
 				Reason:         reason,
 				Status:         CompactAttemptSucceeded,
@@ -373,8 +361,9 @@ func RunToolLoop(
 				MessagesAfter:  len(compacted),
 			}, usageBefore))
 		}
+		return nil
 	}
-	tryProactiveCompact := func() { runCompactPass(CompactReasonProactive, false) }
+	tryProactiveCompact := func() error { return runCompactPass(CompactReasonProactive, false) }
 	appendMessage := func(msg providers.ChatMessage) {
 		messages = append(messages, msg)
 		providerMessages = append(providerMessages, providers.CloneChatMessage(msg))
@@ -394,7 +383,9 @@ func RunToolLoop(
 	if cfg.ForceInitialCompact && freshContextEnabled {
 		newContextRequested = true
 	} else if cfg.ForceInitialCompact {
-		runCompactPass(CompactReasonManual, true)
+		if err := runCompactPass(CompactReasonManual, true); err != nil {
+			return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+		}
 	}
 	if cfg.CompactOnly && !newContextRequested {
 		return LoopResult{
@@ -471,7 +462,9 @@ func RunToolLoop(
 		hardContextRollover := freshContextEnabled && threshold > 0 && usage.EstimateCurrent() >= threshold
 		attemptFreshContext := newContextRequested || hardContextRollover
 		if !attemptFreshContext {
-			tryProactiveCompact()
+			if err := tryProactiveCompact(); err != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+			}
 		}
 		if repaired, changed, nerr := repairLiveToolCallHistory(messages); nerr != nil {
 			return LoopResult{
@@ -483,7 +476,9 @@ func RunToolLoop(
 				CacheReadTokens:     totalCacheRead,
 			}, nerr
 		} else if changed {
-			resetTranscript(repaired)
+			if err := acceptTranscript(repaired); err != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+			}
 		}
 		currentSegments := requestContextSegments(cfg.BeforeRequestContext)
 		if cfg.ContextWindowStatus != nil {
@@ -690,12 +685,10 @@ func RunToolLoop(
 			// in-place edits stay request-scoped. Nothing a transform does
 			// reaches providerMessages or live history.
 			req.Messages = providers.CloneChatMessages(req.Messages)
-			forceBefore := strings.TrimSpace(req.ForceToolName)
-			forceAvailableBefore := requestHasTool(req.Tools, forceBefore)
 			if err := cfg.BeforeRequest(ctx, &req); err != nil {
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), fmt.Errorf("transform model request: %w", err)
 			}
-			if err := validateTransformedRequest(req, forceBefore, forceAvailableBefore); err != nil {
+			if err := validateTransformedRequest(req); err != nil {
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
 			}
 		}
@@ -704,12 +697,10 @@ func RunToolLoop(
 		// legacy BeforeRequest so existing callers are unaffected.
 		if cfg.RequestTransforms != nil && cfg.RequestTransforms.Count() > 0 {
 			req.Messages = providers.CloneChatMessages(req.Messages)
-			forceBefore := strings.TrimSpace(req.ForceToolName)
-			forceAvailableBefore := requestHasTool(req.Tools, forceBefore)
 			if err := cfg.RequestTransforms.Apply(ctx, &req, nil); err != nil {
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), fmt.Errorf("transform model request (chain): %w", err)
 			}
-			if err := validateTransformedRequest(req, forceBefore, forceAvailableBefore); err != nil {
+			if err := validateTransformedRequest(req); err != nil {
 				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
 			}
 		}
@@ -900,7 +891,9 @@ func RunToolLoop(
 						if compactOperationID := lineage.LastOperationID(); compactOperationID != "" && compactOperationID != req.Operation.ID {
 							nextOperationParentID = compactOperationID
 						}
-						resetTranscript(compacted)
+						if err := acceptTranscript(compacted); err != nil {
+							return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+						}
 						// The failed request consumed this round's post-tool
 						// context; re-queue it so the retried request still
 						// carries tool-produced notices.
@@ -945,7 +938,9 @@ func RunToolLoop(
 					return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), hookErr
 				}
 				if trimmed, ok := forceTrimOverflowHistory(messages); ok {
-					resetTranscript(trimmed)
+					if err := acceptTranscript(trimmed); err != nil {
+						return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+					}
 					postToolContextSegments = consumedPostToolSegments
 					continue
 				}
@@ -1058,7 +1053,7 @@ func RunToolLoop(
 					OutputTokens:        totalOut,
 					CacheCreationTokens: totalCacheCreation,
 					CacheReadTokens:     totalCacheRead,
-				}, &EmptyAnswerError{StopReason: result.StopReason}
+				}, &loopdriver.EmptyAnswerError{StopReason: result.StopReason}
 			}
 			return LoopResult{
 				Content:             finalContent,
@@ -1099,9 +1094,7 @@ func RunToolLoop(
 		if toolRuntime == nil {
 			toolRuntime = NewTurnToolRuntime(ToolRuntimeConfig{Executor: cfg.Tools, StepIndex: stepIdx})
 		}
-		toolRuntime.SetStepIndex(stepIdx)
-		toolRuntime.SetResultCallback(cfg.OnToolResultDetail)
-		orderedToolMessages, toolErr := toolRuntime.ExecuteFinalCalls(toolCtx, result.ToolCalls, cfg.OnToolResult, cfg.OnToolBatchRejected)
+		orderedToolMessages, toolErr := toolRuntime.Join(toolCtx, result.ToolCalls, stepIdx, cfg.OnToolResultDetail, cfg.OnToolResult, cfg.OnToolBatchRejected)
 		if toolErr != nil {
 			return LoopResult{
 				NewMessages:         newMessagesForReturn(messages, startLen, historyRewritten),
@@ -1171,7 +1164,7 @@ func applyArchivedHistorySeqs(messages, archived []providers.ChatMessage, seqs [
 	return out
 }
 
-func validateTransformedRequest(req providers.ChatRequest, forceBefore string, forceAvailableBefore bool) error {
+func validateTransformedRequest(req providers.ChatRequest) error {
 	if strings.TrimSpace(req.Model) == "" {
 		return errors.New("transformed model request has empty model")
 	}
@@ -1186,12 +1179,6 @@ func validateTransformedRequest(req providers.ChatRequest, forceBefore string, f
 		return nil
 	}
 	if requestHasTool(req.Tools, forced) {
-		return nil
-	}
-	// Preserve a pre-existing request shape that the runtime already allowed.
-	// The plugin validator owns regressions introduced by the transform, not
-	// unrelated legacy policy decisions made before this extension point.
-	if forced == forceBefore && !forceAvailableBefore {
 		return nil
 	}
 	return fmt.Errorf("transformed model request forces unavailable tool %q", forced)
@@ -1400,13 +1387,8 @@ func stepResultHasNoPartialOutput(result StepResult) bool {
 		!toolRuntimeHasStartedWork(result.ToolRuntime)
 }
 
-func toolRuntimeHasStartedWork(runtime *TurnToolRuntime) bool {
-	if runtime == nil {
-		return false
-	}
-	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
-	return len(runtime.runs) > 0
+func toolRuntimeHasStartedWork(runtime ToolBatchRuntime) bool {
+	return runtime != nil && runtime.HasAcceptedCalls()
 }
 
 func compactChanged(before, after []providers.ChatMessage) bool {

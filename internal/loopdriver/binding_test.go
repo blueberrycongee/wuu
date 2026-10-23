@@ -1,14 +1,17 @@
-package loopdriver
+package loopdriver_test
 
 import (
 	"context"
 	"testing"
+
+	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 )
 
 // Embedded bindings must obey the same identity fence as managed providers.
 func TestAcquireLocalBinding(t *testing.T) {
 	ctx := context.Background()
-	acquire := AcquireLocal(DefaultDriver{})
+	acquire := loopdriver.AcquireLocal(agent.DefaultDriver{})
 	driver, binding, release, err := acquire(ctx, nil)
 	if err != nil || driver == nil || release == nil {
 		t.Fatalf("acquire explicit driver: driver=%v release=%v err=%v", driver, release != nil, err)
@@ -39,7 +42,7 @@ func TestAcquireLocalBinding(t *testing.T) {
 			}
 		})
 	}
-	if _, _, _, err := AcquireLocal(nil)(ctx, nil); err == nil {
+	if _, _, _, err := loopdriver.AcquireLocal(nil)(ctx, nil); err == nil {
 		t.Fatal("missing driver acquired an implicit default")
 	}
 	canceled, cancel := context.WithCancel(ctx)

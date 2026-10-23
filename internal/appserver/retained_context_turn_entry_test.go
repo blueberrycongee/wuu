@@ -7,7 +7,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
@@ -40,7 +39,7 @@ func (c *recordingStreamClient) StreamChat(_ context.Context, req providers.Chat
 func TestEnsureThreadRuntimeAfterAdmission_PreservesRetainedContext(t *testing.T) {
 	client := &recordingStreamClient{}
 	runner := &agent.StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: agent.DefaultDriver{},
 
 		Client: client,
 		Model:  "m",

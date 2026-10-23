@@ -13,6 +13,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/compact"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 )
@@ -150,7 +151,7 @@ func TestRunToolLoopRejectsForcedToolRemovedByPlugin(t *testing.T) {
 	}
 }
 
-func TestRunToolLoopAllowsPreexistingUnavailableForcedTool(t *testing.T) {
+func TestRunToolLoopRejectsPreexistingUnavailableForcedTool(t *testing.T) {
 	step := &fakeStep{results: []StepResult{{Content: "done"}}}
 	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{{Role: "user", Content: "hello"}}, LoopConfig{
 		Model:              "model",
@@ -160,14 +161,11 @@ func TestRunToolLoopAllowsPreexistingUnavailableForcedTool(t *testing.T) {
 			return nil
 		},
 	}, step)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "forces unavailable tool") {
+		t.Fatalf("invalid tool selection reached the model: %v", err)
 	}
-	if len(step.calls) != 1 {
+	if len(step.calls) != 0 {
 		t.Fatalf("calls = %d", len(step.calls))
-	}
-	if step.calls[0].ForceToolName != "required" {
-		t.Fatalf("request force tool = %q", step.calls[0].ForceToolName)
 	}
 }
 
@@ -2666,7 +2664,7 @@ func TestRunToolLoop_FiltersStaleInternalContextWithoutTaskContract(t *testing.T
 func TestRunToolLoop_EmptyAnswerWithoutStopReasonIsError(t *testing.T) {
 	step := &fakeStep{results: []StepResult{{Content: "  "}}}
 	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{Model: "m"}, step)
-	if err == nil || !IsEmptyAnswer(err) {
+	if err == nil || !loopdriver.IsEmptyAnswer(err) {
 		t.Fatalf("expected EmptyAnswerError, got %v", err)
 	}
 }
@@ -2674,10 +2672,10 @@ func TestRunToolLoop_EmptyAnswerWithoutStopReasonIsError(t *testing.T) {
 func TestRunToolLoop_EmptyAnswerCarriesStopReason(t *testing.T) {
 	step := &fakeStep{results: []StepResult{{StopReason: "unexpected_stop"}}}
 	_, err := RunToolLoop(context.Background(), []providers.ChatMessage{userMsg("hi")}, LoopConfig{Model: "m"}, step)
-	if err == nil || !IsEmptyAnswer(err) {
+	if err == nil || !loopdriver.IsEmptyAnswer(err) {
 		t.Fatalf("expected EmptyAnswerError, got %v", err)
 	}
-	var emptyErr *EmptyAnswerError
+	var emptyErr *loopdriver.EmptyAnswerError
 	if !errors.As(err, &emptyErr) || emptyErr.StopReason != "unexpected_stop" {
 		t.Fatalf("expected original stop reason, got %+v", emptyErr)
 	}

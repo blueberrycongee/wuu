@@ -558,10 +558,6 @@ func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration 
 			Invoker:    &driverTurnInvoker{parent: k},
 		},
 		nativeServiceRegistration{
-			Descriptor: pluginhost.KernelDriverModelLoopDescriptor(),
-			Invoker:    &driverModelLoopInvoker{parent: k},
-		},
-		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelDriverCheckpointDescriptor(),
 			Invoker:    &driverCheckpointInvoker{parent: k},
 		},

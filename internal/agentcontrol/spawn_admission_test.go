@@ -22,7 +22,7 @@ import (
 func TestSpawnAdmissionPrepareFailureHasNoSpawnSideEffects(t *testing.T) {
 	dir := t.TempDir()
 	control, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "unused"}},
 		DefaultModel:  "spawn-admission-test",
@@ -76,7 +76,7 @@ func TestSpawnAdmissionRollsBackWhenDirectLaunchFails(t *testing.T) {
 	marker := filepath.Join(dir, "prepared")
 	var rollbackAttempts atomic.Int32
 	control, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       &fakeClient{resp: providers.ChatResponse{Content: "unused"}},
 		DefaultModel: "spawn-admission-test",
@@ -127,7 +127,7 @@ func TestQueuedSpawnAdmissionRollsBackWhenDeferredLaunchFails(t *testing.T) {
 	marker := filepath.Join(dir, "queued-prepared")
 	var rollbackAttempts atomic.Int32
 	control, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       client,
 		DefaultModel: "spawn-admission-test",
@@ -225,7 +225,7 @@ func TestStopAllCancelsRunningWorkersBeforeQueuedAdmissionCompensation(t *testin
 	dir := t.TempDir()
 	client := &blockingStreamClient{started: make(chan struct{}), release: make(chan struct{})}
 	control, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       client,
 		DefaultModel: "stop-all-ordering-test",
@@ -317,7 +317,7 @@ func TestShutdownRacingSpawnPreparationCannotPublishQueuedWorker(t *testing.T) {
 	dir := t.TempDir()
 	client := &blockingStreamClient{started: make(chan struct{}), release: make(chan struct{})}
 	control, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       client,
 		DefaultModel: "spawn-admission-test",
@@ -405,7 +405,7 @@ func TestShutdownRacingDirectSpawnPreparationHasNoSideEffects(t *testing.T) {
 	harnessDir := filepath.Join(dir, ".wuu-state", "sessions", "direct-spawn-shutdown", "harness")
 	worktreeRoot := filepath.Join(dir, ".wuu-state", "worktrees")
 	control, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       &fakeClient{resp: providers.ChatResponse{Content: "unused"}},
 		DefaultModel: "spawn-admission-test",
@@ -500,7 +500,7 @@ func TestDirectForkAdmissionCoversPreparationThroughManagerCommit(t *testing.T) 
 	factoryEntered := make(chan struct{})
 	allowFactory := make(chan struct{})
 	control, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       client,
 		DefaultModel: "spawn-admission-test",
@@ -590,7 +590,7 @@ func TestQueuedPublicationFailureSettlesThreadLifecycle(t *testing.T) {
 			harnessDir := filepath.Join(dir, "harness")
 			client := &blockingStreamClient{started: make(chan struct{}), release: make(chan struct{})}
 			control, err := New(Config{
-				AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+				AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 				Client:       client,
 				DefaultModel: "spawn-admission-test",
@@ -726,7 +726,7 @@ func TestQueuedSpawnCancellationRollsBackAdmission(t *testing.T) {
 			var tombstoneObserved atomic.Bool
 			var queuedLaunches atomic.Int32
 			control, err := New(Config{
-				AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+				AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 				Client:       client,
 				DefaultModel: "spawn-admission-test",

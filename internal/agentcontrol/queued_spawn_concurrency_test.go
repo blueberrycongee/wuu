@@ -1245,7 +1245,7 @@ func newDormantQueuedSpawnConcurrencyControl(
 		}
 	}
 	control, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:        client,
 		DefaultModel:  "queued-spawn-test-model",

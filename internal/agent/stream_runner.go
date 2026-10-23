@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -16,7 +18,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
-	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // StreamCallback receives streaming events for live clients.
@@ -24,11 +25,9 @@ type StreamCallback func(event providers.StreamEvent)
 
 const maxConsecutiveProactiveCompactFailures = 3
 
-// StreamRunner manages one multi-step coding turn with streaming.
-// It is a thin wrapper around RunToolLoop that supplies a streamStep
-// adapter (Step → providers.StreamClient.StreamChat with recovery),
-// so the actual loop logic — step counting, finish handling,
-// context-overflow auto-compact — comes from the same code as Runner.
+// StreamRunner binds a selected driver to one execution and its model, tool,
+// context and persistence resources. The driver owns control flow; resources
+// retain accepted effects and drain work before the execution is released.
 type StreamRunner struct {
 	Client       providers.StreamClient
 	ProviderName string
@@ -225,10 +224,6 @@ func (r *StreamRunner) Run(ctx context.Context, prompt string) (string, error) {
 	return res.Content, nil
 }
 
-// RunWithCallback executes a conversation turn with a per-call event callback.
-// It accepts the full message history and returns the loop result, including
-// any new messages produced during this turn and whether history was rewritten
-// by auto-compaction.
 // UpdateSystemPrompt safely updates the system prompt at runtime.
 // The new prompt takes effect on the next turn.
 func (r *StreamRunner) UpdateSystemPrompt(newPrompt string) {
@@ -250,7 +245,13 @@ func (r *StreamRunner) systemPromptSnapshot() (string, []SystemPromptSectionInfo
 	return r.SystemPrompt, cloneSystemPromptSections(r.SystemPromptSections)
 }
 
-func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.ChatMessage, onEvent StreamCallback) (LoopResult, error) {
+// RunWithCallback executes a conversation turn through the selected driver.
+// A nil callback uses OnEvent. The result includes accepted messages and any
+// committed context replacement, including partial output on failure.
+func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.ChatMessage, onEvent StreamCallback) (loopResult LoopResult, runErr error) {
+	if onEvent == nil {
+		onEvent = r.OnEvent
+	}
 	driver := r.LoopDriver
 	var binding loopdriver.Binding
 	if r.AcquireLoopDriver != nil {
@@ -337,12 +338,21 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		return LoopResult{}, errors.New("loop driver returned a nil instance")
 	}
 
+	ctx = providers.WithInferenceJournal(ctx, r.InferenceJournal)
+	ctx, workflow, ownsWorkflow := providers.EnsureInferenceWorkflow(ctx, r.InferenceWorkloadProfile)
+	if ownsWorkflow {
+		defer func() {
+			outcome := providers.InferenceOutcomeSucceeded
+			if runErr != nil {
+				outcome = providers.InferenceOutcomeFailed
+				if ctx.Err() != nil || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+					outcome = providers.InferenceOutcomeCanceled
+				}
+			}
+			runErr = errors.Join(runErr, providers.CompleteInferenceWorkflow(workflow, r.InferenceJournal, outcome))
+		}()
+	}
 	gateway := &streamDriverGateway{
-		runner:            r,
-		onEvent:           onEvent,
-		descriptor:        descriptor,
-		execution:         execution,
-		results:           make(map[string]LoopResult),
 		streamTurnGateway: newStreamTurnGateway(ctx, r, input, onEvent),
 	}
 	gateway.streamTurnGateway.descriptor = descriptor
@@ -365,11 +375,6 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		outcome.Checkpoint = *gateway.lastCheckpoint
 	}
 
-	if runErr != nil && gateway.lastLegacyError != nil {
-		// Keep the original typed failure for local consumers after the service
-		// protocol has carried its diagnostic. All drivers share this path.
-		runErr = errors.Join(runErr, gateway.lastLegacyError)
-	}
 	res, ok := gateway.result(outcome.ReceiptID)
 	if outcome.ReceiptID != "" && !ok {
 		runErr = errors.Join(runErr, fmt.Errorf("loop driver returned unknown kernel receipt %q", outcome.ReceiptID))
@@ -384,32 +389,7 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 
 type streamDriverGateway struct {
 	*streamTurnGateway
-	runner          *StreamRunner
-	onEvent         StreamCallback
-	descriptor      loopdriver.Descriptor
-	execution       loopdriver.ExecutionContext
-	results         map[string]LoopResult
-	lastCheckpoint  *loopdriver.Checkpoint
-	lastLegacyError error
-	next            int
-}
-
-func (gateway *streamDriverGateway) ExecuteModelLoop(ctx context.Context, input loopdriver.PersistedInput, policy loopdriver.LoopPolicy) (loopdriver.ModelLoopReceipt, error) {
-	ctx, leave, err := gateway.acquire(ctx)
-	if err != nil {
-		return loopdriver.ModelLoopReceipt{}, err
-	}
-	defer leave()
-	if gateway.ready {
-		return loopdriver.ModelLoopReceipt{}, errors.New("cannot combine independent turn operations with the legacy loop gateway")
-	}
-	gateway.legacy = true
-	gateway.next++
-	receipt := loopdriver.ModelLoopReceipt{ID: fmt.Sprintf("model-loop-%d", gateway.next)}
-	result, err := gateway.runner.runModelToolLoop(ctx, input.Messages, gateway.onEvent, policy, gateway.descriptor, gateway.execution)
-	gateway.results[receipt.ID] = result
-	gateway.lastLegacyError = err
-	return receipt, err
+	lastCheckpoint *loopdriver.Checkpoint
 }
 
 func (gateway *streamDriverGateway) WriteCheckpoint(ctx context.Context, checkpoint loopdriver.Checkpoint) error {
@@ -429,342 +409,6 @@ func (gateway *streamDriverGateway) WriteCheckpoint(ctx context.Context, checkpo
 	checkpoint.State = append(json.RawMessage(nil), checkpoint.State...)
 	gateway.lastCheckpoint = &checkpoint
 	return nil
-}
-
-func (gateway *streamDriverGateway) result(receiptID string) (LoopResult, bool) {
-	if receiptID == "" && gateway.next > 0 {
-		// Cancellation can end the protocol call before its receipt arrives.
-		// The execution still owns everything the gateway already observed.
-		receiptID = fmt.Sprintf("model-loop-%d", gateway.next)
-	}
-	result, ok := gateway.results[receiptID]
-	if !ok {
-		return gateway.streamTurnGateway.result(receiptID)
-	}
-	return result, ok
-}
-
-func (r *StreamRunner) runModelToolLoop(ctx context.Context, history []providers.ChatMessage, onEvent StreamCallback, policy loopdriver.LoopPolicy, descriptor loopdriver.Descriptor, execution loopdriver.ExecutionContext) (LoopResult, error) {
-	client, providerObservationKey := r.providerConnectionSnapshot()
-	if client == nil {
-		return LoopResult{}, errors.New("client is required")
-	}
-	if strings.TrimSpace(r.Model) == "" {
-		return LoopResult{}, errors.New("model is required")
-	}
-	ctx = providers.WithInferenceJournal(ctx, r.InferenceJournal)
-	requestModel := strings.TrimSpace(r.APIModel)
-	if requestModel == "" {
-		requestModel = r.Model
-	}
-	runUsageContract := usageContractKey(providerObservationKey, r.ProviderName, requestModel, r.Variant, r.Effort, r.ProviderOptions)
-	history = filterDurableHistory(history)
-	recoveredToolMessages, err := r.pendingToolResultMessages(ctx, history)
-	if err != nil {
-		return LoopResult{}, fmt.Errorf("recover pending tool results: %w", err)
-	}
-	history = append(history, recoveredToolMessages...)
-	mediaInput := providers.ResolveMediaInput(client, r.MediaInput, r.ProviderOptions)
-	admission := providers.ChatRequest{Messages: history, MediaInput: mediaInput, ProviderOptions: r.ProviderOptions}
-	if _, err := providers.PrepareVideoInput(admission, mediaInput.Video); err != nil {
-		return LoopResult{}, err
-	}
-	if err := providers.ValidateRequiredMedia(providers.ApplyToolResultProjections(history), mediaInput); err != nil {
-		return LoopResult{}, err
-	}
-	runUsage, baseHistoryLen := r.prepareUsageTrackerForContract(history, runUsageContract)
-
-	effectiveOnEvent := onEvent
-
-	tools := r.Tools
-	if policy.DisableTools {
-		tools = nil
-	}
-	step := &streamStep{
-		client:                  client,
-		onEvent:                 effectiveOnEvent,
-		tools:                   tools,
-		toolLedger:              r.ToolLedger,
-		enableStreamingToolExec: r.StreamingToolExecution,
-	}
-
-	compactContextTokens := r.ContextWindowOverride
-	maxCtx := compactContextTokens
-	compactThresholdTokens := r.CompactThresholdTokens
-	if policy.DisableCompaction || r.DisableAutoCompact || r.proactiveCompactCircuitOpen() {
-		maxCtx = 0 // disables the proactive trigger inside RunToolLoop
-		compactThresholdTokens = 0
-	}
-	_, systemPromptSections := r.systemPromptSnapshot()
-	beforeStep := r.BeforeStep
-	if beforeStep != nil {
-		capturedBeforeStep := beforeStep
-		beforeStep = func() []providers.ChatMessage {
-			return filterDurableHistory(capturedBeforeStep())
-		}
-	}
-	contextWindowProvider := r.contextWindowProvider()
-	contextWindowsEnabled := contextWindowProvider != nil && r.ArchiveHistory != nil && !policy.DisableCompaction
-	beforeRequestContext := r.BeforeRequestContext
-	if contextWindowsEnabled {
-		beforeRequestContext = withContextWindowGuidance(beforeRequestContext)
-	}
-	operationKind := r.InferenceOperationKind
-	if operationKind == "" {
-		operationKind = providers.InferenceOperationAgentRound
-	}
-	workloadProfile := r.InferenceWorkloadProfile
-	if workloadProfile == "" {
-		workloadProfile = providers.InferenceProfileInteractive
-	}
-	maxSteps := r.MaxSteps
-	if policy.ModelRoundLimit > 0 {
-		maxSteps = policy.ModelRoundLimit
-	}
-	forceToolFirstStep := r.ForceToolFirstStep
-	if policy.DisableTools {
-		forceToolFirstStep = ""
-	}
-	cfg := LoopConfig{
-		Tools:                    tools,
-		Model:                    requestModel,
-		ProviderName:             r.ProviderName,
-		ProviderObservationKey:   providerObservationKey,
-		ModelVariant:             r.Variant,
-		InferenceOperationKind:   operationKind,
-		InferenceWorkloadProfile: workloadProfile,
-		SessionID:                execution.SessionID,
-		ExecutionID:              execution.ExecutionID,
-		DriverID:                 descriptor.ID,
-		DriverVersion:            descriptor.Version,
-		ModelInputReceiptStore:   r.ModelInputReceiptStore,
-		RequestContextStore:      r.RequestContextStore,
-		Temperature:              r.Temperature,
-		MediaInput:               mediaInput,
-		MaxSteps:                 maxSteps,
-		MaxContextTokens:         maxCtx,
-		MaxInputTokens:           r.MaxInputTokens,
-		OutputReserveTokens:      r.OutputReserveTokens,
-		CompactThresholdTokens:   compactThresholdTokens,
-		CompactThresholdPct:      r.CompactThresholdPct,
-		CompactKeepRecentTokens:  r.CompactKeepRecentTokens,
-		ForceInitialCompact:      r.ForceInitialCompact && !policy.DisableCompaction,
-		CompactOnly:              r.CompactOnly && !policy.DisableCompaction,
-		ToolWaitInterrupt:        r.ToolWaitInterrupt,
-		BeforeStep:               beforeStep,
-		BeforeModelStep:          r.BeforeModelStep,
-		BeforeRequestContext:     beforeRequestContext,
-		BeforeRequest:            r.BeforeRequest,
-		SystemPromptSections:     systemPromptSections,
-		ForceToolFirstStep:       forceToolFirstStep,
-		OnRequestContext: func(info RequestContextInfo) {
-			if r.OnRequestContext != nil {
-				r.OnRequestContext(info)
-			}
-			if effectiveOnEvent == nil {
-				return
-			}
-			effectiveOnEvent(providers.StreamEvent{
-				Type:           providers.EventRequestContext,
-				RequestContext: requestContextSummary(info),
-			})
-		},
-		OnUsage:       r.OnUsage,
-		OnTokenUsage:  r.OnTokenUsage,
-		BeforeCompact: r.BeforeCompact,
-		AfterCompact:  r.AfterCompact,
-		OnMessage: func(msg providers.ChatMessage) {
-			if effectiveOnEvent == nil || msg.Hidden || isNonDurableHistoryMessage(msg) || isInternalContextHistoryMessage(msg) {
-				return
-			}
-			copyMsg := msg
-			effectiveOnEvent(providers.StreamEvent{
-				Type:    providers.EventMessage,
-				Message: &copyMsg,
-			})
-		},
-		Compact: func(ctx context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
-			budget, budgetErr := applyAdaptiveCompactBudget(ctx, messages, compact.Budget{
-				MediaInput:          mediaInput,
-				ContextTokens:       compactContextTokens,
-				InputTokens:         r.MaxInputTokens,
-				OutputReserveTokens: r.OutputReserveTokens,
-				KeepRecentTokens:    r.CompactKeepRecentTokens,
-			})
-			if budgetErr != nil {
-				return messages, budgetErr
-			}
-			definitions := toolDefinitions(tools)
-			return compact.CompactWithNativeOrSummary(ctx, messages, client, requestModel, budget, compact.NativeOptions{
-				Provider:                    r.ProviderName,
-				Tools:                       definitions,
-				Temperature:                 r.Temperature,
-				ProviderOptions:             r.ProviderOptions,
-				MediaInput:                  mediaInput,
-				NativeDeferredToolDiscovery: providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, definitions),
-			})
-		},
-		CompactionRegistry:  r.CompactionRegistry,
-		CompactionNoteStore: r.CompactionNoteStore,
-		// Forward each tool result through the streaming callback so
-		// clients can render tool output live (the loop itself only
-		// records the tool message into the history).
-		OnToolResultDetail: func(call providers.ToolCall, result toolresult.Result) {
-			if effectiveOnEvent == nil {
-				return
-			}
-			textResult := result.TextProjection()
-			toolCall := enrichToolCallDisplay(r.Tools, providers.ToolCall{
-				ID:                   call.ID,
-				ProviderItemID:       call.ProviderItemID,
-				ProviderItemProvider: call.ProviderItemProvider,
-				ProviderItemModel:    call.ProviderItemModel,
-				Name:                 call.Name,
-				Arguments:            call.Arguments,
-				Kind:                 call.Kind,
-				Display:              call.Display,
-			})
-			effectiveOnEvent(providers.StreamEvent{
-				Type:             providers.EventToolUseEnd,
-				ToolCall:         &toolCall,
-				ToolResult:       truncateLog(textResult, 2000),
-				ToolResultDetail: resultPointer(result),
-			})
-			if update, ok := todoUpdateEventFromToolResult(toolCall, textResult); ok {
-				effectiveOnEvent(providers.StreamEvent{
-					Type:       providers.EventTodoUpdate,
-					TodoUpdate: update,
-				})
-			}
-		},
-		OnCompactStart: func(reason CompactReason) {
-			if effectiveOnEvent == nil {
-				return
-			}
-			effectiveOnEvent(providers.StreamEvent{
-				Type:          providers.EventCompact,
-				CompactReason: string(reason),
-				CompactPhase:  providers.CompactPhaseStarted,
-			})
-		},
-		// Surface auto-compact events as stream events. The loop fires
-		// this for both the proactive and the reactive overflow path.
-		OnCompact: func(info CompactInfo) {
-			if effectiveOnEvent == nil {
-				return
-			}
-			effectiveOnEvent(providers.StreamEvent{
-				Type:           providers.EventCompact,
-				Content:        formatCompactNotice(info),
-				CompactReason:  string(info.Reason),
-				CompactPhase:   providers.CompactPhaseCompleted,
-				CompactSummary: info.Summary,
-			})
-		},
-		OnCompactAttempt: func(info CompactAttemptInfo) {
-			r.recordCompactAttempt(info)
-			if r.OnCompactAttempt != nil {
-				r.OnCompactAttempt(info)
-			}
-			if effectiveOnEvent == nil {
-				return
-			}
-			notice, ok := formatCompactAttemptNotice(info)
-			if !ok {
-				return
-			}
-			phase := providers.CompactPhaseCompleted
-			if info.Status == CompactAttemptFailed {
-				phase = providers.CompactPhaseFailed
-			}
-			effectiveOnEvent(providers.StreamEvent{
-				Type:          providers.EventCompact,
-				Content:       notice,
-				CompactReason: string(info.Reason),
-				CompactPhase:  phase,
-			})
-		},
-		OnToolBatchRejected: func(info ToolBatchRejectionInfo) {
-			if r.OnToolBatchRejected != nil {
-				r.OnToolBatchRejected(info)
-			}
-		},
-		UsageTracker:                runUsage,
-		Effort:                      r.Effort,
-		ProviderOptions:             provideroptions.Clone(r.ProviderOptions),
-		NativeDeferredToolDiscovery: r.NativeDeferredToolDiscovery,
-		PromptCacheKey:              r.PromptCacheKey,
-		RetainedRequestContext:      r.takeRetainedRequestContext(),
-	}
-	if cfg.RetainedRequestContext == nil && r.RequestContextStore != nil {
-		checkpoint, found, err := r.RequestContextStore.Load(ctx)
-		if err != nil {
-			return LoopResult{}, fmt.Errorf("restore request context: %w", err)
-		}
-		if found && checkpoint.Provider == cfg.ProviderName && checkpoint.Model == cfg.Model && checkpoint.DriverID == cfg.DriverID && checkpoint.DriverVersion == cfg.DriverVersion {
-			// The loop checks the durable fingerprint and current producers before
-			// reusing positions, so rewrites and removed guidance remain safe.
-			cfg.RetainedRequestContext = checkpoint.State
-		}
-	}
-	cfg.ForkCompactionNote = r.compactionNoteFork(cfg.RetainedRequestContext)
-	cfg.ArchiveHistory = r.ArchiveHistory
-	if contextWindowsEnabled {
-		cfg.FreshContextTokens = r.freshContextTargetTokens(compactThresholdTokens)
-		cfg.FreshContext = func(ctx context.Context, messages []providers.ChatMessage, head, fixed, target int) ([]providers.ChatMessage, error) {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			return buildFreshContext(messages, head, fixed, target, mediaInput)
-		}
-		cfg.AcceptFreshContext = func(acceptCtx context.Context, messages []providers.ChatMessage, head int) ([]providers.ChatMessage, int, error) {
-			if r.CommitFreshContext != nil {
-				return r.CommitFreshContext(acceptCtx, messages, head, contextWindowProvider.CompactionKey(), CompactionNote{})
-			}
-			return messages, head, nil
-		}
-	}
-	cfg.OnCompactionNote = func(status string, noteErr error) {
-		emitCompactionNoteEvent(effectiveOnEvent, status, noteErr)
-	}
-	if policy.DisableCompaction {
-		cfg.Compact = nil
-		cfg.CompactionRegistry = nil
-	}
-
-	res, err := RunToolLoop(ctx, history, cfg, step)
-	r.storeRetainedRequestContext(res.RetainedRequestContext)
-	res.ContextTokens = runUsage.EstimateCurrent()
-	if len(recoveredToolMessages) > 0 && !res.HistoryRewritten {
-		res.NewMessages = append(append([]providers.ChatMessage(nil), recoveredToolMessages...), res.NewMessages...)
-	}
-	res.NewMessages = filterDurableHistory(res.NewMessages)
-	res.DurableNewMessages = filterDurableHistory(res.DurableNewMessages)
-	if len(recoveredToolMessages) > 0 {
-		res.DurableNewMessages = append(append([]providers.ChatMessage(nil), recoveredToolMessages...), res.DurableNewMessages...)
-	}
-	if err != nil {
-		r.commitUsageTrackerForContract(runUsage, history[:baseHistoryLen], runUsageContract)
-		return res, err
-	}
-	finalHistory := append(providers.CloneChatMessages(history[:baseHistoryLen]), res.NewMessages...)
-	if len(recoveredToolMessages) > 0 && !res.HistoryRewritten {
-		// Recovered results already belong to the input history used by the
-		// loop and were prepended to NewMessages only so callers persist them.
-		finalHistory = append(providers.CloneChatMessages(history[:baseHistoryLen]), res.NewMessages[len(recoveredToolMessages):]...)
-	}
-	if res.HistoryRewritten {
-		finalHistory = providers.CloneChatMessages(res.NewMessages)
-	}
-	r.commitUsageTrackerForContract(runUsage, finalHistory, runUsageContract)
-	if r.AfterTurn != nil {
-		fullHistory := make([]providers.ChatMessage, 0, len(history)+len(res.NewMessages))
-		fullHistory = append(fullHistory, history...)
-		fullHistory = append(fullHistory, res.NewMessages...)
-		fullHistory = filterDurableHistory(fullHistory)
-		r.AfterTurn(ctx, r, fullHistory, res)
-	}
-	return res, nil
 }
 
 func emitCompactionNoteEvent(onEvent StreamCallback, status string, noteErr error) {
@@ -948,15 +592,20 @@ func (r *StreamRunner) prepareUsageTrackerForContract(history []providers.ChatMe
 	return tracker, trackedLen
 }
 
-// takeRetainedRequestContext hands the stored cross-turn request-context
-// state to the next run and clears it, so a crashed or aborted run cannot
-// replay stale state twice.
-func (r *StreamRunner) takeRetainedRequestContext() *RetainedRequestContextState {
+// snapshotRetainedRequestContext leaves the accepted insertions available if a
+// speculative compaction fails. Only SaveContextState replaces retained state.
+func (r *StreamRunner) snapshotRetainedRequestContext() *RetainedRequestContextState {
 	r.retainedContextMu.Lock()
 	defer r.retainedContextMu.Unlock()
-	state := r.retainedRequestContext
-	r.retainedRequestContext = nil
-	return state
+	if r.retainedRequestContext == nil {
+		return nil
+	}
+	state := *r.retainedRequestContext
+	state.Messages = make([]RetainedContextMessage, len(r.retainedRequestContext.Messages))
+	for index, item := range r.retainedRequestContext.Messages {
+		state.Messages[index] = RetainedContextMessage{AfterDurable: item.AfterDurable, Message: providers.CloneChatMessage(item.Message)}
+	}
+	return &state
 }
 
 // storeRetainedRequestContext publishes a run's retained request-context
@@ -1048,12 +697,10 @@ func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState)
 			req.MaxTokens = max(1, plan.MaxBytes/3)
 		}
 		if beforeRequest != nil {
-			forceBefore := strings.TrimSpace(req.ForceToolName)
-			forceAvailableBefore := requestHasTool(req.Tools, forceBefore)
 			if err := beforeRequest(ctx, &req); err != nil {
 				return CompactionNoteForkResult{}, fmt.Errorf("transform context note request: %w", err)
 			}
-			if err := validateTransformedRequest(req, forceBefore, forceAvailableBefore); err != nil {
+			if err := validateTransformedRequest(req); err != nil {
 				return CompactionNoteForkResult{}, err
 			}
 		}
@@ -1368,69 +1015,14 @@ func filterDurableHistory(msgs []providers.ChatMessage) []providers.ChatMessage 
 }
 
 func requestContextSummary(info RequestContextInfo) *providers.RequestContextSummary {
-	return &providers.RequestContextSummary{
-		StepIndex:                info.StepIndex,
-		TransientMessages:        info.TransientMessages,
-		ContentBytes:             info.ContentBytes,
-		BlockKinds:               append([]string(nil), info.BlockKinds...),
-		BlockKindCounts:          cloneStringIntMap(info.BlockKindCounts),
-		BlockKindBytes:           cloneStringIntMap(info.BlockKindBytes),
-		SegmentLifecycleCounts:   cloneStringIntMap(info.SegmentLifecycleCounts),
-		SegmentPlacementCounts:   cloneStringIntMap(info.SegmentPlacementCounts),
-		SegmentCachePolicyCounts: cloneStringIntMap(info.SegmentCachePolicyCounts),
-		MessageCount:             info.MessageCount,
-		SystemMessages:           info.SystemMessages,
-		HiddenMessages:           info.HiddenMessages,
-		ToolCount:                info.ToolCount,
-		StablePrefix:             info.StablePrefix,
-		TurnPrefix:               info.TurnPrefix,
-		DynamicBytes:             info.DynamicBytes,
-		SystemBytes:              info.SystemBytes,
-		StablePrefixBytes:        info.StablePrefixBytes,
-		TurnPrefixBytes:          info.TurnPrefixBytes,
-		MessageBytes:             info.MessageBytes,
-		ToolSchemaBytes:          info.ToolSchemaBytes,
-		LoadableToolCount:        info.LoadableToolCount,
-		LoadableToolSchemaBytes:  info.LoadableToolSchemaBytes,
-		LoadableToolSurfaceHash:  info.LoadableToolSurfaceHash,
-		SystemHash:               info.SystemHash,
-		StablePrefixHash:         info.StablePrefixHash,
-		TurnPrefixHash:           info.TurnPrefixHash,
-		ToolSurfaceHash:          info.ToolSurfaceHash,
-		PromptCacheKey:           info.PromptCacheKey,
-		InputTokens:              info.InputTokens,
-		OutputTokens:             info.OutputTokens,
-		CacheCreationTokens:      info.CacheCreationTokens,
-		CacheReadTokens:          info.CacheReadTokens,
-		SystemSections:           systemPromptSectionSummaries(info.SystemSections),
-	}
-}
-
-func cloneStringIntMap(in map[string]int) map[string]int {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]int, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
-}
-
-func systemPromptSectionSummaries(sections []SystemPromptSectionInfo) []providers.SystemPromptSectionSummary {
-	if len(sections) == 0 {
-		return nil
-	}
-	out := make([]providers.SystemPromptSectionSummary, 0, len(sections))
-	for _, section := range sections {
-		out = append(out, providers.SystemPromptSectionSummary{
-			Key:    section.Key,
-			Static: section.Static,
-			Bytes:  section.Bytes,
-			Hash:   section.Hash,
-		})
-	}
-	return out
+	info.BlockKinds = slices.Clone(info.BlockKinds)
+	info.BlockKindCounts = maps.Clone(info.BlockKindCounts)
+	info.BlockKindBytes = maps.Clone(info.BlockKindBytes)
+	info.SegmentLifecycleCounts = maps.Clone(info.SegmentLifecycleCounts)
+	info.SegmentPlacementCounts = maps.Clone(info.SegmentPlacementCounts)
+	info.SegmentCachePolicyCounts = maps.Clone(info.SegmentCachePolicyCounts)
+	info.SystemSections = slices.Clone(info.SystemSections)
+	return &info
 }
 
 // streamStep adapts providers.StreamClient (with recovery) to the
@@ -1588,7 +1180,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 			ReasoningContent: thinkingBuf.String(),
 			ReasoningBlocks:  cloneReasoningBlocks(reasoningBlocks),
 			ToolCalls:        partialToolCalls,
-			ToolRuntime:      partialToolRuntime,
+			ToolRuntime:      asToolBatchRuntime(partialToolRuntime),
 			Usage:            usage,
 		}
 		if journalErr := req.Execution.Complete(outcome, failure); journalErr != nil {
@@ -1716,7 +1308,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		FinishReason:         finishReason,
 		StopReason:           stopReason,
 		Truncated:            truncated,
-		ToolRuntime:          finalToolRuntime,
+		ToolRuntime:          asToolBatchRuntime(finalToolRuntime),
 	}, nil
 }
 

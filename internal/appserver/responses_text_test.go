@@ -3,7 +3,6 @@ package appserver
 import (
 	"context"
 	"fmt"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	sessionstore "github.com/blueberrycongee/wuu/internal/session"
 	"net/http"
 	"net/http/httptest"
@@ -70,7 +69,7 @@ func TestResponsesFinalTextAfterToolBoundary(t *testing.T) {
 			th := newThreadState("thread", nil, "openai", "gpt-test", "/repo", false, now)
 			user := providers.ChatMessage{Role: "user", Content: "inspect"}
 			th.startTurnLocked("turn", user, now)
-			runner := agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "gpt-test", Tools: fastToolExecutor{}, MaxSteps: 3}
+			runner := agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: client, Model: "gpt-test", Tools: fastToolExecutor{}, MaxSteps: 3}
 			result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{user}, func(event providers.StreamEvent) {
 				th.applyStreamEventLocked("turn", event, now)
 			})
@@ -189,7 +188,7 @@ func TestResponsesGeneratedImageSurvivesHistoryReload(t *testing.T) {
 	user := providers.ChatMessage{Role: "user", Content: "draw"}
 	th := newThreadState("thread", nil, "openai", "gpt-test", "/repo", false, now)
 	th.startTurnLocked("turn", user, now)
-	runner := agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "gpt-test"}
+	runner := agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: client, Model: "gpt-test"}
 	result, err := runner.RunWithCallback(context.Background(), []providers.ChatMessage{user}, func(event providers.StreamEvent) { th.applyStreamEventLocked("turn", event, now) })
 	if err != nil {
 		t.Fatal(err)

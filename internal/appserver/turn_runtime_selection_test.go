@@ -287,7 +287,7 @@ func TestEnsureThreadRuntimeSelectionMismatchWithOutstandingAgentWorkFailsAdmiss
 
 	workerClient := newBlockingStreamClient("worker finished")
 	control, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       workerClient,
 		DefaultModel: "fake-model",

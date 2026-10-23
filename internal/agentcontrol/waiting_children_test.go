@@ -116,7 +116,7 @@ func TestCompletedParentParksUntilChildDelivers(t *testing.T) {
 				threadDir = filepath.Join(dir, ".wuu-state", "sessions", "sess-waiting", "threads")
 			}
 			c, err := New(Config{
-				AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+				AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 				Client:        client,
 				DefaultModel:  "fake-model",

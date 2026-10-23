@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/modelwire"
@@ -75,8 +76,22 @@ func TestStreamingDriverProcess(t *testing.T) {
 		LoopDriver:             resolveLoopDriver("default", host, kernel.driverGateways),
 		DriverCheckpointStore:  sessionDriverCheckpointStore{sessDir: dir, sessionID: "streaming-session"},
 		ModelInputReceiptStore: sessionModelInputReceiptStore{sessDir: dir, sessionID: "streaming-session"}}
+	history := []providers.ChatMessage{{Role: "user", Content: "Read evidence"}}
+	attachWorkflowHistory(t, runner, dir, "streaming-session", history)
+	runner.CompactionRegistry = agent.NewCompactionRegistry()
+	runner.CompactionRegistry.Register(&generationCompactionProvider{key: "controlled-output-limit", err: compact.ErrSummaryOutputLimit})
+	var observations, beforeCompact, afterCompact int
+	runner.OnRequestContext = func(agent.RequestContextInfo) { observations++ }
+	runner.BeforeCompact = func(context.Context, agent.CompactReason) error { beforeCompact++; return nil }
+	runner.AfterCompact = func(_ context.Context, _ agent.CompactReason, err error) error {
+		afterCompact++
+		if !compact.IsSummaryOutputLimit(err) {
+			return fmt.Errorf("compaction hook lost failure classification: %v", err)
+		}
+		return nil
+	}
 	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "streaming-session", ExecutionID: "streaming-first"})
-	result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "Read evidence"}}, nil)
+	result, err := runner.RunWithCallback(ctx, history, nil)
 	if err != nil || result.Content != "42" || tools.calls != 1 || len(model.requests) != 1 || len(result.NewMessages) != 2 || result.NewMessages[1].ToolInvocationID == "" {
 		t.Fatalf("external streaming failed: result=%+v effects=%d requests=%d err=%v", result, tools.calls, len(model.requests), err)
 	}
@@ -85,8 +100,11 @@ func TestStreamingDriverProcess(t *testing.T) {
 			t.Fatal("host default driver remained loaded")
 		}
 	}
+	if observations != 1 || beforeCompact != 1 || afterCompact != 1 || result.FinishReason != providers.FinishReasonStop || result.StopReason != "evidence_complete" || result.ContextTokens != 13 {
+		t.Fatalf("resource decisions or completion lost: observations=%d hooks=%d/%d result=%+v", observations, beforeCompact, afterCompact, result)
+	}
 	assertDriverModelReceipts(t, dir, "streaming-session", result.DriverID, model.requests)
-	t.Log("independent SDK driver: committed model input before dispatch; real file read began before model completion; joined one durable tool receipt; default loop absent")
+	t.Log("independent SDK driver: settings, context state, observations, durable archive, classified compaction failure and completion metadata; committed model input before dispatch; real file read began before model completion; joined one durable tool receipt; default loop absent")
 }
 
 func testWorkflowDriverProcess(t *testing.T, profile string) {
@@ -126,7 +144,7 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 	owner := &Session{DriverProfile: selectedProfile, pluginGeneration: generation}
 	defer owner.releasePluginGeneration(generation)
 	acquire := owner.driverResolver(generation)
-	if owner, ok := host.ServiceRegistry().ProviderPluginID("driver."+profile, 1); !ok || owner != provider.ID {
+	if owner, ok := host.ServiceRegistry().ProviderPluginID("driver."+profile, loopdriver.DriverServiceMajor); !ok || owner != provider.ID {
 		t.Fatalf("workflow binding = %q, %v", owner, ok)
 	}
 	if profile == "default" {
@@ -413,12 +431,13 @@ func (t *workflowEvidenceTools) Execute(ctx context.Context, call providers.Tool
 }
 
 type workflowEvidenceModel struct {
-	mu              sync.Mutex
-	requests        []providers.ChatRequest
-	cancelSynthesis context.CancelFunc
-	synthesisOnly   bool
-	overflowFirst   bool
-	waitForTool     <-chan struct{}
+	mu                sync.Mutex
+	requests          []providers.ChatRequest
+	cancelSynthesis   context.CancelFunc
+	synthesisOnly     bool
+	continueWithTools bool
+	overflowFirst     bool
+	waitForTool       <-chan struct{}
 }
 
 func (m *workflowEvidenceModel) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
@@ -457,8 +476,12 @@ func (m *workflowEvidenceModel) StreamChat(ctx context.Context, req providers.Ch
 		}
 		stream <- providers.StreamEvent{Type: providers.EventDone, FinishReason: providers.FinishReasonToolCalls}
 	} else {
-		if len(req.Tools) != 0 {
-			return nil, errors.New("synthesis still has tools; driver did not own control flow")
+		expectedTools := 0
+		if m.continueWithTools {
+			expectedTools = 1
+		}
+		if len(req.Tools) != expectedTools {
+			return nil, errors.New("synthesis tool surface does not match the selected loop policy")
 		}
 		if m.cancelSynthesis != nil {
 			m.cancelSynthesis()

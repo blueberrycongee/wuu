@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 )
 
 // Remote protocol: a loop driver that runs inside a plugin process. The
@@ -18,6 +19,9 @@ import (
 // declaring the methods below; the kernel stays the execution gateway and
 // only ever exchanges these DTOs across the wire.
 const (
+	DriverServiceVersion = "2.0.0"
+	DriverServiceMajor   = 2
+
 	RemoteMethodDescriptor = "descriptor"
 	RemoteMethodCreate     = "create"
 	RemoteMethodResume     = "resume"
@@ -33,7 +37,7 @@ type RemoteInvoker interface {
 }
 
 // RemoteGatewayRegistry exposes per-execution kernel gateways so the
-// plugin's gateway callbacks (model loop, checkpoint writes) reach the
+// plugin's turn-resource callbacks and checkpoint writes reach the
 // runner that owns the execution. Register returns an unregister func.
 type RemoteGatewayRegistry interface {
 	RegisterGateway(executionID string, gateway KernelGateway) (unregister func(), err error)
@@ -65,10 +69,10 @@ type remoteRunParams struct {
 }
 
 type remoteRunResult struct {
-	Status     TerminalStatus `json:"status"`
-	ReceiptID  string         `json:"receipt_id,omitempty"`
-	Checkpoint Checkpoint     `json:"checkpoint"`
-	Error      string         `json:"error,omitempty"`
+	Status     TerminalStatus                `json:"status"`
+	ReceiptID  string                        `json:"receipt_id,omitempty"`
+	Checkpoint Checkpoint                    `json:"checkpoint"`
+	Failure    *pluginprotocol.DriverFailure `json:"failure,omitempty"`
 }
 
 type remoteShutdownParams struct {
@@ -268,8 +272,8 @@ func (i *RemoteInstance) Run(ctx context.Context, gateway KernelGateway) (Termin
 	switch decoded.Status {
 	case TerminalSucceeded:
 	case TerminalFailed:
-		if decoded.Error != "" {
-			err = errors.New(decoded.Error)
+		if decoded.Failure != nil {
+			err = &FailureError{Failure: *decoded.Failure}
 		} else {
 			err = errors.New("remote driver reported failure")
 		}
@@ -279,7 +283,7 @@ func (i *RemoteInstance) Run(ctx context.Context, gateway KernelGateway) (Termin
 		return TerminalOutcome{Status: TerminalFailed, Checkpoint: i.Checkpoint()}, fmt.Errorf("remote driver returned unknown terminal status %q", decoded.Status)
 	}
 	if runCtx.Err() != nil {
-		return TerminalOutcome{Status: TerminalCanceled, Checkpoint: i.Checkpoint()}, context.Cause(runCtx)
+		return TerminalOutcome{Status: TerminalCanceled, Checkpoint: i.Checkpoint()}, errors.Join(runCtx.Err(), context.Cause(runCtx))
 	}
 	i.setCheckpoint(decoded.Checkpoint)
 	return TerminalOutcome{Status: decoded.Status, ReceiptID: decoded.ReceiptID, Checkpoint: decoded.Checkpoint}, err

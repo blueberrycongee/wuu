@@ -1,7 +1,7 @@
 import {
-  DriverModelError, driverServiceDescriptor, driverTurn, requireDriverTurnServices, runJSONLRuntime,
+  DriverModelError, DriverOperationError, driverServiceDescriptor, driverTurn, requireDriverTurnServices, runJSONLRuntime,
   type DriverCheckpoint, type DriverCreateParams, type DriverExecution,
-  type DriverInstanceParams, type DriverResumeParams, type DriverTurnInput,
+  type DriverInstanceParams, type DriverResumeParams, type DriverTurnInput, type DriverRunResult,
   type ModelMessageV1, type ModelToolCallV1, type RuntimePlugin,
 } from "@wuu/plugin-sdk";
 
@@ -30,7 +30,7 @@ const plugin: RuntimePlugin = {
   initialize() {
     return {
       protocol_version: 3, lifecycle_version: 2,
-      provided_services: [driverServiceDescriptor(profile, version)],
+      provided_services: [driverServiceDescriptor(profile)],
       required_services: requireDriverTurnServices(),
     };
   },
@@ -146,7 +146,10 @@ const plugin: RuntimePlugin = {
       if (!content.trim()) throw new Error("synthesis returned no answer");
       const receipt = await turn.complete(content);
       instance.checkpoint = checkpoint({ phase: "complete" });
-      return { status: "succeeded", ...receipt, checkpoint: instance.checkpoint };
+      return { status: "succeeded", ...receipt, checkpoint: instance.checkpoint } satisfies DriverRunResult<State>;
+    } catch (error) {
+      if (!(error instanceof DriverOperationError)) throw error;
+      return { status: "failed", failure: error.failure, checkpoint: instance.checkpoint } satisfies DriverRunResult<State>;
     } finally {
       instance.running = false;
     }

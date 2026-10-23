@@ -65,11 +65,6 @@ const (
 	// endpoint; the constant lives with the execution scope vocabulary.
 	KernelExecutionUpdateService = ExecutionUpdateService
 
-	// KernelDriverModelLoopService is the kernel gateway endpoint a remote
-	// loop driver executes model loops through; calls are routed to the
-	// gateway registered for the execution id in the params.
-	KernelDriverModelLoopService = "driver.model-loop"
-
 	// KernelDriverCheckpointService is the kernel gateway endpoint a remote
 	// loop driver persists checkpoints through.
 	KernelDriverCheckpointService = "driver.checkpoint"
@@ -171,16 +166,6 @@ func KernelFileLockDescriptor() ServiceDescriptor {
 			{Name: "acquire", InputSchema: "host.file-lock.acquire.input.v1", OutputSchema: "host.file-lock.acquire.output.v1"},
 			{Name: "release", InputSchema: "host.file-lock.release.input.v1", OutputSchema: "host.file-lock.release.output.v1", Cleanup: true},
 		},
-	}
-}
-
-// KernelDriverModelLoopDescriptor is the descriptor the kernel registers for
-// the remote-driver model-loop gateway. The method set is the single kernel
-// verb; execution scoping rides the params.
-func KernelDriverModelLoopDescriptor() ServiceDescriptor {
-	return ServiceDescriptor{
-		Name: KernelDriverModelLoopService, Version: "1.0.0",
-		Methods: []ServiceMethodDescriptor{{Name: KernelServiceMethod, InputSchema: "driver.model-loop.request.v1", OutputSchema: "driver.model-loop.response.v1"}},
 	}
 }
 

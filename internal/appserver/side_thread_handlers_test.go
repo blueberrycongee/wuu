@@ -17,7 +17,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/contextbudget"
 	"github.com/blueberrycongee/wuu/internal/extensions"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -102,7 +101,7 @@ func newSideThreadServer(t *testing.T, client providers.StreamClient) (*Server, 
 		RootDir:      root,
 		SessionDir:   filepath.Join(root, "sessions"),
 		StreamRunner: &agent.StreamRunner{
-			LoopDriver: loopdriver.DefaultDriver{},
+			LoopDriver: agent.DefaultDriver{},
 
 			Client:       client,
 			Model:        "test-model",
@@ -526,7 +525,7 @@ func TestSideThreadSendRejectsConcurrentServers(t *testing.T) {
 			RootDir:       rt.RootDir,
 			SessionDir:    rt.SessionDir,
 			ActivePlugins: rt.ActivePlugins,
-			StreamRunner:  &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: peerClient, Model: "test-model"},
+			StreamRunner:  &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: peerClient, Model: "test-model"},
 		},
 		out:             &lockedBuffer{},
 		threads:         make(map[string]*threadState),
@@ -820,7 +819,7 @@ func TestSideThreadContextBoundsUnknownModelBudget(t *testing.T) {
 		{ID: "user", SideThreadID: "side", Role: sidethread.RoleUser, Text: "UNKNOWN_SIDE_MARKER"},
 		{ID: "assistant", SideThreadID: "side", Role: sidethread.RoleAssistant, Status: sidethread.AssistantStreaming},
 	}
-	requestHistory, err := buildSideThreadRunHistory(&agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, SystemPrompt: "read-only side chat"}, snapshot, messages, "assistant")
+	requestHistory, err := buildSideThreadRunHistory(&agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, SystemPrompt: "read-only side chat"}, snapshot, messages, "assistant")
 	if err != nil {
 		t.Fatalf("buildSideThreadRunHistory: %v", err)
 	}
@@ -847,7 +846,7 @@ func TestSideThreadContextPreservesEntireActivePrompt(t *testing.T) {
 		{ID: "user", SideThreadID: "side", Role: sidethread.RoleUser, Text: prompt},
 		{ID: "assistant", SideThreadID: "side", Role: sidethread.RoleAssistant, Status: sidethread.AssistantStreaming},
 	}
-	history, err := buildSideThreadRunHistory(&agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, SystemPrompt: "read-only side chat", MaxInputTokens: 800}, snapshot, messages, "assistant")
+	history, err := buildSideThreadRunHistory(&agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, SystemPrompt: "read-only side chat", MaxInputTokens: 800}, snapshot, messages, "assistant")
 	if err != nil {
 		t.Fatalf("buildSideThreadRunHistory: %v", err)
 	}

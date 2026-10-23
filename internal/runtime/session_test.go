@@ -154,7 +154,7 @@ func newRuntimeCleanupWorktree(t *testing.T, sessionID string) (*agentcontrol.Ag
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	artifactDir := filepath.Join(stateRoot, "sessions", sessionID)
 	control, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       &sessionRecordingClient{},
 		DefaultModel: "runtime-cleanup-test",
@@ -2578,7 +2578,7 @@ func TestSessionRefreshSystemPromptUpdatesRunnerPrompt(t *testing.T) {
 	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5-codex", false)
 	rt := &Session{
 		RootDir:      root,
-		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, SystemPrompt: "old prompt"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, SystemPrompt: "old prompt"},
 		Toolkit:      kit,
 	}
 
