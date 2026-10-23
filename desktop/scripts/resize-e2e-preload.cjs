@@ -132,6 +132,7 @@ if (liveLayout) {
 let submittedTurns = 0;
 
 const desktopAPI = {
+  initialLanguagePreference: process.env.WUU_RESIZE_E2E_LOCALE,
   listProjects: async () => projectList(),
   createBlankProject: async () => projectList(),
   chooseProjectFolder: async () => projectList(),
