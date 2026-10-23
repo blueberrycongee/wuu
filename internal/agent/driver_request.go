@@ -18,6 +18,9 @@ func (g *streamTurnGateway) AdmitInput(ctx context.Context) (loopdriver.InputAdm
 	if err := g.prepare(ctx); err != nil {
 		return loopdriver.InputAdmission{}, err
 	}
+	if len(g.streamedBatches) != 0 {
+		return loopdriver.InputAdmission{}, errors.New("join the pending streaming tool batch before admitting input")
+	}
 	var admitted []providers.ChatMessage
 	appendInput := func(messages []providers.ChatMessage) {
 		messages = filterDurableHistory(messages)

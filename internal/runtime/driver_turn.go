@@ -91,7 +91,7 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 			return nil, err
 		}
 		return marshalServiceResult(driverContextToWire(current))
-	case "model":
+	case "model", "model_with_tools":
 		var input pluginprotocol.DriverTurnModelParams
 		if err := decodeServiceParams(params.Params, &input); err != nil {
 			return nil, err
@@ -100,8 +100,14 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		if err != nil {
 			return nil, serviceError("invalid_request", err.Error())
 		}
-		round, runErr := turn.CallModel(ctx, request)
-		result := pluginprotocol.DriverTurnModelResult{Messages: modelwire.DriverMessagesToWire(round.Messages)}
+		var round loopdriver.ModelRound
+		var runErr error
+		if params.Method == "model_with_tools" {
+			round, runErr = turn.CallModelWithTools(ctx, request, input.BatchID)
+		} else {
+			round, runErr = turn.CallModel(ctx, request)
+		}
+		result := pluginprotocol.DriverTurnModelResult{Messages: modelwire.DriverMessagesToWire(round.Messages), ToolBatchID: round.ToolBatchID, ToolWorkStarted: round.ToolWorkStarted}
 		if runErr != nil {
 			failure := providers.NormalizeFailure(runErr)
 			result.Failure = &pluginprotocol.DriverModelFailure{

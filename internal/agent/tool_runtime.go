@@ -59,6 +59,9 @@ type TurnToolRuntime struct {
 	runs     []*toolRun
 	byID     map[string]*toolRun
 	canceled bool
+	started  bool
+	workers  sync.WaitGroup
+	running  map[*toolRun]context.CancelFunc
 
 	requestContext []ContextSegment
 	stepIndex      *int
@@ -100,6 +103,7 @@ func NewTurnToolRuntime(config ToolRuntimeConfig) *TurnToolRuntime {
 		runContext:  config.RunContext,
 		gate:        config.Gate,
 		byID:        map[string]*toolRun{},
+		running:     map[*toolRun]context.CancelFunc{},
 	}
 	if runtime.gate == nil {
 		runtime.gate = NewToolExecutionGate(maxToolConcurrency)
@@ -151,26 +155,46 @@ func (r *TurnToolRuntime) Cancel() {
 	}
 	r.mu.Lock()
 	r.canceled = true
-	runs := append([]*toolRun(nil), r.runs...)
-	r.mu.Unlock()
-
-	for _, run := range runs {
-		run.mu.Lock()
-		cancel := run.cancel
-		run.mu.Unlock()
-		if cancel != nil {
-			cancel()
-		}
+	for _, cancel := range r.running {
+		cancel()
 	}
+	r.mu.Unlock()
+}
+
+// Close waits for physical completion, including orphaned and nested calls.
+// Cancel closes admission before Wait, so no new worker can race the drain.
+func (r *TurnToolRuntime) Close() {
+	if r == nil {
+		return
+	}
+	r.Cancel()
+	r.workers.Wait()
+}
+
+func (r *TurnToolRuntime) HasStartedWork() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.started
 }
 
 func (r *TurnToolRuntime) ReplayDecision(ctx context.Context) (toolledger.ReplayDecision, error) {
-	if r == nil || r.ledger == nil {
+	if r == nil {
 		return toolledger.ReplayDecision{Action: toolledger.ReplayAllow, Reason: toolledger.ReplayReasonNoInvocation}, nil
 	}
 	r.mu.Lock()
-	batchID := r.batchID
+	batchID, started := r.batchID, r.started
 	r.mu.Unlock()
+	if r.ledger == nil {
+		if started {
+			// A missing ledger cannot prove that an accepted effect is safe to
+			// repeat. Even a retry with new model call IDs must stop here.
+			return toolledger.ReplayDecision{Action: toolledger.ReplayBlock, Reason: toolledger.ReplayReasonInvocationUnknown}, nil
+		}
+		return toolledger.ReplayDecision{Action: toolledger.ReplayAllow, Reason: toolledger.ReplayReasonNoInvocation}, nil
+	}
 	return r.ledger.DecideReplay(ctx, batchID)
 }
 
@@ -275,6 +299,11 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 		run.mu.Unlock()
 		return
 	}
+	if r.canceled {
+		run.mu.Unlock()
+		run.complete(toolresult.Result{}, context.Canceled)
+		return
+	}
 	run.streamStarted = run.streamStarted || streamStarted
 	if err := r.prepareRunLocked(ctx, run); err != nil {
 		run.state = toolRunRunning
@@ -306,8 +335,17 @@ func (r *TurnToolRuntime) startRunLocked(ctx context.Context, run *toolRun, stre
 	// already starting. Use the scheduling decision made under the runtime lock.
 	concurrencySafe := run.concurrencySafe
 	run.mu.Unlock()
+	r.started = true
+	r.running[run] = cancel
+	r.workers.Add(1)
 
 	go func() {
+		defer r.workers.Done()
+		defer func() {
+			r.mu.Lock()
+			delete(r.running, run)
+			r.mu.Unlock()
+		}()
 		finish := func(result toolresult.Result, executionErr error) {
 			defer cancel()
 			if run.parent != nil {

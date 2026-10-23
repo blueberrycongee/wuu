@@ -33,6 +33,8 @@ type streamTurnGateway struct {
 	frozen           ToolSurfaceFreezer
 	step             int
 	batches          map[string]bool
+	streamedBatches  map[string]driverToolStream
+	toolRuntimes     map[*TurnToolRuntime]bool
 	toolCalls        map[string]bool
 	produced         []providers.ChatMessage
 	durable          []providers.ChatMessage
@@ -132,7 +134,23 @@ func (g *streamTurnGateway) ReadTurn(ctx context.Context) (providers.ChatRequest
 	}, nil
 }
 
+type driverToolStream struct {
+	runtime *TurnToolRuntime
+	calls   []providers.ToolCall
+}
+
 func (g *streamTurnGateway) CallModel(ctx context.Context, request providers.ChatRequest) (loopdriver.ModelRound, error) {
+	return g.callModel(ctx, request, "")
+}
+
+func (g *streamTurnGateway) CallModelWithTools(ctx context.Context, request providers.ChatRequest, batchID string) (loopdriver.ModelRound, error) {
+	if strings.TrimSpace(batchID) == "" {
+		return loopdriver.ModelRound{}, errors.New("streaming tool batch id is required")
+	}
+	return g.callModel(ctx, request, batchID)
+}
+
+func (g *streamTurnGateway) callModel(ctx context.Context, request providers.ChatRequest, batchID string) (loopdriver.ModelRound, error) {
 	ctx, leave, err := g.enter(ctx)
 	if err != nil {
 		return loopdriver.ModelRound{}, err
@@ -140,6 +158,9 @@ func (g *streamTurnGateway) CallModel(ctx context.Context, request providers.Cha
 	defer leave()
 	if err := g.prepare(ctx); err != nil {
 		return loopdriver.ModelRound{}, err
+	}
+	if len(g.streamedBatches) != 0 {
+		return loopdriver.ModelRound{}, errors.New("join the pending streaming tool batch before calling another model")
 	}
 	if g.client == nil {
 		return loopdriver.ModelRound{}, errors.New("model client is unavailable")
@@ -152,16 +173,102 @@ func (g *streamTurnGateway) CallModel(ctx context.Context, request providers.Cha
 	}
 	request = cloneDriverRequest(request)
 	request.StepIndex = g.step
-	g.step++
 	round := loopdriver.ModelRound{}
 	if err := validateTransformedRequest(request, "", false); err != nil {
 		return round, err
 	}
 	ctx = providers.WithInferenceJournal(ctx, g.runner.InferenceJournal)
-	// No executor is attached here: only an explicit CallTools can cause effects.
 	step := &streamStep{client: g.client, onEvent: g.onEvent}
+	observed := make(map[string]providers.ToolCall)
+	var runtimes []*TurnToolRuntime
+	if batchID != "" {
+		if g.batches[batchID] {
+			return round, fmt.Errorf("tool batch %q was already submitted; resolve its effects before retrying", batchID)
+		}
+		if g.runner.Tools == nil {
+			return round, errors.New("tool executor is unavailable")
+		}
+		g.batches[batchID] = true
+		round.ToolBatchID = batchID
+		step.tools, step.toolLedger, step.enableStreamingToolExec = g.runner.Tools, g.runner.ToolLedger, true
+		// A successful model RPC ends before its streamed tools. Their lifetime
+		// belongs to the execution, while model failures explicitly cancel them.
+		step.toolRunContext = g.ctx
+		if g.runner.ToolWaitInterrupt != nil {
+			step.toolRunContext = toolctx.WithWaitInterrupt(step.toolRunContext, g.runner.ToolWaitInterrupt())
+		}
+		if g.toolRuntimes == nil {
+			g.toolRuntimes = make(map[*TurnToolRuntime]bool)
+		}
+		step.ownToolRuntime = func(runtime *TurnToolRuntime) {
+			runtimes = append(runtimes, runtime)
+			g.toolRuntimes[runtime] = true
+		}
+		step.admitStreamToolCall = func(call providers.ToolCall) error {
+			if g.toolCalls[call.ID] {
+				return fmt.Errorf("tool call %q was already submitted; resolve its effects before retrying", call.ID)
+			}
+			if err := providers.ValidateAssistantToolCalls([]providers.ToolCall{call}); err != nil {
+				return err
+			}
+			g.toolCalls[call.ID] = true
+			observed[call.ID] = call
+			return nil
+		}
+	}
+	g.step++
 	g.contextTokens = estimateOutboundRequestTokens(request)
 	result, err := step.Execute(ctx, request)
+	if err == nil {
+		err = providers.ValidateAssistantToolCalls(result.ToolCalls)
+	}
+	if batchID != "" {
+		for _, runtime := range runtimes {
+			round.ToolWorkStarted = round.ToolWorkStarted || runtime.HasStartedWork()
+		}
+		if err == nil {
+			for _, call := range result.ToolCalls {
+				original, streamed := observed[call.ID]
+				if (streamed && !sameToolEffect(original, call)) || (!streamed && g.toolCalls[call.ID]) {
+					err = fmt.Errorf("model reused tool call %q with a different effect", call.ID)
+					break
+				}
+			}
+		}
+		if err == nil {
+			finalIDs := make(map[string]bool, len(result.ToolCalls))
+			for _, call := range result.ToolCalls {
+				finalIDs[call.ID] = true
+			}
+			for id := range observed {
+				if !finalIDs[id] {
+					err = fmt.Errorf("streamed tool call %q is missing from the completed model response", id)
+					break
+				}
+			}
+		}
+		if err != nil || len(result.ToolCalls) == 0 {
+			g.releaseToolRuntimes(runtimes)
+			if err == nil {
+				round.ToolBatchID = ""
+			}
+		} else {
+			for _, call := range result.ToolCalls {
+				g.toolCalls[call.ID] = true
+			}
+			if g.streamedBatches == nil {
+				g.streamedBatches = make(map[string]driverToolStream)
+			}
+			g.streamedBatches[batchID] = driverToolStream{runtime: result.ToolRuntime, calls: append([]providers.ToolCall(nil), result.ToolCalls...)}
+			var retired []*TurnToolRuntime
+			for _, runtime := range runtimes {
+				if runtime != result.ToolRuntime {
+					retired = append(retired, runtime)
+				}
+			}
+			g.releaseToolRuntimes(retired)
+		}
+	}
 	if result.Usage != nil {
 		g.usage.InputTokens += result.Usage.InputTokens
 		g.usage.OutputTokens += result.Usage.OutputTokens
@@ -182,11 +289,14 @@ func (g *streamTurnGateway) CallModel(ctx context.Context, request providers.Cha
 		g.contextTokens += estimateMessages([]providers.ChatMessage{assistant})
 	}
 	if shouldPersistAssistantMessage(assistant) {
-		g.appendMessages(assistant)
 		round.Messages = append(round.Messages, assistant)
-	}
-	if err == nil {
-		err = providers.ValidateAssistantToolCalls(assistant.ToolCalls)
+		if err == nil {
+			g.appendMessages(assistant)
+		} else if strings.TrimSpace(result.Content) != "" || len(result.Images) > 0 {
+			// Keep visible partial output, but not incomplete provider state or
+			// tool declarations. The reply still exposes those for reconciliation.
+			g.appendMessages(providers.ChatMessage{Role: "assistant", Content: result.Content, Images: result.Images, Phase: result.Phase})
+		}
 	}
 	return round, err
 }
@@ -203,8 +313,23 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 	if strings.TrimSpace(batch.ID) == "" {
 		return nil, errors.New("tool batch id is required")
 	}
-	if g.batches[batch.ID] {
+	streamed, joining := g.streamedBatches[batch.ID]
+	if len(g.streamedBatches) != 0 && !joining {
+		return nil, errors.New("join the pending streaming tool batch before submitting another batch")
+	}
+	if g.batches[batch.ID] && !joining {
 		return nil, fmt.Errorf("tool batch %q was already submitted; resolve its effects before retrying", batch.ID)
+	}
+	if joining {
+		if len(batch.Calls) != len(streamed.calls) {
+			return nil, errors.New("streaming tool batch must join all returned calls")
+		}
+		for i, call := range batch.Calls {
+			if !sameToolEffect(call, streamed.calls[i]) {
+				return nil, errors.New("streaming tool batch differs from its model receipt")
+			}
+		}
+		batch.Calls = streamed.calls
 	}
 	if g.runner.Tools == nil {
 		return nil, errors.New("tool executor is unavailable")
@@ -216,7 +341,7 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 		return nil, err
 	}
 	for _, call := range batch.Calls {
-		if g.toolCalls[call.ID] {
+		if g.toolCalls[call.ID] && !joining {
 			return nil, fmt.Errorf("tool call %q was already submitted; resolve its effects before retrying", call.ID)
 		}
 	}
@@ -226,6 +351,7 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 		return nil, err
 	}
 	g.batches[batch.ID] = true
+	delete(g.streamedBatches, batch.ID)
 	for _, call := range batch.Calls {
 		g.toolCalls[call.ID] = true
 	}
@@ -239,23 +365,11 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 		ctx = toolctx.WithWaitInterrupt(ctx, g.runner.ToolWaitInterrupt())
 	}
 	execution := loopdriver.ExecutionContextFromContext(g.ctx)
-	runtime := NewTurnToolRuntime(ToolRuntimeConfig{Executor: g.runner.Tools, Ledger: g.runner.ToolLedger, OperationID: execution.ExecutionID + "/" + batch.ID, StepIndex: g.step, RunContext: ctx})
-	defer func() {
-		runtime.Cancel()
-		// Cancellation may return before an executor has settled its result.
-		// Keep the tool surface and its providers alive through that cleanup.
-		runtime.mu.Lock()
-		runs := append([]*toolRun(nil), runtime.runs...)
-		runtime.mu.Unlock()
-		for _, run := range runs {
-			run.mu.Lock()
-			started := run.state != toolRunQueued
-			run.mu.Unlock()
-			if started {
-				<-run.done
-			}
-		}
-	}()
+	runtime := streamed.runtime
+	if runtime == nil {
+		runtime = NewTurnToolRuntime(ToolRuntimeConfig{Executor: g.runner.Tools, Ledger: g.runner.ToolLedger, OperationID: execution.ExecutionID + "/" + batch.ID, StepIndex: g.step, RunContext: ctx})
+	}
+	defer g.releaseToolRuntimes([]*TurnToolRuntime{runtime})
 	runtime.SetResultCallback(func(call providers.ToolCall, result toolresult.Result) {
 		if g.onEvent != nil {
 			call = enrichToolCallDisplay(g.runner.Tools, call)
@@ -277,6 +391,9 @@ func (g *streamTurnGateway) CompleteTurn(ctx context.Context, result loopdriver.
 	defer leave()
 	if err := g.prepare(ctx); err != nil {
 		return loopdriver.ModelLoopReceipt{}, err
+	}
+	if len(g.streamedBatches) != 0 {
+		return loopdriver.ModelLoopReceipt{}, errors.New("join the pending streaming tool batch before completing the turn")
 	}
 	if err := validateDriverMessages(result.Messages); err != nil {
 		return loopdriver.ModelLoopReceipt{}, err
@@ -354,9 +471,27 @@ func (g *streamTurnGateway) close() {
 	defer func() { g.gate <- struct{}{} }()
 	if !g.closed {
 		g.closed = true
+		for runtime := range g.toolRuntimes {
+			runtime.Cancel()
+		}
+		for runtime := range g.toolRuntimes {
+			runtime.Close()
+		}
+		g.toolRuntimes = nil
+		g.streamedBatches = nil
 		if g.frozen != nil {
 			g.frozen.UnfreezeToolSurface()
 		}
+	}
+}
+
+func (g *streamTurnGateway) releaseToolRuntimes(runtimes []*TurnToolRuntime) {
+	for _, runtime := range runtimes {
+		runtime.Cancel()
+	}
+	for _, runtime := range runtimes {
+		runtime.Close()
+		delete(g.toolRuntimes, runtime)
 	}
 }
 
@@ -393,6 +528,10 @@ func pendingToolCallDeclaration(history []providers.ChatMessage, calls []provide
 		return false, errors.New("tool batch mixes declared and undeclared calls; submit them separately")
 	}
 	return matched == len(calls), nil
+}
+
+func sameToolEffect(a, b providers.ToolCall) bool {
+	return a.ID == b.ID && a.Name == b.Name && a.Arguments == b.Arguments && a.Kind == b.Kind
 }
 
 func assistantMessageFromStep(result StepResult) providers.ChatMessage {

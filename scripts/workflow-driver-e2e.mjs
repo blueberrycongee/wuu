@@ -28,6 +28,10 @@ console.log(`Workflow driver evidence: ${run}`);
 const packed = JSON.parse(command("npm", ["pack", "--json", "--pack-destination", run], join(root, "packages/plugin-sdk")));
 const sdk = join(run, packed[0].filename);
 for (const name of ["runtime.ts", "tsconfig.json"]) cpSync(join(root, "examples/plugins/workflow-loop", name), join(fixture, name));
+cpSync(join(root, "internal/runtime/testdata/streaming-driver.ts"), join(fixture, "streaming.ts"));
+const tsconfig = JSON.parse(readFileSync(join(fixture, "tsconfig.json"), "utf8"));
+tsconfig.include.push("streaming.ts");
+writeFileSync(join(fixture, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
 writeFileSync(join(fixture, "package.json"), JSON.stringify({
   name: "independent-workflow-verification", private: true, type: "module",
   dependencies: { "@wuu/plugin-sdk": `file:${sdk}` },
@@ -35,11 +39,11 @@ writeFileSync(join(fixture, "package.json"), JSON.stringify({
 }, null, 2));
 command("npm", ["install", "--no-audit", "--no-fund"], fixture);
 command("npm", ["exec", "--", "tsc", "--noEmit"], fixture);
-command("go", ["test", "-race", "./internal/runtime", "-run", "^TestWorkflowDriverProcess$", "-count=1", "-v"], root, { ...process.env, WUU_WORKFLOW_FIXTURE: fixture });
+command("go", ["test", "-race", "./internal/runtime", "-run", "^Test(Workflow|Streaming)DriverProcess$", "-count=1", "-v"], root, { ...process.env, WUU_WORKFLOW_FIXTURE: fixture });
 writeFileSync(join(run, "environment.json"), JSON.stringify({
   node: process.version,
   go: command("go", ["version"]).trim(),
   commit: command("git", ["rev-parse", "HEAD"]).trim(),
   sdk: JSON.parse(readFileSync(join(fixture, "node_modules/@wuu/plugin-sdk/package.json"), "utf8")).version,
 }, null, 2));
-console.log(`Verified independent SDK installation, external workflow, cancellation and resume. Log: ${log}`);
+console.log(`Verified independent SDK installation, external workflow, streaming tool receipts, cancellation and resume. Log: ${log}`);

@@ -69,6 +69,7 @@ type DriverTurnReplaceContextParams struct {
 type DriverTurnModelParams struct {
 	DriverTurnScope
 	Request DriverTurnReadResult `json:"request"`
+	BatchID string               `json:"batch_id,omitempty"`
 }
 
 // DriverModelFailure describes a completed model operation that failed. It does
@@ -96,9 +97,11 @@ type DriverModelRecovery struct {
 }
 
 type DriverTurnModelResult struct {
-	Messages []DriverMessageV1   `json:"messages"`
-	Usage    *ModelRequestUsage  `json:"usage,omitempty"`
-	Failure  *DriverModelFailure `json:"failure,omitempty"`
+	Messages        []DriverMessageV1   `json:"messages"`
+	Usage           *ModelRequestUsage  `json:"usage,omitempty"`
+	Failure         *DriverModelFailure `json:"failure,omitempty"`
+	ToolBatchID     string              `json:"tool_batch_id,omitempty"`
+	ToolWorkStarted bool                `json:"tool_work_started,omitempty"`
 }
 
 type DriverTurnToolsParams struct {

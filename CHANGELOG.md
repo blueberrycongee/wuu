@@ -12,6 +12,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Compose named profiles from ordered reusable bundles, profile patches and user overrides with composition version 2; version 1 inline configurations remain supported. Patches can select or exclude modules and replace or remove service bindings; diagnostics show applied layers and individual selection sources. Explicit empty compositions remain empty after saving.
 
+- Let independent drivers opt into overlapping safe tools with model streaming through `driver.turn` 3.1. Typed batch receipts join the original effects once; cancellation drains tools before provider release, and model replay stops after accepted work even without a durable ledger.
+
 - Give independent loop drivers explicit input admission, request-context and request-transform operations through `driver.turn` 3.0. Model submission preserves classified failures, partial messages and reported usage without implicitly consuming input or preparing the request. Update the SDK and service requirement together; the evidence workflow owns its preparation order and bounded context-overflow recovery.
 
 - Persist conversation driver bindings before execution, retain them across default changes and forks, and reject mismatched checkpoints or missing session owners before effects. Migrate older native conversations to their historical driver identity; retain unknown external bindings for explicit recovery.

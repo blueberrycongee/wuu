@@ -1445,6 +1445,9 @@ type streamStep struct {
 	tools                   ToolExecutor
 	toolLedger              *toolledger.Ledger
 	enableStreamingToolExec bool
+	toolRunContext          context.Context
+	ownToolRuntime          func(*TurnToolRuntime)
+	admitStreamToolCall     func(providers.ToolCall) error
 }
 
 // NewStreamStep returns the shared stream-first model step used by agent loops.
@@ -1485,10 +1488,18 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		toolRuntime   *TurnToolRuntime
 	)
 	newToolRuntime := func() *TurnToolRuntime {
-		return NewTurnToolRuntime(ToolRuntimeConfig{
+		runContext := ctx
+		if s.toolRunContext != nil {
+			runContext = ContextWithHistory(s.toolRunContext, req.Messages)
+		}
+		runtime := NewTurnToolRuntime(ToolRuntimeConfig{
 			Executor: s.tools, Ledger: s.toolLedger, OperationID: req.Operation.ID, StepIndex: req.StepIndex,
-			RunContext: ctx,
+			RunContext: runContext,
 		})
+		if s.ownToolRuntime != nil {
+			s.ownToolRuntime(runtime)
+		}
+		return runtime
 	}
 	currentToolRuntime := func() *TurnToolRuntime {
 		toolRuntimeMu.Lock()
@@ -1503,6 +1514,11 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		rt := currentToolRuntime()
 		if rt == nil || !s.enableStreamingToolExec {
 			return nil
+		}
+		if ev.Type == providers.EventToolUseEnd && ev.ToolCall != nil && s.admitStreamToolCall != nil {
+			if err := s.admitStreamToolCall(*ev.ToolCall); err != nil {
+				return err
+			}
 		}
 		return rt.ObserveStreamEvent(eventCtx, ev)
 	}

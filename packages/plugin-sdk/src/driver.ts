@@ -62,6 +62,12 @@ export interface DriverContextSegment {
 export interface DriverModelRound {
   /** The assistant response. Input admission is a separate operation. */
   readonly messages: readonly DriverMessage[];
+  /** Reserved batch from modelWithTools. Join a successful nonempty receipt
+   * with tools() before input, new effects, context replacement, or completion.
+   */
+  readonly tool_batch_id?: string;
+  /** Some tool work began, even if the model operation later failed. */
+  readonly tool_work_started?: boolean;
   readonly usage?: {
     readonly input_tokens: number;
     readonly output_tokens: number;
@@ -125,7 +131,8 @@ export function driverServiceDescriptor(profile: string, version: string): Servi
 
 /** Operations are bound to one active execution and its provider generation.
  * Model events stream through the session; the reply contains the completed
- * round. Model calls never execute tools or choose the next action. Calls are
+ * round. model() does not execute tools; modelWithTools() explicitly opts into
+ * overlapping safe tools. The driver chooses the next action. Calls are
  * serialized; cancellation or completion rejects further operations.
  */
 export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
@@ -134,6 +141,11 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
     return await host.call("host.service.call", {
       service: DRIVER_TURN_SERVICE, method, params: { ...scope, ...params },
     }) as T;
+  }
+  async function callModel(method: string, request: LogicalModelRequestV1, batch_id?: string): Promise<DriverModelRound> {
+    const result = await call<DriverModelRound & { readonly failure?: DriverModelFailure }>(method, { request, batch_id });
+    if (result.failure) throw new DriverModelError(result.failure, result);
+    return result;
   }
   return {
     /** Bound model defaults, available tools, and current active history. */
@@ -166,17 +178,23 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
      * operation, preserving its partial result. Transport and authorization
      * failures remain host errors.
      */
-    model: async (request: LogicalModelRequestV1): Promise<DriverModelRound> => {
-      const result = await call<DriverModelRound & { readonly failure?: DriverModelFailure }>("model", { request });
-      if (result.failure) throw new DriverModelError(result.failure, result);
-      return result;
-    },
+    model: (request: LogicalModelRequestV1) => callModel("model", request),
+    /** driver.turn 3.1+: reserve a unique batch before dispatch and allow safe
+     * tools to start while the model streams. Checkpoint intent first. Join a
+     * successful tool_batch_id through tools() using exactly the returned calls.
+     * Failed operations cancel and drain their tools; never reuse their batch
+     * or call IDs. Partial output and tool_work_started survive in the error.
+     */
+    modelWithTools: (request: LogicalModelRequestV1, batch_id: string) =>
+      callModel("model_with_tools", request, batch_id),
     /** ID is unique within this execution, including failed calls. Persist
      * intent before submitting effects. An interrupted batch needs explicit
      * reconciliation; cancellation cannot undo its external effects. Call IDs
      * must also be unique within the execution. Calls can be chosen directly;
      * missing declarations are recorded automatically. Pending calls can be
-     * submitted in subsets. The reply contains only tool result messages.
+     * submitted in subsets. A modelWithTools receipt instead joins its complete
+     * batch, preserving call order, identities, and arguments. Already started
+     * work is awaited once. The reply contains only tool result messages.
      */
     tools: (batch_id: string, messages: readonly DriverMessage[], calls: readonly ModelToolCallV1[]) =>
       call<{ readonly messages: readonly DriverMessage[] }>("tools", { batch_id, messages, calls }),

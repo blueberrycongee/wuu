@@ -8,7 +8,8 @@ import (
 )
 
 // TurnGateway exposes individual operations to a driver that owns its control
-// flow. Calling a model never executes tools or decides whether to continue.
+// flow. CallModel never executes tools. CallModelWithTools explicitly opts into
+// safe streaming tool execution; neither operation decides whether to continue.
 // Operations are serialized within a turn and reject calls after completion or
 // cancellation. Model and tool events use the turn's existing event stream.
 type TurnGateway interface {
@@ -19,6 +20,7 @@ type TurnGateway interface {
 	ReadContext(context.Context) (TurnContext, error)
 	ReplaceContext(context.Context, ContextReplacement) (TurnContext, error)
 	CallModel(context.Context, providers.ChatRequest) (ModelRound, error)
+	CallModelWithTools(context.Context, providers.ChatRequest, string) (ModelRound, error)
 	CallTools(context.Context, ToolBatch) ([]providers.ChatMessage, error)
 	CompleteTurn(context.Context, TurnResult) (ModelLoopReceipt, error)
 }
@@ -57,6 +59,15 @@ type InputAdmission struct {
 type ModelRound struct {
 	Messages []providers.ChatMessage
 	Usage    *providers.TokenUsage
+	// CallModelWithTools reserves a unique batch before dispatch and permits
+	// safe prefix tools to start during streaming. On success, a nonempty ID
+	// must be joined through CallTools with exactly the returned calls before
+	// admitting input, submitting other effects, replacing context, or completing.
+	// A failed model drains its work; its batch cannot be reused.
+	// ToolWorkStarted also survives
+	// model failure and is evidence against blind replay.
+	ToolBatchID     string
+	ToolWorkStarted bool
 }
 
 // ModelRoundError retains the classified failure of a model operation. The
@@ -75,6 +86,8 @@ func (e *ModelRoundError) Error() string { return e.Failure.Message }
 // must also be unique within the execution. Calls may be chosen directly by the
 // driver; a missing assistant declaration is recorded before execution. Subsets
 // of the current pending declaration can be submitted in separate batches.
+// An ID returned by CallModelWithTools instead joins that entire model batch;
+// its call identities and arguments must match. It never executes them twice.
 type ToolBatch struct {
 	ID       string
 	Messages []providers.ChatMessage

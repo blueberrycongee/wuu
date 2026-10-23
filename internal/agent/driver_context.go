@@ -30,6 +30,9 @@ func (g *streamTurnGateway) ReplaceContext(ctx context.Context, replacement loop
 	if err := g.prepare(ctx); err != nil {
 		return loopdriver.TurnContext{}, err
 	}
+	if len(g.streamedBatches) != 0 {
+		return loopdriver.TurnContext{}, errors.New("join the pending streaming tool batch before replacing context")
+	}
 	if g.runner.ArchiveHistory == nil || g.runner.CommitFreshContext == nil {
 		return loopdriver.TurnContext{}, errors.New("durable context replacement is unavailable")
 	}

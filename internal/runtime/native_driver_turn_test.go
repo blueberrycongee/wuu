@@ -22,6 +22,12 @@ import (
 // as process drivers. Exercise metadata preservation, canceled requests, context
 // commits, explicit tool effects, duplicate rejection, and callback cleanup.
 func TestNativeDriverIndependentTurn(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprintf("streaming-%t", streaming), func(t *testing.T) { testNativeDriverIndependentTurn(t, streaming) })
+	}
+}
+
+func testNativeDriverIndependentTurn(t *testing.T, streaming bool) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "evidence.txt")
@@ -118,11 +124,19 @@ func TestNativeDriverIndependentTurn(t *testing.T) {
 		if err != nil {
 			return loopdriver.ModelLoopReceipt{}, err
 		}
-		planned, err := turn.CallModel(ctx, request)
+		var planned loopdriver.ModelRound
+		if streaming {
+			planned, err = turn.CallModelWithTools(ctx, request, "measure")
+			if err == nil && planned.ToolBatchID != "measure" {
+				return loopdriver.ModelLoopReceipt{}, fmt.Errorf("streaming receipt lost its batch: %+v", planned)
+			}
+		} else {
+			planned, err = turn.CallModel(ctx, request)
+		}
 		if err != nil {
 			return loopdriver.ModelLoopReceipt{}, err
 		}
-		if tools.calls != 0 || len(planned.Messages) != 1 || len(planned.Messages[0].ToolCalls) != 1 {
+		if (!streaming && tools.calls != 0) || len(planned.Messages) != 1 || len(planned.Messages[0].ToolCalls) != 1 {
 			return loopdriver.ModelLoopReceipt{}, errors.New("model callback executed tools or lost its declaration")
 		}
 		if model.requests[0].Messages[0].ClientID != "native-input" {

@@ -82,13 +82,21 @@ func turnContextFromWire(current pluginprotocol.DriverTurnContextResult) TurnCon
 }
 
 func (g serviceGateway) CallModel(ctx context.Context, request providers.ChatRequest) (ModelRound, error) {
+	return g.callModel(ctx, "model", request, "")
+}
+
+func (g serviceGateway) CallModelWithTools(ctx context.Context, request providers.ChatRequest, batchID string) (ModelRound, error) {
+	return g.callModel(ctx, "model_with_tools", request, batchID)
+}
+
+func (g serviceGateway) callModel(ctx context.Context, method string, request providers.ChatRequest, batchID string) (ModelRound, error) {
 	var result pluginprotocol.DriverTurnModelResult
-	if err := g.callTurn(ctx, "model", pluginprotocol.DriverTurnModelParams{
-		DriverTurnScope: pluginprotocol.DriverTurnScope{ExecutionID: g.executionID}, Request: modelwire.DriverRequestToWire(request),
+	if err := g.callTurn(ctx, method, pluginprotocol.DriverTurnModelParams{
+		DriverTurnScope: pluginprotocol.DriverTurnScope{ExecutionID: g.executionID}, Request: modelwire.DriverRequestToWire(request), BatchID: batchID,
 	}, &result); err != nil {
 		return ModelRound{}, err
 	}
-	round := ModelRound{Messages: modelwire.DriverMessagesFromWire(result.Messages)}
+	round := ModelRound{Messages: modelwire.DriverMessagesFromWire(result.Messages), ToolBatchID: result.ToolBatchID, ToolWorkStarted: result.ToolWorkStarted}
 	if result.Usage != nil {
 		usage := modelwire.TokenUsageFromWire(*result.Usage)
 		round.Usage = &usage

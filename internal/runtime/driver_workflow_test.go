@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/composition"
@@ -29,6 +30,60 @@ func TestWorkflowDriverProcess(t *testing.T) {
 	for _, profile := range []string{"workflow", "default"} {
 		t.Run(profile, func(t *testing.T) { testWorkflowDriverProcess(t, profile) })
 	}
+}
+
+func TestStreamingDriverProcess(t *testing.T) {
+	fixture := os.Getenv("WUU_WORKFLOW_FIXTURE")
+	if fixture == "" {
+		t.Skip("run node scripts/workflow-driver-e2e.mjs")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	root, dir := t.TempDir(), t.TempDir()
+	path := filepath.Join(root, "evidence.txt")
+	if err := os.WriteFile(path, []byte("42"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	provider := testRuntimePlugin("streaming-evidence")
+	provider.Root, provider.Runtime.Command = fixture, node
+	provider.Runtime.Args = []string{"streaming.ts"}
+	modules := []string{kernelHostModule, sessionExecutionConsumer, provider.ID}
+	host, kernel, err := buildPluginHost([]pluginpkg.Plugin{provider}, root, "streaming", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, &composition.Config{Version: composition.Version, Modules: &modules}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close(context.Background())
+	if err := activatePluginHost(ctx, host); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Create(dir, "streaming-session"); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := toolledger.New(dir, "streaming-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	tools := &workflowEvidenceTools{path: path, started: started}
+	model := &workflowEvidenceModel{waitForTool: started}
+	runner := &agent.StreamRunner{Client: model, Model: "controlled-evidence", Tools: tools, ToolLedger: ledger,
+		LoopDriver:            resolveLoopDriver("default", host, kernel.driverGateways),
+		DriverCheckpointStore: sessionDriverCheckpointStore{sessDir: dir, sessionID: "streaming-session"}}
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "streaming-session", ExecutionID: "streaming-first"})
+	result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "Read evidence"}}, nil)
+	if err != nil || result.Content != "42" || tools.calls != 1 || len(model.requests) != 1 || len(result.NewMessages) != 2 || result.NewMessages[1].ToolInvocationID == "" {
+		t.Fatalf("external streaming failed: result=%+v effects=%d requests=%d err=%v", result, tools.calls, len(model.requests), err)
+	}
+	for _, status := range host.Statuses() {
+		if status.ID == loopdriver.DefaultDriverID {
+			t.Fatal("host default driver remained loaded")
+		}
+	}
+	t.Log("independent SDK driver: real file read began before model completion; joined one durable tool receipt; default loop absent")
 }
 
 func testWorkflowDriverProcess(t *testing.T, profile string) {
@@ -300,12 +355,16 @@ func (s workflowCheckpointBarrier) Save(ctx context.Context, checkpoint loopdriv
 }
 
 type workflowEvidenceTools struct {
-	path  string
-	calls int
+	path    string
+	calls   int
+	started chan struct{}
 }
 
 func (t *workflowEvidenceTools) Definitions() []providers.ToolDefinition {
 	return []providers.ToolDefinition{{Name: "read_evidence", InputSchema: map[string]any{"type": "object"}}}
+}
+func (*workflowEvidenceTools) ToolMetadata(providers.ToolCall) (agent.ToolMetadata, bool) {
+	return agent.ToolMetadata{ReadOnly: true, ConcurrencySafe: true}, true
 }
 func (t *workflowEvidenceTools) Execute(ctx context.Context, call providers.ToolCall) (string, error) {
 	if call.Name != "read_evidence" {
@@ -315,6 +374,9 @@ func (t *workflowEvidenceTools) Execute(ctx context.Context, call providers.Tool
 		return "", err
 	}
 	t.calls++
+	if t.started != nil {
+		close(t.started)
+	}
 	data, err := os.ReadFile(t.path)
 	return string(data), err
 }
@@ -325,6 +387,7 @@ type workflowEvidenceModel struct {
 	cancelSynthesis context.CancelFunc
 	synthesisOnly   bool
 	overflowFirst   bool
+	waitForTool     <-chan struct{}
 }
 
 func (m *workflowEvidenceModel) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
@@ -349,6 +412,18 @@ func (m *workflowEvidenceModel) StreamChat(ctx context.Context, req providers.Ch
 		call := providers.ToolCall{ID: "evidence-call", Name: "read_evidence", Arguments: "{}"}
 		stream <- providers.StreamEvent{Type: providers.EventToolUseStart, ToolCall: &call}
 		stream <- providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &call}
+		if m.waitForTool != nil {
+			go func() {
+				defer close(stream)
+				select {
+				case <-m.waitForTool:
+					stream <- providers.StreamEvent{Type: providers.EventDone, FinishReason: providers.FinishReasonToolCalls}
+				case <-ctx.Done():
+					stream <- providers.StreamEvent{Type: providers.EventError, Error: ctx.Err()}
+				}
+			}()
+			return stream, nil
+		}
 		stream <- providers.StreamEvent{Type: providers.EventDone, FinishReason: providers.FinishReasonToolCalls}
 	} else {
 		if len(req.Tools) != 0 {

@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -64,6 +66,190 @@ func TestDriverTurnOperationsSeparateModelAndToolExecution(t *testing.T) {
 	if _, err := gateway.CallModel(context.Background(), request); err == nil || len(client.requests) != 1 {
 		t.Fatalf("completed turn accepted another model call: calls=%d err=%v", len(client.requests), err)
 	}
+}
+
+// A driver explicitly opts into overlap before the model starts. Its receipt
+// joins the same effects exactly once, and a provider stays alive until even a
+// cancellation-resistant tool has physically left its execution function.
+func TestDriverTurnStreamingTools(t *testing.T) {
+	for _, abandon := range []bool{false, true} {
+		t.Run(map[bool]string{false: "join", true: "close"}[abandon], func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			tools := &driverStreamingTools{started: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{})}
+			client := &driverStreamingModel{started: tools.started}
+			gateway := newStreamTurnGateway(ctx, &StreamRunner{Client: client, Model: "streamed", Tools: tools}, loopdriver.PersistedInput{Messages: []providers.ChatMessage{{Role: "user", Content: "Read evidence"}}}, nil)
+			defer func() { tools.releaseOnce(); gateway.close() }()
+			request, err := gateway.ReadTurn(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			round, err := gateway.CallModelWithTools(ctx, request, "measure")
+			if err != nil || round.ToolBatchID != "measure" || !round.ToolWorkStarted || tools.calls.Load() != 1 {
+				t.Fatalf("streamed effect lost its receipt: round=%+v calls=%d err=%v", round, tools.calls.Load(), err)
+			}
+			select {
+			case <-tools.canceled:
+				t.Fatal("returning the model response canceled its tool")
+			default:
+			}
+			if _, err := gateway.CallModel(ctx, request); err == nil {
+				t.Fatal("another model operation overtook pending streamed tools")
+			}
+			if _, err := gateway.CompleteTurn(ctx, loopdriver.TurnResult{}); err == nil {
+				t.Fatal("completion abandoned streamed tools")
+			}
+			if _, err := gateway.AdmitInput(ctx); err == nil {
+				t.Fatal("input interrupted the pending assistant/tool block")
+			}
+			if _, err := gateway.CallTools(ctx, loopdriver.ToolBatch{ID: "unrelated", Calls: []providers.ToolCall{{ID: "another-call", Name: "read_evidence", Arguments: "{}"}}}); err == nil {
+				t.Fatal("another tool batch interrupted pending streamed effects")
+			}
+			if abandon {
+				closed := make(chan struct{})
+				go func() { gateway.close(); close(closed) }()
+				select {
+				case <-tools.canceled:
+				case <-ctx.Done():
+					t.Fatal("close did not cancel the streamed tool")
+				}
+				if tools.unfrozen.Load() {
+					t.Fatal("tool surface was released before its consumer stopped")
+				}
+				select {
+				case <-closed:
+					t.Fatal("close returned before physical cleanup")
+				default:
+				}
+				tools.releaseOnce()
+				select {
+				case <-closed:
+				case <-ctx.Done():
+					t.Fatal("close did not finish after tool cleanup")
+				}
+				if !tools.unfrozen.Load() {
+					t.Fatal("tool surface was never released")
+				}
+				return
+			}
+			calls := round.Messages[0].ToolCalls
+			changed := append([]providers.ToolCall(nil), calls...)
+			changed[0].Arguments = `{"changed":true}`
+			if _, err := gateway.CallTools(ctx, loopdriver.ToolBatch{ID: round.ToolBatchID, Calls: changed}); err == nil {
+				t.Fatal("stream receipt admitted changed arguments")
+			}
+			if _, err := gateway.CallTools(ctx, loopdriver.ToolBatch{ID: "other", Calls: calls}); err == nil {
+				t.Fatal("another batch reused a streamed call ID")
+			}
+			tools.releaseOnce()
+			messages, err := gateway.CallTools(ctx, loopdriver.ToolBatch{ID: round.ToolBatchID, Calls: calls})
+			if err != nil || len(messages) != 1 || messages[0].Content != "42" || tools.calls.Load() != 1 {
+				t.Fatalf("join lost or repeated effects: messages=%+v calls=%d err=%v", messages, tools.calls.Load(), err)
+			}
+			if _, err := gateway.CallTools(ctx, loopdriver.ToolBatch{ID: round.ToolBatchID, Calls: calls}); err == nil {
+				t.Fatal("joined receipt was reused")
+			}
+			if _, err := gateway.CallModelWithTools(ctx, request, "measure"); err == nil {
+				t.Fatal("model reused an accepted batch ID")
+			}
+			if _, err := gateway.CompleteTurn(ctx, loopdriver.TurnResult{Content: "42"}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+type driverStreamingTools struct {
+	started, canceled, release chan struct{}
+	calls                      atomic.Int32
+	unfrozen                   atomic.Bool
+	released                   atomic.Bool
+}
+
+func (t *driverStreamingTools) releaseOnce() {
+	if t.released.CompareAndSwap(false, true) {
+		close(t.release)
+	}
+}
+func (*driverStreamingTools) Definitions() []providers.ToolDefinition {
+	return []providers.ToolDefinition{{Name: "read_evidence"}}
+}
+func (*driverStreamingTools) ToolMetadata(providers.ToolCall) (ToolMetadata, bool) {
+	return ToolMetadata{ReadOnly: true, ConcurrencySafe: true}, true
+}
+func (*driverStreamingTools) FreezeToolSurface()     {}
+func (t *driverStreamingTools) UnfreezeToolSurface() { t.unfrozen.Store(true) }
+func (t *driverStreamingTools) Execute(ctx context.Context, _ providers.ToolCall) (string, error) {
+	t.calls.Add(1)
+	close(t.started)
+	select {
+	case <-ctx.Done():
+		close(t.canceled)
+		<-t.release
+		return "", ctx.Err()
+	case <-t.release:
+		return "42", nil
+	}
+}
+
+func TestDriverTurnStreamingFailureDoesNotReplay(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tools := &driverStreamingTools{started: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{})}
+	tools.releaseOnce()
+	client := &driverStreamingModel{started: tools.started, fail: true}
+	gateway := newStreamTurnGateway(ctx, &StreamRunner{Client: client, Model: "streamed", Tools: tools}, loopdriver.PersistedInput{Messages: []providers.ChatMessage{{Role: "user", Content: "Read evidence"}}}, nil)
+	defer gateway.close()
+	request, err := gateway.ReadTurn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	round, err := gateway.CallModelWithTools(ctx, request, "measure")
+	if err == nil || !round.ToolWorkStarted || round.ToolBatchID != "measure" || client.calls.Load() != 1 || tools.calls.Load() != 1 {
+		t.Fatalf("failed stream lost effects or replayed: round=%+v models=%d tools=%d err=%v", round, client.calls.Load(), tools.calls.Load(), err)
+	}
+	if len(round.Messages) != 1 || len(round.Messages[0].ToolCalls) != 1 {
+		t.Fatalf("failure concealed partial output: %+v", round)
+	}
+	current, err := gateway.ReadContext(ctx)
+	if err != nil || len(current.Messages) != 2 || current.Messages[1].Content != "visible partial" || len(current.Messages[1].ToolCalls) != 0 || current.Messages[1].ProviderItemID != "" {
+		t.Fatalf("incomplete tool declaration became replayable history: context=%+v err=%v", current, err)
+	}
+	if _, err := gateway.CallTools(ctx, loopdriver.ToolBatch{ID: "retry", Calls: round.Messages[0].ToolCalls}); err == nil {
+		t.Fatal("failed streamed effect was executed again")
+	}
+}
+
+type driverStreamingModel struct {
+	started <-chan struct{}
+	fail    bool
+	calls   atomic.Int32
+}
+
+func (*driverStreamingModel) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
+	return providers.ChatResponse{}, errors.New("stream only")
+}
+func (m *driverStreamingModel) StreamChat(ctx context.Context, _ providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	m.calls.Add(1)
+	stream := make(chan providers.StreamEvent, 4)
+	call := providers.ToolCall{ID: "streamed-read", Name: "read_evidence", Arguments: "{}"}
+	stream <- providers.StreamEvent{Type: providers.EventToolUseStart, ToolCall: &call}
+	stream <- providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &call}
+	go func() {
+		defer close(stream)
+		select {
+		case <-m.started:
+			if m.fail {
+				stream <- providers.StreamEvent{Type: providers.EventContentDelta, Content: "visible partial", ProviderItemID: "incomplete"}
+				stream <- providers.StreamEvent{Type: providers.EventError, Error: providers.NewIncompleteStreamError("temporary drop after effect")}
+			} else {
+				stream <- providers.StreamEvent{Type: providers.EventDone, FinishReason: providers.FinishReasonToolCalls}
+			}
+		case <-ctx.Done():
+			stream <- providers.StreamEvent{Type: providers.EventError, Error: ctx.Err()}
+		}
+	}()
+	return stream, nil
 }
 
 func TestDriverTurnCancellationAndClosureRejectEffects(t *testing.T) {
