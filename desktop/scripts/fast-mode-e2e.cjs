@@ -246,7 +246,11 @@ async function run() {
   }
   await turn('fast-mode-fast', 'priority');
   async function openPanel(fastSupported = true) {
-    if (!await evaluate(main, () => Boolean(document.querySelector('.runtime-panel')))) await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+    if (!await evaluate(main, () => Boolean(document.querySelector('.runtime-panel')))) {
+      // Workspace switching keeps the trigger disabled until its runtime is ready.
+      await waitFor(main, () => document.querySelector('.codex-runtime-trigger:not(:disabled)'));
+      await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+    }
     await waitFor(main, () => document.querySelector('.runtime-panel.is-summary .runtime-panel-model'));
     if (fastSupported) await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]:not(:disabled)'));
     // Opening schedules model autofocus; finish that frame before choosing a
@@ -398,8 +402,7 @@ async function run() {
   main.setContentSize(1380, 860);
   await waitFor(main, () => document.querySelector('.project-row-new-thread'));
   await evaluate(main, () => document.querySelector('.project-row-new-thread').click());
-  await evaluate(main, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+  await openPanel(false);
   await waitFor(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)'));
   for (const engine of ['Wuu', 'Codex']) {
     await evaluate(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)').click());
