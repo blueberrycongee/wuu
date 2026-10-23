@@ -3202,6 +3202,15 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   transition-delay: 0ms;
 }
 
+/* Submission placement transforms this wrapper. Keep one shared layer after
+ * landing so Chromium does not re-rasterize the text and bubble edges as the
+ * animation releases it. Per-message layers would grow with the history. */
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-appearance-motion="reduce"]) .scroll-region:not(.empty-scroll-region):not(.split-scroll-region):not(.workspace-scroll-region) > .scroll-region-content {
+    will-change: transform;
+  }
+}
+
 @media (pointer: coarse) {
   :root[data-host-kind="web"] .scroll-region {
     overscroll-behavior: contain;
