@@ -1171,9 +1171,18 @@ async function runWebsiteAcceptance(h, fixture) {
       // external activity cannot contaminate unrelated local fixture journeys.
       await click(plugins, 'notion-diagnostic-return-to-inventory');
       await click(pick('.sidebar-section-item', 'Plugins'), 'notion-diagnostic-plugin-list');
+      if (await evaluate(() => Boolean(document.querySelector('[data-testid="plugin-page-back"]')))) {
+        await click('[data-testid="plugin-page-back"]', 'notion-diagnostic-back-to-list');
+      }
+      await waitFor(selector => document.querySelector(selector), pluginRow);
       if (await evaluate(selector => document.querySelector(`${selector} [role="switch"]`)?.getAttribute('aria-checked') === 'true', pluginRow)) {
         await click(`${pluginRow} [role="switch"]`, 'disable-diagnostic-notion');
       }
+      await waitFor(selector => {
+        const row = document.querySelector(selector);
+        return row && !row.hasAttribute('data-on');
+      }, pluginRow, 'optional Notion is inactive');
+      await waitFor(() => !document.querySelector('.sidebar-ribbon-main button[aria-label="Notion"]'), undefined, 'optional Notion ribbon is removed');
       await goConversations();
     }
   });
