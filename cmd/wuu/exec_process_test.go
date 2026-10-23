@@ -98,7 +98,7 @@ text(await tools.bash({command:"mkdir shell; printf created > shell/new.txt"}));
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			t.Cleanup(unblock)
 			configPath := filepath.Join(root, "config.json")
-			config := fmt.Sprintf(`{"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"unconfined"},"skills":{"enabled":false}}`, server.URL)
+			config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"unconfined"},"skills":{"enabled":false}}`, server.URL)
 			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -180,7 +180,7 @@ func execProcess(t *testing.T, root string, args ...string) (*exec.Cmd, *bytes.B
 	cmd.Dir = root
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + root,
-		"WUU_HOME=" + filepath.Join(root, "state"), "WUU_SAFE_MODE=1", "WUU_EXEC_PROCESS_TEST=1",
+		"WUU_HOME=" + filepath.Join(root, "state"), "WUU_EXEC_PROCESS_TEST=1",
 	}
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
@@ -245,7 +245,7 @@ func stalledExecProvider(t *testing.T, root string, delta string) (string, <-cha
 	}))
 	t.Cleanup(func() { close(release); server.Close() })
 	configPath := filepath.Join(root, "config.json")
-	config := fmt.Sprintf(`{"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"read_only"}}`, server.URL)
+	config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"read_only"}}`, server.URL)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}

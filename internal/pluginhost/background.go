@@ -229,7 +229,7 @@ func (r *ServiceRegistry) backgroundTarget(caller, service, method string) (serv
 	var target serviceProvider
 	var targetKey serviceKey
 	for key, provider := range r.providers {
-		if key.name != service || provider.kernel || provider.pluginID != caller {
+		if key.name != service || provider.pluginID != caller {
 			continue
 		}
 		if target.invoker != nil {

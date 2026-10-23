@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -89,6 +90,8 @@ func TestSubscribeThreadRuntimeKeepsForeignPinWorkerProvider(t *testing.T) {
 
 	dir := t.TempDir()
 	control, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       providers.AdaptStreamClient(&fakeClient{}),
 		ProviderName: "alt-provider", // the conversation's own worker provider, set at construction
 		DefaultModel: "alt-worker-model",

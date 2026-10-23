@@ -119,7 +119,6 @@ func (k *processServiceInvoker) Status() pluginhost.Status { return k.parent.Sta
 func (k *processServiceInvoker) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	k.parent.mu.RLock()
 	s := k.parent.services[params.Caller]
-	executions := k.parent.executions
 	k.parent.mu.RUnlock()
 	if s == nil {
 		return nil, serviceError("service_unavailable", "process owner is unavailable")
@@ -142,10 +141,7 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 		if input.Key == "" || len(input.Key) > 128 || input.Command == "" || len(input.Command) > 64*1024 || input.TimeoutMS < 0 || input.TimeoutMS > int64((1<<63-1)/time.Millisecond) {
 			return nil, serviceError("invalid_params", "start requires a key, a command within 64 KiB and a non-negative timeout_ms")
 		}
-		if executions == nil {
-			return nil, serviceError("service_unavailable", "tool execution is unavailable")
-		}
-		scope, scopeErr := executions.ResolveToolExecution(params.Caller, params.ExecutionID)
+		scope, scopeErr := params.CallerExecution(true)
 		if scopeErr != nil {
 			return nil, scopeErr
 		}

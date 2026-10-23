@@ -752,6 +752,26 @@ func TestLoadFrom_StripsProjectModelAliases(t *testing.T) {
 	}
 }
 
+func TestLoadFromPreservesUserCompositionBindings(t *testing.T) {
+	home := isolatedHome(t)
+	workdir := t.TempDir()
+	base := strings.Replace(layerBaseConfigJSON, `"default_provider": "main",`, `"default_provider": "main", "composition": {"version":1,"services":[{"service":"permission.policy","major":1,"provider":"trusted"}]},`, 1)
+	writeBaseConfig(t, home, base)
+	for _, name := range []string{sharedSettingsFile, localSettingsFile} {
+		writeProjectSettings(t, workdir, name, `{"Composition":{"version":1,"services":[{"service":"permission.policy","major":1,"provider":"project-choice"}]}}`)
+	}
+	cfg, _, err := LoadFrom(workdir, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Composition == nil || len(cfg.Composition.Services) != 1 || cfg.Composition.Services[0].Provider != "trusted" {
+		t.Fatalf("project replaced user service selection: %+v", cfg.Composition)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeBaseConfigPath(t *testing.T, workdir, contents string) string {
 	t.Helper()
 	path := filepath.Join(workdir, localPrimaryConfig)

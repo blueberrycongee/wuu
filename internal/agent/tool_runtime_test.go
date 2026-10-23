@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
@@ -720,7 +721,7 @@ func TestStreamRunnerProvidesHistoryToStreamStartedTools(t *testing.T) {
 		}},
 		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "done"}, {Type: providers.EventDone, FinishReason: providers.FinishReasonStop}}},
 	}}
-	runner := StreamRunner{Client: client, Tools: historyAwareRuntimeTools{streaming: true}, Model: "test", MaxSteps: 3, StreamingToolExecution: true}
+	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Tools: historyAwareRuntimeTools{streaming: true}, Model: "test", MaxSteps: 3, StreamingToolExecution: true}
 	result, err := runner.RunWithCallback(context.Background(), []providers.ChatMessage{{Role: "user", Content: "resume"}}, nil)
 	if err != nil {
 		t.Fatal(err)

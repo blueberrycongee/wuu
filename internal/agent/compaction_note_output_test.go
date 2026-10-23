@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -44,7 +45,7 @@ func TestNoteOutputRecoveryInstallsCompleteCheckpoint(t *testing.T) {
 	} {
 		t.Run(string(first.finish)+"/"+first.body[:6], func(t *testing.T) {
 			client := &noteOutputClient{outputs: []noteOutput{first, {"Migration applied. Verify tests; do not reapply. [History Seq 41]", providers.FinishReasonStop}}}
-			runner := &StreamRunner{Client: client, ProviderName: "test", Model: "test"}
+			runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, ProviderName: "test", Model: "test"}
 			history := []providers.ChatMessage{{Role: "user", Content: "finish migration", Seq: 1}, {Role: "assistant", Content: "Migration applied", Seq: 41}}
 			store := &cancellationNoteStore{}
 			ctx := context.WithValue(context.Background(), compactionNoteBudgetKey{}, 39936)
@@ -76,7 +77,7 @@ func TestNoteOutputExhaustionPreservesCheckpointAndContextRecovery(t *testing.T)
 	history = append(history, providers.ChatMessage{Role: "assistant", Content: "latest verified result", Seq: 41})
 	store := &cancellationNoteStore{note: previous}
 	client := &noteOutputClient{outputs: []noteOutput{{strings.Repeat("未完", 2000), providers.FinishReasonStop}}}
-	runner := &StreamRunner{Client: client, ProviderName: "test", Model: "test"}
+	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, ProviderName: "test", Model: "test"}
 	ctx := context.WithValue(context.Background(), compactionNoteBudgetKey{}, 39936)
 	note, usage, err := generateCompactionNote(ctx, cancellationNoteProvider{}, store, runner.CompactionNoteFork(), "test", history, true)
 	if err == nil || note.Markdown != "" || store.note != previous || store.storeCalls != 0 || len(client.requests) != 3 {
@@ -100,7 +101,7 @@ func TestNoteOutputExhaustionPreservesCheckpointAndContextRecovery(t *testing.T)
 
 func TestNoteOutputExactUTF8LimitAndCancellation(t *testing.T) {
 	client := &noteOutputClient{outputs: []noteOutput{{strings.Repeat("中", 16), providers.FinishReasonStop}}}
-	runner := &StreamRunner{Client: client, ProviderName: "test", Model: "test"}
+	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, ProviderName: "test", Model: "test"}
 	result, err := runner.CompactionNoteFork()(context.Background(), nil, CompactionNotePlan{Prompt: "write brief", MaxBytes: 48})
 	if err != nil || len(result.Markdown) != 48 || len(client.requests) != 1 {
 		t.Fatalf("exact UTF-8 bound rejected: %+v %v", result, err)

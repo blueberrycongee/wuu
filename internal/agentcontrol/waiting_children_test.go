@@ -9,6 +9,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
@@ -115,6 +116,8 @@ func TestCompletedParentParksUntilChildDelivers(t *testing.T) {
 				threadDir = filepath.Join(dir, ".wuu-state", "sessions", "sess-waiting", "threads")
 			}
 			c, err := New(Config{
+				AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 				Client:        client,
 				DefaultModel:  "fake-model",
 				ParentRepo:    dir,

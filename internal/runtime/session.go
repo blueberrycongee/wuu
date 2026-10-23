@@ -90,9 +90,9 @@ type Options struct {
 	// NonInteractive disables human questions and interactive engine approvals
 	// for this runtime, including plugin generations loaded later.
 	NonInteractive bool
-	// DriverProfile selects the loop driver for new turns: empty keeps the
-	// in-process default; a profile name binds the plugin that provides the
-	// versioned "driver.<profile>" service. Unknown profiles fail closed.
+	// DriverProfile selects the versioned driver.<profile> service. Empty
+	// selects driver.default through the same composition binding. Missing
+	// providers fail closed, including when the default module is removed.
 	DriverProfile string
 	// SafeMode discovers plugin manifests for management but activates no
 	// runtime, tool, skill, hook, or desktop contribution from a plugin.
@@ -511,7 +511,10 @@ func NewSession(opts Options) (*Session, error) {
 	if !opts.NonInteractive {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
-	pluginHost, pluginKernel := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions)
+	pluginHost, pluginKernel, err := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions, runtimeComposition(cfg.Composition, safeMode), opts.DriverProfile)
+	if err != nil {
+		return nil, fmt.Errorf("prepare plugin composition: %w", err)
+	}
 	activePlugins = availablePluginPackages(activePlugins, pluginHost)
 	systemPrompts, compactions, capabilityErr := buildPluginAgentCapabilities(context.Background(), pluginHost, resolvedName, providerCfg.Model, rootDir)
 	if capabilityErr != nil {
@@ -554,11 +557,7 @@ func NewSession(opts Options) (*Session, error) {
 		kit.SetProcessManager(processMgr)
 		kit.SetSkills(discoveredSkills)
 		ConfigureToolkitPermissions(kit, permissions)
-		var securityRegistry *pluginhost.ServiceRegistry
-		if pluginKernel != nil {
-			securityRegistry = pluginKernel.registry
-		}
-		configureToolkitSecurityExtensions(kit, securityRegistry)
+		configureToolkitSecurityExtensions(kit, pluginHost)
 		kit.ConfigureSurfaceForProviderModel(ruleProviderName, toolModeModel, true)
 		kit.SetBrowserEnabled(browserEnabledFromEnv())
 		kit.SetToolSearchEnabled(toolSearchEnabled)
@@ -703,6 +702,9 @@ func NewSession(opts Options) (*Session, error) {
 				wkit.SetAgentIdentity(meta.ID, meta.Path)
 				applyWorkerToolFilter(wkit, wt)
 				return wkit, nil
+			},
+			AcquireLoopDriver: func(ctx context.Context, binding *loopdriver.Binding) (loopdriver.Driver, loopdriver.Binding, func(), error) {
+				return runtimeSession.workerDriverResolver(nil)(ctx, binding)
 			},
 			WorkerWakeAuthority: workerWakeAuthority(toolkit),
 			OnSubagentStart: func(ctx context.Context, agentID string) error {
@@ -912,12 +914,9 @@ func NewSession(opts Options) (*Session, error) {
 		pluginKernel.bindModelSession(runtimeSession, pluginHost)
 		runtimeSession.pluginGeneration.driverGateways = pluginKernel.driverGateways
 	}
-	// Bind the session-selected loop driver: an installed profile resolves to
-	// a remote driver behind the registry; a missing one fails closed.
-	if driver := resolveLoopDriver(opts.DriverProfile, pluginHost, runtimeSession.currentDriverGatewayTable); driver != nil {
-		streamRunner.LoopDriver = driver
-		runtimeSession.DriverProfile = strings.TrimSpace(opts.DriverProfile)
-	}
+	// The default and external drivers share the selected service binding.
+	streamRunner.LoopDriver = resolveLoopDriver(opts.DriverProfile, pluginHost, runtimeSession.currentDriverGatewayTable())
+	runtimeSession.DriverProfile = strings.TrimSpace(opts.DriverProfile)
 	if toolkit != nil {
 		runtimeSession.pluginGeneration.mcp = toolkit.MCPManager()
 	}
@@ -1496,6 +1495,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					applyWorkerToolFilter(workerKit, wt)
 					return workerKit, nil
 				},
+				AcquireLoopDriver:   s.workerDriverResolver(generation),
 				WorkerWakeAuthority: workerWakeAuthority(kit),
 				OnSubagentStart: func(ctx context.Context, agentID string) error {
 					dispatcher := s.HookDispatcher
@@ -1581,10 +1581,8 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		if runner.CompactionRegistry == nil {
 			runner.CompactionRegistry = generation.compactions
 		}
-		if profile := strings.TrimSpace(s.DriverProfile); profile != "" {
-			runner.LoopDriver = resolveLoopDriver(profile, generation.host, func() *driverGatewayTable {
-				return generation.driverGateways
-			})
+		if generation.driverGateways != nil {
+			runner.LoopDriver = resolveLoopDriver(s.DriverProfile, generation.host, generation.driverGateways)
 		}
 	}
 	runner.BeforeModelStep = pluginPreStepInjector(pluginHost, s.ProviderName, s.Model, id, threadRoot)
@@ -2323,7 +2321,11 @@ func activatedPlugins(cfg config.Config, discovered []pluginpkg.Plugin) []plugin
 // ResolvePluginActivationPlan applies package relationships after trust,
 // explicit disablement, and host compatibility have selected candidates.
 func ResolvePluginActivationPlan(cfg config.Config, discovered []pluginpkg.Plugin) (pluginpkg.ActivationPlan, error) {
-	return pluginpkg.BuildActivationPlan(activatedPlugins(cfg, discovered))
+	selected, _, err := selectCompositionPlugins(cfg.Composition, activatedPlugins(cfg, discovered))
+	if err != nil {
+		return pluginpkg.ActivationPlan{}, err
+	}
+	return pluginpkg.BuildActivationPlan(selected)
 }
 
 func permissionSetContains(granted, required []string) bool {

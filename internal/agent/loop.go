@@ -447,15 +447,12 @@ func RunToolLoop(
 					// The checkpoint is atomic: none of these human steers reached
 					// history or the provider. Leave them recoverable, and keep
 					// the valid assistant/tool suffix without inventing sent input.
-					undispatched := func(message providers.ChatMessage) bool {
-						return message.Seq == 0 && message.Role == "user" && message.Steered && message.ClientID != "" && !message.Hidden && !message.ReadOnly && (message.Origin == "" || message.Origin == "user")
-					}
 					if historyRewritten {
-						messages = slices.DeleteFunc(messages, undispatched)
+						messages = slices.DeleteFunc(messages, isUndispatchedSteeringMessage)
 					} else {
-						messages = append(messages[:startLen], slices.DeleteFunc(messages[startLen:], undispatched)...)
+						messages = append(messages[:startLen], slices.DeleteFunc(messages[startLen:], isUndispatchedSteeringMessage)...)
 					}
-					durableNewMessages = slices.DeleteFunc(durableNewMessages, undispatched)
+					durableNewMessages = slices.DeleteFunc(durableNewMessages, isUndispatchedSteeringMessage)
 					return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), fmt.Errorf("persist steering before dispatch: %w", err)
 				}
 				messages = applyArchivedHistorySeqs(messages, durableNewMessages, archive.Seqs)
@@ -1028,27 +1025,8 @@ func RunToolLoop(
 			}, fmt.Errorf("provider returned invalid tool_calls: %w", err)
 		}
 
-		finishReason := result.FinishReason
-		if finishReason == "" {
-			finishReason = providers.NormalizeFinishReason(result.StopReason, result.Truncated, len(result.ToolCalls) > 0)
-		}
-
-		assistant := providers.ChatMessage{
-			ProviderItems:        result.ProviderItems,
-			Role:                 "assistant",
-			Images:               result.Images,
-			Content:              result.Content,
-			Phase:                result.Phase,
-			ProviderItemID:       result.ProviderItemID,
-			ProviderItemProvider: result.ProviderItemProvider,
-			ProviderItemModel:    result.ProviderItemModel,
-			ReasoningContent:     result.ReasoningContent,
-			ReasoningBlocks:      cloneReasoningBlocks(result.ReasoningBlocks),
-			ToolCalls:            result.ToolCalls,
-			FinishReason:         finishReason,
-			StopReason:           result.StopReason,
-			Truncated:            result.Truncated,
-		}
+		assistant := assistantMessageFromStep(result)
+		finishReason := assistant.FinishReason
 		if shouldPersistAssistantMessage(assistant) {
 			appendMessage(assistant)
 			// Provider usage already includes this assistant message. Without
@@ -1181,6 +1159,10 @@ func RunToolLoop(
 		CacheCreationTokens: totalCacheCreation,
 		CacheReadTokens:     totalCacheRead,
 	}, fmt.Errorf("max steps exceeded (%d)", cfg.MaxSteps)
+}
+
+func isUndispatchedSteeringMessage(message providers.ChatMessage) bool {
+	return message.Seq == 0 && message.Role == "user" && message.Steered && message.ClientID != "" && !message.Hidden && !message.ReadOnly && (message.Origin == "" || message.Origin == "user")
 }
 
 func applyArchivedHistorySeqs(messages, archived []providers.ChatMessage, seqs []int) []providers.ChatMessage {

@@ -195,9 +195,12 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
         return { id: request.id, result: {
           ...result,
           protocol_version: result.required_services?.length || result.provided_services?.length ? CAPABILITY_PROTOCOL_V3 : result.protocol_version,
-          lifecycle_version: 1
+          lifecycle_version: 2
         } };
       }
+      case "prepare":
+        await plugin.prepare?.(host, lifecycle);
+        return { id: request.id, result: null };
       case "activate":
         await plugin.activate?.(host, lifecycle);
         return { id: request.id, result: null };
@@ -335,6 +338,11 @@ async function runJSONLRuntime(plugin, streams) {
   const host = new JSONLRuntimeHost(send);
   const lifetime = new AbortController();
   const executions = /* @__PURE__ */ new Map();
+  const callerScopes = /* @__PURE__ */ new Map();
+  lifetime.signal.addEventListener("abort", () => {
+    for (const controller of callerScopes.values()) controller.abort();
+    callerScopes.clear();
+  }, { once: true });
   const active = /* @__PURE__ */ new Set();
   const concurrentServices = new Set(plugin.concurrentServices ?? []);
   const concurrentCapabilities = /* @__PURE__ */ new Set(["model.adapter", "model.middleware", ...plugin.concurrentCapabilities ?? []]);
@@ -386,6 +394,8 @@ async function runJSONLRuntime(plugin, streams) {
     if (host.route(parsed)) return;
     if (isExecutionCancelRequest(parsed)) {
       for (const controller2 of executions.get(parsed.params.execution_id) ?? []) controller2.abort();
+      callerScopes.get(parsed.params.execution_id)?.abort();
+      callerScopes.delete(parsed.params.execution_id);
       return;
     }
     if (!isRuntimeRequest(parsed)) {
@@ -396,7 +406,7 @@ async function runJSONLRuntime(plugin, streams) {
       track(send({ id: parsed.id, error: { message: "runtime is shutting down" } }));
       return;
     }
-    const isLifecycle = parsed.method === "initialize" || parsed.method === "activate" || parsed.method === "shutdown";
+    const isLifecycle = parsed.method === "initialize" || parsed.method === "prepare" || parsed.method === "activate" || parsed.method === "shutdown";
     if (parsed.method === "shutdown") {
       shuttingDown = true;
       lifetime.abort();
@@ -407,7 +417,14 @@ async function runJSONLRuntime(plugin, streams) {
     let controllers = executions.get(executionId);
     if (!controllers) executions.set(executionId, controllers = /* @__PURE__ */ new Set());
     controllers.add(controller);
-    const execution = { executionId, signal: controller.signal };
+    let caller;
+    if (parsed.method === "service.invoke" && parsed.params.caller_scope) {
+      const scope = parsed.params.caller_scope;
+      let owner = callerScopes.get(scope.id);
+      if (!owner) callerScopes.set(scope.id, owner = new AbortController());
+      caller = { ...scope, signal: owner.signal };
+    }
+    const execution = { executionId, signal: controller.signal, caller };
     const ready = isLifecycle ? Promise.all([...active]) : concurrent ? lifecycle : Promise.resolve();
     const run = async () => {
       await ready;
@@ -476,7 +493,7 @@ function isRuntimeRequest(value) {
   if (typeof value !== "object" || value === null) return false;
   const request = value;
   if (typeof request.id !== "string" || typeof request.method !== "string") return false;
-  if (request.method === "activate" || request.method === "shutdown") return true;
+  if (request.method === "prepare" || request.method === "activate" || request.method === "shutdown") return true;
   return ["initialize", "capability.invoke", "service.invoke", "service.changed", "tool.execute"].includes(request.method) && typeof request.params === "object" && request.params !== null;
 }
 

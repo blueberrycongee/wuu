@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -40,7 +41,7 @@ func TestFreshContextShrinksFittingToolProgress(t *testing.T) {
 func TestAttachmentBudgetMatchesNativeInputPolicy(t *testing.T) {
 	history := []providers.ChatMessage{{Role: "user", Content: "Read /tmp/clip.mp4", Files: []providers.InputFile{{MediaType: "video/mp4", Data: strings.Repeat("AAAA", 650_000), LocalPath: "/tmp/clip.mp4"}}}}
 	policy := providers.MediaInputPolicy{VideoKnown: true}
-	runner := &StreamRunner{MediaInput: policy}
+	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, MediaInput: policy}
 	usage, _ := runner.prepareUsageTracker(history)
 	request := providers.ChatRequest{Messages: history, MediaInput: policy}
 	expected := estimateMessages(providers.ProjectMediaForPolicy(history, policy))

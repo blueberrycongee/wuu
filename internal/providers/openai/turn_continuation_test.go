@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/coder/websocket"
 )
@@ -291,7 +292,7 @@ func TestResponsesAgentPreservesOutputOrder(t *testing.T) {
 				if transport == "unary" {
 					api = continuationChatOnly{client}
 				}
-				runner := agent.StreamRunner{Client: providers.AdaptStreamClient(api), Model: "gpt-test", Tools: &webSocketAgentLoopTools{}, PromptCacheKey: "thread-output-order"}
+				runner := agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: providers.AdaptStreamClient(api), Model: "gpt-test", Tools: &webSocketAgentLoopTools{}, PromptCacheKey: "thread-output-order"}
 				result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "read README"}}, nil)
 				if err != nil || result.Content != "done" || requests.Load() != 2 {
 					t.Fatalf("requests=%d result=%+v err=%v", requests.Load(), result, err)
@@ -420,7 +421,7 @@ func TestResponsesTurnRouting(t *testing.T) {
 			if transport == "unary" {
 				stream = providers.AdaptStreamClient(continuationChatOnly{client})
 			}
-			runner := agent.StreamRunner{Client: stream, Model: "test", PromptCacheKey: "same-thread"}
+			runner := agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: stream, Model: "test", PromptCacheKey: "same-thread"}
 			for i := 0; i < 2; i++ {
 				if _, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "continue"}}, nil); err != nil {
 					t.Fatal(err)

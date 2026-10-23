@@ -145,11 +145,12 @@ A failed or timed-out write may have applied remotely: do not retry it silently.
 
 The host starts the manifest's command and exchanges one JSON object per line over stdin/stdout. Reserve stdout for protocol frames and stderr for diagnostics. The manifest transport name `wuu-plugin-v1` and the negotiated capability protocol number are different fields; new service-using runtimes should negotiate `protocol_version: 3`.
 
-The official plugin authoring SDK is TypeScript: `@wuu/plugin-sdk`. Implement `RuntimePlugin` and pass it to `runJSONLRuntime`; the SDK handles framing, request IDs, cancellation signals, and the lifecycle-v1 handshake. A process written in another language can implement the same JSONL contract, but Wuu does not provide a separate authoring SDK for it.
+The official plugin authoring SDK is TypeScript: `@wuu/plugin-sdk`. Implement `RuntimePlugin` and pass it to `runJSONLRuntime`; the SDK handles framing, request IDs, cancellation signals, and the lifecycle-v2 handshake. A process written in another language can implement the same JSONL contract, but Wuu does not provide a separate authoring SDK for it.
 
 | Callback | Responsibility |
 | --- | --- |
 | `initialize(params, host, lifecycle)` | Return tools, capabilities, provided services, and required services |
+| `prepare(host, lifecycle)` | Read and validate state after service bindings resolve; do not write or start background work |
 | `activate(host, lifecycle)` | Start timers, subscriptions, or other behavior after the runtime change commits |
 | `executeTool(params, host, execution)` | Run a registered tool and return its result |
 | `invokeCapability(params, host, execution)` | Handle a declared capability |
@@ -157,7 +158,7 @@ The official plugin authoring SDK is TypeScript: `@wuu/plugin-sdk`. Implement `R
 | `serviceChanged(params, host)` | Respond to a service resolution change |
 | `shutdown()` | Stop plugin-owned work and release resources |
 
-Initialization is preparation, not permission to start product behavior. The host permits only its read-phase services during native preflight. Defer writes and background work to `activate`, and make shutdown safe after partial initialization or partial activation. Preparation and persistence failures preserve the old runtime without calling candidate `activate`. Once the change commits, an activation failure leaves a degraded new generation with failure diagnostics; it does not restore the old generation or undo external effects. Avoid duplicate effects when explicitly retrying activation. Trusted initialization code and MCP preparation may still have external effects outside the host service boundary. See [runtime generations](plugin-system.md#runtime-generations) for the commit boundary.
+`initialize` only declares contracts. Lifecycle v2 requires a separate `prepare` request after all declarations are bound. Move persisted-state reads and validation from `initialize` into `prepare`, rebuild with the matching SDK, and return `lifecycle_version: 2` in hand-written adapters. An adapter using an older lifecycle is rejected before commit. Providers prepare before consumers; only declared methods marked `preparation: true` may be called during preparation, including nested calls. Marking a method promises no durable writes or external effects. Omitted flags mean active-only methods. Defer writes and background work to `activate`, and make shutdown safe after partial initialization or partial activation. Preparation and persistence failures preserve the old runtime without calling candidate `activate`. Once the change commits, an activation failure leaves a degraded new generation with failure diagnostics; it does not restore the old generation or undo external effects. Avoid duplicate effects when explicitly retrying activation. Trusted initialization code and MCP preparation may still have external effects outside the host service boundary. See [runtime generations](plugin-system.md#runtime-generations) for the commit boundary.
 
 `lifecycle.signal` aborts when shutdown is requested or the transport closes.
 Use it for activation-owned background work and stop timers in shutdown. Cleanup
@@ -173,7 +174,7 @@ Adjacent explicitly safe tools may overlap, with at most eight tool handlers
 running per runtime. Omitted or false values, unknown tool IDs, and ordinary
 capability/service callbacks remain FIFO exclusive barriers. `read_only` alone
 does not enable concurrency. These barriers apply across both shared and distinct
-execution IDs. Initialize, activate, and shutdown also wait for previously
+execution IDs. Initialize, prepare, activate, and shutdown also wait for previously
 admitted reentrant callbacks before proceeding.
 
 Protect shared mutable state before opting in. Keep each invocation's execution
@@ -576,7 +577,7 @@ Local UI control is an exception to ordinary generation retention. Updating an o
 
 ## Development and distribution
 
-`wuu plugin dev ./extension.ts` runs a single file whose default export implements `RuntimePlugin`. Wuu supplies the matching SDK and generates the process adapter internally; manifests, installation, packaging, and builds are optional for this development path. It requires Node.js 22.7 or later with `--experimental-transform-types` support and supports only Node builtins and `@wuu/plugin-sdk` imports. It snapshots each candidate and validates syntax, imports, and its default export before publication, retaining the last published source on loading failure. Import validation executes module top-level code, so it is not a side-effect-free check. `initialize` runs only in the actual host with its read-phase services. Preparation failure preserves the old runtime; activation happens after commit and can leave a failed new runtime, as described above. See the [agent quickstart](plugin-quickstart.md) for a complete example.
+`wuu plugin dev ./extension.ts` runs a single file whose default export implements `RuntimePlugin`. Wuu supplies the matching SDK and generates the process adapter internally; manifests, installation, packaging, and builds are optional for this development path. It requires Node.js 22.7 or later with `--experimental-transform-types` support and supports only Node builtins and `@wuu/plugin-sdk` imports. It snapshots each candidate and validates syntax, imports, and its default export before publication, retaining the last published source on loading failure. Import validation executes module top-level code, so it is not a side-effect-free check. `initialize` declares contracts in the actual host; `prepare` then validates state through the selected services. Preparation failure preserves the old runtime; activation happens after commit and can leave a failed new runtime, as described above. See the [agent quickstart](plugin-quickstart.md) for a complete example.
 
 `wuu plugin create` generates `agent`, `desktop`, or `full` package scaffolds. For a directory, `wuu plugin dev` uses its `plugin.json` and `package.json` build script, then publishes the built development generation. Both paths keep watching after a failed build/load so fixing and saving recovers without restarting. Filesystem events are debounced, with periodic reconciliation for missed events; `--poll` must be positive.
 

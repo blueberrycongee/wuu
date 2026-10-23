@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/coder/websocket"
 )
@@ -167,7 +168,7 @@ func TestResponsesStreamFinalMessage(t *testing.T) {
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				runner := agent.StreamRunner{Client: client, Model: "gpt-test", PromptCacheKey: t.Name()}
+				runner := agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "gpt-test", PromptCacheKey: t.Name()}
 				var visible strings.Builder
 				result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "hello"}}, func(event providers.StreamEvent) {
 					switch event.Type {

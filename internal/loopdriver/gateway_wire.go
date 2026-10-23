@@ -10,8 +10,8 @@ const (
 	DriverModelLoopService  = "driver.model-loop"
 	DriverCheckpointService = "driver.checkpoint"
 
-	DriverModelLoopMethod  = "execute"
-	DriverCheckpointMethod = "write"
+	DriverModelLoopMethod  = "call"
+	DriverCheckpointMethod = "call"
 )
 
 type DriverModelLoopParams struct {

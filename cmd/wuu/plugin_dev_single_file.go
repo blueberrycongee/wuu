@@ -64,7 +64,12 @@ func prepareSingleFilePlugin(ctx context.Context, source string) (string, func()
 		"loader.mjs":   []byte(singleFileRuntimeLoader),
 		"resolve.mjs":  []byte(singleFileSDKResolver),
 	}
-	for _, name := range []string{"index.ts", "theme-contract.generated.ts", "bundle-contract.ts", "model.ts", "process.ts"} {
+	sources, err := pluginsdk.Sources.ReadDir("src")
+	if err != nil {
+		return fail(err)
+	}
+	for _, source := range sources {
+		name := source.Name()
 		data, err := pluginsdk.Sources.ReadFile("src/" + name)
 		if err != nil {
 			return fail(err)
@@ -110,14 +115,14 @@ if (!process.argv.includes("--validate")) {
 `
 
 // The SDK's public source uses emitted .js import names for normal package
-// builds. Resolve only that owned import to its embedded TypeScript source.
+// builds. Resolve SDK-relative imports to the same embedded TypeScript modules.
 const singleFileSDKResolver = `import { isBuiltin } from "node:module";
 export async function resolve(specifier, context, nextResolve) {
   if (specifier === "@wuu/plugin-sdk") {
     return { url: new URL("./sdk/index.ts", import.meta.url).href, shortCircuit: true };
   }
-  if (["./theme-contract.generated.js", "./bundle-contract.js", "./model.js", "./process.js"].includes(specifier) && context.parentURL === new URL("./sdk/index.ts", import.meta.url).href) {
-    return { url: new URL("./sdk/" + specifier.slice(2, -3) + ".ts", import.meta.url).href, shortCircuit: true };
+  if (specifier.startsWith("./") && specifier.endsWith(".js") && context.parentURL?.startsWith(new URL("./sdk/", import.meta.url).href)) {
+    return { url: new URL(specifier.slice(0, -3) + ".ts", context.parentURL).href, shortCircuit: true };
   }
   if (context.parentURL === new URL("./extension.ts", import.meta.url).href && !isBuiltin(specifier)) {
     throw new Error("Single-file plugins may import Node builtins and @wuu/plugin-sdk only; use a plugin directory for other dependencies.");

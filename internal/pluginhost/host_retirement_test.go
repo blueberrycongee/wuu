@@ -78,8 +78,8 @@ func TestRetirementAllowsCleanupBeforeRevokingServices(t *testing.T) {
 		if _, err := registry.Call(ctx, observer.id, ServiceCallParams{Service: stateService.Name, Method: "save"}); err == nil {
 			return errors.New("retiring provider accepted another consumer during shutdown")
 		}
-		if _, err := registry.CallProvider(ctx, stateService.Name, 1, "save", nil, "late-driver"); err == nil {
-			return errors.New("retiring provider accepted new kernel work during shutdown")
+		if _, err := host.CallService(ctx, observer.id, stateService.Name, "save", nil); err == nil {
+			return errors.New("retiring provider accepted new native work during shutdown")
 		}
 		if _, err := registry.Call(ctx, consumer.id, ServiceCallParams{Service: stateService.Name, Method: "save"}); err != nil {
 			return err

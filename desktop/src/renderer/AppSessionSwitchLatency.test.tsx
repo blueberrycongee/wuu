@@ -2,13 +2,14 @@ import type { ChromeOverlayApi, ChromeOverlayEvent, ChromeOverlayRequest } from 
 import { WEB_WORKSPACE_RIBBON_ID, type WebWorkspaceApi, type WebWorkspaceState } from "../shared/webWorkspace";
 import { readComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { openComposerAttachmentPicker } from "./test/attachmentPicker";
+import { startFocusModality } from "./FocusModality";
 /**
  * Session switching keeps the outgoing conversation covered until the resumed
  * target has restored its presentation and scroll position.
  */
 import { act, Fragment, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type {
   InitializeResult,
   RuntimeContext,
@@ -490,6 +491,7 @@ describe("session tab switch latency", () => {
   });
 
   it.each([false, true])("app history replays ribbon destinations without driving website navigation and skips a removed website (native presenter=%s)", async (nativePresenter) => {
+    onTestFinished(startFocusModality());
     installWuuApi();
     Object.defineProperty(window.wuu, "platform", { configurable: true, value: "darwin" });
     const overlayListeners = new Set<(event: ChromeOverlayEvent) => void>();
@@ -532,8 +534,11 @@ describe("session tab switch latency", () => {
     // but hidden, independently of ribbon expansion.
     expect(history.hidden).toBe(true);
     expect(history.hasAttribute("inert")).toBe(true);
-    await act(async () => toggle.focus());
-    await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
+    const destination = ribbon.querySelector<HTMLButtonElement>('[data-ribbon-id]')!;
+    await act(async () => {
+      destination.focus();
+      destination.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
+    });
     await vi.waitFor(async () => {
       await act(async () => {});
       expect(ribbon.dataset.expanded).toBe("true");
@@ -542,8 +547,8 @@ describe("session tab switch latency", () => {
     expect(history.hasAttribute("inert")).toBe(true);
     expect(toggle.hidden).toBe(true);
     expect(toggle.hasAttribute("inert")).toBe(true);
-    expect(document.activeElement).toBe(container.querySelector(".app-shell"));
-    await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
+    expect(ribbon.contains(document.activeElement)).toBe(true);
+    await act(async () => container.querySelector<HTMLElement>(".app-shell")!.focus());
     if (nativePresenter) {
       expect(history.hidden).toBe(true);
       expect(toggle.hidden).toBe(true);

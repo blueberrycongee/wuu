@@ -64,11 +64,11 @@ Reload does not transfer arbitrary process or module variables into the replacem
 
 A runtime generation groups the selected packages with their processes, tools, capabilities, hooks, skills, MCP connections, service registry, and owned package snapshots. Building a candidate does not immediately replace the active generation. Development publication may proceed while turns are running: each retained generation owns its package snapshot, so replacing the published source does not change the files used by running work. The host coordinates catalog reads with publication rather than blocking publication for an entire turn.
 
-During preflight, native runtime processes initialize and describe their contracts through read-phase host services. Plugins should start timers and other active behavior in `activate`, not `initialize`. Preparation can also start MCP connections. These are trusted processes: restrictions on host service calls do not prevent direct filesystem, network, or other external effects during initialization. Preparation is not a side-effect-free sandbox.
+Lifecycle v2 separates declarations from state validation. `initialize` returns contracts without service calls. After binding the complete dependency graph, the host calls `prepare` in provider-before-consumer order. During this callback, declared services may be called only through methods marked `preparation: true`; these methods promise no durable writes or external effects. This applies to selected native and process providers alike. Plugins start timers and other active behavior in `activate`. Preparation can also start MCP connections. These are trusted processes: restrictions on host service calls do not prevent direct filesystem, network, or other external effects during initialization. Preparation is not a side-effect-free sandbox.
 
 The runtime transition prepares the candidate, commits the associated package or policy changes, and only then calls native `activate`. If preparation or the durable commit fails, the candidate is closed and the old runtime remains current; candidate `activate` is not called.
 
-Providers initialize and activate before their package consumers. A required provider's initialization or activation failure blocks its transitive required consumers, including relationships through declarative-only packages. Blocked consumers do not expose their tools, hooks, skills, MCP servers, or desktop contributions. Independent packages can still activate; a provider's own runtime failure does not automatically remove its independent declarative contributions.
+Providers prepare and activate before their package and service consumers. A required provider's initialization or activation failure blocks its transitive required consumers, including relationships through declarative-only packages. Blocked consumers do not expose their tools, hooks, skills, MCP servers, or desktop contributions. Independent packages can still activate; a provider's own runtime failure does not automatically remove its independent declarative contributions.
 
 If an already-active provider process exits, existing recovery checks revoke its transitive required consumers before preparing a replacement. This uses the normal consumer cleanup and blocks future access to their tools, hooks, MCP servers, skills, and desktop contributions. A failed replacement does not re-enable those consumers. Detection follows the existing recovery checks, not an immediate crash notification.
 
@@ -92,17 +92,95 @@ Reload preserves conversation history and the conversation-scoped `prompt_cache_
 
 Dependent packages retire before their providers, including revocation of retained generations after a disable or removal. Optional dependency failures do not cascade into consumers. Retirement closes MCP connections, clears prompt and compaction registrations, cancels plugin executions, shuts down processes, revokes service routing, and removes owned snapshots. Shutdown retains access to the host services needed to release plugin-owned work before routing is closed. Plugins must still stop their own timers, subscriptions, and background work; the host cannot infer arbitrary resources created by extension code.
 
+Native and process runtime clients are owned by a generation-local [cordis-go](https://github.com/tr1v3r/cordis-go) scope. The resolved dependency graph supplies preparation and activation injections; the registry does not maintain a second native-provider lifecycle. Duplicate runtime identities reject the candidate before processes start. Client resources remain owned outside the activation scope so a prepared or failed client can still shut down, and providers remain available until consumer cleanup returns. Wuu serializes lifecycle transitions and waits for cleanup before returning from retirement. Preparation, activation, and cleanup panics become attributable errors. A closed generation cannot reactivate. Executions and generation leases keep the version-retention rules above; Cordis does not independently reload a retained generation.
+
 Cleanup produces structured revocation records, persisted in `plugin-generation-revocations.jsonl` under Wuu's home directory. These distinguish publication success from retirement failures and help diagnose resources that did not close normally.
 
 ## Services and executions
 
 Runtime process writes honor cancellation and a bounded transport deadline. If a frame is interrupted during delivery or an execution cancellation cannot be delivered, the host retires that transport. Canceling an invocation before it is sent leaves other running work intact. Shutdown terminates the runtime process group on macOS/Linux and requests process-tree termination on Windows, with a bounded pipe drain. Windows tree cleanup is best-effort if the runtime has already exited. Unexpected nonzero shutdown exits remain visible in retirement reports. Runtime stderr keeps the most recent 64 KiB and marks omitted earlier output; verbose logs cannot grow this buffer indefinitely. These limits do not shorten a running tool’s execution deadline or replace the generation-retention rules above.
 
-Runtime plugins communicate over JSONL. Versioned services use the `host.service.call` gateway: providers declare names, versions, and methods; consumers declare service names and major versions. The registry binds consumers to providers and supplies caller identity. A missing required provider prevents the consumer from becoming usable. Duplicate providers for the same name and major version are diagnosed, not combined.
+Runtime plugins communicate over JSONL. Versioned services use the `host.service.call` gateway: providers declare names, versions, and methods; consumers declare service names and major versions. The registry binds consumers to providers and supplies caller identity. A missing required provider prevents the consumer from becoming usable. Duplicate providers for the same name and major version require an explicit choice; an ambiguous candidate is rejected before activation.
+
+Select a runtime service provider in the trusted user configuration:
+
+```json
+{
+  "composition": {
+    "version": 1,
+    "services": [
+      { "service": "search.provider", "major": 1, "provider": "my-search" }
+    ]
+  }
+}
+```
+
+The selected package must already be enabled and trusted and must declare the requested service major. Bindings do not install or enable packages. Duplicate bindings, an unavailable selected provider, and an ambiguous service reject preparation and preserve the previous running generation. A selected provider that crashes or is removed causes calls to fail; another registered implementation is never used as a fallback. With no explicit binding, a service must have exactly one provider. Registry inspection reports `binding_source` as `composition`, `profile:<name>`, or `unique-provider` alongside its version and provider ID.
+
+Composition version 1 is independent of product CalVer and service versions. Existing configurations without this section retain unique-provider discovery. A configuration that previously depended on first-registration precedence must add explicit selections. Normal startup ignores project overrides of `composition`, including case variants, because bindings can select execution and credential policies. Apply a changed configuration at generation preparation; retained executions keep their existing registry. Restoring a previous selection creates a new generation and does not undo completed effects or migrate provider data.
+
+A named runtime composition can also select the complete module set. For example, after installing and enabling both [service composition example packages](../../../examples/plugins/service-composition/README.md):
+
+```json
+{
+  "composition": {
+    "version": 1,
+    "profile": "writing",
+    "profiles": {
+      "writing": {
+        "modules": ["text-analysis-example", "writing-report-example"],
+        "services": [
+          { "service": "example.text.analysis", "major": 1, "provider": "text-analysis-example" }
+        ]
+      }
+    }
+  }
+}
+```
+
+`profile` selects one entry in `profiles`. Each profile must supply a complete `modules` array, including dependencies. A top-level `modules` array replaces that set; top-level `services` override profile bindings individually by service name and major. Module order does not determine service selection or lifecycle order. An explicit empty array starts no modules. Omitting both a profile and `modules` preserves enabled, trusted discovery defaults. An unknown profile, duplicate module, excluded binding target, unavailable selected module, or failed selected runtime rejects preparation. Module selection cannot install, enable, or trust a package. Filtering happens before runtime, hook, skill, and MCP contributions are loaded.
+
+The current native runtime modules are `kernel` (the native service collection), `wuu.default-loop` (the provider for `driver.default`), `wuu.tool-execution` (the declared consumer for tool security services), and `wuu.session-execution` (the declared consumer for the selected driver). Explicit module sets include these only when needed. Excluding `kernel` removes its services and result materializer; it does not select a substitute. These runtime choices do not yet replace the application shell or the complete session persistence implementation. Safe mode starts no composition modules, even when the configured selection refers to unavailable packages; discovery remains available for recovery.
+
+`plugin/registry/introspect` returns `composition.profile`, `module_source`, and selected module IDs with package versions and current runtime states. Native module versions identify the product build; service versions remain separate. Packages without a runtime have no runtime state. This diagnostic also works when the native registry-introspection provider is excluded. Same-ID updates retain running executions; removing a module revokes it across retained generations, with consumers completing cleanup before their providers stop.
+
+Package dependencies and selected service dependencies share one generation lifecycle graph. Providers activate before consumers; cleanup runs in reverse order while provider resources remain available. A required missing service, incompatible major, or failed provider blocks transitive consumers. An absent optional service does not block activation; an available optional service participates in ordering. Cycles across package and service edges reject preparation before activation. Retained generations keep their own resolved graph when newer versions change requirements. Removing a provider stops its required consumers; independent plugins remain active.
+
+An empty driver profile selects `driver.default` through the service graph. The native `wuu.default-loop` module and external providers use the same driver protocol, declared dependencies, cancellation, and cleanup. Excluding that module stops its driver; a composition can instead include an external provider of `driver.default`. Without a provider, new turns fail. The experimental `driver.<profile>` bridge pins its provider and callback table to the same generation. Descriptor, creation, and resume calls honor turn cancellation. A descriptor must supply a non-empty ID and a semantic version; errors are returned before creating an instance. Creation, resume, and terminal checkpoints must match the selected driver ID, version, and checkpoint contract. Unknown terminal statuses or incompatible checkpoints fail without replacing the last accepted state. Late instances returned after cancellation receive bounded shutdown. If a run fails or is canceled after saving a checkpoint, its result retains the latest accepted checkpoint so application finalization cannot overwrite it with the instance's initial state. Already observed history remains available for final persistence even when cancellation prevents a terminal receipt from arriving. A failed `run` reply can include an `error` string alongside its status, receipt, and checkpoint.
+
+Embedded Go callers must also select a driver explicitly. `StreamRunner` rejects a missing `LoopDriver`; a worker manager without `AcquireLoopDriver` fails before lifecycle hooks, inference, or tool execution. `loopdriver.AcquireLocal(driver)` binds a caller-owned in-process driver and checks its persisted identity on every acquisition.
+
+Background workers use the selected driver too. Before effects start, they save the service profile, provider ID, driver ID/version and checkpoint contract. Follow-up and restart retain that binding; unavailable or incompatible providers fail explicitly. Records from before driver selection retain the native default identity. Worker executions hold a generation lease through terminal persistence and cleanup, and use distinct callback IDs from their parent. Pending checkpoints preserve their execution input separately from the last committed terminal result, so crash recovery cannot erase a result awaiting delivery. A terminal snapshot commits the matching execution ID. Worker checkpoint files are part of the worker's recovery data and must be kept with its history; older versions that ignore driver bindings cannot safely resume workers using a replacement driver.
+
+Independent drivers can declare `driver.turn` major 1 and `driver.checkpoint` major 1. The SDK's `driverTurn(host, execution)` exposes these operations:
+
+| Operation | Observable behavior |
+| --- | --- |
+| `read()` | Returns bound model defaults, available tools, and current active history with recovered tool receipts. |
+| `context()` | Returns active model history, an execution-local revision, the durable archive head, and whether durable replacement is available. |
+| `replaceContext(revision, messages)` | Archives accepted originals, then atomically commits the driver's replacement and any concurrent durable tail. Stale revisions fail before writing. |
+| `model(request)` | Executes one streaming model request through the selected model pipeline. Returns admitted input contributions and the assistant response; it never executes tools. |
+| `tools(batchID, messages, calls)` | Executes an explicit batch through the selected executor and durable tool ledger. Duplicate batch and call IDs are rejected within an execution. Calls can be chosen directly; missing assistant declarations are recorded before execution. Pending calls can be submitted in subsets; the reply contains only tool result messages. |
+| `complete(content, messages?)` | Returns a terminal receipt. Model and tool messages are already recorded; optional messages are additional authored output. |
+| `checkpoint(checkpoint)` | Saves state for this exact driver identity and checkpoint contract. Save intent before issuing external effects. |
+
+Operations belong to the active execution and provider generation, run serially, and reject further effects after cancellation or completion. Model events use the session's event stream. Tool cleanup completes before its execution resources are released. Failed steering persistence prevents the new input from reaching the model. Cancellation does not undo external effects; an interrupted tool batch must be reconciled from durable receipts before it can be resumed safely.
+
+Native driver modules can use the same independent turn operations. Their callback dependencies are explicit, and calls pass through the service registry with the provider's execution identity. An undeclared callback is rejected even for a native module. Model requests and context operations preserve client message IDs, transcript sequence numbers, steering markers, and tool invocation IDs; these are correlation metadata, not call authority.
+
+The context operations require `driver.turn` 1.1.0 or newer. Replacing active context preserves the original transcript. If archive succeeds but checkpoint commit fails, the archive stays durable and the previous active context remains; read a fresh revision before retrying. Cancellation after commit does not undo the committed context. Missing archive or atomic checkpoint services make replacement unavailable; there is no volatile fallback.
+
+The [evidence workflow example](../../../examples/plugins/workflow-loop/runtime.ts) uses only the public SDK. It plans one tool batch, commits an active context containing the current task and evidence, then runs a synthesis stage with tools disabled. This example requires durable context replacement. Its checkpoint records the current stage; recovery consumes settled tool receipts instead of replaying their effects. Run `node scripts/workflow-driver-e2e.mjs` from a checkout to install a packed SDK in an independent directory and verify real file evidence, original-history preservation, committed-context recovery, interruption before the planned history is flushed, and provider removal. The same check also runs the workflow as `driver.default` with the native default module excluded; set the example runtime environment variable `WUU_WORKFLOW_PROFILE=default` to declare that service. Repeatable logs and the installed package remain under `.tmp/e2e/workflow-driver/`.
+
+The default multi-round driver still uses the legacy `driver.model-loop` gateway. Its compaction and history-rewrite policy has not yet moved onto the independent operations. A single execution cannot combine the two gateways. The workflow example resumes its saved task context; it does not merge a new user task into an interrupted workflow. Driver profiles are currently exposed through the debug app-server `--driver` option, rather than a desktop selection control.
 
 Kernel services cover storage, settings, sessions, history, workspaces, artifacts, and execution operations. Feature services use the same routing mechanism. A service method's schema identifiers describe its contract; they are not permission to call another plugin's private process or read its private storage.
 
 Tool and capability dispatch create bounded execution scopes. Progress, child-tool calls, questions, and artifacts attach to a live execution. Cancellation closes that scope without waiting for plugin acknowledgement, and late updates cannot revive it. Plugins receive an abort signal and must propagate it to cancellable work. Service-registry shutdown rejects new work, drains existing calls, and cancels what remains when its shutdown context expires.
+
+Native and process service providers use the same declarations, method checks, and callback scopes. Native consumers also declare dependencies and participate in the same lifecycle graph. A caller named `kernel` has no special authority. Driver instance IDs travel in domain payloads; they cannot be used as service execution IDs. `service.invoke.execution_id` belongs to the provider callback. When the consumer calls from a live invocation, `caller_scope` supplies its authenticated identity, kind (`tool` or `callback`), and session/workspace attribution. The SDK exposes this as `execution.caller`, including a separate `signal`. That signal survives individual service responses and aborts when the caller ends or the provider stops. Use it for resources such as a model stream that spans start/read/cancel calls. Use `execution.signal` for work bounded to the current callback. A nested call uses the provider's own execution ID; caller attribution never grants permission to impersonate the caller or its tool authority.
+
+A method may declare `cleanup: true` to release resources after autonomous admission stops. Cleanup must not acquire resources or start work, and receives no caller scope. Registry snapshots identify implementations by provider ID and binding source; the former `kernel` flag has been removed. These contract changes do not change product CalVer or stored user data.
 
 Capabilities compose at defined points, such as adding prompt context or observing turn completion. They are not unrestricted interception of the agent loop or provider request. The [authoring reference](plugin-authoring.md) lists supported capabilities and error policies.
 

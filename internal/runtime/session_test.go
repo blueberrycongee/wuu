@@ -25,6 +25,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/hooks"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -153,6 +154,8 @@ func newRuntimeCleanupWorktree(t *testing.T, sessionID string) (*agentcontrol.Ag
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	artifactDir := filepath.Join(stateRoot, "sessions", sessionID)
 	control, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       &sessionRecordingClient{},
 		DefaultModel: "runtime-cleanup-test",
 		ParentRepo:   root,
@@ -2575,7 +2578,7 @@ func TestSessionRefreshSystemPromptUpdatesRunnerPrompt(t *testing.T) {
 	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5-codex", false)
 	rt := &Session{
 		RootDir:      root,
-		StreamRunner: &agent.StreamRunner{SystemPrompt: "old prompt"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, SystemPrompt: "old prompt"},
 		Toolkit:      kit,
 	}
 

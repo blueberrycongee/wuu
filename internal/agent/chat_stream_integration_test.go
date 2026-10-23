@@ -15,6 +15,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
@@ -65,7 +66,7 @@ func TestChatStreamRunner_CustomVideoTransport(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			runner := &agent.StreamRunner{Client: client, Model: "custom-video"}
+			runner := &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "custom-video"}
 			if tc.optIn {
 				runner.ProviderOptions = map[string]any{"video_input": "video_url"}
 			}
@@ -263,6 +264,8 @@ func runChatStream(t *testing.T, body string, failAfterExecution bool) chatStrea
 		t.Fatal(err)
 	}
 	runner := &agent.StreamRunner{
+		LoopDriver: loopdriver.DefaultDriver{},
+
 		Client: client, ProviderName: "synthetic-openrouter", Model: "openai/gpt-4o", MaxSteps: 3,
 		Tools: tool, ToolLedger: ledger, StreamingToolExecution: true,
 	}

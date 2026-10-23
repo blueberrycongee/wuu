@@ -10,6 +10,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Resolve session and background worker drivers through `driver.default`, provided by the removable `wuu.default-loop` module or a selected external implementation. Native drivers use the same service lifecycle and protocol as process drivers; failed and canceled calls retain observed history. Workers retain their driver binding across follow-up and restart, preserve pending checkpoints separately from committed terminal results, and hold providers until execution cleanup completes. Embedded runners and worker managers require an explicit driver instead of silently selecting the native loop.
+
+- Expose independent model, tool-batch, context replacement, completion and checkpoint operations for external loop drivers. Context replacement preserves original durable history and survives cancellation after commit. The public SDK includes a workflow example with evidence collection and synthesis, plus isolated verification of cancellation, durable recovery and provider removal.
+
+- Own runtime client activation and cleanup through generation-local cordis-go scopes, with serialized shutdown barriers and attributable provider panic errors. Building from source now requires Go 1.27.0; build and CI version selection follows `go.mod`.
+
+- Select runtime modules and service providers through named `composition.profiles` and explicit `modules` / `services` overrides. Inspect binding sources, package versions and lifecycle states. Ambiguous or unavailable choices reject preparation; failed or removed providers never fall back to another implementation. Removing native modules also retires them in retained generations; safe mode starts no composition modules.
+
 - Switch workspaces from the underlined workspace name in the new-conversation greeting, using the existing workspace picker.
 
 - Select plugin-provided shell skins independently of content themes, with paired light/dark artwork, ribbon previews, native ribbon continuity and default-frame recovery. Local images use a fixed Gaussian blur with automatic contrast, replacing effect, strength and position controls. Shared controls use soft surfaces and shadows, translucent menus and neutral filled selections.
@@ -110,6 +118,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Prevent conversation previews from jumping when sending a follow-up after a delivered file by settling the outgoing file card before the submission scroll animation.
+
+- Restore composer hints to the same quiet gray as aggregated tool-call summaries in both light and dark themes.
+
+- Keep remote loop-driver callbacks in their selected generation, propagate preparation cancellation, and reject invalid driver identities, checkpoint bindings, and terminal statuses before accepting state.
 
 - Keep the composer worktree toggle next to the branch name in narrow windows, without stretching short branch labels across the context row.
 

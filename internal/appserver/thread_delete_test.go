@@ -16,6 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/harness"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -238,6 +239,8 @@ func TestServerThreadDeleteRejectsActiveBackgroundAgent(t *testing.T) {
 
 	workerClient := newBlockingStreamClient("done")
 	control, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       workerClient,
 		DefaultModel: "fake-model",
 		ParentRepo:   rt.RootDir,
@@ -313,6 +316,8 @@ func TestServerThreadDeleteRejectsDurableNestedAgentFromAnotherServer(t *testing
 	artifactDir := statepath.SessionArtifactDir(ownerRuntime.StateDir, rootID)
 	workerClient := newBlockingStreamClient("nested done")
 	control, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       workerClient,
 		DefaultModel: "fake-model",
 		ParentRepo:   ownerRuntime.RootDir,
@@ -405,6 +410,8 @@ func TestServerThreadDeleteRejectsTerminalWorkerUntilExecutionLeaseReleases(t *t
 	}
 	artifactDir := statepath.SessionArtifactDir(rt.StateDir, rootID)
 	control, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       providers.AdaptStreamClient(&fakeClient{response: providers.ChatResponse{Content: "done"}}),
 		DefaultModel: "fake-model",
 		ParentRepo:   rt.RootDir,

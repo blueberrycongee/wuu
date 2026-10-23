@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -116,7 +117,7 @@ func (c *modelAdapterClient) Chat(ctx context.Context, req providers.ChatRequest
 		return providers.ChatResponse{}, err
 	}
 	response, callErr := invokePluginModelChat(ctx, c.host, capability.RegisteredCapability, pluginprotocol.ModelAdapterInput{
-		AdapterID: req.Adapter, Request: logicalModelRequest(req), Stream: false,
+		AdapterID: req.Adapter, Request: modelwire.RequestToWire(req), Stream: false,
 	})
 	callErr = errors.Join(callErr, settlePluginModelSubmission(req, submission, response.Usage, callErr))
 	return response, callErr
@@ -145,7 +146,7 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 		return nil, err
 	}
 	stream, err := invokePluginModelStream(ctx, c.host, capability.RegisteredCapability, pluginprotocol.ModelAdapterInput{
-		AdapterID: req.Adapter, Request: logicalModelRequest(req), Stream: true,
+		AdapterID: req.Adapter, Request: modelwire.RequestToWire(req), Stream: true,
 	}, submission)
 	if err != nil {
 		return nil, errors.Join(err, settlePluginModelSubmission(req, submission, nil, err))

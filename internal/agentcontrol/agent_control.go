@@ -32,6 +32,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/harness"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/securefs"
@@ -276,6 +277,7 @@ type Config struct {
 	MaxParallel       int
 	InferenceJournal  providers.InferenceJournal
 	ToolLedgerFactory func(ownerID string) (*toolledger.Ledger, error)
+	AcquireLoopDriver loopdriver.AcquireFunc
 	OnSubagentStart   func(context.Context, string) error
 	OnSubagentStop    func(context.Context, string) error
 }
@@ -317,6 +319,7 @@ func New(cfg Config) (*AgentControl, error) {
 		DisableAutoCompact:      cfg.DefaultDisableAutoCompact,
 		InferenceJournal:        cfg.InferenceJournal,
 		ToolLedgerFactory:       cfg.ToolLedgerFactory,
+		AcquireLoopDriver:       cfg.AcquireLoopDriver,
 		OnSubagentStart:         cfg.OnSubagentStart,
 		OnSubagentStop:          cfg.OnSubagentStop,
 	})
@@ -4716,10 +4719,10 @@ func (c *AgentControl) rehydrateAgent(id string) (*subagent.SubAgent, error) {
 		return nil, nil
 	}
 	path := filepath.Join(c.historyDir, id+".json")
-	if _, err := os.Stat(path); err != nil {
+	run, err := subagent.LoadPersistedRun(path)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
-	run, err := subagent.LoadPersistedRun(path)
 	if err != nil {
 		return nil, fmt.Errorf("cannot resume agent %q: reading snapshot: %w", id, err)
 	}

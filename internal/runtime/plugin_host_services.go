@@ -382,9 +382,12 @@ type executionUpdateRecorder interface {
 	ResolveToolExecution(callerPluginID, executionID string) (pluginhost.ToolExecutionScope, *pluginhost.HostServiceError)
 }
 
+const kernelHostModule = "kernel"
+
 type kernelHostServices struct {
 	mu                sync.RWMutex
 	active            bool
+	closed            bool
 	services          map[string]*pluginHostServices
 	registry          *pluginhost.ServiceRegistry
 	generation        func() uint64
@@ -395,10 +398,20 @@ type kernelHostServices struct {
 	wuuHome           string
 	modelSession      *Session
 	modelHost         *pluginhost.Host
+	providers         map[string]nativeServiceRegistration
+}
+
+type nativeServiceRegistration struct {
+	Descriptor pluginhost.ServiceDescriptor
+	Invoker    pluginhost.ServiceInvoker
 }
 
 func newKernelHostServices(generation func() uint64, executions executionUpdateRecorder) *kernelHostServices {
-	return &kernelHostServices{services: make(map[string]*pluginHostServices), generation: generation, executions: executions, driverGateways: newDriverGatewayTable()}
+	k := &kernelHostServices{services: make(map[string]*pluginHostServices), generation: generation, executions: executions, driverGateways: newDriverGatewayTable(), providers: make(map[string]nativeServiceRegistration)}
+	for _, registration := range k.serviceRegistrations() {
+		k.providers[registration.Descriptor.Name] = registration
+	}
+	return k
 }
 
 // bindWorkspaceStateDir sets the workspace state directory used by read-only
@@ -435,7 +448,7 @@ func (k *kernelHostServices) bindRegistry(registry *pluginhost.ServiceRegistry) 
 	k.mu.Unlock()
 }
 
-func (k *kernelHostServices) ID() string { return "kernel" }
+func (k *kernelHostServices) ID() string { return kernelHostModule }
 
 func (k *kernelHostServices) Status() pluginhost.Status {
 	k.mu.RLock()
@@ -444,15 +457,30 @@ func (k *kernelHostServices) Status() pluginhost.Status {
 	if k.active {
 		state = pluginhost.StateActive
 	}
+	if k.closed {
+		state = pluginhost.StateStopped
+	}
 	return pluginhost.Status{ID: k.ID(), State: state}
 }
 
-func (k *kernelHostServices) Close(context.Context) error { return nil }
 func (k *kernelHostServices) ProvidedServices() []pluginhost.ServiceDescriptor {
-	return pluginhost.KernelServiceDescriptors()
+	descriptors := make([]pluginhost.ServiceDescriptor, 0, len(k.providers))
+	for _, registration := range k.providers {
+		descriptors = append(descriptors, registration.Descriptor)
+	}
+	sort.Slice(descriptors, func(i, j int) bool { return descriptors[i].Name < descriptors[j].Name })
+	return descriptors
+}
+
+func (k *kernelHostServices) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	registration, ok := k.providers[params.Service]
+	if !ok {
+		return nil, serviceError("service_unavailable", "native service is unavailable")
+	}
+	return registration.Invoker.InvokeService(ctx, params)
 }
 func (k *kernelHostServices) RequiredServices() []pluginhost.ServiceRequirement { return nil }
-func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRegistration {
+func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration {
 	descriptors := pluginhost.KernelServiceDescriptors()
 	methods := []pluginhost.HostServiceMethod{
 		pluginhost.HostServiceStorageGet, pluginhost.HostServiceStorageSet,
@@ -466,79 +494,90 @@ func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRe
 		pluginhost.HostServiceWorkspaceDiscard,
 		pluginhost.HostServiceSessionControl, pluginhost.HostServiceCredentialsRequest,
 	}
-	registrations := make([]pluginhost.ServiceRegistration, 0, len(descriptors)+8)
+	registrations := make([]nativeServiceRegistration, 0, len(descriptors)+8)
 	for index, descriptor := range descriptors {
-		registrations = append(registrations, pluginhost.ServiceRegistration{
-			Descriptor: descriptor, Invoker: &kernelServiceInvoker{parent: k, method: methods[index]}, Kernel: true,
+		registrations = append(registrations, nativeServiceRegistration{
+			Descriptor: descriptor, Invoker: &kernelServiceInvoker{parent: k, method: methods[index]},
 		})
 	}
 	registrations = append(registrations,
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelModelInvokeDescriptor(),
-			Invoker:    &modelInvokeInvoker{parent: k, store: newModelInvocationStore()}, Kernel: true,
+			Invoker:    &modelInvokeInvoker{parent: k, store: newModelInvocationStore()},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelModelEmitDescriptor(),
-			Invoker:    &modelEmitInvoker{parent: k}, Kernel: true,
+			Invoker:    &modelEmitInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelProcessDescriptor(),
-			Invoker:    &processServiceInvoker{parent: k}, Kernel: true,
+			Invoker:    &processServiceInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelBackgroundDescriptor(),
-			Invoker:    &backgroundInvoker{parent: k}, Kernel: true,
+			Invoker:    &backgroundInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelModelRequestDescriptor(),
-			Invoker:    &modelRequestInvoker{parent: k}, Kernel: true,
+			Invoker:    &modelRequestInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelRegistryIntrospectDescriptor(),
-			Invoker:    &registryIntrospectInvoker{parent: k}, Kernel: true,
+			Invoker:    &registryIntrospectInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelExecutionUpdateDescriptor(),
-			Invoker:    &executionUpdateInvoker{parent: k}, Kernel: true,
+			Invoker:    &executionUpdateInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelInvokeToolDescriptor(),
-			Invoker:    &nestedToolInvoker{parent: k}, Kernel: true,
+			Invoker:    &nestedToolInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelUserQuestionAskDescriptor(),
-			Invoker:    &userQuestionAskInvoker{parent: k}, Kernel: true,
+			Invoker:    &userQuestionAskInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelUserQuestionOfferDescriptor(),
-			Invoker:    &userQuestionOfferInvoker{parent: k}, Kernel: true,
+			Invoker:    &userQuestionOfferInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelFileLockDescriptor(),
-			Invoker:    &fileLockInvoker{parent: k}, Kernel: true,
+			Invoker:    &fileLockInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelArtifactImportDescriptor(),
-			Invoker:    &artifactImportInvoker{parent: k}, Kernel: true,
+			Invoker:    &artifactImportInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelDataQueryDescriptor(),
-			Invoker:    &dataQueryInvoker{parent: k}, Kernel: true,
+			Invoker:    &dataQueryInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
+			Descriptor: pluginhost.DriverTurnDescriptor(),
+			Invoker:    &driverTurnInvoker{parent: k},
+		},
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelDriverModelLoopDescriptor(),
-			Invoker:    &driverModelLoopInvoker{parent: k}, Kernel: true,
+			Invoker:    &driverModelLoopInvoker{parent: k},
 		},
-		pluginhost.ServiceRegistration{
+		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelDriverCheckpointDescriptor(),
-			Invoker:    &driverCheckpointInvoker{parent: k}, Kernel: true,
+			Invoker:    &driverCheckpointInvoker{parent: k},
 		},
 	)
 	return registrations
 }
 
-func (k *kernelHostServices) ActivateKernelServices() {
+func (k *kernelHostServices) Activate(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	k.mu.Lock()
+	if k.closed {
+		k.mu.Unlock()
+		return errors.New("native host services are closed")
+	}
 	k.active = true
 	services := make([]*pluginHostServices, 0, len(k.services))
 	for _, service := range k.services {
@@ -548,11 +587,14 @@ func (k *kernelHostServices) ActivateKernelServices() {
 	for _, service := range services {
 		service.activate()
 	}
+	return nil
 }
 
-func (k *kernelHostServices) CloseKernelServices() {
+// Close completes resource cleanup even when the generation's context is cancelled.
+func (k *kernelHostServices) Close(context.Context) error {
 	k.mu.Lock()
 	k.active = false
+	k.closed = true
 	services := make([]*pluginHostServices, 0, len(k.services))
 	for _, service := range k.services {
 		services = append(services, service)
@@ -561,6 +603,7 @@ func (k *kernelHostServices) CloseKernelServices() {
 	for _, service := range services {
 		service.close()
 	}
+	return nil
 }
 
 type kernelServiceInvoker struct {
@@ -678,15 +721,11 @@ func invokeUserQuestion(ctx context.Context, parent *kernelHostServices, params 
 	}
 	parent.mu.RLock()
 	broker := parent.userQuestions
-	executions := parent.executions
 	parent.mu.RUnlock()
 	if broker == nil {
 		return nil, serviceError("service_unavailable", "user interaction is unavailable")
 	}
-	if executions == nil {
-		return nil, serviceError("service_unavailable", "execution scope is unavailable")
-	}
-	scope, scopeErr := executions.ResolveToolExecution(params.Caller, params.ExecutionID)
+	scope, scopeErr := params.CallerExecution(true)
 	if scopeErr != nil {
 		return nil, scopeErr
 	}

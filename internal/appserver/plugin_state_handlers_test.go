@@ -170,9 +170,9 @@ func TestPluginRegistryIntrospectReturnsKernelServices(t *testing.T) {
 	for _, entry := range result.Services {
 		switch entry.Service {
 		case pluginhost.KernelStorageGetService:
-			foundStorage = entry.Provider == "kernel" && entry.Kernel
+			foundStorage = entry.Provider == "kernel"
 		case pluginhost.KernelRegistryIntrospectService:
-			foundIntrospect = entry.Provider == "kernel" && entry.Kernel
+			foundIntrospect = entry.Provider == "kernel"
 		}
 	}
 	if !foundStorage || !foundIntrospect {

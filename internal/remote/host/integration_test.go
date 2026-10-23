@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/appserver"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
 	"github.com/blueberrycongee/wuu/internal/hooks"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/remote/host"
 	"github.com/blueberrycongee/wuu/internal/remote/phone"
@@ -77,6 +78,8 @@ func newRemoteTestRuntime(t *testing.T, client providers.Client) *runtime.Sessio
 		HookDispatcher: hooks.NewDispatcher(nil),
 		Toolkit:        kit,
 		StreamRunner: &agent.StreamRunner{
+			LoopDriver: loopdriver.DefaultDriver{},
+
 			Client:       providers.AdaptStreamClient(client),
 			Model:        "fake-model",
 			SystemPrompt: "system prompt",

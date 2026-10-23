@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/remote/account"
 	"github.com/blueberrycongee/wuu/internal/remote/conversations"
 	"github.com/blueberrycongee/wuu/internal/remote/pgtest"
@@ -58,7 +59,7 @@ func TestConversationPublisherPersistsHistoryWithoutAnOnlineHost(t *testing.T) {
 	}
 	phone := login(phoneID, "phone", false)
 	c := account.Credentials{Server: server.URL, Token: hostSession.Token, Username: hostSession.Username}
-	rt := &runtime.Session{RootDir: root, ConfigPath: filepath.Join(root, "config.json"), SessionDir: filepath.Join(root, "sessions"), StreamRunner: &agent.StreamRunner{}}
+	rt := &runtime.Session{RootDir: root, ConfigPath: filepath.Join(root, "config.json"), SessionDir: filepath.Join(root, "sessions"), StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}}}
 	h := &Host{store: store, rt: rt}
 	thread, err := session.CreateWithMetadata(rt.SessionDir, "server-history", root)
 	if err != nil {

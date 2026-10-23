@@ -17,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/harness"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
@@ -1244,6 +1245,8 @@ func newDormantQueuedSpawnConcurrencyControl(
 		}
 	}
 	control, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        client,
 		DefaultModel:  "queued-spawn-test-model",
 		ParentRepo:    rootDir,

@@ -12,10 +12,26 @@ import (
 const ContractVersion = 1
 
 type Descriptor struct {
-	ID           string
-	Version      string
-	Capabilities []string
+	ID           string   `json:"id"`
+	Version      string   `json:"version"`
+	Capabilities []string `json:"capabilities,omitempty"`
 }
+
+// Binding is the durable identity of a selected loop implementation. A new
+// default never changes an existing binding; switching requires an explicit
+// migration of its state and checkpoint.
+type Binding struct {
+	Profile         string `json:"profile"`
+	ProviderID      string `json:"provider_id"`
+	ContractVersion int    `json:"contract_version"`
+	DriverID        string `json:"driver_id"`
+	DriverVersion   string `json:"driver_version"`
+}
+
+// AcquireFunc retains the selected provider until release is called. A nil
+// expected binding selects the configured default; a saved binding must match
+// exactly. Success returns a non-nil driver and release function.
+type AcquireFunc func(ctx context.Context, expected *Binding) (driver Driver, binding Binding, release func(), err error)
 
 type ExecutionContext struct {
 	SessionID   string
@@ -63,9 +79,9 @@ type KernelGateway interface {
 }
 
 type Driver interface {
-	Descriptor() Descriptor
-	Create(ExecutionContext, PersistedInput) (Instance, error)
-	Resume(ExecutionContext, PersistedInput, Checkpoint) (Instance, error)
+	Descriptor(context.Context) (Descriptor, error)
+	Create(context.Context, ExecutionContext, PersistedInput) (Instance, error)
+	Resume(context.Context, ExecutionContext, PersistedInput, Checkpoint) (Instance, error)
 }
 
 type Instance interface {

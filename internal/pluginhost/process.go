@@ -105,6 +105,8 @@ type ProcessClient struct {
 	stopMu             sync.Mutex
 	stopped            bool
 	stopErr            error
+	callerScopeMu      sync.Mutex
+	callerScopes       map[string]struct{}
 }
 
 func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
@@ -149,8 +151,8 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 		readerDone: make(chan struct{}),
 	}
 	client.processCtx, client.processCancel = context.WithCancel(context.Background())
-	// Initialization is a prepare phase. Only read-only services are available
-	// until the generation and its durable policy commit.
+	// The transport negotiates routing only. Initialize has no consumer
+	// declarations yet; the registry admits calls during explicit preparation.
 	client.negotiated = map[HostServiceMethod]struct{}{ServiceCallMethod: {}}
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 4096), maxResponseLineSize)
@@ -200,7 +202,7 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 		return nil, fmt.Errorf("initialize plugin %q: %w", config.ID, err)
 	}
 	client.mu.Lock()
-	client.status.State = StatePrepared
+	client.status.State = StateInitialized
 	client.tools = make([]ToolRegistration, len(initialized.Tools))
 	for index, registration := range initialized.Tools {
 		client.tools[index] = cloneToolRegistration(registration)
@@ -214,10 +216,14 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 	client.providedServices = cloneServiceDescriptors(initialized.ProvidedServices)
 	client.requiredServices = cloneServiceRequirements(initialized.RequiredServices)
 	client.activationServices = map[HostServiceMethod]struct{}{ServiceCallMethod: {}}
-	client.negotiated = preflightNegotiatedHostServices(client.activationServices)
+	client.negotiated = cloneHostServiceSet(client.activationServices)
 	client.lifecycleVersion = initialized.LifecycleVersion
 	client.mu.Unlock()
 	if !config.PrepareOnly {
+		if err := client.Prepare(ctx); err != nil {
+			_ = client.Close(context.Background())
+			return nil, fmt.Errorf("prepare plugin %q: %w", config.ID, err)
+		}
 		if err := client.Activate(ctx); err != nil {
 			return nil, fmt.Errorf("activate plugin %q: %w", config.ID, err)
 		}
@@ -310,6 +316,32 @@ func (c *ProcessClient) Status() Status {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.status
+}
+
+// Prepare validates state after declarations and dependency binding are complete.
+// A failure leaves the transport alive for ordered candidate cleanup.
+func (c *ProcessClient) Prepare(ctx context.Context) error {
+	c.mu.RLock()
+	state, version := c.status.State, c.lifecycleVersion
+	c.mu.RUnlock()
+	if state == StatePrepared || state == StateActive {
+		return nil
+	}
+	if state != StateInitialized {
+		return fmt.Errorf("plugin process cannot prepare from state %q", state)
+	}
+	if version == RuntimeLifecycleVersion {
+		prepareCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
+		defer cancel()
+		if err := c.call(prepareCtx, "prepare", nil, nil); err != nil {
+			c.setFailure(err)
+			return err
+		}
+	}
+	c.mu.Lock()
+	c.status.State = StatePrepared
+	c.mu.Unlock()
+	return nil
 }
 
 // Activate opens the negotiated service set and starts lifecycle-aware
@@ -460,7 +492,11 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	c.pending[id] = responseCh
 	c.pendingMu.Unlock()
 	defer c.removePending(id)
-	if err := c.writeLine(ctx, payload); err != nil {
+	if input, ok := params.(ServiceInvokeParams); ok && input.CallerScope != nil {
+		if err := c.writeScopedInvocation(ctx, payload, input.CallerScope); err != nil {
+			return fmt.Errorf("write scoped request: %w", err)
+		}
+	} else if err := c.writeLine(ctx, payload); err != nil {
 		return fmt.Errorf("write request: %w", err)
 	}
 	// The invoke frame must be written before cancellation can be signalled.
@@ -502,6 +538,40 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	case <-c.readerDone:
 		return c.readFailure()
 	}
+}
+
+// Serialize caller-scope admission with its terminal signal. A signal cannot
+// precede a queued invocation and then accidentally reopen that scope in the SDK.
+// One observer per live caller survives individual callback responses.
+func (c *ProcessClient) writeScopedInvocation(ctx context.Context, payload []byte, scope *ExecutionScope) error {
+	c.callerScopeMu.Lock()
+	defer c.callerScopeMu.Unlock()
+	if err := scope.Context.Err(); err != nil {
+		return err
+	}
+	if err := c.writeLine(ctx, payload); err != nil {
+		return err
+	}
+	if _, watching := c.callerScopes[scope.ID]; watching {
+		return nil
+	}
+	if c.callerScopes == nil {
+		c.callerScopes = make(map[string]struct{})
+	}
+	c.callerScopes[scope.ID] = struct{}{}
+	go func() {
+		select {
+		case <-scope.Context.Done():
+		case <-c.processCtx.Done():
+		}
+		c.callerScopeMu.Lock()
+		defer c.callerScopeMu.Unlock()
+		delete(c.callerScopes, scope.ID)
+		if c.processCtx.Err() == nil {
+			c.notifyExecutionCancel(scope.ID)
+		}
+	}()
+	return nil
 }
 
 func (c *ProcessClient) readLoop() {
@@ -618,16 +688,6 @@ const (
 	pluginMessageResponse pluginMessageKind = iota
 	pluginMessageHostCall
 )
-
-func preflightNegotiatedHostServices(negotiated map[HostServiceMethod]struct{}) map[HostServiceMethod]struct{} {
-	out := make(map[HostServiceMethod]struct{})
-	for service := range negotiated {
-		if service == ServiceCallMethod {
-			out[service] = struct{}{}
-		}
-	}
-	return out
-}
 
 func cloneHostServiceSet(source map[HostServiceMethod]struct{}) map[HostServiceMethod]struct{} {
 	out := make(map[HostServiceMethod]struct{}, len(source))

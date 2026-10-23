@@ -15,6 +15,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
+	cordis "github.com/tr1v3r/cordis-go"
 )
 
 // Client is one initialized plugin runtime. Implementations may host plugins
@@ -41,6 +42,10 @@ type CapabilityClient interface {
 	InvokeCapability(context.Context, CapabilityInvokeParams) (CapabilityInvokeResult, error)
 }
 
+type preparationClient interface {
+	Prepare(context.Context) error
+}
+
 type lifecycleClient interface {
 	Activate(context.Context) error
 }
@@ -62,6 +67,11 @@ type RegisteredTool struct {
 
 // Host owns the active plugin clients and their negotiated contributions.
 type Host struct {
+	lifecycleMu         sync.Mutex
+	lifecycleRoot       *cordis.Context
+	lifetimes           map[string]*clientLifetime
+	closed              bool
+	preparationErr      error
 	mu                  sync.RWMutex
 	clients             []Client
 	tools               map[string]RegisteredTool
@@ -69,7 +79,8 @@ type Host struct {
 	capabilities        []RegisteredCapability
 	diagnostics         map[string]map[string]string
 	serviceRegistry     *ServiceRegistry
-	packageRequirements map[string][]string
+	dependencies        map[string][]Dependency
+	dependencyErrors    map[string]error
 	executions          *ExecutionTracker
 	background          map[string]*backgroundJob
 	backgroundCompleted []string
@@ -108,7 +119,14 @@ func Failed(id string, err error) Client {
 	if err != nil {
 		message = err.Error()
 	}
-	return &failedClient{status: Status{ID: id, State: StateFailed, Error: message}}
+	return FailedWithStatus(Status{ID: id, Error: message})
+}
+
+// FailedWithStatus retains the original process identity and start time after
+// cleanup. Recovery must distinguish a crashed active module from a load failure.
+func FailedWithStatus(status Status) Client {
+	status.State = StateFailed
+	return &failedClient{status: status}
 }
 
 func (h *Host) Add(client Client) {
@@ -128,12 +146,12 @@ func (h *Host) AttachServiceRegistry(registry *ServiceRegistry, conflicts []Serv
 		return
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.serviceRegistry = registry
 	if registry != nil {
 		registry.bindRootExecutionContext(h.ResolveExecutionContext)
 		registry.mu.Lock()
 		registry.scopeTracker = h.executions
+		registry.moduleStatuses = h.Statuses
 		registry.mu.Unlock()
 	}
 	for _, conflict := range conflicts {
@@ -142,6 +160,8 @@ func (h *Host) AttachServiceRegistry(registry *ServiceRegistry, conflicts []Serv
 		}
 		h.diagnostics[conflict.PluginID][fmt.Sprintf("service:%s@%d", conflict.Service, conflict.Major)] = conflict.Message
 	}
+	h.mu.Unlock()
+	h.resolveServiceDependencies(registry)
 }
 
 // ServiceRegistry returns the registry attached at generation build time, or
@@ -467,7 +487,7 @@ func (h *Host) ExecuteTool(ctx context.Context, name string, input ToolExecuteIn
 }
 
 func capabilityStateReady(state State) bool {
-	return state == StatePrepared || state == StateActive
+	return state == StateInitialized || state == StatePrepared || state == StateActive
 }
 
 // RecordExecutionUpdate is the kernel-side entry for execution.update: the
@@ -509,16 +529,71 @@ func (h *Host) CancelExecutions(cause error) {
 	}
 }
 
-// RetirePlugin revokes one plugin's executable paths and closes only its
-// client. Unrelated clients and contributions remain active so runtimes can
-// replace plugin generations independently.
+// RetirePlugin stops required consumers before closing their provider. Other
+// clients remain active. Cleanup retains access to providers until it returns.
 func (h *Host) RetirePlugin(ctx context.Context, pluginID string, cause error) (ClientShutdownOutcome, bool) {
+	if h == nil {
+		return ClientShutdownOutcome{}, false
+	}
+	h.lifecycleMu.Lock()
+	defer h.lifecycleMu.Unlock()
+	return h.retirePluginAndConsumers(ctx, pluginID, cause)
+}
+
+func (h *Host) retirePluginAndConsumers(ctx context.Context, pluginID string, cause error) (ClientShutdownOutcome, bool) {
+	pluginID = strings.TrimSpace(pluginID)
+	retiring := map[string]bool{pluginID: true}
+	dependencies := h.Dependencies()
+	for changed := true; changed; {
+		changed = false
+		for id, edges := range dependencies {
+			if retiring[id] {
+				continue
+			}
+			for _, edge := range edges {
+				if edge.Required && retiring[edge.Provider] {
+					retiring[id], changed = true, true
+					break
+				}
+			}
+		}
+	}
+	clients := h.orderedClients()
+	for _, client := range clients {
+		if retiring[client.ID()] {
+			h.serviceRegistry.stopProviderAdmission(client.ID())
+		}
+	}
+	var result ClientShutdownOutcome
+	var found bool
+	var cleanupErr error
+	for i := len(clients) - 1; i >= 0; i-- {
+		id := clients[i].ID()
+		if !retiring[id] {
+			continue
+		}
+		outcome, retired := h.retirePlugin(ctx, id, cause)
+		cleanupErr = errors.Join(cleanupErr, outcome.Err)
+		if id == pluginID {
+			result, found = outcome, retired
+		} else if retired {
+			h.Add(Failed(id, fmt.Errorf("plugin %q requires retired plugin %q", id, pluginID)))
+		}
+	}
+	result.Err = cleanupErr
+	return result, found
+}
+
+func (h *Host) retirePlugin(ctx context.Context, pluginID string, cause error) (ClientShutdownOutcome, bool) {
 	if h == nil {
 		return ClientShutdownOutcome{}, false
 	}
 	pluginID = strings.TrimSpace(pluginID)
 	if pluginID == "" {
 		return ClientShutdownOutcome{}, false
+	}
+	if err := h.ownClients(h.orderedClients()); err != nil {
+		return ClientShutdownOutcome{PluginID: pluginID, Err: err}, false
 	}
 	h.mu.Lock()
 	var client Client
@@ -567,13 +642,40 @@ func (h *Host) RetirePlugin(ctx context.Context, pluginID string, cause error) (
 	}
 	// Contributions and executions are already detached. Keep declared host
 	// services available while the plugin persists state and cancels its work.
-	finishCleanup := registry.allowShutdownCleanup(pluginID)
-	closeErr := client.Close(ctx)
-	finishCleanup()
+	closeErr := h.closeClient(ctx, client)
 	if registry != nil {
 		registry.RevokePlugin(ctx, pluginID)
 	}
 	return ClientShutdownOutcome{PluginID: pluginID, Err: closeErr}, true
+}
+
+// CallService dispatches a native consumer callback through its declared service
+// dependencies. Like tool and capability callbacks, it owns a fresh execution
+// bounded by ctx and retirement of the consumer. Domain IDs belong in params;
+// they never confer execution authority.
+func (h *Host) CallService(ctx context.Context, consumer, service, method string, params json.RawMessage) (json.RawMessage, *HostServiceError) {
+	if h == nil {
+		return nil, &HostServiceError{Code: "service_unavailable", Message: "service host is unavailable"}
+	}
+	h.mu.RLock()
+	var admitted bool
+	for _, client := range h.clients {
+		if client.ID() == consumer && client.Status().State == StateActive {
+			admitted = true
+			break
+		}
+	}
+	registry := h.serviceRegistry
+	if !admitted || registry == nil {
+		h.mu.RUnlock()
+		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service consumer %q is not active", consumer)}
+	}
+	executionID, executionCtx := h.executions.begin(consumer, ctx, ToolExecuteInput{}, false)
+	h.mu.RUnlock()
+	defer h.executions.End(executionID)
+	return registry.Call(executionCtx, consumer, ServiceCallParams{
+		Service: service, Method: method, Params: params, ExecutionID: executionID,
+	})
 }
 
 // ExecutionSnapshots returns the host's live execution table for diagnostics.
@@ -584,6 +686,47 @@ func (h *Host) ExecutionSnapshots() []ExecutionSnapshot {
 	return h.executions.Snapshot()
 }
 
+// Prepare validates a candidate in dependency order before durable commit.
+// Preparation methods may read selected providers but must not publish effects.
+func (h *Host) Prepare(ctx context.Context) error {
+	h.lifecycleMu.Lock()
+	defer h.lifecycleMu.Unlock()
+	return h.prepare(ctx)
+}
+
+func (h *Host) prepare(ctx context.Context) (err error) {
+	if h.closed {
+		return errors.New("plugin generation is closed")
+	}
+	if h.preparationErr != nil {
+		return h.preparationErr
+	}
+	defer func() {
+		if err != nil {
+			h.preparationErr = err
+		}
+	}()
+	if _, err := h.DependencyOrder(); err != nil {
+		return err
+	}
+	h.blockFailedDependencies(ctx)
+	clients := h.orderedClients()
+	if err := h.ownClients(clients); err != nil {
+		return err
+	}
+	dependencies := h.Dependencies()
+	blocked := h.DependencyFailures()
+	for _, client := range clients {
+		if blocked[client.ID()] != nil || client.Status().State == StateFailed || client.Status().State == StateStopped {
+			continue
+		}
+		if err := h.prepareClient(ctx, client, dependencies[client.ID()]); err != nil {
+			return fmt.Errorf("prepare plugin %q: %w", client.ID(), err)
+		}
+	}
+	return nil
+}
+
 // Activate opens the effectful lifecycle of prepared runtimes. The caller owns
 // the durable commit and publication boundary; activation effects cannot be
 // rolled back. Failures remain visible through status inventory.
@@ -591,26 +734,32 @@ func (h *Host) Activate(ctx context.Context) error {
 	if h == nil {
 		return nil
 	}
-	h.mu.RLock()
-	clients := append([]Client(nil), h.clients...)
-	h.mu.RUnlock()
+	h.lifecycleMu.Lock()
+	defer h.lifecycleMu.Unlock()
+	if err := h.prepare(ctx); err != nil {
+		return err
+	}
+	if h.serviceRegistry != nil {
+		h.serviceRegistry.Activate()
+	}
+	clients := h.orderedClients()
+	dependencies := h.Dependencies()
 	var err error
-	blocked := h.PackageDependencyFailures()
+	blocked := h.DependencyFailures()
 	for _, client := range clients {
-		if blocked[client.ID()] != nil {
+		if blocked[client.ID()] != nil || client.Status().State == StateFailed || client.Status().State == StateStopped {
 			continue
 		}
-		lifecycle, ok := client.(lifecycleClient)
-		if !ok || client.Status().State != StatePrepared {
-			continue
-		}
-		if activateErr := lifecycle.Activate(ctx); activateErr != nil {
+		if activateErr := h.activateClient(ctx, client, dependencies[client.ID()]); activateErr != nil {
 			err = errors.Join(err, fmt.Errorf("activate plugin %q: %w", client.ID(), activateErr))
-			h.BlockFailedPackageDependencies(ctx)
-			blocked = h.PackageDependencyFailures()
+			outcome, _ := h.retirePluginAndConsumers(ctx, client.ID(), activateErr)
+			err = errors.Join(err, outcome.Err)
+			h.Add(Failed(client.ID(), activateErr))
+			h.blockFailedDependencies(ctx)
+			blocked = h.DependencyFailures()
 		}
 	}
-	h.BlockFailedPackageDependencies(ctx)
+	h.blockFailedDependencies(ctx)
 	return err
 }
 
@@ -645,16 +794,25 @@ func (h *Host) Close(ctx context.Context) error {
 	return firstErr
 }
 
-// CloseWithOutcomes shuts clients down in reverse start order and reports one
+// CloseWithOutcomes shuts clients down in reverse dependency order and reports one
 // structured outcome per client instead of collapsing everything into a
 // single joined error.
 func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 	if h == nil {
 		return nil
 	}
+	h.lifecycleMu.Lock()
+	defer h.lifecycleMu.Unlock()
+	if h.closed {
+		return nil
+	}
 	h.StopBackground()
+	if err := h.ownClients(h.orderedClients()); err != nil {
+		return []ClientShutdownOutcome{{Err: err}}
+	}
+	h.closed = true
 	h.mu.Lock()
-	clients := append([]Client(nil), h.clients...)
+	clients := h.orderedClientsLocked()
 	registry := h.serviceRegistry
 	h.clients = nil
 	h.tools = nil
@@ -671,10 +829,9 @@ func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 
 	outcomes := make([]ClientShutdownOutcome, 0, len(clients))
 	for i := len(clients) - 1; i >= 0; i-- {
-		finishCleanup := registry.allowShutdownCleanup(clients[i].ID())
-		outcomes = append(outcomes, ClientShutdownOutcome{PluginID: clients[i].ID(), Err: clients[i].Close(ctx)})
-		finishCleanup()
+		outcomes = append(outcomes, ClientShutdownOutcome{PluginID: clients[i].ID(), Err: h.closeClient(ctx, clients[i])})
 	}
+	h.lifecycleRoot.Fiber().Dispose()
 	return outcomes
 }
 

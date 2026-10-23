@@ -123,8 +123,17 @@ export function createDreamPlugin(): RuntimePlugin {
     }
   }
   return {
-    async initialize(_params, runtimeHost) {
+    initialize(_params, runtimeHost) {
       host = runtimeHost; state = initialState(); running = false; stopped = false;
+      return {
+        capabilities: [...["agent.turn.completed", "agent.turn.lifecycle"].map(id => ({ id, kind: "observe" as const, version: 1, error_policy: "isolate" as const })), { id: "plugin.client.request", kind: "decision" as const, version: 1 }],
+        required_services: [
+          ...(["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService),
+          { name: "memory.session", major_version: 1 },
+        ],
+      };
+    },
+    async prepare() {
       const result = await host.call("host.storage.get", { scope: "workspace", key: storageKey });
       if (result.value !== null) {
         let loaded: Partial<State>;
@@ -153,13 +162,6 @@ export function createDreamPlugin(): RuntimePlugin {
           delete state.active_request_id; delete state.active_session_id;
         }
       }
-      return {
-        capabilities: [...["agent.turn.completed", "agent.turn.lifecycle"].map(id => ({ id, kind: "observe" as const, version: 1, error_policy: "isolate" as const })), { id: "plugin.client.request", kind: "decision" as const, version: 1 }],
-        required_services: [
-          ...(["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService),
-          { name: "memory.session", major_version: 1 },
-        ],
-      };
     },
     async activate(_runtimeHost, lifecycle) {
       if (lifecycle.signal.aborted) { stop(); return; }

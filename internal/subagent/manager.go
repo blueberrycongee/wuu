@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
@@ -58,9 +60,10 @@ type Manager struct {
 	// admission: the owner uses this hook to reapply the authority in force
 	// now instead of the one captured at spawn. Running workers are never
 	// touched — a live turn keeps its admitted snapshot until it settles.
-	wakeAuthority   func(agent.ToolExecutor)
-	onSubagentStart func(context.Context, string) error
-	onSubagentStop  func(context.Context, string) error
+	wakeAuthority     func(agent.ToolExecutor)
+	acquireLoopDriver loopdriver.AcquireFunc
+	onSubagentStart   func(context.Context, string) error
+	onSubagentStop    func(context.Context, string) error
 }
 
 type ManagerOptions struct {
@@ -83,6 +86,9 @@ type ManagerOptions struct {
 	// construction. UpdateDefaults intentionally does not replace it.
 	InferenceJournal  providers.InferenceJournal
 	ToolLedgerFactory func(ownerID string) (*toolledger.Ledger, error)
+	// AcquireLoopDriver is required for execution. Missing configuration
+	// rejects the turn before lifecycle hooks, inference, or tool calls.
+	AcquireLoopDriver loopdriver.AcquireFunc
 	OnSubagentStart   func(context.Context, string) error
 	OnSubagentStop    func(context.Context, string) error
 }
@@ -111,8 +117,8 @@ type toolContextBlockProvider interface {
 
 // NewManager constructs a Manager backed by the given streaming LLM
 // client. defaultModel is used when SpawnOptions.Model is empty.
-func NewManager(client providers.StreamClient, defaultModel string) *Manager {
-	return NewManagerWithOptions(client, defaultModel, ManagerOptions{})
+func NewManager(client providers.StreamClient, defaultModel string, driver loopdriver.Driver) *Manager {
+	return NewManagerWithOptions(client, defaultModel, ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(driver)})
 }
 
 // NewManagerWithOptions constructs a Manager with default request options for
@@ -134,6 +140,7 @@ func NewManagerWithOptions(client providers.StreamClient, defaultModel string, o
 		defaultDisableCompact:  opts.DisableAutoCompact,
 		defaultJournal:         opts.InferenceJournal,
 		toolLedgerFactory:      opts.ToolLedgerFactory,
+		acquireLoopDriver:      opts.AcquireLoopDriver,
 		onSubagentStart:        opts.OnSubagentStart,
 		onSubagentStop:         opts.OnSubagentStop,
 		agents:                 make(map[string]*SubAgent),
@@ -483,6 +490,12 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		}
 	}()
 	defer cancel()
+	var releaseDriver func()
+	defer func() {
+		if releaseDriver != nil {
+			releaseDriver()
+		}
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			sa.mu.Lock()
@@ -547,6 +560,7 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 
 	runner := &agent.StreamRunner{
 		Client:                   sa.client,
+		DriverCheckpointStore:    workerCheckpointStore{worker: sa},
 		ProviderName:             sa.providerName,
 		Tools:                    sa.toolkit,
 		ToolLedger:               sa.toolLedger,
@@ -587,14 +601,47 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	runner.ForceToolFirstStep = sa.takeForceToolNextTurn()
 	var res agent.LoopResult
 	var err error
-	if m.onSubagentStart != nil {
-		err = m.onSubagentStart(ctx, sa.ID)
+	executionID := rand.Text()
+	if m.acquireLoopDriver == nil {
+		err = errors.New("worker loop driver is not configured")
+	} else {
+		sa.mu.Lock()
+		expected := sa.driverBinding
+		sa.mu.Unlock()
+		var binding loopdriver.Binding
+		var release func()
+		runner.LoopDriver, binding, release, err = m.acquireLoopDriver(ctx, expected)
+		if err == nil {
+			releaseDriver = release
+			sa.mu.Lock()
+			sa.driverBinding = &binding
+			sa.mu.Unlock()
+		}
 	}
 	if err == nil {
-		res, err = runner.RunWithCallback(ctx, history, onEvent)
+		sa.mu.Lock()
+		previousExecutionID := sa.driverExecutionID
+		sa.driverExecutionID = executionID
+		err = persistDriverStateLocked(sa)
+		if err != nil {
+			sa.driverExecutionID = previousExecutionID
+		}
+		sa.mu.Unlock()
 	}
-	if m.onSubagentStop != nil {
-		err = errors.Join(err, m.onSubagentStop(ctx, sa.ID))
+	// Each worker owns a distinct domain execution even when spawned from an
+	// active parent turn. Inheriting its ID would alias the callback registry.
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: sa.ID, ExecutionID: executionID})
+	if err == nil {
+		if m.onSubagentStart != nil {
+			err = m.onSubagentStart(ctx, sa.ID)
+		}
+		if err == nil {
+			res, err = runner.RunWithCallback(ctx, history, onEvent)
+			sa.acceptDriverCheckpoint(res)
+		}
+		if m.onSubagentStop != nil {
+			err = errors.Join(err, m.onSubagentStop(ctx, sa.ID))
+		}
 	}
 	content := res.Content
 	nextHistory := mergeTurnHistory(history, res)
@@ -816,16 +863,27 @@ func (m *Manager) runFinalSummaryNudge(ctx context.Context, runner *agent.Stream
 		Content: "You have finished the task but returned no final message. Provide your final summary now: state what you did, what you found or changed, and anything left undone.",
 	}
 	turnHistory := append(providers.CloneChatMessages(history), nudge)
+	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: sa.ID, ExecutionID: rand.Text()})
 	res, err := runner.RunWithCallback(ctx, turnHistory, onEvent)
 	if err != nil {
 		return "", history, false
 	}
+	sa.acceptDriverCheckpoint(res)
 	nextHistory := mergeTurnHistory(turnHistory, res)
 	content := res.Content
 	if strings.TrimSpace(content) == "" {
 		content = lastAssistantText(nextHistory)
 	}
 	return content, nextHistory, true
+}
+
+func (sa *SubAgent) acceptDriverCheckpoint(result agent.LoopResult) {
+	if result.DriverID == "" {
+		return
+	}
+	sa.mu.Lock()
+	defer sa.mu.Unlock()
+	sa.driverCheckpoint = &loopdriver.Checkpoint{ContractVersion: result.DriverContractVersion, DriverID: result.DriverID, DriverVersion: result.DriverVersion, State: append(json.RawMessage(nil), result.DriverCheckpoint...)}
 }
 
 // notify pushes a notification to all listeners. Drops on full channels.
@@ -1096,6 +1154,14 @@ type RestoreOptions struct {
 // channel; a subsequent Followup starts a fresh turn from its history.
 func (m *Manager) Restore(opts RestoreOptions) (*SubAgent, error) {
 	run := opts.Run
+	// A committed terminal snapshot remains the delivery truth while a later
+	// execution is in flight. Its durable input and checkpoint are used only
+	// when that worker is explicitly resumed.
+	if run.Recovery != nil {
+		run.Messages = run.Recovery.Messages
+		run.DriverBinding = run.Recovery.DriverBinding
+		run.DriverCheckpoint = run.Recovery.DriverCheckpoint
+	}
 	id := strings.TrimSpace(run.ID)
 	if id == "" {
 		return nil, errors.New("restore requires a run id")
@@ -1170,6 +1236,22 @@ func (m *Manager) Restore(opts RestoreOptions) (*SubAgent, error) {
 		}
 	}
 
+	binding := run.DriverBinding
+	if binding == nil && m.acquireLoopDriver != nil {
+		// Snapshots predating driver bindings always used the built-in loop.
+		// Preserve that identity even when the configured default has changed.
+		binding = &loopdriver.Binding{Profile: "default", ProviderID: loopdriver.DefaultDriverID, ContractVersion: loopdriver.ContractVersion, DriverID: loopdriver.DefaultDriverID, DriverVersion: loopdriver.DefaultDriverVersion}
+	} else if binding != nil {
+		copied := *binding
+		binding = &copied
+	}
+	checkpoint := run.DriverCheckpoint
+	if checkpoint != nil {
+		copied := *checkpoint
+		copied.State = append(json.RawMessage(nil), copied.State...)
+		checkpoint = &copied
+	}
+
 	// Terminal runs restore with an already-closed done channel so Wait
 	// returns the snapshot immediately until a follow-up starts a turn.
 	doneCh := make(chan struct{})
@@ -1200,6 +1282,9 @@ func (m *Manager) Restore(opts RestoreOptions) (*SubAgent, error) {
 		CompletedAt:        run.CompletedAt,
 		Result:             run.Result,
 		prompt:             run.Prompt,
+		driverExecutionID:  run.DriverExecutionID,
+		driverBinding:      binding,
+		driverCheckpoint:   checkpoint,
 		model:              model,
 		modelPin:           run.ModelPin,
 		modelAlias:         run.ModelAlias,

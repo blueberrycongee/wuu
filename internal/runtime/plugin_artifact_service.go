@@ -57,14 +57,13 @@ func (k *artifactImportInvoker) InvokeService(ctx context.Context, params plugin
 		return nil, serviceError("method_not_found", "kernel service method is unavailable")
 	}
 	k.parent.mu.RLock()
-	executions := k.parent.executions
 	stateDir := k.parent.workspaceStateDir
 	wuuHome := k.parent.wuuHome
 	k.parent.mu.RUnlock()
-	if executions == nil || strings.TrimSpace(stateDir) == "" || strings.TrimSpace(wuuHome) == "" {
+	if strings.TrimSpace(stateDir) == "" || strings.TrimSpace(wuuHome) == "" {
 		return nil, serviceError("service_unavailable", "artifact storage is unavailable")
 	}
-	scope, scopeErr := executions.ResolveToolExecution(params.Caller, params.ExecutionID)
+	scope, scopeErr := params.CallerExecution(true)
 	if scopeErr != nil {
 		return nil, scopeErr
 	}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/coder/websocket"
 )
@@ -880,6 +881,8 @@ func TestResponsesStreamChatWebSocket_RunnerKeepsDeltaAcrossTurnsWithChangingCon
 	}
 	state := "alpha"
 	runner := agent.StreamRunner{
+		LoopDriver: loopdriver.DefaultDriver{},
+
 		Client: client, Model: "gpt-test", PromptCacheKey: "runner-cross-turn-context",
 		BeforeRequestContext: func() []agent.ContextSegment {
 			return agent.RequestOnlyContextBlocks([]wuucontext.Block{{
@@ -1247,6 +1250,8 @@ func TestResponsesStreamChatWebSocket_AgentLoopPreservesDeltaWithChangingHiddenC
 
 	contextCalls := 0
 	runner := agent.StreamRunner{
+		LoopDriver: loopdriver.DefaultDriver{},
+
 		Client:         client,
 		Model:          "gpt-test",
 		Tools:          &webSocketAgentLoopTools{},

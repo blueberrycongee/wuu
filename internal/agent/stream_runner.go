@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -175,8 +176,8 @@ type StreamRunner struct {
 	// round and nested compaction owned by this runner.
 	InferenceJournal providers.InferenceJournal
 	// LoopDriver owns turn policy while the runner remains the kernel gateway
-	// for provider, tool-ledger, history, and streaming invariants. Nil selects
-	// the behavior-compatible default driver.
+	// for provider, tool-ledger, history, and streaming invariants. Callers
+	// must select a driver explicitly; a missing driver rejects execution.
 	LoopDriver             loopdriver.Driver
 	DriverCheckpointStore  loopdriver.CheckpointStore
 	ModelInputReceiptStore ModelInputReceiptStore
@@ -249,11 +250,23 @@ func (r *StreamRunner) systemPromptSnapshot() (string, []SystemPromptSectionInfo
 func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.ChatMessage, onEvent StreamCallback) (LoopResult, error) {
 	driver := r.LoopDriver
 	if driver == nil {
-		driver = loopdriver.DefaultDriver{}
+		return LoopResult{}, errors.New("loop driver is not configured")
 	}
-	descriptor := driver.Descriptor()
+	descriptor, err := driver.Descriptor(ctx)
+	if err != nil {
+		return LoopResult{}, fmt.Errorf("resolve loop driver: %w", err)
+	}
 	input := loopdriver.PersistedInput{Messages: providers.CloneChatMessages(history)}
 	execution := loopdriver.ExecutionContextFromContext(ctx)
+	if execution.ExecutionID == "" {
+		// Embedded callers do not have an app-server turn. The runner owns
+		// their execution identity and carries it to every model/tool callback.
+		execution.ExecutionID = rand.Text()
+		if execution.SessionID == "" {
+			execution.SessionID = r.PromptCacheKey
+		}
+		ctx = loopdriver.WithExecutionContext(ctx, execution)
+	}
 
 	var instance loopdriver.Instance
 	if r.DriverCheckpointStore != nil {
@@ -273,7 +286,7 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 					loopdriver.ContractVersion,
 				)
 			}
-			instance, err = driver.Resume(execution, input, checkpoint)
+			instance, err = driver.Resume(ctx, execution, input, checkpoint)
 			if err != nil {
 				return LoopResult{}, fmt.Errorf("resume loop driver: %w", err)
 			}
@@ -281,7 +294,7 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	}
 	if instance == nil {
 		var err error
-		instance, err = driver.Create(execution, input)
+		instance, err = driver.Create(ctx, execution, input)
 		if err != nil {
 			return LoopResult{}, fmt.Errorf("create loop driver: %w", err)
 		}
@@ -291,12 +304,14 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	}
 
 	gateway := &streamDriverGateway{
-		runner:     r,
-		onEvent:    onEvent,
-		descriptor: descriptor,
-		execution:  execution,
-		results:    make(map[string]LoopResult),
+		runner:            r,
+		onEvent:           onEvent,
+		descriptor:        descriptor,
+		execution:         execution,
+		results:           make(map[string]LoopResult),
+		streamTurnGateway: newStreamTurnGateway(ctx, r, input, onEvent),
 	}
+	defer gateway.close()
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -308,7 +323,18 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	outcome, runErr := instance.Run(ctx, gateway)
 	close(done)
 	instance.Shutdown()
+	gateway.close()
+	// A failed or canceled remote call may return its initial instance state.
+	// Preserve the latest checkpoint accepted by the execution before it ended.
+	if runErr != nil && gateway.lastCheckpoint != nil {
+		outcome.Checkpoint = *gateway.lastCheckpoint
+	}
 
+	if runErr != nil && gateway.lastLegacyError != nil {
+		// Keep the original typed failure for local consumers after the service
+		// protocol has carried its diagnostic. All drivers share this path.
+		runErr = errors.Join(runErr, gateway.lastLegacyError)
+	}
 	res, ok := gateway.result(outcome.ReceiptID)
 	if outcome.ReceiptID != "" && !ok {
 		runErr = errors.Join(runErr, fmt.Errorf("loop driver returned unknown kernel receipt %q", outcome.ReceiptID))
@@ -322,34 +348,64 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 }
 
 type streamDriverGateway struct {
-	runner     *StreamRunner
-	onEvent    StreamCallback
-	descriptor loopdriver.Descriptor
-	execution  loopdriver.ExecutionContext
-	results    map[string]LoopResult
-	next       int
+	*streamTurnGateway
+	runner          *StreamRunner
+	onEvent         StreamCallback
+	descriptor      loopdriver.Descriptor
+	execution       loopdriver.ExecutionContext
+	results         map[string]LoopResult
+	lastCheckpoint  *loopdriver.Checkpoint
+	lastLegacyError error
+	next            int
 }
 
 func (gateway *streamDriverGateway) ExecuteModelLoop(ctx context.Context, input loopdriver.PersistedInput, policy loopdriver.LoopPolicy) (loopdriver.ModelLoopReceipt, error) {
+	ctx, leave, err := gateway.acquire(ctx)
+	if err != nil {
+		return loopdriver.ModelLoopReceipt{}, err
+	}
+	defer leave()
+	if gateway.ready {
+		return loopdriver.ModelLoopReceipt{}, errors.New("cannot combine independent turn operations with the legacy loop gateway")
+	}
+	gateway.legacy = true
 	gateway.next++
 	receipt := loopdriver.ModelLoopReceipt{ID: fmt.Sprintf("model-loop-%d", gateway.next)}
 	result, err := gateway.runner.runModelToolLoop(ctx, input.Messages, gateway.onEvent, policy, gateway.descriptor, gateway.execution)
 	gateway.results[receipt.ID] = result
+	gateway.lastLegacyError = err
 	return receipt, err
 }
 
 func (gateway *streamDriverGateway) WriteCheckpoint(ctx context.Context, checkpoint loopdriver.Checkpoint) error {
+	ctx, leave, err := gateway.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer leave()
 	if checkpoint.ContractVersion != loopdriver.ContractVersion || checkpoint.DriverID != gateway.descriptor.ID || checkpoint.DriverVersion != gateway.descriptor.Version {
 		return errors.New("loop driver attempted to write a checkpoint for another contract")
 	}
-	if gateway.runner.DriverCheckpointStore == nil {
-		return nil
+	if gateway.runner.DriverCheckpointStore != nil {
+		if err := gateway.runner.DriverCheckpointStore.Save(ctx, checkpoint); err != nil {
+			return err
+		}
 	}
-	return gateway.runner.DriverCheckpointStore.Save(ctx, checkpoint)
+	checkpoint.State = append(json.RawMessage(nil), checkpoint.State...)
+	gateway.lastCheckpoint = &checkpoint
+	return nil
 }
 
 func (gateway *streamDriverGateway) result(receiptID string) (LoopResult, bool) {
+	if receiptID == "" && gateway.next > 0 {
+		// Cancellation can end the protocol call before its receipt arrives.
+		// The execution still owns everything the gateway already observed.
+		receiptID = fmt.Sprintf("model-loop-%d", gateway.next)
+	}
 	result, ok := gateway.results[receiptID]
+	if !ok {
+		return gateway.streamTurnGateway.result(receiptID)
+	}
 	return result, ok
 }
 
@@ -740,7 +796,16 @@ func (r *StreamRunner) pendingToolResultMessages(ctx context.Context, history []
 			})
 			end++
 		}
-		messages = append(messages, providers.ChatMessage{Role: "assistant", ToolCalls: calls})
+		// A crash can leave a declaration with only some results projected.
+		// Reuse its remaining calls instead of duplicating the assistant block.
+		transcript := append(providers.CloneChatMessages(history), messages...)
+		declared, err := pendingToolCallDeclaration(transcript, calls)
+		if err != nil {
+			return nil, fmt.Errorf("recover tool batch %q: %w", batchID, err)
+		}
+		if !declared {
+			messages = append(messages, providers.ChatMessage{Role: "assistant", ToolCalls: calls})
+		}
 		for _, invocation := range pending[index:end] {
 			messages = append(messages, providers.ChatMessage{
 				Role: "tool", Name: invocation.ToolName, ToolCallID: invocation.ProviderCallID,

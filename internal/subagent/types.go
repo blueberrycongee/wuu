@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
@@ -254,7 +255,10 @@ type SubAgent struct {
 	modelAlias         string         // configured alias requested at spawn time
 	modelAliasFallback bool           // true when modelAlias was unknown and the default runtime was used
 	runtime            *WorkerRuntime // complete resolved runtime; overrides manager defaults when non-nil
-	workerRoot         string         // working directory, persisted so a resume can validate + reroot
+	driverExecutionID  string
+	driverBinding      *loopdriver.Binding
+	driverCheckpoint   *loopdriver.Checkpoint
+	workerRoot         string // working directory, persisted so a resume can validate + reroot
 	toolkit            agent.ToolExecutor
 	historyPath        string
 	initialHistory     []providers.ChatMessage

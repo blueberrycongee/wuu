@@ -350,10 +350,39 @@ async function closeUnscopedExecution(): Promise<void> {
   assert((await response).result?.cancelled, "EOF left an unscoped handler running");
 }
 
+async function callerScopeLifetime(): Promise<void> {
+  const callbacks: AbortSignal[] = [];
+  const owners: AbortSignal[] = [];
+  const peer = new Peer({
+    initialize: definition,
+    invokeService(params, _host, execution) {
+      const caller = execution.caller;
+      assert(caller?.id === "caller-1", "provider did not receive its authenticated caller scope");
+      callbacks.push(execution.signal);
+      owners.push(caller.signal);
+      return { ownerAlive: !caller.signal.aborted, callback: params.execution_id };
+    },
+  });
+  await peer.start();
+  const invoke = (id: string) => peer.request("service.invoke", {
+    service: "stream.provider", method: "start", caller: "consumer", execution_id: id,
+    caller_scope: { id: "caller-1", plugin_id: "consumer", kind: "tool", cwd: "/project" },
+  });
+  assert((await invoke("callback-1")).result?.ownerAlive, "caller scope was missing or already cancelled");
+  assert((await invoke("callback-2")).result?.ownerAlive, "returning a callback cancelled its caller");
+  assert(callbacks[0].aborted && !owners[0].aborted, "callback and caller shared a lifetime");
+  assert(owners[0] === owners[1], "repeated calls did not share the same caller lifetime");
+  peer.send({ id: "owner-ended", method: "execution.cancel", params: { execution_id: "caller-1" } });
+  await peer.request("service.changed", { service: "stream.provider" });
+  assert(owners.every((signal) => signal.aborted), "owner cancellation left provider resources alive");
+  await peer.close();
+}
+
 // The watchdog only fails a hung regression; all successful ordering is driven
 // by protocol frames and handler gates, with no elapsed-time assertions.
 const watchdog = setTimeout(() => { throw new Error("JSONL composition deadlocked"); }, 10000);
 try {
+  await callerScopeLifetime();
   await reentrantServices();
   await sharedExecutionCancellation();
   await lifecycleBarriers();

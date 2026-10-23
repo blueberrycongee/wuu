@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -25,7 +26,7 @@ func TestFollowup_WakeRefreshesAuthority(t *testing.T) {
 		releaseFirst: make(chan struct{}),
 		secondSeen:   make(chan providers.ChatRequest, 1),
 	}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 	kit := &wakeProbeToolkit{}
 	var refreshed atomic.Int32
 	var refreshedWith atomic.Value
@@ -88,7 +89,7 @@ func TestFollowup_WakeRefreshesAuthority(t *testing.T) {
 // itself is registration, not admission — only the wake refreshes.
 func TestRestoreThenFollowup_WakeRefreshesAuthority(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "resumed"}}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 	kit := &wakeProbeToolkit{}
 	var refreshed atomic.Int32
 	var refreshedWith atomic.Value
