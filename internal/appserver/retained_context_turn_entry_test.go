@@ -68,7 +68,8 @@ func TestEnsureThreadRuntimeAfterAdmission_PreservesRetainedContext(t *testing.T
 		History:     append(append([]providers.ChatMessage(nil), history...), res.NewMessages...),
 		execRuntime: &runtime.ThreadRuntime{StreamRunner: runner},
 	}
-	srv := &Server{rt: &runtime.Session{SessionDir: t.TempDir()}}
+	srv := &Server{rt: newTestRuntime(t, &fakeClient{})}
+	th.state = testRuntimeState(t, srv.rt)
 
 	if _, err := srv.ensureThreadRuntimeAfterAdmission(th); err != nil {
 		t.Fatalf("ensureThreadRuntimeAfterAdmission: %v", err)

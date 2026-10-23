@@ -77,6 +77,7 @@ func TestForwardProcessNotificationsQueuesOnlyNaturalOwnerExit(t *testing.T) {
 	threadID := "thread-owner"
 	thread := &threadState{ID: threadID, running: true}
 	server := &Server{
+		rt:                           newTestRuntime(t, &fakeClient{}),
 		threads:                      map[string]*threadState{threadID: thread},
 		pendingAgentCompletionTurns:  make(map[string][]agentCompletionTurn),
 		drainingAgentCompletionTurns: make(map[string]bool),
@@ -84,8 +85,10 @@ func TestForwardProcessNotificationsQueuesOnlyNaturalOwnerExit(t *testing.T) {
 	events := make(chan process.Event, 4)
 	done := make(chan struct{})
 	forwardDone := make(chan struct{})
+	binding := testRuntimeState(t, server.rt)
+	thread.state = binding
 	go func() {
-		server.forwardProcessNotifications(testRuntimeState(t, server.rt), threadID, nil, nil, events, done)
+		server.forwardProcessNotifications(binding, threadID, nil, nil, events, done)
 		close(forwardDone)
 	}()
 
@@ -166,6 +169,7 @@ func TestForwardProcessNotificationsPullsPersistedCompletionAfterMissedEvent(t *
 
 	thread := &threadState{ID: threadID, running: true}
 	server := &Server{
+		rt:                           newTestRuntime(t, &fakeClient{}),
 		threads:                      map[string]*threadState{threadID: thread},
 		pendingAgentCompletionTurns:  make(map[string][]agentCompletionTurn),
 		drainingAgentCompletionTurns: make(map[string]bool),
@@ -173,8 +177,10 @@ func TestForwardProcessNotificationsPullsPersistedCompletionAfterMissedEvent(t *
 	events := make(chan process.Event, 1)
 	done := make(chan struct{})
 	forwardDone := make(chan struct{})
+	binding := testRuntimeState(t, server.rt)
+	thread.state = binding
 	go func() {
-		server.forwardProcessNotifications(testRuntimeState(t, server.rt), threadID, nil, manager, events, done)
+		server.forwardProcessNotifications(binding, threadID, nil, manager, events, done)
 		close(forwardDone)
 	}()
 	// A full channel can drop the terminal event itself, but at least one
@@ -404,6 +410,7 @@ func TestProcessCompletionDrainContinuesPastDeliveredResult(t *testing.T) {
 func TestProcessCompletionDrainYieldsToQueuedUserWork(t *testing.T) {
 	threadID := "thread-user-priority"
 	server := &Server{
+		rt: newTestRuntime(t, &fakeClient{}),
 		threads: map[string]*threadState{
 			threadID: {ID: threadID},
 		},
@@ -417,7 +424,9 @@ func TestProcessCompletionDrainYieldsToQueuedUserWork(t *testing.T) {
 		drainingQueuedTurns: map[string]bool{threadID: true},
 	}
 
-	server.drainAgentCompletionTurns(testRuntimeState(t, server.rt), threadID)
+	binding := testRuntimeState(t, server.rt)
+	server.threads[threadID].state = binding
+	server.drainAgentCompletionTurns(binding, threadID)
 
 	server.agentCompletionMu.Lock()
 	pending := cloneAgentCompletionTurns(server.pendingAgentCompletionTurns[threadID])
