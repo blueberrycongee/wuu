@@ -19,7 +19,8 @@ const (
 )
 
 // Service is a native provider using the same declarations, invocation and
-// lifecycle as a process provider. Preparing a composition does not open files.
+// lifecycle as a process provider. Preparing a composition does not create a
+// backend generation or write logical records.
 type Service struct {
 	mu            sync.Mutex
 	id, dir, kind string
