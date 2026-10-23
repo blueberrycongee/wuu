@@ -202,9 +202,10 @@ const (
 )
 
 type PluginInventoryChangedNotification struct {
-	Epoch              uint64                     `json:"epoch"`
-	ExtensionInventory []ExtensionInventoryRecord `json:"extension_inventory"`
-	Skills             []SkillSummary             `json:"skills"`
+	ApplicationShell   *runtime.ApplicationShellBinding `json:"application_shell"`
+	Epoch              uint64                           `json:"epoch"`
+	ExtensionInventory []ExtensionInventoryRecord       `json:"extension_inventory"`
+	Skills             []SkillSummary                   `json:"skills"`
 }
 
 type ConfigErrorNotification struct {
@@ -289,30 +290,31 @@ type ReverseRPCCapabilities struct {
 }
 
 type InitializeResult struct {
-	Status             string                       `json:"status"`
-	Issues             []RuntimeIssue               `json:"issues,omitempty"`
-	ProtocolVersion    string                       `json:"protocol_version"`
-	Core               CoreBuildInfo                `json:"core"`
-	Provider           string                       `json:"provider"`
-	Model              string                       `json:"model"`
-	Effort             string                       `json:"effort,omitempty"`
-	Variant            string                       `json:"variant,omitempty"`
-	MaxParallel        int                          `json:"max_parallel"`
-	RuntimeHost        RuntimeHostSummary           `json:"runtime_host"`
-	WorkspaceRoot      string                       `json:"workspace_root"`
-	Permissions        PermissionSummary            `json:"permissions"`
-	ExtensionTrust     ExtensionTrustSummary        `json:"extension_trust"`
-	ExtensionInventory []ExtensionInventoryRecord   `json:"extension_inventory,omitempty"`
-	ModelProfile       *ModelProfileSummary         `json:"model_profile,omitempty"`
-	ToolSurface        *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
-	ModelRoles         []ModelRoleSummary           `json:"model_roles,omitempty"`
-	ModelAliases       map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
-	ProjectModels      config.ProjectModelsConfig   `json:"project_models,omitempty"`
-	Providers          []ProviderSummary            `json:"providers,omitempty"`
-	AdvancedSettings   AdvancedSettingsSummary      `json:"advanced_settings"`
-	GeneralSettings    GeneralSettingsSummary       `json:"general_settings"`
-	CatalogProviders   []CatalogProviderSummary     `json:"catalog_providers"`
-	Features           FeatureFlags                 `json:"features"`
+	ApplicationShell   *runtime.ApplicationShellBinding `json:"application_shell"`
+	Status             string                           `json:"status"`
+	Issues             []RuntimeIssue                   `json:"issues,omitempty"`
+	ProtocolVersion    string                           `json:"protocol_version"`
+	Core               CoreBuildInfo                    `json:"core"`
+	Provider           string                           `json:"provider"`
+	Model              string                           `json:"model"`
+	Effort             string                           `json:"effort,omitempty"`
+	Variant            string                           `json:"variant,omitempty"`
+	MaxParallel        int                              `json:"max_parallel"`
+	RuntimeHost        RuntimeHostSummary               `json:"runtime_host"`
+	WorkspaceRoot      string                           `json:"workspace_root"`
+	Permissions        PermissionSummary                `json:"permissions"`
+	ExtensionTrust     ExtensionTrustSummary            `json:"extension_trust"`
+	ExtensionInventory []ExtensionInventoryRecord       `json:"extension_inventory,omitempty"`
+	ModelProfile       *ModelProfileSummary             `json:"model_profile,omitempty"`
+	ToolSurface        *ToolSurfaceSummary              `json:"tool_surface,omitempty"`
+	ModelRoles         []ModelRoleSummary               `json:"model_roles,omitempty"`
+	ModelAliases       map[string]ModelAliasSummary     `json:"model_aliases,omitempty"`
+	ProjectModels      config.ProjectModelsConfig       `json:"project_models,omitempty"`
+	Providers          []ProviderSummary                `json:"providers,omitempty"`
+	AdvancedSettings   AdvancedSettingsSummary          `json:"advanced_settings"`
+	GeneralSettings    GeneralSettingsSummary           `json:"general_settings"`
+	CatalogProviders   []CatalogProviderSummary         `json:"catalog_providers"`
+	Features           FeatureFlags                     `json:"features"`
 }
 
 type FeatureFlags struct {

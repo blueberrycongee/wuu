@@ -63,6 +63,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	}
 	host := newPluginHostWithRequirements(plugins)
 	var started []pluginhost.Client
+	var rendererServices []pluginhost.Client
 	kernel := newKernelHostServices(func() uint64 {
 		epoch, err := session.ReadPluginGenerationEpoch(wuuHome)
 		if err != nil {
@@ -76,6 +77,12 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		required = make(map[string]bool)
 	}
 	var nativeModules []pluginhost.Client
+	for _, module := range nativeRendererModules() {
+		if resolved.Includes(module.ID) {
+			nativeModules = append(nativeModules, newRendererService(module, nil, nil))
+			required[module.ID] = true
+		}
+	}
 	if resolved.Includes(kernel.ID()) {
 		nativeModules = append(nativeModules, kernel)
 		kernel.bindUserQuestions(userQuestions)
@@ -143,6 +150,11 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			continue
 		}
 		if item.Runtime == nil {
+			if item.Desktop != nil && len(item.Desktop.Services) > 0 {
+				client := newRendererService(rendererModule(item), item.Desktop.RequiredServices, nil)
+				rendererServices = append(rendererServices, client)
+				host.Add(client)
+			}
 			continue
 		}
 		timeout := time.Duration(item.Runtime.Timeout) * time.Second
@@ -177,10 +189,14 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		}
 		started = append(started, client)
 		host.Add(client)
+		if item.Desktop != nil && len(item.Desktop.Services) > 0 {
+			rendererServices = append(rendererServices, newRendererService(rendererModule(item), item.Desktop.RequiredServices, client))
+		}
 	}
 	// Resolve the complete graph before activation. Prepared registrations are
 	// unpublished; missing transitive dependencies cannot expose capabilities.
 	conflicts = append(conflicts, registry.RegisterClients(started...)...)
+	conflicts = append(conflicts, registry.RegisterClients(rendererServices...)...)
 	host.AttachServiceRegistry(registry, conflicts)
 	if err := registry.ValidateBindings(); err != nil {
 		return nil, nil, errors.Join(err, closeStarted())
@@ -226,7 +242,7 @@ func selectCompositionPlugins(selection *composition.Config, candidates []plugin
 	if err != nil {
 		return nil, resolved, err
 	}
-	available := []string{kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
+	available := []string{defaultShellModule, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
 	identities := map[string]bool{}
 	for _, id := range available {
 		identities[id] = true

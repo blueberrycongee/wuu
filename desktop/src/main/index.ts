@@ -2110,6 +2110,9 @@ app.whenReady().then(async () => {
         "plugin/desktop-module/read",
         params,
       );
+      if (module.entry.startsWith("wuu-builtin:")) {
+        return { id: module.id, fingerprint: module.fingerprint, url: module.entry };
+      }
       return cachePluginDesktopModule(module);
     },
   );

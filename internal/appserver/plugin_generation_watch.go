@@ -163,7 +163,8 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		if invalidated && !refreshed {
 			inventory, skills := s.currentExtensionState()
 			if err := s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
-				Epoch: s.pluginGenerationEpoch.Load(), ExtensionInventory: inventory, Skills: skills,
+				ApplicationShell: s.rt.ApplicationShellBinding(),
+				Epoch:            s.pluginGenerationEpoch.Load(), ExtensionInventory: inventory, Skills: skills,
 			}); err != nil {
 				providers.DebugLogf("notify invalidated plugin dependencies: %v", err)
 			}
@@ -300,6 +301,7 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		s.pluginRuntimeRevision.Add(1)
 	}
 	return s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
+		ApplicationShell:   s.rt.ApplicationShellBinding(),
 		Epoch:              epoch,
 		ExtensionInventory: inventory,
 		Skills:             skills,

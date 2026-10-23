@@ -44,6 +44,18 @@ func (s *Server) handlePluginDesktopModuleRead(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("plugin id and fingerprint are required"))
 	}
 
+	for _, module := range s.rt.NativeRendererModules() {
+		if params.ID != module.SubjectID {
+			continue
+		}
+		if params.Fingerprint != module.Fingerprint {
+			return s.writeResponse(req.ID, nil, errors.New("desktop module changed; refresh inventory before loading it"))
+		}
+		return s.writeResponse(req.ID, PluginDesktopModuleReadResult{
+			ID: module.SubjectID, Fingerprint: module.Fingerprint, Entry: module.Entry, MediaType: "text/javascript",
+		}, nil)
+	}
+
 	snapshot := s.rt.ExtensionSnapshot()
 	var selected *pluginpkg.Plugin
 	for index := range snapshot.Plugins {
@@ -653,7 +665,8 @@ func (s *Server) writePluginGenerationResponse(req Request, result any, activati
 	}
 	inventory, skills := s.currentExtensionState()
 	notifyErr := s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
-		Epoch: s.pluginGenerationEpoch.Load(), ExtensionInventory: inventory, Skills: skills,
+		ApplicationShell: s.rt.ApplicationShellBinding(),
+		Epoch:            s.pluginGenerationEpoch.Load(), ExtensionInventory: inventory, Skills: skills,
 	})
 	return errors.Join(notifyErr, s.writeResponse(req.ID, nil, activationErr))
 }

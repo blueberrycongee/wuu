@@ -154,7 +154,14 @@ export type InitializeParams = {
   };
 };
 
+export type ApplicationShellBinding = {
+  plugin_id: string;
+  generation: string;
+  provider_id: string;
+};
+
 export type InitializeResult = {
+  application_shell?: ApplicationShellBinding | null;
   speed?: string;
   status?: "ready" | "needs_setup";
   issues?: RuntimeIssue[];
@@ -652,6 +659,7 @@ export type ExtensionCatalogRefreshResult = {
 
 /** Published after the core atomically activates a new plugin generation. */
 export type PluginInventoryChangedNotification = {
+  application_shell?: ApplicationShellBinding | null;
   epoch: number;
   extension_inventory: ExtensionInventoryRecord[];
   skills: SkillSummary[];

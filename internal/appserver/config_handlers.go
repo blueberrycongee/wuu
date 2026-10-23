@@ -64,9 +64,10 @@ func (s *Server) handleInitialize(req Request) error {
 		issues = append(issues, RuntimeIssue{Code: issue.Code, Provider: issue.Provider, Message: issue.Message})
 	}
 	return s.writeResponse(req.ID, InitializeResult{
-		Status:          status,
-		Issues:          issues,
-		ProtocolVersion: ProtocolVersion,
+		ApplicationShell: s.rt.ApplicationShellBinding(),
+		Status:           status,
+		Issues:           issues,
+		ProtocolVersion:  ProtocolVersion,
 		Core: CoreBuildInfo{
 			Version: core.Version,
 			Commit:  core.Commit,
@@ -657,6 +658,18 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 				State:      state, Executable: true, Fingerprint: fingerprint, GrantScope: grantScope, RequestedPermissions: permissions,
 			})
 		}
+	}
+
+	for _, module := range s.rt.NativeRendererModules() {
+		enabled := true
+		records = append(records, ExtensionInventoryRecord{
+			ID: module.SubjectID, Name: "Wuu", Kind: extensions.KindPlugin,
+			Provenance: extensions.Provenance{Kind: extensions.KindPlugin, Source: "bundled", Scope: "user", PluginID: module.ID, Official: true},
+			State:      ExtensionStateActive, Executable: true, Fingerprint: module.Fingerprint,
+			PackageSource: "bundled", ApprovalState: ExtensionApprovalOfficial,
+			RuntimeState: ExtensionRuntimeActive, Enabled: &enabled,
+			Desktop: &ExtensionDesktopDescriptor{Entry: module.Entry},
+		})
 	}
 
 	sort.Slice(records, func(i, j int) bool {
