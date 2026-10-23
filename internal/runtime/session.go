@@ -408,11 +408,11 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, err
 	}
 	cfg := withDesktopExecutionDefaults(opts.Config, opts.DesktopExecutionDefaults)
-	configRoot := rootDir
-	if opts.ConfigLoadMode == ConfigLoadFile {
-		configRoot = ""
+	configLoadMode := opts.ConfigLoadMode
+	if configLoadMode == ConfigLoadNormal && strings.TrimSpace(opts.ConfigPath) != "" && !isUserConfigPath(opts.ConfigPath, opts.HomeDir) {
+		configLoadMode = ConfigLoadFile
 	}
-	factories := withConfigurationProvider(opts.NativeProviders, opts.ConfigPath, configRoot, cfg)
+	factories := withConfigurationProvider(opts.NativeProviders, opts.ConfigPath, rootDir, cfg, configLoadMode)
 
 	wuuHome, err := statepath.Home(opts.HomeDir)
 	if err != nil {
@@ -820,14 +820,6 @@ func NewSession(opts Options) (*Session, error) {
 	}
 
 	bindPluginCompactionHooks(streamRunner, hookDispatcher, "", rootDir)
-
-	configLoadMode := opts.ConfigLoadMode
-	// Keep direct runtime callers that pass a non-user ConfigPath pinned to
-	// that file. Normal product paths set the mode explicitly when they trust
-	// a complete project config rather than one standalone file.
-	if configLoadMode == ConfigLoadNormal && strings.TrimSpace(opts.ConfigPath) != "" && !isUserConfigPath(opts.ConfigPath, opts.HomeDir) {
-		configLoadMode = ConfigLoadFile
-	}
 
 	runtimeSession = &Session{
 		Documents: documents, Sessions: sessions, nativeProviders: append([]NativeProviderFactory(nil), opts.NativeProviders...),

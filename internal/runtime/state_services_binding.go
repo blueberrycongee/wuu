@@ -13,7 +13,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/siwc"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
 func stateServiceModules() []string {
@@ -21,10 +20,7 @@ func stateServiceModules() []string {
 }
 
 func nativeStateProviders(home, root, stateDir string, factoryIDs []string) ([]pluginhost.Client, error) {
-	configPath, err := statepath.ConfigPath(home)
-	if err != nil {
-		return nil, err
-	}
+	configPath := filepath.Join(home, "config.json")
 	modules := []pluginhost.Client{
 		credentialstore.NewService(credentialstore.OSModule, credentialstore.NewDesktopStore),
 		credentialstore.NewService(credentialstore.FileModule, func() (credentialstore.Store, error) {
@@ -57,8 +53,14 @@ func boundServiceCall(host *pluginhost.Host, consumer, service string) func(cont
 
 // The source path is bootstrap metadata; ordinary reads and writes still go
 // through the selected state.config binding, including external providers.
-func configurationProviderFactory(path, root string, cfg config.Config) NativeProviderFactory {
+func configurationProviderFactory(path, root string, cfg config.Config, mode ConfigLoadMode) NativeProviderFactory {
+	if mode == ConfigLoadFile {
+		root = ""
+	}
 	return NativeProviderFactory{ID: config.Module, DefaultEnabled: true, Build: func(NativeProviderContext) (pluginhost.Client, error) {
+		if mode == ConfigLoadProject {
+			return config.NewProjectService(config.Module, root), nil
+		}
 		if path == "" {
 			return config.NewMemoryService(config.Module, cfg), nil
 		}
@@ -102,12 +104,12 @@ func kernelServiceCall(host *pluginhost.Host, registry *pluginhost.ServiceRegist
 	}
 }
 
-func withConfigurationProvider(factories []NativeProviderFactory, path, root string, cfg config.Config) []NativeProviderFactory {
+func withConfigurationProvider(factories []NativeProviderFactory, path, root string, cfg config.Config, mode ConfigLoadMode) []NativeProviderFactory {
 	result := append([]NativeProviderFactory(nil), factories...)
 	for _, factory := range result {
 		if factory.ID == config.Module {
 			return result
 		}
 	}
-	return append(result, configurationProviderFactory(path, root, cfg))
+	return append(result, configurationProviderFactory(path, root, cfg, mode))
 }

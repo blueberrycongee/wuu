@@ -290,11 +290,7 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 }
 
 func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpkg.Plugin, required map[string]bool, ownedRoots []string, start pluginClientStarter) (*PluginGeneration, error) {
-	configRoot := s.RootDir
-	if s.ConfigLoadMode == ConfigLoadFile {
-		configRoot = ""
-	}
-	factories := withConfigurationProvider(s.nativeProviders, s.ConfigPath, configRoot, cfg)
+	factories := withConfigurationProvider(s.nativeProviders, s.ConfigPath, s.RootDir, cfg, s.ConfigLoadMode)
 	var active []pluginpkg.Plugin
 	if !s.SafeMode {
 		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered, factories...)

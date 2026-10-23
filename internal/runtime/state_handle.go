@@ -82,6 +82,7 @@ func (s *Session) RetainState() (*State, error) {
 type StateOptions struct {
 	RootDir, HomeDir, ConfigPath string
 	Config                       config.Config
+	ConfigLoadMode               ConfigLoadMode
 	NativeProviders              []NativeProviderFactory
 }
 
@@ -89,7 +90,7 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	opts.NativeProviders = withConfigurationProvider(opts.NativeProviders, opts.ConfigPath, opts.RootDir, opts.Config)
+	opts.NativeProviders = withConfigurationProvider(opts.NativeProviders, opts.ConfigPath, opts.RootDir, opts.Config, opts.ConfigLoadMode)
 	root := strings.TrimSpace(opts.RootDir)
 	if root == "" {
 		return nil, errors.New("root dir is required")
