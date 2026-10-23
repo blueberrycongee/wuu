@@ -258,7 +258,7 @@ func runChatStream(t *testing.T, body string, failAfterExecution bool) chatStrea
 	if err != nil {
 		t.Fatal(err)
 	}
-	ledger, err := toolledger.New(t.TempDir(), "synthetic-chat-stream")
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "synthetic-chat-stream")
 	if err != nil {
 		t.Fatal(err)
 	}

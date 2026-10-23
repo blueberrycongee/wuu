@@ -1766,7 +1766,7 @@ func TestStreamRunner_ContextOverflowRecoversWithIdleToolLedger(t *testing.T) {
 			{Content: "summarized ledger overflow"},
 		},
 	}
-	ledger, err := toolledger.New(t.TempDir(), "thread-overflow-ledger")
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "thread-overflow-ledger")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2388,7 +2388,7 @@ func TestStreamRunner_BlocksReplayAfterDurableToolAdmission(t *testing.T) {
 		started:  make(chan struct{}),
 		canceled: make(chan struct{}),
 	}
-	ledger, err := toolledger.New(t.TempDir(), "thread-replay-fence")
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "thread-replay-fence")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2431,7 +2431,7 @@ func TestStreamRunner_BlocksReplayAfterDurableToolAdmission(t *testing.T) {
 
 func TestStreamRunnerRecoversSettledUnprojectedToolResult(t *testing.T) {
 	ctx := context.Background()
-	ledger, err := toolledger.New(t.TempDir(), "thread-recovery")
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "thread-recovery")
 	if err != nil {
 		t.Fatal(err)
 	}

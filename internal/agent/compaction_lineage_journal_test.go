@@ -49,7 +49,7 @@ func TestProactiveCompactionNativeUnavailablePreservesDurableLineage(t *testing.
 }
 
 func testProactiveCompactionDurableLineage(t *testing.T, nativeAvailable bool) {
-	runtime, err := session.NewInferenceJournalRuntime(t.TempDir(), "named-agent-workspace")
+	runtime, err := session.NewStore(context.Background(), agentTestDocuments(t, t.TempDir())).NewInferenceJournalRuntime("named-agent-workspace")
 	if err != nil {
 		t.Fatal(err)
 	}

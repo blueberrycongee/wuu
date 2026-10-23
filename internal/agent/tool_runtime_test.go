@@ -511,7 +511,7 @@ func TestTurnToolRuntime_CancelsStreamingRunsMissingFromFinalCalls(t *testing.T)
 func TestTurnToolRuntimeDurablySettlesBeforeReturningResult(t *testing.T) {
 	ctx := context.Background()
 	tools := &runtimeTestTools{results: map[string]string{"call-1": "done"}}
-	ledger, err := toolledger.New(t.TempDir(), "thread-durable")
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "thread-durable")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,7 +561,7 @@ func TestTurnToolRuntimeFinalizesBeforeDurableSettlement(t *testing.T) {
 			executor.err = errors.New("execution failed")
 		}
 		dir := t.TempDir()
-		ledger, err := toolledger.New(dir, "owner")
+		ledger, err := toolledger.New(agentTestDocuments(t, dir), "owner")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -573,7 +573,7 @@ func TestTurnToolRuntimeFinalizesBeforeDurableSettlement(t *testing.T) {
 			t.Fatalf("execute: %v messages=%v", err, messages)
 		}
 		// Reopening reads the serialized ledger, not the in-memory completion.
-		reopened, err := toolledger.New(dir, "owner")
+		reopened, err := toolledger.New(agentTestDocuments(t, dir), "owner")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -638,7 +638,7 @@ func TestTurnToolRuntimeFinalOnlyToolUsesFinalHistoryContext(t *testing.T) {
 
 func TestTurnToolRuntimeStopsWhenLedgerCannotPrepare(t *testing.T) {
 	tools := &runtimeTestTools{results: map[string]string{"call-1": "must not execute"}}
-	ledger, err := toolledger.New(t.TempDir(), "thread-invalid-operation")
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "thread-invalid-operation")
 	if err != nil {
 		t.Fatal(err)
 	}
