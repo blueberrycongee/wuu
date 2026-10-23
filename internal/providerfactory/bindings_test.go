@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
 func TestFactorySelectedCredentialsAndExplicitOverrides(t *testing.T) {
@@ -65,4 +66,17 @@ func TestFactorySelectedCredentialsAndExplicitOverrides(t *testing.T) {
 	if _, err := BuildClient(provider, "gateway", Bindings{Credentials: unavailable}); err != nil {
 		t.Fatalf("explicit environment credential lost precedence: %v", err)
 	}
+}
+
+func testNativeBindings(t *testing.T, home string) Bindings {
+	t.Helper()
+	resolved, err := statepath.Home(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := authstorage.NewNativeStore(credentialstore.NewFileStore(filepath.Join(t.TempDir(), "credentials.json")), resolved, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Bindings{Credentials: store}
 }

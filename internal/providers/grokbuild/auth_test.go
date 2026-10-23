@@ -1,6 +1,7 @@
 package grokbuild
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +10,7 @@ import (
 
 func TestCredentialSourceUsesExplicitTokenFirst(t *testing.T) {
 	t.Setenv("GROK_HOME", filepath.Join(t.TempDir(), "missing"))
-	token, err := (credentialSource{explicitToken: " explicit ", reuseCLI: true}).token()
+	token, err := (credentialSource{explicitToken: " explicit ", reuseCLI: true}).token(context.Background())
 	if err != nil || token != "explicit" {
 		t.Fatalf("token = %q, err = %v", token, err)
 	}
@@ -52,7 +53,7 @@ func TestLoadCLITokenPrefersCurrentOAuthScopeOverLegacy(t *testing.T) {
 }
 
 func TestCredentialSourceRejectsDisabledReuse(t *testing.T) {
-	_, err := (credentialSource{}).token()
+	_, err := (credentialSource{}).token(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "reuse_grok_credentials") {
 		t.Fatalf("err = %v", err)
 	}

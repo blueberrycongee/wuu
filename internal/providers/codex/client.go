@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
@@ -27,7 +27,7 @@ type ClientConfig struct {
 	BaseURL               string
 	APIKey                string
 	Headers               map[string]string
-	Home                  string
+	Credentials           credentialstore.Store
 	HTTPClient            *http.Client
 	StreamConfig          *providers.StreamTransportConfig
 	StreamTransport       providers.StreamTransportMode
@@ -73,10 +73,6 @@ func New(cfg ClientConfig) (*Client, error) {
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	home := strings.TrimSpace(cfg.Home)
-	if home == "" {
-		home = os.Getenv("HOME")
-	}
 	streamTransport := cfg.StreamTransport
 	if streamTransport == "" {
 		streamTransport = providers.StreamTransportAuto
@@ -88,7 +84,7 @@ func New(cfg ClientConfig) (*Client, error) {
 	streamConfig := providers.ResolveStreamTransportConfig(cfg.StreamConfig)
 	return &Client{
 		baseURL:          baseURL,
-		auth:             NewOAuthSource(OAuthConfig{BaseURL: baseURL, APIKey: cfg.APIKey, Home: home, HTTPClient: cfg.HTTPClient, ReuseCodexCredentials: cfg.ReuseCodexCredentials}),
+		auth:             NewOAuthSource(OAuthConfig{BaseURL: baseURL, APIKey: cfg.APIKey, Credentials: cfg.Credentials, HTTPClient: cfg.HTTPClient, ReuseCodexCredentials: cfg.ReuseCodexCredentials}),
 		headers:          cloneHeaders(cfg.Headers),
 		httpClient:       cfg.HTTPClient,
 		streamConfig:     streamConfig,

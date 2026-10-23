@@ -259,6 +259,7 @@ func buildClient(provider config.ProviderConfig, providerName string, bindings .
 		}
 		if profile.Auth == authGrokBuild {
 			client, newErr := grokbuild.New(grokbuild.ClientConfig{
+				Credentials:          bound.Credentials,
 				BaseURL:              provider.BaseURL,
 				APIKey:               resolveExplicitAPIKey(provider),
 				Headers:              provider.Headers,
@@ -273,6 +274,7 @@ func buildClient(provider config.ProviderConfig, providerName string, bindings .
 		}
 		if profile.Auth == authCodexOAuth {
 			client, newErr := codex.New(codex.ClientConfig{
+				Credentials:           bound.Credentials,
 				BaseURL:               provider.BaseURL,
 				APIKey:                resolveExplicitAPIKey(provider),
 				Headers:               provider.Headers,
@@ -289,6 +291,7 @@ func buildClient(provider config.ProviderConfig, providerName string, bindings .
 		}
 		if profile.Auth == authXAISubscription {
 			client, newErr := xaisub.New(xaisub.ClientConfig{
+				Credentials:     bound.Credentials,
 				BaseURL:         provider.BaseURL,
 				Headers:         provider.Headers,
 				StreamConfig:    providerStreamTransportConfig(provider),

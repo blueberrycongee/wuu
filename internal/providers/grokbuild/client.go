@@ -3,9 +3,9 @@ package grokbuild
 import (
 	"context"
 	"net/http"
-	"os"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/grokbuildspec"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
@@ -14,7 +14,7 @@ import (
 type ClientConfig struct {
 	BaseURL              string
 	APIKey               string
-	Home                 string
+	Credentials          credentialstore.Store
 	Headers              map[string]string
 	HTTPClient           *http.Client
 	StreamConfig         *providers.StreamTransportConfig
@@ -45,16 +45,12 @@ func New(cfg ClientConfig) (*Client, error) {
 	if baseURL == "" {
 		baseURL = grokbuildspec.DefaultBaseURL
 	}
-	home := strings.TrimSpace(cfg.Home)
-	if home == "" {
-		home = os.Getenv("HOME")
-	}
 	streamConfig := providers.ResolveStreamTransportConfig(cfg.StreamConfig)
 	return &Client{
 		baseURL: baseURL,
 		auth: credentialSource{
 			explicitToken: cfg.APIKey,
-			home:          home,
+			credentials:   cfg.Credentials,
 			reuseCLI:      cfg.ReuseGrokCredentials,
 		},
 		headers:          cloneHeaders(cfg.Headers),
@@ -66,7 +62,7 @@ func New(cfg ClientConfig) (*Client, error) {
 }
 
 func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
-	client, err := c.openAIClient(req.Model)
+	client, err := c.openAIClient(ctx, req.Model)
 	if err != nil {
 		return providers.ChatResponse{}, err
 	}
@@ -75,7 +71,7 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 }
 
 func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
-	client, err := c.openAIClient(req.Model)
+	client, err := c.openAIClient(ctx, req.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -100,8 +96,8 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	return out, nil
 }
 
-func (c *Client) openAIClient(model string) (*openai.Client, error) {
-	token, err := c.auth.token()
+func (c *Client) openAIClient(ctx context.Context, model string) (*openai.Client, error) {
+	token, err := c.auth.token(ctx)
 	if err != nil {
 		return nil, err
 	}

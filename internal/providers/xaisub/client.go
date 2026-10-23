@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
@@ -15,7 +15,7 @@ import (
 // ClientConfig configures the SuperGrok subscription provider.
 type ClientConfig struct {
 	BaseURL         string
-	Home            string
+	Credentials     credentialstore.Store
 	Headers         map[string]string
 	HTTPClient      *http.Client
 	StreamConfig    *providers.StreamTransportConfig
@@ -42,10 +42,6 @@ func New(cfg ClientConfig) (*Client, error) {
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	home := strings.TrimSpace(cfg.Home)
-	if home == "" {
-		home = os.Getenv("HOME")
-	}
 	streamTransport := cfg.StreamTransport
 	if streamTransport == "" {
 		streamTransport = providers.StreamTransportSSE
@@ -53,7 +49,7 @@ func New(cfg ClientConfig) (*Client, error) {
 	streamConfig := providers.ResolveStreamTransportConfig(cfg.StreamConfig)
 	return &Client{
 		baseURL:          baseURL,
-		auth:             NewOAuthSource(OAuthConfig{BaseURL: baseURL, Home: home, HTTPClient: cfg.HTTPClient}),
+		auth:             NewOAuthSource(OAuthConfig{BaseURL: baseURL, Credentials: cfg.Credentials, HTTPClient: cfg.HTTPClient}),
 		headers:          cloneHeaders(cfg.Headers),
 		httpClient:       cfg.HTTPClient,
 		streamConfig:     streamConfig,
