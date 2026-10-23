@@ -302,8 +302,23 @@ runJSONLRuntime({
   const publishUpdate = async () => {
     const source = join(pkg, "runtime.mjs");
     await writeFile(source, (await readFile(source, "utf8")) + "\n// Same-source lifecycle fixture update.\n");
-    const update = spawnSync(binary, ["plugin", "dev", "--watch=false", pkg], { env, encoding: "utf8", timeout: 20_000 });
-    assert.equal(update.status, 0, update.stderr);
+    const deadline = Date.now() + 20_000;
+    const attempts = [];
+    (result.publication_updates ??= []).push(attempts);
+    for (;;) {
+      const update = spawnSync(binary, ["plugin", "dev", "--watch=false", pkg], {
+        env, encoding: "utf8", timeout: Math.max(1, deadline - Date.now()),
+      });
+      attempts.push({ at: new Date().toISOString(), status: update.status, signal: update.signal,
+        stdout: update.stdout, stderr: update.stderr, error: update.error?.message });
+      if (update.status === 0) break;
+      // The watcher may hold a short catalog read lease. Only this exact
+      // pre-publication rejection is safe to retry within the original budget.
+      const deferred = update.status === 2 && update.stderr.trim() ===
+        "error: dev generation refresh deferred; previous generation preserved: plugin catalog is being read or published by another operation";
+      assert(deferred && Date.now() < deadline, update.error?.message || update.stderr);
+      await new Promise(resolve => setTimeout(resolve, Math.min(20, deadline - Date.now())));
+    }
   };
   const reload = async () => {
     await publishUpdate();
