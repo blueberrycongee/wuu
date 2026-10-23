@@ -152,6 +152,7 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	}
 	generation := &PluginGeneration{host: host, state: kernel.state, ownedRoots: roots}
 	generation.retain()
+	kernel.bindStateGeneration(generation, nil)
 	owned = false
 	return &State{Documents: kernel.state.documents, Sessions: kernel.state.sessions, Host: host, Generation: generation, InferenceJournalRuntime: kernel.state.journal, close: func() error { generation.Release(); return generation.closeErr }}, nil
 }

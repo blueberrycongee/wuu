@@ -127,3 +127,28 @@ func TestKernelInvocationReleasesStateAfterCallbackUnlock(t *testing.T) {
 		t.Fatal("last callback release deadlocked kernel shutdown on its invocation lock")
 	}
 }
+
+func TestOpenStateBindsNativeInvocationState(t *testing.T) {
+	var retain func() (*State, error)
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, "example.consumer"}
+	state, err := OpenState(context.Background(), StateOptions{
+		RootDir: t.TempDir(), HomeDir: t.TempDir(),
+		Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}},
+		NativeProviders: []NativeProviderFactory{{ID: "example.consumer", Build: func(input NativeProviderContext) (pluginhost.Client, error) {
+			retain = input.RetainState
+			return &fakeServicePluginClient{id: "example.consumer"}, nil
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	captured, err := retain()
+	if err != nil {
+		t.Fatalf("OpenState native capture: %v", err)
+	}
+	defer captured.Close()
+	if captured.Sessions != state.Sessions || captured.Host != state.Host || captured.Generation != state.Generation {
+		t.Fatal("native callback captured another graph")
+	}
+}
