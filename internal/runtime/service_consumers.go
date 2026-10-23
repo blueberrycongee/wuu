@@ -5,8 +5,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 )
 
 const (
@@ -28,7 +31,7 @@ func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
 	tool := &runtimeServiceConsumer{
 		id: toolExecutionConsumer, state: pluginhost.StatePrepared,
 		requirements: []pluginhost.ServiceRequirement{
-			{Name: pluginhost.SecurityAuthorizeService, MajorVersion: pluginhost.SecurityServiceMajor},
+			{Name: pluginhost.SecurityAuthorizeService, MajorVersion: pluginhost.SecurityServiceMajor, Required: true},
 			{Name: pluginhost.ProcessSandboxService, MajorVersion: pluginhost.SecurityServiceMajor},
 		},
 	}
@@ -39,7 +42,13 @@ func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
 	loop := &runtimeServiceConsumer{id: sessionExecutionConsumer, state: pluginhost.StatePrepared,
 		requirements: []pluginhost.ServiceRequirement{{Name: DriverServicePrefix + profile, MajorVersion: loopdriver.DriverServiceMajor, Required: true}},
 	}
-	return []pluginhost.Client{tool, loop}
+	state := &runtimeServiceConsumer{id: StateServicesConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{
+		{Name: credentialstore.ServiceName, MajorVersion: 1, Required: true},
+		{Name: pluginsettings.ServiceName, MajorVersion: 1, Required: true},
+		{Name: config.ServiceName, MajorVersion: 1, Required: true},
+		{Name: ArtifactServiceName, MajorVersion: 1, Required: true},
+	}}
+	return []pluginhost.Client{tool, loop, state}
 }
 
 func (c *runtimeServiceConsumer) ID() string { return c.id }

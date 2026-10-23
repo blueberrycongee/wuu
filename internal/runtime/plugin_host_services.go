@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
@@ -22,22 +24,24 @@ import (
 // never accepts a caller-supplied plugin ID or absolute filesystem path:
 // ownership and roots are captured from the validated inventory at activation.
 type pluginHostServices struct {
-	mu          sync.RWMutex
-	active      bool
-	open        bool
-	pluginID    string
-	subjectID   string
-	fingerprint string
-	projectRoot string
-	wuuHome     string
-	settings    map[string]pluginpkg.SettingDefinition
-	sessions    *session.Store
-	turnRouter  *PluginSessionRouter
-	fileLocks   map[string]func()
-	lockContext context.Context
-	lockCancel  context.CancelFunc
-	processMu   sync.Mutex
-	processes   map[string]*pluginProcess
+	mu             sync.RWMutex
+	active         bool
+	open           bool
+	pluginID       string
+	subjectID      string
+	fingerprint    string
+	projectRoot    string
+	wuuHome        string
+	settings       map[string]pluginpkg.SettingDefinition
+	sessions       *session.Store
+	credentials    credentialstore.Store
+	settingsClient *pluginsettings.Client
+	turnRouter     *PluginSessionRouter
+	fileLocks      map[string]func()
+	lockContext    context.Context
+	lockCancel     context.CancelFunc
+	processMu      sync.Mutex
+	processes      map[string]*pluginProcess
 }
 
 func newPluginHostServices(item pluginpkg.Plugin, projectRoot, wuuHome string, turnRouter *PluginSessionRouter) *pluginHostServices {
@@ -237,48 +241,48 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 	case pluginhost.HostServiceCredentialsRequest:
 		return s.credentialRequest(ctx, raw)
 	case pluginhost.HostServiceSettingsGet:
-		return s.settingsGet(raw)
+		return s.settingsGet(ctx, raw)
 	case pluginhost.HostServiceSettingsList:
 		if err := decodeServiceParams(raw, &struct{}{}); err != nil {
 			return nil, err
 		}
-		return s.settingsList()
+		return s.settingsList(ctx)
 	case pluginhost.HostServiceStorageGet:
 		var params pluginhost.StorageGetParams
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		return s.storageGet(params)
+		return s.storageGet(ctx, params)
 	case pluginhost.HostServiceStorageSet:
 		var params pluginhost.StorageSetParams
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		return s.storageSet(params)
+		return s.storageSet(ctx, params)
 	case pluginhost.HostServiceStorageDelete:
 		var params pluginhost.StorageDeleteParams
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		return s.storageDelete(params)
+		return s.storageDelete(ctx, params)
 	case pluginhost.HostServiceStorageKeys:
 		var params pluginhost.StorageKeysParams
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		return s.storageKeys(params)
+		return s.storageKeys(ctx, params)
 	case pluginhost.HostServiceStorageCompareExchange:
 		var params pluginhost.StorageCompareExchangeParams
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		return s.storageCompareExchange(params)
+		return s.storageCompareExchange(ctx, params)
 	default:
 		return nil, serviceError("method_not_found", fmt.Sprintf("host service %q is not implemented", method))
 	}
 }
 
-func (s *pluginHostServices) settingsGet(raw json.RawMessage) (json.RawMessage, error) {
+func (s *pluginHostServices) settingsGet(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var params pluginhost.SettingsGetParams
 	if err := decodeServiceParams(raw, &params); err != nil {
 		return nil, err
@@ -287,14 +291,14 @@ func (s *pluginHostServices) settingsGet(raw json.RawMessage) (json.RawMessage, 
 	if err != nil {
 		return nil, err
 	}
-	value, err := s.settingValue(localKey, definition)
+	value, err := s.settingValue(ctx, localKey, definition)
 	if err != nil {
 		return nil, err
 	}
 	return marshalServiceResult(pluginhost.SettingsGetResult{Value: value})
 }
 
-func (s *pluginHostServices) settingsList() (json.RawMessage, error) {
+func (s *pluginHostServices) settingsList(ctx context.Context) (json.RawMessage, error) {
 	entries := make(map[string]json.RawMessage, len(s.settings))
 	keys := make([]string, 0, len(s.settings))
 	for qualified := range s.settings {
@@ -309,7 +313,7 @@ func (s *pluginHostServices) settingsList() (json.RawMessage, error) {
 		if err != nil {
 			return nil, err
 		}
-		value, err := s.settingValue(key, definition)
+		value, err := s.settingValue(ctx, key, definition)
 		if err != nil {
 			return nil, err
 		}
@@ -330,7 +334,7 @@ func (s *pluginHostServices) ownedSetting(key string) (string, pluginpkg.Setting
 	return key, definition, nil
 }
 
-func (s *pluginHostServices) settingValue(key string, definition pluginpkg.SettingDefinition) (json.RawMessage, error) {
+func (s *pluginHostServices) settingValue(ctx context.Context, key string, definition pluginpkg.SettingDefinition) (json.RawMessage, error) {
 	if definition.Type == pluginpkg.SettingTypeSecret {
 		return json.RawMessage(`""`), nil
 	}
@@ -339,7 +343,7 @@ func (s *pluginHostServices) settingValue(key string, definition pluginpkg.Setti
 	// survive plugin upgrades, so a document fingerprint may differ from this
 	// generation's fingerprint. Reading never rewrites it; Desktop's existing
 	// fingerprint-gated direct API remains the sole settings writer.
-	document, err := pluginsettings.Read(s.wuuHome, s.projectRoot, s.subjectID, scope)
+	document, err := s.settingsClient.Read(ctx, s.subjectID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +486,14 @@ func (k *kernelHostServices) InvokeService(ctx context.Context, params pluginhos
 	}
 	return registration.Invoker.InvokeService(ctx, params)
 }
-func (k *kernelHostServices) RequiredServices() []pluginhost.ServiceRequirement { return nil }
+func (k *kernelHostServices) RequiredServices() []pluginhost.ServiceRequirement {
+	return []pluginhost.ServiceRequirement{
+		{Name: credentialstore.ServiceName, MajorVersion: 1, Required: true},
+		{Name: pluginsettings.ServiceName, MajorVersion: 1, Required: true},
+		{Name: config.ServiceName, MajorVersion: 1, Required: true},
+		{Name: ArtifactServiceName, MajorVersion: 1, Required: true},
+	}
+}
 func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration {
 	descriptors := pluginhost.KernelServiceDescriptors()
 	methods := []pluginhost.HostServiceMethod{
@@ -551,10 +562,6 @@ func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration 
 		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelArtifactImportDescriptor(),
 			Invoker:    &artifactImportInvoker{parent: k},
-		},
-		nativeServiceRegistration{
-			Descriptor: pluginhost.KernelDataQueryDescriptor(),
-			Invoker:    &dataQueryInvoker{parent: k},
 		},
 		nativeServiceRegistration{
 			Descriptor: pluginhost.DriverTurnDescriptor(),
@@ -758,7 +765,7 @@ func userQuestionServiceError(err error) error {
 	return err
 }
 
-func (s *pluginHostServices) storageGet(params pluginhost.StorageGetParams) (json.RawMessage, error) {
+func (s *pluginHostServices) storageGet(ctx context.Context, params pluginhost.StorageGetParams) (json.RawMessage, error) {
 	scope, err := storageScope(params.Scope)
 	if err != nil {
 		return nil, err
@@ -766,7 +773,7 @@ func (s *pluginHostServices) storageGet(params pluginhost.StorageGetParams) (jso
 	if err := pluginsettings.ValidateStateKey(params.Key); err != nil {
 		return nil, serviceError("invalid_params", err.Error())
 	}
-	document, err := pluginsettings.ReadState(s.wuuHome, s.projectRoot, s.subjectID, scope)
+	document, err := s.settingsClient.ReadState(ctx, s.subjectID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -777,7 +784,7 @@ func (s *pluginHostServices) storageGet(params pluginhost.StorageGetParams) (jso
 	return marshalServiceResult(pluginhost.StorageGetResult{Value: &value})
 }
 
-func (s *pluginHostServices) storageSet(params pluginhost.StorageSetParams) (json.RawMessage, error) {
+func (s *pluginHostServices) storageSet(ctx context.Context, params pluginhost.StorageSetParams) (json.RawMessage, error) {
 	scope, err := storageScope(params.Scope)
 	if err != nil {
 		return nil, err
@@ -788,7 +795,7 @@ func (s *pluginHostServices) storageSet(params pluginhost.StorageSetParams) (jso
 	if len([]byte(params.Value)) > pluginsettings.MaxStateValueBytes {
 		return nil, serviceError("limit_exceeded", fmt.Sprintf("plugin storage value exceeds %d bytes", pluginsettings.MaxStateValueBytes))
 	}
-	_, err = pluginsettings.UpdateState(s.wuuHome, s.projectRoot, s.subjectID, scope, func(values map[string]string) error {
+	_, err = s.settingsClient.UpdateState(ctx, s.subjectID, scope, func(values map[string]string) error {
 		values[params.Key] = params.Value
 		return nil
 	})
@@ -798,7 +805,7 @@ func (s *pluginHostServices) storageSet(params pluginhost.StorageSetParams) (jso
 	return marshalServiceResult(struct{}{})
 }
 
-func (s *pluginHostServices) storageDelete(params pluginhost.StorageDeleteParams) (json.RawMessage, error) {
+func (s *pluginHostServices) storageDelete(ctx context.Context, params pluginhost.StorageDeleteParams) (json.RawMessage, error) {
 	scope, err := storageScope(params.Scope)
 	if err != nil {
 		return nil, err
@@ -806,7 +813,7 @@ func (s *pluginHostServices) storageDelete(params pluginhost.StorageDeleteParams
 	if err := pluginsettings.ValidateStateKey(params.Key); err != nil {
 		return nil, serviceError("invalid_params", err.Error())
 	}
-	_, err = pluginsettings.UpdateState(s.wuuHome, s.projectRoot, s.subjectID, scope, func(values map[string]string) error {
+	_, err = s.settingsClient.UpdateState(ctx, s.subjectID, scope, func(values map[string]string) error {
 		delete(values, params.Key)
 		return nil
 	})
@@ -816,12 +823,12 @@ func (s *pluginHostServices) storageDelete(params pluginhost.StorageDeleteParams
 	return marshalServiceResult(struct{}{})
 }
 
-func (s *pluginHostServices) storageKeys(params pluginhost.StorageKeysParams) (json.RawMessage, error) {
+func (s *pluginHostServices) storageKeys(ctx context.Context, params pluginhost.StorageKeysParams) (json.RawMessage, error) {
 	scope, err := storageScope(params.Scope)
 	if err != nil {
 		return nil, err
 	}
-	document, err := pluginsettings.ReadState(s.wuuHome, s.projectRoot, s.subjectID, scope)
+	document, err := s.settingsClient.ReadState(ctx, s.subjectID, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -833,7 +840,7 @@ func (s *pluginHostServices) storageKeys(params pluginhost.StorageKeysParams) (j
 	return marshalServiceResult(pluginhost.StorageKeysResult{Keys: keys})
 }
 
-func (s *pluginHostServices) storageCompareExchange(params pluginhost.StorageCompareExchangeParams) (json.RawMessage, error) {
+func (s *pluginHostServices) storageCompareExchange(ctx context.Context, params pluginhost.StorageCompareExchangeParams) (json.RawMessage, error) {
 	scope, err := storageScope(params.Scope)
 	if err != nil {
 		return nil, err
@@ -845,7 +852,7 @@ func (s *pluginHostServices) storageCompareExchange(params pluginhost.StorageCom
 		return nil, serviceError("limit_exceeded", fmt.Sprintf("plugin storage value exceeds %d bytes", pluginsettings.MaxStateValueBytes))
 	}
 	result := pluginhost.StorageCompareExchangeResult{}
-	_, err = pluginsettings.UpdateState(s.wuuHome, s.projectRoot, s.subjectID, scope, func(values map[string]string) error {
+	_, err = s.settingsClient.UpdateState(ctx, s.subjectID, scope, func(values map[string]string) error {
 		current, exists := values[params.Key]
 		matches := params.Expected != nil && exists && current == *params.Expected
 		if params.Expected == nil {

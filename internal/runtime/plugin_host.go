@@ -6,16 +6,19 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
+	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
@@ -123,6 +126,16 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			}
 		}
 	}
+	stateModules, err := nativeStateProviders(wuuHome, projectRoot, workspaceStateDir, factoryIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, module := range stateModules {
+		if resolved.Includes(module.ID()) && (resolved.Modules != nil || module.ID() != credentialstore.FileModule) {
+			nativeModules = append(nativeModules, module)
+			required[module.ID()] = true
+		}
+	}
 	for _, consumer := range nativeConsumers {
 		if resolved.Includes(consumer.ID()) {
 			nativeModules = append(nativeModules, consumer)
@@ -204,6 +217,8 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			if kernel.state != nil {
 				handler.sessions = kernel.state.sessions
 			}
+			handler.credentials = credentialstore.NewClient(boundServiceCall(host, kernel.ID(), credentialstore.ServiceName))
+			handler.settingsClient = pluginsettings.NewClient(boundServiceCall(host, kernel.ID(), pluginsettings.ServiceName))
 			kernel.add(item.ID, handler)
 			onClose = handler.close
 		}
@@ -286,7 +301,12 @@ func selectCompositionPlugins(selection *composition.Config, candidates []plugin
 		return nil, resolved, err
 	}
 	available := []string{sessionStateConsumer, defaultShellModule, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
-	available = append(available, nativeProviderIDs...)
+	available = append(available, stateServiceModules()...)
+	for _, id := range nativeProviderIDs {
+		if !slices.Contains(available, id) {
+			available = append(available, id)
+		}
+	}
 	identities := map[string]bool{}
 	for _, id := range available {
 		identities[id] = true
