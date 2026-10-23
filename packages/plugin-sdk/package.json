@@ -8,12 +8,14 @@
   "description": "Wuu Plugin SDK \u2014 types and helpers for building Wuu plugins",
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit",
-    "test": "npm run build && node dist/index.test.js && node dist/bundle-contract.test.js && node dist/runtime-composition.test.js",
-    "prepack": "npm run build"
+    "typecheck": "tsc --noEmit && tsc --project tsconfig.preview.json",
+    "test": "npm run build && node --test dist/*.test.js test/*.test.mjs",
+    "prepack": "npm run build",
+    "test:author": "node test/author-loop.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
+    "@types/node": "22.10.0",
+    "@types/react-dom": "19.2.3",
     "@types/react": "19.2.15"
   },
   "files": [
@@ -32,7 +34,11 @@
     "dist/persistence.js",
     "dist/persistence.d.ts",
     "dist/ui.js",
-    "dist/ui.d.ts"
+    "dist/ui.d.ts",
+    "bin/preview.mjs",
+    "preview/*.mjs",
+    "preview/*.ts",
+    "preview/*.tsx"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -45,6 +51,15 @@
       "types": "./dist/ui.d.ts",
       "import": "./dist/ui.js"
     }
+  },
+  "dependencies": {
+    "esbuild": "0.25.12",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "typescript": "5.9.3"
+  },
+  "bin": {
+    "wuu-plugin-preview": "./bin/preview.mjs"
   },
   "peerDependencies": {
     "@types/react": "^19.2.15"
