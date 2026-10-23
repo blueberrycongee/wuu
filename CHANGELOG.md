@@ -129,6 +129,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep Recent conversation positions stable after reading or switching sessions. Completed work stays immediately below remaining running conversations, including results read in the active conversation; only new activity changes priority until the window is reopened.
+
 - Release native engine session resources after their active turn and workers finish cleanup. `Open` and `Resume` retain their provider generation until `Close` drains the owned runtime; canceling the close wait no longer reports premature completion or abandons cleanup.
 
 - Preserve the selected default engine when it is disabled or unavailable. New conversations now report the unavailable selection instead of silently falling back to Wuu; explicitly choose another engine or restore the selected one. Removed native engine registrations also stop admission and execution.
