@@ -463,8 +463,14 @@ func (c *ProcessClient) Close(ctx context.Context) error {
 	}
 	shutdownCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	_ = c.call(shutdownCtx, "shutdown", nil, nil)
+	shutdownErr := c.call(shutdownCtx, "shutdown", nil, nil)
 	err := c.stopProcess()
+	// Runtimes may exit without replying. Only a received rejection proves a
+	// shutdown callback failure independently of the process retirement result.
+	var remoteErr *remoteCallError
+	if errors.As(shutdownErr, &remoteErr) {
+		err = errors.Join(shutdownErr, err)
+	}
 	c.mu.Lock()
 	c.status.State = StateStopped
 	c.tools = nil

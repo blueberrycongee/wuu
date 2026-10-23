@@ -31,7 +31,7 @@ func TestProcessClientLifecycle(t *testing.T) {
 		runPluginHelper()
 		return
 	}
-	for _, mode := range []string{"normal", "stderr-tail", "descendant", "blocked-write", "cancel-delivery", "shutdown-failure"} {
+	for _, mode := range []string{"normal", "stderr-tail", "descendant", "blocked-write", "cancel-delivery", "shutdown-failure", "shutdown-rejection", "shutdown-rejection-exit", "shutdown-no-response", "shutdown-timeout"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()
 			env := map[string]string{"WUU_PLUGINHOST_HELPER": "1", "WUU_PLUGINHOST_MODE": mode}
@@ -50,11 +50,12 @@ func TestProcessClientLifecycle(t *testing.T) {
 			if mode == "cancel-delivery" {
 				timeout = 5 * time.Second
 			}
+			var closed atomic.Int32
 			client, err := Start(context.Background(), ProcessConfig{
 				ID: "test-plugin", Command: os.Args[0],
 				Args: []string{"-test.run=^TestProcessClientLifecycle$"}, Env: env,
 				PluginRoot: root, ProjectRoot: filepath.Dir(root), WuuHome: t.TempDir(),
-				Timeout: timeout,
+				Timeout: timeout, OnClose: func() { closed.Add(1) },
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -144,11 +145,18 @@ func TestProcessClientLifecycle(t *testing.T) {
 					t.Fatalf("partially written transport remains usable: %+v", client.Status())
 				}
 			}
+			var closeErr error
 			done := make(chan error, 1)
 			go func() { done <- client.Close(context.Background()) }()
 			select {
 			case err := <-done:
-				if mode == "shutdown-failure" {
+				closeErr = err
+				if mode == "shutdown-rejection" || mode == "shutdown-rejection-exit" {
+					var remoteErr *remoteCallError
+					if !errors.As(err, &remoteErr) || remoteErr.message != "synthetic shutdown probe failed" {
+						t.Errorf("shutdown rejection was lost: %T %v", err, err)
+					}
+				} else if mode == "shutdown-failure" {
 					var exitErr *exec.ExitError
 					if !errors.As(err, &exitErr) || exitErr.ExitCode() != 42 {
 						t.Fatalf("shutdown failure = %v, want exit status 42", err)
@@ -165,6 +173,15 @@ func TestProcessClientLifecycle(t *testing.T) {
 			}
 			if client.Status().State != StateStopped {
 				t.Fatalf("status = %+v", client.Status())
+			}
+			if client.cmd.ProcessState == nil || client.processCtx.Err() == nil {
+				t.Fatal("shutdown returned without retiring the runtime")
+			}
+			if err := client.Close(context.Background()); err != nil && (closeErr == nil || err.Error() != closeErr.Error()) {
+				t.Fatalf("repeated close introduced a new failure: %v (first: %v)", err, closeErr)
+			}
+			if got := closed.Load(); got != 1 {
+				t.Fatalf("runtime cleanup called %d times, want exactly once", got)
 			}
 			if mode == "stderr-tail" {
 				stderr := client.stderr.String()
@@ -321,8 +338,22 @@ func runPluginHelper() {
 			}
 			result = InitializeResult{}
 		case "shutdown":
-			if mode == "shutdown-failure" {
+			switch mode {
+			case "shutdown-failure":
 				os.Exit(42)
+			case "shutdown-rejection", "shutdown-rejection-exit":
+				_ = enc.Encode(rpcResponse{ID: req.ID, Error: &rpcError{Message: "synthetic shutdown probe failed"}})
+				if mode == "shutdown-rejection-exit" {
+					os.Exit(0)
+				}
+				continue
+			case "shutdown-no-response":
+				os.Exit(0)
+			case "shutdown-timeout":
+				// Keep the transport open without acknowledging shutdown. The
+				// host must still force retirement within its existing budget.
+				_, _ = io.Copy(io.Discard, os.Stdin)
+				return
 			}
 			_ = enc.Encode(map[string]any{"id": req.ID, "result": result})
 			return
