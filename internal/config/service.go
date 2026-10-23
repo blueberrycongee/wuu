@@ -58,7 +58,7 @@ func (*Service) RequiredServices() []pluginhost.ServiceRequirement { return nil 
 func (*Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{
 		{Name: "read", InputSchema: "state.config.read.input.v1", OutputSchema: "state.config.read.output.v1", Cleanup: true},
-		{Name: "compare_exchange", InputSchema: "state.config.compare_exchange.input.v1", OutputSchema: "state.config.compare_exchange.output.v1", Cleanup: true},
+		{Name: "compare-exchange", InputSchema: "state.config.compare-exchange.input.v1", OutputSchema: "state.config.compare-exchange.output.v1", Cleanup: true},
 	}}}
 }
 func (s *Service) Activate(ctx context.Context) error {
@@ -94,7 +94,7 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 		if err := decodeConfigServiceRequest(params.Params, new(struct{})); err != nil {
 			return nil, err
 		}
-	case "compare_exchange":
+	case "compare-exchange":
 		replacement = &CompareExchangeSource{}
 		if err := decodeConfigServiceRequest(params.Params, replacement); err != nil {
 			return nil, err
@@ -105,7 +105,7 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 	default:
 		return nil, configServiceError("method_not_found", "configuration method is unavailable")
 	}
-	lock, err := storelock.Acquire(filepath.Dir(s.path))
+	lock, err := storelock.AcquireContext(ctx, filepath.Dir(s.path))
 	if err != nil {
 		return nil, configServiceError("config_unavailable", "configuration lock is unavailable")
 	}
@@ -198,7 +198,7 @@ func (c *Client) Read(ctx context.Context) (SourceView, error) {
 	return c.invoke(ctx, "read", struct{}{})
 }
 func (c *Client) CompareExchange(ctx context.Context, revision string, source []byte) (SourceView, error) {
-	return c.invoke(ctx, "compare_exchange", CompareExchangeSource{ExpectedRevision: revision, Source: source})
+	return c.invoke(ctx, "compare-exchange", CompareExchangeSource{ExpectedRevision: revision, Source: source})
 }
 func (c *Client) invoke(ctx context.Context, method string, input any) (SourceView, error) {
 	if c == nil || c.call == nil {

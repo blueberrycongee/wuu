@@ -24,7 +24,7 @@ func (c *Client) Read(ctx context.Context, subject string, scope Scope) (Documen
 }
 func (c *Client) ReadState(ctx context.Context, subject string, scope Scope) (StateDocument, error) {
 	var view StateView
-	err := c.invoke(ctx, "read_state", ReadRequest{Subject: subject, Scope: scope}, &view)
+	err := c.invoke(ctx, "read-state", ReadRequest{Subject: subject, Scope: scope}, &view)
 	return view.Document, err
 }
 func (c *Client) Update(ctx context.Context, subject string, scope Scope, fingerprint string, update func(map[string]json.RawMessage) error) (Document, error) {
@@ -63,7 +63,7 @@ func (c *Client) UpdateState(ctx context.Context, subject string, scope Scope, u
 			return StateDocument{}, err
 		}
 		var view StateView
-		if err := c.invoke(ctx, "read_state", ReadRequest{Subject: subject, Scope: scope}, &view); err != nil {
+		if err := c.invoke(ctx, "read-state", ReadRequest{Subject: subject, Scope: scope}, &view); err != nil {
 			return StateDocument{}, err
 		}
 		if view.Document.Values == nil {
@@ -73,7 +73,7 @@ func (c *Client) UpdateState(ctx context.Context, subject string, scope Scope, u
 			return StateDocument{}, err
 		}
 		var result StateView
-		err := c.invoke(ctx, "update_state", UpdateStateRequest{ReadRequest: ReadRequest{Subject: subject, Scope: scope}, ExpectedRevision: view.Revision, Values: view.Document.Values}, &result)
+		err := c.invoke(ctx, "update-state", UpdateStateRequest{ReadRequest: ReadRequest{Subject: subject, Scope: scope}, ExpectedRevision: view.Revision, Values: view.Document.Values}, &result)
 		var hostErr *pluginhost.HostServiceError
 		if errors.As(err, &hostErr) && hostErr.Code == "settings_conflict" {
 			continue

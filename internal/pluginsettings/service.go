@@ -63,7 +63,7 @@ func (s *Service) Status() pluginhost.Status {
 func (*Service) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 func (*Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	var methods []pluginhost.ServiceMethodDescriptor
-	for _, method := range []string{"read", "update", "read_state", "update_state"} {
+	for _, method := range []string{"read", "update", "read-state", "update-state"} {
 		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ServiceName + "." + method + ".input.v1", OutputSchema: ServiceName + "." + method + ".output.v1", Cleanup: true})
 	}
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: methods}}
@@ -98,7 +98,7 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 	var result any
 	var err error
 	switch params.Method {
-	case "read", "read_state":
+	case "read", "read-state":
 		var request ReadRequest
 		if err = decodeSettingsRequest(params.Params, &request); err != nil {
 			return nil, err
@@ -118,7 +118,7 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 			return nil, err
 		}
 		result, err = s.update(ctx, request)
-	case "update_state":
+	case "update-state":
 		var request UpdateStateRequest
 		if err = decodeSettingsRequest(params.Params, &request); err != nil {
 			return nil, err
@@ -145,7 +145,7 @@ func (s *Service) update(ctx context.Context, request UpdateRequest) (SettingsVi
 	if err != nil {
 		return SettingsView{}, settingsError("invalid_params", "invalid settings subject or scope")
 	}
-	lock, err := storelock.Acquire(dir)
+	lock, err := storelock.AcquireContext(ctx, dir)
 	if err != nil {
 		return SettingsView{}, err
 	}
@@ -182,7 +182,7 @@ func (s *Service) updateState(ctx context.Context, request UpdateStateRequest) (
 	if err != nil {
 		return StateView{}, settingsError("invalid_params", "invalid settings subject or scope")
 	}
-	lock, err := storelock.Acquire(dir)
+	lock, err := storelock.AcquireContext(ctx, dir)
 	if err != nil {
 		return StateView{}, err
 	}

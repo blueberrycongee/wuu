@@ -70,7 +70,7 @@ func TestConfigurationServiceDoesNotLeakInvalidSecretsOrReplay(t *testing.T) {
 	if err := service.Activate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	_, err := service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: "compare_exchange", Params: json.RawMessage(`{"expected_revision":"old","source":"c2VjcmV0LXZhbHVl"}`)})
+	_, err := service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: "compare-exchange", Params: json.RawMessage(`{"expected_revision":"old","source":"c2VjcmV0LXZhbHVl"}`)})
 	if err == nil || strings.Contains(err.Error(), "secret-value") {
 		t.Fatalf("invalid source error leaked: %v", err)
 	}

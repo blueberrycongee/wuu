@@ -59,7 +59,7 @@ func (c *Client) Update(ctx context.Context, namespace, key string, update func(
 			return err
 		}
 		var result CompareExchangeResult
-		err = c.invoke(ctx, "compare_exchange", CompareExchangeRequest{EntryRequest: EntryRequest{Namespace: namespace, Key: key}, Expected: current, Value: next}, &result)
+		err = c.invoke(ctx, "compare-exchange", CompareExchangeRequest{EntryRequest: EntryRequest{Namespace: namespace, Key: key}, Expected: current, Value: next}, &result)
 		clear(current)
 		clear(next)
 		if err != nil {

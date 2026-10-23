@@ -63,7 +63,7 @@ func (s *Service) Status() pluginhost.Status {
 }
 func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	methods := make([]pluginhost.ServiceMethodDescriptor, 0, 4)
-	for _, method := range []string{"get", "set", "delete", "compare_exchange"} {
+	for _, method := range []string{"get", "set", "delete", "compare-exchange"} {
 		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ServiceName + "." + method + ".input.v1", OutputSchema: ServiceName + "." + method + ".output.v1", Cleanup: true})
 	}
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: methods}}
@@ -150,7 +150,7 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 			return nil, credentialError("invalid_params", "credential value must be base64 within the size limit")
 		}
 		err = s.store.Set(ctx, request.Namespace, request.Key, request.Value)
-	case "compare_exchange":
+	case "compare-exchange":
 		var request CompareExchangeRequest
 		if err := decodeCredentialRequest(params.Params, &request); err != nil {
 			return nil, err

@@ -633,7 +633,7 @@ func (s *artifactService) fork(ctx context.Context, request ArtifactForkRequest)
 	parsed.Path = "/" + strings.Join([]string{request.TargetThreadID, artifact.ID, artifact.Name}, "/")
 	targetURI := parsed.String()
 	targetRoot := filepath.Join(statepath.SessionArtifactDir(s.stateDir, request.TargetThreadID), "artifacts")
-	lock, err := storelock.Acquire(targetRoot)
+	lock, err := storelock.AcquireContext(ctx, targetRoot)
 	if err != nil {
 		return pluginhost.ArtifactImportResult{}, err
 	}
