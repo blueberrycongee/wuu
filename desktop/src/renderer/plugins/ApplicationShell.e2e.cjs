@@ -68,9 +68,26 @@ app.whenReady().then(async () => {
       await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       await capture(`restored-${theme}-${size}`);
     }
-    assert.equal(errors.length, 0, errors.join("\n"));
-    fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ passed: true, title, errors,
-      checked: ["selected default mounts", "external shell mounts", "third-party slot renders", "default unmounts", "shared settings action", "disable has no fallback", "default restores", "light/dark 15/20 screenshot evidence"] }, null, 2));
+    for (const [mode, owner, message] of [["broken-child", "user:evidence", "fixture child failure"], ["broken-root", "user:research-shell", "fixture root failure"]]) {
+      await evaluate(mode => window.wuu.testShell(mode), mode);
+      await until(() => Boolean(document.querySelector('[role="alert"]')) && !document.querySelector(".app-shell"));
+      await evaluate(() => new Promise(resolve => setTimeout(resolve, 100)));
+      const reports = await evaluate(() => window.wuu.testDesktopActivations());
+      assert.ok(reports.some(report => report.id === owner && report.phase === "render" && report.status === "failed"), `${owner} must report render failure`);
+      assert.ok(await evaluate(message => document.body.textContent.includes(message), message));
+      await capture(mode);
+    }
+    const reports = await evaluate(() => window.wuu.testDesktopActivations());
+    for (const owner of ["builtin:wuu.default-shell", "user:research-shell", "user:evidence"]) {
+      const registrations = reports.filter(report => report.id === owner && report.phase === "registration" && report.status === "active");
+      assert.ok(registrations.length >= 2, `${owner} must reactivate on graph changes`);
+      assert.ok(registrations.every((report, index) => index === 0 || report.activation > registrations[index - 1].activation));
+    }
+    fs.writeFileSync(path.join(output, "activation-reports.json"), JSON.stringify(reports, null, 2));
+    const unexpectedErrors = errors.filter(message => !message.includes("fixture child failure") && !message.includes("fixture root failure"));
+    assert.equal(unexpectedErrors.length, 0, unexpectedErrors.join("\n"));
+    fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ passed: true, title, errors: unexpectedErrors, expectedRenderErrors: errors,
+      checked: ["registration/render ACKs", "graph reactivation", "root/nested render failures", "selected default mounts", "external shell mounts", "third-party slot renders", "default unmounts", "shared settings action", "disable has no fallback", "default restores", "light/dark 15/20 screenshot evidence"] }, null, 2));
     console.log(`PASS application shell assembly; evidence ${output}`);
     win.destroy(); app.exit(0);
   } catch (error) {

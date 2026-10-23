@@ -14,6 +14,7 @@ module.exports = (api) => {
     kind: "plugin",
     provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "inline-completion-e2e" },
     state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
+    graph_generation: "default-shell-e2e-graph",
     fingerprint: `inline-completion-e2e-${generation}`,
     desktop: { entry: "desktop.js" },
   }] : [];

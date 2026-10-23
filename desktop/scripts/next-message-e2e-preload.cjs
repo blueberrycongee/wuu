@@ -15,6 +15,7 @@ module.exports = (api) => {
     id: "builtin:next-message", name: "Next message", kind: "plugin",
     provenance: { kind: "plugin", source: "builtin", scope: "user", plugin_id: "next-message" },
     state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
+    graph_generation: "default-shell-e2e-graph",
     fingerprint: `next-message-e2e-${generation}`, desktop: { entry: "desktop.js" },
   }] : [];
   const projects = () => ({ projects: fixture.projects, active_project_id: context.project_id, active_context: context });

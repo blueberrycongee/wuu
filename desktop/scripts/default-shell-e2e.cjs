@@ -1,14 +1,18 @@
 // Explicit composition for synthetic backends exercising the shipped default UI.
 // Keep this function self-contained so sandboxed/browser fixtures can inline it.
 module.exports = function withDefaultShell(api) {
+  const activationReports = [];
   const shell = {
     id: "builtin:wuu.default-shell", kind: "plugin", name: "Default shell fixture",
     provenance: { kind: "plugin", source: "builtin", scope: "user", plugin_id: "wuu.default-shell" },
     state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
+    graph_generation: "default-shell-e2e-graph",
     fingerprint: "default-shell-e2e", desktop: { entry: "desktop.js", services: [{ name: "ui.shell", version: "1.0.0" }] },
   };
   return {
     ...api,
+    reportPluginDesktopActivation: async report => { activationReports.push(report); },
+    testDesktopActivations: async () => activationReports,
     initialize: async (...args) => {
       const initialized = await api.initialize(...args);
       return { ...initialized, application_shell: { plugin_id: shell.id, generation: shell.fingerprint, provider_id: "ui.shell" },
