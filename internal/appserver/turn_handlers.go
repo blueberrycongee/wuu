@@ -320,7 +320,7 @@ func (s *Server) ensureThreadRuntimeAfterAdmission(th *threadState) (*runtime.Th
 		if threadRuntime.Toolkit != nil {
 			var handler tools.ProjectSessionHandler
 			if isProject {
-				handler = s.projectSessionHandlerForHost(th.ID, threadRuntime.PluginHost)
+				handler = s.projectSessionHandlerForState(th.ID, th.state)
 			}
 			threadRuntime.Toolkit.SetProjectSessions(handler)
 		}
@@ -1362,7 +1362,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	}
 	th.mu.Unlock()
 	if coordinator && threadRuntime.Toolkit != nil {
-		threadRuntime.Toolkit.SetProjectSessions(s.projectSessionHandlerForHost(th.ID, threadRuntime.PluginHost))
+		threadRuntime.Toolkit.SetProjectSessions(s.projectSessionHandlerForState(th.ID, th.state))
 	}
 	// Stamp the engine the thread is bound to onto the runtime. A cached
 	// runtime keeps its original stamp; threads never silently switch.
@@ -2018,21 +2018,44 @@ func normalizeFilePayload(mediaType, data string) (string, string, error) {
 }
 
 func (s *Server) handleTurnInterrupt(req Request) error {
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
 	var params TurnInterruptParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	threadID := strings.TrimSpace(params.ThreadID)
+	runID := s.activeExecutionRunID(threadID)
+	var binding *runtime.State
+	if runID != "" {
+		held, _, err := s.retainExecutionRun(runID)
+		if err == nil {
+			binding = held
+		} else if !errors.Is(err, errExecutionRunChanged) {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
+	if binding == nil {
+		s.mu.Lock()
+		if th := s.threads[threadID]; th != nil {
+			th.mu.Lock()
+			if cachedThreadExecutionActiveLocked(th) {
+				binding = th.state.Retain()
+			}
+			th.mu.Unlock()
+		}
+		s.mu.Unlock()
+	}
+	if binding == nil {
+		var err error
+		binding, err = s.rt.RetainState()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
+	defer binding.Close()
+
 	if err := s.takeSessionControl(binding, threadID, session.ControlPaused); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	runID := s.activeExecutionRunID(threadID)
 	if runID != "" {
 		// An accepted Run can be between turns while a schema correction waits
 		// for project capacity, including legacy members with no control fence.
@@ -2653,7 +2676,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		th.mu.Unlock()
 		if coordinator {
 			// Deferred team input joins the recipient's next turn.
-			s.startBackgroundWithState(binding, func(binding *runtime.State) { s.drainSessionInboxForHost(th.ID, binding.Host) })
+			s.startBackgroundWithState(binding, func(binding *runtime.State) { s.drainSessionInboxForState(th.ID, binding) })
 		}
 	}
 	if len(frozenTreeContext) > 0 {
@@ -3495,7 +3518,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			providers.DebugLogf("notify plugin turn observers for thread %q turn %q: %v", th.ID, turnID, observerErr)
 		}
 	})
-	s.afterProjectTurnForHost(th, turn, turnRuntime.CompactOnly, binding.Host)
+	s.afterProjectTurnForState(th, turn, turnRuntime.CompactOnly, binding)
 	if reference := turnRuntime.PluginTurn; reference != nil {
 		lifecycleState := pluginhost.TurnLifecycleCompleted
 		errorText := ""

@@ -216,12 +216,6 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 }
 
 func (s *Server) handleRunInterrupt(ctx context.Context, req Request) error {
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
 	var params RunInterruptParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeRunError(req.ID, "invalid_params", err)
@@ -230,6 +224,16 @@ func (s *Server) handleRunInterrupt(ctx context.Context, req Request) error {
 	if runID == "" {
 		return s.writeRunError(req.ID, "invalid_params", errors.New("run_id is required"))
 	}
+	// Cancellation belongs to the accepted Run, even after publication moves
+	// new requests to another state provider.
+	binding, _, stateErr := s.retainExecutionRun(runID)
+	if errors.Is(stateErr, errExecutionRunChanged) {
+		binding, stateErr = s.rt.RetainState()
+	}
+	if stateErr != nil {
+		return s.writeRunError(req.ID, "internal_error", stateErr)
+	}
+	defer binding.Close()
 	view, err := s.readExecutionRun(binding, ctx, runID)
 	if err != nil {
 		if errors.Is(err, execution.ErrNotFound) {
@@ -651,6 +655,9 @@ func (s *Server) drainExecutionSchemaRetries(binding *runtime.State, projectID s
 	s.runMu.Lock()
 	var retries []*executionSchemaRetry
 	for _, tracker := range s.runs {
+		if tracker.state.Sessions != binding.Sessions {
+			continue
+		}
 		if retry := tracker.schemaRetry; retry != nil && retry.projectID == projectID {
 			retries = append(retries, retry)
 		}
@@ -763,7 +770,12 @@ func (s *Server) interruptAttachedRunsOnClose() {
 	}
 	s.runMu.Unlock()
 	for _, id := range ids {
-		_, _ = s.failAndDetachExecutionRun(id, execution.StatusInterrupted, "server_closed", "cancelled", errServerClosed)
+		if _, err := s.failAndDetachExecutionRun(id, execution.StatusInterrupted, "server_closed", "cancelled", errServerClosed); err != nil {
+			providers.DebugLogf("persist interrupted run %q during shutdown: %v", id, err)
+			// Recovery owns an unpersisted terminal after all local work stops.
+			// The closed connection must still release its generation handle.
+			s.detachExecutionRun(id)
+		}
 	}
 }
 

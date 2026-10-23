@@ -41,7 +41,7 @@ func (s *Server) threadProjectAdmission(ctx context.Context, th *threadState) (i
 	if !found || (metadata.Source != projectSource && metadata.Source != projectSessionSource) {
 		return 0, nil
 	}
-	policy, err := ProjectAdmission(ctx, th.state.Host, th.ID)
+	policy, err := ProjectAdmission(s.projectServiceContext(ctx, th.state), th.state.Host, th.ID)
 	return policy.MaxParallel, err
 }
 
