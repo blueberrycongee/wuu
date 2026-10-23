@@ -120,6 +120,9 @@ function placeUserMessageActions(actions: HTMLDivElement | null): (() => void) |
     return undefined;
   }
   const place = (): void => {
+    // Bubble actions have fixed CSS placement. Keep observers alive so a
+    // later switch to IM can measure its last line without remounting history.
+    if (document.documentElement.dataset.messageStyle !== "im") return;
     const message = block.querySelector<HTMLElement>(".user-message");
     const paragraphs = message?.querySelectorAll<HTMLElement>(".rich-paragraph");
     const last = paragraphs?.[paragraphs.length - 1];
