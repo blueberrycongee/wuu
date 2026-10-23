@@ -115,3 +115,51 @@ func TestConfigurationSourceEditsPreserveUnrelatedValues(t *testing.T) {
 		t.Fatal("source edits lost explicit settings")
 	}
 }
+
+// Embedded callers own their initial values. Selection must not substitute a
+// disk default, share caller maps, accept stale writes, or work after closure.
+func TestMemoryConfigurationPreservesExplicitValuesAndCAS(t *testing.T) {
+	ctx := context.Background()
+	cfg := Config{DefaultProvider: "embedded", Providers: map[string]ProviderConfig{
+		"embedded": {Type: "openai-compatible", Model: "embedded-model", BaseURL: "https://example.test/v1"},
+	}}
+	service := NewMemoryService("test.memory-config", cfg)
+	cfg.Providers["embedded"] = ProviderConfig{Model: "mutated-after-construction"}
+	client := NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+		return service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: method, Params: raw})
+	})
+	if _, err := client.Read(ctx); err == nil {
+		t.Fatal("prepared memory provider read")
+	}
+	if err := service.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	view, err := client.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Config.DefaultProvider != "embedded" || view.Config.Providers["embedded"].Model != "embedded-model" || view.Config.Agent.MaxSteps != 0 {
+		t.Fatal("explicit embedded configuration was replaced, defaulted, or aliased")
+	}
+	next, err := UpdateProviderModelSource(view.Source, "embedded", "replacement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed, err := client.CompareExchange(ctx, view.Revision, next)
+	if err != nil || !committed.Committed || committed.Config.Providers["embedded"].Model != "replacement" {
+		t.Fatalf("replacement failed: %v", err)
+	}
+	if _, err := client.CompareExchange(ctx, view.Revision, view.Source); err == nil {
+		t.Fatal("stale memory write committed")
+	}
+	current, err := client.Read(ctx)
+	if err != nil || current.Revision != committed.Revision || !bytes.Equal(current.Source, next) {
+		t.Fatalf("replacement not retained: %v", err)
+	}
+	if err := service.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Read(ctx); err == nil {
+		t.Fatal("closed memory provider read")
+	}
+}

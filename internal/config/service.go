@@ -43,10 +43,24 @@ type Service struct {
 	mu                sync.RWMutex
 	id, path, project string
 	state             pluginhost.State
+	memory            *SourceView
+	initializationErr error
 }
 
 func NewService(id, path, projectRoot string) *Service {
 	return &Service{id: id, path: path, project: projectRoot, state: pluginhost.StatePrepared}
+}
+
+// NewMemoryService selects caller-supplied embedded configuration without
+// consulting files or applying defaults to the initial values.
+func NewMemoryService(id string, cfg Config) *Service {
+	s := &Service{id: id, state: pluginhost.StatePrepared, memory: &SourceView{}}
+	s.memory.Source, s.initializationErr = json.Marshal(cfg)
+	if s.initializationErr == nil {
+		s.initializationErr = json.Unmarshal(s.memory.Source, &s.memory.Config)
+	}
+	s.memory.Revision = sourceRevision(s.memory.Source)
+	return s
 }
 func (s *Service) ID() string { return s.id }
 func (s *Service) Status() pluginhost.Status {
@@ -67,8 +81,8 @@ func (s *Service) Activate(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state != pluginhost.StatePrepared || !filepath.IsAbs(s.path) {
-		return configServiceError("service_unavailable", "configuration provider requires a resolved absolute path")
+	if s.state != pluginhost.StatePrepared || s.initializationErr != nil || (s.memory == nil && !filepath.IsAbs(s.path)) {
+		return configServiceError("service_unavailable", "configuration provider could not be activated")
 	}
 	s.state = pluginhost.StateActive
 	return nil
@@ -83,12 +97,13 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.state != pluginhost.StateActive || params.Service != ServiceName {
 		return nil, configServiceError("service_unavailable", "configuration provider is unavailable")
 	}
 	var replacement *CompareExchangeSource
+	var replacementConfig Config
 	switch params.Method {
 	case "read":
 		if err := decodeConfigServiceRequest(params.Params, new(struct{})); err != nil {
@@ -99,11 +114,24 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 		if err := decodeConfigServiceRequest(params.Params, replacement); err != nil {
 			return nil, err
 		}
-		if _, err := s.decodeSource(replacement.Source); err != nil {
+		var err error
+		replacementConfig, err = s.decodeSource(replacement.Source)
+		if err != nil {
 			return nil, configServiceError("invalid_params", "replacement configuration is invalid")
 		}
 	default:
 		return nil, configServiceError("method_not_found", "configuration method is unavailable")
+	}
+	if s.memory != nil {
+		if replacement != nil {
+			if replacement.ExpectedRevision != s.memory.Revision {
+				return nil, configServiceError("config_conflict", "configuration changed")
+			}
+			s.memory = &SourceView{Source: replacement.Source, Revision: sourceRevision(replacement.Source), Config: replacementConfig}
+		}
+		view := *s.memory
+		view.Committed = replacement != nil
+		return json.Marshal(view)
 	}
 	lock, err := storelock.AcquireContext(ctx, filepath.Dir(s.path))
 	if err != nil {
