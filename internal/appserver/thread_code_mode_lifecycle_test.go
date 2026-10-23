@@ -32,6 +32,7 @@ func TestThreadDeleteReleasesCodeModeStateCapacity(t *testing.T) {
 	rt.Permissions = config.ResolvedPermissions{Mode: config.PermissionModeUnconfined}
 	rt.PermissionModeExplicit = true
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	requestIndex := 0
