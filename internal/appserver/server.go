@@ -219,6 +219,7 @@ type Server struct {
 	clientCallSeq               uint64
 	clientMethods               map[string]struct{}
 	deferredNotificationContent atomic.Bool
+	rendererClients             rendererClientScope
 
 	// pushRegistrar is the host-side hook invoked by the device/push_*
 	// methods. The desktop main pipeline leaves it nil so the methods
@@ -743,6 +744,7 @@ func (s *Server) Close() {
 	}
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
+		s.closeRendererClients()
 		s.closeChatGPTLogins()
 		if s.nativeHistoryCancel != nil {
 			s.nativeHistoryCancel()
@@ -1083,6 +1085,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handlePluginPackageRemove(req)
 	case MethodPluginDesktopModuleRead:
 		return s.handlePluginDesktopModuleRead(req)
+	case MethodPluginDesktopActivation:
+		return s.handlePluginDesktopActivation(req)
 	case MethodPluginIconRead:
 		return s.handlePluginIconRead(req)
 	case "plugin/skin-image/read":
