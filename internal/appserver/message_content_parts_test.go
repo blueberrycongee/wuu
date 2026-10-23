@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
 const responseSelectionFixture = `[{"type":"response_selection","text":"Quoted assistant response (JSON):\n{\"text\":\"Alpha 🌊\",\"comment\":\"Explain this.\"}\n","selection":{"id":"selection-1","text":"Alpha 🌊","comment":"Explain this.","source":{"thread_id":"source-thread","turn_id":"source-turn","item_id":"source-item","start_offset":4,"end_offset":12}}},{"type":"text","text":"Compare it."}]`
@@ -434,8 +433,8 @@ func TestFileSelectionContentPartsHistoryRoundTrip(t *testing.T) {
 }
 
 func TestFileSelectionContentPartsQueueRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	dirStore := newAppserverTestStore(t, dir)
+	rt := newTestRuntime(t, &fakeClient{})
+	dirStore := rt.Sessions
 	sess, err := dirStore.CreateWithMetadata("selection-queue", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -446,7 +445,7 @@ func TestFileSelectionContentPartsQueueRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg.ClientID = "queue-1"
-	srv := &Server{rt: &runtime.Session{SessionDir: dir}}
+	srv := &Server{rt: rt}
 	srv.enqueueQueuedUserTurn(sess.ID, queuedTurn{id: msg.ClientID, msg: msg})
 	entry, ok := srv.takeNextQueuedUserTurn(sess.ID)
 	if !ok {
@@ -455,7 +454,7 @@ func TestFileSelectionContentPartsQueueRoundTrip(t *testing.T) {
 	if _, err := srv.appendHeldUserTurns(testRuntimeState(t, srv.rt), sess.ID, []queuedTurn{entry}); err != nil {
 		t.Fatal(err)
 	}
-	restarted := &Server{rt: &runtime.Session{SessionDir: dir}}
+	restarted := &Server{rt: rt}
 	held, err := restarted.loadHeldUserTurns(testRuntimeState(t, restarted.rt), sess.ID)
 	if err != nil || len(held) != 1 {
 		t.Fatalf("load held messages: %+v, err=%v", held, err)

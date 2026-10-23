@@ -41,7 +41,8 @@ func TestPeerReplyUsesNativeCompletion(t *testing.T) {
 	for _, resolution := range []string{"empty", "reply", "unknown_stop", "provider_failure"} {
 		t.Run(resolution, func(t *testing.T) {
 			srv, provider, owner, out, threadID := newPeerCompletionFixture(t)
-			sent, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{
+			ctx := pluginInvocationContext(t, srv.rt, context.Background())
+			sent, err := srv.sendPluginSession(ctx, owner.id, pluginhost.SessionSendParams{
 				RequestID: "peer.reply:test", SessionID: threadID, Cause: "peer.reply",
 				Input: pluginhost.SessionInput{Prompt: "The peer confirms the result already reported to the user."},
 			})
@@ -99,7 +100,7 @@ func TestPeerReceiptCancellationPreventsRedelivery(t *testing.T) {
 	for _, mode := range []string{pluginhost.SessionIfRunningQueue, pluginhost.SessionIfRunningSteer} {
 		t.Run(mode, func(t *testing.T) {
 			srv, provider, owner, _, threadID := newPeerCompletionFixture(t)
-			ctx := context.Background()
+			ctx := pluginInvocationContext(t, srv.rt, context.Background())
 			initial, err := srv.sendPluginSession(ctx, owner.id, pluginhost.SessionSendParams{
 				RequestID: "work", SessionID: threadID, Input: pluginhost.SessionInput{Prompt: "Review the files"},
 			})
@@ -143,7 +144,8 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			srv, provider, owner, _, threadID := newPeerCompletionFixture(t)
-			initial, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{
+			ctx := pluginInvocationContext(t, srv.rt, context.Background())
+			initial, err := srv.sendPluginSession(ctx, owner.id, pluginhost.SessionSendParams{
 				RequestID: "work", SessionID: threadID, Input: pluginhost.SessionInput{Prompt: "Review the files"},
 			})
 			if err != nil {
@@ -151,7 +153,7 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 			}
 			first := provider.next(t)
 			for _, id := range []string{"receipt-one", "receipt-one", "receipt-two"} {
-				sent, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{
+				sent, err := srv.sendPluginSession(ctx, owner.id, pluginhost.SessionSendParams{
 					RequestID: id, SessionID: threadID, Cause: "peer.reply", IfRunning: pluginhost.SessionIfRunningSteer,
 					Input: pluginhost.SessionInput{Prompt: id},
 				})
@@ -198,7 +200,7 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 				}
 			}
 			for _, requestID := range []string{"receipt-one", "receipt-two"} {
-				inspected, err := srv.inspectPluginSession(context.Background(), owner.id, pluginhost.SessionInspectParams{
+				inspected, err := srv.inspectPluginSession(ctx, owner.id, pluginhost.SessionInspectParams{
 					SessionID: threadID, RequestID: requestID,
 					Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 20,
 				})
@@ -222,7 +224,7 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 
 			// A later provider checkpoint can remove the receipt turn from model
 			// context while retaining it in the durable display transcript.
-			later, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{
+			later, err := srv.sendPluginSession(ctx, owner.id, pluginhost.SessionSendParams{
 				RequestID: "later", SessionID: threadID, Input: pluginhost.SessionInput{Prompt: "Later work"},
 			})
 			if err != nil {
@@ -279,7 +281,7 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 					}
 				}
 				for _, requestID := range []string{"receipt-one", "receipt-two"} {
-					inspected, err := fresh.inspectPluginSession(context.Background(), owner.id, pluginhost.SessionInspectParams{
+					inspected, err := fresh.inspectPluginSession(pluginInvocationContext(t, fresh.rt, context.Background()), owner.id, pluginhost.SessionInspectParams{
 						SessionID: threadID, RequestID: requestID,
 						Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 20,
 					})

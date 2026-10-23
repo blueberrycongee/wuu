@@ -30,6 +30,7 @@ func TestAttributionUpdateDuringTurnDefersRuntimeChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	t.Cleanup(func() {
 		select {
@@ -132,6 +133,7 @@ func TestExecutionEnvironmentSelectionSurvivesSettingsChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	defer srv.Close()
 	send := func(id, method, params string) map[string]any {
