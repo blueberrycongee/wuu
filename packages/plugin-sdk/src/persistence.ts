@@ -82,6 +82,7 @@ export function documentStoreDescriptor(options: { compact?: boolean; import?: b
       name,
       input_schema: `state.documents.${name}.input.v1`,
       output_schema: `state.documents.${name}.output.v1`,
+      ...(name === "read" || name === "export" ? { preparation: true } : {}),
     })),
   };
 }

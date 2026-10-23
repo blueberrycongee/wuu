@@ -24,6 +24,7 @@ import (
 // RAM. Bounded reads seek the index and load only the selected values from disk.
 type jsonlBackend struct {
 	file        *os.File
+	readOnly    bool
 	offset      int64
 	unsynced    bool
 	initialized bool
@@ -50,7 +51,11 @@ func openJSONL(path string) (*jsonlBackend, error) {
 	if err != nil {
 		return nil, err
 	}
-	b := &jsonlBackend{file: file, keys: make(map[string][]string), documents: make(map[documentKey]valueLocation), receipts: make(map[string]CommitRecord), ordered: []CommitRecord{}}
+	return readJSONLFile(file, false)
+}
+
+func readJSONLFile(file *os.File, readOnly bool) (*jsonlBackend, error) {
+	b := &jsonlBackend{file: file, readOnly: readOnly, keys: make(map[string][]string), documents: make(map[documentKey]valueLocation), receipts: make(map[string]CommitRecord), ordered: []CommitRecord{}}
 	if err := b.refresh(); err != nil {
 		file.Close()
 		return nil, err
@@ -72,7 +77,16 @@ func (b *jsonlBackend) refresh() error {
 	if !os.SameFile(info, current) {
 		// Compaction replaces the journal atomically under the authority lock.
 		// Rebuild before appending so no writer can extend a retired inode.
-		next, err := openJSONL(b.file.Name())
+		var next *jsonlBackend
+		if b.readOnly {
+			var file *os.File
+			file, err = os.Open(b.file.Name())
+			if err == nil {
+				next, err = readJSONLFile(file, true)
+			}
+		} else {
+			next, err = openJSONL(b.file.Name())
+		}
 		if err != nil {
 			return err
 		}
@@ -87,7 +101,7 @@ func (b *jsonlBackend) refresh() error {
 	for {
 		line, err := reader.ReadBytes('\n')
 		if errors.Is(err, io.EOF) {
-			if len(line) != 0 {
+			if len(line) != 0 && !b.readOnly {
 				// No newline means the last append never completed. Only this
 				// unacknowledged suffix may be discarded; complete bad frames fail.
 				if err := b.file.Truncate(b.offset); err != nil {
@@ -116,7 +130,7 @@ func (b *jsonlBackend) refresh() error {
 			return err
 		}
 		b.offset += int64(len(line))
-		b.unsynced = true
+		b.unsynced = !b.readOnly
 	}
 	// A previous writer may have lost its acknowledgement at fsync. Reading
 	// its complete receipt must finish that barrier before returning success.

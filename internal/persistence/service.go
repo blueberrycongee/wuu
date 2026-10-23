@@ -38,11 +38,11 @@ func (s *Service) Status() pluginhost.Status {
 }
 func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{
-		{Name: "read", InputSchema: "state.documents.read.input.v1", OutputSchema: "state.documents.read.output.v1"},
+		{Name: "read", InputSchema: "state.documents.read.input.v1", OutputSchema: "state.documents.read.output.v1", Preparation: true},
 		{Name: "commit", InputSchema: "state.documents.commit.input.v1", OutputSchema: "state.documents.commit.output.v1"},
 		{Name: "import", InputSchema: "state.documents.import.input.v1", OutputSchema: "state.documents.import.output.v1"},
 		{Name: "compact", InputSchema: "state.documents.compact.input.v1", OutputSchema: "state.documents.compact.output.v1"},
-		{Name: "export", InputSchema: "state.documents.export.input.v1", OutputSchema: "state.documents.export.output.v1"},
+		{Name: "export", InputSchema: "state.documents.export.input.v1", OutputSchema: "state.documents.export.output.v1", Preparation: true},
 	}}}
 }
 func (s *Service) RequiredServices() []pluginhost.ServiceRequirement { return nil }
@@ -96,7 +96,7 @@ func (s *Service) Close(context.Context) error {
 func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state != pluginhost.StateActive {
+	if s.state != pluginhost.StateActive && !(s.state == pluginhost.StatePrepared && (params.Method == "read" || params.Method == "export")) {
 		return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "state provider is not active"}
 	}
 	var result any
@@ -105,7 +105,11 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 	case "read":
 		var query Query
 		if err = decode(params.Params, &query); err == nil {
-			result, err = s.store.Read(ctx, query)
+			if s.state == pluginhost.StatePrepared {
+				result, err = preparedView(ctx, s.dir, s.kind, query)
+			} else {
+				result, err = s.store.Read(ctx, query)
+			}
 		}
 	case "commit":
 		var request Transaction
@@ -125,7 +129,11 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 	case "export":
 		var request struct{}
 		if err = decode(params.Params, &request); err == nil {
-			result, err = s.store.Export(ctx)
+			if s.state == pluginhost.StatePrepared {
+				result, err = preparedSnapshot(ctx, s.dir, s.kind)
+			} else {
+				result, err = s.store.Export(ctx)
+			}
 		}
 	default:
 		return nil, &pluginhost.HostServiceError{Code: "method_not_found", Message: "unknown state provider method"}
