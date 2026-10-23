@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Continue interrupted replies from an empty composer in the main conversation or split panes. The follow-up preserves earlier work in the same conversation; typing or adding attachments restores the send action.
+
 - Show running and upcoming automations in the contextual sidebar, with task status, scheduled time, workspace-aware selection, and access to dispatched one-shot run details.
 
 - Compose named profiles from ordered reusable bundles, profile patches and user overrides with composition version 2; version 1 inline configurations remain supported. Patches can select or exclude modules and replace or remove service bindings; diagnostics show applied layers and individual selection sources. Explicit empty compositions remain empty after saving.

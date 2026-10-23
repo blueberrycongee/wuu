@@ -14,6 +14,7 @@ import {
   ListTodo,
   Paperclip,
   PencilLine,
+  Play,
   Square,
   LoaderCircle,
   RotateCw,
@@ -45,6 +46,7 @@ import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { ComposerAttachMenuButton, ComposerCameraPanel } from "./ComposerCamera";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import { Tooltip } from "./Tooltip";
+import { requestTurnContinuation, type TurnContinuationTarget } from "./TurnContinuation";
 import { MessageCopyButton } from "./MessageActions";
 import type { MessageContentPart, ResponseSelection } from "../shared/protocol";
 
@@ -93,6 +95,38 @@ export function ComposerStopIcon({ state, submitting = false }: { state?: "pendi
   return <Square aria-hidden="true" />;
 }
 
+export function ComposerContinueButton({ continuation, disabled }: {
+  continuation: TurnContinuationTarget;
+  disabled: boolean;
+}): JSX.Element {
+  const { t } = useI18n();
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
+  return (
+    <button
+      className="composer-action-button composer-send-button"
+      type="button"
+      data-wuu-component="composer-send"
+      data-wuu-state={pending ? "continuing" : "continue"}
+      aria-label={t("composer.continue")}
+      title={t("composer.continue")}
+      aria-busy={pending || undefined}
+      disabled={disabled || pending}
+      onClick={() => {
+        if (disabled || pendingRef.current) return;
+        pendingRef.current = true;
+        setPending(true);
+        void requestTurnContinuation(continuation.threadID, continuation.turnID).finally(() => {
+          pendingRef.current = false;
+          setPending(false);
+        });
+      }}
+    >
+      {pending ? <LoaderCircle className="composer-stop-progress is-spinning" aria-hidden="true" /> : <Play aria-hidden="true" />}
+    </button>
+  );
+}
+
 export function SplitPaneComposer({
   prompt,
   setPrompt,
@@ -106,6 +140,7 @@ export function SplitPaneComposer({
   sendDisabled: requestedSendDisabled = false,
   stopState,
   submitting = false,
+  continuation,
   queryHistorySessionID,
   workspaceId,
   workspaceRoot,
@@ -134,6 +169,7 @@ export function SplitPaneComposer({
   sendDisabled?: boolean;
   stopState?: "pending" | "retry";
   submitting?: boolean;
+  continuation?: TurnContinuationTarget;
   queryHistorySessionID?: string;
   workspaceId?: string;
   workspaceRoot?: string;
@@ -184,6 +220,7 @@ export function SplitPaneComposer({
   // with an empty input. Once there is a draft, it flips to send (queuing
   // mid-turn) so a typed follow-up is never blocked by the stop state.
   const showStop = Boolean(stopState) || ((running || submitting) && !sendDisabled && !hasDraft);
+  const showContinue = continuation && !running && !submitting && !hasDraft && !readOnly;
   const sendLabel = running ? t("composer.queueSend") : t("composer.send");
 
   function focusComposerSoon(): void {
@@ -499,6 +536,12 @@ export function SplitPaneComposer({
                       >
                         <ComposerStopIcon state={stopState} submitting={submitting} />
                       </button>
+                    ) : showContinue ? (
+                      <ComposerContinueButton
+                        key={`${continuation.threadID}:${continuation.turnID}`}
+                        continuation={continuation}
+                        disabled={sendDisabled}
+                      />
                     ) : (
                       <button
                         className="composer-action-button composer-send-button"

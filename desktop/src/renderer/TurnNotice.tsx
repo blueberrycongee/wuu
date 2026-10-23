@@ -21,15 +21,6 @@ import type { SettingsPage } from "./SettingsView";
 export const OPEN_SETTINGS_EVENT = "wuu:open-settings";
 export type OpenSettingsDetail = { page: SettingsPage };
 
-/**
- * Window event a failure notice sends to continue an interrupted reply. The
- * thread already holds the partial reply, so the text is an ordinary
- * follow-up in that conversation. A handler calls preventDefault to claim
- * the request and reports through done once the message was sent or not.
- */
-export const CONTINUE_TURN_EVENT = "wuu:continue-turn";
-export type ContinueTurnDetail = { threadID: string; text: string; done: (sent: boolean) => void };
-
 export type SystemEventDisplay = {
   label: string;
   detail?: string;

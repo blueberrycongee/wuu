@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { TurnView } from "../../src/renderer/TurnView";
-import { CONTINUE_TURN_EVENT, type ContinueTurnDetail } from "../../src/renderer/TurnNotice";
+import { CONTINUE_TURN_EVENT, type ContinueTurnDetail } from "../../src/renderer/TurnContinuation";
 import type { Turn } from "../../src/shared/protocol";
 import { ThreadItemView } from "../../src/renderer/ThreadItemView";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";

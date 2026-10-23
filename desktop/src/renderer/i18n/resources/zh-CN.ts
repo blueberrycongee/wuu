@@ -1278,6 +1278,7 @@ export const zhCN = {
   "composer.queueSend": "排队发送",
   "composer.steerSend": "发送引导",
   "composer.send": "发送",
+  "composer.continue": "继续",
   "composer.stop": "停止",
   "composer.stopping": "正在停止",
   "composer.retryStop": "尚未确认停止，点击重试",

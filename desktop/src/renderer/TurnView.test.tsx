@@ -6,7 +6,8 @@ import { ASSISTANT_TURN_PRESENTATION_STABILIZE_MS } from "./AssistantTurnPresent
 import { PROCESS_NOTIFICATION_NAME } from "./InternalUserNotification";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { TurnView } from "./TurnView";
-import { CONTINUE_TURN_EVENT, OPEN_SETTINGS_EVENT, type ContinueTurnDetail } from "./TurnNotice";
+import { OPEN_SETTINGS_EVENT } from "./TurnNotice";
+import { CONTINUE_TURN_EVENT, type ContinueTurnDetail } from "./TurnContinuation";
 import { translateCurrent as t } from "./i18n";
 import type { TurnStreamStatus } from "./AppState";
 import { ImagePreviewProvider } from "./ImagePreview";

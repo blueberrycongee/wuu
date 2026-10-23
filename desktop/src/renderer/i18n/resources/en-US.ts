@@ -1281,6 +1281,7 @@ export const enUS = {
   "composer.queueSend": "Queue message",
   "composer.steerSend": "Send guidance",
   "composer.send": "Send",
+  "composer.continue": "Continue",
   "composer.stop": "Stop",
   "composer.stopping": "Stopping",
   "composer.retryStop": "Stop not confirmed. Retry",

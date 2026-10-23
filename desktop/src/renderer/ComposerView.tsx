@@ -83,7 +83,8 @@ import {
 import { FloatingMenuPortal, composerMenuWidth, handleFloatingMenuKeyDown, menuOpeningKey } from "./ComposerFloatingMenu";
 import { ComposerBranchPicker } from "./ComposerBranchPicker";
 import { ComposerContextMenu } from "./ComposerContextMenu";
-import { ComposerQueueStrip, ComposerStopIcon } from "./ComposerInputSections";
+import { ComposerContinueButton, ComposerQueueStrip, ComposerStopIcon } from "./ComposerInputSections";
+import type { TurnContinuationTarget } from "./TurnContinuation";
 import { ComposerCameraPanel } from "./ComposerCamera";
 import { WorkspaceDocumentDrawerContext } from "./WorkspaceDocumentTurnDock";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
@@ -161,6 +162,7 @@ export function Composer({
   forceStopWhileRunning = false,
   stopState,
   submitting = false,
+  continuation,
   runtimeControlsDisabled = running,
   status,
   disabledReason,
@@ -278,6 +280,7 @@ export function Composer({
   forceStopWhileRunning?: boolean;
   stopState?: "pending" | "retry";
   submitting?: boolean;
+  continuation?: TurnContinuationTarget;
   runtimeControlsDisabled?: boolean;
   status: string;
   disabledReason?: string;
@@ -490,6 +493,7 @@ export function Composer({
   const submitAfterCompositionRef = useRef(false);
   const documentDrawer = useContext(WorkspaceDocumentDrawerContext);
   const showComposerStopAction = showComposerStop;
+  const showContinue = continuation && !showComposerStopAction && !running && !submitting && !hasDraft && !readOnly;
   const sendDisabledReason = !showComposerStopAction && (readOnly || effectiveSendDisabled)
     ? disabledReason
     : undefined;
@@ -1491,7 +1495,13 @@ export function Composer({
                     ) : null}
                   </>
                 )}
-                <Tooltip content={sendDisabledReason}>
+                {showContinue ? (
+                  <ComposerContinueButton
+                    key={`${continuation.threadID}:${continuation.turnID}`}
+                    continuation={continuation}
+                    disabled={effectiveSendDisabled}
+                  />
+                ) : <Tooltip content={sendDisabledReason}>
                   <button
                     className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
                     data-wuu-component="composer-send"
@@ -1516,7 +1526,7 @@ export function Composer({
                   >
                     {showComposerStopAction ? <ComposerStopIcon state={stopState} submitting={submitting} /> : <ArrowUp aria-hidden="true" />}
                   </button>
-                </Tooltip>
+                </Tooltip>}
               </div>
             </div>
           </div>

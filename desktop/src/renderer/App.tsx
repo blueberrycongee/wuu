@@ -251,7 +251,8 @@ import {
   statusMessageForError,
 } from "./UserFacingErrors";
 import { TurnView } from "./TurnView";
-import { CONTINUE_TURN_EVENT, OPEN_SETTINGS_EVENT, type ContinueTurnDetail, type OpenSettingsDetail } from "./TurnNotice";
+import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
+import { CONTINUE_TURN_EVENT, threadContinuationTarget, type ContinueTurnDetail } from "./TurnContinuation";
 import {
   WorkspaceRightPanel,
 } from "./WorkspacePanels";
@@ -3415,6 +3416,7 @@ export function App(): JSX.Element {
         sendDisabled={submissionTargetPending || engineSelectionPending || Boolean(activeThread && stopRequests[activeThread.id])}
         submitting={submittingThreadIDs.has(activeThread?.id ?? state.activeSessionTabID)}
         stopState={activeThread ? stopRequests[activeThread.id] : undefined}
+        continuation={threadContinuationTarget(activeThread)}
         running={
           Boolean(activePendingThreadCreation) ||
           (!activeThreadReadOnly && composerTurnRunning) ||
@@ -4017,10 +4019,18 @@ export function App(): JSX.Element {
     return api.onCodexPetCommand((command) => codexPetCommandHandlerRef.current(command));
   }, [codexPetCommandsReady]);
 
-  // A failure notice continues an interrupted reply in its own conversation,
-  // the same way the pet sends text: without touching the composer draft.
+  // Continue from either the composer or a failure notice in the captured
+  // conversation. Recheck the turn so stale controls never queue another run.
   const continueTurnHandlerRef = useRef<(detail: ContinueTurnDetail) => void>(() => undefined);
-  continueTurnHandlerRef.current = ({ threadID, text, done }) => {
+  continueTurnHandlerRef.current = ({ threadID, turnID, text, done }) => {
+    const current = appStateRef.current;
+    const thread = [current.thread, current.secondaryThread, ...current.threads]
+      .find((entry) => entry?.id === threadID);
+    if (!thread || thread.read_only || thread.archived || isThreadRunning(thread) ||
+      thread.turns.at(-1)?.id !== turnID || turnAdmissionsRef.current.has(threadID)) {
+      done(false);
+      return;
+    }
     void submitCodexPetText(text, { thread_id: threadID })
       .catch((error: unknown) => {
         showErrorToast(error);

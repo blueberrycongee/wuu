@@ -10,6 +10,7 @@ import type {
   UserQuestionRequest,
 } from "../shared/protocol";
 import { SplitPaneComposer } from "./ComposerView";
+import { threadContinuationTarget } from "./TurnContinuation";
 import {
   activeTurnIsAnswerReady,
   isThreadRunning,
@@ -246,6 +247,7 @@ export function ConversationSplitPane({
           sendDisabled={viewSwitchPending}
           submitting={submitting}
           stopState={stopState}
+          continuation={threadContinuationTarget(thread)}
           readOnly={viewSwitchPending}
           onPasteAttachmentFiles={onPasteAttachmentFiles}
           onRemoveFile={onRemoveFile}
