@@ -4,7 +4,9 @@
 // long summary must truncate before the indicator is pushed onto a second
 // line: the row stays one line tall, the ring stays beside the text, and the
 // disclosure chevron stays inside the row.
-// Screenshots are written to out/e2e/process-compaction-summary.
+// The composer hint and aggregated activity summary must also share the same
+// quiet text color before and after the turn finishes, across both themes.
+// Rendered measurements and screenshots go to out/e2e/process-compaction-summary.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -14,7 +16,8 @@ const desktopRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(desktopRoot, "..");
 const rendererHtml = path.join(desktopRoot, "out", "renderer", "index.html");
 const preload = path.join(__dirname, "streaming-e2e-preload.cjs");
-const evidenceDir = path.join(desktopRoot, "out", "e2e", "process-compaction-summary");
+const evidenceDir = path.resolve(process.env.WUU_PROCESS_SUMMARY_OUTPUT || path.join(desktopRoot, "out", "e2e", "process-compaction-summary"));
+app.setPath("userData", fs.mkdtempSync(path.join(desktopRoot, "out", "process-summary-profile-")));
 
 process.env.WUU_STREAM_E2E_CWD = repoRoot;
 app.commandLine.appendSwitch("disable-gpu");
@@ -51,6 +54,13 @@ async function run() {
   await loadFile(win, rendererHtml);
   await waitFor(win, () => Boolean(document.querySelector(".conversation-pane")), 5000);
   await waitFor(win, () => Boolean(document.querySelector(".composer textarea")), 5000);
+  const colors = [];
+  await checkQuietText(win, "welcome", colors);
+  win.setContentSize(1080, 900);
+  await evaluate(win, () => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.setProperty("--conversation-message-font-size", "15px");
+  });
   const threadID = await startActiveThread(win);
   const turnID = "turn-process-compaction-summary-e2e";
   const userItem = {
@@ -168,9 +178,75 @@ async function run() {
   await delay(200);
   const image = await win.webContents.capturePage();
   fs.writeFileSync(path.join(evidenceDir, "compaction-summary.png"), image.toPNG());
+  await checkQuietText(win, "running", colors);
+  emitNotification(win, "turn/completed", {
+    thread_id: threadID,
+    turn: {
+      id: turnID,
+      items: [userItem, ...items, {
+        ...answerItem, status: "completed", terminal: true,
+        text: "The activity summary and composer hint keep the same quiet color.",
+      }],
+      items_view: "full",
+      status: "completed",
+      started_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+    },
+  });
+  await waitFor(win, () => !!document.querySelector('.turn-answer-body [data-stream-state="settled"]'), 10000);
+  // Completion folds process details. Reopen them so the comparison and its
+  // evidence exercise visible summary text rather than a hidden DOM subtree.
+  await evaluate(win, () => {
+    const toggle = document.querySelector('[data-turn-id="turn-process-compaction-summary-e2e"] .turn-process-toggle');
+    if (toggle.getAttribute("aria-expanded") !== "true") toggle.click();
+  });
+  await checkQuietText(win, "completed", colors);
   console.log("process compaction summary e2e passed");
   win.destroy();
   app.exit(0);
+}
+
+async function checkQuietText(win, state, report) {
+  if (state !== "welcome") {
+    await waitFor(win, () => document.querySelector('.process-surface-summary-text')
+      ?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }), 5000);
+  }
+  for (const [width, fontSize] of [[1080, 15], [600, 20]]) {
+    win.setContentSize(width, 900);
+    for (const theme of ["light", "dark"]) {
+      const colors = await evaluate(win, async (theme, fontSize) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty("--conversation-message-font-size", `${fontSize}px`);
+        await document.fonts.ready;
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const input = document.querySelector('[data-main-conversation-composer] textarea');
+        const summary = document.querySelector('.process-surface-summary-text');
+        const placeholder = getComputedStyle(input, "::placeholder");
+        return {
+          placeholder: placeholder.color,
+          placeholderOpacity: placeholder.opacity,
+          enteredText: getComputedStyle(input).color,
+          summary: summary ? getComputedStyle(summary).color : null,
+          summaryOpacity: summary ? getComputedStyle(summary).opacity : null,
+          empty: input.value === "" && input.placeholder.length > 0,
+        };
+      }, theme, fontSize);
+      const label = `${state}/${theme}/${width}/${fontSize}`;
+      report.push({ state, theme, width, fontSize, ...colors });
+      fs.writeFileSync(path.join(evidenceDir, "quiet-text.json"), JSON.stringify(report, null, 2));
+      assert.ok(colors.empty, `${label}: the composer must show its placeholder`);
+      assert.notEqual(colors.placeholder, colors.enteredText, `${label}: hints must remain quieter than entered text`);
+      if (state !== "welcome") {
+        assert.ok(colors.summary, `${label}: the aggregated tool summary must be rendered`);
+        assert.equal(colors.placeholder, colors.summary, `${label}: composer hints and aggregated tools must share the same gray`);
+        assert.equal(colors.placeholderOpacity, colors.summaryOpacity, `${label}: opacity must not make the matching colors diverge`);
+        const welcome = report.find(entry => entry.state === "welcome" && entry.theme === theme && entry.width === width);
+        assert.equal(colors.placeholder, welcome.placeholder, `${label}: welcome and conversation hints must match`);
+        fs.writeFileSync(path.join(evidenceDir, `${state}-${theme}-${width}.png`), (await win.webContents.capturePage()).toPNG());
+      }
+      console.log(`PASS quiet text ${label}`);
+    }
+  }
 }
 
 function compactionSummaryGeometry() {

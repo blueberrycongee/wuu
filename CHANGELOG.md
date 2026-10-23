@@ -117,6 +117,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Restore composer hints to the same quiet gray as aggregated tool-call summaries in both light and dark themes.
+
 - Keep remote loop-driver callbacks in their selected generation, propagate preparation cancellation, and reject invalid driver identities, checkpoint bindings, and terminal statuses before accepting state.
 
 - Keep the composer worktree toggle next to the branch name in narrow windows, without stretching short branch labels across the context row.
