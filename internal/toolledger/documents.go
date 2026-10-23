@@ -99,33 +99,6 @@ func batchInvocations(tx *persistence.Tx, batch toolstate.Batch) ([]toolstate.In
 	return out, nil
 }
 
-func (l *Ledger) batches(tx *persistence.Tx) ([]toolstate.Batch, error) {
-	rows, err := tx.Read(persistence.Query{Namespace: toolstate.Batches})
-	if err != nil {
-		return nil, err
-	}
-	var out []toolstate.Batch
-	for _, row := range rows {
-		var batch toolstate.Batch
-		if err := json.Unmarshal(row.Value, &batch); err != nil {
-			return nil, err
-		}
-		if batch.OwnerID == l.ownerID {
-			out = append(out, batch)
-		}
-	}
-	slices.SortFunc(out, func(a, b toolstate.Batch) int {
-		if a.CreatedAt < b.CreatedAt {
-			return -1
-		}
-		if a.CreatedAt > b.CreatedAt {
-			return 1
-		}
-		return strings.Compare(a.ID, b.ID)
-	})
-	return out, nil
-}
-
 func publicInvocation(stored toolstate.Invocation) Invocation {
 	out := Invocation{ParentInvocationID: stored.ParentInvocationID, ID: stored.ID, BatchID: stored.BatchID, ProviderCallID: stored.ProviderCallID,
 		ToolName: stored.ToolName, ToolKind: stored.ToolKind, Arguments: stored.Arguments, ReplayPolicy: ReplayPolicy(stored.ReplayPolicy),
@@ -146,7 +119,7 @@ func (l *Ledger) BeginBatch(ctx context.Context, operationID string, stepIndex i
 	}
 	id, now := newID("tbatch"), time.Now().UTC().UnixMilli()
 	err := l.write(ctx, func(tx *persistence.Tx) error {
-		return tx.Put(toolstate.Batches, id, toolstate.Batch{ID: id, OwnerID: l.ownerID, OperationID: operationID, StepIndex: stepIndex,
+		return toolstate.PutBatch(tx, toolstate.Batch{ID: id, OwnerID: l.ownerID, OperationID: operationID, StepIndex: stepIndex,
 			Status: string(BatchCollecting), CreatedAt: now, UpdatedAt: now, InvocationIDs: []string{}})
 	})
 	return id, err
@@ -163,7 +136,7 @@ func (l *Ledger) FinalizeBatch(ctx context.Context, batchID string) error {
 			return nil
 		}
 		batch.Status, batch.UpdatedAt = string(BatchFinalized), now
-		if err := tx.Put(toolstate.Batches, batch.ID, batch); err != nil {
+		if err := toolstate.PutBatch(tx, batch); err != nil {
 			return err
 		}
 		return settleDocumentBatch(tx, batch, now)
@@ -225,7 +198,7 @@ func (l *Ledger) prepare(ctx context.Context, batchID, parentID string, call pro
 			return err
 		}
 		batch.InvocationIDs = append(batch.InvocationIDs, id)
-		if err := tx.Put(toolstate.Batches, batch.ID, batch); err != nil {
+		if err := toolstate.PutBatch(tx, batch); err != nil {
 			return err
 		}
 		out = publicInvocation(stored)
@@ -321,7 +294,7 @@ func settleDocumentBatch(tx *persistence.Tx, batch toolstate.Batch, now int64) e
 		}
 	}
 	batch.Status, batch.UpdatedAt, batch.TerminalAt = string(BatchSettled), now, max(batch.TerminalAt, now)
-	return tx.Put(toolstate.Batches, batch.ID, batch)
+	return toolstate.PutBatch(tx, batch)
 }
 
 func (l *Ledger) MarkProjected(ctx context.Context, invocationIDs []string) error {
@@ -349,7 +322,7 @@ func (l *Ledger) PendingProjection(ctx context.Context) ([]Invocation, error) {
 	var out []Invocation
 	err := l.write(ctx, func(tx *persistence.Tx) error {
 		out = nil
-		batches, err := l.batches(tx)
+		batches, err := toolstate.ReadOwnerBatches(tx, l.ownerID)
 		if err != nil {
 			return err
 		}
@@ -446,7 +419,7 @@ func (l *Ledger) SupersedePreparedBatch(ctx context.Context, batchID string) err
 			}
 		}
 		batch.Status, batch.UpdatedAt, batch.TerminalAt = string(BatchAbandoned), now, max(batch.TerminalAt, now)
-		return tx.Put(toolstate.Batches, batch.ID, batch)
+		return toolstate.PutBatch(tx, batch)
 	})
 }
 
@@ -458,7 +431,7 @@ func (l *Ledger) Reconcile(ctx context.Context) error {
 	}
 	now := time.Now().UTC().UnixMilli()
 	return l.write(ctx, func(tx *persistence.Tx) error {
-		batches, err := l.batches(tx)
+		batches, err := toolstate.ReadOwnerBatches(tx, l.ownerID)
 		if err != nil {
 			return err
 		}
@@ -483,7 +456,7 @@ func (l *Ledger) Reconcile(ctx context.Context) error {
 			}
 			if batch.Status == string(BatchCollecting) || batch.Status == string(BatchFinalized) {
 				batch.Status, batch.UpdatedAt, batch.TerminalAt = string(BatchInterrupted), now, max(batch.TerminalAt, now)
-				if err := tx.Put(toolstate.Batches, batch.ID, batch); err != nil {
+				if err := toolstate.PutBatch(tx, batch); err != nil {
 					return err
 				}
 			}

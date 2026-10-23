@@ -99,7 +99,7 @@ func reserveWorkflowDocument(tx *persistence.Tx, id string, dimension providers.
 		workflow.Used = make(map[providers.WorkflowBudgetDimension]int64)
 	}
 	workflow.Used[dimension], workflow.UpdatedAt = used+delta, stamp
-	return tx.Put(documentNamespace("inference_workflows"), id, workflow)
+	return putInferenceWorkflow(tx, workflow)
 }
 
 func assertWorkflowDocumentCost(tx *persistence.Tx, id string) error {
@@ -160,7 +160,7 @@ func applyWorkflowDocumentCost(tx *persistence.Tx, id string, old, next provider
 		return &providers.WorkflowBudgetExceededError{WorkflowID: id, Dimension: providers.WorkflowBudgetUnknownBillable, Limit: limit.Value, Used: uint64(oldUnknown), Requested: uint64(after.unknown - before.unknown)}
 	}
 	workflow.UpdatedAt = stamp
-	return tx.Put(documentNamespace("inference_workflows"), id, workflow)
+	return putInferenceWorkflow(tx, workflow)
 }
 
 func mergeInferenceDocumentUsage(left, right *providers.TokenUsage) *providers.TokenUsage {

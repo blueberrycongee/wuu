@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
@@ -174,4 +175,45 @@ func (s *lostLedgerResponse) Commit(ctx context.Context, tx persistence.Transact
 		return receipt, err
 	}
 	return persistence.Receipt{}, errors.New("response lost after durable commit")
+}
+
+func TestLedgerRecoveryUsesOwnerBoundedReads(t *testing.T) {
+	forEachLedgerStore(t, func(t *testing.T, documents *ledgerTestDocuments) {
+		ctx := context.Background()
+		owner, err := New(documents, "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		batch, err := owner.BeginBatch(ctx, "operation", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		invocation, err := owner.Prepare(ctx, batch, providers.ToolCall{ID: "call", Name: "write", Arguments: `{}`}, ReplayAtMostOnce)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := owner.Start(ctx, invocation.ID); err != nil {
+			t.Fatal(err)
+		}
+		authority := &boundedLedgerDocuments{Documents: documents}
+		recovered, err := New(authority, "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := recovered.Reconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if decision, err := recovered.DecideReplay(ctx, batch); err != nil || decision.Reason != ReplayReasonInvocationUnknown {
+			t.Fatalf("recovery: %+v %v", decision, err)
+		}
+	})
+}
+
+type boundedLedgerDocuments struct{ persistence.Documents }
+
+func (s *boundedLedgerDocuments) Read(ctx context.Context, q persistence.Query) (persistence.View, error) {
+	if q.Keys == nil && (q.Limit == 0 || q.Prefix == "") {
+		return persistence.View{}, fmt.Errorf("unbounded owner read: %+v", q)
+	}
+	return s.Documents.Read(ctx, q)
 }

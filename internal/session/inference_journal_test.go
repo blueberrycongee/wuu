@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -1334,7 +1335,7 @@ func TestInferenceJournalEnforcesOperationParentConstraints(t *testing.T) {
 
 func TestInferenceJournalMigratesLegacyOperationsIntoWorkflows(t *testing.T) {
 	dir := t.TempDir()
-	db, err := sql.Open("sqlite", sqliteDSN(DBPath(dir)))
+	db, err := sql.Open("sqlite", filepath.Join(dir, "sessions.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1438,45 +1439,22 @@ INSERT INTO inference_submissions (
 		t.Fatal(err)
 	}
 
-	for pass := 0; pass < 2; pass++ {
-		migrated, err := openStore(dir)
-		if err != nil {
-			t.Fatal(err)
+	forEachSessionStore(t, func(t *testing.T, store *Store) {
+		for pass := 0; pass < 2; pass++ {
+			result, err := MigrateLegacySQLite(context.Background(), dir, store.documents, NewLegacyInferenceConverter())
+			if err != nil || result.AlreadyMigrated != (pass == 1) {
+				t.Fatalf("migration pass %d: %+v %v", pass, result, err)
+			}
+			operation := readSessionDocument[inferenceOperationDocument](t, store, "inference_operations", "operation-legacy")
+			if operation.WorkflowID != "iwf-legacy-operation-legacy" || operation.AttemptLimit != 2 || len(operation.AttemptIDs) != 2 {
+				t.Fatalf("legacy operation: %+v", operation)
+			}
+			workflow := readSessionDocument[inferenceWorkflowDocument](t, store, "inference_workflows", operation.WorkflowID)
+			if workflow.Used[providers.WorkflowBudgetOperations] != 1 || workflow.Used[providers.WorkflowBudgetAttempts] != 2 || workflow.Used[providers.WorkflowBudgetSubmissions] != 3 || workflow.Used[providers.WorkflowBudgetSamePayloadReplays] != 1 || workflow.KnownSubmissions != 1 || workflow.EstimatedSubmissions != 1 || workflow.UnknownBillable != 1 || workflow.KnownUsageTokens != 20 || workflow.EstimatedUsageTokens != 10 || workflow.Status != "failed" {
+				t.Fatalf("legacy workflow: %+v", workflow)
+			}
 		}
-		var workflowID string
-		var attemptLimit int
-		if err := migrated.QueryRow(`SELECT workflow_id, attempt_limit FROM inference_operations WHERE id = 'operation-legacy'`).
-			Scan(&workflowID, &attemptLimit); err != nil {
-			migrated.Close()
-			t.Fatal(err)
-		}
-		if workflowID != "iwf-legacy-operation-legacy" || attemptLimit != 2 {
-			migrated.Close()
-			t.Fatalf("legacy operation = workflow %q attempt limit %d", workflowID, attemptLimit)
-		}
-		var operations, attempts, submissions, replays, known, estimated, unknown, knownTokens, estimatedTokens int
-		var status string
-		if err := migrated.QueryRow(`
-SELECT used_operations, used_attempts, used_submissions, used_replays,
-       known_submissions, estimated_submissions, unknown_billable,
-       known_usage_tokens, estimated_usage_tokens, status
-FROM inference_workflows WHERE id = ?`, workflowID).Scan(
-			&operations, &attempts, &submissions, &replays, &known, &estimated, &unknown,
-			&knownTokens, &estimatedTokens, &status,
-		); err != nil {
-			migrated.Close()
-			t.Fatal(err)
-		}
-		if operations != 1 || attempts != 2 || submissions != 3 || replays != 1 ||
-			known != 1 || estimated != 1 || unknown != 1 || knownTokens != 20 || estimatedTokens != 10 || status != "failed" {
-			migrated.Close()
-			t.Fatalf("legacy workflow counters = %d/%d/%d/%d cost=%d/%d/%d tokens=%d/%d status=%q",
-				operations, attempts, submissions, replays, known, estimated, unknown, knownTokens, estimatedTokens, status)
-		}
-		if err := migrated.Close(); err != nil {
-			t.Fatal(err)
-		}
-	}
+	})
 }
 
 func TestInferenceJournalDoesNotRecoverLiveRuntime(t *testing.T) {
@@ -1747,4 +1725,43 @@ func crashInferenceRuntimeForTest(t *testing.T, runtime *InferenceJournalRuntime
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestInferenceRecoveryAndPruningUseBoundedScopeReads(t *testing.T) {
+	forEachSessionStore(t, func(t *testing.T, store *Store) {
+		authority := &boundedInferenceDocuments{Documents: store.documents}
+		selected := NewStore(context.Background(), authority)
+		runtime, err := selected.NewInferenceJournalRuntime("bounded-scope")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer runtime.Close()
+		journal := runtime.ForOwner("owner")
+		operation := providers.NewInferenceOperation(providers.InferenceOperationTitle, providers.InferenceProfileBestEffort)
+		at := time.Now().Add(-40 * 24 * time.Hour)
+		if err := journal.PrepareOperation(providers.InferenceOperationJournalRecord{Operation: operation, RequestHash: testInferenceHash("bounded"), At: at}); err != nil {
+			t.Fatal(err)
+		}
+		if err := journal.CompleteOperation(providers.InferenceOperationTerminalRecord{OperationID: operation.ID, Outcome: providers.InferenceOutcomeSucceeded, At: at}); err != nil {
+			t.Fatal(err)
+		}
+		if err := journal.CompleteWorkflow(providers.InferenceWorkflowTerminalRecord{WorkflowID: "iwf-" + operation.ID, Outcome: providers.InferenceOutcomeSucceeded, At: at}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := runtime.ReconcileOrphans(time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if deleted, err := runtime.Prune(time.Now()); err != nil || deleted != 2 {
+			t.Fatalf("prune: %d %v", deleted, err)
+		}
+	})
+}
+
+type boundedInferenceDocuments struct{ persistence.Documents }
+
+func (s *boundedInferenceDocuments) Read(ctx context.Context, q persistence.Query) (persistence.View, error) {
+	if q.Keys == nil && (q.Limit == 0 || q.Prefix == "") {
+		return persistence.View{}, fmt.Errorf("unbounded inference scope read: %+v", q)
+	}
+	return s.Documents.Read(ctx, q)
 }

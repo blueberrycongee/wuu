@@ -235,11 +235,17 @@ func NewLegacyInferenceConverter() func(string, []map[string]any) ([]persistence
 				}
 				return strings.Compare(a, b)
 			})
+			if err := add("inference_workflows_index", inferenceIndexKey(workflow.WorkspaceScope, workflow.Status, workflow.UpdatedAt, workflow.ID), workflow.ID); err != nil {
+				return nil, true, err
+			}
 			if err := add("inference_workflows", workflow.ID, workflow); err != nil {
 				return nil, true, err
 			}
 		}
 		for _, operation := range operations {
+			if err := add("inference_operations_index", inferenceIndexKey(operation.WorkspaceScope, operation.Status, operation.UpdatedAt, operation.ID), operation.ID); err != nil {
+				return nil, true, err
+			}
 			if err := add("inference_operations", operation.ID, operation); err != nil {
 				return nil, true, err
 			}

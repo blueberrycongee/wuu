@@ -3,6 +3,7 @@
 package toolstate
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 
@@ -12,8 +13,9 @@ import (
 )
 
 const (
-	Batches     = "wuu.tool_batches.v1"
-	Invocations = "wuu.tool_invocations.v1"
+	Batches        = "wuu.tool_batches.v1"
+	Invocations    = "wuu.tool_invocations.v1"
+	batchesByOwner = "wuu.tool_batches_owner.v1"
 )
 
 type Batch struct {
@@ -85,5 +87,48 @@ func Project(tx *persistence.Tx, ownerID, invocationID string, now int64) error 
 		}
 	}
 	batch.Status, batch.UpdatedAt, batch.TerminalAt = "projected", now, max(batch.TerminalAt, now)
+	return PutBatch(tx, batch)
+}
+
+func batchOwnerKey(batch Batch) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(batch.OwnerID)) + "/" + fmt.Sprintf("%020d", uint64(batch.CreatedAt)^(1<<63)) + "/" + batch.ID
+}
+
+// PutBatch keeps owner lookup and the batch receipt in the same transaction.
+func PutBatch(tx *persistence.Tx, batch Batch) error {
+	if err := tx.Put(batchesByOwner, batchOwnerKey(batch), batch.ID); err != nil {
+		return err
+	}
 	return tx.Put(Batches, batch.ID, batch)
+}
+
+func ReadOwnerBatches(tx *persistence.Tx, ownerID string) ([]Batch, error) {
+	query := persistence.Query{Namespace: batchesByOwner, Prefix: base64.RawURLEncoding.EncodeToString([]byte(ownerID)) + "/", Limit: 256}
+	var batches []Batch
+	for {
+		page, err := tx.ReadView(query)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range page.Documents {
+			var id string
+			if err := json.Unmarshal(row.Value, &id); err != nil {
+				return nil, err
+			}
+			var batch Batch
+			found, err := tx.Get(Batches, id, &batch)
+			if err != nil {
+				return nil, err
+			}
+			if !found || batch.OwnerID != ownerID {
+				return nil, fmt.Errorf("%w: invalid tool batch owner index", persistence.ErrCorrupt)
+			}
+			batches = append(batches, batch)
+		}
+		if page.NextCursor == "" {
+			return batches, nil
+		}
+		query.Cursor = page.NextCursor
+		query.AtRevision = &page.Revision
+	}
 }

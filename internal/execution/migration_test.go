@@ -218,3 +218,15 @@ func legacyRowsForTest(t *testing.T, tx *sql.Tx, table string) []map[string]any 
 	}
 	return result
 }
+
+func TestLegacyExecutionRejectsMissingRuntimeBeforeWrites(t *testing.T) {
+	convert := NewLegacyConverter()
+	_, claimed, err := convert("execution_runs", []map[string]any{{"id": "run", "runtime_id": "missing", "thread_id": "thread", "status": "accepted", "request_json": `{"mode":"start"}`, "runtime_json": `{}`, "created_at": int64(1), "updated_at": int64(1)}})
+	if err != nil || !claimed {
+		t.Fatalf("collect: %v %v", claimed, err)
+	}
+	writes, _, err := convert("", nil)
+	if !errors.Is(err, persistence.ErrCorrupt) || len(writes) != 0 {
+		t.Fatalf("orphan runtime imported: writes=%d err=%v", len(writes), err)
+	}
+}

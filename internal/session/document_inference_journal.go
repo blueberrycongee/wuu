@@ -96,10 +96,10 @@ func (j *documentInferenceJournal) PrepareOperation(record providers.InferenceOp
 			return err
 		}
 		storedWorkflow.OperationIDs = append(storedWorkflow.OperationIDs, op.ID)
-		if err := tx.Put(documentNamespace("inference_workflows"), workflow.ID, storedWorkflow); err != nil {
+		if err := putInferenceWorkflow(tx, storedWorkflow); err != nil {
 			return err
 		}
-		return tx.Put(documentNamespace("inference_operations"), op.ID, inferenceOperationDocument{
+		return putInferenceOperation(tx, inferenceOperationDocument{
 			InferenceOperation: op, RuntimeID: j.runtime.runtimeID, WorkspaceScope: j.runtime.workspaceScope, OwnerID: j.ownerID,
 			RequestHash: record.RequestHash, Status: "active", CreatedAt: stamp, UpdatedAt: stamp, AttemptIDs: []string{},
 		})
@@ -127,7 +127,7 @@ func (j *documentInferenceJournal) prepareWorkflow(tx *persistence.Tx, record pr
 		}
 		return nil
 	}
-	return tx.Put(documentNamespace("inference_workflows"), record.ID, inferenceWorkflowDocument{
+	return putInferenceWorkflow(tx, inferenceWorkflowDocument{
 		InferenceWorkflowJournalRecord: record, RuntimeID: j.runtime.runtimeID, WorkspaceScope: j.runtime.workspaceScope, OwnerID: j.ownerID,
 		Status: "active", CreatedAt: record.StartedAt.UnixMilli(), UpdatedAt: stamp, Used: make(map[providers.WorkflowBudgetDimension]int64), OperationIDs: []string{},
 	})
@@ -196,7 +196,7 @@ func (j *documentInferenceJournal) prepareAttempt(tx *persistence.Tx, record pro
 		return err
 	}
 	op.AttemptIDs, op.UpdatedAt = append(op.AttemptIDs, record.AttemptID), stamp
-	return tx.Put(documentNamespace("inference_operations"), op.ID, op)
+	return putInferenceOperation(tx, op)
 }
 
 func normalizeSubmissionDocument(record *providers.InferenceSubmissionJournalRecord) {
@@ -317,7 +317,7 @@ func (j *documentInferenceJournal) upsertSubmission(tx *persistence.Tx, record p
 	}
 	if op.Status == "active" {
 		op.UpdatedAt = stamp
-		return tx.Put(documentNamespace("inference_operations"), op.ID, op)
+		return putInferenceOperation(tx, op)
 	}
 	return nil
 }
@@ -357,7 +357,7 @@ func (j *documentInferenceJournal) MarkAttemptFirstEvent(operationID, attemptID,
 			return err
 		}
 		op.UpdatedAt = stamp
-		return tx.Put(documentNamespace("inference_operations"), operationID, op)
+		return putInferenceOperation(tx, op)
 	})
 }
 
@@ -393,7 +393,7 @@ func (j *documentInferenceJournal) PrepareRecoveryAttempt(ctx context.Context, r
 			if err := assertWorkflowDocumentCost(tx, op.WorkflowID); err != nil {
 				return err
 			}
-			dimension, _, _ := recoveryWorkflowColumns(recovery.Action)
+			dimension := recoveryWorkflowDimension(recovery.Action)
 			if dimension != "" {
 				if err := reserveWorkflowDocument(tx, op.WorkflowID, dimension, 1, stamp); err != nil {
 					return err
@@ -409,7 +409,7 @@ func (j *documentInferenceJournal) PrepareRecoveryAttempt(ctx context.Context, r
 				return err
 			}
 			op.RecoveryAction, op.UpdatedAt = recovery.Action, stamp
-			if err := tx.Put(documentNamespace("inference_operations"), op.ID, op); err != nil {
+			if err := putInferenceOperation(tx, op); err != nil {
 				return err
 			}
 		}
@@ -483,7 +483,7 @@ func completeInferenceOperationDocument(tx *persistence.Tx, id string, outcome p
 	}
 	op.Status, op.TerminalOutcome, op.RecoveryAction, op.Failure = string(outcome), outcome, action, normalizedDocumentFailure(failure)
 	op.UpdatedAt, op.TerminalAt = stamp, stamp
-	return tx.Put(documentNamespace("inference_operations"), id, op)
+	return putInferenceOperation(tx, op)
 }
 
 func (j *documentInferenceJournal) CompleteWorkflow(record providers.InferenceWorkflowTerminalRecord) error {
@@ -521,5 +521,5 @@ func completeInferenceWorkflowDocument(tx *persistence.Tx, workflow inferenceWor
 		}
 	}
 	workflow.Status, workflow.UpdatedAt, workflow.TerminalAt = string(outcome), stamp, stamp
-	return tx.Put(documentNamespace("inference_workflows"), workflow.ID, workflow)
+	return putInferenceWorkflow(tx, workflow)
 }

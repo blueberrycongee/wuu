@@ -104,6 +104,9 @@ func NewLegacyConverter() func(string, []map[string]any) ([]persistence.Write, b
 				}
 				return strings.Compare(a, b)
 			})
+			if err := appendWrite(batchesByOwner, batchOwnerKey(batch), batch.ID); err != nil {
+				return nil, true, err
+			}
 			if err := appendWrite(Batches, batch.ID, batch); err != nil {
 				return nil, true, err
 			}

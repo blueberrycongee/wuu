@@ -14,8 +14,19 @@ import (
 // snapshot. An empty table name finalizes their ownership indexes atomically.
 func NewLegacyConverter() func(string, []map[string]any) ([]persistence.Write, bool, error) {
 	tables := make(map[string][]map[string]any)
+	runtimes := make(map[string]bool)
 	return func(table string, rows []map[string]any) ([]persistence.Write, bool, error) {
 		if table != "" {
+			if table == "inference_journal_runtimes" {
+				for _, row := range rows {
+					id, ok := row["id"].(string)
+					if !ok || id == "" {
+						return nil, false, fmt.Errorf("%w: missing legacy execution runtime identity", persistence.ErrCorrupt)
+					}
+					runtimes[id] = true
+				}
+				return nil, false, nil
+			}
 			if table != "execution_runs" && table != "execution_run_turns" {
 				return nil, false, nil
 			}
@@ -47,7 +58,7 @@ func NewLegacyConverter() func(string, []map[string]any) ([]persistence.Write, b
 			if err := json.Unmarshal(raw, &stored); err != nil {
 				return nil, true, err
 			}
-			if stored.ID == "" || stored.ThreadID == "" || stored.RuntimeID == "" {
+			if stored.ID == "" || stored.ThreadID == "" || !runtimes[stored.RuntimeID] {
 				return nil, true, fmt.Errorf("%w: legacy execution identity is missing", persistence.ErrCorrupt)
 			}
 			if _, ok := runs[stored.ID]; ok {
@@ -115,6 +126,11 @@ func NewLegacyConverter() func(string, []map[string]any) ([]persistence.Write, b
 		active := make(map[string]string)
 		for _, run := range runs {
 			slices.SortFunc(run.Turns, func(a, b TurnRef) int { return a.Ordinal - b.Ordinal })
+			for _, key := range runOrderKeys(run) {
+				if err := add(runOrderNamespace, key, run.ID); err != nil {
+					return nil, true, err
+				}
+			}
 			if err := add(runsNamespace, run.ID, run); err != nil {
 				return nil, true, err
 			}

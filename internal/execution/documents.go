@@ -20,6 +20,7 @@ const (
 	runsNamespace          = "wuu.execution_runs.v1"
 	activeThreadsNamespace = "wuu.execution_active_threads.v1"
 	turnOwnersNamespace    = "wuu.execution_turn_owners.v1"
+	runOrderNamespace      = "wuu.execution_run_order.v1"
 )
 
 // Store retains the selected authority supplied by its runtime owner.
@@ -83,8 +84,23 @@ func getRunDocument(tx *persistence.Tx, id string) (Run, error) {
 }
 
 func persistRunDocument(tx *persistence.Tx, run Run) error {
+	var previous Run
+	found, err := tx.Get(runsNamespace, run.ID, &previous)
+	if err != nil {
+		return err
+	}
+	if found {
+		for _, key := range runOrderKeys(previous) {
+			tx.Delete(runOrderNamespace, key)
+		}
+	}
+	for _, key := range runOrderKeys(run) {
+		if err := tx.Put(runOrderNamespace, key, run.ID); err != nil {
+			return err
+		}
+	}
 	var activeID string
-	_, err := tx.Get(activeThreadsNamespace, run.ThreadID, &activeID)
+	_, err = tx.Get(activeThreadsNamespace, run.ThreadID, &activeID)
 	if err != nil {
 		return err
 	}
@@ -141,20 +157,81 @@ func (s *Store) Get(ctx context.Context, id string) (Run, error) {
 	return run, err
 }
 
-func listRunDocuments(tx *persistence.Tx) ([]Run, error) {
-	rows, err := tx.Read(persistence.Query{Namespace: runsNamespace})
-	if err != nil {
-		return nil, err
-	}
-	runs := make([]Run, 0, len(rows))
-	for _, row := range rows {
-		var run Run
-		if err := json.Unmarshal(row.Value, &run); err != nil {
-			return nil, fmt.Errorf("%w: execution run %q: %v", persistence.ErrCorrupt, row.Key, err)
+func runOrderKeys(run Run) []string {
+	suffix := run.UpdatedAt.UTC().Format("20060102150405.000000000") + "/" + run.ID
+	keys := []string{"all/" + suffix}
+	for _, scope := range []struct{ name, value string }{{"thread", run.ThreadID}, {"workspace", run.Workspace.ID}, {"root", run.Workspace.Root}, {"status", string(run.Status)}} {
+		if scope.value != "" {
+			keys = append(keys, scope.name+"/"+base64.RawURLEncoding.EncodeToString([]byte(scope.value))+"/"+suffix)
 		}
-		runs = append(runs, run)
 	}
-	return runs, nil
+	return keys
+}
+
+func listRunDocuments(tx *persistence.Tx, opts ListOptions) ([]Run, error) {
+	prefix := "all/"
+	for _, scope := range []struct{ name, value string }{{"thread", opts.ThreadID}, {"workspace", opts.WorkspaceID}, {"root", opts.WorkspaceRoot}, {"status", string(opts.Status)}} {
+		if scope.value != "" {
+			prefix = scope.name + "/" + base64.RawURLEncoding.EncodeToString([]byte(scope.value)) + "/"
+			break
+		}
+	}
+	query := persistence.Query{Namespace: runOrderNamespace, Prefix: prefix, Reverse: true, Limit: opts.Limit}
+	runs := make([]Run, 0, opts.Limit)
+	for {
+		page, err := tx.ReadView(query)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range page.Documents {
+			var id string
+			if err := json.Unmarshal(row.Value, &id); err != nil {
+				return nil, err
+			}
+			run, err := getRunDocument(tx, id)
+			if err != nil {
+				return nil, err
+			}
+			if matchesList(run, opts) {
+				runs = append(runs, run)
+				if len(runs) == opts.Limit {
+					return runs, nil
+				}
+			}
+		}
+		if page.NextCursor == "" {
+			return runs, nil
+		}
+		query.Cursor = page.NextCursor
+		query.AtRevision = &page.Revision
+	}
+}
+
+func activeRunDocuments(tx *persistence.Tx) ([]Run, error) {
+	query := persistence.Query{Namespace: activeThreadsNamespace, Limit: 256}
+	var runs []Run
+	for {
+		page, err := tx.ReadView(query)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range page.Documents {
+			var id string
+			if err := json.Unmarshal(row.Value, &id); err != nil {
+				return nil, err
+			}
+			run, err := getRunDocument(tx, id)
+			if err != nil {
+				return nil, err
+			}
+			runs = append(runs, run)
+		}
+		if page.NextCursor == "" {
+			return runs, nil
+		}
+		query.Cursor = page.NextCursor
+		query.AtRevision = &page.Revision
+	}
 }
 
 func (s *Store) List(ctx context.Context, opts ListOptions) ([]Run, error) {
@@ -173,7 +250,7 @@ func (s *Store) List(ctx context.Context, opts ListOptions) ([]Run, error) {
 	var all []Run
 	err := persistence.Update(ctx, s.documents, func(tx *persistence.Tx) error {
 		all = nil
-		runs, err := listRunDocuments(tx)
+		runs, err := listRunDocuments(tx, opts)
 		if err != nil {
 			return err
 		}
@@ -246,7 +323,7 @@ func (s *Store) ReconcileOrphans(ctx context.Context, currentRuntimeID string, a
 	var recovered []Run
 	err := persistence.Update(ctx, s.documents, func(tx *persistence.Tx) error {
 		recovered = nil
-		runs, err := listRunDocuments(tx)
+		runs, err := activeRunDocuments(tx)
 		if err != nil {
 			return err
 		}

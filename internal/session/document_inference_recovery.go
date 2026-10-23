@@ -25,7 +25,7 @@ func (r *InferenceJournalRuntime) ReconcileOrphans(now time.Time) ([]InferenceCr
 	var recoveries []InferenceCrashRecovery
 	err = r.store.transaction(func(tx *persistence.Tx) error {
 		recoveries = nil
-		operations, err := readDocumentRows[inferenceOperationDocument](tx, "inference_operations", "")
+		operations, err := readInferenceIndexedDocuments[inferenceOperationDocument](tx, "inference_operations", r.workspaceScope, "active", nil)
 		if err != nil {
 			return err
 		}
@@ -116,7 +116,7 @@ func (r *InferenceJournalRuntime) ReconcileOrphans(now time.Time) ([]InferenceCr
 			}
 			recoveries = append(recoveries, item)
 		}
-		workflows, err := readDocumentRows[inferenceWorkflowDocument](tx, "inference_workflows", "")
+		workflows, err := readInferenceIndexedDocuments[inferenceWorkflowDocument](tx, "inference_workflows", r.workspaceScope, "active", nil)
 		if err != nil {
 			return err
 		}
@@ -171,7 +171,7 @@ func (r *InferenceJournalRuntime) Prune(now time.Time) (int64, error) {
 	var deleted int64
 	err = r.store.transaction(func(tx *persistence.Tx) error {
 		deleted = 0
-		operations, err := readDocumentRows[inferenceOperationDocument](tx, "inference_operations", "")
+		operations, err := readInferenceIndexedDocuments[inferenceOperationDocument](tx, "inference_operations", r.workspaceScope, "terminal", &cutoff)
 		if err != nil {
 			return err
 		}
@@ -190,23 +190,25 @@ func (r *InferenceJournalRuntime) Prune(now time.Time) (int64, error) {
 				tx.Delete(documentNamespace("inference_attempts"), id)
 			}
 			tx.Delete(documentNamespace("inference_operations"), op.ID)
+			tx.Delete(documentNamespace("inference_operations_index"), inferenceIndexKey(op.WorkspaceScope, op.Status, op.UpdatedAt, op.ID))
 			workflow, err := requireInferenceDocument[inferenceWorkflowDocument](tx, "inference_workflows", op.WorkflowID)
 			if err != nil {
 				return err
 			}
 			workflow.OperationIDs = slices.DeleteFunc(workflow.OperationIDs, func(id string) bool { return id == op.ID })
-			if err := tx.Put(documentNamespace("inference_workflows"), workflow.ID, workflow); err != nil {
+			if err := putInferenceWorkflow(tx, workflow); err != nil {
 				return err
 			}
 			deleted++
 		}
-		workflows, err := readDocumentRows[inferenceWorkflowDocument](tx, "inference_workflows", "")
+		workflows, err := readInferenceIndexedDocuments[inferenceWorkflowDocument](tx, "inference_workflows", r.workspaceScope, "terminal", &cutoff)
 		if err != nil {
 			return err
 		}
 		for _, workflow := range workflows {
 			if workflow.WorkspaceScope == r.workspaceScope && workflow.Status != "active" && workflow.UpdatedAt < cutoff && len(workflow.OperationIDs) == 0 {
 				tx.Delete(documentNamespace("inference_workflows"), workflow.ID)
+				tx.Delete(documentNamespace("inference_workflows_index"), inferenceIndexKey(workflow.WorkspaceScope, workflow.Status, workflow.UpdatedAt, workflow.ID))
 				deleted++
 			}
 		}

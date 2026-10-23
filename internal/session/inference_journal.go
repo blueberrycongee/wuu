@@ -86,7 +86,7 @@ func inferenceWorkflowLimits(spec providers.WorkflowBudgetSpec) (inferenceWorkfl
 			return -1, nil
 		}
 		if limit.Value > uint64(1<<63-1) {
-			return 0, fmt.Errorf("workflow budget %s exceeds SQLite integer range", name)
+			return 0, fmt.Errorf("workflow budget %s exceeds signed integer range", name)
 		}
 		return int64(limit.Value), nil
 	}
@@ -125,16 +125,16 @@ func journalUsageTokens(usage inferenceJournalUsage) int64 {
 	return int64(usage.input + usage.output + usage.cacheCreation + usage.cacheRead)
 }
 
-func recoveryWorkflowColumns(action providers.RecoveryActionKind) (providers.WorkflowBudgetDimension, string, string) {
+func recoveryWorkflowDimension(action providers.RecoveryActionKind) providers.WorkflowBudgetDimension {
 	switch action {
 	case providers.RecoverySwitchTransport:
-		return providers.WorkflowBudgetTransportSwitches, "used_transport_switches", "max_transport_switches"
+		return providers.WorkflowBudgetTransportSwitches
 	case providers.RecoveryRefreshAuth:
-		return providers.WorkflowBudgetCredentialRefresh, "used_credential_refreshes", "max_credential_refreshes"
+		return providers.WorkflowBudgetCredentialRefresh
 	case providers.RecoveryTransformPayload:
-		return providers.WorkflowBudgetPayloadTransforms, "used_payload_transforms", "max_payload_transforms"
+		return providers.WorkflowBudgetPayloadTransforms
 	default:
-		return "", "", ""
+		return ""
 	}
 }
 
