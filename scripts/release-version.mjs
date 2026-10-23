@@ -11,7 +11,7 @@ const nativeAndroid = "clients/native/android/app/build.gradle.kts";
 const nativeIOS = "clients/native/ios/Wuu.xcodeproj/project.pbxproj";
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const [command = "check", rawVersion] = process.argv.slice(2);
+  const [command = "check", rawVersion, rawNotes] = process.argv.slice(2);
   try {
     switch (command) {
       case "check":
@@ -26,11 +26,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       case "prepare":
         prepare(rawVersion);
         break;
+      case "prepare-nightly":
+        prepareNightly(rawVersion, rawNotes);
+        break;
       case "notes":
         process.stdout.write(`${releaseNotes(requireSemver(rawVersion))}\n`);
         break;
       default:
-        fail("usage: release-version.mjs check [v<version>] | sync | next | prepare [version] | notes <version>");
+        fail("usage: release-version.mjs check [v<version>] | sync | next | prepare [version] | prepare-nightly <version> <notes> | notes <version>");
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
@@ -69,7 +72,7 @@ function prepare(rawNextVersion) {
   const changelog = read("CHANGELOG.md");
   const unreleased = findSection(changelog, "Unreleased");
   if (findSection(changelog, version)) fail(`CHANGELOG.md already contains ${version}`);
-  const candidate = current.includes("-") && version === current.split("-")[0]
+  const candidate = current.includes("-rc.") && version === current.split("-")[0]
     ? findSection(changelog, current)
     : null;
   const body = [candidate?.body, unreleased?.body].filter(Boolean).join("\n\n");
@@ -83,6 +86,27 @@ function prepare(rawNextVersion) {
   files.set("CHANGELOG.md", changelog.slice(0, unreleasedStart) + released + changelog.slice(unreleasedEnd));
   writeFiles(files);
   console.log(`prepared release ${version}`);
+}
+
+function prepareNightly(rawVersion, rawNotes) {
+  const version = requireCalver(rawVersion);
+  if (!/-nightly\.[0-9]+$/.test(version)) fail("nightly version must end with -nightly.<number>");
+  const current = requireCalver(currentVersion());
+  if (compareVersions(version, current) <= 0) fail(`nightly version ${version} must be greater than current version ${current}`);
+
+  const notes = String(rawNotes ?? "").trim();
+  if (!notes) fail("nightly release notes are required");
+  const changelog = read("CHANGELOG.md");
+  const unreleased = findSection(changelog, "Unreleased");
+  if (!unreleased) fail("CHANGELOG.md is missing the Unreleased section");
+  if (findSection(changelog, version)) fail(`CHANGELOG.md already contains ${version}`);
+
+  const section = `## [${version}] - ${version.split("-")[0]}\n\n${notes}\n\n`;
+  const files = versionFiles(version);
+  files.set("VERSION", `${version}\n`);
+  files.set("CHANGELOG.md", changelog.slice(0, unreleased.end) + section + changelog.slice(unreleased.end));
+  writeFiles(files);
+  console.log(`prepared nightly release ${version}`);
 }
 
 function releaseNotes(version) {

@@ -433,7 +433,7 @@ describe("collapsed sidebar hover drawer", () => {
     expect(history.hasAttribute("inert")).toBe(false);
   });
 
-  it.each([true, false])("occludes expanded Mac ribbon history only in its narrow lane (collapsed=%s)", async (collapsed) => {
+  it.each([true, false])("keeps Mac history usable on hover and occludes keyboard expansion only in its narrow lane (collapsed=%s)", async (collapsed) => {
     Object.defineProperty(window.wuu, "platform", { configurable: true, value: "darwin" });
     await renderCollapsedApp();
     if (!collapsed) {
@@ -447,34 +447,49 @@ describe("collapsed sidebar hover drawer", () => {
     await act(async () => back.focus());
     const ribbon = container.querySelector<HTMLElement>(".sidebar-ribbon")!;
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
-    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    expect(ribbon.dataset.expanded).toBeUndefined();
+    expect(history.hidden).toBe(false);
+    expect(history.hasAttribute("inert")).toBe(false);
+    expect(document.activeElement).toBe(back);
+    const destination = ribbon.querySelector<HTMLButtonElement>('[data-ribbon-id]:not([aria-disabled="true"])')!;
+    await act(async () => {
+      destination.focus();
+      destination.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Home" }));
+    });
     expect(ribbon.dataset.expanded).toBe("true");
     expect(history.hidden).toBe(collapsed);
     expect(history.hasAttribute("inert")).toBe(collapsed);
-    expect(document.activeElement).toBe(collapsed ? appShell() : back);
-    await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
-    expect(ribbon.dataset.expanded).toBe("true");
-    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
+    expect(ribbon.contains(document.activeElement)).toBe(true);
+    await act(async () => appShell()!.focus());
     expect(ribbon.dataset.expanded).toBeUndefined();
     expect(history.hidden).toBe(false);
     expect(history.hasAttribute("inert")).toBe(false);
     expect(container.querySelector('[data-wuu-component="page-history-controls"]')).toBe(history);
   });
 
-  it.each(["darwin", "linux"])("releases only an occluded toggle's focus without pinning ribbon expansion on %s", async (platform) => {
+  it.each(["darwin", "linux"])("keeps the toggle focused on hover and occludes it only during keyboard expansion on %s", async (platform) => {
     Object.defineProperty(window.wuu, "platform", { configurable: true, value: platform });
     await renderCollapsedApp();
     const toggle = container.querySelector<HTMLButtonElement>(".section-sidebar-toggle")!;
     const ribbon = container.querySelector<HTMLElement>(".sidebar-ribbon")!;
     await act(async () => toggle.focus());
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
-    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    expect(ribbon.dataset.expanded).toBeUndefined();
+    expect(toggle.hidden).toBe(false);
+    expect(toggle.hasAttribute("inert")).toBe(false);
+    expect(document.activeElement).toBe(toggle);
+    const destination = ribbon.querySelector<HTMLButtonElement>('[data-ribbon-id]:not([aria-disabled="true"])')!;
+    await act(async () => {
+      destination.focus();
+      destination.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Home" }));
+    });
+    expect(ribbon.dataset.expanded).toBe("true");
     expect(toggle.hidden).toBe(platform === "darwin");
     expect(toggle.hasAttribute("inert")).toBe(platform === "darwin");
-    expect(document.activeElement).toBe(platform === "darwin" ? appShell() : toggle);
-    await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
-    expect(ribbon.dataset.expanded).toBe("true");
-    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
+    expect(ribbon.contains(document.activeElement)).toBe(true);
+    await act(async () => appShell()!.focus());
     expect(ribbon.dataset.expanded).toBeUndefined();
     expect(toggle.hidden).toBe(false);
     expect(toggle.hasAttribute("inert")).toBe(false);

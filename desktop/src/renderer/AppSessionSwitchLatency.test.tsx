@@ -534,6 +534,18 @@ describe("session tab switch latency", () => {
     expect(history.hasAttribute("inert")).toBe(true);
     await act(async () => toggle.focus());
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 160)); });
+    expect(ribbon.dataset.expanded).toBeUndefined();
+    expect(toggle.hidden).toBe(false);
+    expect(toggle.hasAttribute("inert")).toBe(false);
+    expect(document.activeElement).toBe(toggle);
+    // Hover is intentionally inert; explicit keyboard navigation still opens
+    // the ribbon and must preserve its existing occlusion/lifecycle contract.
+    const destination = ribbon.querySelector<HTMLButtonElement>('[data-ribbon-id]:not([aria-disabled="true"])')!;
+    await act(async () => {
+      destination.focus();
+      destination.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Home" }));
+    });
     await vi.waitFor(async () => {
       await act(async () => {});
       expect(ribbon.dataset.expanded).toBe("true");
@@ -542,7 +554,8 @@ describe("session tab switch latency", () => {
     expect(history.hasAttribute("inert")).toBe(true);
     expect(toggle.hidden).toBe(true);
     expect(toggle.hasAttribute("inert")).toBe(true);
-    expect(document.activeElement).toBe(container.querySelector(".app-shell"));
+    expect(ribbon.contains(document.activeElement)).toBe(true);
+    await act(async () => container.querySelector<HTMLElement>(".app-shell")!.focus());
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
     if (nativePresenter) {
       expect(history.hidden).toBe(true);

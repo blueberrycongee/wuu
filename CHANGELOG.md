@@ -198,6 +198,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Guide next-message predictions toward concrete follow-ups instead of polite
   acknowledgments, and allow no suggestion when the next intent is unclear.
 
+## [2026.10.23-nightly.1] - 2026.10.23
+
+Nightly build from experiment/workbench at f3acd0b4b6606852c8ae05899dd2ab85fb681bc8. Experimental prerelease for testing; not a stable update.
+
 ## [2026.10.19] - 2026-10-18
 
 ### Contributors
