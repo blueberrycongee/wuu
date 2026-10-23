@@ -19,7 +19,7 @@ import (
 func TestRunStartSettlesManifest(t *testing.T) {
 	client := &fakeClient{response: providersResponse("run-protocol-ok")}
 	rt := newTestRuntime(t, client)
-	runtimeJournal, err := session.NewInferenceJournalRuntime(rt.SessionDir, "run-test")
+	runtimeJournal, err := rt.Sessions.NewInferenceJournalRuntime("run-test")
 	if err != nil {
 		t.Fatalf("NewInferenceJournalRuntime: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestRunStartSettlesManifest(t *testing.T) {
 	if err != nil || !saved || resumed.DriverID != checkpoint.DriverID || string(resumed.State) != string(checkpoint.State) {
 		t.Fatalf("ephemeral checkpoint lost across runtime rebuild: %+v %v", resumed, err)
 	}
-	if _, _, err := session.LoadDriverBinding(rt.SessionDir, thread.ID); !errors.Is(err, session.ErrSessionNotFound) {
+	if _, _, err := rt.Sessions.LoadDriverBinding(thread.ID); !errors.Is(err, session.ErrSessionNotFound) {
 		t.Fatalf("ephemeral execution created a persistent session: %v", err)
 	}
 }
