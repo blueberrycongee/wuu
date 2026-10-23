@@ -485,17 +485,33 @@ func NewSession(opts Options) (*Session, error) {
 	if !opts.NonInteractive {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
-	pluginHost, pluginKernel, err := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions, runtimeComposition(cfg.Composition, safeMode), opts.DriverProfile, factories...)
+	pluginHost, pluginKernel, err := buildPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, pluginTurnRouter, userQuestions, runtimeComposition(cfg.Composition, safeMode), opts.DriverProfile, factories...)
 	if err != nil {
 		return nil, fmt.Errorf("prepare plugin composition: %w", err)
 	}
 
+	initialGeneration := &PluginGeneration{
+		id: newPluginGenerationID(wuuHome), host: pluginHost, state: pluginKernel.state,
+		ownedRoots: initialSnapshotRoots, settings: cfg,
+		plugins: append([]pluginpkg.Plugin(nil), discoveredPlugins...),
+		active:  append([]pluginpkg.Plugin(nil), activePlugins...),
+	}
+	if services := pluginKernel.selectedServices; services != nil {
+		initialGeneration.credentials, initialGeneration.configClient = services.credentials, services.config
+		initialGeneration.chatGPTManager, initialGeneration.artifactClient, initialGeneration.mcpOAuth = services.chatGPT, services.artifacts, services.oauth
+	}
+	initialGeneration.retain()
+	pluginKernel.bindStateGeneration(initialGeneration, nil)
+	snapshotsOwned = false
 	graphOwned := true
 	defer func() {
 		if graphOwned {
-			_ = pluginHost.Close(context.Background())
+			initialGeneration.Release()
 		}
 	}()
+	if err := activatePluginHost(context.Background(), pluginHost); err != nil {
+		providers.DebugLogf("activate initial plugin generation: %v", err)
+	}
 	var documents persistence.Documents
 	var sessions *session.Store
 	var journalRuntime *session.InferenceJournalRuntime
@@ -578,9 +594,11 @@ func NewSession(opts Options) (*Session, error) {
 	activePlugins = availablePluginPackages(activePlugins, pluginHost)
 	systemPrompts, compactions, capabilityErr := buildPluginAgentCapabilities(context.Background(), pluginHost, resolvedName, providerCfg.Model, rootDir)
 	if capabilityErr != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		closeErr := pluginHost.Close(ctx)
-		cancel()
+		graphOwned = false
+		var closeErr error
+		if initialGeneration.Release() {
+			closeErr = initialGeneration.closeErr
+		}
 		return nil, errors.Join(capabilityErr, closeErr)
 	}
 	hookDispatcher := buildHookDispatcher(cfg, activePlugins, providers.Client(client), toolModeModel, workspaceJournal)
@@ -890,8 +908,6 @@ func NewSession(opts Options) (*Session, error) {
 	// engine factory, starting with this one.
 	runtimeSession.engines = agentengine.NewRegistry()
 	if err := runtimeSession.engines.Register(NewWuuEngine(runtimeSession)); err != nil {
-		graphOwned = false
-		_ = pluginHost.Close(context.Background())
 		return nil, fmt.Errorf("register built-in agent engine: %w", err)
 	}
 	// The codex engine hosts the codex CLI app-server as an external agent.
@@ -943,23 +959,17 @@ func NewSession(opts Options) (*Session, error) {
 	runtimeSession.RebuildProtocolEngines(cfg.Engines)
 	initialHooks := hooks.NewDispatcher(nil)
 	initialHooks.Replace(hookDispatcher)
-	generationID := newPluginGenerationID(wuuHome)
-	runtimeSession.pluginGeneration = &PluginGeneration{
-		state:       pluginKernel.state,
-		credentials: credentials, configClient: configClient, chatGPTManager: chatGPTManager, artifactClient: artifacts, mcpOAuth: mcpOAuth,
-		id:            generationID,
-		ownedRoots:    initialSnapshotRoots,
-		settings:      cfg,
-		plugins:       append([]pluginpkg.Plugin(nil), discoveredPlugins...),
-		active:        append([]pluginpkg.Plugin(nil), activePlugins...),
-		host:          pluginHost,
-		hooks:         initialHooks,
-		skills:        append([]skills.Skill(nil), discoveredSkills...),
-		pluginSkills:  pluginSkills,
-		mcpBinding:    mcpActivityBindingsFromPlugins(activePlugins, generationID),
-		systemPrompts: systemPrompts,
-		compactions:   compactions,
-	}
+	initialGeneration.revokedMu.Lock()
+	initialGeneration.settings = cfg
+	initialGeneration.active = append([]pluginpkg.Plugin(nil), activePlugins...)
+	initialGeneration.revokedMu.Unlock()
+	initialGeneration.hooks = initialHooks
+	initialGeneration.skills = append([]skills.Skill(nil), discoveredSkills...)
+	initialGeneration.pluginSkills = pluginSkills
+	initialGeneration.mcpOAuth = mcpOAuth
+	initialGeneration.mcpBinding = mcpActivityBindingsFromPlugins(activePlugins, initialGeneration.id)
+	initialGeneration.systemPrompts, initialGeneration.compactions = systemPrompts, compactions
+	runtimeSession.pluginGeneration = initialGeneration
 	if pluginKernel != nil {
 		pluginKernel.bindModelSession(runtimeSession, pluginHost)
 		pluginKernel.bindStateGeneration(runtimeSession.pluginGeneration, runtimeSession)
@@ -972,14 +982,12 @@ func NewSession(opts Options) (*Session, error) {
 		runtimeSession.pluginGeneration.mcp = toolkit.MCPManager()
 	}
 	runtimeSession.pluginGeneration.bindActivityOwnership(activityRegistry)
-	runtimeSession.pluginGeneration.retain()
 	if toolkit != nil {
 		toolkit.SetMCPActivityBindings(runtimeSession.pluginGeneration.mcpBinding)
 		toolkit.SetPluginManager(runtimeSession.pluginManager(runtimeSession.pluginGeneration, runPluginManagementCommand))
 		toolkit.SetSkillsWithAvailability(discoveredSkills, runtimeSession.pluginGeneration.skillAvailable)
 		runtimeSession.bindLocalSkillRefresh(toolkit, rootDir, runtimeSession.pluginGeneration)
 	}
-	snapshotsOwned = false
 	// The legacy/root control remains dormant until SetSessionID binds its real
 	// artifact directories. Per-thread controls created by NewThreadRuntime are
 	// likewise started only after app-server installs their terminal finalizer.

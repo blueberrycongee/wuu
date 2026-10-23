@@ -32,8 +32,8 @@ func RetainInvocationState(ctx context.Context) (*State, error) {
 	return retain()
 }
 
-// bindStateGeneration is called once after constructing this kernel's graph.
-// The graph owner must retain it before opening effectful lifecycle callbacks.
+// bindStateGeneration binds one graph before effectful lifecycle callbacks.
+// Its Session owner may be attached after construction, without changing graphs.
 func (k *kernelHostServices) bindStateGeneration(generation *PluginGeneration, owner *Session) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -42,7 +42,7 @@ func (k *kernelHostServices) bindStateGeneration(generation *PluginGeneration, o
 
 func (k *kernelHostServices) retainState() (*State, error) {
 	k.mu.RLock()
-	generation, owner := k.stateGeneration, k.stateOwner
+	generation := k.stateGeneration
 	k.mu.RUnlock()
 	if generation == nil || generation.state == nil {
 		return nil, serviceError("service_unavailable", "session state is unavailable during generation prepare")
@@ -56,6 +56,11 @@ func (k *kernelHostServices) retainState() (*State, error) {
 		}
 	}
 	close := func() error {
+		// An activation capture can outlive construction and must use the final
+		// Session's retirement bookkeeping for this same generation.
+		k.mu.RLock()
+		owner := k.stateOwner
+		k.mu.RUnlock()
 		if owner != nil {
 			return owner.releasePluginGeneration(generation)
 		}

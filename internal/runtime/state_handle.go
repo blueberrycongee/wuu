@@ -147,15 +147,7 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := host.Activate(ctx); err != nil {
-		_ = host.Close(context.Background())
-		return nil, fmt.Errorf("activate state composition: %w", err)
-	}
-	if kernel.state == nil || kernel.state.Status().State != pluginhost.StateActive {
-		_ = host.Close(context.Background())
-		return nil, errors.New("selected composition has no active session state")
-	}
-	generation := &PluginGeneration{id: newPluginGenerationID(home), host: host, state: kernel.state, ownedRoots: roots, settings: opts.Config, plugins: plugins, active: availablePluginPackages(plugins, host)}
+	generation := &PluginGeneration{id: newPluginGenerationID(home), host: host, state: kernel.state, ownedRoots: roots, settings: opts.Config, plugins: plugins}
 	if services := kernel.selectedServices; services != nil {
 		generation.credentials, generation.configClient = services.credentials, services.config
 		generation.chatGPTManager, generation.artifactClient, generation.mcpOAuth = services.chatGPT, services.artifacts, services.oauth
@@ -163,6 +155,22 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	generation.retain()
 	kernel.bindStateGeneration(generation, nil)
 	owned = false
+	graphOwned := true
+	defer func() {
+		if graphOwned {
+			generation.Release()
+		}
+	}()
+	if err := host.Activate(ctx); err != nil {
+		return nil, fmt.Errorf("activate state composition: %w", err)
+	}
+	if kernel.state == nil || kernel.state.Status().State != pluginhost.StateActive {
+		return nil, errors.New("selected composition has no active session state")
+	}
+	generation.revokedMu.Lock()
+	generation.active = availablePluginPackages(plugins, host)
+	generation.revokedMu.Unlock()
+	graphOwned = false
 	return &State{Documents: kernel.state.documents, Sessions: kernel.state.sessions, Host: host, Generation: generation, InferenceJournalRuntime: kernel.state.journal, close: func() error {
 		if generation.Release() {
 			return generation.closeErr
