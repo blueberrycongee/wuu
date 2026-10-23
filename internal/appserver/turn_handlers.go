@@ -161,17 +161,6 @@ func (s *Server) handleTurnStart(ctx context.Context, req Request) error {
 }
 
 func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allowBackgroundWait bool) error {
-	// Adopt published extensions before capturing this new request. A later
-	// publication is still fenced by durable admission, before any user append.
-	if err := s.refreshPluginGenerationIfChanged(); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
 	var params TurnStartParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -192,6 +181,20 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	if params.Prompt == "" && len(images) == 0 && len(files) == 0 {
 		return s.writeResponse(req.ID, nil, errors.New("prompt or attachment is required"))
 	}
+	// Adopt published extensions before capturing this new request. A later
+	// publication is still fenced by durable admission, before any user append.
+	if err := s.refreshPluginGenerationIfChanged(); err != nil {
+		if errors.Is(err, errPluginGenerationRefreshBusy) {
+			err = threadExecutionBusyError(params.ThreadID)
+		}
+		return s.writeResponse(req.ID, nil, err)
+	}
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	th, err := s.ensureThreadLoaded(binding, params.ThreadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
