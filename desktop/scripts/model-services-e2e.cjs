@@ -27,7 +27,7 @@ process.env.HOME = userHome;
 process.env.WUU_DESKTOP_CORE = process.env.WUU_MODEL_SERVICES_CORE || path.join(desktop, 'build/bin/wuu-core');
 delete process.env.ELECTRON_RENDERER_URL;
 process.env.WUU_ENABLE_BROWSER = '0';
-process.env.WUU_SAFE_MODE = '1';
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 
 const requests = [];

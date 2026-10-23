@@ -25,7 +25,7 @@ for (const directory of [output, home, ...projects]) mkdirSync(directory, { recu
 app.setPath('userData', join(fixture, 'profile'));
 app.disableHardwareAcceleration();
 app.on('window-all-closed', () => {});
-Object.assign(process.env, { HOME: home, WUU_HOME: home, WUU_SAFE_MODE: cua ? '0' : '1', WUU_ENABLE_BROWSER: '1', WUU_ENABLE_CUA_LINUX: cua ? '1' : '0',
+Object.assign(process.env, { HOME: home, WUU_HOME: home, WUU_SAFE_MODE: '0', WUU_ENABLE_BROWSER: '1', WUU_ENABLE_CUA_LINUX: cua ? '1' : '0',
   WUU_DESKTOP_CORE: resolve(process.env.WUU_EXTERNAL_CAPABILITIES_CORE ?? join(desktop, 'build/bin/wuu-core')),
   WUU_SOURCE_ROOT: resolve(desktop, '..'), CODEX_HOME: join(home, '.codex'), CLAUDE_CONFIG_DIR: join(home, '.claude') });
 delete process.env.ELECTRON_RENDERER_URL;

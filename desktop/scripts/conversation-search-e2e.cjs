@@ -34,7 +34,7 @@ for (const name of Object.keys(process.env)) {
 }
 process.env.WUU_HOME = home;
 process.env.WUU_DESKTOP_CORE = path.resolve(process.env.WUU_DESKTOP_CORE || path.join(desktop, 'build/bin/wuu-core'));
-process.env.WUU_SAFE_MODE = '1';
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_ENABLE_BROWSER = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 delete process.env.ELECTRON_RENDERER_URL;
@@ -301,7 +301,7 @@ const watchdog = setTimeout(() => {
 }, 360000);
 
 async function run() {
-  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode', '--workdir', projects[0].path], {
+  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--workdir', projects[0].path], {
     env: process.env, input: '{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{}}\n', encoding: 'utf8', timeout: 30000,
   });
   assert.equal(boot.status, 0, boot.stderr || String(boot.error));
@@ -519,7 +519,7 @@ db.commit()
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ passed: true, recordedAt: new Date().toISOString(),
     versions: process.versions, platform: process.platform, source: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: desktop, encoding: 'utf8' }).stdout.trim(),
     hashes: { harness: hash(__filename), core: hash(process.env.WUU_DESKTOP_CORE), main: hash(mainBundle), preload: hash(path.join(desktop, 'out/preload/index.cjs')) },
-    fixture: { sessions, projects: projects.map(p => ({ id: p.id, name: p.name })), noInference: true, safeMode: true },
+    fixture: { sessions, projects: projects.map(p => ({ id: p.id, name: p.name })), noInference: true, safeMode: false },
     checks, screenshots, rpc,
     limitations: ['Composition events exercise the renderer guard, not a native OS IME candidate window.', 'PNG captures and bounded geometry are review evidence, not a complete visual-quality assertion.', '14px is an explicit reference preference, not an assertion about the product default.'],
   }, null, 2));

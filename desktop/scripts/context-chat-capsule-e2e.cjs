@@ -18,7 +18,7 @@ const home = path.join(fixture, 'wuu-home'), userHome = path.join(fixture, 'user
 for (const directory of [output, home, userHome, project]) fs.mkdirSync(directory, { recursive: true });
 app.setPath('userData', path.join(fixture, 'profile'));
 process.env.WUU_HOME = home; process.env.HOME = userHome; process.env.USERPROFILE = userHome;
-process.env.WUU_ENABLE_BROWSER = '1'; process.env.WUU_SAFE_MODE = '1'; process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
+process.env.WUU_ENABLE_BROWSER = '1'; process.env.WUU_SAFE_MODE = '0'; process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 process.env.WUU_DESKTOP_CORE ||= path.join(desktop, 'build/bin/wuu-core');
 delete process.env.ELECTRON_RENDERER_URL;
 for (const name of Object.keys(process.env)) if (/(?:API_KEY|ACCESS_TOKEN|AUTH_TOKEN|SECRET|PASSWORD)$/.test(name)) delete process.env[name];

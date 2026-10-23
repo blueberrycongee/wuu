@@ -415,7 +415,7 @@ async function run() {
   }
   report.buildSha256 = Object.fromEntries(['out/main/index.js', 'out/preload/index.cjs', 'out/renderer/index.html'].map(file =>
     [file, createHash('sha256').update(fs.readFileSync(path.join(desktop, file))).digest('hex')]));
-  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode', '--workdir', project], {
+  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--workdir', project], {
     env: process.env, input: '{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{}}\n', encoding: 'utf8', timeout: 30000,
   });
   assert.equal(boot.status, 0, boot.stderr || String(boot.error));

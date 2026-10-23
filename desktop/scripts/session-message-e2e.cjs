@@ -31,7 +31,7 @@ for (const name of Object.keys(process.env)) {
 }
 process.env.WUU_HOME = home;
 process.env.WUU_DESKTOP_CORE = path.resolve(process.env.WUU_DESKTOP_CORE || path.join(desktop, 'build/bin/wuu-core'));
-process.env.WUU_SAFE_MODE = '1';
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_ENABLE_BROWSER = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 delete process.env.ELECTRON_RENDERER_URL;
@@ -513,7 +513,7 @@ const watchdog = setTimeout(() => { log('Global acceptance deadline exceeded'); 
 
 async function run() {
   log(boundary);
-  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode', '--workdir', cwd], {
+  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--workdir', cwd], {
     env: process.env, input: '{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{}}\n', encoding: 'utf8', timeout: 30000,
   });
   assert.equal(boot.status, 0, boot.stderr || String(boot.error));

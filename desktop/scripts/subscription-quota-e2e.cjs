@@ -22,7 +22,7 @@ app.setPath('userData', path.join(fixture, 'profile'));
 Object.assign(process.env, {
   WUU_HOME: home, HOME: userHome, CODEX_HOME: path.join(userHome, '.codex'),
   GROK_HOME: path.join(userHome, '.grok'), CLAUDE_CONFIG_DIR: path.join(userHome, '.claude'),
-  WUU_ENABLE_BROWSER: '0', WUU_SAFE_MODE: '1', WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP: '1',
+  WUU_ENABLE_BROWSER: '0', WUU_SAFE_MODE: '0', WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP: '1',
 });
 delete process.env.ELECTRON_RENDERER_URL;
 const key = path.join(fixture, 'key.pem');
