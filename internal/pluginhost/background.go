@@ -18,6 +18,14 @@ const (
 	backgroundMaxResultBytes   = 1 << 20
 )
 
+type backgroundExecutionKey struct{}
+
+// IsBackgroundExecution reports host-admitted background provenance. The marker
+// stays in the authenticated execution context and is never accepted from JSON.
+func IsBackgroundExecution(ctx context.Context) bool {
+	return ctx != nil && ctx.Value(backgroundExecutionKey{}) == true
+}
+
 func KernelBackgroundDescriptor() ServiceDescriptor {
 	return ServiceDescriptor{
 		Name: KernelBackgroundService, Version: "1.0.0",
@@ -98,7 +106,7 @@ func (h *Host) StartBackground(provenance context.Context, caller string, input 
 	if running >= backgroundMaxJobsPerPlugin {
 		return BackgroundStartResult{}, &HostServiceError{Code: "limit_exceeded", Message: "plugin has too many running background jobs"}
 	}
-	ctx, cancel := context.WithCancel(context.WithoutCancel(provenance))
+	ctx, cancel := context.WithCancel(context.WithValue(context.WithoutCancel(provenance), backgroundExecutionKey{}, true))
 	if input.TimeoutMS > 0 {
 		var deadlineCancel context.CancelFunc
 		ctx, deadlineCancel = context.WithTimeout(ctx, time.Duration(input.TimeoutMS)*time.Millisecond)
