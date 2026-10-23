@@ -21,8 +21,17 @@ const tick = () => new Promise(setImmediate);
 async function fixture(t, initial, handler) {
   let state = structuredClone(initial);
   const calls = [];
+  const background = new AbortController();
+  let fireTimer;
+  t.mock.method(globalThis, "setInterval", callback => { fireTimer = callback; return 1; });
+  t.mock.method(globalThis, "clearInterval", () => {});
+  let running;
   const host = { async call(method, params, options) {
     calls.push({ method, params });
+    if (method === "host.service.call" && params.service === "host.background") {
+      running = plugin.invokeService({ service: params.params.service, method: params.params.method, caller: "automation", params: {} }, host, { signal: background.signal });
+      return { job_id: "scheduler-job", execution_id: "scheduler-execution" };
+    }
     if (method === "host.storage.get") return { value: JSON.stringify(state) };
     const result = await handler?.(method, params, options);
     if (result !== undefined) return result;
@@ -32,11 +41,11 @@ async function fixture(t, initial, handler) {
     throw new Error(`unexpected method ${method}`);
   } };
   const plugin = createAutomationPlugin();
-  plugin.initialize({ project_root: "/workspace", workspace_id: "" }, host);
+  plugin.initialize({ plugin_id: "automation", project_root: "/workspace", workspace_id: "" }, host);
   await plugin.prepare();
   const lifecycle = new AbortController();
-  t.after(async () => { lifecycle.abort(); await plugin.shutdown(); });
-  return { plugin, host, lifecycle, calls, state: () => state, async activate() { await plugin.activate(host, { signal: lifecycle.signal }); await tick(); } };
+  t.after(async () => { lifecycle.abort(); background.abort(); await running; await plugin.shutdown(); });
+  return { plugin, host, lifecycle, background, calls, fireTimer: () => fireTimer(), state: () => state, async activate() { await plugin.activate(host, { signal: lifecycle.signal }); await tick(); } };
 }
 
 test("recovery preserves uncertain dispatch without replaying session effects", async t => {
@@ -74,4 +83,19 @@ test("transport uncertainty is durable and is never an automatic retry", async t
   const restored = await fixture(t, f.state());
   await restored.activate();
   assert.equal(restored.calls.filter(call => call.method.startsWith("host.session.")).length, 0);
+});
+
+test("generation background cancellation stops scheduling without shutting down foreground transport", async t => {
+  const now = Date.now();
+  const f = await fixture(t, { tasks: [{ ...task, next_run_at: new Date(now + 60_000).toISOString() }], runs: [] });
+  await f.activate();
+  f.background.abort();
+  t.mock.timers.enable({ apis: ["Date"], now: now + 120_000 });
+  await tick();
+  f.fireTimer();
+  await tick();
+  assert.equal(f.calls.filter(call => call.method.startsWith("host.session.")).length, 0);
+  // An already admitted foreground request retains this provider until release.
+  await f.plugin.invokeService({ service: "automation.scheduler", method: "request", params: { method: "automation.create", input: { prompt: "Retained request", cron: "* * * * *" } } }, f.host);
+  assert.equal(f.calls.filter(call => call.method === "host.storage.set").length, 1);
 });

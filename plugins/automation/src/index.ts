@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { normalize, parse, sep } from "node:path";
-import { requireKernelService, type RuntimeHost, type RuntimePlugin, type RuntimeInitializeParams, type ToolExecuteParams, type TurnLifecycleInput } from "@wuu/plugin-sdk";
+import { requireBackgroundService, startBackground, requireKernelService, type RuntimeHost, type RuntimePlugin, type RuntimeInitializeParams, type ToolExecuteParams, type TurnLifecycleInput } from "@wuu/plugin-sdk";
 import { localTimezone, parseCronExpression, validateTimezone } from "./schedule.js";
 
 const storageKey = "automation.state";
@@ -82,13 +82,14 @@ const cronSchema = {
 
 export function createAutomationPlugin(): RuntimePlugin {
   let host: RuntimeHost;
-  let workspaceID = "", workspaceRoot = "";
+  let pluginID = "", workspaceID = "", workspaceRoot = "";
   let tasks = new Map<string, Task>(), runs: Run[] = [];
   let timer: ReturnType<typeof setInterval> | undefined;
   let dispatch: Promise<void> = Promise.resolve(), stateQueue: Promise<unknown> = Promise.resolve();
-  let stopped = false;
+  let stopped = false, schedulingStopped = false;
   const abort = new AbortController();
-  function stop(): void { stopped = true; clearInterval(timer); abort.abort(); }
+  function stopScheduling(): void { schedulingStopped = true; clearInterval(timer); }
+  function stop(): void { stopped = true; stopScheduling(); abort.abort(); }
 
   // State writes and mutations have the same atomic boundary as the Go mutex;
   // dispatch releases it while calling the session service so lifecycle events
@@ -181,6 +182,7 @@ export function createAutomationPlugin(): RuntimePlugin {
   }
   async function consume(task: Task, now: Date): Promise<void> {
     await locked(async () => {
+      if (schedulingStopped) return;
       const existing = tasks.get(task.id);
       if (!existing || existing.paused || Date.parse(existing.next_run_at) !== Date.parse(task.next_run_at)) return;
       if (existing.recurring) {
@@ -216,6 +218,7 @@ export function createAutomationPlugin(): RuntimePlugin {
       return false;
     });
     if (settled) return true;
+    if (schedulingStopped) return false;
     let sessionID = task.heartbeat_thread_id || "", executionRoot = "", error: unknown;
     const workspaceMode = task.workspace_mode || "shared";
     let sent: Awaited<ReturnType<typeof send>> | undefined;
@@ -233,10 +236,11 @@ export function createAutomationPlugin(): RuntimePlugin {
         sessionID = created.session_id;
         executionRoot = created.workspace_root || "";
       }
+      if (schedulingStopped) return false;
       sent = await send();
     } catch (cause) { error = cause; }
     return locked(async () => {
-      if (stopped) return false;
+      if (schedulingStopped) return false;
       const index = runs.findIndex(run => run.id === runID), run = runs[index];
       if (!run) return true;
       if (terminal.has(run.status)) return true;
@@ -256,12 +260,12 @@ export function createAutomationPlugin(): RuntimePlugin {
   }
   function fireDue(): void {
     dispatch = dispatch.then(async () => {
-      if (stopped) return;
+      if (schedulingStopped) return;
       const now = new Date();
       const due = await locked(() => [...tasks.values()].filter(task => !task.paused && Date.parse(task.next_run_at || zeroTime) <= now.getTime()).map(task => ({ ...task })));
       for (const task of due) {
-        if (stopped) break;
-        if (await fire(task, now) && !stopped) await consume(task, now);
+        if (schedulingStopped) break;
+        if (await fire(task, now) && !schedulingStopped) await consume(task, now);
       }
     }).catch(error => { console.error("automation dispatch failed:", error); });
   }
@@ -285,14 +289,15 @@ export function createAutomationPlugin(): RuntimePlugin {
     });
   }
   return {
+    concurrentServices: ["automation.scheduler"],
     initialize(params: RuntimeInitializeParams, runtimeHost: RuntimeHost) {
-      host = runtimeHost; workspaceID = params.workspace_id?.trim() || ""; workspaceRoot = params.project_root.trim();
-      tasks = new Map(); runs = []; stopped = false;
+      host = runtimeHost; pluginID = params.plugin_id; workspaceID = params.workspace_id?.trim() || ""; workspaceRoot = params.project_root.trim();
+      tasks = new Map(); runs = []; stopped = false; schedulingStopped = false;
       return {
         tools: [{ id: "cron", description: "Manage scheduled Agent prompts. action=list returns tasks; action=add creates a one-shot or recurring task from a five-field cron expression; action=remove deletes a task. Use new_thread for an independent visible conversation and thread_heartbeat to wake an existing conversation. Set workspace=worktree so each triggered session runs in its own git worktree instead of the shared project directory.", input_schema: cronSchema, execution_scopes: ["root" as const] }],
-        provided_services: [{ name: "automation.scheduler", version: "1.0.0", methods: [{ name: "request", input_schema: "automation.scheduler.request.v1", output_schema: "automation.scheduler.response.v1" }] }],
+        provided_services: [{ name: "automation.scheduler", version: "1.0.0", methods: [{ name: "request", input_schema: "automation.scheduler.request.v1", output_schema: "automation.scheduler.response.v1" }, { name: "run", input_schema: "automation.scheduler.run.input.v1", output_schema: "automation.scheduler.run.output.v1" }] }],
         capabilities: [{ id: "plugin.client.request", kind: "decision" as const, version: 1 }, { id: "agent.turn.lifecycle", kind: "observe" as const, version: 1, error_policy: "isolate" as const }],
-        required_services: (["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService),
+        required_services: [requireBackgroundService(), ...(["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService)],
       };
     },
     async prepare() {
@@ -310,16 +315,28 @@ export function createAutomationPlugin(): RuntimePlugin {
         } catch (error) { throw new Error(`decode automation plugin state: ${String(error)}`); }
       }
     },
-    activate(_runtimeHost, lifecycle) {
+    async activate(activeHost, lifecycle) {
       if (lifecycle.signal.aborted) { stop(); return; }
       lifecycle.signal.addEventListener("abort", stop, { once: true });
-      fireDue(); timer = setInterval(fireDue, 15_000);
+      await startBackground(activeHost, { key: "scheduler", service: "automation.scheduler", method: "run" });
     },
     async shutdown() { stop(); await dispatch; await stateQueue; },
-    async invokeService(call, host) {
-      if (call.service !== "automation.scheduler" || call.method !== "request") throw new Error("unknown automation service method");
+    async invokeService(call, scoped, execution) {
+      if (call.service !== "automation.scheduler") throw new Error("unknown automation service");
+      if (call.method === "run") {
+        if (call.caller !== pluginID) throw new Error("automation scheduler must be started by its owner");
+        if (!execution) throw new Error("automation scheduler execution is unavailable");
+        if (stopped || schedulingStopped || execution.signal.aborted) { stopScheduling(); return {}; }
+        host = scoped;
+        const cancelled = new Promise<void>(resolve => execution.signal.addEventListener("abort", () => { stopScheduling(); resolve(); }, { once: true }));
+        fireDue(); timer = setInterval(fireDue, 15_000);
+        await cancelled;
+        await dispatch;
+        return {};
+      }
+      if (call.method !== "request") throw new Error("unknown automation service method");
       const request = call.params as { method: string; input?: Mutation };
-      return clientRequest(host, request.method, request.input);
+      return clientRequest(scoped, request.method, request.input);
     },
     async executeTool(call: ToolExecuteParams, host: RuntimeHost) {
       if (stopped) throw new Error("automation provider is stopped");
