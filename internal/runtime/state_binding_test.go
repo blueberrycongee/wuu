@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -76,5 +77,26 @@ func TestRuntimeStateRequiresSelectedAuthority(t *testing.T) {
 	}
 	if err := state.Activate(context.Background()); err == nil {
 		t.Fatal("state owner silently opened a default backend")
+	}
+}
+
+func TestDocumentMethodsDoNotAdmitRetiredAutonomousWork(t *testing.T) {
+	ctx := context.Background()
+	registry := pluginhost.NewServiceRegistry()
+	owner := newRuntimeState(registry, "test")
+	provider := persistence.NewService("example.state", t.TempDir(), "jsonl")
+	host := pluginhost.New(provider, owner)
+	host.AttachServiceRegistry(registry, registry.RegisterClients(provider, owner))
+	if err := host.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close(ctx)
+	host.StopBackground()
+	raw := json.RawMessage(`{"id":"late-write","expected_revision":"0","writes":[{"namespace":"test","key":"late","value":true}]}`)
+	if _, err := registry.Call(ctx, owner.ID(), pluginhost.ServiceCallParams{Service: persistence.ServiceName, Method: "commit", Params: raw}); err == nil || err.Code != "generation_closed" {
+		t.Fatalf("retired autonomous write: %v", err)
 	}
 }

@@ -2111,7 +2111,7 @@ app.whenReady().then(async () => {
         params,
       );
       if (module.entry.startsWith("wuu-builtin:")) {
-        return { id: module.id, fingerprint: module.fingerprint, url: module.entry };
+        return { id: module.id, fingerprint: module.fingerprint, digest: module.digest, url: module.entry };
       }
       return cachePluginDesktopModule(module);
     },
