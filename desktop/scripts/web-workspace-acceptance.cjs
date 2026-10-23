@@ -9,6 +9,37 @@ const { createHash } = require('node:crypto');
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, session, webContents } = require('electron');
 const { prepareMediaFixture, serveMediaFixture, runBrowserMediaAcceptance } = require('./browser-media-acceptance.cjs');
 
+async function readRibbonInteraction(win) {
+  const snapshot = { ownerFocused: win.isFocused(), focusedContentsID: webContents.getFocusedWebContents()?.id ?? null };
+  snapshot.shell = await win.webContents.executeJavaScript(`(() => {
+    const rail = document.querySelector('.sidebar-ribbon'), active = document.activeElement;
+    return { modality: document.documentElement.dataset.focusModality ?? null, documentFocused: document.hasFocus(),
+      mounted: Boolean(rail), expanded: rail?.dataset.expanded ?? null, docked: rail?.dataset.docked ?? null,
+      focusedWithin: Boolean(rail?.contains(active)), activeElement: active ? { tag: active.tagName, className: active.className,
+        ribbonID: active.getAttribute('data-ribbon-id'), role: active.getAttribute('role') } : null,
+      accountExpanded: document.querySelector('.sidebar-account-trigger')?.getAttribute('aria-expanded') ?? null };
+  })()`).catch(error => ({ unavailable: String(error) }));
+  snapshot.native = await Promise.all(['ribbon', 'account'].map(async kind => {
+    const view = win.contentView.children.find(view => view.webContents && !view.webContents.isDestroyed()
+      && view.webContents.getURL() === `wuu-chrome://ui/chrome-overlay.html?surface=${kind}`);
+    if (!view) return { kind, mounted: false };
+    const state = { kind, contentsID: view.webContents.id, visible: view.getVisible(), focused: view.webContents.isFocused(), bounds: view.getBounds() };
+    state.renderer = await view.webContents.executeJavaScript(`(async () => {
+      const mounted = Boolean(document.querySelector('.sidebar-ribbon, .sidebar-account-menu'));
+      // A mounted native surface has already completed ready(); do not
+      // initialize unpainted chrome merely to collect diagnostics.
+      const request = mounted ? await window.wuuChromeOverlay.ready() : null;
+      const active = document.activeElement;
+      return { mounted, modality: document.documentElement.dataset.focusModality ?? null, documentFocused: document.hasFocus(),
+        activeElement: active ? { tag: active.tagName, className: active.className,
+          ribbonID: active.getAttribute('data-ribbon-id'), role: active.getAttribute('role') } : null,
+        request: request ? { token: request.token, generation: request.generation, focus: request.focus, focusTarget: request.model.focusTarget } : null };
+    })()`).catch(error => ({ unavailable: String(error) }));
+    return state;
+  }));
+  return snapshot;
+}
+
 async function createWebsiteFixture(home) {
   const requests = [];
   const controls = { offline: true };
@@ -292,7 +323,8 @@ async function runWebsiteAcceptance(h, fixture) {
       nativeFocus: { ownerFocused: win.isFocused(), ownerFullscreen: win.isFullScreen(), focusedContentsID: webContents.getFocusedWebContents()?.id ?? null },
       nativeViews: win.contentView.children.filter(view => view.webContents && !view.webContents.isDestroyed()).map(view => ({ id: view.webContents.id, url: view.webContents.getURL(), visible: view.getVisible(), focused: view.webContents.isFocused(), bounds: view.getBounds(), zoom: view.webContents.getZoomFactor() })),
       visibleNativeLayers: nativeLayers().map(({ view, x, y, top }) => ({ id: view.webContents.id, url: view.webContents.getURL(), focused: view.webContents.isFocused(), x, y, bounds: view.getBounds(), clip: top.getBounds() })),
-      activeElement: await evaluate(() => document.activeElement?.outerHTML.slice(0, 240)) });
+      activeElement: await evaluate(() => document.activeElement?.outerHTML.slice(0, 240)),
+      ribbonInteraction: await readRibbonInteraction(win) });
     save(); await delay(160);
   }
   function xinput(args) {
@@ -1933,4 +1965,4 @@ async function runWebsiteAcceptance(h, fixture) {
   await goConversations();
   report.websiteFixture = { origin, requestCount: fixture.requests.length, externalAccounts: false, authoredExtension: true };
 }
-module.exports = { createWebsiteFixture, runWebsiteAcceptance };
+module.exports = { createWebsiteFixture, runWebsiteAcceptance, readRibbonInteraction };
