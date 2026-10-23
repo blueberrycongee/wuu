@@ -1,7 +1,7 @@
-import { act } from "react";
+import { act, useSyncExternalStore, type ComponentProps, type Dispatch, type SetStateAction } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EngineListResult, ExtensionInventoryRecord, WuuDesktopApi } from "../shared/protocol";
+import type { BrowserCookieImportResult, EngineListResult, ExtensionInventoryRecord, RecentWorkspacesResult, WuuDesktopApi } from "../shared/protocol";
 import {
   FirstRunOnboarding,
   bundledOnboardingPlugins,
@@ -11,6 +11,8 @@ import {
 import { ServiceConnector } from "./ModelServicesPage";
 import { I18nProvider } from "./i18n";
 import { ONBOARDING_PLUGIN_ORDER } from "./onboardingCatalog";
+import { ApplicationController } from "./plugins/ApplicationController";
+import { initialState, type AppState } from "./AppState";
 
 function plugin(
   id: string,
@@ -57,6 +59,172 @@ describe("FirstRunOnboarding", () => {
     act(() => root.unmount());
     container.remove();
     vi.restoreAllMocks();
+  });
+
+  async function sharedFlow(overrides: Partial<ComponentProps<typeof FirstRunOnboarding>>) {
+    const application = new ApplicationController(initialState);
+    let generation = 0;
+    const onStateChange: Dispatch<SetStateAction<AppState["onboarding"]>> = update => {
+      application.updateState(current => ({ ...current, onboarding: typeof update === "function" ? update(current.onboarding) : update }));
+    };
+    function Shell() {
+      const state = useSyncExternalStore(application.subscribeState, application.getState);
+      const shared = { state: state.onboarding, onStateChange };
+      return <I18nProvider><FirstRunOnboarding
+        inventory={[{ ...plugin("todo", true), enabled_override: true }]}
+        providers={[{ name: "fixture", type: "openai-compatible", model: "fixture", api_key_configured: true }]}
+        onUpdateExtensionPackage={vi.fn(async () => undefined)}
+        onSaveProvider={vi.fn(async () => undefined)}
+        onComplete={vi.fn(async () => undefined)}
+        {...overrides} {...shared}
+      /></I18nProvider>;
+    }
+    await act(async () => root.render(<Shell key={generation} />));
+    return { remount: () => act(async () => root.render(<Shell key={++generation} />)) };
+  }
+
+  it.each(["success", "failure"])("retains plugin choices and their pending %s through shell replacement", async outcome => {
+    let resolve!: () => void;
+    let reject!: (reason: Error) => void;
+    const update = vi.fn(() => new Promise<void>((ok, fail) => { resolve = ok; reject = fail; }));
+    const flow = await sharedFlow({ onUpdateExtensionPackage: update });
+    await clickButton("开始设置");
+    await clickPlugin("todo");
+    await clickButton("继续");
+    expect(update).toHaveBeenCalledExactlyOnceWith({ id: "plugin:bundled:todo", action: "disable" });
+    await flow.remount();
+    expect(container.querySelector(".onboarding-stage-plugins")).not.toBeNull();
+    const choice = container.querySelector<HTMLButtonElement>('[data-plugin="todo"] [role="switch"]')!;
+    expect(choice.getAttribute("aria-checked")).toBe("false");
+    expect(choice.disabled).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>(".onboarding-actions .settings-button-primary")!.disabled).toBe(true);
+    await act(async () => { if (outcome === "success") resolve(); else reject(new Error("Selection rejected")); });
+    if (outcome === "success") {
+      expect(container.querySelector(".onboarding-stage-runtime")).not.toBeNull();
+      await flow.remount();
+      expect(container.querySelector(".onboarding-stage-runtime")).not.toBeNull();
+    } else {
+      expect(container.querySelector(".onboarding-stage-plugins")).not.toBeNull();
+      expect(container.querySelector(".onboarding-error")?.textContent).toContain("Selection rejected");
+      await flow.remount();
+      expect(container.querySelector(".onboarding-error")?.textContent).toContain("Selection rejected");
+      expect(container.querySelector<HTMLButtonElement>(".onboarding-actions .settings-button-primary")!.disabled).toBe(false);
+    }
+    expect(update).toHaveBeenCalledOnce();
+  });
+
+  it("retains selected workspaces and a failed completion across shell replacement", async () => {
+    window.wuu.discoverRecentWorkspaces = vi.fn(async () => ({ candidates: [
+      { path: "/alpha", name: "Alpha", sources: [], sessionCount: 0, lastUsedAt: "", isRepository: true },
+      { path: "/beta", name: "Beta", sources: [], sessionCount: 0, lastUsedAt: "", isRepository: true },
+    ], incomplete: false }));
+    let reject!: (error: Error) => void;
+    const complete = vi.fn(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    const flow = await sharedFlow({ onComplete: complete });
+    await clickButton("开始设置");
+    await clickButton("继续");
+    await clickButton("继续");
+    await clickButton("继续");
+    await act(async () => container.querySelector<HTMLInputElement>('input[aria-label="Beta"]')!.click());
+    await flow.remount();
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="Beta"]')?.checked).toBe(true);
+    await act(async () => container.querySelector<HTMLButtonElement>(".onboarding-actions .settings-button-primary")!.click());
+    expect(complete).toHaveBeenCalledExactlyOnceWith(["/beta"]);
+    await flow.remount();
+    expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
+    expect(container.querySelector<HTMLButtonElement>(".onboarding-actions .settings-button-primary")!.disabled).toBe(true);
+    await act(async () => reject(new Error("Import failed")));
+    expect(container.querySelector(".onboarding-error")?.textContent).toContain("Import failed");
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="Beta"]')?.checked).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>(".onboarding-actions .settings-button-primary")!.disabled).toBe(false);
+    expect(window.wuu.discoverRecentWorkspaces).toHaveBeenCalledOnce();
+  });
+
+  it.each(["success", "failure"])("settles a browser import %s in the replacement shell without importing twice", async outcome => {
+    const profile = { browserId: "chrome", appName: "Chrome", profileDirectoryName: "Default", profileName: "Default", profilePath: "/profiles/chrome/Default", hasCookies: true, hasPasswords: false, lastUsedAt: Date.now() };
+    window.wuu.platform = "darwin";
+    window.wuu.listBrowserProfiles = vi.fn(async () => [profile]);
+    let resolve!: (result: BrowserCookieImportResult) => void;
+    let reject!: (error: Error) => void;
+    window.wuu.importBrowserCookies = vi.fn(() => new Promise<BrowserCookieImportResult>((ok, fail) => { resolve = ok; reject = fail; }));
+    const flow = await sharedFlow({});
+    await clickButton("开始设置");
+    await clickButton("继续");
+    await clickButton("继续");
+    await clickButton("继续");
+    const importButton = () => container.querySelector<HTMLButtonElement>('.onboarding-browser-import button[aria-label*="Chrome"]')!;
+    await act(async () => importButton().click());
+    await flow.remount();
+    expect(container.querySelector(".onboarding-stage-browser")).not.toBeNull();
+    expect(importButton().disabled).toBe(true);
+    await act(async () => importButton().click());
+    expect(window.wuu.importBrowserCookies).toHaveBeenCalledExactlyOnceWith(profile.profilePath);
+    await act(async () => {
+      if (outcome === "success") resolve({ ...profile, discovered: 2, imported: 1, skippedExpired: 1, skippedInvalid: 0, failed: 0 });
+      else reject(new Error("Import denied"));
+    });
+    expect(importButton().disabled).toBe(false);
+    expect(container.querySelector<HTMLButtonElement>(".onboarding-actions .settings-button-primary")!.disabled).toBe(false);
+    await flow.remount();
+    if (outcome === "success") expect(container.querySelector('.onboarding-browser-import [role="status"]')).not.toBeNull();
+    else expect(container.querySelector('.onboarding-browser-import [role="alert"]')?.textContent).toContain("Import denied");
+    expect(window.wuu.importBrowserCookies).toHaveBeenCalledOnce();
+  });
+
+  it("finishes runtime selection in the replacement shell without resetting its engine", async () => {
+    let resolve!: () => void;
+    const save = vi.fn(() => new Promise<void>(ok => { resolve = ok; }));
+    const flow = await sharedFlow({ engines: { engines: [{ id: "codex", enabled: true, binary_ok: true }], settings: { default_engine: "wuu" } }, onUpdateEngines: save });
+    await clickButton("开始设置"); await clickButton("继续");
+    await act(async () => container.querySelector<HTMLInputElement>('[data-testid="onboarding-engine-codex"]')!.click());
+    await clickButton("继续"); await flow.remount();
+    expect(container.querySelector<HTMLInputElement>('[data-testid="onboarding-engine-codex"]')?.checked).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>(".onboarding-actions .settings-button-primary")!.disabled).toBe(true);
+    await act(async () => resolve());
+    expect(container.querySelector(".onboarding-stage-provider")).not.toBeNull();
+    expect(save).toHaveBeenCalledExactlyOnceWith({ default_engine: "codex" });
+  });
+
+  it("restarts a cancelled workspace scan after remount and ignores its older result", async () => {
+    const pending: Array<(result: Awaited<ReturnType<NonNullable<WuuDesktopApi["discoverRecentWorkspaces"]>>>) => void> = [];
+    window.wuu.discoverRecentWorkspaces = vi.fn(() => new Promise<RecentWorkspacesResult>(resolve => pending.push(resolve)));
+    const flow = await sharedFlow({});
+    await clickButton("开始设置"); await clickButton("继续"); await clickButton("继续"); await clickButton("继续");
+    await flow.remount();
+    expect(window.wuu.discoverRecentWorkspaces).toHaveBeenCalledTimes(2);
+    const candidate = { path: "/latest", name: "Latest", sources: [], sessionCount: 0, lastUsedAt: "", isRepository: true };
+    await act(async () => pending[0]({ candidates: [{ ...candidate, path: "/old", name: "Old" }], incomplete: false }));
+    expect(container.querySelector('input[aria-label="Old"]')).toBeNull();
+    await act(async () => pending[1]({ candidates: [candidate], incomplete: false }));
+    expect(container.querySelector('input[aria-label="Latest"]')).not.toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('.onboarding-workspace-tools button')!.disabled).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>('.onboarding-workspace-tools .settings-icon-button')!.disabled).toBe(false);
+  });
+
+  it.each(["success", "failure"])("settles a provider save %s after shell replacement", async outcome => {
+    const provider = { id: "deepseek", name: "DeepSeek", type: "openai-compatible", base_url: "https://api.deepseek.com", model_count: 1, default_model: "deepseek-chat" };
+    window.wuu.listCatalogProviders = vi.fn(async () => ({ providers: [provider] }));
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const save = vi.fn(() => new Promise<void>((ok, fail) => { resolve = ok; reject = fail; }));
+    const flow = await sharedFlow({ providers: [], catalogProviders: [provider], onSaveProvider: save });
+    await clickButton("开始设置"); await clickButton("继续"); await clickButton("继续");
+    await act(async () => container.querySelector<HTMLButtonElement>('.model-service-tile[data-catalog="deepseek"]')!.click());
+    const key = document.querySelector<HTMLInputElement>('[data-testid="settings-provider-connect-key"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(key, "synthetic-key");
+      key.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-connect"]')!.click());
+    await flow.remount();
+    expect(container.querySelector<HTMLButtonElement>('.model-service-tile[data-catalog="deepseek"]')!.disabled).toBe(true);
+    await act(async () => { if (outcome === "success") resolve(); else reject(new Error("Connection rejected")); });
+    if (outcome === "success") expect(container.querySelector(".onboarding-stage-ready")).not.toBeNull();
+    else {
+      expect(container.querySelector(".onboarding-error")?.textContent).toContain("Connection rejected");
+      expect(container.querySelector<HTMLButtonElement>('.model-service-tile[data-catalog="deepseek"]')!.disabled).toBe(false);
+    }
+    expect(save).toHaveBeenCalledOnce();
   });
 
   it("offers only known official plugins distributed with Wuu", () => {

@@ -761,9 +761,7 @@ export function App({ application: providedApplication }: { application?: Applic
   const showingPluginWebPage = Boolean(primaryPageView && pageWorkbench.webPageViewIds.includes(primaryPageView.view.id));
   const showingWebPage = showingWebsite || showingPluginWebPage;
   const [accountOpen, setAccountOpen] = useState(false);
-  const [onboardingComplete, setOnboardingComplete] = useState(
-    () => window.wuu?.initialOnboardingComplete ?? true,
-  );
+  const onboardingComplete = state.onboardingComplete ?? window.wuu?.initialOnboardingComplete ?? true;
 
   const settingsInitialPage = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.activePageId ?? "providers") as SettingsPage;
   const setSettingsInitialPage = useCallback((pageId: SettingsPage): void => {
@@ -5690,6 +5688,11 @@ export function App({ application: providedApplication }: { application?: Applic
     return (
       <WuuMascotRuntimeProvider>
         <FirstRunOnboarding
+          state={state.onboarding}
+          onStateChange={update => setState(current => {
+            const onboarding = typeof update === "function" ? update(current.onboarding) : update;
+            return onboarding === current.onboarding ? current : { ...current, onboarding };
+          })}
           onProvidersChanged={updateConnectionProviders}
           inventory={state.initialized?.extension_inventory}
           providers={state.initialized?.providers}
@@ -5716,7 +5719,7 @@ export function App({ application: providedApplication }: { application?: Applic
               throw new Error(t("onboarding.finishFailed"));
             }
             await window.wuu.completeOnboarding();
-            setOnboardingComplete(true);
+            setState(current => ({ ...current, onboardingComplete: true, onboarding: undefined }));
           }}
         />
       </WuuMascotRuntimeProvider>

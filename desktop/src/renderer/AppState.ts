@@ -26,6 +26,7 @@ import { userMessageBodyText } from "./ThreadItemText";
 import { localTurnTiming } from "./LocalTurnTiming";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { threadDisplayTitle } from "./ThreadTitles";
+import type { FirstRunOnboardingState } from "./FirstRunOnboarding";
 import { sortChildAgents } from "./ThreadAgents";
 import {
   hasAuthoritativeTurnItems,
@@ -138,6 +139,8 @@ type AppState = {
   nativeSection?: "conversations" | "catalog";
   catalogSection?: "plugins" | "skills";
   catalogPluginID?: string;
+  onboarding?: FirstRunOnboardingState;
+  onboardingComplete?: boolean;
   // Pending search addresses survive shell replacement during workspace activation.
   conversationSearchTarget?: {
     id: string; result: ThreadSearchResultItem; query: string; ready: boolean;
