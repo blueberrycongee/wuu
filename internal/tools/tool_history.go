@@ -9,7 +9,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
 const (
@@ -25,12 +24,17 @@ const (
 	maximumHistoryEnvelope    = 96 * 1024
 )
 
-type HistoryReadTool struct{ env *Env }
+type HistoryReadTool struct {
+	env   *Env
+	store *session.Store
+}
 
-func NewHistoryReadTool(env *Env) *HistoryReadTool { return &HistoryReadTool{env: env} }
-func (*HistoryReadTool) Name() string              { return historyReadToolName }
-func (*HistoryReadTool) IsReadOnly() bool          { return true }
-func (*HistoryReadTool) IsConcurrencySafe() bool   { return true }
+func NewHistoryReadTool(env *Env, store *session.Store) *HistoryReadTool {
+	return &HistoryReadTool{env: env, store: store}
+}
+func (*HistoryReadTool) Name() string            { return historyReadToolName }
+func (*HistoryReadTool) IsReadOnly() bool        { return true }
+func (*HistoryReadTool) IsConcurrencySafe() bool { return true }
 
 func (*HistoryReadTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
@@ -85,11 +89,14 @@ func (t *HistoryReadTool) Execute(ctx context.Context, argsJSON string) (string,
 	if err != nil {
 		return "", err
 	}
-	sessDir, sessionID, err := resolveHistorySession(t.env, historyReadToolName, args.SessionID, cursor)
+	sessionID, err := resolveHistorySession(t.env, historyReadToolName, args.SessionID, cursor)
 	if err != nil {
 		return "", err
 	}
-	page, err := session.ReadHistoryQuery(ctx, sessDir, session.HistoryReadQuery{
+	if t.store == nil {
+		return "", errors.New("history_read: session store is unavailable")
+	}
+	page, err := t.store.WithContext(ctx).ReadHistoryQuery(session.HistoryReadQuery{
 		SessionID: sessionID, StartSeq: args.StartSeq, EndSeq: args.EndSeq, SnapshotSeq: args.SnapshotSeq, Limit: limit, Cursor: cursor,
 	})
 	if err != nil {
@@ -113,12 +120,17 @@ func (t *HistoryReadTool) Execute(ctx context.Context, argsJSON string) (string,
 	return mustBoundedJSON(result)
 }
 
-type HistorySearchTool struct{ env *Env }
+type HistorySearchTool struct {
+	env   *Env
+	store *session.Store
+}
 
-func NewHistorySearchTool(env *Env) *HistorySearchTool { return &HistorySearchTool{env: env} }
-func (*HistorySearchTool) Name() string                { return historySearchToolName }
-func (*HistorySearchTool) IsReadOnly() bool            { return true }
-func (*HistorySearchTool) IsConcurrencySafe() bool     { return true }
+func NewHistorySearchTool(env *Env, store *session.Store) *HistorySearchTool {
+	return &HistorySearchTool{env: env, store: store}
+}
+func (*HistorySearchTool) Name() string            { return historySearchToolName }
+func (*HistorySearchTool) IsReadOnly() bool        { return true }
+func (*HistorySearchTool) IsConcurrencySafe() bool { return true }
 
 func (*HistorySearchTool) Definition() providers.ToolDefinition {
 	return providers.ToolDefinition{
@@ -179,11 +191,14 @@ func (t *HistorySearchTool) Execute(ctx context.Context, argsJSON string) (strin
 	if err != nil {
 		return "", err
 	}
-	sessDir, sessionID, err := resolveHistorySession(t.env, historySearchToolName, args.SessionID, cursor)
+	sessionID, err := resolveHistorySession(t.env, historySearchToolName, args.SessionID, cursor)
 	if err != nil {
 		return "", err
 	}
-	page, err := session.SearchHistoryQuery(ctx, sessDir, session.HistorySearchQuery{
+	if t.store == nil {
+		return "", errors.New("history_search: session store is unavailable")
+	}
+	page, err := t.store.WithContext(ctx).SearchHistoryQuery(session.HistorySearchQuery{
 		SessionID: sessionID, Query: args.Query, StartSeq: args.StartSeq, EndSeq: args.EndSeq,
 		SnapshotSeq: args.SnapshotSeq, BeforeSeq: args.BeforeSeq, Limit: limit, Cursor: cursor,
 	})
@@ -336,40 +351,21 @@ func decodeOptionalHistoryCursor(raw string) (*session.HistoryCursor, error) {
 	return &cursor, nil
 }
 
-func resolveHistorySession(env *Env, toolName, requestedID string, cursor *session.HistoryCursor) (string, string, error) {
-	sessDir, currentID, err := currentHistorySession(env, toolName)
-	if err != nil {
-		return "", "", err
+func resolveHistorySession(env *Env, toolName, requestedID string, cursor *session.HistoryCursor) (string, error) {
+	if env == nil || strings.TrimSpace(env.SessionID) == "" {
+		return "", fmt.Errorf("%s: current session is unavailable", toolName)
 	}
 	id := strings.TrimSpace(requestedID)
 	if id == "" && cursor != nil {
 		id = cursor.SessionID
 	}
 	if id == "" {
-		id = currentID
+		id = strings.TrimSpace(env.SessionID)
 	}
 	if cursor != nil && cursor.SessionID != id {
-		return "", "", fmt.Errorf("%s: cursor session does not match session_id", toolName)
+		return "", fmt.Errorf("%s: cursor session does not match session_id", toolName)
 	}
-	return sessDir, id, nil
-}
-
-func currentHistorySession(env *Env, toolName string) (string, string, error) {
-	if env == nil || strings.TrimSpace(env.SessionID) == "" {
-		return "", "", fmt.Errorf("%s: current session is unavailable", toolName)
-	}
-	sessDir := strings.TrimSpace(env.SessionsDir)
-	if sessDir == "" {
-		home, err := statepath.Home("")
-		if err != nil {
-			return "", "", fmt.Errorf("%s: resolve wuu home: %w", toolName, err)
-		}
-		sessDir = statepath.SessionsDir(home)
-	}
-	if sessDir == "" {
-		return "", "", fmt.Errorf("%s: sessions dir is empty", toolName)
-	}
-	return sessDir, strings.TrimSpace(env.SessionID), nil
+	return id, nil
 }
 
 func boundedPositive(value, defaultValue, maximum int, name string) (int, error) {

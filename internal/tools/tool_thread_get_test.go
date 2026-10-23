@@ -7,57 +7,43 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
-// withTempWuuHome redirects statepath.Home("") at a fresh temp dir for the
-// duration of the test, so the tool's "look up the user-level sessions db"
-// call lands in an isolated SQLite file and does not pollute the real one.
-func withTempWuuHome(t *testing.T) string {
+func newToolSessionStore(t *testing.T, backend string) *session.Store {
 	t.Helper()
-	wuuHome := t.TempDir()
-	t.Setenv("WUU_HOME", wuuHome)
-	home, err := statepath.Home("")
+	documents, err := persistence.Open(context.Background(), t.TempDir(), backend)
 	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
+		t.Fatal(err)
 	}
-	if home != wuuHome {
-		// WUU_HOME may not be the only signal the helper honours; if a
-		// different value comes back the test will silently hit the real
-		// user state dir, which we must not allow.
-		t.Fatalf("statepath.Home did not honour WUU_HOME: got %q want %q", home, wuuHome)
-	}
-	return wuuHome
+	t.Cleanup(func() { documents.Close() })
+	return session.NewStore(context.Background(), documents)
 }
 
 func TestThreadGetToolReturnsSessionAndHistory(t *testing.T) {
-	withTempWuuHome(t)
-	home, _ := statepath.Home("")
-	sessDir := statepath.SessionsDir(home)
-	if sessDir == "" {
-		t.Fatal("statepath.SessionsDir returned empty path")
-	}
+	store := newToolSessionStore(t, "jsonl")
 
 	const id = "test-thread-happy"
-	sess, err := session.CreateWithMetadata(sessDir, id, "/tmp/workdir")
+	sess, err := store.CreateInitialized(session.Session{ID: id, CWD: "/tmp/workdir"}, nil)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, sess.ID, session.HistoryRecord{
+	if err := store.AppendHistoryRecord(sess.ID, session.HistoryRecord{
 		Role:    "user",
 		Content: "hello",
 	}); err != nil {
 		t.Fatalf("append history: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, sess.ID, session.HistoryRecord{
+	if err := store.AppendHistoryRecord(sess.ID, session.HistoryRecord{
 		Role:    "assistant",
 		Content: "world",
 	}); err != nil {
 		t.Fatalf("append history: %v", err)
 	}
 
-	tool := NewThreadGetTool(&Env{})
+	tool := NewThreadGetTool(store)
 	out, err := tool.Execute(context.Background(), `{"thread_id":"`+id+`"}`)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -86,9 +72,9 @@ func TestThreadGetToolReturnsSessionAndHistory(t *testing.T) {
 }
 
 func TestThreadGetToolContinuationPinsHistorySnapshotAcrossAppends(t *testing.T) {
-	sessDir := t.TempDir()
+	store := newToolSessionStore(t, "jsonl")
 	const id = "snapshot-thread"
-	if _, err := session.CreateWithMetadata(sessDir, id, "/tmp/workdir"); err != nil {
+	if _, err := store.CreateInitialized(session.Session{ID: id, CWD: "/tmp/workdir"}, nil); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	for _, record := range []session.HistoryRecord{
@@ -97,11 +83,11 @@ func TestThreadGetToolContinuationPinsHistorySnapshotAcrossAppends(t *testing.T)
 		{Role: "user", Content: "three"},
 		{Role: "assistant", Content: "four"},
 	} {
-		if err := session.AppendHistoryRecord(sessDir, id, record); err != nil {
+		if err := store.AppendHistoryRecord(id, record); err != nil {
 			t.Fatalf("append history: %v", err)
 		}
 	}
-	tool := NewThreadGetTool(&Env{SessionsDir: sessDir})
+	tool := NewThreadGetTool(store)
 	firstRaw, err := tool.Execute(context.Background(), `{"thread_id":"snapshot-thread"}`)
 	if err != nil {
 		t.Fatalf("first execute: %v", err)
@@ -117,7 +103,7 @@ func TestThreadGetToolContinuationPinsHistorySnapshotAcrossAppends(t *testing.T)
 	if first.SnapshotSeq != 4 || first.SnapshotToken == "" {
 		t.Fatalf("missing initial snapshot: %+v", first)
 	}
-	if err := session.AppendHistoryRecord(sessDir, id, session.HistoryRecord{Role: "user", Content: "appended later"}); err != nil {
+	if err := store.AppendHistoryRecord(id, session.HistoryRecord{Role: "user", Content: "appended later"}); err != nil {
 		t.Fatalf("append later record: %v", err)
 	}
 	args, _ := json.Marshal(map[string]any{
@@ -148,7 +134,7 @@ func TestThreadGetToolContinuationPinsHistorySnapshotAcrossAppends(t *testing.T)
 }
 
 func TestThreadGetToolContinuationRequiresSnapshotBinding(t *testing.T) {
-	tool := NewThreadGetTool(&Env{})
+	tool := NewThreadGetTool(nil)
 	_, err := tool.Execute(context.Background(), `{"thread_id":"x","before_seq":10}`)
 	if err == nil || !strings.Contains(err.Error(), "snapshot_seq and expected_snapshot are required") {
 		t.Fatalf("unbound continuation was not rejected: %v", err)
@@ -156,9 +142,9 @@ func TestThreadGetToolContinuationRequiresSnapshotBinding(t *testing.T) {
 }
 
 func TestThreadGetToolReturnsErrSessionNotFound(t *testing.T) {
-	withTempWuuHome(t)
+	store := newToolSessionStore(t, "jsonl")
 
-	tool := NewThreadGetTool(&Env{})
+	tool := NewThreadGetTool(store)
 	_, err := tool.Execute(context.Background(), `{"thread_id":"missing-id"}`)
 	if err == nil {
 		t.Fatal("expected error for missing thread id")
@@ -168,5 +154,53 @@ func TestThreadGetToolReturnsErrSessionNotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "missing-id") {
 		t.Errorf("expected error to include the id %q, got: %v", "missing-id", err)
+	}
+}
+
+// A template update must not change an existing consumer's captured provider,
+// and an unavailable/canceled binding must fail instead of opening local state.
+func TestSessionToolsRetainCapturedStore(t *testing.T) {
+	for _, backend := range []string{"sqlite", "jsonl"} {
+		t.Run(backend, func(t *testing.T) {
+			original := newToolSessionStore(t, backend)
+			next := newToolSessionStore(t, backend)
+			for _, fixture := range []struct {
+				store   *session.Store
+				content string
+			}{{original, "original"}, {next, "replacement"}} {
+				if _, err := fixture.store.CreateInitialized(session.Session{ID: "same", CWD: t.TempDir()}, []session.HistoryRecord{{Role: "user", Content: fixture.content}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			kit, err := New(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			kit.SetSessionID("same")
+			kit.SetSessionStore(original)
+			retained, err := kit.CloneForRoot(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			kit.SetSessionStore(next)
+			call := providers.ToolCall{Name: historyReadToolName, Arguments: `{"start_seq":1}`}
+			got, err := retained.Execute(context.Background(), call)
+			if err != nil || !strings.Contains(got, "original") {
+				t.Fatalf("retained binding: %s, %v", got, err)
+			}
+			got, err = kit.Execute(context.Background(), call)
+			if err != nil || !strings.Contains(got, "replacement") {
+				t.Fatalf("new binding: %s, %v", got, err)
+			}
+			kit.SetSessionStore(nil)
+			if _, err := kit.Execute(context.Background(), call); err == nil {
+				t.Fatal("missing binding fell back")
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			if _, err := NewThreadGetTool(original).Execute(ctx, `{"thread_id":"same"}`); !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled read: %v", err)
+			}
+		})
 	}
 }

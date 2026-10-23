@@ -25,6 +25,7 @@ import (
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
@@ -57,6 +58,7 @@ var historyRecoveryToolNames = []string{historyReadToolName, historySearchToolNa
 // registry lookup.
 type Toolkit struct {
 	env                     *Env
+	sessionStore            *session.Store
 	registry                *Registry
 	disabledTools           map[string]struct{}
 	toolPolicy              func(string) bool
@@ -284,7 +286,6 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		SessionID:                   t.env.SessionID,
 		CodeModeStateOwner:          t.env.CodeModeStateOwner,
 		SessionDir:                  t.env.SessionDir,
-		SessionsDir:                 t.env.SessionsDir,
 		AgentID:                     t.env.AgentID,
 		AgentPath:                   t.env.AgentPath,
 		ToolSearchEnabled:           t.env.ToolSearchEnabled,
@@ -322,6 +323,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 	env.skillCatalog.Store(catalog)
 
 	clone := &Toolkit{
+		sessionStore:          t.sessionStore,
 		env:                   &env,
 		boundary:              t.boundary,
 		permissionRequestHook: t.permissionRequestHook,
@@ -392,12 +394,12 @@ func (t *Toolkit) rebuildRegistry() {
 		// Session/thread lookup (used after right-click "copy ID" on the
 		// desktop session tree — agents receive a thread ID and resolve it
 		// back to the full conversation via this tool).
-		NewThreadGetTool(e),
+		NewThreadGetTool(t.sessionStore),
 		NewSetSessionWorkspaceTool(e),
 		NewNewContextTool(e),
 		NewNotesTool(e),
-		NewHistoryReadTool(e),
-		NewHistorySearchTool(e),
+		NewHistoryReadTool(e, t.sessionStore),
+		NewHistorySearchTool(e, t.sessionStore),
 		// Recurring agent profiles
 		NewListAgentProfilesTool(e),
 		NewCreateAgentProfileTool(e),
@@ -607,12 +609,20 @@ func (t *Toolkit) SetSessionDir(dir string) {
 	t.env.SessionDir = dir
 }
 
-// SetSessionsDir binds session-history tools to a specific SQLite store.
+// SetSessionsDir retains the legacy path setting until runtime call sites are
+// migrated to SetSessionStore. It does not bind or open a session store.
 func (t *Toolkit) SetSessionsDir(dir string) {
 	if t == nil || t.env == nil {
 		return
 	}
 	t.env.SessionsDir = strings.TrimSpace(dir)
+}
+
+// SetSessionStore binds tools to the owning runtime's captured provider. Call
+// before admitting execution; existing clones retain their original binding.
+func (t *Toolkit) SetSessionStore(store *session.Store) {
+	t.sessionStore = store
+	t.rebuildRegistry()
 }
 
 // SetWorkingNotesHome binds native notes and legacy imports to this runtime.
