@@ -1165,16 +1165,79 @@ func TestServerThreadDeleteReportsSideCommitFailureAndRetriesWithoutMainRow(t *t
 	}
 }
 
+func TestServerThreadDeleteKeepsSideStageWhenMainCommitOutcomeIsUnknown(t *testing.T) {
+	for _, applied := range []bool{false, true} {
+		t.Run(fmt.Sprintf("main_commit_applied_%t", applied), func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			fault := &deleteCommitFaultDocuments{Documents: rt.Documents, namespace: "wuu.sessions.v1", apply: applied}
+			rt.Documents = fault
+			rt.Sessions = session.NewStore(context.Background(), fault)
+			artifacts := &threadDeleteArtifactProvider{}
+			bindThreadDeleteArtifacts(t, rt, artifacts)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			const id = "unknown-main-delete"
+			if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
+				t.Fatal(err)
+			}
+			side := sideStoreForTest(t, srv)
+			if _, err := side.BeginTurn(id, "preserve the cleanup intent", "question", "answer"); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := side.FinishTurn(id, "answer", "recoverable history", sidethread.StatusCompleted, ""); err != nil {
+				t.Fatal(err)
+			}
+			fault.err = errors.New("main deletion response lost")
+			dispatchPayload(t, srv, "unknown", MethodThreadDelete, ThreadDeleteParams{ThreadID: id})
+			response := responseByID(t, parseOutput(t, out.String()), "unknown")
+			if response["error"] == nil || response["result"] != nil || artifacts.calls != 0 {
+				t.Fatalf("unknown main commit was treated as complete: %+v artifact calls=%d", response, artifacts.calls)
+			}
+			if _, found, err := rt.Sessions.Find(id); err != nil || found != !applied {
+				t.Fatalf("injected commit outcome changed: found=%t applied=%t err=%v", found, applied, err)
+			}
+			if count, err := sideDeleteStageCount(fault, id); err != nil || count != 1 {
+				t.Fatalf("uncertain main deletion rolled back its side cleanup intent: count=%d err=%v", count, err)
+			}
+			if history, err := side.Load(id); err != nil || len(history.Messages) != 2 || history.Messages[1].Text != "recoverable history" {
+				t.Fatalf("unknown outcome lost readable history: %+v err=%v", history, err)
+			}
+			if message := fmt.Sprint(response["error"]); !strings.Contains(message, "outcome is unknown") || !strings.Contains(message, "retry thread/delete") {
+				t.Fatalf("unknown outcome omitted recovery guidance: %+v", response)
+			}
+			fault.err = nil
+			dispatchPayload(t, srv, "retry-unknown", MethodThreadDelete, ThreadDeleteParams{ThreadID: id})
+			response = responseByID(t, parseOutput(t, out.String()), "retry-unknown")
+			if response["error"] != nil || response["result"] == nil || artifacts.calls != 1 {
+				t.Fatalf("explicit retry did not finish deletion: %+v artifact calls=%d", response, artifacts.calls)
+			}
+			if _, found, err := rt.Sessions.Find(id); err != nil || found {
+				t.Fatalf("retry retained main session: found=%t err=%v", found, err)
+			}
+			if exists, err := side.Exists(id); err != nil || exists {
+				t.Fatalf("retry retained side history: exists=%t err=%v", exists, err)
+			}
+		})
+	}
+}
+
 type deleteCommitFaultDocuments struct {
 	persistence.Documents
 	namespace string
 	err       error
+	apply     bool
 }
 
 func (d *deleteCommitFaultDocuments) Commit(ctx context.Context, transaction persistence.Transaction) (persistence.Receipt, error) {
 	if d.err != nil {
 		for _, write := range transaction.Writes {
 			if write.Namespace == d.namespace && write.Delete {
+				if d.apply {
+					if _, err := d.Documents.Commit(ctx, transaction); err != nil {
+						return persistence.Receipt{}, err
+					}
+				}
 				return persistence.Receipt{}, d.err
 			}
 		}

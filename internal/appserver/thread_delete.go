@@ -12,6 +12,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/harness"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -102,6 +103,13 @@ func (s *Server) handleThreadDelete(req Request) error {
 	}
 	deleted, err := s.deleteThreadSession(binding, id, params.OnlyIfArchived)
 	if err != nil && !errors.Is(err, session.ErrSessionNotFound) {
+		var uncertain *persistence.CommitError
+		if errors.As(err, &uncertain) {
+			// The main row may already be gone. Keep the readable deletion
+			// stage until an explicit retry can finish either storage outcome.
+			releaseThreadLifecycleWriteLease(id, lifecycleLease)
+			return s.writeResponse(req.ID, nil, fmt.Errorf("session deletion outcome is unknown for %q; retry thread/delete: %w", id, err))
+		}
 		rollbackErr := sideDelete.Rollback()
 		releaseThreadLifecycleWriteLease(id, lifecycleLease)
 		return s.writeResponse(req.ID, nil, errors.Join(err, rollbackErr))
