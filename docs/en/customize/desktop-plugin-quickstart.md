@@ -1,19 +1,15 @@
 # Desktop plugin quickstart
 
-This tutorial adds a small toggle to the composer toolbar. It demonstrates local component state and host UI registration; it does not change model behavior or save a setting. You need Wuu Desktop, the `wuu` CLI, Node.js 22 or later, and a matching Wuu source checkout for SDK types.
+This tutorial adds a small toggle to the composer toolbar. It demonstrates local component state and host UI registration; it does not change model behavior or save a setting. You need Wuu Desktop, the `wuu` CLI, Node.js 22 or later, and the public SDK tarball matching your Wuu build. The author directory does not need a Wuu source checkout.
 
 ## Create the package
 
-Replace the SDK source path, then run from the directory where you want the plugin project:
+Replace the SDK tarball path, then run from the directory where you want the plugin project:
 
 ```bash
-WUU_SOURCE=/absolute/path/to/wuu
-npm ci --prefix "$WUU_SOURCE/packages/plugin-sdk"
-npm run build --prefix "$WUU_SOURCE/packages/plugin-sdk"
 wuu plugin create --type desktop toolbar-demo
 cd toolbar-demo
-npm pkg set "devDependencies.@wuu/plugin-sdk=file:$WUU_SOURCE/packages/plugin-sdk"
-npm install
+npm install --save-dev /absolute/path/to/wuu-plugin-sdk-0.1.0.tgz
 ```
 
 The generated `plugin.json` points `desktop.entry` to `dist/index.js`. The desktop module exports `activate(api)`, called when the host starts its generation. This example imports only SDK types, so TypeScript produces a self-contained ESM entry without runtime imports.
@@ -27,8 +23,7 @@ import type { PluginGenerationApi } from "@wuu/plugin-sdk";
 
 export function activate(api: PluginGenerationApi): void {
   const React = api.react;
-  const Toggle = api.ui.ToolbarToggle as unknown as
-    (props: Readonly<Record<string, unknown>>) => unknown;
+  const Toggle = api.ui.ToolbarToggle;
 
   function DemoToggle() {
     const [enabled, setEnabled] = React.useState(false);
@@ -75,3 +70,5 @@ wuu plugin approve toolbar-demo
 The current CLI separates staging from the trust decision that enables execution. Development authorization stays local and does not travel with the zip. Desktop plugins are trusted renderer code, not sandboxed web content.
 
 Use the [UI extension map](desktop-plugins.md) to choose a larger boundary, the [recipes](plugin-recipes.md) for actions and views, and the [authoring reference](plugin-authoring.md) for package and lifecycle contracts.
+
+For a single TSX component, a complete shell and nested contributions, see [direct TSX preview and the public UI SDK](ui-sdk.md).
