@@ -144,6 +144,132 @@ func TestDriverTurnRecoversSettledResultsOnce(t *testing.T) {
 	}
 }
 
+func TestDriverTurnRecordsDriverChosenTools(t *testing.T) {
+	for _, planned := range []bool{false, true} {
+		t.Run(map[bool]string{false: "direct", true: "planned-checkpoint"}[planned], func(t *testing.T) {
+			ctx := context.Background()
+			path := filepath.Join(t.TempDir(), "evidence.txt")
+			if err := os.WriteFile(path, []byte("42"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			tools := &driverEvidenceTools{path: path}
+			call := providers.ToolCall{ID: "chosen", Name: "read_evidence", Arguments: "{}"}
+			history := []providers.ChatMessage{{Role: "user", Content: "Read evidence"}}
+			gateway := newStreamTurnGateway(ctx, &StreamRunner{Tools: tools}, loopdriver.PersistedInput{Messages: history}, nil)
+			defer gateway.close()
+			if planned {
+				history = append(history, providers.ChatMessage{Role: "assistant", ToolCalls: []providers.ToolCall{call}})
+			}
+			messages, err := gateway.CallTools(ctx, loopdriver.ToolBatch{ID: "chosen", Messages: history, Calls: []providers.ToolCall{call}})
+			if err != nil || len(messages) != 1 || messages[0].Content != "42" {
+				t.Fatalf("tool messages=%+v err=%v", messages, err)
+			}
+			receipt, err := gateway.CompleteTurn(ctx, loopdriver.TurnResult{Content: "42"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, _ := gateway.result(receipt.ID)
+			if len(result.NewMessages) != 2 || result.NewMessages[0].Role != "assistant" || len(result.NewMessages[0].ToolCalls) != 1 || result.NewMessages[1].ToolCallID != call.ID || tools.calls != 1 {
+				t.Fatalf("driver-chosen call lost its declaration: %+v effects=%d", result, tools.calls)
+			}
+		})
+	}
+}
+
+func TestDriverTurnExecutesPendingSubsetsWithoutDuplicateDeclarations(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "evidence.txt")
+	if err := os.WriteFile(path, []byte("42"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tools := &driverEvidenceTools{path: path}
+	calls := []providers.ToolCall{{ID: "first", Name: "read_evidence", Arguments: "{}"}, {ID: "second", Name: "read_evidence", Arguments: "{}"}}
+	history := []providers.ChatMessage{{Role: "user", Content: "Read twice"}, {Role: "assistant", ToolCalls: calls}}
+	gateway := newStreamTurnGateway(ctx, &StreamRunner{Tools: tools}, loopdriver.PersistedInput{Messages: history}, nil)
+	defer gateway.close()
+	changed := calls[0]
+	changed.Arguments = `{"different":true}`
+	if _, err := gateway.CallTools(ctx, loopdriver.ToolBatch{ID: "changed", Messages: history, Calls: []providers.ToolCall{changed}}); err == nil || tools.calls != 0 {
+		t.Fatalf("changed call reused a declaration: effects=%d err=%v", tools.calls, err)
+	}
+	for _, call := range calls {
+		messages, err := gateway.CallTools(ctx, loopdriver.ToolBatch{ID: call.ID, Messages: history, Calls: []providers.ToolCall{call}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		history = append(history, messages...)
+	}
+	if _, err := gateway.CallTools(ctx, loopdriver.ToolBatch{ID: "different-batch-same-effect", Messages: history, Calls: calls[:1]}); err == nil || tools.calls != 2 {
+		t.Fatalf("settled call executed again: effects=%d err=%v", tools.calls, err)
+	}
+	receipt, err := gateway.CompleteTurn(ctx, loopdriver.TurnResult{Content: "42 twice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, _ := gateway.result(receipt.ID)
+	if len(result.NewMessages) != 2 || result.NewMessages[0].Role != "tool" || result.NewMessages[1].Role != "tool" {
+		t.Fatalf("subset execution duplicated declarations: %+v", result)
+	}
+}
+
+func TestDriverTurnRecoversPartiallyProjectedBatch(t *testing.T) {
+	ctx := context.Background()
+	ledger, err := toolledger.New(t.TempDir(), "driver-partial-recovery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "evidence.txt")
+	if err := os.WriteFile(path, []byte("42"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tools := &driverEvidenceTools{path: path}
+	runner := &StreamRunner{Tools: tools, ToolLedger: ledger}
+	calls := []providers.ToolCall{{ID: "first", Name: "read_evidence", Arguments: "{}"}, {ID: "second", Name: "read_evidence", Arguments: "{}"}}
+	history := []providers.ChatMessage{{Role: "user", Content: "Read twice"}, {Role: "assistant", ToolCalls: calls}}
+	first := newStreamTurnGateway(ctx, runner, loopdriver.PersistedInput{Messages: history}, nil)
+	messages, err := first.CallTools(ctx, loopdriver.ToolBatch{ID: "read", Messages: history, Calls: calls})
+	first.close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	history = append(history, messages[0])
+	resumed := newStreamTurnGateway(ctx, runner, loopdriver.PersistedInput{Messages: history}, nil)
+	defer resumed.close()
+	request, err := resumed.ReadTurn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Messages) != 4 || request.Messages[3].ToolInvocationID != messages[1].ToolInvocationID {
+		t.Fatalf("partially projected batch duplicated its declaration: %+v", request.Messages)
+	}
+	if _, err := resumed.CompleteTurn(ctx, loopdriver.TurnResult{Content: "42"}); err != nil {
+		t.Fatal(err)
+	}
+	if tools.calls != 2 {
+		t.Fatalf("recovery repeated effects: %d", tools.calls)
+	}
+}
+
+func TestDriverTurnRejectsMalformedAuthoredMessages(t *testing.T) {
+	for _, message := range []providers.ChatMessage{
+		{Role: "invented", Content: "bad role"},
+		{Role: "user", ToolCalls: []providers.ToolCall{{ID: "bad", Name: "read_evidence", Arguments: "{}"}}},
+		{Role: "assistant", ToolCallID: "bad"},
+	} {
+		t.Run(message.Role, func(t *testing.T) {
+			ctx := context.Background()
+			gateway := newStreamTurnGateway(ctx, &StreamRunner{}, loopdriver.PersistedInput{Messages: []providers.ChatMessage{{Role: "user", Content: "initial"}}}, nil)
+			defer gateway.close()
+			if _, err := gateway.CompleteTurn(ctx, loopdriver.TurnResult{Messages: []providers.ChatMessage{message}}); err == nil {
+				t.Fatalf("accepted malformed message: %+v", message)
+			}
+			if _, err := gateway.CompleteTurn(ctx, loopdriver.TurnResult{Content: "valid", Messages: []providers.ChatMessage{{Role: "assistant", Content: "valid"}}}); err != nil {
+				t.Fatalf("rejection changed completion state: %v", err)
+			}
+		})
+	}
+}
+
 type driverEvidenceTools struct {
 	path  string
 	calls int

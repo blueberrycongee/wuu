@@ -101,11 +101,71 @@ func TestWorkflowDriverProcess(t *testing.T) {
 	if _, ok := kernel.driverGateways.lookup("workflow-resume"); ok {
 		t.Fatal("completed execution retained its gateway")
 	}
+	t.Run("resume-planned-before-history-flush", func(t *testing.T) {
+		plannedDir := t.TempDir()
+		if _, err := session.Create(plannedDir, "planned-session"); err != nil {
+			t.Fatal(err)
+		}
+		plannedStore := sessionDriverCheckpointStore{sessDir: plannedDir, sessionID: "planned-session"}
+		plannedLedger, err := toolledger.New(plannedDir, "planned-session")
+		if err != nil {
+			t.Fatal(err)
+		}
+		planningCtx, stopPlanning := context.WithCancel(context.Background())
+		defer stopPlanning()
+		plannedTools := &workflowEvidenceTools{path: filepath.Join(root, "evidence.txt")}
+		plannedRunner := &agent.StreamRunner{Client: &workflowEvidenceModel{}, Model: "controlled-evidence", Tools: plannedTools, ToolLedger: plannedLedger, LoopDriver: driver,
+			DriverCheckpointStore: workflowCheckpointBarrier{CheckpointStore: plannedStore, phase: "planned", cancel: stopPlanning}}
+		originalHistory := []providers.ChatMessage{{Role: "user", Content: "Read evidence.txt and report the measured value."}}
+		planningCtx = loopdriver.WithExecutionContext(planningCtx, loopdriver.ExecutionContext{SessionID: "planned-session", ExecutionID: "planning"})
+		if _, err := plannedRunner.RunWithCallback(planningCtx, originalHistory, nil); err == nil || plannedTools.calls != 0 {
+			t.Fatalf("planned checkpoint barrier did not precede effects: calls=%d err=%v", plannedTools.calls, err)
+		}
+		// Simulate a crash after checkpoint persistence but before history flush.
+		// The request stored by the external driver contains its planned calls.
+		plannedRunner.DriverCheckpointStore = plannedStore
+		plannedModel := &workflowEvidenceModel{synthesisOnly: true}
+		plannedRunner.Client = plannedModel
+		plannedCtx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "planned-session", ExecutionID: "planned-resume"})
+		result, err := plannedRunner.RunWithCallback(plannedCtx, originalHistory, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Content != "The measured value is 42." || plannedTools.calls != 1 || len(plannedModel.requests) != 1 || len(result.NewMessages) != 3 {
+			t.Fatalf("planned recovery lost effects or history: result=%+v effects=%d requests=%d", result, plannedTools.calls, len(plannedModel.requests))
+		}
+		if err := providers.ValidateToolCallHistory(append(originalHistory, result.NewMessages...)); err != nil {
+			t.Fatal(err)
+		}
+		t.Log("planned checkpoint recovered without a model replan; one real file read; complete tool history")
+	})
 	host.RetirePlugin(context.Background(), provider.ID, errors.New("workflow provider disabled"))
 	if _, err := runner.RunWithCallback(resumeCtx, history, nil); err == nil || tools.calls != 1 || len(resumedModel.requests) != 1 {
 		t.Fatalf("disabled workflow fell back to another loop: effects=%d requests=%d err=%v", tools.calls, len(resumedModel.requests), err)
 	}
 	t.Logf("external driver=%s; file evidence=42; tool effects=%d; first requests=%d; resume requests=%d; output=%q", result.DriverID, tools.calls, len(model.requests), len(resumedModel.requests), result.Content)
+}
+
+type workflowCheckpointBarrier struct {
+	loopdriver.CheckpointStore
+	phase  string
+	cancel context.CancelFunc
+}
+
+func (s workflowCheckpointBarrier) Save(ctx context.Context, checkpoint loopdriver.Checkpoint) error {
+	if err := s.CheckpointStore.Save(ctx, checkpoint); err != nil {
+		return err
+	}
+	var state struct {
+		Phase string `json:"phase"`
+	}
+	if err := json.Unmarshal(checkpoint.State, &state); err != nil {
+		return err
+	}
+	if state.Phase == s.phase {
+		s.cancel()
+	}
+	return nil
 }
 
 type workflowEvidenceTools struct {

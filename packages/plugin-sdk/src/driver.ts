@@ -74,7 +74,10 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
     model: (request: LogicalModelRequestV1) => call<DriverModelRound>("model", { request }),
     /** ID is unique within this execution, including failed calls. Persist
      * intent before submitting effects. An interrupted batch needs explicit
-     * reconciliation; cancellation cannot undo its external effects.
+     * reconciliation; cancellation cannot undo its external effects. Call IDs
+     * must also be unique within the execution. Calls can be chosen directly;
+     * missing declarations are recorded automatically. Pending calls can be
+     * submitted in subsets. The reply contains only tool result messages.
      */
     tools: (batch_id: string, messages: readonly DriverMessage[], calls: readonly ModelToolCallV1[]) =>
       call<{ readonly messages: readonly DriverMessage[] }>("tools", { batch_id, messages, calls }),

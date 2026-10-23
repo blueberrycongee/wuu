@@ -154,7 +154,7 @@ Independent drivers can declare `driver.turn` major 1 and `driver.checkpoint` ma
 | --- | --- |
 | `read()` | Returns bound model defaults, available tools, and initial history with recovered tool receipts. |
 | `model(request)` | Executes one streaming model request through the selected model pipeline. Returns admitted input contributions and the assistant response; it never executes tools. |
-| `tools(batchID, messages, calls)` | Executes an explicit batch through the selected executor and durable tool ledger. Duplicate batch IDs are rejected within an execution. |
+| `tools(batchID, messages, calls)` | Executes an explicit batch through the selected executor and durable tool ledger. Duplicate batch and call IDs are rejected within an execution. Calls can be chosen directly; missing assistant declarations are recorded before execution. Pending calls can be submitted in subsets; the reply contains only tool result messages. |
 | `complete(content, messages?)` | Returns a terminal receipt. Model and tool messages are already recorded; optional messages are additional authored output. |
 | `checkpoint(checkpoint)` | Saves state for this exact driver identity and checkpoint contract. Save intent before issuing external effects. |
 

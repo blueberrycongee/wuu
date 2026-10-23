@@ -27,7 +27,10 @@ type ModelRound struct {
 // ToolBatch.ID is unique within an execution. A duplicate is rejected, including
 // after a failed call; cancellation cannot undo external effects. A driver must
 // checkpoint its intent before submitting effects and resolve an interrupted
-// batch explicitly before attempting it again in a resumed execution.
+// batch explicitly before attempting it again in a resumed execution. Call IDs
+// must also be unique within the execution. Calls may be chosen directly by the
+// driver; a missing assistant declaration is recorded before execution. Subsets
+// of the current pending declaration can be submitted in separate batches.
 type ToolBatch struct {
 	ID       string
 	Messages []providers.ChatMessage

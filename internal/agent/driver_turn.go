@@ -31,6 +31,7 @@ type streamTurnGateway struct {
 	frozen          ToolSurfaceFreezer
 	step            int
 	batches         map[string]bool
+	toolCalls       map[string]bool
 	produced        []providers.ChatMessage
 	durable         []providers.ChatMessage
 	archiveHead     int
@@ -42,7 +43,7 @@ type streamTurnGateway struct {
 
 func newStreamTurnGateway(ctx context.Context, runner *StreamRunner, input loopdriver.PersistedInput, onEvent StreamCallback) *streamTurnGateway {
 	ctx, cancel := context.WithCancel(ctx)
-	gateway := &streamTurnGateway{ctx: ctx, cancel: cancel, gate: make(chan struct{}, 1), runner: runner, input: input, onEvent: onEvent, batches: make(map[string]bool)}
+	gateway := &streamTurnGateway{ctx: ctx, cancel: cancel, gate: make(chan struct{}, 1), runner: runner, input: input, onEvent: onEvent, batches: make(map[string]bool), toolCalls: make(map[string]bool)}
 	gateway.gate <- struct{}{}
 	return gateway
 }
@@ -257,10 +258,31 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 	if g.runner.Tools == nil {
 		return nil, errors.New("tool executor is unavailable")
 	}
+	if len(batch.Calls) == 0 {
+		return nil, errors.New("tool batch must contain at least one call")
+	}
 	if err := providers.ValidateAssistantToolCalls(batch.Calls); err != nil {
 		return nil, err
 	}
+	for _, call := range batch.Calls {
+		if g.toolCalls[call.ID] {
+			return nil, fmt.Errorf("tool call %q was already submitted; resolve its effects before retrying", call.ID)
+		}
+	}
+	transcript := append(providers.CloneChatMessages(g.baseHistory), g.produced...)
+	declared, err := pendingToolCallDeclaration(transcript, batch.Calls)
+	if err != nil {
+		return nil, err
+	}
 	g.batches[batch.ID] = true
+	for _, call := range batch.Calls {
+		g.toolCalls[call.ID] = true
+	}
+	if !declared {
+		// Drivers may choose tools directly or restore intent from a checkpoint
+		// before the original model response reached the session transcript.
+		g.appendMessages(providers.ChatMessage{Role: "assistant", ToolCalls: batch.Calls})
+	}
 	ctx = ContextWithHistory(ctx, providers.CloneChatMessages(batch.Messages))
 	if g.runner.ToolWaitInterrupt != nil {
 		ctx = toolctx.WithWaitInterrupt(ctx, g.runner.ToolWaitInterrupt())
@@ -304,6 +326,19 @@ func (g *streamTurnGateway) CompleteTurn(ctx context.Context, result loopdriver.
 	defer leave()
 	if err := g.prepare(ctx); err != nil {
 		return loopdriver.ModelLoopReceipt{}, err
+	}
+	for i, message := range result.Messages {
+		switch message.Role {
+		case "system", "user", "assistant", "tool":
+		default:
+			return loopdriver.ModelLoopReceipt{}, fmt.Errorf("message %d: unsupported role %q", i, message.Role)
+		}
+		if message.Role != "assistant" && len(message.ToolCalls) != 0 {
+			return loopdriver.ModelLoopReceipt{}, fmt.Errorf("message %d: only assistant messages can declare tool calls", i)
+		}
+		if message.Role != "tool" && (message.ToolCallID != "" || message.ToolInvocationID != "" || message.ToolResult != nil) {
+			return loopdriver.ModelLoopReceipt{}, fmt.Errorf("message %d: tool results require the tool role", i)
+		}
 	}
 	messages := filterDurableHistory(providers.CloneChatMessages(result.Messages))
 	transcript := append(providers.CloneChatMessages(g.baseHistory), g.produced...)
@@ -373,6 +408,41 @@ func (g *streamTurnGateway) close() {
 			g.frozen.UnfreezeToolSurface()
 		}
 	}
+}
+
+// pendingToolCallDeclaration matches the trailing assistant/tool block. A batch
+// can execute a subset of pending calls, but cannot reuse a settled call or give
+// an existing call ID a different meaning.
+func pendingToolCallDeclaration(history []providers.ChatMessage, calls []providers.ToolCall) (bool, error) {
+	settled := make(map[string]bool)
+	index := len(history) - 1
+	for index >= 0 && history[index].Role == "tool" {
+		settled[history[index].ToolCallID] = true
+		index--
+	}
+	if index < 0 || history[index].Role != "assistant" {
+		return false, nil
+	}
+	matched := 0
+	for _, call := range calls {
+		for _, original := range history[index].ToolCalls {
+			if original.ID != call.ID {
+				continue
+			}
+			if settled[call.ID] {
+				return false, fmt.Errorf("tool call %q already has a result", call.ID)
+			}
+			if original.Name != call.Name || original.Arguments != call.Arguments || original.Kind != call.Kind {
+				return false, fmt.Errorf("tool call %q differs from its recorded declaration", call.ID)
+			}
+			matched++
+			break
+		}
+	}
+	if matched > 0 && matched != len(calls) {
+		return false, errors.New("tool batch mixes declared and undeclared calls; submit them separately")
+	}
+	return matched == len(calls), nil
 }
 
 func assistantMessageFromStep(result StepResult) providers.ChatMessage {

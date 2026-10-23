@@ -774,19 +774,12 @@ func (r *StreamRunner) pendingToolResultMessages(ctx context.Context, history []
 			})
 			end++
 		}
-		// A crash can happen after the assistant call was archived but before
-		// its settled results were projected. Reuse that trailing declaration.
-		declared := false
-		if index == 0 && len(history) > 0 {
-			last := history[len(history)-1]
-			declared = last.Role == "assistant" && len(last.ToolCalls) == len(calls)
-			for i, call := range calls {
-				if !declared {
-					break
-				}
-				original := last.ToolCalls[i]
-				declared = original.ID == call.ID && original.Name == call.Name && original.Arguments == call.Arguments && original.Kind == call.Kind
-			}
+		// A crash can leave a declaration with only some results projected.
+		// Reuse its remaining calls instead of duplicating the assistant block.
+		transcript := append(providers.CloneChatMessages(history), messages...)
+		declared, err := pendingToolCallDeclaration(transcript, calls)
+		if err != nil {
+			return nil, fmt.Errorf("recover tool batch %q: %w", batchID, err)
 		}
 		if !declared {
 			messages = append(messages, providers.ChatMessage{Role: "assistant", ToolCalls: calls})
