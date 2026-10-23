@@ -46,6 +46,8 @@
   color: inherit;
 }
 
+/* Sidebar row actions use the same utility glyph scale as toolbars. Keep
+ * navigation artwork and row hit targets independent of this action size. */
 :is(.icon-button, .settings-icon-button, .composer-tool-button,
     .sidebar-row-icon-button, .sidebar-functional-action, .sidebar-notifications-button,
     .session-tab-close, .workspace-tool-tab-close, .composer-attachment-card-remove) {
@@ -55,12 +57,6 @@
 
 :is(.session-tab-close, .workspace-tool-tab-close, .composer-attachment-card-remove) {
   --control-icon-size: var(--control-icon-size-dismiss);
-}
-
-/* Row actions share the navigation glyph scale. Utility classes must not
- * make pin/archive smaller than new-thread. */
-.sidebar-row-icon-button {
-  --control-icon-size: var(--sidebar-primary-icon-size);
 }
 
 /* Section heading + is a heading accessory, not a navigation glyph.

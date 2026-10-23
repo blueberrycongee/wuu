@@ -137,6 +137,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Return to the conversation and exit full-panel mode when the last workspace tab closes. Closing a file no longer creates a replacement Files tab, and restoring a previous file keeps its selected tab and editor content aligned.
 
+- Size sidebar new-conversation, pin, and archive action icons consistently with toolbar controls at default and large UI font sizes, while preserving their row click targets.
+
 - Keep Recent conversation positions stable after reading or switching sessions. Completed work stays immediately below remaining running conversations, including results read in the active conversation; only new activity changes priority until the window is reopened.
 
 - Open branches already checked out elsewhere in their existing worktrees from the composer and environment panel, preserving conversation drafts. Explain common branch-switch failures in the selected language and keep independent worktree start-point selection separate from checkout.
