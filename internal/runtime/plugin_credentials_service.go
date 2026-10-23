@@ -56,6 +56,7 @@ type StateServices struct {
 	Credentials *credentialstore.Client
 	Settings    *pluginsettings.Client
 	Config      *config.Client
+	Artifacts   *ArtifactClient
 }
 
 func (s *Session) RetainStateServices() (*StateServices, func(), error) {
@@ -92,5 +93,5 @@ func (s *Session) RetainStateServices() (*StateServices, func(), error) {
 	}
 	var once sync.Once
 	release := func() { once.Do(func() { s.ReleasePluginGeneration(generation) }) }
-	return &StateServices{Snapshot: snapshot, Credentials: credentialstore.NewClient(call(credentialstore.ServiceName)), Settings: pluginsettings.NewClient(call(pluginsettings.ServiceName)), Config: config.NewClient(call(config.ServiceName))}, release, nil
+	return &StateServices{Snapshot: snapshot, Credentials: credentialstore.NewClient(call(credentialstore.ServiceName)), Settings: pluginsettings.NewClient(call(pluginsettings.ServiceName)), Config: config.NewClient(call(config.ServiceName)), Artifacts: NewArtifactClient(call(ArtifactServiceName))}, release, nil
 }

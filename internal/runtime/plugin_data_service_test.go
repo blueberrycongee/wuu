@@ -152,3 +152,43 @@ func TestDataQueryInvokerRequiresStateDir(t *testing.T) {
 		t.Fatalf("unbound state dir error = %#v, want service_unavailable", err)
 	}
 }
+
+func TestDataQueryProviderLifecycleAndBoundedRead(t *testing.T) {
+	ctx := context.Background()
+	stateDir := t.TempDir()
+	artifactDir := statepath.SessionArtifactDir(stateDir, "thread")
+	if err := os.MkdirAll(artifactDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	// A bounded query must stop reading once enough matching rows are found;
+	// parsing the corrupt suffix would expose an accidental full-file scan.
+	if err := os.WriteFile(sessiontrace.Path(artifactDir), []byte("{\"type\":\"turn\",\"thread_id\":\"thread\",\"turn_id\":\"one\",\"data\":{}}\ninvalid suffix\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	provider := NewDataQueryService(DataQueryModule, stateDir)
+	call := func(query string) error {
+		_, err := provider.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: pluginhost.KernelDataQueryService, Method: pluginhost.KernelServiceMethod, Params: json.RawMessage(query)})
+		return err
+	}
+	if err := call(`{"thread_id":"thread","limit":1}`); err == nil {
+		t.Fatal("prepared query provider read")
+	}
+	if err := provider.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(`{"thread_id":"thread","limit":1}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(`{"thread_id":"..","limit":1}`); err == nil {
+		t.Fatal("parent directory was accepted as thread")
+	}
+	if err := call(`{"thread_id":"thread","limit":2}`); err == nil {
+		t.Fatal("unreadable required data was ignored")
+	}
+	if err := provider.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := call(`{"thread_id":"thread","limit":1}`); err == nil {
+		t.Fatal("closed query provider read")
+	}
+}
