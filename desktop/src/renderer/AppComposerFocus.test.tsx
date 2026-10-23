@@ -457,7 +457,14 @@ describe("main composer focus continuity", () => {
     });
     let accept!: (result: { turn: Turn }) => void;
     vi.mocked(window.wuu.startTurn).mockImplementation(() => new Promise(resolve => { accept = resolve; }));
-    window.wuu.editThreadMessage = vi.fn().mockResolvedValue({ thread: { ...persistedThread(), turns: [] } });
+    let storedThread = persistedThread();
+    // Background reconciliation must read the same history the write mocks acknowledge.
+    vi.mocked(window.wuu.resumeThread).mockImplementation(async () => ({ thread: storedThread }));
+    vi.mocked(window.wuu.listThreads).mockImplementation(async () => ({ threads: [storedThread] }));
+    window.wuu.editThreadMessage = vi.fn().mockImplementation(async () => {
+      storedThread = { ...storedThread, turns: [] };
+      return { thread: storedThread };
+    });
 
     if (entry === "history edit") {
       await act(async () => container.querySelector<HTMLButtonElement>(".message-edit-button")!.click());
@@ -472,10 +479,14 @@ describe("main composer focus continuity", () => {
     expect(tail()).toBeGreaterThan(0);
     const placedTop = viewport.scrollTop;
     expect(placedTop).toBeCloseTo(1650);
-    await act(async () => accept({ turn: {
+    const acceptedTurn: Turn = {
       id: "accepted", status: "in_progress", items_view: "full",
       items: [{ id: "accepted-user", type: "user_message", text: "replacement query" }],
-    } }));
+    };
+    await act(async () => {
+      storedThread = { ...storedThread, status: "in_progress", turns: [...storedThread.turns, acceptedTurn] };
+      accept({ turn: acceptedTurn });
+    });
     await flushAsync();
     await act(async () => {
       await vi.waitFor(() => expect(container.querySelector('[data-user-message-id="accepted-user"]')).not.toBeNull());
