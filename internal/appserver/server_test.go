@@ -991,6 +991,7 @@ func TestProviderSummariesAutoDiscoverLocalGrokBuildLogin(t *testing.T) {
 	if err := os.WriteFile(rt.ConfigPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	bindConfigSourceForTest(t, rt)
 	summaries := New(rt, &lockedBuffer{}).providerSummaries()
 	var discovered *ProviderSummary
 	for index := range summaries {
@@ -1054,6 +1055,7 @@ func TestSelectingAutoDiscoveredGrokBuildPersistsProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	request := `{"id":"grok","method":"config/model/update","params":{"provider":"grok-build","model":"grok-4.6","variant":"xhigh"}}`
 	if err := srv.handleLine(context.Background(), []byte(request)); err != nil {
@@ -1398,6 +1400,7 @@ func TestServerConfigModelUpdate(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"model":"new-model"}}`)); err != nil {
@@ -1560,6 +1563,7 @@ func TestServerConfigModelUpdateWorkspaceDefaultsPreserveRunningSession(t *testi
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	now := time.Now().UTC()
 
@@ -1664,6 +1668,7 @@ func TestServerConfigModelUpdateScopesSelectionToTargetOnly(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	now := time.Now().UTC()
 	target := newThreadState("target-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
@@ -1766,6 +1771,7 @@ func TestServerConfigModelUpdatePermissionOnlyTargetKeepsModelSelection(t *testi
 	rt.StreamRunner.Effort = "high"
 	writeTargetedUpdateConfig(t, rt)
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newTargetedUpdateFixture(t, rt, srv)
 
@@ -1815,6 +1821,7 @@ func TestServerConfigModelUpdateModelOnlyTargetResetsUnsupportedEffortAndKeepsPe
 	rt.StreamRunner.Effort = "high"
 	writeTargetedUpdateConfig(t, rt)
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newTargetedUpdateFixture(t, rt, srv)
 
@@ -1862,6 +1869,7 @@ func TestServerConfigModelUpdateExplicitEmptyVariantClearsSelection(t *testing.T
 	rt.StreamRunner.Effort = "high"
 	writeTargetedUpdateConfig(t, rt)
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newTargetedUpdateFixture(t, rt, srv)
 
@@ -1954,6 +1962,7 @@ func TestServerConfigModelUpdateTargetedModelOnlyForeignProviderStaysThreadScope
 	rt.StreamRunner.Effort = "high"
 	writeForeignProviderUpdateConfig(t, rt)
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newForeignProviderTargetFixture(t, rt, srv)
 
@@ -2004,6 +2013,7 @@ func TestServerConfigModelUpdateTargetedVariantOnlyValidatesAgainstThreadModel(t
 	rt.StreamRunner.Effort = "high"
 	writeForeignProviderUpdateConfig(t, rt)
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newForeignProviderTargetFixture(t, rt, srv)
 
@@ -2050,6 +2060,7 @@ func TestServerConfigModelUpdateConnectionOnlyTargetAllowedWhileRunning(t *testi
 	writeTargetedUpdateConfig(t, rt)
 	oldClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newTargetedUpdateFixture(t, rt, srv)
 	target.mu.Lock()
@@ -2176,6 +2187,7 @@ func TestServerConfigAdvancedUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/advanced/update","params":{"max_steps":12,"max_context_tokens":256000,"temperature":0.4,"compact_threshold_pct":0.5,"compact_keep_recent_tokens":20000,"disable_auto_compact":true,"provider_context_window":512000,"model_aliases":{"cheap":{"provider":"fake-provider","model":"cheap-model:latest","effort":"low"}},"project_models":{"side":{"provider":"fake-provider","model":"side-model"},"worker":{"provider":"fake-provider","model":"worker-model"}},"verification_model":{"provider":"fake-provider","model":"verification-model"}}}`
@@ -2260,6 +2272,7 @@ func TestServerConfigGeneralUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 	}
 	oldPrompt := rt.StreamRunner.SystemPrompt
 	th := newThreadState("thread-1", []providers.ChatMessage{{Role: "system", Content: oldPrompt}}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	bindConfigSourceForTest(t, rt)
 	th.state = testRuntimeState(t, rt)
 	th.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, SystemPrompt: oldPrompt}}
 	out := &lockedBuffer{}
@@ -2369,6 +2382,7 @@ func TestServerConfigModelUpdatePersistsPermissionMode(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/model/update","params":{"model":"fake-model","permission_mode":"unconfined"}}`
@@ -2422,6 +2436,7 @@ func TestServerConfigModelUpdateAppliesPermissionBoundary(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/model/update","params":{"model":"fake-model","permission_mode":"read_only"}}`
@@ -2567,6 +2582,7 @@ func TestServerConfigModelUpdateSwitchesProvider(t *testing.T) {
 	}
 	oldClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"provider":"codex-provider","model":"new-codex-model"}}`)); err != nil {
@@ -2638,6 +2654,7 @@ func TestServerConfigModelUpdateRecomputesToolLoadingForSessionProviderSelection
 	rt.StreamRunner.NativeDeferredToolDiscovery = true
 
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newThreadState("target-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
 	target.state = testRuntimeState(t, rt)
@@ -2700,6 +2717,7 @@ func TestServerConfigModelUpdatePersistsProviderConnection(t *testing.T) {
 	}
 	oldClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	idle := newThreadState("idle-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	idle.state = testRuntimeState(t, rt)
@@ -2738,10 +2756,7 @@ func TestServerConfigModelUpdatePersistsProviderConnection(t *testing.T) {
 		!strings.Contains(string(data), `"model": "new-model"`) {
 		t.Fatalf("provider connection was not persisted: %s", data)
 	}
-	store, err := authstorage.ForHome(os.Getenv("HOME"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := selectedAuthFixture(t, rt)
 	credentials, err := store.Get("fake-provider")
 	if err != nil || credentials.APIKey != "new-key" {
 		t.Fatalf("provider key was not saved to auth store: credentials=%+v err=%v", credentials, err)
@@ -2806,6 +2821,7 @@ func TestServerConfigModelUpdateCreatesProvider(t *testing.T) {
 	}
 	oldClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"custom-1","model":"custom-model","base_url":"https://custom.example.test/v1","api_key":"new-key","create_provider":true}}`
@@ -2846,10 +2862,7 @@ func TestServerConfigModelUpdateCreatesProvider(t *testing.T) {
 		!strings.Contains(string(data), `"default_provider": "custom-1"`) {
 		t.Fatalf("new provider was not persisted: %s", data)
 	}
-	store, err := authstorage.ForHome(os.Getenv("HOME"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := selectedAuthFixture(t, rt)
 	credentials, err := store.Get("custom-1")
 	if err != nil || credentials.APIKey != "new-key" {
 		t.Fatalf("provider key was not saved to auth store: credentials=%+v err=%v", credentials, err)
@@ -2873,6 +2886,7 @@ func TestServerConfigModelUpdateCreatesAnthropicProviderWithAuthToken(t *testing
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"anthropic-gateway","model":"claude-sonnet-4-6[1M]","base_url":"https://anthropic-gateway.example.test/","auth_token":"sk-token","type":"anthropic","create_provider":true}}`
@@ -2906,10 +2920,7 @@ func TestServerConfigModelUpdateCreatesAnthropicProviderWithAuthToken(t *testing
 		strings.Contains(string(data), `"api_key": "sk-token"`) {
 		t.Fatalf("anthropic provider was not persisted safely: %s", data)
 	}
-	store, err := authstorage.ForHome(os.Getenv("HOME"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := selectedAuthFixture(t, rt)
 	credentials, err := store.Get("anthropic-gateway")
 	if err != nil || credentials.AuthToken != "sk-token" {
 		t.Fatalf("provider auth token was not saved to auth store: credentials=%+v err=%v", credentials, err)
@@ -2933,6 +2944,7 @@ func TestServerConfigModelUpdateCreatesXAISubscriptionWithoutAPIKey(t *testing.T
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"xai-subscription","model":"grok-4.6","type":"xai-subscription","create_provider":true}}`
@@ -2988,6 +3000,7 @@ func TestServerXAILoginStartAndPoll(t *testing.T) {
 	t.Setenv("WUU_XAI_DEVICE_CODE_URL", server.URL+"/oauth2/device/code")
 	t.Setenv("WUU_XAI_TOKEN_URL", server.URL+"/oauth2/token")
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"auth/xai/login/start"}`)); err != nil {
@@ -3041,6 +3054,7 @@ func TestServerConfigModelUpdateRejectsOAuthConnectionChanges(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"codex-provider","model":"new-codex-model","base_url":"https://custom.example.test/v1","api_key":"new-key"}}`
@@ -3083,6 +3097,7 @@ func TestServerConfigModelUpdatePersistsEffort(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"model":"fake-model","effort":"xhigh"}}`)); err != nil {
@@ -3127,6 +3142,7 @@ func TestServerConfigModelUpdatePersistsVariantOptions(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"provider":"xiaomi","model":"mimo-v2.5-pro","variant":"high"}}`)); err != nil {
@@ -3179,6 +3195,7 @@ func TestServerConfigModelUpdateUsesCatalogFastModelRuntime(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"provider":"openai","model":"gpt-5.5-fast"}}`)); err != nil {
@@ -3253,6 +3270,7 @@ func TestServerConfigCodexModels(t *testing.T) {
 	}
 
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/codex/models"}`)); err != nil {
 		t.Fatalf("config/codex/models: %v", err)
@@ -3345,6 +3363,7 @@ func TestGPT61SolSubscriptionModelSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	live := []codex.ModelInfo{{Slug: "gpt-6.1-sol", DefaultReasoningLevel: "medium", SupportedReasoning: []string{"low", "medium", "high", "xhigh", "max"}}}
 	summaries := codexModelSummaries(live)
@@ -3465,13 +3484,6 @@ func TestCachedCodexModelsKeepAstraCatalogWindow(t *testing.T) {
 
 func TestServerConfigProviderRemoveInactive(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	store, err := authstorage.ForHome(os.Getenv("HOME"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Set("drop", authstorage.Credentials{Type: "api_key", APIKey: "drop-key"}); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(rt.ConfigPath, []byte(`{
   "default_provider": "keep",
   "providers": {
@@ -3499,6 +3511,11 @@ func TestServerConfigProviderRemoveInactive(t *testing.T) {
 	removedTitleClient := &fakeClient{}
 	rt.TitleClient = removedTitleClient
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
+	store := selectedAuthFixture(t, rt)
+	if err := store.Set("drop", authstorage.Credentials{Type: "api_key", APIKey: "drop-key"}); err != nil {
+		t.Fatal(err)
+	}
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"drop"}}`
@@ -3548,7 +3565,7 @@ func TestServerConfigProviderRemoveInactive(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := xaisub.PersistTokens(os.Getenv("HOME"), xaisub.TokenResponse{AccessToken: "synthetic-shared-token", ExpiresIn: time.Hour}, xaisub.DefaultBaseURL); err != nil {
+	if err := store.Set(xaisub.AuthProviderID, authstorage.Credentials{Type: "oauth", AccessToken: "synthetic-shared-token", ExpiresAt: time.Now().Add(time.Hour), BaseURL: xaisub.DefaultBaseURL}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{xaisub.AuthProviderID, "supergrok-two"} {
@@ -3594,6 +3611,7 @@ func TestServerConfigProviderRemoveActiveSwapsDefault(t *testing.T) {
 	rt.ProviderName = "drop"
 	rt.Model = "drop-model"
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	store, err := authstorage.ForHome(os.Getenv("HOME"))
@@ -3699,6 +3717,7 @@ func TestServerConfigProviderRemoveRejectsProviderUsedByRunningTurn(t *testing.T
 	rt.Model = "drop-model"
 	rt.StreamRunner.Model = "drop-model"
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	now := time.Now().UTC()
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
@@ -3775,6 +3794,7 @@ func TestServerConfigProviderRemoveAllowsProviderPinnedByIdleArchivedSession(t *
 	}
 	rt.ProviderName, rt.Model = "keep", "keep-model"
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"drop"}}`
@@ -3819,6 +3839,7 @@ func TestServerConfigProviderRemoveAllowsUnusedProviderWithRunningThread(t *test
 	rt.Model = "keep-model"
 	rt.StreamRunner.Model = "keep-model"
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	now := time.Now().UTC()
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
@@ -3867,6 +3888,7 @@ func TestServerConfigProviderRemoveRejectsOAuth(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"codex"}}`
@@ -3905,6 +3927,7 @@ func TestServerConfigProviderRemoveRejectsLastProvider(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"only"}}`
