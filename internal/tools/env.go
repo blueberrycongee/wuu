@@ -128,6 +128,7 @@ type Env struct {
 	RootDir              string
 	WorkspaceID          string
 	StateDir             string
+	RuntimeHome          string
 	// Unconfined is the explicit escape hatch for lifting path confinement.
 	// Default false means file tools stay inside FileScopeRoots/RootDir.
 	Unconfined     bool

@@ -232,6 +232,7 @@ func New(rootDir string) (*Toolkit, error) {
 	env := &Env{
 		RootDir:            abs,
 		StateDir:           stateDir,
+		RuntimeHome:        wuuHome,
 		AllowMutations:     true,
 		boundaryConfigured: true,
 		ToolSearchEnabled:  true,
@@ -279,6 +280,7 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		RootDir:                     abs,
 		WorkspaceID:                 t.env.WorkspaceID,
 		StateDir:                    t.env.StateDir,
+		RuntimeHome:                 t.env.RuntimeHome,
 		Unconfined:                  t.env.Unconfined,
 		PermissionMode:              t.env.PermissionMode,
 		AllowMutations:              t.env.AllowMutations,
@@ -548,6 +550,11 @@ func (t *Toolkit) SetShellEarlyHandoffEnabled(enabled bool) {
 // SetStateDir sets the workspace-scoped runtime state directory.
 func (t *Toolkit) SetStateDir(dir string) {
 	t.env.StateDir = strings.TrimSpace(dir)
+}
+
+// SetRuntimeHome excludes the resolved runtime state root from workspace digests.
+func (t *Toolkit) SetRuntimeHome(dir string) {
+	t.env.RuntimeHome = strings.TrimSpace(dir)
 }
 
 // SetSkills publishes discovered skills while retaining the bound generation's

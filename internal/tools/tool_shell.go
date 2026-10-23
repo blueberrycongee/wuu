@@ -394,7 +394,7 @@ waitForeground:
 		StderrTail:          stderrTail,
 		StdoutBytes:         len(stdoutText),
 		StderrBytes:         len(stderrText),
-		WorkspaceRevision:   workspaceRevision(ctx, env.RevisionRoot(ctx)),
+		WorkspaceRevision:   workspaceRevision(ctx, env.RevisionRoot(ctx), env.RuntimeHome),
 		StdoutTailTruncated: stdoutTailTruncated,
 		StderrTailTruncated: stderrTailTruncated,
 		Sandbox:             sandboxResult,

@@ -628,6 +628,7 @@ func NewSession(opts Options) (*Session, error) {
 			return nil, newErr
 		}
 		kit.SetStateDir(workspaceStateDir)
+		kit.SetRuntimeHome(wuuHome)
 		kit.SetSessionStore(sessions)
 		kit.SetWorkingNotesHome(wuuHome)
 		kit.SetArtifactPublisher(NewArtifactPublisher(artifacts))
@@ -769,6 +770,7 @@ func NewSession(opts Options) (*Session, error) {
 					}
 				}
 				wkit.SetStateDir(workerStateDir)
+				wkit.SetRuntimeHome(wuuHome)
 				wkit.SetProcessManager(processMgr)
 				_, workerSkills, workerGeneration := runtimeSession.skillSnapshotForRoot(workerRoot, nil)
 				wkit.SetSkillsWithAvailability(workerSkills, workerGeneration.skillAvailable)
@@ -1455,6 +1457,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			return nil, err
 		}
 		kit.SetStateDir(stateDir)
+		kit.SetRuntimeHome(wuuHome)
 		kit.SetArtifactPublisher(NewArtifactPublisher(s.artifactClient))
 		kit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 		kit.SetProcessManager(threadProcessManager)
@@ -1574,6 +1577,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 						}
 					}
 					workerKit.SetStateDir(workerStateDir)
+					workerKit.SetRuntimeHome(wuuHome)
 					workerKit.SetProcessManager(threadProcessManager)
 					_, workerSkills := s.guidanceForRoot(workerRoot, generation)
 					workerKit.SetSkills(workerSkills)
