@@ -176,11 +176,12 @@ const leftToggle = '.section-sidebar-toggle';
 const rightToggle = '.shell-right-sidebar-toggle';
 function pick(selector, text) { return { selector, text }; }
 async function point(target, scroll = true) {
+  // Accessible names can include counts while the visible control label stays stable.
   const query = typeof target === 'string' ? { selector: target } : target;
   for (const view of [...win.contentView.children].reverse()) {
     if (!view.webContents || !view.getVisible() || !view.webContents.getURL().startsWith('wuu-chrome://ui/chrome-overlay.html')) continue;
     const p = await view.webContents.executeJavaScript(`(({selector,text}) => {
-      const node = [...document.querySelectorAll(selector)].find(n => (text === undefined || (n.getAttribute('aria-label') || n.textContent || '').trim() === text) && n.getBoundingClientRect().width > 0);
+      const node = [...document.querySelectorAll(selector)].find(n => (text === undefined || (n.getAttribute('aria-label') || '').trim() === text || (n.textContent || '').trim() === text) && n.getBoundingClientRect().width > 0);
       if (!node) return null;
       const r = node.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2;
       if (!node.contains(document.elementFromPoint(x,y)) || node.disabled) throw new Error('Native chrome target is occluded or disabled');
@@ -190,7 +191,7 @@ async function point(target, scroll = true) {
   }
   return evaluate(async ({ selector, text, scroll }) => {
     const nodes = [...document.querySelectorAll(selector)];
-    const node = nodes.find(n => (text === undefined || (n.getAttribute('aria-label') || n.textContent || '').trim() === text)
+    const node = nodes.find(n => (text === undefined || (n.getAttribute('aria-label') || '').trim() === text || (n.textContent || '').trim() === text)
       && n.getBoundingClientRect().width > 0 && !n.closest('[inert]'));
     if (!node) throw new Error(`Missing interactive target: ${selector} / ${text}`);
     if (scroll) node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
@@ -462,7 +463,8 @@ async function run() {
     const reading = await geometry('conversations');
     await click(plugins, 'plugins');
     await waitFor(() => document.querySelector('.skills-catalog'));
-    assert.equal(await evaluate(() => document.querySelectorAll('.sidebar-section-item').length), 2);
+    // Enabled extension shortcuts are a separate nested group, not primary catalog choices.
+    assert.equal(await evaluate(() => document.querySelectorAll('.sidebar-section-navigation > .sidebar-section-item').length), 2);
     await click(pick('.sidebar-section-item', 'Skills'), 'skills-context');
     await waitFor(() => document.querySelector('.catalog-tab[data-tab="skills"]')?.getAttribute('aria-selected') === 'true');
     await click(pick('.sidebar-section-item', 'Plugins'), 'plugins-context');
