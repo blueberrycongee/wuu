@@ -430,7 +430,11 @@ func (k *modelEmitInvoker) InvokeService(ctx context.Context, params pluginhost.
 	if err := decodeServiceParams(params.Params, &event); err != nil {
 		return nil, err
 	}
-	if err := host.EmitModelEvent(ctx, params.Caller, params.ExecutionID, event); err != nil {
+	scope, scopeErr := params.CallerExecution(false)
+	if scopeErr != nil {
+		return nil, scopeErr
+	}
+	if err := host.EmitModelEvent(ctx, scope.PluginID, scope.ID, event); err != nil {
 		var serviceErr *pluginhost.HostServiceError
 		if errors.As(err, &serviceErr) {
 			return nil, serviceErr
