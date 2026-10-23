@@ -765,16 +765,15 @@ func (s *Session) ReleasePluginGeneration(generation *PluginGeneration) {
 	s.releasePluginGeneration(generation)
 }
 
-func (s *Session) releasePluginGeneration(generation *PluginGeneration) {
-	if s == nil || generation == nil {
-		return
+func (s *Session) releasePluginGeneration(generation *PluginGeneration) error {
+	if s == nil || generation == nil || !generation.Release() {
+		return nil
 	}
-	if generation.Release() {
-		s.pluginGenerationMu.Lock()
-		delete(s.retiredPluginGenerations, generation)
-		s.pluginGenerationMu.Unlock()
-		s.persistRevocationReport(generation)
-	}
+	s.pluginGenerationMu.Lock()
+	delete(s.retiredPluginGenerations, generation)
+	s.pluginGenerationMu.Unlock()
+	s.persistRevocationReport(generation)
+	return generation.closeErr
 }
 
 func (s *Session) capturePluginGeneration() *PluginGeneration {

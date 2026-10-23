@@ -57,11 +57,12 @@ func (k *kernelHostServices) retainState() (*State, error) {
 	}
 	close := func() error {
 		if owner != nil {
-			owner.releasePluginGeneration(generation)
-		} else {
-			generation.Release()
+			return owner.releasePluginGeneration(generation)
 		}
-		return generation.closeErr
+		if generation.Release() {
+			return generation.closeErr
+		}
+		return nil
 	}
 	state := generation.state
 	state.mu.Lock()

@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,7 +13,73 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
+
+func TestStateConcurrentReleaseReportsFinalClose(t *testing.T) {
+	for _, source := range []string{"invocation", "owned-invocation", "session"} {
+		t.Run(source, func(t *testing.T) {
+			documents, err := persistence.Open(context.Background(), t.TempDir(), "jsonl")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer documents.Close()
+			closeErr := errors.New("provider shutdown failed")
+			for range 50 {
+				client := &failingCloseClient{generationClient: &generationClient{id: "state-consumer"}, closeErr: closeErr}
+				generation := &PluginGeneration{host: pluginhost.New(client), state: &runtimeState{
+					status: pluginhost.StateActive, documents: documents, sessions: session.NewStore(context.Background(), documents),
+				}}
+				generation.retain()
+				owner := &Session{pluginGeneration: generation}
+				kernel := newKernelHostServices(nil, nil)
+				if source == "owned-invocation" {
+					kernel.bindStateGeneration(generation, owner)
+				} else {
+					kernel.bindStateGeneration(generation, nil)
+				}
+				capture := kernel.retainState
+				if source == "session" {
+					capture = owner.RetainState
+				}
+				captures := make([]*State, 16)
+				for i := range captures {
+					captures[i], err = capture()
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				generation.Release()
+				start := make(chan struct{})
+				results := make(chan error, len(captures))
+				var done sync.WaitGroup
+				for _, held := range captures {
+					done.Add(1)
+					go func() {
+						defer done.Done()
+						<-start
+						results <- held.Close()
+					}()
+				}
+				close(start)
+				done.Wait()
+				close(results)
+				failures := 0
+				for result := range results {
+					if result != nil {
+						if !errors.Is(result, closeErr) {
+							t.Fatalf("unexpected cleanup error: %v", result)
+						}
+						failures++
+					}
+				}
+				if failures != 1 {
+					t.Fatalf("provider cleanup failure was reported by %d releases, want only the final owner", failures)
+				}
+			}
+		})
+	}
+}
 
 func TestInvocationStateRetainsOriginalAuthority(t *testing.T) {
 	modules := []string{sessionStateConsumer, persistence.JSONLModule}

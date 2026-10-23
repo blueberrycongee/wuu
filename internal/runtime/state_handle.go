@@ -72,7 +72,7 @@ func (s *Session) RetainState() (*State, error) {
 		if generation.state != nil {
 			result.InferenceJournalRuntime = generation.state.journal
 		}
-		result.close = func() error { s.releasePluginGeneration(generation); return generation.closeErr }
+		result.close = func() error { return s.releasePluginGeneration(generation) }
 	}
 	return result, nil
 }
@@ -163,7 +163,12 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	generation.retain()
 	kernel.bindStateGeneration(generation, nil)
 	owned = false
-	return &State{Documents: kernel.state.documents, Sessions: kernel.state.sessions, Host: host, Generation: generation, InferenceJournalRuntime: kernel.state.journal, close: func() error { generation.Release(); return generation.closeErr }}, nil
+	return &State{Documents: kernel.state.documents, Sessions: kernel.state.sessions, Host: host, Generation: generation, InferenceJournalRuntime: kernel.state.journal, close: func() error {
+		if generation.Release() {
+			return generation.closeErr
+		}
+		return nil
+	}}, nil
 }
 
 // Retain transfers a live capture without observing the publishing Session.
