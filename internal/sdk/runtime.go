@@ -139,13 +139,14 @@ func New(opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := runtimeconfig.ApplyOverrides(&cfg, runtimeconfig.Overrides{
+	overrides := runtimeconfig.Overrides{
 		AgentProfile:   opts.AgentProfile,
 		MaxTurns:       opts.MaxTurns,
 		Effort:         opts.Effort,
 		Variant:        opts.Variant,
 		PermissionMode: opts.PermissionMode,
-	}); err != nil {
+	}
+	if err := runtimeconfig.ApplyOverrides(&cfg, overrides); err != nil {
 		return nil, err
 	}
 
@@ -160,7 +161,7 @@ func New(opts Options) (*Runtime, error) {
 		Config:                   cfg,
 		ProviderName:             strings.TrimSpace(opts.Provider),
 		ModelOverride:            strings.TrimSpace(opts.Model),
-		PermissionModeExplicit:   strings.TrimSpace(opts.PermissionMode) != "",
+		Overrides:                overrides,
 		NoTools:                  opts.NoTools,
 		NonInteractive:           opts.NonInteractive,
 		SafeMode:                 opts.SafeMode,

@@ -41,7 +41,10 @@ func (s *Session) bindGenerationModels(g *PluginGeneration) (err error) {
 	if err != nil {
 		return fmt.Errorf("read generation model configuration: %w", err)
 	}
-	cfg := withDesktopExecutionDefaults(view.Config, s.DesktopExecutionDefaults)
+	cfg, err := s.applyRuntimeConfig(view.Config)
+	if err != nil {
+		return err
+	}
 	provider, name, err := cfg.ResolveProvider(s.ProviderName)
 	if err != nil {
 		return err

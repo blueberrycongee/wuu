@@ -78,18 +78,15 @@ type Options struct {
 	// config plus restricted project overlays.
 	ConfigLoadMode ConfigLoadMode
 	Config         config.Config
+	// Overrides are applied after the selected configuration provider is read.
+	// They affect this process and are never written back to that provider.
+	Overrides ConfigOverrides
 	// DesktopExecutionDefaults ignores persisted step and temperature overrides
 	// for desktop conversations without changing CLI or explicit automation config.
 	DesktopExecutionDefaults bool
 	ProviderName             string
 	ModelOverride            string
-	// PermissionModeExplicit marks Config's permission mode as an explicit
-	// process-scoped execution override (a CLI --permission-mode flag). The
-	// override wins over per-thread pinned modes and persisted session
-	// metadata for every turn this process runs, and is never written back
-	// into sessions.
-	PermissionModeExplicit bool
-	NoTools                bool
+	NoTools                  bool
 	// NonInteractive disables human questions and interactive engine approvals
 	// for this runtime, including plugin generations loaded later.
 	NonInteractive bool
@@ -184,7 +181,7 @@ type Session struct {
 	pluginEpoch uint64
 	Permissions config.ResolvedPermissions
 	// PermissionModeExplicit reports that Permissions carries an explicit
-	// process-scoped override (see Options.PermissionModeExplicit): it beats
+	// process-scoped override (see Options.Overrides): it beats
 	// thread pins and session metadata and is never persisted into sessions.
 	PermissionModeExplicit      bool
 	maxParallel                 int
@@ -217,6 +214,7 @@ type Session struct {
 	threadProcesses            *threadProcessManagers
 	executionEnvironments      *executionenv.Manager
 	executionEnvironmentConfig executionenv.Config
+	configOverrides            ConfigOverrides
 }
 
 // MaxParallel returns the worker concurrency configured for this session.
@@ -257,6 +255,7 @@ func (s *Session) cloneForThreadModel(expected ...*State) (*Session, error) {
 		ConfigPath:                  s.ConfigPath,
 		HomeDir:                     s.HomeDir,
 		ConfigLoadMode:              s.ConfigLoadMode,
+		configOverrides:             s.configOverrides,
 		DesktopExecutionDefaults:    s.DesktopExecutionDefaults,
 		SessionDir:                  s.SessionDir,
 		StreamRunner:                s.StreamRunner,
@@ -543,8 +542,12 @@ func NewSession(opts Options) (*Session, error) {
 		if err != nil {
 			return nil, fmt.Errorf("load selected configuration: %w", err)
 		}
-		cfg = withDesktopExecutionDefaults(view.Config, opts.DesktopExecutionDefaults)
+		cfg = view.Config
 	}
+	if err := opts.Overrides.Apply(&cfg); err != nil {
+		return nil, err
+	}
+	cfg = withDesktopExecutionDefaults(cfg, opts.DesktopExecutionDefaults)
 	permissions := config.ResolveAgentPermissions(cfg.Agent)
 
 	providerCfg, resolvedName, err := cfg.ResolveProvider(opts.ProviderName)
@@ -857,6 +860,7 @@ func NewSession(opts Options) (*Session, error) {
 		executionEnvironmentConfig:  opts.Config.ExecutionEnvironments,
 		HomeDir:                     opts.HomeDir,
 		ConfigLoadMode:              configLoadMode,
+		configOverrides:             opts.Overrides,
 		DesktopExecutionDefaults:    opts.DesktopExecutionDefaults,
 		SessionDir:                  sessionDir,
 		StreamRunner:                streamRunner,
@@ -892,7 +896,7 @@ func NewSession(opts Options) (*Session, error) {
 		SafeMode:                    safeMode,
 		pluginEpoch:                 initialPluginGenerationEpoch,
 		Permissions:                 permissions,
-		PermissionModeExplicit:      opts.PermissionModeExplicit,
+		PermissionModeExplicit:      strings.TrimSpace(opts.Overrides.PermissionMode) != "",
 		maxParallel:                 cfg.Agent.MaxParallelValue(),
 		ExperimentalCoordinatorMode: cfg.Agent.ExperimentalCoordinatorMode,
 		ToolLoadingPreference:       toolLoadingPreference,
@@ -1028,12 +1032,21 @@ func (s *Session) LoadEffectiveConfig() (config.Config, string, error) {
 	if s == nil {
 		return config.Config{}, "", errors.New("runtime session is nil")
 	}
-	if s.configClient != nil {
-		view, err := s.configClient.Read(context.Background())
-		return withDesktopExecutionDefaults(view.Config, s.DesktopExecutionDefaults), s.ConfigPath, err
-	}
-	if !s.SafeMode && s.pluginGeneration != nil {
-		return config.Config{}, "", errors.New("selected configuration provider is unavailable")
+	s.pluginGenerationMu.Lock()
+	hasGraph := s.PluginHost != nil || s.pluginGeneration != nil
+	s.pluginGenerationMu.Unlock()
+	if !s.SafeMode && hasGraph {
+		services, release, err := s.RetainStateServices()
+		if err != nil {
+			return config.Config{}, s.ConfigPath, err
+		}
+		defer release()
+		view, err := services.Config.Read(context.Background())
+		if err != nil {
+			return config.Config{}, s.ConfigPath, err
+		}
+		cfg, err := s.applyRuntimeConfig(view.Config)
+		return cfg, s.ConfigPath, err
 	}
 	var cfg config.Config
 	var path string
@@ -1048,7 +1061,18 @@ func (s *Session) LoadEffectiveConfig() (config.Config, string, error) {
 	default:
 		return config.Config{}, "", fmt.Errorf("unknown config load mode %d", s.ConfigLoadMode)
 	}
-	return withDesktopExecutionDefaults(cfg, s.DesktopExecutionDefaults), path, err
+	if err != nil {
+		return config.Config{}, path, err
+	}
+	cfg, err = s.applyRuntimeConfig(cfg)
+	return cfg, path, err
+}
+
+func (s *Session) applyRuntimeConfig(cfg config.Config) (config.Config, error) {
+	if err := s.configOverrides.Apply(&cfg); err != nil {
+		return config.Config{}, err
+	}
+	return withDesktopExecutionDefaults(cfg, s.DesktopExecutionDefaults), nil
 }
 
 func withDesktopExecutionDefaults(cfg config.Config, enabled bool) config.Config {
