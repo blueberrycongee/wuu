@@ -1306,7 +1306,7 @@ describe("session tab switch latency", () => {
     else expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
   });
 
-  it.each(["pdf", "png"] as const)("does not revive a closed split draft when its %s finishes", async (extension) => {
+  it.each(["pdf", "png"] as const)("restores a closed split draft with its completed %s attachment", async (extension) => {
     installWuuApi();
     await act(async () => { root = createRoot(container); root.render(<App />); });
     await flushAsync();
@@ -1316,7 +1316,16 @@ describe("session tab switch latency", () => {
     await attachment.finish();
     expect(container.querySelector(attachmentCardSelector)).toBeNull();
     await act(async () => { requestOpenThreadInSplit(threadBID); });
-    expect(container.querySelector(attachmentCardSelector)).toBeNull();
+    const primary = container.querySelector(`.conversation-split-pane[data-thread-id="${threadAID}"]`)!;
+    const restored = container.querySelector(`.conversation-split-pane[data-thread-id="${threadBID}"]`)!;
+    expect(primary.querySelector(attachmentCardSelector)).toBeNull();
+    expect(restored.querySelectorAll(attachmentCardSelector)).toHaveLength(1);
+    expect(restored.querySelector(".composer-attachment-preparing, .composer-attachment-failed")).toBeNull();
+    if (extension === "png") {
+      expect(restored.querySelector("img")?.getAttribute("src")).toBe(`data:image/png;base64,${attachment.data}`);
+    } else {
+      expect(restored.querySelector(attachmentCardSelector)?.textContent).toContain("A-only.pdf");
+    }
   });
 
   it.each(["queue", "steer"] as const)("waits for pending PDF bytes before %s without refilling the sent draft", async (action) => {
