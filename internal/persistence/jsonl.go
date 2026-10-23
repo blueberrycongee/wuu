@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,16 +16,18 @@ import (
 	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
-// The index is disposable. Only complete, checksummed log records are durable;
-// every opener rebuilds the index and every operation reads another writer's tail
-// while holding the shared authority lock.
+// The disposable index retains ordered keys and value offsets, not payloads.
+// Only complete, checksummed log records are durable. Opening replays the journal
+// and operations replay another writer's tail under the authority lock. Replay
+// memory is proportional to the largest frame; key/receipt metadata remains in
+// RAM. Bounded reads seek the index and load only the selected values from disk.
 type jsonlBackend struct {
 	file        *os.File
 	offset      int64
 	unsynced    bool
 	initialized bool
 	revision    Revision
-	documents   map[documentKey]Document
+	documents   map[documentKey]valueLocation
 	keys        map[string][]string
 	receipts    map[string]CommitRecord
 	ordered     []CommitRecord
@@ -46,7 +49,7 @@ func openJSONL(path string) (*jsonlBackend, error) {
 	if err != nil {
 		return nil, err
 	}
-	b := &jsonlBackend{file: file, keys: make(map[string][]string), documents: make(map[documentKey]Document), receipts: make(map[string]CommitRecord), ordered: []CommitRecord{}}
+	b := &jsonlBackend{file: file, keys: make(map[string][]string), documents: make(map[documentKey]valueLocation), receipts: make(map[string]CommitRecord), ordered: []CommitRecord{}}
 	if err := b.refresh(); err != nil {
 		file.Close()
 		return nil, err
@@ -93,7 +96,7 @@ func (b *jsonlBackend) refresh() error {
 		if err := json.Unmarshal(frame.Payload, &record); err != nil {
 			return fmt.Errorf("%w: invalid journal record", ErrCorrupt)
 		}
-		if err := b.apply(record); err != nil {
+		if err := b.apply(record, line); err != nil {
 			return err
 		}
 		b.offset += int64(len(line))
@@ -110,7 +113,7 @@ func (b *jsonlBackend) refresh() error {
 	return nil
 }
 
-func (b *jsonlBackend) apply(record journalRecord) error {
+func (b *jsonlBackend) apply(record journalRecord, line []byte) error {
 	switch record.Kind {
 	case "snapshot":
 		if b.initialized || record.Snapshot == nil || record.Transaction != nil {
@@ -120,9 +123,13 @@ func (b *jsonlBackend) apply(record journalRecord) error {
 		if err := validateSnapshot(s); err != nil {
 			return err
 		}
+		locations, err := journalLocations(line, "snapshot", "documents", b.offset)
+		if err != nil {
+			return err
+		}
 		b.revision = s.Revision
-		for _, d := range s.Documents {
-			b.putDocument(d)
+		for i, d := range s.Documents {
+			b.putDocument(d.Namespace, d.Key, locations[i])
 		}
 		for _, r := range s.Receipts {
 			b.receipts[r.ID] = r
@@ -139,17 +146,23 @@ func (b *jsonlBackend) apply(record journalRecord) error {
 		if err != nil || tx.ExpectedRevision != b.revision || exists {
 			return fmt.Errorf("%w: invalid commit sequence", ErrCorrupt)
 		}
-		for _, w := range tx.Writes {
+		locations, err := journalLocations(line, "transaction", "writes", b.offset)
+		if err != nil {
+			return err
+		}
+		for i, w := range tx.Writes {
 			key := documentKey{w.Namespace, w.Key}
 			if w.Delete {
 				delete(b.documents, key)
 				keys := b.keys[w.Namespace]
 				i := sort.SearchStrings(keys, w.Key)
 				if i < len(keys) && keys[i] == w.Key {
-					b.keys[w.Namespace] = append(keys[:i], keys[i+1:]...)
+					copy(keys[i:], keys[i+1:])
+					keys[len(keys)-1] = ""
+					b.keys[w.Namespace] = keys[:len(keys)-1]
 				}
 			} else {
-				b.putDocument(Document{Namespace: w.Namespace, Key: w.Key, Value: append(json.RawMessage(nil), w.Value...)})
+				b.putDocument(w.Namespace, w.Key, locations[i])
 			}
 		}
 		b.revision++
@@ -190,24 +203,99 @@ func (b *jsonlBackend) append(ctx context.Context, record journalRecord) error {
 	if err := json.Unmarshal(payload, &persisted); err != nil {
 		return err
 	}
-	if err := b.apply(persisted); err != nil {
+	if err := b.apply(persisted, line); err != nil {
 		return err
 	}
 	b.offset += int64(len(line))
 	return nil
 }
 
-func (b *jsonlBackend) putDocument(d Document) {
-	key := documentKey{d.Namespace, d.Key}
-	if _, exists := b.documents[key]; !exists {
-		keys := b.keys[d.Namespace]
-		i := sort.SearchStrings(keys, d.Key)
+type valueLocation struct {
+	offset int64
+	length int
+}
+
+// jsonMember locates a member in validated JSON. Decoder offsets refer to the
+// original bytes, so repeated values, escaped strings and nested fields cannot
+// accidentally select a different occurrence of the same value.
+func jsonMember(raw []byte, member string) ([]byte, int64, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if _, err := decoder.Token(); err != nil {
+		return nil, 0, err
+	}
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return nil, 0, err
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, 0, err
+		}
+		if key == member {
+			end := decoder.InputOffset()
+			start := end - int64(len(value))
+			return raw[start:end], start, nil
+		}
+	}
+	return nil, 0, nil
+}
+
+func journalLocations(line []byte, kind, collection string, base int64) ([]valueLocation, error) {
+	raw, offset, err := jsonMember(line, "payload")
+	if err != nil {
+		return nil, err
+	}
+	base += offset
+	raw, offset, err = jsonMember(raw, kind)
+	if err != nil {
+		return nil, err
+	}
+	base += offset
+	raw, offset, err = jsonMember(raw, collection)
+	if err != nil {
+		return nil, err
+	}
+	base += offset
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if _, err := decoder.Token(); err != nil {
+		return nil, err
+	}
+	locations := []valueLocation{}
+	for decoder.More() {
+		var entry json.RawMessage
+		if err := decoder.Decode(&entry); err != nil {
+			return nil, err
+		}
+		entryOffset := decoder.InputOffset() - int64(len(entry))
+		value, valueOffset, err := jsonMember(entry, "value")
+		if err != nil {
+			return nil, err
+		}
+		locations = append(locations, valueLocation{offset: base + entryOffset + valueOffset, length: len(value)})
+	}
+	return locations, nil
+}
+
+func (b *jsonlBackend) putDocument(namespace, key string, location valueLocation) {
+	id := documentKey{namespace, key}
+	if _, exists := b.documents[id]; !exists {
+		keys := b.keys[namespace]
+		i := sort.SearchStrings(keys, key)
 		keys = append(keys, "")
 		copy(keys[i+1:], keys[i:])
-		keys[i] = d.Key
-		b.keys[d.Namespace] = keys
+		keys[i] = key
+		b.keys[namespace] = keys
 	}
-	b.documents[key] = d
+	b.documents[id] = location
+}
+
+func (b *jsonlBackend) readDocument(namespace, key string, location valueLocation) (Document, error) {
+	d := Document{Namespace: namespace, Key: key, Value: make(json.RawMessage, location.length)}
+	if _, err := b.file.ReadAt(d.Value, location.offset); err != nil {
+		return Document{}, err
+	}
+	return d, nil
 }
 
 func (b *jsonlBackend) read(ctx context.Context, q Query) (View, error) {
@@ -266,17 +354,20 @@ func (b *jsonlBackend) read(ctx context.Context, q Query) (View, error) {
 				continue
 			}
 		}
-		d, exists := b.documents[documentKey{q.Namespace, key}]
+		location, exists := b.documents[documentKey{q.Namespace, key}]
 		if !exists {
 			continue
 		}
-		d.Value = append(json.RawMessage(nil), d.Value...)
-		view.Documents = append(view.Documents, d)
-		if q.Limit > 0 && len(view.Documents) > q.Limit {
+		if q.Limit > 0 && len(view.Documents) == q.Limit {
+			view.NextCursor = view.Documents[len(view.Documents)-1].Key
 			break
 		}
+		d, err := b.readDocument(q.Namespace, key, location)
+		if err != nil {
+			return View{}, err
+		}
+		view.Documents = append(view.Documents, d)
 	}
-	finishPage(&view, q)
 	return view, nil
 }
 
@@ -316,8 +407,14 @@ func (b *jsonlBackend) export(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, ErrCorrupt
 	}
 	s := Snapshot{Version: 1, Revision: b.revision, Documents: []Document{}, Receipts: append([]CommitRecord{}, b.ordered...)}
-	for _, d := range b.documents {
-		d.Value = append(json.RawMessage(nil), d.Value...)
+	for key, location := range b.documents {
+		if err := ctx.Err(); err != nil {
+			return Snapshot{}, err
+		}
+		d, err := b.readDocument(key.namespace, key.key, location)
+		if err != nil {
+			return Snapshot{}, err
+		}
 		s.Documents = append(s.Documents, d)
 	}
 	sortDocuments(s.Documents)
