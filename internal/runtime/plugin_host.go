@@ -275,6 +275,38 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	// unpublished; missing transitive dependencies cannot expose capabilities.
 	conflicts = append(conflicts, registry.RegisterClients(started...)...)
 	conflicts = append(conflicts, registry.RegisterClients(rendererServices...)...)
+	if providerID, found := registry.ProviderPluginID(persistence.ServiceName, 1); found {
+		authority, err := NewStateAuthority(wuuHome)
+		if err != nil {
+			return nil, nil, errors.Join(err, closeStarted())
+		}
+		consumer := newRuntimeStateAuthority(host, registry, authority)
+		// Internal edges enforce admission and teardown for all selected callers,
+		// including compositions that intentionally omit the session domain.
+		clients := append(append(slices.Clone(nativeModules), started...), rendererServices...)
+		for _, client := range clients {
+			if client.ID() == consumer.ID() {
+				return nil, nil, errors.Join(fmt.Errorf("reserved host mechanism identity %q", consumer.ID()), closeStarted())
+			}
+			if client.ID() == providerID {
+				continue
+			}
+			if services, ok := client.(pluginhost.ServiceClient); ok {
+				for _, requirement := range services.RequiredServices() {
+					if requirement.Name == persistence.ServiceName && requirement.MajorVersion == 1 {
+						packageRequirements[client.ID()] = append(packageRequirements[client.ID()], consumer.ID())
+						break
+					}
+				}
+			}
+		}
+		host.Add(consumer)
+		conflicts = append(conflicts, registry.RegisterClients(consumer)...)
+		host.SetPackageRequirements(packageRequirements)
+		if err := registry.WrapServiceInvoker(persistence.ServiceName, 1, authority.Wrap); err != nil {
+			return nil, nil, errors.Join(err, closeStarted())
+		}
+	}
 	host.AttachServiceRegistry(registry, conflicts)
 	if err := registry.ValidateBindings(); err != nil {
 		return nil, nil, errors.Join(err, closeStarted())
@@ -296,16 +328,6 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		closeErr := host.Close(ctx)
 		cancel()
 		return nil, nil, errors.Join(err, closeErr)
-	}
-	if kernel.state != nil {
-		authority, err := NewStateAuthority(wuuHome)
-		if err != nil {
-			return nil, nil, errors.Join(err, closeStarted())
-		}
-		kernel.state.authority = authority
-		if err := registry.WrapServiceInvoker(persistence.ServiceName, 1, authority.Wrap); err != nil {
-			return nil, nil, errors.Join(err, closeStarted())
-		}
 	}
 	if err := host.Prepare(context.Background()); err != nil {
 		return nil, nil, errors.Join(err, closeStarted())
