@@ -66,11 +66,11 @@ func TestThreadSearchMessageAddressAndArchiveScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv.threads[private.ID] = private
-	srv.threads["title"] = &threadState{ID: "title", Title: "Cobalt plan", UpdatedAt: now,
+	srv.threads["title"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "title", Title: "Cobalt plan", UpdatedAt: now,
 		History: []providers.ChatMessage{{Seq: 12, Role: "user", Content: "cobalt body"}}}
-	srv.threads["technical"] = &threadState{ID: "technical", Title: "Logs", UpdatedAt: now, PinnedAt: &now,
+	srv.threads["technical"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "technical", Title: "Logs", UpdatedAt: now, PinnedAt: &now,
 		History: []providers.ChatMessage{{Seq: 17, Role: "tool", Content: "cobalt output"}}}
-	srv.threads["unaddressed"] = &threadState{ID: "unaddressed", Title: "Draft", UpdatedAt: now,
+	srv.threads["unaddressed"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "unaddressed", Title: "Draft", UpdatedAt: now,
 		History: []providers.ChatMessage{
 			{Role: "assistant", Content: "first amber draft"},
 			{Seq: 21, Role: "assistant", Content: "second amber draft"},
@@ -164,12 +164,12 @@ func TestThreadSearchLazyHistoryPreservesResults(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	now := time.Now()
-	live := &threadState{ID: "disk", Title: "live title", Model: "model", UpdatedAt: now, History: []providers.ChatMessage{
+	live := &threadState{state: testRuntimeState(t, srv.rt), ID: "disk", Title: "live title", Model: "model", UpdatedAt: now, History: []providers.ChatMessage{
 		{Role: "user", Content: "unpersisted needle"},
 		{Role: "assistant", Content: "hidden secret", Hidden: true},
 	}}
 	srv.threads[live.ID] = live
-	srv.threads["pinned"] = &threadState{ID: "pinned", Title: "pinned title", PinnedAt: &now, UpdatedAt: now.Add(-time.Hour)}
+	srv.threads["pinned"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "pinned", Title: "pinned title", PinnedAt: &now, UpdatedAt: now.Add(-time.Hour)}
 	search := func(id, query string, limit int) []ThreadSearchResultItem {
 		t.Helper()
 		params, err := json.Marshal(ThreadSearchParams{Query: query, Limit: limit})
@@ -210,14 +210,14 @@ func TestThreadSearchRanksBeforeLimiting(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	now := time.Now()
-	srv.threads["tool"] = &threadState{ID: "tool", Title: "Recent logs", UpdatedAt: now, PinnedAt: &now,
+	srv.threads["tool"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "tool", Title: "Recent logs", UpdatedAt: now, PinnedAt: &now,
 		History: []providers.ChatMessage{{Role: "tool", Content: `{"output":"onboarding\\nlog"}`}}}
-	srv.threads["body"] = &threadState{ID: "body", Title: "Design discussion", UpdatedAt: now.Add(-time.Hour),
+	srv.threads["body"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "body", Title: "Design discussion", UpdatedAt: now.Add(-time.Hour),
 		History: []providers.ChatMessage{
 			{Role: "tool", Content: "onboarding build output"},
 			{Role: "user", Content: "Improve onboarding for new users"},
 		}}
-	srv.threads["title"] = &threadState{ID: "title", Title: "Onboarding layout", UpdatedAt: now.Add(-2 * time.Hour)}
+	srv.threads["title"] = &threadState{state: testRuntimeState(t, srv.rt), ID: "title", Title: "Onboarding layout", UpdatedAt: now.Add(-2 * time.Hour)}
 	for _, limit := range []int{1, 2, 3} {
 		id := fmt.Sprint(limit)
 		params, _ := json.Marshal(ThreadSearchParams{Query: "ONBOARDING", Limit: limit})
@@ -251,7 +251,7 @@ func TestThreadSearchLimitedPageMatchesFullRanking(t *testing.T) {
 	now := time.Now()
 	for i := 0; i < 16; i++ {
 		id := fmt.Sprintf("thread-%02d", i)
-		th := &threadState{ID: id, Title: "unrelated", UpdatedAt: now.Add(time.Duration(i/2) * time.Hour)}
+		th := &threadState{state: testRuntimeState(t, srv.rt), ID: id, Title: "unrelated", UpdatedAt: now.Add(time.Duration(i/2) * time.Hour)}
 		switch i % 4 {
 		case 0:
 			th.Title = "needle title"

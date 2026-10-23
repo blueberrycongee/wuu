@@ -51,6 +51,10 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 					defer journal.Close()
 					rt.InferenceJournalRuntime = journal
 					rt.ActivityRegistry = activity.NewRegistry()
+					runStore, err := execution.NewStore(testRuntimeState(t, rt).Documents)
+					if err != nil {
+						t.Fatal(err)
+					}
 					peer := New(rt, &lockedBuffer{})
 					defer peer.Close()
 					start := func(prompt string) RunStartResult {
@@ -88,7 +92,7 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 							t.Fatal("correction did not enter prompt hook")
 						}
 					}
-					if _, err := peer.adoptProjectSession(lead.ID, id); err != nil {
+					if _, err := peer.adoptProjectSession(testRuntimeState(t, peer.rt), lead.ID, id); err != nil {
 						t.Fatal(err)
 					}
 					if stopped {
@@ -109,7 +113,7 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 						deadline := time.Now().Add(gatedProviderTimeout)
 						var run execution.Run
 						for time.Now().Before(deadline) {
-							run, err = srv.runStore.Get(context.Background(), runID)
+							run, err = runStore.Get(context.Background(), runID)
 							if err != nil {
 								t.Fatal(err)
 							}

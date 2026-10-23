@@ -754,6 +754,7 @@ func TestSideThreadSnapshotIncludesLiveMainTurn(t *testing.T) {
 			{ID: "tool", Type: ThreadItemToolCall, Status: ThreadItemStatusInProgress, Name: "run_shell", Arguments: "go test ./...", Result: "LIVE_TOOL_STATE"},
 		},
 	}}
+	th.state = testRuntimeState(t, s.rt)
 	s.threads["main_live"] = th
 	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_live", "what is happening?"); err != nil {
 		t.Fatalf("send: %v", err)
@@ -784,6 +785,7 @@ func TestSideThreadContextUsesResolvedModelBudget(t *testing.T) {
 	th.Turns = []Turn{{ID: "turn-long", Status: TurnStatusInProgress, ItemsView: TurnItemsViewFull, Items: []ThreadItem{{
 		ID: "tool", Type: ThreadItemToolCall, Status: ThreadItemStatusInProgress, Name: "run_shell", Result: "LATEST_LIVE_TOOL_MARKER",
 	}}}}
+	th.state = testRuntimeState(t, s.rt)
 	s.threads["main_long"] = th
 	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_long", "LATEST_SIDE_PROMPT_MARKER"); err != nil {
 		t.Fatalf("send: %v", err)
@@ -1046,6 +1048,7 @@ func TestMainThreadModelSelectionPrefersCacheThenSession(t *testing.T) {
 	// Cached thread state wins over the persisted row.
 	th := newThreadState("sel-thread", nil, "fake-provider", "cached-model", cachedRoot, true, time.Now().UTC())
 	srv.mu.Lock()
+	th.state = testRuntimeState(t, srv.rt)
 	srv.threads[th.ID] = th
 	srv.mu.Unlock()
 	if got := srv.mainThreadModelSelection(testRuntimeState(t, srv.rt), "sel-thread"); got.Model != "cached-model" {

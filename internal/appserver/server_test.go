@@ -1920,6 +1920,7 @@ func newForeignProviderTargetFixture(t *testing.T, rt *runtime.Session, srv *Ser
 	t.Helper()
 	target := newThreadState("foreign-thread", nil, "xiaomi", "mimo-v2.5-pro", rt.RootDir, true, time.Now().UTC())
 	target.PermissionMode = config.PermissionModeReadOnly
+	target.state = testRuntimeState(t, srv.rt)
 	srv.threads[target.ID] = target
 	if _, err := rt.Sessions.CreateWithMetadata(target.ID, rt.RootDir); err != nil {
 		t.Fatalf("create target session: %v", err)
@@ -6346,6 +6347,7 @@ func TestServerThreadForkAtAssistantItem(t *testing.T) {
 		{Role: "assistant", Content: "memory answer", Phase: providers.MessagePhaseFinalAnswer},
 	}, "fake-provider", "fake-model", rt.RootDir, false, time.Now())
 	srv.mu.Lock()
+	memorySource.state = testRuntimeState(t, srv.rt)
 	srv.threads[memorySource.ID] = memorySource
 	srv.mu.Unlock()
 	memoryTurn, memoryItem := finalAnswerItemForForkTest(t, memorySource.Turns, "memory answer")
@@ -9656,6 +9658,7 @@ func TestServerAutoResumesRootAgentOnAgentCompletion(t *testing.T) {
 	}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	rootThread.execRuntime = threadRuntime
 	srv.mu.Lock()
+	rootThread.state = testRuntimeState(t, srv.rt)
 	srv.threads[threadID] = rootThread
 	srv.mu.Unlock()
 	rootThread.runtimeSubscription = srv.subscribeThreadRuntime(testRuntimeState(t, srv.rt), threadID, threadRuntime)
@@ -9750,6 +9753,7 @@ func TestServerQueuesAgentCompletionWhileRootTurnIsRunning(t *testing.T) {
 	}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	rootThread.execRuntime = threadRuntime
 	srv.mu.Lock()
+	rootThread.state = testRuntimeState(t, srv.rt)
 	srv.threads[threadID] = rootThread
 	srv.mu.Unlock()
 	rootThread.runtimeSubscription = srv.subscribeThreadRuntime(testRuntimeState(t, srv.rt), threadID, threadRuntime)
@@ -9824,6 +9828,7 @@ func TestServerSkipsDuplicateAgentCompletionNotificationsAfterAutoResume(t *test
 	}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	rootThread.execRuntime = threadRuntime
 	srv.mu.Lock()
+	rootThread.state = testRuntimeState(t, srv.rt)
 	srv.threads[threadID] = rootThread
 	srv.mu.Unlock()
 	rootThread.runtimeSubscription = srv.subscribeThreadRuntime(testRuntimeState(t, srv.rt), threadID, threadRuntime)
@@ -9886,6 +9891,7 @@ func TestServerSkipsAutoResumeWhenAwaitAgentsAlreadyReturnedResult(t *testing.T)
 	}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	rootThread.execRuntime = threadRuntime
 	srv.mu.Lock()
+	rootThread.state = testRuntimeState(t, srv.rt)
 	srv.threads[threadID] = rootThread
 	srv.mu.Unlock()
 	rootThread.runtimeSubscription = srv.subscribeThreadRuntime(testRuntimeState(t, srv.rt), threadID, threadRuntime)

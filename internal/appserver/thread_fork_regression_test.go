@@ -169,6 +169,7 @@ func TestServerThreadForkLiveAnswerDoesNotDuplicateArchivedToolPrefix(t *testing
 		},
 	}
 	srv.mu.Lock()
+	th.state = testRuntimeState(t, srv.rt)
 	srv.threads[sourceID] = th
 	srv.mu.Unlock()
 

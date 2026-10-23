@@ -299,6 +299,7 @@ func TestQueuedProcessCompletionAlreadyAnsweredSkipsProvider(t *testing.T) {
 	rootThread.state = testRuntimeState(t, rt)
 	rootThread.execRuntime = threadRuntime
 	server.mu.Lock()
+	rootThread.state = testRuntimeState(t, server.rt)
 	server.threads[threadID] = rootThread
 	server.mu.Unlock()
 	rootThread.runtimeSubscription = server.subscribeThreadRuntime(testRuntimeState(t, server.rt), threadID, threadRuntime)
@@ -370,6 +371,7 @@ func TestProcessCompletionDrainContinuesPastDeliveredResult(t *testing.T) {
 	rootThread.state = testRuntimeState(t, rt)
 	rootThread.execRuntime = &runtime.ThreadRuntime{StreamRunner: rt.StreamRunner, ProcessManager: manager}
 	server.mu.Lock()
+	rootThread.state = testRuntimeState(t, server.rt)
 	server.threads[threadID] = rootThread
 	server.mu.Unlock()
 	server.prependPendingAgentCompletionTurns(threadID, pending)
@@ -448,6 +450,7 @@ func TestServerAutoResumesAndAcknowledgesNaturalProcessCompletion(t *testing.T) 
 	}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	rootThread.execRuntime = threadRuntime
 	server.mu.Lock()
+	rootThread.state = testRuntimeState(t, server.rt)
 	server.threads[threadID] = rootThread
 	server.mu.Unlock()
 	rootThread.runtimeSubscription = server.subscribeThreadRuntime(testRuntimeState(t, server.rt), threadID, threadRuntime)

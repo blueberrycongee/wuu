@@ -45,6 +45,7 @@ func TestReplyImagesResolveOnlyVisibleMarkdownAndVerifyChangingOriginals(t *test
 	body := "Result ![preview](<answer (1).png>)\n\n`![code](secret.png)`\n\n[document](private.png)"
 	th := newThreadState("images", nil, "", "", rt.RootDir, false, time.Now())
 	th.Turns = []Turn{{ID: "turn", Items: []ThreadItem{{ID: "answer", Type: ThreadItemAgentMessage, Text: body}}}}
+	th.state = testRuntimeState(t, server.rt)
 	server.threads[th.ID] = th
 	projected := RemoteThreadItem(th.ID, "turn", th.Turns[0].Items[0])
 	if len(projected.MarkdownImages) != 1 || projected.MarkdownImages[0].Data != "" {

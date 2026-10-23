@@ -6,13 +6,12 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/participant"
-	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
 
 func TestAgentFromSnapshotResolvesParticipantSummary(t *testing.T) {
-	sessDir := t.TempDir()
-	sessDirStore := newAppserverTestStore(t, sessDir)
+	rt := newTestRuntime(t, &fakeClient{})
+	sessDirStore := rt.Sessions
 	p := participant.Participant{
 		ID:     "prt-1234567890abcdef",
 		Kind:   participant.KindEphemeral,
@@ -24,7 +23,8 @@ func TestAgentFromSnapshotResolvesParticipantSummary(t *testing.T) {
 		t.Fatalf("UpsertParticipant: %v", err)
 	}
 
-	s := New(&runtime.Session{SessionDir: sessDir}, nil)
+	s := New(rt, nil)
+	defer s.Close()
 	snap := subagent.SubAgentSnapshot{
 		ID:            "agent-1",
 		ParticipantID: p.ID,
@@ -59,7 +59,8 @@ func TestAgentFromSnapshotResolvesParticipantSummary(t *testing.T) {
 }
 
 func TestAgentFromSnapshotParticipantFallback(t *testing.T) {
-	s := New(&runtime.Session{SessionDir: t.TempDir()}, nil)
+	s := New(newTestRuntime(t, &fakeClient{}), nil)
+	defer s.Close()
 
 	// ParticipantID set but no matching store row.
 	snap := subagent.SubAgentSnapshot{
@@ -96,9 +97,13 @@ func TestAgentFromSnapshotParticipantFallback(t *testing.T) {
 }
 
 func TestAgentThreadModelInheritsRootUnlessSnapshotIsPinned(t *testing.T) {
-	s := New(&runtime.Session{ProviderName: "workspace-provider", Model: "workspace-model", RootDir: t.TempDir()}, nil)
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.ProviderName, rt.Model = "workspace-provider", "workspace-model"
+	s := New(rt, nil)
+	defer s.Close()
 	now := time.Now().UTC()
 	root := newThreadState("root", nil, "kimi", "k3", s.rt.RootDir, false, now)
+	root.state = testRuntimeState(t, s.rt)
 	s.threads[root.ID] = root
 
 	inherited, _ := s.ensureAgentThreadState(testRuntimeState(t, s.rt), root.ID, nil, subagent.SubAgentSnapshot{ID: "agent-inherited"}, now)

@@ -33,6 +33,10 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 			defer journal.Close()
 			rt.InferenceJournalRuntime = journal
 			rt.ActivityRegistry = activity.NewRegistry()
+			runStore, err := execution.NewStore(testRuntimeState(t, rt).Documents)
+			if err != nil {
+				t.Fatal(err)
+			}
 
 			type scheduled struct {
 				delay   time.Duration
@@ -40,7 +44,7 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 				stopped *atomic.Bool
 			}
 			timers := make(chan scheduled, 16)
-			srv.projectInboxAfterFunc = func(delay time.Duration, fire func()) func() {
+			projectFixtureProvider(srv).lifetime.projectInboxAfterFunc = func(delay time.Duration, fire func()) func() {
 				stopped := &atomic.Bool{}
 				timers <- scheduled{delay, fire, stopped}
 				return func() { stopped.Store(true) }
@@ -64,13 +68,13 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 			select {
 			case timer = <-timers:
 			case <-time.After(gatedProviderTimeout):
-				run, _ := srv.runStore.Get(context.Background(), started.Run.ID)
+				run, _ := runStore.Get(context.Background(), started.Run.ID)
 				t.Fatalf("schema continuation was not retained for retry: %+v", run)
 			}
 			if timer.delay != threadExecutionLeaseRetryDelay {
 				t.Fatalf("initial retry delay=%v", timer.delay)
 			}
-			run, err := srv.runStore.Get(context.Background(), started.Run.ID)
+			run, err := runStore.Get(context.Background(), started.Run.ID)
 			if err != nil || run.Status.Terminal() || len(run.Turns) != 1 || !srv.executionRunAttached(run.ID) {
 				t.Fatalf("capacity-blocked Run=%+v error=%v", run, err)
 			}
@@ -100,7 +104,7 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 				}
 			case "turn_interrupt":
 				client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: worker.ID}, nil)
-				interrupted, err := srv.runStore.Get(context.Background(), run.ID)
+				interrupted, err := runStore.Get(context.Background(), run.ID)
 				if err != nil || interrupted.Status != execution.StatusInterrupted {
 					t.Fatalf("thread stop left Run=%+v error=%v", interrupted, err)
 				}
@@ -126,7 +130,7 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 			retry.response <- providersResponse(`{"ok":true}`)
 			deadline := time.Now().Add(gatedProviderTimeout)
 			for time.Now().Before(deadline) {
-				run, err = srv.runStore.Get(context.Background(), run.ID)
+				run, err = runStore.Get(context.Background(), run.ID)
 				if err == nil && run.Status.Terminal() {
 					break
 				}
@@ -201,8 +205,12 @@ func TestProjectCapacitySchemaContinuationHonorsRemoteStop(t *testing.T) {
 			defer journal.Close()
 			rt.InferenceJournalRuntime = journal
 			rt.ActivityRegistry = activity.NewRegistry()
+			runStore, err := execution.NewStore(testRuntimeState(t, rt).Documents)
+			if err != nil {
+				t.Fatal(err)
+			}
 			timers := make(chan func(), 16)
-			srv.projectInboxAfterFunc = func(_ time.Duration, fire func()) func() {
+			projectFixtureProvider(srv).lifetime.projectInboxAfterFunc = func(_ time.Duration, fire func()) func() {
 				timers <- fire
 				return func() {}
 			}
@@ -268,7 +276,7 @@ func TestProjectCapacitySchemaContinuationHonorsRemoteStop(t *testing.T) {
 			deadline = time.Now().Add(gatedProviderTimeout)
 			var run execution.Run
 			for time.Now().Before(deadline) {
-				run, err = srv.runStore.Get(context.Background(), started.Run.ID)
+				run, err = runStore.Get(context.Background(), started.Run.ID)
 				if err == nil && run.Status.Terminal() {
 					break
 				}

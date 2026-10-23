@@ -3,11 +3,12 @@ package appserver
 import "testing"
 
 func TestLatestProviderRetainedContextTokensIgnoresLocalEstimate(t *testing.T) {
-	s := &Server{threads: map[string]*threadState{}}
+	s := &Server{rt: newTestRuntime(t, &fakeClient{}), threads: map[string]*threadState{}}
 	thread := &threadState{ID: "s1", Turns: []Turn{
 		{InputTokens: 10, OutputTokens: 2, ContextTokens: 12},
 		{ContextTokens: 452352},
 	}}
+	thread.state = testRuntimeState(t, s.rt)
 	s.threads["s1"] = thread
 
 	if got := s.latestProviderRetainedContextTokens(testRuntimeState(t, s.rt), "s1"); got != 0 {

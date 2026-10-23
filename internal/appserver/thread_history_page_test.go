@@ -137,6 +137,7 @@ func TestHistoryBoundsSingleLongTurnAndRetainsCompleteContent(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	th.state = testRuntimeState(t, srv.rt)
 	srv.threads[th.ID] = th
 	refBytes, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(last.RemoteContentRef, "content:"))
 	if err != nil {
@@ -219,6 +220,7 @@ func TestHistoryRetainsStructuredImageReferencesAndReadsOriginalContentIndex(t *
 	th := newThreadState("tool-images", nil, "", "", rt.RootDir, false, time.Now())
 	data := strings.Repeat("a", 20_000)
 	th.Turns = []Turn{{ID: "turn", Items: []ThreadItem{{ID: "tool", Type: ThreadItemToolCall, ResultDetail: &toolresult.Result{Content: []toolresult.ContentPart{{Type: "text", Text: "caption"}, {Type: "image", MIMEType: "image/png", Data: data}}}}}}}
+	th.state = testRuntimeState(t, srv.rt)
 	srv.threads[th.ID] = th
 	projected := th.resumeSnapshotLocked(true).Turns[0].Items[0]
 	if projected.RemoteContentRef != "" {
@@ -262,6 +264,7 @@ func TestTerminalNotificationsDeferLargeToolContent(t *testing.T) {
 			}
 			turn.Items = append(turn.Items, ThreadItem{ID: "final", Type: ThreadItemAgentMessage, Status: ThreadItemStatusCompleted, Terminal: true, Text: "All done."})
 			th.Turns = []Turn{turn}
+			th.state = testRuntimeState(t, srv.rt)
 			srv.threads[th.ID] = th
 			var params any = TurnCompletedNotification{ThreadID: th.ID, Turn: turn, Content: "All done."}
 			if method == NotificationTurnError {
