@@ -102,7 +102,9 @@ func (k *kernelHostServices) retainModelInvocation() (*State, func(context.Conte
 	return binding, func(ctx context.Context) error {
 		release := func() error {
 			defer generation.modelInvocations.Done()
-			return binding.Close()
+			err := binding.Close()
+			generation.recordModelCompletionError(err)
+			return err
 		}
 		if pluginhost.DeferServiceCompletion(ctx, release) {
 			return nil

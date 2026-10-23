@@ -197,10 +197,15 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 		}
 		ctx = providers.WithInferenceJournal(ctx, journal)
 	}
+	request, err = providers.EnsureInferenceExecutionContext(ctx, request, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+	if err != nil {
+		return nil, modelRequestError(err)
+	}
 	// This auxiliary request intentionally has no agent-loop callbacks, injected
 	// history or tools. Provider preparation, credentials, capacity, retry and
 	// durable accounting use the ordinary host inference path.
 	response, err := modelrequest.Execute(ctx, client, request, modelrequest.Options{AllowUnboundedOutput: input.AllowUnboundedOutput})
+	binding.Generation.recordModelCompletionError(request.Execution.JournalError())
 	if err != nil {
 		if errors.Is(err, modelrequest.ErrUnsupportedLimit) {
 			return nil, serviceError("unsupported_limit", err.Error())

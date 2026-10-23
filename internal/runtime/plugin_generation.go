@@ -74,12 +74,26 @@ type PluginGeneration struct {
 	refs         atomic.Int32
 	revocationMu sync.Mutex
 	// Admission closes under modelMu before root shutdown starts Wait.
-	modelMu          sync.Mutex
-	modelStopped     bool
-	modelInvocations sync.WaitGroup
+	modelMu            sync.Mutex
+	modelStopped       bool
+	modelInvocations   sync.WaitGroup
+	modelCompletionErr error
 	// revokedMu also protects host detachment from read-only diagnostics.
 	revokedMu      sync.Mutex
 	revokedPlugins map[string]bool
+}
+
+// Keep only the first durability or authority-release failure. Provider
+// rejections and ordinary cancellation belong to the model result, not shutdown.
+func (g *PluginGeneration) recordModelCompletionError(err error) {
+	if err == nil {
+		return
+	}
+	g.modelMu.Lock()
+	if g.modelCompletionErr == nil {
+		g.modelCompletionErr = err
+	}
+	g.modelMu.Unlock()
 }
 
 // Root shutdown drains model effects separately from passive State references.
@@ -129,6 +143,14 @@ func (s *Session) stopPluginModelInvocations() (err error) {
 	case <-done:
 	case <-ctx.Done():
 		err = fmt.Errorf("drain model invocations: %w", ctx.Err())
+	}
+	for _, generation := range generations {
+		generation.modelMu.Lock()
+		completionErr := generation.modelCompletionErr
+		generation.modelMu.Unlock()
+		if completionErr != nil {
+			err = errors.Join(err, fmt.Errorf("model completion in generation %q: %w", generation.id, completionErr))
+		}
 	}
 	return err
 }

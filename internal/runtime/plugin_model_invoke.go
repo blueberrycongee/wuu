@@ -162,6 +162,7 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 			response, err = client.Chat(ctx, request)
 		} else {
 			response, err = providers.ExecuteChat(ctx, client, request, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+			binding.Generation.recordModelCompletionError(request.Execution.JournalError())
 		}
 		if err != nil {
 			if direct {
@@ -194,7 +195,7 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 				providers.DebugLogf("model stream generation cleanup: %v", err)
 			}
 		}()
-		k.runStream(ctx, job, client, request, origin, direct)
+		binding.Generation.recordModelCompletionError(k.runStream(ctx, job, client, request, origin, direct))
 	}()
 	return marshalServiceResult(pluginhost.ModelInvocationHandle{InvocationID: id})
 }
@@ -307,7 +308,7 @@ func independentModelOrigin(scope pluginhost.ExecutionScope, request providers.C
 	return origin
 }
 
-func (k *modelInvokeInvoker) runStream(ctx context.Context, job *modelInvocation, client providers.StreamClient, request providers.ChatRequest, origin pluginhost.ModelInvocationOriginV1, direct bool) {
+func (k *modelInvokeInvoker) runStream(ctx context.Context, job *modelInvocation, client providers.StreamClient, request providers.ChatRequest, origin pluginhost.ModelInvocationOriginV1, direct bool) (completionErr error) {
 	defer job.cancel()
 	var err error
 	if !direct {
@@ -388,7 +389,8 @@ func (k *modelInvokeInvoker) runStream(ctx context.Context, job *modelInvocation
 				outcome = providers.InferenceOutcomeCanceled
 			}
 		}
-		err = errors.Join(err, request.Execution.Complete(outcome, failure))
+		completionErr = request.Execution.Complete(outcome, failure)
+		err = errors.Join(err, completionErr)
 	}
 	if direct && err != nil {
 		recordModelContinuationError(ctx, err)
@@ -402,6 +404,7 @@ func (k *modelInvokeInvoker) runStream(ctx context.Context, job *modelInvocation
 	close(job.changed)
 	job.changed = make(chan struct{})
 	job.mu.Unlock()
+	return completionErr
 }
 
 func (k *modelInvokeInvoker) readOrCancel(ctx context.Context, scope pluginhost.ExecutionScope, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {

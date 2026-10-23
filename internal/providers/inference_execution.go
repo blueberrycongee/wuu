@@ -658,7 +658,15 @@ func (a InferenceAttempt) JournalError() error {
 	if !a.Valid() {
 		return nil
 	}
-	e := a.execution
+	return a.execution.JournalError()
+}
+
+// JournalError returns the first required journal write failure, including
+// failures before the first attempt. A nil execution has no journal error.
+func (e *InferenceExecution) JournalError() error {
+	if e == nil {
+		return nil
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.journalErr

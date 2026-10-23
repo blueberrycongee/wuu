@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,8 +26,9 @@ import (
 
 type shutdownModelCaller struct {
 	fakeServicePluginClient
-	host   *pluginhost.Host
-	method string
+	host    *pluginhost.Host
+	method  string
+	doneURL string
 }
 
 func (c *shutdownModelCaller) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
@@ -41,6 +43,36 @@ func (c *shutdownModelCaller) InvokeService(ctx context.Context, params pluginho
 		return nil, err
 	}
 	if method == "start" {
+		if c.doneURL != "" {
+			var handle pluginhost.ModelInvocationHandle
+			if err := json.Unmarshal(result, &handle); err != nil {
+				return nil, err
+			}
+			cursor := 0
+			for {
+				raw, _ := json.Marshal(pluginhost.ModelInvocationReadParams{InvocationID: handle.InvocationID, Cursor: cursor, WaitMS: 1000})
+				result, err := c.host.ServiceRegistry().Call(ctx, c.ID(), pluginhost.ServiceCallParams{Service: service, Method: "read", Params: raw, ExecutionID: params.ExecutionID})
+				if err != nil {
+					return nil, err
+				}
+				var read pluginhost.ModelInvocationReadResult
+				if err := json.Unmarshal(result, &read); err != nil {
+					return nil, err
+				}
+				cursor = read.Cursor
+				if read.Done {
+					if read.Error == nil {
+						return nil, fmt.Errorf("expected model rejection")
+					}
+					response, err := http.Get(c.doneURL)
+					if err != nil {
+						return nil, err
+					}
+					response.Body.Close()
+					break
+				}
+			}
+		}
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
@@ -49,7 +81,9 @@ func (c *shutdownModelCaller) InvokeService(ctx context.Context, params pluginho
 
 type shutdownModelDocuments struct {
 	*persistence.Service
-	barrierURL string
+	barrierURL    string
+	failTerminal  bool
+	beforeAttempt chan struct{}
 }
 
 func (p *shutdownModelDocuments) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
@@ -59,19 +93,44 @@ func (p *shutdownModelDocuments) InvokeService(ctx context.Context, params plugi
 			return nil, err
 		}
 		for _, write := range tx.Writes {
-			if write.Namespace != "wuu.inference_attempts.v1" {
+			terminal := false
+			if p.beforeAttempt != nil && write.Namespace == "wuu.inference_operations.v1" {
+				var operation struct{ Status string }
+				if err := json.Unmarshal(write.Value, &operation); err != nil {
+					return nil, err
+				}
+				if operation.Status == "active" {
+					result, err := p.Service.InvokeService(ctx, params)
+					if err != nil {
+						return nil, err
+					}
+					response, err := http.Get(strings.TrimSuffix(p.barrierURL, "/terminal") + "/prepared")
+					if err != nil {
+						return nil, err
+					}
+					response.Body.Close()
+					<-p.beforeAttempt
+					return result, nil
+				}
+				terminal = true
+			} else if write.Namespace == "wuu.inference_attempts.v1" {
+				var attempt struct{ Phase string }
+				if err := json.Unmarshal(write.Value, &attempt); err != nil {
+					return nil, err
+				}
+				terminal = attempt.Phase == "terminal"
+			} else {
 				continue
 			}
-			var attempt struct{ Phase string }
-			if err := json.Unmarshal(write.Value, &attempt); err != nil {
-				return nil, err
-			}
-			if attempt.Phase == "terminal" {
+			if terminal {
 				response, err := http.Get(p.barrierURL)
 				if err != nil {
 					return nil, err
 				}
 				response.Body.Close()
+				if p.failTerminal {
+					return nil, &pluginhost.HostServiceError{Code: "state_io_error", Message: "injected model terminal persistence failure"}
+				}
 				break
 			}
 		}
@@ -79,21 +138,58 @@ func (p *shutdownModelDocuments) InvokeService(ctx context.Context, params plugi
 	return p.Service.InvokeService(ctx, params)
 }
 
+func (p *shutdownModelDocuments) Close(ctx context.Context) error {
+	err := p.Service.Close(ctx)
+	if os.Getenv("WUU_MODEL_SHUTDOWN_FAIL_CLOSE") == "true" {
+		return errors.Join(err, errors.New("injected model authority release failure"))
+	}
+	return err
+}
+
 // EOF must run cancellation and terminal persistence before the owning process
 // exits. A live HTTP connection disappearing is not evidence of that drain.
+// Terminal persistence failures must reach root cleanup, while an ordinary
+// model rejection and cancellation with durable accounting are not close errors.
 func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 	if root := os.Getenv("WUU_MODEL_SHUTDOWN_HELPER"); root != "" {
 		modelShutdownProcess(t, root)
 		os.Exit(0)
 	}
-	for _, method := range []string{"request", "call", "start", "retired-start"} {
-		t.Run(method, func(t *testing.T) {
+	for _, scenario := range []struct {
+		name, method                                                         string
+		failTerminal, rejectModel, terminalTimeout, failClose, beforeAttempt bool
+	}{
+		{name: "request", method: "request"},
+		{name: "call", method: "call"},
+		{name: "start", method: "start"},
+		{name: "retired-start", method: "retired-start"},
+		{name: "request-terminal-failure", method: "request", failTerminal: true},
+		{name: "call-terminal-failure", method: "call", failTerminal: true},
+		{name: "start-terminal-failure", method: "start", failTerminal: true},
+		{name: "retired-start-terminal-failure", method: "retired-start", failTerminal: true},
+		{name: "start-model-rejection", method: "start", rejectModel: true},
+		{name: "start-terminal-timeout", method: "start", terminalTimeout: true},
+		{name: "start-authority-release-failure", method: "start", failClose: true},
+		{name: "request-before-attempt", method: "request", beforeAttempt: true},
+		{name: "call-before-attempt", method: "call", beforeAttempt: true},
+		{name: "request-before-attempt-terminal-failure", method: "request", beforeAttempt: true, failTerminal: true},
+		{name: "call-before-attempt-terminal-failure", method: "call", beforeAttempt: true, failTerminal: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
 			root := t.TempDir()
-			started, terminal := make(chan struct{}, 1), make(chan struct{}, 1)
+			started, terminal, rejected := make(chan struct{}, 1), make(chan struct{}, 1), make(chan struct{}, 1)
 			release := make(chan struct{})
 			var once sync.Once
 			unblock := func() { once.Do(func() { close(release) }) }
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/prepared" {
+					started <- struct{}{}
+					return
+				}
+				if r.URL.Path == "/rejected" {
+					rejected <- struct{}{}
+					return
+				}
 				if r.URL.Path == "/terminal" {
 					terminal <- struct{}{}
 					<-release
@@ -101,12 +197,18 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 				}
 				_, _ = io.Copy(io.Discard, r.Body)
 				started <- struct{}{}
+				if scenario.rejectModel {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = io.WriteString(w, `{"error":{"message":"injected model rejection","type":"invalid_request_error"}}`)
+					return
+				}
 				<-r.Context().Done()
 			}))
 			defer server.Close()
 			defer unblock()
 			child := exec.Command(os.Args[0], "-test.run=^TestModelShutdownPersistsBeforeProcessExit$")
-			child.Env = append(os.Environ(), "WUU_MODEL_SHUTDOWN_HELPER="+root, "WUU_MODEL_SHUTDOWN_URL="+server.URL, "WUU_MODEL_SHUTDOWN_METHOD="+method)
+			child.Env = append(os.Environ(), "WUU_MODEL_SHUTDOWN_HELPER="+root, "WUU_MODEL_SHUTDOWN_URL="+server.URL, "WUU_MODEL_SHUTDOWN_METHOD="+scenario.method, fmt.Sprintf("WUU_MODEL_SHUTDOWN_FAIL_TERMINAL=%t", scenario.failTerminal), fmt.Sprintf("WUU_MODEL_SHUTDOWN_REJECT=%t", scenario.rejectModel), fmt.Sprintf("WUU_MODEL_SHUTDOWN_FAIL_CLOSE=%t", scenario.failClose))
+			child.Env = append(child.Env, fmt.Sprintf("WUU_MODEL_SHUTDOWN_BEFORE_ATTEMPT=%t", scenario.beforeAttempt))
 			stdin, err := child.StdinPipe()
 			if err != nil {
 				t.Fatal(err)
@@ -127,6 +229,16 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 			case <-time.After(15 * time.Second):
 				t.Fatal("child did not submit a model request")
 			}
+			if scenario.rejectModel {
+				unblock()
+				select {
+				case <-rejected:
+				case err := <-exited:
+					t.Fatalf("child exited before observing model rejection: %v\n%s", err, output.String())
+				case <-time.After(15 * time.Second):
+					t.Fatal("model rejection did not reach the caller")
+				}
+			}
 			if err := stdin.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -137,10 +249,24 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 			case <-time.After(15 * time.Second):
 				t.Fatal("EOF did not cancel the admitted model invocation")
 			}
-			unblock()
+			if !scenario.terminalTimeout {
+				unblock()
+			}
 			select {
 			case err := <-exited:
-				if err != nil {
+				if scenario.terminalTimeout || scenario.failClose {
+					want := "drain model invocations: context deadline exceeded"
+					if scenario.failClose {
+						want = "injected model authority release failure"
+					}
+					if err == nil || !strings.Contains(output.String(), "root cleanup:") || !strings.Contains(output.String(), want) {
+						t.Errorf("root cleanup lost completion failure: %v\n%s", err, output.String())
+					}
+				} else if scenario.failTerminal {
+					if err == nil || !strings.Contains(output.String(), "root cleanup:") || !strings.Contains(output.String(), "injected model terminal persistence failure") {
+						t.Errorf("root cleanup lost terminal persistence failure: %v\n%s", err, output.String())
+					}
+				} else if err != nil {
 					t.Fatalf("cleanup failed: %v\n%s", err, output.String())
 				}
 			case <-time.After(15 * time.Second):
@@ -150,6 +276,31 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if scenario.beforeAttempt {
+				for _, document := range snapshot.Documents {
+					if document.Namespace == "wuu.inference_attempts.v1" || document.Namespace == "wuu.inference_submissions.v1" {
+						t.Fatalf("cancellation before attempt created %s: %s", document.Namespace, document.Value)
+					}
+				}
+			}
+			if scenario.failTerminal || scenario.terminalTimeout {
+				for _, document := range snapshot.Documents {
+					if document.Namespace == "wuu.inference_operations.v1" {
+						var record struct{ Status string }
+						if err := json.Unmarshal(document.Value, &record); err != nil {
+							t.Fatal(err)
+						}
+						if record.Status != "active" {
+							t.Errorf("failed persistence invented terminal accounting: %s", document.Value)
+						}
+					}
+				}
+				return
+			}
+			wantStatus := "canceled"
+			if scenario.rejectModel {
+				wantStatus = "failed"
+			}
 			operations, workflows, submissions := 0, 0, 0
 			for _, document := range snapshot.Documents {
 				switch document.Namespace {
@@ -158,7 +309,7 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 					if err := json.Unmarshal(document.Value, &record); err != nil {
 						t.Fatal(err)
 					}
-					if record.Status != "canceled" {
+					if record.Status != wantStatus {
 						t.Errorf("EOF lost terminal accounting: %s %s", document.Namespace, document.Value)
 					}
 					if document.Namespace == "wuu.inference_operations.v1" {
@@ -171,13 +322,17 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 					if err := json.Unmarshal(document.Value, &receipt); err != nil {
 						t.Fatal(err)
 					}
-					if receipt.Outcome != providers.InferenceSubmissionFailed || receipt.FailureCategory != providers.FailureCanceled || receipt.CompletedAt.IsZero() || receipt.ReportedUsage != nil || (receipt.CostState != providers.InferenceCostEstimated && receipt.CostState != providers.InferenceCostUnknownBillable) {
+					if receipt.Outcome != providers.InferenceSubmissionFailed || (scenario.rejectModel && receipt.FailureCategory == providers.FailureCanceled || !scenario.rejectModel && receipt.FailureCategory != providers.FailureCanceled) || receipt.CompletedAt.IsZero() || receipt.ReportedUsage != nil || (receipt.CostState != providers.InferenceCostEstimated && receipt.CostState != providers.InferenceCostUnknownBillable) {
 						t.Errorf("EOF lost physical outcome or invented usage: %+v", receipt)
 					}
 					submissions++
 				}
 			}
-			if operations != 1 || workflows != 1 || submissions != 1 {
+			wantSubmissions := 1
+			if scenario.beforeAttempt {
+				wantSubmissions = 0
+			}
+			if operations != 1 || workflows != 1 || submissions != wantSubmissions {
 				t.Fatalf("records: %d operations, %d workflows, %d submissions", operations, workflows, submissions)
 			}
 		})
@@ -191,11 +346,17 @@ func modelShutdownProcess(t *testing.T, root string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := &shutdownModelDocuments{Service: persistence.NewService("test.shutdown-documents", filepath.Join(root, "documents"), "jsonl"), barrierURL: os.Getenv("WUU_MODEL_SHUTDOWN_URL") + "/terminal"}
+	provider := &shutdownModelDocuments{Service: persistence.NewService("test.shutdown-documents", filepath.Join(root, "documents"), "jsonl"), barrierURL: os.Getenv("WUU_MODEL_SHUTDOWN_URL") + "/terminal", failTerminal: os.Getenv("WUU_MODEL_SHUTDOWN_FAIL_TERMINAL") == "true"}
+	if os.Getenv("WUU_MODEL_SHUTDOWN_BEFORE_ATTEMPT") == "true" {
+		provider.beforeAttempt = make(chan struct{})
+	}
 	caller := &shutdownModelCaller{fakeServicePluginClient: fakeServicePluginClient{id: "model-client", required: []pluginhost.ServiceRequirement{
 		{Name: pluginhost.KernelModelInvokeService, MajorVersion: 1, Required: true},
 		{Name: pluginhost.KernelModelRequestService, MajorVersion: 1, Required: true},
 	}, provided: []pluginhost.ServiceDescriptor{{Name: "test.shutdown-model", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "run", InputSchema: "test.input", OutputSchema: "test.output"}}}}}, method: strings.TrimPrefix(os.Getenv("WUU_MODEL_SHUTDOWN_METHOD"), "retired-")}
+	if os.Getenv("WUU_MODEL_SHUTDOWN_REJECT") == "true" {
+		caller.doneURL = os.Getenv("WUU_MODEL_SHUTDOWN_URL") + "/rejected"
+	}
 	modules := testStateModules()
 	modules[1] = provider.ID()
 	modules = append(modules, kernelHostModule, caller.ID())
@@ -244,14 +405,28 @@ func modelShutdownProcess(t *testing.T, root string) {
 	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
 		t.Fatal(err)
 	}
+	if provider.beforeAttempt != nil {
+		host.StopBackground()
+		host.CancelExecutions(context.Canceled)
+		close(provider.beforeAttempt)
+	}
 	if strings.HasPrefix(os.Getenv("WUU_MODEL_SHUTDOWN_METHOD"), "retired-") {
 		host.StopBackground()
 		owner.retiredPluginGenerations = map[*PluginGeneration]struct{}{generation: {}}
 		owner.pluginGeneration, owner.PluginHost = nil, nil
 		generation.Release()
 	}
+	if os.Getenv("WUU_MODEL_SHUTDOWN_FAIL_CLOSE") == "true" {
+		if err := captured.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := owner.Cleanup(); err != nil {
-		t.Fatal(err)
+		t.Fatalf("root cleanup: %v", err)
+	}
+	if os.Getenv("WUU_MODEL_SHUTDOWN_FAIL_TERMINAL") == "true" {
+		fmt.Fprintln(os.Stdout, "root cleanup returned without terminal persistence error")
+		return
 	}
 	if _, err := captured.Sessions.Create("independently retained state"); err != nil {
 		t.Fatal(err)
