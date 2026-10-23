@@ -27,17 +27,10 @@ func preserveForkArtifacts(stateDir, sourceThreadID, forkThreadID string, histor
 
 // preserveForkArtifacts routes all managed artifact identities through the
 // captured provider, so external URI schemes never require filesystem parsing.
-func (s *Server) preserveForkArtifacts(stateDir, sourceThreadID, forkThreadID string, history []providers.ChatMessage) error {
+func (s *Server) preserveForkArtifacts(services *runtime.StateServices, stateDir, sourceThreadID, forkThreadID string, history []providers.ChatMessage) error {
 	if err := preserveForkInputImages(stateDir, sourceThreadID, forkThreadID, history); err != nil {
 		return err
 	}
-	var services *runtime.StateServices
-	var release func()
-	defer func() {
-		if release != nil {
-			release()
-		}
-	}()
 	replacements := make(map[string]pluginhost.ArtifactImportResult)
 	for index := range history {
 		result := history[index].ToolResult
@@ -48,13 +41,6 @@ func (s *Server) preserveForkArtifacts(stateDir, sourceThreadID, forkThreadID st
 			part := &result.Content[partIndex]
 			if part.Artifact == nil {
 				continue
-			}
-			if services == nil {
-				var err error
-				services, release, err = s.rt.RetainStateServices()
-				if err != nil {
-					return err
-				}
 			}
 			originalURI := part.URI
 			artifact, ok := replacements[originalURI]

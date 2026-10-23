@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 	worktreepkg "github.com/blueberrycongee/wuu/internal/worktree"
 )
 
@@ -65,7 +63,7 @@ type hostSessionLaunchParams struct {
 }
 
 func (s *Server) createHostSessionThread(binding *runtime.State, owner, source, id string, params hostSessionCreateParams) (*threadState, error) {
-	th, err := s.createHostSessionThreadWithStore(binding.Sessions, owner, source, id, params)
+	th, err := s.createHostSessionThreadWithStore(binding, binding.Sessions, owner, source, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +71,7 @@ func (s *Server) createHostSessionThread(binding *runtime.State, owner, source, 
 	if err != nil {
 		return nil, err
 	}
-	th.Instructions, err = ProjectInstructions(context.Background(), binding.Host, metadata)
+	th.Instructions, err = ProjectInstructions(s.projectServiceContext(context.Background(), binding), binding.Host, metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +99,7 @@ func (s *Server) createHostSessionThread(binding *runtime.State, owner, source, 
 
 // Managed-session creation commits to the caller's captured store. Publication
 // and execution admission belong to the caller, after this durable operation.
-func (s *Server) createHostSessionThreadWithStore(store *session.Store, owner, source, id string, params hostSessionCreateParams) (*threadState, error) {
+func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store *session.Store, owner, source, id string, params hostSessionCreateParams) (*threadState, error) {
 	if s.rt == nil || s.rt.StreamRunner == nil {
 		return nil, errors.New("runtime session is required")
 	}
@@ -157,7 +155,15 @@ func (s *Server) createHostSessionThreadWithStore(store *session.Store, owner, s
 		}
 	}
 	if params.ModelAlias != "" {
-		resolved := s.resolveSubagentModelAlias(params.ModelAlias)
+		services, err := binding.Services()
+		if err != nil {
+			return nil, err
+		}
+		models, err := binding.Models()
+		if err != nil {
+			return nil, err
+		}
+		resolved := s.resolveSubagentModelAliasWithServices(services, models, params.ModelAlias)
 		if resolved.Err != nil {
 			return nil, resolved.Err
 		}
@@ -246,16 +252,18 @@ func (s *Server) createHostSessionThreadWithStore(store *session.Store, owner, s
 		ProjectRole: params.ProjectRole, Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
 	}
 	var records []session.HistoryRecord
-	artifactStateDir := ""
+	var artifactServices *runtime.StateServices
 	if params.ContextSource == sessionContextFork {
 		stateDir, stateErr := s.workspaceStateDir()
 		if stateErr != nil {
 			return nil, stateErr
 		}
-		artifactStateDir = stateDir
-		if err := s.preserveForkArtifacts(artifactStateDir, params.ParentSessionID, id, history); err != nil {
-			_ = os.RemoveAll(statepath.SessionArtifactDir(artifactStateDir, id))
-			return nil, err
+		artifactServices, stateErr = binding.Services()
+		if stateErr != nil {
+			return nil, stateErr
+		}
+		if err := s.preserveForkArtifacts(artifactServices, stateDir, params.ParentSessionID, id, history); err != nil {
+			return nil, rollbackCreatedArtifacts(artifactServices.Artifacts, id, err)
 		}
 		records = historyRecordsFromChatMessages(history)
 	}
@@ -287,6 +295,9 @@ func (s *Server) createHostSessionThreadWithStore(store *session.Store, owner, s
 		}
 	}
 	if err := s.rt.PinExecutionEnvironment(id, params.ParentSessionID); err != nil {
+		if artifactServices != nil {
+			err = rollbackCreatedArtifacts(artifactServices.Artifacts, id, err)
+		}
 		return nil, err
 	}
 	var created *session.Session
@@ -297,8 +308,8 @@ func (s *Server) createHostSessionThreadWithStore(store *session.Store, owner, s
 		created, err = store.CreateInitializedWithLaunch(initial, records, seed, launch)
 	}
 	if err != nil {
-		if artifactStateDir != "" {
-			_ = os.RemoveAll(statepath.SessionArtifactDir(artifactStateDir, id))
+		if artifactServices != nil {
+			err = rollbackCreatedArtifacts(artifactServices.Artifacts, id, err)
 		}
 		return nil, err
 	}
@@ -404,4 +415,9 @@ func sessionSystemPrompt(prompt, instructions string) string {
 		return prompt
 	}
 	return strings.TrimSpace(prompt) + "\n\n# Session instructions\n\n" + instructions
+}
+
+func rollbackCreatedArtifacts(artifacts *runtime.ArtifactClient, threadID string, cause error) error {
+	_, cleanupErr := artifacts.DeleteThread(context.Background(), threadID)
+	return errors.Join(cause, cleanupErr)
 }

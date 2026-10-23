@@ -808,10 +808,14 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.preserveForkArtifacts(stateDir, source.thread.ID, id, history); err != nil {
-		_ = os.RemoveAll(statepath.SessionArtifactDir(stateDir, id))
+	artifactServices, err := binding.Services()
+	if err != nil {
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.preserveForkArtifacts(artifactServices, stateDir, source.thread.ID, id, history); err != nil {
+		cleanupWorktree()
+		return s.writeResponse(req.ID, nil, rollbackCreatedArtifacts(artifactServices.Artifacts, id, err))
 	}
 	// Publish the binding and copied transcript together. A native fork can be
 	// orphaned if this commit fails, but an empty/misbound Wuu child cannot escape.
@@ -827,9 +831,8 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 	}
 	sess, err := binding.Sessions.CreateInitialized(initial, historyRecordsFromChatMessages(history))
 	if err != nil {
-		_ = os.RemoveAll(statepath.SessionArtifactDir(stateDir, id))
 		cleanupWorktree()
-		return s.writeResponse(req.ID, nil, err)
+		return s.writeResponse(req.ID, nil, rollbackCreatedArtifacts(artifactServices.Artifacts, id, err))
 	}
 	seq := 0
 	for i := range history {
