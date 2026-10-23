@@ -387,7 +387,6 @@ func (s *Server) handlePluginPackageRemove(req Request) error {
 		return s.writeResponse(req.ID, nil, activationErr)
 	}
 	activationErr = errors.Join(activationErr, configActivationError(committedView))
-	s.rt.SetExtensionSettings(&preparedSettings)
 	if pendingRemoval != nil {
 		if err := pendingRemoval.Commit(); err != nil {
 			providers.DebugLogf("finalize pending plugin removal: %v", err)
@@ -480,7 +479,6 @@ func (s *Server) handlePendingPluginUpdate(req Request, params ExtensionPackageU
 		return s.writeResponse(req.ID, nil, activationErr)
 	}
 	activationErr = errors.Join(activationErr, configActivationError(committedView))
-	s.rt.SetExtensionSettings(&preparedSettings)
 	s.scheduleCurrentPluginTurnLifecycleReplay()
 	s.resetThreadRuntimesForGeneralSettings("")
 	return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, activationErr, finish)

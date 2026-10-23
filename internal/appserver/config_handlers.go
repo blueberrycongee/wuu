@@ -1009,7 +1009,6 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, activationErr)
 	}
 	activationErr = errors.Join(activationErr, configActivationError(committedView))
-	s.rt.SetExtensionSettings(&preparedSettings)
 	s.scheduleCurrentPluginTurnLifecycleReplay()
 	return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, activationErr, releaseMutation)
 }

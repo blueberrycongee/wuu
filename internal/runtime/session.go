@@ -2457,20 +2457,6 @@ func permissionSetContains(granted, required []string) bool {
 	return true
 }
 
-// SetExtensionSettings keeps the live policy and current-generation settings
-// snapshot aligned after a durable settings transaction.
-func (s *Session) SetExtensionSettings(settings *extensions.Settings) {
-	if s == nil {
-		return
-	}
-	s.pluginGenerationMu.Lock()
-	defer s.pluginGenerationMu.Unlock()
-	s.ExtensionSettings = settings
-	if s.pluginGeneration != nil {
-		s.pluginGeneration.settings.Extensions = settings
-	}
-}
-
 // RefreshExtensions rediscovers package manifests before rebuilding the active
 // extension surfaces. It is used by the catalog's explicit Refresh action.
 func (s *Session) RefreshExtensions(cfg config.Config) error {
