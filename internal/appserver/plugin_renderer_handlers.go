@@ -30,8 +30,13 @@ func (s *Server) handlePluginDesktopActivation(req Request) error {
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if params.RendererID == "" || len(params.RendererID) > 128 {
+	if len(params.RendererID) > 128 {
 		return s.writeResponse(req.ID, nil, errors.New("invalid renderer identity"))
+	}
+	// A device-owned stdio connection has one renderer. Multiplexed desktop
+	// transports supply their own owner IDs, still scoped to this connection.
+	if params.RendererID == "" {
+		params.RendererID = "primary"
 	}
 	s.rendererClients.mu.Lock()
 	defer s.rendererClients.mu.Unlock()
