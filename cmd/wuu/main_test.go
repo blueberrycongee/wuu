@@ -1646,25 +1646,32 @@ func parseCLIJSONLines(t *testing.T, text string) []map[string]any {
 	return events
 }
 
+func commandSessionStore(t *testing.T) *session.Store {
+	t.Helper()
+	state, err := openCommandState(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := state.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return state.Sessions
+}
+
 func TestRunSessionShowReturnsCreatedSessionJSON(t *testing.T) {
 	wuuHome := filepath.Join(t.TempDir(), "wuu-home")
 	t.Setenv("WUU_HOME", wuuHome)
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	if sessDir == "" {
-		t.Fatal("statepath.SessionsDir returned empty path")
-	}
+	store := commandSessionStore(t)
 
 	const id = "cli-thread-1"
-	sess, err := session.CreateWithMetadata(sessDir, id, "/tmp/workdir")
+	sess, err := store.CreateWithMetadata(id, "/tmp/workdir")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, sess.ID, session.HistoryRecord{
+	if err := store.AppendHistoryRecord(sess.ID, session.HistoryRecord{
 		Role:    "user",
 		Content: "hello from CLI",
 	}); err != nil {
@@ -1700,15 +1707,11 @@ func TestRunSessionListJSONFiltersCurrentWorkspace(t *testing.T) {
 	otherWorkdir := t.TempDir()
 	t.Chdir(workdir)
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	if _, err := session.CreateWithMetadata(sessDir, "current-thread", workdir); err != nil {
+	store := commandSessionStore(t)
+	if _, err := store.CreateWithMetadata("current-thread", workdir); err != nil {
 		t.Fatalf("create current session: %v", err)
 	}
-	if _, err := session.CreateWithMetadata(sessDir, "other-thread", otherWorkdir); err != nil {
+	if _, err := store.CreateWithMetadata("other-thread", otherWorkdir); err != nil {
 		t.Fatalf("create other session: %v", err)
 	}
 
@@ -1734,16 +1737,12 @@ func TestRunSessionShowSubcommandReturnsHistoryJSON(t *testing.T) {
 	t.Setenv("WUU_HOME", wuuHome)
 	workdir := t.TempDir()
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	sess, err := session.CreateWithMetadata(sessDir, "show-thread", workdir)
+	store := commandSessionStore(t)
+	sess, err := store.CreateWithMetadata("show-thread", workdir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, sess.ID, session.HistoryRecord{
+	if err := store.AppendHistoryRecord(sess.ID, session.HistoryRecord{
 		Role:    "assistant",
 		Content: "visible answer",
 	}); err != nil {
@@ -1773,19 +1772,15 @@ func TestRunSessionShowLastReturnsMostRecentForWorkspace(t *testing.T) {
 	t.Setenv("WUU_HOME", wuuHome)
 	workdir := t.TempDir()
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	if _, err := session.CreateWithMetadata(sessDir, "older-thread", workdir); err != nil {
+	store := commandSessionStore(t)
+	if _, err := store.CreateWithMetadata("older-thread", workdir); err != nil {
 		t.Fatalf("create older session: %v", err)
 	}
-	latest, err := session.CreateWithMetadata(sessDir, "latest-thread", workdir)
+	latest, err := store.CreateWithMetadata("latest-thread", workdir)
 	if err != nil {
 		t.Fatalf("create latest session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, latest.ID, session.HistoryRecord{
+	if err := store.AppendHistoryRecord(latest.ID, session.HistoryRecord{
 		Role:    "assistant",
 		Content: "latest answer",
 	}); err != nil {
@@ -1817,26 +1812,22 @@ func TestRunSessionSearchJSONMatchesHistoryAndFiltersWorkspace(t *testing.T) {
 	otherWorkdir := t.TempDir()
 	t.Chdir(workdir)
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	current, err := session.CreateWithMetadata(sessDir, "search-current", workdir)
+	store := commandSessionStore(t)
+	current, err := store.CreateWithMetadata("search-current", workdir)
 	if err != nil {
 		t.Fatalf("create current session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, current.ID, session.HistoryRecord{
+	if err := store.AppendHistoryRecord(current.ID, session.HistoryRecord{
 		Role:    "user",
 		Content: "please fix the orion cache regression",
 	}); err != nil {
 		t.Fatalf("append current history: %v", err)
 	}
-	other, err := session.CreateWithMetadata(sessDir, "search-other", otherWorkdir)
+	other, err := store.CreateWithMetadata("search-other", otherWorkdir)
 	if err != nil {
 		t.Fatalf("create other session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, other.ID, session.HistoryRecord{
+	if err := store.AppendHistoryRecord(other.ID, session.HistoryRecord{
 		Role:    "user",
 		Content: "orion cache but another workspace",
 	}); err != nil {
@@ -1877,12 +1868,8 @@ func TestRunSessionArchiveHidesSessionFromList(t *testing.T) {
 	workdir := t.TempDir()
 	t.Chdir(workdir)
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	sess, err := session.CreateWithMetadata(sessDir, "archive-thread", workdir)
+	store := commandSessionStore(t)
+	sess, err := store.CreateWithMetadata("archive-thread", workdir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -1938,16 +1925,12 @@ func TestRunSessionDeleteRemovesSessionAndArtifacts(t *testing.T) {
 	workdir := t.TempDir()
 	t.Chdir(workdir)
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	sess, err := session.CreateWithMetadata(sessDir, "delete-thread", workdir)
+	store := commandSessionStore(t)
+	sess, err := store.CreateWithMetadata("delete-thread", workdir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, sess.ID, session.HistoryRecord{Role: "user", Content: "temporary task"}); err != nil {
+	if err := store.AppendHistoryRecord(sess.ID, session.HistoryRecord{Role: "user", Content: "temporary task"}); err != nil {
 		t.Fatalf("append history: %v", err)
 	}
 	workspaceStateDir, err := statepath.WorkspaceDir(wuuHome, workdir)
@@ -1981,7 +1964,7 @@ func TestRunSessionDeleteRemovesSessionAndArtifacts(t *testing.T) {
 	if payload.ThreadID != sess.ID || payload.Session.ID != sess.ID || !payload.Deleted || payload.ArtifactPath != artifactDir || !payload.ArtifactsDeleted {
 		t.Fatalf("unexpected delete payload: %+v", payload)
 	}
-	if _, ok, err := session.Find(sessDir, sess.ID); err != nil || ok {
+	if _, ok, err := store.Find(sess.ID); err != nil || ok {
 		t.Fatalf("deleted session should not be found, ok=%v err=%v", ok, err)
 	}
 	if _, err := os.Stat(artifactDir); !os.IsNotExist(err) {
@@ -2062,12 +2045,8 @@ func TestRunDebugProtocolEventsJSONReadsTraceEvents(t *testing.T) {
 	t.Setenv("WUU_HOME", wuuHome)
 	workdir := t.TempDir()
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	sess, err := session.CreateWithMetadata(sessDir, "debug-thread", workdir)
+	store := commandSessionStore(t)
+	sess, err := store.CreateWithMetadata("debug-thread", workdir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -2122,12 +2101,8 @@ func TestRunSessionTraceJSONReplaysTrace(t *testing.T) {
 	t.Setenv("WUU_HOME", wuuHome)
 	workdir := t.TempDir()
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	sess, err := session.CreateWithMetadata(sessDir, "trace-thread", workdir)
+	store := commandSessionStore(t)
+	sess, err := store.CreateWithMetadata("trace-thread", workdir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -2173,15 +2148,11 @@ func TestRunSessionTraceLastReplaysMostRecentTrace(t *testing.T) {
 	t.Setenv("WUU_HOME", wuuHome)
 	workdir := t.TempDir()
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	if _, err := session.CreateWithMetadata(sessDir, "older-trace-thread", workdir); err != nil {
+	store := commandSessionStore(t)
+	if _, err := store.CreateWithMetadata("older-trace-thread", workdir); err != nil {
 		t.Fatalf("create older session: %v", err)
 	}
-	latest, err := session.CreateWithMetadata(sessDir, "latest-trace-thread", workdir)
+	latest, err := store.CreateWithMetadata("latest-trace-thread", workdir)
 	if err != nil {
 		t.Fatalf("create latest session: %v", err)
 	}

@@ -20,9 +20,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/config"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
 	"github.com/blueberrycongee/wuu/internal/execution"
-	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
@@ -98,7 +100,7 @@ text(await tools.bash({command:"mkdir shell; printf created > shell/new.txt"}));
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			t.Cleanup(unblock)
 			configPath := filepath.Join(root, "config.json")
-			config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"unconfined"},"skills":{"enabled":false}}`, server.URL)
+			config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.state.sqlite"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"unconfined"},"skills":{"enabled":false}}`, server.URL)
 			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -133,8 +135,13 @@ text(await tools.bash({command:"mkdir shell; printf created > shell/new.txt"}));
 			}
 			// Hold the provider response so the database sidecars are still live.
 			state := filepath.Join(root, "state")
+			documentsDir := filepath.Join(statepath.SessionsDir(state), "documents")
+			inspection, _, err := persistence.Inspect(context.Background(), documentsDir)
+			if err != nil {
+				t.Fatal(err)
+			}
 			for _, suffix := range []string{"", "-wal", "-shm"} {
-				path := session.DBPath(statepath.SessionsDir(state)) + suffix
+				path := filepath.Join(documentsDir, inspection.Generation, "state.sqlite3") + suffix
 				info, err := os.Stat(path)
 				if err != nil || info.Mode().Perm() != 0o600 {
 					t.Errorf("private database %s: %v, %v", path, info, err)
@@ -245,19 +252,39 @@ func stalledExecProvider(t *testing.T, root string, delta string) (string, <-cha
 	}))
 	t.Cleanup(func() { close(release); server.Close() })
 	configPath := filepath.Join(root, "config.json")
-	config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"read_only"}}`, server.URL)
+	config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.state.sqlite"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"read_only"}}`, server.URL)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return configPath, started
 }
 
-func assertSettledExecRun(t *testing.T, root string) {
+func execProcessStore(t *testing.T, root string) *execution.Store {
 	t.Helper()
-	store, err := execution.NewStore(statepath.SessionsDir(filepath.Join(root, "state")))
+	t.Setenv("WUU_HOME", filepath.Join(root, "state"))
+	cfg, path, err := config.LoadPath(filepath.Join(root, "config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	state, err := runtime.OpenState(context.Background(), runtime.StateOptions{RootDir: root, HomeDir: root, ConfigPath: path, Config: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := state.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	store, err := execution.NewStore(state.Documents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func assertSettledExecRun(t *testing.T, root string) {
+	t.Helper()
+	store := execProcessStore(t, root)
 	runs, err := store.List(context.Background(), execution.ListOptions{})
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("stored runs: %+v, %v", runs, err)
@@ -312,10 +339,7 @@ func TestExecProcessBusyResumeWithModelSelection(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("provider was not reached")
 	}
-	store, err := execution.NewStore(statepath.SessionsDir(filepath.Join(root, "state")))
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := execProcessStore(t, root)
 	runs, err := store.List(context.Background(), execution.ListOptions{})
 	if err != nil || len(runs) != 1 || runs[0].Status.Terminal() {
 		t.Fatalf("expected one active Run: %+v, %v", runs, err)
