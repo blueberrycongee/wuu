@@ -1350,7 +1350,7 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		}
 		return nil, err
 	}
-	if err := s.configureSessionToolPolicy(th.ID, threadRuntime); err != nil {
+	if err := s.configureSessionToolPolicy(th.state, th.ID, threadRuntime); err != nil {
 		s.releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: threadRuntime})
 		return nil, err
 	}
