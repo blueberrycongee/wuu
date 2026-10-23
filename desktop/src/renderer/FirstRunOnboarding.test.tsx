@@ -539,7 +539,7 @@ describe("FirstRunOnboarding", () => {
       await clickPlugin(id);
       selected.push(id);
       expect(container.querySelectorAll(".onboarding-plugin [role=switch][aria-checked=true]")).toHaveLength(selected.length);
-      const expected = selected.filter((pluginID) => pluginID !== "subagent" && pluginID !== "automation-client");
+      const expected = selected.filter((pluginID) => pluginID !== "subagent");
       expect(wornCapabilities().sort()).toEqual([...expected].sort());
       for (const decoration of expected) {
         const node = mascotStage()?.querySelector(`[data-onboarding-capability="${decoration}"]`);
@@ -552,13 +552,13 @@ describe("FirstRunOnboarding", () => {
     // Removing one capability leaves all the others intact.
     await clickPlugin("memory");
     expect(wornCapabilities()).not.toContain("memory");
-    expect(wornCapabilities()).toHaveLength(7);
+    expect(wornCapabilities()).toHaveLength(8);
     await clickButton("极简");
     expect(visibleClones()).toHaveLength(1);
     expect(wornCapabilities()).toEqual([]);
     await clickButton("全部");
     expect(visibleClones()).toHaveLength(3);
-    expect(wornCapabilities().sort()).toEqual(ONBOARDING_PLUGIN_ORDER.filter((id) => id !== "subagent" && id !== "automation-client").sort());
+    expect(wornCapabilities().sort()).toEqual(ONBOARDING_PLUGIN_ORDER.filter((id) => id !== "subagent").sort());
     expect(update).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
   });
