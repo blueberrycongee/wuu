@@ -149,6 +149,27 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 	if _, ok := kernel.driverGateways.lookup("workflow-resume"); ok {
 		t.Fatal("completed execution retained its gateway")
 	}
+	t.Run("driver-decides-overflow-recovery", func(t *testing.T) {
+		dir := t.TempDir()
+		if _, err := session.Create(dir, "overflow-session"); err != nil {
+			t.Fatal(err)
+		}
+		store := sessionDriverCheckpointStore{sessDir: dir, sessionID: "overflow-session"}
+		model := &workflowEvidenceModel{overflowFirst: true}
+		tools := &workflowEvidenceTools{path: filepath.Join(root, "evidence.txt")}
+		owner.DriverProfile = selectedProfile
+		runner := &agent.StreamRunner{Client: model, Model: "controlled-evidence", Tools: tools, AcquireLoopDriver: acquire, DriverBindingStore: store, DriverCheckpointStore: store}
+		history := []providers.ChatMessage{{Role: "user", Content: "Earlier task"}, {Role: "assistant", Content: "Earlier result"}, {Role: "user", Content: "Read evidence.txt and report the measured value."}}
+		attachWorkflowHistory(t, runner, dir, "overflow-session", history)
+		ctx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "overflow-session", ExecutionID: "overflow-recovery"})
+		result, err := runner.RunWithCallback(ctx, history, nil)
+		if err != nil || result.Content != "The measured value is 42." || tools.calls != 1 || len(model.requests) != 3 {
+			t.Fatalf("external recovery lost control: result=%+v model=%d tools=%d err=%v", result, len(model.requests), tools.calls, err)
+		}
+		if len(model.requests[1].Messages) >= len(model.requests[0].Messages) {
+			t.Fatal("driver retried the overflowing payload without shortening context")
+		}
+	})
 	t.Run("resume-planned-before-history-flush", func(t *testing.T) {
 		plannedDir := t.TempDir()
 		if _, err := session.Create(plannedDir, "planned-session"); err != nil {
@@ -303,6 +324,7 @@ type workflowEvidenceModel struct {
 	requests        []providers.ChatRequest
 	cancelSynthesis context.CancelFunc
 	synthesisOnly   bool
+	overflowFirst   bool
 }
 
 func (m *workflowEvidenceModel) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
@@ -312,8 +334,15 @@ func (m *workflowEvidenceModel) StreamChat(ctx context.Context, req providers.Ch
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.requests = append(m.requests, req)
+	planningRound := 1
+	if m.overflowFirst {
+		planningRound = 2
+		if len(m.requests) == 1 {
+			return nil, providers.NewProviderStreamError("context_length_exceeded", "controlled context overflow")
+		}
+	}
 	stream := make(chan providers.StreamEvent, 3)
-	if !m.synthesisOnly && len(m.requests) == 1 {
+	if !m.synthesisOnly && len(m.requests) == planningRound {
 		if len(req.Tools) != 1 {
 			return nil, errors.New("planning did not receive the selected tools")
 		}

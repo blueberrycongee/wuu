@@ -1,6 +1,9 @@
 package pluginprotocol
 
-const DriverTurnService = "driver.turn"
+const (
+	DriverTurnService = "driver.turn"
+	DriverTurnMajor   = 2
+)
 
 // DriverTurnScope identifies an active driver execution. The service also checks
 // transport caller identity; knowing an execution ID does not grant access.
@@ -41,9 +44,34 @@ type DriverTurnModelParams struct {
 	Request DriverTurnReadResult `json:"request"`
 }
 
+// DriverModelFailure describes a completed model operation that failed. It does
+// not authorize another attempt: the driver must account for partial output,
+// accepted effects, and the recovery executor's stopping decision.
+type DriverModelFailure struct {
+	Message         string               `json:"message"`
+	Origin          string               `json:"origin"`
+	Category        string               `json:"category"`
+	ProviderCode    string               `json:"provider_code,omitempty"`
+	HTTPStatus      int                  `json:"http_status,omitempty"`
+	RetryAfterMS    int64                `json:"retry_after_ms,omitempty"`
+	ContextOverflow bool                 `json:"context_overflow"`
+	Recovery        *DriverModelRecovery `json:"recovery,omitempty"`
+}
+
+type DriverModelRecovery struct {
+	OperationID     string `json:"operation_id,omitempty"`
+	AttemptCount    int    `json:"attempt_count"`
+	RetryCount      int    `json:"retry_count"`
+	MaxAttempts     int    `json:"max_attempts"`
+	SubmissionCount int    `json:"submission_count"`
+	StopReason      string `json:"stop_reason"`
+	BudgetDimension string `json:"budget_dimension,omitempty"`
+}
+
 type DriverTurnModelResult struct {
-	Messages []DriverMessageV1  `json:"messages"`
-	Usage    *ModelRequestUsage `json:"usage,omitempty"`
+	Messages []DriverMessageV1   `json:"messages"`
+	Usage    *ModelRequestUsage  `json:"usage,omitempty"`
+	Failure  *DriverModelFailure `json:"failure,omitempty"`
 }
 
 type DriverTurnToolsParams struct {

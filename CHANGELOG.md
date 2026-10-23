@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Preserve classified model failures, partial messages and reported usage for independent loop drivers through `driver.turn` 2.0. Update the SDK and service requirement together; the evidence workflow now decides its own bounded context-overflow recovery.
+
 - Persist conversation driver bindings before execution, retain them across default changes and forks, and reject mismatched checkpoints or missing session owners before effects. Migrate older native conversations to their historical driver identity; retain unknown external bindings for explicit recovery.
 
 - Resolve session and background worker drivers through `driver.default`, provided by the removable `wuu.default-loop` module or a selected external implementation. Native drivers use the same service lifecycle and protocol as process drivers; failed and canceled calls retain observed history. Workers retain their driver binding across follow-up and restart, preserve pending checkpoints separately from committed terminal results, and hold providers until execution cleanup completes. Embedded runners and worker managers require an explicit driver instead of silently selecting the native loop.

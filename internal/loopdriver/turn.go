@@ -3,6 +3,7 @@ package loopdriver
 import (
 	"context"
 
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -46,6 +47,15 @@ type ModelRound struct {
 	Messages []providers.ChatMessage
 	Usage    *providers.TokenUsage
 }
+
+// ModelRoundError retains the classified failure of a model operation. The
+// accompanying ModelRound still contains accepted input and partial output.
+// Transport and authorization errors do not imply a completed model operation.
+type ModelRoundError struct {
+	Failure pluginprotocol.DriverModelFailure
+}
+
+func (e *ModelRoundError) Error() string { return e.Failure.Message }
 
 // ToolBatch.ID is unique within an execution. A duplicate is rejected, including
 // after a failed call; cancellation cannot undo external effects. A driver must

@@ -49,8 +49,46 @@ export interface DriverModelRound {
   };
 }
 
+export interface DriverModelFailure {
+  readonly message: string;
+  readonly origin: string;
+  readonly category: string;
+  readonly provider_code?: string;
+  readonly http_status?: number;
+  readonly retry_after_ms?: number;
+  readonly context_overflow: boolean;
+  readonly recovery?: {
+    readonly operation_id?: string;
+    readonly attempt_count: number;
+    readonly retry_count: number;
+    readonly max_attempts: number;
+    readonly submission_count: number;
+    readonly stop_reason: string;
+    readonly budget_dimension?: string;
+  };
+}
+
+/** A model operation failed after admission. Partial messages and reported
+ * usage remain available. Classification alone does not authorize replay;
+ * inspect partial output and the recovery executor's stopping decision.
+ */
+export class DriverModelError extends Error {
+  readonly failure: DriverModelFailure;
+  readonly round: DriverModelRound;
+
+  constructor(failure: DriverModelFailure, round: DriverModelRound) {
+    super(failure.message);
+    this.name = "DriverModelError";
+    this.failure = failure;
+    this.round = round;
+  }
+}
+
 export function requireDriverTurnServices(): ServiceRequirement[] {
-  return [DRIVER_TURN_SERVICE, DRIVER_CHECKPOINT_SERVICE].map(name => ({ name, major_version: 1, required: true }));
+  return [
+    { name: DRIVER_TURN_SERVICE, major_version: 2, required: true },
+    { name: DRIVER_CHECKPOINT_SERVICE, major_version: 1, required: true },
+  ];
 }
 
 export function driverServiceDescriptor(profile: string, version: string): ServiceDescriptor {
@@ -88,7 +126,14 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
      */
     replaceContext: (revision: number, messages: readonly DriverMessage[]) =>
       call<DriverTurnContext>("replace_context", { revision, messages }),
-    model: (request: LogicalModelRequestV1) => call<DriverModelRound>("model", { request }),
+    /** Throws DriverModelError for a failed model operation, preserving its
+     * partial result. Transport and authorization failures remain host errors.
+     */
+    model: async (request: LogicalModelRequestV1): Promise<DriverModelRound> => {
+      const result = await call<DriverModelRound & { readonly failure?: DriverModelFailure }>("model", { request });
+      if (result.failure) throw new DriverModelError(result.failure, result);
+      return result;
+    },
     /** ID is unique within this execution, including failed calls. Persist
      * intent before submitting effects. An interrupted batch needs explicit
      * reconciliation; cancellation cannot undo its external effects. Call IDs
