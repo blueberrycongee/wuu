@@ -2131,7 +2131,7 @@ func valueOfIntFlag(v *int) int {
 	return *v
 }
 
-func runAppServer(args []string) error {
+func runAppServer(args []string) (runErr error) {
 	fs := flag.NewFlagSet("app-server", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
@@ -2179,7 +2179,7 @@ func runAppServer(args []string) error {
 		return err
 	}
 	defer func() {
-		_ = rt.Close()
+		runErr = errors.Join(runErr, rt.Close())
 	}()
 
 	return rt.Serve(context.Background(), os.Stdin, os.Stdout)
